@@ -20,24 +20,15 @@ GeoTaichi is a research project that is currently __under development__. Our vis
 ### Material point method (MPM)
 - Soil and fluid dynamics
 <p align="center">
-    <img src="https://github.com/Yihao-Shi/GeoTaichi/blob/main/images/soil.gif" width="50%" height="50%" /><img src="https://github.com/Yihao-Shi/GeoTaichi/blob/main/images/newtonian.gif" width="50%" height="50%" />
-</p>
-
-- Strip footing penetration
-<p align="center">
-    <img src="https://github.com/Yihao-Shi/GeoTaichi/blob/main/images/footing.gif" width="50%" height="50%" />
+    <img src="https://github.com/Yihao-Shi/GeoTaichi/blob/main/images/soil.gif" width="30%" height="30%" /><img src="https://github.com/Yihao-Shi/GeoTaichi/blob/main/images/newtonian.gif" width="30%" height="30%" /><img src="https://github.com/Yihao-Shi/GeoTaichi/blob/main/images/footing.gif" width="30%" height="30%" />
 </p>
 
 ### Discrete element method (DEM)
-- Granular packings (more than 1.6 milloin particles)
 <p align="center">
-    <img src="https://github.com/Yihao-Shi/GeoTaichi/blob/main/images/clump.gif" width="50%" height="50%" /><img src="https://github.com/Yihao-Shi/GeoTaichi/blob/main/images/heap_formation.gif" width="50%" height="50%" />
+    <img src="https://github.com/Yihao-Shi/GeoTaichi/blob/main/images/clump.gif" width="30%" height="30%" /><img src="https://github.com/Yihao-Shi/GeoTaichi/blob/main/images/heap_formation.gif" width="30%" height="30%" /><img src="https://github.com/Yihao-Shi/GeoTaichi/blob/main/images/force_chain.gif" width="30%" height="30%" />
 </p>
 
-- Triaxial shear test
-<p align="center">
-    <img src="https://github.com/Yihao-Shi/GeoTaichi/blob/main/images/shear.gif" width="50%" height="50%" /><img src="https://github.com/Yihao-Shi/GeoTaichi/blob/main/images/force_chain.gif" width="50%" height="50%" />
-</p>
+The performance of GeoTaichi is compared with similar simulator in the field, such as [MUSEN](https://msolids.net/musen/) and [CoSim](http://www.meggs.hydr.tsinghua.edu.cn/index.html), showing a notable improvement in both computational efficiency and memory usage.
 
 ### Coupled material point-discrete element method (MPDEM)
 <p align="center">
@@ -168,7 +159,6 @@ This project is licensed under the GNU General Public License v3 - see the [LICE
 If you find GeoTaichi is helpful, you can [star it](https://github.com/Yihao-Shi/GeoTaichi).
 
 ## Acknowledgements
-This is the release version of GeoTaichi, if you need more features such as implicit material point/level set DEM, please contact authors.
 We thank all contributors for their great work and open source spirit.
 
 ## Release Notes

@@ -1,17 +1,21 @@
-from src import *
+import sys
+sys.path.append('/home/eleven/work/GeoTaichi')
 
-init()
+import taichi as ti
+ti.init(arch=ti.cpu, default_fp=ti.f64)
+
+from src.dem.mainDEM import DEM
 
 dem = DEM()
 
 
-dem.set_configuration(domain=ti.Vector([20.,25.,25.]))
+dem.set_configuration(domain=ti.Vector([100.,30.,45.]))
 
 dem.add_region(region={
                        "Name": "region1",
                        "Type": "Rectangle",
                        "BoundingBoxPoint": ti.Vector([0.,0.,0.]),
-                       "BoundingBoxSize": ti.Vector([15.,15.,15]),
+                       "BoundingBoxSize": ti.Vector([30.,30.,45]),
                        "zdirection": ti.Vector([0.,0.,1.])
                        })                            
                           
@@ -27,5 +31,5 @@ dem.add_body(body={
                                
                                "MaxRadius": 0.075,
                                "MinRadius": 0.075,
-                               "BodyNumber": 600000}}) 
+                               "BodyNumber": 6250000}}) 
 

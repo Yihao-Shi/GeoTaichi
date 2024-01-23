@@ -1,11 +1,15 @@
-from src import *
+import sys
+sys.path.append('/home/eleven/work/GeoTaichi')
 
-init()
+import taichi as ti
+ti.init(arch=ti.gpu, default_fp=ti.f64, default_ip=ti.i32, debug=False, kernel_profiler = False, device_memory_GB=7.11)
+
+from src.dem.mainDEM import DEM
 
 dem = DEM()
 
 dem.set_configuration(device=ti.gpu,
-                      domain=ti.Vector([40.,15.,35.]),
+                      domain=ti.Vector([100.,30.,45.]),
                       boundary=["Destroy", "Destroy", "Destroy"],
                       gravity=ti.Vector([0.,0.,-9.8]),
                       engine="SymplecticEuler",
@@ -13,17 +17,21 @@ dem.set_configuration(device=ti.gpu,
 
 dem.set_solver({
                 "Timestep":         1e-4,
-                "SimulationTime":   3,
-                "SaveInterval":     0.3
+                "SimulationTime":   15,
+                "SaveInterval":     0.3,
+                "SavePath":         "case10/OutputData"
                })
 
 dem.memory_allocate(memory={
                             "max_material_number": 2,
-                            "max_particle_number": 600000,
-                            "max_sphere_number": 600000,
+                            "max_particle_number": 6250000,
+                            "max_sphere_number": 6250000,
                             "max_clump_number": 0,
-                            "max_plane_number": 7,
-                            "verlet_distance_multiplier": 0.3
+                            "max_plane_number": 6,
+                            "verlet_distance_multiplier": 0.1,
+                            "body_coordination_number": 16,
+                            "wall_coordination_number": 3,
+                            "compaction_ratio": [0.15, 0.05]
                             }, log=True)                       
 
 dem.add_attribute(materialID=0,
@@ -47,7 +55,7 @@ dem.add_body_from_file(body={
                                "BodyType": "Sphere",
                                "GroupID": 0,
                                "MaterialID": 0,
-                               "File":'case3/SpherePacking.txt',
+                               "File":'case10/SpherePacking.txt',
                                "InitialVelocity": ti.Vector([0.,0.,0.]),
                                "InitialAngularVelocity": ti.Vector([0.,0.,0.]),
                                "FixVelocity": ["Free","Free","Free"],
@@ -78,45 +86,45 @@ dem.add_property(materialID1=0,
 dem.add_wall(body={
                    "WallType":    "Plane",
                    "MaterialID":   1,
-                   "WallCenter":   ti.Vector([20, 7.5, 0.]),
+                   "WallCenter":   ti.Vector([50, 15, 0.]),
                    "OuterNormal":  ti.Vector([0., 0., 1.])
                   })
                   
 dem.add_wall(body={
                    "WallType":    "Plane",
                    "MaterialID":   1,
-                   "WallCenter":   ti.Vector([20, 7.5, 17.5]),
+                   "WallCenter":   ti.Vector([50, 15, 45]),
                    "OuterNormal":  ti.Vector([0., 0., -1.])
                   })
                   
 dem.add_wall(body={
                    "WallType":    "Plane",
                    "MaterialID":   1,
-                   "WallCenter":   ti.Vector([40, 7.5, 17.5]),
+                   "WallCenter":   ti.Vector([100, 15, 22.5]),
                    "OuterNormal":  ti.Vector([-1., 0., 0.])
                   })
                   
 dem.add_wall(body={
                    "WallType":    "Plane",
                    "MaterialID":   1,
-                   "WallCenter":   ti.Vector([0., 7.5, 17.5]),
+                   "WallCenter":   ti.Vector([0., 15, 22.5]),
                    "OuterNormal":  ti.Vector([1., 0., 0.])
                   })
                   
 dem.add_wall(body={
                    "WallType":    "Plane",
                    "MaterialID":   1,
-                   "WallCenter":   ti.Vector([20, 0., 17.5]),
+                   "WallCenter":   ti.Vector([50, 0., 22.5]),
                    "OuterNormal":  ti.Vector([0., 1., 0.])
                   })
                   
 dem.add_wall(body={
                    "WallType":    "Plane",
                    "MaterialID":   1,
-                   "WallCenter":   ti.Vector([20, 15, 17.5]),
+                   "WallCenter":   ti.Vector([50, 30, 22.5]),
                    "OuterNormal":  ti.Vector([0., -1., 0.])
                   })
-                 
+
 dem.select_save_data()
 
-dem.run()     
+dem.run()            
