@@ -1,10 +1,6 @@
-import sys
-sys.path.append('/home/eleven/work/GeoTaichi')
+from geotaichi import *
 
-import taichi as ti
-ti.init(arch=ti.cpu, default_fp=ti.f64)
-
-from src.dem.mainDEM import DEM
+init()
 
 dem = DEM()
 

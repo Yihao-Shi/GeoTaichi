@@ -1,4 +1,4 @@
-from src import *
+from geotaichi import *
 
 init()
 
