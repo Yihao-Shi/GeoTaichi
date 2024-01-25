@@ -19,5 +19,8 @@ examples/***/draw?.py
 research/
 !images/*.gif
 *.ini
-
+build/
+dist/
+geotaichi.egg-info/
+setup.py
 

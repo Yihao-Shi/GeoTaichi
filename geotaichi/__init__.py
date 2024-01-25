@@ -8,9 +8,9 @@ __license__ = "GNU License"
 import taichi as ti
 import psutil
 
-from src.mpm.mainMPM import MPM
-from src.dem.mainDEM import DEM
-from src.mpdem.mainDEMPM import DEMPM 
+from geotaichi.mpm.mainMPM import MPM
+from geotaichi.dem.mainDEM import DEM
+from geotaichi.mpdem.mainDEMPM import DEMPM 
 
 def init(arch="gpu", cpu_max_num_threads=0, offline_cache=True, debug=False, default_fp="float64", default_ip="int32", device_memory_GB=2, device_memory_fraction=0.8, kernel_profiler=False):
     
@@ -25,16 +25,16 @@ def init(arch="gpu", cpu_max_num_threads=0, offline_cache=True, debug=False, def
 
     if arch == "cpu":
         if cpu_max_num_threads == 0:
-            ti.init(arch=ti.cpu, offline_cache=offline_cache, debug=debug, default_fp=default_fp, default_ip=default_ip, kernel_profiler=kernel_profiler)
+            ti.init(arch=ti.cpu, offline_cache=offline_cache, debug=debug, default_fp=default_fp, default_ip=default_ip, kernel_profiler=kernel_profiler, log_level=ti.ERROR)
         else:
-            ti.init(arch=ti.cpu, cpu_max_num_threads=cpu_max_num_threads, offline_cache=offline_cache, debug=debug, default_fp=default_fp, default_ip=default_ip, kernel_profiler=kernel_profiler)
+            ti.init(arch=ti.cpu, cpu_max_num_threads=cpu_max_num_threads, offline_cache=offline_cache, debug=debug, default_fp=default_fp, default_ip=default_ip, kernel_profiler=kernel_profiler, log_level=ti.ERROR)
     elif arch == "gpu":
         if device_memory_GB <= 2:
-            ti.init(arch=ti.gpu, offline_cache=offline_cache, debug=debug, default_fp=default_fp, default_ip=default_ip, kernel_profiler=kernel_profiler)
+            ti.init(arch=ti.gpu, offline_cache=offline_cache, debug=debug, default_fp=default_fp, default_ip=default_ip, kernel_profiler=kernel_profiler, log_level=ti.ERROR)
         elif device_memory_GB < round(psutil.virtual_memory().total / 1024 / 1024 / 1024, 2):
-            ti.init(arch=ti.gpu, offline_cache=offline_cache, device_memory_GB=device_memory_GB, debug=debug, default_fp=default_fp, default_ip=default_ip, kernel_profiler=kernel_profiler)
+            ti.init(arch=ti.gpu, offline_cache=offline_cache, device_memory_GB=device_memory_GB, debug=debug, default_fp=default_fp, default_ip=default_ip, kernel_profiler=kernel_profiler, log_level=ti.ERROR)
         else:
-            ti.init(arch=ti.gpu, offline_cache=offline_cache, device_memory_fraction=device_memory_fraction, debug=debug, default_fp=default_fp, default_ip=default_ip, kernel_profiler=kernel_profiler)
+            ti.init(arch=ti.gpu, offline_cache=offline_cache, device_memory_fraction=device_memory_fraction, debug=debug, default_fp=default_fp, default_ip=default_ip, kernel_profiler=kernel_profiler, log_level=ti.ERROR)
     else:
         raise RuntimeError("arch is not recognized, please choose in the following: ['cpu', 'gpu']")
        
