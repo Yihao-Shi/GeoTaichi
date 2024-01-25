@@ -49,7 +49,7 @@ The performance of GeoTaichi is compared with similar simulator in the field, su
 |[scipy](https://pypi.org/project/SciPy/)|==1.10.1|Pre-processing|
 |[pybind11](https://pypi.org/project/pybind11/)|==2.10.4|Warp C++ code|
 |[trimesh](https://pypi.org/project/trimesh/)|==3.20.1|Import stl/obj files|
-|[shapely](https://pypi.org/project/shapely/)|==3.20.1|Delaunay triangulation|
+|[shapely](https://pypi.org/project/shapely/)|==1.8.0|Delaunay triangulation|
 
 - C++ packages
 
@@ -72,8 +72,8 @@ cd GeoTaichi
 sudo apt-get install python3.8
 sudo apt-get install python3-pip
 
-# Install python packages
-python3 -m pip install taichi imageio pybind11 numpy trimesh psutil -i https://pypi.douban.com/simple
+# Install python packages (recommand to add package version)
+python3 -m pip install taichi imageio pybind11 numpy trimesh psutil shapely -i https://pypi.douban.com/simple
 
 # Install Eigen in C++
 sudo apt-get install libeigen3-dev cmake==3.18.2
