@@ -52,9 +52,9 @@ Notes:
     This module has been deprecated in favor of ``pathos.pools``.
 """
 
-from pathos.pp import __STATE, stats, __print_stats as print_stats
+from third_party.pathos.pp import __STATE, stats, __print_stats as print_stats
 #from pathos.pp import ParallelPythonPool as Pool
-from pathos.helpers.pp_helper import Server as ppServer
+from third_party.pathos.helpers.pp_helper import Server as ppServer
 
 
 def ppmap(processes, function, sequence, *sequences):

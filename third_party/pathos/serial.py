@@ -50,7 +50,7 @@ interactively-defined functions.
 """
 __all__ = ['SerialPool']
 
-from pathos.abstract_launcher import AbstractWorkerPool
+from third_party.pathos.abstract_launcher import AbstractWorkerPool
 __get_nodes__ = AbstractWorkerPool._AbstractWorkerPool__get_nodes
 __set_nodes__ = AbstractWorkerPool._AbstractWorkerPool__set_nodes
 

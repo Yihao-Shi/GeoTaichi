@@ -8,9 +8,9 @@ __license__ = "GNU License"
 import taichi as ti
 import psutil
 
-from geotaichi.mpm.mainMPM import MPM
-from geotaichi.dem.mainDEM import DEM
-from geotaichi.mpdem.mainDEMPM import DEMPM 
+from ..src.mpm.mainMPM import MPM
+from ..src.dem.mainDEM import DEM
+from ..src.mpdem.mainDEMPM import DEMPM 
 
 def init(arch="gpu", cpu_max_num_threads=0, offline_cache=True, debug=False, default_fp="float64", default_ip="int32", device_memory_GB=2, device_memory_fraction=0.8, kernel_profiler=False):
     

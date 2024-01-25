@@ -49,6 +49,7 @@ The performance of GeoTaichi is compared with similar simulator in the field, su
 |[scipy](https://pypi.org/project/SciPy/)|==1.10.1|Pre-processing|
 |[pybind11](https://pypi.org/project/pybind11/)|==2.10.4|Warp C++ code|
 |[trimesh](https://pypi.org/project/trimesh/)|==3.20.1|Import stl/obj files|
+|[shapely](https://pypi.org/project/shapely/)|==3.20.1|Delaunay triangulation|
 
 - C++ packages
 

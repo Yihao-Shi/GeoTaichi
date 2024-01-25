@@ -71,9 +71,9 @@ __all__ = ['ProcessPool','_ProcessPool']
 #FIXME: probably not good enough... should store each instance with a uid
 __STATE = _ProcessPool__STATE = {}
 
-from pathos.abstract_launcher import AbstractWorkerPool
-from pathos.helpers.mp_helper import starargs as star
-from pathos.helpers import cpu_count, freeze_support, ProcessPool as Pool
+from third_party.pathos.abstract_launcher import AbstractWorkerPool
+from third_party.pathos.helpers.mp_helper import starargs as star
+from third_party.pathos.helpers import cpu_count, freeze_support, ProcessPool as Pool
 import warnings
 import sys
 OLD312a7 = (sys.hexversion < 0x30c00a7)
@@ -248,8 +248,8 @@ Mapper that leverages python's multiprocessing.
 
 
 # backward compatibility
-from pathos.helpers import ThreadPool
-from pathos.threading import ThreadPool as ThreadingPool
+from third_party.pathos.helpers import ThreadPool
+from third_party.pathos.threading import ThreadPool as ThreadingPool
 ProcessingPool = ProcessPool
 
 # EOF

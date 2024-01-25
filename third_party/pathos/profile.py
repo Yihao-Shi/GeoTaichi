@@ -121,7 +121,7 @@ profiler = None
 
 def process_id():
     "get the identifier (process id) for the current process"
-    from pathos.helpers import mp
+    from third_party.pathos.helpers import mp
     return mp.current_process().pid
 
 def thread_id():
@@ -336,7 +336,7 @@ NOTE: pipe provided should come from pool built with nodes=1. Other
         if type(sort) not in (bool, type(None)):
             config.update(dict(gen=sort))
         self.config = dict(gen=False) if not bool(config) else config
-        from pathos.pools import SerialPool
+        from third_party.pathos.pools import SerialPool
         if pipe is None:
             self._pool = SerialPool()
             self.pipe = self._pool.pipe

@@ -45,7 +45,7 @@ Server base class for pathos servers for parallel and distributed computing.
         """configure the selector and install the timeout callback"""
 
         if selector is None:
-            from pathos.selector import Selector
+            from third_party.pathos.selector import Selector
             selector = Selector()
 
         if onTimeout is not None:

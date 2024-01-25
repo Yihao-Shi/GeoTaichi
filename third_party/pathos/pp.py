@@ -14,8 +14,8 @@ Notes:
 """
 # backward compatibility
 __all__ = ['ParallelPythonPool', 'stats']
-from pathos.parallel import __doc__, __print_stats, __STATE
-from pathos.parallel import *
+from third_party.pathos.parallel import __doc__, __print_stats, __STATE
+from third_party.pathos.parallel import *
 ParallelPythonPool = ParallelPool
 
 # EOF

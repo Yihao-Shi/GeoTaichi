@@ -87,8 +87,8 @@ find the source code for the target function. For a work-around, try:
 """
 __all__ = ['ParallelPool', 'stats']
 
-from pathos.helpers import parallelpython as pp
-from pathos.helpers import cpu_count
+from third_party.pathos.helpers import parallelpython as pp
+from third_party.pathos.helpers import cpu_count
 
 import builtins
 
@@ -131,8 +131,8 @@ def stats(pool=None):
     return result
 
 
-from pathos.abstract_launcher import AbstractWorkerPool
-from pathos.helpers.pp_helper import ApplyResult, MapResult
+from third_party.pathos.abstract_launcher import AbstractWorkerPool
+from third_party.pathos.helpers.pp_helper import ApplyResult, MapResult
 
 #XXX: should look into parallelpython for 'cluster computing'
 class ParallelPool(AbstractWorkerPool):

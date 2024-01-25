@@ -12,9 +12,9 @@ Notes:
     This module has been deprecated in favor of ``pathos.pools``.
 """
 
-from pathos.multiprocessing import ProcessPool, __STATE
-from pathos.threading import ThreadPool #XXX: thread __STATE not imported
-from pathos.helpers import cpu_count
+from third_party.pathos.multiprocessing import ProcessPool, __STATE
+from third_party.pathos.threading import ThreadPool #XXX: thread __STATE not imported
+from third_party.pathos.helpers import cpu_count
 mp = ProcessPool() #FIXME: don't do this
 tp = ThreadPool() #FIXME: don't do this
 

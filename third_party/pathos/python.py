@@ -14,8 +14,8 @@ Notes:
 """
 # backward compatibility
 __all__ = ['PythonSerial']
-from pathos.serial import __doc__, __STATE
-from pathos.serial import *
+from third_party.pathos.serial import __doc__, __STATE
+from third_party.pathos.serial import *
 PythonSerial = SerialPool
 
 # EOF

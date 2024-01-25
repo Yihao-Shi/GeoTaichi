@@ -14,7 +14,7 @@ __all__ = ['copy', 'execute', 'kill', 'getpid', 'getppid', 'getchild', \
 import os
 import string
 import re
-import pathos
+import third_party.pathos as pathos
 
 # standard pattern for 'ps axj': '... ddddd ddddd ddddd ...'
 _psaxj = re.compile(r"((\S+\s+)?\d+\s+\d+\s+\d+\s)")
@@ -32,7 +32,7 @@ Args:
   '''
   #XXX: options, background, stdin can be set w/ kwds (also name, launcher)
   if destination is None: destination = os.getcwd()
-  from pathos.secure import Copier
+  from third_party.pathos.secure import Copier
   opt = kwds.pop('options', None)
   kwds['background'] = kwds.pop('bg', False) # ignores 'background'
   copier = Copier(**kwds)
@@ -63,11 +63,11 @@ Args:
   #XXX: options, background, stdin can be set w/ kwds (also name, launcher)
   bg = bool(bg) # overrides 'background'
   if host in [None, '']:
-    from pathos.connection import Pipe
+    from third_party.pathos.connection import Pipe
     launcher = Pipe(**kwds)
     launcher(command=command, background=bg)
   else:
-    from pathos.secure import Pipe
+    from third_party.pathos.secure import Pipe
     opt = kwds.pop('options', '-q')
     launcher = Pipe(**kwds)
     launcher(options=opt, command=command, host=host, background=bg)
@@ -248,11 +248,11 @@ def randomport(host=None):
 Args:
     host -- hostname on which to select a open port
   '''
-  from pathos.portpicker import randomport
+  from third_party.pathos.portpicker import randomport
   if not host:
     return randomport()
-  from pathos.secure import Pipe
-  from pathos.portpicker import __file__ as src
+  from third_party.pathos.secure import Pipe
+  from third_party.pathos.portpicker import __file__ as src
   # make sure src is a .py file, not .pyc or .pyo
   src = src.rstrip('co')
   launcher = Pipe() #XXX: use pox.which / which_python?
@@ -262,7 +262,7 @@ Args:
   try:
     rport = int(launcher.response())
   except:
-    from pathos.secure import TunnelException
+    from third_party.pathos.secure import TunnelException
     raise TunnelException("failure to pick remote port")
   # return remote port number
   return rport
@@ -276,7 +276,7 @@ Args:
     port     -- port number (on host) to connect the tunnel to
     through  -- 'tunnel-through' hostname  [default = None]
   '''
-  from pathos.secure import Tunnel
+  from third_party.pathos.secure import Tunnel
   t = Tunnel()
   t.connect(host, port, through)
   return t

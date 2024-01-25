@@ -186,7 +186,7 @@ Takes no initial input.
 
 
     # static members
-    from pathos import logger
+    from third_party.pathos import logger
     _debug = logger(name="pathos.selector", level=30) # logging.WARN
     del logger
 
