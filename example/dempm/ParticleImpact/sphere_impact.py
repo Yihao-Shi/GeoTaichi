@@ -13,18 +13,14 @@ dempm.dem.set_configuration(
                       boundary=["Destroy", "Destroy", "Destroy"],
                       gravity=ti.Vector([0., 0., 0.]),
                       engine="SymplecticEuler",
-                      search="LinkedCell",
-                      coupling=True)
+                      search="LinkedCell")
                       
 dempm.mpm.set_configuration(
                       background_damping=0., 
                       alphaPIC=0.005, 
                       mapping="USF", 
                       shape_function="Linear",
-                      gravity=ti.Vector([0., 0., 0.]),
-                      coupling=True,
-                      free_surface_detection=False,
-                      coupling=True)
+                      gravity=ti.Vector([0., 0., 0.]))
 
 dempm.set_solver({
                       "Timestep":         1e-6,

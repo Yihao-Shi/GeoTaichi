@@ -14,15 +14,13 @@ dempm.mpm.set_configuration(
                       alphaPIC=0.002, 
                       mapping="USL", 
                       shape_function="GIMP",
-                      gravity=ti.Vector([0., 0., -9.8]),
-                      coupling=True)
+                      gravity=ti.Vector([0., 0., -9.8]))
 
 dempm.dem.set_configuration(
                       boundary=["Destroy", "Destroy", "Destroy"],
                       gravity=ti.Vector([0., 0., -9.8]),
                       engine="VelocityVerlet",
-                      search="LinkedCell",
-                      coupling=True)
+                      search="LinkedCell")
                       
 
 dempm.set_solver({

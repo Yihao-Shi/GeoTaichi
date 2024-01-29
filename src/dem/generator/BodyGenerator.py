@@ -137,6 +137,7 @@ class ParticleGenerator(object):
         self.myTemplate = None
         self.neighbor = None
         self.snode_tree: ti.SNode = None
+        self.save_path = ''
         
         self.start_time = 0.
         self.end_time = 0.
@@ -176,6 +177,7 @@ class ParticleGenerator(object):
         self.check_hist = DictIO.GetAlternative(body_dict, "CheckHistory", True)
         self.write_file = DictIO.GetAlternative(body_dict, "WriteFile", False)
         self.visualize = DictIO.GetAlternative(body_dict, "Visualize", False)
+        self.save_path = DictIO.GetAlternative(body_dict, "SavePath", '')
         self.tries_number = DictIO.GetAlternative(body_dict, "TryNumber", 100)
         self.is_poission = DictIO.GetAlternative(body_dict, "PoissionSampling", False)
         self.porosity = DictIO.GetAlternative(body_dict, "Porosity", 0.345)
@@ -277,7 +279,7 @@ class ParticleGenerator(object):
         bodyID = np.ascontiguousarray(scene.particle.multisphereIndex.to_numpy()[0:int(scene.particleNum[0])])
         groupID = np.ascontiguousarray(scene.particle.groupID.to_numpy()[0:int(scene.particleNum[0])])
         rad = np.ascontiguousarray(scene.particle.rad.to_numpy()[0:int(scene.particleNum[0])])
-        pointsToVTK(f'DEMPackings', posx, posy, posz, data={'bodyID': bodyID, 'group': groupID, "rad": rad})
+        pointsToVTK(self.save_path+'DEMPackings', posx, posy, posz, data={'bodyID': bodyID, 'group': groupID, "rad": rad})
 
     def generator_visualization(self):
         if self.btype == "Sphere":
@@ -286,14 +288,14 @@ class ParticleGenerator(object):
                             np.ascontiguousarray(position[:, 1]), \
                             np.ascontiguousarray(position[:, 2])
             rad = np.ascontiguousarray(self.sphere_radii.to_numpy()[0:self.insert_particle_in_neighbor[None]])
-            pointsToVTK(f'DEMPackings', posx, posy, posz, data={"rad": rad})
+            pointsToVTK(self.save_path+'DEMPackings', posx, posy, posz, data={"rad": rad})
         elif self.btype == "Clump":
             position = self.pebble_coords.to_numpy()[0:self.insert_particle_in_neighbor[None]]
             posx, posy, posz = np.ascontiguousarray(position[:, 0]), \
                             np.ascontiguousarray(position[:, 1]), \
                             np.ascontiguousarray(position[:, 2])
             rad = np.ascontiguousarray(self.pebble_radii.to_numpy()[0:self.insert_particle_in_neighbor[None]])
-            pointsToVTK(f'DEMPackings', posx, posy, posz, data={"rad": rad})
+            pointsToVTK(self.save_path+'DEMPackings', posx, posy, posz, data={"rad": rad})
 
     # ========================================================= #
     #                        SPHERES                            #
