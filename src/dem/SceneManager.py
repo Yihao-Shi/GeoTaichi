@@ -65,7 +65,6 @@ class myScene(object):
             self.activate_servo_control(sims)
 
     def activate_material(self, sims: Simulation):
-        print("#", " Essential Information ".center(67,"="), "#")
         self.material = Material.field(shape=sims.max_material_num)
 
     def activate_particle(self, sims: Simulation):

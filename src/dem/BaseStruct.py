@@ -1,11 +1,12 @@
+from typing import Any
 import taichi as ti
 
-from src.utils.constants import PI, Threshold, ZEROVEC3f
+from src.utils.constants import PI, DBL_EPSILON, Threshold, ZEROVEC3f, ZEROMAT2x2
 from src.utils.GeometryFunction import SphereTriangleIntersectionArea, DistanceFromPointToTriangle
 from src.utils.ObjectIO import DictIO
 from src.utils.ScalarFunction import sgn
-from src.utils.TypeDefination import vec3f, vec3u8, vec4f, vec3i
-from src.utils.VectorFunction import Zero2OneVector
+from src.utils.TypeDefination import vec3f, vec3u8, vec4f, vec3i, vec2f
+from src.utils.VectorFunction import Zero2OneVector, linear_id
 
 
 @ti.dataclass
@@ -331,9 +332,11 @@ class PlaneFamily:
     point: vec3f
     norm: vec3f
     
+    @ti.pyfunc
     def add_materialID(self, matID):
         self.materialID = matID
 
+    @ti.pyfunc
     def add_wall_geometry(self, wallID, point, norm):
         self.wallID = wallID
         self.active = 1
@@ -873,199 +876,6 @@ class PatchFamily:    # memory usage: 64B
 
 
 @ti.dataclass
-class LevelSetGrid:
-    sdf: float
-    normal: vec3f
-
-    @ti.func
-    def _set_distance(self, sdf):
-        self.sdf = sdf
-
-    @ti.func
-    def _set_normal(self, normal):
-        self.normal = normal
-
-
-@ti.dataclass
-class SurfaceNode:
-    masterIndex: int
-    x: vec3f
-
-    @ti.func
-    def _set_index(self, index):
-        self.index = index
-
-    @ti.func
-    def _set_coordinate(self, x):
-        self.x = float(x)
-
-    @ti.func
-    def _scale(self, factor, centor_of_mass):
-        self.x = self.x * factor + (1 - factor) * centor_of_mass
-
-
-@ti.dataclass
-class RigidBody:   
-    active: ti.u8 
-    groupID: ti.u8
-    materialID: ti.u8
-    startGrid: int
-    startNode: int
-    endNode: int 
-    m: float
-    mass_center: vec3f
-    v: vec3f
-    w: vec3f
-    q: vec4f
-    inv_I: vec3f
-    contact_force: vec3f
-    contact_torque: vec3f
-
-    @ti.func
-    def _restart(self, active, startIndex, endIndex, groupID, materialID, mass, mass_center, v, w, angmoment, q, inv_I):
-        self.active = ti.u8(active)
-        self.startIndex = int(startIndex)
-        self.endIndex = int(endIndex)
-        self.groupID = ti.u8(groupID)
-        self.materialID = ti.u8(materialID)
-        self.m = float(mass)
-        self.mass_center = float(mass_center)
-        self.v = float(v)
-        self.w = float(w)
-        self.angmoment = float(angmoment)
-        self.q = float(q)
-        self.inv_I = float(inv_I)
-
-    @ti.func
-    def _add_body_proporities(self, materialID, groupID, mass, inv_inertia, q):
-        self.active = ti.u8(1)
-        self.materialID = ti.u8(materialID)
-        self.groupID = ti.u8(groupID)
-        self.m = float(mass)
-        self.inv_I = float(inv_inertia)
-        self.q = float(q)
-
-    @ti.func
-    def _add_index(self, start_index, end_index):
-        self.startIndex = int(start_index)
-        self.endIndex = int(end_index)
-
-    @ti.func
-    def _add_body_kinematic(self, centor_of_mass, init_v, init_w, inv_i):
-        self.mass_center = float(centor_of_mass)
-        self.v = float(init_v)
-        self.w = float(init_w)
-        self.angmoment = self.w / inv_i
-
-    @ti.func
-    def _scale(self, factor):
-        self.m *= factor * factor * factor
-
-    @ti.func
-    def _velocity_update(self, dcurr_v):
-        self.v += dcurr_v
-
-    @ti.func
-    def _angular_velocity_update(self, dcurr_w):
-        self.w += dcurr_w
-
-    @ti.func
-    def calm(self):
-        self.v = ZEROVEC3f
-        self.w = ZEROVEC3f
-
-    @ti.func
-    def _add_index(self, multisphereIndex):
-        self.multisphereIndex = int(multisphereIndex)
-
-    @ti.func
-    def _update_contact_interaction(self, cforce, ctorque): 
-        self.contact_force += cforce
-        self.contact_torque += ctorque
-
-    @ti.func
-    def _add_particle_kinematics(self, x, v, w):
-        self.x = x
-        self.v = v
-        self.w = w
-
-    @ti.func
-    def _get_multisphere_index(self): return self.multisphereIndex
-
-    @ti.func
-    def _get_material(self): return self.materialID
-
-    @ti.func
-    def _get_group(self): return self.groupID
-
-    @ti.func
-    def _get_mass(self): return self.m
-
-    @ti.func
-    def _get_position(self): return self.x
-
-    @ti.func
-    def _get_velocity(self): return self.v
-
-    @ti.func
-    def _get_angular_velocity(self): return self.w
-
-
-
-@ti.dataclass
-class BoundingSphere:
-    active: ti.u8
-    multisphereIndex: int
-    rad: float
-    x: vec3f
-    verletDisp: vec3f
-
-    @ti.func
-    def _restart(self, bounding_center, bounding_radius):
-        self.x = float(bounding_center)
-        self.rad = float(bounding_radius)
-
-    @ti.func
-    def _add_bounding_sphere(self, bounding_center, bounding_radius):
-        self.x = float(bounding_center)
-        self.rad = float(bounding_radius)
-
-    @ti.func
-    def _move(self, disp):
-        self.x += disp
-        self.verletDisp += disp
-
-    @ti.func
-    def _scale(self, factor):
-        self.rad *= factor
-
-    @ti.func
-    def _renew_verlet(self):
-        self.verletDisp = ZEROVEC3f
-
-    @ti.func
-    def _get_radius(self): return self.rad
-
-    @ti.func
-    def _get_verlet_displacement(self): return self.verletDisp
-
-
-@ti.dataclass
-class BoundingBox:
-    xmin: vec3f
-    xmax: vec3f
-
-    @ti.func
-    def _set_bounding_box(self, xmin, xmax):
-        self.xmin = float(xmin)
-        self.xmax = float(xmax)
-
-    @ti.func
-    def _get_center(self):
-        return 0.5 * (self.xmin + self.xmax)
-
-
-@ti.dataclass
 class EnergyFamily:
     kinetic: float
     potential: float
@@ -1079,6 +889,23 @@ class ContactTable:
     csforce: vec3f
     oldTangOverlap: vec3f
 
+    @ti.func
+    def _set_id(self, endID1, endID2):
+        self.endID1 = endID1
+        self.endID2 = endID2
+
+    @ti.func
+    def _set_contact(self, cnforce, csforce, overlap):
+        self.cnforce = cnforce
+        self.csforce = csforce
+        self.oldTangOverlap = overlap
+
+    @ti.func
+    def _no_contact(self):
+        self.cnforce = ZEROVEC3f
+        self.csforce = ZEROVEC3f
+        self.oldTangOverlap = ZEROVEC3f
+
 
 @ti.dataclass
 class CoupledContactTable:
@@ -1086,11 +913,29 @@ class CoupledContactTable:
     endID2: int
     oldTangOverlap: vec3f
 
+    @ti.func
+    def _set_id(self, endID1, endID2):
+        self.endID1 = endID1
+        self.endID2 = endID2
+
+    @ti.func
+    def _set_contact(self, overlap):
+        self.oldTangOverlap = overlap
+
+    @ti.func
+    def _no_contact(self):
+        self.oldTangOverlap = ZEROVEC3f
+
 
 @ti.dataclass
 class SFContactTable:
     endID1: int
     endID2: int
+
+    @ti.func
+    def _set_id(self, endID1, endID2):
+        self.endID1 = endID1
+        self.endID2 = endID2
 
 
 @ti.dataclass
@@ -1102,12 +947,38 @@ class RollingContactTable:
     oldTangOverlap: vec3f
     oldRollAngle: vec3f
     oldTwistAngle: vec3f
+
+    @ti.func
+    def _set_id(self, endID1, endID2):
+        self.endID1 = endID1
+        self.endID2 = endID2
+
+    @ti.func
+    def _set_contact(self, cnforce, csforce, tangential_overlap, rolling_overlap, twisting_overlap):
+        self.cnforce = cnforce
+        self.csforce = csforce
+        self.oldTangOverlap = tangential_overlap
+        self.oldRollAngle = rolling_overlap
+        self.oldTwistAngle = twisting_overlap
+
+    @ti.func
+    def _no_contact(self):
+        self.cnforce = ZEROVEC3f
+        self.csforce = ZEROVEC3f
+        self.oldTangOverlap = ZEROVEC3f
+        self.oldRollAngle = ZEROVEC3f
+        self.oldTwistAngle = ZEROVEC3f
     
 
 @ti.dataclass
 class HistoryContactTable:
     DstID: int
     oldTangOverlap: vec3f
+
+    @ti.func
+    def _copy(self, endID, overlap):
+        self.DstID = endID
+        self.oldTangOverlap = overlap
 
 
 @ti.dataclass
@@ -1116,3 +987,11 @@ class HistoryRollingContactTable:
     oldTangOverlap: vec3f
     oldRollAngle: vec3f
     oldTwistAngle: vec3f
+
+    @ti.func
+    def _copy(self, endID, tangential_overlap, rolling_overlap, twisting_overlap):
+        self.DstID = endID
+        self.oldTangOverlap = tangential_overlap
+        self.oldRollAngle = rolling_overlap
+        self.oldTwistAngle = twisting_overlap
+

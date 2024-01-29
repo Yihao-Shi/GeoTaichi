@@ -216,224 +216,181 @@ class HertzMindlinSurfaceProperty:
     #                   Particle-Particle                       #
     # ========================================================= # 
     @ti.func
-    def _particle_particle_force_assemble(self, nc, dt, particle, cplist):
-        end1, end2 = cplist[nc].endID1, cplist[nc].endID2
+    def _particle_particle_force_assemble(self, nc, end1, end2, gapn, norm, cpos, dt, particle, cplist):
         pos1, pos2 = particle[end1].x, particle[end2].x
         rad1, rad2 = particle[end1].rad, particle[end2].rad 
-        gapn = (pos1 - pos2).norm() - (rad1 + rad2)  
-        if gapn < 0.:
-            norm = (pos1 - pos2).normalized()
+        mass1, mass2 = particle[end1].m, particle[end2].m
+        vel1, vel2 = particle[end1].v, particle[end2].v
+        w1, w2 = particle[end1].w, particle[end2].w
+        
+        m_eff = EffectiveValue(mass1, mass2)
+        rad_eff = EffectiveValue(rad1, rad2)
+        contactAreaRadius = ti.sqrt(-gapn * rad_eff)
+        effective_E, effective_G = self.YoungModulus, self.ShearModulus
+        miu, restitution = self.mu, self.restitution
+        kn = 2 * effective_E * contactAreaRadius
+        ks = 8 * effective_G * contactAreaRadius
 
-            mass1, mass2 = particle[end1].m, particle[end2].m
-            vel1, vel2 = particle[end1].v, particle[end2].v
-            w1, w2 = particle[end1].w, particle[end2].w
-            
-            m_eff = EffectiveValue(mass1, mass2)
-            rad_eff = EffectiveValue(rad1, rad2)
-            contactAreaRadius = ti.sqrt(-gapn * rad_eff)
-            effective_E, effective_G = self.YoungModulus, self.ShearModulus
-            miu, restitution = self.mu, self.restitution
-            kn = 2 * effective_E * contactAreaRadius
-            ks = 8 * effective_G * contactAreaRadius
+        v_rel = vel1 + w1.cross(cpos - pos1) - (vel2 + w2.cross(cpos - pos2))
+        vn = v_rel.dot(norm)
+        vs = v_rel - vn * norm
+        
+        normal_contact_force = -2./3. * kn * gapn 
+        normal_damping_force = -1.8257 * restitution * vn * ti.sqrt(kn * m_eff) 
+        normal_force = (normal_contact_force + normal_damping_force) * norm
 
-            cpos = pos2 + (rad2 + 0.5 * gapn) * norm
-            v_rel = vel1 + w1.cross(cpos - pos1) - (vel2 + w2.cross(cpos - pos2))
-            vn = v_rel.dot(norm)
-            vs = v_rel - vn * norm
-            
-            normal_contact_force = -2./3. * kn * gapn 
-            normal_damping_force = -1.8257 * restitution * vn * ti.sqrt(kn * m_eff) 
-            normal_force = (normal_contact_force + normal_damping_force) * norm
-
-            tangOverlapOld = cplist[nc].oldTangOverlap
-            tangOverlapRot = tangOverlapOld - tangOverlapOld.dot(norm) * norm
-            tangOverTemp = vs * dt[None] + tangOverlapOld.norm() * Normalize(tangOverlapRot)
-            trial_ft = -ks * tangOverTemp
-            tang_damping_force = -1.8257 * restitution * vs * ti.sqrt(ks * m_eff)
-            
-            fric = miu * ti.abs(normal_contact_force + normal_damping_force)
-            tangential_force = ZEROVEC3f
-            if trial_ft.norm() > fric:
-                tangential_force = fric * trial_ft.normalized()
-                tangOverTemp = -tangential_force / ks
-            else:
-                tangential_force = trial_ft + tang_damping_force
-            
-            Ftotal = normal_force + tangential_force
-            moment = tangential_force.cross(norm)
-
-            cplist[nc].cnforce = normal_force
-            cplist[nc].csforce = tangential_force
-            cplist[nc].oldTangOverlap = tangOverTemp
-
-            particle[end1]._update_contact_interaction(Ftotal, moment * (rad1 + 0.5 * gapn))
-            particle[end2]._update_contact_interaction(-Ftotal, moment * (rad2 + 0.5 * gapn))
+        tangOverlapOld = cplist[nc].oldTangOverlap
+        tangOverlapRot = tangOverlapOld - tangOverlapOld.dot(norm) * norm
+        tangOverTemp = vs * dt[None] + tangOverlapOld.norm() * Normalize(tangOverlapRot)
+        trial_ft = -ks * tangOverTemp
+        tang_damping_force = -1.8257 * restitution * vs * ti.sqrt(ks * m_eff)
+        
+        fric = miu * ti.abs(normal_contact_force + normal_damping_force)
+        tangential_force = ZEROVEC3f
+        if trial_ft.norm() > fric:
+            tangential_force = fric * trial_ft.normalized()
+            tangOverTemp = -tangential_force / ks
         else:
-            cplist[nc].cnforce = ZEROVEC3f
-            cplist[nc].csforce = ZEROVEC3f
-            cplist[nc].oldTangOverlap = ZEROVEC3f
+            tangential_force = trial_ft + tang_damping_force
+        
+        Ftotal = normal_force + tangential_force
+        moment = tangential_force.cross(norm)
+
+        cplist[nc]._set_contact(normal_force, tangential_force, tangOverTemp)
+        particle[end1]._update_contact_interaction(Ftotal, moment * (rad1 + 0.5 * gapn))
+        particle[end2]._update_contact_interaction(-Ftotal, moment * (rad2 + 0.5 * gapn))
 
 
     @ti.func
-    def _coupled_particle_force_assemble(self, nc, dt, particle1, particle2, cplist):
-        end1, end2 = cplist[nc].endID1, cplist[nc].endID2
-        pos1, pos2 = particle1[end1].x, particle2[end2].x
+    def _coupled_particle_force_assemble(self, nc, end1, end2, gapn, norm, cpos, dt, particle1, particle2, cplist):
+        pos2, w2 = particle2[end2].x, particle2[end2].w
         rad1, rad2 = particle1[end1].rad, particle2[end2].rad 
-        gapn = (pos1 - pos2).norm() - (rad1 + rad2)  
-        if gapn < 0.:
-            norm = (pos1 - pos2).normalized()
+        mass1, mass2 = particle1[end1].m, particle2[end2].m
+        vel1, vel2 = particle1[end1].v, particle2[end2].v
+        
+        m_eff = EffectiveValue(mass1, mass2)
+        rad_eff = EffectiveValue(rad1, rad2)
+        contactAreaRadius = ti.sqrt(-gapn * rad_eff)
+        effective_E, effective_G = self.YoungModulus, self.ShearModulus
+        miu, restitution = self.mu, self.restitution
+        kn = 2 * effective_E * contactAreaRadius
+        ks = 8 * effective_G * contactAreaRadius
 
-            mass1, mass2 = particle1[end1].m, particle2[end2].m
-            vel1, vel2 = particle1[end1].v, particle2[end2].v
-            w1, w2 = ZEROVEC3f, particle2[end2].w
-            
-            m_eff = EffectiveValue(mass1, mass2)
-            rad_eff = EffectiveValue(rad1, rad2)
-            contactAreaRadius = ti.sqrt(-gapn * rad_eff)
-            effective_E, effective_G = self.YoungModulus, self.ShearModulus
-            miu, restitution = self.mu, self.restitution
-            kn = 2 * effective_E * contactAreaRadius
-            ks = 8 * effective_G * contactAreaRadius
+        v_rel = vel1 - (vel2 + w2.cross(cpos - pos2))
+        vn = v_rel.dot(norm)
+        vs = v_rel - vn * norm
+        
+        normal_contact_force = -2./3. * kn * gapn 
+        normal_damping_force = -1.8257 * restitution * vn * ti.sqrt(kn * m_eff) 
+        normal_force = (normal_contact_force + normal_damping_force) * norm
 
-            cpos = pos2 + (rad2 + 0.5 * gapn) * norm
-            v_rel = vel1 - (vel2 + w2.cross(cpos - pos2))
-            vn = v_rel.dot(norm)
-            vs = v_rel - vn * norm
-            
-            normal_contact_force = -2./3. * kn * gapn 
-            normal_damping_force = -1.8257 * restitution * vn * ti.sqrt(kn * m_eff) 
-            normal_force = (normal_contact_force + normal_damping_force) * norm
-
-            tangOverlapOld = cplist[nc].oldTangOverlap
-            tangOverlapRot = tangOverlapOld - tangOverlapOld.dot(norm) * norm
-            tangOverTemp = vs * dt[None] + tangOverlapOld.norm() * Normalize(tangOverlapRot)
-            trial_ft = -ks * tangOverTemp
-            tang_damping_force = -1.8257 * restitution * vs * ti.sqrt(ks * m_eff)
-            
-            fric = miu * ti.abs(normal_contact_force + normal_damping_force)
-            tangential_force = ZEROVEC3f
-            if trial_ft.norm() > fric:
-                tangential_force = fric * trial_ft.normalized()
-                tangOverTemp = -tangential_force / ks
-            else:
-                tangential_force = trial_ft + tang_damping_force
-            
-            Ftotal = normal_force + tangential_force
-            resultant_momentum = Ftotal.cross(cpos - pos2) 
-
-            cplist[nc].oldTangOverlap = tangOverTemp
-            particle1[end1]._update_contact_interaction(Ftotal)
-            particle2[end2]._update_contact_interaction(-Ftotal, resultant_momentum)
+        tangOverlapOld = cplist[nc].oldTangOverlap
+        tangOverlapRot = tangOverlapOld - tangOverlapOld.dot(norm) * norm
+        tangOverTemp = vs * dt[None] + tangOverlapOld.norm() * Normalize(tangOverlapRot)
+        trial_ft = -ks * tangOverTemp
+        tang_damping_force = -1.8257 * restitution * vs * ti.sqrt(ks * m_eff)
+        
+        fric = miu * ti.abs(normal_contact_force + normal_damping_force)
+        tangential_force = ZEROVEC3f
+        if trial_ft.norm() > fric:
+            tangential_force = fric * trial_ft.normalized()
+            tangOverTemp = -tangential_force / ks
         else:
-            cplist[nc].oldTangOverlap = ZEROVEC3f
+            tangential_force = trial_ft + tang_damping_force
+        
+        Ftotal = normal_force + tangential_force
+        resultant_momentum = Ftotal.cross(cpos - pos2) 
+
+        cplist[nc]._set_contact(tangOverTemp)
+        particle1[end1]._update_contact_interaction(Ftotal)
+        particle2[end2]._update_contact_interaction(-Ftotal, resultant_momentum)
 
 
     # ========================================================= #
     #                      Particle-Wall                        #
     # ========================================================= # 
     @ti.func
-    def _particle_wall_force_assemble(self, nc, dt, particle, wall, cplist):
-        end1, end2 = cplist[nc].endID1, cplist[nc].endID2
-        particle_rad, norm = particle[end1].rad, wall[end2].norm
-        pos1 = particle[end1].x
-        distance = wall[end2]._get_norm_distance(pos1)
-        gapn = distance - particle_rad
-        if gapn < 0.:
-            vel1, vel2 = particle[end1].v, wall[end2]._get_velocity()
-            w1 = particle[end1].w
+    def _particle_wall_force_assemble(self, nc, end1, end2, distance, gapn, norm, cpos, dt, particle, wall, cplist):
+        pos1, particle_rad = particle[end1].x, particle[end1].rad
+        vel1, vel2 = particle[end1].v, wall[end2]._get_velocity()
+        w1 = particle[end1].w
             
-            m_eff = particle[end1].m
-            rad_eff = particle_rad
-            contactAreaRadius = ti.sqrt(-gapn * rad_eff)
-            effective_E, effective_G = self.YoungModulus, self.ShearModulus
-            miu, restitution = self.mu, self.restitution
-            kn = 2 * effective_E * contactAreaRadius
-            ks = 8 * effective_G * contactAreaRadius
+        m_eff = particle[end1].m
+        rad_eff = particle_rad
+        contactAreaRadius = ti.sqrt(-gapn * rad_eff)
+        effective_E, effective_G = self.YoungModulus, self.ShearModulus
+        miu, restitution = self.mu, self.restitution
+        kn = 2 * effective_E * contactAreaRadius
+        ks = 8 * effective_G * contactAreaRadius
 
-            cpos = wall[end2]._point_projection(pos1) - 0.5 * gapn * norm
-            v_rel = vel1 + w1.cross(cpos - pos1) - vel2 
-            vn = v_rel.dot(norm)
-            vs = v_rel - vn * norm
-            
-            normal_contact_force = -2./3. * kn * gapn 
-            normal_damping_force = -1.8257 * restitution * vn * ti.sqrt(kn * m_eff) 
-            normal_force = (normal_contact_force + normal_damping_force) * norm
-            
-            tangOverlapOld = cplist[nc].oldTangOverlap
-            tangOverlapRot = tangOverlapOld - tangOverlapOld.dot(norm) * norm
-            tangOverTemp = vs * dt[None] + tangOverlapOld.norm() * Normalize(tangOverlapRot)
-            trial_ft = -ks * tangOverTemp
-            tang_damping_force = -1.8257 * restitution * vs * ti.sqrt(ks * m_eff)
-            
-            fric = miu * ti.abs(normal_contact_force + normal_damping_force)
-            tangential_force = ZEROVEC3f
-            if trial_ft.norm() > fric:
-                tangential_force = fric * trial_ft.normalized()
-                tangOverTemp = -tangential_force / ks
-            else:
-                tangential_force = trial_ft + tang_damping_force
-            
-            fraction = ti.abs(wall[end2].processCircleShape(pos1, distance, -gapn))
-            Ftotal = fraction * (normal_force + tangential_force)
-            resultant_momentum = fraction * Ftotal.cross(pos1 - cpos)
-
-            cplist[nc].cnforce = fraction * normal_force
-            cplist[nc].csforce = fraction * tangential_force
-            cplist[nc].oldTangOverlap = tangOverTemp
-            
-            particle[end1]._update_contact_interaction(Ftotal, resultant_momentum)
+        v_rel = vel1 + w1.cross(cpos - pos1) - vel2 
+        vn = v_rel.dot(norm)
+        vs = v_rel - vn * norm
+        
+        normal_contact_force = -2./3. * kn * gapn 
+        normal_damping_force = -1.8257 * restitution * vn * ti.sqrt(kn * m_eff) 
+        normal_force = (normal_contact_force + normal_damping_force) * norm
+        
+        tangOverlapOld = cplist[nc].oldTangOverlap
+        tangOverlapRot = tangOverlapOld - tangOverlapOld.dot(norm) * norm
+        tangOverTemp = vs * dt[None] + tangOverlapOld.norm() * Normalize(tangOverlapRot)
+        trial_ft = -ks * tangOverTemp
+        tang_damping_force = -1.8257 * restitution * vs * ti.sqrt(ks * m_eff)
+        
+        fric = miu * ti.abs(normal_contact_force + normal_damping_force)
+        tangential_force = ZEROVEC3f
+        if trial_ft.norm() > fric:
+            tangential_force = fric * trial_ft.normalized()
+            tangOverTemp = -tangential_force / ks
         else:
-            cplist[nc].cnforce = ZEROVEC3f
-            cplist[nc].csforce = ZEROVEC3f
-            cplist[nc].oldTangOverlap = ZEROVEC3f
+            tangential_force = trial_ft + tang_damping_force
+        
+        fraction = ti.abs(wall[end2].processCircleShape(pos1, distance, -gapn))
+        Ftotal = fraction * (normal_force + tangential_force)
+        resultant_momentum = fraction * Ftotal.cross(pos1 - cpos)
+
+        cplist[nc]._set_contact(fraction * normal_force, fraction * tangential_force, tangOverTemp)
+        particle[end1]._update_contact_interaction(Ftotal, resultant_momentum)
 
     @ti.func
-    def _mpm_wall_force_assemble(self, nc, dt, particle, wall, cplist):
-        end1, end2 = cplist[nc].endID1, cplist[nc].endID2
-        particle_rad, norm = particle[end1].rad, wall[end2].norm
-        pos1 = particle[end1].x
-        distance = wall[end2]._get_norm_distance(pos1)
-        gapn = distance - particle_rad
-        if gapn < 0.:
-            vel1, vel2 = particle[end1].v, wall[end2]._get_velocity()
-            
-            m_eff = particle[end1].m
-            rad_eff = particle_rad
-            contactAreaRadius = ti.sqrt(-gapn * rad_eff)
-            effective_E, effective_G = self.YoungModulus, self.ShearModulus
-            miu, restitution = self.mu, self.restitution
-            kn = 2 * effective_E * contactAreaRadius
-            ks = 8 * effective_G * contactAreaRadius
- 
-            v_rel = vel1 - vel2 
-            vn = v_rel.dot(norm)
-            vs = v_rel - vn * norm
-            
-            normal_contact_force = -2./3. * kn * gapn 
-            normal_damping_force = -1.8257 * restitution * vn * ti.sqrt(kn * m_eff) 
-            normal_force = (normal_contact_force + normal_damping_force) * norm
-            
-            tangOverlapOld = cplist[nc].oldTangOverlap
-            tangOverlapRot = tangOverlapOld - tangOverlapOld.dot(norm) * norm
-            tangOverTemp = vs * dt[None] + tangOverlapOld.norm() * Normalize(tangOverlapRot)
-            trial_ft = -ks * tangOverTemp
-            tang_damping_force = -1.8257 * restitution * vs * ti.sqrt(ks * m_eff)
-            
-            fric = miu * ti.abs(normal_contact_force + normal_damping_force)
-            tangential_force = ZEROVEC3f
-            if trial_ft.norm() > fric:
-                tangential_force = fric * trial_ft.normalized()
-                tangOverTemp = -tangential_force / ks
-            else:
-                tangential_force = trial_ft + tang_damping_force
-            
-            fraction = wall[end2].processCircleShape(pos1, distance, -gapn)
-            Ftotal = fraction * (normal_force + tangential_force)
+    def _mpm_wall_force_assemble(self, nc, end1, end2, distance, gapn, norm, dt, particle, wall, cplist):
+        pos1, particle_rad = particle[end1].x, particle[end1].rad
+        vel1, vel2 = particle[end1].v, wall[end2]._get_velocity()
+        
+        m_eff = particle[end1].m
+        contactAreaRadius = ti.sqrt(-gapn * particle_rad)
+        effective_E, effective_G = self.YoungModulus, self.ShearModulus
+        miu, restitution = self.mu, self.restitution
+        kn = 2 * effective_E * contactAreaRadius
+        ks = 8 * effective_G * contactAreaRadius
 
-            cplist[nc].oldTangOverlap = tangOverTemp
-            particle[end1]._update_contact_interaction(Ftotal)
+        v_rel = vel1 - vel2 
+        vn = v_rel.dot(norm)
+        vs = v_rel - vn * norm
+        
+        normal_contact_force = -2./3. * kn * gapn 
+        normal_damping_force = -1.8257 * restitution * vn * ti.sqrt(kn * m_eff) 
+        normal_force = (normal_contact_force + normal_damping_force) * norm
+        
+        tangOverlapOld = cplist[nc].oldTangOverlap
+        tangOverlapRot = tangOverlapOld - tangOverlapOld.dot(norm) * norm
+        tangOverTemp = vs * dt[None] + tangOverlapOld.norm() * Normalize(tangOverlapRot)
+        trial_ft = -ks * tangOverTemp
+        tang_damping_force = -1.8257 * restitution * vs * ti.sqrt(ks * m_eff)
+        
+        fric = miu * ti.abs(normal_contact_force + normal_damping_force)
+        tangential_force = ZEROVEC3f
+        if trial_ft.norm() > fric:
+            tangential_force = fric * trial_ft.normalized()
+            tangOverTemp = -tangential_force / ks
         else:
-            cplist[nc].oldTangOverlap = ZEROVEC3f
+            tangential_force = trial_ft + tang_damping_force
+        
+        fraction = wall[end2].processCircleShape(pos1, distance, -gapn)
+        Ftotal = fraction * (normal_force + tangential_force)
+
+        cplist[nc]._set_contact(tangOverTemp)
+        particle[end1]._update_contact_interaction(Ftotal)
 
 
 @ti.kernel

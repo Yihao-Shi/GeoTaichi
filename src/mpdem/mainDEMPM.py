@@ -1,7 +1,9 @@
-import taichi as ti
+import numpy as np
+from taichi.lang.impl import current_cfg
 
 from src.dem.mainDEM import DEM
 from src.mpm.mainMPM import MPM
+
 from src.mpdem.ContactManager import ContactManager
 from src.mpdem.DEMPMBase import Solver
 from src.mpdem.Engine import Engine
@@ -12,14 +14,15 @@ from src.utils.ObjectIO import DictIO
 
 
 class DEMPM(object):
-    def __init__(self, dem: DEM, mpm: MPM, title='A High Performance Multiscale and Multiphysics Simulator on GPU'):
-        print('# =================================================================== #')
-        print('#', "".center(67), '#')
-        print('#', "Welcome to GeoTaichi -- DEM & MPM Coupling Engine !".center(67), '#')
-        print('#', "".center(67), '#')
-        print('#', title.center(67), '#')
-        print('#', "".center(67), '#')
-        print('# =================================================================== #', '\n')
+    def __init__(self, dem: DEM, mpm: MPM, title='A High Performance Multiscale and Multiphysics Simulator on GPU', log=True):
+        if log:
+            print('# =================================================================== #')
+            print('#', "".center(67), '#')
+            print('#', "Welcome to GeoTaichi -- DEM & MPM Coupling Engine !".center(67), '#')
+            print('#', "".center(67), '#')
+            print('#', title.center(67), '#')
+            print('#', "".center(67), '#')
+            print('# =================================================================== #', '\n')
         self.dem = dem
         self.mpm = mpm
         self.sims = Simulation()
@@ -30,10 +33,30 @@ class DEMPM(object):
         self.recorder = None
         self.history_contact_path = dict()
 
-    def set_configuration(self, **kwargs):
-        if not all(self.mpm.sims.get_simulation_domain() == self.dem.sims.get_simulation_domain()):
-            raise RuntimeError(f"DEM simulation domain {self.dem.sims.get_simulation_domain()} is not in line with MPM simulation domain {self.mpm.sims.get_simulation_domain()}")
-        self.sims.set_domain(self.mpm.sims.get_simulation_domain())
+    def set_configuration(self, log=True, **kwargs):
+        if np.linalg.norm(np.array(self.mpm.sims.get_simulation_domain()) - np.zeros(3)) < 1e-10 and \
+            np.linalg.norm(np.array(self.dem.sims.get_simulation_domain()) - np.zeros(3)) < 1e-10:
+            domain = DictIO.GetEssential(kwargs, "domain")
+            self.sims.set_domain(domain)
+            self.dem.sims.set_domain(domain)
+            self.mpm.sims.set_domain(domain)
+        elif np.linalg.norm(np.array(self.mpm.sims.get_simulation_domain()) - np.zeros(3)) < 1e-10 and \
+            np.linalg.norm(np.array(self.dem.sims.get_simulation_domain()) - np.zeros(3)) > 1e-10:
+            domain = self.dem.sims.get_simulation_domain()
+            self.sims.set_domain(domain)
+            self.mpm.sims.set_domain(domain)
+        elif np.linalg.norm(np.array(self.mpm.sims.get_simulation_domain()) - np.zeros(3)) > 1e-10 and \
+            np.linalg.norm(np.array(self.dem.sims.get_simulation_domain()) - np.zeros(3)) < 1e-10:
+            domain = self.mpm.sims.get_simulation_domain()
+            self.sims.set_domain(domain)
+            self.dem.sims.set_domain(domain)
+        elif np.linalg.norm(np.array(self.mpm.sims.get_simulation_domain()) - np.zeros(3)) > 1e-10 and \
+            np.linalg.norm(np.array(self.dem.sims.get_simulation_domain()) - np.zeros(3)) < 1e-10:
+            if not all(self.mpm.sims.get_simulation_domain() == self.dem.sims.get_simulation_domain()):
+                raise RuntimeError(f"DEM simulation domain {self.dem.sims.get_simulation_domain()} is not in line with MPM simulation domain {self.mpm.sims.get_simulation_domain()}")
+            else:
+                self.sims.set_domain(self.mpm.sims.get_simulation_domain())
+                
         self.sims.set_coupling_scheme(DictIO.GetAlternative(kwargs, "coupling_scheme", "DEM-MPM"))
         self.sims.set_particle_interaction(DictIO.GetAlternative(kwargs, "particle_interaction", True))
         self.sims.set_wall_interaction(DictIO.GetAlternative(kwargs, "wall_interaction", False))
@@ -41,28 +64,41 @@ class DEMPM(object):
         
         if self.mpm.sims.coupling is False:
             raise RuntimeError(f"KeyWord::: /coupling/ should be activated in MPM")
-            
+        
         if self.dem.sims.coupling is False:
-            raise RuntimeError(f"KeyWord::: /coupling/ should be activated in MPM")
+            raise RuntimeError(f"KeyWord::: /coupling/ should be activated in DEM")
+            
+        if log: 
+            self.print_basic_simulation_info()
+            print('\n')
 
-    def set_solver(self, solver):
+    def set_solver(self, solver, log=True):
         self.sims.set_timestep(DictIO.GetEssential(solver, "Timestep"))
         self.sims.set_simulation_time(DictIO.GetEssential(solver, "SimulationTime"))
         self.sims.set_CFL(DictIO.GetAlternative(solver, "CFL", 0.5))
         self.sims.set_adaptive_timestep(DictIO.GetAlternative(solver, "AdaptiveTimestep", False))
         self.sims.set_save_interval(DictIO.GetEssential(solver, "SaveInterval"))
         self.sims.set_save_path(DictIO.GetAlternative(solver, "SavePath", 'OutputData'))
-        self.mpm.set_solver(solver)
-        self.dem.set_solver(solver)
+        self.mpm.set_solver(solver, log=False)
+        self.dem.set_solver(solver, log=False)
+        if log: 
+            self.print_solver_info()
+            print('\n')
 
     def memory_allocate(self, memory, log=True):
         self.sims.set_material_num(max(self.dem.sims.max_material_num, self.mpm.sims.max_material_num))
         self.sims.set_body_coordination_number(DictIO.GetAlternative(memory, "body_coordination_number", 64))
         self.sims.set_wall_coordination_number(DictIO.GetAlternative(memory, "wall_coordination_number", 6))
         self.sims.set_compaction_ratio(DictIO.GetAlternative(memory, "compaction_ratio", 0.5))
-        if log: 
-            self.print_solver_info()
-            print('\n')
+            
+    def print_basic_simulation_info(self):
+        print(" Basic Configuration ".center(71,"-"))
+        print(("Simulation Type: " + str(current_cfg().arch)).ljust(67))
+        print(("Simulation Domain: " + str(self.sims.domain)).ljust(67))
+        print(("DEM Boundary Condition: " + str(self.dem.sims.boundary)).ljust(67))
+        print(("MPM Boundary Condition: " + str(self.mpm.sims.boundary)).ljust(67))
+        print(("DEM Gravity: " + str(self.dem.sims.gravity)).ljust(67))
+        print(("MPM Gravity: " + str(self.mpm.sims.gravity)).ljust(67))
 
     def print_solver_info(self):
         print(" Solver Information ".center(71,"-"))

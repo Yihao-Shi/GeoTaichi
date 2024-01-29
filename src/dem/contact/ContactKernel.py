@@ -1,7 +1,9 @@
 import taichi as ti
 
 from src.utils.constants import ZEROVEC3f
+from src.utils.Quaternion import SetFromTwoVec, SetToRotate
 from src.utils.ScalarFunction import PairingMapping
+from src.utils.TypeDefination import vec3f
 
 
 @ti.func
@@ -247,8 +249,54 @@ def kernel_particle_particle_force_assemble_(particleNum: int, dt: ti.template()
     for nc in range(total_contact_num):
         end1, end2 = cplist[nc].endID1, cplist[nc].endID2
         matID1, matID2 = particle[end1].materialID, particle[end2].materialID
+        pos1, pos2 = particle[end1].x, particle[end2].x
+        rad1, rad2 = particle[end1].rad, particle[end2].rad 
+        gapn = (pos1 - pos2).norm() - (rad1 + rad2)  
         materialID = PairingMapping(matID1, matID2, max_material_num)
-        surfaceProps[materialID]._particle_particle_force_assemble(nc, dt, particle, cplist)
+
+        if gapn < 0.:
+            norm = (pos1 - pos2).normalized()
+            cpos = pos2 + (rad2 + 0.5 * gapn) * norm
+            surfaceProps[materialID]._particle_particle_force_assemble(nc, end1, end2, gapn, norm, cpos, dt, particle, cplist)
+        else:
+            cplist[nc]._no_contact()
+
+
+@ti.kernel
+def kernel_particle_wall_force_assemble_(particleNum: int, dt: ti.template(), max_material_num: int, surfaceProps: ti.template(), particle: ti.template(), 
+                                         wall: ti.template(), cplist: ti.template(), particle_wall: ti.template()):
+    total_contact_num = particle_wall[particleNum]
+    # ti.block_local(dt)
+    for nc in range(total_contact_num):
+        end1, end2 = cplist[nc].endID1, cplist[nc].endID2
+        matID1, matID2 = particle[end1].materialID, wall[end2].materialID
+        pos1, particle_rad = particle[end1].x, particle[end1].rad
+        distance = wall[end2]._get_norm_distance(pos1)
+        gapn = distance - particle_rad
+        materialID = PairingMapping(matID1, matID2, max_material_num)
+
+        if gapn < 0.:
+            norm = wall[end2].norm
+            cpos = wall[end2]._point_projection(pos1) - 0.5 * gapn * norm
+            surfaceProps[materialID]._particle_wall_force_assemble(nc, end1, end2, distance, gapn, norm, cpos, dt, particle, wall, cplist)      
+        else:
+            cplist[nc]._no_contact()
+
+@ti.kernel
+def kernel_get_contact_tensor():
+    pass
+
+
+@ti.kernel
+def copy_histcp2cp(particleNum: int, object_object: ti.template(), hist_object_object: ti.template(), cplist: ti.template(), hist_cplist: ti.template()):
+    contact_num = object_object[particleNum]
+    for nc in range(contact_num):
+        end1 = cplist[nc].endID1
+        end2 = cplist[nc].endID2
+        for j in range(hist_object_object[end1], hist_object_object[end1 + 1]):
+            if hist_cplist[j].DstID == end2:
+                cplist[nc].oldTangOverlap = hist_cplist[j].oldTangOverlap
+                break
 
 
 @ti.kernel
@@ -265,9 +313,17 @@ def kernel_calculate_contact_force(particleNum: int, dt: ti.template(), max_mate
         nc = compact_table[i]
         end1, end2 = cplist[nc].endID1, cplist[nc].endID2
         matID1, matID2 = particle[end1].materialID, particle[end2].materialID
+        pos1, pos2 = particle[end1].x, particle[end2].x
+        rad1, rad2 = particle[end1].rad, particle[end2].rad 
+        gapn = (pos1 - pos2).norm() - (rad1 + rad2)  
         materialID = PairingMapping(matID1, matID2, max_material_num)
-        surfaceProps[materialID]._particle_particle_force_assemble(nc, dt, particle, cplist)
 
+        if gapn < 0.:
+            norm = (pos1 - pos2).normalized()
+            cpos = pos2 + (rad2 + 0.5 * gapn) * norm
+            surfaceProps[materialID]._particle_particle_force_assemble(nc, end1, end2, gapn, norm, cpos, dt, particle, cplist)
+        else:
+            cplist[nc]._no_contact()
 
 '''
 @ti.kernel
@@ -306,32 +362,3 @@ def kernel_particle_wall_narrow_detection_(particleNum: int, particle: ti.templa
             cplist[nc].oldTangOverlap = ZEROVEC3f
     return total_contact_num
 '''
-
-
-@ti.kernel
-def kernel_particle_wall_force_assemble_(particleNum: int, dt: ti.template(), max_material_num: int, surfaceProps: ti.template(), particle: ti.template(), 
-                                         wall: ti.template(), cplist: ti.template(), particle_wall: ti.template()):
-    total_contact_num = particle_wall[particleNum]
-    # ti.block_local(dt)
-    for nc in range(total_contact_num):
-        end1, end2 = cplist[nc].endID1, cplist[nc].endID2
-        matID1, matID2 = particle[end1].materialID, wall[end2].materialID
-        materialID = PairingMapping(matID1, matID2, max_material_num)
-        surfaceProps[materialID]._particle_wall_force_assemble(nc, dt, particle, wall, cplist)        
-
-
-@ti.kernel
-def kernel_get_contact_tensor():
-    pass
-
-
-@ti.kernel
-def copy_histcp2cp(particleNum: int, object_object: ti.template(), hist_object_object: ti.template(), cplist: ti.template(), hist_cplist: ti.template()):
-    contact_num = object_object[particleNum]
-    for nc in range(contact_num):
-        end1 = cplist[nc].endID1
-        end2 = cplist[nc].endID2
-        for j in range(hist_object_object[end1], hist_object_object[end1 + 1]):
-            if hist_cplist[j].DstID == end2:
-                cplist[nc].oldTangOverlap = hist_cplist[j].oldTangOverlap
-                break

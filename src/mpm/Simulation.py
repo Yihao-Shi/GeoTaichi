@@ -7,9 +7,9 @@ from src.utils.TypeDefination import vec3i, vec3f
 class Simulation(object):
     def __init__(self) -> None:
         self.dimension = 3
-        self.domain = None
-        self.boundary = None
-        self.gravity = None
+        self.domain = vec3f([0, 0, 0])
+        self.boundary = vec3i([0, 0, 0])
+        self.gravity = vec3f([0, 0, 0])
         self.background = 0.
         self.alphaPIC = 0.
         self.coupling = False

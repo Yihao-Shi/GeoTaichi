@@ -244,211 +244,178 @@ class JiangRollingSurfaceProperty:
     #                   Particle-Particle                       #
     # ========================================================= # 
     @ti.func
-    def _particle_particle_force_assemble(self, nc, dt, particle, cplist):
-        end1, end2 = cplist[nc].endID1, cplist[nc].endID2
+    def _particle_particle_force_assemble(self, nc, end1, end2, gapn, norm, cpos, dt, particle, cplist):
         pos1, pos2 = particle[end1].x, particle[end2].x
-        rad1, rad2 = particle[end1].rad, particle[end2].rad
-        gapn = (pos1 - pos2).norm() - (rad1 + rad2)
-        if gapn < 0.:
-            mass1, mass2 = particle[end1].m, particle[end2].m
-            vel1, vel2 = particle[end1].v, particle[end2].v
-            w1, w2 = particle[end1].w, particle[end2].w
-            norm = (pos1 - pos2).normalized()
+        rad1, rad2 = particle[end1].rad, particle[end2].rad 
+        mass1, mass2 = particle[end1].m, particle[end2].m
+        vel1, vel2 = particle[end1].v, particle[end2].v
+        w1, w2 = particle[end1].w, particle[end2].w
 
-            m_eff = EffectiveValue(mass1, mass2)
-            rad_eff = 2  * EffectiveValue(rad1, rad2)
-            YoungModulus, stiffness_ratio = self.YoungModulus, self.stiffness_ratio
-            shape_factor, crush_factor = self.shape_factor, self.crush_factor
-            ndratio = self.ndratio * 2 * ti.sqrt(m_eff * kn),
-            sdratio = self.sdratio * 2 * ti.sqrt(m_eff * ks)
-            miu = self.mu
-            kn = 2 * rad_eff * YoungModulus
-            ks = kn * stiffness_ratio
+        m_eff = EffectiveValue(mass1, mass2)
+        rad_eff = 2  * EffectiveValue(rad1, rad2)
+        YoungModulus, stiffness_ratio = self.YoungModulus, self.stiffness_ratio
+        shape_factor, crush_factor = self.shape_factor, self.crush_factor
+        ndratio = self.ndratio * 2 * ti.sqrt(m_eff * kn),
+        sdratio = self.sdratio * 2 * ti.sqrt(m_eff * ks)
+        miu = self.mu
+        kn = 2 * rad_eff * YoungModulus
+        ks = kn * stiffness_ratio
 
-            RBar = shape_factor * rad_eff
-            SquareR = RBar * RBar
-            kr = 0.25 * kn * SquareR
-            kt = 0.5 * ks * SquareR
-            rdratio = 0.25 * ndratio * SquareR
-            tdratio = 0.5 * sdratio * SquareR
-            rmiu = 0.25 * RBar * crush_factor
-            tmiu = 0.65 * RBar * miu
+        RBar = shape_factor * rad_eff
+        SquareR = RBar * RBar
+        kr = 0.25 * kn * SquareR
+        kt = 0.5 * ks * SquareR
+        rdratio = 0.25 * ndratio * SquareR
+        tdratio = 0.5 * sdratio * SquareR
+        rmiu = 0.25 * RBar * crush_factor
+        tmiu = 0.65 * RBar * miu
 
-            cpos = pos2 + (rad2 + 0.5 * gapn) * norm
-            v_rel = vel1 + w1.cross(cpos - pos1) - (vel2 + w2.cross(cpos - pos2))
-            w_rel = w1 - w2
-            vn = v_rel.dot(norm) 
-            vs = v_rel - vn * norm
-            wt = (w_rel).dot(norm) * norm
-            wr = w_rel - wt 
+        cpos = pos2 + (rad2 + 0.5 * gapn) * norm
+        v_rel = vel1 + w1.cross(cpos - pos1) - (vel2 + w2.cross(cpos - pos2))
+        w_rel = w1 - w2
+        vn = v_rel.dot(norm) 
+        vs = v_rel - vn * norm
+        wt = (w_rel).dot(norm) * norm
+        wr = w_rel - wt 
 
-            tangOverlapOld, tangRollingOld, tangTwistingOld = cplist[nc].oldTangOverlap, cplist[nc].oldRollAngle, cplist[nc].oldTwistAngle
-            
-            normal_contact_force = -kn * gapn 
-            normal_damping_force = -ndratio * vn
-            normal_force = (normal_contact_force + normal_damping_force) * norm
+        tangOverlapOld, tangRollingOld, tangTwistingOld = cplist[nc].oldTangOverlap, cplist[nc].oldRollAngle, cplist[nc].oldTwistAngle
+        
+        normal_contact_force = -kn * gapn 
+        normal_damping_force = -ndratio * vn
+        normal_force = (normal_contact_force + normal_damping_force) * norm
 
-            tangOverlapRot = tangOverlapOld - tangOverlapOld.dot(norm) * norm
-            tangOverTemp = vs * dt[None] + tangOverlapOld.norm() * Normalize(tangOverlapRot)
-            trial_ft = -ks * tangOverTemp
-            tang_damping_force = -sdratio * vs
-            
-            fric = miu * ti.abs(normal_contact_force + normal_damping_force)
-            tangential_force = ZEROVEC3f
-            if trial_ft.norm() > fric:
-                tangential_force = fric * trial_ft.normalized()
-                tangOverTemp = -tangential_force / ks
-            else:
-                tangential_force = trial_ft + tang_damping_force
-            
-            tangRollingRot = tangRollingOld - tangRollingOld.dot(norm) * norm
-            tangRollingTemp = wr * dt[None] + tangRollingOld.norm() * Normalize(tangRollingRot)
-            trial_fr = -kr * tangRollingTemp
-            rolling_damping_force = -rdratio * wr
-            
-            fricRoll = rmiu * ti.abs(normal_contact_force + normal_damping_force)
-            rolling_momentum = ZEROVEC3f
-            if trial_fr.norm() > fricRoll:
-                rolling_momentum = fricRoll * trial_fr.normalized()
-                tangRollingTemp = -rolling_momentum / kr
-            else:
-                rolling_momentum = trial_fr + rolling_damping_force
-
-            tangTwistingTemp = wt * dt[None] + tangTwistingOld.norm() * Normalize(norm)
-            trial_ft = -kt * tangTwistingTemp
-            twisting_damping_force = -tdratio * wt
-            
-            fricTwist = tmiu * ti.abs(normal_contact_force + normal_damping_force)
-            twisting_momentum = ZEROVEC3f
-            if trial_ft.norm() > fricTwist:
-                twisting_momentum = fricTwist * trial_ft.normalized()
-                tangTwistingTemp = -twisting_momentum / kt
-            else:
-                twisting_momentum = trial_ft + twisting_damping_force
-            
-            Ftotal = normal_force + tangential_force
-            resultant_momentum1 = Ftotal.cross(pos1 - cpos) + rolling_momentum + twisting_momentum
-            resultant_momentum2 = Ftotal.cross(pos2 - cpos) + rolling_momentum + twisting_momentum
-
-            cplist[nc].cnforce = normal_force
-            cplist[nc].csforce = tangential_force
-            cplist[nc].oldTangOverlap = tangOverTemp
-            cplist[nc].oldRollAngle = tangRollingTemp
-            cplist[nc].oldTwistAngle = tangTwistingTemp
-
-            particle[end1]._update_contact_interaction(Ftotal, resultant_momentum1)
-            particle[end2]._update_contact_interaction(-Ftotal, -resultant_momentum2)
+        tangOverlapRot = tangOverlapOld - tangOverlapOld.dot(norm) * norm
+        tangOverTemp = vs * dt[None] + tangOverlapOld.norm() * Normalize(tangOverlapRot)
+        trial_ft = -ks * tangOverTemp
+        tang_damping_force = -sdratio * vs
+        
+        fric = miu * ti.abs(normal_contact_force + normal_damping_force)
+        tangential_force = ZEROVEC3f
+        if trial_ft.norm() > fric:
+            tangential_force = fric * trial_ft.normalized()
+            tangOverTemp = -tangential_force / ks
         else:
-            cplist[nc].cnforce = ZEROVEC3f
-            cplist[nc].csforce = ZEROVEC3f
-            cplist[nc].oldTangOverlap = ZEROVEC3f
-            cplist[nc].oldRollAngle = ZEROVEC3f
-            cplist[nc].oldTwistAngle = ZEROVEC3f
+            tangential_force = trial_ft + tang_damping_force
+        
+        tangRollingRot = tangRollingOld - tangRollingOld.dot(norm) * norm
+        tangRollingTemp = wr * dt[None] + tangRollingOld.norm() * Normalize(tangRollingRot)
+        trial_fr = -kr * tangRollingTemp
+        rolling_damping_force = -rdratio * wr
+        
+        fricRoll = rmiu * ti.abs(normal_contact_force + normal_damping_force)
+        rolling_momentum = ZEROVEC3f
+        if trial_fr.norm() > fricRoll:
+            rolling_momentum = fricRoll * trial_fr.normalized()
+            tangRollingTemp = -rolling_momentum / kr
+        else:
+            rolling_momentum = trial_fr + rolling_damping_force
+
+        tangTwistingTemp = wt * dt[None] + tangTwistingOld.norm() * Normalize(norm)
+        trial_ft = -kt * tangTwistingTemp
+        twisting_damping_force = -tdratio * wt
+        
+        fricTwist = tmiu * ti.abs(normal_contact_force + normal_damping_force)
+        twisting_momentum = ZEROVEC3f
+        if trial_ft.norm() > fricTwist:
+            twisting_momentum = fricTwist * trial_ft.normalized()
+            tangTwistingTemp = -twisting_momentum / kt
+        else:
+            twisting_momentum = trial_ft + twisting_damping_force
+        
+        Ftotal = normal_force + tangential_force
+        resultant_momentum1 = Ftotal.cross(pos1 - cpos) + rolling_momentum + twisting_momentum
+        resultant_momentum2 = Ftotal.cross(pos2 - cpos) + rolling_momentum + twisting_momentum
+
+        cplist[nc]._set_contact(normal_force, tangential_force, tangOverTemp, tangRollingTemp, tangTwistingTemp)
+        particle[end1]._update_contact_interaction(Ftotal, resultant_momentum1)
+        particle[end2]._update_contact_interaction(-Ftotal, -resultant_momentum2)
 
 
     # ========================================================= #
     #                      Particle-Wall                        #
     # ========================================================= # 
     @ti.func
-    def _particle_wall_force_assemble(self, nc, dt, particle, wall, cplist):
-        end1, end2 = cplist[nc].endID1, cplist[nc].endID2
-        particle_rad, norm = particle[end1].rad, wall[end2].norm
-        pos1 = particle[end1].x
-        distance = wall[end2]._get_norm_distance(pos1)
-        gapn = distance - particle_rad
-        if gapn < 0.:
-            vel1, vel2 = particle[end1].v, wall[end2]._get_velocity()
-            w1 = particle[end1].w
+    def _particle_wall_force_assemble(self, nc, end1, end2, distance, gapn, norm, cpos, dt, particle, wall, cplist):
+        pos1, particle_rad = particle[end1].x, particle[end1].rad
+        vel1, vel2 = particle[end1].v, wall[end2]._get_velocity()
+        w1 = particle[end1].w
+        m_eff = particle[end1].m
 
-            m_eff = particle[end1].m
-            rad_eff = 2 * particle_rad
-            YoungModulus, stiffness_ratio = self.YoungModulus, self.stiffness_ratio
-            shape_factor, crush_factor = self.shape_factor, self.crush_factor
-            ndratio = self.ndratio * 2 * ti.sqrt(m_eff * kn),
-            sdratio = self.sdratio * 2 * ti.sqrt(m_eff * ks)
-            miu = self.mu
-            kn = 2 * rad_eff * YoungModulus
-            ks = kn * stiffness_ratio
+        rad_eff = 2 * particle_rad
+        YoungModulus, stiffness_ratio = self.YoungModulus, self.stiffness_ratio
+        shape_factor, crush_factor = self.shape_factor, self.crush_factor
+        ndratio = self.ndratio * 2 * ti.sqrt(m_eff * kn),
+        sdratio = self.sdratio * 2 * ti.sqrt(m_eff * ks)
+        miu = self.mu
+        kn = 2 * rad_eff * YoungModulus
+        ks = kn * stiffness_ratio
 
-            RBar = shape_factor * rad_eff
-            SquareR = RBar * RBar
-            kr = 0.25 * kn * SquareR
-            kt = 0.5 * ks * SquareR
-            rdratio = 0.25 * ndratio * SquareR
-            tdratio = 0.5 * sdratio * SquareR
-            rmiu = 0.25 * RBar * crush_factor
-            tmiu = 0.65 * RBar * miu
+        RBar = shape_factor * rad_eff
+        SquareR = RBar * RBar
+        kr = 0.25 * kn * SquareR
+        kt = 0.5 * ks * SquareR
+        rdratio = 0.25 * ndratio * SquareR
+        tdratio = 0.5 * sdratio * SquareR
+        rmiu = 0.25 * RBar * crush_factor
+        tmiu = 0.65 * RBar * miu
 
-            cpos = wall[end2]._point_projection(pos1) - 0.5 * gapn * norm
-            v_rel = vel1 + w1.cross(cpos - pos1) - vel2 
-            w_rel = w1 
-            vn = v_rel.dot(norm) 
-            vs = v_rel - vn * norm
-            wt = (w_rel).dot(norm) * norm
-            wr = w_rel - wt 
+        v_rel = vel1 + w1.cross(cpos - pos1) - vel2 
+        w_rel = w1 
+        vn = v_rel.dot(norm) 
+        vs = v_rel - vn * norm
+        wt = (w_rel).dot(norm) * norm
+        wr = w_rel - wt 
 
-            tangOverlapOld, tangRollingOld, tangTwistingOld = cplist[nc].oldTangOverlap, cplist[nc].oldRollAngle, cplist[nc].oldTwistAngle
+        tangOverlapOld, tangRollingOld, tangTwistingOld = cplist[nc].oldTangOverlap, cplist[nc].oldRollAngle, cplist[nc].oldTwistAngle
 
-            normal_contact_force = -kn * gapn 
-            normal_damping_force = -ndratio * vn
-            normal_force = (normal_contact_force + normal_damping_force) * norm
+        normal_contact_force = -kn * gapn 
+        normal_damping_force = -ndratio * vn
+        normal_force = (normal_contact_force + normal_damping_force) * norm
 
-            tangOverlapRot = tangOverlapOld - tangOverlapOld.dot(norm) * norm
-            tangOverTemp = vs * dt[None] + tangOverlapOld.norm() * Normalize(tangOverlapRot)
-            trial_ft = -ks * tangOverTemp
-            tang_damping_force = -sdratio * vs
-            
-            fric = miu * ti.abs(normal_contact_force + normal_damping_force)
-            tangential_force = ZEROVEC3f
-            if trial_ft.norm() > fric:
-                tangential_force = fric * trial_ft.normalized()
-                tangOverTemp = -tangential_force / ks
-            else:
-                tangential_force = trial_ft + tang_damping_force
-            
-            tangRollingRot = tangRollingOld - tangRollingOld.dot(norm) * norm
-            tangRollingTemp = wr * dt[None] + tangRollingOld.norm() * Normalize(tangRollingRot)
-            trial_fr = -kr * tangRollingTemp
-            rolling_damping_force = -rdratio * wr
-            
-            fricRoll = rmiu * ti.abs(normal_contact_force + normal_damping_force)
-            rolling_momentum = ZEROVEC3f
-            if trial_fr.norm() > fricRoll:
-                rolling_momentum = fricRoll * trial_fr.normalized()
-                tangRollingTemp = -rolling_momentum / kr
-            else:
-                rolling_momentum = trial_fr + rolling_damping_force
-
-            tangTwistingTemp = wt * dt[None] + tangTwistingOld.norm() * Normalize(norm)
-            trial_ft = -kt * tangTwistingTemp
-            twisting_damping_force = -tdratio * wt
-            
-            fricTwist = tmiu * ti.abs(normal_contact_force + normal_damping_force)
-            twisting_momentum = ZEROVEC3f
-            if trial_ft.norm() > fricTwist:
-                twisting_momentum = fricTwist * trial_ft.normalized()
-                tangTwistingTemp = -twisting_momentum / kt
-            else:
-                twisting_momentum = trial_ft + twisting_damping_force
-            
-            fraction = ti.abs(wall[end2].processCircleShape(pos1, distance, -gapn))
-            Ftotal = fraction * (normal_force + tangential_force)
-            resultant_momentum1 = fraction * (Ftotal.cross(pos1 - cpos) + rolling_momentum + twisting_momentum)
-            #resultant_momentum2 = Ftotal.cross(pos2 - cpos) + fraction * (rolling_momentum + twisting_momentum)
-
-            cplist[nc].cnforce = normal_force
-            cplist[nc].csforce = tangential_force
-            cplist[nc].oldTangOverlap = tangOverTemp
-            cplist[nc].oldRollAngle = tangRollingTemp
-            cplist[nc].oldTwistAngle = tangTwistingTemp
-            
-            particle[end1]._update_contact_interaction(Ftotal, resultant_momentum1)
+        tangOverlapRot = tangOverlapOld - tangOverlapOld.dot(norm) * norm
+        tangOverTemp = vs * dt[None] + tangOverlapOld.norm() * Normalize(tangOverlapRot)
+        trial_ft = -ks * tangOverTemp
+        tang_damping_force = -sdratio * vs
+        
+        fric = miu * ti.abs(normal_contact_force + normal_damping_force)
+        tangential_force = ZEROVEC3f
+        if trial_ft.norm() > fric:
+            tangential_force = fric * trial_ft.normalized()
+            tangOverTemp = -tangential_force / ks
         else:
-            cplist[nc].cnforce = ZEROVEC3f
-            cplist[nc].csforce = ZEROVEC3f
-            cplist[nc].oldTangOverlap = ZEROVEC3f
-            cplist[nc].oldRollAngle = ZEROVEC3f
-            cplist[nc].oldTwistAngle = ZEROVEC3f
+            tangential_force = trial_ft + tang_damping_force
+        
+        tangRollingRot = tangRollingOld - tangRollingOld.dot(norm) * norm
+        tangRollingTemp = wr * dt[None] + tangRollingOld.norm() * Normalize(tangRollingRot)
+        trial_fr = -kr * tangRollingTemp
+        rolling_damping_force = -rdratio * wr
+        
+        fricRoll = rmiu * ti.abs(normal_contact_force + normal_damping_force)
+        rolling_momentum = ZEROVEC3f
+        if trial_fr.norm() > fricRoll:
+            rolling_momentum = fricRoll * trial_fr.normalized()
+            tangRollingTemp = -rolling_momentum / kr
+        else:
+            rolling_momentum = trial_fr + rolling_damping_force
+
+        tangTwistingTemp = wt * dt[None] + tangTwistingOld.norm() * Normalize(norm)
+        trial_ft = -kt * tangTwistingTemp
+        twisting_damping_force = -tdratio * wt
+        
+        fricTwist = tmiu * ti.abs(normal_contact_force + normal_damping_force)
+        twisting_momentum = ZEROVEC3f
+        if trial_ft.norm() > fricTwist:
+            twisting_momentum = fricTwist * trial_ft.normalized()
+            tangTwistingTemp = -twisting_momentum / kt
+        else:
+            twisting_momentum = trial_ft + twisting_damping_force
+        
+        fraction = ti.abs(wall[end2].processCircleShape(pos1, distance, -gapn))
+        Ftotal = fraction * (normal_force + tangential_force)
+        resultant_momentum1 = fraction * (Ftotal.cross(pos1 - cpos) + rolling_momentum + twisting_momentum)
+
+        cplist[nc]._set_contact(fraction * normal_force, fraction * tangential_force, tangOverTemp, tangRollingTemp, tangTwistingTemp)
+        particle[end1]._update_contact_interaction(Ftotal, resultant_momentum1)
 
  
 @ti.kernel

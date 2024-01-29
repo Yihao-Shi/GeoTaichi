@@ -107,40 +107,29 @@ class LiquidSurfaceProperty:
     #                   Particle-Particle                       #
     # ========================================================= # 
     @ti.func
-    def _coupled_particle_force_assemble(self, nc, particle1, particle2, cplist, dt):
-        end1, end2 = cplist[nc].endID1, cplist[nc].endID2
-        pos1, pos2 = particle1[end1].x, particle2[end2].x
-        rad1, rad2 = particle1[end1].rad, particle2[end2].rad
-        gapn = (pos1 - pos2).norm() - (rad1 + rad2)
-        if gapn < 0.:
-            norm = (pos1 - pos2).normalized()
-            vel1, vel2 = particle1[end1].v, particle2[end2].v
-            w1, w2 = ZEROVEC3f, particle2[end2].w
+    def _coupled_particle_force_assemble(self, nc, end1, end2, gapn, norm, cpos, dt, particle1, particle2, cplist):
+        pos2, w2 = particle2[end2].x, particle2[end2].w
+        vel1, vel2 = particle1[end1].v, particle2[end2].v
 
-            cpos = pos2 + (rad2 + 0.5 * gapn) * norm
-            v_rel = vel1 - (vel2 + w2.cross(cpos - pos2))
-            Ftotal = v_rel / dt[None] * particle1[end1].m
-            
-            particle1[end1]._update_contact_interaction(Ftotal)
-            particle2[end2]._update_contact_interaction(-Ftotal, vec3f(0, 0, 0))
+        v_rel = vel1 - (vel2 + w2.cross(cpos - pos2))
+        Ftotal = v_rel / dt[None] * particle1[end1].m
+        
+        particle1[end1]._update_contact_interaction(Ftotal)
+        particle2[end2]._update_contact_interaction(-Ftotal, vec3f(0, 0, 0))
 
 
     # ========================================================= #
     #                      Particle-Wall                        #
     # ========================================================= # 
     @ti.func
-    def _mpm_wall_force_assemble(self, nc, particle, wall, cplist, dt):
-        end1, end2 = cplist[nc].endID1, cplist[nc].endID2
-        pos1, pos2 = particle[end1].x, wall[end2]._get_center()
-        particle_rad, norm = particle[end1].rad, wall[end2].norm
-        distance = (pos1 - pos2).dot(norm)
-        gapn = distance - particle_rad
-        if gapn < 0.:
-            vel1, vel2 = particle[end1].v, wall[end2]._get_velocity()
-            v_rel = vel1 - vel2 
-            normal_force = v_rel / dt[None] * particle[end1].m
+    def _mpm_wall_force_assemble(self, nc, end1, end2, distance, gapn, norm, dt, particle, wall, cplist):
+        pos1 = particle[end1].x
+        vel1, vel2 = particle[end1].v, wall[end2]._get_velocity()
 
-            fraction = wall[end2].processCircleShape(pos1, distance, -gapn)
-            Ftotal = fraction * normal_force 
-            particle[end1]._update_contact_interaction(Ftotal)
+        v_rel = vel1 - vel2 
+        normal_force = v_rel / dt[None] * particle[end1].m
+
+        fraction = wall[end2].processCircleShape(pos1, distance, -gapn)
+        Ftotal = fraction * normal_force 
+        particle[end1]._update_contact_interaction(Ftotal)
 

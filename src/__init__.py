@@ -4,19 +4,48 @@
 __author__ = "Shi-Yihao, Guo-Ning"
 __version__ = "0.1.0"
 __license__ = "GNU License"
+__description__ = 'A High Performance Multiscale and Multiphysics Simulator'
 
 
-def DEM():
+def DEM(title=None, log=True):
+    if title is None:
+        title = __description__ 
+        
     from src.dem.mainDEM import DEM 
-    return DEM()
+    return DEM(title=title, log=log)
     
-def MPM():
+    
+def MPM(title=None, log=True):
+    if title is None:
+        title = __description__ 
+        
     from src.mpm.mainMPM import MPM 
-    return MPM()
+    return MPM(title=title, log=log)
     
-def DEMPM():
-    from src.dempm.mainDEMPM import DEMPM 
-    return DEMPM()
+    
+def DEMPM(dem=None, mpm=None, title=None, log=True):
+    if title is None:
+        title = __description__ 
+        
+    if dem is None:
+        dem = DEM(title='', log=False)
+        dem.sims.set_dem_coupling(True)
+    if mpm is None:
+        mpm = MPM(title='', log=False)
+        mpm.sims.set_mpm_coupling(True)
+    from src.mpdem.mainDEMPM import DEMPM 
+    return DEMPM(dem, mpm, log=log)
        
         
-
+def MPDEM(dem=None, mpm=None, title=None, log=True):
+    if title is None:
+        title = __description__ 
+        
+    if dem is None:
+        dem = DEM(title='', log=False)
+        dem.sims.set_dem_coupling(True)
+    if mpm is None:
+        mpm = MPM(title='', log=False)
+        mpm.sims.set_mpm_coupling(True)
+    from src.mpdem.mainDEMPM import DEMPM 
+    return DEMPM(dem, mpm, log=log)

@@ -2,32 +2,70 @@ from geotaichi import *
 
 init()
 
-dem = DEM()
+dempm = DEMPM()
 
-dem.set_configuration(domain=ti.Vector([15., 6., 5.]),
+dempm.set_configuration(domain=ti.Vector([15., 6., 5.]),
+                        coupling_scheme="DEM-MPM",
+                        particle_interaction=True,
+                        wall_interaction=False)
+
+dempm.dem.set_configuration(
                       boundary=["Destroy", "Destroy", "Destroy"],
                       gravity=ti.Vector([6.929646456, 0., -6.929646456]),
                       engine="SymplecticEuler",
                       search="LinkedCell",
                       coupling=True)
+                      
+       
+dempm.mpm.set_configuration(
+                      background_damping=0., 
+                      alphaPIC=0.005, 
+                      mapping="USF", 
+                      shape_function="Linear",
+                      gravity=ti.Vector([6.929646456, 0., -6.929646456]),
+                      coupling=True,
+                      free_surface_detection=False,
+                      coupling=True)
 
-dem.memory_allocate(memory={
+dempm.set_solver({
+                      "Timestep":         6.324555320336759e-05,
+                      "SimulationTime":   3.,
+                      "SaveInterval":     0.1,
+                      "SavePath":         "OutputData/P2PContact/mu=0.1"
+                 })
+
+dempm.memory_allocate(memory={
+                                  "max_material_number":         1,
+                                  "body_coordination_number":    8,
+                                  "wall_coordination_number":    6,
+                             })
+                             
+dempm.dem.memory_allocate(memory={
                                 "max_material_number": 1,
                                 "max_particle_number": 1,
                                 "max_sphere_number": 1,
                                 "max_clump_number": 0,
                                 "max_facet_number": 2,
                                 "verlet_distance_multiplier": 0.
-                            })                   
+                            })            
 
-dem.add_attribute(materialID=0,
+dempm.mpm.memory_allocate(memory={
+                                "max_material_number":           1,
+                                "max_particle_number":           33552,
+                                "max_constraint_number":  {
+                                                               "max_reflection_constraint":   61820
+                                                          }
+                            })
+
+
+dempm.dem.add_attribute(materialID=0,
                   attribute={
                                 "Density":            2650,
                                 "ForceLocalDamping":  0.7,
                                 "TorqueLocalDamping": 0.
                             })
 
-dem.create_body(body={
+dempm.dem.create_body(body={
                    "BodyType": "Sphere",
                    "Template":[{
                                "GroupID": 0,
@@ -40,7 +78,7 @@ dem.create_body(body={
                                "Radius": 1.6,
                                "BodyOrientation": "uniform"}]})
 
-dem.add_wall(body={
+dempm.dem.add_wall(body={
                    "WallID":      0, 
                    "WallType":    "Facet",
                    "WallShape":   "Polygon",
@@ -54,10 +92,10 @@ dem.add_wall(body={
                    "OuterNormal": ti.Vector([-1., 0., 0.])
                   })
                           
-dem.choose_contact_model(particle_particle_contact_model="Linear Model",
+dempm.dem.choose_contact_model(particle_particle_contact_model="Linear Model",
                          particle_wall_contact_model="Linear Model")
                             
-dem.add_property(materialID1=0,
+dempm.dem.add_property(materialID1=0,
                  materialID2=0,
                  property={
                             "NormalStiffness":            1e8,
@@ -68,32 +106,9 @@ dem.add_property(materialID1=0,
                            })
  
                   
-dem.select_save_data()
+dempm.dem.select_save_data()
 
-
-from src.mpm.mainMPM import MPM
-
-mpm = MPM()
-
-mpm.set_configuration(domain=ti.Vector([15., 6., 5.]), 
-                      background_damping=0., 
-                      alphaPIC=0.005, 
-                      mapping="USF", 
-                      shape_function="Linear",
-                      gravity=ti.Vector([6.929646456, 0., -6.929646456]),
-                      coupling=True,
-                      free_surface_detection=False,
-                      coupling=True)
-
-mpm.memory_allocate(memory={
-                                "max_material_number":           1,
-                                "max_particle_number":           33552,
-                                "max_constraint_number":  {
-                                                               "max_reflection_constraint":   61820
-                                                          }
-                            })
-
-mpm.add_material(model="LinearElastic",
+dempm.mpm.add_material(model="LinearElastic",
                  material={
                                "MaterialID":           1,
                                "Density":              2650.,
@@ -101,13 +116,13 @@ mpm.add_material(model="LinearElastic",
                                "PoissionRatio":        0.3
                  })
 
-mpm.add_element(element={
+dempm.mpm.add_element(element={
                              "ElementType":               "R8N3D",
                              "ElementSize":               ti.Vector([0.5, 0.5, 0.5])
                         })
 
 
-mpm.add_region(region=[{
+dempm.mpm.add_region(region=[{
                             "Name": "region1",
                             "Type": "Rectangle",
                             "BoundingBoxPoint": ti.Vector([0., 0., 0.]),
@@ -115,7 +130,7 @@ mpm.add_region(region=[{
                             "zdirection": ti.Vector([0., 0., 1.])
                       }])
 
-mpm.add_body(body={
+dempm.mpm.add_body(body={
                        "Template": [{
                                        "RegionName":         "region1",
                                        "nParticlesPerCell":  1,
@@ -131,7 +146,7 @@ mpm.add_body(body={
                                    }]
                    })
 
-mpm.add_boundary_condition(boundary=[{
+dempm.mpm.add_boundary_condition(boundary=[{
                                         "BoundaryType":   "ReflectionConstraint",
                                         "Norm":           [0., 0., -1],
                                         "StartPoint":     [0., 0., 0.],
@@ -166,29 +181,8 @@ mpm.add_boundary_condition(boundary=[{
                                         "EndPoint":       [6., 2., 0.]
                                     }])
 
-mpm.select_save_data()
-    
+dempm.mpm.select_save_data()
 
-from src.mpdem.mainDEMPM import DEMPM
-
-dempm = DEMPM(dem, mpm)
-
-dempm.set_configuration(coupling_scheme="DEM-MPM",
-                        particle_interaction=True,
-                        wall_interaction=False)
-
-dempm.set_solver({
-                      "Timestep":         6.324555320336759e-05,
-                      "SimulationTime":   3.,
-                      "SaveInterval":     0.1,
-                      "SavePath":         "OutputData/P2PContact/mu=0.1"
-                 })
-
-dempm.memory_allocate(memory={
-                                  "max_material_number":         1,
-                                  "body_coordination_number":    8,
-                                  "wall_coordination_number":    6,
-                             })
 
 dempm.choose_contact_model(particle_particle_contact_model="Linear Model",
                            particle_wall_contact_model=None)
@@ -215,4 +209,6 @@ dempm.modify_parameters(SimulationTime=5)
 
 dempm.run()
 
-mpm.postprocessing()
+dempm.mpm.postprocessing()
+
+dempm.dem.postprocessing()

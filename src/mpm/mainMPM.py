@@ -1,3 +1,4 @@
+import numpy as np
 from taichi.lang.impl import current_cfg
 
 from src.mpm.SpatialHashGrid import SpatialHashGrid
@@ -31,9 +32,10 @@ class MPM(object):
         self.recorder = None
         self.solver = None
 
-    def set_configuration(self, **kwargs):
+    def set_configuration(self, log=True, **kwargs):
+        if np.linalg.norm(np.array(self.sims.get_simulation_domain()) - np.zeros(3)) < 1e-10:
+            self.sims.set_domain(DictIO.GetEssential(kwargs, "domain"))
         self.sims.set_dimension(DictIO.GetAlternative(kwargs, "dimension", "3-Dimension"))
-        self.sims.set_domain(DictIO.GetEssential(kwargs, "domain"))
         self.sims.set_boundary(DictIO.GetAlternative(kwargs, "boundary" ,["Destroy", "Destroy", "Destroy"]))
         self.sims.set_gravity(DictIO.GetAlternative(kwargs, "gravity", vec3f([0.,0.,-9.8])))
         self.sims.set_background_damping(DictIO.GetAlternative(kwargs, "background_damping", 0.))
@@ -50,18 +52,20 @@ class MPM(object):
         self.sims.set_strain_smoothing(DictIO.GetAlternative(kwargs, "strain_smoothing", False))
         self.sims.set_configuration(DictIO.GetAlternative(kwargs, "configuration", "ULMPM"))
         self.sims.set_material_type(DictIO.GetAlternative(kwargs, "material_type", "Solid"))
-        self.sims.set_mpm_coupling(DictIO.GetAlternative(kwargs, "coupling", False))
-        
-    def set_implicit_solver_parameters(self, implicit_parameters):    
-        self.sims.set_implicit_parameters(implicit_parameters)
+        if log: 
+            self.print_basic_simulation_info()
+            print('\n')
 
-    def set_solver(self, solver):
+    def set_solver(self, solver, log=True):
         self.sims.set_timestep(DictIO.GetEssential(solver, "Timestep"))
         self.sims.set_simulation_time(DictIO.GetEssential(solver, "SimulationTime"))
         self.sims.set_CFL(DictIO.GetAlternative(solver, "CFL", 0.5))
         self.sims.set_adaptive_timestep(DictIO.GetAlternative(solver, "AdaptiveTimestep", False))
         self.sims.set_save_interval(DictIO.GetAlternative(solver, "SaveInterval", self.sims.time / 20.))
         self.sims.set_save_path(DictIO.GetAlternative(solver, "SavePath", 'OutputData'))
+        if log: 
+            self.print_solver_info()
+            print('\n')
 
     def memory_allocate(self, memory, log=True):    
         self.sims.set_material_num(DictIO.GetAlternative(memory, "max_material_number", 0))
@@ -70,20 +74,18 @@ class MPM(object):
         self.sims.set_verlet_distance_multiplier(DictIO.GetAlternative(memory, "verlet_distance_multiplier", 0.))
         self.scene.activate_basic_class(self.sims)
         if log: 
-            self.print_basic_simulation_info()
             self.print_simulation_info()
-            if self.sims.dt[None] > 0.:
-                self.print_solver_info()
             print('\n')
 
     def print_basic_simulation_info(self):
-        print(" Basic Configuration ".center(71,"-"))
+        print(" MPM Basic Configuration ".center(71,"-"))
         print(("Simulation Type: " + str(current_cfg().arch)).ljust(67))
         print(("Simulation Domain: " + str(self.sims.domain)).ljust(67))
         print(("Boundary Condition: " + str(self.sims.boundary)).ljust(67))
         print(("Gravity: " + str(self.sims.gravity)).ljust(67))
 
     def print_simulation_info(self):
+        print(" MPM Engine Information ".center(71,"-"))
         print(("Background Damping: " + str(self.sims.background_damping)).ljust(67))
         print(("alpha Value: " + str(self.sims.alphaPIC)).ljust(67))
         print(("Stabilization Technique: " + str(self.sims.stabilize)).ljust(67))
@@ -97,6 +99,7 @@ class MPM(object):
         print(("Shape Function: " + str(self.sims.shape_function)).ljust(67))
 
     def print_solver_info(self):
+        print(" MPM Solver Information ".center(71,"-"))
         print(("Initial Simulation Time: " + str(self.sims.current_time)).ljust(67))
         print(("Finial Simulation Time: " + str(self.sims.current_time + self.sims.time)).ljust(67))
         print(("Time Step: " + str(self.sims.dt[None])).ljust(67))

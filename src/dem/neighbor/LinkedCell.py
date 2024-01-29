@@ -25,7 +25,7 @@ class LinkedCell(NeighborBase):
         
         self.place_particle_to_cells = self.no_operation
         self.particle_hash_tables = self.no_operation_without_paras
-        if self.sims.max_particle_num > 1:
+        if self.sims.max_particle_num > 1 or self.sims.coupling:
             self.place_particle_to_cells = self.place_particle_to_cell
             self.particle_hash_tables = self.particle_hash_table
 
