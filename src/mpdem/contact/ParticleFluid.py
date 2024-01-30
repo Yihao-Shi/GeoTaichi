@@ -16,6 +16,7 @@ class ParticleFluid(ContactModelBase):
     def __init__(self, max_material_num) -> None:
         super().__init__()
         self.surfaceProps = LiquidSurfaceProperty.field(shape=max_material_num * max_material_num)
+        self.null_mode = False
 
     def calcu_critical_timestep(self, mscene: MPMScene, dscene: DEMScene, max_material_num):
         mass = min(mscene.find_particle_min_mass(), dscene.find_particle_min_mass())
@@ -56,8 +57,8 @@ class ParticleFluid(ContactModelBase):
             self.surfaceProps[componousID].add_surface_property()
         return componousID
     
-    def collision_initialize(self, parameter, max_object_pairs, no_operation=False):
-        if not no_operation:
+    def collision_initialize(self, parameter, max_object_pairs):
+        if not self.null_mode:
             self.cplist = SFContactTable.field(shape=int(parameter * max_object_pairs))
     
     def get_contact_output(self, scene: MPMScene, neighbor_list):

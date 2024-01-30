@@ -91,7 +91,7 @@ class DEMPM(object):
         self.sims.set_material_num(max(self.dem.sims.max_material_num, self.mpm.sims.max_material_num))
         self.sims.set_body_coordination_number(DictIO.GetAlternative(memory, "body_coordination_number", 64))
         self.sims.set_wall_coordination_number(DictIO.GetAlternative(memory, "wall_coordination_number", 6))
-        self.sims.set_compaction_ratio(DictIO.GetAlternative(memory, "compaction_ratio", 0.5))
+        self.sims.set_compaction_ratio(DictIO.GetAlternative(memory, "compaction_ratio", [0.4, 0.3]))
             
     def print_basic_simulation_info(self):
         print(" Basic Configuration ".center(71,"-"))

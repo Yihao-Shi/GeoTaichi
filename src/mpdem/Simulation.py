@@ -36,7 +36,7 @@ class Simulation(object):
         self.potential_particle_num = 0.
         self.max_potential_particle_pairs = 0.
         self.max_potential_wall_pairs = 0.
-        self.compaction_ratio = 0.5
+        self.compaction_ratio = [0.4, 0.3]
 
         self.particle_particle_contact_model = None
         self.particle_wall_contact_model = None

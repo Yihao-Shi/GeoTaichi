@@ -16,6 +16,7 @@ class LinearModel(ContactModelBase):
     def __init__(self, max_material_num) -> None:
         super().__init__()
         self.surfaceProps = LinearSurfaceProperty.field(shape=max_material_num * max_material_num)
+        self.null_mode = False
 
     def calcu_critical_timestep(self, mscene: MPMScene, dscene: DEMScene, max_material_num):
         mass = min(mscene.find_particle_min_mass(), dscene.find_particle_min_mass())
@@ -79,7 +80,7 @@ class LinearModel(ContactModelBase):
         return componousID
     
     def get_ppcontact_output(self, contact_path, current_time, current_print, scene: MPMScene, pcontact: MultiLinkedCell):
-        end1, end2, oldTangentialOverlap = self.get_contact_output(scene, pcontact)
+        end1, end2, oldTangentialOverlap = self.get_contact_output(scene, pcontact.particle_particle)
         end1 = np.ascontiguousarray(self.cplist.endID1.to_numpy()[0:pcontact.particle_particle[scene.particleNum[0]]])
         end2 = np.ascontiguousarray(self.cplist.endID2.to_numpy()[0:pcontact.particle_particle[scene.particleNum[0]]])
         oldTangentialOverlap = np.ascontiguousarray(self.cplist.oldTangOverlap.to_numpy()[0:pcontact.particle_particle[scene.particleNum[0]]])
@@ -87,9 +88,9 @@ class LinearModel(ContactModelBase):
         np.savez(contact_path+f'{current_print:06d}', t_current=current_time, contact_num=particleParticle, end1=end1, end2=end2, oldTangentialOverlap=oldTangentialOverlap)
         
     def get_pwcontact_output(self, contact_path, current_time, current_print, scene: MPMScene, pcontact: MultiLinkedCell):
-        end1, end2, oldTangentialOverlap = self.get_contact_output(scene, pcontact)
-        end1 = np.ascontiguousarray(self.cplist.endID1.to_numpy()[0:pcontact.particle_particle[scene.particleNum[0]]])
-        end2 = np.ascontiguousarray(self.cplist.endID2.to_numpy()[0:pcontact.particle_particle[scene.particleNum[0]]])
+        end1, end2, oldTangentialOverlap = self.get_contact_output(scene, pcontact.particle_wall)
+        end1 = np.ascontiguousarray(self.cplist.endID1.to_numpy()[0:pcontact.particle_wall[scene.particleNum[0]]])
+        end2 = np.ascontiguousarray(self.cplist.endID2.to_numpy()[0:pcontact.particle_wall[scene.particleNum[0]]])
         oldTangentialOverlap = np.ascontiguousarray(self.cplist.oldTangOverlap.to_numpy()[0:pcontact.particle_particle[scene.particleNum[0]]])
         particleWall = np.ascontiguousarray(pcontact.hist_particle_wall.to_numpy()[0:pcontact.particle_particle[scene.particleNum[0]]])
         np.savez(contact_path+f'{current_print:06d}', t_current=current_time, contact_num=particleWall, end1=end1, end2=end2, oldTangentialOverlap=oldTangentialOverlap)

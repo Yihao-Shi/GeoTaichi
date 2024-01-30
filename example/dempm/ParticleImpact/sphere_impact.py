@@ -1,6 +1,6 @@
 from geotaichi import *
 
-init()
+init(arch='cpu')
 
 dempm = DEMPM()
 
@@ -23,7 +23,7 @@ dempm.mpm.set_configuration(
                       gravity=ti.Vector([0., 0., 0.]))
 
 dempm.set_solver({
-                      "Timestep":         1e-6,
+                      "Timestep":         1e-5,
                       "SimulationTime":   0.1,
                       "SaveInterval":     0.01
                  })    
@@ -49,7 +49,7 @@ dempm.mpm.memory_allocate(memory={
 
 dempm.memory_allocate(memory={
                                   "max_material_number":         1,
-                                  "body_coordination_number":    2500,
+                                  "body_coordination_number":    250,
                                   "wall_coordination_number":    6,
                              })       
 
@@ -62,8 +62,7 @@ dempm.dem.add_attribute(materialID=0,
                                 "TorqueLocalDamping": 0.
                             })
 
-dempm.dem.add_body(body={
-                   "GenerateType": "Create",
+dempm.dem.create_body(body={
                    "BodyType": "Sphere",
                    "PoissionSampling": False,
                    "TryNumber": 100,
@@ -79,18 +78,8 @@ dempm.dem.add_body(body={
                                "BodyOrientation": "uniform"}]})
 
                           
-dempm.dem.choose_contact_model(particle_particle_contact_model="Linear Model",
-                         particle_wall_contact_model="Linear Model")
-                            
-dempm.dem.add_property(materialID1=0,
-                 materialID2=0,
-                 property={
-                            "NormalStiffness":            1e8,
-                            "TangentialStiffness":        1e8,
-                            "Friction":                   0.5,
-                            "NormalViscousDamping":       0.2,
-                            "TangentialViscousDamping":   0.
-                           })
+dempm.dem.choose_contact_model(particle_particle_contact_model=None,
+                         particle_wall_contact_model=None)
  
                   
 dempm.dem.select_save_data(particle_particle_contact=True)
@@ -125,7 +114,7 @@ dempm.mpm.add_body(body={
                                        "RegionName":         "region1",
                                        "nParticlesPerCell":  2,
                                        "BodyID":             0,
-                                       "MaterialID":         0,
+                                       "MaterialID":         1,
                                        "ParticleStress": {
                                                               "GravityField":     False,
                                                               "InternalStress":   ti.Vector([-0., -0., -0., 0., 0., 0.])
@@ -176,8 +165,8 @@ dempm.mpm.select_save_data()
 dempm.choose_contact_model(particle_particle_contact_model="Linear Model",
                            particle_wall_contact_model=None)
 
-dempm.add_property(materialID1=0,
-                   materialID2=0,
+dempm.add_property(DEMmaterial=0,
+                   MPMmaterial=0,
                    property={
                                  "NormalStiffness":            1e8,
                                  "TangentialStiffness":        1e8,

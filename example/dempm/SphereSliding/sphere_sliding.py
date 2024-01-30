@@ -99,7 +99,7 @@ dempm.dem.add_property(materialID1=0,
                             "Friction":                   0.,
                             "NormalViscousDamping":       0.5,
                             "TangentialViscousDamping":   0.
-                           })
+                           }, dType='particle-particle')
  
                   
 dempm.dem.select_save_data()
@@ -195,11 +195,11 @@ dempm.add_property(DEMmaterial=0,
 
 dempm.run()
 
-dem.scene.wall[0].active = 0
-dem.scene.wall[1].active = 0
+dempm.dem.scene.wall[0].active = 0
+dempm.dem.scene.wall[1].active = 0
 dempm.contactor.physpp.surfaceProps[1].ndratio = 0.
 dempm.contactor.physpp.surfaceProps[1].mu = 0.1
-dem.scene.material[0].fdamp = 0.
+dempm.dem.scene.material[0].fdamp = 0.
 
 dempm.modify_parameters(SimulationTime=5)
 

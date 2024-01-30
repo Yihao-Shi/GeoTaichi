@@ -1,5 +1,5 @@
 import os
-
+import math
 import numpy as np
 
 from src.dem.BaseStruct import CoupledContactTable, HistoryContactTable
@@ -16,14 +16,15 @@ class ContactModelBase(object):
         self.cplist = None
         self.hist_cplist = None
         self.surfaceProps = None
+        self.null_mode = True
 
-    def manage_function(self, object_type, contact_method=None, no_operation=False):
+    def manage_function(self, object_type, contact_method=None):
         self.contact_list_initialize = self.no_contact_list_initial
         self.resolve = self.no_operation
         self.update_contact_table = self.no_operation
         self.add_surface_properties = self.no_add_property
         self.calcu_critical_timesteps = self.no_critical_timestep
-        if not no_operation:
+        if not self.null_mode:
             self.contact_list_initialize = self.contact_list_initial
             self.add_surface_properties = self.add_surface_property
             self.calcu_critical_timesteps = self.calcu_critical_timestep
@@ -39,10 +40,10 @@ class ContactModelBase(object):
             if self.resolve is None:
                 raise RuntimeError("Internal error!")
 
-    def collision_initialize(self, parameter, max_object_pairs, no_operation=False):
-        if not no_operation:
-            self.cplist = CoupledContactTable.field(shape=int(parameter * max_object_pairs))
-            self.hist_cplist = HistoryContactTable.field(shape=int(parameter * max_object_pairs))
+    def collision_initialize(self, parameter, max_object_pairs):
+        if not self.null_mode:
+            self.cplist = CoupledContactTable.field(shape=int(math.ceil(parameter * max_object_pairs)))
+            self.hist_cplist = HistoryContactTable.field(shape=int(math.ceil(parameter * max_object_pairs)))
 
     def get_componousID(self, max_material_num, materialID1, materialID2):
         return int(materialID1 * max_material_num + materialID2)

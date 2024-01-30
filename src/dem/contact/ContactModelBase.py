@@ -1,5 +1,5 @@
 import taichi as ti
-import os
+import os, math
 import numpy as np
 
 from src.dem.BaseStruct import (ContactTable, HistoryContactTable)
@@ -20,14 +20,15 @@ class ContactModelBase(object):
         self.contact_active = None
         self.deactivate_exist = None
         self.surfaceProps = None
+        self.null_mode = True
 
-    def manage_function(self, object_type, work_type, no_opertaion=False):
+    def manage_function(self, object_type, work_type):
         self.contact_list_initialize = self.no_contact_list_initial
         self.resolve = self.no_operation
         self.update_contact_table = self.no_operation
         self.add_surface_properties = self.no_add_property
         self.calcu_critical_timesteps = self.no_critical_timestep
-        if not no_opertaion:
+        if not self.null_mode:
             self.contact_list_initialize = self.contact_list_initial
             self.add_surface_properties = self.add_surface_property
             self.calcu_critical_timesteps = self.calcu_critical_timestep
@@ -46,9 +47,9 @@ class ContactModelBase(object):
             if self.resolve is None:
                 raise RuntimeError("Internal error!")
 
-    def collision_initialize(self, parameter, work_type, max_object_pairs, object_num1, object_num2, no_operation=False):
-        if not no_operation:
-            self.cplist = ContactTable.field(shape=int(parameter * max_object_pairs))
+    def collision_initialize(self, parameter, work_type, max_object_pairs, object_num1, object_num2):
+        if not self.null_mode:
+            self.cplist = ContactTable.field(shape=int(math.ceil(parameter * max_object_pairs)))
             '''
             self.active_contact = ti.field(int, shape=int(parameter * max_object_pairs) + 1)
             self.active_pse = PrefixSumExecutor(int(parameter * max_object_pairs) + 1)
@@ -58,9 +59,9 @@ class ContactModelBase(object):
                 self.deactivate_exist = ti.field(ti.u8, shape=())
                 self.contact_active = ti.field(u1)
                 ti.root.dense(ti.i, round32(object_num1 * object_num2)//32).quant_array(ti.i, dimensions=32, max_num_bits=32).place(self.contact_active)
-                self.hist_cplist = ContactTable.field(shape=int(parameter * max_object_pairs))
+                self.hist_cplist = ContactTable.field(shape=int(math.ceil(parameter * max_object_pairs)))
             elif work_type == 2:
-                self.hist_cplist = HistoryContactTable.field(shape=int(parameter * max_object_pairs))
+                self.hist_cplist = HistoryContactTable.field(shape=int(math.ceil(parameter * max_object_pairs)))
                 #self.active_index = ti.field(int, shape=int(0.5 * max_object_pairs))
 
     def get_componousID(self, max_material_num, materialID1, materialID2):

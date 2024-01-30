@@ -1,3 +1,5 @@
+import warnings
+
 from src.mpdem.contact.ContactModelBase import ContactModelBase
 from src.mpdem.contact.HertzMindlin import HertzMindlinModel
 from src.mpdem.contact.Linear import LinearModel
@@ -28,63 +30,49 @@ class ContactManager:
             if material_type == "Fluid" and sims.particle_particle_contact_model != "Fluid Particle":
                 raise RuntimeError("particle-particle contact model should be set as /Fluid Particle/")
             
-            if sims.particle_particle_contact_model == "Linear Model":
-                self.physpp = LinearModel(sims.max_material_num)
-            elif sims.particle_particle_contact_model == "Hertz Mindlin Model":
-                self.physpp = HertzMindlinModel(sims.max_material_num)
-            elif sims.particle_particle_contact_model == "Linear Bond Model":
-                self.physpp = LinearBondModel(sims.max_material_num)
-            elif sims.particle_particle_contact_model == "Fluid Particle":
-                self.physpp = ParticleFluid(sims.max_material_num)
-            else:
-                if sims.particle_particle_contact_model is None:
-                    self.physpw = ContactModelBase()
+            if sims.particle_interaction is True:
+                if sims.particle_particle_contact_model == "Linear Model":
+                    self.physpp = LinearModel(sims.max_material_num)
+                elif sims.particle_particle_contact_model == "Hertz Mindlin Model":
+                    self.physpp = HertzMindlinModel(sims.max_material_num)
+                elif sims.particle_particle_contact_model == "Linear Bond Model":
+                    self.physpp = LinearBondModel(sims.max_material_num)
+                elif sims.particle_particle_contact_model == "Fluid Particle":
+                    self.physpp = ParticleFluid(sims.max_material_num)
                 else:
                     raise ValueError('Particle to Particle Contact Model error!')
-                
-            no_operation = False
-            if sims.particle_particle_contact_model is None or sims.particle_interaction is False:
-                no_operation = True
-            self.physpp.manage_function("particle", sims.contact_method, no_operation)
+            else:
+                self.physpw = ContactModelBase()
+            self.physpp.manage_function("particle", sims.contact_method)
         
     def particle_wall_initialize(self, sims: Simulation, material_type):
         if self.physpw is None:
             if material_type == "Fluid" and sims.particle_wall_contact_model != "Fluid Particle":
                 raise RuntimeError("particle-wall contact model should be set as /Fluid Particle/")
             
-            if sims.particle_wall_contact_model == "Linear Model":
-                self.physpw = LinearModel(sims.max_material_num)
-            elif sims.particle_wall_contact_model == "Hertz Mindlin Model":
-                self.physpw = HertzMindlinModel(sims.max_material_num)
-            elif sims.particle_wall_contact_model == "Linear Bond Model":
-                self.physpw = LinearBondModel(sims.max_material_num)
-            elif sims.particle_wall_contact_model == "Fluid Particle":
-                self.physpw = ParticleFluid(sims.max_material_num)
-            else:
-                if sims.particle_wall_contact_model is None:
-                    self.physpw = ContactModelBase()
+            if sims.wall_interaction is True:
+                if sims.particle_wall_contact_model == "Linear Model":
+                    self.physpw = LinearModel(sims.max_material_num)
+                elif sims.particle_wall_contact_model == "Hertz Mindlin Model":
+                    self.physpw = HertzMindlinModel(sims.max_material_num)
+                elif sims.particle_wall_contact_model == "Linear Bond Model":
+                    self.physpw = LinearBondModel(sims.max_material_num)
+                elif sims.particle_wall_contact_model == "Fluid Particle":
+                    self.physpw = ParticleFluid(sims.max_material_num)
                 else:
                     raise ValueError('Particle to Wall Contact Model error!')
-                
-            no_operation = False
-            if sims.particle_wall_contact_model is None or sims.wall_interaction is False:
-                no_operation = True 
-            self.physpw.manage_function("wall", None, no_operation)
+            else:
+                self.physpw = ContactModelBase()
+            self.physpw.manage_function("wall", None)
 
     def collision_list(self, sims: Simulation):
         if self.physpp:
-            no_operation = False
-            if sims.particle_particle_contact_model is None or sims.particle_interaction is False:
-                no_operation = True
-            self.physpp.collision_initialize(sims.compaction_ratio, sims.max_potential_particle_pairs, no_operation)
+            self.physpp.collision_initialize(sims.compaction_ratio[0], sims.max_potential_particle_pairs)
         else:
             raise RuntimeError("Particle(MPM)-Particle(DEM) contact model have not been activated successfully!")
         
         if self.physpw:   
-            no_operation = False
-            if sims.particle_wall_contact_model is None or sims.wall_interaction is False:
-                no_operation = True 
-            self.physpw.collision_initialize(sims.compaction_ratio, sims.max_potential_wall_pairs, no_operation)
+            self.physpw.collision_initialize(sims.compaction_ratio[1], sims.max_potential_wall_pairs)
         else:
             raise RuntimeError("Particle(MPM)-Wall contact model have not been activated successfully!")
 
@@ -92,6 +80,30 @@ class ContactManager:
         if materialID1 > sims.max_material_num - 1 or materialID2 > sims.max_material_num - 1:
             raise RuntimeError("Material ID is out of the scope!")
         else:
+            if dType == "particle-particle":
+                if self.physpp.null_mode is True:
+                    dType = None
+                    warnings.warn("Particle-particle contact model is NULL, this procedure is automatically failed")
+                    print('\n')
+            elif dType == "particle-wall":
+                if self.physpw.null_mode is True:
+                    dType = None
+                    warnings.warn("Particle-wall contact model is NULL, this procedure is automatically failed")
+                    print('\n')
+            elif dType == "all":
+                if self.physpp.null_mode is True and self.physpw.null_mode is True:
+                    dType = None
+                    warnings.warn("Particle-particle contact model and particle-wall contact model are NULL, this procedure is automatically failed")
+                    print('\n')
+                elif self.physpp.null_mode is False and self.physpw.null_mode is True:
+                    dType = "particle-particle"
+                    warnings.warn("Particle-wall contact model is NULL, this procedure automatically transforms to add surface properties into particle-particle contact")
+                    print('\n')
+                elif self.physpp.null_mode is True and self.physpw.null_mode is False:
+                    dType = "particle-wall"
+                    warnings.warn("Particle-particle contact model is NULL, this procedure automatically transforms to add surface properties into particle-wall contact")
+                    print('\n')
+                    
             if dType == "particle-particle":
                 componousID = self.physpp.add_surface_properties(sims.max_material_num, materialID1, materialID2, property)
                 self.physpp.surfaceProps[componousID].print_surface_info(materialID1, materialID2)

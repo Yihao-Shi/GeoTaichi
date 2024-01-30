@@ -17,6 +17,7 @@ class LinearModel(ContactModelBase):
     def __init__(self, max_material_num) -> None:
         super().__init__()
         self.surfaceProps = LinearSurfaceProperty.field(shape=max_material_num * max_material_num)
+        self.null_mode = False
 
     def calcu_critical_timestep(self, scene: myScene, max_material_num):
         mass = scene.find_particle_min_mass()

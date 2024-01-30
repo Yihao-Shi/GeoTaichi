@@ -1,5 +1,6 @@
 import taichi as ti
 import numpy as np
+import math
 
 from src.dem.contact.ContactKernel import *
 from src.dem.BaseStruct import (HistoryRollingContactTable, RollingContactTable)
@@ -19,6 +20,7 @@ class JiangRollingResistanceModel(ContactModelBase):
     def __init__(self, max_material_num) -> None:
         super().__init__()
         self.surfaceProps = JiangRollingSurfaceProperty.field(shape=max_material_num * max_material_num)
+        self.null_mode = False
 
     def calcu_critical_timestep(self, scene: myScene, max_material_num):
         mass = scene.find_particle_min_mass()
@@ -36,16 +38,16 @@ class JiangRollingResistanceModel(ContactModelBase):
                     maxmodulus = ti.max(maxmodulus, self.surfaceProps[componousID].YoungModulus)
         return maxmodulus
     
-    def collision_initialize(self, parameter, work_type, max_particle_pairs, object_num1, object_num2, no_operation=False):
-        if not no_operation:
-            self.cplist = RollingContactTable.field(shape=int(parameter * max_particle_pairs))
+    def collision_initialize(self, parameter, work_type, max_particle_pairs, object_num1, object_num2):
+        if not self.null_mode:
+            self.cplist = RollingContactTable.field(shape=int(math.ceil(parameter * max_particle_pairs)))
             if work_type == 0 or work_type == 1:
                 self.deactivate_exist = ti.field(ti.u8, shape=())
                 self.contact_active = ti.field(u1)
                 ti.root.dense(ti.i, round32(object_num1 * object_num2)//32).quant_array(ti.i, dimensions=32, max_num_bits=32).place(self.contact_active)
-                self.old_cplist = RollingContactTable.field(shape=int(parameter * max_particle_pairs))
+                self.old_cplist = RollingContactTable.field(shape=int(math.ceil(parameter * max_particle_pairs)))
             elif work_type == 2:
-                self.hist_cplist = HistoryRollingContactTable.field(shape=int(parameter * max_particle_pairs))
+                self.hist_cplist = HistoryRollingContactTable.field(shape=int(math.ceil(parameter * max_particle_pairs)))
 
     def add_surface_property(self, max_material_num, materialID1, materialID2, property):
         YoungModulus = DictIO.GetEssential(property, 'YoungModulus')
