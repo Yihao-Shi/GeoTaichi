@@ -29,12 +29,6 @@ dempm.set_solver({
                       "SaveInterval":     0.002,
                       "SavePath":         'OutputData/velz112'
                  })
-                 
-
-dempm.memory_allocate(memory={
-                                  "body_coordination_number":    50,
-                                  "wall_coordination_number":    6
-                             })
 
 dempm.dem.memory_allocate(memory={
                                 "max_material_number": 1,
@@ -54,6 +48,12 @@ dempm.mpm.memory_allocate(memory={
                                                           },
                                 "verlet_distance_multiplier":  0.8
                             })   
+                 
+
+dempm.memory_allocate(memory={
+                                  "body_coordination_number":    50,
+                                  "wall_coordination_number":    6
+                             })
 
 
 dempm.dem.add_attribute(materialID=0,

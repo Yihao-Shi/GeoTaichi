@@ -29,12 +29,6 @@ dempm.set_solver({
                       "SaveInterval":     0.1,
                       "SavePath":         "OutputData/P2PContact/mu=0.1"
                  })
-
-dempm.memory_allocate(memory={
-                                  "max_material_number":         1,
-                                  "body_coordination_number":    8,
-                                  "wall_coordination_number":    6,
-                             })
                              
 dempm.dem.memory_allocate(memory={
                                 "max_material_number": 1,
@@ -52,6 +46,12 @@ dempm.mpm.memory_allocate(memory={
                                                                "max_reflection_constraint":   61820
                                                           }
                             })
+
+dempm.memory_allocate(memory={
+                                  "max_material_number":         1,
+                                  "body_coordination_number":    8,
+                                  "wall_coordination_number":    6,
+                             })
 
 
 dempm.dem.add_attribute(materialID=0,

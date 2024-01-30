@@ -86,6 +86,8 @@ class DEMPM(object):
             print('\n')
 
     def memory_allocate(self, memory, log=True):
+        if self.dem.sims.max_material_num == 0 or self.mpm.sims.max_material_num == 0:
+            raise RuntimeError("Should allocate DEM and MPM memory first!")
         self.sims.set_material_num(max(self.dem.sims.max_material_num, self.mpm.sims.max_material_num))
         self.sims.set_body_coordination_number(DictIO.GetAlternative(memory, "body_coordination_number", 64))
         self.sims.set_wall_coordination_number(DictIO.GetAlternative(memory, "wall_coordination_number", 6))

@@ -26,13 +26,7 @@ dempm.set_solver({
                       "Timestep":         1e-6,
                       "SimulationTime":   0.1,
                       "SaveInterval":     0.01
-                 })
-
-dempm.memory_allocate(memory={
-                                  "max_material_number":         1,
-                                  "body_coordination_number":    2500,
-                                  "wall_coordination_number":    6,
-                             })           
+                 })    
 
 
 dempm.dem.memory_allocate(memory={
@@ -52,6 +46,12 @@ dempm.mpm.memory_allocate(memory={
                                                                "max_reflection_constraint":   61820
                                                           }
                             })
+
+dempm.memory_allocate(memory={
+                                  "max_material_number":         1,
+                                  "body_coordination_number":    2500,
+                                  "wall_coordination_number":    6,
+                             })       
 
 
 
