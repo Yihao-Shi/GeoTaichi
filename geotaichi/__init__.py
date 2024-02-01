@@ -7,10 +7,33 @@ __license__ = "GNU License"
 
 import taichi as ti
 import psutil
+import sys, os, datetime  
 
-from src import DEM, MPM, DEMPM, MPDEM
+from src import DEM, MPM, DEMPM
 
-def init(arch="gpu", cpu_max_num_threads=0, offline_cache=True, debug=False, default_fp="float64", default_ip="int32", device_memory_GB=2, device_memory_fraction=0.8, kernel_profiler=False):
+
+class Logger(object):
+    def __init__(self, filename='Default.log', path='./'):
+        self.terminal = sys.stdout
+        self.path = os.path.join(path, filename)
+        self.log = open(self.path, "a", encoding='utf8')
+        
+        
+    def write(self, message):
+        self.terminal.write(message)
+        self.log.write(message)
+        
+    def flush(self):
+        pass     
+       
+       
+def make_print_to_file(path='./'):
+    filename = datetime.datetime.now().strftime('day'+'%Y_%m_%d')
+    sys.stdout = Logger(filename+'.log', path=path)
+    
+
+
+def init(arch="gpu", cpu_max_num_threads=0, offline_cache=True, debug=False, default_fp="float64", default_ip="int32", device_memory_GB=2, device_memory_fraction=0.8, kernel_profiler=False, log=True):
     
     
     if default_fp == "float64": default_fp = ti.f64
@@ -35,6 +58,6 @@ def init(arch="gpu", cpu_max_num_threads=0, offline_cache=True, debug=False, def
             ti.init(arch=ti.gpu, offline_cache=offline_cache, device_memory_fraction=device_memory_fraction, debug=debug, default_fp=default_fp, default_ip=default_ip, kernel_profiler=kernel_profiler, log_level=ti.ERROR)
     else:
         raise RuntimeError("arch is not recognized, please choose in the following: ['cpu', 'gpu']")
-       
         
-
+    if log:
+        make_print_to_file()
