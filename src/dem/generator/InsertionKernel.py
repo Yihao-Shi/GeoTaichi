@@ -409,13 +409,13 @@ def kernel_multisphere_generate_without_overlap_(nspheres: int, r_equiv: float, 
 
             if invalid == 0: 
                 iclump = insert_body_num[None]
-                clump_coords[iclump] = start_point + com_pos
+                clump_coords[iclump] = com_pos
                 clump_radii[iclump] = equiv_rad
                 clump_orients[iclump] = clump_orient
                 for pebble in range(nspheres):
                     ipebble = insert_particle_in_neighbor[None] 
                     pebble_coord, pebble_radius = get_actual_clump(pebble, com_pos, scale_factor, clump_orient, x_pebble, rad_pebble)
-                    pebble_coords[ipebble] = start_point + pebble_coord
+                    pebble_coords[ipebble] = pebble_coord
                     pebble_radii[ipebble] = pebble_radius        
                     insert_particle(cell_num, cell_size, pebble_coord - start_point, pebble_radius, insert_particle_in_neighbor, position, radius, num_particle_in_cell, particle_neighbor)
                 insert_body_num[None] += 1

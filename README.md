@@ -21,12 +21,12 @@ GeoTaichi is a research project that is currently __under development__. Our vis
 Have a cool example? Submit a PR!
 
 ### Material point method (MPM)
-| [Column collapse](examples/mpm/ColumnCollapse/DPmaterial.py) | [Dam break](examples/mpm/ColumnCollapse/NewtonianFluid.py) | [Strip footing](examples/mpm/Footing/StripFootingTresca.py) |
+| [Column collapse](example/mpm/ColumnCollapse/DPmaterial.py) | [Dam break](example/mpm/ColumnCollapse/NewtonianFluid.py) | [Strip footing](example/mpm/Footing/StripFootingTresca.py) |
 | --- | --- | --- |
 | ![Column collapse](images/soil.gif) | ![Dam break](images/newtonian.gif) | ![Strip footing](images/footing.gif) |
 
 ### Discrete element method (DEM)
-| [Granular packing](examples/dem/GranularPackings/clumps_packing.py) | [Heap formation](examples/dem/HeapFormation/sphere_packing.py) | [Triaxial shear test](examples/dem/TriaxialTest/drained.py) |
+| [Granular packing](example/dem/GranularPackings/clumps_packing.py) | [Heap formation](example/dem/HeapFormation/sphere_packing.py) | [Triaxial shear test](example/dem/TriaxialTest/drained.py) |
 | --- | --- | --- | 
 | ![Granular packing](images/clump.gif) | ![Heap formation](images/heap_formation.gif) | ![Triaxial shear test](images/force_chain.gif) |
 
