@@ -2,7 +2,7 @@
 
 ![Github License](https://img.shields.io/github/license/Yihao-Shi/GeoTaichi)          ![Github stars](https://img.shields.io/github/stars/Yihao-Shi/GeoTaichi)          ![Github forks](https://img.shields.io/github/forks/Yihao-Shi/GeoTaichi)          ![Github Downloads (all assets, latest release)](https://img.shields.io/github/downloads/Yihao-Shi/GeoTaichi/latest/total)
 
-## Breif description
+## Brief description
 
 A [Taichi](https://github.com/taichi-dev/taichi)-based numerical package for high-performance simulations of multiscale and multiphysics geophysical problems. 
 Developed by [Multiscale Geomechanics Lab](https://person.zju.edu.cn/en/nguo), Zhejiang University.
@@ -17,23 +17,25 @@ GeoTaichi is a collection of several numerical tools, currently including __Disc
 GeoTaichi is a research project that is currently __under development__. Our vision is to share with the geotechnical community a free, open-source (under the GPL-3.0 License) software that facilitates the relevant computational research. In the Taichi ecosystem, we hope to emphasize the potential of Taichi for scientific computing. Furthermore, GeoTaichi is high parallelized, multi-platform (supporting for Windows, Linux and Macs) and multi-architecture (supporting for both CPU and GPU).
 
 ## Examples
+
+Have a cool example? Submit a PR!
+
 ### Material point method (MPM)
-- Soil and fluid dynamics
-<p align="center">
-    <img src="https://github.com/Yihao-Shi/GeoTaichi/blob/main/images/soil.gif" width="30%" height="30%" /><img src="https://github.com/Yihao-Shi/GeoTaichi/blob/main/images/newtonian.gif" width="30%" height="30%" /><img src="https://github.com/Yihao-Shi/GeoTaichi/blob/main/images/footing.gif" width="30%" height="30%" />
-</p>
+| [Column collapse](examples/mpm/ColumnCollapse/DPmaterial.py) | [Dam break](examples/mpm/ColumnCollapse/NewtonianFluid.py) | [Strip footing](examples/mpm/Footing/StripFootingTresca.py) |
+| --- | --- | --- | --- |
+| ![Column collapse](images/soil.gif) | ![Dam break](images/newtonian.gif) | ![Strip footing](images/footing.gif) |
 
 ### Discrete element method (DEM)
-<p align="center">
-    <img src="https://github.com/Yihao-Shi/GeoTaichi/blob/main/images/clump.gif" width="30%" height="30%" /><img src="https://github.com/Yihao-Shi/GeoTaichi/blob/main/images/heap_formation.gif" width="30%" height="30%" /><img src="https://github.com/Yihao-Shi/GeoTaichi/blob/main/images/force_chain.gif" width="30%" height="30%" />
-</p>
+| [Granular packing](examples/dem/GranularPackings/clumps_packing.py) | [Heap formation](examples/dem/HeapFormation/sphere_packing.py) | [Triaxial shear test](examples/dem/TriaxialTest/drained.py) |
+| --- | --- | --- | --- |
+| ![Granular packing](images/clump.gif) | ![Heap formation](images/heap_formation.gif) | ![Triaxial shear test](images/force_chain.gif) |
 
 The performance of GeoTaichi is compared with similar simulator in the field, such as [MUSEN](https://msolids.net/musen/) and [CoSim](http://www.meggs.hydr.tsinghua.edu.cn/index.html), showing a notable improvement in both computational efficiency and memory usage.
 
 ### Coupled material point-discrete element method (MPDEM)
-<p align="center">
-  <img src="https://github.com/Yihao-Shi/GeoTaichi/blob/main/images/mpdem1.gif" width="50%" height="50%" /><img src="https://github.com/Yihao-Shi/GeoTaichi/blob/main/images/mpdem2.gif" width="50%" height="50%" />
-</p>
+| [A sphere impacting granular bed](example/dempm/SphereImpact/plane_strain.py) | [Granular column impacting cubic particles](example/dempm/GranularImpact/granular_impact.py) |
+| --- | --- | --- | --- |
+| ![A sphere impacting granular bed](images/mpdem1.gif) | ![Granular column impacting cubic particles](images/mpdem2.gif) |
 
 ## Quick start
 ### Dependencies

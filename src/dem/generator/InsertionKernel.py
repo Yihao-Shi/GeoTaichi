@@ -286,6 +286,7 @@ def kernel_sphere_generate_without_overlap_(min_rad: float, max_rad: float, trie
                                             cell_num: ti.types.vector(3, int), cell_size: float, position: ti.template(), radius: ti.template(), num_particle_in_cell: ti.template(), 
                                             particle_neighbor: ti.template(), check_in_domain: ti.template(), overlap: ti.template(), insert_particle: ti.template()):
     while insert_body_num[None] < expected_body_num:
+        count = 0
         for _ in range(tries_default):
             sphere_radius = min_rad + ti.random() * (max_rad - min_rad)
             offset = vec3f([ti.random(), ti.random(), ti.random()]) * region_size
@@ -298,6 +299,9 @@ def kernel_sphere_generate_without_overlap_(min_rad: float, max_rad: float, trie
                 insert_particle(cell_num, cell_size, sphere_coord - start_point, sphere_radius, insert_particle_in_neighbor, position, radius, num_particle_in_cell, particle_neighbor)
                 insert_body_num[None] += 1
                 break
+            count += 1
+        if count == tries_default:
+            break
 
 @ti.kernel
 def kernel_distribute_sphere_(min_rad: float, max_rad: float, volume_expect: float, insert_body_num: ti.template(), insert_particle_in_neighbor: ti.template(), 
@@ -387,13 +391,13 @@ def kernel_multisphere_generate_without_overlap_(nspheres: int, r_equiv: float, 
                                                  position: ti.template(), radius: ti.template(), num_particle_in_cell: ti.template(), particle_neighbor: ti.template(), check_in_domain: ti.template(), 
                                                  start_point: ti.types.vector(3, float), region_size: ti.types.vector(3, float), overlap: ti.template(), insert_particle: ti.template()):
     while insert_body_num[None] < expected_body_num:
-        #print(insert_body_num[None])
+        count = 0
         for _ in range(tries_default):
             equiv_rad = min_rad + ti.random() * (max_rad - min_rad)
             scale_factor = equiv_rad / r_equiv
             
             offset = vec3f([ti.random(), ti.random(), ti.random()]) * region_size
-            com_pos = offset 
+            com_pos = start_point + offset 
             clump_orient = get_orientation()
             invalid = 0
             for pebble in range(nspheres):
@@ -416,6 +420,9 @@ def kernel_multisphere_generate_without_overlap_(nspheres: int, r_equiv: float, 
                     insert_particle(cell_num, cell_size, pebble_coord - start_point, pebble_radius, insert_particle_in_neighbor, position, radius, num_particle_in_cell, particle_neighbor)
                 insert_body_num[None] += 1
                 break
+            count += 1
+        if count == tries_default:
+            break
 
 @ti.kernel
 def kernel_distribute_multisphere_(nspheres: int, r_equiv: float, volume_expect: float, x_pebble: ti.types.ndarray(), rad_pebble: ti.types.ndarray(), min_rad: float, max_rad: float, 

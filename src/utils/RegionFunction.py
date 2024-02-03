@@ -1,4 +1,4 @@
-import math
+import math, copy
 import taichi as ti
 
 from src.utils.constants import PI
@@ -32,12 +32,14 @@ class RegionFunction(object):
         self.zdirection = vec3f([0, 0, 1])
         self.start_point = vec3f([0, 0, 0])
         self.region_size = vec3f([0, 0, 0])
+        self.local_start_point = vec3f([0, 0, 0])
+        self.local_region_size = vec3f([0, 0, 0])
         self.rotate_center = vec3f([0, 0, 0])
         self.cal_volume = None
         self.function = None
 
     def finalize(self):
-        del self.name, self.zdirection, self.start_point, self.region_size, self.cal_volume, self.function
+        del self.name, self.zdirection, self.start_point, self.region_size, self.local_start_point, self.local_region_size, self.cal_volume, self.function
         
     def dem_finalize(self):
         self.finalize()
@@ -94,18 +96,19 @@ class RegionFunction(object):
         if not self.region_type in function_hashmap:
             raise KeyError("Region Type error")
         self.name = DictIO.GetEssential(region_dict, "Name")
-        self.zdirection = DictIO.GetAlternative(region_dict, "zdirection", vec3f([0, 0, 1]))
+        self.zdirection = DictIO.GetAlternative(region_dict, "zdirection", [0, 0, 1])
         self.all_in = 1 if DictIO.GetAlternative(region_dict, "all_in", True) else 0
+        self.zdirection = vec3f(self.zdirection).normalized()
         
-        self.start_point = DictIO.GetEssential(region_dict, "BoundingBoxPoint")
-        self.region_size = DictIO.GetEssential(region_dict, "BoundingBoxSize")
+        self.local_start_point = DictIO.GetEssential(region_dict, "BoundingBoxPoint")
+        self.local_region_size = DictIO.GetEssential(region_dict, "BoundingBoxSize")
         if self.region_type == "UserDefined":
             self.cal_volume = DictIO.GetEssential(region_dict, "RegionVolume")
             self.function = DictIO.GetEssential(region_dict, "RegionFunction")
         else:
             self.cal_volume = DictIO.GetEssential(volume_hashmap, self.region_type)
             self.function = DictIO.GetEssential(function_hashmap, self.region_type)
-        self.rotate_center = DictIO.GetAlternative(region_dict, "RotateCenter", self.start_point + 0.5 * self.region_size)
+        self.rotate_center = DictIO.GetAlternative(region_dict, "RotateCenter", self.local_start_point + 0.5 * self.local_region_size)
         del function_hashmap, volume_hashmap
         self.calcuate_actual_bounding_box()
 
@@ -119,16 +122,16 @@ class RegionFunction(object):
         print("Direction:", self.zdirection, '\n')
 
     def calcuate_actual_bounding_box(self):
-        vertice1 = vec3f(self.start_point[0],                       self.start_point[1],                       self.start_point[2])
-        vertice2 = vec3f(self.start_point[0] + self.region_size[0], self.start_point[1],                       self.start_point[2])
-        vertice3 = vec3f(self.start_point[0],                       self.start_point[1] + self.region_size[1], self.start_point[2])
-        vertice4 = vec3f(self.start_point[0] + self.region_size[0], self.start_point[1] + self.region_size[1], self.start_point[2])
-        vertice5 = vec3f(self.start_point[0],                       self.start_point[1],                       self.start_point[2] + self.region_size[2])
-        vertice6 = vec3f(self.start_point[0] + self.region_size[0], self.start_point[1],                       self.start_point[2] + self.region_size[2])
-        vertice7 = vec3f(self.start_point[0],                       self.start_point[1] + self.region_size[1], self.start_point[2] + self.region_size[2])
-        vertice8 = vec3f(self.start_point[0] + self.region_size[0], self.start_point[1] + self.region_size[1], self.start_point[2] + self.region_size[2])
+        vertice1 = vec3f(self.local_start_point[0],                             self.local_start_point[1],                             self.local_start_point[2])
+        vertice2 = vec3f(self.local_start_point[0] + self.local_region_size[0], self.local_start_point[1],                             self.local_start_point[2])
+        vertice3 = vec3f(self.local_start_point[0],                             self.local_start_point[1] + self.local_region_size[1], self.local_start_point[2])
+        vertice4 = vec3f(self.local_start_point[0] + self.local_region_size[0], self.local_start_point[1] + self.local_region_size[1], self.local_start_point[2])
+        vertice5 = vec3f(self.local_start_point[0],                             self.local_start_point[1],                             self.local_start_point[2] + self.local_region_size[2])
+        vertice6 = vec3f(self.local_start_point[0] + self.local_region_size[0], self.local_start_point[1],                             self.local_start_point[2] + self.local_region_size[2])
+        vertice7 = vec3f(self.local_start_point[0],                             self.local_start_point[1] + self.local_region_size[1], self.local_start_point[2] + self.local_region_size[2])
+        vertice8 = vec3f(self.local_start_point[0] + self.local_region_size[0], self.local_start_point[1] + self.local_region_size[1], self.local_start_point[2] + self.local_region_size[2])
 
-        rotation_matrix = RodriguesRotationMatrix(vec3f(0, 0, 1), self.zdirection)
+        rotation_matrix = RodriguesRotationMatrix(vec3f(0, 0, 1), self.zdirection).transpose()
         vertice1 = rotation_matrix @ (vertice1 - self.rotate_center) + self.rotate_center
         vertice2 = rotation_matrix @ (vertice2 - self.rotate_center) + self.rotate_center
         vertice3 = rotation_matrix @ (vertice3 - self.rotate_center) + self.rotate_center
@@ -172,23 +175,23 @@ class RegionFunction(object):
     # ====================================== Region define ===================================== #
     @ti.pyfunc
     def bounding_center(self):
-        return self.start_point + 0.5 * self.region_size
+        return self.rotate_center
     
     @ti.pyfunc
     def RegionRetangleVolume(self):
-        return self.region_size[0] * self.region_size[1] * self.region_size[2]
+        return self.local_region_size[0] * self.local_region_size[1] * self.local_region_size[2]
     
     @ti.pyfunc
     def RegionTrianglarPrismVolume(self):
-        return 0.5 * self.region_size[0] * self.region_size[1] * self.region_size[2]
+        return 0.5 * self.local_region_size[0] * self.local_region_size[1] * self.local_region_size[2]
     
     @ti.pyfunc
     def RegionSpheroidVolume(self):
-        return 4./3. * PI * (0.5*self.region_size[0]) * (0.5*self.region_size[1]) * (0.5*self.region_size[2])
+        return 4./3. * PI * (0.5*self.local_region_size[0]) * (0.5*self.local_region_size[1]) * (0.5*self.local_region_size[2])
     
     @ti.pyfunc
     def RegionCylinderVolume(self):
-        return PI * (0.5*self.region_size[0]) * (0.5*self.region_size[1]) * self.region_size[2]
+        return PI * (0.5*self.local_region_size[0]) * (0.5*self.local_region_size[1]) * self.local_region_size[2]
 
 
     # ================================================================= #
@@ -202,15 +205,17 @@ class RegionFunction(object):
     # ================================================================= #
     @ti.pyfunc
     def RegionRetangle(self, new_position, new_radius=0.):
-        xpos = new_position[0]
-        ypos = new_position[1]
-        zpos = new_position[2]
-        x0 = self.start_point[0]
-        x1 = self.start_point[1]
-        x2 = self.start_point[2]
-        l0 = self.region_size[0]
-        l1 = self.region_size[1]
-        l2 = self.region_size[2]
+        rotation_matrix = RodriguesRotationMatrix(vec3f(0, 0, 1), self.zdirection)
+        local_position = rotation_matrix.transpose() @ (new_position - self.rotate_center) + self.rotate_center
+        xpos = local_position[0]
+        ypos = local_position[1]
+        zpos = local_position[2]
+        x0 = self.local_start_point[0]
+        x1 = self.local_start_point[1]
+        x2 = self.local_start_point[2]
+        l0 = self.local_region_size[0]
+        l1 = self.local_region_size[1]
+        l2 = self.local_region_size[2]
         return x0 + self.all_in * new_radius <= xpos <= x0 + l0 - self.all_in * new_radius and \
                 x1 + self.all_in * new_radius <= ypos <= x1 + l1 - self.all_in * new_radius and \
                 x2 + self.all_in * new_radius <= zpos <= x2 + l2 - self.all_in * new_radius 
@@ -227,45 +232,51 @@ class RegionFunction(object):
     # ============================================= #
     @ti.pyfunc
     def RegionTrianglarPrism(self, new_position, new_radius=0.):
-        xpos = new_position[0]
-        ypos = new_position[1]
-        zpos = new_position[2]
-        x0 = self.start_point[0]
-        x1 = self.start_point[1]
-        x2 = self.start_point[2]
-        l0 = self.region_size[0]
-        l1 = self.region_size[1]
-        l2 = self.region_size[2]
+        rotation_matrix = RodriguesRotationMatrix(vec3f(0, 0, 1), self.zdirection)
+        local_position = rotation_matrix.transpose() @ (new_position - self.rotate_center) + self.rotate_center
+        xpos = local_position[0]
+        ypos = local_position[1]
+        zpos = local_position[2]
+        x0 = self.local_start_point[0]
+        x1 = self.local_start_point[1]
+        x2 = self.local_start_point[2]
+        l0 = self.local_region_size[0]
+        l1 = self.local_region_size[1]
+        l2 = self.local_region_size[2]
         return x0 + self.all_in * new_radius <= xpos <= x0 + l0 - self.all_in * new_radius and \
                 x1 + self.all_in * new_radius <= ypos <= x1 + l1 - self.all_in * new_radius and \
                 l2 * xpos + l0 * zpos - (x0 * l2 + x2 * l0 + l0 * l2) < 0.
 
     @ti.pyfunc
     def RegionSpheroid(self, new_position, new_radius=0.):
-        xpos = new_position[0]
-        ypos = new_position[1]
-        zpos = new_position[2]
-        x0 = self.start_point[0]
-        x1 = self.start_point[1]
-        x2 = self.start_point[2]
-        l0 = self.region_size[0]
-        l1 = self.region_size[1]
-        l2 = self.region_size[2]
+        rotation_matrix = RodriguesRotationMatrix(vec3f(0, 0, 1), self.zdirection)
+        local_position = rotation_matrix.transpose() @ (new_position - self.rotate_center) + self.rotate_center
+        xpos = local_position[0]
+        ypos = local_position[1]
+        zpos = local_position[2]
+        x0 = self.local_start_point[0]
+        x1 = self.local_start_point[1]
+        x2 = self.local_start_point[2]
+        l0 = self.local_region_size[0]
+        l1 = self.local_region_size[1]
+        l2 = self.local_region_size[2]
         return ((xpos - (x0 + 0.5 * l0)) / (0.5 * l0 - 2 * self.all_in * new_radius)) ** 2 \
                 + ((ypos - (x1 + 0.5 * l1)) / (0.5 * l1 - 2 * self.all_in * new_radius)) ** 2 \
                 + ((zpos - (x2 + 0.5 * l2)) / (0.5 * l2 - 2 * self.all_in * new_radius)) ** 2 - 1. < 0.
 
     @ti.pyfunc
     def RegionCylinder(self, new_position, new_radius=0.):
-        xpos = new_position[0]
-        ypos = new_position[1]
-        zpos = new_position[2]
-        x0 = self.start_point[0]
-        x1 = self.start_point[1]
-        x2 = self.start_point[2]
-        l0 = self.region_size[0]
-        l1 = self.region_size[1]
-        l2 = self.region_size[2]
+        rotation_matrix = RodriguesRotationMatrix(vec3f(0, 0, 1), self.zdirection)
+        local_position = rotation_matrix.transpose() @ (new_position - self.rotate_center) + self.rotate_center
+        xpos = local_position[0]
+        ypos = local_position[1]
+        zpos = local_position[2]
+        x0 = self.local_start_point[0]
+        x1 = self.local_start_point[1]
+        x2 = self.local_start_point[2]
+        l0 = self.local_region_size[0]
+        l1 = self.local_region_size[1]
+        l2 = self.local_region_size[2]
 
         return ((xpos - (x0 + 0.5 * l0)) / (0.5 * l0 - 2 * self.all_in * new_radius)) ** 2 + \
                ((ypos - (x1 + 0.5 * l1)) / (0.5 * l1 - 2 * self.all_in * new_radius)) ** 2 < 1. and \
@@ -274,4 +285,4 @@ class RegionFunction(object):
     @ti.pyfunc
     def SpecifiedRotate(self, position):
         rotation_matrix = RodriguesRotationMatrix(vec3f(0, 0, 1), self.zdirection)
-        return rotation_matrix @ (position - self.rotate_center) + self.rotate_center 
+        return rotation_matrix.transpose() @ (position - self.rotate_center) + self.rotate_center 

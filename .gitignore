@@ -10,6 +10,7 @@
 *.vtp
 *.txt
 *.svg
+*.log
 src/efem/
 src/iga/
 src/igadem/
