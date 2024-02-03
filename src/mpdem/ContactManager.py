@@ -81,25 +81,25 @@ class ContactManager:
             raise RuntimeError("Material ID is out of the scope!")
         else:
             if dType == "particle-particle":
-                if self.physpp.null_mode is True:
+                if self.physpp.null_model is True:
                     dType = None
                     warnings.warn("Particle-particle contact model is NULL, this procedure is automatically failed")
                     print('\n')
             elif dType == "particle-wall":
-                if self.physpw.null_mode is True:
+                if self.physpw.null_model is True:
                     dType = None
                     warnings.warn("Particle-wall contact model is NULL, this procedure is automatically failed")
                     print('\n')
             elif dType == "all":
-                if self.physpp.null_mode is True and self.physpw.null_mode is True:
+                if self.physpp.null_model is True and self.physpw.null_model is True:
                     dType = None
                     warnings.warn("Particle-particle contact model and particle-wall contact model are NULL, this procedure is automatically failed")
                     print('\n')
-                elif self.physpp.null_mode is False and self.physpw.null_mode is True:
+                elif self.physpp.null_model is False and self.physpw.null_model is True:
                     dType = "particle-particle"
                     warnings.warn("Particle-wall contact model is NULL, this procedure automatically transforms to add surface properties into particle-particle contact")
                     print('\n')
-                elif self.physpp.null_mode is True and self.physpw.null_mode is False:
+                elif self.physpp.null_model is True and self.physpw.null_model is False:
                     dType = "particle-wall"
                     warnings.warn("Particle-particle contact model is NULL, this procedure automatically transforms to add surface properties into particle-wall contact")
                     print('\n')
