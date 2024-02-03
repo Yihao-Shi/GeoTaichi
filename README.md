@@ -22,19 +22,19 @@ Have a cool example? Submit a PR!
 
 ### Material point method (MPM)
 | [Column collapse](examples/mpm/ColumnCollapse/DPmaterial.py) | [Dam break](examples/mpm/ColumnCollapse/NewtonianFluid.py) | [Strip footing](examples/mpm/Footing/StripFootingTresca.py) |
-| --- | --- | --- | --- |
+| --- | --- | --- |
 | ![Column collapse](images/soil.gif) | ![Dam break](images/newtonian.gif) | ![Strip footing](images/footing.gif) |
 
 ### Discrete element method (DEM)
 | [Granular packing](examples/dem/GranularPackings/clumps_packing.py) | [Heap formation](examples/dem/HeapFormation/sphere_packing.py) | [Triaxial shear test](examples/dem/TriaxialTest/drained.py) |
-| --- | --- | --- | --- |
+| --- | --- | --- | 
 | ![Granular packing](images/clump.gif) | ![Heap formation](images/heap_formation.gif) | ![Triaxial shear test](images/force_chain.gif) |
 
 The performance of GeoTaichi is compared with similar simulator in the field, such as [MUSEN](https://msolids.net/musen/) and [CoSim](http://www.meggs.hydr.tsinghua.edu.cn/index.html), showing a notable improvement in both computational efficiency and memory usage.
 
 ### Coupled material point-discrete element method (MPDEM)
 | [A sphere impacting granular bed](example/dempm/SphereImpact/plane_strain.py) | [Granular column impacting cubic particles](example/dempm/GranularImpact/granular_impact.py) |
-| --- | --- | --- | --- |
+| --- | --- |
 | ![A sphere impacting granular bed](images/mpdem1.gif) | ![Granular column impacting cubic particles](images/mpdem2.gif) |
 
 ## Quick start
