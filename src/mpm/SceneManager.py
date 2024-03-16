@@ -378,8 +378,8 @@ class myScene(object):
                 copy_valid_friction_constraint2D(self.friction_list, self.friction_boundary)
             elif sims.dimension == 3:
                 for i in range(level, level + nlevel):
-                    set_reflection_constraint(self.reflection_list, self.reflection_boundary, inodes, norm, i)
-                copy_valid_reflection_constraint(self.reflection_list, self.reflection_boundary)
+                    set_friction_constraint(self.friction_list, self.friction_boundary, inodes, mu, norm, i)
+                copy_valid_friction_constraint(self.reflection_list, self.reflection_boundary)
             
             print("Boundary Type: Friction Constraint")
             print("Start Point: ", start_point)

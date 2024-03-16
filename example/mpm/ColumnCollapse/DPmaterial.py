@@ -74,9 +74,8 @@ mpm.add_body(body={
 
 mpm.add_boundary_condition(boundary=[
                                         {
-                                             "BoundaryType":   "FrictionConstraint",
-                                             "Norm":       [0., 0., -1.],
-                                             "Friction":       0.3,
+                                             "BoundaryType":   "VelocityConstraint",
+                                             "Velocity":       [0., 0., 0.],
                                              "StartPoint":     [0., 0., 0.],
                                              "EndPoint":       [0.55, 0.2, 0.005]
                                         },
