@@ -34,7 +34,34 @@ def make_print_to_file(path='./'):
 
 
 def init(arch="gpu", cpu_max_num_threads=0, offline_cache=True, debug=False, default_fp="float64", default_ip="int32", device_memory_GB=2, device_memory_fraction=0.8, kernel_profiler=False, log=True):
+    """
+    初始化函数，用于设置Taichi的运行环境。
     
+    参数:
+    arch: 运行架构，可选 "cpu" 或 "gpu"。
+    cpu_max_num_threads: 若运行后端为CPU，CPU最大线程数，默认值为该CPU最大的线程数。
+    offline_cache: 选择是否储存编译后的文件，默认值为True。
+    debug: 是否启用调试模式。
+    default_fp: 默认浮点数类型，可选 "float64" 或 "float32"。
+    default_ip: 默认整数类型，可选 "int64" 或 "int32"。
+    device_memory_GB: 若运行后端为GPU,预先分配GPU内存大小（GB），如果设备内存小于2GB，则使用默认设置。
+    device_memory_fraction: 若运行后端为GPU,设备内存占用比例
+    kernel_profiler: 是否启用核函数计时。
+    log: 是否启用日志记录。
+    
+    Initializes the Taichi runtime environment.
+    Args:
+        arch (str): The execution architecture. Can be either "cpu" or "gpu".
+        cpu_max_num_threads (int): The maximum number of threads to use if the backend is CPU. Defaults to the maximum number of threads available on the CPU.
+        offline_cache (bool): Whether to store compiled files. Defaults to True.
+        debug (bool): Whether to enable debug mode.
+        default_fp (str): The default floating-point type. Can be "float64" or "float32".
+        default_ip (str): The default integer type. Can be "int64" or "int32".
+        device_memory_GB (int): The pre-allocated GPU memory size in GB. If the device memory is less than 2GB, the default settings will be used.
+        device_memory_fraction (float): The fraction of device memory to be used if the backend is GPU.
+        kernel_profiler (bool): Whether to enable kernel function profiling.
+        log (bool): Whether to enable logging.
+    """
     
     if default_fp == "float64": default_fp = ti.f64
     elif default_fp == "float32": default_fp = ti.f32

@@ -124,6 +124,24 @@ class MPM(object):
         self.generator.add_body(body, self.sims, self.scene)
 
     def add_body_from_file(self, body):
+        """生成颗粒从文件
+        Args:
+            Body[dict]: 颗粒的参数
+                FileType[str]: 文件类型 options:[txt, npz,obj] txt注释为#,[0,1,2]为x,y,z，[3]为体积，[4,5,6]为psize
+                Template[dict/list]: 文件的模板
+                    ParticleFile[str]: 颗粒文件的路径
+                    BodyID[int]: 颗粒的ID
+                    RigidBody[bool][option]:是否是刚体
+                        Density[float][option]: 密度 仅在RigidBody为True时有效，default: 2650
+                        MaterialID[uint]: 材料ID
+                    ParticleStress[dict][option]: 颗粒的应力 
+                        GravityField[bool]: 是否有重力场,default: False
+                        InitialStress[vec6f]: 初始应力,default: [0., 0., 0., 0., 0., 0.]
+                    Traction[dict][option]: 颗粒的牵引力,default:{}
+                    Orientation[vec3f][option]: 颗粒的方向,default: [0., 0.,1]
+                    InitialVelocity[vec3f][option]: 颗粒的初始速度,default: [0., 0., 0.]
+                    FixVelocity[list][option]: 颗粒的速度约束,default: ["Free","Free","Free"]
+        """
         self.scene.check_materials(self.sims)
         self.generator.read_body_file(body, self.sims, self.scene)
 
