@@ -1,3 +1,6 @@
+import sys
+sys.path.append('/home/eleven/work/GeoTaichi_release')
+
 from geotaichi import *
 
 init()
@@ -90,7 +93,7 @@ dem.add_wall(body={
                    "OuterNormal": ti.Vector([-1., 0., -0.])
                   })
                   
-dem.select_save_data(sphere=True, wall=True, particle_particle_contact=True, particle_wall_contact=True)
+dem.select_save_data(sphere=True, wall=True)
 
 dem.run()
 

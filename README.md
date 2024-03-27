@@ -159,6 +159,7 @@ The material point method (MPM) is a numerical technique used to simulate the be
 This project is licensed under the GNU General Public License v3 - see the [LICENSE](https://www.gnu.org/licenses/) for details.
 
 ## Citation
+Please kindly star :star: this project if it helps you. We take great efforts to develope and maintain it :grin::grin:.
 If you find GeoTaichi is helpful, you can [star it](https://github.com/Yihao-Shi/GeoTaichi).
 
 ## Acknowledgements

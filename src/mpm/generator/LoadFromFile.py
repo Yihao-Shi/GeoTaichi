@@ -143,7 +143,7 @@ class BodyReader(object):
         orientation = DictIO.GetAlternative(template, "Orientation", vec3f([0, 0, 1]))
         init_v = DictIO.GetAlternative(template, "InitialVelocity", vec3f([0, 0, 0]))
         fix_v_str = DictIO.GetAlternative(template, "FixVelocity", ["Free", "Free", "Free"])
-        fix_v = DictIO.GetEssential(self.FIX, fix_v_str)
+        fix_v = vec3u8([DictIO.GetEssential(self.FIX, is_fix) for is_fix in fix_v_str])
 
         init_particle_num = int(scene.particleNum[0])
         particle_cloud = np.loadtxt(particle_file, unpack=True, comments='#').transpose()
@@ -231,7 +231,7 @@ class BodyReader(object):
             orientation = DictIO.GetAlternative(template, "Orientation", vec3f([0, 0, 1]))
             init_v = DictIO.GetAlternative(template, "InitialVelocity", vec3f([0, 0, 0]))
             fix_v_str = DictIO.GetAlternative(template, "FixVelocity", ["Free", "Free", "Free"])
-            fix_v = DictIO.GetEssential(self.FIX, fix_v_str)
+            fix_v = vec3u8([DictIO.GetEssential(self.FIX, is_fix) for is_fix in fix_v_str])
             init_particle_num = int(scene.particleNum[0])
 
             particle_cloud = np.load(particle_file, allow_pickle=True) 
@@ -279,7 +279,7 @@ class BodyReader(object):
         orientation = DictIO.GetAlternative(template, "Orientation", vec3f([0, 0, 1]))
         init_v = DictIO.GetAlternative(template, "InitialVelocity", vec3f([0, 0, 0]))
         fix_v_str = DictIO.GetAlternative(template, "FixVelocity", ["Free", "Free", "Free"])
-        fix_v = DictIO.GetEssential(self.FIX, fix_v_str)
+        fix_v = vec3u8([DictIO.GetEssential(self.FIX, is_fix) for is_fix in fix_v_str])
 
         particle_cloud = self.load_obj_file(particle_file)
         scale_factor = DictIO.GetAlternative(particle_file, "ScaleFactor", default=1.0)
