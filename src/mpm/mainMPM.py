@@ -50,7 +50,7 @@ class MPM(object):
         self.sims.set_solver_type(DictIO.GetAlternative(kwargs, "solver_type", "Explicit"))
         self.sims.set_stress_smoothing(DictIO.GetAlternative(kwargs, "stress_smoothing", False))
         self.sims.set_strain_smoothing(DictIO.GetAlternative(kwargs, "strain_smoothing", False))
-        self.sims.set_configuration(DictIO.GetAlternative(kwargs, "configuration", "ULMPM"))
+        self.sims.set_configuration(DictIO.GetAlternative(kwargs, "configuration", "ULMPM")) #fix only use ULMPM
         self.sims.set_material_type(DictIO.GetAlternative(kwargs, "material_type", "Solid"))
         if log: 
             self.print_basic_simulation_info()
@@ -158,6 +158,36 @@ class MPM(object):
                                 )
 
     def add_boundary_condition(self, boundary=None):
+        """
+        add boundary condition
+        Args:
+            sims[Simulation]: Simulation dataclass
+            boundary[dict]: Boundary dict
+                BoundaryType[str]: Boundary type option:[VelocityConstraint, ReflectionConstraint, FrictionConstraint, AbsorbingConstraint, TractionConstraint, DisplacementConstraint]
+                NLevel[str/int][option]:  option:[All, 0, 1, 2, ...]
+                StartPoint[vec3f]: Start point of boundary ,useage see below
+                EndPoint[vec3f]: End point of boundary,useage see below
+                when Boundary type = VelocityConstraint args include:
+                    VelocityX[float/None][option]: Prescribed velocity along X axis
+                    VelocityY[float/None][option]: Prescribed velocity along Y axis
+                    VelocityZ[float/None][option]: Prescribed velocity along Z axis
+                    Velocity[list][option]: Prescribed velocity
+                when Boundary type = ReflectionConstraint args include:
+                    Norm[vec3f]: Outer normal vector
+                when Boundary type = FrictionConstraint args include:
+                    Friction[float]: Friction angle
+                    Norm[vec3f]: Outer normal vector
+                when Boundary type = TractionConstraint args include:
+                    ExternalForce[vec3f]: External force
+                when Boundary type = DisplacementConstraint args include:
+                    DisplacementX[float/None][option]: Prescribed displacement along X axis
+                    DisplacementY[float/None][option]: Prescribed displacement along Y axis
+                    DisplacementZ[float/None][option]: Prescribed displacement along Z axis
+                    Displacement[list][option]: Prescribed displacement
+            
+            StartPoint = [x1,y1,z1],EndPoint = [x2,y2,z2] means Boundary particles constrained in the range x in [x1,x2],y in [y1,y2],z in [z1,z2].
+            
+        """
         if type(boundary) is list or type(boundary) is dict:
             self.scene.iterate_boundary_constraint(self.sims, boundary, 0)
         elif type(boundary) is str:
@@ -195,7 +225,7 @@ class MPM(object):
                 self.neighbor = SpatialHashGrid(self.sims)
             self.neighbor.neighbor_initialze(self.scene)
 
-    def add_engine(self):
+    def add_engine(self): #fix only use ULExplicitEngine
         if self.enginer is None:
             if self.sims.configuration == "ULMPM":
                 if self.sims.solver_type == "Explicit":
@@ -232,13 +262,14 @@ class MPM(object):
         self.add_essentials(kwargs)
         self.check_critical_timestep()
         if visualize is False:
-            self.solver.Solver(self.scene, self.neighbor)
+            self.solver.Solver(self.scene, self.neighbor) 
         else:
             self.sims.set_visualize_interval(DictIO.GetEssential(kwargs, "visualize_interval"))
             self.sims.set_window_size(DictIO.GetAlternative(kwargs, "WindowSize", self.sims.window_size))
             self.solver.Visualize(self.scene, self.neighbor)
 
     def check_critical_timestep(self):
+        """Check the critical timestep for the simulation"""
         if self.sims.solver_type == "Explicit":
             print("#", " Check Timestep ... ...".ljust(67))
             critical_timestep = self.scene.get_critical_timestep()

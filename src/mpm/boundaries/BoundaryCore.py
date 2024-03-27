@@ -6,7 +6,7 @@ from src.utils.VectorFunction import SquareLen
 
 
 @ti.func
-def find_pre_location(start_index, level, inodes, constraint, locate: ti.template()):
+def find_pre_location(start_index, level, inodes, constraint, locate: ti.template()): # type: ignore
     for pre in range(start_index):
         if inodes == constraint[pre].node and level == constraint[pre].level:
             locate = pre
@@ -14,7 +14,7 @@ def find_pre_location(start_index, level, inodes, constraint, locate: ti.templat
 
 
 @ti.func
-def find_pre_location_with_direction(start_index, level, norm, inodes, constraint, locate: ti.template()):
+def find_pre_location_with_direction(start_index, level, norm, inodes, constraint, locate: ti.template()): # type: ignore
     for pre in range(start_index):
         if inodes == constraint[pre].node and level == constraint[pre].level and all(norm == constraint[pre].norm):
             locate = pre
@@ -22,14 +22,14 @@ def find_pre_location_with_direction(start_index, level, norm, inodes, constrain
 
 
 @ti.kernel
-def kernel_initialize_boundary(constraint: ti.template()):
+def kernel_initialize_boundary(constraint: ti.template()):# type: ignore
     for i in constraint:
         constraint[i].node = -1
         constraint[i].level = ti.u8(255)
 
 
 @ti.kernel
-def set_velocity_constraint2D(lists: ti.types.ndarray(), constraint: ti.template(), inodes: ti.types.ndarray(), active_direction: ti.types.vector(2, int), velocity: ti.types.vector(2, float), level: int):
+def set_velocity_constraint2D(lists: ti.types.ndarray(), constraint: ti.template(), inodes: ti.types.ndarray(), active_direction: ti.types.vector(2, int), velocity: ti.types.vector(2, float), level: int):# type: ignore
     start_index = lists[0]
     for offset in range(inodes.shape[0]):
         locate = start_index + offset
@@ -39,7 +39,7 @@ def set_velocity_constraint2D(lists: ti.types.ndarray(), constraint: ti.template
 
 
 @ti.kernel
-def set_velocity_constraint(lists: ti.types.ndarray(), constraint: ti.template(), inodes: ti.types.ndarray(), active_direction: ti.types.vector(3, int), velocity: ti.types.vector(3, float), level: int):
+def set_velocity_constraint(lists: ti.types.ndarray(), constraint: ti.template(), inodes: ti.types.ndarray(), active_direction: ti.types.vector(3, int), velocity: ti.types.vector(3, float), level: int):# type: ignore
     start_index = lists[0]
     for offset in range(inodes.shape[0]):
         locate = start_index + offset
@@ -49,7 +49,7 @@ def set_velocity_constraint(lists: ti.types.ndarray(), constraint: ti.template()
 
 
 @ti.kernel
-def set_reflection_constraint2D(lists: ti.types.ndarray(), constraint: ti.template(), inodes: ti.types.ndarray(), direction: ti.types.vector(2, float), level: int):
+def set_reflection_constraint2D(lists: ti.types.ndarray(), constraint: ti.template(), inodes: ti.types.ndarray(), direction: ti.types.vector(2, float), level: int):# type: ignore
     start_index = lists[0]
     for offset in range(inodes.shape[0]):
         locate = start_index + offset
@@ -59,7 +59,7 @@ def set_reflection_constraint2D(lists: ti.types.ndarray(), constraint: ti.templa
 
 
 @ti.kernel
-def set_reflection_constraint(lists: ti.types.ndarray(), constraint: ti.template(), inodes: ti.types.ndarray(), direction: ti.types.vector(3, float), level: int):
+def set_reflection_constraint(lists: ti.types.ndarray(), constraint: ti.template(), inodes: ti.types.ndarray(), direction: ti.types.vector(3, float), level: int):# type: ignore
     start_index = lists[0]
     for offset in range(inodes.shape[0]):
         locate = start_index + offset
@@ -69,7 +69,7 @@ def set_reflection_constraint(lists: ti.types.ndarray(), constraint: ti.template
 
 
 @ti.kernel
-def set_friction_constraint2D(lists: ti.types.ndarray(), constraint: ti.template(), inodes: ti.types.ndarray(), mu: float, norm: ti.types.vector(2, float), level: int):
+def set_friction_constraint2D(lists: ti.types.ndarray(), constraint: ti.template(), inodes: ti.types.ndarray(), mu: float, norm: ti.types.vector(2, float), level: int):# type: ignore
     start_index = lists[0]
     for offset in range(inodes.shape[0]):
         locate = start_index + offset
@@ -79,7 +79,7 @@ def set_friction_constraint2D(lists: ti.types.ndarray(), constraint: ti.template
 
 
 @ti.kernel
-def set_friction_constraint(lists: ti.types.ndarray(), constraint: ti.template(), inodes: ti.types.ndarray(), mu: float, norm: ti.types.vector(3, float), level: int):
+def set_friction_constraint(lists: ti.types.ndarray(), constraint: ti.template(), inodes: ti.types.ndarray(), mu: float, norm: ti.types.vector(3, float), level: int):# type: ignore
     start_index = lists[0]
     for offset in range(inodes.shape[0]):
         locate = start_index + offset

@@ -10,6 +10,7 @@ from src.utils.RegionFunction import RegionFunction
 from src.utils.TypeDefination import vec3f, vec6f
 
 
+
 class BodyReader(object):
     sims: Simulation
 
@@ -63,7 +64,7 @@ class BodyReader(object):
         if self.sims.current_time < self.next_generate_time: return 0
         if self.sims.current_time < self.start_time or self.sims.current_time > self.end_time: return 0
         
-        print('#', "Start adding material points ......")
+        
         if self.file_type == "TXT":
             if type(self.myTemplate) is dict:
                 self.add_txt_body(scene, self.myTemplate)
@@ -92,15 +93,16 @@ class BodyReader(object):
             self.next_generate_time = self.sims.current_time + self.insert_interval
         return 1
 
-    def print_particle_info(self, nParticlesPerCell, bodyID, materialID, init_v, fix_v, particle_count):
+    def print_particle_info(self, nParticlesPerCell, bodyID, materialID, init_v, fix_v, particle_volume,particle_count):
         if particle_count == 0:
             raise RuntimeError("Zero Particles are inserted into region!")
         print("Body ID = ", bodyID)
         print("Material ID = ", materialID)
-        print("Particle Number: ", particle_count)
+        print("Add Particle Number: ", particle_count)
         print("The Number of Particle per Cell: ", nParticlesPerCell)
         print("Initial Velocity = ", init_v)
         print("Fixed Velocity = ", fix_v)
+        print("Particle Volume = ", particle_volume)
         print('\n')
 
     def check_bodyID(self, scene: myScene, bodyID):
@@ -121,6 +123,7 @@ class BodyReader(object):
 
     def add_txt_body(self, scene: myScene, template):
         particle_file = DictIO.GetAlternative(template, "ParticleFile", "Particle.txt") 
+        print('#', f"Start adding material points from {particle_file}......")
         if not os.path.exists(particle_file):
             raise EOFError("Invaild path")
         
@@ -167,8 +170,11 @@ class BodyReader(object):
             particle_num=particle_num, 
             init_particle_num=int(scene.particleNum[0]))
         scene.particleNum[0] += particle_num
+        self.print_particle_info(nParticlesPerCell='Custom', bodyID = bodyID, materialID = materialID, init_v=init_v, 
+                                 fix_v=fix_v_str, particle_volume=volume[0], particle_count = particle_num)
     def add_npz_body(self, scene: myScene, template): #fix maybe exist bug
         particle_file = DictIO.GetEssential(template, "File")
+        print('#', f"Start adding material points from {particle_file}......")
         if not os.path.exists(particle_file):
             raise EOFError("Invaild path")
         
@@ -237,7 +243,7 @@ class BodyReader(object):
             orientation = DictIO.GetAlternative(template, "Orientation", vec3f([0, 0, 1]))
             init_v = DictIO.GetAlternative(template, "InitialVelocity", vec3f([0, 0, 0]))
             fix_v_str = DictIO.GetAlternative(template, "FixVelocity", ["Free", "Free", "Free"])
-            fix_v = DictIO.GetEssential(self.FIX, fix_v_str)
+            fix_v = vec3u8([DictIO.GetEssential(self.FIX, is_fix) for is_fix in fix_v_str])
             init_particle_num = int(scene.particleNum[0])
 
             particle_cloud = np.load(particle_file, allow_pickle=True) 
@@ -263,6 +269,7 @@ class BodyReader(object):
 
     def add_obj_body(self, scene: myScene, template):
         particle_file = DictIO.GetAlternative(template, "File", "Particle.obj")
+        print('#', f"Start adding material points from {particle_file}......")
         if not os.path.exists(particle_file):
             raise EOFError("Invaild path")
         
@@ -285,7 +292,7 @@ class BodyReader(object):
         orientation = DictIO.GetAlternative(template, "Orientation", vec3f([0, 0, 1]))
         init_v = DictIO.GetAlternative(template, "InitialVelocity", vec3f([0, 0, 0]))
         fix_v_str = DictIO.GetAlternative(template, "FixVelocity", ["Free", "Free", "Free"])
-        fix_v = DictIO.GetEssential(self.FIX, fix_v_str)
+        fix_v = vec3u8([DictIO.GetEssential(self.FIX, is_fix) for is_fix in fix_v_str])
 
         particle_cloud = self.load_obj_file(particle_file)
         scale_factor = DictIO.GetAlternative(particle_file, "ScaleFactor", default=1.0)
