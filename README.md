@@ -1,8 +1,6 @@
 # GeoTaichi
 
-![Github License](https://img.shields.io/github/license/Yihao-Shi/GeoTaichi)          ![Github stars](https://img.shields.io/github/stars/Yihao-Shi/GeoTaichi)          ![Github forks](https://img.shields.io/github/forks/Yihao-Shi/GeoTaichi)          ![Github Downloads (all assets, latest release)](https://img.shields.io/github/downloads/Yihao-Shi/GeoTaichi/latest/total)
-
-FORK FROM [GeoTaichi](https://img.shields.io/github/license/Yihao-Shi/GeoTaichi)
+![Github License](https://img.shields.io/github/license/Yihao-Shi/GeoTaichi)          ![Github stars](https://img.shields.io/github/stars/Yihao-Shi/GeoTaichi)          ![Github forks](https://img.shields.io/github/forks/Yihao-Shi/GeoTaichi)          
 
 
 ## Brief description
