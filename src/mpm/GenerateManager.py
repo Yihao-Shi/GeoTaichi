@@ -57,6 +57,10 @@ class GenerateManager(object):
             generator.finalize()
 
     def read_body_file(self, body_dict, sims, scene: myScene):
+        """
+        读取颗粒文件
+        
+        """
         if scene.material is None:
             raise RuntimeError("The attribute must be added first")
         generator = BodyReader(sims)

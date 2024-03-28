@@ -25,3 +25,11 @@ dist/
 geotaichi.egg-info/
 setup.py
 
+t.ipynb
+DGb.py
+DPmaterial copy.py
+DPmaterial.py
+btp.py
+D-P本构相关参数计算.xlsx
+barrier.py
+StripFootingTresca.py

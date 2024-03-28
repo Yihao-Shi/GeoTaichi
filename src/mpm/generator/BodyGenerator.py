@@ -289,7 +289,15 @@ class BodyGenerator(object):
         elif type(particle_stress) is dict:
             gravityField = DictIO.GetAlternative(particle_stress, "GravityField", False)
             initialStress = DictIO.GetAlternative(particle_stress, "InternalStress", vec6f([0, 0, 0, 0, 0, 0]))
-            self.set_internal_stress(materialID, scene.material, region, scene.particle, particle_count, int(scene.particleNum[0]), gravityField, initialStress)
+            self.set_internal_stress(
+                materialID, 
+                scene.material, 
+                region, 
+                scene.particle,
+                particle_count, 
+                int(scene.particleNum[0]),
+                gravityField, initialStress
+                )
         
     def Generate(self, scene: myScene, region: RegionFunction, nParticlesPerCell):
         if scene.is_rectangle_cell():
@@ -308,7 +316,15 @@ class BodyGenerator(object):
             kernel_fill_particle_in_cell_(point.gpcoords, scene.element.cell_active, scene.element.nodal_coords, scene.element.node_connectivity, scene.particle, self.insert_particle_num, transform_local_to_global)
             snode_tree.destroy()
 
-    def set_internal_stress(self, materialID, material: ConstitutiveModelBase, region: RegionFunction, particle, particle_num, init_particle_num, gravityField, initialStress):
+    def set_internal_stress(self, 
+            materialID,
+            material: ConstitutiveModelBase, 
+            region: RegionFunction, 
+            particle, 
+            particle_num, 
+            init_particle_num, 
+            gravityField, 
+            initialStress):
         if gravityField and materialID >= 0:
             k0 = material.get_lateral_coefficient(materialID)
             top_position = region.region_size[2] + region.start_point[2]
