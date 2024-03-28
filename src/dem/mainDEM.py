@@ -35,6 +35,23 @@ class DEM(object):
         self.history_contact_path=dict()
 
     def set_configuration(self, log=True, **kwargs):
+        """
+        配置DEM基本参数
+        参数:
+        domain[list] :计算域大小
+        boundary[list][option] :边界条件类型，可选项有["Destroy", "Reflect", "Period"] #注意“period”功能尚未开发
+        gravity[list][option] :重力加速度
+        engine[str][option] :求解器类型，可选项有["SymplecticEuler", "VelocityVerlet", "PredictCorrector"]
+        search[str][option] :邻居搜索算法，可选项有["LinkedCell", "Brust"]
+        
+        Configure the basic parameters of DEM
+        Parameters:
+        domain[list] : Size of the computational domain
+        boundary[list][option] : Type of boundary conditions, options include ["Destroy", "Reflect", "Period"] #Note that the "period" function has not yet been developed
+        gravity[list][option] : Gravity acceleration
+        engine[str][option] : Solver type, options include ["SymplecticEuler", "VelocityVerlet", "PredictCorrector"]
+        search[str][option] : Neighbor search algorithm, options include ["LinkedCell", "Brust"]
+        """
         if np.linalg.norm(np.array(self.sims.get_simulation_domain()) - np.zeros(3)) < 1e-10:
             self.sims.set_domain(DictIO.GetEssential(kwargs, "domain"))
         self.sims.set_boundary(DictIO.GetAlternative(kwargs, "boundary" ,["Destroy", "Destroy", "Destroy"]))
@@ -46,6 +63,26 @@ class DEM(object):
             print('\n')
     
     def set_solver(self, solver, log=True):
+        """
+        求解器参数
+        solver[dict]:
+            Timestep[float] :时间步长
+            SimulationTime[float] :模拟总时间
+            CFL[float][option] :CFL数值
+            AdaptiveTimestep[bool][option] :是否自适应时间步长
+            SaveInterval[float] :保存间隔
+            SavePath[str][option] :保存路径
+        Set solver parameters.
+            Args:
+                solver (dict): Dictionary containing solver parameters.
+                    - Timestep (float): Time step size.
+                    - SimulationTime (float): Total simulation time.
+                    - CFL (float, optional): CFL value. Default is 0.5.
+                    - AdaptiveTimestep (bool, optional): Whether to use adaptive time step. Default is False.
+                    - SaveInterval (float): Save interval.
+                    - SavePath (str, optional): Save path. Default is 'OutputData'.
+                log (bool, optional): Whether to print solver information. Default is True.
+        """
         self.sims.set_timestep(DictIO.GetEssential(solver, "Timestep"))
         self.sims.set_simulation_time(DictIO.GetEssential(solver, "SimulationTime"))
         self.sims.set_CFL(DictIO.GetAlternative(solver, "CFL", 0.5))
@@ -57,6 +94,48 @@ class DEM(object):
             print('\n')
 
     def memory_allocate(self, memory, log=True):
+        """
+        内存分配参数
+        memory [dict]:
+            max_material_number[int]                : 最大材料数
+            max_particle_number[float]              : 最大粒子数
+            max_sphere_number[int][option]          : 最大球数
+            max_clump_number[int][option]           : 最大多球数
+            max_levelset_grid_number[int][option]   : 最大水平集网格数
+            max_rigid_body_number[int][option]: 最大刚体数
+            max_surface_node_number[int][option]: 最大表面节点数
+            max_patch_number[int][option]: 最大三角面片个数
+            max_facet_number[int][option]: 最大三角墙个数
+            max_servo_wall_number[int][option]: 最大伺服墙数
+            max_plane_number[int][option]: 最大平面数
+            compaction_ratio[float][option]: 接触列表的压缩率
+            body_coordination_number[int][option]: 粒子最大配位数
+            wall_coordination_number[int][option]: 颗粒最大墙邻居数
+            verlet_distance_multiplier[float][option]: Verlet距离倍数
+            wall_per_cell[int][option]: 每个哈希网格单元的最大墙数
+                Allocate memory parameters.
+
+        Args:
+            memory (dict): A dictionary containing the memory allocation parameters.
+                max_material_number (int): The maximum number of materials.
+                max_particle_number (float): The maximum number of particles.
+                max_sphere_number (int, optional): The maximum number of spheres.
+                max_clump_number (int, optional): The maximum number of clumps.
+                max_levelset_grid_number (int, optional): The maximum number of level set grids.
+                max_rigid_body_number (int, optional): The maximum number of rigid bodies.
+                max_surface_node_number (int, optional): The maximum number of surface nodes.
+                max_patch_number (int, optional): The maximum number of patch triangles.
+                max_facet_number (int, optional): The maximum number of facet triangles.
+                max_servo_wall_number (int, optional): The maximum number of servo walls.
+                max_plane_number (int, optional): The maximum number of planes.
+                compaction_ratio (float, optional): The compression ratio of the contact list.
+                body_coordination_number (int, optional): The maximum coordination number of particles.
+                wall_coordination_number (int, optional): The maximum coordination number of walls.
+                verlet_distance_multiplier (float, optional): The Verlet distance multiplier.
+                wall_per_cell (int, optional): The maximum number of walls per hash grid cell.
+
+            log (bool, optional): Whether to print simulation information. Defaults to True.
+        """
         self.sims.set_material_num(DictIO.GetEssential(memory, "max_material_number"))
         self.sims.set_particle_num(DictIO.GetEssential(memory, "max_particle_number"))
         self.sims.set_sphere_num(DictIO.GetAlternative(memory, "max_sphere_number", 0))
@@ -121,6 +200,28 @@ class DEM(object):
         self.generator.add_body(body, self.sims, self.scene)
 
     def add_body_from_file(self, body):
+        """
+        颗粒文件读取模板
+        Args:
+            Body[dict/list]: 颗粒文件读取的参数
+                FileType[str]: 文件读取的类型, 可选项: TXT, NPZ,OBJ
+                BodyType[str]: 颗粒的类型, 可选项: Clump, Sphere,仅当FileType为TXT时有效
+                Period[list][option]:设定颗粒生成时间间隔,输入格式为[起始时间,结束时间],默认值为[0,0]
+                Template[dict/list]: 颗粒的模板
+                    ParticleFile[str][option]: 颗粒文件的路径,仅颗粒类型为Sphere时有效
+                    ClumpFile[str][option]: 颗粒文件的路径,仅颗粒类型为Clump时有效
+                    PebbleFile[str][option]: 颗粒文件的路径,仅颗粒类型为Pebble时有效
+                    GeometryFile[str][option]: 设定需要体素的文件读取路径,当文件类型为“OBJ”时生效。
+                    GroupID[int][option]: 颗粒的组ID
+                    MaterialID[int][option]: 颗粒的材料ID
+                    InitialVelocity[list][option]: 颗粒的初始速度
+                    InitialAngularVelocity[list][option]: 颗粒的初始角速度
+                    FixVelocity[list][option]: 颗粒的平动自由约束
+                    FixAngularVelocity[list][option]: 颗粒的旋动自由约束
+                    ScaleFactor[float][option]: 设定颗粒的缩放因子，默认值为1,仅当文件类型为“OBJ”时生效
+                    Translation[list][option]: 设定颗粒的平移量，默认值为[0,0,0],仅当文件类型为“OBJ”时生效
+                    Orientation[list][option]: 设定颗粒的旋转角度，默认值为[0,0,0],仅当文件类型为“OBJ”时生效
+        """
         self.generator.read_body_file(body, self.sims, self.scene)
 
     def add_wall(self, body):

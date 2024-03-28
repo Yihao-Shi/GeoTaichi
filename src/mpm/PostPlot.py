@@ -33,6 +33,9 @@ def write_vtk_file(sims: Simulation, start_file, end_file, read_path, write_path
         if DictIO.GetAlternative(kwargs, "write_bodyID", True):
             bodyID = np.ascontiguousarray(DictIO.GetEssential(particle_info, "bodyID"))
             data.update({"bodyID": bodyID})
+        if DictIO.GetAlternative(kwargs, "write_materialID", True):
+            materialID = np.ascontiguousarray(DictIO.GetEssential(particle_info, "materialID"))
+            data.update({"materialID": materialID})
         if DictIO.GetAlternative(kwargs, "write_volume", True):
             volume = np.ascontiguousarray(DictIO.GetEssential(particle_info, "volume"))
             data.update({"volume": volume})

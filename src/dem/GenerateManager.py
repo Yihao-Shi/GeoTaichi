@@ -63,6 +63,38 @@ class GenerateManager(object):
             raise RuntimeError(f"Only {valid_list} is valid for Keyword:: /types/")
 
     def create_body(self, body_dict, sims, scene):
+        """
+        颗粒生成
+        Args:
+            body_dict[dict/list]: 颗粒生成的参数
+                BodyType[str]: 颗粒的类型, 可选项: Clump, Sphere
+                Template[dict/list]: 颗粒的模板
+                    Radius[float]: 颗粒的半径
+                    BodyPoint[list]: 颗粒的中心点坐标
+                    GroupID[int]: 颗粒的组ID
+                    MaterialID[int]: 颗粒的材料ID
+                    InitialVelocity[list][option]: 颗粒的初始速度
+                    InitialAngularVelocity[list][option]: 颗粒的初始角速度
+                    FixVelocity[list][option]: 颗粒的平动自由约束
+                    FixAngularVelocity[list][option]: 颗粒的旋动自由约束
+                    BodyOrientation[list][option]: 设定生成颗粒朝向的概率分布类型，在此仅可选为“constant”或None，默认值为None
+                    OrientationParameter[list][option]: 设定生成颗粒朝向,仅当Clump类型生效
+        Particle generation
+        Args:
+            body_dict[dict/list]: Parameters for particle generation
+            BodyType[str]: Type of the particle, options: Clump, Sphere
+            Template[dict/list]: Template of the particle
+                Radius[float]: Radius of the particle
+                BodyPoint[list]: Coordinates of the center point of the particle
+                GroupID[int]: Group ID of the particle
+                MaterialID[int]: Material ID of the particle
+                InitialVelocity[list][option]: Initial velocity of the particle
+                InitialAngularVelocity[list][option]: Initial angular velocity of the particle
+                FixVelocity[list][option]: Translational freedom constraint of the particle
+                FixAngularVelocity[list][option]: Rotational freedom constraint of the particle
+                BodyOrientation[list][option]: Set the probability distribution type of the generated particle orientation, here can only be "constant" or None, the default value is None
+                OrientationParameter[list][option]: Set the orientation of the generated particle, only effective when the Clump type is in effect
+        """
         self.bodyCreator.set_clump_template(self.myTemplate)
         self.bodyCreator.create(sims, scene, body_dict)
 

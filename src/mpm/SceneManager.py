@@ -279,6 +279,33 @@ class myScene(object):
             raise RuntimeError(f"KeyWord:: /EndPoint/ {end_point} is out of domain {sims.domain}")
 
     def set_boundary_conditions(self, sims: Simulation, boundary):
+        """
+        Set boundary conditions
+        Args:
+            sims[Simulation]: Simulation dataclass
+            boundary[dict]: Boundary dict
+                BoundaryType[str]: Boundary type option:[VelocityConstraint, ReflectionConstraint, FrictionConstraint, AbsorbingConstraint, TractionConstraint, DisplacementConstraint]
+                NLevel[str/int][option]:  option:[All, 0, 1, 2, ...]
+                StartPoint[vec3f]: Start point of boundary
+                EndPoint[vec3f]: End point of boundary
+                when Boundary type = VelocityConstraint args include:
+                    VelocityX[float/None][option]: Prescribed velocity along X axis
+                    VelocityY[float/None][option]: Prescribed velocity along Y axis
+                    VelocityZ[float/None][option]: Prescribed velocity along Z axis
+                    Velocity[list][option]: Prescribed velocity
+                when Boundary type = ReflectionConstraint args include:
+                    Norm[vec3f]: Outer normal vector
+                when Boundary type = FrictionConstraint args include:
+                    Friction[float]: Friction angle
+                    Norm[vec3f]: Outer normal vector
+                when Boundary type = TractionConstraint args include:
+                    ExternalForce[vec3f]: External force
+                when Boundary type = DisplacementConstraint args include:
+                    DisplacementX[float/None][option]: Prescribed displacement along X axis
+                    DisplacementY[float/None][option]: Prescribed displacement along Y axis
+                    DisplacementZ[float/None][option]: Prescribed displacement along Z axis
+                    Displacement[list][option]: Prescribed displacement
+        """
         boundary_type = DictIO.GetEssential(boundary, "BoundaryType")
         level = DictIO.GetAlternative(boundary, "NLevel", "All")
         start_point = DictIO.GetEssential(boundary, "StartPoint")

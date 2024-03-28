@@ -1,6 +1,7 @@
 # GeoTaichi
 
-![Github License](https://img.shields.io/github/license/Yihao-Shi/GeoTaichi)          ![Github stars](https://img.shields.io/github/stars/Yihao-Shi/GeoTaichi)          ![Github forks](https://img.shields.io/github/forks/Yihao-Shi/GeoTaichi)          ![Github Downloads (all assets, latest release)](https://img.shields.io/github/downloads/Yihao-Shi/GeoTaichi/latest/total)
+![Github License](https://img.shields.io/github/license/Yihao-Shi/GeoTaichi)          ![Github stars](https://img.shields.io/github/stars/Yihao-Shi/GeoTaichi)          ![Github forks](https://img.shields.io/github/forks/Yihao-Shi/GeoTaichi)          
+
 
 ## Brief description
 
@@ -77,10 +78,10 @@ sudo apt-get install python3-pip
 # Install python packages (recommand to add package version)
 python3 -m pip install taichi imageio pybind11 numpy trimesh psutil shapely -i https://pypi.douban.com/simple
 
-# Install Eigen in C++
+# Install Eigen in C++ (if necessary)
 sudo apt-get install libeigen3-dev cmake==3.18.2
 
-# Install pybind11
+# Install pybind11 (if necessary)
 git clone https://github.com/pybind/pybind11.git
 cd  pybind11
 mkdir build
