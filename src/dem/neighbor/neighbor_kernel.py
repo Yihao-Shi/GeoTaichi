@@ -299,8 +299,8 @@ def insert_facet_to_cell_(wallNum: int, igrid_size: float, facet_in_cell: int, w
             wall_min_coord = wall[wall_id].bound_beg
             wall_max_coord = wall[wall_id].bound_end
 
-            minCoord = ti.max(ti.floor(wall_min_coord * igrid_size, int) - 1, 0)
-            maxCoord = ti.min(ti.ceil(wall_max_coord * igrid_size, int) + 1, cnum)
+            minCoord = ti.max(ti.floor(wall_min_coord * igrid_size - 0.5, int), 0)
+            maxCoord = ti.min(ti.ceil(wall_max_coord * igrid_size + 0.5, int) + 1, cnum)
             for neigh_i in range(minCoord[0], maxCoord[0]):
                 for neigh_j in range(minCoord[1], maxCoord[1]): 
                     for neigh_k in range(minCoord[2], maxCoord[2]): 

@@ -96,8 +96,11 @@ class myScene(object):
                 ti.root.dense(ti.i, sims.max_particle_num).place(self.particle)
 
     def activate_material(self, sims: Simulation, model, materials):
-        self.material = ConstitutiveModel.initialize(sims.material_type, sims.stabilize, model, sims.max_material_num, sims.max_particle_num, sims.configuration, sims.solver_type)
-        self.material.model_initialization(materials)
+        if self.material is None:
+            self.material = ConstitutiveModel.initialize(sims.material_type, sims.stabilize, model, sims.max_material_num, sims.max_particle_num, sims.configuration, sims.solver_type)
+            self.material.model_initialization(materials)
+        else:
+            warnings.warn("Previous material will be override!")
 
     def check_materials(self, sims):
         if self.material is None:

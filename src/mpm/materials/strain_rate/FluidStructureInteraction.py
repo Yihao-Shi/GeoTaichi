@@ -35,13 +35,13 @@ class FluidStructureInteraction(ConstitutiveModelBase):
             density = DictIO.GetAlternative(material, 'Density', 1000)
             modulus = DictIO.GetAlternative(material, 'Modulus', 2e8)
             viscosity = DictIO.GetAlternative(material, 'Viscosity', 1e-3)
-            self.matProps[materialID].add_material(density, modulus, viscosity)
+            self.matProps[materialID].add_fluid_material(density, modulus, viscosity)
             self.matProps[materialID].print_message(materialID)
         else:
             density = DictIO.GetAlternative(material, 'Density', 2650)
             young = DictIO.GetEssential(material, 'YoungModulus')
             possion = DictIO.GetAlternative(material, 'PossionRatio', 0.3)
-            self.matProps[materialID].add__fluid_material(density, young, possion)
+            self.matProps[materialID].add_material(density, young, possion)
             self.matProps[materialID].print_message(materialID)
 
     def get_lateral_coefficient(self, materialID):
@@ -104,7 +104,7 @@ class FSIModel:
         self.shear = 0.5 * self.young / (1. + self.possion)
         self.bulk = self.young / (3. * (1 - 2. * self.possion))
 
-    def add__fluid_material(self, density, modulus, viscosity):
+    def add_fluid_material(self, density, modulus, viscosity):
         self.is_structure = 0
         self.density = density
         self.modulus = modulus
