@@ -8,6 +8,8 @@
 A [Taichi](https://github.com/taichi-dev/taichi)-based numerical package for high-performance simulations of multiscale and multiphysics geophysical problems. 
 Developed by [Multiscale Geomechanics Lab](https://person.zju.edu.cn/en/nguo), Zhejiang University.
 
+Email: shiyh26@zju.edu.cn
+
 ## Overview
 
 GeoTaichi is a collection of several numerical tools, currently including __Discrete Element Method (DEM)__, __Material Point Method (MPM)__, __Material Point-Discrete element method (MPDEM)__, and __Finite Element Method (FEM)__, that cover the analysis of the __Soil-Gravel-Structure-Interaction__ in geotechnical engineering. The main components of GeoTaichi is illustrated as follows:
@@ -76,7 +78,7 @@ sudo apt-get install python3.8
 sudo apt-get install python3-pip
 
 # Install python packages (recommand to add package version)
-python3 -m pip install taichi==1.6.0 imageio pybind11 numpy trimesh psutil shapely -i https://pypi.douban.com/simple
+python3 -m pip install taichi==1.6.0 imageio pybind11 numpy trimesh psutil shapely [optional: -i https://pypi.douban.com/simple]
 
 # Install Eigen in C++ (if necessary)
 sudo apt-get install libeigen3-dev cmake==3.18.2
@@ -161,10 +163,16 @@ This project is licensed under the GNU General Public License v3 - see the [LICE
 
 ## Citation
 Please kindly star :star: this project if it helps you. We take great efforts to develope and maintain it :grin::grin:.
-If you find GeoTaichi is helpful, you can [star it](https://github.com/Yihao-Shi/GeoTaichi).
 
 ## Acknowledgements
-We thank all contributors for their great work and open source spirit.
+We thank all amazing contributors for their great work and open source spirit. We welcome all kinds of contributions to file an issue at [GitHub Issues](https://github.com/Yihao-Shi/GeoTaichi/issues).
+
+### Contributors
+<a href="https://github.com/Yihao-Shi/GeoTaichi/graphs/contributors"><img src="https://contrib.rocks/image?repo=eryajf/learn-github" /></a>
+
+
+### Contact us
+- If you spot any issue or need any help, please mail directly to <a href = "mailto:shiyh26@zju.edu.cn">shiyh26@zju.edu.cn</a>.
 
 ## Release Notes
 V0.1 (January 21, 2024)
