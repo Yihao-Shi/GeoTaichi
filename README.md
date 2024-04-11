@@ -1,6 +1,6 @@
 # GeoTaichi
 
-![Github License](https://img.shields.io/github/license/Yihao-Shi/GeoTaichi)          ![Github stars](https://img.shields.io/github/stars/Yihao-Shi/GeoTaichi)          ![Github forks](https://img.shields.io/github/forks/Yihao-Shi/GeoTaichi)          
+![Github License](https://img.shields.io/github/license/Yihao-Shi/GeoTaichi)          ![Github stars](https://img.shields.io/github/stars/Yihao-Shi/GeoTaichi)          ![Github forks](https://img.shields.io/github/forks/Yihao-Shi/GeoTaichi)         [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](http://makeapullrequest.com) 
 
 
 ## Brief description
@@ -8,7 +8,9 @@
 A [Taichi](https://github.com/taichi-dev/taichi)-based numerical package for high-performance simulations of multiscale and multiphysics geophysical problems. 
 Developed by [Multiscale Geomechanics Lab](https://person.zju.edu.cn/en/nguo), Zhejiang University.
 
-Email: shiyh26@zju.edu.cn
+<p align="center">
+    <img src="https://github.com/Yihao-Shi/GeoTaichi/blob/main/images/GeoTaichi.png" width="90%" height="90%" />
+</p>
 
 ## Overview
 
@@ -32,6 +34,8 @@ Have a cool example? Submit a PR!
 | [Granular packing](example/dem/GranularPackings/clumps_packing.py) | [Heap formation](example/dem/HeapFormation/sphere_packing.py) | [Triaxial shear test](example/dem/TriaxialTest/drained.py) |
 | --- | --- | --- | 
 | ![Granular packing](images/clump.gif) | ![Heap formation](images/heap_formation.gif) | ![Triaxial shear test](images/force_chain.gif) |
+
+![Debris Flow](images/debris_flow.gif)
 
 The performance of GeoTaichi is compared with similar simulator in the field, such as [MUSEN](https://msolids.net/musen/) and [CoSim](http://www.meggs.hydr.tsinghua.edu.cn/index.html), showing a notable improvement in both computational efficiency and memory usage.
 
@@ -164,11 +168,28 @@ This project is licensed under the GNU General Public License v3 - see the [LICE
 ## Citation
 Please kindly star :star: this project if it helps you. We take great efforts to develope and maintain it :grin::grin:.
 
+If you publish work that makes use of GeoTaichi, we would appreciate if you would cite the following reference:
+```latex
+@article{shi2024geotai,
+  author    = {Y. H. Shi, N. Guo., Z. X. Yang},
+  title     = {GeoTaichi: a Taichi-powered high-performance numerical simulator for multiscale geophysical problems},
+  year      = {2024},
+  journal   = {Computer Physics Communications  },
+  doi       = {TBC},
+  url       = {/},
+  volume    = {/},
+  number    = {/},
+  pages     = {/}
+}
+```
+
 ## Acknowledgements
 We thank all amazing contributors for their great work and open source spirit. We welcome all kinds of contributions to file an issue at [GitHub Issues](https://github.com/Yihao-Shi/GeoTaichi/issues).
 
 ### Contributors
-<a href="https://github.com/Yihao-Shi/GeoTaichi/graphs/contributors"><img src="https://contrib.rocks/image?repo=eryajf/learn-github" /></a>
+<a href="https://github.com/HugAILab/HugNLP/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=Yihao-Shi/GeoTaichi" />
+</a>
 
 
 ### Contact us
