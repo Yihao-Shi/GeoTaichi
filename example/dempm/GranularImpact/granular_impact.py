@@ -785,9 +785,9 @@ dempm.dem.add_property(materialID1=0,
 dempm.dem.add_property(materialID1=0,
                  materialID2=1,
                  property={
-                            "NormalStiffness":            2e4,
+                            "NormalStiffness":            1e4,
                             "TangentialStiffness":        1e6,
-                            "Friction":                   0.7,
+                            "Friction":                   0.55,
                             "NormalViscousDamping":       0.25,
                             "TangentialViscousDamping":   0.65
                            })  
@@ -829,7 +829,7 @@ dempm.mpm.add_material(model="DruckerPrager",
                  material={
                                "MaterialID":                    1,
                                "Density":                       1350,
-                               "YoungModulus":                  8e5,
+                               "YoungModulus":                  8e4,
                                "PoissionRatio":                 0.25,
                                "Friction":                      32,
                                "Dilation":                      0.0,
@@ -890,11 +890,11 @@ dempm.choose_contact_model(particle_particle_contact_model="Linear Model",
 dempm.add_property(DEMmaterial=0,
                    MPMmaterial=1,
                    property={
-                                 "NormalStiffness":            3e6,
-                                 "TangentialStiffness":        8e6,
+                                 "NormalStiffness":            3e3,
+                                 "TangentialStiffness":        5e2,
                                  "Friction":                   0.18,
-                                 "NormalViscousDamping":       0.45,
-                                 "TangentialViscousDamping":   0.45
+                                 "NormalViscousDamping":       0.3,
+                                 "TangentialViscousDamping":   0.3
                             })
                             
 dempm.add_property(DEMmaterial=1,
@@ -902,7 +902,7 @@ dempm.add_property(DEMmaterial=1,
                    property={
                                  "NormalStiffness":            5e4,
                                  "TangentialStiffness":        1e5,
-                                 "Friction":                   0.7,
+                                 "Friction":                   0.36,
                                  "NormalViscousDamping":       0.3,
                                  "TangentialViscousDamping":   0.3
                             })

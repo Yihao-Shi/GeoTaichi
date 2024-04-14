@@ -187,7 +187,7 @@ If you publish work that makes use of GeoTaichi, we would appreciate if you woul
 We thank all amazing contributors for their great work and open source spirit. We welcome all kinds of contributions to file an issue at [GitHub Issues](https://github.com/Yihao-Shi/GeoTaichi/issues).
 
 ### Contributors
-<a href="https://github.com/HugAILab/HugNLP/graphs/contributors">
+<a href="https://github.com/Yihao-Shi/GeoTaichi/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=Yihao-Shi/GeoTaichi" />
 </a>
 
