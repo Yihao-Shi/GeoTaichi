@@ -2,6 +2,7 @@
 
 ![Github License](https://img.shields.io/github/license/Yihao-Shi/GeoTaichi)          ![Github stars](https://img.shields.io/github/stars/Yihao-Shi/GeoTaichi)          ![Github forks](https://img.shields.io/github/forks/Yihao-Shi/GeoTaichi)         [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](http://makeapullrequest.com) 
 
+[**Quick start**](#quick-start) | [**Examples**](#examples) | [**Paper**](https://www.researchgate.net/publication/380048019_GeoTaichi_A_Taichi-powered_high-performance_numerical_simulator_for_multiscale_geophysical_problems) | [**Citation**](#citation) | [**Contact**](#acknowledgements)
 
 ## Brief description
 
@@ -11,6 +12,7 @@ Developed by [Multiscale Geomechanics Lab](https://person.zju.edu.cn/en/nguo), Z
 <p align="center">
     <img src="https://github.com/Yihao-Shi/GeoTaichi/blob/main/images/GeoTaichi.png" width="90%" height="90%" />
 </p>
+
 
 ## Overview
 
@@ -60,13 +62,6 @@ The performance of GeoTaichi is compared with similar simulator in the field, su
 |[trimesh](https://pypi.org/project/trimesh/)|==3.20.1|Import stl/obj files|
 |[shapely](https://pypi.org/project/shapely/)|==1.8.0|Delaunay triangulation|
 
-- C++ packages
-
-|Package name|Version|Features|
-|:----------:|:-----:|:------:|
-|[cmake](https://cmake.org/)|==3.18.2|/|
-|[eigen](https://eigen.tuxfamily.org/)|==3.4.0|Nurbs function|
-
 ### Installation
 
 1. Change the current working directory to the desired location and download the GeoTaichi code:
@@ -102,10 +97,6 @@ sudo make install
 sudo gedit ~/.bashrc
 $ export PYTHONPATH="$PYTHONPATH:/path/to/desired/location/GeoTaichi"
 source ~/.bashrc
-```
-5. If you want to use IGA (Isogeometric analysis) modulus. Note that some of programs are written in C++, which need to be compiled for your architecture:
-```
-python src/utils/NURBS/setup.py install --user
 ```
 
 ### Working with vtu files
@@ -157,8 +148,8 @@ The material point method (MPM) is a numerical technique used to simulate the be
   - Supporting force chain visualization
 
 ## Under development
-  - Developing level set DEM modulus
-  - Developing a well-structured IGA modulus
+  - Developing level set DEM modules
+  - Developing a well-structured IGA modules
   - Optimizing code structures
   - Simulating soil-gravel-structure problems in geotechnical engineering
   
@@ -174,12 +165,10 @@ If you publish work that makes use of GeoTaichi, we would appreciate if you woul
   author    = {Y. H. Shi, N. Guo., Z. X. Yang},
   title     = {GeoTaichi: a Taichi-powered high-performance numerical simulator for multiscale geophysical problems},
   year      = {2024},
-  journal   = {Computer Physics Communications  },
-  doi       = {TBC},
-  url       = {/},
-  volume    = {/},
-  number    = {/},
-  pages     = {/}
+  journal   = {Computer Physics Communications},
+  pages     = {109219},
+  publisher = {Elsevier},
+  doi       = {https://doi.org/10.1016/j.cpc.2024.109219}
 }
 ```
 
@@ -190,7 +179,6 @@ We thank all amazing contributors for their great work and open source spirit. W
 <a href="https://github.com/Yihao-Shi/GeoTaichi/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=Yihao-Shi/GeoTaichi" />
 </a>
-
 
 ### Contact us
 - If you spot any issue or need any help, please mail directly to <a href = "mailto:shiyh26@zju.edu.cn">shiyh26@zju.edu.cn</a>.
