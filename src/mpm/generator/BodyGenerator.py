@@ -192,7 +192,7 @@ class BodyGenerator(object):
         self.rotate_body(region, start_particle_num, end_particle_num)
 
         if self.write_file:
-            self.write_text(start_particle_num, end_particle_num, particle_volume, psize, scene.element.nodal_coords, scene.element.node_connectivity)
+            self.write_text(start_particle_num, end_particle_num, particle_volume, psize, scene.element.get_nodal_coords(), scene.element.get_node_connectivity())
         elif not self.write_file:
             material = scene.get_material_ptr()
             particles = scene.get_particle_ptr()
@@ -359,7 +359,7 @@ class BodyGenerator(object):
         region_function = DictIO.GetAlternative(traction, "RegionFunction", region_function)
         kernel_set_particle_traction_(init_particle_num, init_particle_num + particle_num, region_function, traction_force, particle)
 
-    def write_text(self, to_start, to_end, particle_vol, particle_size, nodal_coord, node_connectivity):
+    def write_text(self, to_start, to_end, particle_vol, particle_size, nodal_coords, node_connectivity):
         print('#', "Writing particle(s) into 'Particle' ......")
         print(f"Inserted Sphere Number: {to_end - to_start}")
         particle = self.particle.to_numpy()[to_start:to_end]
@@ -373,17 +373,15 @@ class BodyGenerator(object):
         
         if not os.path.exists("Node.txt"):
             print('#', "Writing node(s) into 'Node' ......")
-            node_id = np.arange(0, nodal_coord.shape[0], 1)
-            nodal_coords = nodal_coord.to_numpy()
+            node_id = np.arange(0, nodal_coords.shape[0], 1)
             np.savetxt('Node.txt', np.column_stack((node_id, nodal_coords)), header="     NodeID            PositionX            PositionY            PositionZ", delimiter=" ")
         
         if not node_connectivity is None and not os.path.exists("Cell.txt"):
             print('#', "Writing cell(s) into 'Cell' ......")
             cell_id = np.arange(0, node_connectivity.shape[0], 1)
-            nodes_id = node_connectivity.to_numpy()
             header = "     CellID"
-            for node in range(nodes_id.shape[0]):
+            for node in range(node_connectivity.shape[0]):
                 header += "            NodeID" + str(node)
-            np.savetxt('Cell.txt', np.column_stack((cell_id, nodes_id)), header=header, delimiter=" ")
+            np.savetxt('Cell.txt', np.column_stack((cell_id, node_connectivity)), header=header, delimiter=" ")
         
     

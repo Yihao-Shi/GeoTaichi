@@ -38,7 +38,7 @@ class Solver:
         pass
         
     def save_file(self, scene):
-        print(f'# [{time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())}] Step =', self.sims.current_step, '   ', 'Save Number =', self.sims.current_print, '   ', 'Simulation time =', self.sims.current_time)
+        print(f'# Step =', self.sims.current_step, '   ', 'Save Number =', self.sims.current_print, '   ', 'Simulation time =', self.sims.current_time, '\n')
         self.recorder.output(self.sims, scene)
 
     def Solver(self, scene, neighbor):
