@@ -130,21 +130,14 @@ def board_search_coupled_particle_linked_cell_(potential_particle_num: int, verl
         position = particle1[master].x
         radius = particle1[master].rad
 
-        '''grid_idx = ti.floor(position * igrid_size, int)
-        x_begin = ti.max(grid_idx[0] - 1, 0)
-        x_end = ti.min(grid_idx[0] + 2, cnum[0])
-        y_begin = ti.max(grid_idx[1] - 1, 0)
-        y_end = ti.min(grid_idx[1] + 2, cnum[1])
-        z_begin = ti.max(grid_idx[2] - 1, 0)
-        z_end = ti.min(grid_idx[2] + 2, cnum[2])'''
         grid_start = ti.floor((position - radius - verlet_distance1 - verlet_distance2 - max_radius) * igrid_size, int)
         grid_end = ti.ceil((position + radius + verlet_distance1 + verlet_distance2 + max_radius) * igrid_size, int)
-        x_begin = grid_start[0]
-        x_end = grid_end[0]
-        y_begin = grid_start[1]
-        y_end = grid_end[1]
-        z_begin = grid_start[2]
-        z_end = grid_end[2]
+        x_begin = ti.max(grid_start[0], 0)
+        x_end = ti.min(grid_end[0], cnum[0])
+        y_begin = ti.max(grid_start[1], 0)
+        y_end = ti.min(grid_end[1], cnum[1])
+        z_begin = ti.max(grid_start[2], 0)
+        z_end = ti.min(grid_end[2], cnum[2])
 
         sques = master * potential_particle_num
         for neigh_i in range(x_begin, x_end):
