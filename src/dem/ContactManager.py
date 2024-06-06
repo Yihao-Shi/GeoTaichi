@@ -81,12 +81,12 @@ class ContactManager(object):
 
     def collision_list(self, sims: Simulation):
         if self.physpp:
-            self.physpp.collision_initialize(sims.compaction_ratio, sims.particle_work, sims.max_potential_particle_pairs, sims.max_particle_num, sims.max_particle_num)
+            self.physpp.collision_initialize(sims.compaction_ratio[0], sims.particle_work, sims.max_potential_particle_pairs, sims.max_particle_num, sims.max_particle_num)
         else:
             raise RuntimeError("Particle-Particle contact model have not been activated successfully!")
         
         if self.physpw:    
-            self.physpw.collision_initialize(sims.compaction_ratio, sims.wall_work, sims.max_potential_wall_pairs, sims.max_particle_num, sims.max_wall_num)
+            self.physpw.collision_initialize(sims.compaction_ratio[1], sims.wall_work, sims.max_potential_wall_pairs, sims.max_particle_num, sims.max_wall_num)
         else:
             raise RuntimeError("Particle-Wall contact model have not been activated successfully!")
     

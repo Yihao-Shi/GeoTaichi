@@ -1,6 +1,6 @@
 from geotaichi import *
 
-init()
+init(device_memory_GB=7)
 
 dem = DEM()
 
@@ -51,7 +51,7 @@ dem.add_body_from_file(body={
                                "BodyType": "Sphere",
                                "GroupID": 0,
                                "MaterialID": 0,
-                               "File":'case10/SpherePacking.txt',
+                               "File":'SpherePacking.txt',
                                "InitialVelocity": ti.Vector([0.,0.,0.]),
                                "InitialAngularVelocity": ti.Vector([0.,0.,0.]),
                                "FixVelocity": ["Free","Free","Free"],
