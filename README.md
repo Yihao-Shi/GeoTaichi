@@ -184,6 +184,10 @@ We thank all amazing contributors for their great work and open source spirit. W
 - If you spot any issue or need any help, please mail directly to <a href = "mailto:shiyh@zju.edu.cn">shiyh26@zju.edu.cn</a>.
 
 ## Release Notes
+V0.2 (July 1, 2024)
+
+- Add some advanced constitutive model
+
 V0.1 (January 21, 2024)
 
 - First release GeoTaichi

@@ -3,11 +3,11 @@ import taichi as ti
 
 from src.mpm.materials.ConstitutiveModelBase import ConstitutiveModelBase
 from src.utils.MaterialKernel import *
-from src.utils.constants import DELTA, PI, MThreshold
+from src.utils.constants import DELTA, PI, MAXITS, FTOL
 from src.utils.MatrixFunction import matrix_form
 from src.utils.ObjectIO import DictIO
 from src.utils.TypeDefination import mat3x3
-from src.utils.VectorFunction import voigt_form
+from src.utils.VectorFunction import voigt_form, voigt_tensor_dot
 
 
 class MohrCoulomb(ConstitutiveModelBase):
@@ -49,11 +49,11 @@ class MohrCoulomb(ConstitutiveModelBase):
         possion = DictIO.GetAlternative(material, 'PossionRatio', 0.3)
         tensile = DictIO.GetAlternative(material, 'Tensile', 0.)
         c_peak = DictIO.GetAlternative(material, 'Cohesion', 0.)
-        fai_peak = DictIO.GetAlternative(material, 'Friction', 0.) * PI / 180.
-        psi_peak = DictIO.GetAlternative(material, 'Dilation', 0.) * PI / 180.
-        c_residual = DictIO.GetAlternative(material, 'ResidualCohesion', 0.)
-        fai_residual = DictIO.GetAlternative(material, 'ResidualFriction', 0.) * PI / 180.
-        psi_residual = DictIO.GetAlternative(material, 'ResidualDilation', 0.) * PI / 180.
+        fai_peak = DictIO.GetAlternative(material, 'Friction', 0.) * np.pi / 180.
+        psi_peak = DictIO.GetAlternative(material, 'Dilation', 0.) * np.pi / 180.
+        c_residual = DictIO.GetAlternative(material, 'ResidualCohesion', c_peak)
+        fai_residual = DictIO.GetAlternative(material, 'ResidualFriction', fai_peak * 180 / np.pi) * np.pi / 180.
+        psi_residual = DictIO.GetAlternative(material, 'ResidualDilation', psi_peak * 180 / np.pi) * np.pi / 180.
         pdstrain_peak = DictIO.GetAlternative(material, 'PlasticDevStrain', 0.) 
         pdstrain_residual = DictIO.GetAlternative(material, 'ResidualPlasticDevStrain', 0.)
         
@@ -63,7 +63,6 @@ class MohrCoulomb(ConstitutiveModelBase):
         
         self.matProps[materialID].add_material(density, young, possion, c_peak, fai_peak, psi_peak, c_residual, fai_residual, psi_residual, pdstrain_peak, pdstrain_residual, tensile)
         self.matProps[materialID].print_message(materialID)
-
 
     def get_lateral_coefficient(self, materialID):
         mu = self.matProps[materialID].possion
@@ -76,6 +75,7 @@ class ULStateVariable:
     estress: float
     fai: float
     psi: float
+    tensile: float
     c: float
 
     @ti.func
@@ -86,6 +86,7 @@ class ULStateVariable:
         self.fai = matProps[materialID].fai_peak
         self.psi = matProps[materialID].psi_peak
         self.c = matProps[materialID].c_peak
+        self.tensile = matProps[materialID].tensile
 
     @ti.func
     def _update_vars(self, stress, epstrain):
@@ -100,6 +101,7 @@ class TLStateVariable:
     fai: float
     psi: float
     c: float
+    tensile: float
     deformation_gradient: mat3x3
     stress: mat3x3
 
@@ -111,6 +113,7 @@ class TLStateVariable:
         self.fai = matProps[materialID].fai_peak
         self.psi = matProps[materialID].psi_peak
         self.c = matProps[materialID].c_peak
+        self.tensile = matProps[materialID].tensile
         self.deformation_gradient = DELTA
         self.stress = matrix_form(stress)
 
@@ -156,7 +159,11 @@ class MohrCoulombModel:
         self.psi_residual = psi_residual
         self.pdstrain_peak = pdstrain_peak
         self.pdstrain_residual = pdstrain_residual
-        self.tensile = tensile
+
+        if self.fai_peak == 0:
+            self.tensile = 0.
+        else:
+            self.tensile = ti.min(tensile, self.c_peak / ti.tan(self.fai_peak))
 
     def print_message(self, materialID):
         print(" Constitutive Model Information ".center(71, '-'))
@@ -204,127 +211,197 @@ class MohrCoulombModel:
         return matrix_form(stress) @ stateVars[np].deformation_gradient.inverse().transpose() * j
     
     # ==================================================== Mohr-Coulomb Model ==================================================== #
-    # cb-geo /include/materials/infinitesimal_strain/mohr_coulomb.tcc
     @ti.func
-    def YieldState(self, lode, sqrt2J2, epsilon, variables):
-        tolerance = -1e-6
-        fai, cohesion, tensile = variables.fai, variables.c, self.tensile
-        cos_lode = ti.cos(lode)
-        sin_fai, cos_fai, tan_fai = ti.sin(fai), ti.cos(fai), ti.tan(fai)
+    def get_epsilon(self, stress):
+        return ti.sqrt(3) * MeanStress(stress)
+    
+    @ti.func
+    def get_sqrt2J2(self, stress):
+        return ti.sqrt(2 * ComputeInvariantJ2(stress))
+    
+    @ti.func
+    def get_lode(self, stress):
+        return ComputeLodeAngle(stress)
 
-        yield_tension = ti.sqrt(2./3.) * cos_lode * sqrt2J2 + epsilon * ti.sqrt(1./3.) - tensile
+    @ti.func
+    def ComputeStressInvariant(self, stress):
+        return self.get_epsilon(stress), self.get_sqrt2J2(stress), self.get_lode(stress)
+    
+    @ti.func
+    def ComputeShearFunction(self, epsilon, sqrt2J2, lode, variables):
+        fai, cohesion = variables.fai, variables.c
+        cos_fai, tan_fai = ti.cos(fai), ti.tan(fai)
         yield_shear = ti.sqrt(1.5) * sqrt2J2 * (ti.sin(lode + PI/3.) / (ti.sqrt(3.) * cos_fai) + \
-                                        ti.cos(lode + PI/3.) * tan_fai / 3.) + \
-                                        epsilon * ti.sqrt(1./3.) * tan_fai - cohesion
+                      ti.cos(lode + PI/3.) * tan_fai / 3.) + epsilon * ti.sqrt(1./3.) * tan_fai - cohesion
+        return yield_shear
+    
+    @ti.func
+    def ComputeTensileFunction(self, epsilon, sqrt2J2, lode):
+        tensile = self.tensile
+        cos_lode = ti.cos(lode)
+        yield_tensile = ti.sqrt(2./3.) * cos_lode * sqrt2J2 + epsilon * ti.sqrt(1./3.) - tensile
+        return yield_tensile
+    
+    @ti.func
+    def ComputeYieldFunction(self, stress, variables):
+        epsilon, sqrt2J2, lode = self.ComputeStressInvariant(stress)
+        yield_shear = self.ComputeShearFunction(epsilon, sqrt2J2, lode, variables)
+        yield_tensile = self.ComputeTensileFunction(epsilon, sqrt2J2, lode)
+        return yield_shear, yield_tensile
+
+    @ti.func
+    def ComputeYieldState(self, stress, variables):
+        tolerance = -1e-8
+        fai, cohesion, tensile = variables.fai, variables.c, variables.tensile
+        sin_fai = ti.sin(fai)
+        epsilon, sqrt2J2, lode = self.ComputeStressInvariant(stress)
+        yield_shear, yield_tensile = self.ComputeYieldFunction(stress, variables)
 
         yield_state = 0
-        if yield_tension > tolerance and yield_shear > tolerance:
+        if yield_tensile > tolerance and yield_shear > tolerance:
             n_fai = (1. + sin_fai) / (1. - sin_fai)
             sigma_p = tensile * n_fai - 2. * cohesion * ti.sqrt(n_fai)
             alpha_p = ti.sqrt(1. + n_fai * n_fai) + n_fai
-            h = yield_tension + alpha_p * (ti.sqrt(2./3.) * ti.cos(lode - 4.*PI/3.) * sqrt2J2 \
-                                        + epsilon * ti.sqrt(1./3.) - sigma_p)
+            h = yield_tensile + alpha_p * (ti.sqrt(2./3.) * ti.cos(lode - 4.*PI/3.) * sqrt2J2 + epsilon * ti.sqrt(1./3.) - sigma_p)
             if h > Threshold:
                 yield_state = 2
             else:
                 yield_state = 1
-        if yield_tension < tolerance and yield_shear > tolerance:
+        if yield_tensile < tolerance and yield_shear > tolerance:
             yield_state = 1
-        if yield_tension > tolerance and yield_shear < tolerance:
+        if yield_tensile > tolerance and yield_shear < tolerance:
             yield_state = 2
 
-        return yield_state, yield_tension, yield_shear
-        
+        f_function = 0.
+        if yield_state == 1:
+            f_function = yield_shear
+        elif yield_state == 2:
+            f_function = yield_tensile
+        return yield_state, f_function
+    
     @ti.func
-    def Compute_DfDp(self, yield_state, sqrt2J2, lode, stress, variables):
-        df_dsigma = dp_dsigma = ZEROVEC6f
-        dp_dq = 0.
-        
-        pdstrain = variables.epstrain
-        pdstrain_peak, pdstrain_residual = self.pdstrain_peak, self.pdstrain_residual
-        fai, psi, cohesion, tensile = variables.fai, variables.psi, variables.c, self.tensile
-        sin_lode, cos_lode = ti.sin(lode), ti.cos(lode)
-        sin_fai, cos_fai, tan_fai, tan_psi = ti.sin(fai), ti.cos(fai), ti.tan(fai), ti.tan(psi)
+    def ComputeDfDsigma(self, yield_state, stress, variables):
+        sqrt2J2 = self.get_sqrt2J2(stress)
+        lode = self.get_lode(stress)
 
+        fai = variables.fai
         df_depsilon, df_dsqrt2J2, df_dlode = 0., 0., 0.
         if yield_state == 2:
+            sin_lode, cos_lode = ti.sin(lode), ti.cos(lode)
             df_depsilon = ti.sqrt(1./3.)
             df_dsqrt2J2 = ti.sqrt(2./3.) * cos_lode
             df_dlode = -ti.sqrt(2./3.) * sqrt2J2 * sin_lode
         else:
+            sin_lode_PI_3, cos_lode_PI_3 = ti.sin(lode + PI/3.), ti.cos(lode + PI/3.)
+            cos_fai, tan_fai = ti.cos(fai), ti.tan(fai)
             df_depsilon = tan_fai * ti.sqrt(1./3.)
-            df_dsqrt2J2 = ti.sqrt(1.5) * (ti.sin(lode + PI/3.) / (ti.sqrt(3.) * cos_fai) + \
-                                            ti.cos(lode + PI/3.) * tan_fai / 3.)
-            df_dlode = ti.sqrt(1.5) * sqrt2J2 * (ti.cos(lode + PI/3.) / (ti.sqrt(3.) * cos_fai) - \
-                                                ti.sin(lode + PI/3.) * tan_fai / 3.)
+            df_dsqrt2J2 = ti.sqrt(1.5) * (sin_lode_PI_3 / (ti.sqrt(3.) * cos_fai) + cos_lode_PI_3 * tan_fai / 3.)
+            df_dlode = ti.sqrt(1.5) * sqrt2J2 * (cos_lode_PI_3 / (ti.sqrt(3.) * cos_fai) - sin_lode_PI_3 * tan_fai / 3.)
         
         depsilon_dsigma = DpDsigma() * ti.sqrt(3.)
         dsqrt2J2_dsigma = DqDsigma(stress) * ti.sqrt(2./3.)
         dlode_dsigma = DlodeDsigma(stress)
         df_dsigma = df_depsilon * depsilon_dsigma + df_dsqrt2J2 * dsqrt2J2_dsigma + df_dlode * dlode_dsigma
+        return df_dsigma
+    
+    @ti.func
+    def ComputeSoftening(self, dgdp, dgdq, stress, variables):
+        dfdpvstrain = self.ComputeDfDpvstrain(stress, variables)
+        dfdpdstrain = self.ComputeDfDpdstrain(stress, variables)
+        return dfdpvstrain * dgdp + dfdpdstrain * dgdq
+
+    @ti.func
+    def ComputeDfDpvstrain(self, stress, variables):
+        return 0.
+    
+    @ti.func
+    def ComputeDfDpdstrain(self, stress, variables):
+        sqrt2J2 = self.get_sqrt2J2(stress)
+        lode = self.get_lode(stress)
+
+        dfdpdstrain, pdstrain = 0., variables.epstrain
+        sin_fai, cos_fai = ti.sin(variables.fai), ti.cos(variables.fai)
+        c_peak, c_residual = self.c_peak, self.c_residual
+        fai_peak, fai_residual = self.fai_peak, self.fai_residual
+        pdstrain_peak, pdstrain_residual = self.pdstrain_peak, self.pdstrain_residual
+        if pdstrain > self.pdstrain_peak and pdstrain < pdstrain_residual:
+            dfai_dpstrain = (fai_residual - fai_peak) / (pdstrain_residual - pdstrain_peak)
+            dc_dpstrain = (c_residual - c_peak) / (pdstrain_residual - pdstrain_peak)
+            df_dfai = ti.sqrt(1.5) * sqrt2J2 * (sin_fai * ti.sin(lode + PI / 3.) / (ti.sqrt(3.) * cos_fai * cos_fai) + ti.cos(lode + PI / 3.) / (3. * cos_fai * cos_fai)) + MeanStress(stress) / (cos_fai * cos_fai)
+            df_dc = -1
+            dfdpdstrain = df_dfai * dfai_dpstrain + df_dc * dc_dpstrain
+        return dfdpdstrain
+    
+    @ti.func
+    def ComputeDgDsigma(self, yield_state, stress, variables):
+        sqrt2J2 = self.get_sqrt2J2(stress)
+        lode = self.get_lode(stress)
+
+        xi, xit = 0.1, 0.1
+        fai, psi, cohesion, tensile = variables.fai, variables.psi, variables.c, variables.tensile
+        sin_lode, cos_lode = ti.sin(lode), ti.cos(lode)
+        sin_fai, cos_fai, tan_psi = ti.sin(fai), ti.cos(fai), ti.tan(psi)
+
+        depsilon_dsigma = DpDsigma() * ti.sqrt(3.)
+        dsqrt2J2_dsigma = DqDsigma(stress) * ti.sqrt(2./3.)
+        dlode_dsigma = DlodeDsigma(stress)
         
+        dg_dp, dg_dq = 0., 0.
+        dg_depsilon, dg_dsqrt2J2, dg_dlode = 0., 0., 0.
         if yield_state == 2:
             et_value = 0.6
-            xit = 0.1
             sqpart = 4. * (1 - et_value * et_value) * cos_lode * cos_lode + 5. * et_value * et_value - 4. * et_value
             if sqpart < Threshold: sqpart = 1e-5
             rt_den = 2. * (1 - et_value * et_value) * cos_lode + (2. * et_value - 1) * ti.sqrt(sqpart)
             rt_num = 4. * (1 - et_value * et_value) * cos_lode * cos_lode + (2. * et_value - 1) * (2. * et_value - 1)
             if ti.abs(rt_den) < Threshold: rt_den = 1e-5
             rt = rt_num / (3. * rt_den)
-
             temp_den = ti.sqrt(xit * xit * tensile * tensile + 1.5 * rt * rt * sqrt2J2 * sqrt2J2)
             if temp_den < Threshold: temp_den = Threshold
+            dg_dp = 1.
+            dg_dq = ti.sqrt(1.5) * sqrt2J2 * rt * rt / temp_den
             dp_drt = 1.5 * sqrt2J2 * sqrt2J2 * rt / temp_den
-            dp_dsqrt2J2 = 1.5 * sqrt2J2 * rt * rt / temp_den
-
-            dp_depsilon = 1. / ti.sqrt(3.)
             drtden_dlode = -2. * (1 - et_value * et_value) * sin_lode - (2. * et_value - 1) * 4. * (1 - et_value * et_value) * cos_lode * \
                             sin_lode / ti.sqrt(4. * (1 - et_value * et_value) * cos_lode * cos_lode + 5. * et_value * et_value - 4. * et_value)
             drtnum_dlode = -8. * (1 - et_value * et_value) * cos_lode * sin_lode
             drt_dlode = (drtnum_dlode * rt_den - drtden_dlode * rt_num) / (3. * rt_den * rt_den)
-            dp_dsigma = dp_depsilon * depsilon_dsigma + dp_dsqrt2J2 * dsqrt2J2_dsigma + dp_drt * drt_dlode * dlode_dsigma
-            dp_dq = dp_dsqrt2J2 * ti.sqrt(2. / 3.)
+            dg_dlode = dp_drt * drt_dlode 
         else:
             r_mc = (3. - sin_fai) / (6. * cos_fai)
             e_val = (3. - sin_fai) / (3. + sin_fai)
             e_val = clamp(0.5 + 1e-10, 1., e_val)
             sqpart = 4. * (1 - e_val * e_val) * cos_lode * cos_lode + 5 * e_val * e_val - 4 * e_val
-            if sqpart < Threshold: sqpart = 1e-5
+            if sqpart < Threshold: sqpart = 1e-10
             m = 2. * (1 - e_val * e_val) * cos_lode + (2. * e_val - 1) * ti.sqrt(sqpart)
-            if ti.abs(m) < Threshold: m = 1e-5
+            if ti.abs(m) < Threshold: m = 1e-10
             l = 4. * (1 - e_val * e_val) * cos_lode * cos_lode + (2. * e_val - 1) * (2. * e_val - 1)
             r_mw = (l / m) * r_mc
-            xi = 0.1
             omega = (xi * cohesion * tan_psi) * (xi * cohesion * tan_psi) + (r_mw * ti.sqrt(1.5) * sqrt2J2) * (r_mw * ti.sqrt(1.5) * sqrt2J2)
-            if omega < Threshold: omega = 1e-5
+            if omega < Threshold: omega = 1e-10
             dl_dlode = -8. * (1. - e_val * e_val) * cos_lode * sin_lode
             dm_dlode = -2. * (1. - e_val * e_val) * sin_lode + (0.5 * (2. * e_val - 1.) * dl_dlode) / ti.sqrt(sqpart)
             drmw_dlode = ((m * dl_dlode) - (l * dm_dlode)) / (m * m)
-            dp_depsilon = tan_psi / ti.sqrt(3.)
-            dp_dsqrt2J2 = 3. * sqrt2J2 * r_mw * r_mw / (2. * ti.sqrt(omega))
-            dp_dlode = (3. * sqrt2J2 * sqrt2J2 * r_mw * r_mc * drmw_dlode) / (2. * ti.sqrt(omega))
-            dp_dsigma = (dp_depsilon * depsilon_dsigma) + (dp_dsqrt2J2 * dsqrt2J2_dsigma) + (dp_dlode * dlode_dsigma)
-            dp_dq = dp_dsqrt2J2 * ti.sqrt(2./3.)
+            dg_dp = tan_psi
+            dg_dq = sqrt2J2 * r_mw * r_mw / (2. * ti.sqrt(omega)) * ti.sqrt(6.)
+            dg_dlode = (3. * sqrt2J2 * sqrt2J2 * r_mw * r_mc * drmw_dlode) / (2. * ti.sqrt(omega))
         
-        c_peak, c_residual = self.c_peak, self.c_residual
-        fai_peak, fai_residual = self.fai_peak, self.fai_residual
-
-        softening = 0.
-        if pdstrain > pdstrain_peak and pdstrain < pdstrain_residual:
-            dfai_dpstrain = (fai_residual - fai_peak) / (pdstrain_residual - pdstrain_peak)
-            dc_dpstrain = (c_residual - c_peak) / (pdstrain_residual - pdstrain_peak)
-            df_dfai = ti.sqrt(1.5) * sqrt2J2 * (sin_fai * ti.sin(lode + PI / 3.) / (ti.sqrt(3.) * cos_fai * cos_fai) + ti.cos(lode + PI / 3.) / (3. * cos_fai * cos_fai)) + MeanStress(stress) / (cos_fai * cos_fai)
-            df_dc = -1
-            softening = -1. * (df_dfai * dfai_dpstrain + df_dc * dc_dpstrain) * dp_dq
-        return df_dsigma, dp_dsigma, dp_dq, softening
+        dg_depsilon = dg_dp / ti.sqrt(3.)
+        dg_dsqrt2J2 = dg_dq * ti.sqrt(1.5)
+        dg_dsigma = (dg_depsilon * depsilon_dsigma) + (dg_dsqrt2J2 * dsqrt2J2_dsigma) + (dg_dlode * dlode_dsigma)
+        return dg_dp, dg_dq, dg_dsigma
 
     @ti.func
-    def ComputeStressInvariant(self, stress):
-        epsilon = ti.sqrt(3) * MeanStress(stress)
-        sqrt2J2 = ti.sqrt(2 * ComputeInvariantJ2(stress))
-        lode = ComputeLodeAngle(stress)
-        return epsilon, sqrt2J2, lode
+    def ComputeElasticStress(self, dstrain, stress):
+        return stress + self.ComputeElasticStressIncrement(dstrain, stress)
+    
+    @ti.func
+    def ComputeElasticStressIncrement(self, dstrain, stress):
+        bulk_modulus = self.bulk
+        shear_modulus = self.shear
+
+        # !-- trial elastic stresses ----!
+        dstress = ElasticTensorMultiplyVector(dstrain, bulk_modulus, shear_modulus)
+        return dstress
 
     @ti.func
     def ComputeStress2D(self, np, previous_stress, velocity_gradient, stateVars, dt):  
@@ -339,10 +416,7 @@ class MohrCoulombModel:
         return self.core(np, previous_stress, de, dw, stateVars)
     
     @ti.func
-    def core(self, np, previous_stress, de, dw, stateVars): 
-        bulk_modulus = self.bulk
-        shear_modulus = self.shear
-
+    def soften(self, np, stateVars):
         pdstrain = stateVars[np].epstrain
         pdstrain_peak, pdstrain_residual = self.pdstrain_peak, self.pdstrain_residual
         c_peak, c_residual = self.c_peak, self.c_residual
@@ -359,115 +433,138 @@ class MohrCoulombModel:
                 stateVars[np].c = c_residual
 
             apex = stateVars[np].c / ti.max(ti.tan(stateVars[np].fai), Threshold)
-            if self.tensile > apex: self.tensile = ti.max(apex, Threshold)
-        
+            if stateVars[np].tensile > apex: stateVars[np].tensile = ti.max(apex, Threshold)
+    
+    @ti.func
+    def core(self, np, previous_stress, de, dw, stateVars): 
+        bulk_modulus = self.bulk
+        shear_modulus = self.shear
+        self.soften(np, stateVars)
 
         # !-- trial elastic stresses ----!
         stress = previous_stress
         sigrot = Sigrot(stress, dw)
-        dstress = ElasticTensorMultiplyVector(de, shear_modulus, bulk_modulus)
+        dstress = ElasticTensorMultiplyVector(de, bulk_modulus, shear_modulus)
         trial_stress = stress + dstress 
 
         # !-- compute trial stress invariants ----!
-        epsilon, sqrt2J2, lode = self.ComputeStressInvariant(trial_stress)
-        yield_state, yield_tension_trial, yield_shear_trial = self.YieldState(lode, sqrt2J2, epsilon, stateVars[np])
+        pdstrain = 0.
         updated_stress = trial_stress
-        if yield_state == 0:
-            updated_stress += sigrot
-            stateVars[np].estress = VonMisesStress(updated_stress)
-        elif yield_state > 0:
+        yield_state_trial, f_function_trial = self.ComputeYieldState(trial_stress, stateVars[np])
+        
+        # !-- implicit return mapping ----!
+        if yield_state_trial > 0:
             Tolerance = 1e-1
-
-            df_dsigma_trial, dp_dsigma_trial, dp_dq_trial, softening_trial = self.Compute_DfDp(yield_state, sqrt2J2, lode, trial_stress, stateVars[np])
-            yield_trial = 0.
-            if yield_state == 1:
-                yield_trial = yield_shear_trial
-            elif yield_state == 2:
-                yield_trial = yield_tension_trial
-
-            temp_matrix = ElasticTensorMultiplyVector(df_dsigma_trial, bulk_modulus, shear_modulus)
-            lambda_trial = yield_trial / ((temp_matrix).dot(dp_dsigma_trial) + softening_trial)
+            dfdsigma_trial = self.ComputeDfDsigma(yield_state_trial, trial_stress, stateVars[np])
+            dgdp_trial, dgdq_trial, dgdsigma_trial = self.ComputeDgDsigma(yield_state_trial, trial_stress, stateVars[np])
+            softening_trial = self.ComputeSoftening(dgdp_trial, dgdq_trial, trial_stress, stateVars[np])
+            temp_matrix = ElasticTensorMultiplyVector(dfdsigma_trial, bulk_modulus, shear_modulus)
+            lambda_trial = f_function_trial / ((temp_matrix).dot(dgdsigma_trial) - softening_trial)
             
-            epsilon, sqrt2J2, lode = self.ComputeStressInvariant(stress)
-            yield_state, yield_tension, yield_shear = self.YieldState(lode, sqrt2J2, epsilon, stateVars[np])
-            _yield = MThreshold
-            if yield_state == 1:
-                _yield = yield_shear
-            elif yield_state == 2:
-                _yield = yield_tension
+            yield_state, f_function = self.ComputeYieldState(stress, stateVars[np])
+            dfdsigma = self.ComputeDfDsigma(yield_state, stress, stateVars[np])
+            dgdp, dgdq, dgdsigma = self.ComputeDgDsigma(yield_state, stress, stateVars[np])
+            softening = self.ComputeSoftening(dgdp, dgdq, stress, stateVars[np])
+            temp_matrix = ElasticTensorMultiplyVector(dfdsigma, bulk_modulus, shear_modulus)
+            _lambda = temp_matrix.dot(de) / ((temp_matrix).dot(dgdsigma) - softening)
 
-            df_dsigma, dp_dsigma, dp_dq, softening = self.Compute_DfDp(yield_state, sqrt2J2, lode, stress, stateVars[np])
-            temp_matrix = ElasticTensorMultiplyVector(df_dsigma, bulk_modulus, shear_modulus)
-            _lambda = temp_matrix.dot(de) / ((temp_matrix).dot(dp_dsigma) + softening)
-            dpdstrain = 0.
-
-            if ti.abs(_yield) < Tolerance:
-                temp_matrix = ElasticTensorMultiplyVector(dp_dsigma, bulk_modulus, shear_modulus)
+            pdstrain = 0.
+            if ti.abs(f_function) < Tolerance:
+                temp_matrix = ElasticTensorMultiplyVector(dgdsigma, bulk_modulus, shear_modulus)
                 updated_stress -= _lambda * temp_matrix
-                dpdstrain = _lambda * dp_dq
+                pdstrain = _lambda * dgdq
             else:
-                temp_matrix = ElasticTensorMultiplyVector(dp_dsigma_trial, bulk_modulus, shear_modulus)
+                temp_matrix = ElasticTensorMultiplyVector(dgdsigma_trial, bulk_modulus, shear_modulus)
                 updated_stress -= lambda_trial * temp_matrix
-                dpdstrain = lambda_trial * dp_dq_trial
+                pdstrain = lambda_trial * dgdq_trial
 
-            itr_max = 100
-            for _ in range(itr_max):
-                epsilon, sqrt2J2, lode = self.ComputeStressInvariant(updated_stress)
-
-                yield_state, yield_tension_trial, yield_shear_trial = self.YieldState(lode, sqrt2J2, epsilon, stateVars[np])
-                
-                if yield_tension_trial < Tolerance and yield_shear_trial < Tolerance:
-                    break
-                
-                df_dsigma_trial, dp_dsigma_trial, dp_dq_trial, softening_trial = self.Compute_DfDp(yield_state, sqrt2J2, lode, updated_stress, stateVars[np])
-
-                if yield_state == 1:
-                    yield_trial = yield_shear_trial
-                elif yield_state == 2:
-                    yield_trial = yield_tension_trial
-
-                temp_matrix = ElasticTensorMultiplyVector(df_dsigma_trial, bulk_modulus, shear_modulus)
-                lambda_trial = yield_trial / ((temp_matrix).dot(dp_dsigma_trial) + softening_trial)
-                
-                temp_matrix = ElasticTensorMultiplyVector(dp_dsigma_trial, bulk_modulus, shear_modulus)
-                updated_stress -= lambda_trial * temp_matrix
-                dpdstrain += lambda_trial * dp_dq_trial
+            yield_state, f_function = self.ComputeYieldState(updated_stress, stateVars[np])
+            if ti.abs(f_function) > FTOL:
+                updated_stress, pdstrain = self.DriftCorrect(yield_state, f_function, updated_stress, pdstrain, stateVars[np])
             
-            updated_stress += sigrot
-            stateVars[np].estress = VonMisesStress(updated_stress)
-            stateVars[np].epstrain += dpdstrain
+        updated_stress += sigrot
+        stateVars[np].estress = VonMisesStress(updated_stress)
+        stateVars[np].epstrain += pdstrain
         return updated_stress
     
     @ti.func
-    def compute_elastic_tensor(self, np, current_stress, stiffness, stateVars):
-        ComputeElasticStiffnessTensor(np, self.bulk, self.shear, stiffness)
-
-    @ti.func
-    def compute_stiffness_tensor(self, np, current_stress, stiffness, stateVars):
-        bulk_modulus = self.bulk
-        shear_modulus = self.shear
-
-        a1 = bulk_modulus + (4./3.) * shear_modulus
-        a2 = bulk_modulus - (2./3.) * shear_modulus
-        stiffness[np][0, 0] = stiffness[np][1, 1] = stiffness[np][2, 2] = a1
-        stiffness[np][0, 1] = stiffness[np][0, 2] = stiffness[np][1, 2] = a2
-        stiffness[np][1, 0] = stiffness[np][2, 0] = stiffness[np][2, 1] = a2
-        stiffness[np][3, 3] = stiffness[np][4, 4] = stiffness[np][5, 5] = shear_modulus
-
-        epsilon, sqrt2J2, lode = self.ComputeStressInvariant(current_stress)
-        yield_state, _, _ = self.YieldState(lode, sqrt2J2, epsilon, stateVars[np])
-        if yield_state > 0:
-            df_dsigma, dp_dsigma, dp_dq, softening = self.Compute_DfDp(yield_state, sqrt2J2, lode, current_stress, stateVars[np])
-            de_dpdsigma = ElasticTensorMultiplyVector(dp_dsigma, bulk_modulus, shear_modulus)
-            de_dfdsigma = ElasticTensorMultiplyVector(df_dsigma, bulk_modulus, shear_modulus)
-            dfdsigma_de_dpdsigma = df_dsigma.dot(de_dpdsigma)
-            stiffness[np] -= 1. / (dfdsigma_de_dpdsigma + softening) * (de_dpdsigma.outer_product(de_dfdsigma))
+    def line_search(self, stress, dstress, f_function, variables):
+        alpha = 1.
+        while True:
+            _, f_function_new = self.ComputeYieldState(stress - alpha * dstress, variables)
+            if ti.abs(f_function_new) < ti.abs(f_function) or alpha < 1e-5: 
+                break
+            alpha /= 2.
+        return alpha
     
     @ti.func
-    def ComputePKStress(self, np, previous_stress, velocity_gradient, stateVars, dt):  
-        previous_stress = self.PK2CauchyStress(np, stateVars, previous_stress)
-        stress = self.ComputeStress(np, previous_stress, velocity_gradient, stateVars, dt)
-        return self.Cauchy2PKStress(np, stateVars, stress)
+    def ConsistentCorrection(self, yield_state, f_function, stress, pdstrain, variables):
+        bulk_modulus, shear_modulus = self.bulk, self.shear
+        dfdsigma = self.ComputeDfDsigma(yield_state, stress, variables)
+        dgdp, dgdq, dgdsigma = self.ComputeDgDsigma(yield_state, stress, variables)
+        softening_trial = self.ComputeSoftening(dgdp, dgdq, stress, variables)
+        temp_matrix = ElasticTensorMultiplyVector(dgdsigma, bulk_modulus, shear_modulus)
+        lambda_trial = f_function / ((temp_matrix).dot(dfdsigma) - softening_trial)
+        dstress = lambda_trial * temp_matrix
+        dpdstrain = lambda_trial * dgdq
+        return stress - dstress, pdstrain + dpdstrain
+
+    @ti.func
+    def NormalCorrection(self, yield_state, f_function, stress, variables):
+        dfdsigma = self.ComputeDfDsigma(yield_state, stress, variables)
+        dfdsigmadfdsigma = voigt_tensor_dot(dfdsigma, dfdsigma)
+        abeta = 1. / dfdsigmadfdsigma if ti.abs(dfdsigmadfdsigma) > Threshold else 0.
+        dlambda = f_function * abeta
+        dstress = dlambda * dfdsigma
+        return stress - dstress
+
+    @ti.func
+    def DriftCorrect(self, yield_state, f_function, stress, pdstrain, variables):
+        for _ in range(MAXITS):
+            stress_new, pdstrain_new = self.ConsistentCorrection(yield_state, f_function, stress, pdstrain, variables)
+            yield_state_new, f_function_new = self.ComputeYieldState(stress_new, variables)
+
+            if ti.abs(f_function_new) > ti.abs(f_function):
+                stress_new = self.NormalCorrection(yield_state, f_function, stress, variables)
+                yield_state_new, f_function_new = self.ComputeYieldState(stress_new, variables)
+                pdstrain_new = pdstrain
+
+            stress = stress_new
+            pdstrain = pdstrain_new
+            yield_state = yield_state_new
+            f_function = f_function_new
+            if ti.abs(f_function_new) <= FTOL:
+                break
+        return stress, pdstrain
+    
+    @ti.func
+    def compute_elastic_tensor(self, np, current_stress, stateVars):
+        return ComputeElasticStiffnessTensor(self.bulk, self.shear)
+
+    @ti.func
+    def compute_stiffness_tensor(self, np, current_stress, stateVars):
+        stiffness_matrix = self.compute_elastic_tensor(np, current_stress, stateVars)
+        yield_state, f_function = self.ComputeYieldState(current_stress, stateVars[np])
+        if yield_state > 0:
+            bulk_modulus = self.bulk
+            shear_modulus = self.shear
+
+            dfdsigma = self.ComputeDfDsigma(yield_state, current_stress, stateVars[np])
+            dgdp, dgdq, dgdsigma = self.ComputeDgDsigma(yield_state, current_stress, stateVars[np])
+            softening = self.ComputeSoftening(dgdp, dgdq, current_stress, stateVars[np])
+            tempMatf = ElasticTensorMultiplyVector(dfdsigma, bulk_modulus, shear_modulus)
+            tempMatg = ElasticTensorMultiplyVector(dgdsigma, bulk_modulus, shear_modulus)
+            dfdsigmaDedgdsigma = voigt_tensor_dot(dgdsigma, tempMatf)
+            stiffness_matrix -= 1. / (dfdsigmaDedgdsigma - softening) * (tempMatg.outer_product(tempMatf))
+        return stiffness_matrix
+
+    @ti.func
+    def ComputePKStress(self, np, velocity_gradient, stateVars, dt):  
+        previous_stress = self.PK2CauchyStress(np, stateVars)
+        cauchy_stress = self.ComputeStress(np, previous_stress, velocity_gradient, stateVars, dt)
+        PKstress = self.Cauchy2PKStress(np, stateVars, cauchy_stress)
+        stateVars[np].stress = PKstress
+        return PKstress
 
 
 @ti.kernel

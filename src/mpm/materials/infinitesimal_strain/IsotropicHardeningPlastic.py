@@ -3,11 +3,11 @@ import taichi as ti
 
 from src.mpm.materials.ConstitutiveModelBase import ConstitutiveModelBase
 from src.utils.MaterialKernel import *
-from src.utils.constants import DELTA
+from src.utils.constants import DELTA, FTOL, MAXITS
 from src.utils.MatrixFunction import matrix_form
 from src.utils.ObjectIO import DictIO
 from src.utils.TypeDefination import mat3x3
-from src.utils.VectorFunction import voigt_form
+from src.utils.VectorFunction import voigt_form, voigt_tensor_dot, equivalent_voigt
 
 
 class IsotropicHardeningPlastic(ConstitutiveModelBase):
@@ -160,60 +160,208 @@ class IsotropicHardeningPlasticModel:
     def ComputeStress2D(self, np, previous_stress, velocity_gradient, stateVars, dt):  
         de = calculate_strain_increment2D(velocity_gradient, dt)
         dw = calculate_vorticity_increment2D(velocity_gradient, dt)
-        return self.core(np, previous_stress, de, dw, stateVars)
+        return self.ImplicitIntegration(np, previous_stress, de, dw, stateVars)
 
     @ti.func
     def ComputeStress(self, np, previous_stress, velocity_gradient, stateVars, dt):  
         de = calculate_strain_increment(velocity_gradient, dt)
         dw = calculate_vorticity_increment(velocity_gradient, dt)
-        return self.core(np, previous_stress, de, dw, stateVars)
+        return self.ImplicitIntegration(np, previous_stress, de, dw, stateVars)
     
     @ti.func
-    def core(self, np, previous_stress, de, dw, stateVars): 
-        sigma_y = stateVars[np].sigma_y
-        shear_modulus, bulk_modulus = self.shear, self.bulk
+    def ComputeStressInvariant(self, stress):
+        return EquivalentStress(stress)
+    
+    @ti.func
+    def ComputeShearFunction(self, seqv, pdstrain):
+        return seqv - (self._yield + self.pla_mod * pdstrain)
+    
+    @ti.func
+    def ComputeYieldFunction(self, stress, pdstrain):
+        seqv = self.ComputeStressInvariant(stress)
+        yield_shear = self.ComputeShearFunction(seqv, pdstrain)
+        return yield_shear
+
+    @ti.func
+    def ComputeYieldState(self, stress, pdstrain):
+        tolerance = -1e-8
+        yield_shear = self.ComputeYieldFunction(stress, pdstrain)
+
+        yield_state = 0
+        if yield_shear > tolerance:
+            yield_state = 1
+        return yield_state, yield_shear
+    
+    @ti.func
+    def ComputeDfDsigma(self, stress):
+        df_dp = 0.
+        df_dq = 1.
+        
+        dp_dsigma = DpDsigma() 
+        dq_dsigma = DqDsigma(stress) 
+        df_dsigma = df_dp * dp_dsigma + df_dq * dq_dsigma 
+        return df_dsigma
+    
+    @ti.func
+    def ComputeDfDdariable(self):
+        return -self.pla_mod 
+    
+    @ti.func
+    def ComputeHardening(self, dgdq):
+        dfdpdstrain = self.ComputeDfDdariable()
+        return dfdpdstrain * dgdq
+    
+    @ti.func
+    def ComputeDgDsigma(self, stress):
+        dg_dp = 0.
+        dg_dq = 1.
+        
+        dp_dsigma = DpDsigma() 
+        dq_dsigma = DqDsigma(stress) 
+        dg_dsigma = dg_dp * dp_dsigma + dg_dq * dq_dsigma 
+        return dg_dp, dg_dq, dg_dsigma
+    
+    @ti.func
+    def ComputeElasticStress(self, dstrain, stress):
+        return stress + self.ComputeElasticStressIncrement(dstrain)
+    
+    @ti.func
+    def ComputeElasticStressIncrement(self, dstrain):
+        bulk_modulus = self.bulk
+        shear_modulus = self.shear
 
         # !-- trial elastic stresses ----!
+        dstress = ElasticTensorMultiplyVector(dstrain, bulk_modulus, shear_modulus)
+        return dstress
+
+    @ti.func
+    def line_search(self, stress, dstress, f_function, pdstrain, dpdstrain):
+        alpha = 1.
+        while True:
+            _, f_function_new = self.ComputeYieldState(stress - alpha * dstress, pdstrain + alpha * dpdstrain)
+            if ti.abs(f_function_new) < ti.abs(f_function) or alpha < 1e-5: 
+                break
+            alpha /= 2.
+        return alpha
+    
+    @ti.func
+    def ConsistentCorrection(self, yield_state, f_function, stress, pdstrain):
+        bulk_modulus, shear_modulus = self.bulk, self.shear
+
+        dfdsigma = self.ComputeDfDsigma(yield_state, stress)
+        _, dgdq, dgdsigma = self.ComputeDgDsigma(yield_state, stress)
+        tempMat = ElasticTensorMultiplyVector(dgdsigma, bulk_modulus, shear_modulus)
+        hardening = self.ComputeHardening(dgdq)
+        dfdsigmaDedgdsigma = voigt_tensor_dot(dfdsigma, tempMat) - hardening
+        abeta = 1. / dfdsigmaDedgdsigma if ti.abs(dfdsigmaDedgdsigma) > Threshold else 0.
+        dlambda = f_function * abeta
+        dstress = dlambda * tempMat
+        dpdstrain = dlambda * dgdq
+        alpha = self.line_search(stress, dstress, f_function, pdstrain, dpdstrain)
+        return stress - alpha * dstress, pdstrain + alpha * dpdstrain
+    
+    @ti.func
+    def NormalCorrection(self, yield_state, f_function, stress, pdstrain):
+        dfdsigma = self.ComputeDfDsigma(yield_state, stress)
+        dfdsigmadfdsigma = voigt_tensor_dot(dfdsigma, dfdsigma)
+        abeta = 1. / dfdsigmadfdsigma if ti.abs(dfdsigmadfdsigma) > Threshold else 0.
+        dlambda = f_function * abeta
+        dstress = dlambda * dfdsigma
+        alpha = self.line_search(stress, dstress, f_function, pdstrain, 0)
+        return stress - alpha * dstress
+    
+    @ti.func
+    def UpdateInternalVariables(self, np, dpdstrain, stateVars):
+        stateVars[np].epstrain += dpdstrain
+
+    @ti.func
+    def UpdateStateVariables(self, np, stress, stateVars):
+        stateVars[np].estress = VonMisesStress(stress)
+    
+    @ti.func
+    def DriftCorrect(self, yield_state, f_function, stress, pdstrain):
+        for _ in range(MAXITS):
+            stress_new, pdstrain_new = self.ConsistentCorrection(yield_state, f_function, stress, pdstrain)
+            yield_state_new, f_function_new = self.ComputeYieldState(stress_new, pdstrain_new)
+
+            if ti.abs(f_function_new) > ti.abs(f_function):
+                stress_new = self.NormalCorrection(yield_state, f_function, stress, pdstrain)
+                yield_state_new, f_function_new = self.ComputeYieldState(stress_new, pdstrain)
+                pdstrain_new = pdstrain
+
+            stress = stress_new
+            pdstrain = pdstrain_new
+            yield_state = yield_state_new
+            f_function = f_function_new
+            if ti.abs(f_function_new) <= FTOL:
+                break
+        return stress, pdstrain
+    
+    @ti.func
+    def ImplicitIntegration(self, np, previous_stress, de, dw, stateVars):
+        bulk_modulus = self.bulk
+        shear_modulus = self.shear
+
+        # !---- trial elastic stresses ----!
         stress = previous_stress
         sigrot = Sigrot(stress, dw)
         dstress = ElasticTensorMultiplyVector(de, bulk_modulus, shear_modulus)
-        trial_stress = stress + dstress 
+        trial_stress = stress + dstress
 
-        sigma = MeanStress(trial_stress)
-        sd = DeviatoricStress(trial_stress)
-        seqv = EquivalentStress(trial_stress)
-        f_func = seqv - sigma_y
-
-        depeff = 0.
+        # !---- compute trial stress invariants ----!
+        pdstrain = 0.
         updated_stress = trial_stress
-        if f_func > Threshold:
-            depeff = (seqv - sigma_y) / (3. * self.shear + self.pla_mod)
-            
-            sigma_y += self.pla_mod * depeff
-            ratio = sigma_y / seqv
-            sd *= ratio
-            seqv *= ratio
+        yield_state_trial, f_function_trial = self.ComputeYieldState(trial_stress, pdstrain)
+        
+        if yield_state_trial > 0:
+            Tolerance = 1e-1
 
-            updated_stress = AssembleStress(sigma, sd)
+            df_dsigma_trial = self.ComputeDfDsigma(yield_state_trial, trial_stress)
+            __, dgdp_trial, dg_dsigma_trial = self.ComputeDgDsigma(yield_state_trial, trial_stress)
+            hardening_trial = self.ComputeHardening(dgdp_trial)
+            temp_matrix = ElasticTensorMultiplyVector(df_dsigma_trial, bulk_modulus, shear_modulus)
+            lambda_trial = f_function_trial / ti.max(((temp_matrix).dot(dg_dsigma_trial)) - hardening_trial, Threshold)
+
+            yield_state, f_function = self.ComputeYieldState(stress, pdstrain)
+            df_dsigma = self.ComputeDfDsigma(yield_state, stress)
+            __, dgdp, dg_dsigma = self.ComputeDgDsigma(yield_state, stress)
+            hardening = self.ComputeHardening(dgdp)
+            temp_matrix = ElasticTensorMultiplyVector(df_dsigma, bulk_modulus, shear_modulus)
+            lambda_ = temp_matrix.dot(de) / ti.max(((temp_matrix).dot(dg_dsigma)) - hardening, Threshold)
+
+            pdstrain = 0.
+            if ti.abs(f_function) < Tolerance:
+                temp_matrix = ElasticTensorMultiplyVector(dg_dsigma, bulk_modulus, shear_modulus)
+                updated_stress -= lambda_ * temp_matrix
+                pdstrain = lambda_ * dgdp
+            else:
+                temp_matrix = ElasticTensorMultiplyVector(dg_dsigma_trial, bulk_modulus, shear_modulus)
+                updated_stress -= lambda_trial * temp_matrix
+                pdstrain = lambda_trial * dgdp_trial
+
+            yield_state, f_function = self.ComputeYieldState(updated_stress, pdstrain)
+            if ti.abs(f_function) > FTOL:
+                updated_stress, pdstrain = self.DriftCorrect(yield_state, f_function, updated_stress, pdstrain)
             
-        stateVars[np].sigma_y = sigma_y
         updated_stress += sigrot
-        stateVars[np].epstrain += depeff
-        stateVars[np].estress += VonMisesStress(updated_stress)
+        stateVars[np].estress = VonMisesStress(updated_stress)
+        stateVars[np].epstrain += pdstrain
         return updated_stress
 
     @ti.func
-    def ComputePKStress(self, np, previous_stress, velocity_gradient, stateVars, dt):  
-        previous_stress = self.PK2CauchyStress(np, stateVars, previous_stress)
-        stress = self.ComputeStress(np, previous_stress, velocity_gradient, stateVars, dt)
-        return self.Cauchy2PKStress(np, stateVars, stress)
+    def ComputePKStress(self, np, velocity_gradient, stateVars, dt):  
+        previous_stress = self.PK2CauchyStress(np, stateVars)
+        cauchy_stress = self.ComputeStress(np, previous_stress, velocity_gradient, stateVars, dt)
+        PKstress = self.Cauchy2PKStress(np, stateVars, cauchy_stress)
+        stateVars[np].stress = PKstress
+        return PKstress
     
     @ti.func
-    def compute_elastic_tensor(self, np, current_stress, stiffness, stateVars):
-        ComputeElasticStiffnessTensor(np, self.bulk, self.shear, stiffness)
+    def compute_elastic_tensor(self, np, current_stress, stateVars):
+        return ComputeElasticStiffnessTensor(self.bulk, self.shear)
 
     @ti.func
-    def compute_stiffness_tensor(self, np, current_stress, stiffness, stateVars):
+    def compute_stiffness_tensor(self, np, current_stress, stateVars):
         pass
 
 

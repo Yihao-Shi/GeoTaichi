@@ -299,14 +299,16 @@ class SSIModel:
         return updated_stress
 
     @ti.func
-    def ComputePKStress(self, np, previous_stress, velocity_gradient, stateVars, dt):  
-        previous_stress = self.PK2CauchyStress(np, stateVars, previous_stress)
-        stress = self.ComputeStress(np, previous_stress, velocity_gradient, stateVars, dt)
-        return self.Cauchy2PKStress(np, stateVars, stress)
+    def ComputePKStress(self, np, velocity_gradient, stateVars, dt):  
+        previous_stress = self.PK2CauchyStress(np, stateVars)
+        cauchy_stress = self.ComputeStress(np, previous_stress, velocity_gradient, stateVars, dt)
+        PKstress = self.Cauchy2PKStress(np, stateVars, cauchy_stress)
+        stateVars[np].stress = PKstress
+        return PKstress
     
     @ti.func
     def compute_elastic_tensor(self, np, current_stress, stiffness, stateVars):
-        ComputeElasticStiffnessTensor(np, self.bulk, self.shear, stiffness)
+        stiffness[np] = ComputeElasticStiffnessTensor(self.bulk, self.shear)
 
     @ti.func
     def compute_stiffness_tensor(self, np, current_stress, stiffness, stateVars):
