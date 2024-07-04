@@ -23,10 +23,11 @@ mpm.memory_allocate(memory={
                                 "max_particle_number":    5.12e5,
                                 "max_constraint_number":  {
                                                                "max_velocity_constraint":   134638,
+                                                               "max_friction_constraint":   134638
                                                           }
                             })
 
-mpm.add_material(model="DruckerPrager",
+mpm.add_material(model="MohrCoulomb",
                  material={
                                "MaterialID":           1,
                                "Density":              2650.,
@@ -74,7 +75,7 @@ mpm.add_body(body={
 mpm.add_boundary_condition(boundary=[
                                         {
                                              "BoundaryType":   "VelocityConstraint",
-                                             "Velocity":       [0., 0., 0.],
+                                             "Velocity":       [0., 0., -0.],
                                              "StartPoint":     [0., 0., 0.],
                                              "EndPoint":       [0.55, 0.2, 0.005]
                                         },
