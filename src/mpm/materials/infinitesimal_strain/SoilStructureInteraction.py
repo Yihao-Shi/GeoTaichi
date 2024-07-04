@@ -201,11 +201,11 @@ class SSIModel:
         if int(self.is_structure) == 0:
             de = calculate_strain_increment2D(velocity_gradient, dt)
             dw = calculate_vorticity_increment2D(velocity_gradient, dt)
-            updated_stress = self.core1(np, previous_stress, de, dw, stateVars)
+            updated_stress = self.core2(np, previous_stress, de, dw, stateVars)
         else:
             de = calculate_strain_increment2D(velocity_gradient, dt)
             dw = calculate_vorticity_increment2D(velocity_gradient, dt)
-            updated_stress = self.core2(np, previous_stress, de, dw, stateVars)
+            updated_stress = self.core1(np, previous_stress, de, dw, stateVars)
         return updated_stress
 
     @ti.func
@@ -214,11 +214,11 @@ class SSIModel:
         if int(self.is_structure) == 0:
             de = calculate_strain_increment(velocity_gradient, dt)
             dw = calculate_vorticity_increment(velocity_gradient, dt)
-            updated_stress = self.core1(np, previous_stress, de, dw, stateVars)
+            updated_stress = self.core2(np, previous_stress, de, dw, stateVars)
         else:
             de = calculate_strain_increment(velocity_gradient, dt)
             dw = calculate_vorticity_increment(velocity_gradient, dt)
-            updated_stress = self.core2(np, previous_stress, de, dw, stateVars)
+            updated_stress = self.core1(np, previous_stress, de, dw, stateVars)
         return updated_stress
 
     @ti.func
