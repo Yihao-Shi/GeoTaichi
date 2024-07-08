@@ -63,7 +63,7 @@ The performance of GeoTaichi is compared with similar simulator in the field, su
 |[shapely](https://pypi.org/project/shapely/)|==1.8.0|Delaunay triangulation|
 
 ### Installation
-
+#### Install from source code (recommand)
 1. Change the current working directory to the desired location and download the GeoTaichi code:
 ```
 cd /path/to/desired/location/
@@ -77,7 +77,7 @@ sudo apt-get install python3.8
 sudo apt-get install python3-pip
 
 # Install python packages (recommand to add package version)
-python3 -m pip install taichi==1.6.0 imageio pybind11 numpy trimesh psutil shapely [optional: -i https://pypi.douban.com/simple]
+python3 -m pip install taichi==1.6.0 imageio pybind11 numpy trimesh psutil shapely 
 
 # Install Eigen in C++ (if necessary)
 sudo apt-get install libeigen3-dev cmake==3.18.2
@@ -97,6 +97,10 @@ sudo make install
 sudo gedit ~/.bashrc
 $ export PYTHONPATH="$PYTHONPATH:/path/to/desired/location/GeoTaichi"
 source ~/.bashrc
+```
+#### Install from pip (easy)
+```
+pip install geotaichi
 ```
 
 ### Working with vtu files

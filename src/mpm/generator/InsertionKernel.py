@@ -12,15 +12,17 @@ def kernel_calc_mass_of_center_(coords: ti.types.ndarray()) -> ti.types.vector(3
     return position / coords.shape[0]
 
 @ti.kernel
-def kernel_position_rotate_(target: ti.types.vector(3, float), offset: ti.types.vector(3, float), body_coords: ti.template(), start_particle_num: int, end_particle_num: int): # type: ignore
+def kernel_position_rotate_(target: ti.types.vector(3, float), offset: ti.types.vector(3, float), body_coords: ti.types.ndarray(), start_particle_num: int, end_particle_num: int):
     origin =vec3f([0, 0, 1]) 
     R = RodriguesRotationMatrix(origin, target)
     for nb in range(start_particle_num, end_particle_num):
-        coords = body_coords[nb]
+        coords = vec3f(body_coords[nb, 0], body_coords[nb, 1], body_coords[nb, 2])
         coords -= offset
         coords = R @ coords
         coords += offset
-        body_coords[nb] = coords
+        body_coords[nb, 0] = coords[0]
+        body_coords[nb, 1] = coords[1]
+        body_coords[nb, 2] = coords[2]
 
 @ti.kernel
 def kernel_position_rotate_for_array_(
