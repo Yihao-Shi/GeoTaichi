@@ -41,8 +41,8 @@ class HertzMindlinModel(ContactModelBase):
     def add_surface_property(self, max_material_num, materialID1, materialID2, property):
         modulus = DictIO.GetEssential(property, 'ShearModulus')
         possion = DictIO.GetEssential(property, 'Possion')
-        YoungModulus = modulus * 2 * (1 + possion)
-        ShearModulus = modulus
+        ShearModulus = 0.5 * modulus / (2. - possion)
+        YoungModulus = (4. * ShearModulus - 2. * ShearModulus * possion) / (1. - possion)
         mu = DictIO.GetEssential(property, 'Friction')
         restitution = DictIO.GetEssential(property, 'Restitution')
         componousID = 0
