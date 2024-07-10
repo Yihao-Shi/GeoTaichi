@@ -111,7 +111,7 @@ class BodyReader(object):
 
     def rotate_body(self, orientation, coords, init_particle_num, particle_num):
         bounding_center = kernel_calc_mass_of_center_(coords)
-        kernel_position_rotate_(orientation, bounding_center, coords, init_particle_num, particle_num)
+        kernel_position_rotate_ndarray_(orientation, bounding_center, coords, init_particle_num, particle_num)
 
     def set_element_calLength(self, scene: myScene, bodyID, psize):
         if self.sims.shape_function == "Linear":

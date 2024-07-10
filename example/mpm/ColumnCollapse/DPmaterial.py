@@ -1,3 +1,6 @@
+import sys
+sys.path.append('/home/eleven/work/GeoTaichi_release')
+
 from geotaichi import *
 
 init()
