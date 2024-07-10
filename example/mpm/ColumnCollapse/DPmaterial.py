@@ -1,6 +1,3 @@
-import sys
-sys.path.append('/home/eleven/work/GeoTaichi_release')
-
 from geotaichi import *
 
 init()
@@ -8,8 +5,8 @@ init()
 mpm = MPM()
 
 mpm.set_configuration(domain=ti.Vector([0.55, 0.2, 0.11]), 
-                      background_damping=0.02, 
-                      alphaPIC=0.00, 
+                      background_damping=0.002, 
+                      alphaPIC=0.005, 
                       mapping="USF", 
                       stabilize=None,
                       shape_function="GIMP",
@@ -30,7 +27,7 @@ mpm.memory_allocate(memory={
                                                           }
                             })
 
-mpm.add_material(model="MohrCoulomb",
+mpm.add_material(model="DruckerPrager",
                  material={
                                "MaterialID":           1,
                                "Density":              2650.,
