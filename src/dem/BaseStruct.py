@@ -594,12 +594,15 @@ class FacetFamily:
         return ti.abs(distance) < contact_radius
     
     @ti.func
-    def processCircleShape(self, point, distance, criteria):
-        r = ti.sqrt(criteria)
-        area0 = PI * r * r
-        position = self._point_projection_by_distance(point, distance)
-        area = SphereTriangleIntersectionArea(position, r, self.vertice1, self.vertice2, self.vertice3, self.norm)
-        return area / area0
+    def processCircleShape(self, point, radius, distance):
+        fraction = 0.
+        if 0. < distance < radius:
+            r = ti.sqrt(radius * radius - distance * distance)
+            area0 = PI * r * r
+            position = self._point_projection_by_distance(point, distance)
+            area = SphereTriangleIntersectionArea(position, r, self.vertice1, self.vertice2, self.vertice3, self.norm)
+            fraction = area / area0
+        return fraction
 
 
 @ti.dataclass 
@@ -870,12 +873,15 @@ class PatchFamily:    # memory usage: 64B
         return ti.abs(distance) < contact_radius
     
     @ti.func
-    def processCircleShape(self, point, distance, criteria):
-        r = ti.sqrt(criteria)
-        area0 = PI * r * r
-        position = self._point_projection_by_distance(point, distance)
-        area = SphereTriangleIntersectionArea(position, r, self.vertice1, self.vertice2, self.vertice3, self.norm)
-        return area / area0
+    def processCircleShape(self, point, radius, distance):
+        fraction = 0.
+        if 0. < distance < radius:
+            r = ti.sqrt(radius * radius - distance * distance)
+            area0 = PI * r * r
+            position = self._point_projection_by_distance(point, distance)
+            area = SphereTriangleIntersectionArea(position, r, self.vertice1, self.vertice2, self.vertice3, self.norm)
+            fraction = area / area0
+        return fraction
 
 
 @ti.dataclass

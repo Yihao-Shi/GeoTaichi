@@ -246,7 +246,7 @@ class ParticleGenerator(object):
 
         self.reset()
 
-        if self.sims.current_time + self.next_generate_time > self.end_time or self.insert_interval > self.sims.time or self.end_time > self.sims.time or \
+        if self.sims.current_time + self.insert_interval > self.end_time or self.insert_interval > self.sims.time or self.end_time > self.sims.time or \
             self.end_time == 0 or self.start_time > self.end_time:
             self.deactivate()
         else:
@@ -264,8 +264,7 @@ class ParticleGenerator(object):
             self.add_clumps_to_scene(scene)
         self.reset()
 
-        if self.sims.current_time + self.next_generate_time > self.end_time or self.insert_interval > self.sims.time or self.end_time > self.sims.time or \
-            self.end_time == 0 or self.start_time > self.end_time:
+        if self.sims.current_time + self.insert_interval > self.end_time:
             self.deactivate()
         else:
             self.next_generate_time = self.sims.current_time + self.insert_interval

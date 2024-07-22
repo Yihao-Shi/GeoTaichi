@@ -9,8 +9,7 @@ from src.utils.ObjectIO import DictIO
 
 def write_vtk_file(sims: Simulation, start_file, end_file, read_path, write_path, kwargs):
     if not os.path.exists(read_path):
-        print(read_path)
-        raise EOFError("Invaild path")
+        raise EOFError(f"Invaild path {read_path}")
     if not os.path.exists(write_path):
         os.mkdir(write_path)
 

@@ -7,6 +7,51 @@ from src.utils.VectorFunction import Zero2OneVector, SquareLen
 
 
 @ti.kernel
+def update_particle_storage_(particleNum: ti.types.ndarray(), sphereNum: ti.types.ndarray(), clumpNum: ti.types.ndarray(), particle: ti.template(), sphere: ti.template(), clump: ti.template()):
+    active = True
+    remaining_sphere = 0
+    remaining_clump = 0
+    remaining_particle = 0
+    delete_particle = 0
+    ti.loop_config(serialize=True)
+    for np in range(particleNum[0]):
+        multisphereIndex = particle[np].multisphereIndex
+        if ti.static(not sphere == None):
+            if multisphereIndex < 0:
+                if int(particle[np].active) == 1:
+                    particle[remaining_particle] = particle[np]
+                    particle[remaining_particle].multisphereIndex += delete_particle
+                    sphere[remaining_sphere] = sphere[-multisphereIndex - 1]
+                    sphere[remaining_sphere].sphereIndex -= delete_particle
+                    remaining_particle += 1
+                    remaining_sphere += 1
+                else:
+                    delete_particle += 1
+        if ti.static(not clump == None):
+            if multisphereIndex >= 0:
+                if active and int(particle[np].active) == 0:
+                    active = False
+                startIndex = clump[multisphereIndex].startIndex
+                endIndex = clump[multisphereIndex].endIndex
+                if np == endIndex:
+                    pebble_num = endIndex - startIndex + 1
+                    if active:
+                        for npebble in range(pebble_num):
+                            particle[remaining_particle + npebble] = particle[np]
+                            particle[remaining_particle + npebble].multisphereIndex -= delete_particle
+                        clump[remaining_clump] = clump[multisphereIndex]
+                        clump[remaining_clump].startIndex -= delete_particle
+                        clump[remaining_clump].endIndex -= delete_particle
+                        remaining_particle += pebble_num
+                        remaining_clump += 1
+                    else:
+                        delete_particle += pebble_num
+                    active = True
+    sphereNum[0] = remaining_sphere
+    clumpNum[0] = remaining_clump
+    particleNum[0] = remaining_particle
+
+@ti.kernel
 def particle_calm(particleNum: int, particle: ti.template()):
     for np in range(particleNum):
         particle[np].v = ZEROVEC3f

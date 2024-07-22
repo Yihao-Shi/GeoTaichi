@@ -169,8 +169,9 @@ class WallGenerator(object):
         file = DictIO.GetEssential(wall_dict, "WallFile")
         scale = DictIO.GetAlternative(wall_dict, "ScaleFactor", 1.)
         offset = DictIO.GetAlternative(wall_dict, "Translation", vec3f([0, 0, 0]))
-        direction = DictIO.GetEssential(wall_dict, "Orientation", vec3f([0, 0, 1]))
+        direction = DictIO.GetAlternative(wall_dict, "Orientation", vec3f([0, 0, 1]))
         init_v = DictIO.GetAlternative(wall_dict, "InitialVelocity", vec3f([0, 0, 0]))
+        iscounterclockwise = DictIO.GetAlternative(wall_dict, "Counterclockwise", True)
 
         mesh = trimesh.load(file)
         mesh.apply_scale(scale)
@@ -179,10 +180,7 @@ class WallGenerator(object):
         faces = np.array(mesh.faces)
         center = mesh.vertices.mean(axis=0)
 
-        scene.vispts = list(vertices.copy())
-        scene.vistri = list(np.c_(faces.copy(), np.arange(3 * int(scene.wallNum[0]), 3 * (int(scene.wallNum[0]) + faces.shape[0]) + 1, 3), np.repeat(VtkTriangle.tid, faces.shape[0])))
-
-        kernel_add_patch(int(scene.wallNum[0]), wallID, matID, vertices, faces, center, offset, direction, init_v, scene.wall)
+        kernel_add_patch(iscounterclockwise, int(scene.wallNum[0]), wallID, matID, vertices, faces, center, offset, direction, init_v, scene.wall)
         scene.wallNum[0] += faces.shape[0]
 
         

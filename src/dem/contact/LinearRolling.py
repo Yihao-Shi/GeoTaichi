@@ -243,7 +243,7 @@ class LinearRollingSurfaceProperty:
         particle_rad, norm = particle[end1].rad, wall[end2].norm
         distance = (pos1 - pos2).dot(norm)
         gapn = distance - particle_rad
-        fraction = ti.abs(wall[end2].processCircleShape(pos1, distance, -gapn))
+        fraction = ti.abs(wall[end2].processCircleShape(pos1, particle_rad, distance))
         return fraction * self.kn
 
     # ========================================================= #
@@ -332,7 +332,7 @@ class LinearRollingSurfaceProperty:
     #                      Particle-Wall                        #
     # ========================================================= # 
     @ti.func
-    def _particle_wall_force_assemble(self, nc, end1, end2, distance, gapn, norm, cpos, dt, particle, wall, cplist):
+    def _particle_wall_force_assemble(self, nc, end1, end2, fraction, gapn, norm, cpos, dt, particle, wall, cplist):
         pos1, particle_rad = particle[end1].x, particle[end1].rad
         vel1, vel2 = particle[end1].v, wall[end2]._get_velocity()
         w1 = particle[end1].w
@@ -401,7 +401,6 @@ class LinearRollingSurfaceProperty:
         rolling_momentum = rad_eff * norm.cross(rolling_force)
         twisting_momentum = rad_eff * twisting_force
             
-        fraction = ti.abs(wall[end2].processCircleShape(pos1, distance, -gapn))
         Ftotal = fraction * (normal_force + tangential_force)
         resultant_momentum1 = fraction * (Ftotal.cross(pos1 - cpos) + rolling_momentum + twisting_momentum)
 

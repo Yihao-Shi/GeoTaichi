@@ -523,7 +523,7 @@ def generate_sphere_from_file(min_rad: float, max_rad: float, groupID: int, matI
         
 
 @ti.kernel
-def kernel_add_patch(start: int, wallID: int, matID: int, vertices: ti.types.ndarray(), faces: ti.types.ndarray(), center: ti.types.vector(3, float), 
+def kernel_add_patch(iscounterclockwise: int, start: int, wallID: int, matID: int, vertices: ti.types.ndarray(), faces: ti.types.ndarray(), center: ti.types.vector(3, float), 
                      offset: ti.types.vector(3, float), direction: ti.types.vector(3, float), init_v: ti.types.vector(3, float), wall: ti.template()):
     for swall in range(start, start + faces.shape[0]):
         nwall = swall - start
@@ -533,11 +533,19 @@ def kernel_add_patch(start: int, wallID: int, matID: int, vertices: ti.types.nda
         
         rot_matrix = RodriguesRotationMatrix(vec3f(0, 0, 1), direction)
         vertice1 = rot_matrix @ (vertice1 - center) + center + offset
-        vertice1 = rot_matrix @ (vertice2 - center) + center + offset
-        vertice1 = rot_matrix @ (vertice3 - center) + center + offset
+        vertice2 = rot_matrix @ (vertice2 - center) + center + offset
+        vertice3 = rot_matrix @ (vertice3 - center) + center + offset
+
+        if iscounterclockwise == 0:
+            exvertice = vertice1
+            vertice1 = vertice3
+            vertice3 = exvertice
 
         wall[swall].add_materialID(matID)
         wall[swall].add_wall_geometry(wallID, vertice1, vertice2, vertice3, init_v)
+        
+        
+
     
 
 @ti.kernel

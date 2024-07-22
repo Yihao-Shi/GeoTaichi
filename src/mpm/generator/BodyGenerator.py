@@ -100,7 +100,7 @@ class BodyGenerator(object):
             elif self.write_file:
                 self.generator_visualization()
 
-        if self.sims.current_time + self.next_generate_time > self.end_time or self.insert_interval > self.sims.time or self.end_time > self.sims.time or \
+        if self.sims.current_time + self.insert_interval > self.end_time or self.insert_interval > self.sims.time or self.end_time > self.sims.time or \
             self.end_time == 0 or self.start_time > self.end_time:
             self.deactivate()
         else:
@@ -119,8 +119,7 @@ class BodyGenerator(object):
             end_particle = int(scene.particleNum[0])
             scene.material.state_vars_initialize(start_particle, end_particle, scene.particle)
 
-        if self.sims.current_time + self.next_generate_time > self.end_time or self.insert_interval > self.sims.time or self.end_time > self.sims.time or \
-            self.end_time == 0 or self.start_time > self.end_time:
+        if self.sims.current_time + self.insert_interval > self.end_time:
             self.deactivate()
         else:
             self.next_generate_time = self.sims.current_time + self.insert_interval

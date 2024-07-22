@@ -188,8 +188,14 @@ We thank all amazing contributors for their great work and open source spirit. W
 - If you spot any issue or need any help, please mail directly to <a href = "mailto:shiyh@zju.edu.cn">shiyh@zju.edu.cn</a>.
 
 ## Release Notes
+V0.2.2 (July 22, 2024)
+
+- Fix computing the intersection area between circles and triangles
+- Add "Destory" and "Reflect" boundaries in DEM modules, see [examples](https://github.com/Yihao-Shi/GeoTaichi/blob/main/example/dem/SimpleChute/simple_chute.py)
+
 V0.2 (July 1, 2024)
 
+- Fix some bugs in DEM and MPM modules, see [details](https://github.com/Yihao-Shi/GeoTaichi/releases/tag/GeoTaichi-v0.2)
 - Add some advanced constitutive model
 
 V0.1 (January 21, 2024)
