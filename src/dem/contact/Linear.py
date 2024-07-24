@@ -313,7 +313,7 @@ class LinearSurfaceProperty:
             tangential_force = trial_ft + tang_damping_force
             
         Ftotal = fraction * (normal_force + tangential_force)
-        resultant_momentum = fraction * Ftotal.cross(pos1 - cpos)
+        resultant_momentum = Ftotal.cross(pos1 - cpos)
 
         cplist[nc]._set_contact(fraction * normal_force, fraction * tangential_force, tangOverTemp)
         particle[end1]._update_contact_interaction(Ftotal, resultant_momentum)

@@ -401,11 +401,11 @@ class LinearRollingSurfaceProperty:
         rolling_momentum = rad_eff * norm.cross(rolling_force)
         twisting_momentum = rad_eff * twisting_force
             
-        Ftotal = fraction * (normal_force + tangential_force)
-        resultant_momentum1 = fraction * (Ftotal.cross(pos1 - cpos) + rolling_momentum + twisting_momentum)
+        Ftotal = (normal_force + tangential_force)
+        resultant_momentum1 = (Ftotal.cross(pos1 - cpos) + rolling_momentum + twisting_momentum)
 
         cplist[nc]._set_contact(fraction * normal_force, fraction * tangential_force, tangOverTemp, tangRollingTemp, tangTwistingTemp)
-        particle[end1]._update_contact_interaction(Ftotal, resultant_momentum1)
+        particle[end1]._update_contact_interaction(fraction * Ftotal, fraction * resultant_momentum1)
 
 @ti.kernel
 def kernel_rebulid_history_contact_list(hist_cplist: ti.template(), hist_object_object: ti.template(), object_object: ti.types.ndarray(), 

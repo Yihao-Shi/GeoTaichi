@@ -273,7 +273,7 @@ def kernel_particle_wall_force_assemble_(particleNum: int, dt: ti.template(), ma
         distance = wall[end2]._get_norm_distance(pos1)
         gapn = distance - particle_rad
         materialID = PairingMapping(matID1, matID2, max_material_num)
-        fraction = wall[end2].processCircleShape(pos1, particle_rad, distance)
+        fraction = ti.abs(wall[end2].processCircleShape(pos1, particle_rad, distance))
 
         if gapn < 0. and fraction > Threshold:
             norm = wall[end2].norm
