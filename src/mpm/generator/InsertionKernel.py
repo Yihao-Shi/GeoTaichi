@@ -20,7 +20,7 @@ def kernel_position_rotate_ndarray_(target: ti.types.vector(3, float), offset: t
         coords -= offset
         coords = R @ coords
         coords += offset
-        body_coords[nb, 0] = coords
+        body_coords[nb, 0] = coords[0]
         body_coords[nb, 1] = coords[1]
         body_coords[nb, 2] = coords[2]
 

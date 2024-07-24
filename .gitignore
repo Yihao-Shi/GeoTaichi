@@ -24,4 +24,4 @@ build/
 dist/
 geotaichi.egg-info/
 setup.py
-
+push_pypi.sh

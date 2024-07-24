@@ -1,3 +1,6 @@
+import sys, math
+sys.path.append("/home/eleven/work/GeoTaichi_release")
+
 from geotaichi import *
 
 init(device_memory_GB=4)
