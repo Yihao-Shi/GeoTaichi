@@ -30,7 +30,7 @@ class ConstitutiveModel:
         return the corresponding material constitutive_model
         """
         if material_type == "Solid":
-            model_type = ["None", "LinearElastic", " ", "NeoHookean", "ElasticPerfectlyPlastic", "IsotropicHardeningPlastic",
+            model_type = ["None", "LinearElastic", "HencyElastic", "NeoHookean", "ElasticPerfectlyPlastic", "IsotropicHardeningPlastic",
                           "MohrCoulomb", "SoftenMohrCoulomb", "DruckerPrager", "ModifiedCamClay", "CohesiveModifiedCamClay", "SoilStructureInteraction", "UserDefined"]
             if constitutive_model == "None":
                 return RigidBody(max_material_num, max_particle_num, configuration, solver_type)

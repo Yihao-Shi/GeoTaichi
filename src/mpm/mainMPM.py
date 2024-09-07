@@ -332,7 +332,7 @@ class MPM(object):
     def write_boundary_condition(self, output_path='OutputData'):
         self.scene.write_boundary_constraint(output_path)
 
-    def select_save_data(self, particle=True, grid=True):
+    def select_save_data(self, particle=True, grid=False):
         self.sims.set_save_data(particle, grid)
 
     def modify_parameters(self, **kwargs):
