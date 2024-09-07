@@ -13,7 +13,7 @@ class GenerateManager(object):
 
     def add_my_region(self, domain, region_dict):
         name = DictIO.GetEssential(region_dict, "Name")
-        if name in self.myRegion:
+        if name in self.myRegion: #override if the region already exists
             region: RegionFunction = self.myRegion[name]
             region.mpm_finalize()
             del self.myRegion[name]

@@ -1,7 +1,8 @@
 import os 
 import numpy as np
 def fromat_worker(mpmfile:str,divide=True):
-    """
+    """ 
+    该函数将MPMgenerator生成的mpmfile文件转换为多个材料的单独文件
     args:
         mpmfile[str]:mpmfile path
         divide[bool][option]:divide mpmfile into several file parts according material ID,then fromat to GEOTaichi input file.
@@ -60,8 +61,10 @@ def move_data(file_data:np.array):
     if min_z<0:
         file_data[:,3] -= min_z
     return file_data
-    
 if __name__ == '__main__':
-    file =  'E:\\EX_library\\PAPER-3D_MODEL_MPM-231121\\MPM-Particle-Generator-1.1\\examples\\e3\\paper_model\\mpm_d2000.part'
-    
+    file =  'E:\\EX_library\\PAPER-3D_MODEL_MPM-231121\\MPM-Particle-Generator-1.1\\examples\\e3\\paper_model\\mpm_new_d2500.part'
+    #file = 'E:\\EX_library\\PAPER-3D_MODEL_MPM-231121\\MPM-Particle-Generator-1.1\\examples\\example-2-daguangbao\\paper_model\\python_mpm_100000.part'
+    fromat_worker(file,1)
+    file =  'E:\\EX_library\\PAPER-3D_MODEL_MPM-231121\\MPM-Particle-Generator-1.1\\examples\\e3\\paper_model\\mpm_new_d3000.part'
+    #file = 'E:\\EX_library\\PAPER-3D_MODEL_MPM-231121\\MPM-Particle-Generator-1.1\\examples\\example-2-daguangbao\\paper_model\\python_mpm_100000.part'
     fromat_worker(file,1)

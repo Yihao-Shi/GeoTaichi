@@ -1,7 +1,12 @@
-import sys
-sys.path.append('/home/eleven/work/GeoTaichi')
+try:
+    from geotaichi import *
+except:
+    import os
+    import sys
+    current_file_path = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    sys.path.append(current_file_path)
+    from geotaichi import *
 
-from geotaichi import *
 
 init()
 

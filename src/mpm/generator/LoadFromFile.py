@@ -121,7 +121,7 @@ class BodyReader(object):
         elif self.sims.shape_function == "GIMP":
             scene.element.calLength[bodyID] = psize
 
-    def add_txt_body(self, scene: myScene, template):
+    def add_txt_body(self, scene: myScene, template):# FIXME 有空把 materialID 也改成从模板中读取
         particle_file = DictIO.GetAlternative(template, "ParticleFile", "Particle.txt") 
         print('#', f"Start adding material points from {particle_file}......")
         if not os.path.exists(particle_file):

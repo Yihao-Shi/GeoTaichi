@@ -17,6 +17,7 @@ from src.utils.TypeDefination import vec2i, vec2f, vec3f, vec3i, vec3u8
 
 
 class myScene(object):
+    """The scene class for the MPM simulation, which includes the material, element, node, particle, and boundary constraints"""
     material: ConstitutiveModelBase
     node: Nodes
     multi_node: Nodes
@@ -96,8 +97,13 @@ class myScene(object):
                 ti.root.dense(ti.i, sims.max_particle_num).place(self.particle)
 
     def activate_material(self, sims: Simulation, model, materials):
-        self.material = ConstitutiveModel.initialize(sims.material_type, sims.stabilize, model, sims.max_material_num, sims.max_particle_num, sims.configuration, sims.solver_type)
-        self.material.model_initialization(materials)
+        """Activate the material model
+        sims[Simulation]: Simulation dataclass
+        model[str]: Material model name
+        materials[dict/list]: Material parameters
+        """
+        self.material = ConstitutiveModel.initialize(sims.material_type, sims.stabilize, model, sims.max_material_num, sims.max_particle_num, sims.configuration, sims.solver_type) 
+        self.material.model_initialization(materials) #ConstitutiveModelBase.model_initialization()
 
     def check_materials(self, sims):
         if self.material is None:
@@ -193,7 +199,7 @@ class myScene(object):
                 ti.root.dense(ti.ij, (self.element.gridSum, grid_level)).place(self.node)
         
         self.print_grid_message(sims, grid_level, cut_off)
- 
+
     def check_grid_inputs(self, sims: Simulation, grid_level):
         if grid_level > 2:
             raise ValueError("The mpm only support two body contact detection")

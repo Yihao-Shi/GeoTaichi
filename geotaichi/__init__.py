@@ -35,7 +35,7 @@ def make_print_to_file(path='./'):
 
 def init(arch="gpu", cpu_max_num_threads=0, offline_cache=True, debug=False, default_fp="float64", default_ip="int32", device_memory_GB=2, device_memory_fraction=0.8, kernel_profiler=False, log=True):
     """
-    初始化函数，用于设置Taichi的运行环境。
+    初始化函数ti.init，用于设置Taichi的运行环境。
     
     参数:
     arch: 运行架构，可选 "cpu" 或 "gpu"。

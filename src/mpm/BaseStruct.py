@@ -93,11 +93,11 @@ class ParticleCloud:      # memory usage: 108B
     bodyID: ti.u8
     materialID: ti.u8
     active: ti.u8
-    m: float
-    vol: float
+    m: float              #mass
+    vol: float            #volume
     psize: vec3f
     x: vec3f
-    v: vec3f
+    v: vec3f                
     traction: vec3f
     strain: vec6f
     stress: vec6f

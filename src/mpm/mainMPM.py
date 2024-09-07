@@ -16,6 +16,36 @@ from src.utils.TypeDefination import vec3f
 
 class MPM(object):
     def __init__(self, title='A High Performance Multiscale and Multiphysics Simulator', log=True):  
+        """
+        MPM
+        =====
+        
+        Initialize the MPM class
+        
+        Args:
+        ---------------------
+            title[str][option]: Title of the simulation         (not required)
+            
+            log[bool][option]: Print the title of the simulation (not required)
+        
+        Usage of the class:
+        ---------------------
+        
+            >>> from geotaichi import *
+            >>> init()
+            >>> mpm = MPM()
+            >>> mpm.set_configuration()
+            >>> mpm.set_solver()
+            >>> mpm.memory_allocate()
+            >>> mpm.add_material()
+            >>> mpm.add_element()
+            >>> mpm.add_region()
+            >>> mpm.add_body()/mpm.add_body_from_file()
+            >>> mpm.add_boundary_condition()
+            >>> mpm.select_save_data() #[optional]
+            >>> mpm.run()
+            >>> mpm.postprocessing() #[optional]
+        """
         if log:
             print('# =================================================================== #')
             print('#', "".center(67), '#')
@@ -33,6 +63,51 @@ class MPM(object):
         self.solver = None
 
     def set_configuration(self, log=True, **kwargs):
+        """set simulation configuration
+        
+        Args:
+        --------
+        
+            domain[vec3f] : Simulation domain
+            
+            dimension[str][option]: Simulation dimension options:["2-Dimension", "3-Dimension"],default: "3-Dimension"
+            
+            boundary[list][option]: Boundary condition options:"Reflect"/"Destroy"/"Period",default: ["Destroy", "Destroy", "Destroy"]
+            
+            gravity[vec3f][option]: Gravity,default: [0., 0., -9.8]
+            
+            background_damping[float][option]: Background damping, default: 0.
+            
+            alphaPIC[float][option]: Alpha value, default: 0.
+            
+            stabilize[str][option]: Stabilization technique, option:[None, "B-Bar Method", "F-Bar Method"].default: None
+                B bar method can only used at [Linear, GIMP] Shape Function
+                
+            gauss_number[flaot #FIX][option]: Gauss number, default: 0
+                HexahedronGuassCell/ GaussPointInRectangle
+                
+            mls_order[int][option]: The order of moving least square. default: 0
+            
+            boundary_direction_detection[bool][option]: Boundary direction detection, default: False
+            
+            free_surface_detection[bool][option]: Free surface detection, default: False
+            
+            mapping[str][option]: Mapping scheme options:["USL", "USF", "MUSL", "APIC", "Newmark" #FIX], default: "MUSL"
+            
+            shape_function[str][option]: Shape function options: ["Linear", "GIMP", "QuadBSpline", "CubicBSpline"], default: "Linear"
+            
+            solver_type[str][option]: Solver type options:["Explicit", "SimiImplicit", "Implicit"], default: "Explicit" #FIX "SimiImplicit", "Implicit" not implemented
+            
+            stress_smoothing[bool][option]: Stress smoothing, default: False
+            
+            strain_smoothing[bool][option]: Strain smoothing, default: False
+            
+            configuration[str][option]: Configuration options: ["TLMPM", "ULMPM"], default: "ULMPM" #fix TLMPM nop implemented
+            
+            material_type[str][option]: Material type options: ["Solid", "Fluid"], default: "Solid"
+            
+            log[bool][option]: Print the basic simulation information, default: True
+        """
         if np.linalg.norm(np.array(self.sims.get_simulation_domain()) - np.zeros(3)) < 1e-10:
             self.sims.set_domain(DictIO.GetEssential(kwargs, "domain"))
         self.sims.set_dimension(DictIO.GetAlternative(kwargs, "dimension", "3-Dimension"))
@@ -57,6 +132,7 @@ class MPM(object):
             print('\n')
 
     def set_solver(self, solver, log=True):
+        """set simulation solver configuration"""
         self.sims.set_timestep(DictIO.GetEssential(solver, "Timestep"))
         self.sims.set_simulation_time(DictIO.GetEssential(solver, "SimulationTime"))
         self.sims.set_CFL(DictIO.GetAlternative(solver, "CFL", 0.5))
@@ -68,6 +144,7 @@ class MPM(object):
             print('\n')
 
     def memory_allocate(self, memory, log=True):    
+        """allocate memory for simulation"""
         self.sims.set_material_num(DictIO.GetAlternative(memory, "max_material_number", 0))
         self.sims.set_particle_num(DictIO.GetAlternative(memory, "max_particle_number", 0))
         self.sims.set_constraint_num(DictIO.GetAlternative(memory, "max_constraint_number", {}))
@@ -107,12 +184,53 @@ class MPM(object):
         print(("Save Path: " + str(self.sims.path)).ljust(67))
 
     def add_material(self, model, material):
+        """add material to scene
+        
+        Args
+        ----
+        
+        model[str]: Material model options:["None", "LinearElastic", " ", "NeoHookean",                 
+            "ElasticPerfectlyPlastic", "IsotropicHardeningPlastic","MohrCoulomb", 
+            "SoftenMohrCoulomb", "DruckerPrager", "ModifiedCamClay", 
+            "CohesiveModifiedCamClay", "SoilStructureInteraction", "UserDefined"]
+        material[dict/list]: Material parameters
+        
+        parameters passed to class (use MohrCoulomb as an example):
+        MPM -> myScene -> MohrCoulomb -> ConstitutiveModel -> MohrCoulombModel
+        """
         self.scene.activate_material(self.sims, model, material)
 
     def add_element(self, element):
+        """add element parameters to scene,initialize element and contact nodes
+        Args:
+            element[dict]: Element parameters
+                ElementType[str][option]: Element type options:["R8N3D", "Q4N2D", "T4N3D", "R27N3D"],defult: "R8N3D"
+                ElementSize[vec3f]: Element size
+                Contact[dict]: Contact parameters
+                    ContactDetection[bool][option]: Contact detection,default: False
+                    GridLevel[int][option]: Grid level>=1 &Gridlevel=max body id
+        parameters passed to class (use R8N3D as an example):
+        MPM -> myScene -> HexahedronElement8Nodes , ContactNodes
+        """
         self.scene.activate_element(self.sims, element)
 
     def add_region(self, region):
+        """add region to generator
+        Args:
+            region[dict/list]: Region parameters
+                Name[str]: Region name
+                Type[str]: options:["Rectangle","TrianglarPrism","Spheroid","Cylinder","UserDefined"]
+                zdirection[vec3f][option]: z direction ,default: [0., 0., 1.]
+                all_in[bool][option]: all in ,default: False
+                BoundingBoxPoint[vec3f]: Bounding box point
+                BoundingBoxSize[vec3f]: Bounding box size
+                RotateCenter[vec3f][option]: Rotate center
+                RegionVolume[ti.pyfun][option]    :use when Type = "UserDefined" 
+                RegionFunction[ti.pyfun][option]  :use when Type = "UserDefined" 
+        parameters passed to class :
+        MPM -> GenerateManager -> RegionFunction
+        """
+        
         if type(region) is dict:
             self.generator.add_my_region(self.sims.domain, region)
         elif type(region) is list:
@@ -120,6 +238,18 @@ class MPM(object):
                 self.generator.add_my_region(self.sims.domain, region_dict)
 
     def add_body(self, body):
+        """add body to generator
+        Args:
+            body[dict]: Body parameters
+                Period[vec3f][option]: Period,default: [0, 0, 1e6]
+                WriteFile[bool][option]: Write Visualize file,default: False
+                Visualize[bool][option]: Visualize,default: False
+                Template[dict/list]: Body template
+                checkHistory[bool][option]: Check history,default: False
+                
+        parameters passed to class :
+        MPM -> GenerateManager -> BodyGenerator
+        """
         self.scene.check_materials(self.sims)
         self.generator.add_body(body, self.sims, self.scene)
 
@@ -202,7 +332,7 @@ class MPM(object):
     def write_boundary_condition(self, output_path='OutputData'):
         self.scene.write_boundary_constraint(output_path)
 
-    def select_save_data(self, particle=True, grid=False):
+    def select_save_data(self, particle=True, grid=True):
         self.sims.set_save_data(particle, grid)
 
     def modify_parameters(self, **kwargs):
@@ -228,9 +358,9 @@ class MPM(object):
     def add_engine(self): #fix only use ULExplicitEngine
         if self.enginer is None:
             if self.sims.configuration == "ULMPM":
-                if self.sims.solver_type == "Explicit":
+                if self.sims.solver_type == "Explicit": #
                     self.enginer = ULExplicitEngine(self.sims)
-                elif self.sims.solver_type == "SimiImplicit":
+                elif self.sims.solver_type == "SimiImplicit": #fix SimiImplicit or Implicit not implemented
                     if self.sims.material_type == "TwoPhase":
                         self.enginer = None
                     else:
@@ -242,24 +372,37 @@ class MPM(object):
         if self.recorder is None:
             self.recorder = WriteFile(self.sims)
 
-    def add_solver(self, kwargs):
-        if self.solver is None:
+    def add_solver(self, functions=None):
+        if self.solver is None: #
             self.solver = Solver(self.sims, self.generator, self.enginer, self.recorder)
-        self.solver.set_callback_function(kwargs)
+        self.solver.set_callback_function(functions)
 
     def set_window(self, window):
         self.sims.set_window_parameters(window)
 
-    def add_essentials(self, kwargs):
-        self.add_spatial_grid()
+    def add_essentials(self, functions=None):
+        self.add_spatial_grid() #when coupling or neighbor detection is True
         self.add_engine()
         self.add_recorder()
-        self.add_solver(kwargs)
+        self.add_solver(functions)
         self.scene.calc_mass_cutoff(self.sims)
         self.scene.set_boundary(self.sims)
 
     def run(self, visualize=False, **kwargs):
-        self.add_essentials(kwargs)
+        """
+        start simulation
+        
+        Args:
+        -----
+        
+            visualize[bool][option]: Visualize the simulation, default: False
+            kwargs include:
+                visualize_interval
+                window_size
+                #todo
+        """
+        functions = DictIO.GetAlternative(kwargs, "function", None)
+        self.add_essentials(functions)
         self.check_critical_timestep()
         if visualize is False:
             self.solver.Solver(self.scene, self.neighbor) 

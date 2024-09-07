@@ -5,6 +5,7 @@ from src.utils.TypeDefination import vec3i, vec3f
 
 
 class Simulation(object):
+    """Simulation class for MPM simulation. This class is used to set the simulation parameters for the MPM simulation."""
     def __init__(self) -> None:
         self.dimension = 3
         self.domain = vec3f([0, 0, 0])
@@ -26,7 +27,7 @@ class Simulation(object):
         self.gauss_number = 0
         self.mls_order = 0
         self.order = 2.
-        self.update = None
+        #self.update = None
 
         self.dt = ti.field(float, shape=())
         self.delta = 0.
@@ -144,12 +145,22 @@ class Simulation(object):
         self.mls_order = mls_order
 
     def set_mapping_scheme(self, mapping):
+        """stress update schemes ->ULExplicitEngine.choose_engine()
+        explicit substance point method:
+            USF(update stress first) : update stress before time step calculation
+            USL(update stress last) : update stress after time step calculation
+            MUSL(modified update stress last) : improved USL scheme
+            # fix MLSMPM is not used
+        implicit substance point method:
+            Newmark #fix the function is not implemented
+        """
         typelist = ["USL", "USF", "MUSL", "APIC", "Newmark"]
         if not mapping in typelist:
             raise RuntimeError(f"KeyWord:: /mapping: {mapping}/ is invalid. The valid type are given as follows: {typelist}")
         self.mapping = mapping
 
     def set_shape_function(self, shape_function):
+        
         typelist = ["Linear", "GIMP", "QuadBSpline", "CubicBSpline"]
         if not shape_function in typelist:
             raise RuntimeError(f"KeyWord:: /mapping: {shape_function}/ is invalid. The valid type are given as follows: {typelist}")

@@ -84,7 +84,7 @@ class Engine(object):
         self.mengine.reset_particle_message(self.mscene)
         self.dengine.reset_wall_message(self.dscene)
         self.dengine.reset_particle_message(self.dscene)
-
+ 
     def apply_contact_model(self):
         self.physpp.update_contact_table(self.sims, self.mscene, self.dscene, self.neighbor)
         self.physpw.update_contact_table(self.sims, self.mscene, self.dscene, self.neighbor)

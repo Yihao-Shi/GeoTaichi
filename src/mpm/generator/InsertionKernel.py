@@ -122,8 +122,19 @@ def kernel_place_particles_(grid_size: ti.types.vector(3, float), igrid_size: ti
             particle[old_particle] = particle_pos
 
 @ti.kernel
-def kernel_add_body_(particles: ti.template(), init_particleNum: int, start_particle_num: int, end_particle_num: int, particle: ti.template(), psize: ti.types.vector(3, float), 
-                     particle_volume: float, bodyID: int, materialID: int, density: float, init_v: ti.types.vector(3, float), fix_v: ti.types.vector(3, ti.u8)):
+def kernel_add_body_(
+    particles: ti.template(), 
+    init_particleNum: int, 
+    start_particle_num: int, 
+    end_particle_num: int, 
+    particle: ti.template(), 
+    psize: ti.types.vector(3, float), 
+    particle_volume: float, 
+    bodyID: int, 
+    materialID: int, 
+    density: float, 
+    init_v: ti.types.vector(3, float), 
+    fix_v: ti.types.vector(3, ti.u8)):
     for np in range(end_particle_num - start_particle_num):
         particleID = start_particle_num + np
         particleNum = init_particleNum + np

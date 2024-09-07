@@ -473,35 +473,35 @@ def kernel_pressure_g2p(gnum: ti.types.vector(3, int), igrid_size: ti.types.vect
 # ========================================================= #
 @ti.kernel
 def kernel_compute_stress_strain(total_nodes: int, dt: ti.template(), particleNum: int, node: ti.template(), particle: ti.template(), 
-                                 matPorps: ti.template(), stateVars: ti.template(), LnID: ti.template(), dshapefn: ti.template(), node_size: ti.template()):
+                                 matProps: ti.template(), stateVars: ti.template(), LnID: ti.template(), dshapefn: ti.template(), node_size: ti.template()):
     # ti.block_local(dt)
     for np in range(particleNum):
         materialID = int(particle[np].materialID)
         if materialID > 0 and int(particle[np].active) == 1:
             velocity_gradient = update_velocity_gradient(np, total_nodes, node, particle, LnID, dshapefn, node_size)
             previous_stress = particle[np].stress
-            particle[np].vol *= matPorps[materialID].update_particle_volume(np, velocity_gradient, stateVars, dt)
-            particle[np].stress = matPorps[materialID].ComputeStress(np, previous_stress, velocity_gradient, stateVars, dt)
+            particle[np].vol *= matProps[materialID].update_particle_volume(np, velocity_gradient, stateVars, dt)
+            particle[np].stress = matProps[materialID].ComputeStress(np, previous_stress, velocity_gradient, stateVars, dt)
             particle[np].velocity_gradient = velocity_gradient
             particle[np].strain += calculate_strain_increment(velocity_gradient, dt)
 
 @ti.kernel
 def kernel_compute_stress_strain_bbar(total_nodes: int, dt: ti.template(), particleNum: int, node: ti.template(), particle: ti.template(), 
-                                      matPorps: ti.template(), stateVars: ti.template(), LnID: ti.template(), dshapefn: ti.template(), dshapefnc: ti.template(), node_size: ti.template()):
+                                      matProps: ti.template(), stateVars: ti.template(), LnID: ti.template(), dshapefn: ti.template(), dshapefnc: ti.template(), node_size: ti.template()):
     # ti.block_local(dt)
     for np in range(particleNum):
         materialID = int(particle[np].materialID)
         if materialID > 0 and int(particle[np].active) == 1:
             velocity_gradient, strain_rate_trace = update_velocity_gradient_bbar(np, total_nodes, node, particle, LnID, dshapefn, dshapefnc, node_size)
             previous_stress = particle[np].stress
-            particle[np].vol *= matPorps[materialID].update_particle_volume_bbar(np, strain_rate_trace, stateVars, dt)
-            particle[np].stress = matPorps[materialID].ComputeStress(np, previous_stress, velocity_gradient, stateVars, dt)
+            particle[np].vol *= matProps[materialID].update_particle_volume_bbar(np, strain_rate_trace, stateVars, dt)
+            particle[np].stress = matProps[materialID].ComputeStress(np, previous_stress, velocity_gradient, stateVars, dt)
             particle[np].velocity_gradient = velocity_gradient
             particle[np].strain += calculate_strain_increment(velocity_gradient, dt)
 
 @ti.kernel
 def kernel_compute_stress_strain_fbar(total_nodes: int, dt: ti.template(), particleNum: int, extra_node: ti.template(), particle: ti.template(), particle_fbar: ti.template(),  
-                                      matPorps: ti.template(), stateVars: ti.template(), LnID: ti.template(), shapefn: ti.template(), node_size: ti.template()):
+                                      matProps: ti.template(), stateVars: ti.template(), LnID: ti.template(), shapefn: ti.template(), node_size: ti.template()):
     # ti.block_local(dt)
     for np in range(particleNum):
         materialID = int(particle[np].materialID)
@@ -521,22 +521,22 @@ def kernel_compute_stress_strain_fbar(total_nodes: int, dt: ti.template(), parti
             particle_fbar[np].jacobian = jacobian
             previous_stress = particle[np].stress
             
-            particle[np].vol *= matPorps[materialID].update_particle_volume(np, velocity_gradient, stateVars, dt)
-            particle[np].stress = matPorps[materialID].ComputeStress(np, previous_stress, updated_velocity_gradient, stateVars, dt)
+            particle[np].vol *= matProps[materialID].update_particle_volume(np, velocity_gradient, stateVars, dt)
+            particle[np].stress = matProps[materialID].ComputeStress(np, previous_stress, updated_velocity_gradient, stateVars, dt)
             particle[np].velocity_gradient = updated_velocity_gradient
             particle[np].strain += calculate_strain_increment(velocity_gradient, dt)
 
 @ti.kernel
 def kernel_compute_stress_strain_apic(total_nodes: int, dt: ti.template(), particleNum: int, node: ti.template(), nodal_coords: ti.template(), particle: ti.template(), 
-                                      matPorps: ti.template(), stateVars: ti.template(), LnID: ti.template(), shapefn: ti.template(), node_size: ti.template()):
+                                      matProps: ti.template(), stateVars: ti.template(), LnID: ti.template(), shapefn: ti.template(), node_size: ti.template()):
     # ti.block_local(dt)
     for np in range(particleNum):
         materialID = int(particle[np].materialID)
         if materialID > 0 and int(particle[np].active) == 1:
             velocity_gradient = update_velocity_gradient_apic(np, total_nodes, node, nodal_coords, particle, LnID, shapefn, node_size)
             previous_stress = particle[np].stress
-            particle[np].vol *= matPorps[materialID].update_particle_volume(np, velocity_gradient, stateVars, dt)
-            particle[np].stress = matPorps[materialID].ComputeStress(np, previous_stress, velocity_gradient, stateVars, dt)
+            particle[np].vol *= matProps[materialID].update_particle_volume(np, velocity_gradient, stateVars, dt)
+            particle[np].stress = matProps[materialID].ComputeStress(np, previous_stress, velocity_gradient, stateVars, dt)
             particle[np].velocity_gradient = velocity_gradient
             particle[np].strain += calculate_strain_increment(velocity_gradient, dt)
             

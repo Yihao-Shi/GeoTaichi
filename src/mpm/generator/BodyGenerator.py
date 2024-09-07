@@ -47,6 +47,19 @@ class BodyGenerator(object):
         self.active = False
 
     def set_system_strcuture(self, body_dict):
+        """
+        add parameters to the generator
+        
+        args:
+        ----
+        
+        body_dict: dict
+            Period[list][option]: defult = [0, 0, 1e6]
+            WriteFile[bool][option]: defult = False
+            Visualize[bool][option]: defult = False
+            Template[dict/list]:  when it is a dict that means only one template is used, otherwise, multiple templates are used for generation.
+            CheckHistory[bool][option]: defult = False
+        """
         period = DictIO.GetAlternative(body_dict, "Period", [0, 0, 1e6])
         self.start_time = period[0]
         self.end_time = period[1]
@@ -135,11 +148,13 @@ class BodyGenerator(object):
         pointsToVTK(f'MPMPackings', posx, posy, posz, data=data)
 
     def generator_visualization(self):
+        """write the generator particles to file."""
         position = self.particle.to_numpy()[0:self.insert_particle_num[None]]
         posx, posy, posz = np.ascontiguousarray(position[:, 0]), np.ascontiguousarray(position[:, 1]), np.ascontiguousarray(position[:, 2])
         pointsToVTK(f'MPMPackings', posx, posy, posz, data={})
 
     def allocate_material_point_memory(self, expected_total_particle_number):
+        """constructs a SNodeTree instance."""
         field_bulider = ti.FieldsBuilder()
         self.particle = ti.Vector.field(3, float)
         field_bulider.dense(ti.i, expected_total_particle_number).place(self.particle)
@@ -178,24 +193,40 @@ class BodyGenerator(object):
         kernel_position_rotate_(region.zdirection, region.rotate_center, self.particle, start_particle_num, end_particle_num)
 
     def generate_material_points(self, scene: myScene, template):
+        """
+        generate material points in the region defined by the template to scene.
+        
+        args:
+        ----
+        
+        scene[myScene]: the scene object 
+        template[dict]:
+            RegionName[str]: the name of the region
+            nParticlesPerCell[int][option]: the number of particles per cell in the region, default is 2
+            BodyID[int]: the body ID of the region, only used when self.write_file=False
+            RigidBody[bool][option]: the material ID of the region,defult=False, only used when self.write_file=False
+            Density[float][option]: the density of the region, default=2650, only used when self.write_file=False & RigidBody=True
+            MaterialID[int]: the material ID of the region, default=0, only used when self.write_file=False & RigidBody=False
+            ParticleStress[dict][option]: the stress of the particle, default={"GravityField": False, "InternalStress": vec6f([0, 0, 0, 0, 0, 0])},only used when self.write_file=False
+            Traction[dict][option]: the traction of the particle, default={}, only used when self.write_file=False
+            InitialVelocity[list][option] : the initial velocity of the particle, default=[0, 0, 0], only used when self.write_file=False
+            FixVelocity[list][option]: the fixed velocity of the particle, default=["Free", "Free", "Free"], only used when self.write_file=False
+        """ 
         name = DictIO.GetEssential(template, "RegionName")
         nParticlesPerCell = DictIO.GetAlternative(template, "nParticlesPerCell", 2)
         region: RegionFunction = self.get_region_ptr(name)
         particle_volume = scene.element.calc_volume() / scene.element.calc_total_particle(nParticlesPerCell)
         psize = scene.element.calc_particle_size(nParticlesPerCell)
-
         start_particle_num = self.insert_particle_num[None]
         self.Generate(scene, region, nParticlesPerCell)
         end_particle_num = self.insert_particle_num[None]
         particle_count = end_particle_num - start_particle_num
-
         self.rotate_body(region, start_particle_num, end_particle_num)
-
         if self.write_file:
             self.write_text(start_particle_num, end_particle_num, particle_volume, psize, scene.element.nodal_coords, scene.element.node_connectivity)
         elif not self.write_file:
-            material = scene.get_material_ptr()
-            particles = scene.get_particle_ptr()
+            material = scene.get_material_ptr()  #scene.material
+            particles = scene.get_particle_ptr() #scene.particle
             particleNum = int(scene.particleNum[0])
 
             bodyID = DictIO.GetEssential(template, "BodyID")
@@ -209,17 +240,14 @@ class BodyGenerator(object):
             else:
                 materialID = DictIO.GetEssential(template, "MaterialID")
                 density = material.matProps[materialID].density
-
                 if materialID <= 0:
                     raise RuntimeError(f"Material ID {materialID} should be larger than 0")
-
             if self.sims.shape_function == "Linear":
                 scene.element.calLength[bodyID] = [0, 0, 0]
             elif self.sims.shape_function == "QuadBSpline" or self.sims.shape_function == "CubicBSpline":
                 scene.element.calLength[bodyID] = 0.5 * scene.element.grid_size
             elif self.sims.shape_function == "GIMP":
                 scene.element.calLength[bodyID] = psize
-
             particle_stress = DictIO.GetAlternative(template, "ParticleStress", {"GravityField": False, "InternalStress": vec6f([0, 0, 0, 0, 0, 0])})
             traction = DictIO.GetAlternative(template, "Traction", {})
             init_v = DictIO.GetAlternative(template, "InitialVelocity", vec3f([0, 0, 0]))

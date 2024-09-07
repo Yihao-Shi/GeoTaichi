@@ -33,3 +33,26 @@ btp.py
 D-P本构相关参数计算.xlsx
 barrier.py
 StripFootingTresca.py
+btp2500.py
+btp2500N.py
+btp3000N.py
+btp3000.py
+callbtp.py
+.gitignore
+.vscode/settings.json
+dbt_.drawio
+test.py
+*.part1
+*.part2
+*.part3
+.gitignore
+1.0m
+2m
+t2.ipynb
+goaftest5/vtks.zip
+goaftest7MCL/vtks.zip
+NEW_2D copy 2.py
+NEW_2D copy.py
+RegionChecker.py
+DPmaterial copy 2.py
+drained.py
