@@ -195,7 +195,3 @@ def up_sweep(d: int, n: int, offset: int, output: ti.template()):
             tmp = output[ai]
             output[ai] = output[bi]
             output[bi] += tmp
-
-
-    
-  

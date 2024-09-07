@@ -54,7 +54,7 @@ class DEM(object):
         """
         if np.linalg.norm(np.array(self.sims.get_simulation_domain()) - np.zeros(3)) < 1e-10:
             self.sims.set_domain(DictIO.GetEssential(kwargs, "domain"))
-        self.sims.set_boundary(DictIO.GetAlternative(kwargs, "boundary" ,["Destroy", "Destroy", "Destroy"]))
+        self.sims.set_boundary(DictIO.GetAlternative(kwargs, "boundary" ,[None, None, None]))
         self.sims.set_gravity(DictIO.GetAlternative(kwargs, "gravity", vec3f([0.,0.,-9.8])))
         self.sims.set_engine(DictIO.GetAlternative(kwargs, "engine", "SymplecticEuler"))
         self.sims.set_search(DictIO.GetAlternative(kwargs, "search", "LinkedCell"))
@@ -329,6 +329,7 @@ class DEM(object):
         self.add_engine(DictIO.GetAlternative(kwargs, "callback", None))
         self.add_recorder()
         self.add_solver(kwargs)
+        self.scene.set_boundary_condition(self.sims)
 
     def servo_switch(self, status="On"):
         self.sims.update_servo_status(status)

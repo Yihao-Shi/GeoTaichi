@@ -41,8 +41,8 @@ class HertzMindlinModel(ContactModelBase):
     def add_surface_property(self, max_material_num, materialID1, materialID2, property):
         modulus = DictIO.GetEssential(property, 'ShearModulus')
         possion = DictIO.GetEssential(property, 'Possion')
-        YoungModulus = modulus * 2 * (1 + possion)
-        ShearModulus = modulus
+        ShearModulus = 0.5 * modulus / (2. - possion)
+        YoungModulus = (4. * ShearModulus - 2. * ShearModulus * possion) / (1. - possion)
         mu = DictIO.GetEssential(property, 'Friction')
         restitution = DictIO.GetEssential(property, 'Restitution')
         componousID = 0
@@ -156,12 +156,12 @@ class HertzMindlinModel(ContactModelBase):
     #              Particle Contact Matrix Resolve              #
     # ========================================================= # 
     def update_particle_particle_contact_table(self, sims: Simulation, scene: myScene, pcontact: NeighborBase):
-        copy_contact_table(pcontact.particle_particle, int(scene.particleNum[0]), self.cplist, self.hist_cplist) 
+        copy_contact_table(pcontact.hist_particle_particle, int(scene.particleNum[0]), self.cplist, self.hist_cplist) 
         update_contact_table_(sims.potential_particle_num, int(scene.particleNum[0]), pcontact.particle_particle, pcontact.potential_list_particle_particle, self.cplist)
         kernel_inherit_contact_history(int(scene.particleNum[0]), self.cplist, self.hist_cplist, pcontact.particle_particle, pcontact.hist_particle_particle)
 
     def update_particle_wall_contact_table(self, sims: Simulation, scene: myScene, pcontact: NeighborBase):
-        copy_contact_table(pcontact.particle_wall, int(scene.particleNum[0]), self.cplist, self.hist_cplist)
+        copy_contact_table(pcontact.hist_particle_wall, int(scene.particleNum[0]), self.cplist, self.hist_cplist)
         update_wall_contact_table_(sims.wall_coordination_number, int(scene.particleNum[0]), pcontact.particle_wall, pcontact.potential_list_particle_wall, self.cplist)
         kernel_inherit_contact_history(int(scene.particleNum[0]), self.cplist, self.hist_cplist, pcontact.particle_wall, pcontact.hist_particle_wall)
 
@@ -210,7 +210,7 @@ class HertzMindlinSurfaceProperty:
         distance = (pos1 - pos2).dot(norm)
         gapn = distance - particle_rad
         contactAreaRadius = ti.sqrt(-gapn * particle_rad)
-        fraction = ti.abs(wall[end2].processCircleShape(pos1, distance, -gapn))
+        fraction = ti.abs(wall[end2].processCircleShape(pos1, particle_rad, distance))
         return 2 * fraction * self.YoungModulus * contactAreaRadius
 
     # ========================================================= #
@@ -311,7 +311,7 @@ class HertzMindlinSurfaceProperty:
     #                      Particle-Wall                        #
     # ========================================================= # 
     @ti.func
-    def _particle_wall_force_assemble(self, nc, end1, end2, distance, gapn, norm, cpos, dt, particle, wall, cplist):
+    def _particle_wall_force_assemble(self, nc, end1, end2, fraction, gapn, norm, cpos, dt, particle, wall, cplist):
         pos1, particle_rad = particle[end1].x, particle[end1].rad
         vel1, vel2 = particle[end1].v, wall[end2]._get_velocity()
         w1 = particle[end1].w
@@ -346,15 +346,14 @@ class HertzMindlinSurfaceProperty:
         else:
             tangential_force = trial_ft + tang_damping_force
         
-        fraction = ti.abs(wall[end2].processCircleShape(pos1, distance, -gapn))
         Ftotal = fraction * (normal_force + tangential_force)
-        resultant_momentum = fraction * Ftotal.cross(pos1 - cpos)
+        resultant_momentum = Ftotal.cross(pos1 - cpos)
 
         cplist[nc]._set_contact(fraction * normal_force, fraction * tangential_force, tangOverTemp)
         particle[end1]._update_contact_interaction(Ftotal, resultant_momentum)
 
     @ti.func
-    def _mpm_wall_force_assemble(self, nc, end1, end2, distance, gapn, norm, dt, particle, wall, cplist):
+    def _mpm_wall_force_assemble(self, nc, end1, end2, fraction, gapn, norm, dt, particle, wall, cplist):
         pos1, particle_rad = particle[end1].x, particle[end1].rad
         vel1, vel2 = particle[end1].v, wall[end2]._get_velocity()
         
@@ -387,7 +386,6 @@ class HertzMindlinSurfaceProperty:
         else:
             tangential_force = trial_ft + tang_damping_force
         
-        fraction = wall[end2].processCircleShape(pos1, distance, -gapn)
         Ftotal = fraction * (normal_force + tangential_force)
 
         cplist[nc]._set_contact(tangOverTemp)

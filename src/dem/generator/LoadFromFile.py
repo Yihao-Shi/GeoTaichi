@@ -297,7 +297,7 @@ class ParticleReader(object):
     # ========================================================= #
     def load_obj_file(self, scene: myScene, template):
         print('#', "Start voxelizing body(s) ......")
-        body_file = DictIO.GetEssential(template, "GeomertyFile")
+        body_file = DictIO.GetEssential(template, "GeometryFile")
         groupID = DictIO.GetEssential(template, "GroupID")
         matID = DictIO.GetEssential(template, "MaterialID")
         init_v = DictIO.GetAlternative(template, "InitialVelocity", vec3f([0, 0, 0]))

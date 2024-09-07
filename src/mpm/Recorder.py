@@ -129,14 +129,14 @@ class WriteFile:
                                                                              traction=traction, psize=psize, strain=strain, stress=stress, velocity_gradient=velocity_gradient, fix_v=fix_v, state_vars=state_vars)
 
     def MonitorContactGrid(self, sims: Simulation, scene: myScene):
-        coords = scene.element.nodal_coords.to_numpy()
+        coords = scene.element.get_nodal_coords()
         contact_force = scene.node.contact_force.to_numpy()
         norm = scene.node.grad_domain.to_numpy()
         # self.VisualizeGrid(sims, coords, {"contact_force": (fcx, fcy, fcz)})
         np.savez(self.grid_path+f'/MPMGrid{sims.current_print:06d}', t_current=sims.current_time, dims=scene.element.gnum, coords=coords, contact_force=contact_force, normal=norm)
 
     def MonitorGrid(self, sims: Simulation, scene: myScene):
-        coords = scene.element.nodal_coords.to_numpy()
+        coords = scene.element.get_nodal_coords()
         # self.VisualizeGrid(sims, coords, {})
         np.savez(self.grid_path+f'/MPMGrid{sims.current_print:06d}', t_current=sims.current_time, dims=scene.element.gnum, coords=coords)
     

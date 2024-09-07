@@ -201,6 +201,7 @@ class ULExplicitEngine(Engine):
         kernel_compute_grid_kinematic(scene.mass_cut_off, sims.background_damping, scene.node, sims.dt)
 
     def apply_kinematic_constraints(self, sims: Simulation, scene: myScene):
+        self.apply_friction_constraints(sims, scene)
         self.apply_reflection_constraints(sims, scene)
         self.apply_velocity_constraints(sims, scene)
 
@@ -282,16 +283,16 @@ class ULExplicitEngine(Engine):
         scene.element.calculate(scene.particleNum, scene.particle)
 
     def usl_updating(self, sims: Simulation, scene: myScene):
-        self.calculate_interpolation(sims, scene)   #计算从粒子到背景网格的插值权重和导数。这是MPM方法中的关键步骤，用于将粒子的物理属性（如质量、动量）转移到网格上。
-        self.compute_nodal_kinematic(sims, scene)   #更新网格结点的运动学信息，比如速度和位移。
-        self.compute_grid_velcity(sims, scene)      #根据网格结点上累积的动量和质量计算网格结点的速度。
-        self.compute_external_force(sims, scene)        #计算背景网格结点外力
-        self.compute_internal_forces(sims, scene)       #计算背景网格结点力内力
-        self.apply_traction_constraints(sims, scene)    #施加边界条件
-        self.apply_absorbing_constraints(sims, scene)   #施加边界条件
-        self.apply_friction_constraints(sims, scene)    #施加边界条件
-        self.compute_grid_kinematic(sims, scene)        
-        self.pre_contact_calculate(sims, scene)         #在处理接触力之前进行的预处理步骤，可能用于确定哪些粒子和网格结点即将接触。
+        self.calculate_interpolation(sims, scene)
+        self.compute_nodal_kinematic(sims, scene)
+        self.compute_grid_velcity(sims, scene)
+        self.apply_dirichlet_constraints(sims, scene)
+        self.compute_external_force(sims, scene)
+        self.compute_internal_forces(sims, scene)
+        self.apply_traction_constraints(sims, scene)
+        self.apply_absorbing_constraints(sims, scene)
+        self.compute_grid_kinematic(sims, scene)
+        self.pre_contact_calculate(sims, scene)
         self.apply_kinematic_constraints(sims, scene)
         self.compute_contact_force_(sims, scene)
         self.compute_particle_kinematics(sims, scene)   #更新粒子的运动学信息
@@ -309,7 +310,6 @@ class ULExplicitEngine(Engine):
         self.compute_internal_forces(sims, scene)
         self.apply_traction_constraints(sims, scene)
         self.apply_absorbing_constraints(sims, scene)
-        self.apply_friction_constraints(sims, scene)
         self.compute_grid_kinematic(sims, scene)
         self.pre_contact_calculate(sims, scene)
         self.apply_kinematic_constraints(sims, scene)
@@ -320,18 +320,17 @@ class ULExplicitEngine(Engine):
         self.calculate_interpolation(sims, scene)
         self.compute_nodal_kinematic(sims, scene)
         self.compute_grid_velcity(sims, scene)
+        self.apply_dirichlet_constraints(sims, scene)
         self.compute_external_force(sims, scene)
         self.compute_internal_forces(sims, scene)
         self.apply_traction_constraints(sims, scene)
         self.apply_absorbing_constraints(sims, scene)
-        self.apply_friction_constraints(sims, scene)
         self.compute_grid_kinematic(sims, scene)
         self.pre_contact_calculate(sims, scene)
         self.apply_kinematic_constraints(sims, scene)
         self.compute_contact_force_(sims, scene)
         self.compute_particle_kinematics(sims, scene)
         self.postmapping_grid_velocity(sims, scene)
-        self.apply_friction_constraints(sims, scene)
         self.compute_grid_velcity(sims, scene)
         self.apply_kinematic_constraints(sims, scene)
         self.compute_stress_strains(sims, scene)
@@ -348,7 +347,6 @@ class ULExplicitEngine(Engine):
         self.compute_internal_forces(sims, scene)
         self.apply_traction_constraints(sims, scene)
         self.apply_absorbing_constraints(sims, scene)
-        self.apply_friction_constraints(sims, scene)
         self.compute_grid_kinematic(sims, scene)
         self.pre_contact_calculate(sims, scene)
         self.apply_kinematic_constraints(sims, scene)

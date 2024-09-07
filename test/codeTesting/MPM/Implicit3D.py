@@ -2,7 +2,7 @@ import sys
 sys.path.append("/home/eleven/work/GeoTaichi")
 
 import taichi as ti
-ti.init(arch=ti.gpu, default_fp=ti.f64, kernel_profiler=True, debug=True)
+ti.init(arch=ti.gpu, default_fp=ti.f64, kernel_profiler=True, debug=False)
 
 from src.utils.ShapeFunctions import ShapeLinear, GShapeLinear
 from src.utils.MatrixSolver.MatrixFreePCG import MatrixFreePCG
@@ -207,14 +207,14 @@ def assign_displacement_constraints():
 
         if idx == space1:
             offset = ti.atomic_add(disp_list[None], 3)
-            disp_constraint[offset].value = 0.01
+            disp_constraint[offset].value = 0.0
             disp_constraint[offset].dof = 3 * i
             disp_constraint[offset + 1].value = 0.
             disp_constraint[offset + 1].dof = 3 * i + 1
             disp_constraint[offset + 2].value = 0.
             disp_constraint[offset + 2].dof = 3 * i + 2
 
-    for i in g:
+    '''for i in g:
         idx = i % grid_x
 
         if idx == space2:
@@ -224,7 +224,7 @@ def assign_displacement_constraints():
             disp_constraint[offset + 1].value = 0.
             disp_constraint[offset + 1].dof = 3 * i + 1
             disp_constraint[offset + 2].value = 0.
-            disp_constraint[offset + 2].dof = 3 * i + 2
+            disp_constraint[offset + 2].dof = 3 * i + 2'''
 
 @ti.kernel
 def grid_reset():

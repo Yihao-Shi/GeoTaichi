@@ -372,8 +372,8 @@ class ContactNodes:
 
     @ti.func
     def _compute_nodal_kinematic(self, damp, dt):
-        unbalanced_force = self.force / self.m
-        force = unbalanced_force - damp * unbalanced_force.norm() * vsign(self.momentum)
+        unbalanced_force = self.force 
+        force = (unbalanced_force - damp * unbalanced_force.norm() * vsign(self.momentum)) / self.m
         self.momentum += force * dt[None]
         self.force = force 
 
@@ -460,29 +460,7 @@ class ContactNodes:
     @ti.func
     def friction_constraint(self, mu, norm, dt):
         velocity = self.momentum
-        acceleration = self.force / self.m
-
-        '''acc_n = acceleration.dot(norm)
-        acc_t = acceleration - acc_n * norm
-        vel_n = velocity.dot(norm)
-        vel_t = velocity - vel_n * norm
-        if acc_n > 0.:
-            if vel_t.norm() != 0.:
-                vel_net = vel_t + acc_t * dt[None]
-                vel_net_t = vel_net.norm()
-                vel_friction = mu * ti.abs(acc_n) * dt[None]
-
-                if vel_net_t <= vel_friction:
-                    acc_t -= vel_t / dt[None]
-                else:
-                    acc_t -= mu * ti.abs(acc_n) * (vel_net / vel_net_t)
-            else:
-                if acc_t.norm() <= mu * ti.abs(acc_n):
-                    acc_t = ZEROVEC3f
-                else:
-                    acc_tt = acc_t.norm() - mu * ti.abs(acc_n)
-                    acc_t -= mu * ti.abs(acc_n) * acc_t / acc_tt
-            self.force = acc_t * self.m'''
+        acceleration = self.force
 
         vel_n = velocity.dot(norm)
         if vel_n > Threshold:
@@ -565,8 +543,8 @@ class ContactNodes2D:
 
     @ti.func
     def _compute_nodal_kinematic(self, damp, dt):
-        unbalanced_force = self.force / self.m
-        force = unbalanced_force - damp * unbalanced_force.norm() * vsign(self.momentum)
+        unbalanced_force = self.force 
+        force = (unbalanced_force - damp * unbalanced_force.norm() * vsign(self.momentum)) / self.m
         self.momentum += force * dt[None]
         self.force = force 
 
@@ -646,7 +624,7 @@ class ContactNodes2D:
     @ti.func
     def friction_constraint(self, mu, norm, dt):
         velocity = self.momentum
-        acceleration = self.force / self.m
+        acceleration = self.force 
 
         vel_n = velocity.dot(norm)
         if vel_n > Threshold:
@@ -745,8 +723,8 @@ class Nodes:
 
     @ti.func
     def _compute_nodal_kinematic(self, damp, dt):
-        unbalanced_force = self.force / self.m
-        force = unbalanced_force - damp * unbalanced_force.norm() * vsign(self.momentum)
+        unbalanced_force = self.force 
+        force = (unbalanced_force - damp * unbalanced_force.norm() * vsign(self.momentum)) / self.m
         self.momentum += force * dt[None]
         self.force = force 
 
@@ -787,29 +765,7 @@ class Nodes:
     @ti.func
     def friction_constraint(self, mu, norm, dt):
         velocity = self.momentum
-        acceleration = self.force / self.m
-
-        '''acc_n = acceleration.dot(norm)
-        acc_t = acceleration - acc_n * norm
-        vel_n = velocity.dot(norm)
-        vel_t = velocity - vel_n * norm
-        if acc_n > 0.:
-            if vel_t.norm() != 0.:
-                vel_net = vel_t + acc_t * dt[None]
-                vel_net_t = vel_net.norm()
-                vel_friction = mu * ti.abs(acc_n) * dt[None]
-
-                if vel_net_t <= vel_friction:
-                    acc_t -= vel_t / dt[None]
-                else:
-                    acc_t -= mu * ti.abs(acc_n) * (vel_net / vel_net_t)
-            else:
-                if acc_t.norm() <= mu * ti.abs(acc_n):
-                    acc_t = ZEROVEC3f
-                else:
-                    acc_tt = acc_t.norm() - mu * ti.abs(acc_n)
-                    acc_t -= mu * ti.abs(acc_n) * acc_t / acc_tt
-            self.force = acc_t * self.m'''
+        acceleration = self.force 
         
         vel_n = velocity.dot(norm)
         if vel_n > Threshold:
@@ -880,8 +836,8 @@ class Nodes2D:
 
     @ti.func
     def _compute_nodal_kinematic(self, damp, dt):
-        unbalanced_force = self.force / self.m
-        force = unbalanced_force - damp * unbalanced_force.norm() * vsign(self.momentum)
+        unbalanced_force = self.force 
+        force = (unbalanced_force - damp * unbalanced_force.norm() * vsign(self.momentum)) / self.m
         self.momentum += force * dt[None]
         self.force = force 
 
@@ -919,7 +875,7 @@ class Nodes2D:
     @ti.func
     def friction_constraint(self, mu, norm, dt):
         velocity = self.momentum
-        acceleration = self.force / self.m
+        acceleration = self.force 
 
         vel_n = velocity.dot(norm)
         if vel_n > Threshold:

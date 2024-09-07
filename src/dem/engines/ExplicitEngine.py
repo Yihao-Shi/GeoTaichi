@@ -97,7 +97,7 @@ class ExplicitEngine(object):
         wall_force_reset_(int(scene.wallNum[0]), scene.wall)
 
     def pre_calculation(self, sims: Simulation, scene: myScene, neighbor: NeighborBase):
-        scene.check_particle_in_domain(sims)
+        scene.apply_boundary_conditions(sims)
         neighbor.pre_neighbor(scene)
         self.physpp.update_contact_table(sims, scene, neighbor)
         self.physpw.update_contact_table(sims, scene, neighbor)
@@ -116,7 +116,7 @@ class ExplicitEngine(object):
             self.physpw.resolve(sims, scene, neighbor)
 
     def update_verlet_table(self, sims, scene: myScene, neighbor: NeighborBase):
-        scene.check_particle_in_domain(sims)
+        scene.apply_boundary_conditions(sims)
         neighbor.update_verlet_table(scene)
         self.physpp.update_contact_table(sims, scene, neighbor)
         self.physpw.update_contact_table(sims, scene, neighbor)

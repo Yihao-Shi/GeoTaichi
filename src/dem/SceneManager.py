@@ -4,9 +4,12 @@ import numpy as np
 from src.dem.BaseStruct import *
 from src.dem.Simulation import Simulation
 from src.dem.BaseKernel import *
+from src.utils.DomainBoundary import DomainBoundary
+from src.utils.linalg import no_operation
 
 
 class myScene(object):
+    domain_boundary: DomainBoundary
     clump: ClumpFamily
     particle: ParticleFamily
     sphere: SphereFamily
@@ -15,6 +18,7 @@ class myScene(object):
     material: Material
 
     def __init__(self) -> None:
+        self.domain_boundary = None
         self.particle = None
         self.clump = None
         self.sphere = None
@@ -49,12 +53,6 @@ class myScene(object):
         if sims.max_clump_num > 0: 
             self.activate_clump(sims)
 
-        if sims.max_level_grid_num > 0:
-            self.activate_levelset_grid(sims)
-        if sims.max_rigid_body_num > 0:
-            self.activate_rigid_body(sims)
-            self.active_boundings(sims)
-
         if sims.wall_type == 0: 
             self.activate_plane(sims)
         elif sims.wall_type == 1: 
@@ -86,35 +84,6 @@ class myScene(object):
                 self.activate_particle(sims)
             self.clump = ClumpFamily.field(shape=sims.max_clump_num)
 
-    def activate_levelset_grid(self, sims: Simulation):
-        if self.grid is None and sims.max_level_grid_num > 0:
-            self.grid = LevelSetGrid.field(shape=sims.max_level_grid_num)
-
-    def activate_rigid_body(self, sims: Simulation):
-        if self.rigid is None and sims.max_rigid_body_num > 0:
-            self.rigid = RigidBody.field(shape=sims.max_rigid_body_num)
-
-            if self.grid is None: 
-                raise RuntimeError("Level set grid has not been set!")
-            
-            if sims.max_level_grid_num <= 0:
-                raise RuntimeError("Keyword:: /max_levelset_grid_num/ should be larger than 0")
-            
-            if self.surface_node is None:
-                if sims.max_surface_node_num > 0:
-                    self.surface_node = SurfaceNode.field(shape=sims.max_surface_node_num)
-                else:
-                    raise RuntimeError("Keyword:: /max_surface_node_num/ should be larger than 0")
-
-    def active_boundings(self, sims: Simulation):
-        if self.particle is None and sims.max_rigid_body_num > 0:
-            self.particle = BoundingSphere.field(shape=sims.max_rigid_body_num)
-            if sims.max_particle_num > 0.:
-                raise RuntimeError("Level set DEM cannot run ")
-            
-        if self.box is None and sims.max_rigid_body_num > 0:
-            self.box = BoundingBox.field(shape=sims.max_rigid_body_num)
-                
     def activate_plane(self, sims: Simulation):
         if self.wall is None and not sims.wall_type is None:
             self.wall = PlaneFamily.field(shape=sims.max_wall_num)
@@ -272,6 +241,10 @@ class myScene(object):
     def check_particle_in_domain(self, sims: Simulation):
         check_in_domain(sims.domain, int(self.particleNum[0]), self.particle)
 
+    def apply_boundary_condition(self, sims: Simulation):
+        if self.domain_boundary.apply_boundary_conditions(int(self.particleNum[0]), self.particle):
+            update_particle_storage_(self.particleNum, self.sphereNum, self.clumpNum, self.particle, self.sphere, self.clump)
+    
     def update_particle_properties(self, override, particle_type, property_name, value, bodyID):
         print(" Modify Particle Information ".center(71, '-'))
         print("Target BodyID =", bodyID)
@@ -407,5 +380,10 @@ class myScene(object):
     def clump_calm(self):
         clump_calm(int(self.clumpNum[0]), self.clump)
     
-
-    
+    def set_boundary_condition(self, sims: Simulation):
+        self.domain_boundary = DomainBoundary(sims.domain)
+        self.domain_boundary.set_boundary_condition(sims.boundary)
+        if self.domain_boundary.need_run:
+            self.apply_boundary_conditions = self.apply_boundary_condition
+        else:
+            self.apply_boundary_conditions = no_operation

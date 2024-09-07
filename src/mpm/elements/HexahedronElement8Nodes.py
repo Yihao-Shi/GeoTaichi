@@ -57,11 +57,34 @@ class HexahedronElement8Nodes(ElementBase):
                 self.gnum[d] = 1
         self.cnum = self.gnum - 1
         self.gridSum = int(self.gnum[0] * self.gnum[1] * self.gnum[2])
-        self.nodal_coords = ti.Vector.field(3, float, shape=self.gridSum)
-        set_node_position_(self.nodal_coords, self.gnum, self.grid_size)
+        self.set_nodal_coords()
 
     def set_characteristic_length(self, sims: Simulation):
         self.calLength = ti.Vector.field(3, float, shape=sims.max_body_num)
+
+    def set_nodal_coords(self):
+        X = np.arange(0., self.cnum[0] * self.grid_size[0], self.gnum[0])
+        Y = np.arange(0., self.cnum[1] * self.grid_size[1], self.gnum[1])
+        Z = np.arange(0., self.cnum[2] * self.grid_size[2], self.gnum[2])
+        self.nodal_coords = np.array(list(product(X, Y, Z)))
+
+    def set_node_connectivity(self):
+        total_cell_number = self.get_total_cell_number()
+        self.node_connectivity = np.zeros((total_cell_number, 8))
+        self.node_connectivity[:, 0] = np.arange(0, total_cell_number, 1)
+        self.node_connectivity[:, 1] = np.arange(0, total_cell_number, 1) + 1
+        self.node_connectivity[:, 2] = np.arange(0, total_cell_number, 1) + self.cnum[0] + 1
+        self.node_connectivity[:, 3] = np.arange(0, total_cell_number, 1) + self.cnum[0]
+        self.node_connectivity[:, 4] = np.arange(0, total_cell_number, 1) + self.cnum[0] * self.cnum[1]
+        self.node_connectivity[:, 5] = np.arange(0, total_cell_number, 1) + self.cnum[0] * self.cnum[1] + 1
+        self.node_connectivity[:, 6] = np.arange(0, total_cell_number, 1) + self.cnum[0] * self.cnum[1] + self.cnum[0] + 1
+        self.node_connectivity[:, 7] = np.arange(0, total_cell_number, 1) + self.cnum[0] * self.cnum[1] + self.cnum[0]
+
+    def get_nodal_coords(self) -> np.ndarray:
+        return self.nodal_coords
+    
+    def get_node_connectivity(self) -> np.ndarray:
+        return self.node_connectivity
 
     def element_initialize(self, sims: Simulation, local_coordiates=False):
         self.choose_shape_function(sims.shape_function)
@@ -77,13 +100,12 @@ class HexahedronElement8Nodes(ElementBase):
                 self.gauss_point = GaussPointInRectangle(gauss_point=sims.gauss_number)
                 self.gauss_point.create_gauss_point()
             self.set_essential_field(is_bbar, sims.max_particle_num)
-        
-        self.node_connectivity = ti.Vector.field(self.grid_nodes, int, shape=self.get_total_cell_number())
-        find_nodes_per_element_(0, self.get_total_cell_number(), self.gnum, self.node_connectivity, set_connectivity)
                 
         if sims.solver_type == "Implicit":
             self.pse = PrefixSumExecutor(self.gridSum)
             self.flag = ti.field(int, shape=self.gridSum)
+
+        self.set_node_connectivity()
 
     def choose_shape_function(self, shape_function_type):
         if shape_function_type == "Linear":
@@ -211,20 +233,20 @@ class HexahedronElement8Nodes(ElementBase):
         return set_active_dofs(self.gridSum, cutoff, node, self.flag, active_node)
 
     def calc_local_shape_fn(self, particleNum, particle):
-        update(self.grid_nodes, self.influenced_node, self.igrid_size, self.gnum, self.start_local_coord, particleNum[0],
-                                particle, self.calLength, self.nodal_coords, self.LnID, self.node_size, self.shape_fn, self.dshape_fn, self.shape_function, self.grad_shape_function)
+        update(self.grid_nodes, self.influenced_node, self.grid_size, self.igrid_size, self.gnum, self.start_local_coord, particleNum[0],
+               particle, self.calLength, self.LnID, self.node_size, self.shape_fn, self.dshape_fn, self.shape_function, self.grad_shape_function)
         
     def calc_local_shape_fn_b_bar(self, particleNum, particle):
-        updatebbar(self.grid_nodes, self.influenced_node, self.igrid_size, self.gnum, self.start_local_coord, particleNum[0],
-                                    particle, self.calLength, self.nodal_coords, self.LnID, self.node_size, self.shape_fn, self.dshape_fn, self.dshape_fnc, self.shape_function, self.grad_shape_function, self.shape_function_center)
+        updatebbar(self.grid_nodes, self.influenced_node, self.grid_size, self.igrid_size, self.gnum, self.start_local_coord, particleNum[0],
+                   particle, self.calLength, self.LnID, self.node_size, self.shape_fn, self.dshape_fn, self.dshape_fnc, self.shape_function, self.grad_shape_function, self.shape_function_center)
         
     def calc_shape_fn(self, particleNum, particle):
-        global_update(self.grid_nodes, self.influenced_node, self.igrid_size, self.gnum, particleNum[0], particle, self.calLength, self.nodal_coords, 
-                                       self.node_size, self.LnID, self.shape_fn, self.dshape_fn, self.shape_function, self.grad_shape_function)
+        global_update(self.grid_nodes, self.influenced_node, self.grid_size, self.igrid_size, self.gnum, particleNum[0], particle, self.calLength, 
+                      self.node_size, self.LnID, self.shape_fn, self.dshape_fn, self.shape_function, self.grad_shape_function)
 
     def calc_shape_fn_b_bar(self, particleNum, particle):
-        global_updatebbar(self.grid_nodes, self.influenced_node, self.igrid_size, self.gnum, particleNum[0], particle, self.calLength, self.nodal_coords, 
-                                           self.node_size, self.LnID, self.shape_fn, self.dshape_fn, self.dshape_fnc, self.shape_function, self.grad_shape_function, self.shape_function_center)
+        global_updatebbar(self.grid_nodes, self.influenced_node, self.grid_size, self.igrid_size, self.gnum, particleNum[0], particle, self.calLength, 
+                          self.node_size, self.LnID, self.shape_fn, self.dshape_fn, self.dshape_fnc, self.shape_function, self.grad_shape_function, self.shape_function_center)
 
     def find_located_cell(self, particleNum, particle):
         kernel_find_located_cell(self.igrid_size, self.gnum, particleNum[0], particle)

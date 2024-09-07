@@ -1,14 +1,18 @@
 # GeoTaichi
 
-![Github License](https://img.shields.io/github/license/Yihao-Shi/GeoTaichi)          ![Github stars](https://img.shields.io/github/stars/Yihao-Shi/GeoTaichi)          ![Github forks](https://img.shields.io/github/forks/Yihao-Shi/GeoTaichi)          ![Github Downloads (all assets, latest release)](https://img.shields.io/github/downloads/Yihao-Shi/GeoTaichi/latest/total)
+![Github License](https://img.shields.io/github/license/Yihao-Shi/GeoTaichi)          ![Github stars](https://img.shields.io/github/stars/Yihao-Shi/GeoTaichi)          ![Github forks](https://img.shields.io/github/forks/Yihao-Shi/GeoTaichi)         [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](http://makeapullrequest.com) 
 
-FORK FROM [GeoTaichi](https://img.shields.io/github/license/Yihao-Shi/GeoTaichi)
-
+[**Quick start**](#quick-start) | [**Examples**](#examples) | [**Paper**](https://www.researchgate.net/publication/380048019_GeoTaichi_A_Taichi-powered_high-performance_numerical_simulator_for_multiscale_geophysical_problems) | [**Citation**](#citation) | [**Contact**](#acknowledgements)
 
 ## Brief description
 
 A [Taichi](https://github.com/taichi-dev/taichi)-based numerical package for high-performance simulations of multiscale and multiphysics geophysical problems. 
 Developed by [Multiscale Geomechanics Lab](https://person.zju.edu.cn/en/nguo), Zhejiang University.
+
+<p align="center">
+    <img src="https://github.com/Yihao-Shi/GeoTaichi/blob/main/images/GeoTaichi.png" width="90%" height="90%" />
+</p>
+
 
 ## Overview
 
@@ -33,6 +37,8 @@ Have a cool example? Submit a PR!
 | --- | --- | --- | 
 | ![Granular packing](images/clump.gif) | ![Heap formation](images/heap_formation.gif) | ![Triaxial shear test](images/force_chain.gif) |
 
+![Debris Flow](images/debris_flow.gif)
+
 The performance of GeoTaichi is compared with similar simulator in the field, such as [MUSEN](https://msolids.net/musen/) and [CoSim](http://www.meggs.hydr.tsinghua.edu.cn/index.html), showing a notable improvement in both computational efficiency and memory usage.
 
 ### Coupled material point-discrete element method (MPDEM)
@@ -49,22 +55,15 @@ The performance of GeoTaichi is compared with similar simulator in the field, su
 |:----------:|:-----:|:------:|
 |[python](https://www.python.org/)|>=3.8|Programming language|
 |[psutil](https://pypi.org/project/psutil/)|lastest|Get GPU memory|
-|[taichi](https://pypi.org/project/taichi/)|>=1.6.0|High performance computing|
+|[taichi](https://pypi.org/project/taichi/)|==1.6.0|High performance computing|
 |[numpy](https://pypi.org/project/numpy/)|==1.23.5|Pre-processing|
 |[scipy](https://pypi.org/project/SciPy/)|==1.10.1|Pre-processing|
 |[pybind11](https://pypi.org/project/pybind11/)|==2.10.4|Warp C++ code|
 |[trimesh](https://pypi.org/project/trimesh/)|==3.20.1|Import stl/obj files|
 |[shapely](https://pypi.org/project/shapely/)|==1.8.0|Delaunay triangulation|
 
-- C++ packages
-
-|Package name|Version|Features|
-|:----------:|:-----:|:------:|
-|[cmake](https://cmake.org/)|==3.18.2|/|
-|[eigen](https://eigen.tuxfamily.org/)|==3.4.0|Nurbs function|
-
 ### Installation
-
+#### Install from source code (recommand)
 1. Change the current working directory to the desired location and download the GeoTaichi code:
 ```
 cd /path/to/desired/location/
@@ -78,7 +77,7 @@ sudo apt-get install python3.8
 sudo apt-get install python3-pip
 
 # Install python packages (recommand to add package version)
-python3 -m pip install taichi imageio pybind11 numpy trimesh psutil shapely -i https://pypi.douban.com/simple
+python3 -m pip install taichi==1.6.0 imageio pybind11 numpy trimesh psutil shapely 
 
 # Install Eigen in C++ (if necessary)
 sudo apt-get install libeigen3-dev cmake==3.18.2
@@ -99,9 +98,9 @@ sudo gedit ~/.bashrc
 $ export PYTHONPATH="$PYTHONPATH:/path/to/desired/location/GeoTaichi"
 source ~/.bashrc
 ```
-5. If you want to use IGA (Isogeometric analysis) modulus. Note that some of programs are written in C++, which need to be compiled for your architecture:
+#### Install from pip (easy)
 ```
-python src/utils/NURBS/setup.py install --user
+pip install geotaichi
 ```
 
 ### Working with vtu files
@@ -153,8 +152,8 @@ The material point method (MPM) is a numerical technique used to simulate the be
   - Supporting force chain visualization
 
 ## Under development
-  - Developing level set DEM modulus
-  - Developing a well-structured IGA modulus
+  - Developing level set DEM modules
+  - Developing a well-structured IGA modules
   - Optimizing code structures
   - Simulating soil-gravel-structure problems in geotechnical engineering
   
@@ -162,12 +161,43 @@ The material point method (MPM) is a numerical technique used to simulate the be
 This project is licensed under the GNU General Public License v3 - see the [LICENSE](https://www.gnu.org/licenses/) for details.
 
 ## Citation
-If you find GeoTaichi is helpful, you can [star it](https://github.com/Yihao-Shi/GeoTaichi).
+Please kindly star :star: this project if it helps you. We take great efforts to develope and maintain it :grin::grin:.
+
+If you publish work that makes use of GeoTaichi, we would appreciate if you would cite the following reference:
+```latex
+@article{shi2024geotai,
+  author    = {Y. H. Shi, N. Guo., Z. X. Yang},
+  title     = {GeoTaichi: a Taichi-powered high-performance numerical simulator for multiscale geophysical problems},
+  year      = {2024},
+  journal   = {Computer Physics Communications},
+  pages     = {109219},
+  publisher = {Elsevier},
+  doi       = {https://doi.org/10.1016/j.cpc.2024.109219}
+}
+```
 
 ## Acknowledgements
-We thank all contributors for their great work and open source spirit.
+We thank all amazing contributors for their great work and open source spirit. We welcome all kinds of contributions to file an issue at [GitHub Issues](https://github.com/Yihao-Shi/GeoTaichi/issues).
+
+### Contributors
+<a href="https://github.com/Yihao-Shi/GeoTaichi/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=Yihao-Shi/GeoTaichi" />
+</a>
+
+### Contact us
+- If you spot any issue or need any help, please mail directly to <a href = "mailto:shiyh@zju.edu.cn">shiyh@zju.edu.cn</a>.
 
 ## Release Notes
+V0.2.2 (July 22, 2024)
+
+- Fix computing the intersection area between circles and triangles
+- Add "Destory" and "Reflect" boundaries in DEM modules, see [examples](https://github.com/Yihao-Shi/GeoTaichi/blob/main/example/dem/SimpleChute/simple_chute.py)
+
+V0.2 (July 1, 2024)
+
+- Fix some bugs in DEM and MPM modules, see [details](https://github.com/Yihao-Shi/GeoTaichi/releases/tag/GeoTaichi-v0.2)
+- Add some advanced constitutive model
+
 V0.1 (January 21, 2024)
 
 - First release GeoTaichi

@@ -3,9 +3,9 @@ import numpy as np
 
 from src.mpm.materials.ConstitutiveModelBase import ConstitutiveModelBase
 from src.utils.MaterialKernel import *
-from src.utils.constants import ZEROVEC6f, EYE, Threshold, DELTA
+from src.utils.constants import ZEROVEC6f, EYE, Threshold
 from src.utils.ObjectIO import DictIO
-from src.utils.TypeDefination import mat3x3
+from src.utils.VectorFunction import voigt_tensor_trace
 
 
 class Bingham(ConstitutiveModelBase):
@@ -16,13 +16,13 @@ class Bingham(ConstitutiveModelBase):
 
     def get_state_vars_dict(self, start_particle, end_particle):
         estress = np.ascontiguousarray(self.stateVars.estress.to_numpy()[start_particle:end_particle])
-        dvolumetric_strain = np.ascontiguousarray(self.stateVars.dvolumetric_strain.to_numpy()[start_particle:end_particle])
-        return {'estress': estress, 'dvolumetric_strain': dvolumetric_strain}
+        p0 = np.ascontiguousarray(self.stateVars.p0.to_numpy()[start_particle:end_particle])
+        return {'estress': estress, 'p0': p0}
     
     def reload_state_variables(self, state_vars):
         estress = state_vars.item()['estress']
-        dvolumetric_strain = state_vars.item()['dvolumetric_strain']
-        kernel_reload_state_variables(estress, dvolumetric_strain, self.stateVars)
+        p0 = state_vars.item()['p0']
+        kernel_reload_state_variables(estress, p0, self.stateVars)
 
     def model_initialize(self, material):
         materialID = DictIO.GetEssential(material, 'MaterialID')
@@ -35,8 +35,9 @@ class Bingham(ConstitutiveModelBase):
         viscosity = DictIO.GetEssential(material, 'Viscosity')
         _yield = DictIO.GetEssential(material, 'YieldStress')
         critical_rate = DictIO.GetEssential(material, 'CriticalStrainRate')
+        gamma = DictIO.GetAlternative(material, 'gamma', 7.)
         
-        self.matProps[materialID].add_material(density, modulus, viscosity, _yield, critical_rate)
+        self.matProps[materialID].add_material(density, modulus, viscosity, _yield, critical_rate, gamma)
         self.matProps[materialID].print_message(materialID)
 
     def get_lateral_coefficient(self, materialID):
@@ -46,17 +47,17 @@ class Bingham(ConstitutiveModelBase):
 @ti.dataclass
 class ULStateVariable:
     estress: float
-    dvolumetric_strain: float
+    p0: float
 
     @ti.func
     def _initialize_vars(self, np, particle, matProps):
         stress = particle[np].stress
-        self.estress = MeanStress(stress)
-        self.dvolumetric_strain = 1.
+        self.estress = -MeanStress(stress)
+        self.p0 = -MeanStress(stress)
 
     @ti.func
     def _update_vars(self, stress):
-        self.estress = MeanStress(stress)    
+        self.estress = -MeanStress(stress)    
 
 
 @ti.dataclass
@@ -66,13 +67,15 @@ class BinghamModel:
     viscosity: float
     _yield: float
     critical_rate: float
+    gamma: float
 
-    def add_material(self, density, modulus, viscosity, _yield, critical_rate):
+    def add_material(self, density, modulus, viscosity, _yield, critical_rate, gamma):
         self.density = density
         self.modulus = modulus
         self.viscosity = viscosity
         self._yield = _yield
         self.critical_rate = critical_rate
+        self.gamma = gamma
 
     def print_message(self, materialID):
         print(" Constitutive Model Information ".center(71, '-'))
@@ -92,40 +95,43 @@ class BinghamModel:
         return sound_speed
     
     @ti.func
+    def _set_modulus(self, velocity):
+        velocity = 1000 * velocity
+        ti.atomic_max(self.modulus, self.density * velocity / self.gamma)
+    
+    @ti.func
     def update_particle_volume(self, np, velocity_gradient, stateVars, dt):
         delta_jacobian = 1. + dt[None] * (velocity_gradient[0, 0] + velocity_gradient[1, 1] + velocity_gradient[2, 2])
-        stateVars[np].dvolumetric_strain *= delta_jacobian
         return delta_jacobian
     
     @ti.func
     def update_particle_volume_bbar(self, np, strain_rate, stateVars, dt):
         delta_jacobian = 1. + dt[None] * (strain_rate[0] + strain_rate[1] + strain_rate[2])
-        stateVars[np].dvolumetric_strain *= delta_jacobian
         return delta_jacobian
 
     @ti.func
-    def thermodynamic_pressure(self, dvolumertic):
-        gamma = 7
-        pressure = -self.modulus * (dvolumertic ** gamma - 1)
+    def thermodynamic_pressure(self, dvolumertic_strain):
+        pressure = -self.modulus * dvolumertic_strain 
         return pressure
     
     @ti.func
     def ComputeStress2D(self, np, previous_stress, velocity_gradient, stateVars, dt):
         strain_rate = calculate_strain_rate2D(velocity_gradient)
-        return self.core(np, strain_rate, stateVars)
+        return self.core(np, strain_rate, stateVars, dt)
 
     @ti.func
     def ComputeStress(self, np, previous_stress, velocity_gradient, stateVars, dt):
         strain_rate = calculate_strain_rate(velocity_gradient)
-        return self.core(np, strain_rate, stateVars)
+        return self.core(np, strain_rate, stateVars, dt)
 
     @ti.func
-    def core(self, np, strain_rate, stateVars):   
+    def core(self, np, strain_rate, stateVars, dt):   
         _yield = self._yield
         viscosity = self.viscosity
         critical_shear_rate = self.critical_rate
 
         # Convert strain rate to rate of deformation tensor
+        volumetric_strain_rate = voigt_tensor_trace(strain_rate)
         for d in ti.static(range(3, 6)):
             strain_rate[d] *= 0.5
         
@@ -145,13 +151,15 @@ class BinghamModel:
         trace_invariant2 = 0.5 * (tau[0] * tau[0] + tau[1] * tau[1] + tau[2] * tau[2])
         if trace_invariant2 < _yield * _yield: tau = ZEROVEC6f
 
-        pressure = self.thermodynamic_pressure(stateVars[np].dvolumetric_strain)
-        stateVars[np].estress = pressure
-        return -pressure * EYE + tau 
+        pressure = stateVars[np].p0 + self.thermodynamic_pressure(volumetric_strain_rate * dt[None])
+        updated_stress = -pressure * EYE + tau 
+        stateVars[np].estress = -MeanStress(updated_stress)
+        stateVars[np].p0 = pressure
+        return updated_stress
 
 
 @ti.kernel
-def kernel_reload_state_variables(estress: ti.types.ndarray(), dvolumetric_strain: ti.types.ndarray(), state_vars: ti.template()):
+def kernel_reload_state_variables(estress: ti.types.ndarray(), p0: ti.types.ndarray(), state_vars: ti.template()):
     for np in range(estress.shape[0]):
         state_vars[np].estress = estress[np]
-        state_vars[np].dvolumetric_strain = dvolumetric_strain[np]
+        state_vars[np].p0 = p0[np]

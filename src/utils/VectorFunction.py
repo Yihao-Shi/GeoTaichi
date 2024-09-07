@@ -140,6 +140,10 @@ def voigt_form(matrix):
                  0.5 * (matrix[0, 1] + matrix[1, 0]), 0.5 * (matrix[1, 2] + matrix[2, 1]), 0.5 * (matrix[0, 2] + matrix[2, 0]))
 
 @ti.func
+def equivalent_voigt(vector):
+    return ti.sqrt(2./3. * symtensordot(vector, vector))
+
+@ti.func
 def principal_tensor(vector):
     matrix = matrix_form(vector)
     m = matrix.trace()

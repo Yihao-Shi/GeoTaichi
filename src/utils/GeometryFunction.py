@@ -10,59 +10,53 @@ from src.utils.VectorFunction import dot2
 # refers to https://stackoverflow.com/questions/540014/compute-the-area-of-intersection-between-a-circle-and-a-triangle
 @ti.func
 def SphereTriangleIntersectionArea(position, radius, vertice1, vertice2, vertice3, norm):
-	area = 0.
-	processSegment(area, position, radius, norm, vertice3, vertice2)
-	processSegment(area, position, radius, norm, vertice2, vertice1)
-	processSegment(area, position, radius, norm, vertice1, vertice3)
-	return area 
+    area = 0.
+    processSegment(area, position, radius, vertice1, vertice2, norm)
+    processSegment(area, position, radius, vertice2, vertice3, norm)
+    processSegment(area, position, radius, vertice3, vertice1, norm)
+    return area 
 
 
 @ti.func
-def processSegment(area: ti.template(), position, radius, norm, initialVertex, finalVertex):
-	segmentDisplacement = finalVertex - initialVertex
-	centerToInitialDisplacement = initialVertex - position
-
-	segmentLength = segmentDisplacement.norm()
-	leftX = centerToInitialDisplacement.dot(segmentDisplacement) / segmentLength
-	rightX = leftX + segmentLength
-	outer_normal = segmentDisplacement.cross(centerToInitialDisplacement)
-	y = sgn(outer_normal.dot(norm)) * outer_normal.norm() / segmentLength
-	processSegmentStandardGeometry(area, radius, leftX, rightX, y)
+def processSegment(area: ti.template(), position, radius, initialVertex, finalVertex, norm):
+    segmentDisplacement = finalVertex - initialVertex
+    segmentLength = segmentDisplacement.norm()
+    centerToInitialDisplacement = initialVertex - position
+    leftX = centerToInitialDisplacement.dot(segmentDisplacement) / segmentLength
+    rightX = leftX + segmentLength
+    wedge_product = segmentDisplacement.cross(centerToInitialDisplacement)
+    y = wedge_product.dot(norm) / segmentLength
+    processSegmentStandardGeometry(area, radius, leftX, rightX, y)
 
 
 @ti.func
 def processSegmentStandardGeometry(area: ti.template(), radius, leftX, rightX, y):
-	if y * y > radius * radius:
-		processNonIntersectingRegion(area, radius, leftX, rightX, y)
-	else:
-		intersectionX = ti.sqrt(radius * radius - y * y)
-		if leftX < -intersectionX:
-			leftRegionRightEndpoint = ti.min(-intersectionX, rightX)
-			processNonIntersectingRegion(area, radius, leftX, leftRegionRightEndpoint, y)
-		if intersectionX < rightX:
-			rightRegionLeftEndpoint = ti.max(intersectionX, leftX)
-			processNonIntersectingRegion(area, radius, rightRegionLeftEndpoint, rightX, y)
-		middleRegionLeftEndpoint = ti.max(-intersectionX, leftX)
-		middleRegionRightEndpoint = ti.min(intersectionX, rightX)
-		middleRegionLength = ti.max(middleRegionRightEndpoint - middleRegionLeftEndpoint, 0)
-		processIntersectingRegion(area, middleRegionLength, y)
+    if y * y > radius * radius:
+        processNonIntersectingRegion(area, radius, leftX, rightX, y)
+    else:
+        intersectionX = ti.sqrt(radius * radius - y * y)
+        if leftX < -intersectionX:
+            leftRegionRightEndpoint = ti.min(-intersectionX, rightX)
+            processNonIntersectingRegion(area, radius, leftX, leftRegionRightEndpoint, y)
+        if intersectionX < rightX:
+            rightRegionLeftEndpoint = ti.max(intersectionX, leftX)
+            processNonIntersectingRegion(area, radius, rightRegionLeftEndpoint, rightX, y)
+        middleRegionLeftEndpoint = ti.max(-intersectionX, leftX)
+        middleRegionRightEndpoint = ti.min(intersectionX, rightX)
+        middleRegionLength = ti.max(middleRegionRightEndpoint - middleRegionLeftEndpoint, 0)
+        area -= 0.5 * middleRegionLength * y
 
 
 @ti.func
 def processNonIntersectingRegion(area: ti.template(), radius, leftX, rightX, y):
-	initialTheta = ti.atan2(y, leftX)
-	finalTheta = ti.atan2(y, rightX)
-	deltaTheta = finalTheta - initialTheta
-	if deltaTheta < -PI:
-		deltaTheta += 2 * PI
-	elif deltaTheta > PI:
-		deltaTheta -= 2 * PI
-	area += 0.5 * radius * radius * deltaTheta
-
-
-@ti.func
-def processIntersectingRegion(area: ti.template(), length, y):
-	area -= 0.5 * length * y
+    initialTheta = ti.atan2(y, leftX)
+    finalTheta = ti.atan2(y, rightX)
+    deltaTheta = finalTheta - initialTheta
+    if deltaTheta < -PI:
+        deltaTheta += 2 * PI
+    elif deltaTheta > PI:
+        deltaTheta -= 2 * PI
+    area += 0.5 * radius * radius * deltaTheta
 
 
 @ti.func

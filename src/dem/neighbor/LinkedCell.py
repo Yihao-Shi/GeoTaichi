@@ -59,7 +59,7 @@ class LinkedCell(NeighborBase):
         rad_min, rad_max = scene.find_bounding_sphere_radius(self.sims)
         rad_max = max(max_bounding_rad, rad_max)
         self.sims.set_verlet_distance(rad_min)
-        self.grid_size = 2 * (rad_max + self.sims.verlet_distance) #main c0bc8be
+        self.grid_size = 2 * ((rad_max + self.sims.verlet_distance)) #main c0bc8be
         self.plane_insert_factor = 0.5 + rad_max / self.grid_size
         if self.grid_size < 1e-3 * Threshold:
             raise RuntimeError("Particle radius is equal to zero!")

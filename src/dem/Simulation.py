@@ -79,6 +79,7 @@ class Simulation(object):
             
     def set_boundary(self, boundary):
         BOUNDARY = {
+                        None: -1,
                         "Reflect": 0,
                         "Destroy": 1,
                         "Period": 2
@@ -252,8 +253,11 @@ class Simulation(object):
         self.is_continue = is_continue
 
     def set_compaction_ratio(self, compaction_ratio):
-        self.compaction_ratio = compaction_ratio
-
+        if isinstance(compaction_ratio, float):
+            self.compaction_ratio = [compaction_ratio, compaction_ratio]
+        elif isinstance(compaction_ratio, (tuple, list)):
+            self.compaction_ratio = list(compaction_ratio)
+            
     def set_window_parameters(self, windows):
         self.visualize_interval = DictIO.GetAlternative(windows, "VisualizeInterval", self.save_interval)
         self.window_size = DictIO.GetAlternative(windows, "WindowSize", self.window_size)

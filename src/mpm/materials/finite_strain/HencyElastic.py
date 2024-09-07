@@ -3,7 +3,7 @@ import taichi as ti
 
 from src.mpm.materials.ConstitutiveModelBase import ConstitutiveModelBase
 from src.utils.MaterialKernel import *
-from src.utils.constants import DELTA
+from src.utils.constants import DELTA, ZEROMAT6x6
 from src.utils.MatrixFunction import principal_tensor, Diagonal, matrix_form
 from src.utils.ObjectIO import DictIO
 from src.utils.TypeDefination import mat3x3
@@ -136,12 +136,16 @@ class HencyElasticModel:
         return cauchy_stress
     
     @ti.func
-    def ComputePKStress2D(self, np, previous_stress, velocity_gradient, stateVars, dt):  
-        return self.corePK(np, stateVars)
+    def ComputePKStress2D(self, np, velocity_gradient, stateVars, dt):  
+        PKstress = self.corePK(np, stateVars)
+        stateVars[np].stress = PKstress
+        return PKstress
 
     @ti.func
-    def ComputePKStress(self, np, previous_stress, velocity_gradient, stateVars, dt):  
-        return self.corePK(np, stateVars)
+    def ComputePKStress(self, np, velocity_gradient, stateVars, dt):  
+        PKstress = self.corePK(np, stateVars)
+        stateVars[np].stress = PKstress
+        return PKstress
 
     @ti.func
     def corePK(self, np, stateVars):  
@@ -157,11 +161,11 @@ class HencyElasticModel:
         return kirchhoff_stress
     
     @ti.func
-    def compute_elastic_tensor(self, np, current_stress, stiffness, stateVars):
-        self.compute_stiffness_tensor(np, current_stress, stiffness, stateVars)
+    def compute_elastic_tensor(self, np, current_stress, stateVars):
+        return self.compute_stiffness_tensor(np, current_stress, stateVars)
 
     @ti.func
-    def compute_stiffness_tensor(self, np, stiffness, stateVars):
+    def compute_stiffness_tensor(self, np, current_stress, stateVars):
         deformation_gradient = stateVars[np].deformation_gradient
         jacobian = deformation_gradient.determinant()
         lambda_ = 3. * self.bulk * self.possion / (1 + self.possion) 
@@ -170,10 +174,12 @@ class HencyElasticModel:
 
         a1 = modified_lambda + 2. * modified_shear
         a2 = modified_lambda
-        stiffness[np][0, 0] = stiffness[np][1, 1] = stiffness[np][2, 2] = a1
-        stiffness[np][0, 1] = stiffness[np][0, 2] = stiffness[np][1, 2] = a2
-        stiffness[np][1, 0] = stiffness[np][2, 0] = stiffness[np][2, 1] = a2
-        stiffness[np][3, 3] = stiffness[np][4, 4] = stiffness[np][5, 5] = modified_shear
+        stiffness = ZEROMAT6x6
+        stiffness[0, 0] = stiffness[1, 1] = stiffness[2, 2] = a1
+        stiffness[0, 1] = stiffness[0, 2] = stiffness[1, 2] = a2
+        stiffness[1, 0] = stiffness[2, 0] = stiffness[2, 1] = a2
+        stiffness[3, 3] = stiffness[4, 4] = stiffness[5, 5] = modified_shear
+        return stiffness
 
 
 @ti.kernel

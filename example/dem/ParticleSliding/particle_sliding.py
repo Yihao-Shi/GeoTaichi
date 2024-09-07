@@ -7,12 +7,11 @@ except:
     sys.path.append(current_file_path)
     from geotaichi import *
 
-init()
+init(kernel_profiler=True)
 
 dem = DEM()
 
 dem.set_configuration(domain=ti.Vector([15., 6., 5.]),
-                      boundary=["Destroy", "Destroy", "Destroy"],
                       gravity=ti.Vector([6.929646456, 0., -6.929646456]),
                       engine="VelocityVerlet",
                       search="LinkedCell")
@@ -26,7 +25,8 @@ dem.memory_allocate(memory={
                                 "max_facet_number": 4,
                                 "body_coordination_number":   16,
                                 "wall_coordination_number":   6,
-                                "verlet_distance_multiplier": 0.1
+                                "verlet_distance_multiplier": 0.1,
+                                "compaction_ratio": 1.
                             })    
 
 dem.set_solver({
@@ -97,14 +97,14 @@ dem.add_wall(body={
                    "OuterNormal": ti.Vector([-1., 0., -0.])
                   })
                   
-dem.select_save_data(sphere=True, wall=True, particle_particle_contact=True, particle_wall_contact=True)
+dem.select_save_data(sphere=True, wall=False)
 
 dem.run()
 
 dem.scene.wall[2].active = 0
 dem.scene.wall[3].active = 0
-dem.contactor.physpw.surfaceProps[0].ndratio = 0.
-dem.contactor.physpw.surfaceProps[0].mu = 0.2
+dem.contactor.physpw.surfaceProps[0].tdratio = 0.
+dem.contactor.physpw.surfaceProps[0].mu = 0.5
 dem.scene.material[0].fdamp = 0.
 
 dem.modify_parameters(SimulationTime=5.,SaveInterval=0.1)
@@ -112,4 +112,4 @@ dem.modify_parameters(SimulationTime=5.,SaveInterval=0.1)
 dem.run()
 
 dem.postprocessing()
-    
+ti.profiler.print_kernel_profiler_info()

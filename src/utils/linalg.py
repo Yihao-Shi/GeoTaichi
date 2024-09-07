@@ -3,6 +3,9 @@ import math
 from copy import deepcopy
 
 
+def no_operation(*args, **kwrags):
+    pass
+
 def Sphere2Certesian(vector):
     return vector[0] * numpy.array([numpy.sin(vector[1]) * numpy.cos(vector[2]), numpy.sin(vector[1]) * numpy.sin(vector[2]), numpy.cos(vector[1])])
 

@@ -1,6 +1,6 @@
-import taichi as ti
 import numpy as np
-import trimesh, os
+import os
+import trimesh as tm
 
 from src.mpm.generator.InsertionKernel import *
 from src.mpm.SceneManager import myScene
@@ -109,9 +109,9 @@ class BodyReader(object):
         if bodyID > scene.node.shape[1] - 1:
             raise RuntimeError(f"Keyword:: /bodyID/ must be smaller than {scene.node.shape[1] - 1}")
 
-    def rotate_body(self, orientation, coords, particle_num):
+    def rotate_body(self, orientation, coords, init_particle_num, particle_num):
         bounding_center = kernel_calc_mass_of_center_(coords)
-        kernel_position_rotate_for_array_(orientation, bounding_center, coords, 0,particle_num)
+        kernel_position_rotate_ndarray_(orientation, bounding_center, coords, init_particle_num, particle_num)
 
     def set_element_calLength(self, scene: myScene, bodyID, psize):
         if self.sims.shape_function == "Linear":
@@ -141,40 +141,38 @@ class BodyReader(object):
             if materialID <= 0:
                 raise RuntimeError(f"Material ID {materialID} should be larger than 0")
             
+        particle_number = DictIO.GetAlternative(template, "ParticleNumber", -1)
         particle_stress = DictIO.GetAlternative(template, "ParticleStress", {"GravityField": False, "InternalStress": vec6f([0, 0, 0, 0, 0, 0])})
         traction = DictIO.GetAlternative(template, "Traction", {})
         orientation = DictIO.GetAlternative(template, "Orientation", vec3f([0, 0, 1]))
-        init_v = DictIO.GetAlternative(template, "InitialVelocity", vec3f([0, 0, 0]))
-        fix_v_str = DictIO.GetAlternative(template, "FixVelocity", ["Free", "Free", "Free"])
-        #fix_v = DictIO.GetEssential(self.FIX, fix_v_str) #fix
+        init_v = DictIO.GetAlternative(template, "InitialVelocity", [0., 0., 0.] if self.sims.dimension == 3 else [0., 0.])
+        fix_v_str = DictIO.GetAlternative(template, "FixVelocity", ["Free", "Free", "Free"] if self.sims.dimension == 3 else ["Free", "Free"])
         fix_v = vec3u8([DictIO.GetEssential(self.FIX, is_fix) for is_fix in fix_v_str])
+        if isinstance(init_v, (list, tuple)):
+            init_v = vec3f(init_v)
+
         init_particle_num = int(scene.particleNum[0])
         particle_cloud = np.loadtxt(particle_file, unpack=True, comments='#').transpose()
-        coords = np.ascontiguousarray(particle_cloud[:, [0, 1, 2]])
-        volume = np.ascontiguousarray(particle_cloud[:, 3])
-        psize = np.ascontiguousarray(particle_cloud[:, [4, 5, 6]])
+        coords, volume, psize = None, None, None
+        if self.sims.dimension == 3:
+            coords = np.ascontiguousarray(particle_cloud[0:particle_number, [0, 1, 2]])
+            volume = np.ascontiguousarray(particle_cloud[0:particle_number, 3])
+            psize = np.ascontiguousarray(particle_cloud[0:particle_number, [4, 5, 6]])
+        elif self.sims.dimension == 2:
+            coords = np.ascontiguousarray(particle_cloud[0:particle_number, [0, 1]])
+            volume = np.ascontiguousarray(particle_cloud[0:particle_number, 2])
+            psize = np.ascontiguousarray(particle_cloud[0:particle_number, [3, 4]])
         particle_num = coords.shape[0]
-        self.set_element_calLength(scene, bodyID, psize[0,:])
 
-        self.rotate_body(orientation, coords, particle_num)
+        self.rotate_body(orientation, coords, init_particle_num, particle_num)
         scene.check_particle_num(self.sims, particle_number=particle_num)
         kernel_read_particle_file_(scene.particle, int(scene.particleNum[0]), particle_num, coords, psize, volume, bodyID, materialID, density, init_v, fix_v)
-        
         self.set_particle_stress(scene, materialID, init_particle_num, particle_num, particle_stress)
-        name = DictIO.GetEssential(template, "RegionName")
-        region: RegionFunction = self.get_region_ptr(name)
-        self.set_traction(
-            tractions=traction,
-            region=region ,
-            particle=scene.particle, 
-            particle_num=particle_num, 
-            init_particle_num=int(scene.particleNum[0]))
+        self.set_traction(traction, scene.particle, particle_num, int(scene.particleNum[0]), init_particle_num)
         scene.particleNum[0] += particle_num
-        self.print_particle_info(nParticlesPerCell='Custom', bodyID = bodyID, materialID = materialID, init_v=init_v, 
-                                 fix_v=fix_v_str, particle_volume=volume[0], particle_count = particle_num)
-    def add_npz_body(self, scene: myScene, template): #fix maybe exist bug
+        
+    def add_npz_body(self, scene: myScene, template):
         particle_file = DictIO.GetEssential(template, "File")
-        print('#', f"Start adding material points from {particle_file}......")
         if not os.path.exists(particle_file):
             raise EOFError("Invaild path")
         
@@ -252,24 +250,18 @@ class BodyReader(object):
             volume = DictIO.GetEssential(particle_cloud, "volume")
             particle_num = coords.shape[0]
 
-            if self.sims.shape_function == "Linear":
-                scene.element.calLength[bodyID] = [0, 0, 0]
-            elif self.sims.shape_function == "QuadBSpline" or self.sims.shape_function == "CubicBSpline":
-                scene.element.calLength[bodyID] = 0.5 * scene.element.grid_size
-            elif self.sims.shape_function == "GIMP":
-                scene.element.calLength[bodyID] = psize
-
-            self.rotate_body(orientation, coords, particle_num)
+            self.rotate_body(orientation, coords, init_particle_num, particle_num)
             scene.check_particle_num(self.sims, particle_number=particle_num)
             kernel_read_particle_file_(scene.particle, int(scene.particleNum[0]), particle_num, coords, psize, volume, bodyID, materialID, density, init_v, fix_v)
             
             self.set_particle_stress(scene, materialID, init_particle_num, particle_num, particle_stress)
-            self.set_traction(volume, traction, scene.particle, particle_num, int(scene.particleNum[0]))
+            self.set_traction(traction, scene.particle, particle_num, int(scene.particleNum[0]), init_particle_num)
             scene.particleNum[0] += particle_num
 
     def add_obj_body(self, scene: myScene, template):
-        particle_file = DictIO.GetAlternative(template, "File", "Particle.obj")
-        print('#', f"Start adding material points from {particle_file}......")
+        if self.sims.dimension == 2:
+            raise RuntimeError("2D conditions do not support voxelization technique")
+        particle_file = DictIO.GetAlternative(template, "ParticleFile", "Particle.obj")
         if not os.path.exists(particle_file):
             raise EOFError("Invaild path")
         
@@ -289,41 +281,35 @@ class BodyReader(object):
             
         particle_stress = DictIO.GetAlternative(template, "ParticleStress", {"GravityField": False, "InternalStress": vec6f([0, 0, 0, 0, 0, 0])})
         traction = DictIO.GetAlternative(template, "Traction", {})
-        orientation = DictIO.GetAlternative(template, "Orientation", vec3f([0, 0, 1]))
         init_v = DictIO.GetAlternative(template, "InitialVelocity", vec3f([0, 0, 0]))
         fix_v_str = DictIO.GetAlternative(template, "FixVelocity", ["Free", "Free", "Free"])
         fix_v = vec3u8([DictIO.GetEssential(self.FIX, is_fix) for is_fix in fix_v_str])
+        init_particle_num = int(scene.particleNum[0])
 
-        particle_cloud = self.load_obj_file(particle_file)
-        scale_factor = DictIO.GetAlternative(particle_file, "ScaleFactor", default=1.0)
-        offset = DictIO.GetAlternative(particle_file, "Offset", default=0.0)
-        orientation = DictIO.GetAlternative(particle_file, "Orientation", default=vec3f([0., 0., 1.]))
+        scale_factor = DictIO.GetAlternative(template, "ScaleFactor", default=1.0)
+        offset = np.array(DictIO.GetAlternative(template, "Offset", [0., 0., 0.]))
+        orientation = DictIO.GetAlternative(template, "Orientation", vec3f([0, 0, 1]))
+        nParticlesPerCell = DictIO.GetAlternative(template, "nParticlesPerCell", 2)
         
-        mesh = trimesh.load(particle_file)
+        mesh = tm.load(particle_file)
+        com = mesh.vertices.mean(axis=0)
+        mesh.apply_translation(offset - com)
         mesh.apply_scale(scale_factor)
-        mesh_backup = mesh.copy()
-        mesh_backup.vertices += offset
-        com = mesh_backup.vertices.mean(axis=0)
-        offset += self.GetCenterOfCell(com) - com
-        voxelized_mesh = mesh.voxelized(pitch=self.dx).fill()
-        voxelized_points_np = voxelized_mesh.points + offset
+        cell_size = scene.element.grid_size
+        diameter = min(cell_size[0], cell_size[1], cell_size[2]) / nParticlesPerCell
+        voxelized_mesh = mesh.voxelized(pitch=diameter).fill()
+        voxelized_points_np = voxelized_mesh.points.copy()
+        particle_num = voxelized_points_np.shape[0]
 
-        # TODO: activate cell
-
-        '''if self.sims.shape_function == "Linear":
-            scene.element.calLength[bodyID] = [0, 0, 0]
-        elif self.sims.shape_function == "QuadBSpline" or self.sims.shape_function == "CubicBSpline":
-            scene.element.calLength[bodyID] = 0.5 * scene.element.grid_size
-        elif self.sims.shape_function == "GIMP":
-            scene.element.calLength[bodyID] = psize
-
-        self.rotate_body(orientation, coords, particle_num)
+        psize = np.repeat(0.5 * diameter, particle_num * 3).reshape((particle_num, 3))
+        volume = np.repeat(4./3. * np.pi * (0.5 * diameter) ** 3, particle_num)
+        self.rotate_body(orientation, voxelized_points_np, init_particle_num, particle_num)
         scene.check_particle_num(self.sims, particle_number=particle_num)
-        kernel_read_particle_file_(scene.particle, scene.particleNum, particle_num, coords, psize, volume, bodyID, materialID, density, init_v, fix_v)
+        kernel_read_particle_file_(scene.particle, int(scene.particleNum[0]), particle_num, voxelized_points_np, psize, volume, bodyID, materialID, density, init_v, fix_v)
         
         self.set_particle_stress(scene, materialID, init_particle_num, particle_num, particle_stress)
-        self.set_traction(traction, scene.particle, particle_num, scene.particleNum[0])
-        scene.particleNum[0] += particle_num'''
+        self.set_traction(traction, scene.particle, particle_num, int(scene.particleNum[0]), init_particle_num)
+        scene.particleNum[0] += particle_num
 
     def set_particle_stress(self, scene: myScene, materialID, init_particle_num, particle_num, particle_stress):
         if type(particle_stress) is str:

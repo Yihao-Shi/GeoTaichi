@@ -3,6 +3,7 @@ import taichi as ti
 
 from src.utils.constants import ZEROMAT3x3, ZEROVEC3f, Threshold
 from src.utils.ShapeFunctions import local_linear_shapefn
+from src.utils.ScalarFunction import linearize
 from src.utils.TypeDefination import vec3f, vec3i
 
 @ti.func
@@ -195,13 +196,13 @@ def assemble_bbar(np, total_nodes, jacobian, dshape_fn, dshape_fnc, node_size):
 
 @ti.func
 def set_node_index(gnum, base_bound, natural_coords):
-    index = base_bound + 0.5 * (natural_coords - vec3f([-1, -1, -1]))
-    return int(index[0] + index[1] * gnum[0] + index[2] * gnum[0] * gnum[1])
+    index = vec3i(base_bound + 0.5 * (natural_coords - vec3f([-1, -1, -1])))
+    return index
 
 # Used for Classical MPM
 @ti.kernel
-def update(total_nodes: int, influenced_node: int, ielement_size: ti.types.vector(3, float), gnum: ti.types.vector(3, int), start_natural_coords: ti.types.vector(3, float), particleNum: int, 
-           particle: ti.template(), calLength: ti.template(), nodal_coords: ti.template(), LnID: ti.template(), node_size: ti.template(), shape_fn: ti.template(), dshape_fn: ti.template(), shape_function: ti.template(), grad_shape_function: ti.template()):
+def update(total_nodes: int, influenced_node: int, element_size: ti.types.vector(3, float), ielement_size: ti.types.vector(3, float), gnum: ti.types.vector(3, int), start_natural_coords: ti.types.vector(3, float), particleNum: int, 
+           particle: ti.template(), calLength: ti.template(), LnID: ti.template(), node_size: ti.template(), shape_fn: ti.template(), dshape_fn: ti.template(), shape_function: ti.template(), grad_shape_function: ti.template()):
     local_element_size, ilocal_element_size = vec3f([2., 2., 2.]), vec3f([0.5, 0.5, 0.5])
     for np in range(particleNum): 
         position, psize = particle[np].x, calLength[int(particle[np].bodyID)]
@@ -216,7 +217,9 @@ def update(total_nodes: int, influenced_node: int, ielement_size: ti.types.vecto
             if k < 0 or k >= gnum[2]: continue
 
             natural_coords = start_natural_coords + vec3i([i, j, k]) * local_element_size
-            linear_id = set_node_index(gnum, base_bound, natural_coords)
+            linear_index = set_node_index(gnum, base_bound, natural_coords)
+            linear_id = linearize(linear_index[0], linear_index[1], linear_index[2], gnum)
+            nodal_coords = linear_index * element_size
             shapen0, shapen1, shapen2 = shapefn(natural_particle_position, natural_coords, ilocal_element_size, natural_particle_size, shape_function)
             shapeval = shapen0 * shapen1 * shapen2
             if shapeval > Threshold:
@@ -225,15 +228,15 @@ def update(total_nodes: int, influenced_node: int, ielement_size: ti.types.vecto
                 LnID[activeID] = linear_id
                 shape_fn[activeID] = shapeval
                 dshape_fn[activeID] = local_grad_shapeval
-                get_jacobian(nodal_coords[linear_id], local_grad_shapeval, jacobian)
+                get_jacobian(nodal_coords, local_grad_shapeval, jacobian)
                 activeID += 1
         node_size[np] = ti.u8(activeID - np * total_nodes)
         assemble(np, total_nodes, jacobian, dshape_fn, node_size)
 
 # Used for Anti-Locking Classical MPM 
 @ti.kernel
-def updatebbar(total_nodes: int, influenced_node: int, ielement_size: ti.types.vector(3, float), gnum: ti.types.vector(3, int), start_natural_coords: ti.types.vector(3, float), particleNum: int, particle: ti.template(), 
-               calLength: ti.template(), nodal_coords: ti.template(), LnID: ti.template(), node_size: ti.template(), shape_fn: ti.template(), dshape_fn: ti.template(), dshape_fnc: ti.template(), shape_function: ti.template(), grad_shape_function: ti.template(), shape_function_center: ti.template()):
+def updatebbar(total_nodes: int, influenced_node: int, element_size: ti.types.vector(3, float), ielement_size: ti.types.vector(3, float), gnum: ti.types.vector(3, int), start_natural_coords: ti.types.vector(3, float), particleNum: int, particle: ti.template(), 
+               calLength: ti.template(), LnID: ti.template(), node_size: ti.template(), shape_fn: ti.template(), dshape_fn: ti.template(), dshape_fnc: ti.template(), shape_function: ti.template(), grad_shape_function: ti.template(), shape_function_center: ti.template()):
     local_element_size, ilocal_element_size = vec3f([2., 2., 2.]), vec3f([0.5, 0.5, 0.5])
     for np in range(particleNum):  
         position, psize = particle[np].x, calLength[int(particle[np].bodyID)]
@@ -248,7 +251,9 @@ def updatebbar(total_nodes: int, influenced_node: int, ielement_size: ti.types.v
             if k < 0 or k >= gnum[2]: continue
 
             natural_coords = start_natural_coords + vec3i([i, j, k]) * local_element_size
-            linear_id = set_node_index(gnum, base_bound, natural_coords)
+            linear_index = set_node_index(gnum, base_bound, natural_coords)
+            linear_id = linearize(linear_index[0], linear_index[1], linear_index[2], gnum)
+            nodal_coords = linear_index * element_size
             
             shapen0, shapen1, shapen2 = shapefn(natural_particle_position, natural_coords, ilocal_element_size, natural_particle_size, shape_function)
             shapeval = shapen0 * shapen1 * shapen2
@@ -261,7 +266,7 @@ def updatebbar(total_nodes: int, influenced_node: int, ielement_size: ti.types.v
                 shape_fn[activeID] = shapeval
                 dshape_fn[activeID] = local_grad_shapeval
                 dshape_fnc[activeID] = local_grad_shapevalc
-                get_jacobian(nodal_coords[linear_id], local_grad_shapeval, jacobian)
+                get_jacobian(nodal_coords, local_grad_shapeval, jacobian)
                 activeID += 1
         node_size[np] = ti.u8(activeID - np * total_nodes)
         assemble_bbar(np, total_nodes, jacobian, dshape_fn, dshape_fnc, node_size)
@@ -276,8 +281,8 @@ def assemble_shape(particle_position, node_position, element_size, natural_parti
     return shape, grad_shape
 
 @ti.kernel
-def global_update(total_nodes: int, influenced_node: int, ielement_size: ti.types.vector(3, float), gnum: ti.types.vector(3, int), particleNum: int, particle: ti.template(), calLength: ti.template(), 
-                  node_coords: ti.template(), node_size: ti.template(), LnID: ti.template(), shape_fn: ti.template(), dshape_fn: ti.template(), shape_function: ti.template(), grad_shape_function: ti.template()):
+def global_update(total_nodes: int, influenced_node: int, element_size: ti.types.vector(3, float), ielement_size: ti.types.vector(3, float), gnum: ti.types.vector(3, int), particleNum: int, particle: ti.template(), calLength: ti.template(), 
+                  node_size: ti.template(), LnID: ti.template(), shape_fn: ti.template(), dshape_fn: ti.template(), shape_function: ti.template(), grad_shape_function: ti.template()):
     for np in range(particleNum):
         position, psize = particle[np].x, calLength[int(particle[np].bodyID)]
         base_bound = calc_base_cell(ielement_size, psize, position)
@@ -289,10 +294,11 @@ def global_update(total_nodes: int, influenced_node: int, ielement_size: ti.type
                 for i in range(base_bound[0], base_bound[0] + influenced_node):
                     if i < 0 or i >= gnum[0]: continue
                     nodeID = int(i + j * gnum[0] + k * gnum[0] * gnum[1])
-                    shapen0, shapen1, shapen2 = shapefn(particle[np].x, node_coords[nodeID], ielement_size, psize, shape_function)
+                    node_coords = vec3i(i, j, k) * element_size
+                    shapen0, shapen1, shapen2 = shapefn(particle[np].x, node_coords, ielement_size, psize, shape_function)
                     shapeval = shapen0 * shapen1 * shapen2
                     if shapeval > Threshold:
-                        dshapen0, dshapen1, dshapen2 = grad_shapefn(particle[np].x, node_coords[nodeID], ielement_size, psize, grad_shape_function)
+                        dshapen0, dshapen1, dshapen2 = grad_shapefn(particle[np].x, node_coords, ielement_size, psize, grad_shape_function)
                         grad_shapeval = vec3f([dshapen0 * shapen1 * shapen2, shapen0 * dshapen1 * shapen2, shapen0 * shapen1 * dshapen2])
                         LnID[activeID] = nodeID
                         shape_fn[activeID]=shapeval
@@ -301,8 +307,8 @@ def global_update(total_nodes: int, influenced_node: int, ielement_size: ti.type
         node_size[np] = ti.u8(activeID - np * total_nodes)
 
 @ti.kernel
-def global_updatebbar(total_nodes: int, influenced_node: int, ielement_size: ti.types.vector(3, float), gnum: ti.types.vector(3, int), particleNum: int, particle: ti.template(), calLength: ti.template(),
-                      node_coords: ti.template(), node_size: ti.template(), LnID: ti.template(), shape_fn: ti.template(), dshape_fn: ti.template(), dshape_fnc: ti.template(), shape_function: ti.template(), grad_shape_function: ti.template(), shape_function_center: ti.template()):
+def global_updatebbar(total_nodes: int, influenced_node: int, element_size: ti.types.vector(3, float), ielement_size: ti.types.vector(3, float), gnum: ti.types.vector(3, int), particleNum: int, particle: ti.template(), calLength: ti.template(),
+                      node_size: ti.template(), LnID: ti.template(), shape_fn: ti.template(), dshape_fn: ti.template(), dshape_fnc: ti.template(), shape_function: ti.template(), grad_shape_function: ti.template(), shape_function_center: ti.template()):
     for np in range(particleNum):
         position, psize = particle[np].x, calLength[int(particle[np].bodyID)]
         base_bound = calc_base_cell(ielement_size, psize, position)
@@ -313,12 +319,13 @@ def global_updatebbar(total_nodes: int, influenced_node: int, ielement_size: ti.
             if k < 0 or k >= gnum[2]: continue
 
             nodeID = int(i + j * gnum[0] + k * gnum[0] * gnum[1])
-            shapen0, shapen1, shapen2 = shapefn(particle[np].x, node_coords[nodeID], ielement_size, psize, shape_function, )
+            node_coords = vec3i(i, j, k) * element_size
+            shapen0, shapen1, shapen2 = shapefn(particle[np].x, node_coords, ielement_size, psize, shape_function, )
             shapeval = shapen0 * shapen1 * shapen2
             if shapeval > Threshold:
-                dshapen0, dshapen1, dshapen2 = grad_shapefn(particle[np].x, node_coords[nodeID], ielement_size, psize, grad_shape_function, )
+                dshapen0, dshapen1, dshapen2 = grad_shapefn(particle[np].x, node_coords, ielement_size, psize, grad_shape_function, )
                 grad_shapeval = vec3f([dshapen0 * shapen1 * shapen2, shapen0 * dshapen1 * shapen2, shapen0 * shapen1 * dshapen2])
-                shapenc0, shapenc1, shapenc2 = shapefnc(particle[np].x, node_coords[nodeID], ielement_size, psize, shape_function_center)
+                shapenc0, shapenc1, shapenc2 = shapefnc(particle[np].x, node_coords, ielement_size, psize, shape_function_center)
                 grad_shapevalc = vec3f([dshapen0 * shapenc1 * shapenc2, shapenc0 * dshapen1 * shapenc2, shapenc0 * shapenc1 * dshapen2])
                 LnID[activeID] = nodeID
                 shape_fn[activeID]=shapeval

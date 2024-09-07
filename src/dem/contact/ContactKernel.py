@@ -1,7 +1,6 @@
 import taichi as ti
 
-from src.utils.constants import ZEROVEC3f
-from src.utils.Quaternion import SetFromTwoVec, SetToRotate
+from src.utils.constants import ZEROVEC3f, Threshold
 from src.utils.ScalarFunction import PairingMapping
 from src.utils.TypeDefination import vec3f
 
@@ -274,11 +273,12 @@ def kernel_particle_wall_force_assemble_(particleNum: int, dt: ti.template(), ma
         distance = wall[end2]._get_norm_distance(pos1)
         gapn = distance - particle_rad
         materialID = PairingMapping(matID1, matID2, max_material_num)
+        fraction = ti.abs(wall[end2].processCircleShape(pos1, particle_rad, distance))
 
-        if gapn < 0.:
+        if gapn < 0. and fraction > Threshold:
             norm = wall[end2].norm
             cpos = wall[end2]._point_projection(pos1) - 0.5 * gapn * norm
-            surfaceProps[materialID]._particle_wall_force_assemble(nc, end1, end2, distance, gapn, norm, cpos, dt, particle, wall, cplist)      
+            surfaceProps[materialID]._particle_wall_force_assemble(nc, end1, end2, fraction, gapn, norm, cpos, dt, particle, wall, cplist)      
         else:
             cplist[nc]._no_contact()
 
