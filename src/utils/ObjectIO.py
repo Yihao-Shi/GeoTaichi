@@ -35,6 +35,7 @@ class ObjectIO:
 class DictIO:
     @staticmethod
     def GetEssential(dict, *arg):
+        """Get the value of the keyWord in the dictionary. If the keyWord is not included in the dictionary, raise KeyError."""
         for keyWord in arg:
             if keyWord in dict: 
                 return dict[keyWord]
@@ -42,6 +43,7 @@ class DictIO:
     
     @staticmethod
     def GetAlternative(dict, keyWord, default):
+        """Get the value of the keyWord in the dictionary. If the keyWord is not included in the dictionary, return default."""
         if keyWord in dict:
             return dict[keyWord]
         else:
@@ -50,6 +52,7 @@ class DictIO:
 
     @staticmethod
     def GetOptional(dict, keyWord):
+        """Get the value of the keyWord in the dictionary. If the keyWord is not included in the dictionary, return None."""
         if keyWord in dict:
             return dict[keyWord]
         else:

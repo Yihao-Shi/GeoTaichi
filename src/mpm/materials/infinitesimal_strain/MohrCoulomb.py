@@ -39,6 +39,10 @@ class MohrCoulomb(ConstitutiveModelBase):
         kernel_reload_state_variables(estress, epstrain, cohesion, friction, dilation, self.stateVars)
 
     def model_initialize(self, material):
+        """Initialize the material properties of Mohr-Coulomb Model
+        args:
+            material: dict, the material properties
+        """
         materialID = DictIO.GetEssential(material, 'MaterialID')
         self.check_materialID(materialID, self.matProps.shape[0])
         

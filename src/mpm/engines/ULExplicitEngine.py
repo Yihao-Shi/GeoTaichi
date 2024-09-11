@@ -14,7 +14,7 @@ class ULExplicitEngine(Engine):
     def __init__(self, sims) -> None:
         super().__init__(sims)
 
-        self.compute = None
+        self.compute = None #used in solver.core()
         self.compute_stress_strains = None
         self.bulid_neighbor_list = None
         self.apply_traction_constraints = None
@@ -39,14 +39,15 @@ class ULExplicitEngine(Engine):
         self.is_verlet_update = np.zeros(1, dtype=np.int32)
         self.limit = 0.
         
-    def choose_engine(self, sims: Simulation):
+    def choose_engine(self, sims: Simulation): 
+        """define self.compute according to the mapping"""
         if sims.mapping == "USL":
             self.compute = self.usl_updating
         elif sims.mapping == "USF":
             self.compute = self.usf_updating
         elif sims.mapping == "MUSL":
             self.compute = self.musl_updating
-        elif sims.mapping == "MLSMPM":
+        elif sims.mapping == "MLSMPM": #fix not used
             self.compute = self.mls_updating
         else:
             raise ValueError(f"The mapping scheme {sims.mapping} is not supported yet")
@@ -146,7 +147,7 @@ class ULExplicitEngine(Engine):
     def compute_nodal_kinematics(self, sims: Simulation, scene: myScene):
         kernel_mass_momentum_p2g(scene.element.grid_nodes, int(scene.particleNum[0]), scene.node, scene.particle, scene.element.LnID, scene.element.shape_fn, scene.element.node_size)
 
-    def compute_nodal_kinematics_apic(self, sims: Simulation, scene: myScene):
+    def compute_nodal_kinematics_apic(self, sims: Simulation, scene: myScene): #MAP particle mass and momentum to nodes
         kernel_momentum_apic_p2g(scene.element.grid_nodes, int(scene.particleNum[0]), scene.node, scene.particle, scene.element.LnID, scene.element.shape_fn, scene.element.node_size)
 
     def compute_grid_velcity(self, sims: Simulation, scene: myScene):
@@ -294,13 +295,13 @@ class ULExplicitEngine(Engine):
         self.pre_contact_calculate(sims, scene)
         self.apply_kinematic_constraints(sims, scene)
         self.compute_contact_force_(sims, scene)
-        self.compute_particle_kinematics(sims, scene)
-        self.compute_stress_strains(sims, scene)
+        self.compute_particle_kinematics(sims, scene)   #更新粒子的运动学信息
+        self.compute_stress_strains(sims, scene)        #计算粒子的应力和应变，这是材料模型的一部分，反映材料的物理行为。
         self.stress_smoothing_(sims, scene)
 
     def usf_updating(self, sims: Simulation, scene: myScene):
         self.calculate_interpolation(sims, scene)
-        self.compute_nodal_kinematic(sims, scene)
+        self.compute_nodal_kinematic(sims, scene) 
         self.compute_grid_velcity(sims, scene)
         self.apply_dirichlet_constraints(sims, scene)
         self.compute_stress_strains(sims, scene)

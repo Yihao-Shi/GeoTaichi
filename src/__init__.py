@@ -49,3 +49,7 @@ def MPDEM(dem=None, mpm=None, title=None, log=True):
         mpm.sims.set_mpm_coupling(True)
     from src.mpdem.mainDEMPM import DEMPM 
     return DEMPM(dem, mpm, log=log)
+
+def Multiscale_DEMMPM(dem=None, mpm=None, title=None, log=True):#todo
+    
+    from src.Multiscale_DEMMPM.main_Multiscale_DEMMPM import Multiscale_DEMMPM

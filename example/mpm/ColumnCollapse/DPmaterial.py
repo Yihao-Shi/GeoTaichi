@@ -1,5 +1,11 @@
-from geotaichi import *
-
+try:
+    from geotaichi import *
+except:
+    import os
+    import sys
+    current_file_path = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    sys.path.append(current_file_path)
+    from geotaichi import *
 init()
 
 mpm = MPM()
@@ -32,7 +38,7 @@ mpm.add_material(model="DruckerPrager",
                                "MaterialID":           1,
                                "Density":              2650.,
                                "YoungModulus":         8.4e5,
-                               "PossionRatio":        0.3,
+                               "PossionRatio":         0.3,
                                "Cohesion":             0.,
                                "Friction":             19.8,
                                "Dilation":             0.,

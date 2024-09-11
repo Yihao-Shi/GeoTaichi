@@ -13,7 +13,7 @@ class GenerateManager(object):
 
     def add_my_region(self, domain, region_dict):
         name = DictIO.GetEssential(region_dict, "Name")
-        if name in self.myRegion:
+        if name in self.myRegion: #override if the region already exists
             region: RegionFunction = self.myRegion[name]
             region.mpm_finalize()
             del self.myRegion[name]
@@ -59,7 +59,6 @@ class GenerateManager(object):
     def read_body_file(self, body_dict, sims, scene: myScene):
         """
         读取颗粒文件
-        
         """
         if scene.material is None:
             raise RuntimeError("The attribute must be added first")
@@ -67,7 +66,7 @@ class GenerateManager(object):
         generator.set_region(self.myRegion)
         generator.set_system_strcuture(body_dict)
         generator.begin(scene)
-        if generator.active:
+        if generator.active: 
             self.myGenerator.append(generator)
         else:
             generator.finalize()

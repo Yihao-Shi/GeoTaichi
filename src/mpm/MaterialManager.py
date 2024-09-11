@@ -18,6 +18,17 @@ from src.mpm.materials.MaterialModel import UserDefined
 class ConstitutiveModel:
     @classmethod
     def initialize(cls, material_type, stabilize, constitutive_model, max_material_num, max_particle_num, configuration, solver_type):
+        """
+        Args:
+            material_type[str]: the type of material, either "Solid" or "Fluid"
+            stabilize[str]: the stabilization method, options: [None, "B-Bar Method", "F-Bar Method"]
+            constitutive_model[str] :Material model name
+            max_material_num[int]: the maximum number of materials
+            max_particle_num[int]: the maximum number of particles
+            configuration[str]: the configuration of the material model
+            solver_type[str]: the solver type, either "Implicit" or "Explicit"
+        return the corresponding material constitutive_model
+        """
         if material_type == "Solid":
             model_type = ["None", "LinearElastic", "HencyElastic", "NeoHookean", "ElasticPerfectlyPlastic", "IsotropicHardeningPlastic",
                           "MohrCoulomb", "SoftenMohrCoulomb", "DruckerPrager", "ModifiedCamClay", "CohesiveModifiedCamClay", "SoilStructureInteraction", "UserDefined"]

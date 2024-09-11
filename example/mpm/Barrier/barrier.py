@@ -1,4 +1,6 @@
+
 from geotaichi import *
+
 
 init()
 

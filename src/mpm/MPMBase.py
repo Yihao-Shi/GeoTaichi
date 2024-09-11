@@ -27,8 +27,15 @@ class Solver:
         self.last_save_time = 0.
         self.last_print_time = 0.
 
-    def set_callback_function(self, kwargs):
-        functions = DictIO.GetAlternative(kwargs, "function", None)
+    def set_callback_function(self, functions=None):
+        """
+        add callback function to the solver
+        
+        Args:
+        ----
+        
+        functions: function
+        """
         if functions is None:
             self.function = self.no_operation
         else:
@@ -43,7 +50,6 @@ class Solver:
 
     def Solver(self, scene, neighbor):
         print("#", " Start Simulation ".center(67,"="), "#")
-       
         self.engine.pre_calculation(self.sims, scene, neighbor)
         if self.sims.current_time < Threshold:
             self.save_file(scene)
@@ -147,9 +153,9 @@ class Solver:
         print("#", " End Simulation ".center(67,"="), "#", '\n')
 
     def core(self, scene: myScene, neighbor):
-        self.engine.reset_grid_message(scene)
-        self.engine.bulid_neighbor_list(self.sims, scene, neighbor)
+        self.engine.reset_grid_message(scene) #self.engine = ULExplicitEngine->engine->reset_grid_message
+        self.engine.bulid_neighbor_list(self.sims, scene, neighbor) #bulid_neighbor_list only used for neighbor_detection/coupling
         self.engine.compute(self.sims, scene)
-        self.function()
+        self.function()  # callback function
 
         
