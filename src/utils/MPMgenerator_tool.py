@@ -1,8 +1,8 @@
 import os 
 import numpy as np
-def fromat_worker(mpmfile:str,divide=True):
+def fromat_worker(mpmfile:str,divide=True,skiprows=3):
     """ 
-    该函数将MPMgenerator生成的mpmfile文件转换为多个材料的单独文件
+    该函数将GEOMPMGEN生成的默认mpmfile文件转换为多个材料的单独文件
     args:
         mpmfile[str]:mpmfile path
         divide[bool][option]:divide mpmfile into several file parts according material ID,then fromat to GEOTaichi input file.
@@ -20,7 +20,7 @@ def fromat_worker(mpmfile:str,divide=True):
                     mpmfile.partc
     """
     assert os.path.exists(mpmfile),f"file {mpmfile} not found"
-    file_data = np.loadtxt(mpmfile,delimiter=' ',skiprows=3)
+    file_data = np.loadtxt(mpmfile,delimiter=' ',skiprows=skiprows)
     file_data = move_data(file_data)
     min_x = np.min(file_data[:,1])
     min_y = np.min(file_data[:,2])
@@ -41,12 +41,26 @@ def fromat_worker(mpmfile:str,divide=True):
     if divide:
         for matid in matids:
             mask = file_data[:,6] == matid
+            data[5] = data[5] * 0.5
             data = file_data[mask][:,[1,2,3,4,5,5,5,6]]
-            np.savetxt(os.path.join(filedir,f"{filename}.part{int(matid)}"),data,delimiter=' ',fmt='%.6f',header = 'x y z vol psx psy psz matid',comments='#')
-            print(f"save {filename}.part{int(matid)}")
+            np.savetxt(os.path.join(filedir,f"{filename}.part{int(matid)}"), data, 
+                       header="     PositionX            PositionY                PositionZ            Volume            SizeX            SizeY            SizeZ", 
+                       delimiter=" ")
+            #np.savetxt(os.path.join(filedir,f"{filename}.part{int(matid)}"),data,delimiter=' ',fmt='%.6f',header = 'x y z vol psx psy psz matid',comments='#')
+            print(f"save to {filename}.part{int(matid)}")
     else:
         data = file_data[:,[1,2,3,4,5,5,5,6]]
-        np.savetxt(os.path.join(filedir,f"{filename}.partc"),data,delimiter=' ',fmt='%.6f',header = 'x y z vol psx psy psz matid',comments='#')
+        data[5] = data[5] * 0.5 
+        #limit_vol = min(data[:,3])
+        np.savetxt(os.path.join(filedir,f"{filename}.partc"), data, 
+                   header="     PositionX            PositionY                PositionZ            Volume            SizeX            SizeY            SizeZ", 
+                   delimiter=" ")
+        #if limit_vol<1e-9:
+        #    np.savetxt(os.path.join(filedir,f"{filename}.partc"),data,delimiter=' ',fmt='%.12f',header = 'x y z vol psx psy psz matid',comments='#')
+        #elif limit_vol<1e-6:
+        #    np.savetxt(os.path.join(filedir,f"{filename}.partc"),data,delimiter=' ',fmt='%.9f',header = 'x y z vol psx psy psz matid',comments='#')
+        #else:
+        #    np.savetxt(os.path.join(filedir,f"{filename}.partc"),data,delimiter=' ',fmt='%.6f',header = 'x y z vol psx psy psz matid',comments='#')
 def move_data(file_data:np.array):
     """
     平移坐标为正值

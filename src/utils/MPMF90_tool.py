@@ -1,5 +1,4 @@
 import os
-
 import numpy as np
 def F90_file_loader(file_path:str,save_file:str):
     """将F90输入文件转为MPMgenerator生成的mpmfile文件"""

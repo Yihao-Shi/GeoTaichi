@@ -243,6 +243,7 @@ class MPM(object):
             body[dict]: Body parameters
                 Period[vec3f][option]: Period,default: [0, 0, 1e6]
                 WriteFile[bool][option]: Write Visualize file,default: False
+                WriteFileDir[str][option]: Write file path,default: ''
                 Visualize[bool][option]: Visualize,default: False
                 Template[dict/list]: Body template
                 checkHistory[bool][option]: Check history,default: False
@@ -295,6 +296,7 @@ class MPM(object):
             boundary[dict]: Boundary dict
                 BoundaryType[str]: Boundary type option:[VelocityConstraint, ReflectionConstraint, FrictionConstraint, AbsorbingConstraint, TractionConstraint, DisplacementConstraint]
                 NLevel[str/int][option]:  option:[All, 0, 1, 2, ...]
+                AutoDetect[str][option]: Auto detect boundary,default: None.only used when using Rectangle region  option:[None, 'behind', 'front', 'left', 'right', 'bottom', 'top'] # todo
                 StartPoint[vec3f]: Start point of boundary ,useage see below
                 EndPoint[vec3f]: End point of boundary,useage see below
                 when Boundary type = VelocityConstraint args include:
@@ -314,9 +316,7 @@ class MPM(object):
                     DisplacementY[float/None][option]: Prescribed displacement along Y axis
                     DisplacementZ[float/None][option]: Prescribed displacement along Z axis
                     Displacement[list][option]: Prescribed displacement
-            
             StartPoint = [x1,y1,z1],EndPoint = [x2,y2,z2] means Boundary particles constrained in the range x in [x1,x2],y in [y1,y2],z in [z1,z2].
-            
         """
         if type(boundary) is list or type(boundary) is dict:
             self.scene.iterate_boundary_constraint(self.sims, boundary, 0)
@@ -363,8 +363,7 @@ class MPM(object):
                 elif self.sims.solver_type == "SimiImplicit": #fix SimiImplicit or Implicit not implemented
                     if self.sims.material_type == "TwoPhase":
                         self.enginer = None
-                    else:
-                        raise RuntimeError("Keyword:: /material_type/ should be set as $TwoPhase$")
+                    else: raise RuntimeError("Keyword:: /material_type/ should be set as $TwoPhase$")
         self.enginer.choose_engine(self.sims)
         self.enginer.choose_boundary_constraints(self.sims, self.scene)
 

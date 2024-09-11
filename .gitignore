@@ -56,3 +56,39 @@ NEW_2D copy.py
 RegionChecker.py
 DPmaterial copy 2.py
 drained.py
+DP_collpose/0025.partc
+DP_collpose/0050.partc
+DP_collpose/0075.partc
+DP_collpose/0100.partc
+DP_collpose/0150.partc
+DP_collpose/0200.partc
+DP_collpose_2/0010.partc
+DP_collpose_2/0025.partc
+DP_collpose_2/0050.partc
+DP_collpose_2/0075.partc
+DP_collpose_2/0100.partc
+DP_collpose_2/0150.partc
+DP_collpose_2/0200.partc
+example_result/goaftest5/vtks.zip
+example_result/goaftest7MCL/vtks.zip
+goatunnel face collapse/goatunnel face collapse 3D (10mm )/vtks.zip
+goatunnel face collapse/p_data/10mm.partc
+边界检查.ipynb
+边界检查器.py
+边界检查案例.ipynb
+铝棒试验 2d.py
+铝棒试验.py
+铝棒试验数据预处理.ipynb
+砂柱垮塌试验0010.py
+砂柱垮塌试验0025 copy.py
+砂柱垮塌试验0025.py
+砂柱垮塌试验0050.py
+砂柱垮塌试验0075 copy.py
+砂柱垮塌试验0075.py
+砂柱垮塌试验0100 copy.py
+砂柱垮塌试验0100.py
+砂柱垮塌试验0150 copy.py
+砂柱垮塌试验0150.py
+砂柱垮塌试验0200 copy.py
+砂柱垮塌试验0200.py
+DPmaterial_testpy

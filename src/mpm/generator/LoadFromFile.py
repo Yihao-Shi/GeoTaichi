@@ -47,7 +47,7 @@ class BodyReader(object):
             raise RuntimeError("Region class should be activated first!")
 
     def set_system_strcuture(self, body_dict):
-        if self.sims.dimension == 2:
+        if self.sims.dimension == 2: # todo
             raise RuntimeError("Load File class does not support 2-Dimensional condition")
         self.file_type = DictIO.GetEssential(body_dict, "FileType")
         self.myTemplate = DictIO.GetEssential(body_dict, "Template")
@@ -63,8 +63,7 @@ class BodyReader(object):
     def begin(self, scene: myScene):
         if self.sims.current_time < self.next_generate_time: return 0
         if self.sims.current_time < self.start_time or self.sims.current_time > self.end_time: return 0
-        
-        
+
         if self.file_type == "TXT":
             if type(self.myTemplate) is dict:
                 self.add_txt_body(scene, self.myTemplate)
@@ -85,7 +84,10 @@ class BodyReader(object):
                     self.add_obj_body(scene, template)
         else:
             raise RuntimeError("Invalid file type. Only the following file types are aviliable: ['TXT', 'NPZ', 'OBJ']")
-
+        if not scene.particle is None: # fixme 我不知道要不要添加这个，因为BodyGenerator里面有这个
+            start_particle = int(scene.particleNum[0])
+            end_particle = int(scene.particleNum[0])
+            scene.material.state_vars_initialize(start_particle, end_particle, scene.particle)
         if self.sims.current_time + self.next_generate_time > self.end_time or self.insert_interval > self.sims.time or self.end_time > self.sims.time or\
             self.end_time == 0 or self.start_time > self.end_time:
             self.deactivate()
@@ -126,7 +128,8 @@ class BodyReader(object):
         print('#', f"Start adding material points from {particle_file}......")
         if not os.path.exists(particle_file):
             raise EOFError("Invaild path")
-        
+        region = self.get_region_ptr(DictIO.GetEssential(template, "RegionName"))
+        if region.region_type != 'Rectangle': print("Warning: The region type should be Rectangle")
         bodyID = DictIO.GetEssential(template, "BodyID")
         self.check_bodyID(scene, bodyID)
         rigid_body = DictIO.GetAlternative(template, "RigidBody", False)
@@ -137,7 +140,6 @@ class BodyReader(object):
         else:
             materialID = DictIO.GetEssential(template, "MaterialID")
             density = scene.material.matProps[materialID].density
-
             if materialID <= 0:
                 raise RuntimeError(f"Material ID {materialID} should be larger than 0")
             
@@ -166,12 +168,24 @@ class BodyReader(object):
 
         self.rotate_body(orientation, coords, init_particle_num, particle_num)
         scene.check_particle_num(self.sims, particle_number=particle_num)
+        self.set_element_calLength( scene, bodyID, vec3f(psize[0, 0],psize[0, 1], psize[0, 2])) #fixme psize 可以变化？
         kernel_read_particle_file_(scene.particle, int(scene.particleNum[0]), particle_num, coords, psize, volume, bodyID, materialID, density, init_v, fix_v)
-        self.set_particle_stress(scene, materialID, init_particle_num, particle_num, particle_stress)
-        self.set_traction(traction, scene.particle, particle_num, int(scene.particleNum[0]), init_particle_num)
+        self.set_particle_stress(scene, materialID, init_particle_num, particle_num, particle_stress,region)
+        self.set_traction(traction, region,scene.particle, particle_num, int(scene.particleNum[0]))
         scene.particleNum[0] += particle_num
-        
-    def add_npz_body(self, scene: myScene, template):
+        self.print_particle_info('Custom', bodyID, materialID, init_v, fix_v, volume[0], particle_num)
+    def particle_cloud_filter(self, particle_cloud, region):
+        if region.region_type == 'Rectangle':
+            start_points = region.local_start_point
+            size_points = region.local_region_size
+            bounding_box = [start_points[0], start_points[0] + size_points[0], start_points[1], start_points[1] + size_points[1]]
+            particle_cloud = particle_cloud[np.logical_and(particle_cloud[:, 0] >= bounding_box[0], particle_cloud[:, 0] <= bounding_box[1])]
+            particle_cloud = particle_cloud[np.logical_and(particle_cloud[:, 1] >= bounding_box[2], particle_cloud[:, 1] <= bounding_box[3])]
+            if self.sims.dimension == 3:
+                bounding_box += [start_points[2], start_points[2] + size_points[2]]
+                particle_cloud = particle_cloud[np.logical_and(particle_cloud[:, 2] >= bounding_box[4], particle_cloud[:, 2] <= bounding_box[5])]
+        return particle_cloud
+    def add_npz_body(self, scene: myScene, template): # todo
         particle_file = DictIO.GetEssential(template, "File")
         if not os.path.exists(particle_file):
             raise EOFError("Invaild path")
@@ -258,7 +272,7 @@ class BodyReader(object):
             self.set_traction(traction, scene.particle, particle_num, int(scene.particleNum[0]), init_particle_num)
             scene.particleNum[0] += particle_num
 
-    def add_obj_body(self, scene: myScene, template):
+    def add_obj_body(self, scene: myScene, template): # todo
         if self.sims.dimension == 2:
             raise RuntimeError("2D conditions do not support voxelization technique")
         particle_file = DictIO.GetAlternative(template, "ParticleFile", "Particle.obj")
@@ -302,7 +316,7 @@ class BodyReader(object):
         particle_num = voxelized_points_np.shape[0]
 
         psize = np.repeat(0.5 * diameter, particle_num * 3).reshape((particle_num, 3))
-        volume = np.repeat(4./3. * np.pi * (0.5 * diameter) ** 3, particle_num)
+        volume = np.repeat(4./3. * np.pi * (0.5 * diameter) ** 3, particle_num) # fixme 物质点是立方体还是球体？
         self.rotate_body(orientation, voxelized_points_np, init_particle_num, particle_num)
         scene.check_particle_num(self.sims, particle_number=particle_num)
         kernel_read_particle_file_(scene.particle, int(scene.particleNum[0]), particle_num, voxelized_points_np, psize, volume, bodyID, materialID, density, init_v, fix_v)
@@ -311,7 +325,7 @@ class BodyReader(object):
         self.set_traction(traction, scene.particle, particle_num, int(scene.particleNum[0]), init_particle_num)
         scene.particleNum[0] += particle_num
 
-    def set_particle_stress(self, scene: myScene, materialID, init_particle_num, particle_num, particle_stress):
+    def set_particle_stress(self, scene: myScene, materialID, init_particle_num, particle_num, particle_stress,region):
         if type(particle_stress) is str:
             stress_file = DictIO.GetAlternative(particle_stress, "File", "ParticleStress.txt")
             stress_cloud = np.loadtxt(stress_file, unpack=True, comments='#').transpose()
@@ -329,6 +343,7 @@ class BodyReader(object):
                 particle_num=particle_num, 
                 gravityField=gravityField, 
                 initialStress=initialStress, 
+                region=region
                 )
 
     def set_internal_stress(self, 
@@ -336,10 +351,13 @@ class BodyReader(object):
                             materialID, 
                             particle_num, 
                             gravityField, 
-                            initialStress):
+                            initialStress,
+                            region: RegionFunction, 
+                            ):
         if gravityField and materialID >= 0:
             k0 = scene.material.get_lateral_coefficient(materialID)
-            top_position = scene.find_min_z_position()
+            # top_position = scene.find_min_z_position()
+            top_position = region.region_size[2] + region.start_point[2]
             print("Warning: The outline of particles should be aligned to Z axis when set /GravityField/ active!")
             if not all(np.abs(np.array(self.sims.gravity) - np.array([0., 0., -9.8])) < 1e-12):
                 raise ValueError("Gravity must be set as [0, 0, -9.8] when gravity activated")
