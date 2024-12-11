@@ -33,11 +33,9 @@ Have a cool example? Submit a PR!
 | ![Column collapse](images/soil.gif) | ![Dam break](images/newtonian.gif) | ![Strip footing](images/footing.gif) |
 
 ### Discrete element method (DEM)
-| [Granular packing](example/dem/GranularPackings/clumps_packing.py) | [Heap formation](example/dem/HeapFormation/sphere_packing.py) | [Triaxial shear test](example/dem/TriaxialTest/drained.py) |
+| [Granular packing](example/dem/GranularPackings/clumps_packing.py) | [Debris Flow](example/dem/HeapFormation/sphere_packing.py) | [Triaxial shear test](example/dem/TriaxialTest/drained.py) |
 | --- | --- | --- | 
-| ![Granular packing](images/clump.gif) | ![Heap formation](images/heap_formation.gif) | ![Triaxial shear test](images/force_chain.gif) |
-
-![Debris Flow](images/debris_flow.gif)
+| ![Granular packing](images/clump.gif) | ![Debris Flow](images/debris_flow.gif) | ![Triaxial shear test](images/force_chain.gif) |
 
 The performance of GeoTaichi is compared with similar simulator in the field, such as [MUSEN](https://msolids.net/musen/) and [CoSim](http://www.meggs.hydr.tsinghua.edu.cn/index.html), showing a notable improvement in both computational efficiency and memory usage.
 
@@ -64,6 +62,7 @@ The performance of GeoTaichi is compared with similar simulator in the field, su
 
 ### Installation
 #### Install from source code (recommand)
+##### Ubuntu
 1. Change the current working directory to the desired location and download the GeoTaichi code:
 ```
 cd /path/to/desired/location/
@@ -77,19 +76,7 @@ sudo apt-get install python3.8
 sudo apt-get install python3-pip
 
 # Install python packages (recommand to add package version)
-python3 -m pip install taichi==1.6.0 imageio pybind11 numpy trimesh psutil shapely 
-
-# Install Eigen in C++ (if necessary)
-sudo apt-get install libeigen3-dev cmake==3.18.2
-
-# Install pybind11 (if necessary)
-git clone https://github.com/pybind/pybind11.git
-cd  pybind11
-mkdir build
-cd build
-cmake ..
-make check -j 4 
-sudo make install
+bash requirements.sh
 ```
 3. Install CUDA, detailed information can be referred to [official installation guide](https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html)
 4. Set up environment variables
@@ -98,6 +85,38 @@ sudo gedit ~/.bashrc
 $ export PYTHONPATH="$PYTHONPATH:/path/to/desired/location/GeoTaichi"
 source ~/.bashrc
 ```
+##### Windows
+1. Install Anaconda 
+2. start Anaconda Prompt 
+3. Navigate to a folder where geotaichi_env.yml is located. 
+4. clone geotaichi as:
+```
+git clone https://github.com/Yihao-Shi/GeoTaichi 
+```
+5. run command:
+```
+conda env create -f geotaichi_env.yml 
+```
+6. run command:
+```
+conda activate geotaichi 
+```
+7. correct the environment (the last part should be modified to the path of geotaichi):
+```
+conda env config vars set PYTHONPATH=%PYTHONPATH%;.\path\to\GeoTaichi 
+```
+8. run command:
+```
+conda activate geotaichi 
+```
+9. run a benchmark (column collapse):
+```
+python DPmaterial 
+```
+Remark: line 3 of the examples should be modified based on the availability of the GPU. If CPU is available, the following should be used;
+```
+init('cpu')
+```
 #### Install from pip (easy)
 ```
 pip install geotaichi
@@ -105,8 +124,7 @@ pip install geotaichi
 
 ### Working with vtu files
 
-To visualize the VTS files produced by some of the scripts, it is recommended to use Paraview. It can be
-freely downloaded from: http://www.paraview.org/ To visualize the output in ParaView, use the following
+To visualize the VTS files produced by some of the scripts, it is recommended to use [ParaView](http://www.paraview.org/). To visualize the output in ParaView, use the following
 procedure:
 1. Open the .vts or .vtu file in ParaView
 2. Click on the "Apply" button on the left side of the screen
@@ -152,10 +170,7 @@ The material point method (MPM) is a numerical technique used to simulate the be
   - Supporting force chain visualization
 
 ## Under development
-  - Developing level set DEM modules
   - Developing a well-structured IGA modules
-  - Optimizing code structures
-  - Simulating soil-gravel-structure problems in geotechnical engineering
   
 ## License
 This project is licensed under the GNU General Public License v3 - see the [LICENSE](https://www.gnu.org/licenses/) for details.

@@ -1,0 +1,36 @@
+name: geotaichi
+channels:
+  - defaults
+  - https://repo.anaconda.com/pkgs/main
+  - https://repo.anaconda.com/pkgs/r
+  - https://repo.anaconda.com/pkgs/msys2
+dependencies:
+  - ca-certificates=2024.9.24=haa95532_0
+  - libffi=3.4.4=hd77b12b_1
+  - openssl=3.0.15=h827c3e9_0
+  - pip=24.2=py38haa95532_0
+  - python=3.8.20=h8205438_0
+  - setuptools=75.1.0=py38haa95532_0
+  - sqlite=3.45.3=h2bbff1b_0
+  - vc=14.40=h2eaa2aa_1
+  - vs2015_runtime=14.40.33807=h98bb1dd_1
+  - wheel=0.44.0=py38haa95532_0
+  - pip:
+      - astunparse==1.6.3
+      - colorama==0.4.6
+      - dill==0.3.9
+      - imageio==2.35.1
+      - markdown-it-py==3.0.0
+      - mdurl==0.1.2
+      - numpy==1.24.4
+      - pillow==10.4.0
+      - psutil==6.1.0
+      - pybind11==2.13.6
+      - pygments==2.18.0
+      - pynvml==11.4.1
+      - rich==13.9.3
+      - shapely==2.0.6
+      - six==1.16.0
+      - taichi==1.6.0
+      - trimesh==4.5.1
+      - typing-extensions==4.12.2

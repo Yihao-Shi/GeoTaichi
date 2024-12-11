@@ -116,8 +116,10 @@ class BodyReader(object):
     def set_element_calLength(self, scene: myScene, bodyID, psize):
         if self.sims.shape_function == "Linear":
             scene.element.calLength[bodyID] = [0, 0, 0]
-        elif self.sims.shape_function == "QuadBSpline" or self.sims.shape_function == "CubicBSpline":
+        elif self.sims.shape_function == "QuadBSpline":
             scene.element.calLength[bodyID] = 0.5 * scene.element.grid_size
+        elif self.sims.shape_function == "CubicBSpline":
+            scene.element.calLength[bodyID] = scene.element.grid_size
         elif self.sims.shape_function == "GIMP":
             scene.element.calLength[bodyID] = psize
 

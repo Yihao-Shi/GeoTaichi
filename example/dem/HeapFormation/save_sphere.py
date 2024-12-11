@@ -27,5 +27,5 @@ dem.add_body(body={
                                
                                "MaxRadius": 0.075,
                                "MinRadius": 0.075,
-                               "BodyNumber": 6250000}}) 
+                               "BodyNumber": 625000}}) 
 

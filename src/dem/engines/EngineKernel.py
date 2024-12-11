@@ -412,6 +412,7 @@ def get_contact_stiffness(max_material_num: int, particleNum: int, particle: ti.
             equivalent_stiffness = surfaceProps[materialID]._get_equivalent_stiffness(end1, end2, particle, wall)
             wall[end2]._update_contact_stiffness(equivalent_stiffness)
             wall[end2]._update_contact_interaction(-(cplist[nc].cnforce + cplist[nc].csforce))
+    print(wall[0].contact_force)
 
 @ti.kernel
 def get_gain(dt: ti.template(), servoNum: int, servo: ti.template(), wall: ti.template()):

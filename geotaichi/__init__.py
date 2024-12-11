@@ -6,7 +6,7 @@ __version__ = "0.1.0"
 __license__ = "GNU License"
 
 import taichi as ti
-import psutil, pynvml, platform
+import psutil, platform
 import sys, os, datetime  
 
 from src import DEM, MPM, DEMPM
@@ -67,6 +67,9 @@ def init(arch="gpu", cpu_max_num_threads=0, offline_cache=True, debug=False, def
     else: raise RuntimeError("Only ['int64', 'int32'] is available for default type of int")
 
     if arch == "cpu":
+        if platform.system() == "Darwin" and platform.machine() == "arm64":
+            arch = "metal"
+            print("Detected Apple Silicon, using Metal backend.")
         cpu_name = platform.processor()
         cpu_core = psutil.cpu_count(False)
         cpu_logic = psutil.cpu_count(True)
@@ -76,21 +79,26 @@ def init(arch="gpu", cpu_max_num_threads=0, offline_cache=True, debug=False, def
         else:
             ti.init(arch=ti.cpu, cpu_max_num_threads=cpu_max_num_threads, offline_cache=offline_cache, debug=debug, default_fp=default_fp, default_ip=default_ip, kernel_profiler=kernel_profiler, log_level=ti.ERROR)
     elif arch == "gpu":
-        pynvml.nvmlInit()
-        handle = pynvml.nvmlDeviceGetHandleByIndex(0)
-        gpu_name = pynvml.nvmlDeviceGetName(handle=handle)
-        gpu_memory = pynvml.nvmlDeviceGetMemoryInfo(handle=handle)
-        pynvml.nvmlShutdown()
-        print(f"Using device {gpu_name} (Total: {bytes_to_GB(gpu_memory.total)}GB, Available: {bytes_to_GB(gpu_memory.free)}GB)")
+        if platform.system() == "Darwin":
+            print("Using GPU on macOS (Metal backend).")
+            ti.init(arch=ti.metal, offline_cache=offline_cache, debug=debug, default_fp=default_fp, default_ip=default_ip, kernel_profiler=kernel_profiler, log_level=ti.ERROR)
+        else:
+            import pynvml
+            pynvml.nvmlInit()
+            handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+            gpu_name = pynvml.nvmlDeviceGetName(handle=handle)
+            gpu_memory = pynvml.nvmlDeviceGetMemoryInfo(handle=handle)
+            pynvml.nvmlShutdown()
+            print(f"Using device {gpu_name} (Total: {bytes_to_GB(gpu_memory.total)}GB, Available: {bytes_to_GB(gpu_memory.free)}GB)")
 
-        if device_memory_GB is None and device_memory_fraction is None:
-            ti.init(arch=ti.gpu, offline_cache=offline_cache, debug=debug, default_fp=default_fp, default_ip=default_ip, kernel_profiler=kernel_profiler, log_level=ti.ERROR)
-        elif not device_memory_GB is None:
-            device_memory_GB = min(device_memory_GB, bytes_to_GB(gpu_memory.free))
-            ti.init(arch=ti.gpu, offline_cache=offline_cache, device_memory_GB=device_memory_GB, debug=debug, default_fp=default_fp, default_ip=default_ip, kernel_profiler=kernel_profiler, log_level=ti.ERROR)
-        elif not device_memory_fraction is None:
-            device_memory_GB = min(device_memory_GB, bytes_to_GB(gpu_memory.free) / bytes_to_GB(gpu_memory.total))
-            ti.init(arch=ti.gpu, offline_cache=offline_cache, device_memory_fraction=device_memory_fraction, debug=debug, default_fp=default_fp, default_ip=default_ip, kernel_profiler=kernel_profiler, log_level=ti.ERROR)
+            if device_memory_GB is None and device_memory_fraction is None:
+                ti.init(arch=ti.gpu, offline_cache=offline_cache, debug=debug, default_fp=default_fp, default_ip=default_ip, kernel_profiler=kernel_profiler, log_level=ti.ERROR)
+            elif not device_memory_GB is None:
+                device_memory_GB = min(device_memory_GB, bytes_to_GB(gpu_memory.free))
+                ti.init(arch=ti.gpu, offline_cache=offline_cache, device_memory_GB=device_memory_GB, debug=debug, default_fp=default_fp, default_ip=default_ip, kernel_profiler=kernel_profiler, log_level=ti.ERROR)
+            elif not device_memory_fraction is None:
+                device_memory_GB = min(device_memory_GB, bytes_to_GB(gpu_memory.free) / bytes_to_GB(gpu_memory.total))
+                ti.init(arch=ti.gpu, offline_cache=offline_cache, device_memory_fraction=device_memory_fraction, debug=debug, default_fp=default_fp, default_ip=default_ip, kernel_profiler=kernel_profiler, log_level=ti.ERROR)
     else:
         raise RuntimeError("arch is not recognized, please choose in the following: ['cpu', 'gpu']")
         

@@ -1,6 +1,3 @@
-import sys
-sys.path.append('/home/eleven/work/GeoTaichi_release')
-
 from geotaichi import *
 
 init(arch="gpu", debug=False)
@@ -30,8 +27,7 @@ dem.memory_allocate(memory={
 dem.set_solver({
         "Timestep": 1e-5,
         "SimulationTime": 1.01,
-        "SaveInterval": 0.04,
-        "SavePath":"patch"
+        "SaveInterval": 0.04
     })
 
 

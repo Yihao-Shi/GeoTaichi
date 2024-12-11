@@ -166,7 +166,7 @@ dempm.choose_contact_model(particle_particle_contact_model="Linear Model",
                            particle_wall_contact_model=None)
 
 dempm.add_property(DEMmaterial=0,
-                   MPMmaterial=0,
+                   MPMmaterial=1,
                    property={
                                  "NormalStiffness":            1e8,
                                  "TangentialStiffness":        1e8,
