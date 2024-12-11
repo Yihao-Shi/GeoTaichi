@@ -1,6 +1,3 @@
-import sys
-sys.path.append('/home/eleven/work/GeoTaichi')
-
 import taichi as ti
 from src.utils.MatrixSolver.MatrixFreeCG import MatrixFreeCG 
 from src.utils.MatrixSolver.LinearOperator import LinearOperator

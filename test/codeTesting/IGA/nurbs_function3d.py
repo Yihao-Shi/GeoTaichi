@@ -78,7 +78,6 @@ plt.close()
 interpolatedPointsU = np.ascontiguousarray(interpolatedPoints[:, 0].reshape((1, numPts_v, numPts_u)))
 interpolatedPointsV = np.ascontiguousarray(interpolatedPoints[:, 1].reshape((1, numPts_v, numPts_u)))
 interpolatedPointsW = np.ascontiguousarray(interpolatedPoints[:, 2].reshape((1, numPts_v, numPts_u)))
-import sys
-sys.path.append('/home/eleven/work/GeoTaichi')
+
 from third_party.pyevtk.hl import gridToVTK
 # gridToVTK(f"NurbsVolume", interpolatedPointsU, interpolatedPointsV, interpolatedPointsW, cellData={}, pointData={})

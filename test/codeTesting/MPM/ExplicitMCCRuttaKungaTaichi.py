@@ -3,9 +3,6 @@ import taichi as ti
 ti.init()
 import numpy as np
 
-import sys
-sys.path.append('/home/eleven/work/tiDEMPM_v0.2')
-
 eps1 = 0.08 # total axial strain to be loaded
 nsub = int(eps1/0.0005) # load 0.0005 per step
 sig1 = ti.Vector([306., 306., 306., 0., 0., 0.])

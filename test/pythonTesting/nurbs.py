@@ -1,6 +1,3 @@
-import sys
-sys.path.append('/home/eleven/work/GeoTaichi')	
-
 from geomdl import NURBS
 from geomdl import operations
 from geomdl.visualization import VisMPL

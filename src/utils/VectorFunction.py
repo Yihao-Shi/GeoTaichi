@@ -3,15 +3,8 @@ import numpy as np
 
 from src.utils.constants import ZEROVEC3f, Threshold, SQRT3, DBL_EPSILON
 from src.utils.MatrixFunction import matrix_form
-from src.utils.TypeDefination import vec3f, vec6f, mat3x3
+from src.utils.TypeDefination import vec3f, vec6f, mat2x2, mat3x3
 
-
-@ti.func
-def packingIndex(scalar, vector):
-    i = (scalar % (vector[0] * vector[1])) % vector[0]
-    j = (scalar % (vector[0] * vector[1])) // vector[0]
-    k = scalar // (vector[0] * vector[1])
-    return i, j, k
 
 @ti.func
 def dot2(vector):
@@ -32,8 +25,8 @@ def cartesian_coosys_to_local_orthogonal(globals, ex_local, ey_local, ez_local):
     dot2 = ey_local.dot(ez_local)
     dot3 = ez_local.dot(ex_local)
 
-    if dot1 > Threshold or dot2 > Threshold or dot3 > Threshold:
-        print("Insufficient accuracy: using VectorFunction::cartesian_coosys_to_local_orthogonal() for non-orthogonal coo-sys")
+    assert dot1 <= Threshold and dot2 <= Threshold and dot3 <= Threshold, \
+        "Insufficient accuracy: using VectorFunction::cartesian_coosys_to_local_orthogonal() for non-orthogonal coo-sys"
     
     locals[0] = globals[0] * ex_local[0] + globals[1] * ex_local[1] + globals[2] * ex_local[2]
     locals[1] = globals[0] * ey_local[0] + globals[1] * ey_local[1] + globals[2] * ey_local[2]
@@ -51,10 +44,11 @@ def TACIHI_NUMPY_SUB(TI_VEC, NP_VEC):
     return vec3f([TI_VEC[i] - NP_VEC[i] for i in range(TI_VEC.n)])
 
 @ti.func
-def summation(vec, nodes):
+def summation(vector):
     result = 0.
-    for n in ti.static(range(nodes)):
-        result += vec[n]
+    for n in ti.static(range(vector.n)):
+        result += vector[n]
+    return result
 
 @ti.func
 def Normalize(var):
@@ -108,15 +102,6 @@ def SIGN(vector):
         else:
             vector[i] = 0
     return vector
-
-@ti.func
-def Zero2OneVector(x):
-    for i in ti.static(range(x.n)):
-        if x[i] > 0:
-            x[i] = ti.u8(0)
-        elif x[i] == 0:
-            x[i] = ti.u8(1)
-    return x
 
 @ti.func
 def clamp(low_bound, high_bound, vec):
@@ -177,16 +162,16 @@ def outer_product(vec1, vec2):
                    [vec1[0] * vec2[2], vec1[1] * vec2[2], vec1[2] * vec2[2]]])
 
 @ti.func
+def outer_product2D(vec1, vec2):
+    return mat2x2([vec1[0] * vec2[0], vec1[1] * vec2[0]],
+                  [vec1[0] * vec2[1], vec1[1] * vec2[1]])
+
+@ti.func
 def SquareLen(vec):
     squareLen = 0.
     for d in ti.static(range(vec.n)):
         squareLen += vec[d] * vec[d]
     return squareLen
-
-
-@ti.func
-def linear_id(indexVec, countVec):
-    return int(indexVec[0] + indexVec[1] * countVec[0] + indexVec[2] * countVec[0] * countVec[1])
 
 
 @ti.func

@@ -3,6 +3,7 @@ import trimesh
 import os
 
 from src.dem.generator.InsertionKernel import *
+from src.dem.generator.LevelSetTemplate import LevelSetTemplate
 from src.dem.SceneManager import myScene
 from src.dem.Simulation import Simulation
 from src.utils.ObjectIO import DictIO
@@ -24,6 +25,9 @@ class ParticleReader(object):
         self.check_hist = False
         self.write_file = False
         self.template_dict = None
+        self.myTemplate = None
+
+        self.faces = np.array([], dtype=np.int32)
 
         self.FIX = {
                     "Free": 0,
@@ -37,6 +41,15 @@ class ParticleReader(object):
         self.start_time = period[0]
         self.end_time = period[1]
         self.insert_interval = period[2]
+
+    def set_template(self, template_ptr):
+        self.myTemplate = template_ptr
+
+    def get_template_ptr_by_name(self, name):
+        clump_ptr = DictIO.GetOptional(self.myTemplate, name)
+        if not clump_ptr:
+            raise KeyError(f"Template name: {name} is not set before")
+        return clump_ptr
 
     def deactivate(self):
         self.active = False
@@ -103,6 +116,9 @@ class ParticleReader(object):
         elif btype == "Clump":
             print('#', "Start adding Clump(s) ......")
             self.load_txt_multispheres(scene, template)
+        elif btype == "RigidBody":
+            print('#', "Start adding Level-set(s) ......")
+            self.load_txt_levelsets(scene, template)
         else:
             raise ValueError("Particle type error")
 
@@ -115,30 +131,34 @@ class ParticleReader(object):
 
         groupID = DictIO.GetEssential(template, "GroupID")
         matID = DictIO.GetEssential(template, "MaterialID")
+        offset = DictIO.GetAlternative(template, "Translation", [0, 0, 0])
         init_v = DictIO.GetAlternative(template, "InitialVelocity", vec3f([0, 0, 0]))
         init_w = DictIO.GetAlternative(template, "InitialAngularVelocity", vec3f([0, 0, 0]))
         fix_v_str = DictIO.GetAlternative(template, "FixVelocity", ["Free", "Free", "Free"])
         fix_w_str = DictIO.GetAlternative(template, "FixAngularVelocity", ["Free", "Free", "Free"])
         file = DictIO.GetAlternative(template, "File", "SpherePacking.txt")
+        particle_num = DictIO.GetAlternative(template, "ParticleNumber", -1)
         fix_v = vec3i([DictIO.GetEssential(self.FIX, i) for i in fix_v_str])
         fix_w = vec3i([DictIO.GetEssential(self.FIX, i) for i in fix_w_str])
 
         if not os.path.exists(file):
             raise EOFError("Invaild particle path")
-        particle_cloud = np.loadtxt(file, unpack=True, comments='#').transpose()
+        particle_cloud = np.loadtxt(file, unpack=True, comments='#').transpose() 
+        particle_num = particle_cloud.shape[0] if particle_num == -1 else min(particle_num, particle_cloud.shape[0])
+        particle_cloud = particle_cloud[0:particle_num]
         body_num = particle_cloud.shape[0]
 
-        coords = np.ascontiguousarray(particle_cloud[:, [0, 1, 2]])
+        coords = np.ascontiguousarray(particle_cloud[:, [0, 1, 2]]) + np.array(offset)
         radii = np.ascontiguousarray(particle_cloud[:, 3])
         
-        scene.check_particle_num(self.sims, particle_number=body_num)
+        scene.check_particle_num(self.sims, particle_number=particle_num)
         scene.check_sphere_number(self.sims, body_number=body_num)
         kernel_add_sphere_files(particle, sphere, material, sphereNum, particleNum, body_num, coords, radii, groupID, matID, init_v, init_w, fix_v, fix_w)
         print(" Sphere Information ".center(71, '-'))
         self.print_particle_info(groupID, matID, init_v, init_w, fix_v=fix_v_str, fix_w=fix_w_str, body_num=body_num)
 
         scene.sphereNum[0] += body_num
-        scene.particleNum[0] += body_num * 1
+        scene.particleNum[0] += particle_num 
 
     def load_txt_multispheres(self, scene: myScene, template):
         particle = scene.get_particle_ptr()
@@ -149,10 +169,13 @@ class ParticleReader(object):
 
         groupID = DictIO.GetEssential(template, "GroupID")
         matID = DictIO.GetEssential(template, "MaterialID")
+        offset = DictIO.GetAlternative(template, "Translation", [0, 0, 0])
         init_v = DictIO.GetAlternative(template, "InitialVelocity", vec3f([0, 0, 0]))
         init_w = DictIO.GetAlternative(template, "InitialAngularVelocity", vec3f([0, 0, 0]))
         clump_file = DictIO.GetAlternative(template, "ClumpFile", "ClumpPacking.txt")
         pebble_file = DictIO.GetAlternative(template, "PebbleFile", "PebblePacking.txt")
+        particle_num = DictIO.GetAlternative(template, "ParticleNumber", -1)
+        body_num = DictIO.GetAlternative(template, "BodyNumber", -1)
         
         if not os.path.exists(clump_file):
             raise EOFError("Invaild clump file path")
@@ -160,17 +183,21 @@ class ParticleReader(object):
             raise EOFError("Invaild pebble file path")
         
         clump_cloud = np.loadtxt(clump_file, unpack=True, comments='#').transpose()
-        pebble_cloud = np.loadtxt(pebble_file, unpack=True, comments='#').transpose()
+        pebble_cloud = np.loadtxt(pebble_file, unpack=True, comments='#').transpose() 
+        particle_num = pebble_cloud.shape[0] if particle_num == -1 else min(particle_num, pebble_cloud.shape[0])
+        body_num = clump_cloud.shape[0] if body_num == -1 else min(body_num, clump_cloud.shape[0])
+        clump_cloud = clump_cloud[0:body_num]
+        pebble_cloud = pebble_cloud[0:particle_num]
         body_num = clump_cloud.shape[0]
         particle_num = pebble_cloud.shape[0]
 
-        clump_coords = np.ascontiguousarray(clump_cloud[:, [0, 1, 2]])
+        clump_coords = np.ascontiguousarray(clump_cloud[:, [0, 1, 2]]) + np.array(offset)
         clump_radii = np.ascontiguousarray(clump_cloud[:, 3])
         clump_orients = np.ascontiguousarray(clump_cloud[:, [4, 5, 6]])
         clump_inertia_vol = np.ascontiguousarray(clump_cloud[:, [7, 8, 9]])
         startIndex = np.ascontiguousarray(clump_cloud[:, 10])
         endIndex = np.ascontiguousarray(clump_cloud[:, 11])
-        pebble_coords = np.ascontiguousarray(pebble_cloud[:, [0, 1, 2]])
+        pebble_coords = np.ascontiguousarray(pebble_cloud[:, [0, 1, 2]]) + np.array(offset)
         pebble_radii = np.ascontiguousarray(pebble_cloud[:, 3])
         multisphereIndics = np.ascontiguousarray(pebble_cloud[:, 4])
         
@@ -184,6 +211,55 @@ class ParticleReader(object):
 
         scene.clumpNum[0] += body_num
         scene.particleNum[0] += particle_num
+
+    def load_txt_levelsets(self, scene: myScene, template):
+        bounding_sphere = scene.get_bounding_sphere()
+        bounding_box = scene.get_bounding_box()
+        rigid_body = scene.get_rigid_ptr()
+        material = scene.get_material_ptr()
+        surface = scene.get_surface()
+        particleNum = int(scene.particleNum[0])
+        surfaceNum = int(scene.surfaceNum[0])
+
+        name = DictIO.GetEssential(template, "Name")
+        template_ptr: LevelSetTemplate = self.get_template_ptr_by_name(name)
+        index = DictIO.GetEssential(scene.prefixID, name)
+        groupID = DictIO.GetEssential(template, "GroupID")
+        matID = DictIO.GetEssential(template, "MaterialID")
+        offset = DictIO.GetAlternative(template, "Translation", [0, 0, 0])
+        init_v = DictIO.GetAlternative(template, "InitialVelocity", vec3f([0, 0, 0]))
+        init_w = DictIO.GetAlternative(template, "InitialAngularVelocity", vec3f([0, 0, 0]))
+        fix_str = DictIO.GetAlternative(template, "FixMotion", ["Free", "Free", "Free"])
+        is_fix = vec3i([DictIO.GetEssential(self.FIX, i) for i in fix_str])
+        file = DictIO.GetAlternative(template, "File", "BoundingSphere.txt")
+        body_num = DictIO.GetAlternative(template, "ParticleNumber", -1)
+
+        if not os.path.exists(file):
+            raise EOFError("Invaild particle path")
+        particle_cloud = np.loadtxt(file, unpack=True, comments='#').transpose()
+        body_num = particle_cloud.shape[0] if body_num == -1 else min(body_num, particle_cloud.shape[0])
+        particle_cloud = particle_cloud[0:body_num]
+        body_num = particle_cloud.shape[0]
+
+        coords = np.ascontiguousarray(particle_cloud[:, [0, 1, 2]]) + np.array(offset)
+        radii = np.ascontiguousarray(particle_cloud[:, 3])
+        orients = np.ascontiguousarray(particle_cloud[:, [4, 5, 6]])
+        
+        gridNum = scene.gridID[index]
+        verticeNum = scene.verticeID[index]
+        scene.check_rigid_body_number(self.sims, rigid_body_number=body_num)
+        kernel_add_levelset_files(rigid_body, bounding_box, bounding_sphere, surface, particleNum, gridNum, surfaceNum, template_ptr.boundings.r_bound, vec3f(template_ptr.boundings.x_bound), 
+                                  vec3f(template_ptr.objects.grid.minBox()), vec3f(template_ptr.objects.grid.maxBox()), template_ptr.surface_node_number, vec3f(template_ptr.objects.inertia), 
+                                  template_ptr.objects.eqradius, template_ptr.objects.grid.grid_space, vec3i(template_ptr.objects.grid.gnum), template_ptr.objects.grid.extent, body_num, coords, radii, orients)
+        kernel_add_rigid_body(rigid_body, material, particleNum, surfaceNum, verticeNum, body_num, template_ptr.surface_node_number, groupID, matID, init_v, init_w, is_fix)
+        print(" Level-set body Information ".center(71, '-'))
+        self.print_particle_info(groupID, matID, init_v, init_w, fix_v=is_fix, fix_w=is_fix, body_num=body_num)
+
+        faces = scene.add_connectivity(body_num, template_ptr.surface_node_number, template_ptr.objects)
+        scene.particleNum[0] += body_num
+        scene.rigidNum[0] += body_num
+        scene.surfaceNum[0] += template_ptr.surface_node_number * body_num
+        self.faces = np.append(self.faces, faces).reshape(-1, 3)
 
     # ========================================================= #
     #                          npz File                         #

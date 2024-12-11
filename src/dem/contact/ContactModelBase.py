@@ -1,17 +1,23 @@
 import taichi as ti
-import os, math
+import os
 import numpy as np
 
-from src.dem.BaseStruct import (ContactTable, HistoryContactTable)
+from src.dem.BaseStruct import (ContactTable, HistoryContactTable, DigitalContactTable)
 from src.dem.contact.ContactKernel import *
+from src.dem.Simulation import Simulation
 from src.dem.SceneManager import myScene
+from src.dem.neighbor.NeighborBase import NeighborBase
+from src.dem.neighbor.HierarchicalLinkedCell import HierarchicalLinkedCell
 from src.utils.ObjectIO import DictIO
-from src.utils.ScalarFunction import round32
+from src.utils.linalg import round32
 from src.utils.TypeDefination import u1
-# from src.utils.PrefixSum import PrefixSumExecutor
 
 class ContactModelBase(object):
-    def __init__(self):
+    sims: Simulation
+
+    def __init__(self, sims):
+        self.sims = sims
+        self.name = "Base"
         self.contact_list_initialize = None
         self.resolve = None
         self.update_contact_table = None
@@ -20,49 +26,110 @@ class ContactModelBase(object):
         self.contact_active = None
         self.deactivate_exist = None
         self.surfaceProps = None
-        self.null_mode = True
+        self.contact_model = None
+        self.null_model = True
+        self.model_type = -1
 
     def manage_function(self, object_type, work_type):
-        self.contact_list_initialize = self.no_contact_list_initial
         self.resolve = self.no_operation
         self.update_contact_table = self.no_operation
         self.add_surface_properties = self.no_add_property
         self.calcu_critical_timesteps = self.no_critical_timestep
-        if not self.null_mode:
-            self.contact_list_initialize = self.contact_list_initial
+        self.update_verlet_particle_particle_tables = self.no_operation
+        self.update_verlet_particle_wall_tables = self.no_operation
+        if not self.null_model:
             self.add_surface_properties = self.add_surface_property
             self.calcu_critical_timesteps = self.calcu_critical_timestep
             if object_type == "particle":
                 if work_type == 0 or work_type == 1:
                     self.resolve = self.tackle_particle_particle_contact_bit_table
                 elif work_type == 2:
-                    self.resolve = self.tackle_particle_particle_contact_cplist
-                    self.update_contact_table = self.update_particle_particle_contact_table
+                    if self.sims.scheme == "DEM":
+                        self.resolve = self.tackle_particle_particle_contact_cplist
+                        self.update_contact_table = self.update_particle_particle_contact_table
+                    elif self.sims.scheme == "LSDEM":
+                        self.resolve = self.tackle_LSparticle_LSparticle_contact_cplist
+                        self.update_contact_table = self.update_LSparticle_LSparticle_contact_table
             elif object_type == "wall":
-                if work_type == 0 or work_type == 1:
-                    self.resolve = self.tackle_particle_wall_contact_bit_table
-                elif work_type == 2:
-                    self.resolve = self.tackle_particle_wall_contact_cplist
-                    self.update_contact_table = self.update_particle_wall_contact_table
+                if self.sims.wall_type != 3:
+                    if work_type == 0 or work_type == 1:
+                        self.resolve = self.tackle_particle_wall_contact_bit_table
+                    elif work_type == 2:
+                        if self.sims.scheme == "DEM":
+                            self.resolve = self.tackle_particle_wall_contact_cplist
+                            self.update_contact_table = self.update_particle_wall_contact_table
+                        elif self.sims.scheme == "LSDEM":
+                            self.resolve = self.tackle_LSparticle_wall_contact_cplist
+                            self.update_contact_table = self.update_LSparticle_wall_contact_table
+                elif self.sims.wall_type == 3:
+                    if self.sims.scheme == "DEM":
+                        self.resolve = self.tackle_particle_digital_elevation_contact_cplist
+                    elif self.sims.scheme == "LSDEM":
+                        self.resolve = self.tackle_LSparticle_digital_elevation_contact_cplist
+
+            self.update_ppcontact_table = self.update_particle_contact_table
+            if self.sims.scheme == "DEM":
+                if self.sims.search == "HierarchicalLinkedCell":
+                    self.update_ppcontact_table = self.update_particle_contact_table_hierarchical
+            elif self.sims.scheme == "LSDEM":
+                self.update_ppcontact_table = self.update_LSparticle_contact_table
+                
+            self.update_pwcontact_table = self.update_wall_contact_table
+            if self.sims.scheme == "DEM":
+                if self.sims.search == "HierarchicalLinkedCell":
+                    self.update_pwcontact_table = self.update_wall_contact_table_hierarchical
+            elif self.sims.scheme == "LSDEM":
+                self.update_pwcontact_table = self.update_LSwall_contact_table
+
+            if self.sims.scheme == "LSDEM":
+                if self.sims.search == "HierarchicalLinkedCell":
+                    self.update_verlet_particle_particle_tables = self.update_particle_verlet_table_hierarchical
+                    if self.sims.wall_type != 3:
+                        self.update_verlet_particle_wall_tables = self.update_wall_verlet_table_hierarchical
+                else:
+                    self.update_verlet_particle_particle_tables = self.update_particle_verlet_table
+                    if self.sims.wall_type != 3:
+                        self.update_verlet_particle_wall_tables = self.update_wall_verlet_table
+
+            if object_type == "particle":
+                if self.sims.scheme == "DEM":
+                    if self.model_type == 1:
+                        self.contact_model = particle_contact_model_type1
+                    elif self.model_type == 2:
+                        self.contact_model = particle_contact_model_type2
+                elif self.sims.scheme == "LSDEM":
+                    if self.model_type == 0:
+                        self.contact_model = LSparticle_contact_model_type0
+                    elif self.model_type == 1:
+                        self.contact_model = LSparticle_contact_model_type1
+            elif object_type == "wall":
+                if self.sims.scheme == "DEM":
+                    if self.model_type == 1:
+                        self.contact_model = wall_contact_model_type1
+                    elif self.model_type == 2:
+                        self.contact_model = wall_contact_model_type2
+                elif self.sims.scheme == "LSDEM":
+                    self.contact_model = LSparticle_wall_contact_model
+
             if self.resolve is None:
                 raise RuntimeError("Internal error!")
 
-    def collision_initialize(self, parameter, work_type, max_object_pairs, object_num1, object_num2):
-        if not self.null_mode:
-            self.cplist = ContactTable.field(shape=int(math.ceil(parameter * max_object_pairs)))
-            '''
-            self.active_contact = ti.field(int, shape=int(parameter * max_object_pairs) + 1)
-            self.active_pse = PrefixSumExecutor(int(parameter * max_object_pairs) + 1)
-            self.compact_table = ti.field(int, shape=int(parameter * max_object_pairs))
-            '''
-            if work_type == 0 or work_type == 1:
-                self.deactivate_exist = ti.field(ti.u8, shape=())
-                self.contact_active = ti.field(u1)
-                ti.root.dense(ti.i, round32(object_num1 * object_num2)//32).quant_array(ti.i, dimensions=32, max_num_bits=32).place(self.contact_active)
-                self.hist_cplist = ContactTable.field(shape=int(math.ceil(parameter * max_object_pairs)))
-            elif work_type == 2:
-                self.hist_cplist = HistoryContactTable.field(shape=int(math.ceil(parameter * max_object_pairs)))
-                #self.active_index = ti.field(int, shape=int(0.5 * max_object_pairs))
+    def collision_initialize(self, object_type, work_type, max_object_pairs, object_num1, object_num2):
+        if not self.null_model:
+            if object_type == 'particle' or (object_type == 'wall' and self.sims.wall_type != 3):
+                self.cplist = ContactTable.field(shape=max_object_pairs)
+                if work_type == 0 or work_type == 1:
+                    self.deactivate_exist = ti.field(ti.u8, shape=())
+                    self.contact_active = ti.field(u1)
+                    ti.root.dense(ti.i, round32(object_num1 * object_num2)//32).quant_array(ti.i, dimensions=32, max_num_bits=32).place(self.contact_active)
+                    self.hist_cplist = ContactTable.field(shape=max_object_pairs)
+                elif work_type == 2:
+                    self.hist_cplist = HistoryContactTable.field(shape=max_object_pairs)
+            elif object_type == 'wall' and self.sims.wall_type == 3:
+                if self.sims.scheme == "DEM":
+                    self.cplist = DigitalContactTable.field(shape=int(self.sims.max_particle_num))
+                elif self.sims.scheme == "LSDEM":
+                    self.cplist = DigitalContactTable.field(shape=int(self.sims.max_surface_node_num * self.sims.max_rigid_body_num))
 
     def get_componousID(self, max_material_num, materialID1, materialID2):
         return int(materialID1 * max_material_num + materialID2)
@@ -70,20 +137,17 @@ class ContactModelBase(object):
     def add_surface_property(self, max_material_num, materialID1, materialID2, property):
         raise NotImplementedError
     
-    def no_add_property(self, max_material_num, materialID1, materialID2, property):
-        return self.get_componousID(max_material_num, materialID1, materialID2)
+    def no_add_property(self, materialID1, materialID2, property):
+        return self.get_componousID(self.sims.max_material_num, materialID1, materialID2)
     
-    def calcu_critical_timestep(self, scene, max_material_num):
+    def calcu_critical_timestep(self, sims, scene):
         raise NotImplementedError
     
-    def no_critical_timestep(self, scene, max_material_num):
+    def no_critical_timestep(self, scene):
         return 1e-3
     
-    def get_ppcontact_output(self, contact_path, current_time, current_print, scene, pcontact):
-        raise NotImplementedError
-    
-    def get_pwcontact_output(self, contact_path, current_time, current_print, scene, pcontact):
-        raise NotImplementedError
+    def find_max_penetration(self):
+        return 0.
     
     def get_contact_output(self, scene: myScene, neighbor_list):
         end1 = np.ascontiguousarray(self.cplist.endID1.to_numpy()[0:neighbor_list[scene.particleNum[0]]])
@@ -93,13 +157,13 @@ class ContactModelBase(object):
         oldTangentialOverlap = np.ascontiguousarray(self.cplist.oldTangOverlap.to_numpy()[0:neighbor_list[scene.particleNum[0]]])
         return end1, end2, normal_force, tangential_force, oldTangentialOverlap
     
-    def update_properties(self, max_material_num, materialID1, materialID2, property_name, value, override):
+    def update_properties(self, materialID1, materialID2, property_name, value, override):
         if materialID1 == materialID2:
-            componousID = self.get_componousID(max_material_num, materialID1, materialID2)
+            componousID = self.get_componousID(self.sims.max_material_num, materialID1, materialID2)
         else:
-            componousID = self.get_componousID(max_material_num, materialID1, materialID2)
+            componousID = self.get_componousID(self.sims.max_material_num, materialID1, materialID2)
             self.update_property(componousID, property_name, value, override)
-            componousID = self.get_componousID(max_material_num, materialID2, materialID1)
+            componousID = self.get_componousID(self.sims.max_material_num, materialID2, materialID1)
             self.update_property(componousID, property_name, value, override)
         return componousID
     
@@ -120,49 +184,130 @@ class ContactModelBase(object):
             
     def rebuild_contact_list(self, contact_info):
         object_object = DictIO.GetEssential(contact_info, "contact_num")
-        particle_number = object_object[object_object.shape[0] - 1]
         DstID = DictIO.GetEssential(contact_info, "end2")
         oldTangOverlap = DictIO.GetEssential(contact_info, "oldTangentialOverlap")
-        return object_object, particle_number, DstID, oldTangOverlap
-
-    def rebuild_ppcontact_list(self, pcontact, contact_info):
-        raise NotImplementedError
+        return object_object, DstID, oldTangOverlap
     
-    def rebuild_pwcontact_list(self, pcontact, contact_info):
-        raise NotImplementedError
+    def rebuild_LScontact_list(self, contact_info):
+        object_object = DictIO.GetEssential(contact_info, "contact_num")
+        LocID = DictIO.GetEssential(contact_info, "end1")
+        DstID = DictIO.GetEssential(contact_info, "end2")
+        oldTangOverlap = DictIO.GetEssential(contact_info, "oldTangentialOverlap")
+        return object_object, LocID, DstID, oldTangOverlap
+
+    def get_ppcontact_output(self, contact_path, current_time, current_print, scene: myScene, pcontact: NeighborBase):
+        end1, end2, normal_force, tangential_force, oldTangentialOverlap = self.get_contact_output(scene, pcontact.particle_particle)
+        particleParticle = np.ascontiguousarray(pcontact.particle_particle.to_numpy()[0:scene.particleNum[0] + 1])
+        np.savez(contact_path+f'{current_print:06d}', t_current=current_time, contact_num=particleParticle, end1=end1, end2=end2, normal_force=normal_force, 
+                                                      tangential_force=tangential_force, oldTangentialOverlap=oldTangentialOverlap)
+        
+    def get_pwcontact_output(self, contact_path, current_time, current_print, scene: myScene, pcontact: NeighborBase):
+        end1, end2, normal_force, tangential_force, oldTangentialOverlap = self.get_contact_output(scene, pcontact.particle_wall)
+        particleWall = np.ascontiguousarray(pcontact.particle_wall.to_numpy()[0:scene.particleNum[0] + 1])
+        np.savez(contact_path+f'{current_print:06d}', t_current=current_time, contact_num=particleWall, end1=end1, end2=end2, normal_force=normal_force, 
+                                                      tangential_force=tangential_force, oldTangentialOverlap=oldTangentialOverlap)
     
-    def contact_list_initial(self, particleNum, object_object, hist_object_object):
-        copy_histcp2cp(int(particleNum[0]), object_object, hist_object_object, self.cplist, self.hist_cplist)
-        copy_contact_table(object_object, int(particleNum[0]), self.cplist, self.hist_cplist)
+    def rebuild_ppcontact_list(self, pcontact: NeighborBase, contact_info):
+        object_object, DstID, oldTangOverlap = self.rebuild_contact_list(contact_info)
+        if DstID.shape[0] > self.cplist.shape[0]:
+            raise RuntimeError("/body_coordination_number/ should be enlarged")
+        kernel_rebulid_history_contact_list(self.cplist, pcontact.hist_particle_particle, object_object, DstID, oldTangOverlap)
 
-    def no_contact_list_initial(self, particleNum, object_object, hist_object_object):
-        pass
-
+    def rebuild_pwcontact_list(self, pcontact: NeighborBase, contact_info):
+        object_object, DstID, oldTangOverlap = self.rebuild_contact_list(contact_info)
+        if DstID.shape[0] > self.cplist.shape[0]:
+            raise RuntimeError("/body_coordination_number/ should be enlarged")
+        kernel_rebulid_history_contact_list(self.cplist, pcontact.hist_particle_wall, object_object, DstID, oldTangOverlap)
     
     # ========================================================= #
     #                   Bit Table Resolve                       #
     # ========================================================= # 
-    def tackle_particle_particle_contact_bit_table(self, sims, scene, pcontact):
-        raise NotImplementedError
-    
-    def tackle_particle_wall_contact_bit_table(self, sims, scene, pcontact):
-        raise NotImplementedError
-    
+    def tackle_particle_particle_contact_bit_table(self, sims: Simulation, scene: myScene, pcontact: NeighborBase):
+        update_contact_bit_table_(pcontact.particle_particle, sims.max_particle_num, pcontact.potential_list_particle_particle, scene.particle, self.cplist, self.active_contactNum, self.contact_active)
+        kernel_particle_particle_force_assemble_(int(scene.particleNum[0]), sims.dt, sims.max_material_num, self.surfaceProps, scene.particle, self.cplist, self.hist_cplist, 
+                                                 pcontact.particle_particle, pcontact.hist_particle_particle, find_history)
+        copy_contact_table(pcontact.particle_particle, int(scene.particleNum[0]), self.cplist, self.hist_cplist)
+
+    def tackle_particle_wall_contact_bit_table(self, sims: Simulation, scene: myScene, pcontact: NeighborBase):
+        update_contact_wall_bit_table_(pcontact.particle_wall, sims.max_wall_num, pcontact.potential_list_particle_wall, scene.particle, scene.wall, self.cplist, self.active_contactNum, self.contact_active)
+        kernel_particle_wall_force_assemble_(int(scene.particleNum[0]), sims.dt, sims.max_material_num, self.surfaceProps, scene.particle, scene.wall, self.cplist, self.hist_cplist, 
+                                             pcontact.particle_wall, pcontact.hist_particle_wall, find_history)
+        copy_contact_table(pcontact.particle_wall, int(scene.particleNum[0]), self.cplist, self.hist_cplist)
     
     # ========================================================= #
     #              Particle Contact Matrix Resolve              #
     # ========================================================= # 
-    def update_particle_particle_contact_table(self, sims, scene, pcontact):
-        raise NotImplementedError
+    def update_particle_particle_contact_table(self, sims: Simulation, scene: myScene, pcontact: NeighborBase):
+        copy_contact_table(pcontact.hist_particle_particle, int(scene.particleNum[0]), self.cplist, self.hist_cplist)
+        self.update_ppcontact_table(sims, scene, pcontact)
+        kernel_inherit_contact_history(int(scene.particleNum[0]), self.cplist, self.hist_cplist, pcontact.particle_particle, pcontact.hist_particle_particle)
+         
+    def update_particle_wall_contact_table(self, sims: Simulation, scene: myScene, pcontact: NeighborBase):
+        copy_contact_table(pcontact.hist_particle_wall, int(scene.particleNum[0]), self.cplist, self.hist_cplist)
+        self.update_pwcontact_table(sims, scene, pcontact)
+        kernel_inherit_contact_history(int(scene.particleNum[0]), self.cplist, self.hist_cplist, pcontact.particle_wall, pcontact.hist_particle_wall)
+        
+    def tackle_particle_particle_contact_cplist(self, sims: Simulation, scene: myScene, pcontact: NeighborBase):
+        kernel_particle_particle_force_assemble_(int(scene.particleNum[0]), sims.dt, sims.max_material_num, self.surfaceProps, scene.particle, scene.particle, self.cplist, pcontact.hist_particle_particle, self.contact_model)
+        
+    def tackle_particle_wall_contact_cplist(self, sims: Simulation, scene: myScene, pcontact: NeighborBase):
+        kernel_particle_wall_force_assemble_(int(scene.particleNum[0]), sims.dt, sims.max_material_num, self.surfaceProps, scene.particle, scene.wall, self.cplist, pcontact.hist_particle_wall, self.contact_model)
 
-    def update_particle_wall_contact_table(self, sims, scene, pcontact):
-        raise NotImplementedError
-
-    def tackle_particle_particle_contact_cplist(self, sims, scene, pcontact):
-        raise NotImplementedError
+    def tackle_particle_digital_elevation_contact_cplist(self, sims: Simulation, scene: myScene, pcontact: NeighborBase):
+        kernel_particle_digital_elevation_force_assemble_(int(scene.particleNum[0]), sims.dt, sims.max_material_num, self.surfaceProps, scene.particle, scene.wall, 
+                                                          scene.digital_elevation.idigital_size, scene.digital_elevation.digital_dim, pcontact.digital_wall, self.cplist, self.contact_model)
+        
+    def tackle_LSparticle_digital_elevation_contact_cplist(self, sims: Simulation, scene: myScene, pcontact: NeighborBase):
+        kernel_LSparticle_digital_elevation_force_assemble_(int(scene.surfaceNum[0]), sims.dt, sims.max_material_num, self.surfaceProps, scene.rigid, scene.vertice, scene.surface, scene.particle,
+                                                            scene.box, scene.wall, scene.digital_elevation.idigital_size, scene.digital_elevation.digital_dim, pcontact.digital_wall, self.cplist, self.contact_model)
     
-    def tackle_particle_wall_contact_cplist(self, sims, scene, pcontact):
-        raise NotImplementedError
+    def update_LSparticle_LSparticle_contact_table(self, sims: Simulation, scene: myScene, pcontact: NeighborBase):
+        copy_contact_table(pcontact.hist_lsparticle_lsparticle, int(scene.surfaceNum[0]), self.cplist, self.hist_cplist)
+        self.update_ppcontact_table(sims, scene, pcontact)
+        kernel_inherit_contact_history(int(scene.surfaceNum[0]), self.cplist, self.hist_cplist, pcontact.lsparticle_lsparticle, pcontact.hist_lsparticle_lsparticle)
+        
+    def update_LSparticle_wall_contact_table(self, sims: Simulation, scene: myScene, pcontact: NeighborBase):
+        copy_contact_table(pcontact.hist_lsparticle_wall, int(scene.surfaceNum[0]), self.cplist, self.hist_cplist)
+        self.update_pwcontact_table(sims, scene, pcontact)
+        kernel_inherit_contact_history(int(scene.surfaceNum[0]), self.cplist, self.hist_cplist, pcontact.lsparticle_wall, pcontact.hist_lsparticle_wall)
+        
+    def tackle_LSparticle_LSparticle_contact_cplist(self, sims: Simulation, scene: myScene, pcontact: NeighborBase):
+        kernel_LSparticle_LSparticle_force_assemble_(int(scene.surfaceNum[0]), sims.dt, sims.max_material_num, self.surfaceProps, scene.rigid, scene.rigid_grid, 
+                                                     scene.vertice, scene.surface, scene.box, self.cplist, pcontact.hist_lsparticle_lsparticle, self.contact_model)
+        
+    def tackle_LSparticle_wall_contact_cplist(self, sims: Simulation, scene: myScene, pcontact: NeighborBase):
+        kernel_LSparticle_wall_force_assemble_(int(scene.surfaceNum[0]), sims.dt, sims.max_material_num, self.surfaceProps, scene.rigid, scene.vertice, scene.surface, 
+                                               scene.box, scene.wall, self.cplist, pcontact.hist_lsparticle_wall, self.contact_model)
+    
+    def update_particle_contact_table(self, sims: Simulation, scene: myScene, pcontact: NeighborBase):
+        update_contact_table_(sims.potential_particle_num, int(scene.particleNum[0]), pcontact.particle_particle, pcontact.potential_list_particle_particle, self.cplist)
 
+    def update_particle_contact_table_hierarchical(self, sims: Simulation, scene: myScene, pcontact: HierarchicalLinkedCell):
+        update_contact_table_hierarchical_(int(scene.particleNum[0]), pcontact.particle_particle, pcontact.potential_list_particle_particle, self.cplist, pcontact.body)
+
+    def update_particle_verlet_table(self, sims: Simulation, scene: myScene, pcontact: NeighborBase):
+        update_contact_table_(sims.potential_particle_num, int(scene.particleNum[0]), pcontact.particle_particle, pcontact.potential_list_particle_particle, pcontact.pplist)
+
+    def update_particle_verlet_table_hierarchical(self, sims: Simulation, scene: myScene, pcontact: HierarchicalLinkedCell):
+        update_contact_table_hierarchical_(int(scene.particleNum[0]), pcontact.particle_particle, pcontact.potential_list_particle_particle, pcontact.pplist, pcontact.body)
+
+    def update_LSparticle_contact_table(self, sims: Simulation, scene: myScene, pcontact: NeighborBase):
+        update_LScontact_table_(sims.point_particle_coordination_number, int(scene.surfaceNum[0]), pcontact.lsparticle_lsparticle, pcontact.potential_list_point_particle, self.cplist)
+
+    def update_wall_contact_table(self, sims: Simulation, scene: myScene, pcontact: NeighborBase):
+        update_contact_table_(sims.wall_coordination_number, int(scene.particleNum[0]), pcontact.particle_wall, pcontact.potential_list_particle_wall, self.cplist)
+
+    def update_wall_contact_table_hierarchical(self, sims: Simulation, scene: myScene, pcontact: HierarchicalLinkedCell):
+        update_wall_contact_table_hierarchical_(int(scene.particleNum[0]), pcontact.particle_wall, pcontact.potential_list_particle_wall, self.cplist, pcontact.body)
+
+    def update_wall_verlet_table(self, sims: Simulation, scene: myScene, pcontact: NeighborBase):
+        update_contact_table_(sims.wall_coordination_number, int(scene.particleNum[0]), pcontact.particle_wall, pcontact.potential_list_particle_wall, pcontact.pwlist)
+
+    def update_wall_verlet_table_hierarchical(self, sims: Simulation, scene: myScene, pcontact: HierarchicalLinkedCell):
+        update_wall_contact_table_hierarchical_(int(scene.particleNum[0]), pcontact.particle_wall, pcontact.potential_list_particle_wall, pcontact.pwlist, pcontact.body)
+
+    def update_LSwall_contact_table(self, sims: Simulation, scene: myScene, pcontact: NeighborBase):
+        update_LScontact_table_(sims.point_wall_coordination_number, int(scene.surfaceNum[0]), pcontact.lsparticle_wall, pcontact.potential_list_point_wall, self.cplist)
+    
     def no_operation(self, sims, scene, pcontact):
         pass

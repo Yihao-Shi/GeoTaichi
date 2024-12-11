@@ -1,9 +1,10 @@
 import taichi as ti
 
 
-from src.utils.constants import ZEROMAT2x2, ZEROVEC2f, Threshold
+from src.utils.constants import ZEROMAT2x2, ZEROVEC2f, Threshold, ZEROVEC2i
 from src.utils.ShapeFunctions import local_linear_shapefn
-from src.utils.TypeDefination import vec2f, vec2i
+from src.utils.TypeDefination import vec2f, vec2i, vec2u8
+from src.utils.ScalarFunction import linearize2D, vectorize_id, linearize
 
 @ti.func
 def set_connectivity(cell_id, gnum, node_connectivity):
@@ -17,6 +18,18 @@ def set_connectivity(cell_id, gnum, node_connectivity):
 # ========================================================= #
 #                  Get Node ID & Index                      #
 # ========================================================= # 
+@ti.kernel
+def set_particle_characteristic_length_cpdi(particleNum: int, calLength: ti.template(), particle: ti.template(), psize: ti.types.ndarray()):
+    for np in range(particleNum):
+        psize = psize[np]
+        calLength[np]._set(vec2f(psize[np, 0], 0), vec2f(0, psize[np, 1], 0))
+
+@ti.kernel
+def set_particle_characteristic_length_gimp(particleNum: int, factor: float, calLength: ti.template(), particle: ti.template(), psize: ti.types.ndarray()):
+    for np in range(particleNum):
+        bodyID = particle[np].bodyID
+        calLength[bodyID] = factor * vec2f(psize[np, 0], psize[np, 1])
+
 @ti.kernel
 def set_node_position_(position: ti.template(), gnum: ti.types.vector(2, int), grid_size: ti.types.vector(2, float)):
     for ng in position:
@@ -71,15 +84,33 @@ def shapefn(natural_particle_position, natural_coords, ielement_size, natural_pa
     return shapen0, shapen1
 
 @ti.func
+def shapefn2DAxisy(natural_particle_position, natural_coords, ielement_size, natural_particle_size, shape_function_r: ti.template(), shape_function_z: ti.template()):
+    shapen0 = shape_function_r(natural_particle_position[0], natural_coords[0], ielement_size[0], natural_particle_size[0])
+    shapen1 = shape_function_z(natural_particle_position[1], natural_coords[1], ielement_size[1], natural_particle_size[1])
+    return shapen0, shapen1
+
+@ti.func
 def grad_shapefn(natural_particle_position, natural_coords, ielement_size, natural_particle_size, grad_shape_function: ti.template()):
     dshapen0 = grad_shape_function(natural_particle_position[0], natural_coords[0], ielement_size[0], natural_particle_size[0])
     dshapen1 = grad_shape_function(natural_particle_position[1], natural_coords[1], ielement_size[1], natural_particle_size[1])
     return dshapen0, dshapen1
 
 @ti.func
+def grad_shapefn2DAxisy(natural_particle_position, natural_coords, ielement_size, natural_particle_size, grad_shape_function_r: ti.template(), grad_shape_function_z: ti.template()):
+    dshapen0 = grad_shape_function_r(natural_particle_position[0], natural_coords[0], ielement_size[0], natural_particle_size[0])
+    dshapen1 = grad_shape_function_z(natural_particle_position[1], natural_coords[1], ielement_size[1], natural_particle_size[1])
+    return dshapen0, dshapen1
+
+@ti.func
 def shapefnc(natural_particle_position, natural_coords, ielement_size, natural_particle_size, shape_function_center: ti.template()):
     shapen0 = shape_function_center(natural_particle_position[0], natural_coords[0], ielement_size[0], natural_particle_size[0])
     shapen1 = shape_function_center(natural_particle_position[1], natural_coords[1], ielement_size[1], natural_particle_size[1])
+    return shapen0, shapen1
+
+@ti.func
+def shapefnc2DAxisy(natural_particle_position, natural_coords, ielement_size, natural_particle_size, shape_function_center_r: ti.template(), shape_function_center_z: ti.template()):
+    shapen0 = shape_function_center_r(natural_particle_position[0], natural_coords[0], ielement_size[0], natural_particle_size[0])
+    shapen1 = shape_function_center_z(natural_particle_position[1], natural_coords[1], ielement_size[1], natural_particle_size[1])
     return shapen0, shapen1
 
 @ti.func
@@ -132,8 +163,8 @@ def set_node_index(gnum, base_bound, natural_coords):
 
 # Used for Classical MPM
 @ti.kernel
-def update(total_nodes: int, influenced_node: int, ielement_size: ti.types.vector(2, float), gnum: ti.types.vector(2, int), start_natural_coords: ti.types.vector(2, float), particleNum: int, 
-           particle: ti.template(), calLength: ti.template(), nodal_coords: ti.template(), LnID: ti.template(), node_size: ti.template(), shape_fn: ti.template(), dshape_fn: ti.template(), shape_function: ti.template(), grad_shape_function: ti.template()):
+def update(total_nodes: int, influenced_node: int, element_size: ti.types.vector(2, float), ielement_size: ti.types.vector(2, float), gnum: ti.types.vector(2, int), start_natural_coords: ti.types.vector(2, float), particleNum: int, 
+           particle: ti.template(), calLength: ti.template(), LnID: ti.template(), node_size: ti.template(), shape_fn: ti.template(), dshape_fn: ti.template(), shape_function: ti.template(), grad_shape_function: ti.template()):
     local_element_size, ilocal_element_size = vec2f([2., 2.]), vec2f([0.5, 0.5])
     for np in range(particleNum): 
         position, psize = particle[np].x, calLength[int(particle[np].bodyID)]
@@ -147,7 +178,9 @@ def update(total_nodes: int, influenced_node: int, ielement_size: ti.types.vecto
             if j < 0 or j >= gnum[1]: continue
 
             natural_coords = start_natural_coords + vec2i([i, j]) * local_element_size
-            linear_id = set_node_index(gnum, base_bound, natural_coords)
+            linear_index = set_node_index(gnum, base_bound, natural_coords)
+            linear_id = linearize2D(linear_index[0], linear_index[1], gnum)
+            nodal_coords = linear_index * element_size
             shapen0, shapen1 = shapefn(natural_particle_position, natural_coords, ilocal_element_size, natural_particle_size, shape_function)
             shapeval = shapen0 * shapen1
             if shapeval > Threshold:
@@ -156,15 +189,15 @@ def update(total_nodes: int, influenced_node: int, ielement_size: ti.types.vecto
                 LnID[activeID] = linear_id
                 shape_fn[activeID] = shapeval
                 dshape_fn[activeID] = local_grad_shapeval
-                get_jacobian(nodal_coords[linear_id], local_grad_shapeval, jacobian)
+                get_jacobian(nodal_coords, local_grad_shapeval, jacobian)
                 activeID += 1
         node_size[np] = ti.u8(activeID - np * total_nodes)
         assemble(np, total_nodes, jacobian, dshape_fn, node_size)
 
 # Used for Anti-Locking Classical MPM 
 @ti.kernel
-def updatebbar(total_nodes: int, influenced_node: int, ielement_size: ti.types.vector(2, float), gnum: ti.types.vector(2, int), start_natural_coords: ti.types.vector(2, float), particleNum: int, particle: ti.template(), 
-               calLength: ti.template(), nodal_coords: ti.template(), LnID: ti.template(), node_size: ti.template(), shape_fn: ti.template(), dshape_fn: ti.template(), dshape_fnc: ti.template(), shape_function: ti.template(), grad_shape_function: ti.template(), shape_function_center: ti.template()):
+def updatebbar(total_nodes: int, influenced_node: int, element_size: ti.types.vector(2, float), ielement_size: ti.types.vector(2, float), gnum: ti.types.vector(2, int), start_natural_coords: ti.types.vector(2, float), particleNum: int, particle: ti.template(), 
+               calLength: ti.template(), LnID: ti.template(), node_size: ti.template(), shape_fn: ti.template(), dshape_fn: ti.template(), dshape_fnc: ti.template(), shape_function: ti.template(), grad_shape_function: ti.template(), shape_function_center: ti.template()):
     local_element_size, ilocal_element_size = vec2f([2., 2.]), vec2f([0.5, 0.5])
     for np in range(particleNum):  
         position, psize = particle[np].x, calLength[int(particle[np].bodyID)]
@@ -178,8 +211,9 @@ def updatebbar(total_nodes: int, influenced_node: int, ielement_size: ti.types.v
             if j < 0 or j >= gnum[1]: continue
 
             natural_coords = start_natural_coords + vec2i([i, j]) * local_element_size
-            linear_id = set_node_index(gnum, base_bound, natural_coords)
-            
+            linear_index = set_node_index(gnum, base_bound, natural_coords)
+            linear_id = linearize2D(linear_index[0], linear_index[1], gnum)
+            nodal_coords = linear_index * element_size
             shapen0, shapen1 = shapefn(natural_particle_position, natural_coords, ilocal_element_size, natural_particle_size, shape_function)
             shapeval = shapen0 * shapen1 
             if shapeval > Threshold:
@@ -191,7 +225,7 @@ def updatebbar(total_nodes: int, influenced_node: int, ielement_size: ti.types.v
                 shape_fn[activeID] = shapeval
                 dshape_fn[activeID] = local_grad_shapeval
                 dshape_fnc[activeID] = local_grad_shapevalc
-                get_jacobian(nodal_coords[linear_id], local_grad_shapeval, jacobian)
+                get_jacobian(nodal_coords, local_grad_shapeval, jacobian)
                 activeID += 1
         node_size[np] = ti.u8(activeID - np * total_nodes)
         assemble_bbar(np, total_nodes, jacobian, dshape_fn, dshape_fnc, node_size)
@@ -206,8 +240,8 @@ def assemble_shape(particle_position, node_position, element_size, natural_parti
     return shape, grad_shape
 
 @ti.kernel
-def global_update(total_nodes: int, influenced_node: int, ielement_size: ti.types.vector(2, float), gnum: ti.types.vector(2, int), particleNum: int, particle: ti.template(), calLength: ti.template(), 
-                  node_coords: ti.template(), node_size: ti.template(), LnID: ti.template(), shape_fn: ti.template(), dshape_fn: ti.template(), shape_function: ti.template(), grad_shape_function: ti.template()):
+def global_update(total_nodes: int, influenced_node: int, element_size: ti.types.vector(2, float), ielement_size: ti.types.vector(2, float), gnum: ti.types.vector(2, int), particleNum: int, particle: ti.template(), calLength: ti.template(), 
+                  node_size: ti.template(), LnID: ti.template(), shape_fn: ti.template(), dshape_fn: ti.template(), shape_function: ti.template(), grad_shape_function: ti.template()):
     for np in range(particleNum):
         position, psize = particle[np].x, calLength[int(particle[np].bodyID)]
         base_bound = calc_base_cell(ielement_size, psize, position)
@@ -217,10 +251,11 @@ def global_update(total_nodes: int, influenced_node: int, ielement_size: ti.type
             for i in range(base_bound[0], base_bound[0] + influenced_node):
                 if i < 0 or i >= gnum[0]: continue
                 nodeID = int(i + j * gnum[0])
-                shapen0, shapen1 = shapefn(particle[np].x, node_coords[nodeID], ielement_size, psize, shape_function)
+                node_coords = vec2i(i, j) * element_size
+                shapen0, shapen1 = shapefn(particle[np].x, node_coords, ielement_size, psize, shape_function)
                 shapeval = shapen0 * shapen1
                 if shapeval > Threshold:
-                    dshapen0, dshapen1 = grad_shapefn(particle[np].x, node_coords[nodeID], ielement_size, psize, grad_shape_function)
+                    dshapen0, dshapen1 = grad_shapefn(particle[np].x, node_coords, ielement_size, psize, grad_shape_function)
                     grad_shapeval = vec2f([dshapen0 * shapen1, shapen0 * dshapen1])
                     LnID[activeID] = nodeID
                     shape_fn[activeID]=shapeval
@@ -229,8 +264,32 @@ def global_update(total_nodes: int, influenced_node: int, ielement_size: ti.type
         node_size[np] = ti.u8(activeID - np * total_nodes)
 
 @ti.kernel
-def global_updatebbar(total_nodes: int, influenced_node: int, ielement_size: ti.types.vector(2, float), gnum: ti.types.vector(2, int), particleNum: int, particle: ti.template(), calLength: ti.template(),
-                      node_coords: ti.template(), node_size: ti.template(), LnID: ti.template(), shape_fn: ti.template(), dshape_fn: ti.template(), dshape_fnc: ti.template(), shape_function: ti.template(), grad_shape_function: ti.template(), shape_function_center: ti.template()):
+def global_update_2DAxisy(total_nodes: int, influenced_node: int, element_size: ti.types.vector(2, float), ielement_size: ti.types.vector(2, float), gnum: ti.types.vector(2, int), particleNum: int, particle: ti.template(), calLength: ti.template(),
+                          node_size: ti.template(), LnID: ti.template(), shape_fn: ti.template(), dshape_fn: ti.template(), shape_function_r: ti.template(), shape_function_z: ti.template(), grad_shape_function_r: ti.template(), grad_shape_function_z: ti.template()):
+    for np in range(particleNum):
+        position, psize = particle[np].x, calLength[int(particle[np].bodyID)]
+        base_bound = calc_base_cell(ielement_size, psize, position)
+        activeID = np * total_nodes
+        for j in range(base_bound[1], base_bound[1] + influenced_node):
+            if j < 0 or j >= gnum[1]: continue
+            for i in range(base_bound[0], base_bound[0] + influenced_node):
+                if i < 0 or i >= gnum[0]: continue
+                nodeID = int(i + j * gnum[0])
+                node_coords = vec2i(i, j) * element_size
+                shapen0, shapen1 = shapefn2DAxisy(particle[np].x, node_coords, ielement_size, psize, shape_function_r, shape_function_z)
+                shapeval = shapen0 * shapen1
+                if shapeval > Threshold:
+                    dshapen0, dshapen1 = grad_shapefn2DAxisy(particle[np].x, node_coords, ielement_size, psize, grad_shape_function_r, grad_shape_function_z)
+                    grad_shapeval = vec2f([dshapen0 * shapen1, shapen0 * dshapen1])
+                    LnID[activeID] = nodeID
+                    shape_fn[activeID]=shapeval
+                    dshape_fn[activeID]=grad_shapeval
+                    activeID += 1
+        node_size[np] = ti.u8(activeID - np * total_nodes)
+
+@ti.kernel
+def global_updatebbar(total_nodes: int, influenced_node: int, element_size: ti.types.vector(2, float), ielement_size: ti.types.vector(2, float), gnum: ti.types.vector(2, int), particleNum: int, particle: ti.template(), calLength: ti.template(),
+                      node_size: ti.template(), LnID: ti.template(), shape_fn: ti.template(), dshape_fn: ti.template(), dshape_fnc: ti.template(), shape_function: ti.template(), grad_shape_function: ti.template(), shape_function_center: ti.template()):
     for np in range(particleNum):
         position, psize = particle[np].x, calLength[int(particle[np].bodyID)]
         base_bound = calc_base_cell(ielement_size, psize, position)
@@ -240,18 +299,96 @@ def global_updatebbar(total_nodes: int, influenced_node: int, ielement_size: ti.
             if j < 0 or j >= gnum[1]: continue
 
             nodeID = int(i + j * gnum[0])
-            shapen0, shapen1 = shapefn(particle[np].x, node_coords[nodeID], ielement_size, psize, shape_function, )
+            node_coords = vec2i(i, j) * element_size
+            shapen0, shapen1 = shapefn(particle[np].x, node_coords, ielement_size, psize, shape_function)
             shapeval = shapen0 * shapen1
             if shapeval > Threshold:
-                dshapen0, dshapen1 = grad_shapefn(particle[np].x, node_coords[nodeID], ielement_size, psize, grad_shape_function, )
+                dshapen0, dshapen1 = grad_shapefn(particle[np].x, node_coords, ielement_size, psize, grad_shape_function)
                 grad_shapeval = vec2f([dshapen0 * shapen1, shapen0 * dshapen1])
-                shapenc0, shapenc1 = shapefnc(particle[np].x, node_coords[nodeID], ielement_size, psize, shape_function_center)
+                shapenc0, shapenc1 = shapefnc(particle[np].x, node_coords, ielement_size, psize, shape_function_center)
                 grad_shapevalc = vec2f([dshapen0 * shapenc1, shapenc0 * dshapen1])
                 LnID[activeID] = nodeID
                 shape_fn[activeID]=shapeval
                 dshape_fn[activeID]=grad_shapeval
                 dshape_fnc[activeID]=grad_shapevalc
                 activeID += 1
+        node_size[np] = ti.u8(activeID - np * total_nodes)
+
+@ti.kernel
+def global_updatebbar_axisy(total_nodes: int, influenced_node: int, element_size: ti.types.vector(2, float), ielement_size: ti.types.vector(2, float), gnum: ti.types.vector(2, int), particleNum: int, particle: ti.template(), calLength: ti.template(),
+                          node_size: ti.template(), LnID: ti.template(), shape_fn: ti.template(), shape_fnc: ti.template(), dshape_fn: ti.template(), dshape_fnc: ti.template(), shape_function_r: ti.template(), shape_function_z: ti.template(), grad_shape_function_r: ti.template(), grad_shape_function_z: ti.template(), shape_function_center_r: ti.template(), shape_function_center_z: ti.template()):
+    for np in range(particleNum):
+        position, psize = particle[np].x, calLength[int(particle[np].bodyID)]
+        base_bound = calc_base_cell(ielement_size, psize, position)
+        activeID = np * total_nodes
+        for j, i in ti.ndrange((base_bound[1], base_bound[1] + influenced_node), (base_bound[0], base_bound[0] + influenced_node)):
+            if i < 0 or i >= gnum[0]: continue
+            if j < 0 or j >= gnum[1]: continue
+
+            nodeID = int(i + j * gnum[0])
+            node_coords = vec2i(i, j) * element_size
+            shapen0, shapen1 = shapefn2DAxisy(particle[np].x, node_coords, ielement_size, psize, shape_function_r, shape_function_z)
+            shapeval = shapen0 * shapen1
+            if shapeval > Threshold:
+                dshapen0, dshapen1 = grad_shapefn2DAxisy(particle[np].x, node_coords, ielement_size, psize, grad_shape_function_r, grad_shape_function_z)
+                grad_shapeval = vec2f([dshapen0 * shapen1, shapen0 * dshapen1])
+                shapenc0, shapenc1 = shapefnc2DAxisy(particle[np].x, node_coords, ielement_size, psize, shape_function_center_r, shape_function_center_z)
+                grad_shapevalc = vec2f([dshapen0 * shapenc1, shapenc0 * dshapen1])
+                LnID[activeID] = nodeID
+                shape_fn[activeID] = shapeval
+                shape_fnc[activeID] = shapenc0 * shapenc1
+                dshape_fn[activeID] = grad_shapeval
+                dshape_fnc[activeID] = grad_shapevalc
+                activeID += 1
+        node_size[np] = ti.u8(activeID - np * total_nodes)
+
+@ti.kernel
+def global_update_spline(total_nodes: int, influenced_node: int, element_size: ti.types.vector(2, float), ielement_size: ti.types.vector(2, float), gnum: ti.types.vector(2, int), particleNum: int, particle: ti.template(), calLength: ti.template(), 
+                         node_size: ti.template(), LnID: ti.template(), shape_fn: ti.template(), dshape_fn: ti.template(), shape_function: ti.template(), grad_shape_function: ti.template(), boundtype: ti.template()):
+    for np in range(particleNum):
+        bodyID = int(particle[np].bodyID)
+        position, psize = particle[np].x, calLength[bodyID]
+        base_bound = calc_base_cell(ielement_size, psize, position)
+        activeID = np * total_nodes
+        for j in range(base_bound[1], base_bound[1] + influenced_node):
+            if j < 0 or j >= gnum[1]: continue
+            for i in range(base_bound[0], base_bound[0] + influenced_node):
+                if i < 0 or i >= gnum[0]: continue
+                nodeID = int(i + j * gnum[0])
+                node_coords = vec2i(i, j) * element_size
+                btype = boundtype[nodeID, bodyID]
+                shapen0, shapen1 = shapefn(particle[np].x, node_coords, ielement_size, btype, shape_function)
+                shapeval = shapen0 * shapen1
+                if shapeval > Threshold:
+                    dshapen0, dshapen1 = grad_shapefn(particle[np].x, node_coords, ielement_size, btype, grad_shape_function)
+                    grad_shapeval = vec2f([dshapen0 * shapen1, shapen0 * dshapen1])
+                    LnID[activeID] = nodeID
+                    shape_fn[activeID]=shapeval
+                    dshape_fn[activeID]=grad_shapeval
+                    activeID += 1
+        node_size[np] = ti.u8(activeID - np * total_nodes)
+
+@ti.kernel
+def global_update_spline_fn(total_nodes: int, influenced_node: int, element_size: ti.types.vector(3, float), ielement_size: ti.types.vector(3, float), gnum: ti.types.vector(3, int), particleNum: int, particle: ti.template(), calLength: ti.template(), 
+                            node_size: ti.template(), LnID: ti.template(), shape_fn: ti.template(), shape_function: ti.template(), boundtype: ti.template()):
+    for np in range(particleNum):
+        bodyID = int(particle[np].bodyID)
+        position, psize = particle[np].x, calLength[bodyID]
+        base_bound = calc_base_cell(ielement_size, psize, position)
+        activeID = np * total_nodes
+        for j in range(base_bound[1], base_bound[1] + influenced_node):
+            if j < 0 or j >= gnum[1]: continue
+            for i in range(base_bound[0], base_bound[0] + influenced_node):
+                if i < 0 or i >= gnum[0]: continue
+                nodeID = int(i + j * gnum[0])
+                node_coords = vec2i(i, j) * element_size
+                btype = boundtype[nodeID, bodyID]
+                shapen0, shapen1 = shapefn(particle[np].x, node_coords, ielement_size, btype, shape_function)
+                shapeval = shapen0 * shapen1 
+                if shapeval > Threshold:
+                    LnID[activeID] = nodeID
+                    shape_fn[activeID]=shapeval
+                    activeID += 1
         node_size[np] = ti.u8(activeID - np * total_nodes)
     
 
@@ -299,12 +436,54 @@ def estimate_active_dofs(cutoff: float, node: ti.template()) -> int:
 
 
 @ti.kernel
-def set_active_dofs(gridSum: int, cutoff: float, node: ti.template(), flag: ti.template(), active_node: ti.template()) -> int:
+def set_active_dofs(gridSum: int, cutoff: float, node: ti.template(), flag: ti.template()) -> int:
     ti.loop_config(serialize=True)
     for ng in range(node.shape[0]):
         for nb in range(node.shape[1]):
             if node[ng, nb].m > cutoff:
-                dofs = flag[ng + nb * gridSum] - 1
+                dofs = 2 * (flag[ng + nb * gridSum] - 1)
                 node[ng, nb]._set_dofs(dofs)
-                active_node[dofs] = ng + node.shape[0] * nb
     return 2 * flag[flag.shape[0] - 1]
+
+@ti.func
+def get_boundary_type(grid_id, gnum, boundary_1, boundary_2, boundary1, boundary2):
+    btype = 0
+    if grid_id - 1 < 0 or boundary_1 == -2:
+        btype = 1
+    elif grid_id - 2 < 0 or boundary_2 == -1:
+        btype = 2
+    elif grid_id + 1 >= gnum or boundary1 == 2:
+        btype = 4
+    elif grid_id + 2 >= gnum or boundary2 == 1:
+        btype = 3
+    return btype
+
+@ti.kernel
+def kernel_set_boundary_type(gridSum: int, grid_level: int, gnum: ti.types.vector(2, int), boundary_flag: ti.template(), boundary_type: ti.template()):
+    ti.loop_config(bit_vectorize=True)
+    for i in boundary_flag:
+        if i < gridSum * grid_level:
+            Ind = vec2i(vectorize_id(i % gridSum, gnum))
+            xtype, ytype = 0, 0
+            if Ind[0] - 1 < 0:
+                xtype = 1
+            elif Ind[0] + 1 >= gnum[0]:
+                xtype = 4
+            else:
+                xtype = get_boundary_type(Ind[0], gnum[0], -boundary_flag[i]-boundary_flag[i-1], -boundary_flag[i-1], boundary_flag[i]+boundary_flag[i+1], boundary_flag[i+1])
+            if Ind[1] - 1 < 0:
+                ytype = 1
+            elif Ind[1] + 1 >= gnum[1]:
+                ytype = 4
+            else:
+                ytype = get_boundary_type(Ind[1], gnum[1], -boundary_flag[int(i // gridSum) * gridSum + linearize(Ind + vec2i(0, 0), gnum)]-boundary_flag[int(i // gridSum) * gridSum + linearize(Ind + vec2i(0, -1), gnum)], 
+                                                           boundary_flag[int(i // gridSum) * gridSum + linearize(Ind + vec2i(0, -1), gnum)], 
+                                                           boundary_flag[int(i // gridSum) * gridSum + linearize(Ind + vec2i(0, 0), gnum)]+boundary_flag[int(i // gridSum) * gridSum + linearize(Ind + vec2i(0, 1), gnum)], 
+                                                           boundary_flag[int(i // gridSum) * gridSum + linearize(Ind + vec2i(0, 1), gnum)])
+            
+            if (Ind[0] - 1 >= 0 and int(boundary_flag[i-1]) != 1) or (Ind[0] + 1 <= gnum[0] and int(boundary_flag[i+1]) != 1):
+                ytype = get_boundary_type(Ind[1], gnum[1], 0, 0, 0, 0)
+            if (Ind[1] - 1 >= 0 and int(boundary_flag[int(i // gridSum) * gridSum + linearize(Ind + vec2i(0, -1), gnum)]) != 1) or \
+                (Ind[1] + 1 <= gnum[1] and int(boundary_flag[int(i // gridSum) * gridSum + linearize(Ind + vec2i(0, 1), gnum)]) != 1):
+                xtype = get_boundary_type(Ind[0], gnum[0], 0, 0, 0, 0)
+            boundary_type[int(i % gridSum), int(i // gridSum)] = vec2u8(xtype, ytype)

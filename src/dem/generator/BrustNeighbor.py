@@ -1,5 +1,6 @@
 import taichi as ti
 
+from src.utils.constants import Threshold
 from src.utils.TypeDefination import vec3i
 
 class BruteSearch(object):
@@ -27,6 +28,7 @@ class BruteSearch(object):
 
         self.pre_neighbor_sphere = pre_neighbor_sphere
         self.pre_neighbor_clump = pre_neighbor_clump
+        self.pre_neighbor_bounding_sphere = pre_neighbor_bounding_sphere
         self.pre_insert_particle = pre_insert_particle
         self.insert_particle = insert_particle
         self.overlap = overlap
@@ -59,6 +61,14 @@ def pre_neighbor_clump(bodyNum: int, offset: ti.template(), particle: ti.templat
                 radius = particle.rad[npebble]
                 pre_insert_particle(start_point, position, radius, offset)
 
+@ti.kernel
+def pre_neighbor_bounding_sphere(rigidNum: int, offset: ti.template(), bounding_sphere: ti.template(), check_in_region: ti.template(), start_point: ti.types.vector(3, float)):
+    for nb in range(rigidNum):
+        pos = bounding_sphere[nb].x
+        rad = bounding_sphere[nb].rad
+        if check_in_region(pos, rad):
+            pre_insert_particle(start_point, pos, rad, offset)
+
 @ti.func
 def pre_insert_particle(cell_num, cell_size, pos0, pos, rad, offset, position, radius, num_particle_in_cell, particle_neighbor):
     particle_number = ti.atomic_add(offset[None], 1)
@@ -79,7 +89,7 @@ def overlap(cell_num, cell_size, pos, rad, offset, position, radius, num_particl
     for np in range(offset[None]):
         dist = (position[np] - pos).norm()
         delta = -dist + (radius[np] + rad)
-        if delta > 0:
+        if delta > Threshold:
             isoverlap = 1
             break
     return isoverlap

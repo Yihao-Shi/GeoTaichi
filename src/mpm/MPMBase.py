@@ -26,22 +26,27 @@ class Solver:
 
         self.last_save_time = 0.
         self.last_print_time = 0.
+        self.postprocess = []
 
-    def set_callback_function(self, kwargs):
-        functions = DictIO.GetAlternative(kwargs, "function", None)
-        if functions is None:
-            self.function = self.no_operation
-        else:
-            self.function = functions
+    def set_callback_function(self, functions):
+        if not functions is None:
+            if isinstance(functions, list):
+                for f in functions:
+                    self.postprocess.append(f)
+            elif isinstance(functions, dict):
+                for f in functions.values():
+                    self.postprocess.append(f)
+            elif isinstance(functions, type(lambda: None)):
+                self.postprocess.append(functions)
 
     def no_operation(self):
         pass
         
     def save_file(self, scene):
-        print(f'# Step =', self.sims.current_step, '   ', 'Save Number =', self.sims.current_print, '   ', 'Simulation time =', self.sims.current_time, '\n')
+        print('# Step =', self.sims.current_step, '   ', 'Save Number =', self.sims.current_print, '   ', 'Simulation time =', self.sims.current_time, '\n')
         self.recorder.output(self.sims, scene)
 
-    def Solver(self, scene, neighbor):
+    def Solver(self, scene: myScene, neighbor):
         print("#", " Start Simulation ".center(67,"="), "#")
        
         self.engine.pre_calculation(self.sims, scene, neighbor)
@@ -147,9 +152,10 @@ class Solver:
         print("#", " End Simulation ".center(67,"="), "#", '\n')
 
     def core(self, scene: myScene, neighbor):
-        self.engine.reset_grid_message(scene)
+        self.engine.reset_grid_messages(scene)
         self.engine.bulid_neighbor_list(self.sims, scene, neighbor)
         self.engine.compute(self.sims, scene)
-        self.function()
+        for functions in self.postprocess:
+            functions()
 
         

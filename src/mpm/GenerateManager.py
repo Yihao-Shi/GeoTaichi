@@ -1,5 +1,6 @@
 from src.mpm.generator.BodyGenerator import BodyGenerator
 from src.mpm.generator.LoadFromFile import BodyReader
+from src.mpm.Simulation import Simulation
 from src.mpm.SceneManager import myScene
 from src.utils.ObjectIO import DictIO
 from src.utils.RegionFunction import RegionFunction
@@ -11,18 +12,18 @@ class GenerateManager(object):
         self.myClumpTemplate = dict()
         self.myGenerator = []
 
-    def add_my_region(self, domain, region_dict):
+    def add_my_region(self, dims, domain, region_dict):
         name = DictIO.GetEssential(region_dict, "Name")
         if name in self.myRegion:
             region: RegionFunction = self.myRegion[name]
             region.mpm_finalize()
             del self.myRegion[name]
-            self.add_region(domain, name, region_dict, True)
+            self.add_region(dims, domain, name, region_dict, True)
         else:
-            self.add_region(domain, name, region_dict, False)
+            self.add_region(dims, domain, name, region_dict, False)
 
-    def add_region(self, domain, name, region_dict, override):
-        DictIO.append(self.myRegion, name, RegionFunction("MPM"))
+    def add_region(self, dims, domain, name, region_dict, override):
+        DictIO.append(self.myRegion, name, RegionFunction(dims, "MPM"))
         region: RegionFunction = self.myRegion[name]
         region.set_region(region_dict, override)
         region.check_in_domain(domain)
@@ -57,10 +58,6 @@ class GenerateManager(object):
             generator.finalize()
 
     def read_body_file(self, body_dict, sims, scene: myScene):
-        """
-        读取颗粒文件
-        
-        """
         if scene.material is None:
             raise RuntimeError("The attribute must be added first")
         generator = BodyReader(sims)
@@ -71,3 +68,12 @@ class GenerateManager(object):
             self.myGenerator.append(generator)
         else:
             generator.finalize()
+
+    def add_polygons(self, body_dict, sims: Simulation, scene: myScene):
+        if scene.contact_parameter is None:
+            raise RuntimeError("The contact attribute must be added first")
+        if sims.contact_detection == "DEMContact":
+            generator = BodyReader(sims)
+            generator.set_polygons(scene.contact_parameter, body_dict)
+        else:
+            raise RuntimeError(f"The polygon only supports for DEMContact. Current contact type is {sims.contact_detection}")

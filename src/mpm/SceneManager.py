@@ -1,104 +1,118 @@
-import os, warnings
+import warnings
 
 import numpy as np
 import taichi as ti
 
 from src.mpm.BaseKernel import *
+from src.mpm.Contact import *
 from src.mpm.elements.HexahedronElement8Nodes import HexahedronElement8Nodes
 from src.mpm.elements.QuadrilateralElement4Nodes import QuadrilateralElement4Nodes
 from src.mpm.MaterialManager import ConstitutiveModel
 from src.mpm.materials.ConstitutiveModelBase import ConstitutiveModelBase
-from src.mpm.boundaries.BoundaryCore import *
-from src.mpm.boundaries.BoundaryStrcut import *
-from src.mpm.BaseStruct import *
+from src.mpm.boundaries.BoundaryConstraint import BoundaryConstraints
 from src.mpm.Simulation import Simulation
+from src.mpm.structs import *
+from src.utils.linalg import no_operation
+from src.utils.DomainBoundary import DomainBoundary
 from src.utils.ObjectIO import DictIO
-from src.utils.TypeDefination import vec2i, vec2f, vec3f, vec3i, vec3u8
+from src.utils.TypeDefination import vec2f, vec3f, vec3u8
 
 
 class myScene(object):
     material: ConstitutiveModelBase
-    node: Nodes
-    multi_node: Nodes
-    particle: ParticleCloud
-    extra_particle: ParticleFBar
-    velocity_boundary: VelocityConstraint
-    friction_boundary: FrictionConstraint
-    absorbing_boundary: AbsorbingConstraint
-    traction_boundary: TractionConstraint
 
     def __init__(self) -> None:
-        self.mu = 0.
+        self.domain_boundary = None
+        self.contact_parameter = None
+        self.contact_type = None
         self.mass_cut_off = Threshold
         self.volume_cut_off = Threshold
 
-        self.particle = None
-        self.extra_particle = None
         self.element_type = "R8N3D"
+        self.boundary = None
+        self.particle = None
+        self.iparticle = None
         self.material = None
         self.element = None
         self.extra_node = None
         self.node = None
-        self.accmulated_reaction_forces = None
-        self.velocity_boundary = None
-        self.reflection_boundary = None
-        self.friction_boundary = None
-        self.absorbing_boundary = None
-        self.traction_boundary = None
-        self.displacement_boundary = None
+        self.grid = []
         self.is_rigid = None
+        self.pid = None
+        self.grandparent = None
+        self.parent = None
+        self.child = None
+        self.psize = np.array([], dtype=np.int32)
 
-        self.velocity_list = np.zeros(1, dtype=np.int32)
-        self.reflection_list = np.zeros(1, dtype=np.int32)
-        self.friction_list = np.zeros(1, dtype=np.int32)
-        self.absorbing_list = np.zeros(1, dtype=np.int32)
-        self.traction_list = np.zeros(1, dtype=np.int32)
-        self.displacement_list = np.zeros(1, dtype=np.int32)
         self.particleNum = np.zeros(1, dtype=np.int32)
-        
-        self.RECTELETYPE = ["Q4N2D", "R8N3D", "R27N3D"]
-        self.TRIELETYPE = ["T4N3D"]
+        self.RECTELETYPE = ["Q4N2D", "R8N3D", "Staggered"]
+        self.TRIELETYPE = ["T3N2D", "T4N3D"]
 
-    def activate_basic_class(self, sims):
-        self.activate_particle(sims)
-        self.activate_boundary_constraints(sims)
+    def activate_boundary(self, sims):
+        self.boundary = BoundaryConstraints()
+        self.boundary.activate_boundary_constraints(sims)
 
     def is_rectangle_cell(self):
         return self.element_type in self.RECTELETYPE
     
     def is_triangle_cell(self):
         return self.element_type in self.TRIELETYPE
+    
+    def find_particle_class(self, sims: Simulation):
+        ptemp = None
+        if sims.coupling or sims.neighbor_detection:
+            if sims.solver_type == "Explicit":
+                ptemp = ParticleCoupling
+            #elif sims.solver_type == "Implicit":
+            #    ptemp = ImplicitParticleCoupling
+        else:
+            if sims.solver_type == "Explicit":
+                if sims.dimension == 2:
+                    if not sims.is_2DAxisy:
+                        if sims.material_type == "TwoPhaseSingleLayer":
+                            ptemp = ParticleCloudTwoPhase2D
+                        else:
+                            ptemp = ParticleCloud2D
+                    elif sims.is_2DAxisy:
+                        ptemp = ParticleCloud2DAxisy
+                elif sims.dimension == 3:
+                    ptemp = ParticleCloud
+            elif sims.solver_type == "Implicit":
+                raise RuntimeError("Invalid")
+                #if self.element_type == "Staggered":
+                #    if sims.dimension == 2:
+                #        ptemp = ParticleCloudIncompressible2D # StaggeredPartilce2D
+                #    if sims.dimension == 3:
+                #        ptemp = ParticleCloudIncompressible3D # StaggeredPartilce
+                #else:
+                #    if sims.dimension == 2:
+                #        ptemp = ImplicitParticle2D
+                #    elif sims.dimension == 3:
+                #        ptemp = ImplicitParticle
+            
+            if sims.contact_detection == "DEMContact":
+                ptemp.members.update({"contact_traction": ti.types.vector(sims.dimension, float)})
+        if ptemp is None: raise RuntimeError("Wrong particle type!")
+        return ptemp
 
     def activate_particle(self, sims: Simulation):
         if self.particle is None and sims.max_particle_num > 0:
-            if sims.coupling or sims.neighbor_detection:
-                if sims.solver_type == "Explicit":
-                    self.particle = ParticleCoupling.field()
-                elif sims.solver_type == "Implicit":
-                    self.particle = ImplicitParticleCoupling.field()
-            else:
-                if sims.solver_type == "Explicit":
-                    if sims.dimension == 2:
-                        self.particle = ParticleCloud2D.field()
-                    elif sims.dimension == 3:
-                        self.particle = ParticleCloud.field()
-                elif sims.solver_type == "Implicit":
-                    self.particle = ImplicitParticle.field()
-
+            ptemp = self.find_particle_class(sims)
             if sims.solver_type == "Explicit":
-                if self.extra_particle is None and sims.stabilize == 'F-Bar Method':
-                    self.extra_particle = ParticleFBar.field()
-                    ti.root.dense(ti.i, sims.max_particle_num).place(self.particle, self.extra_particle)
-                    kernel_initialize_particle_fbar(self.extra_particle)
-                else:
-                    ti.root.dense(ti.i, sims.max_particle_num).place(self.particle)
-            elif sims.solver_type == "Implicit":
-                ti.root.dense(ti.i, sims.max_particle_num).place(self.particle)
+                if sims.stabilize == 'F-Bar Method':
+                    ptemp.members.update({"jacobian": float})
+            if sims.particle_shifting is True:
+                ptemp.members.update({"grad_E2": ti.types.vector(sims.dimension, float)})
+            self.particle = ptemp.field()
+            ti.root.dense(ti.i, sims.max_particle_num).place(self.particle)
+            if sims.solver_type == "Explicit":
+                if sims.stabilize == 'F-Bar Method':
+                    kernel_initialize_particle_fbar(self.particle)
 
-    def activate_material(self, sims: Simulation, model, materials):
+    def activate_material(self, sims: Simulation, handler: ConstitutiveModel):
         if self.material is None:
-            self.material = ConstitutiveModel.initialize(sims.material_type, sims.stabilize, model, sims.max_material_num, sims.max_particle_num, sims.configuration, sims.solver_type)
-            self.material.model_initialization(materials)
+            self.material = handler.initialize(sims)
+            self.material.model_initialization(handler.material)
         else:
             warnings.warn("Previous material will be override!")
 
@@ -106,33 +120,39 @@ class myScene(object):
         if self.material is None:
             self.activate_material(sims, "RigidBody", materials={})
 
-    def activate_element(self, sims: Simulation, element):
+    def activate_element(self, sims: Simulation, handler, element):
         self.element_type = DictIO.GetAlternative(element, "ElementType", "R8N3D")
         if sims.max_particle_num > 0:
             grid_level = self.find_grid_level(sims, DictIO.GetAlternative(element, "Contact", None))
+            self.activate_material(sims, handler)
+
             if sims.dimension == 2:
-                if self.element_type == "Q4N2D":
+                if self.element_type == "T3N2D":
+                    raise ValueError("The triangle mesh is not supported currently")
+                elif self.element_type == "Q4N2D" or self.element_type == "Staggered":
                     if not self.element is None:
                         print("Warning: Previous elements will be override!")
-                    self.element = QuadrilateralElement4Nodes()
-                    self.element.create_nodes(sims, vec2f(DictIO.GetEssential(element, "ElementSize")))
-                    self.initialize_element(sims, grid_level)
+                    self.element = QuadrilateralElement4Nodes(self.element_type)
                 else:
                     raise ValueError("Keyword:: /ElementType/ error!")
+                self.element.create_nodes(sims, vec2f(DictIO.GetEssential(element, "ElementSize")))
+                self.initialize_element(sims, grid_level)
             elif sims.dimension == 3:
                 if self.element_type == "T4N3D":
                     raise ValueError("The triangle mesh is not supported currently")
                 elif self.element_type == "R8N3D":
                     if not self.element is None:
                         print("Warning: Previous elements will be override!")
-                    self.element = HexahedronElement8Nodes()
-                    self.element.create_nodes(sims, vec3f(DictIO.GetEssential(element, "ElementSize")))
-                    self.initialize_element(sims, grid_level)
-                elif self.element_type == "R27N3D":
-                    pass
+                    self.element = HexahedronElement8Nodes(self.element_type)
                 else:
                     raise ValueError("Keyword:: /ElementType/ error!")
+                self.element.create_nodes(sims, vec3f(DictIO.GetEssential(element, "ElementSize")))
+                self.initialize_element(sims, grid_level)
+            self.boundary.set_layer_number(grid_level)
             self.activate_grid(sims, DictIO.GetAlternative(element, "Contact", None), grid_level)
+
+            if sims.ptraction_method == "Virtual":
+                self.element.set_up_cell_active_flag()
 
     def initialize_element(self, sims: Simulation, grid_level):
         if sims.gauss_number > 0:
@@ -140,20 +160,64 @@ class myScene(object):
             self.element.activate_gauss_cell(sims, grid_level)
         else:
             self.element.element_initialize(sims)
+        self.element.activate_euler_cell()
 
     def find_grid_level(self, sims: Simulation, contact):
-        if contact is None:
-            sims.set_contact_detection(False)
+        if contact is None or DictIO.GetAlternative(contact, "ContactDetection", None) is False:
+            sims.set_contact_detection(None)
             grid_level = 1
         else:
-            sims.set_contact_detection(DictIO.GetAlternative(contact, "ContactDetection", False))
+            sims.set_contact_detection(DictIO.GetAlternative(contact, "ContactDetection", None))
             grid_level = DictIO.GetAlternative(contact, "GridLevel", None)
             if grid_level is None:
-                if not sims.contact_detection:
+                if sims.contact_detection is None:
                     grid_level = 1
-                elif sims.contact_detection:
-                    grid_level = 2
+                else:
+                    if "DEM" in sims.contact_detection:
+                        grid_level = 1
+                    else:
+                        grid_level = 2
         return grid_level
+    
+    def find_grid_class(self, sims: Simulation):
+        gtemp = None
+        if sims.contact_detection is not None:
+            if sims.solver_type == "Explicit":
+                if sims.dimension == 2:
+                    gtemp = ContactNodes2D
+                elif sims.dimension == 3:
+                    gtemp = ContactNodes
+                if sims.contact_detection == "GeoContact":
+                    gtemp.members.update({"contact_pos": ti.types.vector(sims.dimension, float)})
+            else:
+                raise RuntimeError("The contact is not supported in implicit MPM currently")
+        else:
+            if sims.solver_type == "Explicit":
+                if sims.dimension == 2:
+                    if sims.material_type == "Solid" or sims.material_type == "Fluid":
+                        gtemp = Nodes2D
+                    elif sims.material_type == "TwoPhaseSingleLayer":
+                        gtemp = NodeTwoPhase2D
+                    #elif sims.material_type == "TwoPhaseDoubleLayer":
+                    #    raise RuntimeError()
+                elif sims.dimension == 3:
+                    if sims.material_type == "Solid" or sims.material_type == "Fluid":
+                        gtemp = Nodes
+                    else:
+                        raise RuntimeError()
+            elif sims.solver_type == "Implicit":
+                if sims.material_type == "Solid":
+                    if sims.dimension == 2:
+                        gtemp = ImplicitNodes2D
+                    elif sims.dimension == 3:
+                        gtemp = ImplicitNodes
+                #if sims.material_type == "Fluid":
+                #    if sims.dimension == 2:
+                #        gtemp = IncompressibleNodes2D
+                #    elif sims.dimension == 3:
+                #        gtemp = IncompressibleNodes3D
+        if gtemp is None: raise RuntimeError("Wrong background node type!")
+        return gtemp
 
     def activate_grid(self, sims: Simulation, contact, grid_level):
         self.check_grid_inputs(sims, grid_level)
@@ -161,41 +225,64 @@ class myScene(object):
         sims.set_body_num(grid_level)
         self.element.set_characteristic_length(sims)
 
+        cut_off = 0.
         if not self.node is None:
             print("Warning: Previous node will be override!")
-            
-        cut_off = 0.
         if sims.contact_detection:
-            cut_off = DictIO.GetAlternative(contact, "CutOff", 0.8)
-            self.mu = DictIO.GetAlternative(contact, "Friction", 0.)
-            self.element.set_contact_position_offset(cut_off)
-            if sims.solver_type == "Explicit":
-                if sims.dimension == 2:
-                    self.node = ContactNodes2D.field()
-                elif sims.dimension == 3:
-                    self.node = ContactNodes.field()
-            else:
-                raise RuntimeError("The contact is not supported in implicit MPM currently")
-        else:
-            if sims.solver_type == "Explicit":
-                if sims.dimension == 2:
-                    self.node = Nodes2D.field()
-                elif sims.dimension == 3:
-                    self.node = Nodes.field()
-            elif sims.solver_type == "Implicit":
-                self.node = ImplicitNodes.field()
+            if sims.contact_detection == "MPMContact":
+                self.contact_parameter = MPMContact(contact)
+            elif sims.contact_detection == "GeoContact":
+                self.contact_parameter = GeoContact(contact)   
+            elif sims.contact_detection == "DEMContact":
+                self.contact_parameter = DEMContact(contact, self.material)
+             
+        self.node = self.find_grid_class(sims).field()
+        if sims.sparse_grid:
+            self.grandparent = ti.root.pointer(ti.ij, (int(np.ceil(self.element.gridSum / sims.block_size[0])), grid_level))
+            self.parent = self.grandparent.pointer(ti.i, int(sims.block_size[0] // sims.block_size[1]))
+            self.child = self.parent.dense(ti.i, int(sims.block_size[1]))
+        else: 
+            self.child = ti.root.dense(ti.ij, (self.element.gridSum, grid_level))
 
-        if sims.stabilize == 'F-Bar Method':
-            self.extra_node = ExtraNode.field()
-            ti.root.dense(ti.ij, (self.element.gridSum, grid_level)).place(self.node, self.extra_node)
+        if sims.stabilize == 'F-Bar Method' or sims.pressure_smoothing == True or sims.particle_shifting is True:
+            gtemp = ExtraNode
+            if sims.stabilize == 'F-Bar Method':
+                if sims.material_type == "Solid":
+                    gtemp.members.update({"jacobian": float})
+                elif sims.material_type == "Fluid":
+                    gtemp.members.update({"jacobian": float, "pressure": float})
+            if sims.pressure_smoothing == True:
+                if 'pressure' not in gtemp.members.keys():
+                    gtemp.members.update({"pressure": float})
+            self.extra_node = gtemp.field()
+            self.child.place(self.node, self.extra_node)
         else:
-            if sims.calculate_reaction_force:
-                self.accmulated_reaction_forces = ti.Vector.field(3, float)
-                ti.root.dense(ti.ij, (self.element.gridSum, grid_level)).place(self.node, self.accmulated_reaction_forces)
-            else:
-                ti.root.dense(ti.ij, (self.element.gridSum, grid_level)).place(self.node)
+            self.child.place(self.node)
+
+        #if sims.sparse_grid:
+        #    self.pid = ti.field(int)
+        #    self.parent.dynamic(ti.i, 1024 * 1024, chunk_size=sims.block_size[1] ** sims.dimension * 8).place(self.pid)
         
+        if sims.mapping == "G2P2G":
+            self.grandparent = [self.grandparent]
+            self.parent = [self.parent]
+            self.child = [self.child]
+            output_grid = self.find_grid_class(sims, grid_level)
+            if sims.sparse_grid:
+                grandparent = ti.root.pointer(ti.ij, (int(np.ceil(self.element.gridSum // sims.block_size[0])), grid_level))
+                parent = self.grandparent[1].pointer(ti.i, int(sims.block_size[0] // sims.block_size[1]))
+                child = self.parent[1].dense(ti.i, int(sims.block_size[1]))
+                self.grandparent.append(grandparent)
+                self.parent.append(parent)
+                self.child.append(child)
+            else: 
+                self.child = ti.root.dense(ti.ij, (self.element.gridSum, grid_level))
+            self.grid = [self.node, self.child[1].place(output_grid)]
+        self.element.calculate_basis_function(sims, grid_level)
         self.print_grid_message(sims, grid_level, cut_off)
+
+    def deactivate_sparse_grid(self):
+        self.grandparent.deactivate_all()
  
     def check_grid_inputs(self, sims: Simulation, grid_level):
         if grid_level > 2:
@@ -213,453 +300,14 @@ class myScene(object):
             print("The number of grids = ", grid_level)
         self.element.print_message()
         if sims.contact_detection:
-            print("Contact Detection Activated")
+            print("Contact Detection Activated: ", sims.contact_detection)
             print("Cut-off Distance Multiplier =", cut_off)
-            print("Friction Coefficient =", self.mu)
+            print("Friction Coefficient =", self.contact_parameter.friction)
+            if sims.contact_detection == "GeoContact":
+                print("Penalty Parameter = ", self.contact_parameter.alpha, self.contact_parameter.beta)
+            if sims.contact_detection == "DEMContact":
+                print("Stiffness Parameter = ", self.contact_parameter.kn, self.contact_parameter.kt)
         print('\n')
-
-    def activate_boundary_constraints(self, sims: Simulation):
-        if self.velocity_boundary is None and sims.nvelocity > 0.:
-            if sims.dimension == 2:
-                self.velocity_boundary = VelocityConstraint2D.field(shape=sims.nvelocity)
-            elif sims.dimension == 3:
-                self.velocity_boundary = VelocityConstraint.field(shape=sims.nvelocity)
-            kernel_initialize_boundary(self.velocity_boundary)
-
-        if self.reflection_boundary is None and sims.nreflection > 0.:
-            if sims.dimension == 2:
-                self.reflection_boundary = ReflectionConstraint2D.field(shape=sims.nreflection)
-            elif sims.dimension == 3:
-                self.reflection_boundary = ReflectionConstraint.field(shape=sims.nreflection)
-            kernel_initialize_boundary(self.reflection_boundary)
-
-        if self.friction_boundary is None and sims.nfriction > 0.:
-            if sims.dimension == 2:
-                self.friction_boundary = FrictionConstraint2D.field(shape=sims.nfriction)
-            elif sims.dimension == 3:
-                self.friction_boundary = FrictionConstraint.field(shape=sims.nfriction)
-            kernel_initialize_boundary(self.friction_boundary)
-
-        if self.absorbing_boundary is None and sims.nabsorbing > 0.:
-            if sims.dimension == 2:
-                self.absorbing_boundary = AbsorbingConstraint2D.field(shape=sims.nabsorbing)
-            elif sims.dimension == 3:
-                self.absorbing_boundary = AbsorbingConstraint.field(shape=sims.nabsorbing)
-            kernel_initialize_boundary(self.absorbing_boundary)
-
-        if self.traction_boundary is None and sims.ntraction > 0.:
-            if sims.dimension == 2:
-                self.traction_boundary = TractionConstraint2D.field(shape=sims.ntraction)
-            elif sims.dimension == 3:
-                self.traction_boundary = TractionConstraint.field(shape=sims.ntraction)
-            kernel_initialize_boundary(self.traction_boundary)
-
-        if sims.solver_type == "Implicit":
-            if self.displacement_boundary is None and sims.ndisplacement > 0.:
-                self.displacement_boundary = DisplacementConstraint.field(shape=sims.ndisplacement)
-                kernel_initialize_boundary(self.displacement_boundary)
-
-    def iterate_boundary_constraint(self, sims, boundary_constraint, mode):
-        if mode == 0:
-            print(" Boundary Information ".center(71,"-"))
-            if type(boundary_constraint) is dict:
-                self.set_boundary_conditions(sims, boundary_constraint)
-            elif type(boundary_constraint) is list:
-                for boundary in boundary_constraint:
-                    self.set_boundary_conditions(sims, boundary) 
-        elif mode == 1:
-            print('#', "Boundary Earse".center(67, "="), '-')
-            if type(boundary_constraint) is dict:
-                self.clear_boundary_constraint(sims, boundary_constraint)
-            elif type(boundary_constraint) is list:
-                for boundary in boundary_constraint:
-                    self.clear_boundary_constraint(sims, boundary) 
-
-    def check_boundary_domain(self, sims: Simulation, start_point, end_point):
-        if any(start_point < vec3f(0., 0., 0.)):
-            raise RuntimeError(f"KeyWord:: /StartPoint/ {start_point} is out of domain {sims.domain}")
-        if any(end_point > sims.domain):
-            raise RuntimeError(f"KeyWord:: /EndPoint/ {end_point} is out of domain {sims.domain}")
-
-    def set_boundary_conditions(self, sims: Simulation, boundary):
-        """
-        Set boundary conditions
-        Args:
-            sims[Simulation]: Simulation dataclass
-            boundary[dict]: Boundary dict
-                BoundaryType[str]: Boundary type option:[VelocityConstraint, ReflectionConstraint, FrictionConstraint, AbsorbingConstraint, TractionConstraint, DisplacementConstraint]
-                NLevel[str/int][option]:  option:[All, 0, 1, 2, ...]
-                StartPoint[vec3f]: Start point of boundary
-                EndPoint[vec3f]: End point of boundary
-                when Boundary type = VelocityConstraint args include:
-                    VelocityX[float/None][option]: Prescribed velocity along X axis
-                    VelocityY[float/None][option]: Prescribed velocity along Y axis
-                    VelocityZ[float/None][option]: Prescribed velocity along Z axis
-                    Velocity[list][option]: Prescribed velocity
-                when Boundary type = ReflectionConstraint args include:
-                    Norm[vec3f]: Outer normal vector
-                when Boundary type = FrictionConstraint args include:
-                    Friction[float]: Friction angle
-                    Norm[vec3f]: Outer normal vector
-                when Boundary type = TractionConstraint args include:
-                    ExternalForce[vec3f]: External force
-                when Boundary type = DisplacementConstraint args include:
-                    DisplacementX[float/None][option]: Prescribed displacement along X axis
-                    DisplacementY[float/None][option]: Prescribed displacement along Y axis
-                    DisplacementZ[float/None][option]: Prescribed displacement along Z axis
-                    Displacement[list][option]: Prescribed displacement
-        """
-        boundary_type = DictIO.GetEssential(boundary, "BoundaryType")
-        level = DictIO.GetAlternative(boundary, "NLevel", "All")
-        start_point = DictIO.GetEssential(boundary, "StartPoint")
-        end_point = DictIO.GetEssential(boundary, "EndPoint")
-        self.check_boundary_domain(sims, start_point, end_point)
-        inodes = self.element.get_boundary_nodes(start_point, end_point)
-
-        if boundary_type == "VelocityConstraint":
-            if self.velocity_boundary is None:
-                raise RuntimeError("Error:: /max_velocity_constraint/ is set as zero!")
-            
-            default_val = [None, None, None] if sims.dimension == 3 else [None, None, 0]
-            
-            level, nlevel = self.check_nlevel(level)
-            self.check_velocity_constraint_num(sims, inodes.shape[0] * nlevel)
-            xvelocity = DictIO.GetAlternative(boundary, "VelocityX", None)
-            yvelocity = DictIO.GetAlternative(boundary, "VelocityY", None)
-            zvelocity = DictIO.GetAlternative(boundary, "VelocityZ", None)
-            velocity = DictIO.GetAlternative(boundary, "Velocity", default_val)
-
-            if sims.dimension == 2 and len(velocity) == 2:
-                velocity.append(0.)
-
-            if not velocity[0] is None or not velocity[1] is None or not velocity[2] is None:
-                xvelocity = velocity[0]
-                yvelocity = velocity[1]
-                zvelocity = velocity[2]
-
-            if xvelocity is None and yvelocity is None and zvelocity is None:
-                raise KeyError("The prescribed velocity has not been set")
-            
-            fix_v, velocity = [0, 0, 0], [0., 0., 0.]
-            if not xvelocity is None:
-                fix_v[0] = 1
-                velocity[0] = xvelocity
-            if not yvelocity is None:
-                fix_v[1] = 1
-                velocity[1] = yvelocity
-            if not zvelocity is None:
-                fix_v[2] = 1
-                velocity[2] = zvelocity
-            
-            if sims.dimension == 2:
-                for i in range(level, level + nlevel):
-                    set_velocity_constraint2D(self.velocity_list, self.velocity_boundary, inodes, vec2i(fix_v[0], fix_v[1]), vec2f(velocity[0], velocity[1]), i)
-                copy_valid_velocity_constraint2D(self.velocity_list, self.velocity_boundary)
-            elif sims.dimension == 3:
-                for i in range(level, level + nlevel):
-                    set_velocity_constraint(self.velocity_list, self.velocity_boundary, inodes, vec3i(fix_v), vec3f(velocity), i)
-                copy_valid_velocity_constraint(self.velocity_list, self.velocity_boundary)
-
-            print("Boundary Type: Velocity Constraint")
-            print("Start Point: ", start_point)
-            print("End Point: ", end_point)
-            if not xvelocity is None:
-                print("Prescribed Velocity along X axis = ", float(xvelocity))
-            if not yvelocity is None:
-                print("Prescribed Velocity along Y axis = ", float(yvelocity))
-            if not zvelocity is None:
-                print("Prescribed Velocity along Z axis = ", float(zvelocity))
-            print('\n')
-
-        elif boundary_type == "ReflectionConstraint":
-            if self.reflection_boundary is None:
-                raise RuntimeError("Error:: /max_reflection_constraint/ is set as zero!")
-
-            level, nlevel = self.check_nlevel(level)
-            self.check_reflection_constraint_num(sims, inodes.shape[0] * nlevel)
-            norm = DictIO.GetEssential(boundary, "Norm")
-
-            if sims.dimension == 2:
-                for i in range(level, level + nlevel):
-                    set_reflection_constraint2D(self.reflection_list, self.reflection_boundary, inodes, norm, i)
-                copy_valid_reflection_constraint2D(self.reflection_list, self.reflection_boundary)
-            elif sims.dimension == 3:
-                for i in range(level, level + nlevel):
-                    set_reflection_constraint(self.reflection_list, self.reflection_boundary, inodes, norm, i)
-                copy_valid_reflection_constraint(self.reflection_list, self.reflection_boundary)
-            
-            print("Boundary Type: Reflection Constraint")
-            print("Start Point: ", start_point)
-            print("End Point: ", end_point)
-            print("Outer Normal Vector = ", norm, '\n')
-        
-        elif boundary_type == "FrictionConstraint":
-            if self.friction_boundary is None:
-                raise RuntimeError("Error:: /max_friction_constraint/ is set as zero!")
-
-            level, nlevel = self.check_nlevel(level)
-            self.check_friction_constraint_num(sims, inodes.shape[0] * nlevel)
-            mu = DictIO.GetEssential(boundary, "Friction")
-            norm = DictIO.GetEssential(boundary, "Norm")
-
-            if sims.dimension == 2:
-                for i in range(level, level + nlevel):
-                    set_friction_constraint2D(self.friction_list, self.friction_boundary, inodes, mu, norm, i)
-                copy_valid_friction_constraint2D(self.friction_list, self.friction_boundary)
-            elif sims.dimension == 3:
-                for i in range(level, level + nlevel):
-                    set_friction_constraint(self.friction_list, self.friction_boundary, inodes, mu, norm, i)
-                copy_valid_friction_constraint(self.friction_list, self.friction_boundary)
-            
-            print("Boundary Type: Friction Constraint")
-            print("Start Point: ", start_point)
-            print("End Point: ", end_point)
-            print("Outer Normal Vector = ", norm)
-            print("Friction Angle = ", mu, '\n')
-            
-        elif boundary_type == "AbsorbingConstraint":
-            if self.absorbing_boundary is None:
-                raise RuntimeError("Error:: /max_absorbing_constraint/ is set as zero!")
-
-            level, nlevel = self.check_nlevel(level)
-            self.check_absorbing_constraint_num(sims, inodes.shape[0] * nlevel)
-
-        elif boundary_type == "TractionConstraint":
-            if self.traction_boundary is None:
-                raise RuntimeError("Error:: /max_traciton_constraint/ is set as zero!")
-
-            level, nlevel = self.check_nlevel(level)
-            self.check_traction_constraint_num(sims, inodes.shape[0] * nlevel)
-            fex = DictIO.GetEssential(boundary, "ExternalForce")
-            
-            if sims.dimension == 2:
-                for i in range(level, level + nlevel):
-                    if self.is_rigid[i] == 0:
-                        set_traction_contraint2D(self.traction_list, self.traction_boundary, inodes, fex, i) 
-                    else:
-                        raise ValueError(f"Traction boundary will be assigned on rigid body (bodyID = {i})")
-                copy_valid_traction_constraint2D(self.traction_list, self.traction_boundary)
-            elif sims.dimension == 3:
-                for i in range(level, level + nlevel):
-                    if self.is_rigid[i] == 0:
-                        set_traction_contraint(self.traction_list, self.traction_boundary, inodes, fex, i) 
-                    else:
-                        raise ValueError(f"Traction boundary will be assigned on rigid body (bodyID = {i})")
-                copy_valid_traction_constraint(self.traction_list, self.traction_boundary)
-
-            print("Boundary Type: Traction Constraint")
-            print("Start Point: ", start_point)
-            print("End Point: ", end_point)
-            print("Grid Force = ", fex, '\n')
-
-        elif boundary_type == "DisplacementConstraint":
-            if sims.solver_type != "Implicit":
-                raise RuntimeError("Only Implicit solver can assign displacement boundary conditions")
-        
-            if self.displacement_boundary is None:
-                raise RuntimeError("Error:: dataclass /displacement_boundary/ is not activated!")
-            
-            default_val = [None, None, None] if sims.dimension == 3 else [None, None, 0]
-
-            xdisplacement = DictIO.GetAlternative(boundary, "DisplacementX", None)
-            ydisplacement = DictIO.GetAlternative(boundary, "DisplacementY", None)
-            zdisplacement = DictIO.GetAlternative(boundary, "DisplacementZ", None)
-            displacement = DictIO.GetAlternative(boundary, "Displacement", default_val)
-
-            if sims.dimension == 2 and len(displacement) == 2:
-                displacement.append(0.)
-
-            if not displacement[0] is None or not displacement[1] is None or not displacement[2] is None:
-                xdisplacement = displacement[0]
-                ydisplacement = displacement[1]
-                zdisplacement = displacement[2]
-
-            if xdisplacement is None and ydisplacement is None and zdisplacement is None:
-                raise KeyError("The prescribed displacement has not been set")
-            
-            dofs, velocity = [0, 0, 0], [0., 0., 0.]
-            if not xdisplacement is None:
-                dofs[0] = 1
-                displacement[0] = xdisplacement
-            if not ydisplacement is None:
-                dofs[1] = 1
-                displacement[1] = ydisplacement
-            if not zdisplacement is None:
-                dofs[2] = 1
-                displacement[2] = zdisplacement
-
-            fix_dofs = dofs[0] + dofs[1] + dofs[2] if sims.dimension == 3 else dofs[0] + dofs[1]
-
-            level, nlevel = self.check_nlevel(level)
-            self.check_displacement_constraint_num(sims, inodes.shape[0] * nlevel * fix_dofs)
-
-            for i in range(level, level + nlevel):
-                if self.is_rigid[i] == 0:
-                    set_displacement_contraint(self.displacement_list, self.displacement_boundary, inodes, dofs, displacement, i, fix_dofs) 
-                else:
-                    raise ValueError(f"Implicit MPM is not supported for rigid body")
-            
-            print("Boundary Type: Displacement Constraint")
-            print("Start Point: ", start_point)
-            print("End Point: ", end_point)
-            print("Degree of freedom = ", dofs)
-            print("Displacement = ", displacement, '\n')
-
-
-    def clear_boundary_constraint(self, sims: Simulation, boundary):
-        boundary_type = DictIO.GetEssential(boundary, "BoundaryType")
-        level = DictIO.GetAlternative(boundary, "NLevel", "All")
-        start_point = DictIO.GetAlternative(boundary, "StartPoint", vec3f(0, 0, 0))
-        end_point = DictIO.GetEssential(boundary, "EndPoint", sims.domain)
-        inodes = self.element.get_boundary_nodes(start_point, end_point)
-        print("Start Point: ", start_point)
-        print("End Point: ", end_point, '\n')
-
-        if boundary_type == "VelocityConstraint":
-            level, nlevel = self.check_nlevel()
-            for i in range(level, level + nlevel):
-                clear_constraint(self.velocity_list, self.velocity_boundary, inodes, i)
-
-            if sims.dimension == 2:
-                copy_valid_velocity_constraint2D(self.velocity_list, self.velocity_boundary)
-            elif sims.dimension == 3:
-                copy_valid_velocity_constraint(self.velocity_list, self.velocity_boundary)
-
-        elif boundary_type == "ReflectionConstraint":
-            level, nlevel = self.check_nlevel()
-            for i in range(level, level + nlevel):
-                clear_constraint(self.reflection_list, self.reflection_boundary, inodes, i)
-
-            if sims.dimension == 2:
-                copy_valid_reflection_constraint2D(self.reflection_list, self.reflection_boundary)
-            elif sims.dimension == 3:
-                copy_valid_reflection_constraint(self.reflection_list, self.reflection_boundary)
-
-        elif boundary_type == "FrictionConstraint":
-            level, nlevel = self.check_nlevel()
-            for i in range(level, level + nlevel):
-                clear_constraint(self.friction_list, self.friction_boundary, inodes, i)
-            
-            if sims.dimension == 2:
-                copy_valid_friction_constraint2D(self.friction_list, self.friction_boundary)
-            elif sims.dimension == 3:
-                copy_valid_friction_constraint(self.friction_list, self.friction_boundary)
-
-        elif boundary_type == "AbsorbingConstraint":
-            pass
-
-        elif boundary_type == "TractionConstraint":
-            level, nlevel = self.check_nlevel()
-            for i in range(level, level + nlevel):
-                clear_constraint(self.traction_list, self.traction_boundary, inodes, i) 
-
-            if sims.dimension == 2:
-                copy_valid_traction_constraint2D(self.traction_list, self.traction_boundary)
-            elif sims.dimension == 3:    
-                copy_valid_traction_constraint(self.traction_list, self.traction_boundary)
-
-        elif boundary_type == "DisplacementConstraint":
-            level, nlevel = self.check_nlevel()
-            for i in range(level, level + nlevel):
-                clear_displacement_constraint(self.displacement_boundary, inodes, i) 
-
-    def check_nlevel(self, level):
-        if level == "All":
-            level = 0
-            nlevel = self.node.shape[1]
-        elif type(level)is int and level < self.node.shape[1]:
-            nlevel = 1
-        else:
-            raise ValueError("NLevel should be smaller than the grid level")
-        return level, nlevel
-
-    def read_boundary_constraint(self, sims: Simulation, boundary_constraint):
-        print(" Read Boundary Information ".center(71,"-"))
-        if not os.path.exists(boundary_constraint):
-            raise EOFError("Invaild path")
-
-        boundary_constraints = open(boundary_constraint, 'r')
-        while True:
-            line = str.split(boundary_constraints.readline())
-            if not line: break
-
-            elif line[0] == '#': continue
-
-            elif line[0] == "VelocityConstraint":
-                if self.velocity_boundary is None:
-                    raise RuntimeError("Error:: /max_velocity_constraint/ is set as zero!")
-
-                boundary_size = int(line[1])
-                self.check_velocity_constraint_num(sims, boundary_size)
-                for _ in range(boundary_size):
-                    boundary = str.split(boundary_constraints.readline())
-                    self.velocity_boundary[self.velocity_list[0]].set_boundary_condition(int(boundary[0]), int(boundary[1]),
-                                                                                            vec3f(float(boundary[2]), float(boundary[3]), float(boundary[4])),
-                                                                                            vec3f(float(boundary[5]), float(boundary[6]), float(boundary[7])))
-                    self.velocity_list[0] += 1
-
-            elif line[0] == "ReflectionConstraint":
-                if self.reflection_boundary is None:
-                    raise RuntimeError("Error:: /max_reflection_constraint/ is set as zero!")
-
-                boundary_size = int(line[1])
-                self.check_reflection_constraint_num(sims, boundary_size)
-                for _ in range(boundary_size):
-                    boundary = str.split(boundary_constraints.readline())
-                    self.reflection_boundary[self.reflection_list[0]].set_boundary_condition(int(boundary[0]), int(boundary[1]), 
-                                                                                                vec3f(float(boundary[3]), float(boundary[4]), float(boundary[5])),
-                                                                                                vec3f(float(boundary[6]), float(boundary[7]), float(boundary[8])),
-                                                                                                vec3f(float(boundary[9]), float(boundary[10]), float(boundary[11])))
-                    self.reflection_list[0] += 1
-                    
-            elif line[0] == "FrictionConstraint":
-                if self.friction_boundary is None:
-                    raise RuntimeError("Error:: /max_friction_constraint/ is set as zero!")
-
-                boundary_size = int(line[1])
-                self.check_friction_constraint_num(sims, boundary_size)
-                for _ in range(boundary_size):
-                    boundary = str.split(boundary_constraints.readline())
-                    self.friction_boundary[self.friction_list[0]].set_boundary_condition(int(boundary[0]), int(boundary[1]), float(boundary[2]),
-                                                                                            vec3f(float(boundary[3]), float(boundary[4]), float(boundary[5])))
-                    self.friction_list[0] += 1
-                    
-            elif line[0] == "AbsorbingConstraint":
-                if self.absorbing_boundary is None:
-                    raise RuntimeError("Error:: /max_absorbing_constraint/ is set as zero!")
-
-                boundary_size = int(line[1])
-                self.check_absorbing_constraint_num(sims, boundary_size)
-                    
-            elif line[0] == "TractionConstraint":
-                if self.traction_boundary is None:
-                    raise RuntimeError("Error:: /max_traction_constraint/ is set as zero!")
-
-                boundary_size = int(line[1])
-                self.check_velocity_constraint_num(sims, boundary_size)
-                for _ in range(boundary_size):
-                    boundary = str.split(boundary_constraints.readline())
-                    self.traction_boundary[self.traction_list[0]].set_boundary_condition(int(boundary[0]), int(boundary[1]),
-                                                                                            vec3f(float(boundary[2]), float(boundary[3]), float(boundary[4])))
-                    self.traction_list[0] += 1
-
-            elif line[0] == "DisplacementConstraint":
-                pass
-
-    def write_boundary_constraint(self, output_path):
-        if not os.path.exists(output_path):
-            os.mkdir(output_path)
-
-        if self.velocity_list[0] > 0:
-            pass
-        if self.reflection_list[0] > 0:
-            pass
-        if self.friction_list[0] > 0:
-            pass
-        if self.absorbing_list[0] > 0:
-            pass
-        if self.traction_list[0] > 0:
-            pass
 
     def get_material_ptr(self):
         return self.material
@@ -672,57 +320,36 @@ class myScene(object):
     
     def get_particle_ptr(self):
         return self.particle
-    
-    def check_velocity_constraint_num(self, sims: Simulation, constraint_num):
-        if self.velocity_list[0] + constraint_num > sims.nvelocity:
-            raise ValueError ("The number of velocity constraints should be set as: ", self.velocity_list[0] + constraint_num)
-        
-    def check_reflection_constraint_num(self, sims: Simulation, constraint_num):
-        if self.reflection_list[0] + constraint_num > sims.nreflection:
-            raise ValueError ("The number of reflection constraints should be set as: ", self.reflection_list[0] + constraint_num)
-        
-    def check_friction_constraint_num(self, sims: Simulation, constraint_num):
-        if self.friction_list[0] + constraint_num > sims.nfriction:
-            raise ValueError ("The number of friction constraints should be set as: ", self.friction_list[0] + constraint_num)
-        
-    def check_absorbing_constraint_num(self, sims: Simulation, constraint_num):
-        if self.absorbing_list[0] + constraint_num > sims.nabsorbing:
-            raise ValueError ("The number of absorbing constraints should be set as: ", self.absorbing_list[0] + constraint_num)
-        
-    def check_traction_constraint_num(self, sims: Simulation, constraint_num):
-        if self.traction_list[0] + constraint_num > sims.ntraction:
-            raise ValueError ("The number of traction constraints should be set as: ", self.traction_list[0] + constraint_num)
-        
-    def check_displacement_constraint_num(self, sims: Simulation, constraint_num):
-        if self.displacement_list[0] + constraint_num > sims.ndisplacement:
-            raise ValueError ("The number of displacement constraints should be set as: ", self.displacement_list[0] + constraint_num)
         
     def check_particle_num(self, sims: Simulation, particle_number):
         if self.particleNum[0] + particle_number > sims.max_particle_num:
             raise ValueError ("The MPM particles should be set as: ", self.particleNum[0] + particle_number)
 
     def find_min_z_position(self):
-        return find_min_z_position_(self.particleNum[0], self.particle)
+        return find_min_z_position_(int(self.particleNum[0]), self.particle)
+    
+    def find_min_y_position(self):
+        return find_min_y_position_(int(self.particleNum[0]), self.particle)
     
     def find_bounding_sphere_radius(self):
-        rad_max = find_particle_max_radius_(self.particleNum[0], self.particle)
-        rad_min = find_particle_min_radius_(self.particleNum[0], self.particle)
+        rad_max = find_particle_max_radius_(int(self.particleNum[0]), self.particle)
+        rad_min = find_particle_min_radius_(int(self.particleNum[0]), self.particle)
         return rad_max, rad_min
     
     def find_particle_min_radius(self):
-        return find_particle_min_radius_(self.particleNum[0], self.particle)
+        return find_particle_min_radius_(int(self.particleNum[0]), self.particle)
     
     def find_particle_max_radius(self):
-        return find_particle_max_radius_(self.particleNum[0], self.particle)
+        return find_particle_max_radius_(int(self.particleNum[0]), self.particle)
     
     def find_particle_min_mass(self):
-        return find_particle_min_mass_(self.particleNum[0], self.particle)
+        return find_particle_min_mass_(int(self.particleNum[0]), self.particle)
     
     def reset_verlet_disp(self):
-        reset_verlet_disp_(self.particleNum[0], self.particle)
+        reset_verlet_disp_(int(self.particleNum[0]), self.particle)
 
     def get_critical_timestep(self):
-        max_vel = find_max_velocity_(self.particleNum[0], self.particle)
+        max_vel = find_max_velocity_(int(self.particleNum[0]), self.particle)
         max_vel += self.material.find_max_sound_speed()
         return self.element.calc_critical_timestep(max_vel)
     
@@ -741,153 +368,140 @@ class myScene(object):
                 density += self.material.matProps[nm].density
                 matcount += 1
         grid_size = self.element.grid_size
-        self.mass_cut_off = 1e-5 * density / matcount * grid_size[0] * grid_size[1] * grid_size[2]
-        self.volume_cut_off = 1e-5 * grid_size[0] * grid_size[1] * grid_size[2]
+        if sims.dimension == 3:
+            self.mass_cut_off = 1e-8 * density / matcount * grid_size[0] * grid_size[1] * grid_size[2]
+            self.volume_cut_off = 1e-8 * grid_size[0] * grid_size[1] * grid_size[2]
+        elif sims.dimension == 2:
+            self.mass_cut_off = 1e-8 * density / matcount * grid_size[0] * grid_size[1]
+            self.volume_cut_off = 1e-5 * grid_size[0] * grid_size[1]
     
-    def update_particle_properties_in_region(self, override, property_name, value, is_in_region):
+    def update_particle_properties_in_region(self, sims: Simulation, override, property_name, value, is_in_region):
         print(" Modify Particle Information ".center(71, '-'))
         print("Target Property =", property_name)
         print("Target Value =", value)
         print("Override =", override, '\n')
 
-        override = 1 if not override else 0
+        factor = 1 if not override else 0
         if property_name == "bodyID":
-            modify_particle_bodyID_in_region(value, self.particleNum[0], self.particle, is_in_region)
+            modify_particle_bodyID_in_region(value, int(self.particleNum[0]), self.particle, is_in_region)
         elif property_name == "materialID":
-            modify_particle_materialID_in_region(value, self.particleNum[0], self.particle, self.material.matProps, is_in_region)
+            modify_particle_materialID_in_region(value, int(self.particleNum[0]), self.particle, self.material.matProps, is_in_region)
         elif property_name == "position":
-            modify_particle_position_in_region(override, value, self.particleNum[0], self.particle, is_in_region)
+            if sims.dimension == 3:
+                modify_particle_position_in_region(factor, value, int(self.particleNum[0]), self.particle, is_in_region)
+            elif sims.dimension == 2:
+                modify_particle_position_in_region_2D(factor, value, int(self.particleNum[0]), self.particle, is_in_region)
         elif property_name == "velocity":
-            modify_particle_velocity_in_region(override, value, self.particleNum[0], self.particle, is_in_region)
-        elif property_name == "traction":
-            modify_particle_traction_in_region(override, value, self.particleNum[0], self.particle, is_in_region)
+            if sims.dimension == 3:
+                modify_particle_velocity_in_region(factor, value, int(self.particleNum[0]), self.particle, is_in_region)
+            elif sims.dimension == 2:
+                modify_particle_velocity_in_region_2D(factor, value, int(self.particleNum[0]), self.particle, is_in_region)
         elif property_name == "stress":
-            modify_particle_stress_in_region(override, value, self.particleNum[0], self.particle, is_in_region)
+            modify_particle_stress_in_region(factor, value, int(self.particleNum[0]), self.particle, is_in_region)
         elif property_name == "fix_velocity":
             FIX = {
                     "Free": 0,
                     "Fix": 1
                    }
             fix_v = vec3u8([DictIO.GetEssential(FIX, is_fix) for is_fix in value])
-            modify_particle_fix_v_in_region(fix_v, self.particleNum[0], self.particle, is_in_region)
+            modify_particle_fix_v_in_region(fix_v, int(self.particleNum[0]), self.particle, is_in_region)
         else:
             valid_list = ["bodyID", "materialID", "position", "velocity", "traction", "stress", "fix_velocity"]
             raise KeyError(f"Invalid property_name: {property_name}! Only the following keywords is valid: {valid_list}")
         
-    def update_particle_properties(self, override, property_name, value, bodyID):
+    def update_particle_properties(self, sims: Simulation, override, property_name, value, bodyID):
         print(" Modify Body Information ".center(71, '-'))
         print("Target BodyID =", bodyID)
         print("Target Property =", property_name)
         print("Target Value =", value)
         print("Override =", override, '\n')
 
-        override = 1 if not override else 0
+        factor = 1 if not override else 0
         if property_name == "bodyID":
-            modify_particle_bodyID(value, self.particleNum[0], self.particle, bodyID)
+            modify_particle_bodyID(value, int(self.particleNum[0]), self.particle, bodyID)
         elif property_name == "materialID":
-            modify_particle_materialID(value, self.particleNum[0], self.particle, self.material.matProps, bodyID)
+            modify_particle_materialID(value, int(self.particleNum[0]), self.particle, self.material.matProps, bodyID)
         elif property_name == "position":
-            modify_particle_position(override, value, self.particleNum[0], self.particle, bodyID)
+            if sims.dimension == 3:
+                modify_particle_position(factor, value, int(self.particleNum[0]), self.particle, bodyID)
+            elif sims.dimension == 2:
+                modify_particle_position_2D(factor, value, int(self.particleNum[0]), self.particle, bodyID)
         elif property_name == "velocity":
-            modify_particle_velocity(override, value, self.particleNum[0], self.particle, bodyID)
-        elif property_name == "traction":
-            modify_particle_traction(override, value, self.particleNum[0], self.particle, bodyID)
+            if sims.dimension == 3:
+                modify_particle_velocity(factor, value, int(self.particleNum[0]), self.particle, bodyID)
+            elif sims.dimension == 2:
+                modify_particle_velocity_2D(factor, value, int(self.particleNum[0]), self.particle, bodyID)
         elif property_name == "stress":
-            modify_particle_stress(override, value, self.particleNum[0], self.particle, bodyID)
+            modify_particle_stress(factor, value, int(self.particleNum[0]), self.particle, bodyID)
         elif property_name == "fix_velocity":
             FIX = {
                     "Free": 0,
                     "Fix": 1
                    }
             fix_v = vec3u8([DictIO.GetEssential(FIX, is_fix) for is_fix in value])
-            modify_particle_fix_v(fix_v, self.particleNum[0], self.particle, bodyID)
+            modify_particle_fix_v(fix_v, int(self.particleNum[0]), self.particle, bodyID)
         else:
             valid_list = ["bodyID", "materialID", "position", "velocity", "traction", "stress", "fix_velocity"]
             raise KeyError(f"Invalid property_name: {property_name}! Only the following keywords is valid: {valid_list}")
 
     def check_overlap_coupling(self):
         initial_particle = self.particleNum[0]
-        self.particleNum[0] = update_particle_storage_(self.particleNum[0], self.particle, self.material.stateVars)
+        self.particleNum[0] = update_particle_storage_(int(int(self.particleNum[0])), self.particle, self.material.stateVars)
         finial_particle = self.particleNum[0]
         print(f"Total {-finial_particle + initial_particle} particles has been deleted", '\n')
         
     def delete_particles(self, bodyID):
         initial_particle = self.particleNum[0]
         kernel_delete_particles(self.particleNum[0], self.particle, bodyID)
-        self.particleNum[0] = update_particle_storage_(self.particleNum[0], self.particle, self.material.stateVars)
+        self.particleNum[0] = update_particle_storage_(int(self.particleNum[0]), self.particle, self.material.stateVars)
         finial_particle = self.particleNum[0]
         print(f"Total {-finial_particle + initial_particle} particles has been deleted", '\n')
 
     def delete_particles_in_region(self, is_in_region):
         initial_particle = self.particleNum[0]
         kernel_delete_particles_in_region(self.particleNum[0], self.particle, is_in_region)
-        self.particleNum[0] = update_particle_storage_(self.particleNum[0], self.particle, self.material.stateVars)
+        self.particleNum[0] = update_particle_storage_(int(self.particleNum[0]), self.particle, self.material.stateVars)
         finial_particle = self.particleNum[0]
         print(f"Total {-finial_particle + initial_particle} particles has been deleted", '\n')
 
-    def check_particle_in_domain(self, sims: Simulation):
-        check_in_domain(sims.domain, self.particleNum[0], self.particle)
+    def check_in_domain(self, sims: Simulation):
+        check_in_domain(sims.domain, int(self.particleNum[0]), self.particle)
 
-    def set_boundary(self, sims: Simulation):
-        if sims.boundary[0] == 0:
-            start_point = vec3f(0, 0, 0)
-            end_point = vec3f(0, sims.domain[1], sims.domain[2])
-            norm = vec3f(-1, 0, 0)
-            self.set_boundary_conditions(sims, boundary={
-                                                             "BoundaryType":   "ReflectionConstraint",
-                                                             "Norm":           norm,
-                                                             "StartPoint":     start_point,
-                                                             "EndPoint":       end_point
-                                                        })
-            
-            start_point = vec3f(sims.domain[0], 0, 0)
-            end_point = vec3f(sims.domain[0], sims.domain[1], sims.domain[2])
-            norm = vec3f(1, 0, 0)
-            self.set_boundary_conditions(sims, boundary={
-                                                             "BoundaryType":   "ReflectionConstraint",
-                                                             "Norm":           norm,
-                                                             "StartPoint":     start_point,
-                                                             "EndPoint":       end_point
-                                                        })
-        if sims.boundary[1] == 0:
-            start_point = vec3f(0, 0, 0)
-            end_point = vec3f(sims.domain[0], 0, sims.domain[2])
-            norm = vec3f(0, -1, 0)
-            self.set_boundary_conditions(sims, boundary={
-                                                             "BoundaryType":   "ReflectionConstraint",
-                                                             "Norm":           norm,
-                                                             "StartPoint":     start_point,
-                                                             "EndPoint":       end_point
-                                                        })
-            
-            start_point = vec3f(0, sims.domain[1], 0)
-            end_point = vec3f(sims.domain[0], sims.domain[1], sims.domain[2])
-            norm = vec3f(0, 1, 0)
-            self.set_boundary_conditions(sims, boundary={
-                                                             "BoundaryType":   "ReflectionConstraint",
-                                                             "Norm":           norm,
-                                                             "StartPoint":     start_point,
-                                                             "EndPoint":       end_point
-                                                        })
-            
-        if sims.boundary[2] == 0:
-            start_point = vec3f(0, 0, 0)
-            end_point = vec3f(sims.domain[0], sims.domain[1], 0)
-            norm = vec3f(0, 0, -1)
-            self.set_boundary_conditions(sims, boundary={
-                                                             "BoundaryType":   "ReflectionConstraint",
-                                                             "Norm":           norm,
-                                                             "StartPoint":     start_point,
-                                                             "EndPoint":       end_point
-                                                        })
-            
-            start_point = vec3f(0, 0, sims.domain[2])
-            end_point = vec3f(sims.domain[0], sims.domain[1], sims.domain[2])
-            norm = vec3f(0, 0, 1)
-            self.set_boundary_conditions(sims, boundary={
-                                                             "BoundaryType":   "ReflectionConstraint",
-                                                             "Norm":           norm,
-                                                             "StartPoint":     start_point,
-                                                             "EndPoint":       end_point
-                                                        })
-            
+    def get_mass_center(self, bodyID=0):
+        return kernel_compute_mass_center(int(self.particleNum[0]), self.particle, bodyID)
+    
+    def choose_coupling_region(self, sims: Simulation, function):
+        if sims.coupling:
+            kernel_update_coupling_material_points(int(self.particleNum[0]), self.particle, function)
+
+    def update_coupling_points_number(self, sims: Simulation):
+        need_coupling = kernel_compute_coupling_material_points_number(int(self.particleNum[0]), self.particle)
+        sims.set_coupling_particles(need_coupling)
+
+    def filter_particles(self, sims: Simulation):
+        if sims.coupling:
+            kernel_tranverse_coupling_particle(int(self.particleNum[0]), self.particle)
+        else:
+            kernel_tranverse_active_particle(int(self.particleNum[0]), self.particle)
+
+    def check_elastic_material(self):
+        return self.material.is_elastic
+    
+    def push_psize(self, particleNum, psize):
+        psize = list(psize)
+        dim = len(psize)
+        if np.array(psize).ndim == 2:
+            dim = len(psize[0])
+        self.psize = np.append(self.psize, np.repeat([psize], particleNum, axis=0)).reshape(-1, dim)
+
+    def set_boundary_condition(self, sims: Simulation):
+        self.domain_boundary = DomainBoundary(sims.domain)
+        self.domain_boundary.set_boundary_condition(sims.boundary)
+        if self.domain_boundary.need_run:
+            self.apply_boundary_conditions = self.apply_boundary_condition
+        else:
+            self.apply_boundary_conditions = no_operation
+
+    def apply_boundary_condition(self):
+        if self.domain_boundary.apply_boundary_conditions(int(self.particleNum[0]), self.particle):
+            update_particle_storage_(self.particleNum, self.particle, self.material.stateVars)

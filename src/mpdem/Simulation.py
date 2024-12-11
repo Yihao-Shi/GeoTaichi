@@ -1,5 +1,5 @@
 import taichi as ti
-import numpy as np
+import math
 
 from src.dem.Simulation import Simulation as DEMSimulation
 from src.mpm.Simulation import Simulation as MPMSimulation
@@ -10,7 +10,6 @@ class Simulation(object):
     def __init__(self) -> None:
         self.domain = vec3f(0., 0., 0.)
         self.coupling_scheme = "DEM-MPM"
-        self.contact_method = 'P2P'
         self.particle_interaction = True
         self.wall_interaction = False
         self.is_continue = True
@@ -30,6 +29,9 @@ class Simulation(object):
         self.window_size = 1024
         self.path = None
 
+        self.min_bounding_rad = 0.
+        self.max_bounding_rad = 0.
+
         self.max_material_num = 0.
         self.body_coordination_number = 15
         self.wall_coordination_number = 10
@@ -37,6 +39,9 @@ class Simulation(object):
         self.max_potential_particle_pairs = 0.
         self.max_potential_wall_pairs = 0.
         self.compaction_ratio = [0.4, 0.3]
+
+        self.particle_contact_list_length = 0
+        self.wall_contact_list_length = 0
 
         self.particle_particle_contact_model = None
         self.particle_wall_contact_model = None
@@ -96,6 +101,8 @@ class Simulation(object):
         self.wall_coordination_number = wall_coordination_number
 
     def set_compaction_ratio(self, compaction_ratio):
+        if isinstance(compaction_ratio, (float, int)):
+            compaction_ratio = [compaction_ratio, compaction_ratio]
         self.compaction_ratio = compaction_ratio
 
     def set_particle_particle_contact_model(self, model):
@@ -110,10 +117,6 @@ class Simulation(object):
         if self.wall_interaction is False: model = None
         self.particle_wall_contact_model = model
 
-    def set_contact_method(self, msims: MPMSimulation):
-        if msims.free_surface_detection:
-            self.contact_method = 'implicitP2S'
-
     def update_critical_timestep(self, msims: MPMSimulation, dsims: DEMSimulation, dt):
         print("The time step is corrected as:", dt, '\n')
         self.dt[None] = dt
@@ -126,6 +129,15 @@ class Simulation(object):
     def set_potential_list_size(self, msims: MPMSimulation, dsims: DEMSimulation, dem_rad_max, mpm_rad_max):
         potential_particle_ratio = ((dem_rad_max + mpm_rad_max + msims.verlet_distance + dsims.verlet_distance) / (dem_rad_max + mpm_rad_max)) ** 3
         self.potential_particle_num = int(potential_particle_ratio * self.body_coordination_number)
-        self.max_potential_particle_pairs = int(self.potential_particle_num * msims.max_particle_num)
+        self.max_potential_particle_pairs = int(self.potential_particle_num * msims.max_coupling_particle_particle)
+        self.particle_contact_list_length = int(math.ceil(self.compaction_ratio[0] * self.max_potential_particle_pairs))
         if dsims.max_wall_num > 0 and self.wall_interaction:
-            self.max_potential_wall_pairs = int(self.wall_coordination_number * msims.max_particle_num)    
+            self.max_potential_wall_pairs = int(self.wall_coordination_number * msims.max_coupling_particle_particle)    
+            if dsims.wall_type == 3:
+                self.wall_contact_list_length = int(msims.max_coupling_particle_particle)
+            else:
+                self.wall_contact_list_length = int(math.ceil(self.compaction_ratio[1] * self.max_potential_wall_pairs))
+
+    def set_bounding_sphere(self, rad_min, rad_max):
+        self.min_bounding_rad = rad_min
+        self.max_bounding_rad = rad_max

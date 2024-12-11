@@ -1,6 +1,3 @@
-import sys
-sys.path.append('/home/eleven/work/GeoTaichi')
-
 from src import *
 
 init(arch="gpu", debug=False)

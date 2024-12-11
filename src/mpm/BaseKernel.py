@@ -1,7 +1,26 @@
 import taichi as ti
 
 from src.utils.constants import MThreshold, Threshold, ZEROVEC3f
-from src.utils.VectorFunction import SquareLen, Zero2OneVector, linear_id
+from src.utils.ScalarFunction import linearize
+from src.utils.VectorFunction import SquareLen
+from src.utils.BitFunction import Zero2OneVector
+from src.utils.TypeDefination import vec3f
+
+
+@ti.kernel
+def kernel_update_coupling_material_points(particleNum: int, particle: ti.template(), is_in_region: ti.template()):
+    for np in range(particleNum):
+        if not is_in_region(particle[np].x):
+            particle[np].coupling = ti.u8(0)
+
+
+@ti.kernel
+def kernel_compute_coupling_material_points_number(particleNum: int, particle: ti.template()) -> int:
+    need_coupling = 0
+    for np in range(particleNum):
+        if int(particle[np].coupling) == 1:
+            need_coupling += 1
+    return need_coupling
 
 
 @ti.kernel
@@ -21,6 +40,14 @@ def find_max_radius_(particleNum: int, particle: ti.template()) -> float:
     for np in range(particleNum):
         ti.atomic_max(rmax, particle[np].rad)
     return rmax
+
+@ti.kernel
+def find_min_y_position_(particleNum: int, particle: ti.template()) -> float:
+    min_ypos = MThreshold
+    for np in range(particleNum):
+        ypos = particle[np].x[1]
+        ti.atomic_min(min_ypos, ypos)
+    return min_ypos
 
 @ti.kernel
 def find_min_z_position_(particleNum: int, particle: ti.template()) -> float:
@@ -82,6 +109,20 @@ def modify_particle_materialID_in_region(value: int, particleNum: int, particle:
 
 
 @ti.kernel
+def modify_particle_position_in_region_2D(factor: int, value: ti.types.vector(2, float), particleNum: int, particle: ti.template(), is_in_region: ti.template()):
+    for np in range(particleNum):
+        if is_in_region(particle[np].x):
+            particle[np].x = factor * particle[np].x + value
+
+
+@ti.kernel
+def modify_particle_velocity_in_region_2D(factor: int, value: ti.types.vector(2, float), particleNum: int, particle: ti.template(), is_in_region: ti.template()):
+    for np in range(particleNum):
+        if is_in_region(particle[np].x):
+            particle[np].v = factor * particle[np].v + value
+
+
+@ti.kernel
 def modify_particle_position_in_region(factor: int, value: ti.types.vector(3, float), particleNum: int, particle: ti.template(), is_in_region: ti.template()):
     for np in range(particleNum):
         if is_in_region(particle[np].x):
@@ -93,13 +134,6 @@ def modify_particle_velocity_in_region(factor: int, value: ti.types.vector(3, fl
     for np in range(particleNum):
         if is_in_region(particle[np].x):
             particle[np].v = factor * particle[np].v + value
-
-
-@ti.kernel
-def modify_particle_traction_in_region(factor: int, value: ti.types.vector(3, float), particleNum: int, particle: ti.template(), is_in_region: ti.template()):
-    for np in range(particleNum):
-        if is_in_region(particle[np].x):
-            particle[np].traction = factor * particle[np].traction + value
 
 
 @ti.kernel
@@ -147,10 +181,17 @@ def modify_particle_velocity(factor: int, value: ti.types.vector(3, float), part
 
 
 @ti.kernel
-def modify_particle_traction(factor: int, value: ti.types.vector(3, float), particleNum: int, particle: ti.template(), bodyID: int):
+def modify_particle_position_2D(factor: int, value: ti.types.vector(2, float), particleNum: int, particle: ti.template(), bodyID: int):
     for np in range(particleNum):
         if particle[np].bodyID == ti.u8(bodyID):
-            particle[np].traction = factor * particle[np].traction + value
+            particle[np].x = factor * particle[np].x + value
+
+
+@ti.kernel
+def modify_particle_velocity_2D(factor: int, value: ti.types.vector(2, float), particleNum: int, particle: ti.template(), bodyID: int):
+    for np in range(particleNum):
+        if particle[np].bodyID == ti.u8(bodyID):
+            particle[np].v = factor * particle[np].v + value
 
 
 @ti.kernel
@@ -171,7 +212,7 @@ def modify_particle_fix_v(value: ti.types.vector(3, ti.u8), particleNum: int, pa
 @ti.kernel
 def kernel_initialize_particle_fbar(particle_fbar: ti.template()):
     for np in particle_fbar:
-        particle_fbar[np].initialize()
+        particle_fbar[np].jacobian = 1.
 
     
 @ti.kernel
@@ -229,7 +270,7 @@ def calculate_particles_position_(particleNum: int, igrid_size: float, particle:
     particle_count.fill(0)
     for np in range(particleNum):  
         grid_idx = ti.floor(particle[np].x * igrid_size , int)
-        cellID = linear_id(grid_idx, cnum)
+        cellID = linearize(grid_idx, cnum)
         ti.atomic_add(particle_count[cellID], 1)
     
 @ti.kernel
@@ -237,7 +278,7 @@ def insert_particle_to_cell_(igrid_size: float, particleNum: int, particle: ti.t
     particle_current.fill(0)
     for np in range(particleNum):
         grid_idx = ti.floor(particle[np].x * igrid_size , int)
-        cellID = linear_id(grid_idx, cnum)
+        cellID = linearize(grid_idx, cnum)
         grain_location = particle_count[cellID] - ti.atomic_add(particle_current[cellID], 1) - 1
         particleID[grain_location] = np
 
@@ -249,7 +290,7 @@ def calculate_particles_position_v2_(particleNum: int, igrid_size: float, partic
     for np in range(particleNum):  
         if particle[np].free_surface == ti.u8(1):
             grid_idx = ti.floor(particle[np].x * igrid_size , int)
-            cellID = linear_id(grid_idx, cnum)
+            cellID = linearize(grid_idx, cnum)
             ti.atomic_add(particle_count[cellID], 1)
     
 @ti.kernel
@@ -258,10 +299,35 @@ def insert_particle_to_cell_v2_(igrid_size: float, particleNum: int, particle: t
     for np in range(particleNum):
         if particle[np].free_surface == ti.u8(1):
             grid_idx = ti.floor(particle[np].x * igrid_size , int)
-            cellID = linear_id(grid_idx, cnum)
+            cellID = linearize(grid_idx, cnum)
             grain_location = particle_count[cellID] - ti.atomic_add(particle_current[cellID], 1) - 1
             particleID[grain_location] = np
 
+@ti.kernel
+def kernel_compute_mass_center(particleNum: int, particle: ti.template(), bodyID: int) -> ti.types.vector(3, float):
+    pcount = 0
+    mass_center = vec3f(0., 0., 0.)
+    for i in range(particleNum):
+        if bodyID != particle[i].bodyID: continue
+        mass_center += particle[i].x
+        pcount += 1
+    return mass_center / pcount
 
 
+@ti.kernel
+def kernel_tranverse_active_particle(particleNum: int, particle: ti.template()):
+    traverse_offset = 0
+    ti.loop_config(serialize=True)
+    for np in range(particleNum):
+        if int(particle[np].active) == 1:
+            particle[traverse_offset], particle[np] = particle[np], particle[traverse_offset]
+            traverse_offset += 1
 
+@ti.kernel
+def kernel_tranverse_coupling_particle(particleNum: int, particle: ti.template()):
+    traverse_offset = 0
+    ti.loop_config(serialize=True)
+    for np in range(particleNum):
+        if int(particle[np].coupling) == 1:
+            particle[traverse_offset], particle[np] = particle[np], particle[traverse_offset]
+            traverse_offset += 1

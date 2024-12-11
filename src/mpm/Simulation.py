@@ -1,32 +1,40 @@
 import taichi as ti
+import warnings
 
 from src.utils.ObjectIO import DictIO
-from src.utils.TypeDefination import vec3i, vec3f
+from src.utils.TypeDefination import vec2f, vec3i, vec3f
 
 
 class Simulation(object):
     def __init__(self) -> None:
         self.dimension = 3
-        self.domain = vec3f([0, 0, 0])
-        self.boundary = vec3i([0, 0, 0])
-        self.gravity = vec3f([0, 0, 0])
+        self.is_2DAxisy = False
+        self.domain = [0., 0., 0.]
+        self.boundary = [0, 0, 0]
+        self.gravity = [0., 0., 0.]
+        self.block_size = [128, 4]
         self.background = 0.
         self.alphaPIC = 0.
+        self.shape_smooth = 0.
         self.coupling = False
         self.neighbor_detection = False
         self.free_surface_detection = False
+        self.sparse_grid = False
         self.boundary_direction_detection = False
         self.stabilize = None
-        self.stress_smoothing = False
+        self.pressure_smoothing = False
         self.strain_smoothing = False
         self.mapping = None
         self.shape_function = None
         self.wall_type = None
         self.monitor_type = []
         self.gauss_number = 0
-        self.mls_order = 0
+        self.mls = False
         self.order = 2.
-        self.update = None
+        self.integration_scheme = None
+        self.visualize = True
+        self.particle_shifting = False
+        self.grid_layer = 0
 
         self.dt = ti.field(float, shape=())
         self.delta = 0.
@@ -40,11 +48,13 @@ class Simulation(object):
         self.max_particle_num = 0
         self.verlet_distance_multiplier = 0
         self.verlet_distance = 0.
+        self.max_coupling_particle_particle = 0
         self.nvelocity = 0
         self.nfriction = 0
         self.nreflection = 0
         self.nabsorbing = 0
         self.ntraction = 0
+        self.nptraction = 0
         self.ndisplacement = 0
         self.pbc = False
         self.is_continue = True
@@ -70,17 +80,22 @@ class Simulation(object):
         self.calculate_reaction_force = False
         self.displacement_tolerance = 1e-4
         self.residual_tolerance = 1e-7
-        self.relative_residual_tolerance = 1e-6
         self.quasi_static = False
-        self.max_iteration = 10000
         self.newmark_gamma = 0.5
         self.newmark_beta = 0.25
-        self.iter_max = 100
+        self.iter_max = 50
         self.dof_multiplier = 2
-        self.update = "Newmark"
+        self.multilevel = 1
+        self.pre_and_post_smoothing = 0
+        self.bottom_smoothing = 0
+        self.linear_solver = "PCG"
+        self.assemble_type = "MatrixFree"
+        self.integration_scheme = "Newmark"
         self.configuration = "ULMPM"
         self.material_type = "Solid"
         self.solver_type = "Explicit"
+
+        self.TESTMODE = False
         
     def get_simulation_domain(self):
         return self.domain
@@ -91,11 +106,20 @@ class Simulation(object):
             raise ValueError(f"Keyword:: /dimension/ should choose as follows: {DIMENSION}")
         self.dimension = 3 if dimension == "3-Dimension" else 2
 
+    def set_is_2DAxisy(self, is_2DAxisy):
+        self.is_2DAxisy = is_2DAxisy
+
     def set_domain(self, domain):
         self.domain = domain
+        if isinstance(domain, (list, tuple)):
+            if self.dimension == 3:
+                self.domain = vec3f(domain)
+            elif self.dimension == 2:
+                self.domain = vec2f(domain)
         
     def set_boundary(self, boundary):
         BOUNDARY = {
+                        None: -1,
                         "Reflect": 0,
                         "Destroy": 1,
                         "Period": 2
@@ -106,6 +130,10 @@ class Simulation(object):
 
     def set_gravity(self, gravity):
         self.gravity = gravity
+        if len(gravity) == 2:
+            gravity = [gravity[0], gravity[1], 0.]
+        if isinstance(gravity, (list, tuple)):
+            self.gravity = vec3f(gravity)
 
     def set_background_damping(self, background_damping):
         self.background_damping = background_damping
@@ -119,8 +147,12 @@ class Simulation(object):
             raise RuntimeError(f"KeyWord:: /stabilize: {stabilize}/ is invalid. The valid type are given as follows: {typelist}")
         self.stabilize = stabilize
 
-    def set_stress_smoothing(self, stress_smoothing):
-        self.stress_smoothing = stress_smoothing
+    def set_shape_smoothing(self, shape_smooth):
+        if self.shape_function == "SmoothLinear":
+            self.shape_smooth = shape_smooth
+
+    def set_pressure_smoothing(self, pressure_smoothing):
+        self.pressure_smoothing = pressure_smoothing
 
     def set_strain_smoothing(self, strain_smoothing):
         self.strain_smoothing = strain_smoothing
@@ -132,30 +164,55 @@ class Simulation(object):
         self.configuration = configuration
 
     def set_material_type(self, material_type):
-        mt = ["Solid", "Fluid", "TwoPhase"]
-        if not material_type in mt:
-            raise RuntimeError(f"Keyword:: /material_type/ error. Only {mt} is valid!")
+        valid_list = ["Solid", "Fluid", "TwoPhaseSingleLayer", "TwoPhaseDoubleLayer"]
+        if not material_type in valid_list:
+            raise RuntimeError(f"Keyword:: /material_type/ error. Only {valid_list} is valid!")
         self.material_type = material_type
+
+    def set_visualize(self, visualize):
+        self.visualize = visualize
+
+    def set_sparse_grid(self, sparse_grid):
+        if sparse_grid:
+            self.sparse_grid = True
+            if isinstance(sparse_grid, (list, tuple)):
+                if len(sparse_grid) == 2:
+                    self.block_size = list(sparse_grid)
+                else:
+                    raise ValueError(f"Keyword:: /sparse_grid/ contains two components [grid_block_size, leaf_block_size]. The input {sparse_grid} is invalid")
 
     def set_gauss_integration(self, gauss_number):
         self.gauss_number = gauss_number
     
-    def set_moving_least_square_order(self, mls_order):
-        self.mls_order = mls_order
+    def set_particle_shifting(self, particle_shifting):
+        self.particle_shifting = particle_shifting
+
+    def set_moving_least_square(self, mls):
+        self.mls = mls
+        if self.mapping == "G2P2G":
+            self.mls = True
+        if mls is True:
+            self.set_velocity_projection_scheme("Affine")
+            self.alphaPIC = 1.
 
     def set_mapping_scheme(self, mapping):
-        typelist = ["USL", "USF", "MUSL", "APIC", "Newmark"]
+        typelist = ["USL", "USF", "MUSL", "G2P2G"]
         if not mapping in typelist:
             raise RuntimeError(f"KeyWord:: /mapping: {mapping}/ is invalid. The valid type are given as follows: {typelist}")
         self.mapping = mapping
 
     def set_shape_function(self, shape_function):
-        typelist = ["Linear", "GIMP", "QuadBSpline", "CubicBSpline"]
+        typelist = ["Linear", "SmoothLinear", "GIMP", "QuadBSpline", "CubicBSpline"]
         if not shape_function in typelist:
             raise RuntimeError(f"KeyWord:: /mapping: {shape_function}/ is invalid. The valid type are given as follows: {typelist}")
         self.shape_function = shape_function
+        if self.mapping == "G2P2G":
+            self.shape_function == "QuadBSpline"
 
     def set_mpm_coupling(self, coupling):
+        typelist = ["Lagrangian", "Euler", False]
+        if not coupling in typelist:
+            raise RuntimeError(f"KeyWord:: /coupling: {coupling}/ is invalid. The valid type are given as follows: {typelist}")
         self.coupling = coupling
 
     def set_free_surface_detection(self, free_surface_detection):
@@ -170,13 +227,13 @@ class Simulation(object):
             self.neighbor_detection = True
 
     def set_solver_type(self, solver_type):
-        typelist = ["Explicit", "Implicit", "SimiImplicit"]
+        typelist = ["Explicit", "Implicit", "SemiImplicit"]
         if not solver_type in typelist:
             raise RuntimeError(f"KeyWord:: /solver_type: {solver_type}/ is invalid. The valid type are given as follows: {typelist}")
         self.solver_type = solver_type
 
-        if self.solver_type != "Explicit" and self.dimension == 2:
-            raise RuntimeError("Only Explicit type supports 2-Dimensional condition!")
+        if self.solver_type == "SemiImplicit" and self.dimension == 2:
+            raise RuntimeError("SemiImplicit type supports 2-Dimensional condition!")
 
     def set_is_continue(self, is_continue):
         self.is_continue = is_continue
@@ -231,6 +288,20 @@ class Simulation(object):
         if self.verlet_distance < 1e-16:
             self.verlet_distance = self.verlet_distance_multiplier * rad_min 
 
+    def set_coupling_particles(self, coupling_particles):
+        self.max_coupling_particle_particle = coupling_particles
+
+    def set_velocity_projection_scheme(self, velocity_projection_scheme: str):
+        self.velocity_projection_scheme = velocity_projection_scheme
+        valid_type = ["PIC", "FLIP", "PIC/FLIP", "Affine", "Taylor"]
+        if velocity_projection_scheme == "PIC": 
+            self.alphaPIC = 1.
+        elif velocity_projection_scheme == "FLIP": 
+            self.alphaPIC = 0.
+
+        if velocity_projection_scheme not in valid_type:
+            raise RuntimeError(f"Keyword:: /velocity_projection_scheme/ is error, followings are valid {valid_type}")
+
     def set_window_parameters(self, windows):
         self.visualize_interval = DictIO.GetAlternative(windows, "VisualizeInterval", self.save_interval)
         self.window_size = DictIO.GetAlternative(windows, "WindowSize", self.window_size)
@@ -249,12 +320,20 @@ class Simulation(object):
         self.nfriction = int(DictIO.GetAlternative(constraint, "max_friction_constraint", 0))
         self.nabsorbing = int(DictIO.GetAlternative(constraint, "max_absorbing_constraint", 0))
         self.ntraction = int(DictIO.GetAlternative(constraint, "max_traction_constraint", 0))
+        self.nptraction = int(DictIO.GetAlternative(constraint, "max_particle_traction_constraint", 0))
+        self.ptraction_method = DictIO.GetAlternative(constraint, "particle_traction_method", "Stable")
         if self.solver_type == "Implicit":
             self.ndisplacement = int(DictIO.GetAlternative(constraint, "max_displacement_constraint", 0))
+
+        valid_list = [None, "Stable", "Nanson", "Virtual"]
+        if self.ptraction_method not in valid_list:
+            warnings.warn("We choose stable version of particle traction by default!")
+            self.ptraction_method = "Stable"
         
-    def set_save_data(self, particle, grid):
+    def set_save_data(self, particle, grid, object):
         if particle: self.monitor_type.append('particle')
         if grid: self.monitor_type.append('grid')
+        if object: self.monitor_type.append('object')
 
     def update_critical_timestep(self, dt):
         print("The time step is corrected as:", dt, '\n')
@@ -263,20 +342,58 @@ class Simulation(object):
 
     def set_contact_detection(self, contact_detection):
         self.contact_detection = contact_detection
+        if contact_detection and not contact_detection in ["MPMContact", "GeoContact", "DEMContact"]:
+            valid = ["MPMContact", "GeoContact", "DEMContact"]
+            raise RuntimeError(f"Keyword:: /contact_detection/ is wrong. Only the following is valid: {valid}")
+        if self.dimension == 3 and contact_detection == "DEMContact":
+            raise RuntimeError("Three-dimension model do not support DEMContact!")
+        
+    def set_calculate_reaction_force(self, calculate_reaction_force):
+        self.calculate_reaction_force = calculate_reaction_force
 
-    def set_implicit_parameters(self, implicit_parameters):
-        if self.solver_type != "Implicit":
-            raise RuntimeError("KeyError:: /solver_type/ should be set as Implicit")
+    def set_integration_scheme(self, integration_scheme):
+        self.integration_scheme = integration_scheme
+
+    def set_displacement_tolerance(self, displacement_tolerance):
+        self.displacement_tolerance = displacement_tolerance
+
+    def set_residual_tolerance(self, residual_tolerance):
+        self.residual_tolerance = residual_tolerance
+
+    def set_quasi_static(self, quasi_static):
+        self.quasi_static = quasi_static
+
+    def set_max_iteration(self, iter_max):
+        self.iter_max = iter_max
+
+    def set_newmark_parameter(self, newmark_parameter):
+        newmark_parameter = list(newmark_parameter)
+        if len(newmark_parameter) != 2: 
+            raise RuntimeError("The size of newmark parameter should follow [gamma, beta]")
+        self.newmark_gamma = newmark_parameter[0]
+        self.newmark_beta = newmark_parameter[1]
+
+    def set_dof_multiplier(self, dof_multiplier):
+        self.dof_multiplier = dof_multiplier
+
+    def set_linear_solver(self, linear_solver):
+        self.linear_solver = linear_solver
+
+        if self.material_type == "Fluid" and self.solver_type == "Implicit":
+            self.linear_solver = "MGPCG"
+
+        valid_list = ["CG", "PCG", "BiCG", "MGPCG"]
+        if linear_solver not in valid_list:
+            raise RuntimeError(f"Keyword:: /linear_solver/ is error, followings are valid {valid_list}")
         
-        self.calculate_reaction_force = DictIO.GetAlternative(implicit_parameters, "calculate_reaction_force", False)
-        self.update = DictIO.GetAlternative(implicit_parameters, "update_scheme", "Newmark")
-        self.displacement_tolerance = DictIO.GetAlternative(implicit_parameters, "displacement_tolerance", self.displacement_tolerance)
-        self.residual_tolerance = DictIO.GetAlternative(implicit_parameters, "residual_tolerance", self.residual_tolerance)
-        self.relative_residual_tolerance = DictIO.GetAlternative(implicit_parameters, "relative_residual_tolerance", self.relative_residual_tolerance)
-        self.quasi_static = DictIO.GetAlternative(implicit_parameters, "quasi_static", self.quasi_static)
-        self.max_iteration = DictIO.GetAlternative(implicit_parameters, "max_iteration", self.max_iteration)
-        self.newmark_gamma = DictIO.GetAlternative(implicit_parameters, "newmark_gamma", self.newmark_gamma)
-        self.newmark_beta = DictIO.GetAlternative(implicit_parameters, "newmark_beta", self.newmark_beta)
-        self.iter_max = DictIO.GetAlternative(implicit_parameters, "max_iteration_number", self.iter_max)
-        self.dof_multiplier = DictIO.GetAlternative(implicit_parameters, "multiplier", self.dof_multiplier)
+    def set_assemble_type(self, assemble_type):
+        self.assemble_type = assemble_type
+        valid_list = ["MatrixFree", "CSR", "LocalStiffness"]
+        if assemble_type not in valid_list:
+            raise RuntimeError(f"Keyword:: /assemble_type/ is error, followings are valid {valid_list}")
         
+    def set_multigrid_paramter(self, multilevel, pre_and_post_smoothing, bottom_smoothing):
+        self.multilevel = int(multilevel)
+        self.pre_and_post_smoothing = int(pre_and_post_smoothing)
+        self.bottom_smoothing = int(bottom_smoothing)
+

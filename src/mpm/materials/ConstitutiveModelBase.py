@@ -1,69 +1,30 @@
-import taichi as ti
+import numpy as np
 
-from src.utils.MaterialKernel import *
+from src.consititutive_model.ConstitutiveModelBase import ConstitutiveBase
+from src.utils.ObjectIO import DictIO
 
 
-class ConstitutiveModelBase:
+class ConstitutiveModelBase(ConstitutiveBase):
     def __init__(self) -> None:
-        self.compute = None
-        self.matProps = None
-        self.stateVars = None
-        self.stiffness_matrix = None
+        super().__init__()
 
-    def check_materialID(self, materialID, max_material_num):
-        if materialID <= 0: 
-            raise RuntimeError(f"MaterialID {materialID} should be larger than 0")
-        if materialID > max_material_num - 1:
-            raise RuntimeError(f"Keyword:: /max_material_number/ should be set as {materialID + 1}")
+    def add_material(self, max_material_num, material_type, contact_type, material_struct):
+        if material_type == "TwoPhaseSingleLayer":
+            material_struct.members.update({"solid_density": float, "fluid_density": float, "fluid_bulk": float, "porosity": float, "permeability": float})
+        if contact_type == "DEMContact":
+            material_struct.members.update({"kn": float, "kt": float, "friction": float})
+        self.matProps = material_struct.field(shape=max_material_num)
+        self.material_type = material_type
 
-    def model_initialization(self, materials):
-        if type(materials) is dict:
-            self.model_initialize(materials)
-        elif type(materials) is list:
-            for material in materials:
-                self.model_initialize(material)
+    def contact_initialize(self, material):
+        materialID = DictIO.GetEssential(material, 'MaterialID')
+        if "Stiffness" in material:
+            friction = DictIO.GetAlternative(material, "Friction", 0.)
+            stiffness = DictIO.GetAlternative(material, "Stiffness", [1e6, 1e6])
+            if len(list(stiffness)) != 2:
+                raise RuntimeError("The dimension of Keyword:: /Stiffness/ should be 2")
+            self.matProps[materialID].add_contact_parameter(friction, stiffness[0], stiffness[1])
+    
+        
 
-    def model_initialize(self, material):
-        raise NotImplementedError
-    
-    def state_vars_initialize(self, start_particle, end_particle, particle):
-        raise NotImplementedError
-    
-    def get_state_vars_dict(self, start_particle, end_particle):
-        raise NotImplementedError
-    
-    def compute_stress(self):
-        raise NotImplementedError
-    
-    def get_lateral_coefficient(self, materialID):
-        raise NotImplementedError
-    
-    def reload_state_variables(self, state_vars):
-        raise NotImplementedError
-    
-    def find_max_sound_speed(self):
-        return find_max_sound_speed_(self.matProps)
-    
-    def state_vars_initialize(self, start_particle, end_particle, particle):
-        kernel_initial_state_variables(start_particle, end_particle, particle, self.stateVars, self.matProps)
-
-    def pre_compute_stiffness(self, particleNum, particle):
-        compute_elastic_stiffness_matrix(self.stiffness_matrix, particleNum, particle, self.matProps, self.stateVars)
-    
-    def compute_elasto_plastic_stiffness(self, particleNum, particle):
-        compute_stiffness_matrix(self.stiffness_matrix, particleNum, particle, self.matProps, self.stateVars)
-
-
-@ti.dataclass
-class StateVariable:
-    # TODO: add essential state variable for constitutive model
-    estress: float
-
-    @ti.func
-    def _initialize_vars(self, stress):
-        pass
-
-    @ti.func
-    def _update_vars(self, stress, epstrain):
-        pass
 

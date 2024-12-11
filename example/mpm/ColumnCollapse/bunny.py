@@ -49,7 +49,7 @@ mpm.add_body_from_file(body={
                                     "Template":  {
                                                    "BodyID": 0,
                                                    "MaterialID": 1,
-                                                   "ParticleFile": "/home/eleven/work/GeoTaichi/assets/bunny_sparse.obj",
+                                                   "ParticleFile": "/assets/bunny_sparse.obj",
                                                    "nParticlesPerCell": 2,
                                                    "Offset": [0.07, 0.1, 0.11]
                                                   }

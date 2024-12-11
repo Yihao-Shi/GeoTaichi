@@ -1,6 +1,3 @@
-import sys
-sys.path.append('/home/eleven/work/GeoTaichi')
-
 import taichi as ti
 
 from src.dem.mainDEM import DEM

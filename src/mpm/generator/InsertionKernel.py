@@ -1,18 +1,25 @@
 import taichi as ti
 
-from src.utils.TypeDefination import vec3f, vec6f, vec3u8, mat3x3
-from src.utils.Quaternion import RodriguesRotationMatrix
+from src.utils.TypeDefination import vec2f, vec3f, vec6f, vec3u8, mat3x3
+from src.utils.Quaternion import RodriguesRotationMatrix, RotationMatrix2D
 
 
 @ti.kernel
-def kernel_calc_mass_of_center_(coords: ti.types.ndarray()) -> ti.types.vector(3, float): # type: ignore
+def kernel_calc_mass_of_center_(coords: ti.types.ndarray()) -> ti.types.vector(3, float):
     position = vec3f(0, 0, 0)
     for np in range(coords.shape[0]):
         position += vec3f(coords[np, 0], coords[np, 1], coords[np, 2])
     return position / coords.shape[0]
 
 @ti.kernel
-def kernel_position_rotate_ndarray_(target: ti.types.vector(3, float), offset: ti.types.vector(3, float), body_coords: ti.types.ndarray(), start_particle_num: int, end_particle_num: int):
+def kernel_calc_mass_of_center_2D(coords: ti.types.ndarray()) -> ti.types.vector(2, float):
+    position = vec2f(0, 0)
+    for np in range(coords.shape[0]):
+        position += vec2f(coords[np, 0], coords[np, 1])
+    return position / coords.shape[0]
+
+@ti.kernel
+def kernel_position_rotate_(target: ti.types.vector(3, float), offset: ti.types.vector(3, float), body_coords: ti.types.ndarray(), start_particle_num: int, end_particle_num: int):
     origin =vec3f([0, 0, 1]) 
     R = RodriguesRotationMatrix(origin, target)
     for nb in range(start_particle_num, end_particle_num):
@@ -25,18 +32,19 @@ def kernel_position_rotate_ndarray_(target: ti.types.vector(3, float), offset: t
         body_coords[nb, 2] = coords[2]
 
 @ti.kernel
-def kernel_position_rotate_(target: ti.types.vector(3, float), offset: ti.types.vector(3, float), body_coords: ti.template(), start_particle_num: int, end_particle_num: int):
-    origin =vec3f([0, 0, 1]) 
-    R = RodriguesRotationMatrix(origin, target)
+def kernel_position_rotate_2D(target: ti.types.vector(2, float), offset: ti.types.vector(2, float), body_coords: ti.types.ndarray(), start_particle_num: int, end_particle_num: int):
+    origin =vec2f([0, 1]) 
+    R = RotationMatrix2D(origin, target).transpose()
     for nb in range(start_particle_num, end_particle_num):
-        coords = body_coords[nb]
+        coords = vec2f(body_coords[nb, 0], body_coords[nb, 1])
         coords -= offset
         coords = R @ coords
         coords += offset
-        body_coords[nb] = coords
+        body_coords[nb, 0] = coords[0]
+        body_coords[nb, 1] = coords[1]
 
 @ti.kernel
-def kernel_apply_gravity_field_(density: float, start: int, end: int, k0: float, top_pos: float, gravity: ti.types.vector(3, float), particle: ti.template()): # type: ignore
+def kernel_apply_gravity_field_(density: float, start: int, end: int, k0: float, top_pos: float, gravity: ti.types.vector(3, float), particle: ti.template()):
     for np in range(start, end):
         materialID = particle[np].materialID
         if materialID > 0:
@@ -44,24 +52,31 @@ def kernel_apply_gravity_field_(density: float, start: int, end: int, k0: float,
             particle[np]._add_gravity_field(k0, gamma)
 
 @ti.kernel
+def kernel_apply_gravity_field_2D(density: float, start: int, end: int, k0: float, top_pos: float, gravity: ti.types.vector(2, float), particle: ti.template()):
+    for np in range(start, end):
+        materialID = particle[np].materialID
+        if materialID > 0:
+            gamma = -(particle[np].x[1] - top_pos) * density * gravity[1]
+            particle[np]._add_gravity_field(k0, gamma)
+
+@ti.kernel
 def kernel_apply_stress_(start: int, end: int, stress_field: ti.types.matrix(3, 3, float), particle: ti.template()):
     for np in range(start, end):
-        particle[np].stress += vec6f(stress_field[0, 0], stress_field[1, 1], stress_field[2, 2], 
+        particle[np]._update_stress(vec6f(stress_field[0, 0], stress_field[1, 1], stress_field[2, 2], 
                                      0.5 * (stress_field[0, 1] + stress_field[1, 0]), 
                                      0.5 * (stress_field[1, 2] + stress_field[2, 1]), 
-                                     0.5 * (stress_field[0, 2] + stress_field[2, 0]))
+                                     0.5 * (stress_field[0, 2] + stress_field[2, 0])))
 
 @ti.kernel
 def kernel_apply_vigot_stress_(start: int, end: int, stress_field: ti.types.vector(6, float), particle: ti.template()):
     for np in range(start, end):
-        particle[np].stress += stress_field
-
-@ti.kernel
-def kernel_set_particle_traction_(start: int, end: int, funcs: ti.template(), fex: ti.types.vector(3, float), particle: ti.template()):
-    for np in range(start, end):
-        if funcs(particle[np].x):
-            particle[np]._set_particle_traction(fex)
+        particle[np]._update_stress(stress_field)
             
+@ti.kernel
+def kernel_apply_pore_pressure_(start: int, end: int, pore_pressure: float, particle: ti.template()):
+    for np in range(start, end):
+        particle[np].pressure += pore_pressure
+
 @ti.kernel
 def kernel_activate_cell_(start_point: ti.types.vector(3, float), region_size: ti.types.vector(3, float), nodal_coords: ti.template(), 
                           node_connectivity: ti.template(), cell_active: ti.template(), is_in_region: ti.template()):
@@ -106,7 +121,7 @@ def get_particle_offset3D(np, pnum):
 @ti.kernel
 def kernel_place_particles_(grid_size: ti.types.vector(3, float), igrid_size: ti.types.vector(3, float), start_point: ti.types.vector(3, float), region_size: ti.types.vector(3, float), new_particle_num: int, npic: int,
                             particle: ti.template(), insert_particle_num: ti.template(), is_in_region: ti.template()):
-    pnum = int(region_size * npic * igrid_size)
+    pnum = int(region_size * npic / grid_size)
     ti.loop_config(serialize=True)
     for np in range(new_particle_num):
         ip = (np % (pnum[0] * pnum[1])) % pnum[0]
@@ -118,44 +133,55 @@ def kernel_place_particles_(grid_size: ti.types.vector(3, float), igrid_size: ti
             particle[old_particle] = particle_pos
 
 @ti.kernel
-def kernel_add_body_(particles: ti.template(), init_particleNum: int, start_particle_num: int, end_particle_num: int, particle: ti.template(), psize: ti.types.vector(3, float), 
+def kernel_place_particles_2D(grid_size: ti.types.vector(2, float), igrid_size: ti.types.vector(2, float), start_point: ti.types.vector(2, float), region_size: ti.types.vector(2, float), new_particle_num: int, npic: int,
+                              particle: ti.template(), insert_particle_num: ti.template(), is_in_region: ti.template()):
+    pnum = int(region_size * npic / grid_size)
+    ti.loop_config(serialize=True)
+    for np in range(new_particle_num):
+        ip = np % pnum[0]
+        jp = np // pnum[0]
+        particle_pos = (vec2f([ip, jp]) + 0.5) * grid_size / npic + start_point
+        if is_in_region(particle_pos):
+            old_particle = ti.atomic_add(insert_particle_num[None], 1)
+            particle[old_particle] = particle_pos
+
+@ti.kernel
+def kernel_add_body_(particles: ti.template(), init_particleNum: int, start_particle_num: int, end_particle_num: int, particle: ti.template(), 
                      particle_volume: float, bodyID: int, materialID: int, density: float, init_v: ti.types.vector(3, float), fix_v: ti.types.vector(3, ti.u8)):
     for np in range(end_particle_num - start_particle_num):
         particleID = start_particle_num + np
         particleNum = init_particleNum + np
-        particles[particleNum]._set_essential(
-            bodyID, 
-            materialID, 
-            density, 
-            particle_volume, 
-            psize, 
-            particle[particleID], 
-            init_v, 
-            fix_v)
+        particles[particleNum]._set_essential(bodyID, materialID, density, particle_volume, particle[particleID], init_v, fix_v)
 
 @ti.kernel
-def kernel_read_particle_file_(
-    particles: ti.template(),               # already exist particles
-    particleNum: int,                       # already exist particle number
-    particle_num: int,                      # new particle number 
-    particle: ti.types.ndarray(),           # new particle position
-    psize: ti.types.ndarray(), 
-    particle_volume: ti.types.ndarray(), 
-    bodyID: int, 
-    materialID: int,
-    density: float, 
-    init_v: ti.types.vector(3, float), 
-    fix_v: ti.types.vector(3, int)):
+def kernel_add_body_2D(particles: ti.template(), init_particleNum: int, start_particle_num: int, end_particle_num: int, particle: ti.template(), 
+                     particle_volume: float, bodyID: int, materialID: int, density: float, init_v: ti.types.vector(2, float), fix_v: ti.types.vector(2, ti.u8)):
+    for np in range(end_particle_num - start_particle_num):
+        particleID = start_particle_num + np
+        particleNum = init_particleNum + np
+        particles[particleNum]._set_essential(bodyID, materialID, density, particle_volume, particle[particleID], init_v, fix_v)
+
+@ti.kernel
+def kernel_add_body_twophase2D(particles: ti.template(), init_particleNum: int, start_particle_num: int, end_particle_num: int, particle: ti.template(), 
+                     particle_volume: float, bodyID: int, materialID: int, densitys: float, densityf: float, porosity: float, permeability: float, init_v: ti.types.vector(2, float), fix_v: ti.types.vector(2, ti.u8)):
+    for np in range(end_particle_num - start_particle_num):
+        particleID = start_particle_num + np
+        particleNum = init_particleNum + np
+        particles[particleNum]._set_essential(bodyID, materialID, densitys, densityf, porosity, particle_volume, particle[particleID], init_v, fix_v, permeability)
+
+@ti.kernel
+def kernel_read_particle_file_(particles: ti.template(), particleNum: int, particle_num: int, particle: ti.types.ndarray(), particle_volume: ti.types.ndarray(), 
+                               bodyID: int, materialID: int, density: float, init_v: ti.types.vector(3, float), fix_v: ti.types.vector(3, int)):
     for np in range(particle_num):
-        particles[particleNum + np]._set_essential(
-            bodyID, 
-            materialID, 
-            density, 
-            particle_volume[np], 
-            vec3f(psize[np, 0],psize[np, 1], psize[np, 2]), 
-            vec3f(particle[np, 0], particle[np, 1], particle[np, 2]), 
-            init_v, 
-            fix_v)
+        i = particleNum + np
+        particles[i]._set_essential(bodyID, materialID, density, particle_volume[np], vec3f(particle[np, 0], particle[np, 1], particle[np, 2]), init_v, fix_v)
+
+@ti.kernel
+def kernel_read_particle_file_2D(particles: ti.template(), particleNum: int, particle_num: int, particle: ti.types.ndarray(), particle_volume: ti.types.ndarray(), 
+                                 bodyID: int, materialID: int, density: float, init_v: ti.types.vector(2, float), fix_v: ti.types.vector(2, int)):
+    for np in range(particle_num):
+        i = particleNum + np
+        particles[i]._set_essential(bodyID, materialID, density, particle_volume[np], vec2f(particle[np, 0], particle[np, 1]), init_v, fix_v)
 
 @ti.kernel
 def kernel_rebulid_particle(particle_number: int, particle: ti.template(), is_rigid: ti.template(), bodyID: ti.types.ndarray(), materialID: ti.types.ndarray(), active: ti.types.ndarray(),

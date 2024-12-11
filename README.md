@@ -35,7 +35,7 @@ Have a cool example? Submit a PR!
 ### Discrete element method (DEM)
 | [Granular packing](example/dem/GranularPackings/clumps_packing.py) | [Debris Flow](example/dem/HeapFormation/sphere_packing.py) | [Triaxial shear test](example/dem/TriaxialTest/drained.py) |
 | --- | --- | --- | 
-| ![Granular packing](images/clump.gif) | ![Debris Flow](images/debris_flow.gif) | ![Triaxial shear test](images/force_chain.gif) |
+| ![Granular packing](images/LSDEM.gif) | ![Debris Flow](images/debris_flow.gif) | ![Triaxial shear test](images/force_chain.gif) |
 
 The performance of GeoTaichi is compared with similar simulator in the field, such as [MUSEN](https://msolids.net/musen/) and [CoSim](http://www.meggs.hydr.tsinghua.edu.cn/index.html), showing a notable improvement in both computational efficiency and memory usage.
 

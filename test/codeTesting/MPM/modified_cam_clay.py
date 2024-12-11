@@ -1,8 +1,6 @@
 import taichi as ti
 ti.init(default_fp=ti.f64, cpu_max_num_threads=1)
 import matplotlib.pyplot as plt
-import sys, os, numpy
-sys.path.append('/home/eleven/work/GeoTaichi')
 
 
 strain_rate = 0.0002

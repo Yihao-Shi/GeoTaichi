@@ -1,10 +1,9 @@
 import taichi as ti
 
-from src.utils.constants import PI, ZEROVEC3f, ZEROVEC6f
-from src.utils.ShapeFunctions import SmoothedHeavisideFunction
-from src.utils.Quaternion import RodriguesRotationMatrix, RandomGenerator, SetFromTwoVec
+from src.utils.constants import PI
+from src.utils.Quaternion import RodriguesRotationMatrix, RandomGenerator, SetFromTwoVec, SetToRotate
 from src.utils.TypeDefination import vec3f, vec2f, vec2i, vec4f, vec3u8
-from src.utils.ScalarFunction import vectorize_id
+from src.utils.ScalarFunction import vectorize_id, linearize3D, equal_to
 
 
 @ti.func
@@ -47,12 +46,10 @@ def kernel_create_sphere_(particle: ti.template(), sphere: ti.template(), materi
     sphere[bodyNum]._add_sphere_attribute(init_w, inv_inertia, q, fix_v, fix_w)
 
 @ti.kernel
-def kernel_create_multisphere_(particle: ti.template(), clump: ti.template(), material: ti.template(), bodyNum: int, particleNum: int, nspheres: int, r_equiv: float, inertia: ti.types.vector(3, float),
+def kernel_create_multisphere_(particle: ti.template(), clump: ti.template(), material: ti.template(), bodyNum: int, particleNum: int, nspheres: int, scale_factor: float, inertia: ti.types.vector(3, float),
                                x_pebble: ti.types.ndarray(), rad_pebble: ti.types.ndarray(), com_pos: ti.types.vector(3, float), equiv_rad: float, get_orientation: ti.template(), 
                                groupID: int, matID: int, init_v: ti.types.vector(3, float), init_w: ti.types.vector(3, float)):
     nsphere = nspheres
-    scale_factor = equiv_rad / r_equiv
-
     density = material[matID]._get_density()
     mass = density * 4./3. * PI * equiv_rad * equiv_rad * equiv_rad
     inv_inertia = 1. / (inertia * density * scale_factor ** 5)
@@ -71,11 +68,76 @@ def kernel_create_multisphere_(particle: ti.template(), clump: ti.template(), ma
         particle[particleID]._add_particle_proporities(matID, groupID, pebble_radius, pebble_mass)
         particle[particleID]._add_particle_kinematics(pebble_coord, init_v + init_w.cross(pebble_coord - com_pos), init_w)
 
+@ti.func
+def create_bounding_sphere_(rigidNum, scale, com_pos, bounding_sphere, r_bound, x_bound):
+    bounding_sphere[rigidNum]._add_bounding_sphere(x_bound + com_pos, r_bound)
+    bounding_sphere[rigidNum]._scale(scale, com_pos)
+
+@ti.func
+def create_bounding_box(rigidNum, scale, bounding_box, minBox, maxBox, gridNum, space, gnum, extent):
+    bounding_box[rigidNum]._set_bounding_box(minBox, maxBox)
+    bounding_box[rigidNum]._scale(scale, vec3f(0, 0, 0))
+    bounding_box[rigidNum]._add_grid(gridNum, scale * space, gnum, scale, extent)
+
+@ti.func
+def create_deformable_grids_(gridNum, gridSum, grid, scale, distance_fields: ti.types.ndarray()):
+    for i in range(gridSum):
+        grid[i + gridNum]._set_grid(distance_fields[i])
+        grid[i + gridNum]._scale(scale)
+
+@ti.func
+def create_deformable_surface(rigidNum, surfaceNum, surfaceSum, surface_node, scale, surface_nodes: ti.types.ndarray(), parameters: ti.types.ndarray()):
+    for i in range(surfaceSum):
+        surface_node[i + surfaceNum]._set_master(rigidNum)
+        surface_node[i + surfaceNum]._set_surface_node(vec3f(surface_nodes[i, 0], surface_nodes[i, 1], surface_nodes[i, 2]))
+        surface_node[i + surfaceNum]._set_coefficient(parameters[i])
+        surface_node[i + surfaceNum]._scale(scale, vec3f(0, 0, 0))
+
 @ti.kernel
-def kernel_create_level_set_body_(rigid_body: ti.template(), surface_node: ti.template(), grid: ti.template(), bounding_box: ti.template(), bounding_sphere: ti.template(), material: ti.template(), 
-                                  rigidNum: int, gridNum: int, surfaceNum: int, r_bound: int, x_bound: ti.types.vector(3, float), surface_nodes: ti.types.ndarray(), node_coords: ti.types.ndarray(), distance_fields: ti.types.ndarray(),
-                                  com_pos: ti.types.vector(3, float), equiv_rad: float, get_orientation: ti.template(), groupID: int, matID: int, init_v: ti.types.vector(3, float), init_w: ti.types.vector(3, float)):
-    pass
+def kernel_create_level_set_rigid_body_(rigid_body: ti.template(), bounding_box: ti.template(), bounding_sphere: ti.template(), master: ti.template(), material: ti.template(), rigidNum: int, gridNum: int, verticeNum: int, surfaceNum: int, minBox: ti.types.vector(3, float), 
+                                        maxBox: ti.types.vector(3, float), r_bound: float, x_bound: ti.types.vector(3, float), surfaceSum: int, space: float, gnum: ti.types.vector(3, int), extent: int, scale_factor: float, inertia: ti.types.vector(3, float), 
+                                        com_pos: ti.types.vector(3, float), equiv_rad: float, get_orientation: ti.template(), groupID: int, matID: int, init_v: ti.types.vector(3, float), init_w: ti.types.vector(3, float), is_fix: ti.types.vector(3, int)):
+    density = material[matID]._get_density()
+    mass = 4./3. * PI * equiv_rad * equiv_rad * equiv_rad
+    inv_inertia = 1. / (inertia * scale_factor ** 5)
+    orientation = get_orientation()
+    q = SetFromTwoVec(vec3f([0, 0, 1]), orientation)
+    rotation_matrix = SetToRotate(q)
+    
+    create_bounding_sphere_(rigidNum, scale_factor, com_pos, bounding_sphere, r_bound, rotation_matrix @ x_bound)
+    create_bounding_box(rigidNum, scale_factor, bounding_box, minBox, maxBox, gridNum, space, gnum, extent)
+    for i in range(surfaceSum):
+        master[i + surfaceNum] = rigidNum
+
+    rigid_body[rigidNum]._add_body_attribute(com_pos, mass, equiv_rad, inv_inertia, q)
+    rigid_body[rigidNum]._add_surface_index(surfaceNum, surfaceNum + surfaceSum, verticeNum)
+    rigid_body[rigidNum]._add_body_proporities(matID, groupID, density)
+    rigid_body[rigidNum]._add_body_kinematic(init_v, init_w, is_fix)
+
+@ti.kernel
+def kernel_create_deformable_body_(rigid_body: ti.template(), surface_node: ti.template(), grid: ti.template(), bounding_box: ti.template(), bounding_sphere: ti.template(), material: ti.template(), rigidNum: int, gridNum: int, surfaceNum: int, minBox: ti.types.vector(3, float), maxBox: ti.types.vector(3, float), 
+                                  r_bound: float, x_bound: ti.types.vector(3, float), surfaceSum: int, surface_nodes: ti.types.ndarray(), parameters: ti.types.ndarray(), gridSum: int, space: float, gnum: ti.types.vector(3, int), start_point: ti.types.vector(3, float), distance_fields: ti.types.ndarray(), 
+                                  scale_factor: float, inertia: ti.types.vector(3, float), com_pos: ti.types.vector(3, float), equiv_rad: float, get_orientation: ti.template(), groupID: int, matID: int, init_v: ti.types.vector(3, float), init_w: ti.types.vector(3, float), is_fix: ti.types.vector(3, int)):
+    create_bounding_sphere_(rigidNum, scale_factor, com_pos, bounding_sphere, r_bound, x_bound)
+    create_bounding_box(rigidNum, scale_factor, bounding_box, minBox, maxBox, gridNum, space, gnum, start_point)
+    create_deformable_grids_(gridNum, gridSum, grid, scale_factor, distance_fields)
+    create_deformable_surface(rigidNum, surfaceNum, surfaceSum, surface_node, scale_factor, surface_nodes, parameters)
+    bounding_box[rigidNum].scale = 1.
+
+    density = material[matID]._get_density()
+    mass = density * 4./3. * PI * equiv_rad * equiv_rad * equiv_rad
+    inv_inertia = 1. / (inertia * density * scale_factor ** 5)
+    orientation = get_orientation()
+    q = SetFromTwoVec(vec3f([0, 0, 1]), orientation)
+
+    rigid_body[rigidNum]._add_surface_index(surfaceNum, surfaceNum + surfaceSum)
+    rigid_body[rigidNum]._add_body_proporities(matID, groupID, mass, equiv_rad, inv_inertia, q)
+    rigid_body[rigidNum]._add_body_kinematic(com_pos, init_v, init_w, inv_inertia, is_fix)
+
+@ti.kernel
+def kernel_get_orient(start_body_num: int, end_body_num: int, get_orientation: ti.template(), orients: ti.template()):
+    for nb in range(end_body_num - start_body_num):
+        orients[start_body_num + nb] = get_orientation()
 
 @ti.kernel
 def kernel_add_sphere_packing(particle: ti.template(), sphere: ti.template(), material: ti.template(), init_bodyNum: int, init_particleNum: int, start_body_num: int, end_body_num: int, coords: ti.template(), radii: ti.template(),
@@ -174,6 +236,85 @@ def kernel_add_multisphere_files(particle: ti.template(), clump: ti.template(), 
         particle[particleID]._add_particle_kinematics(pebble_coord, init_v + init_w.cross(pebble_coord - clump_com), init_w)
 
 @ti.kernel
+def kernel_add_levelset_packing(rigid_body: ti.template(), bounding_box: ti.template(), bounding_sphere: ti.template(), master: ti.template(), material: ti.template(), rigidNum: int, gridNum: int, surfaceNum: int, verticeNum: int, minBox: ti.types.vector(3, float), 
+                                maxBox: ti.types.vector(3, float), r_bound: float, x_bound: ti.types.vector(3, float), surfaceSum: int, space: float, gnum: ti.types.vector(3, int), extent: int, inertia: ti.types.vector(3, float), eqradius: float, 
+                                groupID: int, matID: int, init_v: ti.types.vector(3, float), init_w: ti.types.vector(3, float), is_fix: ti.types.vector(3, int), start_body_num: int, end_body_num: int, coords: ti.template(), radii: ti.template(), orients: ti.template()):
+    density = material[matID]._get_density()
+    for nb in range(end_body_num - start_body_num):
+        bounding_x, bounding_r = coords[start_body_num + nb], radii[start_body_num + nb] 
+        scale_factor = bounding_r / r_bound
+        orientation = orients[start_body_num + nb]
+        q = SetFromTwoVec(vec3f([0, 0, 1]), orientation)
+        rotation_matrix = SetToRotate(q)
+        com_pos, equiv_rad = bounding_x - scale_factor * rotation_matrix @ x_bound, scale_factor * eqradius
+        mass = 4./3. * PI * equiv_rad * equiv_rad * equiv_rad
+        inv_inertia = 1. / (inertia * scale_factor ** 5)
+
+        create_bounding_sphere_(rigidNum + nb, scale_factor, com_pos, bounding_sphere, r_bound, rotation_matrix @ x_bound)
+        create_bounding_box(rigidNum + nb, scale_factor, bounding_box, minBox, maxBox, gridNum, space, gnum, extent)
+        for i in range(surfaceSum):
+            master[i + surfaceNum + nb * surfaceSum] = rigidNum + nb
+
+        rigid_body[rigidNum + nb]._add_body_attribute(com_pos, mass, equiv_rad, inv_inertia, q)
+        rigid_body[rigidNum + nb]._add_surface_index(surfaceNum + nb * surfaceSum, surfaceNum + (nb + 1) * surfaceSum, verticeNum)
+        rigid_body[rigidNum + nb]._add_body_proporities(matID, groupID, density)
+        rigid_body[rigidNum + nb]._add_body_kinematic(init_v, init_w, is_fix)
+
+@ti.kernel
+def kernel_add_levelset_files(rigid_body: ti.template(), bounding_box: ti.template(), bounding_sphere: ti.template(), master: ti.template(), rigidNum: int, gridNum: int, surfaceNum: int, 
+                              r_bound: float, x_bound: ti.types.vector(3, float), minBox: ti.types.vector(3, float), maxBox: ti.types.vector(3, float), surfaceSum: int, inertia: ti.types.vector(3, float), eqradius: float, 
+                              space: float, gnum: ti.types.vector(3, int), extent: int, body_num: int, coords: ti.types.ndarray(), radii: ti.types.ndarray(), orients: ti.types.ndarray()):
+    for nb in range(body_num):
+        bounding_x, bounding_r = vec3f([coords[nb, 0], coords[nb, 1], coords[nb, 2]]), radii[nb] 
+        scale_factor = bounding_r / r_bound
+        orientation = vec3f([orients[nb, 0], orients[nb, 1], orients[nb, 2]])
+        q = SetFromTwoVec(vec3f([0, 0, 1]), orientation)
+        rotation_matrix = SetToRotate(q)
+        com_pos, equiv_rad = bounding_x - scale_factor * rotation_matrix @ x_bound, scale_factor * eqradius
+        mass = 4./3. * PI * equiv_rad * equiv_rad * equiv_rad
+        inv_inertia = 1. / (inertia * scale_factor ** 5)
+
+        create_bounding_sphere_(rigidNum + nb, scale_factor, com_pos, bounding_sphere, r_bound, rotation_matrix @ x_bound)
+        create_bounding_box(rigidNum + nb, scale_factor, bounding_box, minBox, maxBox, gridNum, space, gnum, extent)
+        for i in range(surfaceSum):
+            master[i + surfaceNum + nb * surfaceSum] = rigidNum + nb
+
+        rigid_body[rigidNum + nb]._add_body_attribute(com_pos, mass, equiv_rad, inv_inertia, q)
+
+@ti.kernel
+def kernel_add_rigid_body(rigid_body: ti.template(), material: ti.template(), rigidNum: int, surfaceNum: int, verticeNum: int, body_num: int, surfaceSum: int, groupID: int, matID: int, 
+                          init_v: ti.types.vector(3, float), init_w: ti.types.vector(3, float), is_fix: ti.types.vector(3, int)):
+    density = material[matID]._get_density()
+    for nb in range(body_num):
+        rigid_body[rigidNum + nb]._add_surface_index(surfaceNum + nb * surfaceSum, surfaceNum + (nb + 1) * surfaceSum, verticeNum)
+        rigid_body[rigidNum + nb]._add_body_proporities(matID, groupID, density)
+        rigid_body[rigidNum + nb]._add_body_kinematic(init_v, init_w, is_fix)
+
+@ti.kernel
+def kernel_add_deformable_packing(rigid_body: ti.template(), surface_node: ti.template(), grid: ti.template(), bounding_box: ti.template(), bounding_sphere: ti.template(), material: ti.template(), rigidNum: int, gridNum: int, surfaceNum: int, minBox: ti.types.vector(3, float), maxBox: ti.types.vector(3, float), 
+                                r_bound: float, x_bound: ti.types.vector(3, float), surfaceSum: int, surface_nodes: ti.types.ndarray(), parameters: ti.types.ndarray(), gridSum: int, space: float, gnum: ti.types.vector(3, int), start_point: ti.types.vector(3, float), distance_fields: ti.types.ndarray(), 
+                                inertia: ti.types.vector(3, float), eqradius: float, groupID: int, matID: int, init_v: ti.types.vector(3, float), init_w: ti.types.vector(3, float), start_body_num: int, end_body_num: int, coords: ti.template(), radii: ti.template(), orients: ti.template(), is_fix: ti.types.vector(3, int)):
+    density = material[matID]._get_density()
+    for nb in range(end_body_num - start_body_num):
+        bounding_x, bounding_r = coords[start_body_num + nb], radii[start_body_num + nb] 
+        scale_factor = bounding_r / r_bound
+        com_pos, equiv_rad = bounding_x - scale_factor * x_bound, scale_factor * eqradius
+        create_bounding_sphere_(rigidNum + nb, scale_factor, com_pos, bounding_sphere, r_bound, x_bound)
+        create_bounding_box(rigidNum + nb, scale_factor, bounding_box, minBox, maxBox, gridNum, space, gnum, start_point)
+        create_deformable_grids_(gridNum + nb * gridSum, gridSum, grid, scale_factor, distance_fields)
+        create_deformable_surface(rigidNum + nb, surfaceNum + nb * surfaceSum, surfaceSum, surface_node, scale_factor, surface_nodes, parameters)
+        bounding_box[rigidNum].scale = 1.
+
+        mass = density * 4./3. * PI * equiv_rad * equiv_rad * equiv_rad
+        inv_inertia = 1. / (inertia * density * scale_factor ** 5)
+        orientation = orients[start_body_num + nb]
+        q = SetFromTwoVec(vec3f([0, 0, 1]), orientation)
+
+        rigid_body[rigidNum + nb]._add_surface_index(surfaceNum + nb * surfaceSum, surfaceNum + (nb + 1) * surfaceSum)
+        rigid_body[rigidNum + nb]._add_body_proporities(matID, groupID, mass, equiv_rad, inv_inertia, q)
+        rigid_body[rigidNum + nb]._add_body_kinematic(com_pos, init_v, init_w, inv_inertia, is_fix)
+
+@ti.kernel
 def kernel_position_rotate_(target: ti.types.vector(3, float), offset: ti.types.vector(3, float), body_coords: ti.template(), start_body_num: int, end_body_num: int):
     origin =vec3f([0, 0, 1]) 
     R = RodriguesRotationMatrix(origin, target)
@@ -209,6 +350,30 @@ def kernel_update_particle_volume_by_sphere_(bodyNum: int, sphere: ti.template()
             inserted_volume += particle[index]._get_volume()
             inserted_particle += 1
     return vec2f([inserted_volume, float(inserted_particle)])
+
+@ti.kernel
+def kernel_update_particle_number_by_levelset_(rigidNum: int, bounding_sphere: ti.template(), check_in_region: ti.template()) -> ti.types.vector(2, int):
+    inserted_body = 0
+    inserted_particle = 0
+    for index in range(rigidNum):
+        position = bounding_sphere[index].x
+        radius = bounding_sphere[index].rad
+        if check_in_region(position, radius):
+            inserted_body += 1
+            inserted_particle += 1
+    return vec2i([inserted_body, inserted_particle])
+
+@ti.kernel
+def kernel_update_particle_volume_by_levelset_(rigidNum: int, bounding_sphere: ti.template(), rigid: ti.template(), check_in_region: ti.template()) -> ti.types.vector(2, float):
+    inserted_volume = 0.
+    inserted_particle = 0
+    for index in range(rigidNum):
+        position = bounding_sphere[index].x
+        radius = bounding_sphere[index].rad
+        if check_in_region(position, radius):
+            inserted_volume += rigid[index]._get_volume()
+            inserted_particle += 1
+    return vec2f([inserted_volume, inserted_particle])
 
 @ti.kernel
 def kernel_update_pebble_number_by_clump_(bodyNum: int, clump: ti.template(), particle: ti.template(), check_in_region: ti.template()) -> ti.types.vector(2, int):
@@ -252,7 +417,7 @@ def kernel_update_particle_volume_by_clump_(bodyNum: int, clump: ti.template(), 
 def kernel_insert_first_sphere_(start_point: ti.types.vector(3, float), position: ti.types.vector(3, float), radius: float, insert_body_num: ti.template(), 
                                 insert_particle_in_neighbor: ti.template(), sphere_coords: ti.template(), sphere_radii: ti.template(), cell_num: ti.types.vector(3, int), cell_size: float, 
                                 neighbor_position: ti.template(), neighbor_radius: ti.template(), num_particle_in_cell: ti.template(), particle_neighbor: ti.template(), insert_particle: ti.template()):
-    sphere_coords[insert_body_num[None]] = start_point + position
+    sphere_coords[insert_body_num[None]] = position
     sphere_radii[insert_body_num[None]] = radius
     insert_particle(cell_num, cell_size, position - start_point, radius, insert_particle_in_neighbor, neighbor_position, neighbor_radius, num_particle_in_cell, particle_neighbor)
     insert_body_num[None] += 1
@@ -302,6 +467,41 @@ def kernel_sphere_generate_without_overlap_(min_rad: float, max_rad: float, trie
             count += 1
         if count == tries_default:
             break
+
+@ti.kernel                
+def kernel_sphere_generate_lattice_(min_rad: float, max_rad: float, expected_body_num: int, position_distribution: ti.types.vector(3, int), start_point: ti.types.vector(3, float), valid: ti.template(),
+                                    insert_body_num: ti.template(), insert_particle_in_neighbor: ti.template(),  sphere_coords: ti.template(), sphere_radii: ti.template(), 
+                                    cell_num: ti.types.vector(3, int), cell_size: float, position: ti.template(), radius: ti.template(), num_particle_in_cell: ti.template(), 
+                                    particle_neighbor: ti.template(), check_in_domain: ti.template(), overlap: ti.template(), insert_particle: ti.template()):
+    tries = insert_body_num[None]
+    while tries < expected_body_num:
+        sphere_radius = min_rad + ti.random() * (max_rad - min_rad)
+        randomID = expected_body_num - insert_body_num[None] - 1
+        offset = vec3f([ti.random(), ti.random(), ti.random()]) * (max_rad - sphere_radius)
+        sphere_coord = start_point + (vec3f(vectorize_id(valid[randomID], position_distribution)) + 0.5) * 2. * max_rad + offset
+        if check_in_domain(sphere_coord, sphere_radius):
+            if overlap(cell_num, cell_size, sphere_coord - start_point, sphere_radius, insert_particle_in_neighbor, position, radius, num_particle_in_cell, particle_neighbor) == 0: 
+                sphere_coords[insert_body_num[None]] = sphere_coord
+                sphere_radii[insert_body_num[None]] = sphere_radius
+                insert_particle(cell_num, cell_size, sphere_coord - start_point, sphere_radius, insert_particle_in_neighbor, position, radius, num_particle_in_cell, particle_neighbor)
+                insert_body_num[None] += 1
+        valid[randomID] = -1
+        tries += 1
+
+@ti.kernel
+def update_valid(number: int, valid: ti.template()) -> int:
+    remains = 0
+    ti.loop_config(serialize=True)
+    for i in range(number):
+        if valid[i] != -1:
+            valid[remains] = valid[i]
+            remains += 1
+    return remains
+
+@ti.kernel
+def fill_valid(valid: ti.template()):
+    for i in valid:
+        valid[i] = i
 
 @ti.kernel
 def kernel_distribute_sphere_(min_rad: float, max_rad: float, volume_expect: float, insert_body_num: ti.template(), insert_particle_in_neighbor: ti.template(), 
@@ -416,7 +616,7 @@ def kernel_multisphere_generate_without_overlap_(nspheres: int, r_equiv: float, 
                     ipebble = insert_particle_in_neighbor[None] 
                     pebble_coord, pebble_radius = get_actual_clump(pebble, com_pos, scale_factor, clump_orient, x_pebble, rad_pebble)
                     pebble_coords[ipebble] = pebble_coord
-                    pebble_radii[ipebble] = pebble_radius        
+                    pebble_radii[ipebble] = pebble_radius  
                     insert_particle(cell_num, cell_size, pebble_coord - start_point, pebble_radius, insert_particle_in_neighbor, position, radius, num_particle_in_cell, particle_neighbor)
                 insert_body_num[None] += 1
                 break
@@ -453,8 +653,8 @@ def kernel_distribute_multisphere_(nspheres: int, r_equiv: float, volume_expect:
             for pebble in range(nspheres):
                 ipebble = insert_particle_in_neighbor[None] 
                 pebble_coord, pebble_radius = get_actual_clump(pebble, com_pos, scale_factor, clump_orient, x_pebble, rad_pebble)
-                pebble_coords[ipebble] = pebble_coord
-                pebble_radii[ipebble] = pebble_radius
+                pebble_coords[ipebble + pebble] = pebble_coord
+                pebble_radii[ipebble + pebble] = pebble_radius
             pvol = scale_factor * scale_factor * scale_factor * volume_expect
             inserted_volume += pvol
             insert_particle_in_neighbor[None] += nspheres
@@ -522,19 +722,26 @@ def generate_sphere_from_file(min_rad: float, max_rad: float, groupID: int, matI
         new_pos = voxelized_points_np[voxelize]
         
 
+
 @ti.kernel
-def kernel_add_patch(iscounterclockwise: int, start: int, wallID: int, matID: int, vertices: ti.types.ndarray(), faces: ti.types.ndarray(), center: ti.types.vector(3, float), 
-                     offset: ti.types.vector(3, float), direction: ti.types.vector(3, float), init_v: ti.types.vector(3, float), wall: ti.template()):
+def kernel_add_facet(start: int, wallID: int, matID: int, vertices: ti.types.ndarray(), faces: ti.types.ndarray(), init_v: ti.types.vector(3, float), wall: ti.template()):
     for swall in range(start, start + faces.shape[0]):
         nwall = swall - start
         vertice1 = vec3f(vertices[faces[nwall, 0], 0], vertices[faces[nwall, 0], 1], vertices[faces[nwall, 0], 2]) 
         vertice2 = vec3f(vertices[faces[nwall, 1], 0], vertices[faces[nwall, 1], 1], vertices[faces[nwall, 1], 2]) 
         vertice3 = vec3f(vertices[faces[nwall, 2], 0], vertices[faces[nwall, 2], 1], vertices[faces[nwall, 2], 2]) 
-        
-        rot_matrix = RodriguesRotationMatrix(vec3f(0, 0, 1), direction)
-        vertice1 = rot_matrix @ (vertice1 - center) + center + offset
-        vertice2 = rot_matrix @ (vertice2 - center) + center + offset
-        vertice3 = rot_matrix @ (vertice3 - center) + center + offset
+
+        wall[swall].add_materialID(matID)
+        wall[swall].add_wall_geometry_(wallID, vertice1, vertice2, vertice3, init_v)
+
+
+@ti.kernel
+def kernel_add_patch(iscounterclockwise: int, start: int, wallID: int, matID: int, vertices: ti.types.ndarray(), faces: ti.types.ndarray(), init_v: ti.types.vector(3, float), wall: ti.template()):
+    for swall in range(start, start + faces.shape[0]):
+        nwall = swall - start
+        vertice1 = vec3f(vertices[faces[nwall, 0], 0], vertices[faces[nwall, 0], 1], vertices[faces[nwall, 0], 2]) 
+        vertice2 = vec3f(vertices[faces[nwall, 1], 0], vertices[faces[nwall, 1], 1], vertices[faces[nwall, 1], 2]) 
+        vertice3 = vec3f(vertices[faces[nwall, 2], 0], vertices[faces[nwall, 2], 1], vertices[faces[nwall, 2], 2]) 
 
         if iscounterclockwise == 0:
             exvertice = vertice1
@@ -543,10 +750,7 @@ def kernel_add_patch(iscounterclockwise: int, start: int, wallID: int, matID: in
 
         wall[swall].add_materialID(matID)
         wall[swall].add_wall_geometry(wallID, vertice1, vertice2, vertice3, init_v)
-        
-        
 
-    
 
 @ti.kernel
 def kernel_set_node_coords(gridSum: int, grid_size: float, gnum: ti.types.vector(3, int), start_point: ti.types.vector(3, float), node: ti.template()):
@@ -593,3 +797,57 @@ def kernel_reload_particle(bodyID: int, materialID: int, active: int, mass: ti.t
     for np in range(particle_num):
         particle[np]._reload_essential(bodyID[np], materialID[np], active[np], mass[np], volume[np], psize[np], position[np], velocity[np], velocity_gradient[np], stress[np], external_force[np], fix_v)
     particleNum[None] = particle_num
+
+
+@ti.kernel
+def kernel_add_dem_wall(wallNum: int, no_data: float, cell_size: float, cell_number: ti.types.vector(2, int), digital_elevation: ti.types.ndarray(), wallID: int, matID: int, init_v: ti.types.vector(3, float), wall: ti.template()) -> int:
+    wall_num = 0
+    cellSum = int(cell_number[0] * cell_number[1])
+    ti.loop_config(serialize=True)
+    for i in range(cellSum):
+        xInd, yInd = vectorize_id(i, cell_number)
+        if xInd >= cell_number[0] or yInd >= cell_number[1]: continue
+
+        Ind00 = linearize3D(xInd, yInd, 0, cell_number + 1)
+        Ind10 = linearize3D(xInd + 1, yInd, 0, cell_number + 1)
+        Ind01 = linearize3D(xInd, yInd + 1, 0, cell_number + 1)
+        Ind11 = linearize3D(xInd + 1, yInd + 1, 0, cell_number + 1)
+
+        height00 = digital_elevation[Ind00]
+        height10 = digital_elevation[Ind10]
+        height01 = digital_elevation[Ind01]
+        height11 = digital_elevation[Ind11]
+
+        xyCoord00 = vec3f(xInd * cell_size, yInd * cell_size, height00)
+        xyCoord10 = vec3f((xInd + 1) * cell_size, yInd * cell_size, height10)
+        xyCoord01 = vec3f(xInd * cell_size, (yInd + 1) * cell_size, height01)
+        xyCoord11 = vec3f((xInd + 1) * cell_size, (yInd + 1) * cell_size, height11)
+
+        if not equal_to(height00, no_data) and not equal_to(height10, no_data) and not equal_to(height01, no_data) and not equal_to(height11, no_data):
+            wall[wallNum + wall_num].add_materialID(matID)
+            wall[wallNum + wall_num].add_wall_geometry(wallID, xyCoord00, xyCoord10, xyCoord11, init_v)
+            wall[wallNum + wall_num + 1].add_materialID(matID)
+            wall[wallNum + wall_num + 1].add_wall_geometry(wallID, xyCoord11, xyCoord01, xyCoord00, init_v)
+            wall_num += 2
+            continue
+        if equal_to(height00, no_data) and not equal_to(height10, no_data) and not equal_to(height01, no_data) and not equal_to(height11, no_data):
+            wall[wallNum + wall_num].add_materialID(matID)
+            wall[wallNum + wall_num].add_wall_geometry(wallID, xyCoord10, xyCoord11, xyCoord01, init_v)
+            wall_num += 1
+            continue
+        if not equal_to(height00, no_data) and equal_to(height10, no_data) and not equal_to(height01, no_data) and not equal_to(height11, no_data):
+            wall[wallNum + wall_num].add_materialID(matID)
+            wall[wallNum + wall_num].add_wall_geometry(wallID, xyCoord00, xyCoord11, xyCoord01, init_v)
+            wall_num += 1
+            continue
+        if not equal_to(height00, no_data) and not equal_to(height10, no_data) and equal_to(height01, no_data) and not equal_to(height11, no_data):
+            wall[wallNum + wall_num].add_materialID(matID)
+            wall[wallNum + wall_num].add_wall_geometry(wallID, xyCoord00, xyCoord10, xyCoord11, init_v)
+            wall_num += 1
+            continue
+        if not equal_to(height00, no_data) and not equal_to(height10, no_data) and not equal_to(height01, no_data) and equal_to(height11, no_data):
+            wall[wallNum + wall_num].add_materialID(matID)
+            wall[wallNum + wall_num].add_wall_geometry(wallID, xyCoord00, xyCoord10, xyCoord01, init_v)
+            wall_num += 1
+            continue
+    return wall_num

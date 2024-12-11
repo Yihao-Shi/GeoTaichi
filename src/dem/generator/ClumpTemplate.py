@@ -10,6 +10,7 @@ from third_party.pyevtk.hl import pointsToVTK
 class ClumpTemplate(object):
     def __init__(self):
         self.name = None
+        self.save_path = ''
         self.resolution = 80.
         self.ntry = 2000000
         self.volume_expect = 0.
@@ -25,10 +26,11 @@ class ClumpTemplate(object):
         self.ey_space = vec3f([0, 0, 0])
         self.ez_space = vec3f([0, 0, 0])
 
-    def clump_template(self, clump_dict, calculate=True):
+    def clump_template(self, clump_dict, calculate=True, title=True):
         print('#', "Start calculating properties of clump template ...".ljust(67))
         self.nspheres = DictIO.GetEssential(clump_dict, "NSphere")
         pebble_dict = DictIO.GetEssential(clump_dict, "Pebble")
+        self.save_path = DictIO.GetAlternative(clump_dict, "SavePath", '')
         if self.nspheres != len(pebble_dict):
             raise ValueError("NSphere is not equal to the length of pebble dict")
         if self.nspheres < 2 or self.nspheres > 127:
@@ -43,7 +45,7 @@ class ClumpTemplate(object):
 
             self.clump_property_initialize(clump_property)
             self.template_visualization()
-            self.print_info()
+            self.print_info(title)
 
     def clump_template_initialize(self, pebble_dict):
         self.x_pebble = np.zeros((self.nspheres, 3))
@@ -66,10 +68,10 @@ class ClumpTemplate(object):
                 self.center_of_mass_1()
                 moi_vol = self.inertia_moment_1()
             elif clump_property == "Grid":
-                gird_size = self.pebble_radius_min / self.resolution
+                grid_size = self.pebble_radius_min / self.resolution
                 self.bounding_sphere_2()
-                self.center_of_mass_2(gird_size)
-                moi_vol = self.inertia_moment_2(gird_size)
+                self.center_of_mass_2(grid_size)
+                moi_vol = self.inertia_moment_2(grid_size)
         elif type(clump_property) is dict:
             self.bounding_sphere_2()
             self.volume_expect = DictIO.GetEssential(clump_property, "Volume")
@@ -218,10 +220,11 @@ class ClumpTemplate(object):
         posx, posy, posz = np.ascontiguousarray(self.x_pebble[:, 0]), \
                            np.ascontiguousarray(self.x_pebble[:, 1]), \
                            np.ascontiguousarray(self.x_pebble[:, 2])
-        pointsToVTK(f'{self.name}', posx, posy, posz, data={"rad": np.ascontiguousarray(self.rad_pebble)})
+        pointsToVTK(self.save_path+f'{self.name}', posx, posy, posz, data={"rad": np.ascontiguousarray(self.rad_pebble)})
     
-    def print_info(self):
-        print(" Clump Template Information ".center(71,"-"))
+    def print_info(self, title):
+        if title:
+            print(" Clump Template Information ".center(71,"-"))
         print("Template name: ",  self.name)
         print("The number of pebble: ",  self.nspheres)
         print("Volume = ",  self.volume_expect)

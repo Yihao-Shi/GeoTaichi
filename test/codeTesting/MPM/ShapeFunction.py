@@ -1,8 +1,6 @@
 import taichi as ti
 ti.init(arch=ti.gpu, default_fp=ti.f64, debug=False, device_memory_fraction=0.75)
 
-import sys
-sys.path.append('/home/eleven/work/GeoTaichi')
 from src.mpm.BaseStruct import *   
 from src.mpm.elements.HexahedronElement8Nodes import *
 

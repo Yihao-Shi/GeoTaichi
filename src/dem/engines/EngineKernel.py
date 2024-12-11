@@ -1,10 +1,11 @@
 import taichi as ti
 
 from src.utils.constants import ZEROVEC3f
-from src.utils.Quaternion import Normalized, SetDQ, SetToRotate, UpdateQAccurate
+from src.utils.Quaternion import SetDQ, SetToRotate, UpdateQAccurate
 from src.utils.ScalarFunction import PairingMapping, sgn
 from src.utils.TypeDefination import vec3f
 from src.utils.VectorFunction import SquaredLength, Squared, Normalize
+from src.utils import GlobalVariable
 
 
 @ti.kernel
@@ -12,53 +13,17 @@ def particle_force_reset_(particleNum: int, particle: ti.template()):
     for np in range(particleNum):
         particle[np].contact_force = vec3f([0., 0., 0.])
         particle[np].contact_torque = vec3f([0., 0., 0.])
+        if ti.static(GlobalVariable.TRACKENERGY):
+            particle[np].elastic_energy = 0.
 
 @ti.kernel
 def wall_force_reset_(wallNum: int, wall: ti.template()):
     for nw in range(wallNum):
         wall[nw]._reset()
 
-@ti.kernel
-def track_sphere_energy(gravity: ti.types.vector(3, float), dt: ti.template(), bodyNum: int, material: ti.template(), particle: ti.template(), sphere: ti.template(), energy: ti.template()):
-    for nsphere in range(bodyNum):
-        np = sphere[nsphere].sphereIndex
-        materialID = int(particle[np].materialID)
-        fdamp = material[materialID].fdamp
-        tdamp = material[materialID].tdamp
-
-        mass = particle[np].m
-        cforce, ctorque = particle[np].contact_force, particle[np].contact_torque
-        velocity, angular_velocity = particle[np].v, particle[np].w
-
-        energy[nsphere].nonviscous_damp += ti.abs(velocity).dot(ti.abs(cforce + mass * gravity)) * fdamp * dt[None]
-        energy[nsphere].nonviscous_damp += ti.abs(angular_velocity).dot(ti.abs(ctorque)) * tdamp * dt[None]
-        energy[nsphere].translation_kinetic = 0.5 * mass * Squared(velocity)
-        energy[nsphere].rotation_kinetic = 0.5 * angular_velocity .dot(angular_velocity / sphere[nsphere].inv_I)
-        energy[nsphere].body += -gravity.dot(velocity) * mass * dt[None]
-
-@ti.kernel
-def track_clump_energy(gravity: ti.types.vector(3, float), dt: ti.template(), bodyNum: int, material: ti.template(), particle: ti.template(), clump: ti.template(), energy: ti.template()):
-    for nclump in range(bodyNum):
-        pebb_beg, pebb_end = clump[nclump].startIndex, clump[nclump].endIndex
-        materialID = int(particle[pebb_beg].materialID)
-        fdamp = material[materialID].fdamp
-        tdamp = material[materialID].tdamp
-
-        mass = clump[nclump].m
-        cforce, ctorque = ZEROVEC3f, ZEROVEC3f
-        for np in range(pebb_beg, pebb_end + 1):
-            contact_force = particle[np].contact_force
-            cforce += contact_force
-            ctorque += particle[np].contact_torque + (particle[np].x - clump[nclump].mass_center).cross(contact_force)
-        velocity, angular_velocity = particle[np].v, particle[np].w
-
-        energy[nclump].nonviscous_damp += ti.abs(velocity).dot(ti.abs(cforce + mass * gravity)) * fdamp * dt[None]
-        energy[nclump].nonviscous_damp += ti.abs(angular_velocity).dot(ti.abs(ctorque)) * tdamp * dt[None]
-        energy[nclump].translation_kinetic = 0.5 * mass * Squared(velocity)
-        rotation_matrix = SetToRotate(clump[nclump].q)
-        omega_local = rotation_matrix.transpose() @ angular_velocity
-        energy[nclump].rotation_kinetic = 0.5 * omega_local .dot(omega_local / clump[nclump].inv_I)
-        energy[nclump].body += -gravity.dot(velocity) * mass * dt[None]
+@ti.func
+def cundall_damping_energy(fdamp, tdamp, velocity, angular_velocity, force, ctorque, dt):
+    return -ti.abs(velocity).dot(ti.abs(force)) * fdamp * dt[None] - ti.abs(angular_velocity).dot(ti.abs(ctorque)) * tdamp * dt[None]
 
 @ti.func
 def cundall_damp1st(damp, force, vel):
@@ -107,7 +72,7 @@ def move_spheres_euler_(bodyNum: int, dt: ti.template(), sphere: ti.template(), 
 
         mass, is_fix = particle[np].m, sphere[nsphere].fix_v
         old_vel, old_disp = particle[np].v, particle[np].verletDisp
-        force = cundall_damp1st(fdamp, cforce + gravity * mass , old_vel)
+        force = cundall_damp1st(fdamp, cforce + gravity * mass, old_vel)
         
         av = force / mass * int(is_fix)
         vel = old_vel + dt[None] * av
@@ -128,6 +93,9 @@ def move_spheres_euler_(bodyNum: int, dt: ti.template(), sphere: ti.template(), 
 
         particle[np].w = omega
         sphere[nsphere].q = Normalize(q)
+
+        if ti.static(GlobalVariable.TRACKENERGY):
+            particle[np].damp_energy += cundall_damping_energy(fdamp, tdamp, old_vel, old_omega, cforce + gravity * mass, ctorque, dt)
 
 @ti.kernel
 def move_clumps_euler_(bodyNum: int, dt: ti.template(), clump: ti.template(), particle: ti.template(), material: ti.template(), gravity: ti.types.vector(3, float)):    
@@ -198,6 +166,56 @@ def move_clumps_euler_(bodyNum: int, dt: ti.template(), clump: ti.template(), pa
             particle[np].x = pebble_pos
             particle[np].verletDisp += pebble_pos - old_pebble_pos
 
+        if ti.static(GlobalVariable.TRACKENERGY):
+            damp_energy = cundall_damping_energy(fdamp, tdamp, old_vel, old_omega, cforce + gravity * mass, ctorque, dt)
+            for np in range(pebb_beg, pebb_end + 1):
+                particle[np].damp_energy += damp_energy / (pebb_end - pebb_beg + 1)
+
+@ti.kernel
+def move_level_set_euler_(bodyNum: int, dt: ti.template(), sphere: ti.template(), rigid: ti.template(), material: ti.template(), gravity: ti.types.vector(3, float)):
+    for np in range(bodyNum):
+        materialID = int(rigid[np].materialID)
+        fdamp = material[materialID].fdamp
+        tdamp = material[materialID].tdamp
+        
+        cforce, ctorque = rigid[np].contact_force, rigid[np].contact_torque
+        old_center, old_x = rigid[np].mass_center, sphere[np].x
+
+        mass, is_fix = rigid[np].m, rigid[np].is_fix
+        old_vel = rigid[np].v
+        force = cundall_damp1st(fdamp, cforce + gravity * mass , old_vel)
+        
+        av = force / mass * int(is_fix)
+        vel = old_vel + dt[None] * av
+        delta_x = dt[None] * vel
+        mass_center = old_center + delta_x
+
+        rigid[np].v = vel
+        rigid[np].mass_center = mass_center
+
+        inv_i = rigid[np].inv_I
+        old_omega, old_q = rigid[np].w, rigid[np].q
+
+        torque = cundall_damp1st(tdamp, ctorque, old_omega)
+        rotation_matrix = SetToRotate(old_q)
+        torque_local = rotation_matrix.transpose() @ torque
+        omega_local = rotation_matrix.transpose() @ old_omega
+        aw_local = inv_i * (torque_local - omega_local.cross(1. / inv_i * omega_local))
+        aw = rotation_matrix @ aw_local * int(is_fix)
+        omega = old_omega + aw * dt[None]
+
+        # see Langston et al. (2004) Distinct element modelling of non-spherical frictionless particle flow.
+        dq = SetDQ(old_q, rotation_matrix.transpose() @ omega) * dt[None]                  # SetDQ(old_q, old_omega)
+        q = Normalize(old_q + dq)
+        rigid[np].w = omega
+        rigid[np].q = q
+
+        rotation_matrix1 = SetToRotate(q)
+        sphere[np]._move(mass_center + rotation_matrix1 @ (rotation_matrix.transpose() @ (old_x - old_center)) - old_x)
+
+        if ti.static(GlobalVariable.TRACKENERGY):
+            rigid[np].damp_energy += cundall_damping_energy(fdamp, tdamp, old_vel, old_omega, cforce + gravity * mass, ctorque, dt)
+
 @ti.kernel
 def move_spheres_verlet_(bodyNum: int, dt: ti.template(), sphere: ti.template(), particle: ti.template(), material: ti.template(), gravity: ti.types.vector(3, float)):
     for nsphere in range(bodyNum):
@@ -254,6 +272,9 @@ def move_spheres_verlet_(bodyNum: int, dt: ti.template(), sphere: ti.template(),
         particle[np].w = omega_half
         sphere[nsphere].angmoment = angmoment_half 
         sphere[nsphere].q = Normalize(q)
+
+        if ti.static(GlobalVariable.TRACKENERGY):
+            particle[np].damp_energy += cundall_damping_energy(fdamp, tdamp, old_vel, old_omega, cforce + gravity * mass, ctorque, dt)
 
 @ti.kernel
 def move_clumps_verlet_(bodyNum: int, dt: ti.template(), clump: ti.template(), particle: ti.template(), material: ti.template(), gravity: ti.types.vector(3, float)):    
@@ -330,6 +351,58 @@ def move_clumps_verlet_(bodyNum: int, dt: ti.template(), clump: ti.template(), p
             particle[np].w = omega
             particle[np].x = pebble_pos
             particle[np].verletDisp += pebble_pos - old_pebble_pos
+
+@ti.kernel
+def move_level_set_verlet_(bodyNum: int, dt: ti.template(), sphere: ti.template(), rigid: ti.template(), material: ti.template(), gravity: ti.types.vector(3, float)):    
+    for np in range(bodyNum):
+        materialID = int(rigid[np].materialID)
+        fdamp = material[materialID].fdamp
+        tdamp = material[materialID].tdamp
+        
+        cforce, ctorque = rigid[np].contact_force, rigid[np].contact_torque
+        old_center, old_x = rigid[np].mass_center, sphere[np].x
+
+        mass, is_fix = rigid[np].m, rigid[np].is_fix
+        old_av, old_vel = rigid[np].a, rigid[np].v
+        
+        vel_half = old_vel + 0.5 * dt[None] * old_av
+        force = cundall_damp1st(fdamp, cforce + gravity * mass , vel_half)
+        delta_x = dt[None] * vel_half 
+        av = force / mass * int(is_fix)
+        vel = vel_half + 0.5 * av * dt[None]
+        mass_center = old_center + delta_x
+
+        rigid[np].v = vel
+        rigid[np].a = av
+        rigid[np].mass_center = mass_center
+
+        inv_i = rigid[np].inv_I
+        i = 1. / inv_i
+        old_omega, old_q = rigid[np].w, rigid[np].q
+
+        torque = cundall_damp1st(tdamp, ctorque, old_omega)
+        rotation_matrix = SetToRotate(old_q)
+
+        torque_local = rotation_matrix.transpose() @ torque
+        omega_local = rotation_matrix.transpose() @ old_omega
+        K1 = dt[None] * w_dot(omega_local, torque_local, i, inv_i) * int(is_fix)
+        K2 = dt[None] * w_dot(omega_local + K1, torque_local, i, inv_i) * int(is_fix)
+        K3 = dt[None] * w_dot(omega_local + 0.25 * (K1 + K2), torque_local, i, inv_i) * int(is_fix)
+        omega_local += (K1 + K2 + 4. * K3) / 6.
+        omega = rotation_matrix @ omega_local
+        # see Langston et al. (2004) Distinct element modelling of non-spherical frictionless particle flow.
+        dq = SetDQ(old_q, omega_local) * dt[None]                 
+        q = Normalize(old_q + dq)
+
+        rigid[np].angmoment = omega * i
+        rigid[np].w = omega
+        rigid[np].q = q
+
+        rotation_matrix1 = SetToRotate(q)
+        sphere[np]._move(mass_center + rotation_matrix1 @ (rotation_matrix.transpose() @ (old_x - old_center)) - old_x)
+
+        if ti.static(GlobalVariable.TRACKENERGY):
+            rigid[np].damp_energy += cundall_damping_energy(fdamp, tdamp, old_vel, old_omega, cforce + gravity * mass, ctorque, dt)
 
 @ti.kernel
 def move_clumps_predictor_corrector_(bodyNum: int, dt: ti.template(), clump: ti.template(), particle: ti.template(), material: ti.template(), gravity: ti.types.vector(3, float)):    
@@ -412,7 +485,6 @@ def get_contact_stiffness(max_material_num: int, particleNum: int, particle: ti.
             equivalent_stiffness = surfaceProps[materialID]._get_equivalent_stiffness(end1, end2, particle, wall)
             wall[end2]._update_contact_stiffness(equivalent_stiffness)
             wall[end2]._update_contact_interaction(-(cplist[nc].cnforce + cplist[nc].csforce))
-    print(wall[0].contact_force)
 
 @ti.kernel
 def get_gain(dt: ti.template(), servoNum: int, servo: ti.template(), wall: ti.template()):
