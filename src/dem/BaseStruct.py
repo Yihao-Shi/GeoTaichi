@@ -1,12 +1,14 @@
 from typing import Any
 import taichi as ti
 
-from src.utils.constants import PI, DBL_EPSILON, Threshold, ZEROVEC3f, ZEROMAT2x2
+from src.utils.constants import PI, Threshold, ZEROVEC3f, ZEROMAT2x2, ZEROMAT3x9, ZEROMAT9x9
 from src.utils.GeometryFunction import SphereTriangleIntersectionArea, DistanceFromPointToTriangle
+from src.utils.MatrixFunction import LUinverse, get_eigenvalue
 from src.utils.ObjectIO import DictIO
-from src.utils.ScalarFunction import sgn
-from src.utils.TypeDefination import vec3f, vec3u8, vec4f, vec3i, vec2f
-from src.utils.VectorFunction import Zero2OneVector, linear_id
+from src.utils.ScalarFunction import sgn, biInterpolate, linearize3D
+from src.utils.TypeDefination import vec3f, vec3u8, vec4f, vec3i, vec2f, vec2i, mat3x3, vec9f
+from src.utils.VectorFunction import vsign
+from src.utils.BitFunction import Zero2OneVector
 
 
 @ti.dataclass
@@ -140,7 +142,10 @@ class ParticleFamily:          # device memory: 84B
         self.w = w
 
     @ti.func
-    def _get_multisphere_index(self): return self.multisphereIndex
+    def _get_multisphere_index1(self): return self.multisphereIndex
+
+    @ti.func
+    def _get_multisphere_index2(self): return self.multisphereIndex
 
     @ti.func
     def _get_material(self): return self.materialID
@@ -168,6 +173,9 @@ class ParticleFamily:          # device memory: 84B
 
     @ti.func
     def _get_verlet_displacement(self): return self.verletDisp
+
+    @ti.func
+    def _get_contact_radius(self, contact_point): return (contact_point - self.x).norm()
 
 
 @ti.dataclass
@@ -403,7 +411,7 @@ class PlaneFamily:
     @ti.func
     def _is_sphere_intersect(self, position, contact_radius):
         distance = self._point_to_wall_distance(position)
-        return ti.abs(distance) < contact_radius 
+        return distance <= contact_radius 
     
     @ti.func
     def processCircleShape(self, point, distance, criteria):
@@ -431,13 +439,23 @@ class FacetFamily:
 
     @ti.pyfunc
     def add_wall_geometry(self, wallID, vertice1, vertice2, vertice3, norm, init_v):
-        self.wallID = wallID
+        self.wallID = int(wallID)
         self.active = 1
         self.vertice1 = vec3f([float(vertice) for vertice in vertice1])
         self.vertice2 = vec3f([float(vertice) for vertice in vertice2])
         self.vertice3 = vec3f([float(vertice) for vertice in vertice3])
         self.norm = norm
         self.v = init_v
+
+    @ti.pyfunc
+    def add_wall_geometry_(self, wall_id, vertice1, vertice2, vertice3, vel):
+        self.active = 1
+        self.wallID = int(wall_id)
+        self.vertice1 = vec3f([float(vertice) for vertice in vertice1])
+        self.vertice2 = vec3f([float(vertice) for vertice in vertice2])
+        self.vertice3 = vec3f([float(vertice) for vertice in vertice3])
+        self.norm = ((vertice2 - vertice1).cross(vertice3 - vertice1)).normalized()
+        self.v = vel
 
     def deactivate(self):
         self.active = 0
@@ -469,7 +487,7 @@ class FacetFamily:
         a = self.vertice2 - self.vertice1
         b = self.vertice3 - self.vertice1
         return 0.5 * ti.sqrt((a[1] * b[2] - b[1] * a[2]) * (a[1] * b[2] - b[1] * a[2]) + (a[0] * b[2] - b[0] * a[2]) * (a[0] * b[2] - b[0] * a[2]) + \
-                           (a[0] * b[1] - b[0] * a[1]) * (a[0] * b[1] - b[0] * a[1]))
+                             (a[0] * b[1] - b[0] * a[1]) * (a[0] * b[1] - b[0] * a[1]))
     
     @ti.func
     def _move(self, disp):
@@ -530,11 +548,15 @@ class FacetFamily:
     
     @ti.func
     def _point_to_wall_distance(self, point):
-        return DistanceFromPointToTriangle(point, self.vertice1, self.vertice2, self.vertice3)
+        return DistanceFromPointToTriangle(point, self.vertice1, self.vertice2, self.vertice3, -self.norm)
     
     @ti.func
     def _get_norm_distance(self, point):
         return (point - self._get_center()).dot(self.norm)
+    
+    @ti.func
+    def _is_positive_direction(self, point):
+        return (point - self.vertice1).dot(self.norm) > 0.
 
     @ti.func
     def _is_in_plane(self, point):
@@ -589,9 +611,9 @@ class FacetFamily:
     
     @ti.func
     def _is_sphere_intersect(self, position, contact_radius):
-        distance = self._point_to_wall_distance(position)
+        distance = self._point_to_wall_distance(position) # self._get_norm_distance(position) or self._point_to_wall_distance(position) ???
         # in_plane = self._is_in_plane(self._point_projection_by_distance(position, distance))
-        return ti.abs(distance) < contact_radius
+        return distance <= contact_radius
     
     @ti.func
     def processCircleShape(self, point, radius, distance):
@@ -626,6 +648,7 @@ class ServoWall:
         self.target_stress = float(target_stress)
         self.max_velocity = float(max_velocity)
 
+    @ti.pyfunc
     def add_servo_wall(self, start_index, end_index, alpha, target_stress, max_velocity):
         self.active = 1
         self.startIndex = start_index
@@ -758,14 +781,14 @@ class PatchFamily:    # memory usage: 64B
         a = self.vertice2 - self.vertice1
         b = self.vertice3 - self.vertice1
         return 0.5 * ti.sqrt((a[1] * b[2] - b[1] * a[2]) * (a[1] * b[2] - b[1] * a[2]) + (a[0] * b[2] - b[0] * a[2]) * (a[0] * b[2] - b[0] * a[2]) + \
-                           (a[0] * b[1] - b[0] * a[1]) * (a[0] * b[1] - b[0] * a[1]))
+                             (a[0] * b[1] - b[0] * a[1]) * (a[0] * b[1] - b[0] * a[1]))
 
     @ti.func
     def _get_bounding_radius(self):
         a = self.vertice2 - self.vertice1
         b = self.vertice3 - self.vertice1
         c = self.vertice2 - self.vertice3
-        S =  0.5 * ti.sqrt((a[1] * b[2] - b[1] * a[2]) * (a[1] * b[2] - b[1] * a[2]) + (a[0] * b[2] - b[0] * a[2]) * (a[0] * b[2] - b[0] * a[2]) + \
+        S = 0.5 * ti.sqrt((a[1] * b[2] - b[1] * a[2]) * (a[1] * b[2] - b[1] * a[2]) + (a[0] * b[2] - b[0] * a[2]) * (a[0] * b[2] - b[0] * a[2]) + \
                            (a[0] * b[1] - b[0] * a[1]) * (a[0] * b[1] - b[0] * a[1]))
 
         length1 = a[0] * a[0] + a[1] * a[1] + a[2] * a[2]
@@ -828,11 +851,15 @@ class PatchFamily:    # memory usage: 64B
     
     @ti.func
     def _point_to_wall_distance(self, point):
-        return DistanceFromPointToTriangle(point, self.vertice1, self.vertice2, self.vertice3)
+        return DistanceFromPointToTriangle(point, self.vertice1, self.vertice2, self.vertice3, -self.norm)
     
     @ti.func
     def _get_norm_distance(self, point):
         return (point - self._get_center()).dot(self.norm)
+    
+    @ti.func
+    def _is_positive_direction(self, point):
+        return (point - self.vertice1).dot(self.norm) > 0.
 
     @ti.func
     def _is_in_plane(self, point):
@@ -868,9 +895,9 @@ class PatchFamily:    # memory usage: 64B
 
     @ti.func
     def _is_sphere_intersect(self, position, contact_radius):
-        distance = self._point_to_wall_distance(position)
+        distance = self._get_norm_distance(position)
         # in_plane = self._is_in_plane(self._point_projection_by_distance(position, distance))
-        return ti.abs(distance) < contact_radius
+        return distance <= contact_radius
     
     @ti.func
     def processCircleShape(self, point, radius, distance):
@@ -885,9 +912,773 @@ class PatchFamily:    # memory usage: 64B
 
 
 @ti.dataclass
+class LevelSetGrid:
+    distance_field: float
+
+    @ti.func
+    def _set_grid(self, sdf):
+        self.distance_field = float(sdf)
+
+    @ti.func
+    def _get_sdf(self):
+        return self.distance_field
+    
+    @ti.func
+    def _scale(self, scale):
+        self.distance_field *= float(scale)
+
+    @ti.func
+    def distance(self, scale):
+        return self.distance_field * scale
+    
+
+@ti.dataclass
+class DeformableGrid:
+    m: float
+    f: vec3f
+    v: vec3f
+
+    @ti.func
+    def _grid_reset(self):
+        self.m = 0.
+        self.momentum = ZEROVEC3f
+        self.force = ZEROVEC3f
+
+    @ti.func
+    def _set_dofs(self, rowth):
+        pass
+
+    @ti.func
+    def _update_nodal_mass(self, m):
+        self.m += m
+
+    @ti.func
+    def _update_nodal_momentum(self, momentum):
+        self.momentum += momentum
+
+    @ti.func
+    def _compute_nodal_velocity(self):
+        self.momentum /= self.m
+
+    @ti.func
+    def _update_nodal_force(self, force):
+        self.force += force
+
+    @ti.func
+    def _update_external_force(self, external_force):
+        self.force += external_force
+
+    @ti.func
+    def _update_internal_force(self, internal_force):
+        self.force += internal_force
+
+    @ti.func
+    def _compute_nodal_kinematic(self, damp, dt):
+        unbalanced_force = self.force 
+        velocity = self.momentum
+        if velocity.dot(unbalanced_force) > 0.:
+            unbalanced_force -= damp * unbalanced_force.norm() * vsign(velocity)
+        acceleration = unbalanced_force / self.m
+        self.momentum += acceleration * dt[None]
+        self.force = acceleration 
+
+    @ti.func
+    def _update_nodal_kinematic(self):
+        self.force /= self.m
+        self.momentum /= self.m
+
+
+@ti.dataclass
+class VerticeNode:
+    x: vec3f
+    parameter: float
+
+    @ti.func
+    def _set_surface_node(self, x):
+        self.x = float(x)
+
+    @ti.func
+    def _set_coefficient(self, coeff):
+        self.parameter = coeff
+
+    @ti.func
+    def _scale(self, scale, centor_of_mass):
+        self.x = float(scale * (self.x - centor_of_mass) + centor_of_mass)
+
+
+@ti.dataclass
+class TemplateSoftNode:
+    parameter: float
+
+    @ti.func
+    def _set_coefficient(self, coeff):
+        self.parameter = coeff
+
+
+@ti.dataclass
+class SoftSurfacePoint:
+    pointID: int
+    contact_force: vec3f
+
+    @ti.func
+    def _reset(self):
+        self.contact_force = ZEROVEC3f
+
+    @ti.func
+    def _update_contact_interaction(self, cforce, ctorque):
+        self.contact_force += cforce
+
+
+@ti.dataclass
+class SoftPoint:
+    x: vec3f
+    v: vec3f
+
+    @ti.func
+    def _set_surface_node(self, x):
+        self.x = float(x)
+
+    @ti.func
+    def _scale(self, scale, centor_of_mass):
+        self.x = float(scale * (self.x - centor_of_mass) + centor_of_mass)
+
+
+class VerticeSoftNode:
+    def __init__(self, surface_point, material_point) -> None:
+        self.template_point = TemplateSoftNode.field(shape=material_point)
+        self.surface_point = SoftPoint(shape=material_point)
+        self.soft_point = SoftSurfacePoint(shape=surface_point)
+
+
+@ti.dataclass
+class RigidBody:   
+    groupID: ti.u8
+    materialID: ti.u8
+    startNode: int
+    endNode: int
+    localNode: int
+    m: float
+    equi_r: float
+    mass_center: vec3f
+    a: vec3f
+    v: vec3f
+    w: vec3f
+    angmoment: vec3f
+    q: vec4f
+    inv_I: vec3f
+    contact_force: vec3f
+    contact_torque: vec3f
+    is_fix: vec3u8
+
+    @ti.func
+    def _restart(self, startIndex, endIndex, groupID, materialID, mass, equiv_rad, mass_center, a, v, w, angmoment, q, inv_I, is_fix):
+        self.startIndex = int(startIndex)
+        self.endIndex = int(endIndex)
+        self.groupID = ti.u8(groupID)
+        self.materialID = ti.u8(materialID)
+        self.m = float(mass)
+        self.equi_r = float(equiv_rad)
+        self.mass_center = float(mass_center)
+        self.a = float(a)
+        self.v = float(v)
+        self.w = float(w)
+        self.angmoment = float(angmoment)
+        self.q = float(q)
+        self.inv_I = float(inv_I)
+        self.is_fix = ti.cast(is_fix, ti.u8)
+
+    @ti.func
+    def _add_body_attribute(self, centor_of_mass, mass, equiv_rad, inv_inertia, q):
+        self.mass_center = float(centor_of_mass)
+        self.m = float(mass)
+        self.equi_r = float(equiv_rad)
+        self.inv_I = float(inv_inertia)
+        self.q = float(q)
+
+    @ti.func
+    def _add_body_proporities(self, materialID, groupID, density):
+        self.materialID = ti.u8(materialID)
+        self.groupID = ti.u8(groupID)
+        self.m *= density
+        self.inv_I /= density
+
+    @ti.func
+    def _add_surface_index(self, start_index, end_index, local_index):
+        self.startNode = int(start_index)
+        self.endNode = int(end_index)
+        self.localNode = int(local_index)
+
+    @ti.func
+    def _add_body_kinematic(self, init_v, init_w, is_fix):
+        self.v = float(init_v)
+        self.w = float(init_w)
+        self.angmoment = self.w / self.inv_I
+        self.is_fix = ti.cast(Zero2OneVector(is_fix), ti.u8)
+
+    @ti.func
+    def _scale(self, factor):
+        self.m *= float(factor * factor * factor)
+        self.inv_I /= float(factor * factor * factor * factor * factor)
+    
+    @ti.func
+    def _velocity_update(self, dcurr_v):
+        self.v += dcurr_v
+
+    @ti.func
+    def _angular_velocity_update(self, dcurr_w):
+        self.w += dcurr_w
+
+    @ti.func
+    def calm(self):
+        self.v = ZEROVEC3f
+        self.w = ZEROVEC3f
+
+    @ti.func
+    def _update_contact_interaction(self, cforce, ctorque): 
+        self.contact_force += cforce
+        self.contact_torque += ctorque
+
+    @ti.func
+    def _add_particle_kinematics(self, x, v, w):
+        self.mass_center = x
+        self.v = v
+        self.w = w
+
+    @ti.func
+    def _get_vertice_number(self): return int(self.endNode - self.startNode)
+
+    @ti.func
+    def _start_node(self): return self.localNode
+
+    @ti.func
+    def _end_node(self): return int(self.localNode + self.endNode - self.startNode)
+
+    @ti.func
+    def local_node_to_global(self, node): return int(node - self.localNode + self.startNode)
+
+    @ti.func
+    def global_node_to_local(self, node): return int(node - self.startNode + self.localNode)
+
+    @ti.func
+    def _get_material(self): return self.materialID
+
+    @ti.func
+    def _get_group(self): return self.groupID
+
+    @ti.func
+    def _get_mass(self): return self.m
+
+    @ti.func
+    def _get_position(self): return self.mass_center
+
+    @ti.func
+    def _get_velocity(self): return self.v
+
+    @ti.func
+    def _get_angular_velocity(self): return self.w
+
+    @ti.func
+    def _get_volume(self): return 4./3. * PI * self.equi_r * self.equi_r * self.equi_r
+
+    @ti.func
+    def _get_contact_radius(self, contact_point): return (contact_point - self.mass_center).norm() 
+
+    @ti.func
+    def _get_radius(self): return self.equi_r
+
+
+@ti.dataclass
+class SoftBody:   
+    groupID: ti.u8
+    materialID: ti.u8
+    startNode: int
+    endNode: int
+    localNode: int
+
+    @ti.func
+    def _restart(self, startIndex, endIndex, groupID, materialID):
+        self.startIndex = int(startIndex)
+        self.endIndex = int(endIndex)
+        self.groupID = ti.u8(groupID)
+        self.materialID = ti.u8(materialID)
+
+    @ti.func
+    def _add_body_attribute(self, mass):
+        self.m = float(mass)
+
+    @ti.func
+    def _add_body_proporities(self, materialID, groupID):
+        self.materialID = ti.u8(materialID)
+        self.groupID = ti.u8(groupID)
+
+    @ti.func
+    def _add_surface_index(self, start_index, end_index, local_index):
+        self.startNode = int(start_index)
+        self.endNode = int(end_index)
+        self.localNode = int(local_index)
+
+    @ti.func
+    def _get_vertice_number(self): return int(self.endNode - self.startNode)
+
+    @ti.func
+    def _start_node(self): return self.localNode
+
+    @ti.func
+    def _end_node(self): return int(self.localNode + self.endNode - self.startNode)
+
+    @ti.func
+    def local_node_to_global(self, node): return int(node - self.localNode + self.startNode)
+
+    @ti.func
+    def global_node_to_local(self, node): return int(node - self.startNode + self.localNode)
+
+    @ti.func
+    def _get_material(self): return self.materialID
+
+    @ti.func
+    def _get_group(self): return self.groupID
+
+
+@ti.dataclass
+class BoundingSphere:
+    active: ti.u8
+    rad: float
+    x: vec3f
+    verletDisp: vec3f
+
+    @ti.func
+    def _restart(self, active, bounding_center, bounding_radius):
+        self.active = ti.u8(active)
+        self.x = float(bounding_center)
+        self.rad = float(bounding_radius)
+
+    @ti.func
+    def _add_bounding_sphere(self, bounding_center, bounding_radius):
+        self.active = ti.u8(1)
+        self.x = float(bounding_center)
+        self.rad = float(bounding_radius)
+
+    @ti.func
+    def _move(self, disp):
+        self.x += disp
+        self.verletDisp += disp
+
+    @ti.func
+    def _scale(self, scale, centor_of_mass):
+        self.rad *= float(scale)
+        self.x = float(scale * (self.x - centor_of_mass) + centor_of_mass)
+
+    @ti.func
+    def _translate(self, offset):
+        self.x += offset
+
+    @ti.func
+    def _renew_verlet(self):
+        self.verletDisp = ZEROVEC3f
+
+    @ti.func
+    def _get_multisphere_index1(self): return -1
+
+    @ti.func
+    def _get_multisphere_index2(self): return 1
+
+    @ti.func
+    def _get_position(self): return self.x
+
+    @ti.func
+    def _get_radius(self): return self.rad
+
+    @ti.func
+    def _get_verlet_displacement(self): return self.verletDisp
+
+
+@ti.dataclass
+class DeformableBoundingSphere:
+    active: ti.u8
+    rad: float
+    rad0: float
+    mass_center0: vec3f
+    x: vec3f
+    x0: vec3f
+    verletDisp: vec3f
+
+    @ti.func
+    def _restart(self, active, bounding_center, bounding_radius):
+        self.active = ti.u8(active)
+        self.x = float(bounding_center)
+        self.rad = float(bounding_radius)
+
+    @ti.func
+    def _add_bounding_sphere(self, bounding_center, bounding_radius):
+        self.active = ti.u8(1)
+        self.x = float(bounding_center)
+        self.rad = float(bounding_radius)
+
+    @ti.func
+    def _move(self, disp):
+        self.x += disp
+        self.verletDisp += disp
+
+    @ti.func
+    def _scale(self, scale, centor_of_mass):
+        self.rad *= float(scale)
+        self.x = float(scale * (self.x - centor_of_mass) + centor_of_mass)
+
+    @ti.func
+    def _translate(self, offset):
+        self.x += offset
+
+    @ti.func
+    def _renew_verlet(self):
+        self.verletDisp = ZEROVEC3f
+
+    @ti.func
+    def _get_multisphere_index1(self): return -1
+
+    @ti.func
+    def _get_multisphere_index2(self): return 1
+
+    @ti.func
+    def _get_position(self): return self.x
+
+    @ti.func
+    def _get_radius(self): return self.rad
+
+    @ti.func
+    def _get_verlet_displacement(self): return self.verletDisp
+
+    @ti.func
+    def _evolution(self, startIndex, endIndex, particle):
+        # Efficient updates of bounding sphere hierarchies for geometrically deformable models
+        # Meshless Deformations based on shape matching
+        apq = mat3x3([0, 0, 0], [0, 0, 0], [0, 0, 0])
+        aqq = mat3x3([0, 0, 0], [0, 0, 0], [0, 0, 0])
+        mass_center = vec3f(0., 0., 0.)
+        for np in range(startIndex, endIndex):
+            mass_center += particle[np].x
+        mass_center /= (endIndex - startIndex)
+        for np in range(startIndex, endIndex):
+            pp = particle[np].x - mass_center
+            qq = particle[np].x0 - self.mass_center0
+            apq += particle[np].m * pp.outer_product(qq)
+            aqq += particle[np].m * qq.outer_product(qq)
+        a = apq @ aqq.inverse()
+        d = 0.
+        for np in range(startIndex, endIndex):
+            pp = particle[np].x - mass_center
+            qq = particle[np].x0 - self.mass_center0
+            d = max(d, (a @ qq - pp).norm())
+        aTa = a.transpose() @ a
+        val = get_eigenvalue(aTa)
+        self.rad = ti.sqrt(abs(val[2])) * self.rad0 + d
+        self.x = a @ (self.x0 - self.mass_center0) + mass_center
+
+
+@ti.dataclass
+class DeformableQuadraticBoundingSphere:
+    active: ti.u8
+    rad: float
+    rad0: float
+    mass_center0: vec3f
+    x: vec3f
+    x0: vec3f
+    verletDisp: vec3f
+    qmax: float
+    mmax: float
+
+    @ti.func
+    def _restart(self, active, bounding_center, bounding_radius):
+        self.active = ti.u8(active)
+        self.x = float(bounding_center)
+        self.rad = float(bounding_radius)
+
+    @ti.func
+    def _add_bounding_sphere(self, bounding_center, bounding_radius):
+        self.active = ti.u8(1)
+        self.x = float(bounding_center)
+        self.rad = float(bounding_radius)
+
+    @ti.func
+    def _move(self, disp):
+        self.x += disp
+        self.verletDisp += disp
+
+    @ti.func
+    def _scale(self, scale, centor_of_mass):
+        self.rad *= float(scale)
+        self.x = float(scale * (self.x - centor_of_mass) + centor_of_mass)
+
+    @ti.func
+    def _translate(self, offset):
+        self.x += offset
+
+    @ti.func
+    def _renew_verlet(self):
+        self.verletDisp = ZEROVEC3f
+
+    @ti.func
+    def _compute_auxiliary_parameter(self, startIndex, endIndex, particle):
+        center = self.x
+        for np in range(startIndex, endIndex):
+            position = particle[np].x
+            self.qmax = max(self.qmax, vec3f(position[0] * position[0] - center[0] * center[0], 
+                                             position[1] * position[1] - center[1] * center[1], 
+                                             position[2] * position[2] - center[2] * center[2]).norm())
+            self.mmax = max(self.mmax, vec3f(position[0] * position[1] - center[0] * center[1], 
+                                             position[1] * position[2] - center[1] * center[2], 
+                                             position[0] * position[2] - center[0] * center[2]).norm())
+
+    @ti.func
+    def _get_multisphere_index1(self): return -1
+
+    @ti.func
+    def _get_multisphere_index2(self): return 1
+
+    @ti.func
+    def _get_position(self): return self.x
+
+    @ti.func
+    def _get_radius(self): return self.rad
+
+    @ti.func
+    def _get_verlet_displacement(self): return self.verletDisp
+
+    @ti.func
+    def _evolution(self, startIndex, endIndex, mass_center, particle):
+        # Efficient updates of bounding sphere hierarchies for geometrically deformable models
+        # Meshless Deformations based on shape matching
+        apq = ZEROMAT3x9
+        aqq = ZEROMAT9x9
+        mass_center = vec3f(0., 0., 0.)
+        for np in range(startIndex, endIndex):
+            mass_center += particle[np].x
+        mass_center /= (endIndex - startIndex)
+        for np in range(startIndex, endIndex):
+            pp = particle[np].x - self.mass_center
+            qq0 = particle[np].x0 - self.mass_center0
+            qq = vec9f(qq0[0], qq0[1], qq0[2], qq0[0] * qq0[0], qq0[1] * qq0[1], qq0[2] * qq0[2], qq0[0] * qq0[1], qq0[1] * qq0[2], qq0[2] * qq0[0])
+            apq += particle[np].m * pp.outer_product(qq)
+            aqq += particle[np].m * qq.outer_product(qq)
+        a_cap = apq @ LUinverse(aqq)
+        d = 0., 0., 0.
+        for np in range(startIndex, endIndex):
+            pp = particle[np].x - mass_center
+            qq0 = particle[np].x0 - self.mass_center0
+            qq = vec9f(qq0[0], qq0[1], qq0[2], qq0[0] * qq0[0], qq0[1] * qq0[1], qq0[2] * qq0[2], qq0[0] * qq0[1], qq0[1] * qq0[2], qq0[2] * qq0[0])
+            d = max(d, (a_cap @ qq - pp).norm())
+        a = mat3x3([a_cap[0, 0], a_cap[0, 1], a_cap[0, 2]], [a_cap[1, 0], a_cap[1, 1], a_cap[1, 2]], [a_cap[2, 0], a_cap[2, 1], a_cap[2, 2]])
+        q = mat3x3([a_cap[0, 3], a_cap[0, 4], a_cap[0, 5]], [a_cap[1, 3], a_cap[1, 4], a_cap[1, 5]], [a_cap[2, 3], a_cap[2, 4], a_cap[2, 5]])
+        m = mat3x3([a_cap[0, 6], a_cap[0, 7], a_cap[0, 8]], [a_cap[1, 6], a_cap[1, 7], a_cap[1, 8]], [a_cap[2, 6], a_cap[2, 7], a_cap[2, 8]])
+        aval = get_eigenvalue(a.transpose() @ a)
+        qval = get_eigenvalue(q.transpose() @ q)
+        mval = get_eigenvalue(m.transpose() @ m)
+        self.rad = ti.sqrt(abs(aval[2])) * self.rad0 + ti.sqrt(abs(qval[2])) * self.qmax + ti.sqrt(abs(mval[2])) * self.mmax + d
+        cc0 = self.x0 - self.mass_center0
+        cc = vec9f(cc0[0], cc0[1], cc0[2], cc0[0] * cc0[0], cc0[1] * cc0[1], cc0[2] * cc0[2], cc0[0] * cc0[1], cc0[1] * cc0[2], cc0[2] * cc0[0])
+        self.x = a_cap @ cc + mass_center
+
+
+@ti.dataclass
+class BoundingBox:
+    xmin: vec3f
+    xmax: vec3f
+    startGrid: int
+    gnum: vec3i
+    grid_space: float
+    scale: float
+    extent: int
+
+    @ti.func
+    def _set_bounding_box(self, xmin, xmax):
+        self.xmin = float(xmin)
+        self.xmax = float(xmax)
+
+    @ti.func
+    def _get_center(self):
+        return 0.5 * (self.xmin + self.xmax)
+    
+    @ti.func
+    def _scale(self, scale, centor_of_mass):
+        self.xmin = float(scale * (self.xmin - centor_of_mass) + centor_of_mass)
+        self.xmax = float(scale * (self.xmax - centor_of_mass) + centor_of_mass)
+
+    @ti.func
+    def _add_grid(self, start_grid, grid_space, gnum, scale, extent):
+        self.startGrid = int(start_grid)
+        self.grid_space = float(grid_space)
+        self.gnum = float(gnum)
+        self.scale = float(scale)
+        self.extent = int(extent)
+    
+    @ti.func
+    def _translate(self, offset):
+        self.xmin += offset
+        self.xmax += offset
+
+    @ti.func
+    def _get_dim(self):
+        return self.xmax - self.xmin
+    
+    @ti.func
+    def _in_box(self, point):
+        in_box = 1
+        if point[0] < self.xmin[0]: in_box = 0
+        if point[0] > self.xmax[0]: in_box = 0
+        if point[1] < self.xmin[1]: in_box = 0
+        if point[1] > self.xmax[1]: in_box = 0
+        if point[2] < self.xmin[2]: in_box = 0
+        if point[2] > self.xmax[2]: in_box = 0
+        return in_box
+    
+    @ti.func
+    def closet_corner(self, point):
+        retIndices = vec3i(0, 0, 0)
+        for index in range(3):
+            retIndices[index] = int((point[index] - self.xmin[index]) / self.grid_space)
+        return retIndices
+    
+    @ti.func
+    def distance(self, point, grid):
+        space = self.grid_space
+        indices = self.closet_corner(point)
+        xInd, yInd, zInd = indices[0], indices[1], indices[2]
+
+        Ind000 = linearize3D(xInd, yInd, zInd, self.gnum) + self.startGrid
+        Ind001 = linearize3D(xInd, yInd, zInd + 1, self.gnum) + self.startGrid
+        Ind010 = linearize3D(xInd, yInd + 1, zInd, self.gnum) + self.startGrid
+        Ind011 = linearize3D(xInd, yInd + 1, zInd + 1, self.gnum) + self.startGrid
+        Ind100 = linearize3D(xInd + 1, yInd, zInd, self.gnum) + self.startGrid
+        Ind101 = linearize3D(xInd + 1, yInd, zInd + 1, self.gnum) + self.startGrid
+        Ind110 = linearize3D(xInd + 1, yInd + 1, zInd, self.gnum) + self.startGrid
+        Ind111 = linearize3D(xInd + 1, yInd + 1, zInd + 1, self.gnum) + self.startGrid
+
+        temp1 = self.xmin + vec3i(xInd, yInd, zInd) * space
+        temp2 = self.xmin + vec3i(xInd, yInd + 1, zInd) * space
+        temp3 = self.xmin + vec3i(xInd, yInd, zInd + 1) * space
+        yzCoord = vec2f(point[1], point[2])
+        yExtr = vec2f(temp1[1], temp2[1])
+        zExtr = vec2f(temp1[2], temp3[2])
+
+        knownValx0, knownValx1 = ZEROMAT2x2, ZEROMAT2x2
+        knownValx0[0, 0] = grid[Ind000].distance_field * self.scale
+        knownValx0[0, 1] = grid[Ind001].distance_field * self.scale
+        knownValx0[1, 0] = grid[Ind010].distance_field * self.scale
+        knownValx0[1, 1] = grid[Ind011].distance_field * self.scale
+
+        knownValx1[0, 0] = grid[Ind100].distance_field * self.scale
+        knownValx1[0, 1] = grid[Ind101].distance_field * self.scale
+        knownValx1[1, 0] = grid[Ind110].distance_field * self.scale
+        knownValx1[1, 1] = grid[Ind111].distance_field * self.scale
+
+        f0yz = biInterpolate(yzCoord, yExtr, zExtr, knownValx0)
+        f1yz = biInterpolate(yzCoord, yExtr, zExtr, knownValx1)
+        return (point[0] - temp1[0]) / space * (f1yz - f0yz) + f0yz
+    
+    @ti.func
+    def calculate_gradient(self, point, grid):
+        indices = self.closet_corner(point)
+        xInd, yInd, zInd = indices[0], indices[1], indices[2]
+        spacing = self.grid_space
+        
+        xRed = (point[0] - (self.xmin[0] + xInd * spacing)) / spacing
+        yRed = (point[1] - (self.xmin[1] + yInd * spacing)) / spacing
+        zRed = (point[2] - (self.xmin[2] + zInd * spacing)) / spacing
+
+        normal = vec3f(0, 0, 0)
+        for i in ti.static(range(2)):
+            for j in ti.static(range(2)):
+                for k in ti.static(range(2)):
+                    Ind = linearize3D(xInd + i, yInd + j, zInd + k, self.gnum) + self.startGrid
+                    lsVal = grid[Ind].distance_field * self.scale
+                    normal[0] += lsVal * (2 * i - 1) * ((1 - j) * (1 - yRed) + j * yRed) * ((1 - k) * (1 - zRed) + k * zRed)
+                    normal[1] += lsVal * (2 * j - 1) * ((1 - i) * (1 - xRed) + i * xRed) * ((1 - k) * (1 - zRed) + k * zRed)
+                    normal[2] += lsVal * (2 * k - 1) * ((1 - i) * (1 - xRed) + i * xRed) * ((1 - j) * (1 - yRed) + j * yRed)
+        return normal
+    
+    @ti.func
+    def calculate_normal(self, point, grid):
+        return self.calculate_gradient(point, grid).normalized()
+    
+
+@ti.dataclass
+class HierarchicalBody:
+    level: ti.u8
+    max_potential_particle_pairs: int
+    max_potential_wall_pairs: int
+
+    @ti.func
+    def _set(self, potential_particle_ratio, body_coordination_number, wall_coordination_number):
+        self.max_potential_particle_pairs = ti.ceil(potential_particle_ratio * body_coordination_number)
+        self.max_potential_wall_pairs = wall_coordination_number
+
+    @ti.func
+    def _set_level(self, level):
+        self.level = ti.u8(level)
+
+    @ti.func
+    def potential_particle_num(self):
+        return self.max_potential_particle_pairs
+    
+    @ti.func
+    def potential_wall_num(self):
+        return self.max_potential_wall_pairs
+
+
+@ti.dataclass
+class HierarchicalCell:
+    pnum: int
+    rad_min: float
+    rad_max: float
+    grid_size: float
+    igrid_size: float
+    factor: float
+    cell_index: int
+    cnum: vec3i
+    wall_per_cell: int
+    wall_cells: int
+
+    @ti.func
+    def _set(self, grid_size, factor, cnum, wall_per_cell):
+        self.grid_size = float(grid_size)
+        self.igrid_size = 1. / float(grid_size)
+        self.factor = float(factor)
+        self.cnum = cnum
+        self.wall_per_cell = wall_per_cell
+
+    @ti.func
+    def _set_wall_cells(self, wall_cells):
+        self.wall_cells = wall_cells
+
+    @ti.func
+    def _set_cell_index(self, csum):
+        self.cell_index = float(csum)
+
+    @ti.func
+    def _cell_sum(self):
+        cnum = self.cnum
+        return cnum[0] * cnum[1] * cnum[2]
+
+    @ti.func
+    def _calculate(self):
+        pass
+
+
+
+@ti.dataclass
 class EnergyFamily:
     kinetic: float
     potential: float
+
+
+@ti.dataclass
+class LSPotentialContact:
+    end1: int
+    end2: int
+
+    @ti.func
+    def _set(self, end1, end2):
+        self.end1 = end1
+        self.end2 = end2
 
 
 @ti.dataclass
@@ -917,6 +1708,17 @@ class ContactTable:
 
 
 @ti.dataclass
+class VerletContactTable:
+    endID1: int
+    endID2: int
+    verletDisp: vec3f
+
+    @ti.func
+    def _renew_verlet(self):
+        self.verletDisp = ZEROVEC3f
+
+
+@ti.dataclass
 class CoupledContactTable:
     endID1: int
     endID2: int
@@ -928,12 +1730,70 @@ class CoupledContactTable:
         self.endID2 = endID2
 
     @ti.func
-    def _set_contact(self, overlap):
+    def _set_contact(self, normal_force, tangential_force, overlap):
         self.oldTangOverlap = overlap
 
     @ti.func
     def _no_contact(self):
         self.oldTangOverlap = ZEROVEC3f
+
+
+@ti.dataclass
+class CoupledRollingContactTable:
+    endID1: int
+    endID2: int
+    oldTangOverlap: vec3f
+    oldRollAngle: vec3f
+    oldTwistAngle: vec3f
+
+    @ti.func
+    def _set_id(self, endID1, endID2):
+        self.endID1 = endID1
+        self.endID2 = endID2
+
+    @ti.func
+    def _set_contact(self, normal_force, tangential_force, tangential_overlap, rolling_overlap, twisting_overlap):
+        self.oldTangOverlap = tangential_overlap
+        self.oldRollAngle = rolling_overlap
+        self.oldTwistAngle = twisting_overlap
+
+    @ti.func
+    def _no_contact(self):
+        self.oldTangOverlap = ZEROVEC3f
+        self.oldRollAngle = ZEROVEC3f
+        self.oldTwistAngle = ZEROVEC3f
+
+
+@ti.dataclass
+class DigitalContactTable:
+    oldTangOverlap: vec3f
+
+    @ti.func
+    def _set_contact(self, var1, var2, tangential_overlap):
+        self.oldTangOverlap = tangential_overlap
+
+    @ti.func
+    def _no_contact(self):
+        self.oldTangOverlap = ZEROVEC3f
+
+
+@ti.dataclass
+class DigitalRollingContactTable:
+    oldTangOverlap: vec3f
+    oldRollAngle: vec3f
+    oldTwistAngle: vec3f
+
+    @ti.func
+    def _set_contact(self, tangential_overlap, rolling_overlap, twisting_overlap):
+        self.oldTangOverlap = tangential_overlap
+        self.oldRollAngle = rolling_overlap
+        self.oldTwistAngle = twisting_overlap
+
+    @ti.func
+    def _no_contact(self):
+        self.oldTangOverlap = ZEROVEC3f
+        self.oldRollAngle = ZEROVEC3f
+        self.oldTwistAngle = ZEROVEC3f
 
 
 @ti.dataclass
@@ -988,7 +1848,7 @@ class HistoryContactTable:
     def _copy(self, endID, overlap):
         self.DstID = endID
         self.oldTangOverlap = overlap
-
+        
 
 @ti.dataclass
 class HistoryRollingContactTable:
@@ -1004,3 +1864,16 @@ class HistoryRollingContactTable:
         self.oldRollAngle = rolling_overlap
         self.oldTwistAngle = twisting_overlap
 
+
+class DigitalElevationModel(object):
+    def __init__(self) -> None:
+        self.materialID = 0
+        self.digital_size = 0.
+        self.idigital_size = 0.
+        self.digital_dim = [0, 0]
+
+    def set_digital_elevation(self, materialID, cell_size, cnum):
+        self.materialID = materialID
+        self.digital_size = cell_size
+        self.idigital_size = 1. / cell_size
+        self.digital_dim = vec2i(cnum)

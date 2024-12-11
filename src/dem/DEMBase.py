@@ -34,30 +34,23 @@ class Solver(object):
         self.last_print_time = 0.
         self.calm_interval = 0
         self.last_calm = 0
+        self.postprocess = []
     
-    def set_callback_function(self, kwargs):
-        functions = DictIO.GetAlternative(kwargs, "function", None)
-        if functions is None:
-            self.function = self.no_operation_none
-        else:
-            self.function = functions
-
-        self.calm = self.no_operation
-        calm_interval = DictIO.GetAlternative(kwargs, "calm", False)
+    def set_callback_function(self, functions):
+        if not functions is None:
+            if isinstance(functions, list):
+                for f in functions:
+                    self.postprocess.append(f)
+            elif isinstance(functions, dict):
+                for f in functions.values():
+                    self.postprocess.append(f)
+            elif isinstance(functions, type(lambda: None)):
+                self.postprocess.append(functions)
+    
+    def set_particle_calm(self, scene, calm_interval):
         if calm_interval:
             self.calm_interval = calm_interval
-            self.calm = self.launch_calm
-
-    def launch_calm(self, scene):
-        if self.sims.current_step - self.last_calm > self.calm_interval:
-            self.engine.calm(scene)
-            self.last_calm = self.sims.current_step
-
-    def no_operation_none(self):
-        pass
-
-    def no_operation(self, scene):
-        pass
+            self.postprocess.append(lambda: self.engine.calm(self.sims.current_step, self.calm_interval, scene))
 
     def save_file(self, scene):
         print('# Step =', self.sims.current_step, '   ', 'Save Number =', self.sims.current_print, '   ', 'Simulation time =', self.sims.current_time, '\n')
@@ -82,7 +75,7 @@ class Solver(object):
                 self.sims.current_print += 1
                 if new_body:
                     self.engine.update_verlet_table(self.sims, scene, self.contact.neighbor)
-                    self.sims.max_particle_radius = scene.find_particle_max_radius()
+                    self.sims.set_max_bounding_sphere_radius(scene.find_bounding_sphere_max_radius(self.sims))
 
             self.sims.current_time += self.sims.delta
             self.sims.current_step += 1
@@ -145,7 +138,7 @@ class Solver(object):
                 self.sims.current_print += 1
                 if new_body:
                     self.engine.update_verlet_table(self.sims, scene, self.contact.neighbor)
-                    self.sims.max_particle_radius = scene.find_particle_max_radius()
+                    self.sims.set_max_bounding_sphere_radius(scene.find_bounding_sphere_max_radius(self.sims))
 
             if self.sims.current_time - self.last_print_time + 0.1 * self.sims.delta > self.sims.visualize_interval or new_body:
                 camera.track_user_inputs(window, movement_speed=self.sims.move_velocity, hold_key=ti.ui.LMB)
@@ -177,10 +170,10 @@ class Solver(object):
     def core(self, scene):
         self.engine.reset_wall_message(scene)
         self.engine.reset_particle_message(scene)
-        self.engine.update_neighbor_list(self.sims, scene, self.contact.neighbor)
+        self.engine.update_neighbor_lists(self.sims, scene, self.contact.neighbor)
         self.engine.integration(self.sims, scene, self.contact.neighbor)
-        self.function()
-        self.calm(scene)
+        for functions in self.postprocess:
+            functions()
     
 
     

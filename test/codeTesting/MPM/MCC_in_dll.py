@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 import numpy
 from ctypes import cdll
 
-dllpath = '/home/eleven/work/tiDEMPM_v0.2/ThirdParty/A3DModifiedCamClay.dll'
+dllpath = '././third_party/A3DModifiedCamClay.dll'
 mcc = cdll.LoadLibrary(dllpath)
 
 

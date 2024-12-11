@@ -2,7 +2,7 @@ import time
 
 import taichi as ti
 
-from src.mpdem.MixtureGenerate import MixtureGenerator
+from src.mpdem.GenerateManager import GenerateManager
 from src.dem.SceneManager import myScene as DEMScene
 from src.dem.Simulation import Simulation as DEMSimulation
 from src.dem.Recorder import WriteFile as DEMWriteFile
@@ -13,6 +13,7 @@ from src.mpm.SceneManager import myScene as MPMScene
 from src.mpm.Simulation import Simulation as MPMSimulation
 from src.mpm.Recorder import WriteFile as MPMWriteFile
 from src.utils.constants import Threshold
+from src.utils.ObjectIO import DictIO
 
 
 class Solver:
@@ -21,7 +22,7 @@ class Solver:
     msims: MPMSimulation
     drecorder: DEMWriteFile
     mrecorder: MPMWriteFile
-    generator: MixtureGenerator
+    generator: GenerateManager
     engine: Engine
     recorder: WriteFile
 
@@ -34,9 +35,26 @@ class Solver:
         self.engine = engine
         self.generator = generator
         self.recorder = recorder
+        self.postprocess = []
 
         self.last_save_time = 0.
         self.solve = None
+
+    def set_callback_function(self, functions):
+        if not functions is None:
+            if isinstance(functions, list):
+                for f in functions:
+                    self.postprocess.append(f)
+            elif isinstance(functions, dict):
+                for f in functions.values():
+                    self.postprocess.append(f)
+            elif isinstance(functions, type(lambda: None)):
+                self.postprocess.append(functions)
+    
+    def set_particle_calm(self, scene, calm_interval):
+        if calm_interval:
+            self.calm_interval = calm_interval
+            self.postprocess.append(lambda: self.engine.dengine.calm(self.sims.current_step, self.calm_interval, scene))
 
     def save_file(self, mscene:MPMScene, dscene: DEMScene):
         print('# Step =', self.sims.current_step, '   ', 'Save Number =', self.sims.current_print, '   ', 'Simulation time =', self.sims.current_time, '\n')
@@ -45,18 +63,20 @@ class Solver:
     def CouplingSolver(self, mscene: MPMScene, dscene: DEMScene):
         print("#", " Start Simulation ".center(67,"="), "#")
 
-        self.engine.pre_calculate()
         if self.sims.current_time < Threshold:
             self.save_file(mscene, dscene)
             self.sims.current_print += 1
             self.msims.current_print += 1
             self.dsims.current_print += 1
             self.last_save_time = -0.8 * self.sims.delta
+        self.engine.pre_calculate()
             
         start_time = time.time()
         while self.sims.current_time <= self.sims.time:
             self.engine.reset_message()
             self.engine.compute()
+            for functions in self.postprocess:
+                functions()
 
             new_body = self.generator.regenerate(self.sims, mscene, dscene)
             if self.sims.current_time - self.last_save_time + 0.1 * self.sims.delta> self.sims.save_interval or new_body:
@@ -67,7 +87,7 @@ class Solver:
                 self.dsims.current_print += 1
                 if new_body:
                     self.engine.enforce_update_verlet_table()
-                    self.dsims.max_particle_radius = dscene.find_particle_max_radius()
+                    self.dsims.set_max_bounding_sphere_radius(dscene.find_bounding_sphere_max_radius(self.dsims))
 
             self.sims.current_time += self.sims.delta
             self.msims.current_time += self.sims.delta

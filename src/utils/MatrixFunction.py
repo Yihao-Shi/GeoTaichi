@@ -2,7 +2,7 @@ import taichi as ti
 
 from src.utils.constants import ZEROVEC3f, SQRT3, PI, ZEROMAT3x3, DBL_EPSILON
 from src.utils.ScalarFunction import clamp
-from src.utils.TypeDefination import vec3f, mat3x3, mat4x4, mat2x2
+from src.utils.TypeDefination import vec3f, mat3x3, mat4x4, mat2x2, mat3x4
 
 
 @ti.func
@@ -33,7 +33,13 @@ def sum_cwise_product(matrix1, matrix2):
 
 @ti.func
 def trace(matrix):
-    return matrix[0, 0] + matrix[1, 1] + matrix[2, 2]
+    ti.static_assert(matrix.n == matrix.m)
+    matrix_trace = 0.
+    if ti.static(matrix.n == 2):
+        matrix_trace = matrix[0, 0] + matrix[1, 1]
+    elif ti.static(matrix.n == 3):
+        matrix_trace = matrix[0, 0] + matrix[1, 1] + matrix[2, 2]
+    return matrix_trace
 
 @ti.func
 def principal_sym_tensor(matrix):
@@ -64,13 +70,14 @@ def principal_sym_tensor(matrix):
 
 @ti.func
 def QR(matrix):
-    Q, R = ZEROMAT3x3, ZEROMAT3x3
-    col_A, col_Q = ZEROVEC3f, ZEROVEC3f
+    assert matrix.n == matrix.m
+    Q, R = ti.Matrix.zero(float, matrix.n, matrix.m), ti.Matrix.zero(float, matrix.n, matrix.m)
+    col_A, col_Q = ti.Matrix.zero(float, matrix.n), ti.Matrix.zero(float, matrix.n)
     for j in ti.static(range(matrix.m)):
         for i in ti.static(range(matrix.n)):
             col_A[i] = matrix[i, j]
             col_Q[i] = matrix[i, j]
-        for k in range(j):
+        for k in ti.static(range(j)):
             R[k, j] = 0.
             for x in ti.static(range(matrix.m)):
                 R[k, j] += col_A[x] * Q[x, k]
@@ -86,11 +93,9 @@ def QR(matrix):
 
 @ti.func
 def sortEigenValueDescending(value):
-    size = value.n
-
-    for i in ti.static(range(size - 1)):
+    for i in ti.static(range(value.n - 1)):
         k = i
-        for j in range(i + 1, size):
+        for j in ti.static(range(i + 1, value.n)):
             if value[k] < value[j]:
                 k = j
         if k != i:
@@ -104,7 +109,7 @@ def sortEigenValueDescending(value):
 def sortEigenValueAscending(value):
     for i in ti.static(range(value.n - 1)):
         k = i
-        for j in range(i + 1, value.n):
+        for j in ti.static(range(i + 1, value.n)):
             if value[k] > value[j]:
                 k = j
         if k != i:
@@ -116,14 +121,14 @@ def sortEigenValueAscending(value):
 
 @ti.func
 def eigenvalue(matrix):
-    value = ZEROVEC3f
+    value = ti.Matrix.zero(float, matrix.n)
     temp = matrix
 
     for _ in range(50):
         Q, R = QR(temp)
         temp = R @ Q
 
-    for i in ti.static(range(3)):
+    for i in ti.static(range(matrix.n)):
         value[i] = temp[i, i]
 
     value = sortEigenValueAscending(value)
@@ -132,8 +137,8 @@ def eigenvalue(matrix):
 
 @ti.func
 def eigenvector(matrix, value):
-    eigenVector = ZEROMAT3x3
-    temp = ZEROMAT3x3
+    eigenVector = ti.Matrix.zero(float, matrix.n, matrix.m)
+    temp = ti.Matrix.zero(float, matrix.n, matrix.m)
 
     for count in ti.static(range(matrix.m)):
         eValue = value[count]
@@ -142,17 +147,17 @@ def eigenvector(matrix, value):
             temp[i, i] -= eValue
         for i in ti.static(range(temp.n - 1)):
             coe = temp[i, i]
-            for j in range(i, temp.m):
+            for j in ti.static(range(i, temp.m)):
                 temp[i, j] /= coe
-            for m in range(i+1, temp.n):
+            for m in ti.static(range(i+1, temp.n)):
                 coe = temp[m, i]
-                for n in range(i, temp.m):
+                for n in ti.static(range(i, temp.m)):
                     temp[m, n] -= coe * temp[i, n]
         
         sum1 = eigenVector[eigenVector.n - 1, count] = 1.
         for m in ti.static(range(temp.n - 2, -1, -1)):
             sum2 = 0.
-            for n in range(m + 1, temp.m):
+            for n in ti.static(range(m + 1, temp.m)):
                 sum2 += temp[m, n] * eigenVector[n, count]
             sum2 = -sum2 / temp[m, m]
             sum1 += sum2 * sum2
@@ -167,8 +172,7 @@ def eigenvector(matrix, value):
 
 @ti.func
 def get_eigenvalue(matrix):
-    value = eigenvalue(matrix)
-    return value
+    return eigenvalue(matrix)
 
 
 @ti.func
@@ -219,11 +223,11 @@ def getDeterminant(matrix):
         return matrix[0, 0] * matrix[1, 1] - matrix[0, 1] * matrix[1, 0]
     else:
         sign = 1
-        for i in range(ndim):
+        for i in ti.static(range(ndim)):
             sub_vector = ti.Matrix.zero(ndim - 1, mdim - 1)
-            for m in range(1, ndim):
+            for m in ti.static(range(1, ndim)):
                 z = 0
-                for n in range(ndim):
+                for n in ti.static(range(ndim)):
                     if n != i:
                         sub_vector[m-1, z] = matrix[m, n]
                         z +=1
@@ -239,13 +243,13 @@ def getCofactor(matrix):
     solution = ti.Matrix.zero(ndim, mdim)
     sub_vector = ti.Matrix.zero(ndim - 1, mdim - 1)
 
-    for i in range(ndim):
-        for j in range(mdim):
+    for i in ti.static(range(ndim)):
+        for j in ti.static(range(mdim)):
             p = 0
-            for x in range(ndim):
+            for x in ti.static(range(ndim)):
                 if x == i: continue
                 q = 0
-                for y in range(ndim):
+                for y in ti.static(range(ndim)):
                     if y == j: continue
                     sub_vector[p, q] = matrix[x, y]
                     q +=1
@@ -466,3 +470,151 @@ def truncation(mat):
             if ti.abs(mat[i, j]) < DBL_EPSILON:
                 mat[i, j] = 0.
     return mat
+
+
+@ti.func
+def LUinverse(mat):
+    L, U = polar_decomposition(mat)
+    Linv = ti.Matrix.zero(float, mat.n, mat.m)
+    Uinv = ti.Matrix.zero(float, mat.n, mat.m)
+    for j in ti.static(range(mat.n)):
+        for i in ti.static(range(j, mat.m)):
+            if i == j: Linv[i, j] = 1. / L[i, j]
+            elif i < j: Linv[i, j] = 0.
+            else:
+                s = 0.
+                for k in ti.static(range(j, i)):
+                    s += L[i, k] * Linv[k, j]
+                Linv[i, j] = -Linv[j, j] * s
+    for j in ti.static(range(mat.n)):
+        for i in ti.static(range(j, -1, -1)):
+            if i == j: Uinv[i, j] = 1 / U[i, j]
+            elif i > j: Uinv[i, j] = 0
+            else:
+                s = 0.0
+                for k in ti.static(range(i + 1, j + 1)):
+                    s += U[i, k] * Uinv[k, j]
+                Uinv[i, j] = -1 / U[i, i] * s
+    return Uinv @ Linv
+
+
+@ti.func
+def gauss_elimination(A, b):
+    Ab = mat3x4([0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0])
+    for i in ti.static(range(3)):
+        for j in ti.static(range(3)):
+            Ab[i, j] = A[i, j]
+    for i in ti.static(range(3)):
+        Ab[i, 3] = b[i]
+
+    for i in ti.static(range(3)):
+        max_row = i
+        max_v = ti.abs(Ab[i, i])
+        for j in ti.static(range(i + 1, 3)):
+            if ti.abs(Ab[j, i]) > max_v:
+                max_row = j
+                max_v = ti.abs(Ab[j, i])
+        assert max_v != 0.0, "Matrix is singular in linear solve."
+        if i != max_row:
+            if max_row == 1:
+                for col in ti.static(range(4)):
+                    Ab[i, col], Ab[1, col] = Ab[1, col], Ab[i, col]
+            else:
+                for col in ti.static(range(4)):
+                    Ab[i, col], Ab[2, col] = Ab[2, col], Ab[i, col]
+        assert Ab[i, i] != 0.0, "Matrix is singular in linear solve."
+        for j in ti.static(range(i + 1, 3)):
+            scale = Ab[j, i] / Ab[i, i]
+            Ab[j, i] = 0.0
+            for k in ti.static(range(i + 1, 4)):
+                Ab[j, k] -= Ab[i, k] * scale
+    # Back substitution
+    x = vec3f(0, 0, 0)
+    for i in ti.static(range(2, -1, -1)):
+        x[i] = Ab[i, 3]
+        for k in ti.static(range(i + 1, 3)):
+            x[i] -= Ab[i, k] * x[k]
+        x[i] = x[i] / Ab[i, i]
+    return x
+
+
+@ti.func
+def polar_decomposition(mat):
+    L = ti.Matrix.zero(float, mat.n, mat.m)
+    U = ti.Matrix.zero(float, mat.n, mat.m)
+    for i in ti.static(range(mat.n)):
+        L[i, i] = 1.
+    for j in ti.static(range(mat.n)):
+        U[0, j] = mat[0, j]
+    for i in ti.static(range(1, mat.n)):
+        L[i, 0] = mat[i, 0] / U[0, 0]
+    for i in ti.static(range(mat.n)):
+        for j in ti.static(range(i, mat.n)):
+            s = 0.
+            for k in ti.static(range(i)):
+                s += L[i, k] * U[k, j]
+            U[i, j] = mat[i, j] - s
+        for d in ti.static(range(i, mat.n)):
+            s = 0.
+            for k in ti.static(range(i)):
+                s += L[d, k] * U[k, i]
+            L[d, i] = (mat[d, i] - s) / U[i, i]
+    return L, U
+
+
+@ti.func
+def ti_polar_decomposition(mat):
+    dim = mat.n
+    # SVD(A) = U S V*
+    U, S, V = ti.svd(mat)
+    # now do polar decomposition into M = R * T, where R is rotation and T is translation matrix
+    R = U @ V.transpose()
+    if R.determinant() < 0.0:
+        # identify the smallest entry in S and flip its sign
+        S[dim - 1, dim - 1] *= -1
+        # recompute R using flipped stretch eigenvalues
+        R = mat * V * S.inverse() * V.transpose()
+    assert R.determinant() > 0.0
+    return R
+
+
+@ti.func
+def ti_polar_decomposition_stable(mat):
+    dim = mat.n
+    # SVD(A) = U S V*
+    U, S, V = ti.svd(mat)
+    # now do polar decomposition into M = R * T, where R is rotation and T is translation matrix
+    R = U @ V.transpose()
+    # this is an improper rotation
+    if R.determinant() < 0.0:
+        # identify the smallest entry in S and flip its sign
+        S[dim - 1, dim - 1] *= -1
+        # recompute R using flipped stretch eigenvalues
+        R = mat * V * S.inverse() * V.transpose()
+    assert R.determinant() > 0.0
+
+    # scale S to avoid small principal strains
+    minval = 0.3                                   # 0.3^2 = 0.09, should suffice for most problems
+    maxval = 2.0
+    for i in ti.static(range(dim)):
+        S[i, i] = clamp(minval, maxval, S(i, i))
+    T = V * S * V.transpose()
+    return R, T
+
+@ti.func
+def ssvd(F):
+    U, sig, V = ti.svd(F)
+    if U.determinant() < 0:
+        for i in ti.static(range(3)):
+            U[i, 2] *= -1
+        sig[2, 2] = -sig[2, 2]
+    if V.determinant() < 0:
+        for i in ti.static(range(3)):
+            V[i, 2] *= -1
+        sig[2, 2] = -sig[2, 2]
+    return U, sig, V
+
+@ti.func
+def flatten_matrix(mat):
+    # column first
+    return ti.Vector([mat[i, j] for j in ti.static(range(mat.n)) for i in ti.static(range(mat.m))], float)

@@ -7,7 +7,7 @@ from src.mpm.mainMPM import MPM
 from src.mpdem.ContactManager import ContactManager
 from src.mpdem.DEMPMBase import Solver
 from src.mpdem.Engine import Engine
-from src.mpdem.MixtureGenerate import MixtureGenerator
+from src.mpdem.GenerateManager import GenerateManager
 from src.mpdem.Recorder import WriteFile
 from src.mpdem.Simulation import Simulation
 from src.utils.ObjectIO import DictIO
@@ -26,7 +26,7 @@ class DEMPM(object):
         self.dem = dem
         self.mpm = mpm
         self.sims = Simulation()
-        self.generator = MixtureGenerator(self.mpm.generator, self.dem.generator)
+        self.generator = GenerateManager(self.mpm.generator, self.dem.generator)
         self.contactor = None
         self.enginer = None
         self.solver = None
@@ -56,18 +56,19 @@ class DEMPM(object):
                 raise RuntimeError(f"DEM simulation domain {self.dem.sims.get_simulation_domain()} is not in line with MPM simulation domain {self.mpm.sims.get_simulation_domain()}")
             else:
                 self.sims.set_domain(self.mpm.sims.get_simulation_domain())
-                
+        
         self.sims.set_coupling_scheme(DictIO.GetAlternative(kwargs, "coupling_scheme", "DEM-MPM"))
         self.sims.set_particle_interaction(DictIO.GetAlternative(kwargs, "particle_interaction", True))
         self.sims.set_wall_interaction(DictIO.GetAlternative(kwargs, "wall_interaction", False))
-        self.sims.set_contact_method(self.mpm.sims)
+        self.mpm.sims.set_gravity(DictIO.GetAlternative(kwargs, "gravity", [0., 0., -9.8]))
+        self.dem.sims.set_gravity(DictIO.GetAlternative(kwargs, "gravity", [0., 0., -9.8]))
         
         if self.mpm.sims.coupling is False:
             raise RuntimeError(f"KeyWord::: /coupling/ should be activated in MPM")
         
         if self.dem.sims.coupling is False:
             raise RuntimeError(f"KeyWord::: /coupling/ should be activated in DEM")
-            
+        
         if log: 
             self.print_basic_simulation_info()
             print('\n')
@@ -85,34 +86,35 @@ class DEMPM(object):
             self.print_solver_info()
             print('\n')
 
-    def memory_allocate(self, memory, log=True):
+    def memory_allocate(self, memory, dem_memory=None, mpm_memory=None):
+        if dem_memory is not None:
+            self.dem.memory_allocate(dem_memory)
+        if mpm_memory is not None:
+            self.mpm.memory_allocate(mpm_memory)
+
         if self.dem.sims.max_material_num == 0 or self.mpm.sims.max_material_num == 0:
             raise RuntimeError("Should allocate DEM and MPM memory first!")
         self.sims.set_material_num(max(self.dem.sims.max_material_num, self.mpm.sims.max_material_num))
         self.sims.set_body_coordination_number(DictIO.GetAlternative(memory, "body_coordination_number", 64))
         self.sims.set_wall_coordination_number(DictIO.GetAlternative(memory, "wall_coordination_number", 6))
         self.sims.set_compaction_ratio(DictIO.GetAlternative(memory, "compaction_ratio", [0.4, 0.3]))
-            
+
     def print_basic_simulation_info(self):
-        print(" Basic Configuration ".center(71,"-"))
+        print(" DEMPM Basic Configuration ".center(71,"-"))
         print(("Simulation Type: " + str(current_cfg().arch)).ljust(67))
         print(("Simulation Domain: " + str(self.sims.domain)).ljust(67))
-        print(("DEM Boundary Condition: " + str(self.dem.sims.boundary)).ljust(67))
-        print(("MPM Boundary Condition: " + str(self.mpm.sims.boundary)).ljust(67))
-        print(("DEM Gravity: " + str(self.dem.sims.gravity)).ljust(67))
-        print(("MPM Gravity: " + str(self.mpm.sims.gravity)).ljust(67))
 
     def print_solver_info(self):
-        print(" Solver Information ".center(71,"-"))
+        print(" DEMPM Solver Information ".center(71,"-"))
         print(("Initial Simulation Time: " + str(self.sims.current_time)).ljust(67))
         print(("Finial Simulation Time: " + str(self.sims.current_time + self.sims.time)).ljust(67))
         print(("Time Step: " + str(self.sims.dt[None])).ljust(67))
         print(("Save Interval: " + str(self.sims.save_interval)).ljust(67))
         print(("Save Path: " + str(self.sims.path)).ljust(67))
 
-    def add_body(self, mpm_body, dem_particle, write_file=False, check_overlap=False):
-        self.generator.set_essentials(check_overlap)
-        self.generator.add_mixture(self.sims, self.dem.scene, self.mpm.scene, dem_particle, mpm_body, self.dem.sims, self.mpm.sims)
+    def add_body(self, mpm_body=None, dem_particle=None, write_file=False, check_overlap=False):
+        self.generator.add_mixture(check_overlap, dem_particle, mpm_body, self.sims, self.dem.scene, self.mpm.scene, self.dem.sims, self.mpm.sims)
+
         if write_file:
             self.dem.add_recorder()
             self.dem.recorder.save_particle(self.dem.sims, self.dem.scene)
@@ -120,9 +122,6 @@ class DEMPM(object):
             self.dem.recorder.save_clump(self.dem.sims, self.dem.scene)
             self.mpm.add_recorder()
             self.mpm.recorder.save_particle(self.mpm.sims, self.mpm.scene)
-
-    def read_file(self, mpm_body, dem_particle):
-        self.generator.read_files(dem_particle, mpm_body, self.dem.scene, self.mpm.scene, self.dem.sims, self.mpm.sims)
 
     def choose_contact_model(self, particle_particle_contact_model, particle_wall_contact_model=None):
         if self.contactor is None:
@@ -133,11 +132,11 @@ class DEMPM(object):
             raise RuntimeError("memory_allocate should be launched first!")
         self.sims.set_particle_particle_contact_model(particle_particle_contact_model)
         self.sims.set_particle_wall_contact_model(particle_wall_contact_model)
-        self.contactor.particle_particle_initialize(self.sims, self.mpm.sims.material_type)
-        self.contactor.particle_wall_initialize(self.sims, self.mpm.sims.material_type)
+        self.contactor.particle_particle_initialize(self.sims, self.mpm.sims.material_type, self.dem.sims.scheme)
+        self.contactor.particle_wall_initialize(self.sims, self.mpm.sims.material_type, self.dem.sims.wall_type)
 
     def add_property(self, DEMmaterial, MPMmaterial, property, dType="all"):
-        self.contactor.add_contact_property(self.sims, DEMmaterial, MPMmaterial, property, dType)
+        self.contactor.add_contact_property(self.sims, MPMmaterial, DEMmaterial, property, dType)
 
     def modify_parameters(self, **kwargs):
         if len(kwargs) > 0:
@@ -206,13 +205,15 @@ class DEMPM(object):
         if not pwcontact is None:
             self.contactor.physpw.restart(self.contactor.neighbor, file_number, pwcontact, False)
 
-    def add_essentials(self, kwargs):
-        if self.dem.scene.particleNum[0] > 0 and self.mpm.scene.particleNum[0] > 0:
+    def add_essentials(self, kwargs: dict):
+        self.mpm.scene.update_coupling_points_number(self.mpm.sims)
+        if self.dem.scene.particleNum[0] > 0 or self.mpm.scene.particleNum[0] > 0:
             if self.contactor.have_initialise is False:
                 self.contactor.initialize(self.sims, self.mpm.sims, self.dem.sims, self.mpm.scene, self.dem.scene)
         else:
             raise RuntimeError("DEM/MPM particle should be added first")
         self.load_history_contact() 
+        kwargs.update({"max_bounding_radius": self.sims.max_bounding_rad, "min_bounding_radius": self.sims.min_bounding_rad})
         self.mpm.add_essentials(kwargs)
         self.dem.add_essentials(kwargs)
 
@@ -224,8 +225,13 @@ class DEMPM(object):
 
         if self.solver is None:
             self.solver = Solver(self.sims, self.mpm.sims, self.dem.sims, self.mpm.recorder, self.dem.recorder, self.generator, self.enginer, self.recorder)
+        self.solver.set_callback_function(DictIO.GetAlternative(kwargs, "function", None))
+        self.solver.set_particle_calm(self.dem.scene, DictIO.GetAlternative(kwargs, "calm", None))
 
-    def update_contact_properties(self, materialID1, materialID2, property_name, value, overide=False):
+    def add_postfunctions(self, **functions):
+        self.solver.set_callback_function(functions)
+
+    def update_contact_properties(self, materialID1, materialID2, property_name, value, overide=True):
         self.contactor.update_contact_property(self.sims, materialID1, materialID2, property_name, value, overide)
 
     def run(self, **kwargs):
@@ -245,4 +251,5 @@ class DEMPM(object):
             print("The prescribed time step is sufficiently small\n")
 
     def get_critical_timestep(self):
-        return self.contactor.physpp.calcu_critical_timesteps(self.mpm.scene, self.dem.scene, self.sims.max_material_num)
+        return self.contactor.physpp.calcu_critical_timesteps(self.mpm.scene, self.dem.sims, self.dem.scene, self.sims.max_material_num)
+    

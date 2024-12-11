@@ -1,6 +1,3 @@
-import sys
-sys.path.append('/home/eleven/work/GeoTaichi')
-
 import numpy as np
 from math import sqrt, pi
 import matplotlib.pyplot as plt

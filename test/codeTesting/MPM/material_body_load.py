@@ -1,6 +1,3 @@
-import sys
-sys.path.append('/home/eleven/work/GeoTaichi')
-
 import taichi as ti
 ti.init(arch=ti.gpu, default_fp=ti.f64, default_ip=ti.i32, debug=False, device_memory_GB=3)
 

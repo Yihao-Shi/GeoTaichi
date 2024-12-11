@@ -2,7 +2,7 @@ import taichi as ti
 import math
 
 from src.utils.constants import ZEROVEC3f, DELTA, PI, ZEROVEC4f, Threshold
-from src.utils.TypeDefination import vec3f, vec4f, mat3x3, mat4x4
+from src.utils.TypeDefination import vec3f, vec4f, mat2x2, mat3x3, mat4x4
 from src.utils.ScalarFunction import clamp
 from src.utils.VectorFunction import Normalize
 # https://api.flutter.dev/flutter/vector_math/Quaternion/setAxisAngle.html
@@ -266,4 +266,13 @@ def RodriguesRotationMatrix(origin, target):
                              [norm_vec[2], 0., -norm_vec[0]],
                              [-norm_vec[1], norm_vec[0], 0.]])
     RotationMartix = DELTA + norm_vec_invert + (norm_vec_invert @ norm_vec_invert) / (1 + cos_theta)
+    return RotationMartix
+
+
+@ti.pyfunc
+def RotationMatrix2D(origin, target):
+    cos_theta = origin.dot(target)
+    sin_theta = ti.pow(1 - cos_theta * cos_theta, 0.5)
+    RotationMartix = mat2x2([[cos_theta, -sin_theta],
+                             [sin_theta, cos_theta]])
     return RotationMartix

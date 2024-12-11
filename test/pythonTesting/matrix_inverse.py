@@ -1,6 +1,3 @@
-import sys
-sys.path.append('/home/eleven/work/GeoTaichi')
-
 from src.utils.MatrixFunction import get_jacobian_inverse5
 
 import taichi as ti

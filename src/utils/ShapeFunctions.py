@@ -67,6 +67,79 @@ def ShapeGIMPCenter(xp, xg, idx, lp):
 
 
 # ========================================================= #
+#                  AxisyGIMP shape function                 #
+# ========================================================= #
+# refer to Axisymmetric Generalized Interpolation Material Point Method for Fully Coupled Thermomechanical Evalution of Transient Responses. International Journal of Computational Methods
+@ti.func
+def ShapeAxisyGIMP(xp, xg, idx, lp):
+    nx = 0.
+    dx = 1. / idx
+    d = xp - xg
+    a = dx + lp
+    b = dx * lp
+    if xg == 0 and (0 <= xp <= lp):
+        nx = 1. - 2. * (lp + xp) / (3. * dx)
+    elif xg == dx and (0 <= xp <= lp):
+        nx =2. * (lp + xp) / (3. * dx)
+    else:
+        if d < a:
+            if d > (dx - lp):
+                nx = (dx - 2. * lp + xg + 2. * xp) * (a - d) * (a - d)/ (12. * b * xp)
+            elif d > lp:
+                nx = 1. - (lp * lp + 3. * xp * xp - 3. * xg * xp)/(3. * dx * xp)
+            elif d > -lp:
+                nx = 1. - (2. * xp * xp * xp + xg * xg * xg - 3. * lp * lp * xg + 6. * lp * lp * xp - 3. * xp * xp * xg) / (6. * b * xp)
+            elif d > (-dx + lp):
+                nx = 1. + (lp * lp + 3. * xp * xp - 3. * xg * xp)/(3. * dx * xp)
+            elif d > -a:
+                nx = (2. * lp - dx + xg + 2. * xp) * (a + d) * (a + d)/ (12. * b * xp)
+    return nx
+
+
+@ti.func
+def GShapeAxisyGIMP(xp, xg, idx, lp):
+    dnx = 0.
+    dx = 1. / idx
+    d = xp - xg
+    a = dx + lp
+    b = dx * lp
+    if xg ==0 and (0 <= xp <= lp):
+        dnx = -1. * idx
+    elif xg == dx and (0 <= xp <= lp):
+        dnx = 1. * idx
+    else:
+        if d < a:
+            if d > (dx - lp):
+                dnx = ((lp - xp) * (lp - xp) - (dx + xg) * (dx + xg)) / (4. * b * xp)
+            elif d > lp:
+                dnx = -1. * idx
+            elif d > -lp:
+                dnx = (xg * xg - lp * lp- xp * xp) / (2. * b * xp)
+            elif d > (-dx + lp):
+                dnx = 1. * idx
+            elif d > -a:
+                dnx = ((lp + xp) * (lp + xp) - (dx - xg) * (dx - xg)) / (4. * b * xp)
+    return dnx
+
+
+@ti.func
+def ShapeAixGIMPCenter(xp, xg, idx, lp):
+    nxc = 0.
+    dx = 1. / idx
+    d = xp - xg
+    a = dx + lp
+    b = dx * lp
+    if abs(d) < a:
+        if d > (dx - lp):
+            nxc = (a - d) / (4. * lp)
+        elif d > (-dx + lp):
+            nxc = 1./2.
+        elif d > -a:
+            nxc = (a + d) / (4. * lp)
+    return nxc
+
+
+# ========================================================= #
 #                  Linear shape function                    #
 # ========================================================= #
 @ti.func
@@ -144,246 +217,171 @@ def ShapeLinearCenter(xp, xg, idx, lp):
 
 
 # ========================================================= #
+#           Quadratic bernstein shape function              #
+# ========================================================= #
+@ti.func
+def ShapeBernsteinQ(xp, xg, idx, btype):
+    nx = 0.
+    d = ti.abs(xp - xg) * idx
+    if d < 1.0: 
+        if btype == 1:                            # Inside node:
+            if d >= 0.5: 
+                nx = 0.
+            else:
+                nx = 0.5 - 2. * d * d
+        else:                                     # Edge node:
+            nx = (1 - d) * (1 - d)
+    return nx
+
+
+@ti.func
+def GShapeBernsteinQ(xp, xg, idx, btype):
+    dnx = 0.
+    d_signed = (xp - xg) * idx
+    d = ti.abs(d_signed) 
+    if d < 1.0: 
+        if btype == 1:                            # Inside node:
+            if d >= 0.5: 
+                dnx = -4 * d_signed
+            else:
+                dnx = 0.5 - 2. * d * d
+        else:                                     # Edge node:
+            if d_signed > 0.:
+                dnx = -2 * (1 - d_signed)
+            else:
+                dnx = 2 * (1 + d_signed)
+    return dnx * idx
+
+
+# ========================================================= #
 #           Quadratic B-spline shape function               #
 # ========================================================= #
 @ti.func
-def ShapeBsplineQ(xp, xg, idx, lp):
+def ShapeBsplineQ(xp, xg, idx, btype):
     nx = 0.
-    d = ti.abs(xp - xg) * idx
-    if d < 1.5:
-        if d > 0.5:
-            nx = 0.5 * (1.5 - d) * (1.5 - d)
-        else:
-            nx = 0.75 - d * d
-    return nx
-
-
-@ti.func
-def GShapeBsplineQ(xp, xg, idx, lp):
-    dnx = 0.
-    d = ti.abs(xp - xg) * idx
-    a = sign(xp - xg)
-    if d < 1.5:
-        if d > 0.5:
-            dnx = (d - 1.5) * a * idx
-        else:
-            dnx = -2 * d * a  * idx
-    return dnx
-
-@ti.func
-def ShapeBsplineQ1(xp, xg, idx, lp):
-    nx = 0.
-    d = ti.abs(xp - xg) * idx
-    if d < 1.5:
-        if d > 0.5:
-            nx = 0.5 * (1.5 - d) * (1.5 - d)
-        else:
-            nx = 0.75 - d * d
-    return nx
-
-@ti.func
-def ShapeBsplineQ2(xp, xg, idx, lp):
-    nx = 0.
-    d = ti.abs(xp - xg) * idx
-    if d < 1.5:
-        if d > 0.5:
-            nx = 0.5 * (1.5 - d) * (1.5 - d)
-        else:
-            nx = 0.75 - d * d
+    d = (xp - xg) * idx
+    if btype == 0:
+        if d >= 0.5 and d < 1.5:
+            nx = (0.5 * d - 1.5) * d + 1.125
+        elif d >= -0.5 and d < 0.5:
+            nx = -d * d + 0.75
+        elif d >= -1.5 and d < 0.5:
+            nx = (0.5 * d + 1.5) * d + 1.125
+    elif btype == 1:
+        if d >= 0. and d < 0.5:
+            nx = 1. - d
+        elif d >= 0.5 and d < 1.5:
+            nx = (0.5 * d - 1.5) * d + 1.125
+    elif btype == 2:
+        if d >= -1. and d < -0.5:
+            nx = 1. + d
+        elif d >= -0.5 and d < 0.5:
+            nx = -d * d + 0.75
+        elif d >= 0.5 and d < 1.5:
+            nx = (0.5 * d - 1.5) * d + 1.125
+    elif btype == 3:
+        if d >= -1.5 and d < -0.5:
+            nx = (0.5 * d + 1.5) * d + 1.125
+        elif d >= -0.5 and d < 0.5:
+            nx = -d * d + 0.75
+        elif d >= 0.5 and d < 1.:
+            nx = 1. - d
+    elif btype == 4:
+        if d >= -1.5 and d < -0.5:
+            nx = (0.5 * d + 1.5) * d + 1.125
+        elif d >= -0.5 and d <= 0.:
+            nx = 1. + d
     return nx
 
 @ti.func
-def ShapeBsplineQ3(xp, xg, idx, lp):
-    nx = 0.
-    d = ti.abs(xp - xg) * idx
-    if d < 1.5:
-        if d > 0.5:
-            nx = 0.5 * (1.5 - d) * (1.5 - d)
-        else:
-            nx = 0.75 - d * d
-    return nx
-
-@ti.func
-def GShapeBsplineQ1(xp, xg, idx, lp):
+def GShapeBsplineQ(xp, xg, idx, btype):
     dnx = 0.
-    d = ti.abs(xp - xg) * idx
-    a = sign(xp - xg)
-    if d < 1.5:
-        if d > 0.5:
-            dnx = (d - 1.5) * a * idx
-        else:
-            dnx = -2 * d * a  * idx
-    return dnx
-
-@ti.func
-def GShapeBsplineQ2(xp, xg, idx, lp):
-    dnx = 0.
-    d = ti.abs(xp - xg) * idx
-    a = sign(xp - xg)
-    if d < 1.5:
-        if d > 0.5:
-            dnx = (d - 1.5) * a * idx
-        else:
-            dnx = -2 * d * a  * idx
-    return dnx
-
-@ti.func
-def GShapeBsplineQ3(xp, xg, idx, lp):
-    dnx = 0.
-    d = ti.abs(xp - xg) * idx
-    a = sign(xp - xg)
-    if d < 1.5:
-        if d > 0.5:
-            dnx = (d - 1.5) * a * idx
-        else:
-            dnx = -2 * d * a  * idx
-    return dnx
+    d = (xp - xg) * idx
+    if btype == 0:
+        if d >= 0.5 and d < 1.5:
+            dnx = d - 1.5
+        elif d >= -0.5 and d < 0.5:
+            dnx = -2. * d 
+        elif d >= -1.5 and d < 0.5:
+            dnx = d + 1.5
+    elif btype == 1:
+        if d >= 0. and d < 0.5:
+            dnx = -1.
+        elif d >= 0.5 and d < 1.5:
+            dnx = d - 1.5
+    elif btype == 2:
+        if d >= -1. and d < -0.5:
+            dnx = 1. 
+        elif d >= -0.5 and d < 0.5:
+            dnx = -2. * d
+        elif d >= 0.5 and d < 1.5:
+            dnx = d - 1.5
+    elif btype == 3:
+        if d >= -1.5 and d < -0.5:
+            dnx = d + 1.5
+        elif d >= -0.5 and d < 0.5:
+            dnx = -2. * d
+        elif d >= 0.5 and d < 1.:
+            dnx = -1.
+    elif btype == 4:
+        if d >= -1.5 and d < -0.5:
+            dnx = d + 1.5
+        elif d >= -0.5 and d <= 0.:
+            dnx = 1. 
+    return dnx * idx
 
 # ========================================================= #
 #             Cubic B-spline shape function                 #
 # ========================================================= #
 @ti.func
-def ShapeBsplineC(xp, xg, idx, lp):
+def ShapeBsplineC(xp, xg, idx, btype):
     nx = 0.
-    d = ti.abs(xp - xg) * idx
-    if d < 2:
-        if d > 1:
-            nx = (2 - d) ** 3 / 6
+    d = (xp - xg) * idx
+    if d >= 1 and d < 2:
+        if btype != 3:
+            nx = ((-1./6. * d + 1) * d - 2) * d + 4.0/3.0
+    elif d >= 0 and d < 1:
+        if btype == 1:
+            nx = (1./6. * d * d - 1) * d + 1
+        elif btype == 3:
+            nx = (1./3. * d - 1) * d * d + 2./3.
         else:
-            nx = 0.5 * d ** 3 - d ** 2 + 2. / 3.
-    return nx
-
-
-@ti.func
-def GShapeBsplineC(xp, xg, idx, lp):
-    dnx = 0.
-    d = ti.abs(xp - xg) * idx
-    a = sign(xp - xg)
-    if d < 2:
-        if d > 1:
-            dnx = -0.5 * (2 - d) ** 2 * a * idx
+            nx = (0.5 * d - 1) * d * d + 2./3.
+    elif d >= -1 and d < 0:
+        if btype == 4:
+            nx = (-1./6. * d * d + 1) * d + 1
+        elif btype == 2:
+            nx = (-1./3. * d - 1) * d * d + 2./3.
         else:
-            dnx = (1.5 * d ** 2 - 2 * d) * a * idx
-    return dnx
-
-@ti.func
-def ShapeBsplineC1(xp, xg, idx, lp):
-    nx = 0.
-    d = ti.abs(xp - xg) * idx
-    if d < 2:
-        if d >= 1:
-            nx = -1./6. * d * d * d + d * d - 2 * d + 4./3.
-        elif d >= 0:
-            nx = 1./6. * d * d * d - d + 1.
-        elif d >= -1:
-            nx = -1./6. * d * d * d + d + 1.
-        elif d >= -2:
-            nx = 1./6. * d * d * d + d * d + 2 * d + 4./3.
+            nx = (-0.5 * d - 1) * d * d + 2./3.
+    elif d >= -2 and d < -1:
+        nx = ((1./6. * d + 1) * d + 2) * d + 4./3.
     return nx
 
-
 @ti.func
-def ShapeBsplineC2(xp, xg, idx, lp):
-    nx = 0.
-    d = ti.abs(xp - xg) * idx
-    if d < 2:
-        if d > 1:
-            nx = -1./6. * d * d * d + d * d - 2 * d + 4./3.
-        elif d >= 0:
-            nx = 0.5 * d * d * d - d * d + 2./3.
-        elif d >= -1:
-            nx = -1./3. * d * d * d - d * d + 2./3.
-    return nx
-
-
-@ti.func
-def ShapeBsplineC3(xp, xg, idx, lp):
-    nx = 0.
-    d = ti.abs(xp - xg) * idx
-    if d < 2:
-        if d >= 1:
-            nx = -1./6. * d * d * d + d * d - 2 * d + 4./3.
-        elif d >= 0:
-            nx = 0.5 * d * d * d - d * d + 2./3.
-        elif d >= -1:
-            nx = -0.5 * d * d * d - d * d + 2./3.
-        elif d >= -2:
-            nx = 1./6. * d * d * d + d * d + 2 * d + 4./3.
-    return nx
-
-
-@ti.func
-def ShapeBsplineC4(xp, xg, idx, lp):
-    nx = 0.
-    d = ti.abs(xp - xg) * idx
-    if d < 1:
-        if d >= 0:
-            nx = 1./3. * d * d * d - d * d + 2./3.
-        elif d >= -1:
-            nx = -0.5 * d * d * d - d * d + 2./3.
-        elif d >= -2:
-            nx = 1./6. * d * d * d + d * d + 2 * d + 4./3.
-    return nx
-
-
-@ti.func
-def GShapeBsplineC1(xp, xg, idx, lp):
+def GShapeBsplineC(xp, xg, idx, btype):
     dnx = 0.
-    d = ti.abs(xp - xg) * idx
-    if d < 2:
-        if d >= 1:
-            dnx = -0.5 * d * d + 2 * d - 2.
-        elif d >= 0:
+    d = (xp - xg) * idx
+    if d >= 1 and d < 2:
+        if btype != 3:
+            dnx = (-0.5 * d + 2) * d - 2.
+    elif d >= 0 and d < 1:
+        if btype == 1:
             dnx = 0.5 * d * d - 1.
-        elif d >= -1:
+        elif btype == 3:
+            dnx = d * (d - 2.)
+        else:
+            dnx = (3.0 / 2.0 * d - 2) * d
+    elif d >= -1 and d < 0:
+        if btype == 4:
             dnx = -0.5 * d * d + 1.
-        elif d >= -2:
-            dnx = 0.5 * d * d + 2 * d + 2.
-    return dnx
-
-
-@ti.func
-def GShapeBsplineC2(xp, xg, idx, lp):
-    dnx = 0.
-    d = ti.abs(xp - xg) * idx
-    if d < 2:
-        if d > 1:
-            dnx = -0.5 * d * d + 2 * d - 2.
-        elif d >= 0:
-            dnx = 1.5 * d * d - 2 * d 
-        elif d >= -1:
-            dnx = -1. * d * d - 2 * d 
-    return dnx
-
-
-@ti.func
-def GShapeBsplineC3(xp, xg, idx, lp):
-    dnx = 0.
-    d = ti.abs(xp - xg) * idx
-    if d < 2:
-        if d >= 1:
-            dnx = -0.5 * d * d + 2 * d - 2 
-        elif d >= 0:
-            dnx = 1.5 * d * d - 2 * d 
-        elif d >= -1:
-            dnx = -1.5 * d * d - 2 * d 
-        elif d >= -2:
-            dnx = 0.5 * d * d + 2 * d + 2 
-    return dnx
-
-
-@ti.func
-def GShapeBsplineC4(xp, xg, idx, lp):
-    dnx = 0.
-    d = ti.abs(xp - xg) * idx
-    if d < 1:
-        if d >= 0:
-            dnx = d * d - 2 * d 
-        elif d >= -1:
-            dnx = -1.5 * d * d - 2 * d 
-        elif d >= -2:
-            dnx = 0.5 * d * d + 2 * d + 2 
-    return dnx
+        elif btype == 2:
+            dnx = (-d - 2.) * d
+        else:
+            dnx = (-3./2. * d - 2.) * d
+    elif d >= -2 and d < -1:
+        dnx = (0.5 * d + 2.) * d + 2.
+    return dnx * idx
 
 
 # ========================================================= #
@@ -418,7 +416,7 @@ def GCubicSpline(smoothing_length, relative_distance):
     
     gradient = relative_distance
     if norm_distance > Threshold:
-        gradient *= dw_dr  /(norm_distance * smoothing_length)
+        gradient *= dw_dr / (norm_distance * smoothing_length)
     else:
         gradient *= 0.
     return gradient
@@ -494,7 +492,7 @@ def GGuassian(smoothing_length, relative_distance):
 
     gradient = relative_distance
     if norm_distance > Threshold:
-        gradient *= dw_dr  /(norm_distance * smoothing_length)
+        gradient *= dw_dr / (norm_distance * smoothing_length)
     else:
         gradient *= 0.
     return gradient
@@ -535,7 +533,7 @@ def GSuperGuassian(smoothing_length, relative_distance):
 
 
 # ========================================================= #
-#                    Wieght Functions                       #
+#                    Weight Functions                       #
 # ========================================================= #
 @ti.func
 def CubicSplineWeight(xp, xg, idx):
@@ -583,3 +581,26 @@ def SmoothedHeavisideFunction(epsilon, phi):
         else:
             h = 1.
     return h
+
+
+# ========================================================= #
+#               Distortion Ratio Functions                  #
+# ========================================================= #
+@ti.func
+def DistortionRatioFuction(eta):
+    value = 0.
+    if 0 <= eta < 0.5:
+        value = 0.5 * eta
+    elif 0.5 <= eta < 1.:
+        value = -6. * eta * eta * eta + 14. * eta * eta - 9. * eta + 2.
+    elif eta >= 1.:
+        value = eta
+    return value
+
+
+@ti.func
+def CubicSmooth(relative_distance, support_domain):
+    norm_distance = relative_distance.norm()
+    relative_position = norm_distance / support_domain
+    single_value = 1 - relative_position * relative_position
+    return single_value * single_value * single_value if relative_position < 1. else 0.

@@ -11,7 +11,7 @@ from src.mpm.Simulation import Simulation
 from src.utils.GaussPoint import GaussPointInRectangle, GaussPointInTriangle
 from src.utils.ObjectIO import DictIO
 from src.utils.RegionFunction import RegionFunction
-from src.utils.TypeDefination import vec3f, vec6f, vec3u8
+from src.utils.TypeDefination import vec3f, vec6f, vec2u8, vec3u8, vec2f
 from third_party.pyevtk.hl import pointsToVTK
 
 
@@ -92,7 +92,8 @@ class BodyGenerator(object):
         if not scene.particle is None:
             start_particle = int(scene.particleNum[0]) - self.insert_particle_num[None]
             end_particle = int(scene.particleNum[0])
-            scene.material.state_vars_initialize(start_particle, end_particle, scene.particle)
+            if not (self.sims.solver_type == "Implicit" and self.sims.material_type == "Fluid"):
+                scene.material.state_vars_initialize(start_particle, end_particle, scene.particle)
 
         if self.visualize:
             if not self.write_file:
@@ -140,14 +141,14 @@ class BodyGenerator(object):
 
     def allocate_material_point_memory(self, expected_total_particle_number):
         field_bulider = ti.FieldsBuilder()
-        self.particle = ti.Vector.field(3, float)
+        self.particle = ti.Vector.field(self.sims.dimension, float)
         field_bulider.dense(ti.i, expected_total_particle_number).place(self.particle)
         self.snode_tree = field_bulider.finalize()
         self.insert_particle_num = ti.field(int, shape=())
 
     def check_bodyID(self, scene: myScene, bodyID):
         if bodyID > scene.node.shape[1] - 1:
-            raise RuntimeError(f"Keyword:: /bodyID/ must be smaller than {scene.node.shape[1] - 1}")
+            raise RuntimeError(f"Keyword:: /bodyID/ must be smaller than {scene.node.shape[1]}")
 
     def add_body(self, scene: myScene):
         expected_total_particle_number = 0
@@ -188,8 +189,6 @@ class BodyGenerator(object):
         end_particle_num = self.insert_particle_num[None]
         particle_count = end_particle_num - start_particle_num
 
-        self.rotate_body(region, start_particle_num, end_particle_num)
-
         if self.write_file:
             self.write_text(start_particle_num, end_particle_num, particle_volume, psize, scene.element.get_nodal_coords(), scene.element.get_node_connectivity())
         elif not self.write_file:
@@ -209,28 +208,42 @@ class BodyGenerator(object):
                 materialID = DictIO.GetEssential(template, "MaterialID")
                 density = material.matProps[materialID].density
 
+                density, densityf, porosity, permeability = 0., 0., 0., 0.
+                if self.sims.material_type == "TwoPhaseSingleLayer":
+                    density = material.matProps[materialID].solid_density
+                    densityf = material.matProps[materialID].fluid_density
+                    porosity = material.matProps[materialID].porosity
+                    permeability = material.matProps[materialID].permeability
+                else:
+                    density = material.matProps[materialID].density
+
                 if materialID <= 0:
                     raise RuntimeError(f"Material ID {materialID} should be larger than 0")
 
-            if self.sims.shape_function == "Linear":
-                scene.element.calLength[bodyID] = [0, 0, 0]
-            elif self.sims.shape_function == "QuadBSpline":
-                scene.element.calLength[bodyID] = 0.5 * scene.element.grid_size
-            elif self.sims.shape_function == "CubicBSpline":
-                scene.element.calLength[bodyID] = scene.element.grid_size
-            elif self.sims.shape_function == "GIMP":
-                scene.element.calLength[bodyID] = psize
-
             particle_stress = DictIO.GetAlternative(template, "ParticleStress", {"GravityField": False, "InternalStress": vec6f([0, 0, 0, 0, 0, 0])})
-            traction = DictIO.GetAlternative(template, "Traction", {})
-            init_v = DictIO.GetAlternative(template, "InitialVelocity", vec3f([0, 0, 0]))
-            fix_v_str = DictIO.GetAlternative(template, "FixVelocity", ["Free", "Free", "Free"])
-            fix_v = vec3u8([DictIO.GetEssential(self.FIX, is_fix) for is_fix in fix_v_str])
+            init_v = DictIO.GetAlternative(template, "InitialVelocity", [0., 0., 0.] if self.sims.dimension == 3 else [0., 0.])
+            fix_v_str = DictIO.GetAlternative(template, "FixVelocity", ["Free", "Free", "Free"] if self.sims.dimension == 3 else ["Free", "Free"])
+            if self.sims.dimension == 3:
+                fix_v = vec3u8([DictIO.GetEssential(self.FIX, is_fix) for is_fix in fix_v_str])
+                if isinstance(init_v, (list, tuple)):
+                    init_v = vec3f(init_v)
+            elif self.sims.dimension == 2:
+                fix_v = vec2u8([DictIO.GetEssential(self.FIX, is_fix) for is_fix in fix_v_str])
+                if isinstance(init_v, (list, tuple)):
+                    init_v = vec2f(init_v)
             scene.check_particle_num(self.sims, particle_count)
-            kernel_add_body_(particles, particleNum, start_particle_num, end_particle_num, self.particle, psize, particle_volume, bodyID, materialID, density, init_v, fix_v)
+            if self.sims.dimension == 3:
+                kernel_add_body_(particles, particleNum, start_particle_num, end_particle_num, self.particle, particle_volume, bodyID, materialID, density, init_v, fix_v)
+            elif self.sims.dimension == 2:
+                if self.sims.material_type == 'Solid' or self.sims.material_type == 'Fluid':
+                    kernel_add_body_2D(particles, particleNum, start_particle_num, end_particle_num, self.particle, particle_volume, bodyID, materialID, density, init_v, fix_v)
+                elif self.sims.material_type == 'TwoPhaseSingleLayer':
+                    kernel_add_body_twophase2D(particles, particleNum, start_particle_num, end_particle_num, self.particle, particle_volume, bodyID, materialID, density, densityf, porosity, permeability, init_v, fix_v)
             self.set_particle_stress(scene, materialID, region, particleNum, particle_count, particle_stress)
-            self.set_traction(traction, region, scene.particle, particle_count, int(scene.particleNum[0]))
+            scene.push_psize(particle_count, psize)
             print(" Body(s) Information ".center(71, '-'))
+            traction = DictIO.GetAlternative(template, "Traction", {})
+            self.set_traction(scene, region, particle_count, traction)
             self.print_particle_info(nParticlesPerCell, bodyID, materialID, init_v, fix_v_str, particle_volume, particle_count)
             scene.particleNum[0] += particle_count
 
@@ -250,6 +263,7 @@ class BodyGenerator(object):
         name = DictIO.GetEssential(template, "RegionName")
         nParticlesPerCell = DictIO.GetAlternative(template, "nParticlesPerCell", 2)
         region: RegionFunction = self.get_region_ptr(name)
+        psize = scene.element.calc_particle_size(nParticlesPerCell)
         particle_volume = scene.element.calc_volume() / scene.element.calc_total_particle(nParticlesPerCell)
         self.check_bodyID(scene, bodyID)
         rigid_body = DictIO.GetAlternative(template, "RigidBody", False)
@@ -261,20 +275,30 @@ class BodyGenerator(object):
         else:
             materialID = DictIO.GetEssential(template, "MaterialID")
             density = material.matProps[materialID].density
-
             if materialID <= 0:
                 raise RuntimeError(f"Material ID {materialID} should be larger than 0")
 
         particle_stress = DictIO.GetAlternative(template, "ParticleStress", {"GravityField": False, "InternalStress": vec6f([0, 0, 0, 0, 0, 0])})
-        traction = DictIO.GetAlternative(template, "Traction", {})
-        init_v = DictIO.GetAlternative(template, "InitialVelocity", vec3f([0, 0, 0]))
-        fix_v_str = DictIO.GetAlternative(template, "FixVelocity", ["Free", "Free", "Free"])
-        fix_v = vec3u8([DictIO.GetEssential(self.FIX, is_fix) for is_fix in fix_v_str])
+        init_v = DictIO.GetAlternative(template, "InitialVelocity", [0., 0., 0.] if self.sims.dimension == 3 else [0., 0.])
+        fix_v_str = DictIO.GetAlternative(template, "FixVelocity", ["Free", "Free", "Free"] if self.sims.dimension == 3 else ["Free", "Free"])
+        if self.sims.dimension == 3:
+            fix_v = vec3u8([DictIO.GetEssential(self.FIX, is_fix) for is_fix in fix_v_str])
+            if isinstance(init_v, (list, tuple)):
+                init_v = vec3f(init_v)
+        elif self.sims.dimension == 2:
+            fix_v = vec2u8([DictIO.GetEssential(self.FIX, is_fix) for is_fix in fix_v_str])
+            if isinstance(init_v, (list, tuple)):
+                init_v = vec2f(init_v)
         scene.check_particle_num(self.sims, self.insert_particle_num[None])
-        kernel_add_body_(particles, particleNum, 0, self.insert_particle_num[None], self.particle, scene.element.calLength[bodyID], particle_volume, bodyID, materialID, density, init_v, fix_v)
+        if self.sims.dimension == 3:
+            kernel_add_body_(particles, particleNum, 0, self.insert_particle_num[None], self.particle, psize, particle_volume, bodyID, materialID, density, init_v, fix_v)
+        elif self.sims.dimension == 2:
+            kernel_add_body_2D(particles, particleNum, 0, self.insert_particle_num[None], self.particle, psize, particle_volume, bodyID, materialID, density, init_v, fix_v)
         self.set_particle_stress(scene, materialID, region, particleNum, self.insert_particle_num[None], particle_stress)
-        self.set_traction(traction, region, scene.particle, self.insert_particle_num[None], int(scene.particleNum[0]))
+        scene.push_psize(self.insert_particle_num[None], psize)
         print(" Body(s) Information ".center(71, '-'))
+        traction = DictIO.GetAlternative(template, "Traction", {})
+        self.set_traction(scene, region, self.insert_particle_num[None], traction)
         self.print_particle_info(nParticlesPerCell, bodyID, materialID, init_v, fix_v_str, particle_volume, self.insert_particle_num[None])
         scene.particleNum[0] += self.insert_particle_num[None]
 
@@ -290,20 +314,22 @@ class BodyGenerator(object):
         elif type(particle_stress) is dict:
             gravityField = DictIO.GetAlternative(particle_stress, "GravityField", False)
             initialStress = DictIO.GetAlternative(particle_stress, "InternalStress", vec6f([0, 0, 0, 0, 0, 0]))
-            self.set_internal_stress(
-                materialID, 
-                scene.material, 
-                region, 
-                scene.particle,
-                particle_count, 
-                int(scene.particleNum[0]),
-                gravityField, initialStress
-                )
+            if isinstance(initialStress, (int, float)):
+                initialStress = vec6f([float(initialStress), float(initialStress), float(initialStress), 0., 0., 0.])
+            if self.sims.material_type == "TwoPhaseSingleLayer":
+                porePressure = DictIO.GetAlternative(particle_stress, "PorePressure", 0.)
+                self.set_internal_stress(materialID, scene.material, region, scene.particle, particle_count, int(scene.particleNum[0]), gravityField, initialStress, porePressure)
+            else:
+                self.set_internal_stress(materialID, scene.material, region, scene.particle, particle_count, int(scene.particleNum[0]), gravityField, initialStress)
         
     def Generate(self, scene: myScene, region: RegionFunction, nParticlesPerCell):
         if scene.is_rectangle_cell():
-            kernel_place_particles_(scene.element.grid_size, scene.element.igrid_size, region.start_point, region.region_size, region.expected_particle_number, nParticlesPerCell,
-                                    self.particle, self.insert_particle_num, region.function)
+            if self.sims.dimension == 3:
+                kernel_place_particles_(scene.element.grid_size, scene.element.igrid_size, region.start_point, region.region_size, region.expected_particle_number, nParticlesPerCell,
+                                        self.particle, self.insert_particle_num, region.function)
+            elif self.sims.dimension == 2:
+                kernel_place_particles_2D(scene.element.grid_size, scene.element.igrid_size, region.start_point, region.region_size, region.expected_particle_number, nParticlesPerCell,
+                                          self.particle, self.insert_particle_num, region.function)
         elif scene.is_triangle_cell():
             if scene.element.cell_active is None:
                 fb = ti.FieldsBuilder()
@@ -316,49 +342,43 @@ class BodyGenerator(object):
             kernel_activate_cell_(region.start_point, region.region_size, scene.element.nodal_coords, scene.element.node_connectivity, scene.element.cell_active, region.function)
             kernel_fill_particle_in_cell_(point.gpcoords, scene.element.cell_active, scene.element.nodal_coords, scene.element.node_connectivity, scene.particle, self.insert_particle_num, transform_local_to_global)
             snode_tree.destroy()
+        else:
+            raise RuntimeError("Wrong element type!")
 
-    def set_internal_stress(self, 
-            materialID,
-            material: ConstitutiveModelBase, 
-            region: RegionFunction, 
-            particle, 
-            particle_num, 
-            init_particle_num, 
-            gravityField, 
-            initialStress):
+    def set_internal_stress(self, materialID, material: ConstitutiveModelBase, region: RegionFunction, particle, particle_num, init_particle_num, gravityField, initialStress, porePressure=0):
         if gravityField and materialID >= 0:
             k0 = material.get_lateral_coefficient(materialID)
-            top_position = region.region_size[2] + region.start_point[2]
-            if region.region_type != "Rectangle":
-                raise ValueError("Gravity Field is only activated when region type is rectangle")
-            if not all(np.abs(np.array(self.sims.gravity) - np.array([0., 0., -9.8])) < 1e-12):
-                raise ValueError("Gravity must be set as [0, 0, -9.8] when gravity activated")
-            density = material.matProps[materialID].density
-            kernel_apply_gravity_field_(density, init_particle_num, init_particle_num + particle_num, k0, top_position, self.sims.gravity, particle)
+            if self.sims.dimension == 3:
+                top_position = region.region_size[2] + region.start_point[2]
+                if region.region_type != "Rectangle":
+                    raise ValueError("Gravity Field is only activated when region type is rectangle")
+                if not all(np.abs(np.array(self.sims.gravity) - np.array([0., 0., -9.8])) < 1e-12):
+                    raise ValueError("Gravity must be set as [0, 0, -9.8] when gravity activated")
+                density = material.matProps[materialID].density
+                kernel_apply_gravity_field_(density, init_particle_num, init_particle_num + particle_num, k0, top_position, self.sims.gravity, particle)
+            elif self.sims.dimension == 2:
+                top_position = region.region_size[1] + region.start_point[1]
+                if region.region_type != "Rectangle2D":
+                    raise ValueError("Gravity Field is only activated when region type is rectangle2D")
+                if not all(np.abs(np.array(self.sims.gravity) - np.array([0., -9.8, 0.])) < 1e-12):
+                    raise ValueError("Gravity must be set as [0, -9.8] when gravity activated")
+                density = material.matProps[materialID].density
+                kernel_apply_gravity_field_2D(density, init_particle_num, init_particle_num + particle_num, k0, top_position, self.sims.gravity, particle)
         
         if initialStress.n != 6:
             raise ValueError(f"The dimension of initial stress: {initialStress.n} is inconsistent with the dimension of stress vigot tensor in 3D: 6")
         kernel_apply_vigot_stress_(init_particle_num, init_particle_num + particle_num, initialStress, particle)
-    
-    def set_traction(self, tractions, region, particle, particle_num, init_particle_num):
+        if self.sims.material_type == "TwoPhaseSingleLayer":
+            kernel_apply_pore_pressure_(init_particle_num, init_particle_num + particle_num, porePressure, particle)
+
+    def set_traction(self, scene: myScene, region: RegionFunction, particle_num, tractions):
+        scene.boundary.get_essentials(scene.is_rigid, scene.psize, self.myRegion)
         if tractions:
             if type(tractions) is dict:
-                self.set_particle_traction(tractions, region, particle, particle_num, init_particle_num)
+                scene.boundary.set_particle_traction(self.sims, tractions, particle_num, int(scene.particleNum[0]), scene.particle, scene.psize, region)
             elif type(tractions) is list:
                 for traction in tractions:
-                    self.set_particle_traction(traction, region, particle, particle_num, init_particle_num)
-
-    def set_particle_traction(self, traction, region: RegionFunction, particle, particle_num, init_particle_num):
-        traction_force = DictIO.GetEssential(traction, "Pressure") #* particle_volume 
-        if isinstance(traction_force, float):
-            traction_force *= DictIO.GetEssential(traction, "OuterNormal")
-        region_function = region.function
-        region_name = DictIO.GetAlternative(traction, "RegionName", None)
-        if region_name:
-            traction_region: RegionFunction = self.get_region_ptr(region_name)
-            region_function = traction_region.function
-        region_function = DictIO.GetAlternative(traction, "RegionFunction", region_function)
-        kernel_set_particle_traction_(init_particle_num, init_particle_num + particle_num, region_function, traction_force, particle)
+                    scene.boundary.set_particle_traction(self.sims, traction, particle_num, int(scene.particleNum[0]), scene.particle, scene.psize, region)
 
     def write_text(self, to_start, to_end, particle_vol, particle_size, nodal_coords, node_connectivity):
         print('#', "Writing particle(s) into 'Particle' ......")

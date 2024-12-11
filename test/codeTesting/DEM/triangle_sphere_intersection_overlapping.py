@@ -1,6 +1,3 @@
-import sys
-sys.path.append('/home/eleven/work/GeoTaichi_release')
-
 import taichi as ti
 ti.init(default_fp=ti.f32, arch=ti.cpu, debug=True)
 

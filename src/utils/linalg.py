@@ -1,10 +1,176 @@
-import numpy
-import math
+import numpy, math
 from copy import deepcopy
+from decimal import Decimal, ROUND_HALF_UP
 
 
-def no_operation(*args, **kwrags):
+def no_operation(*args, **kwargs):
     pass
+
+def bounding_box(points):
+    if points.ndim == 1:
+        return [(min(points)), (max(points))]
+    else:
+        assert points.ndim == 2
+        if points.shape[1] == 2:
+            x_coordinates, y_coordinates = zip(*points)
+            return [(min(x_coordinates), min(y_coordinates)), (max(x_coordinates), max(y_coordinates))]
+        elif points.shape[2] == 3:
+            x_coordinates, y_coordinates, z_coordinates = zip(*points)
+            return [(min(x_coordinates), min(y_coordinates), min(z_coordinates)), (max(x_coordinates), max(y_coordinates), max(z_coordinates))]
+
+def make_list(input):
+    if isinstance(input, (int, float)):
+        return [input]
+    elif isinstance(input, (list, tuple, numpy.ndarray)):
+        return list(input)
+
+def align_size(x, align):
+  return (x + (align - 1)) &~ (align - 1)
+
+def ranges(nv, start = 0):
+    shifts = numpy.cumsum(nv)
+    id_arr = numpy.ones(shifts[-1], dtype=numpy.int_)
+    id_arr[shifts[:-1]] = -numpy.asarray(nv[:-1])+1
+    id_arr[0] = start
+    return id_arr.cumsum()
+
+def flip2d(array2d, size_u=0, size_v=0):
+    array2d = numpy.array(array2d)
+    if size_u <= 0 or size_v <= 0:
+        # Detect array shapes
+        size_u = array2d.shape[1]
+        size_v = array2d.shape[0]
+
+    new_array2d = numpy.zeros((size_v, size_u, 2))
+    for i in range(size_v):
+        for j in range(size_u):
+            new_array2d[i, j] = array2d[j, i]
+    return new_array2d
+
+
+def flip3d(array3d, size_u=0, size_v=0, size_w=0):
+    array3d = numpy.array(array3d)
+    if size_u <= 0 or size_v <= 0 or size_w <= 0:
+        # Detect array shapes
+        size_u = array3d.shape[2]
+        size_v = array3d.shape[1]
+        size_w = array3d.shape[0]
+
+    new_array3d = numpy.zeros((size_w, size_v, size_u, 3))
+    for i in range(size_w):
+        for j in range(size_v):
+            for k in range(size_u):
+                new_array3d[i, j, k] = array3d[k, j, i]
+    return new_array3d
+
+
+def flip2d_linear(array2d, size_u, size_v):
+    array2d = numpy.array(array2d).reshape(size_u, size_v, 2)
+    return flip2d(array2d, size_u, size_v).reshape(size_u * size_v, 2)
+
+
+def flip3d_linear(array3d, size_u, size_v, size_w):
+    array3d = numpy.array(array3d).reshape(size_u, size_v, size_w, 3)
+    return flip3d(array3d, size_u, size_v, size_w).reshape(size_u * size_v * size_w, 3)
+
+
+def right_round(num, keep_n):
+    if isinstance(num, float):
+        num = str(num)
+    return Decimal(num).quantize((Decimal('0.' + '0'*keep_n)),rounding=ROUND_HALF_UP)
+
+
+def NonNegative(x):
+    if x <= 0:
+        return 1
+    else:
+        return int(x)
+
+
+def next_pow2(x):
+    x -= 1
+    x |= (x >> 1)
+    x |= (x >> 2)
+    x |= (x >> 4)
+    x |= (x >> 8)
+    x |= (x >> 16)
+    return x + 1
+
+def round32(n):
+    if(n % 32 == 0): return n
+    else: return ((n >> 5) + 1) << 5
+
+
+def rotation_matrix_direction(dir1, dir2):
+    cos_theta = numpy.dot(dir1, dir2)
+    norm_vec = numpy.cross(dir1, dir2)
+    norm_vec_invert = numpy.array([[0., -norm_vec[2], norm_vec[1]], 
+                                   [norm_vec[2], 0., -norm_vec[0]],
+                                   [-norm_vec[1], norm_vec[0], 0.]])
+    RotationMartix = numpy.eye(3) + norm_vec_invert + (norm_vec_invert @ norm_vec_invert) / (1 + cos_theta)
+    return RotationMartix
+
+def transformation_matrix_direction(dir1, dir2):
+    RotationMartix = rotation_matrix_direction(dir1, dir2)
+    return numpy.array([[RotationMartix[0, 0], RotationMartix[0, 1], RotationMartix[0, 2], 0],
+                        [RotationMartix[1, 0], RotationMartix[1, 1], RotationMartix[1, 2], 0],
+                        [RotationMartix[2, 0], RotationMartix[2, 1], RotationMartix[2, 2], 0],
+                        [0., 0., 0., 1.]])
+
+
+def transformation_matrix_coordinate_system(axis1, axis2):
+    '''
+    Return a transformation matrix from axis1 to axis2
+    axis1 [nxn]: the old coordinate system
+    axis2 [nxn]: the new coordinate system
+    '''
+    # reference: https://ocw.mit.edu/courses/16-07-dynamics-fall-2009/dd277ec654440f4c2b5b07d6c286c3fd_MIT16_07F09_Lec26.pdf
+    return numpy.array([[numpy.dot(axis1[0, :], axis2[0, :]), numpy.dot(axis1[0, :], axis2[1, :]), numpy.dot(axis1[0, :], axis2[2, :]), 0],
+                        [numpy.dot(axis1[1, :], axis2[0, :]), numpy.dot(axis1[1, :], axis2[1, :]), numpy.dot(axis1[1, :], axis2[2, :]), 0],
+                        [numpy.dot(axis1[2, :], axis2[0, :]), numpy.dot(axis1[2, :], axis2[1, :]), numpy.dot(axis1[2, :], axis2[2, :]), 0],
+                        [0., 0., 0., 1.]])
+
+
+def rotation_matrix_coordinate_system(axis1, axis2):
+    '''
+    Return a rotation matrix from axis1 to axis2
+    axis1 [nxn]: the old coordinate system
+    axis2 [nxn]: the new coordinate system
+    '''
+    # reference: https://ocw.mit.edu/courses/16-07-dynamics-fall-2009/dd277ec654440f4c2b5b07d6c286c3fd_MIT16_07F09_Lec26.pdf
+    return numpy.array([[numpy.dot(axis1[0, :], axis2[0, :]), numpy.dot(axis1[0, :], axis2[1, :]), numpy.dot(axis1[0, :], axis2[2, :])],
+                        [numpy.dot(axis1[1, :], axis2[0, :]), numpy.dot(axis1[1, :], axis2[1, :]), numpy.dot(axis1[1, :], axis2[2, :])],
+                        [numpy.dot(axis1[2, :], axis2[0, :]), numpy.dot(axis1[2, :], axis2[1, :]), numpy.dot(axis1[2, :], axis2[2, :])]])
+
+
+def matrix_from_quanternion(q):
+    q = q.reshape(-1, 4)
+    qw, qx, qy, qz = q[:, 3], q[:, 0], q[:, 1], q[:, 2]
+    return numpy.array([[1 - 2 * (qy * qy + qz * qz), 2 * (qx * qy - qz * qw), 2 * (qx * qz + qy * qw)], 
+                       [2 * (qx * qy + qz * qw), 1 - 2 * (qx * qx + qz * qz), 2 * (qy * qz - qx * qw)], 
+                       [2 * (qx * qz - qy * qw), 2 * (qy * qz + qx * qw), 1 - 2 * (qx * qx + qy * qy)]])
+
+
+def heaviside_function(epsilon, phi):
+    h = 0.
+    ieps = 1. / epsilon
+    return numpy.select([phi > epsilon, numpy.logical_and(phi > -epsilon, phi < epsilon)], [1., 0.5 * (1 + phi * ieps + numpy.sin(math.pi * phi * ieps) / math.pi)], default=0.)
+
+
+def linearize(xInd, yInd, zInd, nGPx, nGPy):
+    return xInd + yInd * nGPx + zInd * nGPx * nGPy
+
+
+def vectorize(i, nGPx, nGPy):
+    xInd = (i % (nGPx * nGPy)) % nGPx 
+    yInd = (i % (nGPx * nGPy)) // nGPx 
+    zInd = i // (nGPx * nGPy)
+    return xInd, yInd, zInd
+
+
+def reduced(var1, var2):
+    return var1 * var2 / (var1 + var2) 
+
 
 def Sphere2Certesian(vector):
     return vector[0] * numpy.array([numpy.sin(vector[1]) * numpy.cos(vector[2]), numpy.sin(vector[1]) * numpy.sin(vector[2]), numpy.cos(vector[1])])
@@ -521,11 +687,11 @@ def Interpolation(pt, Extr, knownVal):
     # pt the point where we want to know the value through interpolation
     # knownVal, known values at x0, x1 with eg knownVal[0] = value at x0
     # Extr = (x0,x1) 
-    x0 = Extr[0]
-    gx = Extr[1] - x0
-    f0 = knownVal[0]
-    f1 = knownVal[1] 
-    return (pt[0] - x0) / gx * (f1 + f0) + f0
+    x0 = Extr[:, 0]
+    gx = Extr[:, 1] - x0
+    f0 = knownVal[:, 0]
+    f1 = knownVal[:, 1] 
+    return (pt[0] - x0) / gx * (f1 - f0) + f0
 
 
 def biInterpolate(pt, xExtr, yExtr, knownVal):
@@ -533,16 +699,16 @@ def biInterpolate(pt, xExtr, yExtr, knownVal):
     # pt the point where we want to know the value through interpolation
     # knownVal, known values at (x0,y0), (x1,y0), (x0,y1), (x1,y1) with eg knownVal[0][1] = value at (x0,y1)
     # xExtr = (x0,x1) and yExtr = (y0,y1)
-    x0 = xExtr[0]
-    y0 = yExtr[0]
-    gx = xExtr[1] - x0
-    gy = yExtr[1] - y0
-    f00 = knownVal[0][0] 
-    f01 = knownVal[0][1] 
-    f10 = knownVal[1][0] 
-    f11 = knownVal[1][1]
-    bracket = (pt[1] - y0) / gy * (f11 - f10 - f01 + f00) + f10 - f00
-    return (pt[0] - x0) / gx * bracket + (pt[1] - y0) / gy * (f01 - f00) + f00
+    x0 = xExtr[:, 0]
+    y0 = yExtr[:, 0]
+    gx = xExtr[:, 1] - x0
+    gy = yExtr[:, 1] - y0
+    f00 = knownVal[:, 0, 0] 
+    f01 = knownVal[:, 0, 1] 
+    f10 = knownVal[:, 1, 0] 
+    f11 = knownVal[:, 1, 1]
+    bracket = (pt[:, 1] - y0) / gy * (f11 - f10 - f01 + f00) + f10 - f00
+    return (pt[:, 0] - x0) / gx * bracket + (pt[:, 1] - y0) / gy * (f01 - f00) + f00
 
 
 def triInterpolate(pt, xExtr, yExtr, zExtr, knownVal):
@@ -552,12 +718,61 @@ def triInterpolate(pt, xExtr, yExtr, zExtr, knownVal):
     # xExtr = (x0,x1) and yExtr = (y0,y1)
     x0 = xExtr[0]
     y0 = yExtr[0]
+    z0 = zExtr[0]
     gx = xExtr[1] - x0
     gy = yExtr[1] - y0
-    f00 = knownVal[0][0] 
-    f01 = knownVal[0][1] 
-    f10 = knownVal[1][0] 
-    f11 = knownVal[1][1]
-    bracket = (pt[1] - y0) / gy * (f11 - f10 - f01 + f00) + f10 - f00
+    gz = zExtr[1] - z0
+    f000 = knownVal[:, 0, 0, 0] 
+    f010 = knownVal[:, 0, 1, 0] 
+    f100 = knownVal[:, 1, 0, 0] 
+    f110 = knownVal[:, 1, 1, 0]
+    f001 = knownVal[:, 0, 0, 1] 
+    f011 = knownVal[:, 0, 1, 1] 
+    f101 = knownVal[:, 1, 0, 1] 
+    f111 = knownVal[:, 1, 1, 1]
+    f00 = (pt[2] - z0) / gz * (f001 - f000) + f000
+    f01 = (pt[2] - z0) / gz * (f011 - f010) + f010
+    f10 = (pt[2] - z0) / gz * (f101 - f100) + f100
+    f11 = (pt[2] - z0) / gz * (f111 - f110) + f110
+    bracket = (pt[:, 1] - y0) / gy * (f11 - f10 - f01 + f00) + f10 - f00
     return (pt[0] - x0) / gx * bracket + (pt[1] - y0) / gy * (f01 - f00) + f00
 
+
+def generate_grid(x0, y0, z0, x1, y1, z1, resolution, order="z"):
+    X = numpy.linspace(x0, x1, resolution+1)
+    Y = numpy.linspace(y0, y1, resolution+1)
+    Z = numpy.linspace(z0, z1, resolution+1)
+    P = cartesian_product(X, Y, Z, order=order)
+    return X, Y, Z, P
+
+
+def generate_grid_step(x0, y0, z0, x1, y1, z1, step, order="z"):
+    X = numpy.arange(x0, x1 + step, step)
+    Y = numpy.arange(y0, y1 + step, step)
+    Z = numpy.arange(z0, z1 + step, step)
+    P = cartesian_product(X, Y, Z, order=order)
+    return X, Y, Z, P
+
+
+def cartesian_product(*arrays, **order):
+    la = len(arrays)
+    order = order.get("order", "z")
+    if order == "x":
+        arrays = (arrays[2], arrays[1], arrays[0])
+    elif order == "y":
+        arrays = (arrays[0], arrays[2], arrays[1])
+    dtype = numpy.result_type(*arrays)
+    arr = numpy.empty([len(a) for a in arrays] + [la], dtype=dtype)
+    for i, a in enumerate(numpy.ix_(*arrays)):
+        arr[...,i] = a
+    arr = arr.reshape(-1, la)
+    if order == "x":
+        arr[:,0], arr[:,2] = arr[:,2].copy(), arr[:,0].copy()
+    elif order == "y":
+        arr[:,1], arr[:,2] = arr[:,2].copy(), arr[:,1].copy()
+    return arr
+
+def binomial_coefficient(k, i):
+    if i > k:
+        return 0.
+    return math.factorial(k) / (math.factorial(k - i) * math.factorial(i))

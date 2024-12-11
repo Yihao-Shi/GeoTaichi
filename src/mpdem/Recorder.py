@@ -1,7 +1,5 @@
 import os
 
-import numpy as np
-
 from src.dem.Recorder import WriteFile as DEMWriteFile
 from src.dem.Simulation import Simulation as DEMSimulation
 from src.mpdem.contact.ContactModelBase import ContactModelBase
@@ -15,7 +13,7 @@ class WriteFile:
     physpp: ContactModelBase
     physpw: ContactModelBase
 
-    def __init__(self, sims, msims, dsims, drecorder, mrecorder, physpp, physpw, pcontact): 
+    def __init__(self, sims, msims, dsims, drecorder: DEMWriteFile, mrecorder: MPMWriteFile, physpp, physpw, pcontact): 
         self.drecorder = drecorder
         self.mrecorder  = mrecorder
         self.physpp = physpp

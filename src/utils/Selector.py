@@ -1,6 +1,8 @@
 import taichi as ti
 import trimesh
 
+ti.init()
+
 mesh = trimesh.load("model/bunny.obj")
 particles = ti.Vector.field(3, dtype=ti.f32, shape=mesh.vertices.shape[0])
 particles.from_numpy(mesh.vertices)

@@ -1,4 +1,5 @@
 import taichi as ti
+from functools import reduce
 
 from src.mpm.BaseKernel import *
 from src.mpm.SceneManager import myScene
@@ -13,10 +14,10 @@ class SpatialHashGrid(object):
 
     def __init__(self, sims):
         self.sims = sims
-        self.cnum = vec3i([0, 0, 0])
+        self.cnum = None
         self.cellSum = 0
-        self.grid_size = vec3f(0, 0, 0)
-        self.igrid_size = vec3f(0, 0, 0)
+        self.grid_size = None
+        self.igrid_size = None
 
         self.particle_pse = None
         self.cell_pse = None
@@ -43,20 +44,15 @@ class SpatialHashGrid(object):
             if self.sims.pbc:
                 pass
 
-            self.cnum = vec3i([int(domain * self.igrid_size) + 1 for domain in self.sims.domain])
-            for d in ti.static(range(3)):
-                if self.cnum[d] == 0:
-                    self.cnum[d] = int(1)
-            
-            self.cellSum = int(self.cnum[0] * self.cnum[1] * self.cnum[2])
+            self.cnum = ti.Vector([max(1, int(domain * self.igrid_size) + 1) for domain in self.sims.domain])
+            self.cellSum = reduce((lambda x, y: int(x * y)), list(self.cnum))
             self.cell_pse = PrefixSumExecutor(self.cellSum)
             self.set_hash_table()
             self.place_particles = self.place_particle_to_cell
 
     def set_hash_table(self):
-        self.current = ti.field(int)
-        self.count = ti.field(int)
-        ti.root.dense(ti.i, self.cellSum).place(self.current, self.count)
+        self.current = ti.field(int, shape=self.cellSum)
+        self.count = ti.field(int, shape=self.cell_pse.get_length())
         self.ParticleID = ti.field(int, shape=self.sims.max_particle_num)
 
     def pre_neighbor(self, scene: myScene):
@@ -67,10 +63,10 @@ class SpatialHashGrid(object):
 
     def place_particle_to_cell_v2(self, scene: myScene):
         calculate_particles_position_v2_(int(scene.particleNum[0]), self.igrid_size, scene.particle, self.count, self.cnum)
-        self.cell_pse.run(self.count, self.cellSum)
+        self.cell_pse.run(self.count)
         insert_particle_to_cell_v2_(self.igrid_size, int(scene.particleNum[0]), scene.particle, self.count, self.current, self.ParticleID, self.cnum)
 
     def place_particle_to_cell(self, scene: myScene):
         calculate_particles_position_(int(scene.particleNum[0]), self.igrid_size, scene.particle, self.count, self.cnum)
-        self.cell_pse.run(self.count, self.cellSum)
+        self.cell_pse.run(self.count)
         insert_particle_to_cell_(self.igrid_size, int(scene.particleNum[0]), scene.particle, self.count, self.current, self.ParticleID, self.cnum)

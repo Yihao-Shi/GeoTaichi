@@ -23,7 +23,7 @@ def MPM(title=None, log=True):
     return MPM(title=title, log=log)
     
     
-def DEMPM(dem=None, mpm=None, title=None, log=True):
+def DEMPM(dem=None, mpm=None, title=None, coupling="Lagrangian", log=True):
     if title is None:
         title = __description__ 
         
@@ -32,12 +32,12 @@ def DEMPM(dem=None, mpm=None, title=None, log=True):
         dem.sims.set_dem_coupling(True)
     if mpm is None:
         mpm = MPM(title='', log=False)
-        mpm.sims.set_mpm_coupling(True)
+        mpm.sims.set_mpm_coupling(coupling)
     from src.mpdem.mainDEMPM import DEMPM 
     return DEMPM(dem, mpm, log=log)
        
         
-def MPDEM(dem=None, mpm=None, title=None, log=True):
+def MPDEM(dem=None, mpm=None, coupling="Lagrangian", title=None, log=True):
     if title is None:
         title = __description__ 
         
@@ -46,6 +46,6 @@ def MPDEM(dem=None, mpm=None, title=None, log=True):
         dem.sims.set_dem_coupling(True)
     if mpm is None:
         mpm = MPM(title='', log=False)
-        mpm.sims.set_mpm_coupling(True)
+        mpm.sims.set_mpm_coupling(coupling)
     from src.mpdem.mainDEMPM import DEMPM 
     return DEMPM(dem, mpm, log=log)

@@ -50,10 +50,36 @@ class Engine(object):
                       "DEM-MPM: Two-way coupling scheme"]
         
         if self.sims.coupling_scheme == 'DEM-MPM':
-            self.compute = self.integration
+            if self.dsims.scheme == "DEM":
+                if "Implicit" in self.msims.solver_type:
+                    if self.msims.material_type == "Solid":
+                        pass
+                    elif self.msims.material_type == "Fluid":
+                        self.compute = self.CFDEMintegration
+                    elif self.msims.material_type == "TwoPhaseSingleLayer":
+                        pass
+                    elif self.msims.material_type == "TwoPhaseDoubleLayer":
+                        pass
+                else:
+                    self.compute = self.integration
+            elif self.dsims.scheme == "LSDEM":
+                if "Implicit" in self.msims.solver_type:
+                    if self.msims.material_type == "Solid":
+                        pass
+                    elif self.msims.material_type == "Fluid":
+                        self.compute = self.CFDEMlsintegration
+                    elif self.msims.material_type == "TwoPhaseSingleLayer":
+                        pass
+                    elif self.msims.material_type == "TwoPhaseDoubleLayer":
+                        pass
+                else:
+                    self.compute = self.lsintegration
             self.enforce_update_verlet_table = self.enforce_reset_contact_list
         elif self.sims.coupling_scheme == "DEM":
-            self.compute = self.dem_integration
+            if self.dsims.scheme == "DEM":
+                self.compute = self.dem_integration
+            elif self.dsims.scheme == "LSDEM":
+                self.compute = self.lsdem_integration
             self.enforce_update_verlet_table = self.enforce_reset_contact_list
         elif self.sims.coupling_scheme == "MPM":
             self.compute = self.mpm_integration
@@ -71,12 +97,10 @@ class Engine(object):
     def pre_calculate(self):
         self.mengine.pre_calculation(self.msims, self.mscene, self.mneighbor)
         self.dengine.pre_calculation(self.dsims, self.dscene, self.dneighbor)
-        self.neighbor.update_verlet_table(self.mscene, self.dscene)
+        self.neighbor.pre_neighbor(self.mscene, self.dscene)
         self.physpp.update_contact_table(self.sims, self.mscene, self.dscene, self.neighbor)
         self.physpw.update_contact_table(self.sims, self.mscene, self.dscene, self.neighbor)
-        self.physpp.contact_list_initialize(self.dscene.particleNum, self.neighbor.particle_particle, self.neighbor.hist_particle_particle)
         self.neighbor.update_particle_particle_auxiliary_lists()
-        self.physpw.contact_list_initialize(self.mscene.particleNum, self.neighbor.particle_wall, self.neighbor.hist_particle_wall)
         self.neighbor.update_particle_wall_auxiliary_lists()
     
     def reset_message(self):
@@ -88,8 +112,6 @@ class Engine(object):
     def apply_contact_model(self):
         self.physpp.update_contact_table(self.sims, self.mscene, self.dscene, self.neighbor)
         self.physpw.update_contact_table(self.sims, self.mscene, self.dscene, self.neighbor)
-        self.physpp.resolve(self.sims, self.mscene, self.dscene, self.neighbor)
-        self.physpw.resolve(self.sims, self.mscene, self.dscene, self.neighbor)
         self.neighbor.update_particle_particle_auxiliary_lists()
         self.neighbor.update_particle_wall_auxiliary_lists()
 
@@ -106,12 +128,24 @@ class Engine(object):
                               self.physpw.surfaceProps, self.physpw.cplist, self.neighbor.particle_wall)
 
     def dem_integration(self):
-        if self.dengine.is_verlet_update(self.dengine.limit) == 1:
+        if self.dengine.is_verlet_update(self.dengine.limit1) == 1:
             self.dengine.update_verlet_table(self.dsims, self.dscene, self.dneighbor)
             self.update_verlet_table()
-        else:
-            self.dengine.system_resolve(self.dsims, self.dscene, self.dneighbor)
-            self.system_resolve()
+
+        self.dengine.system_resolve(self.dsims, self.dscene, self.dneighbor)
+        self.system_resolve()
+
+        self.update_servo_wall()
+        self.dengine.integration(self.dsims, self.dscene, self.dneighbor)
+
+    def lsdem_integration(self):
+        if self.dengine.is_verlet_update(self.dengine.limit1) == 1:
+            self.dengine.update_LSDEM_verlet_table1(self.dsims, self.dscene, self.dneighbor)
+            self.dengine.update_LSDEM_verlet_table2(self.dsims, self.dscene, self.dneighbor)
+            self.update_verlet_table()
+        elif self.dengine.is_verlet_update_point(self.dengine.limit2) == 1:
+            self.dengine.update_LSDEM_verlet_table2(self.dsims, self.dscene, self.dneighbor)
+        self.dengine.system_resolve(self.dsims, self.dscene, self.dneighbor)
         
         self.update_servo_wall()
         self.dengine.integration(self.dsims, self.dscene, self.dneighbor)
@@ -122,24 +156,49 @@ class Engine(object):
             self.update_verlet_table()
         else:
             self.mengine.system_resolve(self.msims, self.mscene)
-            self.system_resolve()
+        self.system_resolve()
 
         self.update_servo_wall()
         self.mengine.compute(self.msims, self.mscene)
 
     def integration(self):
-        if self.mengine.is_need_update_verlet_table(self.mscene) == 1 or self.dengine.is_verlet_update(self.dengine.limit) == 1: 
+        if self.mengine.is_need_update_verlet_table(self.mscene) == 1 or self.dengine.is_verlet_update(self.dengine.limit1) == 1: 
             self.dengine.update_verlet_table(self.dsims, self.dscene, self.dneighbor)
             self.mengine.execute_board_serach(self.msims, self.mscene, self.mneighbor)
             self.update_verlet_table()
         else:
-            self.dengine.system_resolve(self.dsims, self.dscene, self.dneighbor)
             self.mengine.system_resolve(self.msims, self.mscene)
-            self.system_resolve()
+
+        self.dengine.system_resolve(self.dsims, self.dscene, self.dneighbor)
+        self.system_resolve()
 
         self.update_servo_wall()
         self.dengine.integration(self.dsims, self.dscene, self.dneighbor)
         self.mengine.compute(self.msims, self.mscene)
+
+    def lsintegration(self):
+        if self.mengine.is_need_update_verlet_table(self.mscene) == 1 or self.dengine.is_verlet_update(self.dengine.limit1) == 1:
+            self.dengine.update_LSDEM_verlet_table1(self.dsims, self.dscene, self.dneighbor)
+            self.dengine.update_LSDEM_verlet_table2(self.dsims, self.dscene, self.dneighbor)
+            self.mengine.execute_board_serach(self.msims, self.mscene, self.mneighbor)
+            self.update_verlet_table()
+        elif self.dengine.is_verlet_update_point(self.dengine.limit2) == 1:
+            self.dengine.update_LSDEM_verlet_table2(self.dsims, self.dscene, self.dneighbor)
+        else:
+            self.mengine.system_resolve(self.msims, self.mscene)
+
+        self.dengine.system_resolve(self.dsims, self.dscene, self.dneighbor)
+        self.system_resolve()
+
+        self.update_servo_wall()
+        self.dengine.integration(self.dsims, self.dscene, self.dneighbor)
+        self.mengine.compute(self.msims, self.mscene)
+
+    def CFDEMintegration(self):
+        pass
+
+    def CFDEMlsintegration(self):
+        pass
 
     def enforce_reset_dempm_contact_list(self):
         self.update_verlet_table()

@@ -1,6 +1,7 @@
 import taichi as ti
 import math
 
+from src.utils.constants import Threshold
 from src.utils.TypeDefination import vec3i
 
 
@@ -39,6 +40,7 @@ class LinkedCell(object):
  
         self.pre_neighbor_sphere = pre_neighbor_sphere
         self.pre_neighbor_clump = pre_neighbor_clump
+        self.pre_neighbor_bounding_sphere = pre_neighbor_bounding_sphere
         self.pre_insert_particle = pre_insert_particle
         self.insert_particle = insert_particle
         self.overlap = overlap
@@ -68,6 +70,14 @@ def pre_neighbor_clump(bodyNum: int, offset: ti.template(), particle: ti.templat
                 position = particle[npebble].x
                 radius = particle[npebble].rad
                 pre_insert_particle(start_point, position, radius, offset)
+
+@ti.kernel
+def pre_neighbor_bounding_sphere(bodyNum: int, offset: ti.template(), bounding_sphere: ti.template(), check_in_region: ti.template(), start_point: ti.types.vector(3, float)):
+    for nb in range(bodyNum):
+        position = bounding_sphere[nb].x
+        radius = bounding_sphere[nb].rad
+        if check_in_region(position, radius):
+            pre_insert_particle(start_point, position, radius, offset)
 
 @ti.func
 def get_cell_index(cell_size, pos):
@@ -119,7 +129,7 @@ def overlap(cell_num, cell_size, pos, rad, offset, position, radius, num_particl
             dist_vec = slave_pos - pos
             dist = dist_vec.norm()
             delta = -dist + slave_rad + rad
-            if delta > 0:
+            if delta > Threshold:
                 isoverlap = 1
                 break
         if isoverlap == 1:
