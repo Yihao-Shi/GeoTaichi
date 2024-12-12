@@ -25,7 +25,7 @@ GeoTaichi is a research project that is currently __under development__. Our vis
 
 ## Examples
 
-Have a cool example? Submit a PR!
+Have a cool example? Submit a [PR](https://github.com/Yihao-Shi/GeoTaichi/pulls)!
 
 ### Material point method (MPM)
 | [Column collapse](example/mpm/ColumnCollapse/DPmaterial.py) | [Dam break](example/mpm/ColumnCollapse/NewtonianFluid.py) | [Strip footing](example/mpm/Footing/StripFootingTresca.py) |
@@ -33,9 +33,9 @@ Have a cool example? Submit a PR!
 | ![Column collapse](images/soil.gif) | ![Dam break](images/newtonian.gif) | ![Strip footing](images/footing.gif) |
 
 ### Discrete element method (DEM)
-| [Granular packing](example/dem/GranularPackings/clumps_packing.py) | [Debris Flow](example/dem/HeapFormation/sphere_packing.py) | [Triaxial shear test](example/dem/TriaxialTest/drained.py) |
+| [Granular packing](example/dem/GranularPackings/polyLevelSet/packing_generate.py) | [Debris Flow](example/dem/HeapFormation/sphere_packing.py) | [Triaxial shear test](example/dem/TriaxialTest/drained.py) |
 | --- | --- | --- | 
-| ![Granular packing](images/LSDEM.gif) | ![Debris Flow](images/debris_flow.gif) | ![Triaxial shear test](images/force_chain.gif) |
+| ![Granular packing](images/lsdem.gif) | ![Debris Flow](images/debris_flow.gif) | ![Triaxial shear test](images/force_chain.gif) |
 
 The performance of GeoTaichi is compared with similar simulator in the field, such as [MUSEN](https://msolids.net/musen/) and [CoSim](http://www.meggs.hydr.tsinghua.edu.cn/index.html), showing a notable improvement in both computational efficiency and memory usage.
 
@@ -45,21 +45,6 @@ The performance of GeoTaichi is compared with similar simulator in the field, su
 | ![A sphere impacting granular bed](images/mpdem1.gif) | ![Granular column impacting cubic particles](images/mpdem2.gif) |
 
 ## Quick start
-### Dependencies
-
-- Python packages
-
-|Package name|Version|Features|
-|:----------:|:-----:|:------:|
-|[python](https://www.python.org/)|>=3.8|Programming language|
-|[psutil](https://pypi.org/project/psutil/)|lastest|Get GPU memory|
-|[taichi](https://pypi.org/project/taichi/)|==1.6.0|High performance computing|
-|[numpy](https://pypi.org/project/numpy/)|==1.23.5|Pre-processing|
-|[scipy](https://pypi.org/project/SciPy/)|==1.10.1|Pre-processing|
-|[pybind11](https://pypi.org/project/pybind11/)|==2.10.4|Warp C++ code|
-|[trimesh](https://pypi.org/project/trimesh/)|==3.20.1|Import stl/obj files|
-|[shapely](https://pypi.org/project/shapely/)|==1.8.0|Delaunay triangulation|
-
 ### Installation
 #### Install from source code (recommand)
 ##### Ubuntu
@@ -139,26 +124,27 @@ Users can set up simulations by specifying numerical parameters and configuring 
 ## Features
 ### Discrete Element Method 
 Discrete element method is a powerful tool to simulate the movement of granular materials through a series of calculations that trace individual particles constituting the granular material.
-  - Sphere and multisphere particles
+  - Sphere, multisphere particles and level-set DEM
+  - Unified approach for creating level-set functions for irregularly shaped particle
   - Generating particle packings by specifying initial void ratio or particle number in a box/cylinder/sphere/triangular prism
-  - Two neighbor search algorithms, brust search/linked-cell
+  - Three neighbor search algorithms, brust search/linked-cell/multilevel linked-cell
   - Two velocity updating schemes, symlectic Euler/velocity Verlet
-  - Three contact models, including linear elastic, hertz-mindlin and linear rolling
+  - Four contact models, including linear elastic, hertz-mindlin, linear rolling and energy conserving model
   - Supporting plane (infinite plane)/facet (servo wall)/triangle patch (suitable for complex boundary condition)
 
 ### Material Point Method 
 The material point method (MPM) is a numerical technique used to simulate the behavior of solids, liquids, gases, and any other continuum material. Unlike other mesh-based methods like the finite element method, MPM does not encounter the drawbacks of mesh-based methods (high deformation tangling, advection errors etc.) which makes it a promising and powerful tool in computational mechanics. 
-  - Nine Constitutive Models, including linear elastic/neo-hookean/Von-Mises/isotropic hardening plastic/Mohr-Coulomb/Drucker-Prager/(cohesive) modified cam-clay/Newtonian fluid/Bingham fluid
-  - Two improved velocity projection techniques, including MLS/APIC
-  - Three stress update schemes, including USF/USL/MUSL/APIC
+  - Nine Constitutive Models, including linear elastic/neo-hookean/Von-Mises/isotropic hardening plastic/(state-dependent) Mohr-Coulomb/Drucker-Prager/(cohesive) modified cam-clay/Newtonian fluid/Bingham fluid
+  - Two improved velocity projection techniques, including TPIC/APIC/MLS
+  - Three stress update schemes, including USF/USL/MUSL
   - Three stabilization techniques, including mix integration/B-bar method/F-bar method
-  - Two smoothing mehod, including strain/stress smoothing
+  - Two smoothing mehod, including strain/pressure smoothing
   - Supporting Dirichlet (Fix/Reflect/Friction)/Neumann boundary conditions
-  - Supporting total/updating Lagrangian explicit MPM and implicit MPM (Newmark-$\beta$ method)
+  - Supporting total/updating Lagrangian explicit MPM 
   - Free surface detection
 
 ### MPDEM coupling
-  - Two contact models, including linear elastic, hertz-mindlin
+  - Two contact models, including linear elastic, hertz-mindlin, Energy conserving model (Barrier functions)
   - Support DEM-MPM-Mesh contact, feasible simulating complex boundary conditions 
   - Multilevel neighbor search
   - Two way or one way coupling
@@ -203,6 +189,10 @@ We thank all amazing contributors for their great work and open source spirit. W
 - If you spot any issue or need any help, please mail directly to <a href = "mailto:shiyh@zju.edu.cn">shiyh@zju.edu.cn</a>.
 
 ## Release Notes
+V0.3.0 (December 12, 2024)
+
+- Please click [here](https://github.com/Yihao-Shi/GeoTaichi/releases/tag/GeoTaichi-v0.3) for more details
+
 V0.2.2 (July 22, 2024)
 
 - Fix computing the intersection area between circles and triangles
