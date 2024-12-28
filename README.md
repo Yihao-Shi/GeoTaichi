@@ -33,11 +33,9 @@ Have a cool example? Submit a PR!
 | ![Column collapse](images/soil.gif) | ![Dam break](images/newtonian.gif) | ![Strip footing](images/footing.gif) |
 
 ### Discrete element method (DEM)
-| [Granular packing](example/dem/GranularPackings/clumps_packing.py) | [Debris Flow](example/dem/HeapFormation/sphere_packing.py) | [Triaxial shear test](example/dem/TriaxialTest/drained.py) |
-| --- | --- | --- | 
-| ![Granular packing](images/LSDEM.gif) | ![Debris Flow](images/debris_flow.gif) | ![Triaxial shear test](images/force_chain.gif) |
-
-The performance of GeoTaichi is compared with similar simulator in the field, such as [MUSEN](https://msolids.net/musen/) and [CoSim](http://www.meggs.hydr.tsinghua.edu.cn/index.html), showing a notable improvement in both computational efficiency and memory usage.
+| [Granular packing](example/dem/GranularPackings/polyLevelSet/packing_generate.py) | [Screw and nut](example/dem/ParticleSliding/screw_and_nut.py) | [Debris Flow](example/dem/HeapFormation/sphere_packing.py) | [Triaxial shear test](example/dem/TriaxialTest/drained.py) |
+| --- | --- | --- | --- | 
+| ![Granular packing](images/lsdem.gif) | ![Screw and nut](images/screw_nut.gif) | ![Debris Flow](images/debris_flow.gif) | ![Triaxial shear test](images/force_chain.gif) |
 
 ### Coupled material point-discrete element method (MPDEM)
 | [A sphere impacting granular bed](example/dempm/SphereImpact/plane_strain.py) | [Granular column impacting cubic particles](example/dempm/GranularImpact/granular_impact.py) |

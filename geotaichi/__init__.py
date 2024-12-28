@@ -133,7 +133,7 @@ def init(arch="gpu", cpu_max_num_threads=0, offline_cache=True, debug=False, def
                 device_memory_GB = min(device_memory_GB, bytes_to_GB(gpu_memory.free))
                 ti.init(arch=ti.gpu, offline_cache=offline_cache, device_memory_GB=device_memory_GB, debug=debug, default_fp=default_fp, default_ip=default_ip, kernel_profiler=kernel_profiler, log_level=ti.ERROR)
             elif not device_memory_fraction is None:
-                device_memory_GB = min(device_memory_GB, bytes_to_GB(gpu_memory.free) / bytes_to_GB(gpu_memory.total))
+                device_memory_GB = min(device_memory_fraction, bytes_to_GB(gpu_memory.free) / bytes_to_GB(gpu_memory.total))
                 ti.init(arch=ti.gpu, offline_cache=offline_cache, device_memory_fraction=device_memory_fraction, debug=debug, default_fp=default_fp, default_ip=default_ip, kernel_profiler=kernel_profiler, log_level=ti.ERROR)
     else:
         raise RuntimeError("arch is not recognized, please choose in the following: ['cpu', 'gpu']")

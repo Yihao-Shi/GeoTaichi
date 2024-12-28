@@ -200,7 +200,7 @@ class BodyReader(object):
             kernel_read_particle_file_2D(scene.particle, int(scene.particleNum[0]), particle_num, coords, volume, bodyID, materialID, density, init_v, fix_v)
 
         self.set_particle_stress(scene, materialID, init_particle_num, particle_num, particle_stress)
-        scene.push_psize(particle_num, psize)
+        scene.push_psize(1, psize)
         traction = DictIO.GetAlternative(template, "Traction", {})
         self.set_traction(scene, particle_num, traction)
         scene.particleNum[0] += particle_num
