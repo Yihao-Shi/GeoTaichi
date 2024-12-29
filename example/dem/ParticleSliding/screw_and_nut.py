@@ -1,6 +1,3 @@
-import sys
-sys.path.append('/home/eleven/work/GeoTaichi')
-
 from geotaichi import *
 
 init(device_memory_GB=3, debug=False)
