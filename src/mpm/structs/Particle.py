@@ -69,6 +69,10 @@ class ParticleCloud2D:      # memory usage: 108B
         self.stress += stress
 
     @ti.func
+    def _get_mean_stress(self):
+        return 1./3. * (self.stress[0] + self.stress[1] + self.stress[2])
+
+    @ti.func
     def _update_rigid_body(self, dt):
         self.x += self.v * dt[None]
     
@@ -145,6 +149,10 @@ class ParticleCloudTwoPhase2D:      # memory usage: 108B
     @ti.func
     def _update_stress(self, stress):
         self.stress += stress
+
+    @ti.func
+    def _get_mean_stress(self):
+        return 1./3. * (self.stress[0] + self.stress[1] + self.stress[2])
 
     @ti.func   # total, fluid?
     def _compute_external_force(self, gravity):
@@ -247,6 +255,10 @@ class ParticleCloud2DAxisy:  # memory usage: 108B
         self.stress += stress
 
     @ti.func
+    def _get_mean_stress(self):
+        return 1./3. * (self.stress[0] + self.stress[1] + self.stress[2])
+
+    @ti.func
     def _update_rigid_body(self, dt):
         self.x += self.v * dt[None]
 
@@ -317,6 +329,10 @@ class ParticleCloud:      # memory usage: 108B
     @ti.func
     def _update_stress(self, stress):
         self.stress += stress
+
+    @ti.func
+    def _get_mean_stress(self):
+        return 1./3. * (self.stress[0] + self.stress[1] + self.stress[2])
 
     @ti.func
     def _update_rigid_body(self, dt):
@@ -424,6 +440,10 @@ class ParticleCoupling:      # memory usage: 108B
         self.stress += stress
 
     @ti.func
+    def _get_mean_stress(self):
+        return 1./3. * (self.stress[0] + self.stress[1] + self.stress[2])
+
+    @ti.func
     def _update_rigid_body(self, dt):
         deltax = self.v * dt[None]
         self.x += deltax
@@ -514,6 +534,10 @@ class ImplicitParticleCoupling:
     @ti.func
     def _update_stress(self, stress):
         self.stress += stress
+
+    @ti.func
+    def _get_mean_stress(self):
+        return 1./3. * (self.stress[0] + self.stress[1] + self.stress[2])
 
     @ti.func
     def _reset_contact_force(self):
@@ -627,6 +651,10 @@ class ImplicitParticle:
         self.stress += stress
 
     @ti.func
+    def _get_mean_stress(self):
+        return 1./3. * (self.stress[0] + self.stress[1] + self.stress[2])
+
+    @ti.func
     def _compute_external_force(self, gravity):
         return self.m * gravity 
     
@@ -707,6 +735,10 @@ class ImplicitParticle2D:
     def _update_stress(self, stress):
         self.stress += stress
         self.stress0 = self.stress
+
+    @ti.func
+    def _get_mean_stress(self):
+        return 1./3. * (self.stress[0] + self.stress[1] + self.stress[2])
 
     @ti.func
     def _set_particle_traction(self, traction):

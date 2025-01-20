@@ -132,13 +132,13 @@ class HexahedronElement8Nodes(ElementBase):
 
     def compute_inertia_tensor(self, shape_function_type):
         if shape_function_type == "QuadBSpline":
-            self.inertia_tensor[0] = 4. * (self.grid_size[1] * self.grid_size[2])
-            self.inertia_tensor[1] = 4. * (self.grid_size[0] * self.grid_size[2])
-            self.inertia_tensor[2] = 4. * (self.grid_size[0] * self.grid_size[1])
+            self.inertia_tensor[0] = 4. / (self.grid_size[1] * self.grid_size[2])
+            self.inertia_tensor[1] = 4. / (self.grid_size[0] * self.grid_size[2])
+            self.inertia_tensor[2] = 4. / (self.grid_size[0] * self.grid_size[1])
         elif shape_function_type == "CubicBSpline": 
-            self.inertia_tensor[0] = 3. * (self.grid_size[1] * self.grid_size[2])
-            self.inertia_tensor[1] = 3. * (self.grid_size[0] * self.grid_size[2])
-            self.inertia_tensor[2] = 3. * (self.grid_size[0] * self.grid_size[1])
+            self.inertia_tensor[0] = 3. / (self.grid_size[1] * self.grid_size[2])
+            self.inertia_tensor[1] = 3. / (self.grid_size[0] * self.grid_size[2])
+            self.inertia_tensor[2] = 3. / (self.grid_size[0] * self.grid_size[1])
 
     def choose_shape_function(self, sims: Simulation):
         if sims.shape_function == "Linear" or sims.shape_function == "SmoothLinear":

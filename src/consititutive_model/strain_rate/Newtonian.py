@@ -120,16 +120,6 @@ class NewtonianModel:
         return self.fluid_pressure(np, stateVars, strain_rate, dt)
     
     @ti.func
-    def fluid_pressure(self, np, stateVars, strain_rate, dt):
-        volumetric_strain_rate = voigt_tensor_trace(strain_rate) 
-        volumetric_strain_increment = volumetric_strain_rate * dt[None]
-        pressure = -stateVars[np].pressure + self.thermodynamic_pressure(stateVars[np].rho, volumetric_strain_increment)
-        artifical_pressure = self.artifical_viscosity(np, volumetric_strain_rate, stateVars)
-        pressureAV = pressure + artifical_pressure
-        stateVars[np].pressure = -pressure
-        return pressureAV
-    
-    @ti.func
     def ComputeShearStress2D(self, velocity_gradient):
         strain_rate = calculate_strain_rate2D(velocity_gradient)
         return self.shear_stress(strain_rate)
@@ -138,6 +128,16 @@ class NewtonianModel:
     def ComputeShearStress(self, velocity_gradient):
         strain_rate = calculate_strain_rate(velocity_gradient)
         return self.shear_stress(strain_rate)
+    
+    @ti.func
+    def fluid_pressure(self, np, stateVars, strain_rate, dt):
+        volumetric_strain_rate = voigt_tensor_trace(strain_rate) 
+        volumetric_strain_increment = volumetric_strain_rate * dt[None]
+        pressure = -stateVars[np].pressure + self.thermodynamic_pressure(stateVars[np].rho, volumetric_strain_increment)
+        artifical_pressure = self.artifical_viscosity(np, volumetric_strain_rate, stateVars)
+        pressureAV = pressure + artifical_pressure
+        stateVars[np].pressure = -pressure
+        return pressureAV
     
     @ti.func
     def shear_stress(self, strain_rate):

@@ -101,6 +101,26 @@ class BinghamModel:
         return self.core(np, strain_rate, stateVars, dt)
     
     @ti.func
+    def ComputePressure2D(self, np, stateVars, velocity_gradient, dt):
+        strain_rate = calculate_strain_rate2D(velocity_gradient)
+        return self.fluid_pressure(np, stateVars, strain_rate, dt)
+
+    @ti.func
+    def ComputePressure(self, np, stateVars, velocity_gradient, dt):
+        strain_rate = calculate_strain_rate(velocity_gradient)
+        return self.fluid_pressure(np, stateVars, strain_rate, dt)
+    
+    @ti.func
+    def ComputeShearStress2D(self, velocity_gradient):
+        strain_rate = calculate_strain_rate2D(velocity_gradient)
+        return self.shear_stress(strain_rate)
+
+    @ti.func
+    def ComputeShearStress(self, velocity_gradient):
+        strain_rate = calculate_strain_rate(velocity_gradient)
+        return self.shear_stress(strain_rate)
+
+    @ti.func
     def fluid_pressure(self, np, stateVars, velocity_gradient, dt):
         strain_rate = calculate_strain_rate(velocity_gradient)
         volumetric_strain_rate = voigt_tensor_trace(strain_rate) 
