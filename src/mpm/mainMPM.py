@@ -39,8 +39,9 @@ class MPM(object):
         self.first_run = True
 
     def set_configuration(self, log=True, **kwargs):
-        self.sims.set_dimension(DictIO.GetAlternative(kwargs, "dimension", "3-Dimension"))
+        self.sims.set_dimension()
         self.sims.set_is_2DAxisy(DictIO.GetAlternative(kwargs, "is_2DAxisy", False))
+        self.sims.set_mode(DictIO.GetAlternative(kwargs, "mode", 'Normal'))
         if np.linalg.norm(np.array(self.sims.get_simulation_domain()) - np.zeros(3)) < 1e-10:
             self.sims.set_domain(DictIO.GetEssential(kwargs, "domain"))
         self.sims.set_boundary(DictIO.GetAlternative(kwargs, "boundary" ,[None, None, None]))
@@ -64,6 +65,7 @@ class MPM(object):
         self.sims.set_visualize(DictIO.GetAlternative(kwargs, "visualize", True))
         self.sims.set_sparse_grid(DictIO.GetAlternative(kwargs, "sparse_grid", None))
         self.sims.set_particle_shifting(DictIO.GetAlternative(kwargs, "particle_shifting", False))
+        self.sims.set_particle_traction_method(DictIO.GetAlternative(kwargs, "particle_traction_method", "Stable"))
         if log: 
             self.print_basic_simulation_info()
             print('\n')

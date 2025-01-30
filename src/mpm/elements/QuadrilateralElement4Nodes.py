@@ -12,6 +12,7 @@ from src.utils.PrefixSum import PrefixSumExecutor
 from src.utils.linalg import round32, flip2d_linear
 from src.utils.ShapeFunctions import *
 from src.utils.TypeDefination import u1, vec2f, vec2i
+import src.utils.GlobalVariable as GlobalVariable
 
 
 Threshold = 1e-12
@@ -111,7 +112,8 @@ class QuadrilateralElement4Nodes(ElementBase):
             if sims.gauss_number > 0:
                 self.gauss_point = GaussPointInRectangle(gauss_point=sims.gauss_number, dimemsion=2)
                 self.gauss_point.create_gauss_point()
-            self.set_essential_field(is_bbar, sims)
+            if sims.mode == "Normal":
+                self.set_essential_field(is_bbar, sims)
         
         self.node_connectivity = ti.Vector.field(self.grid_nodes, int, shape=self.get_total_cell_number())
         find_nodes_per_element_(0, self.get_total_cell_number(), self.gnum, self.node_connectivity, set_connectivity)
@@ -186,6 +188,9 @@ class QuadrilateralElement4Nodes(ElementBase):
         else:
             raise KeyError(f"The shape function type {sims.shape_function} is not exist!")
         
+        if sims.mode == "Lightweight":
+            GlobalVariable.INFLUENCENODE = self.influenced_node
+
         self.influenced_dofs = 2 * self.grid_nodes
 
     def get_nonzero_grids_per_row(self):

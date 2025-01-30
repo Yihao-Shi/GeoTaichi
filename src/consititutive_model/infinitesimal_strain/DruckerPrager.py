@@ -333,25 +333,27 @@ class DruckerPragerModel:
             Tolerance = 1e-1
 
             df_dsigma_trial = self.ComputeDfDsigma(yield_state_trial, trial_stress)
-            __, _, dp_dsigma_trial = self.ComputeDgDsigma(yield_state_trial, trial_stress)
+            __, _, dg_dsigma_trial = self.ComputeDgDsigma(yield_state_trial, trial_stress)
             temp_matrix = ElasticTensorMultiplyVector(df_dsigma_trial, bulk_modulus, shear_modulus)
-            lambda_trial = f_function_trial / ti.max(((temp_matrix).dot(dp_dsigma_trial)), Threshold)
+            den = (temp_matrix).dot(dg_dsigma_trial)
+            lambda_trial = ti.max(0., f_function_trial / den if ti.abs(den) > Tolerance else 0.)
 
             yield_state, f_function = self.ComputeYieldState(stress)
             df_dsigma = self.ComputeDfDsigma(yield_state, stress)
             __, _, dg_dsigma = self.ComputeDgDsigma(yield_state, stress)
             temp_matrix = ElasticTensorMultiplyVector(df_dsigma, bulk_modulus, shear_modulus)
-            lambda_ = temp_matrix.dot(de) / ti.max(((temp_matrix).dot(dg_dsigma)), Threshold)
+            den = (temp_matrix).dot(dg_dsigma)
+            lambda_ = ti.max(0., f_function / den if ti.abs(den) > Tolerance else 0.)
 
             pdstrain = 0.
-            if ti.abs(f_function) < Tolerance:
+            if ti.abs(f_function) > Tolerance or yield_state == 0:
                 temp_matrix = ElasticTensorMultiplyVector(dg_dsigma, bulk_modulus, shear_modulus)
                 updated_stress -= lambda_ * temp_matrix
                 pdstrain = lambda_ * equivalent_voigt(dg_dsigma)
             else:
-                temp_matrix = ElasticTensorMultiplyVector(dp_dsigma_trial, bulk_modulus, shear_modulus)
+                temp_matrix = ElasticTensorMultiplyVector(dg_dsigma_trial, bulk_modulus, shear_modulus)
                 updated_stress -= lambda_trial * temp_matrix
-                pdstrain = lambda_trial * equivalent_voigt(dp_dsigma_trial)
+                pdstrain = lambda_trial * equivalent_voigt(dg_dsigma_trial)
 
             yield_state, f_function = self.ComputeYieldState(updated_stress)
             if ti.abs(f_function) > FTOL:

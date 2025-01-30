@@ -36,22 +36,25 @@ class ULExplicitEngine(Engine):
         super().__init__(sims)
         
     def choose_engine(self, sims: Simulation):
-        if sims.mapping == "USL":
-            self.compute = self.usl_updating
-        elif sims.mapping == "USF":
-            if sims.velocity_projection_scheme == "Taylor":
-                self.compute = self.velocity_projection_updating
+        if sims.mode == "Normal":
+            if sims.mapping == "USL":
+                self.compute = self.usl_updating
+            elif sims.mapping == "USF":
+                if sims.velocity_projection_scheme == "Taylor":
+                    self.compute = self.velocity_projection_updating
+                else:
+                    self.compute = self.usf_updating
+            elif sims.mapping == "MUSL":
+                self.compute = self.musl_updating
+            elif sims.mapping == "G2P2G":
+                self.compute = self.g2p2g
             else:
-                self.compute = self.usf_updating
-        elif sims.mapping == "MUSL":
-            self.compute = self.musl_updating
-        elif sims.mapping == "G2P2G":
-            self.compute = self.g2p2g
-        else:
-            raise ValueError(f"The mapping scheme {sims.mapping} is not supported yet")
-        
-        if sims.velocity_projection_scheme == "Affine":
-            self.compute = self.velocity_projection_updating
+                raise ValueError(f"The mapping scheme {sims.mapping} is not supported yet")
+            
+            if sims.velocity_projection_scheme == "Affine":
+                self.compute = self.velocity_projection_updating
+        elif sims.mode == "Lightweight":
+            self.compute = self.lightweight
 
         if sims.TESTMODE:
             self.compute = self.test
@@ -645,6 +648,17 @@ class ULExplicitEngine(Engine):
         #g2p2g(dt, self.pid[self.input_layer], self.grid[self.input_layer], self.grid_v[output_grid], self.grid_m[output_layer])
         #grid_normalization_and_gravity(dt, self.grid[output_layer])
         self.input_layer = output_layer
+
+    def lightweight(self, sims: Simulation, scene: myScene):
+        lightweight_p2g(int(scene.particleNum[0]), scene.element.gnum, scene.element.grid_size, scene.element.igrid_size, sims.gravity, scene.element.calLength, scene.element.boundary_type, scene.node, scene.particle)
+        self.apply_particle_traction_constraints(sims, scene)
+        self.apply_traction_constraints(sims, scene)
+        self.apply_absorbing_constraints(sims, scene)
+        lightweight_grid_operation(scene.mass_cut_off, sims.background_damping, scene.node, sims.dt)
+        self.pre_contact_calculate(sims, scene)
+        self.apply_kinematic_constraints(sims, scene)
+        self.compute_contact_force_(sims, scene)
+        lightweight_g2p(int(scene.particleNum[0]), sims.alphaPIC, scene.element.gnum, scene.element.grid_size, scene.element.igrid_size, sims.dt, scene.element.calLength, scene.element.boundary_type, scene.node, scene.particle, scene.material.matProps, scene.material.stateVars)
 
     def test(self, sims: Simulation, scene: myScene):
         pass

@@ -55,6 +55,12 @@ class Solver:
             self.sims.current_print += 1
             self.last_save_time = -0.8 * self.sims.delta
 
+        print("Compiling first ... ...")
+        start_time = time.time()
+        self.core(scene, neighbor)
+        end_time = time.time()
+        print('Compiling time = ', end_time - start_time)
+
         start_time = time.time()
         while self.sims.current_time <= self.sims.time:
             self.core(scene, neighbor)
@@ -157,5 +163,3 @@ class Solver:
         self.engine.compute(self.sims, scene)
         for functions in self.postprocess:
             functions()
-
-        

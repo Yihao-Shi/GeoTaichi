@@ -329,38 +329,30 @@ class ParticleLoad2DAxisy:
         self.psize[0] *= ti.sqrt(deformation_gradient_rate[0, 0] ** 2 + deformation_gradient_rate[1, 0] ** 2)
         self.psize[1] *= ti.sqrt(deformation_gradient_rate[0, 1] ** 2 + deformation_gradient_rate[1, 1] ** 2)'''
 
+class VirtualLoad:
+    def __init__(self, dim) -> None:
+        self.virtual_stress = None
+        self.virtual_force = None
+        self.auxiliary_cell = None
+        self.auxiliary_node = None
 
-@ti.dataclass
-class ParticleVirtualLoad:
-    pid: int
-    traction: vec3f
-    force: vec3f
+    def input(self, virtual_stress, virtual_force):
+        self.virtual_stress = virtual_stress
+        self.virtual_force = virtual_force
 
-    @ti.func
-    def set_boundary_condition(self, pid, traction, psize):
-        self.pid = pid
-        self.traction += traction
-        self.force += 4. * self.traction * vec3f(psize[1] * psize[2], psize[0] * psize[2], psize[0] * psize[1])
+    def set_lists(self, cellSum, gridSum, grid_level):
+        self.auxiliary_cell = ti.field(ti.types.quant.int(bits=2, signed=False))
+        bitpack = ti.BitpackedFields(max_num_bits=32)
+        bitpack.place(self.auxiliary_cell)
+        ti.root.dense(ti.ij, (cellSum, grid_level)).place(bitpack)
 
-    @ti.func
-    def clear_boundary_condition(self):
-        self.pid = -1
-        self.traction = vec2f(0., 0.)
+        self.auxiliary_node = ti.field(ti.types.quant.int(bits=1, signed=False))
+        bitpack = ti.BitpackedFields(max_num_bits=32)
+        bitpack.place(self.auxiliary_node)
+        ti.root.dense(ti.ij, (gridSum, grid_level)).place(bitpack)
 
-
-@ti.dataclass
-class ParticleVirtualLoad2D:
-    pid: int
-    traction: vec2f
-    force: vec2f
-
-    @ti.func
-    def set_boundary_condition(self, pid, traction, psize):
-        self.pid = pid
-        self.traction += traction
-        self.force += 2. * self.traction * vec2f(psize[1], psize[0])
-
-    @ti.func
-    def clear_boundary_condition(self):
-        self.pid = -1
-        self.traction = vec2f(0., 0.)
+    def stress_check(self, dim):
+        return True
+    
+    def force_check(self, dim):
+        return True

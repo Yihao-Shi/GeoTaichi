@@ -47,6 +47,8 @@ from src.sdf.ease import (
     in_square, out_square, in_out_square,
 )
 
+import src.utils.GlobalVariable as GlobalVariable
+
 class Logger(object):
     def __init__(self, filename='Default.log', path='./'):
         self.terminal = sys.stdout
@@ -67,7 +69,7 @@ def make_print_to_file(path='./'):
     sys.stdout = Logger(filename+'.log', path=path)
     
 
-def init(arch="gpu", cpu_max_num_threads=0, offline_cache=True, debug=False, default_fp="float64", default_ip="int32", device_memory_GB=None, device_memory_fraction=None, kernel_profiler=False, log=True):
+def init(dim=3, arch="gpu", cpu_max_num_threads=0, offline_cache=True, debug=False, default_fp="float64", default_ip="int32", device_memory_GB=None, device_memory_fraction=None, kernel_profiler=False, log=True):
     """
     Initializes the Taichi runtime environment.
     Args:
@@ -94,6 +96,10 @@ def init(arch="gpu", cpu_max_num_threads=0, offline_cache=True, debug=False, def
     kernel_profiler: 是否启用核函数计时。
     log: 是否启用日志记录。
     """
+    if dim != 2 and dim != 3:
+        raise ValueError(f"Keyword:: /dim/ should be either 2 or 3.")
+    GlobalVariable.DIMENSION = dim
+
     if default_fp == "float64": default_fp = ti.f64
     elif default_fp == "float32": default_fp = ti.f32
     else: raise RuntimeError("Only ['float64', 'float32'] is available for default type of float")

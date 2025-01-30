@@ -382,21 +382,24 @@ class MohrCoulombModel:
         # !-- implicit return mapping ----!
         if yield_state_trial > 0:
             Tolerance = 1e-1
+
             dfdsigma_trial = self.ComputeDfDsigma(yield_state_trial, trial_stress, fai)
             dgdp_trial, dgdq_trial, dgdsigma_trial = self.ComputeDgDsigma(yield_state_trial, trial_stress, fai, psi, cohesion, tensile)
             softening_trial = self.ComputePlasticModulus(dgdp_trial, dgdq_trial, trial_stress, fai, epstrain)
             temp_matrix = ElasticTensorMultiplyVector(dfdsigma_trial, bulk_modulus, shear_modulus)
-            lambda_trial = f_function_trial / ((temp_matrix).dot(dgdsigma_trial) - softening_trial)
+            den = (temp_matrix).dot(dgdsigma_trial) - softening_trial
+            lambda_trial = ti.max(0., f_function_trial / den if ti.abs(den) > Tolerance else 0.)
             
             yield_state, f_function = self.ComputeYieldState(stress, fai, cohesion, tensile)
             dfdsigma = self.ComputeDfDsigma(yield_state, stress, fai)
             dgdp, dgdq, dgdsigma = self.ComputeDgDsigma(yield_state, stress, fai, psi, cohesion, tensile)
             softening = self.ComputePlasticModulus(dgdp, dgdq, stress, fai, epstrain)
             temp_matrix = ElasticTensorMultiplyVector(dfdsigma, bulk_modulus, shear_modulus)
-            _lambda = temp_matrix.dot(de) / ((temp_matrix).dot(dgdsigma) - softening)
+            den = (temp_matrix).dot(dgdsigma) - softening
+            _lambda = ti.max(0., temp_matrix.dot(de) / den if ti.abs(den) > Tolerance else 0.)
 
             pdstrain = 0.
-            if ti.abs(f_function) < Tolerance:
+            if ti.abs(f_function) > Tolerance or yield_state == 0:
                 temp_matrix = ElasticTensorMultiplyVector(dgdsigma, bulk_modulus, shear_modulus)
                 updated_stress -= _lambda * temp_matrix
                 pdstrain = _lambda * dgdq

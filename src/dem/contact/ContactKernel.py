@@ -297,7 +297,8 @@ def kernel_particle_wall_force_assemble_(particleNum: int, dt: ti.template(), ma
 
         matID1, matID2 = particle[end1].materialID, wall[end2].materialID
         materialID = PairingMapping(matID1, matID2, max_material_num)
-        contact_model(materialID, nc, end1, end2, gapn, distance, pos1, particle_rad, particle, wall, surfaceProps, cplist, dt)
+        fraction = ti.abs(wall[end2].processCircleShape(pos1, particle_rad, distance))
+        contact_model(materialID, nc, end1, end2, gapn, fraction, pos1, particle_rad, particle, wall, surfaceProps, cplist, dt)
 
 
 @ti.kernel
@@ -340,7 +341,10 @@ def kernel_particle_digital_elevation_force_assemble_(particleNum: int, dt: ti.t
                         gapn = distance - particle_rad
                         matID1, matID2 = particle[end1].materialID, wall[end2].materialID
                         materialID = PairingMapping(matID1, matID2, max_material_num)
-                        contact_model(materialID, end1, end1, end2, gapn, distance, point, particle_rad, particle, wall, surfaceProps, cplist, dt)
+
+                        projected_point = wall[end2]._point_projection(point)
+                        fraction = wall[end2]._is_in_plane(projected_point)
+                        contact_model(materialID, end1, end1, end2, gapn, fraction, point, particle_rad, particle, wall, surfaceProps, cplist, dt)
 
 
 @ti.kernel
@@ -619,8 +623,7 @@ def fluid_LSparticle_contact_model(materialID, nc, parameter, end1, end2, contac
 
 
 @ti.func
-def wall_contact_model_type1(materialID, nc, end1, end2, gapn, distance, pos1, particle_rad, particle, wall, surfaceProps, cplist, dt):
-    fraction = ti.abs(wall[end2].processCircleShape(pos1, particle_rad, distance))
+def wall_contact_model_type1(materialID, nc, end1, end2, gapn, fraction, pos1, particle_rad, particle, wall, surfaceProps, cplist, dt):
     if gapn < surfaceProps[materialID].ncut and fraction > Threshold:
         vel1, vel2 = particle[end1]._get_velocity(), wall[end2]._get_velocity()
         w1 = particle[end1]._get_angular_velocity()
@@ -645,8 +648,7 @@ def wall_contact_model_type1(materialID, nc, end1, end2, gapn, distance, pos1, p
 
 
 @ti.func
-def wall_contact_model_type2(materialID, nc, end1, end2, gapn, distance, pos1, particle_rad, particle, wall, surfaceProps, cplist, dt):
-    fraction = ti.abs(wall[end2].processCircleShape(pos1, particle_rad, distance))
+def wall_contact_model_type2(materialID, nc, end1, end2, gapn, fraction, pos1, particle_rad, particle, wall, surfaceProps, cplist, dt):
     if gapn < surfaceProps[materialID].ncut and fraction > Threshold:
         vel1, vel2 = particle[end1]._get_velocity(), wall[end2]._get_velocity()
         w1 = particle[end1]._get_angular_velocity()
@@ -675,8 +677,7 @@ def wall_contact_model_type2(materialID, nc, end1, end2, gapn, distance, pos1, p
 
 
 @ti.func
-def fluid_wall_contact_model(materialID, nc, end1, end2, gapn, distance, pos1, particle_rad, particle, wall, surfaceProps, cplist, dt):
-    fraction = ti.abs(wall[end2].processCircleShape(pos1, particle_rad, distance))
+def fluid_wall_contact_model(materialID, nc, end1, end2, gapn, fraction, pos1, particle_rad, particle, wall, surfaceProps, cplist, dt):
     if gapn < surfaceProps[materialID].ncut and fraction > Threshold:
         vel1, vel2 = particle[end1]._get_velocity(), wall[end2]._get_velocity()
         w1 = particle[end1]._get_angular_velocity()

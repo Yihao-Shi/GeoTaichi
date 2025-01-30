@@ -33,6 +33,13 @@ class BoundaryConstraints(object):
         self.ptraction_list = np.zeros(1, dtype=np.int32)
         self.displacement_list = np.zeros(1, dtype=np.int32)
 
+        self.velocity_dict = {}
+        self.reflection_dict = {}
+        self.friction_dict = {}
+        self.absorbing_dict = {}
+        self.traction_dict = {}
+        self.displacement_dict = {}
+
         self.axis = {0: "X", 1: "Y", 2: "Z"}
 
     def set_layer_number(self, grid_level):
@@ -64,28 +71,28 @@ class BoundaryConstraints(object):
             self.traction_boundary = TractionConstraint.field(shape=sims.ntraction)
             kernel_initialize_boundary(self.traction_boundary)
 
-        if self.particle_traction is None and sims.nptraction > 0.:
-            if sims.dimension == 3:
-                if sims.ptraction_method == "Stable":
-                    self.particle_traction = ParticleLoad.field(shape=sims.nptraction)
-                elif sims.ptraction_method == "Nanson":
-                    self.particle_traction = ParticleLoadNanson.field(shape=sims.nptraction)
-                elif sims.ptraction_method == "Virtual":
-                    self.particle_traction = ParticleVirtualLoad.field(shape=sims.nptraction)
-            elif sims.dimension == 2:
-                if sims.is_2DAxisy:
-                    self.particle_traction = ParticleLoad2DAxisy.field(shape=sims.nptraction)
-                else:
-                    if sims.ptraction_method == "Stable":
-                        if sims.material_type == "TwoPhaseSingleLayer":
-                            self.particle_traction = ParticleLoadTwoPhase2D.field(shape=sims.nptraction)
+        if self.particle_traction is None:
+            if sims.ptraction_method == "Virtual":
+                self.particle_traction = VirtualLoad(sims.dimension)
+            else:
+                if sims.nptraction > 0.:
+                    if sims.dimension == 3:
+                        if sims.ptraction_method == "Stable":
+                            self.particle_traction = ParticleLoad.field(shape=sims.nptraction)
+                        elif sims.ptraction_method == "Nanson":
+                            self.particle_traction = ParticleLoadNanson.field(shape=sims.nptraction)
+                    elif sims.dimension == 2:
+                        if sims.is_2DAxisy:
+                            self.particle_traction = ParticleLoad2DAxisy.field(shape=sims.nptraction)
                         else:
-                            self.particle_traction = ParticleLoad2D.field(shape=sims.nptraction)
-                    elif sims.ptraction_method == "Nanson":
-                        self.particle_traction = ParticleLoadNanson2D.field(shape=sims.nptraction)
-                    elif sims.ptraction_method == "Virtual":
-                        self.particle_traction = ParticleVirtualLoad2D.field(shape=sims.nptraction)
-            kernel_initialize_boundary(self.particle_traction)
+                            if sims.ptraction_method == "Stable":
+                                if sims.material_type == "TwoPhaseSingleLayer":
+                                    self.particle_traction = ParticleLoadTwoPhase2D.field(shape=sims.nptraction)
+                                else:
+                                    self.particle_traction = ParticleLoad2D.field(shape=sims.nptraction)
+                            elif sims.ptraction_method == "Nanson":
+                                self.particle_traction = ParticleLoadNanson2D.field(shape=sims.nptraction)
+                    kernel_initialize_boundary(self.particle_traction)
 
         if sims.solver_type == "Implicit":
             if self.displacement_boundary is None and sims.ndisplacement > 0.:
@@ -114,30 +121,26 @@ class BoundaryConstraints(object):
             if any(end_point > sims.domain):
                 raise RuntimeError(f"KeyWord:: /EndPoint/ {end_point} is out of domain {sims.domain}")
             
-    def get_freedoms(self, sims: Simulation, xfreedoms, yfreedoms, zfreedoms, freedoms):
+    def get_freedoms(self, sims: Simulation, freedoms):
         if sims.dimension == 2 and len(freedoms) == 2:
             freedoms.append(0.)
 
-        if not freedoms[0] is None or not freedoms[1] is None or not freedoms[2] is None:
-            xfreedoms = freedoms[0]
-            yfreedoms = freedoms[1]
-            zfreedoms = freedoms[2]
+        xfreedoms = freedoms[0]
+        yfreedoms = freedoms[1]
+        zfreedoms = freedoms[2]
 
         if xfreedoms is None and yfreedoms is None and zfreedoms is None:
             raise KeyError("The prescribed displacement has not been set")
         
-        dofs, freedoms = [0, 0, 0], [0, 0, 0]
+        return_vals = []
         if not xfreedoms is None:
-            dofs[0] = 1
-            freedoms[0] = xfreedoms
+            return_vals.append((0, xfreedoms))
         if not yfreedoms is None:
-            dofs[1] = 1
-            freedoms[1] = yfreedoms
-        if not zfreedoms is None:
-            dofs[2] = 1
-            freedoms[2] = zfreedoms
-        fix_dofs = dofs[0] + dofs[1] + dofs[2] if sims.dimension == 3 else dofs[0] + dofs[1]
-        return fix_dofs, freedoms, dofs
+            return_vals.append((1, yfreedoms))
+        if sims.dimension == 3:
+            if not zfreedoms is None:
+                return_vals.append((2, zfreedoms))
+        return return_vals
     
     def define_signs(self, norm, sign):
         if sign is None:
@@ -185,47 +188,43 @@ class BoundaryConstraints(object):
         elif norm.endswith("Z"): dirs = 2
         return dirs, signs
     
+    def build_constraint_dict(self, values, *args):
+        keys = np.array(np.meshgrid(*args)).T.reshape(-1, len(args))
+        values_repeated = np.tile(values, len(args[0]))
+        return dict(zip(map(tuple, keys), values_repeated))
+    
     def set_velocity_constraints(self, sims: Simulation, boundary, level, nlevel, start_point, end_point, inodes):
         if self.velocity_boundary is None:
             raise RuntimeError("Error:: /max_velocity_constraint/ is set as zero!")
         
-        default_val = [None, None, None] if sims.dimension == 3 else [None, None, 0]
         xvelocity = DictIO.GetAlternative(boundary, "VelocityX", None)
         yvelocity = DictIO.GetAlternative(boundary, "VelocityY", None)
         zvelocity = DictIO.GetAlternative(boundary, "VelocityZ", None)
-        velocity = list(DictIO.GetAlternative(boundary, "Velocity", default_val))
-        fix_dofs, velocity, dofs = self.get_freedoms(sims, xvelocity, yvelocity, zvelocity, velocity)
-        self.check_velocity_constraint_num(sims, inodes.shape[0] * nlevel * fix_dofs)
+        default_val = [xvelocity, yvelocity, zvelocity] if sims.dimension == 3 else [xvelocity, yvelocity, 0]
+        velocity = DictIO.GetAlternative(boundary, "Velocity", default_val)
+        freedoms = self.get_freedoms(sims, velocity)
 
-        for i in range(level, level + nlevel):
-            set_velocity_constraint(sims.dimension, self.velocity_list, self.velocity_boundary, inodes, vec3i(dofs), vec3f(velocity), i, fix_dofs)
-        copy_valid_constraint(self.velocity_list, self.velocity_boundary)
+        dirs, values = zip(*freedoms)
+        self.velocity_dict.update(self.build_constraint_dict(np.array(values), inodes, np.array(dirs), np.arange(level, level + nlevel, 1)))
 
+        expected_dirs = {0: "X", 1: "Y", 2: "Z"}
         print("Boundary Type: Velocity Constraint")
         print("Start Point: ", start_point)
         print("End Point: ", end_point)
         print("Total involved nodes: ", inodes.shape[0])
-        if dofs[0] == 1:
-            print("Prescribed Velocity along X axis = ", float(velocity[0]))
-        if dofs[1] == 1:
-            print("Prescribed Velocity along Y axis = ", float(velocity[1]))
-        if dofs[2] == 1:
-            print("Prescribed Velocity along Z axis = ", float(velocity[2]))
+        for freedom in freedoms:
+            print(f"Prescribed Velocity along {expected_dirs.get(freedom[0])} axis = ", float(freedom[1]))
         print('\n')
 
     def set_reflection_constraints(self, sims: Simulation, boundary, level, nlevel, start_point, end_point, inodes):
         if self.reflection_boundary is None:
             raise RuntimeError("Error:: /max_reflection_constraint/ is set as zero!")
 
-        self.check_reflection_constraint_num(sims, inodes.shape[0] * nlevel)
         norm = DictIO.GetEssential(boundary, "Norm")
         sign = DictIO.GetAlternative(boundary, "Sign", None)
         norms = self.get_norms(sims, norm, sign)
         dirs, signs = self.get_dirs_and_signs(norms)
-
-        for i in range(level, level + nlevel):
-            set_reflection_constraint(self.reflection_list, self.reflection_boundary, inodes, dirs, signs, i)
-        copy_valid_constraint(self.reflection_list, self.reflection_boundary)
+        self.reflection_dict.update(self.build_constraint_dict(np.zeros(1), inodes, dirs, signs, np.arange(level, level + nlevel, 1)))
         
         print("Boundary Type: Reflection Constraint")
         print("Start Point: ", start_point)
@@ -237,17 +236,13 @@ class BoundaryConstraints(object):
         if self.friction_boundary is None:
             raise RuntimeError("Error:: /max_friction_constraint/ is set as zero!")
 
-        self.check_friction_constraint_num(sims, inodes.shape[0] * nlevel)
         mu = DictIO.GetEssential(boundary, "Friction")
         norm = DictIO.GetEssential(boundary, "Norm")
         sign = DictIO.GetAlternative(boundary, "Sign", None)
         norms = self.get_norms(sims, norm, sign)
         dirs, signs = self.get_dirs_and_signs(norms)
+        self.friction_dict.update(self.build_constraint_dict(np.zeros(mu), inodes, dirs, signs, np.arange(level, level + nlevel, 1)))
 
-        for i in range(level, level + nlevel):
-            set_friction_constraint(self.friction_list, self.friction_boundary, inodes, mu, dirs, signs, i)
-        copy_valid_constraint(self.friction_list, self.friction_boundary)
-        
         print("Boundary Type: Friction Constraint")
         print("Start Point: ", start_point)
         print("End Point: ", end_point)
@@ -264,26 +259,29 @@ class BoundaryConstraints(object):
     def set_traction_constraints(self, sims: Simulation, boundary, level, nlevel, start_point, end_point, inodes):
         if self.traction_boundary is None:
             raise RuntimeError("Error:: /max_traciton_constraint/ is set as zero!")
+        
+        for i in range(level, level + nlevel):    
+            if self.is_rigid[i] == 1:
+                raise ValueError(f"Traction boundary will be assigned on rigid body (bodyID = {i})")
 
         xfext = DictIO.GetAlternative(boundary, "ExternalForceX", None)
         yfext = DictIO.GetAlternative(boundary, "ExternalForceY", None)
         zfext = DictIO.GetAlternative(boundary, "ExternalForceZ", None)
-        fext = DictIO.GetEssential(boundary, "ExternalForce")
-        fix_dofs, fex, dofs = self.get_freedoms(sims, xfext, yfext, zfext, fext)
-        self.check_traction_constraint_num(sims, inodes.shape[0] * nlevel * fix_dofs)
-        
-        for i in range(level, level + nlevel):
-            if self.is_rigid[i] == 0:
-                set_traction_contraint(sims.dimension, self.traction_list, self.traction_boundary, inodes, fex, dofs, i, fix_dofs) 
-            else:
-                raise ValueError(f"Traction boundary will be assigned on rigid body (bodyID = {i})")
-        copy_valid_constraint(self.traction_list, self.traction_boundary)
+        default_val = [xfext, yfext, zfext] if sims.dimension == 3 else [xfext, yfext, 0]
+        fext = DictIO.GetAlternative(boundary, "ExternalForce", default_val)
+        freedoms = self.get_freedoms(sims, fext)
 
+        dirs, values = zip(*freedoms)
+        self.traction_dict.update(self.build_constraint_dict(np.array(values), inodes, np.array(dirs), np.arange(level, level + nlevel, 1)))
+        
+        expected_dirs = {0: "X", 1: "Y", 2: "Z"}
         print("Boundary Type: Traction Constraint")
         print("Start Point: ", start_point)
         print("End Point: ", end_point)
         print("Total involved nodes: ", inodes.shape[0])
-        print("Grid Force = ", fex, '\n')
+        for freedom in freedoms:
+            print(f"Prescribed Grid Force along {expected_dirs.get(freedom[0])} axis = ", float(freedom[1]))
+        print('\n')
 
     def set_displacement_constraints(self, sims: Simulation, boundary, level, nlevel, start_point, end_point, inodes):
         if sims.solver_type != "Implicit":
@@ -291,30 +289,92 @@ class BoundaryConstraints(object):
     
         if self.displacement_boundary is None:
             raise RuntimeError("Error:: dataclass /displacement_boundary/ is not activated!")
-        
-        default_val = [None, None, None] if sims.dimension == 3 else [None, None, 0]
 
         xdisplacement = DictIO.GetAlternative(boundary, "DisplacementX", None)
         ydisplacement = DictIO.GetAlternative(boundary, "DisplacementY", None)
         zdisplacement = DictIO.GetAlternative(boundary, "DisplacementZ", None)
+        default_val = [xdisplacement, ydisplacement, zdisplacement] if sims.dimension == 3 else [xdisplacement, ydisplacement, 0]
         displacement = DictIO.GetAlternative(boundary, "Displacement", default_val)
-        fix_dofs, displacement, dofs = self.get_freedoms(sims, xdisplacement, ydisplacement, zdisplacement, displacement)
-        self.check_displacement_constraint_num(sims, inodes.shape[0] * nlevel * fix_dofs)
+        freedoms = self.get_freedoms(sims, displacement)
 
-        for i in range(level, level + nlevel):
-            if self.is_rigid[i] == 0:
-                set_displacement_contraint(self.displacement_list, self.displacement_boundary, inodes, dofs, displacement, i, fix_dofs) 
-            else:
-                raise ValueError(f"Implicit MPM is not supported for rigid body")
+        dirs, values = zip(*freedoms)
+        self.displacement_dict.update(self.build_constraint_dict(np.array(values), inodes, np.array(dirs), np.arange(level, level + nlevel, 1)))
         
+        expected_dirs = {0: "X", 1: "Y", 2: "Z"}
         print("Boundary Type: Displacement Constraint")
         print("Start Point: ", start_point)
         print("End Point: ", end_point)
         print("Total involved nodes: ", inodes.shape[0])
-        print("Degree of freedom = ", dofs)
-        print("Displacement = ", displacement, '\n')
+        print("Degree of freedom = ", freedoms)
+        for freedom in freedoms:
+            print(f"Prescribed Displacement along {expected_dirs.get(freedom[0])} axis = ", float(freedom[1]))
+        print('\n')
+
+    def split_dict_to_arrays(self, input_dict):
+        if not input_dict:
+            return [], np.array([])
+        
+        split_keys = np.array(list(input_dict.keys()))
+        values = np.array(list(input_dict.values()))
+        return split_keys, values
+
+    def copy_dict_to_field(self, sims):
+        nvelocity = len(self.velocity_dict)
+        if nvelocity > 0:
+            self.check_velocity_constraint_num(sims, nvelocity)
+            keys, values = self.split_dict_to_arrays(dict(sorted(self.velocity_dict.items(), key=lambda item: item)))
+            nodeID = np.ascontiguousarray(keys[:, 0])
+            levels = np.ascontiguousarray(keys[:, 2])
+            dirs = np.ascontiguousarray(keys[:, 1])
+            set_contraints(self.velocity_boundary, nodeID, levels, dirs, values)
+            self.velocity_list[0] = nvelocity
+
+        nreflection = len(self.reflection_dict)
+        if nreflection > 0:
+            self.check_reflection_constraint_num(sims, nreflection)
+            keys, values = self.split_dict_to_arrays(dict(sorted(self.reflection_dict.items(), key=lambda item: item)))
+            nodeID = np.ascontiguousarray(keys[:, 0])
+            levels = np.ascontiguousarray(keys[:, 3])
+            dirs = np.ascontiguousarray(keys[:, 1])
+            signs = np.ascontiguousarray(keys[:, 2])
+            set_reflection_constraint(self.reflection_boundary, nodeID, levels, dirs, signs)
+            self.reflection_list[0] = nreflection
+
+        nfriction = len(self.friction_dict)
+        if nfriction > 0:
+            self.check_friction_constraint_num(sims, nfriction)
+            keys, values = self.split_dict_to_arrays(dict(sorted(self.friction_dict.items(), key=lambda item: item)))
+            nodeID = np.ascontiguousarray(keys[:, 0])
+            levels = np.ascontiguousarray(keys[:, 4])
+            dirs = np.ascontiguousarray(keys[:, 1])
+            signs = np.ascontiguousarray(keys[:, 2])
+            mu = np.ascontiguousarray(keys[:, 3])
+            set_friction_constraint(self.friction_boundary, nodeID, levels, dirs, signs, mu)
+            self.friction_list[0] = nfriction
+        
+        ntraction = len(self.traction_dict)
+        if ntraction > 0:
+            self.check_traction_constraint_num(sims, ntraction)
+            keys, values = self.split_dict_to_arrays(dict(sorted(self.traction_dict.items(), key=lambda item: item)))
+            nodeID = np.ascontiguousarray(keys[:, 0])
+            levels = np.ascontiguousarray(keys[:, 2])
+            dirs = np.ascontiguousarray(keys[:, 1])
+            set_contraints(self.traction_boundary, nodeID, levels, dirs, values)
+            self.traction_list[0] = ntraction
+
+        ndisplacement = len(self.displacement_dict)
+        if ndisplacement > 0:
+            self.check_displacement_constraint_num(sims, ndisplacement)
+            keys, values = self.split_dict_to_arrays(dict(sorted(self.displacement_dict.items(), key=lambda item: item)))
+            nodeID = np.ascontiguousarray(keys[:, 0])
+            levels = np.ascontiguousarray(keys[:, 2])
+            dirs = np.ascontiguousarray(keys[:, 1])
+            set_contraints(self.displacement_boundary, nodeID, levels, dirs, values) 
+            self.displacement_list[0] = ndisplacement
 
     def set_particle_traction(self, sims: Simulation, boundary, particleNum, startNum, particle, psize, region: RegionFunction=None):
+        if sims.ptraction_method == "Virtual":
+            raise RuntimeError("Please input virtual stress field from function /mainMPM -> MPM().add_virtual_stress_field/")
         traction_force = DictIO.GetEssential(boundary, "Pressure") 
         if np.linalg.norm(np.array(traction_force)) == 0: return
         
@@ -363,6 +423,56 @@ class BoundaryConstraints(object):
         print("Total involved nodes: ", ptraction_num)
         print("Traction = ", traction_force, '\n')
 
+    def set_virtual_stress_field(self, sims: Simulation, element: ElementBase, boundary, region_function):
+        if region_function is None:
+            def is_in_region(x): return True
+            region_function = is_in_region
+        region_function = ti.pyfunc(region_function)
+
+        virtual_stress = None
+        if "ConfiningPressure" in boundary:
+            pressure = DictIO.GetEssential(boundary, "ConfiningPressure")
+            virtual_stress_field = [0., 0., 0., 0., 0., 0.]
+            if isinstance(pressure, (int, float)):
+                virtual_stress_field = [-pressure, -pressure, -pressure, 0., 0., 0.]
+            elif isinstance(pressure, (list, tuple, np.ndarray)):
+                virtual_stress_field = pressure.copy()
+            def get_virtual_field(x): 
+                return virtual_stress_field if region_function(x) else [0., 0., 0., 0., 0., 0.]
+            virtual_stress = ti.func(get_virtual_field)
+        else:    
+            virtual_stress_field = DictIO.GetEssential(boundary, "VirtualStress")
+            if not isinstance(virtual_force_field, function):
+                raise ValueError("Keyword:: /VirtualStress/ should be a Python function")
+            virtual_stress_field = ti.pyfunc(virtual_stress_field)
+            def get_virtual_field(x): 
+                return virtual_stress_field(x) if region_function(x) else [0., 0., 0., 0., 0., 0.]
+            virtual_stress = ti.func(get_virtual_field)
+
+        virtual_force = None
+        if "ConfiningPressure" in boundary:
+            virtual_force_field = [0. for _ in range(sims.dimension)]
+            def get_virtual_force(x): return virtual_force_field
+            virtual_force = ti.func(get_virtual_force)
+        else:
+            virtual_force_field = DictIO.GetAlternative(boundary, "VirtualForce", None)
+            zeros = [0. for _ in range(sims.dimension)]
+            if virtual_force_field is None or isinstance(virtual_force_field, (list, tuple, np.ndarray)):
+                if virtual_force_field is None: virtual_force_field = [0. for _ in range(sims.dimension)]
+                if len(list(virtual_force_field)) != sims.dimension: raise ValueError(f"The dimension of /VirtualForce/ should equal to {sims.dimension}")
+                def get_virtual_force(x): return virtual_force_field
+                virtual_force = ti.func(get_virtual_force)
+            elif isinstance(virtual_force_field, function):
+                virtual_force_field = ti.pyfunc(virtual_force_field)
+                def get_virtual_force(x): return virtual_force_field(x) if region_function(x) else zeros
+                virtual_force = ti.func(get_virtual_force)
+
+        self.particle_traction.input(virtual_stress, virtual_force)
+        self.particle_traction.set_lists(element.cellSum, element.gridSum, element.grid_level)
+        print("Boundary Type: Virtual Stress Field")
+        print("Virtual Stress Check: ", self.particle_traction.stress_check(sims.dimension))
+        print("Virtual Force Check: ", self.particle_traction.force_check(sims.dimension), '\n')
+
     def get_region_ptr(self, name):
         if not self.myRegion is None:
             return self.myRegion[name]
@@ -388,32 +498,31 @@ class BoundaryConstraints(object):
     def set_boundary_conditions(self, sims: Simulation, element: ElementBase, boundary):
         self.new_boundaries = True
         boundary_type = DictIO.GetEssential(boundary, "BoundaryType")
-        if boundary_type == "ParticleTractionConstraint":
-            self.set_particle_traction(sims, boundary, level, 0, start_point, end_point, inodes)
-        else:
-            level = DictIO.GetAlternative(boundary, "NLevel", "All")
-            start_point = DictIO.GetEssential(boundary, "StartPoint")
-            end_point = DictIO.GetEssential(boundary, "EndPoint")
-            self.check_boundary_domain(sims, start_point, end_point)
-            inodes = element.get_boundary_nodes(start_point, end_point)
-            level, nlevel = self.check_nlevel(level)
 
+        level = DictIO.GetAlternative(boundary, "NLevel", "All")
+        start_point = DictIO.GetEssential(boundary, "StartPoint")
+        end_point = DictIO.GetEssential(boundary, "EndPoint")
+        self.check_boundary_domain(sims, start_point, end_point)
+        inodes = element.get_boundary_nodes(start_point, end_point)
+        level, nlevel = self.check_nlevel(level)
+
+        if sims.mode == "Normal":
             if sims.shape_function == "QuadBSpline" or sims.shape_function == "CubicBSpline":
                 for nl in range(level, level + nlevel):
                     add_boundary_flags(nl, element.gridSum, inodes, element.boundary_flag)
 
-            if boundary_type == "VelocityConstraint":
-                self.set_velocity_constraints(sims, boundary, level, nlevel, start_point, end_point, inodes)
-            elif boundary_type == "ReflectionConstraint":
-                self.set_reflection_constraints(sims, boundary, level, nlevel, start_point, end_point, inodes)
-            elif boundary_type == "FrictionConstraint":
-                self.set_friction_constraints(sims, boundary, level, nlevel, start_point, end_point, inodes)
-            elif boundary_type == "AbsorbingConstraint":
-                self.set_absorbing_constraints(sims, boundary, level, nlevel, start_point, end_point, inodes)
-            elif boundary_type == "TractionConstraint":
-                self.set_traction_constraints(sims, boundary, level, nlevel, start_point, end_point, inodes)
-            elif boundary_type == "DisplacementConstraint":
-                self.set_displacement_constraints(sims, boundary, level, nlevel, start_point, end_point, inodes)
+        if boundary_type == "VelocityConstraint":
+            self.set_velocity_constraints(sims, boundary, level, nlevel, start_point, end_point, inodes)
+        elif boundary_type == "ReflectionConstraint":
+            self.set_reflection_constraints(sims, boundary, level, nlevel, start_point, end_point, inodes)
+        elif boundary_type == "FrictionConstraint":
+            self.set_friction_constraints(sims, boundary, level, nlevel, start_point, end_point, inodes)
+        elif boundary_type == "AbsorbingConstraint":
+            self.set_absorbing_constraints(sims, boundary, level, nlevel, start_point, end_point, inodes)
+        elif boundary_type == "TractionConstraint":
+            self.set_traction_constraints(sims, boundary, level, nlevel, start_point, end_point, inodes)
+        elif boundary_type == "DisplacementConstraint":
+            self.set_displacement_constraints(sims, boundary, level, nlevel, start_point, end_point, inodes)
         
     def clear_boundary_constraint(self, sims: Simulation, element: ElementBase, boundary):
         boundary_type = DictIO.GetEssential(boundary, "BoundaryType")
@@ -637,3 +746,4 @@ class BoundaryConstraints(object):
         if self.new_boundaries:
             element.set_boundary_type(sims, grid_level)
         self.new_boundaries = False
+        

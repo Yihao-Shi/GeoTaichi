@@ -27,6 +27,8 @@ class ElementBase(object):
                 self.boundary_type = ti.Vector.field(3, ti.u8, shape=(self.gridSum, grid_level))
             self.boundary_flag = ti.field(u1)
             ti.root.dense(ti.i, round32(self.gridSum * grid_level * sims.dimension)//32).quant_array(ti.i, dimensions=32, max_num_bits=32).place(self.boundary_flag)
+        else:
+            self.boundary_type = ti.field(ti.u8, shape=(1, 1))
 
     def create_nodes(self, *args):
         raise NotImplementedError

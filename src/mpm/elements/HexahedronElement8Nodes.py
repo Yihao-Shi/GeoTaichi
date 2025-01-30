@@ -12,6 +12,7 @@ from src.utils.PrefixSum import PrefixSumExecutor
 from src.utils.linalg import round32 ,flip3d_linear
 from src.utils.ShapeFunctions import *
 from src.utils.TypeDefination import u1, vec3f, vec3i
+import src.utils.GlobalVariable as GlobalVariable
 
 
 Threshold = 1e-12
@@ -122,7 +123,8 @@ class HexahedronElement8Nodes(ElementBase):
             if sims.gauss_number > 0:
                 self.gauss_point = GaussPointInRectangle(gauss_point=sims.gauss_number)
                 self.gauss_point.create_gauss_point()
-            self.set_essential_field(is_bbar, sims.max_particle_num, sims.shape_function, sims.mls)
+            if sims.mode == "Normal":
+                self.set_essential_field(is_bbar, sims.max_particle_num, sims.shape_function, sims.mls)
         
         if sims.solver_type == "Implicit":
             self.pse = PrefixSumExecutor(self.gridSum)
@@ -197,6 +199,9 @@ class HexahedronElement8Nodes(ElementBase):
         else:
             raise KeyError(f"The shape function type {sims.shape_function} is not exist!")
         
+        if sims.mode == "Lightweight":
+            GlobalVariable.INFLUENCENODE = self.influenced_node
+
         self.influenced_dofs = 3 * self.grid_nodes
 
     def get_nonzero_grids_per_row(self):

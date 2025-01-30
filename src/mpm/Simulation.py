@@ -3,12 +3,14 @@ import warnings
 
 from src.utils.ObjectIO import DictIO
 from src.utils.TypeDefination import vec2f, vec3i, vec3f
+import src.utils.GlobalVariable as GlobalVariable
 
 
 class Simulation(object):
     def __init__(self) -> None:
         self.dimension = 3
         self.is_2DAxisy = False
+        self.mode = "Normal"
         self.domain = [0., 0., 0.]
         self.boundary = [0, 0, 0]
         self.gravity = [0., 0., 0.]
@@ -16,6 +18,7 @@ class Simulation(object):
         self.background = 0.
         self.alphaPIC = 0.
         self.shape_smooth = 0.
+        self.fbar_fraction = 0.99
         self.coupling = False
         self.neighbor_detection = False
         self.free_surface_detection = False
@@ -34,6 +37,9 @@ class Simulation(object):
         self.integration_scheme = None
         self.visualize = True
         self.particle_shifting = False
+        self.isTHB = False
+        self.AOSOA = False
+        self.THBparameter = {}
         self.grid_layer = 0
 
         self.dt = ti.field(float, shape=())
@@ -64,7 +70,7 @@ class Simulation(object):
         self.isadaptive = False
         self.save_interval = 1e6
         self.path = None
-        self.contact_detection = False
+        self.contact_detection = None
 
         self.visualize_interval = 0.
         self.window_size = (1024, 1024)
@@ -94,20 +100,24 @@ class Simulation(object):
         self.configuration = "ULMPM"
         self.material_type = "Solid"
         self.solver_type = "Explicit"
+        self.discretization = "FEM"
 
         self.TESTMODE = False
         
     def get_simulation_domain(self):
         return self.domain
     
-    def set_dimension(self, dimension):
-        DIMENSION = ["2-Dimension", "3-Dimension"]
-        if not dimension in DIMENSION:
-            raise ValueError(f"Keyword:: /dimension/ should choose as follows: {DIMENSION}")
-        self.dimension = 3 if dimension == "3-Dimension" else 2
+    def set_dimension(self):
+        self.dimension = GlobalVariable.DIMENSION
 
     def set_is_2DAxisy(self, is_2DAxisy):
         self.is_2DAxisy = is_2DAxisy
+
+    def set_mode(self, mode):
+        valid_list = ['Normal', 'Lightweight']
+        if mode not in valid_list:
+            raise RuntimeError(f"Keyword:: /mode/ must be {valid_list}")
+        self.mode = mode
 
     def set_domain(self, domain):
         self.domain = domain
@@ -146,6 +156,11 @@ class Simulation(object):
         if not stabilize in typelist:
             raise RuntimeError(f"KeyWord:: /stabilize: {stabilize}/ is invalid. The valid type are given as follows: {typelist}")
         self.stabilize = stabilize
+        if self.mode == "Lightweight":
+            if self.stabilize == "B-Bar Method":
+                GlobalVariable.BBAR = True
+            elif self.stabilize == "F-Bar Method":
+                GlobalVariable.FBAR = True
 
     def set_shape_smoothing(self, shape_smooth):
         if self.shape_function == "SmoothLinear":
@@ -169,23 +184,36 @@ class Simulation(object):
             raise RuntimeError(f"Keyword:: /material_type/ error. Only {valid_list} is valid!")
         self.material_type = material_type
 
+        if self.mode == "Lightweight":
+            if self.material_type == "TwoPhaseSingleLayer":
+                GlobalVariable.TWOPHASESINGLELAYER = True
+
     def set_visualize(self, visualize):
         self.visualize = visualize
+
+    def set_THB(self, THBparameter):
+        if THBparameter:
+            self.isTHB = True
+            self.THBparameter = THBparameter
+            self.grid_layer = THBparameter['grid_layer']
 
     def set_sparse_grid(self, sparse_grid):
         if sparse_grid:
             self.sparse_grid = True
-            if isinstance(sparse_grid, (list, tuple)):
-                if len(sparse_grid) == 2:
-                    self.block_size = list(sparse_grid)
-                else:
-                    raise ValueError(f"Keyword:: /sparse_grid/ contains two components [grid_block_size, leaf_block_size]. The input {sparse_grid} is invalid")
 
     def set_gauss_integration(self, gauss_number):
         self.gauss_number = gauss_number
     
     def set_particle_shifting(self, particle_shifting):
         self.particle_shifting = particle_shifting
+        if self.mode == "Lightweight":
+            GlobalVariable.PARTICLESHIFTING = particle_shifting
+
+    def set_discretization(self, discretization):
+        typelist = ["FEM", "FDM"]
+        if not discretization in typelist:
+            raise RuntimeError(f"KeyWord:: /discretization: {discretization}/ is invalid. The valid type are given as follows: {typelist}")
+        self.discretization = discretization
 
     def set_moving_least_square(self, mls):
         self.mls = mls
@@ -208,9 +236,18 @@ class Simulation(object):
         self.shape_function = shape_function
         if self.mapping == "G2P2G":
             self.shape_function == "QuadBSpline"
+        if self.mode == "Lightweight":
+            if self.shape_function == "Linear":
+                GlobalVariable.SHAPEFUNCTION = 0
+            elif self.shape_function == "GIMP":
+                raise ValueError("Lightweight MPM do not support GIMP")
+            elif self.shape_function == "QuadBSpline":
+                GlobalVariable.SHAPEFUNCTION = 2
+            elif self.shape_function == "CubicBSpline":
+                GlobalVariable.SHAPEFUNCTION = 3
 
     def set_mpm_coupling(self, coupling):
-        typelist = ["Lagrangian", "Euler", False]
+        typelist = ["Lagrangian", "Eulerian", False]
         if not coupling in typelist:
             raise RuntimeError(f"KeyWord:: /coupling: {coupling}/ is invalid. The valid type are given as follows: {typelist}")
         self.coupling = coupling
@@ -301,6 +338,12 @@ class Simulation(object):
 
         if velocity_projection_scheme not in valid_type:
             raise RuntimeError(f"Keyword:: /velocity_projection_scheme/ is error, followings are valid {valid_type}")
+        
+        if self.mode == "Lightweight":
+            if self.velocity_projection_scheme == "Affine":
+                GlobalVariable.APIC = True
+            elif self.velocity_projection_scheme == "Taylor":
+                GlobalVariable.TPIC = True
 
     def set_window_parameters(self, windows):
         self.visualize_interval = DictIO.GetAlternative(windows, "VisualizeInterval", self.save_interval)
@@ -320,15 +363,29 @@ class Simulation(object):
         self.nfriction = int(DictIO.GetAlternative(constraint, "max_friction_constraint", 0))
         self.nabsorbing = int(DictIO.GetAlternative(constraint, "max_absorbing_constraint", 0))
         self.ntraction = int(DictIO.GetAlternative(constraint, "max_traction_constraint", 0))
-        self.nptraction = int(DictIO.GetAlternative(constraint, "max_particle_traction_constraint", 0))
-        self.ptraction_method = DictIO.GetAlternative(constraint, "particle_traction_method", "Stable")
+        if not self.ptraction_method == "Virtual":
+            self.nptraction = int(DictIO.GetAlternative(constraint, "max_particle_traction_constraint", 0))
         if self.solver_type == "Implicit":
             self.ndisplacement = int(DictIO.GetAlternative(constraint, "max_displacement_constraint", 0))
 
+    def set_particle_traction_method(self, particle_traction_method):
+        self.ptraction_method = particle_traction_method
         valid_list = [None, "Stable", "Nanson", "Virtual"]
         if self.ptraction_method not in valid_list:
             warnings.warn("We choose stable version of particle traction by default!")
             self.ptraction_method = "Stable"
+
+        if self.ptraction_method == "Virtual":
+            self.nptraction = 1
+
+    def set_AOSOA(self, AOSOA):
+        if AOSOA:
+            self.AOSOA = True
+            if isinstance(AOSOA, (list, tuple)):
+                if len(AOSOA) >= 1:
+                    self.block_size = list(AOSOA)
+                else:
+                    raise ValueError(f"Keyword:: /AOSOA/ is empty. The input {AOSOA} is invalid. For example, you can input [grid_block_size, leaf_block_size].")
         
     def set_save_data(self, particle, grid, object):
         if particle: self.monitor_type.append('particle')
@@ -388,7 +445,7 @@ class Simulation(object):
         
     def set_assemble_type(self, assemble_type):
         self.assemble_type = assemble_type
-        valid_list = ["MatrixFree", "CSR", "LocalStiffness"]
+        valid_list = ["MatrixFree", "CSR"]
         if assemble_type not in valid_list:
             raise RuntimeError(f"Keyword:: /assemble_type/ is error, followings are valid {valid_list}")
         

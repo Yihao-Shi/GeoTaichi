@@ -1,9 +1,10 @@
 import taichi as ti
 
 from src.utils.constants import Threshold
-from src.utils.TypeDefination import vec2f, vec3f, vec3i
+from src.utils.TypeDefination import vec2f, vec3f, vec3i, vec2i
 from src.utils.VectorFunction import SquareLen
-from src.utils.ScalarFunction import linearize
+from src.utils.ScalarFunction import linearize, vectorize_id, clamp
+import src.utils.GlobalVariable as GlobalVariable
 
 
 @ti.kernel
@@ -19,65 +20,21 @@ def add_boundary_flags(level: int, gridSum: int, inodes: ti.types.ndarray(), bou
 
 
 @ti.kernel
-def set_velocity_constraint(dimension: int, lists: ti.types.ndarray(), constraint: ti.template(), inodes: ti.types.ndarray(), active_direction: ti.types.vector(3, int), velocity: ti.types.vector(3, float), level: int, total_dofs: int):
-    start_index = lists[0]
-    for offset in range(inodes.shape[0]):
-        locate = start_index + total_dofs * offset
-        for d in range(dimension):
-            if active_direction[d] == 1:
-                constraint[locate].set_boundary_condition(inodes[offset], level, d, velocity[d])
-                locate += 1
-    lists[0] += total_dofs * inodes.shape[0]
+def set_reflection_constraint(constraint: ti.template(), nodeID: ti.types.ndarray(), levels: ti.types.ndarray(), dirs: ti.types.ndarray(), signs: ti.types.ndarray()):
+     for offset in range(nodeID.shape[0]):
+        constraint[offset].set_boundary_condition(nodeID[offset], levels[offset], dirs[offset], signs[offset])
 
 
 @ti.kernel
-def set_reflection_constraint(lists: ti.types.ndarray(), constraint: ti.template(), inodes: ti.types.ndarray(), direction: int, signs: int, level: int):
-    start_index = lists[0]
-    for offset in range(inodes.shape[0]):
-        locate = start_index + offset
-        constraint[locate].set_boundary_condition(inodes[offset], level, direction, signs)
-    lists[0] += inodes.shape[0]
+def set_friction_constraint(constraint: ti.template(), nodeID: ti.types.ndarray(), levels: ti.types.ndarray(), dirs: ti.types.ndarray(), signs: ti.types.ndarray(), mu: ti.types.ndarray()):
+    for offset in range(nodeID.shape[0]):
+        constraint[offset].set_boundary_condition(nodeID[offset], levels[offset], mu[offset], dirs[offset], signs[offset])
 
 
 @ti.kernel
-def set_friction_constraint(lists: ti.types.ndarray(), constraint: ti.template(), inodes: ti.types.ndarray(), mu: float, direction: int, signs: int, level: int):
-    start_index = lists[0]
-    for offset in range(inodes.shape[0]):
-        locate = start_index + offset
-        constraint[locate].set_boundary_condition(inodes[offset], level, mu, direction, signs)
-    lists[0] += inodes.shape[0]
-
-
-@ti.kernel
-def set_absorbing_contraint(lists: ti.types.ndarray(), constraint: ti.template(), inodes: ti.types.ndarray(), level: int):
-    start_index = lists[0]
-    for offset in range(inodes.shape[0]):
-        locate = start_index + offset
-    lists[0] += inodes.shape[0]
-
-
-@ti.kernel
-def set_traction_contraint(dimension: int, lists: ti.types.ndarray(), constraint: ti.template(), inodes: ti.types.ndarray(), traction: ti.types.vector(3, float), dof: ti.types.vector(3, int), direction: int, level: int, fix_dofs: int):
-    start_index = lists[0]
-    for offset in range(inodes.shape[0]):
-        locate = start_index + fix_dofs * offset
-        for d in range(dimension):
-            if dof[d] == 1:
-                constraint[locate].set_boundary_condition(inodes[offset], level, traction[d], direction)
-    lists[0] += fix_dofs * inodes.shape[0]
-
-
-@ti.kernel
-def set_displacement_contraint(lists: ti.types.ndarray(), constraint: ti.template(), inodes: ti.types.ndarray(), dof: ti.types.vector(3, int), value: ti.types.vector(3, float), level: int, fix_dofs: int):
-    start_index = lists[0]
-    for offset in range(inodes.shape[0]):
-        locate = start_index + fix_dofs * offset
-        count = 0
-        for j in ti.static(range(3)):
-            if dof[j] == 1:
-                constraint[locate + count].set_boundary_condition(inodes[offset], level, j, value[j])
-                count += 1
-    lists[0] += inodes.shape[0] * fix_dofs
+def set_contraints(constraint: ti.template(), nodeID: ti.types.ndarray(), levels: ti.types.ndarray(), dirs: ti.types.ndarray(), values: ti.types.ndarray()):
+    for offset in range(nodeID.shape[0]):
+        constraint[offset].set_boundary_condition(nodeID[offset], levels[offset], dirs[offset], values[offset])
 
 
 @ti.func
@@ -320,7 +277,7 @@ def apply_particle_traction_constraint_twophase(lists: int, total_nodes: int, co
     for nboundary in range(lists):
         particleID = constraints[nboundary].pid
         bodyID = int(particle[particleID].bodyID)
-        constraints[nboundary]._calc_psize_cp(dt, particle[particleID].velocity_gradient)
+        constraints[nboundary]._calc_psize_cp(dt, particle[particleID].solid_velocity_gradient)
         exts, extf = constraints[nboundary]._compute_traction_force()
         offset = particleID * total_nodes
         for ln in range(offset, offset + node_size[particleID]):
@@ -330,41 +287,134 @@ def apply_particle_traction_constraint_twophase(lists: int, total_nodes: int, co
 
 
 @ti.func
-def is_inactive_neighbor_cell(c, cell, cnum):
-    return cell[c + linearize(vec3i(-1, -1, -1), cnum)] == 0 or cell[c + linearize(vec3i(0, -1, -1), cnum)] == 0 or cell[c + linearize(vec3i(1, -1, -1), cnum)] == 0 or \
-           cell[c + linearize(vec3i(-1, 0, -1), cnum)] == 0 or cell[c + linearize(vec3i(0, 0, -1), cnum)] == 0 or cell[c + linearize(vec3i(1, 0, -1), cnum)] == 0 or \
-           cell[c + linearize(vec3i(-1, 1, -1), cnum)] == 0 or cell[c + linearize(vec3i(0, 1, -1), cnum)] == 0 or cell[c + linearize(vec3i(1, 1, -1), cnum)] == 0 or \
-           cell[c + linearize(vec3i(-1, -1, 0), cnum)] == 0 or cell[c + linearize(vec3i(0, -1, 0), cnum)] == 0 or cell[c + linearize(vec3i(1, -1, 0), cnum)] == 0 or \
-           cell[c + linearize(vec3i(-1, 0, 0), cnum)] == 0 or cell[c + linearize(vec3i(0, 0, 0), cnum)] == 0 or cell[c + linearize(vec3i(1, 0, 0), cnum)] == 0 or \
-           cell[c + linearize(vec3i(-1, 1, 0), cnum)] == 0 or cell[c + linearize(vec3i(0, 1, 0), cnum)] == 0 or cell[c + linearize(vec3i(1, 1, 0), cnum)] == 0 or \
-           cell[c + linearize(vec3i(-1, -1, 1), cnum)] == 0 or cell[c + linearize(vec3i(0, -1, 1), cnum)] == 0 or cell[c + linearize(vec3i(1, -1, 1), cnum)] == 0 or \
-           cell[c + linearize(vec3i(-1, 0, 1), cnum)] == 0 or cell[c + linearize(vec3i(0, 0, 1), cnum)] == 0 or cell[c + linearize(vec3i(1, 0, 1), cnum)] == 0 or \
-           cell[c + linearize(vec3i(-1, 1, 1), cnum)] == 0 or cell[c + linearize(vec3i(0, 1, 1), cnum)] == 0 or cell[c + linearize(vec3i(1, 1, 1), cnum)] == 0
+def is_subset_neighbor_cell(cell_id, body_id, cell, cnum):
+    return int(cell[linearize(clamp(0, cnum, cell_id + vec3i(-1, -1, -1)), cnum), body_id]) == 2 or int(cell[linearize(clamp(0, cnum, cell_id + vec3i(0, -1, -1)), cnum), body_id]) == 2 or int(cell[linearize(clamp(0, cnum, cell_id + vec3i(1, -1, -1)), cnum), body_id]) == 2 or \
+           int(cell[linearize(clamp(0, cnum, cell_id + vec3i(-1, 0, -1)), cnum), body_id]) == 2 or  int(cell[linearize(clamp(0, cnum, cell_id + vec3i(0, 0, -1)), cnum), body_id]) == 2 or  int(cell[linearize(clamp(0, cnum, cell_id + vec3i(1, 0, -1)), cnum), body_id]) == 2 or \
+           int(cell[linearize(clamp(0, cnum, cell_id + vec3i(-1, 1, -1)), cnum), body_id]) == 2 or  int(cell[linearize(clamp(0, cnum, cell_id + vec3i(0, 1, -1)), cnum), body_id]) == 2 or  int(cell[linearize(clamp(0, cnum, cell_id + vec3i(1, 1, -1)), cnum), body_id]) == 2 or \
+           int(cell[linearize(clamp(0, cnum, cell_id + vec3i(-1, -1, 0)), cnum), body_id]) == 2 or  int(cell[linearize(clamp(0, cnum, cell_id + vec3i(0, -1, 0)), cnum), body_id]) == 2 or  int(cell[linearize(clamp(0, cnum, cell_id + vec3i(1, -1, 0)), cnum), body_id]) == 2 or \
+           int(cell[linearize(clamp(0, cnum, cell_id + vec3i(-1, 0, 0)), cnum), body_id]) == 2 or   int(cell[linearize(clamp(0, cnum, cell_id + vec3i(1, 0, 0)), cnum), body_id]) == 2 or \
+           int(cell[linearize(clamp(0, cnum, cell_id + vec3i(-1, 1, 0)), cnum), body_id]) == 2 or   int(cell[linearize(clamp(0, cnum, cell_id + vec3i(0, 1, 0)), cnum), body_id]) == 2 or   int(cell[linearize(clamp(0, cnum, cell_id + vec3i(1, 1, 0)), cnum), body_id]) == 2 or \
+           int(cell[linearize(clamp(0, cnum, cell_id + vec3i(-1, -1, 1)), cnum), body_id]) == 2 or  int(cell[linearize(clamp(0, cnum, cell_id + vec3i(0, -1, 1)), cnum), body_id]) == 2 or  int(cell[linearize(clamp(0, cnum, cell_id + vec3i(1, -1, 1)), cnum), body_id]) == 2 or \
+           int(cell[linearize(clamp(0, cnum, cell_id + vec3i(-1, 0, 1)), cnum), body_id]) == 2 or   int(cell[linearize(clamp(0, cnum, cell_id + vec3i(0, 0, 1)), cnum), body_id]) == 2 or   int(cell[linearize(clamp(0, cnum, cell_id + vec3i(1, 0, 1)), cnum), body_id]) == 2 or \
+           int(cell[linearize(clamp(0, cnum, cell_id + vec3i(-1, 1, 1)), cnum), body_id]) == 2 or   int(cell[linearize(clamp(0, cnum, cell_id + vec3i(0, 1, 1)), cnum), body_id]) == 2 or   int(cell[linearize(clamp(0, cnum, cell_id + vec3i(1, 1, 1)), cnum), body_id]) == 2
+
+@ti.func
+def is_boundary_nodes(cell_id, body_id, cell, cnum):
+    return int(cell[linearize(clamp(0, cnum, cell_id + vec3i(-1, -1, -1)), cnum), body_id]) == 2 or int(cell[linearize(clamp(0, cnum, cell_id + vec3i(-1, -1, -1)), cnum), body_id]) == 3 or \
+           int(cell[linearize(clamp(0, cnum, cell_id + vec3i(0, -1, -1)), cnum), body_id]) == 2 or  int(cell[linearize(clamp(0, cnum, cell_id + vec3i(0, -1, -1)), cnum), body_id]) == 3 or \
+           int(cell[linearize(clamp(0, cnum, cell_id + vec3i(-1, 0, -1)), cnum), body_id]) == 2 or  int(cell[linearize(clamp(0, cnum, cell_id + vec3i(-1, 0, -1)), cnum), body_id]) == 3 or \
+           int(cell[linearize(clamp(0, cnum, cell_id + vec3i(0, 0, -1)), cnum), body_id]) == 2 or   int(cell[linearize(clamp(0, cnum, cell_id + vec3i(0, 0, -1)), cnum), body_id]) == 3 or \
+           int(cell[linearize(clamp(0, cnum, cell_id + vec3i(-1, -1, 0)), cnum), body_id]) == 2 or  int(cell[linearize(clamp(0, cnum, cell_id + vec3i(-1, -1, 0)), cnum), body_id]) == 3 or \
+           int(cell[linearize(clamp(0, cnum, cell_id + vec3i(0, -1, 0)), cnum), body_id]) == 2 or   int(cell[linearize(clamp(0, cnum, cell_id + vec3i(0, -1, 0)), cnum), body_id]) == 3 or \
+           int(cell[linearize(clamp(0, cnum, cell_id + vec3i(-1, 0, 0)), cnum), body_id]) == 2 or   int(cell[linearize(clamp(0, cnum, cell_id + vec3i(-1, 0, 0)), cnum), body_id]) == 3 or \
+           int(cell[linearize(clamp(0, cnum, cell_id + vec3i(0, 0, 0)), cnum), body_id]) == 2 or    int(cell[linearize(clamp(0, cnum, cell_id + vec3i(0, 0, 0)), cnum), body_id]) == 3 
+
+@ti.func
+def is_subset_neighbor_cell_2D(cell_id, body_id, cell, cnum):
+    return int(cell[linearize(clamp(0, cnum, cell_id + vec2i(-1, -1)), cnum), body_id]) == 2 or int(cell[linearize(clamp(0, cnum, cell_id + vec2i(0, -1)), cnum), body_id]) == 2 or int(cell[linearize(clamp(0, cnum, cell_id + vec2i(1, -1)), cnum), body_id]) == 2 or \
+           int(cell[linearize(clamp(0, cnum, cell_id + vec2i(-1, 0)), cnum), body_id]) == 2 or  int(cell[linearize(clamp(0, cnum, cell_id + vec2i(1, 0)), cnum), body_id]) == 2 or \
+           int(cell[linearize(clamp(0, cnum, cell_id + vec2i(-1, 1)), cnum), body_id]) == 2 or  int(cell[linearize(clamp(0, cnum, cell_id + vec2i(0, 1)), cnum), body_id]) == 2 or  int(cell[linearize(clamp(0, cnum, cell_id + vec2i(1, 1)), cnum), body_id]) == 2
+
+@ti.func
+def is_boundary_nodes_2D(cell_id, body_id, cell, cnum):
+    return int(cell[linearize(clamp(0, cnum, cell_id + vec2i(-1, -1)), cnum), body_id]) == 2 or int(cell[linearize(clamp(0, cnum, cell_id + vec2i(-1, -1)), cnum), body_id]) == 3 or \
+           int(cell[linearize(clamp(0, cnum, cell_id + vec2i(0, -1)), cnum), body_id]) == 2 or  int(cell[linearize(clamp(0, cnum, cell_id + vec2i(0 -1)), cnum), body_id]) == 3 or \
+           int(cell[linearize(clamp(0, cnum, cell_id + vec2i(-1, 0)), cnum), body_id]) == 2 or  int(cell[linearize(clamp(0, cnum, cell_id + vec2i(-1, 0)), cnum), body_id]) == 3 or \
+           int(cell[linearize(clamp(0, cnum, cell_id + vec2i(0, 0)), cnum), body_id]) == 2 or   int(cell[linearize(clamp(0, cnum, cell_id + vec2i(0, 0)), cnum), body_id]) == 3 
 
 @ti.kernel
-def apply_particle_virtual_traction_constraint(lists: int, total_nodes: int, particleNum: int, grid_size: ti.types.vector(3, float), cnum: ti.types.vector(3, int), constraints: ti.template(), dt: ti.template(), cell: ti.template(), 
-                                               node: ti.template(), particle: ti.template(), LnID: ti.template(), shape_fn: ti.template(), dshape_fn: ti.template(), node_size: ti.template()):
-    ti.loop_config(bit_vectorize=True)
-    for c in cell:
-        cell[c] = 0
-
+def apply_particle_virtual_traction_constraint_2D(particleNum: int, grid_size: ti.types.vector(2, float), cnum: ti.types.vector(2, int), 
+                                               auxiliary_cell: ti.template(), auxiliary_node: ti.template(), node: ti.template(), particle: ti.template()):
+    auxiliary_cell.fill(0)
+    auxiliary_node.fill(0)
     for np in range(particleNum):
         cellID = ti.cast(particle[np].x / grid_size, int)
+        bodyID = particle[np].bodyID
         linear_cellID = linearize(cellID, cnum)
-        cell[linear_cellID] = 1
+        auxiliary_cell[linear_cellID, bodyID] = 1
 
-    ti.loop_config(bit_vectorize=True)
-    for c in cell:
-        if is_inactive_neighbor_cell(c, cell, cnum):
-            for d in ti.static(8):
-                pass
-    
-    for nboundary in range(lists):
-        particleID = constraints[nboundary].pid
-        bodyID = int(particle[particleID].bodyID)
-        constraints[nboundary]._calc_psize_cp(dt, particle[particleID].velocity_gradient)
-        traction = constraints[nboundary]._compute_traction_force()
-        offset = particleID * total_nodes
-        for ln in range(offset, offset + node_size[particleID]):
-            nodeID = LnID[ln]
-            node[nodeID, bodyID]._update_nodal_force(shape_fn[ln] * traction)
+    for nc, nb in auxiliary_cell:
+        if int(auxiliary_cell[nc, nb]) == 0:
+            for ndx, ndy in ti.static(ti.ndrange(2, 2)):
+                gridID = linearize(vec2i(vectorize_id(nc, cnum)) + vec2i(ndx, ndy), cnum + 1)
+                if node[gridID, nb].m > Threshold:
+                    auxiliary_cell[nc, nb] = 2
+
+    for nc, nb in auxiliary_cell:
+        if int(auxiliary_cell[nc, nb]) > 0:
+            if is_subset_neighbor_cell_2D(vec2i(vectorize_id(nc, cnum)), nb, auxiliary_cell, cnum):
+                auxiliary_cell[nc, nb] = 3
+
+    for ng, nb in node:
+        if node[ng, nb].m > Threshold:
+            if is_boundary_nodes_2D(vec2i(vectorize_id(ng, cnum + 1)), nb, auxiliary_cell, cnum):
+                auxiliary_node[ng, nb] = 1
+
+@ti.kernel
+def apply_particle_virtual_traction_constraint(particleNum: int, grid_size: ti.types.vector(3, float), cnum: ti.types.vector(3, int), 
+                                               auxiliary_cell: ti.template(), auxiliary_node: ti.template(), node: ti.template(), particle: ti.template()):
+    auxiliary_cell.fill(0)
+    auxiliary_node.fill(0)
+    for np in range(particleNum):
+        cellID = ti.cast(particle[np].x / grid_size, int)
+        bodyID = particle[np].bodyID
+        linear_cellID = linearize(cellID, cnum)
+        auxiliary_cell[linear_cellID, bodyID] = 1
+
+    for nc, nb in auxiliary_cell:
+        if int(auxiliary_cell[nc, nb]) == 0:
+            for ndx, ndy, ndz in ti.static(ti.ndrange(2, 2, 2)):
+                gridID = linearize(vec3i(vectorize_id(nc, cnum)) + vec3i(ndx, ndy, ndz), cnum + 1)
+                if node[gridID, nb].m > Threshold:
+                    auxiliary_cell[nc, nb] = 2
+
+    for nc, nb in auxiliary_cell:
+        if int(auxiliary_cell[nc, nb]) == 1:
+            if is_subset_neighbor_cell(vec3i(vectorize_id(nc, cnum)), nb, auxiliary_cell, cnum):
+                auxiliary_cell[nc, nb] = 3
+
+    for ng, nb in node:
+        if node[ng, nb].m > Threshold:
+            if is_boundary_nodes(vec3i(vectorize_id(ng, cnum + 1)), nb, auxiliary_cell, cnum):
+                auxiliary_node[ng, nb] = 1
+
+@ti.kernel
+def apply_virtual_traction_field_2D(total_nodes: int, particleNum: int, virtual_force: ti.template(), virtual_stress: ti.template(), node: ti.template(), particle: ti.template(), 
+                                 LnID: ti.template(), shapefn: ti.template(), dshapefn: ti.template(), node_size: ti.template(), auxiliary_node: ti.template()):
+    for np in range(particleNum):
+        if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
+            position = particle[np].x
+            volume = particle[np].vol
+            bodyID = int(particle[np].bodyID)
+            offset = np * total_nodes
+            fex = volume * virtual_force(position)
+            fInt = volume * virtual_stress(position)
+            for ln in range(offset, offset + int(node_size[np])):
+                nodeID = LnID[ln]
+                if int(auxiliary_node[nodeID, bodyID]) == 1:
+                    dshape_fn = dshapefn[ln]
+                    external_force = shapefn[ln] * fex
+                    internal_force = vec2f([dshape_fn[0] * fInt[0] + dshape_fn[1] * fInt[3],
+                                            dshape_fn[1] * fInt[1] + dshape_fn[0] * fInt[3]])
+                    node[nodeID, bodyID]._update_nodal_force(external_force + internal_force)
+
+@ti.kernel
+def apply_virtual_traction_field(total_nodes: int, particleNum: int, virtual_force: ti.template(), virtual_stress: ti.template(), node: ti.template(), particle: ti.template(), 
+                                 LnID: ti.template(), shapefn: ti.template(), dshapefn: ti.template(), node_size: ti.template(), auxiliary_node: ti.template()):
+    for np in range(particleNum):
+        if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
+            position = particle[np].x
+            volume = particle[np].vol
+            bodyID = int(particle[np].bodyID)
+            offset = np * total_nodes
+            fex = volume * virtual_force(position)
+            fInt = volume * virtual_stress(position)
+            for ln in range(offset, offset + int(node_size[np])):
+                nodeID = LnID[ln]
+                if int(auxiliary_node[nodeID, bodyID]) == 1:
+                    dshape_fn = dshapefn[ln]
+                    external_force = shapefn[ln] * fex
+                    internal_force = vec3f([dshape_fn[0] * fInt[0] + dshape_fn[1] * fInt[3] + dshape_fn[2] * fInt[5],
+                                            dshape_fn[1] * fInt[1] + dshape_fn[0] * fInt[3] + dshape_fn[2] * fInt[4],
+                                            dshape_fn[2] * fInt[2] + dshape_fn[1] * fInt[4] + dshape_fn[0] * fInt[5]])
+                    node[nodeID, bodyID]._update_nodal_force(external_force + internal_force)
