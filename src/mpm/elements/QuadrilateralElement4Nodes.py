@@ -5,6 +5,7 @@ import taichi as ti
 
 from src.mpm.elements.QuadrilateralKernel import *
 from src.mpm.structs import HexahedronGuassCell, HexahedronCell, ParticleCPDI, IncompressibleCell
+from src.mpm.elements.ElementNodesTHB_Generate import ElemNodesGen
 from src.mpm.elements.ElementBase import ElementBase
 from src.mpm.Simulation import Simulation
 from src.utils.GaussPoint import GaussPointInRectangle
@@ -17,8 +18,8 @@ import src.utils.GlobalVariable as GlobalVariable
 
 Threshold = 1e-12
 class QuadrilateralElement4Nodes(ElementBase):
-    def __init__(self, element_type) -> None:
-        super().__init__(element_type)
+    def __init__(self, element_type, grid_level) -> None:
+        super().__init__(element_type, grid_level)
         self.grid_size = vec2f(2., 2.)
         self.igrid_size = vec2f(0.5, 0.5)
         self.start_local_coord = vec2f(-1, -1)
@@ -83,6 +84,52 @@ class QuadrilateralElement4Nodes(ElementBase):
         self.cellSum = int(self.cnum[0] * self.cnum[1])
         self.set_nodal_coords()
 
+    def create_nodes_THB(self, sims: Simulation, grid_size):
+        self.grid_size = grid_size
+        self.gnum = vec2i([int((sims.domain[i] + Threshold) / grid_size[i]) + 1 for i in range(2)]) 
+        modelRange = np.array([[0., 0.,], sims.domain])
+        modelRange = modelRange.T
+        THBparameter = sims.THBparameter
+        self.grid_layer = THBparameter['grid_layer']
+        subdomain = THBparameter['subdomain']
+        print('Debug THB information:')
+        nbNode, nbElem, ElemList, nodeList = ElemNodesGen(grid_size[0], modelRange, self.grid_layer, subdomain )
+        print(f'Numbers of Element and Node: {nbElem}, {nbNode}')
+        self.gridSum = nbNode
+        self.nodal_coords = np.array([nodeList[i].coord for i in range(1, nbNode + 1)])
+        self.Nlevel = np.array([nodeList[i].level for i in range(1, nbNode + 1)])
+        self.Ntype = np.array([nodeList[i].Ntype for i in range(1, nbNode + 1)])
+        self.ti_nodal_coords = ti.Vector.field(2, float)
+        self.ti_Nlevels = ti.field(int)
+        self.ti_Ntype = ti.field(int)
+        snode = ti.root.dense(ti.i, self.nodal_coords.shape[0])
+        snode.place(self.ti_nodal_coords)
+        snode.dense(ti.j, 2).place(self.ti_Nlevels)
+        snode.dense(ti.j, 2).place(self.ti_Ntype)
+        self.ti_nodal_coords.from_numpy(self.nodal_coords)
+        self.ti_Nlevels.from_numpy(self.Nlevel)
+        self.ti_Ntype.from_numpy(self.Ntype)
+        #print(self.ti_nodal_coords[0][0], self.ti_Nlevels[1763,0],  self.ti_Ntype[1763,0])
+        # print(self.Ntype[3802,1])
+        # Element
+        self.ElemNode = np.array([ElemList[i].includeNode[:4] for i in range(1, nbElem + 1)])
+        self.ElemList_childElem = np.array([ElemList[i].childElem for i in range(1, nbElem + 1)])
+        self.ElemList_nbInfNode = np.array([ElemList[i].nbInfNode for i in range(1, nbElem + 1)])
+        self.ElemList_influenNode = np.array([ElemList[i].influenNode for i in range(1, nbElem + 1)])
+        self.ti_elem_childElem = ti.field(int)
+        self.ti_elem_nbInfNode = ti.field(int)
+        self.ti_elem_influenNode = ti.field(int)
+        self.ti_elemNode = ti.field(int)
+        element_snode = ti.root.dense(ti.i, self.ElemNode.shape[0])
+        element_snode.place(self.ti_elem_nbInfNode)
+        element_snode.dense(ti.j, self.grid_layer).place(self.ti_elem_childElem)
+        element_snode.dense(ti.j, 25).place(self.ti_elem_influenNode)
+        element_snode.dense(ti.j, 4).place(self.ti_elemNode)
+        self.ti_elemNode.from_numpy(self.ElemNode)
+        self.ti_elem_childElem.from_numpy(self.ElemList_childElem)
+        self.ti_elem_nbInfNode.from_numpy(self.ElemList_nbInfNode)
+        self.ti_elem_influenNode.from_numpy(self.ElemList_influenNode)
+
     def set_characteristic_length(self, sims: Simulation):
         if sims.shape_function == "CPDI1" or sims.shape_function == "CPDI2":
             self.calLength = ParticleCPDI.field(shape=sims.max_particle_num)
@@ -123,11 +170,12 @@ class QuadrilateralElement4Nodes(ElementBase):
             self.flag = ti.field(int, shape=self.pse.get_length())
 
     def compute_inertia_tensor(self, shape_function_type):
-        raise RuntimeError("MLS has not been verified")
         if shape_function_type == "QuadBSpline":
-            pass
+            self.inertia_tensor[0] = 4. / (self.grid_size[1])
+            self.inertia_tensor[1] = 4. / (self.grid_size[0])
         elif shape_function_type == "CubicBSpline": 
-            pass
+            self.inertia_tensor[0] = 3. / (self.grid_size[1])
+            self.inertia_tensor[1] = 3. / (self.grid_size[0])
 
     def choose_shape_function(self, sims: Simulation):
         if sims.shape_function == "Linear":
@@ -174,23 +222,28 @@ class QuadrilateralElement4Nodes(ElementBase):
                 self.lower_grad_shape_function = GShapeLinear
 
         elif sims.shape_function == "CubicBSpline":
-            self.influenced_node = 4
-            self.grid_nodes = 16
-            self.ifnum = vec2i(4, 4)
-            
-            self.shape_function = ShapeBsplineC
-            self.grad_shape_function = GShapeBsplineC
-            if sims.stabilize == "F-Bar Method":
-                self.influenced_node_lower_order = 3
-                self.grid_nodes_lower_order = 9
-                self.lower_shape_function = ShapeBsplineQ
-                self.lower_grad_shape_function = GShapeBsplineQ
+            if not sims.isTHB:
+                self.influenced_node = 4
+                self.grid_nodes = 16
+                self.ifnum = vec2i(4, 4)
+                
+                self.shape_function = ShapeBsplineC
+                self.grad_shape_function = GShapeBsplineC
+                if sims.stabilize == "F-Bar Method":
+                    self.influenced_node_lower_order = 3
+                    self.grid_nodes_lower_order = 9
+                    self.lower_shape_function = ShapeBsplineQ
+                    self.lower_grad_shape_function = GShapeBsplineQ
+            elif sims.isTHB:
+                self.grid_nodes = 25
+                self.shape_function = ShapeBsplineC_THB
+                self.grad_shape_function = GShapeBsplineC_THB
         else:
             raise KeyError(f"The shape function type {sims.shape_function} is not exist!")
         
         if sims.mode == "Lightweight":
             GlobalVariable.INFLUENCENODE = self.influenced_node
-
+        
         self.influenced_dofs = 2 * self.grid_nodes
 
     def get_nonzero_grids_per_row(self):
@@ -217,13 +270,19 @@ class QuadrilateralElement4Nodes(ElementBase):
             
         else:
             if not sims.is_2DAxisy:
-                self.calculate = self.calc_shape_fn
-                if sims.shape_function == "QuadBSpline" or sims.shape_function == "CubicBSpline":
-                    self.calculate = self.calc_shape_fn_spline
+                if not sims.isTHB:
+                    self.calculate = self.calc_shape_fn
+                    if sims.shape_function == "QuadBSpline" or sims.shape_function == "CubicBSpline":
+                        self.calculate = self.calc_shape_fn_spline
+                elif sims.isTHB:
+                    self.calculate = self.calc_shape_fn_THB
             elif sims.is_2DAxisy:
-                self.calculate = self.calc_shape_fn_axisy
-                if sims.shape_function == "QuadBSpline" or sims.shape_function == "CubicBSpline":
-                    self.calculate = self.calc_shape_fn_spline
+                if not sims.isTHB:
+                    self.calculate = self.calc_shape_fn_axisy
+                    if sims.shape_function == "QuadBSpline" or sims.shape_function == "CubicBSpline":
+                        self.calculate = self.calc_shape_fn_spline
+                elif sims.isTHB:
+                    self.calculate = self.calc_shape_fn_THB
 
             self.LnID = ti.field(int)
             self.shape_fn = ti.field(float)
@@ -251,12 +310,20 @@ class QuadrilateralElement4Nodes(ElementBase):
 
     def get_nodal_coords(self):
         return self.nodal_coords
+    
+    def get_element_number(self, sims: Simulation):
+        if sims.shape_function == "Linear":
+            return self.cnum[0] * self.cnum[1] 
+        elif sims.shape_function == "QuadBSpline":
+            return (self.cnum[0] - 1) * (self.cnum[1] - 1) 
+        elif sims.shape_function == "CubicBSpline":
+            return (self.cnum[0] - 2) * (self.cnum[1] - 2) 
 
-    def activate_gauss_cell(self, sims: Simulation, grid_level):
+    def activate_gauss_cell(self, sims: Simulation):
         if not self.gauss_cell is None:
             print("Warning: Previous cells will be override!")
-        self.cell = HexahedronCell.field(shape=(self.get_total_cell_number(), grid_level))
-        self.gauss_cell = HexahedronGuassCell.field(shape=(self.get_total_cell_number() * sims.gauss_number ** 2, grid_level))
+        self.cell = HexahedronCell.field(shape=(self.get_total_cell_number(), self.grid_level))
+        self.gauss_cell = HexahedronGuassCell.field(shape=(self.get_total_cell_number() * sims.gauss_number ** 2, self.grid_level))
         activate_cell(self.cell)
 
     def activate_euler_cell(self):
@@ -330,9 +397,17 @@ class QuadrilateralElement4Nodes(ElementBase):
         global_update(self.grid_nodes, self.influenced_node, self.grid_size, self.igrid_size, self.gnum, particleNum[0], particle, self.calLength, 
                       self.node_size, self.LnID, self.shape_fn, self.dshape_fn, self.shape_function, self.grad_shape_function)
         
+    def calc_shape_fn_THB(self, particleNum, particle):
+        global_update_THB(self.ti_elem_nbInfNode, self.ti_elem_influenNode, self.grid_size, self.gnum, particleNum[0], particle, self.calLength, self.grid_layer, self.ti_elem_childElem,self.ti_nodal_coords, self.ti_Nlevels, self.ti_Ntype, 
+                          self.node_size, self.LnID, self.shape_fn, self.dshape_fn, self.shape_function, self.grad_shape_function)
+    
     def calc_shape_fn_axisy(self, particleNum, particle):
         global_update_2DAxisy(self.grid_nodes, self.influenced_node, self.grid_size, self.igrid_size, self.gnum, particleNum[0], particle, self.calLength, 
                               self.node_size, self.LnID, self.shape_fn, self.dshape_fn, self.shape_function_r, self.shape_function_z, self.grad_shape_function_r, self.grad_shape_function_z)
+        
+    def calc_shape_fn_axisy_THB(self, particleNum, particle):
+        global_update_2DAxisy_THB(self.ti_elem_nbInfNode, self.ti_elem_influenNode, self.grid_size, self.gnum, particleNum[0], particle, self.calLength, self.grid_layer, self.ti_elem_childElem,self.ti_nodal_coords, self.ti_Nlevels, self.ti_Ntype, 
+                          self.node_size, self.LnID, self.shape_fn, self.dshape_fn, self.shape_function, self.grad_shape_function)
 
     def calc_shape_fn_b_bar(self, particleNum, particle):
         global_updatebbar(self.grid_nodes, self.influenced_node, self.grid_size, self.igrid_size, self.gnum, particleNum[0], particle, self.calLength, 

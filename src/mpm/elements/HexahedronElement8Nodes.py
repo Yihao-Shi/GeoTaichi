@@ -17,8 +17,8 @@ import src.utils.GlobalVariable as GlobalVariable
 
 Threshold = 1e-12
 class HexahedronElement8Nodes(ElementBase):
-    def __init__(self, element_type) -> None:
-        super().__init__(element_type)
+    def __init__(self, element_type, grid_level) -> None:
+        super().__init__(element_type, grid_level)
         self.grid_size = vec3f(2., 2., 2.)
         self.igrid_size = vec3f(0.5, 0.5, 0.5)
         self.start_local_coord = vec3f(-1, -1, -1)
@@ -201,7 +201,7 @@ class HexahedronElement8Nodes(ElementBase):
         
         if sims.mode == "Lightweight":
             GlobalVariable.INFLUENCENODE = self.influenced_node
-
+        
         self.influenced_dofs = 3 * self.grid_nodes
 
     def get_nonzero_grids_per_row(self):
@@ -219,9 +219,16 @@ class HexahedronElement8Nodes(ElementBase):
             self.dshape_fn = ti.Vector.field(3, float)
             self.dshape_fnc = ti.Vector.field(3, float)
             ti.root.dense(ti.i, max_particle_num * self.grid_nodes).place(self.LnID, self.shape_fn, self.dshape_fn, self.dshape_fnc)
+            self.LnID.fill(0)
+            self.shape_fn.fill(0)
+            self.dshape_fn.fill(0)
+            self.dshape_fnc.fill(0)
         else:
             if shape_function == "QuadBSpline" or shape_function == "CubicBSpline":
-                self.calculate = self.calc_shape_fn_spline
+                if mls:
+                    self.calculate = self.calc_shape_fn_spline_without
+                else:
+                    self.calculate = self.calc_shape_fn_spline
             elif shape_function == "CPDI1" or shape_function == "CPDI2":
                 self.calculate = self.calc_shape_fn_cpdi
             elif shape_function == "SmoothLinear":
@@ -233,9 +240,14 @@ class HexahedronElement8Nodes(ElementBase):
             self.shape_fn = ti.field(float)
             if mls:
                 ti.root.dense(ti.i, max_particle_num * self.grid_nodes).place(self.LnID, self.shape_fn)
+                self.LnID.fill(0)
+                self.shape_fn.fill(0)
             else:
                 self.dshape_fn = ti.Vector.field(3, float)
                 ti.root.dense(ti.i, max_particle_num * self.grid_nodes).place(self.LnID, self.shape_fn, self.dshape_fn)
+                self.LnID.fill(0)
+                self.shape_fn.fill(0)
+                self.dshape_fn.fill(0)
         self.node_size = ti.field(ti.u8, shape=max_particle_num)
 
     def calculate_characteristic_length(self, sims: Simulation, particleNum, particle, psize):
@@ -256,11 +268,11 @@ class HexahedronElement8Nodes(ElementBase):
         elif sims.shape_function == "CPDI1" or sims.shape_function == "CPDI2":
             set_particle_characteristic_length_cpdi(particleNum, self.calLength, particle, psize)
 
-    def activate_gauss_cell(self, sims: Simulation, grid_level):
+    def activate_gauss_cell(self, sims: Simulation):
         if not self.gauss_cell is None:
             print("Warning: Previous cells will be override!")
-        self.cell = HexahedronCell.field(shape=(self.get_total_cell_number(), grid_level))
-        self.gauss_cell = HexahedronGuassCell.field(shape=(self.get_total_cell_number() * sims.gauss_number ** 3, grid_level))
+        self.cell = HexahedronCell.field(shape=(self.get_total_cell_number(), self.grid_level))
+        self.gauss_cell = HexahedronGuassCell.field(shape=(self.get_total_cell_number() * sims.gauss_number ** 3, self.grid_level))
         activate_cell(self.cell)
 
     def activate_euler_cell(self):
@@ -298,6 +310,14 @@ class HexahedronElement8Nodes(ElementBase):
     
     def get_cell_number(self):
         return self.gnum - 1
+    
+    def get_element_number(self, sims: Simulation):
+        if sims.shape_function == "Linear":
+            return self.cnum[0] * self.cnum[1] * self.cnum[2]
+        elif sims.shape_function == "QuadBSpline":
+            return (self.cnum[0] - 1) * (self.cnum[1] - 1) * (self.cnum[2] - 1)
+        elif sims.shape_function == "CubicBSpline":
+            return (self.cnum[0] - 2) * (self.cnum[1] - 2) * (self.cnum[2] - 2)
     
     def get_total_cell_number(self):
         cnum = self.get_cell_number()

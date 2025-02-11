@@ -1,10 +1,35 @@
-import numpy, math
+import numpy, math, warnings
 from copy import deepcopy
 from decimal import Decimal, ROUND_HALF_UP
 
 
 def no_operation(*args, **kwargs):
     pass
+
+def read_dict_list(input, func, is_return=False, *arg, **kwargs):
+    auxiliary = []
+    if isinstance(input, dict):
+        auxiliary.append(func(input, *arg, **kwargs))
+    elif isinstance(input, list):
+        for lst in input:
+            auxiliary.append(func(lst, *arg, **kwargs))
+    if is_return:
+        return auxiliary
+    
+def get_dataclass_to_dict(state_vars, selected_vars=None, start_index=0, end_index=-1):
+    exported_data = {}
+    if state_vars:
+        all_fields = state_vars.field_dict
+        selected_vars = selected_vars or all_fields.keys()
+        invalid_vars = set(selected_vars) - set(all_fields)
+        if invalid_vars:
+            warnings.warn(f"Field '{invalid_vars}' not found in state_vars, skipping.")
+
+        valid_vars = set(selected_vars) & set(all_fields)
+        for var in valid_vars:
+            attr_field = getattr(state_vars, var)
+            exported_data[var] = numpy.ascontiguousarray(attr_field.to_numpy()[start_index:end_index])
+    return exported_data
 
 def bounding_box(points):
     if points.ndim == 1:

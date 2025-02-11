@@ -16,7 +16,7 @@ dempm.mpm.set_configuration(
                       mode="Lightweight",
                       alphaPIC=0.001, 
                       mapping="USF", 
-                      shape_function="Linear",
+                      shape_function="QuadBSpline",
                       gravity=ti.Vector([0., 0., -9.8]))
 
 dempm.dem.set_configuration(domain=ti.Vector([230.,260.,116.6]),

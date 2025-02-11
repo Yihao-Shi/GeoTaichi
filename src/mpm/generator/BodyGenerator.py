@@ -1,11 +1,11 @@
 import numpy as np
 import taichi as ti
-import os
+import os, faiss, types
 
 from src.mpm.elements.ElementBase import ElementBase
 from src.mpm.elements.HexahedronKernel import transform_local_to_global
 from src.mpm.generator.InsertionKernel import *
-from src.mpm.materials.ConstitutiveModelBase import ConstitutiveModelBase
+from src.mpm.MaterialManager import ConstitutiveModel
 from src.mpm.SceneManager import myScene
 from src.mpm.Simulation import Simulation
 from src.utils.GaussPoint import GaussPointInRectangle, GaussPointInTriangle
@@ -129,7 +129,7 @@ class BodyGenerator(object):
     def scene_visualization(self, scene: myScene):
         start_particle = int(scene.particleNum[0]) - self.insert_particle_num[None]
         end_particle = int(scene.particleNum[0])
-        data = scene.material.get_state_vars_dict(start_particle, end_particle)
+        data = scene.material.get_state_vars_dict(start_index=start_particle, end_index=end_particle)
         position = self.particle.to_numpy()[0:self.insert_particle_num[None]]
         posx, posy, posz = np.ascontiguousarray(position[:, 0]), np.ascontiguousarray(position[:, 1]), np.ascontiguousarray(position[:, 2])
         pointsToVTK(f'MPMPackings', posx, posy, posz, data=data)
@@ -147,8 +147,8 @@ class BodyGenerator(object):
         self.insert_particle_num = ti.field(int, shape=())
 
     def check_bodyID(self, scene: myScene, bodyID):
-        if bodyID > scene.node.shape[1] - 1:
-            raise RuntimeError(f"Keyword:: /bodyID/ must be smaller than {scene.node.shape[1]}")
+        if bodyID > scene.grid_level - 1:
+            raise RuntimeError(f"Keyword:: /bodyID/ must be smaller than {scene.grid_level}")
 
     def add_body(self, scene: myScene):
         expected_total_particle_number = 0
@@ -239,8 +239,8 @@ class BodyGenerator(object):
                     kernel_add_body_2D(particles, particleNum, start_particle_num, end_particle_num, self.particle, particle_volume, bodyID, materialID, density, init_v, fix_v)
                 elif self.sims.material_type == 'TwoPhaseSingleLayer':
                     kernel_add_body_twophase2D(particles, particleNum, start_particle_num, end_particle_num, self.particle, particle_volume, bodyID, materialID, density, densityf, porosity, permeability, init_v, fix_v)
-            self.set_particle_stress(scene, materialID, region, particleNum, particle_count, particle_stress)
-            scene.push_psize(particle_count, psize)
+            self.set_particle_stress(scene, materialID, particleNum, particle_count, particle_stress, psize)
+            scene.push_psize(np.repeat([psize], particle_count, axis=0))
             print(" Body(s) Information ".center(71, '-'))
             traction = DictIO.GetAlternative(template, "Traction", {})
             self.set_traction(scene, region, particle_count, traction)
@@ -294,33 +294,13 @@ class BodyGenerator(object):
             kernel_add_body_(particles, particleNum, 0, self.insert_particle_num[None], self.particle, psize, particle_volume, bodyID, materialID, density, init_v, fix_v)
         elif self.sims.dimension == 2:
             kernel_add_body_2D(particles, particleNum, 0, self.insert_particle_num[None], self.particle, psize, particle_volume, bodyID, materialID, density, init_v, fix_v)
-        self.set_particle_stress(scene, materialID, region, particleNum, self.insert_particle_num[None], particle_stress)
-        scene.push_psize(self.insert_particle_num[None], psize)
+        self.set_particle_stress(scene, materialID, particleNum, self.insert_particle_num[None], particle_stress, psize)
+        scene.push_psize(np.repeat([psize], self.insert_particle_num[None], axis=0))
         print(" Body(s) Information ".center(71, '-'))
         traction = DictIO.GetAlternative(template, "Traction", {})
         self.set_traction(scene, region, self.insert_particle_num[None], traction)
         self.print_particle_info(nParticlesPerCell, bodyID, materialID, init_v, fix_v_str, particle_volume, self.insert_particle_num[None])
         scene.particleNum[0] += self.insert_particle_num[None]
-
-    def set_particle_stress(self, scene: myScene, materialID, region, particleNum, particle_count, particle_stress):
-        if type(particle_stress) is str:
-            stress_file = DictIO.GetAlternative(particle_stress, "File", "ParticleStress.txt")
-            stress_cloud = np.loadtxt(stress_file, unpack=True, comments='#').transpose()
-            if stress_cloud.shape[0] != particle_count:
-                raise ValueError("The length of File:: /ParticleStress/ is error!")
-            if stress_cloud.shape[1] != 6:
-                raise ValueError("The stress tensor should be transform to viogt format")
-            kernel_apply_stress_(particleNum, particleNum + particle_count, initialStress, scene.particle)
-        elif type(particle_stress) is dict:
-            gravityField = DictIO.GetAlternative(particle_stress, "GravityField", False)
-            initialStress = DictIO.GetAlternative(particle_stress, "InternalStress", vec6f([0, 0, 0, 0, 0, 0]))
-            if isinstance(initialStress, (int, float)):
-                initialStress = vec6f([float(initialStress), float(initialStress), float(initialStress), 0., 0., 0.])
-            if self.sims.material_type == "TwoPhaseSingleLayer":
-                porePressure = DictIO.GetAlternative(particle_stress, "PorePressure", 0.)
-                self.set_internal_stress(materialID, scene.material, region, scene.particle, particle_count, int(scene.particleNum[0]), gravityField, initialStress, porePressure)
-            else:
-                self.set_internal_stress(materialID, scene.material, region, scene.particle, particle_count, int(scene.particleNum[0]), gravityField, initialStress)
         
     def Generate(self, scene: myScene, region: RegionFunction, nParticlesPerCell):
         if scene.is_rectangle_cell():
@@ -344,26 +324,56 @@ class BodyGenerator(object):
             snode_tree.destroy()
         else:
             raise RuntimeError("Wrong element type!")
+        
+    def set_particle_stress(self, scene: myScene, materialID, particleNum, particle_count, particle_stress, psize):
+        if type(particle_stress) is str:
+            stress_file = DictIO.GetAlternative(particle_stress, "File", "ParticleStress.txt")
+            stress_cloud = np.loadtxt(stress_file, unpack=True, comments='#').transpose()
+            if stress_cloud.shape[0] != particle_count:
+                raise ValueError("The length of File:: /ParticleStress/ is error!")
+            if stress_cloud.shape[1] != 6:
+                raise ValueError("The stress tensor should be transform to viogt format")
+            kernel_apply_stress_from_file(particleNum, particleNum + particle_count, stress_cloud, scene.particle)
+        elif type(particle_stress) is dict:
+            gravityField = DictIO.GetAlternative(particle_stress, "GravityField", False)
+            initialStress = DictIO.GetAlternative(particle_stress, "InternalStress", vec6f([0, 0, 0, 0, 0, 0]))
+            if isinstance(initialStress, (int, float)):
+                initialStress = vec6f([float(initialStress), float(initialStress), float(initialStress), 0., 0., 0.])
+            elif isinstance(initialStress, (tuple, list)):
+                initialStress = vec6f(initialStress)
+            if self.sims.material_type == "TwoPhaseSingleLayer":
+                porePressure = DictIO.GetAlternative(particle_stress, "PorePressure", 0.)
+                self.set_internal_stress(materialID, scene.material, scene.particle, particle_count, int(scene.particleNum[0]), psize, gravityField, initialStress, porePressure)
+            else:
+                self.set_internal_stress(materialID, scene.material, scene.particle, particle_count, int(scene.particleNum[0]), psize, gravityField, initialStress)
 
-    def set_internal_stress(self, materialID, material: ConstitutiveModelBase, region: RegionFunction, particle, particle_num, init_particle_num, gravityField, initialStress, porePressure=0):
+    def set_internal_stress(self, materialID, material: ConstitutiveModel, particle, particle_num, init_particle_num, psize, gravityField, initialStress, porePressure=0):
         if gravityField and materialID >= 0:
-            k0 = material.get_lateral_coefficient(materialID)
-            if self.sims.dimension == 3:
-                top_position = region.region_size[2] + region.start_point[2]
-                if region.region_type != "Rectangle":
-                    raise ValueError("Gravity Field is only activated when region type is rectangle")
-                if not all(np.abs(np.array(self.sims.gravity) - np.array([0., 0., -9.8])) < 1e-12):
-                    raise ValueError("Gravity must be set as [0, 0, -9.8] when gravity activated")
-                density = material.matProps[materialID].density
-                kernel_apply_gravity_field_(density, init_particle_num, init_particle_num + particle_num, k0, top_position, self.sims.gravity, particle)
-            elif self.sims.dimension == 2:
-                top_position = region.region_size[1] + region.start_point[1]
-                if region.region_type != "Rectangle2D":
-                    raise ValueError("Gravity Field is only activated when region type is rectangle2D")
-                if not all(np.abs(np.array(self.sims.gravity) - np.array([0., -9.8, 0.])) < 1e-12):
-                    raise ValueError("Gravity must be set as [0, -9.8] when gravity activated")
-                density = material.matProps[materialID].density
-                kernel_apply_gravity_field_2D(density, init_particle_num, init_particle_num + particle_num, k0, top_position, self.sims.gravity, particle)
+            if np.linalg.norm(np.array(self.sims.gravity)) < 1e-12:
+                raise ValueError("Gravity must be activated")
+            
+            gravity = np.array(self.sims.gravity)
+            k0 = material.matProps[materialID].get_lateral_coefficient()
+            directions = (gravity / np.linalg.norm(gravity))[0:self.sims.dimension]
+            point_cloud = np.ascontiguousarray(self.particle.to_numpy()[init_particle_num:init_particle_num + particle_num])
+            distances = np.full(particle_num, -1.)
+
+            if isinstance(gravityField, types.FunctionType):
+                distances = gravityField(point_cloud)
+            elif isinstance(gravityField, (np.ndarray, list, tuple)):
+                distances = np.asarray(gravityField)
+            else:
+                projections = point_cloud @ -directions
+                t_max = np.max(projections)
+                distances = t_max - projections
+
+                denominator = (directions[0] / psize[0]) ** 2 + (directions[1] / psize[1]) ** 2
+                if self.sims.dimension == 3:
+                    denominator += (directions[2] / psize[2]) ** 2
+                distances += np.sqrt(1. / denominator)
+            
+            density = material.matProps[materialID].density
+            kernel_apply_gravity_field_(density, init_particle_num, init_particle_num + particle_num, k0, self.sims.gravity, distances, particle)
         
         if initialStress.n != 6:
             raise ValueError(f"The dimension of initial stress: {initialStress.n} is inconsistent with the dimension of stress vigot tensor in 3D: 6")

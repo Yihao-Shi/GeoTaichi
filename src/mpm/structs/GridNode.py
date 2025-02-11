@@ -740,6 +740,70 @@ class Nodes2D:
         pass
 
 @ti.dataclass
+class IncompressibleNodes2D:
+    m: float
+    force: vec2f
+    momentum: vec2f
+    
+    @ti.func
+    def _grid_reset(self):
+        self.m = 0.
+        self.momentum = ZEROVEC2f
+
+    @ti.func
+    def _update_nodal_mass(self, m):
+        self.m += m
+
+    @ti.func
+    def _update_nodal_momentum(self, momentum):
+        self.momentum += momentum
+
+    @ti.func
+    def _compute_nodal_velocity(self):
+        self.momentum /= self.m
+        self.force = self.momentum
+
+    @ti.func
+    def _compute_nodal_acceleration(self, dt):
+        self.force = (self.momentum - self.force) / dt[None]
+
+    @ti.func
+    def _add_gravity(self, gravity, dt):
+        self.momentum += vec2f(gravity[0], gravity[1]) * dt[None]
+
+@ti.dataclass
+class IncompressibleNodes3D:
+    m: float
+    force: vec3f
+    momentum: vec3f
+    
+    @ti.func
+    def _grid_reset(self):
+        self.m = 0.
+        self.momentum = ZEROVEC3f
+
+    @ti.func
+    def _update_nodal_mass(self, m):
+        self.m += m
+
+    @ti.func
+    def _update_nodal_momentum(self, momentum):
+        self.momentum += momentum
+
+    @ti.func
+    def _compute_nodal_velocity(self):
+        self.momentum /= self.m
+        self.force = self.momentum
+
+    @ti.func
+    def _compute_nodal_acceleration(self, dt):
+        self.force = (self.momentum - self.force) / dt[None]
+
+    @ti.func
+    def _add_gravity(self, gravity, dt):
+        self.momentum += gravity * dt[None]
+
+@ti.dataclass
 class ImplicitNodes:
     dof: int
     m: float

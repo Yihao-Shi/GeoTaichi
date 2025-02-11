@@ -43,10 +43,16 @@ class ParticleCloud2D:      # memory usage: 108B
         self.fix_v = fix_v
 
     @ti.func
-    def _add_gravity_field(self, k0, gamma):
-        self.stress[1] += float(gamma)
-        self.stress[0] += float(k0 * gamma)
-        self.stress[2] += float(k0 * gamma)
+    def _add_gravity_field(self, gamma):
+        if ti.static(self.stress.n == 6):
+            self.stress[0] += float(gamma[0, 0])
+            self.stress[1] += float(gamma[1, 1])
+            self.stress[2] += float(gamma[2, 2])
+            self.stress[3] += 0.5 * float(gamma[0, 1] + gamma[1, 0])
+            self.stress[4] += 0.5 * float(gamma[1, 2] + gamma[2, 1])
+            self.stress[5] += 0.5 * float(gamma[0, 2] + gamma[2, 0])
+        elif ti.static(self.stress.n == 3):
+            self.stress += float(gamma)
 
     @ti.func
     def _compute_external_force(self, gravity):
@@ -54,7 +60,7 @@ class ParticleCloud2D:      # memory usage: 108B
     
     @ti.func
     def _compute_internal_force(self):
-        return -self.vol * self.stress 
+        return -self.vol * self.stress
     
     @ti.func
     def _update_particle_state(self, dt, alpha, vPIC, vFLIP):
@@ -66,15 +72,98 @@ class ParticleCloud2D:      # memory usage: 108B
 
     @ti.func
     def _update_stress(self, stress):
-        self.stress += stress
-
+        if ti.static(self.stress.n == 6):
+            self.stress += stress
+        elif ti.static(self.stress.n == 3):
+            self.stress += mat3x3([stress[0], stress[3], stress[5]],
+                                  [stress[3], stress[1], stress[4]],
+                                  [stress[5], stress[4], stress[2]])
+            
     @ti.func
     def _get_mean_stress(self):
-        return 1./3. * (self.stress[0] + self.stress[1] + self.stress[2])
+        pressure = 0.
+        if ti.static(self.stress.n == 6):
+            pressure = 1./3. * (self.stress[0] + self.stress[1] + self.stress[2])
+        elif ti.static(self.stress.n == 3):
+            pressure = 1./3. * (self.stress[0, 0] + self.stress[1, 1] + self.stress[2, 2])
+        return pressure
 
     @ti.func
     def _update_rigid_body(self, dt):
         self.x += self.v * dt[None]
+    
+    @ti.func
+    def _compute_particle_velocity(self, xg):
+        return self.v - self.velocity_gradient @ (self.x - xg)
+
+@ti.dataclass
+class ParticleCloudIncompressible2D:      # memory usage: 108B
+    bodyID: ti.u8
+    materialID: ti.u8
+    active: ti.u8
+    m: float
+    vol: float
+    x: vec2f
+    v: vec2f
+    pressure: float
+    velocity_gradient: mat2x2
+    fix_v: vec2u8
+    xvelocity_gradient: vec2f
+    yvelocity_gradient: vec2f
+
+    @ti.func
+    def _restart(self, bodyID, materialID, active, mass, position, velocity, volume, stress, velocity_gradient, fix_v):
+        self.bodyID = ti.u8(bodyID)
+        self.materialID = ti.u8(materialID)
+        self.active = ti.u8(active)
+        self.m = float(mass)
+        self.x = float(position)
+        self.v = float(velocity)
+        self.vol = float(volume)
+        self.pressure = float(stress)
+        self.velocity_gradient = float(velocity_gradient)
+        self.fix_v = ti.cast(fix_v, ti.u8)
+
+    @ti.func
+    def _set_essential(self, bodyID, materialID, density, particle_volume, position, init_v, fix_v):
+        self.active = ti.u8(1)
+        self.bodyID = ti.u8(bodyID)
+        self.materialID = ti.u8(materialID)
+        self.vol = float(particle_volume)
+        self.m = float(particle_volume * density)
+        self.x = float(position)
+        self.v = init_v
+        self.fix_v = fix_v
+
+    @ti.func
+    def _add_gravity_field(self, gamma):
+        self.pressure += 1./3. * float(gamma[0, 0] + gamma[1, 1] + gamma[2, 2])
+
+    @ti.func
+    def _compute_external_force(self, gravity):
+        return self.m * vec2f(gravity[0], gravity[1]) 
+    
+    @ti.func
+    def _compute_internal_force(self):
+        pass
+    
+    @ti.func
+    def _update_particle_state(self, dt, alpha, vPIC, vFLIP):
+        v0 = self.v
+        self.v = alpha * vPIC + (1 - alpha) * (vFLIP * dt[None] + v0)
+        self.x += vPIC * dt[None]
+
+    @ti.func
+    def _update_stress(self, stress):
+        self.pressure += 1./3. * (stress[0] + stress[1] + stress[2])
+
+    @ti.func
+    def _get_mean_stress(self):
+        return self.pressure
+
+    @ti.func
+    def _update_rigid_body(self, dt):
+        pass
     
     @ti.func
     def _compute_particle_velocity(self, xg):
@@ -141,18 +230,34 @@ class ParticleCloudTwoPhase2D:      # memory usage: 108B
         self.fix_v = fix_v
 
     @ti.func
-    def _add_gravity_field(self, k0, gamma):
-        self.stress[1] += float(gamma)
-        self.stress[0] += float(k0 * gamma)
-        self.stress[2] += float(k0 * gamma)
+    def _add_gravity_field(self, gamma):
+        if ti.static(self.stress.n == 6):
+            self.stress[0] += float(gamma[0, 0])
+            self.stress[1] += float(gamma[1, 1])
+            self.stress[2] += float(gamma[2, 2])
+            self.stress[3] += 0.5 * float(gamma[0, 1] + gamma[1, 0])
+            self.stress[4] += 0.5 * float(gamma[1, 2] + gamma[2, 1])
+            self.stress[5] += 0.5 * float(gamma[0, 2] + gamma[2, 0])
+        elif ti.static(self.stress.n == 3):
+            self.stress += float(gamma)
 
     @ti.func
     def _update_stress(self, stress):
-        self.stress += stress
-
+        if ti.static(self.stress.n == 6):
+            self.stress += stress
+        elif ti.static(self.stress.n == 3):
+            self.stress += mat3x3([stress[0], stress[3], stress[5]],
+                                  [stress[3], stress[1], stress[4]],
+                                  [stress[5], stress[4], stress[2]])
+            
     @ti.func
     def _get_mean_stress(self):
-        return 1./3. * (self.stress[0] + self.stress[1] + self.stress[2])
+        pressure = 0.
+        if ti.static(self.stress.n == 6):
+            pressure = 1./3. * (self.stress[0] + self.stress[1] + self.stress[2])
+        elif ti.static(self.stress.n == 3):
+            pressure = 1./3. * (self.stress[0, 0] + self.stress[1, 1] + self.stress[2, 2])
+        return pressure
 
     @ti.func   # total, fluid?
     def _compute_external_force(self, gravity):
@@ -229,10 +334,16 @@ class ParticleCloud2DAxisy:  # memory usage: 108B
         self.fix_v = fix_v
 
     @ti.func
-    def _add_gravity_field(self, k0, gamma):
-        self.stress[1] += float(gamma)
-        self.stress[0] += float(k0 * gamma)
-        self.stress[2] += float(k0 * gamma)
+    def _add_gravity_field(self, gamma):
+        if ti.static(self.stress.n == 6):
+            self.stress[0] += float(gamma[0, 0])
+            self.stress[1] += float(gamma[1, 1])
+            self.stress[2] += float(gamma[2, 2])
+            self.stress[3] += 0.5 * float(gamma[0, 1] + gamma[1, 0])
+            self.stress[4] += 0.5 * float(gamma[1, 2] + gamma[2, 1])
+            self.stress[5] += 0.5 * float(gamma[0, 2] + gamma[2, 0])
+        elif ti.static(self.stress.n == 3):
+            self.stress += float(gamma)
 
     @ti.func
     def _compute_external_force(self, gravity):
@@ -252,11 +363,21 @@ class ParticleCloud2DAxisy:  # memory usage: 108B
 
     @ti.func
     def _update_stress(self, stress):
-        self.stress += stress
-
+        if ti.static(self.stress.n == 6):
+            self.stress += stress
+        elif ti.static(self.stress.n == 3):
+            self.stress += mat3x3([stress[0], stress[3], stress[5]],
+                                  [stress[3], stress[1], stress[4]],
+                                  [stress[5], stress[4], stress[2]])
+            
     @ti.func
     def _get_mean_stress(self):
-        return 1./3. * (self.stress[0] + self.stress[1] + self.stress[2])
+        pressure = 0.
+        if ti.static(self.stress.n == 6):
+            pressure = 1./3. * (self.stress[0] + self.stress[1] + self.stress[2])
+        elif ti.static(self.stress.n == 3):
+            pressure = 1./3. * (self.stress[0, 0] + self.stress[1, 1] + self.stress[2, 2])
+        return pressure
 
     @ti.func
     def _update_rigid_body(self, dt):
@@ -266,9 +387,59 @@ class ParticleCloud2DAxisy:  # memory usage: 108B
     def _compute_particle_velocity(self, xg):
         return self.v - self.velocity_gradient @ (self.x - xg)
 
+@ti.dataclass
+class LargeScaleParticle:
+    vol: float
+    x: vec3f
+    v: vec3f
+    stress: vec6f
+
+    @ti.func
+    def _restart(self, bodyID, materialID, active, mass, position, velocity, volume, stress, velocity_gradient, fix_v):
+        self.x = float(position)
+        self.v = float(velocity)
+        self.vol = float(volume)
+        self.stress = float(stress)
+
+    @ti.func
+    def _set_essential(self, bodyID, materialID, density, particle_volume, position, init_v, fix_v):
+        self.m = float(particle_volume * density)
+        self.x = float(position)
+        self.v = float(init_v)
+        self.vol = float(particle_volume)
+
+    @ti.func
+    def _add_gravity_field(self, gamma):
+        if ti.static(self.stress.n == 6):
+            self.stress[0] += float(gamma[0, 0])
+            self.stress[1] += float(gamma[1, 1])
+            self.stress[2] += float(gamma[2, 2])
+            self.stress[3] += 0.5 * float(gamma[0, 1] + gamma[1, 0])
+            self.stress[4] += 0.5 * float(gamma[1, 2] + gamma[2, 1])
+            self.stress[5] += 0.5 * float(gamma[0, 2] + gamma[2, 0])
+        elif ti.static(self.stress.n == 3):
+            self.stress += float(gamma)
+
+    @ti.func
+    def _update_stress(self, stress):
+        if ti.static(self.stress.n == 6):
+            self.stress += stress
+        elif ti.static(self.stress.n == 3):
+            self.stress += mat3x3([stress[0], stress[3], stress[5]],
+                                  [stress[3], stress[1], stress[4]],
+                                  [stress[5], stress[4], stress[2]])
+            
+    @ti.func
+    def _get_mean_stress(self):
+        pressure = 0.
+        if ti.static(self.stress.n == 6):
+            pressure = 1./3. * (self.stress[0] + self.stress[1] + self.stress[2])
+        elif ti.static(self.stress.n == 3):
+            pressure = 1./3. * (self.stress[0, 0] + self.stress[1, 1] + self.stress[2, 2])
+        return pressure
 
 @ti.dataclass
-class ParticleCloud:      # memory usage: 108B
+class ParticleCloud:      
     bodyID: ti.u8
     materialID: ti.u8
     active: ti.u8
@@ -305,10 +476,16 @@ class ParticleCloud:      # memory usage: 108B
         self.fix_v = fix_v
 
     @ti.func
-    def _add_gravity_field(self, k0, gamma):
-        self.stress[2] += float(gamma)
-        self.stress[0] += float(k0 * gamma)
-        self.stress[1] += float(k0 * gamma)
+    def _add_gravity_field(self, gamma):
+        if ti.static(self.stress.n == 6):
+            self.stress[0] += float(gamma[0, 0])
+            self.stress[1] += float(gamma[1, 1])
+            self.stress[2] += float(gamma[2, 2])
+            self.stress[3] += 0.5 * float(gamma[0, 1] + gamma[1, 0])
+            self.stress[4] += 0.5 * float(gamma[1, 2] + gamma[2, 1])
+            self.stress[5] += 0.5 * float(gamma[0, 2] + gamma[2, 0])
+        elif ti.static(self.stress.n == 3):
+            self.stress += float(gamma)
 
     @ti.func
     def _compute_external_force(self, gravity):
@@ -328,11 +505,21 @@ class ParticleCloud:      # memory usage: 108B
 
     @ti.func
     def _update_stress(self, stress):
-        self.stress += stress
-
+        if ti.static(self.stress.n == 6):
+            self.stress += stress
+        elif ti.static(self.stress.n == 3):
+            self.stress += mat3x3([stress[0], stress[3], stress[5]],
+                                  [stress[3], stress[1], stress[4]],
+                                  [stress[5], stress[4], stress[2]])
+            
     @ti.func
     def _get_mean_stress(self):
-        return 1./3. * (self.stress[0] + self.stress[1] + self.stress[2])
+        pressure = 0.
+        if ti.static(self.stress.n == 6):
+            pressure = 1./3. * (self.stress[0] + self.stress[1] + self.stress[2])
+        elif ti.static(self.stress.n == 3):
+            pressure = 1./3. * (self.stress[0, 0] + self.stress[1, 1] + self.stress[2, 2])
+        return pressure
 
     @ti.func
     def _update_rigid_body(self, dt):
@@ -344,28 +531,14 @@ class ParticleCloud:      # memory usage: 108B
 
 
 @ti.dataclass
-class ParticleFBar:
-    jacobian: float
-    djacobian: float
-
-    @ti.func
-    def initialize(self):
-        self.jacobian = 1.
-        self.djacobian = 0.
-
-
-@ti.dataclass
 class ParticleCoupling:      # memory usage: 108B
     bodyID: ti.u8
     materialID: ti.u8
     active: ti.u8
-    free_surface: ti.u8
     coupling: ti.u8
     m: float
     vol: float
     rad: float
-    mass_density: float
-    normal: vec3f
     x: vec3f
     verletDisp: vec3f
     v: vec3f
@@ -375,13 +548,10 @@ class ParticleCoupling:      # memory usage: 108B
     fix_v: vec3u8
 
     @ti.func
-    def _restart(self, bodyID, materialID, active, free_surface, normal, mass, position, velocity, volume, 
-                 stress, velocity_gradient, fix_v):
+    def _restart(self, bodyID, materialID, active, mass, position, velocity, volume, stress, velocity_gradient, fix_v):
         self.bodyID = ti.u8(bodyID)
         self.materialID = ti.u8(materialID)
         self.active = ti.u8(active)
-        self.free_surface = ti.u8(free_surface)
-        self.normal = float(normal)
         self.m = float(mass)
         self.x = float(position)
         self.v = float(velocity)
@@ -404,10 +574,16 @@ class ParticleCoupling:      # memory usage: 108B
         self.fix_v = fix_v
 
     @ti.func
-    def _add_gravity_field(self, k0, gamma):
-        self.stress[2] += float(gamma)
-        self.stress[0] += float(k0 * gamma)
-        self.stress[1] += float(k0 * gamma)
+    def _add_gravity_field(self, gamma):
+        if ti.static(self.stress.n == 6):
+            self.stress[0] += float(gamma[0, 0])
+            self.stress[1] += float(gamma[1, 1])
+            self.stress[2] += float(gamma[2, 2])
+            self.stress[3] += 0.5 * float(gamma[0, 1] + gamma[1, 0])
+            self.stress[4] += 0.5 * float(gamma[1, 2] + gamma[2, 1])
+            self.stress[5] += 0.5 * float(gamma[0, 2] + gamma[2, 0])
+        elif ti.static(self.stress.n == 3):
+            self.stress += float(gamma)
 
     @ti.func
     def _reset_contact_force(self):
@@ -437,11 +613,21 @@ class ParticleCoupling:      # memory usage: 108B
     
     @ti.func
     def _update_stress(self, stress):
-        self.stress += stress
-
+        if ti.static(self.stress.n == 6):
+            self.stress += stress
+        elif ti.static(self.stress.n == 3):
+            self.stress += mat3x3([stress[0], stress[3], stress[5]],
+                                  [stress[3], stress[1], stress[4]],
+                                  [stress[5], stress[4], stress[2]])
+            
     @ti.func
     def _get_mean_stress(self):
-        return 1./3. * (self.stress[0] + self.stress[1] + self.stress[2])
+        pressure = 0.
+        if ti.static(self.stress.n == 6):
+            pressure = 1./3. * (self.stress[0] + self.stress[1] + self.stress[2])
+        elif ti.static(self.stress.n == 3):
+            pressure = 1./3. * (self.stress[0, 0] + self.stress[1, 1] + self.stress[2, 2])
+        return pressure
 
     @ti.func
     def _update_rigid_body(self, dt):
@@ -480,13 +666,10 @@ class ImplicitParticleCoupling:
     bodyID: ti.u8
     materialID: ti.u8
     active: ti.u8
-    free_surface: ti.u8
     coupling: ti.u8
     m: float
     vol: float
     rad: float
-    mass_density: float
-    normal: vec3f
     x: vec3f
     a: vec3f
     verletDisp: vec3f
@@ -497,13 +680,10 @@ class ImplicitParticleCoupling:
     fix_v: vec3u8
 
     @ti.func
-    def _restart(self, bodyID, materialID, active, free_surface, normal, mass, position, velocity, volume, 
-                 stress, velocity_gradient, fix_v):
+    def _restart(self, bodyID, materialID, active, mass, position, velocity, volume, stress, velocity_gradient, fix_v):
         self.bodyID = ti.u8(bodyID)
         self.materialID = ti.u8(materialID)
         self.active = ti.u8(active)
-        self.free_surface = ti.u8(free_surface)
-        self.normal = float(normal)
         self.m = float(mass)
         self.x = float(position)
         self.v = float(velocity)
@@ -526,18 +706,34 @@ class ImplicitParticleCoupling:
         self.fix_v = fix_v
 
     @ti.func
-    def _add_gravity_field(self, k0, gamma):
-        self.stress[2] += float(gamma)
-        self.stress[0] += float(k0 * gamma)
-        self.stress[1] += float(k0 * gamma)
+    def _add_gravity_field(self, gamma):
+        if ti.static(self.stress.n == 6):
+            self.stress[0] += float(gamma[0, 0])
+            self.stress[1] += float(gamma[1, 1])
+            self.stress[2] += float(gamma[2, 2])
+            self.stress[3] += 0.5 * float(gamma[0, 1] + gamma[1, 0])
+            self.stress[4] += 0.5 * float(gamma[1, 2] + gamma[2, 1])
+            self.stress[5] += 0.5 * float(gamma[0, 2] + gamma[2, 0])
+        elif ti.static(self.stress.n == 3):
+            self.stress += float(gamma)
 
     @ti.func
     def _update_stress(self, stress):
-        self.stress += stress
-
+        if ti.static(self.stress.n == 6):
+            self.stress += stress
+        elif ti.static(self.stress.n == 3):
+            self.stress += mat3x3([stress[0], stress[3], stress[5]],
+                                  [stress[3], stress[1], stress[4]],
+                                  [stress[5], stress[4], stress[2]])
+            
     @ti.func
     def _get_mean_stress(self):
-        return 1./3. * (self.stress[0] + self.stress[1] + self.stress[2])
+        pressure = 0.
+        if ti.static(self.stress.n == 6):
+            pressure = 1./3. * (self.stress[0] + self.stress[1] + self.stress[2])
+        elif ti.static(self.stress.n == 3):
+            pressure = 1./3. * (self.stress[0, 0] + self.stress[1, 1] + self.stress[2, 2])
+        return pressure
 
     @ti.func
     def _reset_contact_force(self):
@@ -611,10 +807,11 @@ class ImplicitParticle:
     a: vec3f
     stress: vec6f
     stress0: vec6f
+    velocity_gradient: mat3x3
     fix_v: vec3u8
 
     @ti.func
-    def _restart(self, bodyID, materialID, active, mass, position, velocity, volume, stress, fix_v):
+    def _restart(self, bodyID, materialID, active, mass, position, velocity, volume, stress, velocity_gradient, fix_v):
         self.bodyID = ti.u8(bodyID)
         self.materialID = ti.u8(materialID)
         self.active = ti.u8(active)
@@ -625,6 +822,7 @@ class ImplicitParticle:
         self.vol0 = float(volume)
         self.stress = float(stress)
         self.stress0 = float(stress)
+        self.velocity_gradient = float(velocity_gradient)
         self.fix_v = ti.cast(fix_v, ti.u8)
 
     @ti.func
@@ -640,19 +838,35 @@ class ImplicitParticle:
         self.fix_v = fix_v
 
     @ti.func
-    def _add_gravity_field(self, k0, gamma):
-        self.stress[2] += float(gamma)
-        self.stress[0] += float(k0 * gamma)
-        self.stress[1] += float(k0 * gamma)
+    def _add_gravity_field(self, gamma):
+        if ti.static(self.stress.n == 6):
+            self.stress[0] += float(gamma[0, 0])
+            self.stress[1] += float(gamma[1, 1])
+            self.stress[2] += float(gamma[2, 2])
+            self.stress[3] += 0.5 * float(gamma[0, 1] + gamma[1, 0])
+            self.stress[4] += 0.5 * float(gamma[1, 2] + gamma[2, 1])
+            self.stress[5] += 0.5 * float(gamma[0, 2] + gamma[2, 0])
+        elif ti.static(self.stress.n == 3):
+            self.stress += float(gamma)
         self.stress0 = self.stress
 
     @ti.func
     def _update_stress(self, stress):
-        self.stress += stress
-
+        if ti.static(self.stress.n == 6):
+            self.stress += stress
+        elif ti.static(self.stress.n == 3):
+            self.stress += mat3x3([stress[0], stress[3], stress[5]],
+                                  [stress[3], stress[1], stress[4]],
+                                  [stress[5], stress[4], stress[2]])
+            
     @ti.func
     def _get_mean_stress(self):
-        return 1./3. * (self.stress[0] + self.stress[1] + self.stress[2])
+        pressure = 0.
+        if ti.static(self.stress.n == 6):
+            pressure = 1./3. * (self.stress[0] + self.stress[1] + self.stress[2])
+        elif ti.static(self.stress.n == 3):
+            pressure = 1./3. * (self.stress[0, 0] + self.stress[1, 1] + self.stress[2, 2])
+        return pressure
 
     @ti.func
     def _compute_external_force(self, gravity):
@@ -692,13 +906,13 @@ class ImplicitParticle2D:
     x: vec2f
     v: vec2f
     a: vec2f
-    traction: vec2f
     stress: vec6f
     stress0: vec6f
+    velocity_gradient: mat2x2
     fix_v: vec2u8
 
     @ti.func
-    def _restart(self, bodyID, materialID, active, mass, position, velocity, volume, traction, stress, fix_v):
+    def _restart(self, bodyID, materialID, active, mass, position, velocity, volume, stress, velocity_gradient, fix_v):
         self.bodyID = ti.u8(bodyID)
         self.materialID = ti.u8(materialID)
         self.active = ti.u8(active)
@@ -707,9 +921,9 @@ class ImplicitParticle2D:
         self.v = float(velocity)
         self.vol = float(volume)
         self.vol0 = float(volume)
-        self.traction = float(traction) 
         self.stress = float(stress)
         self.stress0 = float(stress)
+        self.velocity_gradient = float(velocity_gradient)
         self.fix_v = ti.cast(fix_v, ti.u8)
 
     @ti.func
@@ -725,20 +939,36 @@ class ImplicitParticle2D:
         self.fix_v = fix_v
 
     @ti.func
-    def _add_gravity_field(self, k0, gamma):
-        self.stress[1] += float(gamma)
-        self.stress[0] += float(k0 * gamma)
-        self.stress[2] += float(k0 * gamma)
+    def _add_gravity_field(self, gamma):
+        if ti.static(self.stress.n == 6):
+            self.stress[0] += float(gamma[0, 0])
+            self.stress[1] += float(gamma[1, 1])
+            self.stress[2] += float(gamma[2, 2])
+            self.stress[3] += 0.5 * float(gamma[0, 1] + gamma[1, 0])
+            self.stress[4] += 0.5 * float(gamma[1, 2] + gamma[2, 1])
+            self.stress[5] += 0.5 * float(gamma[0, 2] + gamma[2, 0])
+        elif ti.static(self.stress.n == 3):
+            self.stress += float(gamma)
         self.stress0 = self.stress
 
     @ti.func
     def _update_stress(self, stress):
-        self.stress += stress
+        if ti.static(self.stress.n == 6):
+            self.stress += stress
+        elif ti.static(self.stress.n == 3):
+            self.stress += mat3x3([stress[0], stress[3], stress[5]],
+                                  [stress[3], stress[1], stress[4]],
+                                  [stress[5], stress[4], stress[2]])
         self.stress0 = self.stress
 
     @ti.func
     def _get_mean_stress(self):
-        return 1./3. * (self.stress[0] + self.stress[1] + self.stress[2])
+        pressure = 0.
+        if ti.static(self.stress.n == 6):
+            pressure = 1./3. * (self.stress[0] + self.stress[1] + self.stress[2])
+        elif ti.static(self.stress.n == 3):
+            pressure = 1./3. * (self.stress[0, 0] + self.stress[1, 1] + self.stress[2, 2])
+        return pressure
 
     @ti.func
     def _set_particle_traction(self, traction):
@@ -783,3 +1013,74 @@ class ParticleCPDI:
         self.r0 = deformation_gradient @ self.r0
         self.r1 = deformation_gradient @ self.r1
         self.r2 = deformation_gradient @ self.r2
+
+@ti.dataclass
+class ParticleCloudIncompressible3D:      # memory usage: 108B
+    bodyID: ti.u8
+    materialID: ti.u8
+    active: ti.u8
+    m: float
+    vol: float
+    x: vec3f
+    v: vec3f
+    pressure: float
+    velocity_gradient: mat3x3
+    fix_v: vec3u8
+
+    @ti.func
+    def _restart(self, bodyID, materialID, active, mass, position, velocity, volume, stress, velocity_gradient, fix_v):
+        self.bodyID = ti.u8(bodyID)
+        self.materialID = ti.u8(materialID)
+        self.active = ti.u8(active)
+        self.m = float(mass)
+        self.x = float(position)
+        self.v = float(velocity)
+        self.vol = float(volume)
+        self.pressure = float(stress)
+        self.velocity_gradient = float(velocity_gradient)
+        self.fix_v = ti.cast(fix_v, ti.u8)
+
+    @ti.func
+    def _set_essential(self, bodyID, materialID, density, particle_volume, position, init_v, fix_v):
+        self.active = ti.u8(1)
+        self.bodyID = ti.u8(bodyID)
+        self.materialID = ti.u8(materialID)
+        self.vol = float(particle_volume)
+        self.m = float(particle_volume * density)
+        self.x = float(position)
+        self.v = init_v
+        self.fix_v = fix_v
+
+    @ti.func
+    def _add_gravity_field(self, gamma):
+        self.pressure += 1./3. * float(gamma[0, 0] + gamma[1, 1] + gamma[2, 2])
+
+    @ti.func
+    def _compute_external_force(self, gravity):
+        return self.m * gravity
+    
+    @ti.func
+    def _compute_internal_force(self):
+        pass
+    
+    @ti.func
+    def _update_particle_state(self, dt, alpha, vPIC, vFLIP):
+        v0 = self.v
+        self.v = alpha * vPIC + (1 - alpha) * (vFLIP * dt[None] + v0)
+        self.x += vPIC * dt[None]
+
+    @ti.func
+    def _update_stress(self, stress):
+        self.pressure += 1./3. * (stress[0] + stress[1] + stress[2])
+
+    @ti.func
+    def _get_mean_stress(self):
+        return self.pressure
+
+    @ti.func
+    def _update_rigid_body(self, dt):
+        pass
+    
+    @ti.func
+    def _compute_particle_velocity(self, xg):
+        return self.v - self.velocity_gradient @ (self.x - xg)

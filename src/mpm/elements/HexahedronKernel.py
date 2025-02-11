@@ -537,13 +537,13 @@ def set_active_dofs(gridSum: int, cutoff: float, node: ti.template(), flag: ti.t
 @ti.func
 def get_boundary_type(grid_id, gnum, boundary_1, boundary_2, boundary1, boundary2):
     btype = 0
-    if grid_id - 1 < 0 or boundary_1 == -2:
+    if (grid_id - 1 < 0 or boundary_1 == -2) and grid_id < 0.5 * gnum:
         btype = 1
-    elif grid_id - 2 < 0 or boundary_2 == -1:
+    elif grid_id - 2 < 0 or boundary_2 == -1 and grid_id < 0.5 * gnum:
         btype = 2
-    elif grid_id + 1 >= gnum or boundary1 == 2:
+    elif grid_id + 1 >= gnum or boundary1 == 2 and grid_id >= 0.5 * gnum:
         btype = 4
-    elif grid_id + 2 >= gnum or boundary2 == 1:
+    elif grid_id + 2 >= gnum or boundary2 == 1 and grid_id >= 0.5 * gnum:
         btype = 3
     return btype
 
@@ -566,9 +566,9 @@ def kernel_set_boundary_type(gridSum: int, grid_level: int, gnum: ti.types.vecto
                 ytype = 4
             else:
                 ytype = get_boundary_type(Ind[1], gnum[1], -boundary_flag[int(i // gridSum) * gridSum + linearize(Ind, gnum)]-boundary_flag[int(i // gridSum) * gridSum + linearize(Ind + vec3i(0, -1, 0), gnum)], 
-                                                        -boundary_flag[int(i // gridSum) * gridSum + linearize(Ind + vec3i(0, -1, 0), gnum)], 
-                                                        boundary_flag[int(i // gridSum) * gridSum + linearize(Ind, gnum)]+boundary_flag[int(i // gridSum) * gridSum + linearize(Ind + vec3i(0, 1, 0), gnum)], 
-                                                        boundary_flag[int(i // gridSum) * gridSum + linearize(Ind + vec3i(0, 1, 0), gnum)])
+                                                           -boundary_flag[int(i // gridSum) * gridSum + linearize(Ind + vec3i(0, -1, 0), gnum)], 
+                                                           boundary_flag[int(i // gridSum) * gridSum + linearize(Ind, gnum)]+boundary_flag[int(i // gridSum) * gridSum + linearize(Ind + vec3i(0, 1, 0), gnum)], 
+                                                           boundary_flag[int(i // gridSum) * gridSum + linearize(Ind + vec3i(0, 1, 0), gnum)])
             if Ind[2] - 1 < 0:
                 ztype = 1
             elif Ind[2] + 1 >= gnum[2]:

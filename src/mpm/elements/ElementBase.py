@@ -6,11 +6,13 @@ from src.utils.linalg import round32
 
 
 class ElementBase(object):
-    def __init__(self, element_type) -> None:
+    def __init__(self, element_type, grid_level) -> None:
         self.multi_grids = None
         self.resolution = 0.1
         self.gridSum = 0
+        self.cellSum = 0
         self.gnum = [0, 0, 0]
+        self.cnum = [0, 0, 0]
 
         self.boundary_type = None
         self.boundary_flag = None
@@ -18,6 +20,7 @@ class ElementBase(object):
         self.nodal_coords = None
         self.ti_nodal_coords = None
         self.element_type = element_type
+        self.grid_level = grid_level
 
     def calculate_basis_function(self, sims: Simulation, grid_level):
         if sims.shape_function == "QuadBSpline" or sims.shape_function == "CubicBSpline":
@@ -37,6 +40,9 @@ class ElementBase(object):
         raise NotImplementedError
     
     def get_nodal_coords(self):
+        raise NotImplementedError
+    
+    def get_element_number(self):
         raise NotImplementedError
 
     def calc_total_particle(self, *args):

@@ -1,5 +1,6 @@
 import taichi as ti
 
+from src.utils.constants import DBL_EPSILON
 from src.utils.TypeDefination import vec2f, vec3f, vec6f, vec3u8, mat3x3
 from src.utils.Quaternion import RodriguesRotationMatrix, RotationMatrix2D
 
@@ -44,28 +45,23 @@ def kernel_position_rotate_2D(target: ti.types.vector(2, float), offset: ti.type
         body_coords[nb, 1] = coords[1]
 
 @ti.kernel
-def kernel_apply_gravity_field_(density: float, start: int, end: int, k0: float, top_pos: float, gravity: ti.types.vector(3, float), particle: ti.template()):
+def kernel_apply_gravity_field_(density: float, start: int, end: int, k0: float, gravity: ti.types.vector(3, float), distance: ti.types.ndarray(), particle: ti.template()):
     for np in range(start, end):
         materialID = particle[np].materialID
         if materialID > 0:
-            gamma = -(particle[np].x[2] - top_pos) * density * gravity[2]
-            particle[np]._add_gravity_field(k0, gamma)
+            direction = gravity.normalized()
+            gamma = -distance[np] * density * gravity.norm()
+            initial_gravity_stress = mat3x3([k0 * gamma, 0., 0.],
+                                            [0., k0 * gamma, 0.],
+                                            [0., 0., gamma])
+            rotation_matrix = RodriguesRotationMatrix(direction, vec3f(0., 0., 1.))
+            gravity_field = rotation_matrix.transpose() @ initial_gravity_stress @ rotation_matrix
+            particle[np]._add_gravity_field(gravity_field)
 
 @ti.kernel
-def kernel_apply_gravity_field_2D(density: float, start: int, end: int, k0: float, top_pos: float, gravity: ti.types.vector(2, float), particle: ti.template()):
+def kernel_apply_stress_from_file(start: int, end: int, stress_field: ti.types.ndarray(), particle: ti.template()):
     for np in range(start, end):
-        materialID = particle[np].materialID
-        if materialID > 0:
-            gamma = -(particle[np].x[1] - top_pos) * density * gravity[1]
-            particle[np]._add_gravity_field(k0, gamma)
-
-@ti.kernel
-def kernel_apply_stress_(start: int, end: int, stress_field: ti.types.matrix(3, 3, float), particle: ti.template()):
-    for np in range(start, end):
-        particle[np]._update_stress(vec6f(stress_field[0, 0], stress_field[1, 1], stress_field[2, 2], 
-                                     0.5 * (stress_field[0, 1] + stress_field[1, 0]), 
-                                     0.5 * (stress_field[1, 2] + stress_field[2, 1]), 
-                                     0.5 * (stress_field[0, 2] + stress_field[2, 0])))
+        particle[np]._update_stress(vec6f(stress_field[np, 0], stress_field[np, 1], stress_field[np, 2], stress_field[np, 3], stress_field[np, 4], stress_field[np, 5]))
 
 @ti.kernel
 def kernel_apply_vigot_stress_(start: int, end: int, stress_field: ti.types.vector(6, float), particle: ti.template()):
@@ -121,7 +117,7 @@ def get_particle_offset3D(np, pnum):
 @ti.kernel
 def kernel_place_particles_(grid_size: ti.types.vector(3, float), igrid_size: ti.types.vector(3, float), start_point: ti.types.vector(3, float), region_size: ti.types.vector(3, float), new_particle_num: int, npic: int,
                             particle: ti.template(), insert_particle_num: ti.template(), is_in_region: ti.template()):
-    pnum = int(region_size * npic / grid_size)
+    pnum = int(region_size * npic * igrid_size + DBL_EPSILON * grid_size / npic)                                              # for numerical error
     ti.loop_config(serialize=True)
     for np in range(new_particle_num):
         ip = (np % (pnum[0] * pnum[1])) % pnum[0]
@@ -135,7 +131,7 @@ def kernel_place_particles_(grid_size: ti.types.vector(3, float), igrid_size: ti
 @ti.kernel
 def kernel_place_particles_2D(grid_size: ti.types.vector(2, float), igrid_size: ti.types.vector(2, float), start_point: ti.types.vector(2, float), region_size: ti.types.vector(2, float), new_particle_num: int, npic: int,
                               particle: ti.template(), insert_particle_num: ti.template(), is_in_region: ti.template()):
-    pnum = int(region_size * npic / grid_size)
+    pnum = int(region_size * npic * igrid_size + DBL_EPSILON * grid_size / npic)
     ti.loop_config(serialize=True)
     for np in range(new_particle_num):
         ip = np % pnum[0]

@@ -5,6 +5,7 @@ from src.utils.constants import DELTA2D, DELTA
 from src.utils.MatrixFunction import matrix_form
 from src.utils.TypeDefination import mat3x3
 from src.utils.VectorFunction import voigt_form
+import src.utils.GlobalVariable as GlobalVariables
 
 
 @ti.dataclass
@@ -104,30 +105,19 @@ class LinearElasticModel:
         return 1. + dt[None] * (strain_rate[0] + strain_rate[1] + strain_rate[2])
     
     @ti.func    # two phase
-    def update_particle_porosity(self, np, velocity_gradient, stateVars, particle, dt):
-        particle[np].porosity = 1.0 - (1.0 - particle[np].porosity) / (DELTA + velocity_gradient * dt[None]).determinant()
+    def update_particle_porosity(self, velocity_gradient, porosity, dt):
+        return 1.0 - (1.0 - porosity) / (ti.Matrix.identity(float, GlobalVariables.DIMENSION) + velocity_gradient * dt[None]).determinant()
 
     @ti.func    # two phase
-    def ComputePressure(self, np, velocity_gradients, velocity_gradientf, stateVars, particle, dt):
-        vs = ((DELTA + velocity_gradients * dt[None]).determinant() - 1.0)
-        vf = ((DELTA + velocity_gradientf * dt[None]).determinant() - 1.0)
+    def ComputePressure(self, velocity_gradients, velocity_gradientf, porosity, dt):
+        vs = ((ti.Matrix.identity(float, GlobalVariables.DIMENSION) + velocity_gradients * dt[None]).determinant() - 1.0)
+        vf = ((ti.Matrix.identity(float, GlobalVariables.DIMENSION) + velocity_gradientf * dt[None]).determinant() - 1.0)
         Kf = self.fluid_bulk
-        particle[np].pressure -= Kf/particle[np].porosity * ( (1.0-particle[np].porosity)*vs + particle[np].porosity * vf)
-
+        return Kf / porosity * ( (1.0 - porosity)*vs + porosity * vf)
+        
     @ti.func    # two phase
-    def update_particle_porosity_2D(self, np, velocity_gradient, stateVars, particle, dt):
-        particle[np].porosity = 1.0 - (1.0 - particle[np].porosity) / (DELTA2D + velocity_gradient * dt[None]).determinant()
-
-    @ti.func    # two phase
-    def ComputePressure2D(self, np, velocity_gradients, velocity_gradientf, stateVars, particle, dt):
-        vs = ((DELTA2D + velocity_gradients * dt[None]).determinant() - 1.0)
-        vf = ((DELTA2D + velocity_gradientf * dt[None]).determinant() - 1.0)
-        Kf = self.fluid_bulk
-        particle[np].pressure -= Kf/particle[np].porosity * ( (1.0-particle[np].porosity)*vs + particle[np].porosity * vf)
-
-    @ti.func    # two phase
-    def update_particle_massf(self, np, stateVars, particle):
-        particle[np].mf = particle[np].vol * particle[np].porosity * self.fluid_density
+    def update_particle_fluid_mass(self, pvolume, porosity):
+        return pvolume * porosity * self.fluid_density
 
     @ti.func
     def PK2CauchyStress(self, np, stateVars):

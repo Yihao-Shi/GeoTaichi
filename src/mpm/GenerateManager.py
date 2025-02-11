@@ -70,10 +70,10 @@ class GenerateManager(object):
             generator.finalize()
 
     def add_polygons(self, body_dict, sims: Simulation, scene: myScene):
-        if scene.contact_parameter is None:
+        if scene.contact is None:
             raise RuntimeError("The contact attribute must be added first")
         if sims.contact_detection == "DEMContact":
             generator = BodyReader(sims)
-            generator.set_polygons(scene.contact_parameter, body_dict)
+            generator.set_polygons(scene.contact, body_dict)
         else:
             raise RuntimeError(f"The polygon only supports for DEMContact. Current contact type is {sims.contact_detection}")

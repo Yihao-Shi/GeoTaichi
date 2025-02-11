@@ -142,7 +142,7 @@ class NeighborBase(object):
     
     def digital_elevation_neighbor_facet(self): # digital elevation model
         digital_elevation_grid_number = self.sims.max_digital_elevation_grid_number
-        self.digital_wall = ti.field(int, shape=int((digital_elevation_grid_number[0] - 1) * (digital_elevation_grid_number[1] - 1)))
+        self.digital_wall = ti.field(int, shape=int((digital_elevation_grid_number[0] - 1) * (digital_elevation_grid_number[1] - 1) + 1))
 
     def place_digital_elevation_facet(self, scene: myScene):
         insert_digital_elevation_facet_(scene.digital_elevation.idigital_size, int(scene.wallNum[0]), scene.digital_elevation.digital_dim, scene.wall, self.digital_wall)

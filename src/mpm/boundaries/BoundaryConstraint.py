@@ -190,7 +190,7 @@ class BoundaryConstraints(object):
     
     def build_constraint_dict(self, values, *args):
         keys = np.array(np.meshgrid(*args)).T.reshape(-1, len(args))
-        values_repeated = np.tile(values, len(args[0]))
+        values_repeated = np.tile(values, len(args[-1]) * len(args[0]))
         return dict(zip(map(tuple, keys), values_repeated))
     
     def set_velocity_constraints(self, sims: Simulation, boundary, level, nlevel, start_point, end_point, inodes):

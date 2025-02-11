@@ -187,7 +187,7 @@ class ModifiedCamClayModel:
     def ComputePlasticModulus(self, p, pc, void_ratio):
         dfdpvstrain = self.ComputeDfDstateV(p, pc, void_ratio)
         r_func = self.ComputeRFunction(p, pc)
-        return dfdpvstrain * r_func
+        return -dfdpvstrain * r_func
     
     @ti.func
     def ComputeVoidRatio(self, p, pc):
@@ -296,8 +296,62 @@ class ModifiedCamClayModel:
         ############################## STEP1 ##############################
         de = calculate_strain_increment(-velocity_gradient, dt)
         dw = calculate_vorticity_increment(velocity_gradient, dt)
-        previous_stress = self.ExplicitIntegration(np, -previous_stress, de, dw, stateVars)
+        previous_stress = self.ImplicitIntegration(np, -previous_stress, de, dw, stateVars)
         return previous_stress
+    
+    @ti.func
+    def ImplicitIntegration(self, np, previous_stress, de, dw, stateVars):
+        void_ratio = stateVars[np].void_ratio
+        pc = stateVars[np].pc
+
+        bulk_modulus, shear_modulus = self.ComputeElasticModulus(MeanStress(previous_stress), void_ratio)
+
+        # !---- trial elastic stresses ----!
+        trial_stress = self.ComputeElasticStress(1., de, previous_stress, void_ratio)
+
+        # !---- compute trial stress invariants ----!
+        update_stress = trial_stress
+        yield_state_trial, f_function_trial = self.ComputeYieldState(trial_stress, pc)
+        
+        dpc, depstrain = 0., 0.
+        if yield_state_trial > 0:
+            Tolerance = 1e-1
+        
+            yield_state, f_function = self.ComputeYieldState(previous_stress, pc)
+            if ti.abs(f_function) > Tolerance or yield_state == 0:
+                p_trial, q_trial = self.ComputeStressInvariants(trial_stress)
+                bulk_modulus, shear_modulus = self.ComputeElasticModulus(p_trial, void_ratio)
+                df_dp_trial, _, df_dsigma_trial = self.ComputeDfDsigma(p_trial, q_trial, pc, trial_stress)
+                Kp = self.ComputePlasticModulus(p_trial, pc, void_ratio)
+                tempMat = ElasticTensorMultiplyVector(df_dsigma_trial, bulk_modulus, shear_modulus)
+                dfdsigmaDedgdsigma = voigt_tensor_dot(df_dsigma_trial, tempMat) - Kp
+                abeta = 1. / dfdsigmaDedgdsigma if ti.abs(dfdsigmaDedgdsigma) > Threshold else 0.
+                dlambda_trail = voigt_tensor_dot(tempMat, df_dsigma_trial) * abeta
+                update_stress -= dlambda_trail * tempMat
+                depstrain = dlambda_trail * df_dp_trial
+                dpc = self.ComputeInternalVariableIncrement(void_ratio, pc, depstrain)
+            else:
+                p, q = self.ComputeStressInvariants(previous_stress)
+                bulk_modulus, shear_modulus = self.ComputeElasticModulus(p, void_ratio)
+                df_dp, _, df_dsigma = self.ComputeDfDsigma(p, q, pc, previous_stress)
+                Kp = self.ComputePlasticModulus(p, pc, void_ratio)
+                tempMat = ElasticTensorMultiplyVector(df_dsigma, bulk_modulus, shear_modulus)
+                dfdsigmaDedgdsigma = voigt_tensor_dot(df_dsigma, tempMat) - Kp
+                abeta = 1. / dfdsigmaDedgdsigma if ti.abs(dfdsigmaDedgdsigma) > Threshold else 0.
+                dlambda = voigt_tensor_dot(tempMat, df_dsigma) * abeta
+                update_stress -= dlambda * tempMat
+                depstrain = dlambda * df_dp
+                dpc = self.ComputeInternalVariableIncrement(void_ratio, pc, depstrain)
+
+            yield_state, f_function = self.ComputeYieldState(update_stress, pc)
+            if ti.abs(f_function) > Tolerance:
+                update_stress, pc, depstrain = self.DriftCorrect(f_function, update_stress, pc+dpc, depstrain)
+
+        self.UpdateInternalVariables(np, pc, depstrain, stateVars)
+        dsigrot = Sigrot(previous_stress, dw)
+        update_stress = -update_stress + dsigrot
+        self.UpdateStateVariables(np, update_stress, stateVars)
+        return update_stress
     
     @ti.func
     def ExplicitIntegration(self, np, previous_stress, de, dw, stateVars):

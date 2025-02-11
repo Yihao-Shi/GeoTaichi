@@ -15,9 +15,6 @@ class ULExplicitTwoPhaseEngine(ULExplicitEngine):
     def compute_particle_kinematics(self, sims: Simulation, scene: myScene):
         kernel_kinemaitc_g2p_twophase(scene.element.grid_nodes, sims.alphaPIC, sims.dt, int(scene.particleNum[0]), scene.node, scene.particle, scene.element.LnID, scene.element.shape_fn, scene.element.node_size)
 
-    def compute_particle_kinematics_2D(self, sims: Simulation, scene: myScene):
-        kernel_kinemaitc_g2p_twophase2D(scene.element.grid_nodes, sims.alphaPIC, sims.dt, int(scene.particleNum[0]), scene.node, scene.particle, scene.element.LnID, scene.element.shape_fn, scene.element.node_size)
-
     def compute_nodal_kinematics(self, sims: Simulation, scene: myScene):
         kernel_mass_momentum_p2g_twophase(scene.element.grid_nodes, int(scene.particleNum[0]), scene.node, scene.particle, scene.element.LnID, scene.element.shape_fn, scene.element.node_size)
 
@@ -29,12 +26,10 @@ class ULExplicitTwoPhaseEngine(ULExplicitEngine):
         self.apply_velocity_constraints(sims, scene)
     
     def compute_stress_strain(self, sims: Simulation, scene: myScene):
-        kernel_compute_stress_strain_twophase(scene.element.grid_nodes, sims.dt, int(scene.particleNum[0]), scene.node, scene.particle, scene.material.matProps, scene.material.stateVars,
-                                     scene.element.LnID, scene.element.dshape_fn, scene.element.node_size)
+        kernel_compute_stress_strain_twophase(int(scene.particleNum[0]), sims.dt, scene.particle, scene.material.matProps, scene.material.stateVars)
         
     def compute_stress_strain_2D(self, sims: Simulation, scene: myScene):
-        kernel_compute_stress_strain_twophase2D(scene.element.grid_nodes, sims.dt, int(scene.particleNum[0]), scene.node, scene.particle, scene.material.matProps, scene.material.stateVars,
-                                     scene.element.LnID, scene.element.dshape_fn, scene.element.node_size)
+        kernel_compute_stress_strain_twophase2D(int(scene.particleNum[0]), sims.dt, scene.particle, scene.material.matProps, scene.material.stateVars)
         
     def update_velocity_gradient_2D(self, sims: Simulation, scene: myScene):
         kernel_update_velocity_gradient_twophase_2D(scene.element.grid_nodes, int(scene.particleNum[0]), sims.dt, scene.node, scene.particle, scene.material.matProps, scene.material.stateVars,
@@ -85,12 +80,10 @@ class ULExplicitTwoPhaseEngine(ULExplicitEngine):
         scene.element.calculate_characteristic_length(sims, int(scene.particleNum[0]), scene.particle, scene.psize)
         if sims.neighbor_detection:
             grid_mass_reset(scene.mass_cut_off, scene.node)
-            scene.check_in_domain(sims.domain, int(scene.particleNum[0]), scene.particle)
+            scene.check_in_domain(sims)
             self.find_free_surface_by_density(sims, scene)
             neighbor.place_particles(scene)
             self.compute_boundary_direction(scene, neighbor)
             self.free_surface_by_geometry(scene, neighbor)
             grid_mass_reset(scene.mass_cut_off, scene.node)
         self.limit = sims.verlet_distance * sims.verlet_distance
-
-

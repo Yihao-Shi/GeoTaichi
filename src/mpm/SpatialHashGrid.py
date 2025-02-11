@@ -5,8 +5,8 @@ from src.mpm.BaseKernel import *
 from src.mpm.SceneManager import myScene
 from src.mpm.Simulation import Simulation
 from src.utils.constants import Threshold
-from src.utils.PrefixSum import PrefixSumExecutor
-from src.utils.TypeDefination import vec3i, vec3f
+from src.utils.sorting.BinSort import BinSort
+from src.utils.linalg import no_operation
 
 
 class SpatialHashGrid(object):
@@ -18,26 +18,22 @@ class SpatialHashGrid(object):
         self.cellSum = 0
         self.grid_size = None
         self.igrid_size = None
-
-        self.particle_pse = None
-        self.cell_pse = None
-        self.place_particles = None
-        self.current = None
-        self.count = None
-        self.ParticleID = None
         
     def resize_neighbor(self, scene):
-        del self.cell_pse, self.igrid_size, self.cnum, self.cellSum
-        del self.current, self.count
+        del self.igrid_size, self.cnum, self.cellSum
         self.neighbor_initialze(scene)
 
-    def neighbor_initialze(self, scene: myScene):
-        self.place_particles = self.no_operation
-        if self.sims.neighbor_detection:
-            rad_max, rad_min = scene.find_bounding_sphere_radius()
-            self.sims.set_verlet_distance(rad_min)
-            self.grid_size = 2 * rad_max + self.sims.verlet_distance
-            if self.grid_size < 1e-3 * Threshold:
+    def neighbor_initialze(self, scene: myScene, grid_size=None):
+        self.place_particles = no_operation
+        if self.sims.neighbor_detection: # or self.sims.solver_type == "G2P2G" or self.sims.mode == "Lightweight":
+            if grid_size is None:
+                rad_max, rad_min = scene.find_bounding_sphere_radius()
+                self.sims.set_verlet_distance(rad_min)
+                self.grid_size = 2 * rad_max + self.sims.verlet_distance
+            else:
+                self.grid_size = grid_size
+                
+            if self.grid_size < Threshold:
                 raise RuntimeError("Particle radius is equal to zero!")
             self.igrid_size = 1. / self.grid_size
 
@@ -45,28 +41,12 @@ class SpatialHashGrid(object):
                 pass
 
             self.cnum = ti.Vector([max(1, int(domain * self.igrid_size) + 1) for domain in self.sims.domain])
-            self.cellSum = reduce((lambda x, y: int(x * y)), list(self.cnum))
-            self.cell_pse = PrefixSumExecutor(self.cellSum)
-            self.set_hash_table()
-            self.place_particles = self.place_particle_to_cell
-
-    def set_hash_table(self):
-        self.current = ti.field(int, shape=self.cellSum)
-        self.count = ti.field(int, shape=self.cell_pse.get_length())
-        self.ParticleID = ti.field(int, shape=self.sims.max_particle_num)
+            self.cellSum = reduce((lambda x, y: int(max(1, x) * max(1, y))), list(self.cnum))
+            self.sorted = BinSort(self.grid_size, self.cnum, self.sims.max_particle_num)
+            self.place_particles = self.place_particle
 
     def pre_neighbor(self, scene: myScene):
-        self.place_particles(scene)
+        self.place_particle(scene)
 
-    def no_operation(self, scene):
-        pass
-
-    def place_particle_to_cell_v2(self, scene: myScene):
-        calculate_particles_position_v2_(int(scene.particleNum[0]), self.igrid_size, scene.particle, self.count, self.cnum)
-        self.cell_pse.run(self.count)
-        insert_particle_to_cell_v2_(self.igrid_size, int(scene.particleNum[0]), scene.particle, self.count, self.current, self.ParticleID, self.cnum)
-
-    def place_particle_to_cell(self, scene: myScene):
-        calculate_particles_position_(int(scene.particleNum[0]), self.igrid_size, scene.particle, self.count, self.cnum)
-        self.cell_pse.run(self.count)
-        insert_particle_to_cell_(self.igrid_size, int(scene.particleNum[0]), scene.particle, self.count, self.current, self.ParticleID, self.cnum)
+    def place_particle(self, scene: myScene):
+        self.sorted.run(int(scene.particleNum[0]), scene.particle.x)

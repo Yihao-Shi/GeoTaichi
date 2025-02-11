@@ -1,4 +1,5 @@
 import numpy as np
+import taichi as ti
 from taichi.lang.impl import current_cfg
 
 from src.mpm.SpatialHashGrid import SpatialHashGrid
@@ -44,7 +45,7 @@ class MPM(object):
         self.sims.set_mode(DictIO.GetAlternative(kwargs, "mode", 'Normal'))
         if np.linalg.norm(np.array(self.sims.get_simulation_domain()) - np.zeros(3)) < 1e-10:
             self.sims.set_domain(DictIO.GetEssential(kwargs, "domain"))
-        self.sims.set_boundary(DictIO.GetAlternative(kwargs, "boundary" ,[None, None, None]))
+        self.sims.set_boundary(DictIO.GetAlternative(kwargs, "boundary" ,['None', 'None', 'None']))
         self.sims.set_gravity(DictIO.GetAlternative(kwargs, "gravity", [0.,0.,-9.8] if self.sims.dimension == 3 else [0., -9.8]))
         self.sims.set_background_damping(DictIO.GetAlternative(kwargs, "background_damping", 0.))
         self.sims.set_alpha(DictIO.GetAlternative(kwargs, "alphaPIC", 0.))
@@ -65,12 +66,15 @@ class MPM(object):
         self.sims.set_visualize(DictIO.GetAlternative(kwargs, "visualize", True))
         self.sims.set_sparse_grid(DictIO.GetAlternative(kwargs, "sparse_grid", None))
         self.sims.set_particle_shifting(DictIO.GetAlternative(kwargs, "particle_shifting", False))
+        self.sims.set_discretization(DictIO.GetAlternative(kwargs, "discretization", "FEM"))
+        self.sims.set_THB(DictIO.GetAlternative(kwargs, "set_THB", False))
         self.sims.set_particle_traction_method(DictIO.GetAlternative(kwargs, "particle_traction_method", "Stable"))
+        self.sims.set_AOSOA(DictIO.GetAlternative(kwargs, "AOSOA", False))
         if log: 
             self.print_basic_simulation_info()
             print('\n')
 
-    def set_implicit_solver_parameters(self, implicit_parameters={}):    
+    def set_implicit_solver_parameters(self, **implicit_parameters):    
         if self.sims.solver_type != "Implicit":
             raise RuntimeError("KeyError:: /solver_type/ should be set as Implicit")
         
@@ -82,12 +86,17 @@ class MPM(object):
             self.sims.set_quasi_static(DictIO.GetAlternative(implicit_parameters, "quasi_static", False))
             self.sims.set_newmark_parameter(DictIO.GetAlternative(implicit_parameters, "newmark_parameter", [0.5, 0.25]))
             self.sims.set_max_iteration(DictIO.GetAlternative(implicit_parameters, "max_iteration_number", 50))
-            self.sims.set_assemble_type(DictIO.GetAlternative(implicit_parameters, "assemble_type", "LocalStiffness"))
+            self.sims.set_assemble_type(DictIO.GetAlternative(implicit_parameters, "assemble_type", "MatrixFree"))
+            # self.sims.set_rayleigh_damping(DictIO.GetAlternative(implicit_parameters, "rayleigh_damping", [0.2, 0.7]))
         self.sims.set_linear_solver(DictIO.GetAlternative(implicit_parameters, "linear_solver", "PCG"))
         if self.sims.linear_solver == "MGPCG":
             self.sims.set_multigrid_paramter(DictIO.GetAlternative(implicit_parameters, "multilevel", 4),
                                              DictIO.GetAlternative(implicit_parameters, "pre_and_post_smoothing", 2),
                                              DictIO.GetAlternative(implicit_parameters, "bottom_smoothing", 10))
+
+    def set_fbar_parameters(self, **kwargs):
+        self.sims.set_fbar_fraction(DictIO.GetAlternative(kwargs, "fbar_fraction", 0.99))
+        self.sims.set_jacobian_clamp(DictIO.GetAlternative(kwargs, "jacobian_clamp", [0.1, 10]))
 
     def set_solver(self, solver, log=True):
         self.sims.set_timestep(DictIO.GetEssential(solver, "Timestep"))
@@ -139,12 +148,17 @@ class MPM(object):
         print(("Save Interval: " + str(self.sims.save_interval)).ljust(67))
         print(("Save Path: " + str(self.sims.path)).ljust(67))
 
+    def add_contact(self, contact_type, **contact_phys):
+        self.sims.set_contact_detection(contact_type)
+        self.scene.activate_contact(self.sims, contact_phys)
+
     def add_material(self, model, material):
         self.material_handle.save_material(model, material)
 
     def add_element(self, element):
         self.scene.activate_boundary(self.sims)
-        self.scene.activate_element(self.sims, self.material_handle, element)
+        self.scene.activate_material(self.sims, self.material_handle)
+        self.scene.activate_element(self.sims, element)
         self.scene.activate_particle(self.sims)
 
     def add_region(self, region):
@@ -186,6 +200,12 @@ class MPM(object):
                 boundary = 'OutputData/boundary_conditions.txt'
             self.scene.boundary.read_boundary_constraint(self.sims, boundary)
 
+    def add_virtual_stress_field(self, field, region_name=None, function=None):
+        if not region_name is None:
+            region: RegionFunction = self.generator.get_region_ptr(region_name)
+            function = region.function
+        self.scene.boundary.set_virtual_stress_field(self.sims, self.scene.element, field, function)
+
     def clean_boundary_condition(self, boundary):
         if type(boundary) is list or type(boundary) is dict:
             self.scene.boundary.iterate_boundary_constraint(self.sims, self.scene.element, boundary, 1)
@@ -194,7 +214,7 @@ class MPM(object):
         self.scene.boundary.write_boundary_constraint(output_path)
 
     def select_save_data(self, particle=True, grid=False, object=True):
-        if self.scene.contact_parameter is None or self.scene.contact_parameter.polygon_vertices is None:
+        if self.scene.contact is None or self.scene.contact.polygon_vertices is None:
             object = False
         self.sims.set_save_data(particle, grid, object)
 
@@ -203,7 +223,7 @@ class MPM(object):
             region: RegionFunction = self.generator.get_region_ptr(region_name)
             self.scene.choose_coupling_region(self.sims, region.function)
         elif not function is None:
-            self.scene.choose_coupling_region(self.sims, function)
+            self.scene.choose_coupling_region(self.sims, ti.pyfunc(function))
         self.scene.filter_particles()
 
     def modify_parameters(self, **kwargs):
@@ -234,16 +254,16 @@ class MPM(object):
                         self.enginer = ULExplicitTwoPhaseEngine(self.sims)
                     else:
                         self.enginer = ULExplicitEngine(self.sims)
-                #elif self.sims.solver_type == "Implicit":
-                #    if self.sims.material_type == "Solid":
-                #        self.enginer = ImplicitEngine(self.sims)
-                #    elif self.sims.material_type == "Fluid":
-                #        self.enginer = IncompressibleEngine(self.sims)
+                """ elif self.sims.solver_type == "Implicit":
+                    if self.sims.material_type == "Solid":
+                        self.enginer = ImplicitEngine(self.sims)
+                    elif self.sims.material_type == "Fluid":
+                        self.enginer = IncompressibleEngine(self.sims)
                 elif self.sims.solver_type == "SimiImplicit":
                     if self.sims.material_type == "TwoPhaseDoubleLayer":
                         self.enginer = None
                     else:
-                        raise RuntimeError("Keyword:: /material_type/ should be set as $TwoPhase$")
+                        raise RuntimeError("Keyword:: /material_type/ should be set as $TwoPhase$") """
             elif self.sims.configuration == "TLMPM":
                 if self.sims.solver_type == "Explicit":
                     self.enginer = TLExplicitEngine(self.sims)
@@ -269,6 +289,7 @@ class MPM(object):
         self.sims.set_window_parameters(window)
 
     def add_essentials(self, kwargs):
+        self.scene.boundary.copy_dict_to_field(self.sims)
         self.add_spatial_grid()
         self.add_engine()
         self.add_recorder()
@@ -277,7 +298,8 @@ class MPM(object):
         self.scene.calc_mass_cutoff(self.sims)
         if self.first_run:
             self.scene.boundary.set_boundary(self.sims)
-        self.scene.boundary.set_boundary_types(self.sims, self.scene.element)
+        if self.sims.mode == "Normal":
+            self.scene.boundary.set_boundary_types(self.sims, self.scene.element)
 
     def run(self, visualize=False, **kwargs):
         self.add_essentials(kwargs)
@@ -306,7 +328,7 @@ class MPM(object):
             region: RegionFunction = self.generator.get_region_ptr(region_name)
             self.scene.update_particle_properties_in_region(self.sims, override, property_name, value, region.function)
         elif not function is None:
-            self.scene.update_particle_properties_in_region(self.sims, override, property_name, value, function)
+            self.scene.update_particle_properties_in_region(self.sims, override, property_name, value, ti.pyfunc(function))
 
     def delete_particles(self, bodyID=None, region_name=None, function=None):
         if not bodyID is None:
@@ -315,7 +337,7 @@ class MPM(object):
             region: RegionFunction = self.generator.get_region_ptr(region_name)
             self.scene.delete_particles_in_region(region.function)
         elif not function is None:
-            self.scene.delete_particles_in_region(function)
+            self.scene.delete_particles_in_region(ti.pyfunc(function))
 
     def postprocessing(self, start_file=0, end_file=-1, read_path=None, write_path=None, **kwargs):
         if read_path is None:

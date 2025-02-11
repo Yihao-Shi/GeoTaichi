@@ -169,7 +169,7 @@ class ContactModelBase(object):
         
     def tackle_particle_digital_elevation_contact_cplist(self, sims: Simulation, mscene: MPMScene, dscene: DEMScene, pcontact: MultiLinkedCell):
         kernel_particle_digital_elevation_force_assemble_(int(mscene.particleNum[0]), sims.dt, sims.max_material_num, self.surfaceProps, mscene.particle, dscene.wall, 
-                                                          dscene.digital_elevation.idigital_size, dscene.digital_elevation.digital_dim, pcontact.digital_wall, self.cplist, self.contact_model)
+                                                          dscene.digital_elevation.idigital_size, dscene.digital_elevation.digital_dim, pcontact.dem_spatial_grid.digital_wall, self.cplist, self.contact_model)
     
     def no_operation(self, sims, mscene, dscene, pcontact):
         pass

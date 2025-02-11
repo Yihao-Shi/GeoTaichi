@@ -132,21 +132,20 @@ class WriteFile:
         particle_num = scene.particleNum[0]
         output = self.MonitorParticleBase(sims, scene, particle_num)
         
-        free_surface = scene.particle.free_surface.to_numpy()[0:scene.particleNum[0]]
-        normal = scene.particle.normal.to_numpy()[0:scene.particleNum[0]]
+        #free_surface = scene.particle.free_surface.to_numpy()[0:scene.particleNum[0]]
+        #normal = scene.particle.normal.to_numpy()[0:scene.particleNum[0]]
         radius = scene.particle.rad.to_numpy()[0:scene.particleNum[0]]
         stress = scene.particle.stress.to_numpy()[0:scene.particleNum[0]]
         external_force = scene.particle.external_force.to_numpy()[0:scene.particleNum[0]] 
         velocity_gradient = scene.particle.velocity_gradient.to_numpy()[0:scene.particleNum[0]] 
         state_vars: dict = scene.material.get_state_vars_dict(0, scene.particleNum[0])
-        output.update({'stress': stress, 'radius': radius, "free_surface": free_surface, "normal": normal, 
-                       'external_force': external_force, 'velocity_gradient': velocity_gradient, 'state_vars': state_vars})
+        output.update({'stress': stress, 'radius': radius, 'external_force': external_force, 'velocity_gradient': velocity_gradient, 'state_vars': state_vars})
         
-        xnorm = np.ascontiguousarray(normal[:, 0])
-        ynorm = np.ascontiguousarray(normal[:, 1])
-        znorm = np.ascontiguousarray(normal[:, 2])
+        #xnorm = np.ascontiguousarray(normal[:, 0])
+        #ynorm = np.ascontiguousarray(normal[:, 1])
+        #znorm = np.ascontiguousarray(normal[:, 2])
 
-        state_vars.update({"free_surface": free_surface, "normal": (xnorm, ynorm, znorm)})
+        #state_vars.update({"normal": (xnorm, ynorm, znorm)})
         self.visualizeParticle(sims, output['position'], output['velocity'], output['volume'], state_vars)
         np.savez(self.particle_path+f'/MPMParticle{sims.current_print:06d}', **output)
 
@@ -167,15 +166,16 @@ class WriteFile:
         pressure = scene.particle.pressure.to_numpy()[0:scene.particleNum[0]]
         permeability = scene.particle.permeability.to_numpy()[0:scene.particleNum[0]]
         porosity = scene.particle.porosity.to_numpy()[0:scene.particleNum[0]]
-        velocity_gradient = scene.particle.velocity_gradient.to_numpy()[0:scene.particleNum[0]] 
+        solid_velocity_gradient = scene.particle.solid_velocity_gradient.to_numpy()[0:scene.particleNum[0]] 
+        fluid_velocity_gradient = scene.particle.fluid_velocity_gradient.to_numpy()[0:scene.particleNum[0]] 
         fix_v = scene.particle.fix_v.to_numpy()[0:scene.particleNum[0]] 
         state_vars: dict = scene.material.get_state_vars_dict(0, scene.particleNum[0])
         state_vars.update({"pressure": pressure})
         self.visualizeParticle(sims, position, velocity, volume, state_vars)
         np.savez(self.particle_path+f'/MPMParticle{sims.current_print:06d}', t_current=sims.current_time, body_num = particle_num, 
                                                                              bodyID=bodyID, materialID=materialID, active=active, mass=mass, volume=volume, position=position, velocity=velocity, 
-                                                                             stress=stress, velocity_gradient=velocity_gradient, fix_v=fix_v, state_vars=state_vars, solid_velocity=solid_velocity, 
-                                                                             fluid_velocity=fluid_velocity, solid_mass=solid_mass, fluid_mass=fluid_mass, pressure=pressure, permeability=permeability, porosity=porosity)
+                                                                             stress=stress, solid_velocity_gradient=solid_velocity_gradient, fluid_velocity_gradient=fluid_velocity_gradient, fix_v=fix_v, state_vars=state_vars, 
+                                                                             solid_velocity=solid_velocity, fluid_velocity=fluid_velocity, solid_mass=solid_mass, fluid_mass=fluid_mass, pressure=pressure, permeability=permeability, porosity=porosity)
 
     def MonitorIncompressibleParticleCoupling(self, sims: Simulation, scene: myScene):
         particle_num = scene.particleNum[0]

@@ -111,16 +111,9 @@ class MultiLinkedCell(object):
                 self.potential_list_particle_wall = ti.field(int, shape=self.csims.max_potential_wall_pairs)
                 self.particle_wall = ti.field(int, shape=self.particle_pse.get_length())
                 self.hist_particle_wall = ti.field(int, shape=self.msims.max_particle_num + 1)
-            elif self.dsims.wall_type == 3:
-                self.digital_elevation_neighbor_facet()
-                self.place_digital_elevation_facet(dscene)
 
         if self.dsims.scheme == "LSDEM":
             self.dsims.check_grid_extent(*dscene.find_expect_extent(self.dsims, self.msims.verlet_distance + self.dsims.verlet_distance + mrad_max))
-
-    def digital_elevation_neighbor_facet(self): # digital elevation model
-        digital_elevation_grid_number = self.dsims.max_digital_elevation_grid_number
-        self.digital_wall = ti.field(int, shape=int((digital_elevation_grid_number[0] - 1) * (digital_elevation_grid_number[1] - 1)))
 
     def place_digital_elevation_facet(self, dscene: DEMScene):
         insert_digital_elevation_facet_(dscene.digital_elevation.idigital_size, int(dscene.wallNum[0]), dscene.digital_elevation.digital_dim, dscene.wall, self.digital_wall)

@@ -8,25 +8,22 @@ from src.mpm.Contact import *
 from src.mpm.elements.HexahedronElement8Nodes import HexahedronElement8Nodes
 from src.mpm.elements.QuadrilateralElement4Nodes import QuadrilateralElement4Nodes
 from src.mpm.MaterialManager import ConstitutiveModel
-from src.mpm.materials.ConstitutiveModelBase import ConstitutiveModelBase
 from src.mpm.boundaries.BoundaryConstraint import BoundaryConstraints
 from src.mpm.Simulation import Simulation
 from src.mpm.structs import *
 from src.utils.linalg import no_operation
 from src.utils.DomainBoundary import DomainBoundary
 from src.utils.ObjectIO import DictIO
-from src.utils.TypeDefination import vec2f, vec3f, vec3u8
+from src.utils.TypeDefination import vec2f, vec3f, vec3u8, mat3x3
 
 
 class myScene(object):
-    material: ConstitutiveModelBase
-
     def __init__(self) -> None:
         self.domain_boundary = None
-        self.contact_parameter = None
-        self.contact_type = None
+        self.contact = None
         self.mass_cut_off = Threshold
         self.volume_cut_off = Threshold
+        self.grid_level = 1
 
         self.element_type = "R8N3D"
         self.boundary = None
@@ -34,7 +31,6 @@ class myScene(object):
         self.iparticle = None
         self.material = None
         self.element = None
-        self.extra_node = None
         self.node = None
         self.grid = []
         self.is_rigid = None
@@ -60,11 +56,11 @@ class myScene(object):
     
     def find_particle_class(self, sims: Simulation):
         ptemp = None
-        if sims.coupling or sims.neighbor_detection:
+        if sims.coupling:
             if sims.solver_type == "Explicit":
                 ptemp = ParticleCoupling
-            #elif sims.solver_type == "Implicit":
-            #    ptemp = ImplicitParticleCoupling
+            elif sims.solver_type == "Implicit":
+                ptemp = ImplicitParticleCoupling
         else:
             if sims.solver_type == "Explicit":
                 if sims.dimension == 2:
@@ -76,19 +72,21 @@ class myScene(object):
                     elif sims.is_2DAxisy:
                         ptemp = ParticleCloud2DAxisy
                 elif sims.dimension == 3:
-                    ptemp = ParticleCloud
+                    if sims.solver_type == "G2P2G":
+                        ptemp = LargeScaleParticle
+                    else:
+                        ptemp = ParticleCloud
             elif sims.solver_type == "Implicit":
-                raise RuntimeError("Invalid")
-                #if self.element_type == "Staggered":
-                #    if sims.dimension == 2:
-                #        ptemp = ParticleCloudIncompressible2D # StaggeredPartilce2D
-                #    if sims.dimension == 3:
-                #        ptemp = ParticleCloudIncompressible3D # StaggeredPartilce
-                #else:
-                #    if sims.dimension == 2:
-                #        ptemp = ImplicitParticle2D
-                #    elif sims.dimension == 3:
-                #        ptemp = ImplicitParticle
+                if self.element_type == "Staggered":
+                    if sims.dimension == 2:
+                        ptemp = ParticleCloudIncompressible2D # StaggeredPartilce2D
+                    if sims.dimension == 3:
+                        ptemp = ParticleCloudIncompressible3D # StaggeredPartilce
+                else:
+                    if sims.dimension == 2:
+                        ptemp = ImplicitParticle2D
+                    elif sims.dimension == 3:
+                        ptemp = ImplicitParticle
             
             if sims.contact_detection == "DEMContact":
                 ptemp.members.update({"contact_traction": ti.types.vector(sims.dimension, float)})
@@ -98,16 +96,15 @@ class myScene(object):
     def activate_particle(self, sims: Simulation):
         if self.particle is None and sims.max_particle_num > 0:
             ptemp = self.find_particle_class(sims)
-            if sims.solver_type == "Explicit":
-                if sims.stabilize == 'F-Bar Method':
-                    ptemp.members.update({"jacobian": float})
+            if sims.configuration == "TLMPM":
+                ptemp.members.update({"stress": mat3x3})
             if sims.particle_shifting is True:
                 ptemp.members.update({"grad_E2": ti.types.vector(sims.dimension, float)})
+            if sims.neighbor_detection is True or  sims.free_surface_detection is True or sims.boundary_direction_detection is True:
+                ptemp.members.update({"free_surface": ti.u8, "mass_density": float, "normal": vec3f})
             self.particle = ptemp.field()
             ti.root.dense(ti.i, sims.max_particle_num).place(self.particle)
-            if sims.solver_type == "Explicit":
-                if sims.stabilize == 'F-Bar Method':
-                    kernel_initialize_particle_fbar(self.particle)
+            #self.material.activate_state_variables(sims)
 
     def activate_material(self, sims: Simulation, handler: ConstitutiveModel):
         if self.material is None:
@@ -120,11 +117,25 @@ class myScene(object):
         if self.material is None:
             self.activate_material(sims, "RigidBody", materials={})
 
-    def activate_element(self, sims: Simulation, handler, element):
+    def activate_contact(self, sims: Simulation, contact_phys):
+        if sims.contact_detection:
+            if sims.contact_detection == "MPMContact":
+                self.contact = MPMContact(contact_phys)
+            elif sims.contact_detection == "GeoContact":
+                self.contact = GeoContact(contact_phys)   
+            elif sims.contact_detection == "DEMContact":
+                self.contact = DEMContact(contact_phys)
+        self.print_contact_message(sims)
+
+    def print_contact_message(self, sims: Simulation):
+        if sims.contact_detection:
+            print("Contact Detection Activated: ", sims.contact_detection)
+            self.contact.print_contact_message()
+
+    def activate_element(self, sims: Simulation, element):
         self.element_type = DictIO.GetAlternative(element, "ElementType", "R8N3D")
         if sims.max_particle_num > 0:
-            grid_level = self.find_grid_level(sims, DictIO.GetAlternative(element, "Contact", None))
-            self.activate_material(sims, handler)
+            grid_level = self.find_grid_level(sims)
 
             if sims.dimension == 2:
                 if self.element_type == "T3N2D":
@@ -132,7 +143,7 @@ class myScene(object):
                 elif self.element_type == "Q4N2D" or self.element_type == "Staggered":
                     if not self.element is None:
                         print("Warning: Previous elements will be override!")
-                    self.element = QuadrilateralElement4Nodes(self.element_type)
+                    self.element = QuadrilateralElement4Nodes(self.element_type, grid_level)
                 else:
                     raise ValueError("Keyword:: /ElementType/ error!")
                 self.element.create_nodes(sims, vec2f(DictIO.GetEssential(element, "ElementSize")))
@@ -143,40 +154,32 @@ class myScene(object):
                 elif self.element_type == "R8N3D":
                     if not self.element is None:
                         print("Warning: Previous elements will be override!")
-                    self.element = HexahedronElement8Nodes(self.element_type)
+                    self.element = HexahedronElement8Nodes(self.element_type, grid_level)
                 else:
                     raise ValueError("Keyword:: /ElementType/ error!")
                 self.element.create_nodes(sims, vec3f(DictIO.GetEssential(element, "ElementSize")))
                 self.initialize_element(sims, grid_level)
             self.boundary.set_layer_number(grid_level)
-            self.activate_grid(sims, DictIO.GetAlternative(element, "Contact", None), grid_level)
-
-            if sims.ptraction_method == "Virtual":
-                self.element.set_up_cell_active_flag()
+            self.activate_grid(sims, grid_level)
 
     def initialize_element(self, sims: Simulation, grid_level):
         if sims.gauss_number > 0:
             self.element.element_initialize(sims, local_coordiates=False)
-            self.element.activate_gauss_cell(sims, grid_level)
+            self.element.activate_gauss_cell(sims)
         else:
             self.element.element_initialize(sims)
         self.element.activate_euler_cell()
 
-    def find_grid_level(self, sims: Simulation, contact):
-        if contact is None or DictIO.GetAlternative(contact, "ContactDetection", None) is False:
-            sims.set_contact_detection(None)
-            grid_level = 1
-        else:
-            sims.set_contact_detection(DictIO.GetAlternative(contact, "ContactDetection", None))
-            grid_level = DictIO.GetAlternative(contact, "GridLevel", None)
-            if grid_level is None:
-                if sims.contact_detection is None:
-                    grid_level = 1
-                else:
-                    if "DEM" in sims.contact_detection:
-                        grid_level = 1
-                    else:
-                        grid_level = 2
+    def find_grid_level(self, sims: Simulation):
+        grid_level = 1
+        if sims.contact_detection:
+            if sims.contact_detection == "MPMContact":
+                grid_level = 2
+            elif sims.contact_detection == "GeoContact":
+                grid_level = 2
+            elif sims.contact_detection == "DEMContact":
+                grid_level = 1
+        self.grid_level = grid_level
         return grid_level
     
     def find_grid_class(self, sims: Simulation):
@@ -198,28 +201,29 @@ class myScene(object):
                         gtemp = Nodes2D
                     elif sims.material_type == "TwoPhaseSingleLayer":
                         gtemp = NodeTwoPhase2D
-                    #elif sims.material_type == "TwoPhaseDoubleLayer":
-                    #    raise RuntimeError()
+                    elif sims.material_type == "TwoPhaseDoubleLayer":
+                        raise RuntimeError()
                 elif sims.dimension == 3:
                     if sims.material_type == "Solid" or sims.material_type == "Fluid":
                         gtemp = Nodes
                     else:
                         raise RuntimeError()
+                    
             elif sims.solver_type == "Implicit":
                 if sims.material_type == "Solid":
                     if sims.dimension == 2:
                         gtemp = ImplicitNodes2D
                     elif sims.dimension == 3:
                         gtemp = ImplicitNodes
-                #if sims.material_type == "Fluid":
-                #    if sims.dimension == 2:
-                #        gtemp = IncompressibleNodes2D
-                #    elif sims.dimension == 3:
-                #        gtemp = IncompressibleNodes3D
+                if sims.material_type == "Fluid":
+                    if sims.dimension == 2:
+                        gtemp = IncompressibleNodes2D
+                    elif sims.dimension == 3:
+                        gtemp = IncompressibleNodes3D
         if gtemp is None: raise RuntimeError("Wrong background node type!")
         return gtemp
 
-    def activate_grid(self, sims: Simulation, contact, grid_level):
+    def activate_grid(self, sims: Simulation, grid_level):
         self.check_grid_inputs(sims, grid_level)
         self.is_rigid = ti.field(int, shape=grid_level)
         sims.set_body_num(grid_level)
@@ -228,36 +232,52 @@ class myScene(object):
         cut_off = 0.
         if not self.node is None:
             print("Warning: Previous node will be override!")
-        if sims.contact_detection:
-            if sims.contact_detection == "MPMContact":
-                self.contact_parameter = MPMContact(contact)
-            elif sims.contact_detection == "GeoContact":
-                self.contact_parameter = GeoContact(contact)   
-            elif sims.contact_detection == "DEMContact":
-                self.contact_parameter = DEMContact(contact, self.material)
              
-        self.node = self.find_grid_class(sims).field()
+        '''if self.element_type == "Staggered":
+            if ("Implicit" in sims.solver_type) and (sims.material_type == "Fluid" or sims.material_type == "TwoPhaseDoubleLayer"):
+                self.node = StaggeredGrid(sims, self.element.cnum, self.element.gridSum)
+                if sims.material_type == "TwoPhaseDoubleLayer":
+                    if sims.dimension == 2:
+                        self.node = Nodes2D.field(shape=self.element.gridSum)
+                    elif sims.dimension == 3:
+                        self.node = Nodes.field(shape=self.element.gridSum)
+        else:'''
+        gtemp = self.find_grid_class(sims)
         if sims.sparse_grid:
-            self.grandparent = ti.root.pointer(ti.ij, (int(np.ceil(self.element.gridSum / sims.block_size[0])), grid_level))
-            self.parent = self.grandparent.pointer(ti.i, int(sims.block_size[0] // sims.block_size[1]))
-            self.child = self.parent.dense(ti.i, int(sims.block_size[1]))
+            if sims.AOSOA:
+                self.parent = ti.root.pointer(ti.ij, (int(np.ceil(self.element.gridSum / sims.block_size[0])), grid_level))
+                temp_tree = self.parent
+                for i in range(1, len(sims.block_size)):
+                    temp_tree = temp_tree.pointer(ti.i, int(sims.block_size[i-1] // sims.block_size[i]))
+                self.child = temp_tree.dense(ti.i, int(sims.block_size[len(sims.block_size)-1]))
+            else:
+                self.child = ti.root.pointer(ti.ij, (self.element.gridSum, grid_level))
+                self.parent = self.child
         else: 
-            self.child = ti.root.dense(ti.ij, (self.element.gridSum, grid_level))
+            if sims.AOSOA:
+                self.parent = ti.root.dense(ti.ij, (int(np.ceil(self.element.gridSum / sims.block_size[0])), grid_level))
+                temp_tree = self.parent
+                for i in range(1, len(sims.block_size)):
+                    temp_tree = temp_tree.dense(ti.i, int(sims.block_size[i-1] // sims.block_size[i]))
+                self.parent = self.grandparent.dense(ti.i, int(sims.block_size[0] // sims.block_size[1]))
+                self.child = self.parent.dense(ti.i, int(sims.block_size[1]))
+            else:
+                self.child = ti.root.dense(ti.ij, (self.element.gridSum, grid_level))
 
-        if sims.stabilize == 'F-Bar Method' or sims.pressure_smoothing == True or sims.particle_shifting is True:
-            gtemp = ExtraNode
-            if sims.stabilize == 'F-Bar Method':
-                if sims.material_type == "Solid":
-                    gtemp.members.update({"jacobian": float})
-                elif sims.material_type == "Fluid":
-                    gtemp.members.update({"jacobian": float, "pressure": float})
-            if sims.pressure_smoothing == True:
-                if 'pressure' not in gtemp.members.keys():
-                    gtemp.members.update({"pressure": float})
-            self.extra_node = gtemp.field()
-            self.child.place(self.node, self.extra_node)
-        else:
-            self.child.place(self.node)
+        if sims.stabilize == 'F-Bar Method':
+            if sims.material_type == "Solid":
+                gtemp.members.update({"jacobian": float})
+            elif sims.material_type == "Fluid":
+                gtemp.members.update({"vol": float})
+                gtemp.members.update({"jacobian": float, "pressure": float})
+        if sims.pressure_smoothing == True:
+            if 'pressure' not in gtemp.members.keys():
+                gtemp.members.update({"pressure": float})
+        if sims.particle_shifting is True:
+            gtemp.members.update({"vol": float})
+        self.node = gtemp.field()
+        self.child.place(self.node)
+        self.node.fill(0)
 
         #if sims.sparse_grid:
         #    self.pid = ti.field(int)
@@ -280,9 +300,6 @@ class myScene(object):
             self.grid = [self.node, self.child[1].place(output_grid)]
         self.element.calculate_basis_function(sims, grid_level)
         self.print_grid_message(sims, grid_level, cut_off)
-
-    def deactivate_sparse_grid(self):
-        self.grandparent.deactivate_all()
  
     def check_grid_inputs(self, sims: Simulation, grid_level):
         if grid_level > 2:
@@ -299,14 +316,6 @@ class myScene(object):
         if grid_level > 0:
             print("The number of grids = ", grid_level)
         self.element.print_message()
-        if sims.contact_detection:
-            print("Contact Detection Activated: ", sims.contact_detection)
-            print("Cut-off Distance Multiplier =", cut_off)
-            print("Friction Coefficient =", self.contact_parameter.friction)
-            if sims.contact_detection == "GeoContact":
-                print("Penalty Parameter = ", self.contact_parameter.alpha, self.contact_parameter.beta)
-            if sims.contact_detection == "DEMContact":
-                print("Stiffness Parameter = ", self.contact_parameter.kn, self.contact_parameter.kt)
         print('\n')
 
     def get_material_ptr(self):
@@ -372,8 +381,13 @@ class myScene(object):
             self.mass_cut_off = 1e-8 * density / matcount * grid_size[0] * grid_size[1] * grid_size[2]
             self.volume_cut_off = 1e-8 * grid_size[0] * grid_size[1] * grid_size[2]
         elif sims.dimension == 2:
-            self.mass_cut_off = 1e-8 * density / matcount * grid_size[0] * grid_size[1]
-            self.volume_cut_off = 1e-5 * grid_size[0] * grid_size[1]
+            if sims.isTHB == False:
+                self.mass_cut_off = 1e-8 * density / matcount * grid_size[0] * grid_size[1]
+                self.volume_cut_off = 1e-5 * grid_size[0] * grid_size[1]
+            else:
+                l = 2 ** sims.grid_layer
+                self.mass_cut_off = 1e-8 * density / matcount * grid_size[0]/l * grid_size[1]/l
+                self.volume_cut_off = 1e-8 * grid_size[0]/l * grid_size[1]/l  
     
     def update_particle_properties_in_region(self, sims: Simulation, override, property_name, value, is_in_region):
         print(" Modify Particle Information ".center(71, '-'))
@@ -485,14 +499,17 @@ class myScene(object):
             kernel_tranverse_active_particle(int(self.particleNum[0]), self.particle)
 
     def check_elastic_material(self):
-        return self.material.is_elastic
+        is_elastic = True
+        for nmat in range(1, self.material.matProps.size()):
+            is_elastic &= self.material.matProps[nmat].is_elastic
+        return is_elastic
     
-    def push_psize(self, particleNum, psize):
+    def push_psize(self, psize):
         psize = list(psize)
         dim = len(psize)
         if np.array(psize).ndim == 2:
             dim = len(psize[0])
-        self.psize = np.append(self.psize, np.repeat([psize], particleNum, axis=0)).reshape(-1, dim)
+        self.psize = np.append(self.psize, psize).reshape(-1, dim)
 
     def set_boundary_condition(self, sims: Simulation):
         self.domain_boundary = DomainBoundary(sims.domain)

@@ -265,45 +265,6 @@ def validate_particle_displacement_(limit: float, particleNum: int, particle: ti
 #                Assign Particle to Cell                    #
 # ========================================================= #
 @ti.kernel
-def calculate_particles_position_(particleNum: int, igrid_size: float, particle: ti.template(), particle_count: ti.template(), cnum: ti.types.vector(3, int)):
-    # TODO: using morton code
-    particle_count.fill(0)
-    for np in range(particleNum):  
-        grid_idx = ti.floor(particle[np].x * igrid_size , int)
-        cellID = linearize(grid_idx, cnum)
-        ti.atomic_add(particle_count[cellID], 1)
-    
-@ti.kernel
-def insert_particle_to_cell_(igrid_size: float, particleNum: int, particle: ti.template(), particle_count: ti.template(), particle_current: ti.template(), particleID: ti.template(), cnum: ti.types.vector(3, int)):
-    particle_current.fill(0)
-    for np in range(particleNum):
-        grid_idx = ti.floor(particle[np].x * igrid_size , int)
-        cellID = linearize(grid_idx, cnum)
-        grain_location = particle_count[cellID] - ti.atomic_add(particle_current[cellID], 1) - 1
-        particleID[grain_location] = np
-
-
-@ti.kernel
-def calculate_particles_position_v2_(particleNum: int, igrid_size: float, particle: ti.template(), particle_count: ti.template(), cnum: ti.types.vector(3, int)):
-    # TODO: using morton code
-    particle_count.fill(0)
-    for np in range(particleNum):  
-        if particle[np].free_surface == ti.u8(1):
-            grid_idx = ti.floor(particle[np].x * igrid_size , int)
-            cellID = linearize(grid_idx, cnum)
-            ti.atomic_add(particle_count[cellID], 1)
-    
-@ti.kernel
-def insert_particle_to_cell_v2_(igrid_size: float, particleNum: int, particle: ti.template(), particle_count: ti.template(), particle_current: ti.template(), particleID: ti.template(), cnum: ti.types.vector(3, int)):
-    particle_current.fill(0)
-    for np in range(particleNum):
-        if particle[np].free_surface == ti.u8(1):
-            grid_idx = ti.floor(particle[np].x * igrid_size , int)
-            cellID = linearize(grid_idx, cnum)
-            grain_location = particle_count[cellID] - ti.atomic_add(particle_current[cellID], 1) - 1
-            particleID[grain_location] = np
-
-@ti.kernel
 def kernel_compute_mass_center(particleNum: int, particle: ti.template(), bodyID: int) -> ti.types.vector(3, float):
     pcount = 0
     mass_center = vec3f(0., 0., 0.)

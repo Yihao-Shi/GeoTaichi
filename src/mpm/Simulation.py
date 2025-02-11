@@ -129,7 +129,7 @@ class Simulation(object):
         
     def set_boundary(self, boundary):
         BOUNDARY = {
-                        None: -1,
+                        'None': -1,
                         "Reflect": 0,
                         "Destroy": 1,
                         "Period": 2

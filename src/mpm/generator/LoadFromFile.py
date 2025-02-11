@@ -1,5 +1,5 @@
 import numpy as np
-import os
+import os, faiss, types
 
 from src.mpm.generator.InsertionKernel import *
 from src.mpm.Contact import DEMContact
@@ -110,8 +110,8 @@ class BodyReader(object):
         print('\n')
 
     def check_bodyID(self, scene: myScene, bodyID):
-        if bodyID > scene.node.shape[1] - 1:
-            raise RuntimeError(f"Keyword:: /bodyID/ must be smaller than {scene.node.shape[1] - 1}")
+        if bodyID > scene.grid_level - 1:
+            raise RuntimeError(f"Keyword:: /bodyID/ must be smaller than {scene.grid_level - 1}")
 
     def rotate_body(self, orientation, coords, init_particle_num, particle_num):
         if self.sims.dimension == 3:
@@ -199,8 +199,8 @@ class BodyReader(object):
             self.set_element_calLength(scene, bodyID, vec2f(psize[0, 0],psize[0, 1]))
             kernel_read_particle_file_2D(scene.particle, int(scene.particleNum[0]), particle_num, coords, volume, bodyID, materialID, density, init_v, fix_v)
 
-        self.set_particle_stress(scene, materialID, init_particle_num, particle_num, particle_stress)
-        scene.push_psize(1, psize)
+        self.set_particle_stress(scene, materialID, init_particle_num, particle_num, coords, psize, particle_stress)
+        scene.push_psize(psize)
         traction = DictIO.GetAlternative(template, "Traction", {})
         self.set_traction(scene, particle_num, traction)
         scene.particleNum[0] += particle_num
@@ -247,7 +247,7 @@ class BodyReader(object):
                                         DictIO.GetEssential(particle_info, "velocity_gradient"), 
                                         DictIO.GetEssential(particle_info, "fix_v"))
             psize = DictIO.GetEssential(particle_info, "psize")
-            scene.push_psize(1, psize)
+            scene.push_psize(psize)
             traction = DictIO.GetAlternative(template, "Traction", {})
             self.set_traction(scene, particle_number, traction)
             stateVars = DictIO.GetEssential(particle_info, "state_vars")
@@ -284,8 +284,8 @@ class BodyReader(object):
             self.rotate_body(orientation, coords, init_particle_num, particle_num)
             scene.check_particle_num(self.sims, particle_number=particle_num)
             kernel_read_particle_file_(scene.particle, int(scene.particleNum[0]), particle_num, coords, volume, bodyID, materialID, density, init_v, fix_v)
-            self.set_particle_stress(scene, materialID, init_particle_num, particle_num, particle_stress)
-            scene.push_psize(1, psize)
+            self.set_particle_stress(scene, materialID, init_particle_num, particle_num, coords, psize, particle_stress)
+            scene.push_psize(psize)
             traction = DictIO.GetAlternative(template, "Traction", {})
             self.set_traction(scene, particle_num, traction)
             scene.particleNum[0] += particle_num
@@ -339,13 +339,13 @@ class BodyReader(object):
         scene.check_particle_num(self.sims, particle_number=particle_num)
         kernel_read_particle_file_(scene.particle, int(scene.particleNum[0]), particle_num, voxelized_points_np, volume, bodyID, materialID, density, init_v, fix_v)
         
-        self.set_particle_stress(scene, materialID, init_particle_num, particle_num, particle_stress)
-        scene.push_psize(1, psize)
+        self.set_particle_stress(scene, materialID, init_particle_num, particle_num, voxelized_points_np, psize, particle_stress)
+        scene.push_psize(psize)
         traction = DictIO.GetAlternative(template, "Traction", {})
         self.set_traction(scene, particle_num, traction)
         scene.particleNum[0] += particle_num
 
-    def set_particle_stress(self, scene: myScene, materialID, init_particle_num, particle_num, particle_stress):
+    def set_particle_stress(self, scene: myScene, materialID, init_particle_num, particle_num, coords, psize, particle_stress):
         if type(particle_stress) is str:
             stress_file = DictIO.GetAlternative(particle_stress, "File", "ParticleStress.txt")
             stress_cloud = np.loadtxt(stress_file, unpack=True, comments='#').transpose()
@@ -353,34 +353,49 @@ class BodyReader(object):
                 raise ValueError("The length of File:: /ParticleStress/ is error!")
             if stress_cloud.shape[1] != 6:
                 raise ValueError("The stress tensor should be transform to viogt format")
-            kernel_apply_stress_(init_particle_num, init_particle_num + particle_num, initialStress, scene.particle)
+            kernel_apply_stress_from_file(init_particle_num, init_particle_num + particle_num, stress_cloud, scene.particle)
         elif type(particle_stress) is dict:
             gravityField = DictIO.GetAlternative(particle_stress, "GravityField", False)
             initialStress = DictIO.GetAlternative(particle_stress, "InternalStress", vec6f([0, 0, 0, 0, 0, 0]))
+            if isinstance(initialStress, (int, float)):
+                initialStress = vec6f([float(initialStress), float(initialStress), float(initialStress), 0., 0., 0.])
+            elif isinstance(initialStress, (tuple, list)):
+                initialStress = vec6f(initialStress)
             if self.sims.material_type == "TwoPhaseSingleLayer":
                 porePressure = DictIO.GetAlternative(particle_stress, "PorePressure", 0.)
-                self.set_internal_stress(scene, materialID, particle_num, gravityField, initialStress, porePressure)
+                self.set_internal_stress(scene, materialID, particle_num, coords, psize, gravityField, initialStress, porePressure)
             else:
-                self.set_internal_stress(scene, materialID, particle_num, gravityField, initialStress)
+                self.set_internal_stress(scene, materialID, particle_num, coords, psize, gravityField, initialStress)
 
-    def set_internal_stress(self, scene: myScene, materialID, particle_num, gravityField, initialStress, porePressure=0):
+    def set_internal_stress(self, scene: myScene, materialID, particle_num, point_cloud, psize, gravityField, initialStress, porePressure=0):
         if gravityField and materialID >= 0:
-            k0 = scene.material.get_lateral_coefficient(materialID)
-            if self.sims.dimension == 3:
-                top_position = scene.find_min_z_position()
-                print("Warning: The outline of particles should be aligned to Z axis when set /GravityField/ active!")
-                if not all(np.abs(np.array(self.sims.gravity) - np.array([0., 0., -9.8])) < 1e-12):
-                    raise ValueError("Gravity must be set as [0, 0, -9.8] when gravity activated")
-                density = scene.material.matProps[materialID].density
-                kernel_apply_gravity_field_(density, int(scene.particleNum[0]), int(scene.particleNum[0]) + particle_num, k0, top_position, self.sims.gravity, scene.particle)
-            elif self.sims.dimension == 2:
-                top_position = scene.find_min_y_position()
-                print("Warning: The outline of particles should be aligned to Y axis when set /GravityField/ active!")
-                if not all(np.abs(np.array(self.sims.gravity) - np.array([0., -9.8, 0.])) < 1e-12):
-                    raise ValueError("Gravity must be set as [0, -9.8] when gravity activated")
-                density = scene.material.matProps[materialID].density
-                kernel_apply_gravity_field_2D(density, int(scene.particleNum[0]), int(scene.particleNum[0]) + particle_num, k0, top_position, self.sims.gravity, scene.particle)
+            if np.linalg.norm(np.array(self.sims.gravity)) < 1e-12:
+                raise ValueError("Gravity must be activated")
+            
+            gravity = np.array(self.sims.gravity)
+            k0 = scene.material.matProps[materialID].get_lateral_coefficient()
+            directions = (gravity / np.linalg.norm(gravity))[0:self.sims.dimension]
+            distances = np.full(particle_num, -1.)
 
+            if isinstance(gravityField, types.FunctionType):
+                distances = gravityField(point_cloud)
+            elif isinstance(gravityField, (np.ndarray, list, tuple)):
+                distances = np.asarray(gravityField)
+            else:
+                projections = point_cloud @ -directions
+                t_max = np.max(projections)
+                distances = t_max - projections
+
+                print(directions, psize)
+
+                denominator = (directions[0] / psize[:,0]) ** 2 + (directions[1] / psize[:,1]) ** 2
+                if self.sims.dimension == 3:
+                    denominator += (directions[2] / psize[:,2]) ** 2
+                distances += np.sqrt(1. / denominator)
+            
+            density = scene.material.matProps[materialID].density
+            kernel_apply_gravity_field_(density, int(scene.particleNum[0]), int(scene.particleNum[0]) + particle_num, k0, self.sims.gravity, distances, scene.particle)
+        
         if initialStress.n != 6:
             raise ValueError(f"The dimension of initial stress: {initialStress.n} is inconsistent with the dimension of stress vigot tensor in 3D: 6")
         kernel_apply_vigot_stress_(int(scene.particleNum[0]), int(scene.particleNum[0]) + particle_num, initialStress, scene.particle)
@@ -399,7 +414,7 @@ class BodyReader(object):
     def set_polygons(self, contact: DEMContact, body_dict):
         vertices = DictIO.GetEssential(body_dict, "Vertices")
         if isinstance(vertices, str):
-            print('#', f"Start adding material points from {vertices}......")
+            print('#', f"Reading {vertices}......")
             if not os.path.exists(vertices):
                 raise EOFError("Invaild path")
             vertice = np.loadtxt(vertices)[:, 0:self.sims.dimension]
@@ -411,3 +426,4 @@ class BodyReader(object):
         contact.polygon_vertices.from_numpy(vertice)
         contact.velocity = ti.Vector(np.array(velocity))
             
+
