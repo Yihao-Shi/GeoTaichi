@@ -241,7 +241,7 @@ class BoundaryConstraints(object):
         sign = DictIO.GetAlternative(boundary, "Sign", None)
         norms = self.get_norms(sims, norm, sign)
         dirs, signs = self.get_dirs_and_signs(norms)
-        self.friction_dict.update(self.build_constraint_dict(np.zeros(mu), inodes, dirs, signs, np.arange(level, level + nlevel, 1)))
+        self.friction_dict.update(self.build_constraint_dict(np.zeros(1) + mu, inodes, dirs, signs, np.arange(level, level + nlevel, 1)))
 
         print("Boundary Type: Friction Constraint")
         print("Start Point: ", start_point)
@@ -345,11 +345,10 @@ class BoundaryConstraints(object):
             self.check_friction_constraint_num(sims, nfriction)
             keys, values = self.split_dict_to_arrays(dict(sorted(self.friction_dict.items(), key=lambda item: item)))
             nodeID = np.ascontiguousarray(keys[:, 0])
-            levels = np.ascontiguousarray(keys[:, 4])
+            levels = np.ascontiguousarray(keys[:, 3])
             dirs = np.ascontiguousarray(keys[:, 1])
             signs = np.ascontiguousarray(keys[:, 2])
-            mu = np.ascontiguousarray(keys[:, 3])
-            set_friction_constraint(self.friction_boundary, nodeID, levels, dirs, signs, mu)
+            set_friction_constraint(self.friction_boundary, nodeID, levels, dirs, signs, values)
             self.friction_list[0] = nfriction
         
         ntraction = len(self.traction_dict)
