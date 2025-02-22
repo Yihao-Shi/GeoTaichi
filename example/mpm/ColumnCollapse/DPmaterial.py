@@ -1,3 +1,6 @@
+import sys
+sys.path.append('/home/eleven/work/GeoTaichi_release')
+
 from geotaichi import *
 
 init()
@@ -22,7 +25,7 @@ mpm.memory_allocate(memory={
                                 "max_material_number":    1,
                                 "max_particle_number":    5.12e5,
                                 "max_constraint_number":  {
-                                                               "max_velocity_constraint":   134638,
+                                                               "max_velocity_constraint":   237507,
                                                                "max_friction_constraint":   134638
                                                           }
                             })

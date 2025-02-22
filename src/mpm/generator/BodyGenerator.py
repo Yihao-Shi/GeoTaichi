@@ -5,7 +5,7 @@ import os, faiss, types
 from src.mpm.elements.ElementBase import ElementBase
 from src.mpm.elements.HexahedronKernel import transform_local_to_global
 from src.mpm.generator.InsertionKernel import *
-from src.mpm.MaterialManager import ConstitutiveModel
+from src.consititutive_model.ConstitutiveModelBase import ConstitutiveBase
 from src.mpm.SceneManager import myScene
 from src.mpm.Simulation import Simulation
 from src.utils.GaussPoint import GaussPointInRectangle, GaussPointInTriangle
@@ -347,13 +347,13 @@ class BodyGenerator(object):
             else:
                 self.set_internal_stress(materialID, scene.material, scene.particle, particle_count, int(scene.particleNum[0]), psize, gravityField, initialStress)
 
-    def set_internal_stress(self, materialID, material: ConstitutiveModel, particle, particle_num, init_particle_num, psize, gravityField, initialStress, porePressure=0):
+    def set_internal_stress(self, materialID, material: ConstitutiveBase, particle, particle_num, init_particle_num, psize, gravityField, initialStress, porePressure=0):
         if gravityField and materialID >= 0:
             if np.linalg.norm(np.array(self.sims.gravity)) < 1e-12:
                 raise ValueError("Gravity must be activated")
             
             gravity = np.array(self.sims.gravity)
-            k0 = material.matProps[materialID].get_lateral_coefficient()
+            k0 = material.get_lateral_coefficient(materialID)
             directions = (gravity / np.linalg.norm(gravity))[0:self.sims.dimension]
             point_cloud = np.ascontiguousarray(self.particle.to_numpy()[init_particle_num:init_particle_num + particle_num])
             distances = np.full(particle_num, -1.)

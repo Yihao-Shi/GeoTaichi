@@ -373,7 +373,7 @@ class BodyReader(object):
                 raise ValueError("Gravity must be activated")
             
             gravity = np.array(self.sims.gravity)
-            k0 = scene.material.matProps[materialID].get_lateral_coefficient()
+            k0 = scene.material.get_lateral_coefficient(materialID)
             directions = (gravity / np.linalg.norm(gravity))[0:self.sims.dimension]
             distances = np.full(particle_num, -1.)
 
@@ -385,8 +385,6 @@ class BodyReader(object):
                 projections = point_cloud @ -directions
                 t_max = np.max(projections)
                 distances = t_max - projections
-
-                print(directions, psize)
 
                 denominator = (directions[0] / psize[:,0]) ** 2 + (directions[1] / psize[:,1]) ** 2
                 if self.sims.dimension == 3:
