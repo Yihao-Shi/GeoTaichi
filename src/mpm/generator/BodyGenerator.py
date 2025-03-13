@@ -1,6 +1,6 @@
 import numpy as np
 import taichi as ti
-import os, faiss, types
+import os, types
 
 from src.mpm.elements.ElementBase import ElementBase
 from src.mpm.elements.HexahedronKernel import transform_local_to_global

@@ -1,11 +1,10 @@
 from geotaichi import *
 
-init(device_memory_GB=2)
+init(dim=2, device_memory_GB=2)
 
 mpm = MPM()
 
 mpm.set_configuration(domain=ti.Vector([6, 2.25]),
-                      dimension="2-Dimension",
                       is_2DAxisy=False,
                       background_damping=0.0,
                       gravity=ti.Vector([0., -9.8]),

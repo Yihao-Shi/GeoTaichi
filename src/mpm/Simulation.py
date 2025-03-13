@@ -192,6 +192,7 @@ class Simulation(object):
         self.visualize = visualize
 
     def set_THB(self, THBparameter):
+        raise RuntimeError("Current version do not support THB")
         if THBparameter:
             self.isTHB = True
             self.THBparameter = THBparameter

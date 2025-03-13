@@ -1,5 +1,5 @@
 import numpy as np
-import os, faiss, types
+import os, types
 
 from src.mpm.generator.InsertionKernel import *
 from src.mpm.Contact import DEMContact

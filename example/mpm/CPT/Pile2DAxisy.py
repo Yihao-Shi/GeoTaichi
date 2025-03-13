@@ -1,7 +1,6 @@
 
-import sys
-sys.path.append('/home/eleven/work/GeoTaichi')
 from geotaichi import *
+
 init(dim=2, device_memory_GB=7.0)
 
 mpm = MPM()
@@ -14,7 +13,6 @@ mpm.set_configuration(domain=ti.Vector([0.6, 2.508]),
                       alphaPIC=0.2, 
                       mapping="USF", 
                       shape_function="CubicBSpline",
-                      #stabilize="B-Bar Method",
                       )
 
 mpm.set_solver(solver={

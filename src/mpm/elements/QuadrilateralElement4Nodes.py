@@ -5,7 +5,6 @@ import taichi as ti
 
 from src.mpm.elements.QuadrilateralKernel import *
 from src.mpm.structs import HexahedronGuassCell, HexahedronCell, ParticleCPDI, IncompressibleCell
-from src.mpm.elements.ElementNodesTHB_Generate import ElemNodesGen
 from src.mpm.elements.ElementBase import ElementBase
 from src.mpm.Simulation import Simulation
 from src.utils.GaussPoint import GaussPointInRectangle
@@ -83,52 +82,6 @@ class QuadrilateralElement4Nodes(ElementBase):
         self.gridSum = int(self.gnum[0] * self.gnum[1])
         self.cellSum = int(self.cnum[0] * self.cnum[1])
         self.set_nodal_coords()
-
-    def create_nodes_THB(self, sims: Simulation, grid_size):
-        self.grid_size = grid_size
-        self.gnum = vec2i([int((sims.domain[i] + Threshold) / grid_size[i]) + 1 for i in range(2)]) 
-        modelRange = np.array([[0., 0.,], sims.domain])
-        modelRange = modelRange.T
-        THBparameter = sims.THBparameter
-        self.grid_layer = THBparameter['grid_layer']
-        subdomain = THBparameter['subdomain']
-        print('Debug THB information:')
-        nbNode, nbElem, ElemList, nodeList = ElemNodesGen(grid_size[0], modelRange, self.grid_layer, subdomain )
-        print(f'Numbers of Element and Node: {nbElem}, {nbNode}')
-        self.gridSum = nbNode
-        self.nodal_coords = np.array([nodeList[i].coord for i in range(1, nbNode + 1)])
-        self.Nlevel = np.array([nodeList[i].level for i in range(1, nbNode + 1)])
-        self.Ntype = np.array([nodeList[i].Ntype for i in range(1, nbNode + 1)])
-        self.ti_nodal_coords = ti.Vector.field(2, float)
-        self.ti_Nlevels = ti.field(int)
-        self.ti_Ntype = ti.field(int)
-        snode = ti.root.dense(ti.i, self.nodal_coords.shape[0])
-        snode.place(self.ti_nodal_coords)
-        snode.dense(ti.j, 2).place(self.ti_Nlevels)
-        snode.dense(ti.j, 2).place(self.ti_Ntype)
-        self.ti_nodal_coords.from_numpy(self.nodal_coords)
-        self.ti_Nlevels.from_numpy(self.Nlevel)
-        self.ti_Ntype.from_numpy(self.Ntype)
-        #print(self.ti_nodal_coords[0][0], self.ti_Nlevels[1763,0],  self.ti_Ntype[1763,0])
-        # print(self.Ntype[3802,1])
-        # Element
-        self.ElemNode = np.array([ElemList[i].includeNode[:4] for i in range(1, nbElem + 1)])
-        self.ElemList_childElem = np.array([ElemList[i].childElem for i in range(1, nbElem + 1)])
-        self.ElemList_nbInfNode = np.array([ElemList[i].nbInfNode for i in range(1, nbElem + 1)])
-        self.ElemList_influenNode = np.array([ElemList[i].influenNode for i in range(1, nbElem + 1)])
-        self.ti_elem_childElem = ti.field(int)
-        self.ti_elem_nbInfNode = ti.field(int)
-        self.ti_elem_influenNode = ti.field(int)
-        self.ti_elemNode = ti.field(int)
-        element_snode = ti.root.dense(ti.i, self.ElemNode.shape[0])
-        element_snode.place(self.ti_elem_nbInfNode)
-        element_snode.dense(ti.j, self.grid_layer).place(self.ti_elem_childElem)
-        element_snode.dense(ti.j, 25).place(self.ti_elem_influenNode)
-        element_snode.dense(ti.j, 4).place(self.ti_elemNode)
-        self.ti_elemNode.from_numpy(self.ElemNode)
-        self.ti_elem_childElem.from_numpy(self.ElemList_childElem)
-        self.ti_elem_nbInfNode.from_numpy(self.ElemList_nbInfNode)
-        self.ti_elem_influenNode.from_numpy(self.ElemList_influenNode)
 
     def set_characteristic_length(self, sims: Simulation):
         if sims.shape_function == "CPDI1" or sims.shape_function == "CPDI2":
@@ -234,10 +187,6 @@ class QuadrilateralElement4Nodes(ElementBase):
                     self.grid_nodes_lower_order = 9
                     self.lower_shape_function = ShapeBsplineQ
                     self.lower_grad_shape_function = GShapeBsplineQ
-            elif sims.isTHB:
-                self.grid_nodes = 25
-                self.shape_function = ShapeBsplineC_THB
-                self.grad_shape_function = GShapeBsplineC_THB
         else:
             raise KeyError(f"The shape function type {sims.shape_function} is not exist!")
         

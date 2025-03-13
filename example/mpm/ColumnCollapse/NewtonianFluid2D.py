@@ -1,11 +1,10 @@
 from geotaichi import *
 
-init(device_memory_GB=3.7)
+init(dim=2, device_memory_GB=3.7)
 
 mpm = MPM()
 
 mpm.set_configuration(domain=[6., 6.],
-                      dimension="2-Dimension",
                       background_damping=0.0,
                       alphaPIC=1.0, 
                       mapping="USL", 
