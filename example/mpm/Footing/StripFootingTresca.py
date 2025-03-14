@@ -1,6 +1,6 @@
 from geotaichi import *
 
-init()
+init(device_memory_GB=3)
 
 mpm = MPM()
 
@@ -10,8 +10,7 @@ mpm.set_configuration(domain=ti.Vector([10.2, 0.3, 12.2]),
                       alphaPIC=0.005, 
                       mapping="USL", 
                       shape_function="GIMP",
-                      stabilize="B-Bar Method",
-                      gauss_number=2)
+                      stabilize="B-Bar Method")
 
 mpm.set_solver(solver={
                            "Timestep":                   1e-5,
@@ -23,16 +22,18 @@ mpm.memory_allocate(memory={
                                 "max_material_number":    1,
                                 "max_particle_number":    652800,
                                 "max_constraint_number":  {
-                                                               "max_velocity_constraint":     103716
+                                                               "max_velocity_constraint":     106904
                                                           }
                             })
-                            
+
+mpm.add_contact(contact_type="GeoContact", friction=0.1, cutoff=0.8, penalty=[0.78, 2.5])
+
 mpm.add_material(model="MohrCoulomb",
                  material={
                                "MaterialID":           1,
                                "Density":              1000.,
                                "YoungModulus":         1e5,
-                               "PossionRatio":        0.49,
+                               "PossionRatio":         0.49,
                                "Cohesion":             1000,
                                "Friction":             0.,
                                "Dilation":             0.
@@ -40,12 +41,7 @@ mpm.add_material(model="MohrCoulomb",
 
 mpm.add_element(element={
                              "ElementType":               "R8N3D",
-                             "ElementSize":               ti.Vector([0.1, 0.1, 0.1]),
-                             "Contact":   {
-                                               "ContactDetection":                True,
-                                               "Friction":                        0.1,
-                                               "CutOff":                          0.8
-                                          }
+                             "ElementSize":               ti.Vector([0.1, 0.1, 0.1])
                         })
 
 
@@ -133,7 +129,6 @@ mpm.add_boundary_condition(boundary=[
                                         }
                                     ])
 
-@ti.kernel
 def stepwise():
     ramp = mpm.sims.time
     vel0 = 0.1

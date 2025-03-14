@@ -1,16 +1,16 @@
 from geotaichi import *
 
-init()
+init(device_memory_GB=3)
 
 mpm = MPM()
 
 mpm.set_configuration(domain=ti.Vector([6.4, 1.4, 8.4]), 
-                      background_damping=0.05, 
+                      background_damping=0.0, 
                       gravity=ti.Vector([0., 0., 0.]),
                       alphaPIC=0.00, 
                       mapping="USL", 
                       shape_function="GIMP",
-                      stabilize="F-Bar Method")
+                      stabilize=None)
 
 mpm.set_solver(solver={
                            "Timestep":                   1e-4,
@@ -23,9 +23,11 @@ mpm.memory_allocate(memory={
                                 "max_particle_number":    514000,
                                 "max_constraint_number":  {
                                                                "max_velocity_constraint":     12680,
-                                                               "max_reflection_constraint":   78540
+                                                               "max_reflection_constraint":   178540
                                                           }
                             })
+                   
+mpm.add_contact(contact_type="MPMContact", friction=0.)
                             
 mpm.add_material(model="MohrCoulomb",
                  material={
@@ -40,12 +42,7 @@ mpm.add_material(model="MohrCoulomb",
 
 mpm.add_element(element={
                              "ElementType":               "R8N3D",
-                             "ElementSize":               ti.Vector([0.1, 0.1, 0.1]),
-                             "Contact":   {
-                                               "ContactDetection":                True,
-                                               "Friction":                        0.,
-                                               "CutOff":                          0.8
-                                          }
+                             "ElementSize":               ti.Vector([0.1, 0.1, 0.1])
                         })
 
 

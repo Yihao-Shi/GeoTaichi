@@ -98,7 +98,6 @@ def lightweight_p2g(particleNum: int, gnum: ti.types.vector(GlobalVariable.DIMEN
     for d in ti.static(range(GlobalVariable.DIMENSION)): ti.block_local(node.momentum.get_scalar_field(d))
     for d in ti.static(range(GlobalVariable.DIMENSION)): ti.block_local(node.force.get_scalar_field(d))
     for np in range(particleNum):
-        #np = particleID[pid]
         bodyID = int(particle[np].bodyID)
         position = particle[np].x
         velocity = particle[np].v
@@ -116,14 +115,19 @@ def lightweight_p2g(particleNum: int, gnum: ti.types.vector(GlobalVariable.DIMEN
                 nodeID = linearize(grid_id, gnum)
                 grid_pos = grid_id * grid_size
                 shape_fn, dshape_fn = ti.Vector.zero(float, GlobalVariable.DIMENSION), ti.Vector.zero(float, GlobalVariable.DIMENSION)
+                shape_fnc = ti.Vector.zero(float, GlobalVariable.DIMENSION)
                 if ti.static(GlobalVariable.SHAPEFUNCTION == 0): 
                     for d in ti.static(range(GlobalVariable.DIMENSION)):
                         shape_fn[d] = ShapeLinear(position[d], grid_pos[d], igrid_size[d], 0)
                         dshape_fn[d] = GShapeLinear(position[d], grid_pos[d], igrid_size[d], 0)
+                        if ti.static(GlobalVariable.BBAR):
+                            shape_fnc[d] = ShapeLinearCenter(position[d], grid_pos[d], igrid_size[d], 0)
                 elif ti.static(GlobalVariable.SHAPEFUNCTION == 1): 
                     for d in ti.static(range(GlobalVariable.DIMENSION)):
                         shape_fn[d] = ShapeGIMP(position[d], grid_pos[d], igrid_size[d], psize[d])
                         dshape_fn[d] = GShapeGIMP(position[d], grid_pos[d], igrid_size[d], psize[d])
+                        if ti.static(GlobalVariable.BBAR):
+                            shape_fnc[d] = ShapeGIMPCenter(position[d], grid_pos[d], igrid_size[d], psize[d])
                 elif ti.static(GlobalVariable.SHAPEFUNCTION == 2): 
                     boundary_type = boundary_types[nodeID, bodyID]
                     for d in ti.static(range(GlobalVariable.DIMENSION)):
@@ -146,7 +150,10 @@ def lightweight_p2g(particleNum: int, gnum: ti.types.vector(GlobalVariable.DIMEN
                 if ti.static(GlobalVariable.DIMENSION == 2):
                     weight_grad = ti.Vector([dshape_fn[0] * shape_fn[1], shape_fn[0] * dshape_fn[1]]) 
                     if ti.static(GlobalVariable.BBAR):
-                        pass
+                        weight_gradc = vec3f([dshape_fn[0] * shape_fnc[1], shape_fnc[0] * dshape_fn[1]])
+                        temp_dshape = 0.5 * (weight_gradc - weight_grad)
+                        pforce += vec2f([(weight_grad[0] + temp_dshape[0]) * internal_force[0] + temp_dshape[0] * internal_force[1] + temp_dshape[0] * internal_force[2] + weight_grad[1] * internal_force[3],
+                                          temp_dshape[1] * internal_force[0] + (weight_grad[1] + temp_dshape[1]) * internal_force[1] + temp_dshape[1] * internal_force[2] + weight_grad[0] * internal_force[3]])
                     else:
                         pforce += vec2f([weight_grad[0] * internal_force[0] + weight_grad[1] * internal_force[3], weight_grad[1] * internal_force[1] + weight_grad[0] * internal_force[3]])
                 elif ti.static(GlobalVariable.DIMENSION == 3):
@@ -154,7 +161,13 @@ def lightweight_p2g(particleNum: int, gnum: ti.types.vector(GlobalVariable.DIMEN
                                              shape_fn[0] * dshape_fn[1] * shape_fn[2], 
                                              shape_fn[0] * shape_fn[1] * dshape_fn[2]]) 
                     if ti.static(GlobalVariable.BBAR):
-                        pass
+                        weight_gradc = vec3f([dshape_fn[0] * shape_fnc[1] * shape_fnc[2], 
+                                             shape_fnc[0] * dshape_fn[1] * shape_fnc[2], 
+                                             shape_fnc[0] * shape_fnc[1] * dshape_fn[2]])
+                        temp_dshape = (weight_gradc - weight_grad) / 3.
+                        pforce += vec3f([(weight_grad[0] + temp_dshape[0]) * internal_force[0] + temp_dshape[0] * internal_force[1] + temp_dshape[0] * internal_force[2] + weight_grad[1] * internal_force[3] + weight_grad[2] * internal_force[5],
+                                          temp_dshape[1] * internal_force[0] + (weight_grad[1] + temp_dshape[1]) * internal_force[1] + temp_dshape[1] * internal_force[2] + weight_grad[0] * internal_force[3] + weight_grad[2] * internal_force[4],
+                                          temp_dshape[2] * internal_force[0] + temp_dshape[2] * internal_force[1] + (weight_grad[2] + temp_dshape[2]) * internal_force[2] + weight_grad[1] * internal_force[4] + weight_grad[0] * internal_force[5]])
                     else:
                         pforce += vec3f([weight_grad[0] * internal_force[0] + weight_grad[1] * internal_force[3] + weight_grad[2] * internal_force[5],
                                          weight_grad[1] * internal_force[1] + weight_grad[0] * internal_force[3] + weight_grad[2] * internal_force[4],
@@ -162,13 +175,13 @@ def lightweight_p2g(particleNum: int, gnum: ti.types.vector(GlobalVariable.DIMEN
                 nmass = weight * p_mass
                 momentum = nmass * velocity
                 if ti.static(GlobalVariable.APIC or GlobalVariable.TPIC):
-                    momentum += nmass * velocity_gradient @ dpos
+                    momentum -= nmass * velocity_gradient @ dpos
                 node[nodeID, bodyID].m += nmass
                 node[nodeID, bodyID].momentum += momentum
                 node[nodeID, bodyID].force += pforce
 
 @ti.kernel
-def lightweight_g2p(particleNum: int, alpha: float, gnum: ti.types.vector(GlobalVariable.DIMENSION, int), grid_size: ti.types.vector(GlobalVariable.DIMENSION, float), igrid_size: ti.types.vector(GlobalVariable.DIMENSION, float), 
+def lightweight_g2p(particleNum: int, alpha: float, cutoff: float, fraction: float, gnum: ti.types.vector(GlobalVariable.DIMENSION, int), grid_size: ti.types.vector(GlobalVariable.DIMENSION, float), igrid_size: ti.types.vector(GlobalVariable.DIMENSION, float), 
                     dt: ti.template(), particle_lengths: ti.template(), boundary_types: ti.template(), node: ti.template(), particle: ti.template(), matProps: ti.template(), stateVars: ti.template()):
     for d in ti.static(range(GlobalVariable.DIMENSION)): ti.block_local(node.momentum.get_scalar_field(d))
     for d in ti.static(range(GlobalVariable.DIMENSION)): ti.block_local(node.force.get_scalar_field(d))
@@ -183,6 +196,7 @@ def lightweight_g2p(particleNum: int, alpha: float, gnum: ti.types.vector(Global
         vPIC = ti.Vector.zero(float, GlobalVariable.DIMENSION)
         Wp = ti.Matrix.zero(float, GlobalVariable.DIMENSION, GlobalVariable.DIMENSION)
         velocity_gradient = ti.Matrix.zero(float, GlobalVariable.DIMENSION, GlobalVariable.DIMENSION)
+        velocity_gradient_bar = ti.Matrix.zero(float, GlobalVariable.DIMENSION, GlobalVariable.DIMENSION)
         for offset in ti.static(ti.grouped(ti.ndrange(*((GlobalVariable.INFLUENCENODE, ) * GlobalVariable.DIMENSION)))):
             base = ti.floor((position - psize) * igrid_size).cast(int)
             grid_id = base + offset
@@ -190,16 +204,21 @@ def lightweight_g2p(particleNum: int, alpha: float, gnum: ti.types.vector(Global
                 nodeID = linearize(grid_id, gnum)
                 grid_pos = grid_id * grid_size
                 shape_fn, dshape_fn = ti.Vector.zero(float, GlobalVariable.DIMENSION), ti.Vector.zero(float, GlobalVariable.DIMENSION)
+                shape_fnc = ti.Vector.zero(float, GlobalVariable.DIMENSION)
                 if ti.static(GlobalVariable.SHAPEFUNCTION == 0): 
                     for d in ti.static(range(GlobalVariable.DIMENSION)):
                         shape_fn[d] = ShapeLinear(position[d], grid_pos[d], igrid_size[d], 0)
                         if ti.static(not GlobalVariable.APIC):
                             dshape_fn[d] = GShapeLinear(position[d], grid_pos[d], igrid_size[d], 0)
+                        if ti.static(GlobalVariable.BBAR):
+                            shape_fnc[d] = ShapeLinearCenter(position[d], grid_pos[d], igrid_size[d], 0)
                 elif ti.static(GlobalVariable.SHAPEFUNCTION == 1): 
                     for d in ti.static(range(GlobalVariable.DIMENSION)):
                         shape_fn[d] = ShapeGIMP(position[d], grid_pos[d], igrid_size[d], psize[d])
                         if ti.static(not GlobalVariable.APIC):
                             dshape_fn[d] = GShapeGIMP(position[d], grid_pos[d], igrid_size[d], psize[d])
+                        if ti.static(GlobalVariable.BBAR):
+                            shape_fnc[d] = ShapeGIMPCenter(position[d], grid_pos[d], igrid_size[d], psize[d])
                 elif ti.static(GlobalVariable.SHAPEFUNCTION == 2): 
                     boundary_type = boundary_types[nodeID, bodyID]
                     for d in ti.static(range(GlobalVariable.DIMENSION)):
@@ -234,38 +253,171 @@ def lightweight_g2p(particleNum: int, alpha: float, gnum: ti.types.vector(Global
                 else:
                     if ti.static(GlobalVariable.DIMENSION == 2):
                         weight_grad = ti.Vector([dshape_fn[0] * shape_fn[1], shape_fn[0] * dshape_fn[1]]) 
-                        velocity_gradient += outer_product2D(weight_grad, velocity)
+                        velocity_gradient_increment = outer_product2D(weight_grad, velocity)
+                        velocity_gradient += velocity_gradient_increment
+                        if ti.static(GlobalVariable.BBAR):
+                            weight_gradc = vec3f([dshape_fn[0] * shape_fnc[1], shape_fnc[0] * dshape_fn[1]])
+                            temp_dshape = 0.5 * (weight_gradc - weight_grad)
+                            average_bmatrix = temp_dshape[0] * velocity[0] + temp_dshape[1] * velocity[1]
+                            velocity_gradient_bar += velocity_gradient_increment
+                            velocity_gradient_bar[0, 0] += average_bmatrix
+                            velocity_gradient_bar[1, 1] += average_bmatrix
                     elif ti.static(GlobalVariable.DIMENSION == 3):
                         weight_grad = ti.Vector([dshape_fn[0] * shape_fn[1] * shape_fn[2], 
                                                 shape_fn[0] * dshape_fn[1] * shape_fn[2], 
-                                                shape_fn[0] * shape_fn[1] * dshape_fn[2]]) 
-                        velocity_gradient += outer_product(weight_grad, velocity)
+                                                shape_fn[0] * shape_fn[1] * dshape_fn[2]])
+                        velocity_gradient_increment = outer_product(weight_grad, velocity)
+                        velocity_gradient += velocity_gradient_increment
+                        if ti.static(GlobalVariable.BBAR):
+                            weight_gradc = vec3f([dshape_fn[0] * shape_fnc[1] * shape_fnc[2], 
+                                                  shape_fnc[0] * dshape_fn[1] * shape_fnc[2], 
+                                                  shape_fnc[0] * shape_fnc[1] * dshape_fn[2]])
+                            temp_dshape = (weight_gradc - weight_grad) / 3.
+                            average_bmatrix = temp_dshape[0] * velocity[0] + temp_dshape[1] * velocity[1] + temp_dshape[2] * velocity[2]
+                            velocity_gradient_bar += velocity_gradient_increment
+                            velocity_gradient_bar[0, 0] += average_bmatrix
+                            velocity_gradient_bar[1, 1] += average_bmatrix
+                            velocity_gradient_bar[2, 2] += average_bmatrix
+
+        if ti.static(not GlobalVariable.BBAR):
+            velocity_gradient_bar = velocity_gradient
                     
         if ti.static(GlobalVariable.APIC):
             velocity_gradient = Wp.inverse() @ velocity_gradient
-        
-        velocity_gradient_bar = velocity_gradient
-        if ti.static(GlobalVariable.BBAR):
-            pass
-        elif ti.static(GlobalVariable.FBAR):
-            pass
-        
-        particle[np].velocity_gradient = velocity_gradient_bar
-        particle[np].v = alpha * vPIC + (1. - alpha) * vFLIP
-        particle[np].x += vPIC * dt[None]
 
-        if ti.static(GlobalVariable.PARTICLESHIFTING):
-            pass
+        if ti.static(not GlobalVariable.FBAR):
+            particle[np].velocity_gradient = velocity_gradient_bar
+            particle[np].v = alpha * vPIC + (1. - alpha) * vFLIP
+            particle[np].x += vPIC * dt[None]
 
-        previous_stress, volume = particle[np].stress, particle[np].vol
-        volume *= (ti.Matrix.identity(float, GlobalVariable.DIMENSION) + dt[None] * velocity_gradient).determinant()
-        stress = ti.Vector.zero(float, 6)
-        if ti.static(GlobalVariable.DIMENSION == 2):
-            stress = matProps[materialID].ComputeStress2D(np, previous_stress, velocity_gradient_bar, stateVars, dt)
-        elif ti.static(GlobalVariable.DIMENSION == 3):
-            stress = matProps[materialID].ComputeStress(np, previous_stress, velocity_gradient_bar, stateVars, dt)
-        particle[np].stress = stress
-        particle[np].vol = volume
+            previous_stress, volume = particle[np].stress, particle[np].vol
+            volume *= (ti.Matrix.identity(float, GlobalVariable.DIMENSION) + dt[None] * velocity_gradient).determinant()
+            stress = ti.Vector.zero(float, 6)
+            for matID in ti.static(range(1, matProps.shape[0])):
+                if materialID == matID:
+                    if ti.static(GlobalVariable.DIMENSION == 2):
+                        stress = matProps[1].ComputeStress2D(np, previous_stress, velocity_gradient_bar, stateVars, dt)
+                    elif ti.static(GlobalVariable.DIMENSION == 3):
+                        stress = matProps[1].ComputeStress(np, previous_stress, velocity_gradient_bar, stateVars, dt)
+            particle[np].stress = stress
+            particle[np].vol = volume
+
+    if ti.static(GlobalVariable.FBAR):
+        for np in range(particleNum):
+            node.jacobian.fill(0)
+            mass = particle[np].m
+            djacobian = (ti.Matrix.one(float, GlobalVariable.DIMENSION, GlobalVariable.DIMENSION) + dt[None] * velocity_gradient_bar).determinant()
+            transfer_var = mass * djacobian
+            for offset in ti.static(ti.grouped(ti.ndrange(*((GlobalVariable.INFLUENCENODE, ) * GlobalVariable.DIMENSION)))):
+                base = ti.floor((position - psize) * igrid_size).cast(int)
+                grid_id = base + offset
+                if all(grid_id >= 0):
+                    nodeID = linearize(grid_id, gnum)
+                    grid_pos = grid_id * grid_size
+                    shape_fn, dshape_fn = ti.Vector.zero(float, GlobalVariable.DIMENSION), ti.Vector.zero(float, GlobalVariable.DIMENSION)
+                    shape_fnc = ti.Vector.zero(float, GlobalVariable.DIMENSION)
+                    if ti.static(GlobalVariable.SHAPEFUNCTION == 0): 
+                        for d in ti.static(range(GlobalVariable.DIMENSION)):
+                            shape_fn[d] = ShapeLinear(position[d], grid_pos[d], igrid_size[d], 0)
+                            if ti.static(not GlobalVariable.APIC):
+                                dshape_fn[d] = GShapeLinear(position[d], grid_pos[d], igrid_size[d], 0)
+                            if ti.static(GlobalVariable.BBAR):
+                                shape_fnc[d] = ShapeLinearCenter(position[d], grid_pos[d], igrid_size[d], 0)
+                    elif ti.static(GlobalVariable.SHAPEFUNCTION == 1): 
+                        for d in ti.static(range(GlobalVariable.DIMENSION)):
+                            shape_fn[d] = ShapeGIMP(position[d], grid_pos[d], igrid_size[d], psize[d])
+                            if ti.static(not GlobalVariable.APIC):
+                                dshape_fn[d] = GShapeGIMP(position[d], grid_pos[d], igrid_size[d], psize[d])
+                            if ti.static(GlobalVariable.BBAR):
+                                shape_fnc[d] = ShapeGIMPCenter(position[d], grid_pos[d], igrid_size[d], psize[d])
+                    elif ti.static(GlobalVariable.SHAPEFUNCTION == 2): 
+                        boundary_type = boundary_types[nodeID, bodyID]
+                        for d in ti.static(range(GlobalVariable.DIMENSION)):
+                            btypes = int(boundary_type[d])
+                            shape_fn[d] = ShapeBsplineQ(position[d], grid_pos[d], igrid_size[d], btypes)
+                            if ti.static(not GlobalVariable.APIC):
+                                dshape_fn[d] = GShapeBsplineQ(position[d], grid_pos[d], igrid_size[d], btypes)
+                    elif ti.static(GlobalVariable.SHAPEFUNCTION == 3): 
+                        boundary_type = boundary_types[nodeID, bodyID]
+                        for d in ti.static(range(GlobalVariable.DIMENSION)):
+                            btypes = int(boundary_type[d])
+                            shape_fn[d] = ShapeBsplineC(position[d], grid_pos[d], igrid_size[d], btypes)
+                            if ti.static(not GlobalVariable.APIC):
+                                dshape_fn[d] = GShapeBsplineC(position[d], grid_pos[d], igrid_size[d], btypes)
+
+                    weight = 1.0
+                    for d in ti.static(range(GlobalVariable.DIMENSION)):
+                        weight *= shape_fn[d]
+                    node[nodeID, bodyID].jacobian += weight * transfer_var
+
+        for ng in range(node.shape[0]):
+            for nb in range(node.shape[1]):
+                if node[ng, nb].m > cutoff:
+                    node[ng, nb].jacobian /= node[ng, nb].m
+
+        for np in range(particleNum):
+            node.jacobian.fill(0)
+            mass = particle[np].m
+            djacobian = (ti.Matrix.one(float, GlobalVariable.DIMENSION, GlobalVariable.DIMENSION) + dt[None] * velocity_gradient_bar).determinant()
+            transfer_var = mass * djacobian
+            for offset in ti.static(ti.grouped(ti.ndrange(*((GlobalVariable.INFLUENCENODE, ) * GlobalVariable.DIMENSION)))):
+                base = ti.floor((position - psize) * igrid_size).cast(int)
+                grid_id = base + offset
+                djacobian_bar = 0.
+                if all(grid_id >= 0):
+                    nodeID = linearize(grid_id, gnum)
+                    grid_pos = grid_id * grid_size
+                    shape_fn, dshape_fn = ti.Vector.zero(float, GlobalVariable.DIMENSION), ti.Vector.zero(float, GlobalVariable.DIMENSION)
+                    shape_fnc = ti.Vector.zero(float, GlobalVariable.DIMENSION)
+                    if ti.static(GlobalVariable.SHAPEFUNCTION == 0): 
+                        for d in ti.static(range(GlobalVariable.DIMENSION)):
+                            shape_fn[d] = ShapeLinear(position[d], grid_pos[d], igrid_size[d], 0)
+                            if ti.static(not GlobalVariable.APIC):
+                                dshape_fn[d] = GShapeLinear(position[d], grid_pos[d], igrid_size[d], 0)
+                            if ti.static(GlobalVariable.BBAR):
+                                shape_fnc[d] = ShapeLinearCenter(position[d], grid_pos[d], igrid_size[d], 0)
+                    elif ti.static(GlobalVariable.SHAPEFUNCTION == 1): 
+                        for d in ti.static(range(GlobalVariable.DIMENSION)):
+                            shape_fn[d] = ShapeGIMP(position[d], grid_pos[d], igrid_size[d], psize[d])
+                            if ti.static(not GlobalVariable.APIC):
+                                dshape_fn[d] = GShapeGIMP(position[d], grid_pos[d], igrid_size[d], psize[d])
+                            if ti.static(GlobalVariable.BBAR):
+                                shape_fnc[d] = ShapeGIMPCenter(position[d], grid_pos[d], igrid_size[d], psize[d])
+                    elif ti.static(GlobalVariable.SHAPEFUNCTION == 2): 
+                        boundary_type = boundary_types[nodeID, bodyID]
+                        for d in ti.static(range(GlobalVariable.DIMENSION)):
+                            btypes = int(boundary_type[d])
+                            shape_fn[d] = ShapeBsplineQ(position[d], grid_pos[d], igrid_size[d], btypes)
+                            if ti.static(not GlobalVariable.APIC):
+                                dshape_fn[d] = GShapeBsplineQ(position[d], grid_pos[d], igrid_size[d], btypes)
+                    elif ti.static(GlobalVariable.SHAPEFUNCTION == 3): 
+                        boundary_type = boundary_types[nodeID, bodyID]
+                        for d in ti.static(range(GlobalVariable.DIMENSION)):
+                            btypes = int(boundary_type[d])
+                            shape_fn[d] = ShapeBsplineC(position[d], grid_pos[d], igrid_size[d], btypes)
+                            if ti.static(not GlobalVariable.APIC):
+                                dshape_fn[d] = GShapeBsplineC(position[d], grid_pos[d], igrid_size[d], btypes)
+                    
+                    jacobian = node[nodeID, bodyID].jacobian
+                    weight = 1.0
+                    for d in ti.static(range(GlobalVariable.DIMENSION)):
+                        weight *= shape_fn[d]
+                    djacobian_bar += jacobian
+
+            velocity_gradient = particle[np].velocity_gradient
+            ddeformation_gradient = ti.Matrix.one(float, GlobalVariable.DIMENSION, GlobalVariable.DIMENSION) + dt[None] * velocity_gradient
+            djacobian = ddeformation_gradient.determinant()
+            djacobian_bar_new = fraction * djacobian_bar + (1. - fraction) * djacobian
+            #jacobian_bar_new = clamp(0.01, 100, jacobian_bar_new)
+
+            multiplier = (djacobian_bar_new / djacobian) ** (1. / GlobalVariable.DIMENSION)
+            updated_velocity_gradient = (multiplier - 1.) * ti.Matrix.one(float, GlobalVariable.DIMENSION, GlobalVariable.DIMENSION) / dt[None] + multiplier * velocity_gradient
+            
+            #particle[np].jacobian = jacobian_bar_new
+            particle[np].velocity_gradient = updated_velocity_gradient
+
+    if ti.static(GlobalVariable.PARTICLESHIFTING):
+        pass
 
 @ti.kernel
 def lightweight_grid_operation(cutoff: float, damp: float, node: ti.template(), dt: ti.template()):

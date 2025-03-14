@@ -1,6 +1,3 @@
-import sys
-sys.path.append('/home/eleven/work/GeoTaichi_release')
-
 from geotaichi import *
 
 init()
@@ -8,12 +5,12 @@ init()
 mpm = MPM()
 
 mpm.set_configuration(domain=ti.Vector([0.55, 0.2, 0.11]), 
+                      mode="Lightweight",          # much higher performance and more memory saving but with fewer features (do not support for two-body contact)
                       background_damping=0.002, 
                       alphaPIC=0.005, 
-                      mapping="USF", 
-                      stabilize=None,
-                      shape_function="GIMP",
-                      gauss_number=0)
+                      mapping="USF",               # If open with lightweight mode, it is automatically chosen as USL format
+                      stabilize="B-Bar Method",
+                      shape_function="GIMP")
 
 mpm.set_solver(solver={
                            "Timestep":                   1e-5,

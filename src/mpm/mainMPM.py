@@ -67,7 +67,7 @@ class MPM(object):
         self.sims.set_sparse_grid(DictIO.GetAlternative(kwargs, "sparse_grid", None))
         self.sims.set_particle_shifting(DictIO.GetAlternative(kwargs, "particle_shifting", False))
         self.sims.set_discretization(DictIO.GetAlternative(kwargs, "discretization", "FEM"))
-        self.sims.set_THB(DictIO.GetAlternative(kwargs, "set_THB", False))
+        #self.sims.set_THB(DictIO.GetAlternative(kwargs, "set_THB", False))
         self.sims.set_particle_traction_method(DictIO.GetAlternative(kwargs, "particle_traction_method", "Stable"))
         self.sims.set_AOSOA(DictIO.GetAlternative(kwargs, "AOSOA", False))
         if log: 

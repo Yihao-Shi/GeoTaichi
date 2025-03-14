@@ -342,7 +342,7 @@ class ULExplicitEngine(Engine):
         self.pre_contact_calculate(sims, scene)
         self.apply_kinematic_constraints(sims, scene)
         self.compute_contact_force_(sims, scene)
-        lightweight_g2p(int(scene.particleNum[0]), sims.alphaPIC, scene.element.gnum, scene.element.grid_size, scene.element.igrid_size, sims.dt, scene.element.calLength, scene.element.boundary_type, scene.node, scene.particle, scene.material.matProps, scene.material.stateVars)
+        lightweight_g2p(int(scene.particleNum[0]), sims.alphaPIC, scene.mass_cut_off, sims.fbar_fraction, scene.element.gnum, scene.element.grid_size, scene.element.igrid_size, sims.dt, scene.element.calLength, scene.element.boundary_type, scene.node, scene.particle, scene.material.matProps, scene.material.stateVars)
 
     def test(self, sims: Simulation, scene: myScene):
         pass

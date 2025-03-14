@@ -22,6 +22,8 @@ mpm.memory_allocate(memory={
                                 "max_particle_number":    5.12e5
                             })
 
+mpm.add_contact(contact_type="MPMContact", friction=0.5)
+
 mpm.add_material(model="LinearElastic",
                  material={
                                "MaterialID":           1,
@@ -32,12 +34,7 @@ mpm.add_material(model="LinearElastic",
 
 mpm.add_element(element={
                              "ElementType":               "R8N3D",
-                             "ElementSize":               ti.Vector([1., 1., 1.]),
-                             "Contact":            {
-                                                        "ContactDetection":                True,
-                                                        "Friction":                        0.5,
-                                                        "CutOff":                          0.74
-                                                   }
+                             "ElementSize":               ti.Vector([1., 1., 1.])
                         })
 
 

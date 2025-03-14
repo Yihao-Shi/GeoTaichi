@@ -26,7 +26,9 @@ mpm.memory_allocate(memory={
                                                                "max_reflection_constraint":   0
                                                           }
                             })
-                            
+
+mpm.add_contact(contact_type="MPMContact", friction=0.577)
+  
 mpm.add_material(model="SoilStructureInteraction",
                  material=[{
                                "IsStructure":          False,
@@ -48,13 +50,7 @@ mpm.add_material(model="SoilStructureInteraction",
 
 mpm.add_element(element={
                              "ElementType":               "R8N3D",
-                             "ElementSize":               ti.Vector([0.1, 0.1, 0.1]),
-                             "Contact":   {
-                                               "ContactDetection":                True,
-                                               "GridLevel":                    2,
-                                               "Friction":                        0.577,
-                                               "CutOff":                          0.8
-                                          }
+                             "ElementSize":               ti.Vector([0.1, 0.1, 0.1])
                         })
 
 mpm.add_region(region=[{
