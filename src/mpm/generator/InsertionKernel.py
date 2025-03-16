@@ -54,7 +54,7 @@ def kernel_apply_gravity_field_(density: float, start: int, end: int, k0: float,
             initial_gravity_stress = mat3x3([k0 * gamma, 0., 0.],
                                             [0., k0 * gamma, 0.],
                                             [0., 0., gamma])
-            rotation_matrix = RodriguesRotationMatrix(direction, vec3f(0., 0., 1.))
+            rotation_matrix = RodriguesRotationMatrix(-direction, vec3f(0., 0., 1.))
             gravity_field = rotation_matrix.transpose() @ initial_gravity_stress @ rotation_matrix
             particle[np]._add_gravity_field(gravity_field)
 

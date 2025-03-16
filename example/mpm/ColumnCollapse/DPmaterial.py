@@ -1,21 +1,24 @@
 from geotaichi import *
 
-init()
+init(arch="gpu")
 
 mpm = MPM()
 
-mpm.set_configuration(domain=ti.Vector([0.55, 0.2, 0.11]), 
-                      mode="Lightweight",          # much higher performance and more memory saving but with fewer features (do not support for two-body contact)
+mpm.set_configuration(domain=ti.Vector([0.55, 0.05, 0.11]), 
+                      #mode="Lightweight",          # much higher performance and more memory saving but with fewer features (do not support for two-body contact)
                       background_damping=0.002, 
                       alphaPIC=0.005, 
                       mapping="USF",               # If open with lightweight mode, it is automatically chosen as USL format
-                      stabilize="B-Bar Method",
-                      shape_function="GIMP")
+                      stabilize="F-Bar Method",
+                      shape_function="QuadBSpline")
+
+# change the weight for f-bar
+# mpm.sims.fbar_fraction = 0.8
 
 mpm.set_solver(solver={
                            "Timestep":                   1e-5,
-                           "SimulationTime":             0.6,
-                           "SaveInterval":               0.01
+                           "SimulationTime":             3.,
+                           "SaveInterval":               0.02
                       })
 
 mpm.memory_allocate(memory={
@@ -50,7 +53,7 @@ mpm.add_element(element={
 mpm.add_region(region={
                             "Name": "region1",
                             "Type": "Rectangle",
-                            "BoundingBoxPoint": ti.Vector([0.005, 0.005, 0.005]),
+                            "BoundingBoxPoint": ti.Vector([0.00, 0.00, 0.00]),
                             "BoundingBoxSize": ti.Vector([0.2, 0.05, 0.1]),
                             "zdirection": ti.Vector([0., 0., 1.])
                       })
@@ -77,27 +80,27 @@ mpm.add_boundary_condition(boundary=[
                                              "BoundaryType":   "VelocityConstraint",
                                              "Velocity":       [0., 0., -0.],
                                              "StartPoint":     [0., 0., 0.],
-                                             "EndPoint":       [0.55, 0.2, 0.005]
+                                             "EndPoint":       [0.55, 0.05, 0.00]
                                         },
 
                                         {    
                                              "BoundaryType":   "VelocityConstraint",
                                              "Velocity":       [0., 0., 0.],
                                              "StartPoint":     [0., 0, 0],
-                                             "EndPoint":       [0.005, 0.2, 0.11]
+                                             "EndPoint":       [0., 0.05, 0.11]
                                         },
 
                                         {
                                              "BoundaryType":   "VelocityConstraint",
                                              "StartPoint":     [0., 0., 0.],
-                                             "EndPoint":       [0.55, 0.005, 0.11],
+                                             "EndPoint":       [0.55, 0.00, 0.11],
                                              "Velocity":       [None, 0., None]
                                         },
 
                                         {
                                              "BoundaryType":   "VelocityConstraint",
-                                             "StartPoint":     [0., 0.055, 0.],
-                                             "EndPoint":       [0.55, 0.0575, 0.11],
+                                             "StartPoint":     [0., 0.05, 0.],
+                                             "EndPoint":       [0.55, 0.05, 0.11],
                                              "Velocity":       [None, 0., None]
                                         }
                                     ])

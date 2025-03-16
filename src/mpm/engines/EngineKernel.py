@@ -285,11 +285,11 @@ def lightweight_g2p(particleNum: int, alpha: float, cutoff: float, fraction: flo
         if ti.static(GlobalVariable.APIC):
             velocity_gradient = Wp.inverse() @ velocity_gradient
 
+        particle[np].velocity_gradient = velocity_gradient_bar
+        particle[np].v = alpha * vPIC + (1. - alpha) * vFLIP
+        particle[np].x += vPIC * dt[None]
+        
         if ti.static(not GlobalVariable.FBAR):
-            particle[np].velocity_gradient = velocity_gradient_bar
-            particle[np].v = alpha * vPIC + (1. - alpha) * vFLIP
-            particle[np].x += vPIC * dt[None]
-
             previous_stress, volume = particle[np].stress, particle[np].vol
             volume *= (ti.Matrix.identity(float, GlobalVariable.DIMENSION) + dt[None] * velocity_gradient).determinant()
             stress = ti.Vector.zero(float, 6)
@@ -303,10 +303,14 @@ def lightweight_g2p(particleNum: int, alpha: float, cutoff: float, fraction: flo
             particle[np].vol = volume
 
     if ti.static(GlobalVariable.FBAR):
+        node.jacobian.fill(0)
         for np in range(particleNum):
-            node.jacobian.fill(0)
+            bodyID = int(particle[np].bodyID)
             mass = particle[np].m
-            djacobian = (ti.Matrix.one(float, GlobalVariable.DIMENSION, GlobalVariable.DIMENSION) + dt[None] * velocity_gradient_bar).determinant()
+            position = particle[np].x
+            velocity_gradient_bar = particle[np].velocity_gradient
+            psize = particle_lengths[bodyID]
+            djacobian = (ti.Matrix.identity(float, GlobalVariable.DIMENSION) + dt[None] * velocity_gradient_bar).determinant()
             transfer_var = mass * djacobian
             for offset in ti.static(ti.grouped(ti.ndrange(*((GlobalVariable.INFLUENCENODE, ) * GlobalVariable.DIMENSION)))):
                 base = ti.floor((position - psize) * igrid_size).cast(int)
@@ -356,14 +360,17 @@ def lightweight_g2p(particleNum: int, alpha: float, cutoff: float, fraction: flo
                     node[ng, nb].jacobian /= node[ng, nb].m
 
         for np in range(particleNum):
-            node.jacobian.fill(0)
+            bodyID = int(particle[np].bodyID)
             mass = particle[np].m
-            djacobian = (ti.Matrix.one(float, GlobalVariable.DIMENSION, GlobalVariable.DIMENSION) + dt[None] * velocity_gradient_bar).determinant()
+            position = particle[np].x
+            velocity_gradient_bar = particle[np].velocity_gradient
+            psize = particle_lengths[bodyID]
+            djacobian = (ti.Matrix.identity(float, GlobalVariable.DIMENSION) + dt[None] * velocity_gradient_bar).determinant()
             transfer_var = mass * djacobian
+            djacobian_bar = 0.
             for offset in ti.static(ti.grouped(ti.ndrange(*((GlobalVariable.INFLUENCENODE, ) * GlobalVariable.DIMENSION)))):
                 base = ti.floor((position - psize) * igrid_size).cast(int)
                 grid_id = base + offset
-                djacobian_bar = 0.
                 if all(grid_id >= 0):
                     nodeID = linearize(grid_id, gnum)
                     grid_pos = grid_id * grid_size
@@ -405,19 +412,18 @@ def lightweight_g2p(particleNum: int, alpha: float, cutoff: float, fraction: flo
                     djacobian_bar += jacobian
 
             velocity_gradient = particle[np].velocity_gradient
-            ddeformation_gradient = ti.Matrix.one(float, GlobalVariable.DIMENSION, GlobalVariable.DIMENSION) + dt[None] * velocity_gradient
+            ddeformation_gradient = ti.Matrix.identity(float, GlobalVariable.DIMENSION) + dt[None] * velocity_gradient
             djacobian = ddeformation_gradient.determinant()
             djacobian_bar_new = fraction * djacobian_bar + (1. - fraction) * djacobian
-            #jacobian_bar_new = clamp(0.01, 100, jacobian_bar_new)
 
             multiplier = (djacobian_bar_new / djacobian) ** (1. / GlobalVariable.DIMENSION)
-            updated_velocity_gradient = (multiplier - 1.) * ti.Matrix.one(float, GlobalVariable.DIMENSION, GlobalVariable.DIMENSION) / dt[None] + multiplier * velocity_gradient
+            updated_velocity_gradient = (multiplier - 1.) * ti.Matrix.identity(float, GlobalVariable.DIMENSION) / dt[None] + multiplier * velocity_gradient
             
-            #particle[np].jacobian = jacobian_bar_new
             particle[np].velocity_gradient = updated_velocity_gradient
 
     if ti.static(GlobalVariable.PARTICLESHIFTING):
         pass
+
 
 @ti.kernel
 def lightweight_grid_operation(cutoff: float, damp: float, node: ti.template(), dt: ti.template()):
@@ -1280,7 +1286,7 @@ def kernel_jacobian_p2g(total_nodes: int, dt: ti.template(), particleNum: int, n
             bodyID = int(particle[np].bodyID)
             mass = particle[np].m 
             velocity_gradient = particle[np].velocity_gradient
-            djacobian = (ti.Matrix.one(float, GlobalVariable.DIMENSION, GlobalVariable.DIMENSION) + dt[None] * velocity_gradient).determinant()
+            djacobian = (ti.Matrix.identity(float, GlobalVariable.DIMENSION) + dt[None] * velocity_gradient).determinant()
             transfer_var = mass * djacobian
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
@@ -1584,7 +1590,7 @@ def kernel_compute_stress_strain_twophase2D(particleNum: int, dt: ti.template(),
 def kernel_update_velocity_gradient_fbar(fraction: float, cutoff: float, total_nodes: int, dt: ti.template(), particleNum: int, node: ti.template(), particle: ti.template(), 
                                          LnID: ti.template(), shapefn: ti.template(), node_size: ti.template()):
     # ti.block_local(dt)
-    eyes = ti.Matrix.one(float, GlobalVariable.DIMENSION, GlobalVariable.DIMENSION)
+    eyes = ti.Matrix.identity(float, GlobalVariable.DIMENSION)
     for np in range(particleNum):
         materialID = int(particle[np].materialID)
         if materialID > 0 and int(particle[np].active) == 1:

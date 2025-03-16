@@ -160,7 +160,7 @@ class Simulation(object):
             if self.stabilize == "B-Bar Method":
                 GlobalVariable.BBAR = True
             elif self.stabilize == "F-Bar Method":
-                GlobalVariable.FBAR = True
+                raise RuntimeError("F-bar method should be actived under normal mode:: mode=str(Normal)")
 
     def set_shape_smoothing(self, shape_smooth):
         if self.shape_function == "SmoothLinear":
@@ -241,7 +241,7 @@ class Simulation(object):
             if self.shape_function == "Linear":
                 GlobalVariable.SHAPEFUNCTION = 0
             elif self.shape_function == "GIMP":
-                raise ValueError("Lightweight MPM do not support GIMP")
+                GlobalVariable.SHAPEFUNCTION = 1
             elif self.shape_function == "QuadBSpline":
                 GlobalVariable.SHAPEFUNCTION = 2
             elif self.shape_function == "CubicBSpline":
