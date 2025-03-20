@@ -121,8 +121,8 @@ class RegionFunction(object):
         self.ydirection = vec2f(self.ydirection).normalized()
         
         if self.region_type == "UserDefined":
-            self.cal_volume = DictIO.GetEssential(region_dict, "RegionVolume")
-            self.function = DictIO.GetEssential(region_dict, "RegionFunction")
+            self.cal_volume = ti.pyfunc(DictIO.GetEssential(region_dict, "RegionVolume"))
+            self.function = ti.pyfunc(DictIO.GetEssential(region_dict, "RegionFunction"))
         else:
             self.cal_volume = DictIO.GetEssential(volume_hashmap, self.region_type)
             self.function = DictIO.GetEssential(function_hashmap, self.region_type)

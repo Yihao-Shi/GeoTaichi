@@ -1,4 +1,5 @@
 import numpy as np
+import taichi as ti
 from taichi.lang.impl import current_cfg
 
 from src.dem.SceneManager import myScene
@@ -304,7 +305,7 @@ class DEM(object):
             region: RegionFunction = self.generator.get_region_ptr(region_name)
             self.scene.update_particle_properties_in_region(override, particle_type, property_name, value, region.function)
         elif not function is None:
-            self.scene.update_particle_properties_in_region(override, particle_type, property_name, value, function)
+            self.scene.update_particle_properties_in_region(override, particle_type, property_name, value, ti.pyfunc(function))
         self.contactor.neighbor.pre_neighbor(self.scene)
 
     def update_wall_status(self, wallID, property_name, value, override=True):
@@ -321,7 +322,7 @@ class DEM(object):
             region: RegionFunction = self.generator.get_region_ptr(region_name)
             self.scene.delete_particles_in_region(region.function)
         elif not function is None:
-            self.scene.delete_particles_in_region(function)
+            self.scene.delete_particles_in_region(ti.pyfunc(function))
 
     def postprocessing(self, start_file=0, end_file=-1, read_path=None, write_path=None, scheme=None, **kwargs):
         if read_path is None:

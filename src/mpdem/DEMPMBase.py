@@ -44,12 +44,12 @@ class Solver:
         if not functions is None:
             if isinstance(functions, list):
                 for f in functions:
-                    self.postprocess.append(f)
+                    self.postprocess.append(ti.kernel(f))
             elif isinstance(functions, dict):
                 for f in functions.values():
-                    self.postprocess.append(f)
+                    self.postprocess.append(ti.kernel(f))
             elif isinstance(functions, type(lambda: None)):
-                self.postprocess.append(functions)
+                self.postprocess.append(ti.kernel(functions))
     
     def set_particle_calm(self, scene, calm_interval):
         if calm_interval:

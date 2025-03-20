@@ -224,7 +224,7 @@ class MPM(object):
             self.scene.choose_coupling_region(self.sims, region.function)
         elif not function is None:
             self.scene.choose_coupling_region(self.sims, ti.pyfunc(function))
-        self.scene.filter_particles()
+        self.scene.filter_particles(self.sims)
 
     def modify_parameters(self, **kwargs):
         if len(kwargs) > 0:
