@@ -164,14 +164,22 @@ Please kindly star :star: this project if it helps you. We take great efforts to
 
 If you publish work that makes use of GeoTaichi, we would appreciate if you would cite the following reference:
 ```latex
-@article{shi2024geotai,
-  author    = {Y. H. Shi, N. Guo., Z. X. Yang},
-  title     = {GeoTaichi: a Taichi-powered high-performance numerical simulator for multiscale geophysical problems},
-  year      = {2024},
-  journal   = {Computer Physics Communications},
-  pages     = {109219},
-  publisher = {Elsevier},
-  doi       = {https://doi.org/10.1016/j.cpc.2024.109219}
+@article{shi2024geotaichi,
+  title={GeoTaichi: A Taichi-powered high-performance numerical simulator for multiscale geophysical problems},
+  author={Shi, YH and Guo, N and Yang, ZX},
+  journal={Computer Physics Communications},
+  volume={301},
+  pages={109219},
+  year={2024},
+  publisher={Elsevier}
+}
+@article{shi2025gpu,
+  title={GPU-accelerated level-set DEM for arbitrarily shaped particles with broad size distributions},
+  author={Shi, YH and Guo, N and Yang, ZX},
+  journal={Powder Technology},
+  pages={121293},
+  year={2025},
+  publisher={Elsevier}
 }
 ```
 
