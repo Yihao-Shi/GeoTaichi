@@ -195,6 +195,10 @@ We thank all amazing contributors for their great work and open source spirit. W
 - If you spot any issue or need any help, please mail directly to <a href = "mailto:shiyh@zju.edu.cn">shiyh@zju.edu.cn</a>.
 
 ## Release Notes
+V0.4.0 (Aug 27, 2025)
+
+- Please click [here](https://github.com/Yihao-Shi/GeoTaichi/releases/tag/GeoTaichi-v0.4) for more details
+
 V0.3.0 (December 12, 2024)
 
 - Please click [here](https://github.com/Yihao-Shi/GeoTaichi/releases/tag/GeoTaichi-v0.3) for more details

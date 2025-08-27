@@ -71,15 +71,14 @@ def move_spheres_euler_(bodyNum: int, dt: ti.template(), sphere: ti.template(), 
         #     ctorque += cplistPW[nc].torque
 
         mass, is_fix = particle[np].m, sphere[nsphere].fix_v
-        old_vel, old_disp = particle[np].v, particle[np].verletDisp
+        old_vel, old_disp, old_pos = particle[np].v, particle[np].verletDisp, particle[np].x
         force = cundall_damp1st(fdamp, cforce + gravity * mass, old_vel)
         
         av = force / mass * int(is_fix)
         vel = old_vel + dt[None] * av
         delta_x = dt[None] * vel
-
+        pos = old_pos + delta_x
         particle[np].v = vel
-        particle[np].x += delta_x
         particle[np].verletDisp = old_disp + delta_x
 
         inv_i, is_fix = sphere[nsphere].inv_I, sphere[nsphere].fix_w
@@ -93,6 +92,14 @@ def move_spheres_euler_(bodyNum: int, dt: ti.template(), sphere: ti.template(), 
 
         particle[np].w = omega
         sphere[nsphere].q = Normalize(q)
+
+        if ti.static(GlobalVariable.DEMXPBC):
+            pos[0] -= ti.floor(pos[0] / GlobalVariable.DEMXSIZE) * GlobalVariable.DEMXSIZE
+        if ti.static(GlobalVariable.DEMYPBC):
+            pos[1] -= ti.floor(pos[1] / GlobalVariable.DEMYSIZE) * GlobalVariable.DEMYSIZE
+        if ti.static(GlobalVariable.DEMZPBC):
+            pos[2] -= ti.floor(pos[2] / GlobalVariable.DEMZSIZE) * GlobalVariable.DEMZSIZE
+        particle[np].x = pos
 
         if ti.static(GlobalVariable.TRACKENERGY):
             particle[np].damp_energy += cundall_damping_energy(fdamp, tdamp, old_vel, old_omega, cforce + gravity * mass, ctorque, dt)
@@ -135,9 +142,7 @@ def move_clumps_euler_(bodyNum: int, dt: ti.template(), clump: ti.template(), pa
         av = force / mass
         vel = old_vel + dt[None] * av
         pos = old_pos + dt[None] * vel
-
         clump[nclump].v = vel
-        clump[nclump].mass_center = pos
 
         inv_i = clump[nclump].inv_I
         old_omega, old_q = clump[nclump].w, clump[nclump].q
@@ -165,6 +170,23 @@ def move_clumps_euler_(bodyNum: int, dt: ti.template(), clump: ti.template(), pa
             particle[np].w = omega
             particle[np].x = pebble_pos
             particle[np].verletDisp += pebble_pos - old_pebble_pos
+        
+        if ti.static(GlobalVariable.DEMXPBC):
+            xdisp = ti.floor(pos[0] / GlobalVariable.DEMXSIZE) * GlobalVariable.DEMXSIZE
+            pos[0] -= xdisp
+            for np in range(pebb_beg, pebb_end + 1):
+                particle[np].x[0] -= xdisp
+        if ti.static(GlobalVariable.DEMYPBC):
+            ydisp = ti.floor(pos[1] / GlobalVariable.DEMYSIZE) * GlobalVariable.DEMYSIZE
+            pos[1] -= ydisp
+            for np in range(pebb_beg, pebb_end + 1):
+                particle[np].x[1] -= ydisp
+        if ti.static(GlobalVariable.DEMZPBC):
+            zdisp = ti.floor(pos[2] / GlobalVariable.DEMZSIZE) * GlobalVariable.DEMZSIZE
+            pos[2] -= zdisp
+            for np in range(pebb_beg, pebb_end + 1):
+                particle[np].x[2] -= zdisp
+        clump[nclump].mass_center = pos
 
         if ti.static(GlobalVariable.TRACKENERGY):
             damp_energy = cundall_damping_energy(fdamp, tdamp, old_vel, old_omega, cforce + gravity * mass, ctorque, dt)
@@ -242,17 +264,17 @@ def move_spheres_verlet_(bodyNum: int, dt: ti.template(), sphere: ti.template(),
         #     ctorque += cplistPW[nc].torque
 
         mass, is_fix = particle[np].m, sphere[nsphere].fix_v
-        old_av, old_vel, old_disp = sphere[nsphere].a, particle[np].v, particle[np].verletDisp
+        old_av, old_vel, old_disp, old_pos = sphere[nsphere].a, particle[np].v, particle[np].verletDisp, particle[np].x
         vel_half = old_vel + 0.5 * dt[None] * old_av
         force = cundall_damp1st(fdamp, cforce + gravity * mass , vel_half)
 
         delta_x = dt[None] * vel_half 
         av = force / mass * int(is_fix)
         vel = vel_half + 0.5 * av * dt[None]
+        pos = old_pos + delta_x
         
         sphere[nsphere].a = av
         particle[np].v = vel
-        particle[np].x += delta_x
         particle[np].verletDisp = old_disp + delta_x
         
         # see Rozmanov and Kusalik (2010) Robust rotational-velocity-Verlet integration methods. Phys. Rev. E
@@ -272,6 +294,14 @@ def move_spheres_verlet_(bodyNum: int, dt: ti.template(), sphere: ti.template(),
         particle[np].w = omega_half
         sphere[nsphere].angmoment = angmoment_half 
         sphere[nsphere].q = Normalize(q)
+        
+        if ti.static(GlobalVariable.DEMXPBC):
+            pos[0] -= ti.floor(pos[0] / GlobalVariable.DEMXSIZE) * GlobalVariable.DEMXSIZE
+        if ti.static(GlobalVariable.DEMYPBC):
+            pos[1] -= ti.floor(pos[1] / GlobalVariable.DEMYSIZE) * GlobalVariable.DEMYSIZE
+        if ti.static(GlobalVariable.DEMZPBC):
+            pos[2] -= ti.floor(pos[2] / GlobalVariable.DEMZSIZE) * GlobalVariable.DEMZSIZE
+        particle[np].x = pos
 
         if ti.static(GlobalVariable.TRACKENERGY):
             particle[np].damp_energy += cundall_damping_energy(fdamp, tdamp, old_vel, old_omega, cforce + gravity * mass, ctorque, dt)
@@ -352,6 +382,28 @@ def move_clumps_verlet_(bodyNum: int, dt: ti.template(), clump: ti.template(), p
             particle[np].x = pebble_pos
             particle[np].verletDisp += pebble_pos - old_pebble_pos
 
+        if ti.static(GlobalVariable.DEMXPBC):
+            xdisp = ti.floor(pos[0] / GlobalVariable.DEMXSIZE) * GlobalVariable.DEMXSIZE
+            pos[0] -= xdisp
+            for np in range(pebb_beg, pebb_end + 1):
+                particle[np].x[0] -= xdisp
+        if ti.static(GlobalVariable.DEMYPBC):
+            ydisp = ti.floor(pos[1] / GlobalVariable.DEMYSIZE) * GlobalVariable.DEMYSIZE
+            pos[1] -= ydisp
+            for np in range(pebb_beg, pebb_end + 1):
+                particle[np].x[1] -= ydisp
+        if ti.static(GlobalVariable.DEMZPBC):
+            zdisp = ti.floor(pos[2] / GlobalVariable.DEMZSIZE) * GlobalVariable.DEMZSIZE
+            pos[2] -= zdisp
+            for np in range(pebb_beg, pebb_end + 1):
+                particle[np].x[2] -= zdisp
+        clump[nclump].mass_center = pos
+
+        if ti.static(GlobalVariable.TRACKENERGY):
+            damp_energy = cundall_damping_energy(fdamp, tdamp, old_vel, old_omega, cforce + gravity * mass, ctorque, dt)
+            for np in range(pebb_beg, pebb_end + 1):
+                particle[np].damp_energy += damp_energy / (pebb_end - pebb_beg + 1)
+
 @ti.kernel
 def move_level_set_verlet_(bodyNum: int, dt: ti.template(), sphere: ti.template(), rigid: ti.template(), material: ti.template(), gravity: ti.types.vector(3, float)):    
     for np in range(bodyNum):
@@ -405,69 +457,6 @@ def move_level_set_verlet_(bodyNum: int, dt: ti.template(), sphere: ti.template(
             rigid[np].damp_energy += cundall_damping_energy(fdamp, tdamp, old_vel, old_omega, cforce + gravity * mass, ctorque, dt)
 
 @ti.kernel
-def move_clumps_predictor_corrector_(bodyNum: int, dt: ti.template(), clump: ti.template(), particle: ti.template(), material: ti.template(), gravity: ti.types.vector(3, float)):    
-    for nclump in range(bodyNum):
-        pebb_beg, pebb_end = clump[nclump].startIndex, clump[nclump].endIndex
-        materialID = int(particle[pebb_beg].materialID)
-        fdamp = material[materialID].fdamp
-        tdamp = material[materialID].tdamp
-        
-        mass = clump[nclump].m
-        old_av, old_vel, old_pos = clump[nclump].a, clump[nclump].v, clump[nclump].mass_center
-
-        cforce, ctorque = ZEROVEC3f, ZEROVEC3f
-        for np in range(pebb_beg, pebb_end + 1):
-            contact_force = particle[np].contact_force
-            cforce += contact_force
-            ctorque += particle[np].contact_torque + (particle[np].x - old_pos).cross(contact_force)
-        
-        vel_half = old_vel + 0.5 * dt[None] * old_av
-        force = cundall_damp1st(fdamp, cforce + gravity * mass , vel_half)
-        pos = old_pos + dt[None] * vel_half 
-        av = force / mass 
-        vel = vel_half + 0.5 * av * dt[None]
-
-        clump[nclump].a = av
-        clump[nclump].v = vel
-        clump[nclump].mass_center = pos
-
-        inv_i = clump[nclump].inv_I
-        i = 1. / inv_i
-        old_omega, old_q, old_alpha = clump[nclump].w, clump[nclump].q, clump[nclump].angmoment
-
-        torque = cundall_damp1st(tdamp, ctorque, old_omega)
-        rotation_matrix = SetToRotate(old_q)
-
-        torque_local = rotation_matrix.transpose() @ torque
-        omega_local = rotation_matrix.transpose() @ old_omega
-
-        temp_alpha0, temp_alpha = vec3f(0, 0, 0), old_alpha
-        while SquaredLength(temp_alpha0, temp_alpha) > 1e-5:
-            temp_alpha0 = temp_alpha
-            temp_omega = omega_local + 0.5 * temp_alpha * dt[None]
-            temp_alpha = vec3f(torque_local[0] + temp_omega[1] * temp_omega[2] * (i[1] - i[2]) * i[0],
-                               torque_local[1] + temp_omega[2] * temp_omega[0] * (i[2] - i[0]) * i[1],
-                               torque_local[2] + temp_omega[0] * temp_omega[1] * (i[0] - i[1]) * i[2])
-        omega_local += temp_alpha * dt[None]
-        omega = rotation_matrix @ omega_local
-
-        # see Langston et al. (2004) Distinct element modelling of non-spherical frictionless particle flow.
-        q = Normalize(UpdateQAccurate(old_q, omega_local, dt))                 
-
-        clump[nclump].angmoment = temp_alpha
-        clump[nclump].w = omega
-        clump[nclump].q = q
-        
-        rotation_matrix1 = SetToRotate(q)
-        for np in range(pebb_beg, pebb_end + 1):
-            old_pebble_pos = particle[np].x
-            pebble_pos = pos + rotation_matrix1 @ (rotation_matrix.transpose() @ (old_pebble_pos - old_pos))
-            particle[np].v = vel + omega.cross(pebble_pos - pos)
-            particle[np].w = omega
-            particle[np].x = pebble_pos
-            particle[np].verletDisp += pebble_pos - old_pebble_pos
-
-@ti.kernel
 def move_walls_euler_(wallNum: int, dt: ti.template(), wall: ti.template()):
     # ti.block_local(dt)
     for nw in range(wallNum):
@@ -484,6 +473,14 @@ def get_contact_stiffness(max_material_num: int, particleNum: int, particle: ti.
         if Squared(cplist[nc].cnforce) > 0.:
             equivalent_stiffness = surfaceProps[materialID]._get_equivalent_stiffness(end1, end2, particle, wall)
             wall[end2]._update_contact_stiffness(equivalent_stiffness)
+            wall[end2]._update_contact_interaction(-(cplist[nc].cnforce + cplist[nc].csforce))
+
+@ti.kernel
+def get_wall_contact_force(particleNum: int, wall: ti.template(), cplist: ti.template(), particle_wall: ti.template()):
+    total_contact_num = particle_wall[particleNum]
+    for nc in range(total_contact_num):
+        end2 = cplist[nc].endID2
+        if Squared(cplist[nc].cnforce) > 0.:
             wall[end2]._update_contact_interaction(-(cplist[nc].cnforce + cplist[nc].csforce))
 
 @ti.kernel

@@ -79,13 +79,6 @@ class HierarchicalLinkedCell(NeighborBase):
         self.sims.set_verlet_distance(min(min_bounding_rad, rad_min[0]))
         self.sims.update_hierarchical_size(max(max_bounding_rad, rad_max[-1]))
         potential_particle_ratio = self.sims.compute_potential_ratios(rad_max)
-        
-        if self.sims.xpbc:
-            pass
-        if self.sims.ypbc:
-            pass
-        if self.sims.zpbc:
-            pass
 
         initialize_body_information(int(scene.particleNum[0]), np.array(potential_particle_ratio), np.array(self.sims.body_coordination_number), np.array(self.sims.wall_coordination_number), self.body)
         serial(self.body.max_potential_particle_pairs)
@@ -125,7 +118,10 @@ class HierarchicalLinkedCell(NeighborBase):
             if grid_size < self.sims.hierarchical_size[i] * Threshold:
                 raise RuntimeError("Particle radius is equal to zero!")
             igrid_size = 1. / grid_size
-            cell_num = vec3i([int(domain * igrid_size) + 1 for domain in self.sims.domain])
+            cell_num = vec3i([int(domain * igrid_size) for domain in self.sims.domain])
+            for d in range(3):
+                if cell_num[d] == 0:
+                    cell_num[d] = int(1)
             cellSum = int(cell_num[0] * cell_num[1] * cell_num[2])
             gsize.append(grid_size)
             cnum.append(cell_num)
@@ -203,12 +199,12 @@ class HierarchicalLinkedCell(NeighborBase):
         insert_patch_to_cell_hierarchical_(int(scene.wallNum[0]), scene.wall, self.wall_count, self.patch_current, self.WallID, self.grid, scene.wallbody)
 
     def update_verlet_table_particle_particle(self, scene: myScene):
-        board_search_particle_particle_linked_cell_hierarchical_(int(scene.particleNum[0]), self.sims.verlet_distance, self.particle_count, self.ParticleID, 
+        board_search_particle_particle_linked_cell_hierarchical_(int(scene.particleNum[0]), self.sims.verlet_distance, self.sims.domain, self.particle_count, self.ParticleID, 
                                                                  scene.particle, self.potential_list_particle_particle, self.particle_particle, self.body, self.grid)
         self.particle_pse.run(self.particle_particle)
 
     def update_verlet_table_particle_particle2(self, scene: myScene):
-        board_search_particle_particle_linked_cell_hierarchical2_(int(scene.particleNum[0]), self.sims.hierarchical_level, self.sims.verlet_distance, self.particle_count, self.ParticleID, 
+        board_search_particle_particle_linked_cell_hierarchical2_(int(scene.particleNum[0]), self.sims.hierarchical_level, self.sims.verlet_distance, self.sims.domain, self.particle_count, self.ParticleID, 
                                                                   scene.particle, self.potential_list_particle_particle, self.particle_particle, self.body, self.grid)
         self.particle_pse.run(self.particle_particle)
 
@@ -236,7 +232,7 @@ class HierarchicalLinkedCell(NeighborBase):
             insert_particle_to_cell_hierarchical_(int(scene.particleNum[0]), scene.particle, self.particle_count, self.particle_current, self.ParticleID, self.body, self.grid)
             board_search_particle_particle_linked_cell_hierarchical_interlevel_(int(scene.particleNum[0]), self.sims.verlet_distance, self.particle_count, self.ParticleID, 
                                                                                 scene.particle, self.potential_list_particle_particle, self.particle_particle, self.body, self.grid)
-            board_search_particle_particle_linked_cell_hierarchical_crosslevel_(int(scene.particleNum[0]), self.sims.verlet_distance, self.particle_count, self.ParticleID, 
+            board_search_particle_particle_linked_cell_hierarchical_crosslevel_(int(scene.particleNum[0]), self.sims.verlet_distance, self.sims.domain, self.particle_count, self.ParticleID, 
                                                                                 scene.particle, self.potential_list_particle_particle, self.particle_particle, self.body, self.grid)
             self.particle_pse.run(self.particle_particle)
 

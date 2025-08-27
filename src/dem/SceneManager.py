@@ -7,7 +7,6 @@ from src.dem.structs.Geometry import Geomotry
 from src.dem.Simulation import Simulation
 from src.dem.BaseKernel import *
 from src.sdf.BasicShape import BasicShape
-from src.levelset.SemiLagrangian import SemiLagrangianMultiGrid
 from src.utils.DomainBoundary import DomainBoundary
 from src.utils.linalg import no_operation, remove_connectivity_by_inactive_faces
 
@@ -127,9 +126,6 @@ class myScene(object):
             if sims.scheme == "LSDEM" or sims.scheme == "LSMPM":
                 if sims.max_rigid_template_num > 0:
                     self.rigid_grid = LevelSetGrid.field(shape=sims.max_level_grid_num * sims.max_rigid_template_num)
-                if sims.max_soft_body_num > 0:
-                    self.soft_grid = DeformableGrid.field(shape=sims.max_level_grid_num * sims.max_soft_body_num)
-                    self.levelset = SemiLagrangianMultiGrid(3, sims.max_level_grid_num * sims.max_soft_body_num, order=3, runge_kutta=2)
                 if sims.max_rigid_template_num <= 0 and sims.max_soft_body_num <= 0.:
                     if sims.scheme == "LSDEM":
                         raise RuntimeError("Keyword:: /max_template_number/ must be larger than 0")

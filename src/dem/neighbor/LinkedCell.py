@@ -65,20 +65,13 @@ class LinkedCell(NeighborBase):
         rad_min = min(min_bounding_rad, rad_min) if abs(rad_min) > 1e-15 else min_bounding_rad
         self.sims.set_verlet_distance(rad_min)
         self.sims.set_potential_list_size(rad_max)
-            
-        if self.sims.xpbc:
-            pass
-        if self.sims.ypbc:
-            pass
-        if self.sims.zpbc:
-            pass
         
         self.grid_size = 2 * (rad_max + self.sims.verlet_distance)
         self.plane_insert_factor = 0.5 + rad_max / self.grid_size
         if self.grid_size < 1e-3 * Threshold:
             raise RuntimeError("Particle radius is equal to zero!")
         self.igrid_size = 1. / self.grid_size
-        self.cnum = vec3i([int(domain * self.igrid_size) + 1 for domain in self.sims.domain])
+        self.cnum = vec3i([int(domain * self.igrid_size) for domain in self.sims.domain])
         for d in range(3):
             if self.cnum[d] == 0:
                 self.cnum[d] = int(1)
@@ -173,7 +166,7 @@ class LinkedCell(NeighborBase):
         insert_plane_to_cell_(self.plane_insert_factor, int(scene.wallNum[0]), self.grid_size, self.cellSum, self.sims.wall_per_cell, self.wall_count, self.WallID, scene.wall, self.cnum)
 
     def place_facet_to_cell(self, scene: myScene):
-        insert_facet_to_cell_(int(scene.wallNum[0]), self.igrid_size, self.sims.wall_per_cell, self.wall_count, self.WallID, scene.wall, self.cnum)
+        insert_facet_to_cell_(int(scene.wallNum[0]), self.grid_size, self.igrid_size, self.sims.domain, self.sims.wall_per_cell, self.wall_count, self.WallID, scene.wall, self.cnum)
 
     def place_static_facet_to_cell(self, scene: myScene):
         calculate_static_facet_position_(int(scene.wallNum[0]), self.igrid_size, scene.wall, self.wall_count, self.static_facet_current, self.cnum)

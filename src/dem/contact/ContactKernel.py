@@ -359,6 +359,12 @@ def kernel_particle_particle_force_assemble_(particleNum: int, dt: ti.template()
         matID1, matID2 = particle1[end1].materialID, particle2[end2].materialID
         pos1, pos2 = particle1[end1]._get_position(), particle2[end2]._get_position()
         rad1, rad2 = particle1[end1]._get_radius(), particle2[end2]._get_radius() 
+        if ti.static(GlobalVariable.DEMXPBC):
+            if ti.abs(pos2[0] - pos1[0]) > 0.5 * GlobalVariable.DEMXSIZE: pos2[0] += (ti.cast(pos2[0] < 0.5 * GlobalVariable.DEMXSIZE, float) - ti.cast(pos2[0] > 0.5 * GlobalVariable.DEMXSIZE, float)) * GlobalVariable.DEMXSIZE
+        if ti.static(GlobalVariable.DEMYPBC):
+            if ti.abs(pos2[1] - pos1[1]) > 0.5 * GlobalVariable.DEMYSIZE: pos2[1] += (ti.cast(pos2[1] < 0.5 * GlobalVariable.DEMYSIZE, float) - ti.cast(pos2[1] > 0.5 * GlobalVariable.DEMYSIZE, float)) * GlobalVariable.DEMYSIZE
+        if ti.static(GlobalVariable.DEMZPBC):
+            if ti.abs(pos2[2] - pos1[2]) > 0.5 * GlobalVariable.DEMZSIZE: pos2[2] += (ti.cast(pos2[2] < 0.5 * GlobalVariable.DEMZSIZE, float) - ti.cast(pos2[2] > 0.5 * GlobalVariable.DEMZSIZE, float)) * GlobalVariable.DEMZSIZE
         gapn = (pos1 - pos2).norm() - (rad1 + rad2)  
         materialID = PairingMapping(matID1, matID2, max_material_num)
 
@@ -493,6 +499,7 @@ def kernel_particle_wall_force_assemble_(particleNum: int, dt: ti.template(), ma
         matID1, matID2 = particle[end1].materialID, wall[end2].materialID
         materialID = PairingMapping(matID1, matID2, max_material_num)
         fraction = ti.abs(wall[end2].processCircleShape(pos1, particle_rad, distance))
+
         if gapn < surfaceProps[materialID].ncut and fraction > Threshold:
             contact_model(materialID, nc, end1, end2, gapn, fraction, pos1, particle_rad, particle, wall, surfaceProps, cplist, dt)
         else:
@@ -873,7 +880,8 @@ def wall_contact_model_type1(materialID, nc, end1, end2, gapn, fraction, pos1, p
 
     param = particle_rad
 
-    normal_force, tangential_force, momentum, tangOverTemp, elastic, viscous, friction = surfaceProps[materialID]._force_assemble(m_eff, rad_eff, gapn, 1., param, norm, v_rel, w_rel, tangOverlapOld, dt)      
+    normal_force, tangential_force, momentum, tangOverTemp, elastic, viscous, friction = surfaceProps[materialID]._force_assemble(m_eff, rad_eff, gapn, 1., param, norm, v_rel, w_rel, tangOverlapOld, dt)   
+
     if ti.static(GlobalVariable.TRACKENERGY):
         particle[end1].elastic_energy += elastic
         particle[end1].damp_energy += viscous

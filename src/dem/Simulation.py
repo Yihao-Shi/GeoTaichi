@@ -124,12 +124,12 @@ class Simulation(object):
         if self.boundary[1] == 2:
             self.ypbc = True
             GlobalVariable.DEMYPBC = True
-            GlobalVariable.DEMYSIZE = self.domain[0]
+            GlobalVariable.DEMYSIZE = self.domain[1]
         if self.dimension == 3:
             if self.boundary[2] == 2:
                 self.zpbc = True
                 GlobalVariable.DEMZPBC = True
-                GlobalVariable.DEMZSIZE = self.domain[0]
+                GlobalVariable.DEMZSIZE = self.domain[2]
 
     def set_gravity(self, gravity):
         self.gravity = gravity

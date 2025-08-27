@@ -5,7 +5,7 @@ from src.utils.GeometryFunction import intersectionOBBs
 from src.utils.TypeDefination import vec3f, vec3i, vec2i
 from src.utils.Quaternion import SetToRotate
 from src.utils.VectorFunction import SquaredLength, SquareLen
-from src.utils.ScalarFunction import linearize3D, vectorize_id
+from src.utils.ScalarFunction import linearize3D, vectorize_id, sgn
 import src.utils.GlobalVariable as GlobalVariable
 
 
@@ -130,13 +130,18 @@ def get_cell_center(nc, cnum, grid_size):
 
 @ti.kernel
 def calculate_particles_position_(particleNum: int, igrid_size: float, particle: ti.template(), particle_count: ti.template(), particle_current: ti.template(), cnum: ti.types.vector(3, int)):
-    # TODO: using morton code
     particle_count.fill(0)
     for np in range(particleNum):  
         if int(particle[np].active) == 0: continue
         position = particle[np].x
-        grid_idx = ti.floor(position * igrid_size , int)
-        assert 0 <= grid_idx[0] < cnum[0] and 0 <= grid_idx[1] < cnum[1] and 0 <= grid_idx[2] < cnum[2], f"Particle {np} is located at [{position[0]}, {position[1]}, {position[2]}]. Out of simulation domain!"
+        '''if ti.static(GlobalVariable.DEMXPBC):
+            position[0] -= ti.floor(position[0] / GlobalVariable.DEMXSIZE) * GlobalVariable.DEMXSIZE
+        if ti.static(GlobalVariable.DEMYPBC):
+            position[1] -= ti.floor(position[1] / GlobalVariable.DEMYSIZE) * GlobalVariable.DEMYSIZE
+        if ti.static(GlobalVariable.DEMZPBC):
+            position[2] -= ti.floor(position[2] / GlobalVariable.DEMZSIZE) * GlobalVariable.DEMZSIZE'''
+        grid_idx = ti.min(ti.floor(position * igrid_size, int), cnum - 1)
+        assert 0 <= grid_idx[0] < cnum[0] and 0 <= grid_idx[1] < cnum[1] and 0 <= grid_idx[2] < cnum[2], f"Particle {np} is located at [{position[0]}, {position[1]}, {position[2]}] belongs to cell [{grid_idx[0]}, {grid_idx[1]}, {grid_idx[2]}]. Out of simulation domain!"
         cellID = linearize3D(grid_idx[0], grid_idx[1], grid_idx[2], cnum)
         particle_current[np] = ti.atomic_add(particle_count[cellID + 1], 1)
     
@@ -144,7 +149,14 @@ def calculate_particles_position_(particleNum: int, igrid_size: float, particle:
 def insert_particle_to_cell_(igrid_size: float, particleNum: int, particle: ti.template(), particle_count: ti.template(), particle_current: ti.template(), particleID: ti.template(), cnum: ti.types.vector(3, int)):
     for np in range(particleNum):
         if int(particle[np].active) == 0: continue
-        grid_idx = ti.floor(particle[np].x * igrid_size, int)
+        position = particle[np].x
+        '''if ti.static(GlobalVariable.DEMXPBC):
+            position[0] -= ti.floor(position[0] / GlobalVariable.DEMXSIZE) * GlobalVariable.DEMXSIZE
+        if ti.static(GlobalVariable.DEMYPBC):
+            position[1] -= ti.floor(position[1] / GlobalVariable.DEMYSIZE) * GlobalVariable.DEMYSIZE
+        if ti.static(GlobalVariable.DEMZPBC):
+            position[2] -= ti.floor(position[2] / GlobalVariable.DEMZSIZE) * GlobalVariable.DEMZSIZE'''
+        grid_idx = ti.min(ti.floor(position * igrid_size, int), cnum - 1)
         cellID = linearize3D(grid_idx[0], grid_idx[1], grid_idx[2], cnum)
         grain_location = particle_count[cellID] + particle_current[np]
         particleID[grain_location] = np
@@ -157,27 +169,57 @@ def board_search_particle_particle_linked_cell_(particleNum: int, potential_part
     for master in range(particleNum):
         if int(particle[master].active) == 0: continue
         position = particle[master].x
+        '''if ti.static(GlobalVariable.DEMXPBC):
+            position[0] -= ti.floor(position[0] / GlobalVariable.DEMXSIZE) * GlobalVariable.DEMXSIZE
+        if ti.static(GlobalVariable.DEMYPBC):
+            position[1] -= ti.floor(position[1] / GlobalVariable.DEMYSIZE) * GlobalVariable.DEMYSIZE
+        if ti.static(GlobalVariable.DEMZPBC):
+            position[2] -= ti.floor(position[2] / GlobalVariable.DEMZSIZE) * GlobalVariable.DEMZSIZE'''
         radius = particle[master].rad
         index = particle[master]._get_multisphere_index1()
-        grid_idx = ti.floor(position * igrid_size, int)
+        grid_idx = ti.min(ti.floor(position * igrid_size, int), cnum - 1)
         
-        x_begin = ti.max(grid_idx[0] - 1, 0)
-        x_end = ti.min(grid_idx[0] + 2, cnum[0])
-        y_begin = ti.max(grid_idx[1] - 1, 0)
-        y_end = ti.min(grid_idx[1] + 2, cnum[1])
-        z_begin = ti.max(grid_idx[2] - 1, 0)
-        z_end = ti.min(grid_idx[2] + 2, cnum[2])
+        x_begin, x_end = grid_idx[0] - 1, grid_idx[0] + 2
+        y_begin, y_end = grid_idx[1] - 1, grid_idx[1] + 2
+        z_begin, z_end = grid_idx[2] - 1, grid_idx[2] + 2
+        if ti.static(not GlobalVariable.DEMXPBC):
+            x_begin = ti.max(x_begin, 0)
+            x_end = ti.min(x_end, cnum[0])
+        if ti.static(not GlobalVariable.DEMYPBC):
+            y_begin = ti.max(y_begin, 0)
+            y_end = ti.min(y_end, cnum[1])
+        if ti.static(not GlobalVariable.DEMZPBC):
+            z_begin = ti.max(z_begin, 0)
+            z_end = ti.min(z_end, cnum[2])
 
         sques = master * potential_particle_num
         # isques = (master + 1) * potential_particle_num - 1
         for neigh_i in range(x_begin, x_end):
+            neigh_ii = neigh_i
+            offset_i = 0
+            if ti.static(GlobalVariable.DEMXPBC): 
+                neigh_ii = neigh_i % cnum[0]
+                offset_i = neigh_i - neigh_ii
             for neigh_j in range(y_begin, y_end):
+                neigh_jj = neigh_j
+                offset_j = 0
+                if ti.static(GlobalVariable.DEMYPBC): 
+                    neigh_jj = neigh_j % cnum[1]
+                    offset_j = neigh_j - neigh_jj
                 for neigh_k in range(z_begin, z_end):
-                    cellID = linearize3D(neigh_i, neigh_j, neigh_k, cnum)
+                    neigh_kk = neigh_k
+                    offset_k = 0
+                    if ti.static(GlobalVariable.DEMZPBC): 
+                        neigh_kk = neigh_k % cnum[2]
+                        offset_k = neigh_k - neigh_kk
+                    cellID = linearize3D(neigh_ii, neigh_jj, neigh_kk, cnum)
                     for hash_index in range(particle_count[cellID], particle_count[cellID + 1]):
                         slave = particleID[hash_index]
                         if master < slave and not index == particle[slave]._get_multisphere_index2():
                             pos2 = particle[slave].x 
+                            if ti.static(GlobalVariable.DEMXPBC): pos2[0] += sgn(offset_i) * GlobalVariable.DEMXSIZE
+                            if ti.static(GlobalVariable.DEMYPBC): pos2[1] += sgn(offset_j) * GlobalVariable.DEMYSIZE
+                            if ti.static(GlobalVariable.DEMZPBC): pos2[2] += sgn(offset_k) * GlobalVariable.DEMZSIZE
                             rad2 = particle[slave].rad
                             valid = SquaredLength(pos2, position) <= (radius + rad2 + 2 * verlet_distance) * (radius + rad2 + 2 * verlet_distance)
                             if valid: 
@@ -211,30 +253,9 @@ def board_search_lsparticle_lsparticle_linked_cell_(particleNum: int, potential_
                     sques = ti.atomic_add(point_particle[gnode + 1], 1)
                     potential_list_point_particle[sques + gnode * potential_point_num] = slave
                     assert sques < potential_point_num, f"Keyword:: /point_coordination_numbers[0]/ is too small, Node {gnode} on particle {master} has {sques+1} potential contact number"
-    '''
-    for master in range(particleNum):
-        mass_center1 = rigid[master]._get_position()
-        rotate_matrix1 = SetToRotate(rigid[master].q)
-        scale = box[master].scale
-        start_node, end_node, global_node = rigid[master]._start_node(), rigid[master]._end_node(), rigid[master].startNode
-        sques = 0
-        for neigh in range(particle_particle[master], particle_particle[master + 1]):
-            slave = pplist[neigh].endID2
-            mass_center2 = rigid[slave]._get_position()
-            rotate_matrix2 = SetToRotate(rigid[slave].q)
-            if intersectionOBBs(mass_center1, mass_center2, box[master]._get_dim(), box[slave]._get_dim(), rotate_matrix1, rotate_matrix2):
-                for node in range(start_node, end_node):
-                    gnode = node - start_node + global_node
-                    surface_node = rotate_matrix2.transpose() @ (mass_center1 + rotate_matrix1 @ (scale * vertice[node].x) - mass_center2)
-                    if not box[slave]._in_box(surface_node): continue
-                    if box[slave].distance(surface_node, grid) < verlet_distance: 
-                        potential_list_point_particle[sques + master * potential_point_num]._set(gnode, slave)
-                        sques += 1
-        assert sques <= potential_point_num, f"Keyword:: /point_coordination_numbers[0]/ is too small, Particle {master} has {sques} potential contact number"
-        point_particle[master + 1] = sques'''
 
 @ti.kernel
-def board_search_coupled_particle_linked_cell_(potential_particle_num: int, verlet_distance1: float, verlet_distance2: float, max_radius: float, igrid_size: float, particle_count: ti.template(), 
+def board_search_coupled_particle_linked_cell_(potential_particle_num: int, verlet_distance1: float, verlet_distance2: float, max_radius: float, grid_size: float, igrid_size: float, domain: ti.types.vector(3, float), particle_count: ti.template(), 
                                                particleID: ti.template(), particle1: ti.template(), particle2: ti.template(), potential_list_particle_particle: ti.template(), 
                                                particle_particle: ti.template(), cnum: ti.types.vector(3, int), particleNum: int):
     particle_particle.fill(0)
@@ -243,23 +264,50 @@ def board_search_coupled_particle_linked_cell_(potential_particle_num: int, verl
             position = particle1[master].x
             radius = particle1[master].rad
 
-            grid_start = ti.floor((position - radius - verlet_distance1 - verlet_distance2 - max_radius) * igrid_size, int)
-            grid_end = ti.ceil((position + radius + verlet_distance1 + verlet_distance2 + max_radius) * igrid_size, int)
-            x_begin = ti.max(grid_start[0], 0)
-            x_end = ti.min(grid_end[0], cnum[0])
-            y_begin = ti.max(grid_start[1], 0)
-            y_end = ti.min(grid_end[1], cnum[1])
-            z_begin = ti.max(grid_start[2], 0)
-            z_end = ti.min(grid_end[2], cnum[2])
+            bounding = radius + verlet_distance1 + verlet_distance2 + max_radius
+            grid_start = ti.floor((position - bounding) * igrid_size, int)
+            grid_end = ti.min(cnum - 1, ti.floor((position + bounding) * igrid_size, int)) + ti.cast((position + bounding) // domain, int) + 1
+            
+            x_begin, x_end = grid_start[0], grid_end[0]
+            y_begin, y_end = grid_start[1], grid_end[1]
+            z_begin, z_end = grid_start[2], grid_end[2]
+            if ti.static(not GlobalVariable.DEMXPBC):
+                x_begin = ti.max(x_begin, 0)
+                x_end = ti.min(x_end, cnum[0])
+            if ti.static(not GlobalVariable.DEMYPBC):
+                y_begin = ti.max(y_begin, 0)
+                y_end = ti.min(y_end, cnum[1])
+            if ti.static(not GlobalVariable.DEMZPBC):
+                z_begin = ti.max(z_begin, 0)
+                z_end = ti.min(z_end, cnum[2])
 
             sques = master * potential_particle_num
+            # isques = (master + 1) * potential_particle_num - 1
             for neigh_i in range(x_begin, x_end):
+                neigh_ii = neigh_i
+                offset_i = 0
+                if ti.static(GlobalVariable.DEMXPBC): 
+                    neigh_ii = neigh_i % cnum[0]
+                    offset_i = neigh_i - neigh_ii
                 for neigh_j in range(y_begin, y_end):
+                    neigh_jj = neigh_j
+                    offset_j = 0
+                    if ti.static(GlobalVariable.DEMYPBC): 
+                        neigh_jj = neigh_j % cnum[1]
+                        offset_j = neigh_j - neigh_jj
                     for neigh_k in range(z_begin, z_end):
-                        cellID = linearize3D(neigh_i, neigh_j, neigh_k, cnum)
+                        neigh_kk = neigh_k
+                        offset_k = 0
+                        if ti.static(GlobalVariable.DEMZPBC): 
+                            neigh_kk = neigh_k % cnum[2]
+                            offset_k = neigh_k - neigh_kk
+                        cellID = linearize3D(neigh_ii, neigh_jj, neigh_kk, cnum)
                         for hash_index in range(particle_count[cellID], particle_count[cellID + 1]):
                             slave = particleID[hash_index]
                             pos2 = particle2[slave].x 
+                            if ti.static(GlobalVariable.DEMXPBC): pos2[0] += sgn(offset_i) * GlobalVariable.DEMXSIZE
+                            if ti.static(GlobalVariable.DEMYPBC): pos2[1] += sgn(offset_j) * GlobalVariable.DEMYSIZE
+                            if ti.static(GlobalVariable.DEMZPBC): pos2[2] += sgn(offset_k) * GlobalVariable.DEMZSIZE
                             rad2 = particle2[slave].rad
                             search_radius = (radius + rad2 + verlet_distance1 + verlet_distance2)
                             valid = SquaredLength(pos2, position) <= search_radius * search_radius
@@ -271,7 +319,7 @@ def board_search_coupled_particle_linked_cell_(potential_particle_num: int, verl
             particle_particle[master + 1] = neighbors
 
 @ti.kernel
-def board_search_enhanced_coupled_particle_linked_cell_(potential_particle_num: int, verlet_distance1: float, verlet_distance2: float, max_radius: float, igrid_size: float, particle_count: ti.template(), 
+def board_search_enhanced_coupled_particle_linked_cell_(potential_particle_num: int, verlet_distance1: float, verlet_distance2: float, max_radius: float, grid_size: float, igrid_size: float, domain: ti.types.vector(3, float), particle_count: ti.template(), 
                                                particleID: ti.template(), particle1: ti.template(), particle2: ti.template(), potential_list_particle_particle: ti.template(), 
                                                particle_particle: ti.template(), cnum: ti.types.vector(3, int), particleNum: int):
     particle_particle.fill(0)
@@ -280,23 +328,50 @@ def board_search_enhanced_coupled_particle_linked_cell_(potential_particle_num: 
         position = particle1[master].x
         radius = particle1[master].rad
 
-        grid_start = ti.floor((position - radius - verlet_distance1 - verlet_distance2 - max_radius) * igrid_size, int)
-        grid_end = ti.ceil((position + radius + verlet_distance1 + verlet_distance2 + max_radius) * igrid_size, int)
-        x_begin = ti.max(grid_start[0], 0)
-        x_end = ti.min(grid_end[0], cnum[0])
-        y_begin = ti.max(grid_start[1], 0)
-        y_end = ti.min(grid_end[1], cnum[1])
-        z_begin = ti.max(grid_start[2], 0)
-        z_end = ti.min(grid_end[2], cnum[2])
+        bounding = radius + verlet_distance1 + verlet_distance2 + max_radius
+        grid_start = ti.floor((position - bounding) * igrid_size, int)
+        grid_end = ti.min(cnum - 1, ti.floor((position + bounding) * igrid_size, int)) + ti.cast((position + bounding) // domain, int) + 1
+
+        x_begin, x_end = grid_start[0], grid_end[0]
+        y_begin, y_end = grid_start[1], grid_end[1]
+        z_begin, z_end = grid_start[2], grid_end[2]
+        if ti.static(not GlobalVariable.DEMXPBC):
+            x_begin = ti.max(x_begin, 0)
+            x_end = ti.min(x_end, cnum[0])
+        if ti.static(not GlobalVariable.DEMYPBC):
+            y_begin = ti.max(y_begin, 0)
+            y_end = ti.min(y_end, cnum[1])
+        if ti.static(not GlobalVariable.DEMZPBC):
+            z_begin = ti.max(z_begin, 0)
+            z_end = ti.min(z_end, cnum[2])
 
         sques = master * potential_particle_num
+        # isques = (master + 1) * potential_particle_num - 1
         for neigh_i in range(x_begin, x_end):
+            neigh_ii = neigh_i
+            offset_i = 0
+            if ti.static(GlobalVariable.DEMXPBC): 
+                neigh_ii = neigh_i % cnum[0]
+                offset_i = neigh_i - neigh_ii
             for neigh_j in range(y_begin, y_end):
+                neigh_jj = neigh_j
+                offset_j = 0
+                if ti.static(GlobalVariable.DEMYPBC): 
+                    neigh_jj = neigh_j % cnum[1]
+                    offset_j = neigh_j - neigh_jj
                 for neigh_k in range(z_begin, z_end):
-                    cellID = linearize3D(neigh_i, neigh_j, neigh_k, cnum)
+                    neigh_kk = neigh_k
+                    offset_k = 0
+                    if ti.static(GlobalVariable.DEMZPBC): 
+                        neigh_kk = neigh_k % cnum[2]
+                        offset_k = neigh_k - neigh_kk
+                    cellID = linearize3D(neigh_ii, neigh_jj, neigh_kk, cnum)
                     for hash_index in range(particle_count[cellID], particle_count[cellID + 1]):
                         slave = particleID[hash_index]
                         pos2 = particle2[slave].x 
+                        if ti.static(GlobalVariable.DEMXPBC): pos2[0] += sgn(offset_i) * GlobalVariable.DEMXSIZE
+                        if ti.static(GlobalVariable.DEMYPBC): pos2[1] += sgn(offset_j) * GlobalVariable.DEMYSIZE
+                        if ti.static(GlobalVariable.DEMZPBC): pos2[2] += sgn(offset_k) * GlobalVariable.DEMZSIZE
                         rad2 = particle2[slave].rad
                         norm = particle2[slave].normal
                         search_radius = (radius + rad2 + verlet_distance1 + verlet_distance2)
@@ -310,7 +385,7 @@ def board_search_enhanced_coupled_particle_linked_cell_(potential_particle_num: 
 
 
 @ti.kernel
-def board_search_coupled_lsparticle_linked_cell_(potential_particle_num: int, verlet_distance1: float, verlet_distance2: float, max_radius: float, igrid_size: float, particle_count: ti.template(), 
+def board_search_coupled_lsparticle_linked_cell_(potential_particle_num: int, verlet_distance1: float, verlet_distance2: float, max_radius: float, grid_size: float, igrid_size: float, domain: ti.types.vector(3, float), particle_count: ti.template(), 
                                                  particleID: ti.template(), particle1: ti.template(), rigid: ti.template(), box: ti.template(), grid: ti.template(),
                                                  potential_list_particle_particle: ti.template(), particle_particle: ti.template(), cnum: ti.types.vector(3, int), particleNum: int):
     particle_particle.fill(0)
@@ -319,8 +394,10 @@ def board_search_coupled_lsparticle_linked_cell_(potential_particle_num: int, ve
         position = particle1[master].x
         radius = particle1[master].rad
 
-        grid_start = ti.floor((position - radius - verlet_distance1 - verlet_distance2 - max_radius) * igrid_size, int)
-        grid_end = ti.ceil((position + radius + verlet_distance1 + verlet_distance2 + max_radius) * igrid_size + 1, int)
+        bounding = radius + verlet_distance1 + verlet_distance2 + max_radius
+        grid_start = ti.floor((position - bounding) * igrid_size, int)
+        grid_end = ti.min(cnum - 1, ti.floor((position + bounding) * igrid_size, int)) + ti.cast((position + bounding) // domain, int) + 1
+
         x_begin = ti.max(grid_start[0], 0)
         x_end = ti.min(grid_end[0], cnum[0])
         y_begin = ti.max(grid_start[1], 0)
@@ -328,14 +405,47 @@ def board_search_coupled_lsparticle_linked_cell_(potential_particle_num: int, ve
         z_begin = ti.max(grid_start[2], 0)
         z_end = ti.min(grid_end[2], cnum[2])
 
+        x_begin, x_end = grid_start[0], grid_end[0]
+        y_begin, y_end = grid_start[1], grid_end[1]
+        z_begin, z_end = grid_start[2], grid_end[2]
+        if ti.static(not GlobalVariable.DEMXPBC):
+            x_begin = ti.max(x_begin, 0)
+            x_end = ti.min(x_end, cnum[0])
+        if ti.static(not GlobalVariable.DEMYPBC):
+            y_begin = ti.max(y_begin, 0)
+            y_end = ti.min(y_end, cnum[1])
+        if ti.static(not GlobalVariable.DEMZPBC):
+            z_begin = ti.max(z_begin, 0)
+            z_end = ti.min(z_end, cnum[2])
+
         sques = master * potential_particle_num
+        # isques = (master + 1) * potential_particle_num - 1
         for neigh_i in range(x_begin, x_end):
+            neigh_ii = neigh_i
+            offset_i = 0
+            if ti.static(GlobalVariable.DEMXPBC): 
+                neigh_ii = neigh_i % cnum[0]
+                offset_i = neigh_i - neigh_ii
             for neigh_j in range(y_begin, y_end):
+                neigh_jj = neigh_j
+                offset_j = 0
+                if ti.static(GlobalVariable.DEMYPBC): 
+                    neigh_jj = neigh_j % cnum[1]
+                    offset_j = neigh_j - neigh_jj
                 for neigh_k in range(z_begin, z_end):
-                    cellID = linearize3D(neigh_i, neigh_j, neigh_k, cnum)
+                    neigh_kk = neigh_k
+                    offset_k = 0
+                    if ti.static(GlobalVariable.DEMZPBC): 
+                        neigh_kk = neigh_k % cnum[2]
+                        offset_k = neigh_k - neigh_kk
+                    cellID = linearize3D(neigh_ii, neigh_jj, neigh_kk, cnum)
                     for hash_index in range(particle_count[cellID], particle_count[cellID + 1]):
                         slave = particleID[hash_index]
                         mass_center = rigid[slave]._get_position()
+                        if ti.static(GlobalVariable.DEMXPBC): mass_center[0] += sgn(offset_i) * GlobalVariable.DEMXSIZE
+                        if ti.static(GlobalVariable.DEMYPBC): mass_center[1] += sgn(offset_j) * GlobalVariable.DEMYSIZE
+                        if ti.static(GlobalVariable.DEMZPBC): mass_center[2] += sgn(offset_k) * GlobalVariable.DEMZSIZE
+                        
                         rotate_matrix = SetToRotate(rigid[slave].q)
                         surface_node = rotate_matrix.transpose() @ (position - mass_center)
                         verlet_distance = verlet_distance1 + verlet_distance2
@@ -346,83 +456,6 @@ def board_search_coupled_lsparticle_linked_cell_(potential_particle_num: int, ve
         neighbors = sques - master * potential_particle_num
         assert neighbors <= potential_particle_num, f"Keyword:: DEMPM /body_coordination_number/ is too small, Particle {master} has {neighbors} potential contact number"
         particle_particle[master + 1] = neighbors
-
-'''
-@ti.kernel
-def board_search_particle_particle_linked_cell_(particleNum: int, cellSum: int, potential_particle_num: int, verlet_distance: float, igrid_size: float, grid_size:float, particle_count: ti.template(), 
-                                                particle_current: ti.template(), particleID: ti.template(), particle: ti.template(), potential_list_particle_particle: ti.template(), particle_particle: ti.template(), 
-                                                iparticle_particle: ti.template(), cnum: ti.types.vector(3, int)):
-    particle_particle.fill(0)
-    iparticle_particle.fill(0)
-    for master in range(particleNum):
-        position = particle[master].x
-        radius = particle[master].rad
-        index = particle[master]._get_multisphere_index1()
-        grid_idx = ti.floor(position * igrid_size, int)
-        
-        grid_x = (grid_idx + 0.5) * grid_size
-        offset = vec3i([0, 0, 0])
-        for k in ti.static(range(3)):
-            d = position[k] - grid_x[k]
-            if(d > 0): offset[k] = 1
-            else: offset[k] = -1
-
-        sques = master * potential_particle_num
-        isques = (master + 1) * potential_particle_num - 1
-        particle_particle_verlet_table_within_target_cell(potential_list_particle_particle, particle_count, particle_current, particleID, particle, cnum, 
-                                                          verlet_distance, master, grid_idx[0], grid_idx[1], grid_idx[2], position, radius, index, sques, isques)
-        particle_particle_verlet_table(potential_list_particle_particle, particle_count, particle_current, particleID, particle, cnum,
-                                       cellSum, verlet_distance, master, grid_idx[0] + offset[0], grid_idx[1], grid_idx[2], position, radius, index, sques, isques)
-        particle_particle_verlet_table(potential_list_particle_particle, particle_count, particle_current, particleID, particle, cnum,
-                                       cellSum, verlet_distance, master, grid_idx[0], grid_idx[1] + offset[1], grid_idx[2], position, radius, index, sques, isques)
-        particle_particle_verlet_table(potential_list_particle_particle, particle_count, particle_current, particleID, particle, cnum,
-                                       cellSum, verlet_distance, master, grid_idx[0], grid_idx[1], grid_idx[2] + offset[2], position, radius, index, sques, isques)
-        particle_particle_verlet_table(potential_list_particle_particle, particle_count, particle_current, particleID, particle, cnum,
-                                       cellSum, verlet_distance, master, grid_idx[0], grid_idx[1] + offset[1], grid_idx[2] + offset[2], position, radius, index, sques, isques)
-        particle_particle_verlet_table(potential_list_particle_particle, particle_count, particle_current, particleID, particle, cnum,
-                                       cellSum, verlet_distance, master, grid_idx[0] + offset[0], grid_idx[1] + offset[1], grid_idx[2], position, radius, index, sques, isques)
-        particle_particle_verlet_table(potential_list_particle_particle, particle_count, particle_current, particleID, particle, cnum,
-                                       cellSum, verlet_distance, master, grid_idx[0] + offset[0], grid_idx[1], grid_idx[2] + offset[2], position, radius, index, sques, isques)
-        particle_particle_verlet_table(potential_list_particle_particle, particle_count, particle_current, particleID, particle, cnum,
-                                       cellSum, verlet_distance, master, grid_idx[0] + offset[0], grid_idx[1] + offset[1], grid_idx[2] + offset[2], position, radius, index, sques, isques)
-
-@ti.func
-def particle_particle_verlet_table_within_target_cell(potential_list_particle_particle, particle_count, particle_current, particleID, particle, cnum,
-                                                      verlet_distance, master, neigh_i, neigh_j, neigh_k, pos1, rad1, index, sques: ti.template(), isques: ti.template()):
-    cellID = linearize3D(neigh_i, neigh_j, neigh_k, cnum)
-    for hash_index in range(particle_count[cellID] - particle_current[cellID], particle_count[cellID]):
-        slave = particleID[hash_index]
-        pos2 = particle[slave].x 
-        rad2 = particle[slave].rad
-        same = index == particle[slave]._get_multisphere_index2()
-        valid = SquaredLength(pos2, pos1) <= 1.1 * (rad1 + rad2 + verlet_distance) * 1.1 * (rad1 + rad2 + verlet_distance)
-        if valid and not same: 
-            if master < slave:
-                potential_list_particle_particle[sques] = slave
-                sques += 1
-            elif master > slave:
-                potential_list_particle_particle[isques] = slave
-                isques -= 1
-            
-@ti.func
-def particle_particle_verlet_table(potential_list_particle_particle, particle_count, particle_current, particleID, particle, cnum,
-                                   cellSum, verlet_distance, master, neigh_i, neigh_j, neigh_k, pos1, rad1, index, sques: ti.template(), isques: ti.template()):
-    cellID = linearize3D(neigh_i, neigh_j, neigh_k, cnum)
-    if 0 <= cellID < cellSum: 
-        for hash_index in range(particle_count[cellID] -particle_current[cellID], particle_count[cellID]):
-            slave = particleID[hash_index]
-            pos2 = particle[slave].x 
-            rad2 = particle[slave].rad
-            same = index == particle[slave]._get_multisphere_index2()
-            valid = SquaredLength(pos2, pos1) <= 1.1 * (rad1 + rad2 + verlet_distance) * 1.1 * (rad1 + rad2 + verlet_distance)
-            if valid and not same: 
-                if master < slave:
-                    potential_list_particle_particle[sques] = slave
-                    sques += 1
-                elif master > slave:
-                    potential_list_particle_particle[isques] = slave
-                    isques -= 1
-'''        
 
 # ============================================ Wall ================================================= #
 @ti.kernel
@@ -445,32 +478,6 @@ def board_search_lsparticle_wall_linked_cell_(particleNum: int, potential_point_
                 sques = 0#ti.atomic_add(point_wall[gnode + 1], 1)
                 potential_list_point_wall[sques + gnode * potential_point_num] = wall_id
                 assert sques < potential_point_num, f"Keyword:: /point_coordination_number[1]/ is too small, Node {gnode} has {sques+1} potential contact number"
-    
-    '''
-    for master in range(particleNum):
-        mass_center1 = rigid[master]._get_position()
-        rotate_matrix1 = SetToRotate(rigid[master].q)
-        scale = box[master].scale
-        start_node, end_node, global_node = rigid[master]._start_node(), rigid[master]._end_node(), rigid[master].startNode
-        sques = 0
-
-        for node in range(start_node, end_node):
-            gnode = node - start_node + global_node
-            surface_node = mass_center1 + rotate_matrix1 @ (scale * vertice[node].x)
-
-            target_wall_id = -1
-            min_dist = 0.
-            for neigh in range(particle_wall[master], particle_wall[master + 1]):
-                wall_id = pwlist[neigh].endID2
-                projected_point = wall[wall_id]._point_projection(surface_node)
-                if wall[wall_id]._is_in_plane(projected_point) and wall[wall_id]._is_sphere_intersect(surface_node, verlet_distance) == 1:
-                    dist = wall[wall_id]._get_norm_distance(surface_node)
-                    if min_dist < dist:
-                        min_dist = dist
-                        target_wall_id = wall_id
-            if target_wall_id > -1:
-                potential_list_point_wall[gnode * potential_point_num] = target_wall_id
-                point_wall[master + 1] = 1'''
 
 # ============================================ Plane ================================================= #
 @ti.kernel
@@ -494,7 +501,7 @@ def board_search_particle_plane_linked_cell_(particleNum: int, potential_wall_nu
     for particle_id in range(particleNum):
         position = particle[particle_id].x
         radius = particle[particle_id].rad 
-        grid_idx = ti.floor(position * igrid_size, int)
+        grid_idx = ti.min(ti.floor(position * igrid_size, int), cnum - 1)
         
         sques = particle_id * potential_wall_num
         cellID = linearize3D(grid_idx[0], grid_idx[1], grid_idx[2], cnum)
@@ -510,7 +517,7 @@ def board_search_particle_plane_linked_cell_(particleNum: int, potential_wall_nu
 
 # ======================================== Facet ============================================= #
 @ti.kernel
-def insert_facet_to_cell_(wallNum: int, igrid_size: float, facet_in_cell: int, wall_count: ti.template(), wallID: ti.template(), wall: ti.template(), cnum: ti.types.vector(3, int)):
+def insert_facet_to_cell_(wallNum: int, grid_size: float, igrid_size: float, domain: ti.types.vector(3, float), facet_in_cell: int, wall_count: ti.template(), wallID: ti.template(), wall: ti.template(), cnum: ti.types.vector(3, int)):
     wall_count.fill(0)
     for wall_id in range(wallNum):
         if int(wall[wall_id].active) == 1:
@@ -518,11 +525,17 @@ def insert_facet_to_cell_(wallNum: int, igrid_size: float, facet_in_cell: int, w
             wall_min_coord = wall[wall_id].bound_beg
             wall_max_coord = wall[wall_id].bound_end
 
-            minCoord = ti.max(ti.floor(wall_min_coord * igrid_size - 0.5, int), 0)
-            maxCoord = ti.min(ti.ceil(wall_max_coord * igrid_size + 0.5, int) + 1, cnum)
+            minCoord = ti.min(cnum - 1, ti.floor(wall_min_coord * igrid_size - 0.5, int))
+            maxCoord = ti.min(cnum - 1, ti.floor(wall_max_coord * igrid_size + 0.5, int)) + 1 #+ ti.cast((wall_max_coord  + 0.5 * grid_size) // domain, int)
+            minCoord[0] = ti.max(minCoord[0], 0)
+            maxCoord[0] = ti.min(maxCoord[0], cnum[0])
+            minCoord[1] = ti.max(minCoord[1], 0)
+            maxCoord[1] = ti.min(maxCoord[1], cnum[1])
+            minCoord[2] = ti.max(minCoord[2], 0)
+            maxCoord[2] = ti.min(maxCoord[2], cnum[2])
             for neigh_i in range(minCoord[0], maxCoord[0]):
-                for neigh_j in range(minCoord[1], maxCoord[1]): 
-                    for neigh_k in range(minCoord[2], maxCoord[2]): 
+                for neigh_j in range(minCoord[1], maxCoord[1]):
+                    for neigh_k in range(minCoord[2], maxCoord[2]):
                         cellID = linearize3D(neigh_i, neigh_j, neigh_k, cnum)
                         wall_location = cellID * facet_in_cell + ti.atomic_add(wall_count[cellID], 1)                       
                         wallID[wall_location] = wall_id
@@ -535,7 +548,7 @@ def board_search_particle_facet_linked_cell_(particleNum: int, potential_wall_nu
     for particle_id in range(particleNum):
         position = particle[particle_id].x
         radius = particle[particle_id].rad 
-        grid_idx = ti.floor(position * igrid_size, int)
+        grid_idx = ti.min(ti.floor(position * igrid_size, int), cnum - 1)
 
         sques = particle_id * potential_wall_num
         cellID = linearize3D(grid_idx[0], grid_idx[1], grid_idx[2], cnum)
@@ -557,7 +570,7 @@ def board_search_coupled_particle_facet_linked_cell_(potential_wall_num: int, fa
         if int(particle[particle_id].active) == 0 or int(particle[particle_id].coupling) == 0: continue
         position = particle[particle_id].x
         radius = particle[particle_id].rad 
-        grid_idx = ti.floor(position * igrid_size, int)
+        grid_idx = ti.min(ti.floor(position * igrid_size, int), cnum - 1)
 
         sques = particle_id * potential_wall_num
         cellID = linearize3D(grid_idx[0], grid_idx[1], grid_idx[2], cnum)
@@ -584,11 +597,17 @@ def calculate_static_facet_position_(wallNum: int, igrid_size: float, wall: ti.t
             wall_min_coord = wall[wall_id].bound_beg
             wall_max_coord = wall[wall_id].bound_end
 
-            minCoord = ti.max(ti.floor(wall_min_coord * igrid_size - 0.5, int), 0)
-            maxCoord = ti.min(ti.ceil(wall_max_coord * igrid_size + 0.5, int) + 1, cnum)
+            minCoord = ti.min(cnum - 1, ti.floor(wall_min_coord * igrid_size - 0.5, int))
+            maxCoord = ti.min(cnum - 1, ti.floor(wall_max_coord * igrid_size + 0.5, int)) + 1 #+ ti.cast((wall_max_coord  + 0.5 * grid_size) // domain, int)
+            minCoord[0] = ti.max(minCoord[0], 0)
+            maxCoord[0] = ti.min(maxCoord[0], cnum[0])
+            minCoord[1] = ti.max(minCoord[1], 0)
+            maxCoord[1] = ti.min(maxCoord[1], cnum[1])
+            minCoord[2] = ti.max(minCoord[2], 0)
+            maxCoord[2] = ti.min(maxCoord[2], cnum[2])
             for neigh_i in range(minCoord[0], maxCoord[0]):
-                for neigh_j in range(minCoord[1], maxCoord[1]): 
-                    for neigh_k in range(minCoord[2], maxCoord[2]): 
+                for neigh_j in range(minCoord[1], maxCoord[1]):
+                    for neigh_k in range(minCoord[2], maxCoord[2]):
                         cellID = linearize3D(neigh_i, neigh_j, neigh_k, cnum)
                         static_facet_current[wall_id] = ti.atomic_add(wall_count[cellID + 1], 1)
 
@@ -599,11 +618,17 @@ def insert_static_facet_to_cell_(igrid_size: float, wallNum: int, wall: ti.templ
             wall_min_coord = wall[nw].bound_beg
             wall_max_coord = wall[nw].bound_end
 
-            minCoord = ti.max(ti.floor(wall_min_coord * igrid_size - 0.5, int), 0)
-            maxCoord = ti.min(ti.ceil(wall_max_coord * igrid_size + 0.5, int), cnum)
+            minCoord = ti.min(cnum - 1, ti.floor(wall_min_coord * igrid_size - 0.5, int))
+            maxCoord = ti.min(cnum - 1, ti.floor(wall_max_coord * igrid_size + 0.5, int)) + 1 #+ ti.cast((wall_max_coord  + 0.5 * grid_size) // domain, int)
+            minCoord[0] = ti.max(minCoord[0], 0)
+            maxCoord[0] = ti.min(maxCoord[0], cnum[0])
+            minCoord[1] = ti.max(minCoord[1], 0)
+            maxCoord[1] = ti.min(maxCoord[1], cnum[1])
+            minCoord[2] = ti.max(minCoord[2], 0)
+            maxCoord[2] = ti.min(maxCoord[2], cnum[2])
             for neigh_i in range(minCoord[0], maxCoord[0]):
-                for neigh_j in range(minCoord[1], maxCoord[1]): 
-                    for neigh_k in range(minCoord[2], maxCoord[2]): 
+                for neigh_j in range(minCoord[1], maxCoord[1]):
+                    for neigh_k in range(minCoord[2], maxCoord[2]):
                         cellID = linearize3D(neigh_i, neigh_j, neigh_k, cnum)
                         patch_location = wall_count[cellID] + static_facet_current[nw]
                         wallID[patch_location] = nw
@@ -615,7 +640,7 @@ def board_search_particle_static_facet_linked_cell_(particleNum: int, potential_
     for particle_id in range(particleNum):
         position = particle[particle_id].x
         radius = particle[particle_id].rad 
-        grid_idx = ti.floor(position * igrid_size, int)
+        grid_idx = ti.min(ti.floor(position * igrid_size, int), cnum - 1)
 
         sques = particle_id * potential_wall_num
         cellID = linearize3D(grid_idx[0], grid_idx[1], grid_idx[2], cnum)
@@ -635,7 +660,7 @@ def calculate_patch_position_(wallNum: int, igrid_size: float, wall: ti.template
     wall_count.fill(0)
     for wall_id in range(wallNum):  
         if int(wall[wall_id].active) == 1:
-            grid_idx = ti.floor(wall[wall_id]._get_center() * igrid_size , int)
+            grid_idx = ti.min(ti.floor(wall[wall_id]._get_center() * igrid_size , int), cnum - 1)
             cellID = linearize3D(grid_idx[0], grid_idx[1], grid_idx[2], cnum)
             patch_current[wall_id] = ti.atomic_add(wall_count[cellID + 1], 1)
 
@@ -643,7 +668,7 @@ def calculate_patch_position_(wallNum: int, igrid_size: float, wall: ti.template
 def insert_patch_to_cell_(igrid_size: float, wallNum: int, wall: ti.template(), wall_count: ti.template(), patch_current: ti.template(), wallID: ti.template(), cnum: ti.types.vector(3, int)):
     for nw in range(wallNum):
         if int(wall[nw].active) == 1:
-            grid_idx = ti.floor(wall[nw]._get_center() * igrid_size , int)
+            grid_idx = ti.min(ti.floor(wall[nw]._get_center() * igrid_size , int), cnum - 1)
             cellID = linearize3D(grid_idx[0], grid_idx[1], grid_idx[2], cnum)
             patch_location = wall_count[cellID] + patch_current[nw]
             wallID[patch_location] = nw
@@ -655,7 +680,7 @@ def board_search_particle_patch_linked_cell_(particleNum: int, potential_wall_nu
     for particle_id in range(particleNum):
         position = particle[particle_id].x
         radius = particle[particle_id].rad
-        grid_idx = ti.floor(position * igrid_size, int)
+        grid_idx = ti.min(ti.floor(position * igrid_size, int), cnum - 1)
 
         x_begin = ti.max(grid_idx[0] - 1, 0)
         x_end = ti.min(grid_idx[0] + 2, cnum[0])
@@ -701,7 +726,7 @@ def board_search_particle_digital_elevation_(particleNum: int, potential_wall_nu
         particle_pos, particle_rad = particle[particle_id].x, particle[particle_id].rad
 
         xStart, yStart, _ = ti.floor((particle_pos - particle_rad) * icell_size , int)
-        xEnd, yEnd, _ = ti.ceil((particle_pos + particle_rad) * icell_size , int)
+        xEnd, yEnd, _ = ti.min(ti.ceil((particle_pos + particle_rad) * icell_size , int), cnum - 1)
         
         sques = particle_id * potential_wall_num
         for neigh_x in range(xStart, xEnd):
@@ -782,8 +807,11 @@ def calculate_particles_position_hierarchical_(particleNum: int, particle: ti.te
     for np in range(particleNum):  
         grid_level = body[np + 1].level
         start_index = grid[grid_level].cell_index
-        grid_idx = ti.floor(particle[np].x * grid[grid_level].igrid_size, int)
-        cellID = start_index + linearize3D(grid_idx[0], grid_idx[1], grid_idx[2], grid[grid_level].cnum)
+        cnum = grid[grid_level].cnum
+        position = particle[np].x
+        grid_idx = ti.min(ti.floor(position * grid[grid_level].igrid_size, int), cnum - 1)
+        cellID = start_index + linearize3D(grid_idx[0], grid_idx[1], grid_idx[2], cnum)
+        assert 0 <= grid_idx[0] < cnum[0] and 0 <= grid_idx[1] < cnum[1] and 0 <= grid_idx[2] < cnum[2], f"Particle {np} is located at [{position[0]}, {position[1]}, {position[2]}] belongs to cell [{grid_idx[0]}, {grid_idx[1]}, {grid_idx[2]}]. Out of simulation domain!"
         particle_current[np] = ti.atomic_add(particle_count[cellID + 1], 1)
     
 @ti.kernel
@@ -791,13 +819,15 @@ def insert_particle_to_cell_hierarchical_(particleNum: int, particle: ti.templat
     for np in range(particleNum):
         grid_level = body[np + 1].level
         start_index = grid[grid_level].cell_index
-        grid_idx = ti.floor(particle[np].x * grid[grid_level].igrid_size , int)
-        cellID = start_index + linearize3D(grid_idx[0], grid_idx[1], grid_idx[2], grid[grid_level].cnum)
+        cnum = grid[grid_level].cnum
+        position = particle[np].x
+        grid_idx = ti.min(ti.floor(position * grid[grid_level].igrid_size, int), cnum - 1)
+        cellID = start_index + linearize3D(grid_idx[0], grid_idx[1], grid_idx[2], cnum)
         grain_location = particle_count[cellID] + particle_current[np]
         particleID[grain_location] = np
 
 @ti.kernel
-def board_search_particle_particle_linked_cell_hierarchical_(particleNum: int, verlet_distance: float, particle_count: ti.template(), particleID: ti.template(), 
+def board_search_particle_particle_linked_cell_hierarchical_(particleNum: int, verlet_distance: float, domain: ti.types.vector(3, float), particle_count: ti.template(), particleID: ti.template(), 
                                                              particle: ti.template(), potential_list_particle_particle: ti.template(), particle_particle: ti.template(), body: ti.template(), grid: ti.template()):
     particle_particle.fill(0)
     for master in range(particleNum):
@@ -806,26 +836,52 @@ def board_search_particle_particle_linked_cell_hierarchical_(particleNum: int, v
         index = particle[master]._get_multisphere_index1()
         grid_level = body[master + 1].level
         cell_index = grid[grid_level].cell_index
+        igrid_size = grid[grid_level].igrid_size
         cnum = grid[grid_level].cnum
         potential_particle_num = body[master].potential_particle_num()
-        grid_idx = ti.floor(position * grid[grid_level].igrid_size, int)
-        
-        x_begin = ti.max(grid_idx[0] - 1, 0)
-        x_end = ti.min(grid_idx[0] + 2, cnum[0])
-        y_begin = ti.max(grid_idx[1] - 1, 0)
-        y_end = ti.min(grid_idx[1] + 2, cnum[1])
-        z_begin = ti.max(grid_idx[2] - 1, 0)
-        z_end = ti.min(grid_idx[2] + 2, cnum[2])
+        grid_idx = ti.min(ti.floor(position * igrid_size, int), cnum - 1)
+
+        x_begin, x_end = grid_idx[0] - 1, grid_idx[0] + 2
+        y_begin, y_end = grid_idx[1] - 1, grid_idx[1] + 2
+        z_begin, z_end = grid_idx[2] - 1, grid_idx[2] + 2
+        if ti.static(not GlobalVariable.DEMXPBC):
+            x_begin = ti.max(x_begin, 0)
+            x_end = ti.min(x_end, cnum[0])
+        if ti.static(not GlobalVariable.DEMYPBC):
+            y_begin = ti.max(y_begin, 0)
+            y_end = ti.min(y_end, cnum[1])
+        if ti.static(not GlobalVariable.DEMZPBC):
+            z_begin = ti.max(z_begin, 0)
+            z_end = ti.min(z_end, cnum[2])
 
         sques = potential_particle_num
         for neigh_i in range(x_begin, x_end):
+            neigh_ii = neigh_i
+            offset_i = 0
+            if ti.static(GlobalVariable.DEMXPBC): 
+                neigh_ii = neigh_i % cnum[0]
+                offset_i = neigh_i - neigh_ii
             for neigh_j in range(y_begin, y_end):
+                neigh_jj = neigh_j
+                offset_j = 0
+                if ti.static(GlobalVariable.DEMYPBC): 
+                    neigh_jj = neigh_j % cnum[1]
+                    offset_j = neigh_j - neigh_jj
                 for neigh_k in range(z_begin, z_end):
-                    cellID = cell_index + linearize3D(neigh_i, neigh_j, neigh_k, cnum)
+                    neigh_kk = neigh_k
+                    offset_k = 0
+                    if ti.static(GlobalVariable.DEMZPBC): 
+                        neigh_kk = neigh_k % cnum[2]
+                        offset_k = neigh_k - neigh_kk
+
+                    cellID = cell_index + linearize3D(neigh_ii, neigh_jj, neigh_kk, cnum)
                     for hash_index in range(particle_count[cellID], particle_count[cellID + 1]):
                         slave = particleID[hash_index]
                         if master < slave and not index == particle[slave]._get_multisphere_index2():
                             pos2 = particle[slave].x 
+                            if ti.static(GlobalVariable.DEMXPBC): pos2[0] += sgn(offset_i) * GlobalVariable.DEMXSIZE
+                            if ti.static(GlobalVariable.DEMYPBC): pos2[1] += sgn(offset_j) * GlobalVariable.DEMYSIZE
+                            if ti.static(GlobalVariable.DEMZPBC): pos2[2] += sgn(offset_k) * GlobalVariable.DEMZSIZE
                             rad2 = particle[slave].rad
                             valid = SquaredLength(pos2, position) <= (radius + rad2 + 2 * verlet_distance) * (radius + rad2 + 2 * verlet_distance)
                             if valid: 
@@ -837,24 +893,50 @@ def board_search_particle_particle_linked_cell_hierarchical_(particleNum: int, v
             cnum = grid[i].cnum
             grid_size = grid[i].grid_size
             igrid_size = grid[i].igrid_size
-            grid_start = ti.floor((position - radius - 0.5 * grid_size) * igrid_size, int)
-            grid_end = ti.ceil((position + radius + 0.5 * grid_size) * igrid_size, int)
+            bounding = radius + 0.5 * grid_size + 2. * verlet_distance
+            grid_start = ti.min(cnum - 1, ti.floor((position - bounding) * igrid_size, int))
+            grid_end = ti.min(cnum - 1, ti.floor((position + bounding) * igrid_size, int)) + ti.cast((position + bounding) // domain, int) + 1
 
-            x_begin = ti.max(grid_start[0], 0)
-            x_end = ti.min(grid_end[0], cnum[0])
-            y_begin = ti.max(grid_start[1], 0)
-            y_end = ti.min(grid_end[1], cnum[1])
-            z_begin = ti.max(grid_start[2], 0)
-            z_end = ti.min(grid_end[2], cnum[2])
+            x_begin, x_end = grid_start[0], grid_end[0]
+            y_begin, y_end = grid_start[1], grid_end[1]
+            z_begin, z_end = grid_start[2], grid_end[2]
+            if ti.static(not GlobalVariable.DEMXPBC):
+                x_begin = ti.max(x_begin, 0)
+                x_end = ti.min(x_end, cnum[0])
+            if ti.static(not GlobalVariable.DEMYPBC):
+                y_begin = ti.max(y_begin, 0)
+                y_end = ti.min(y_end, cnum[1])
+            if ti.static(not GlobalVariable.DEMZPBC):
+                z_begin = ti.max(z_begin, 0)
+                z_end = ti.min(z_end, cnum[2])
 
             for neigh_i in range(x_begin, x_end):
+                neigh_ii = neigh_i
+                offset_i = 0
+                if ti.static(GlobalVariable.DEMXPBC): 
+                    neigh_ii = neigh_i % cnum[0]
+                    offset_i = neigh_i - neigh_ii
                 for neigh_j in range(y_begin, y_end):
+                    neigh_jj = neigh_j
+                    offset_j = 0
+                    if ti.static(GlobalVariable.DEMYPBC): 
+                        neigh_jj = neigh_j % cnum[1]
+                        offset_j = neigh_j - neigh_jj
                     for neigh_k in range(z_begin, z_end):
-                        cellID = cell_index + linearize3D(neigh_i, neigh_j, neigh_k, cnum)
+                        neigh_kk = neigh_k
+                        offset_k = 0
+                        if ti.static(GlobalVariable.DEMZPBC): 
+                            neigh_kk = neigh_k % cnum[2]
+                            offset_k = neigh_k - neigh_kk
+
+                        cellID = cell_index + linearize3D(neigh_ii, neigh_jj, neigh_kk, cnum)
                         for hash_index in range(particle_count[cellID], particle_count[cellID + 1]):
                             slave = particleID[hash_index]
                             if not index == particle[slave]._get_multisphere_index2():
                                 pos2 = particle[slave].x 
+                                if ti.static(GlobalVariable.DEMXPBC): pos2[0] += sgn(offset_i) * GlobalVariable.DEMXSIZE
+                                if ti.static(GlobalVariable.DEMYPBC): pos2[1] += sgn(offset_j) * GlobalVariable.DEMYSIZE
+                                if ti.static(GlobalVariable.DEMZPBC): pos2[2] += sgn(offset_k) * GlobalVariable.DEMZSIZE
                                 rad2 = particle[slave].rad
                                 valid = SquaredLength(pos2, position) <= (radius + rad2 + 2 * verlet_distance) * (radius + rad2 + 2 * verlet_distance)
                                 if valid: 
@@ -866,7 +948,7 @@ def board_search_particle_particle_linked_cell_hierarchical_(particleNum: int, v
         particle_particle[master + 1] = neighbors
 
 @ti.kernel
-def board_search_particle_particle_linked_cell_hierarchical2_(particleNum: int, levels: int, verlet_distance: float, particle_count: ti.template(), particleID: ti.template(), 
+def board_search_particle_particle_linked_cell_hierarchical2_(particleNum: int, levels: int, verlet_distance: float, domain: ti.types.vector(3, float), particle_count: ti.template(), particleID: ti.template(), 
                                                               particle: ti.template(), potential_list_particle_particle: ti.template(), particle_particle: ti.template(), body: ti.template(), grid: ti.template()):
     particle_particle.fill(0)
     for master in range(particleNum):
@@ -875,26 +957,51 @@ def board_search_particle_particle_linked_cell_hierarchical2_(particleNum: int, 
         index = particle[master]._get_multisphere_index1()
         grid_level = body[master + 1].level
         cell_index = grid[grid_level].cell_index
+        igrid_size = grid[grid_level].igrid_size
         cnum = grid[grid_level].cnum
         potential_particle_num = body[master].potential_particle_num()
-        grid_idx = ti.floor(position * grid[grid_level].igrid_size, int)
+        grid_idx = ti.min(ti.floor(position * igrid_size, int), cnum - 1)
         
-        x_begin = ti.max(grid_idx[0] - 1, 0)
-        x_end = ti.min(grid_idx[0] + 2, cnum[0])
-        y_begin = ti.max(grid_idx[1] - 1, 0)
-        y_end = ti.min(grid_idx[1] + 2, cnum[1])
-        z_begin = ti.max(grid_idx[2] - 1, 0)
-        z_end = ti.min(grid_idx[2] + 2, cnum[2])
+        x_begin, x_end = grid_idx[0] - 1, grid_idx[0] + 2
+        y_begin, y_end = grid_idx[1] - 1, grid_idx[1] + 2
+        z_begin, z_end = grid_idx[2] - 1, grid_idx[2] + 2
+        if ti.static(not GlobalVariable.DEMXPBC):
+            x_begin = ti.max(x_begin, 0)
+            x_end = ti.min(x_end, cnum[0])
+        if ti.static(not GlobalVariable.DEMYPBC):
+            y_begin = ti.max(y_begin, 0)
+            y_end = ti.min(y_end, cnum[1])
+        if ti.static(not GlobalVariable.DEMZPBC):
+            z_begin = ti.max(z_begin, 0)
+            z_end = ti.min(z_end, cnum[2])
 
         sques = potential_particle_num
         for neigh_i in range(x_begin, x_end):
+            neigh_ii = neigh_i
+            offset_i = 0
+            if ti.static(GlobalVariable.DEMXPBC): 
+                neigh_ii = neigh_i % cnum[0]
+                offset_i = neigh_i - neigh_ii
             for neigh_j in range(y_begin, y_end):
+                neigh_jj = neigh_j
+                offset_j = 0
+                if ti.static(GlobalVariable.DEMYPBC): 
+                    neigh_jj = neigh_j % cnum[1]
+                    offset_j = neigh_j - neigh_jj
                 for neigh_k in range(z_begin, z_end):
-                    cellID = cell_index + linearize3D(neigh_i, neigh_j, neigh_k, cnum)
+                    neigh_kk = neigh_k
+                    offset_k = 0
+                    if ti.static(GlobalVariable.DEMZPBC): 
+                        neigh_kk = neigh_k % cnum[2]
+                        offset_k = neigh_k - neigh_kk
+                    cellID = cell_index + linearize3D(neigh_ii, neigh_jj, neigh_kk, cnum)
                     for hash_index in range(particle_count[cellID], particle_count[cellID + 1]):
                         slave = particleID[hash_index]
                         if master < slave and not index == particle[slave]._get_multisphere_index2():
                             pos2 = particle[slave].x 
+                            if ti.static(GlobalVariable.DEMXPBC): pos2[0] += sgn(offset_i) * GlobalVariable.DEMXSIZE
+                            if ti.static(GlobalVariable.DEMYPBC): pos2[1] += sgn(offset_j) * GlobalVariable.DEMYSIZE
+                            if ti.static(GlobalVariable.DEMZPBC): pos2[2] += sgn(offset_k) * GlobalVariable.DEMZSIZE
                             rad2 = particle[slave].rad
                             valid = SquaredLength(pos2, position) <= (radius + rad2 + 2 * verlet_distance) * (radius + rad2 + 2 * verlet_distance)
                             if valid: 
@@ -906,24 +1013,49 @@ def board_search_particle_particle_linked_cell_hierarchical2_(particleNum: int, 
             cnum = grid[i].cnum
             grid_size = grid[i].grid_size
             igrid_size = grid[i].igrid_size
-            grid_start = ti.floor((position - radius - 0.5 * grid_size) * igrid_size, int)
-            grid_end = ti.ceil((position + radius + 0.5 * grid_size) * igrid_size, int)
+            bounding = radius + 0.5 * grid_size + 2. * verlet_distance
+            grid_start = ti.min(cnum - 1, ti.floor((position - bounding) * igrid_size, int))
+            grid_end = ti.min(cnum - 1, ti.floor((position + bounding) * igrid_size, int)) + ti.cast((position + bounding) // domain, int) + 1
 
-            x_begin = ti.max(grid_start[0], 0)
-            x_end = ti.min(grid_end[0], cnum[0])
-            y_begin = ti.max(grid_start[1], 0)
-            y_end = ti.min(grid_end[1], cnum[1])
-            z_begin = ti.max(grid_start[2], 0)
-            z_end = ti.min(grid_end[2], cnum[2])
+            x_begin, x_end = grid_start[0], grid_end[0]
+            y_begin, y_end = grid_start[1], grid_end[1]
+            z_begin, z_end = grid_start[2], grid_end[2]
+            if ti.static(not GlobalVariable.DEMXPBC):
+                x_begin = ti.max(x_begin, 0)
+                x_end = ti.min(x_end, cnum[0])
+            if ti.static(not GlobalVariable.DEMYPBC):
+                y_begin = ti.max(y_begin, 0)
+                y_end = ti.min(y_end, cnum[1])
+            if ti.static(not GlobalVariable.DEMZPBC):
+                z_begin = ti.max(z_begin, 0)
+                z_end = ti.min(z_end, cnum[2])
 
             for neigh_i in range(x_begin, x_end):
+                neigh_ii = neigh_i
+                offset_i = 0
+                if ti.static(GlobalVariable.DEMXPBC): 
+                    neigh_ii = neigh_i % cnum[0]
+                    offset_i = neigh_i - neigh_ii
                 for neigh_j in range(y_begin, y_end):
+                    neigh_jj = neigh_j
+                    offset_j = 0
+                    if ti.static(GlobalVariable.DEMYPBC): 
+                        neigh_jj = neigh_j % cnum[1]
+                        offset_j = neigh_j - neigh_jj
                     for neigh_k in range(z_begin, z_end):
-                        cellID = cell_index + linearize3D(neigh_i, neigh_j, neigh_k, cnum)
+                        neigh_kk = neigh_k
+                        offset_k = 0
+                        if ti.static(GlobalVariable.DEMZPBC): 
+                            neigh_kk = neigh_k % cnum[2]
+                            offset_k = neigh_k - neigh_kk
+                        cellID = cell_index + linearize3D(neigh_ii, neigh_jj, neigh_kk, cnum)
                         for hash_index in range(particle_count[cellID], particle_count[cellID + 1]):
                             slave = particleID[hash_index]
                             if not index == particle[slave]._get_multisphere_index2():
                                 pos2 = particle[slave].x 
+                                if ti.static(GlobalVariable.DEMXPBC): pos2[0] += sgn(offset_i) * GlobalVariable.DEMXSIZE
+                                if ti.static(GlobalVariable.DEMYPBC): pos2[1] += sgn(offset_j) * GlobalVariable.DEMYSIZE
+                                if ti.static(GlobalVariable.DEMZPBC): pos2[2] += sgn(offset_k) * GlobalVariable.DEMZSIZE
                                 rad2 = particle[slave].rad
                                 valid = SquaredLength(pos2, position) <= (radius + rad2 + 2 * verlet_distance) * (radius + rad2 + 2 * verlet_distance)
                                 if valid: 
@@ -944,8 +1076,9 @@ def board_search_particle_particle_linked_cell_hierarchical_interlevel_(startID:
         grid_level = body[master + 1].level
         cell_index = grid[grid_level].cell_index
         cnum = grid[grid_level].cnum
+        igrid_size = grid[grid_level].igrid_size
         potential_particle_num = body[master].potential_particle_num() + particle_particle[master + 1]
-        grid_idx = ti.floor(position * grid[grid_level].igrid_size, int)
+        grid_idx = ti.min(ti.floor(position * igrid_size, int), cnum - 1)
         
         x_begin = ti.max(grid_idx[0] - 1, 0)
         x_end = ti.min(grid_idx[0] + 2, cnum[0])
@@ -975,7 +1108,7 @@ def board_search_particle_particle_linked_cell_hierarchical_interlevel_(startID:
 
 
 @ti.kernel
-def board_search_particle_particle_linked_cell_hierarchical_crosslevel_(startID: int, endID: int, verlet_distance: float, particle_count: ti.template(), particleID: ti.template(), 
+def board_search_particle_particle_linked_cell_hierarchical_crosslevel_(startID: int, endID: int, verlet_distance: float, domain: ti.types.vector(3, float), particle_count: ti.template(), particleID: ti.template(), 
                                                                         particle: ti.template(), potential_list_particle_particle: ti.template(), particle_particle: ti.template(), body: ti.template(), grid: ti.template()):
     for master in range(startID, endID):
         position = particle[master].x
@@ -993,8 +1126,9 @@ def board_search_particle_particle_linked_cell_hierarchical_crosslevel_(startID:
         cnum = grid[i].cnum
         grid_size = grid[i].grid_size
         igrid_size = grid[i].igrid_size
-        grid_start = ti.floor((position - radius - 0.5 * grid_size) * igrid_size, int)
-        grid_end = ti.ceil((position + radius + 0.5 * grid_size) * igrid_size, int)
+        bounding = radius + 0.5 * grid_size + 2. * verlet_distance
+        grid_start = ti.min(cnum - 1, ti.floor((position - bounding) * igrid_size, int))
+        grid_end = ti.min(cnum - 1, ti.floor((position + bounding) * igrid_size, int)) + ti.cast((position + bounding) // domain, int) + 1
 
         x_begin = ti.max(grid_start[0], 0)
         x_end = ti.min(grid_end[0], cnum[0])
@@ -1144,7 +1278,7 @@ def board_search_particle_plane_linked_cell_hierarchical_(particleNum: int, verl
         cell_index = grid[grid_level].cell_index
         cnum = grid[grid_level].cnum
         potential_wall_num = body[particle_id].potential_wall_num()
-        grid_idx = ti.floor(position * grid[grid_level].igrid_size, int)
+        grid_idx = ti.min(ti.floor(position * grid[grid_level].igrid_size, int), cnum - 1)
         
         sques = potential_wall_num
         local_cell = linearize3D(grid_idx[0], grid_idx[1], grid_idx[2], cnum)
@@ -1176,11 +1310,18 @@ def insert_facet_to_cell_hierarchical_(wallNum: int, levels: int, wall_count: ti
                 cell_index = grid[grid_level].cell_index
                 wall_cells = grid[grid_level].wall_cells 
                 facet_in_cell = grid[grid_level].wall_per_cell
-                minCoord = ti.max(ti.floor(wall_min_coord * igrid_size - 0.5, int), 0)
-                maxCoord = ti.min(ti.ceil(wall_max_coord * igrid_size + 0.5, int) + 1, cnum)
+
+                minCoord = ti.min(cnum - 1, ti.floor(wall_min_coord * igrid_size - 0.5, int))
+                maxCoord = ti.min(cnum - 1, ti.floor(wall_max_coord * igrid_size + 0.5, int)) + 1 #+ ti.cast((wall_max_coord  + 0.5 * grid_size) // domain, int)
+                minCoord[0] = ti.max(minCoord[0], 0)
+                maxCoord[0] = ti.min(maxCoord[0], cnum[0])
+                minCoord[1] = ti.max(minCoord[1], 0)
+                maxCoord[1] = ti.min(maxCoord[1], cnum[1])
+                minCoord[2] = ti.max(minCoord[2], 0)
+                maxCoord[2] = ti.min(maxCoord[2], cnum[2])
                 for neigh_i in range(minCoord[0], maxCoord[0]):
-                    for neigh_j in range(minCoord[1], maxCoord[1]): 
-                        for neigh_k in range(minCoord[2], maxCoord[2]): 
+                    for neigh_j in range(minCoord[1], maxCoord[1]):
+                        for neigh_k in range(minCoord[2], maxCoord[2]):
                             local_cell = linearize3D(neigh_i, neigh_j, neigh_k, cnum)
                             cellID = cell_index + local_cell
                             wall_location = wall_cells + local_cell * facet_in_cell + ti.atomic_add(wall_count[cellID], 1)                       
@@ -1198,7 +1339,7 @@ def board_search_particle_facet_linked_cell_hierarchical_(particleNum: int, verl
         cell_index = grid[grid_level].cell_index
         cnum = grid[grid_level].cnum
         potential_wall_num = body[particle_id].potential_wall_num()
-        grid_idx = ti.floor(position * grid[grid_level].igrid_size, int)
+        grid_idx = ti.min(ti.floor(position * grid[grid_level].igrid_size, int), cnum - 1)
 
         sques = potential_wall_num
         local_cell = linearize3D(grid_idx[0], grid_idx[1], grid_idx[2], cnum)
@@ -1222,8 +1363,9 @@ def calculate_patch_position_hierarchical_(wallNum: int, wall: ti.template(), wa
         if int(wall[wall_id].active) == 1:
             grid_level = wallbody[wall_id]
             start_index = grid[grid_level].cell_index
-            grid_idx = ti.floor(wall[wall_id]._get_center() * grid[grid_level].igrid_size , int)
-            cellID = start_index + linearize3D(grid_idx[0], grid_idx[1], grid_idx[2], grid[grid_level].cnum)
+            cnum = grid[grid_level].cnum
+            grid_idx = ti.min(ti.floor(wall[wall_id]._get_center() * grid[grid_level].igrid_size, int), cnum)
+            cellID = start_index + linearize3D(grid_idx[0], grid_idx[1], grid_idx[2], cnum)
             patch_current[wall_id] = ti.atomic_add(wall_count[cellID + 1], 1)
 
 @ti.kernel
@@ -1233,8 +1375,9 @@ def insert_patch_to_cell_hierarchical_(wallNum: int, wall: ti.template(), wall_c
             grid_level = wallbody[nw]
             start_index = grid[grid_level].cell_index
             wall_index = grid[grid_level].index
-            grid_idx = ti.floor(wall[nw]._get_center() * grid[grid_level].igrid_size , int)
-            cellID = start_index + linearize3D(grid_idx[0], grid_idx[1], grid_idx[2], grid[grid_level].cnum)
+            cnum = grid[grid_level].cnum
+            grid_idx = ti.min(ti.floor(wall[nw]._get_center() * grid[grid_level].igrid_size, int), cnum)
+            cellID = start_index + linearize3D(grid_idx[0], grid_idx[1], grid_idx[2], cnum)
             patch_location = wall_index + wall_count[cellID] + patch_current[nw]
             wallID[patch_location] = nw
 
