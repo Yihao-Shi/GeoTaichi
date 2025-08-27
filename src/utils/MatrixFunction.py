@@ -1,6 +1,6 @@
 import taichi as ti
 
-from src.utils.constants import ZEROVEC3f, SQRT3, PI, ZEROMAT3x3, DBL_EPSILON
+from src.utils.constants import ZEROVEC3f, SQRT3, PI, DBL_EPSILON
 from src.utils.ScalarFunction import clamp
 from src.utils.TypeDefination import vec3f, mat3x3, mat4x4, mat2x2, mat3x4
 
@@ -20,16 +20,24 @@ def matrix_form(tensor):
 
 
 @ti.func
+def inverse_matrix_2x2(matrix):
+    det = matrix[0, 0] * matrix[1, 1] - matrix[1, 0] * matrix[0, 1]
+    return 1. / det * mat2x2([matrix[1, 1], -matrix[0, 1]], [-matrix[1, 0], matrix[0, 0]])
+
+
+@ti.func
 def cwise_product(matrix1, matrix2):
     return mat3x3(matrix1[0, 0] * matrix2[0, 0], matrix1[0, 1] * matrix2[0, 1], matrix1[0, 2] * matrix2[0, 2],
                   matrix1[1, 0] * matrix2[1, 0], matrix1[1, 1] * matrix2[1, 1], matrix1[1, 2] * matrix2[1, 2],
                   matrix1[2, 0] * matrix2[2, 0], matrix1[2, 1] * matrix2[2, 1], matrix1[2, 2] * matrix2[2, 2])
+
 
 @ti.func
 def sum_cwise_product(matrix1, matrix2):
     return matrix1[0, 0] * matrix2[0, 0] + matrix1[0, 1] * matrix2[0, 1] + matrix1[0, 2] * matrix2[0, 2] + \
            matrix1[1, 0] * matrix2[1, 0] + matrix1[1, 1] * matrix2[1, 1] + matrix1[1, 2] * matrix2[1, 2] + \
            matrix1[2, 0] * matrix2[2, 0] + matrix1[2, 1] * matrix2[2, 1] + matrix1[2, 2] * matrix2[2, 2]
+
 
 @ti.func
 def trace(matrix):
@@ -40,6 +48,7 @@ def trace(matrix):
     elif ti.static(matrix.n == 3):
         matrix_trace = matrix[0, 0] + matrix[1, 1] + matrix[2, 2]
     return matrix_trace
+
 
 @ti.func
 def principal_sym_tensor(matrix):
@@ -69,25 +78,49 @@ def principal_sym_tensor(matrix):
 
 
 @ti.func
+def hessenberg(matrix):
+    assert matrix.n == matrix.m
+    Qh = ti.Matrix.identity(float, matrix.n)
+    H = matrix
+    # 对列 0,1 做 Householder
+    for col in ti.static(range(2)):
+        v = ti.Vector.zero(float, matrix.n)
+        for i in ti.static(range(col+1, matrix.n)):
+            v[i] = matrix[i, col]
+        alpha = ti.sqrt(v.dot(v))
+        if v[col+1] > 0:
+            alpha = -alpha
+        v[col+1] -= alpha
+        beta = 0.0
+        for i in ti.static(range(3)):
+            beta += v[i] * v[i]
+        P = ti.Matrix.identity(float, matrix.n)
+        if beta >= 1e-8:
+            beta = 2.0 / beta
+            for i in ti.static(range(3)):
+                for j in ti.static(range(3)):
+                    P[i, j] -= beta * v[i] * v[j]
+        H = P @ H @ P
+        Qh = Qh @ P
+    return H, Qh
+
+
+@ti.func
 def QR(matrix):
     assert matrix.n == matrix.m
-    Q, R = ti.Matrix.zero(float, matrix.n, matrix.m), ti.Matrix.zero(float, matrix.n, matrix.m)
-    col_A, col_Q = ti.Matrix.zero(float, matrix.n), ti.Matrix.zero(float, matrix.n)
-    for j in ti.static(range(matrix.m)):
-        for i in ti.static(range(matrix.n)):
-            col_A[i] = matrix[i, j]
-            col_Q[i] = matrix[i, j]
-        for k in ti.static(range(j)):
-            R[k, j] = 0.
-            for x in ti.static(range(matrix.m)):
-                R[k, j] += col_A[x] * Q[x, k]
-            for y in ti.static(range(matrix.m)):
-                col_Q[y] -= R[k, j] * Q[y, k]
-            
-        temp = col_Q.norm()
-        R[j, j] = temp
-        for z in ti.static(range(matrix.m)):
-            Q[z, j] = col_Q[z] / temp
+    Q = ti.Matrix.zero(float, matrix.n, matrix.m)
+    R = ti.Matrix.zero(float, matrix.n, matrix.m)
+    for j in ti.static(range(matrix.n)):
+        v = ti.Vector([matrix[i, j] for i in range(matrix.n)])
+        for i in ti.static(range(j)):
+            qi = ti.Vector([Q[k, i] for k in range(matrix.n)])
+            R[i, j] = qi.dot(v)
+            for k in ti.static(range(matrix.n)):
+                v[k] -= R[i, j] * qi[k]
+        R[j, j] = ti.sqrt(v.dot(v))
+        if R[j, j] > 1e-6:
+            for k in ti.static(range(matrix.n)):
+                Q[k, j] = v[k] / R[j, j]
     return Q, R
 
 
@@ -148,7 +181,7 @@ def eigenvector(matrix, value):
         for i in ti.static(range(temp.n - 1)):
             coe = temp[i, i]
             for j in ti.static(range(i, temp.m)):
-                temp[i, j] /= coe
+                temp[i, j] /= coe if ti.abs(coe) > DBL_EPSILON else 0.
             for m in ti.static(range(i+1, temp.n)):
                 coe = temp[m, i]
                 for n in ti.static(range(i, temp.m)):
@@ -180,6 +213,19 @@ def get_eigenvector(matrix):
     value = get_eigenvalue(matrix)
     eigenVector = eigenvector(matrix, value)
     return value, eigenVector
+
+
+@ti.func
+def eig(matrix):
+    H, Qh = hessenberg(matrix)
+    Q_tot = Qh
+    for _ in range(50):
+        Q, R = QR(H)
+        H = R @ Q
+        Q_tot = Q_tot @ Q
+    eigenvalues = ti.Vector([H[i, i] for i in ti.static(range(matrix.n))])
+    eigenvectors = Q_tot
+    return eigenvalues, eigenvectors
 
 
 @ti.func
@@ -601,6 +647,7 @@ def ti_polar_decomposition_stable(mat):
     T = V * S * V.transpose()
     return R, T
 
+
 @ti.func
 def ssvd(F):
     U, sig, V = ti.svd(F)
@@ -614,7 +661,99 @@ def ssvd(F):
         sig[2, 2] = -sig[2, 2]
     return U, sig, V
 
+
 @ti.func
 def flatten_matrix(mat):
     # column first
     return ti.Vector([mat[i, j] for j in ti.static(range(mat.n)) for i in ti.static(range(mat.m))], float)
+
+
+@ti.func
+def unflatten_matrix(vec, matrix_like):
+    mat = ti.Matrix.zero(float, matrix_like.m, matrix_like.n)
+    for j in ti.static(range(matrix_like.n)):
+        for i in ti.static(range(matrix_like.m)):
+            mat[i, j] = vec[j * matrix_like.m + i]
+    return mat
+
+
+@ti.func
+def contraction(mat1, mat2):
+    sum = 0.
+    for n in ti.static(range(mat1.n)):
+        for m in ti.static(range(mat1.m)):
+            sum += mat1[n, m] * mat2[n, m]
+    return sum
+
+
+@ti.func
+def QRUnroll(matrix):
+    assert matrix.n == matrix.m
+    Q = ti.Matrix.zero(float, matrix.n, matrix.m)
+    R = ti.Matrix.zero(float, matrix.n, matrix.m)
+    for j in range(matrix.n):
+        v = ti.Vector([matrix[i, j] for i in range(matrix.n)])
+        for i in range(j):
+            qi = ti.Vector([Q[k, i] for k in range(matrix.n)])
+            R[i, j] = qi.dot(v)
+            for k in range(matrix.n):
+                v[k] -= R[i, j] * qi[k]
+        R[j, j] = ti.sqrt(v.dot(v))
+        if R[j, j] > DBL_EPSILON:
+            for k in range(matrix.n):
+                Q[k, j] = v[k] / R[j, j]
+    return Q, R
+
+@ti.func
+def makePSD3x3(mat):
+    S, V = ti.sym_eig(mat)
+    lam = ti.Matrix.zero(float, S.n, S.n)
+    for i in range(S.n):
+        lam[i, i] = ti.max(0.0, S[i])
+    return V @ lam @ V.transpose()
+
+@ti.func
+def shifted_qr(matrix):
+    V = ti.Matrix.identity(float, matrix.n)
+    for _ in range(100):
+        mu = matrix[matrix.n-1, matrix.m-1]
+        B = matrix - mu * ti.Matrix.identity(float, matrix.n)
+        Q, R = QRUnroll(B)
+        matrix = R @ Q + mu * ti.Matrix.identity(float, matrix.n)
+        V = V @ Q
+        real_off = 0.0
+        for i, j in ti.ndrange(matrix.n, matrix.m):
+            if i != j:
+                real_off += ti.abs(matrix[i, j])
+        if real_off < DBL_EPSILON:
+            break
+    return ti.Vector([matrix[i, i] for i in range(matrix.n)]), V
+
+
+@ti.func
+def makePSD(mat):
+    lam, V = shifted_qr(mat)
+    """ for i in range(lam.n):
+        lam[i] = ti.max(0.0, lam[i]) """
+    return mat#reconstruct_matrix(V, lam, V)
+
+
+@ti.func
+def reconstruct_matrix(left_matrix, vector, right_matrix):
+    result = ti.Matrix.zero(float, left_matrix.n, right_matrix.m)
+    for k in range(left_matrix.n):
+        bk = vector[k]
+        for i in range(right_matrix.m):
+            aik = right_matrix[i, k]
+            coef = aik * bk
+            for j in range(left_matrix.m):
+                result[i, j] += coef * left_matrix[j, k]
+    return result
+
+@ti.func
+def global2local_mat3x3(hess, scale, rotation_matrix):
+    return rotation_matrix.transpose() @ hess @ rotation_matrix / (scale * scale)
+
+@ti.func
+def local2global_mat3x3(hess, scale, rotation_matrix):
+    return rotation_matrix @ hess @ rotation_matrix.transpose() * (scale * scale)

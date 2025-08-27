@@ -3,10 +3,12 @@ import taichi as ti
 from src.utils.constants import ZEROVEC3f, ZEROVEC6f
 from src.utils.TypeDefination import vec2f, vec3f, vec2u8, vec3u8, vec6f, mat2x2, mat3x3
 from src.utils.BitFunction import Zero2OneVector
+import src.utils.GlobalVariable as GlobalVariable
 
 
 @ti.dataclass
 class ParticleCloud2D:      # memory usage: 108B
+    particleID: int
     bodyID: ti.u8
     materialID: ti.u8
     active: ti.u8
@@ -32,7 +34,8 @@ class ParticleCloud2D:      # memory usage: 108B
         self.fix_v = ti.cast(fix_v, ti.u8)
 
     @ti.func
-    def _set_essential(self, bodyID, materialID, density, particle_volume, position, init_v, fix_v):
+    def _set_essential(self, particleID, bodyID, materialID, density, particle_volume, position, init_v, fix_v):
+        self.particleID = particleID
         self.active = ti.u8(1)
         self.bodyID = ti.u8(bodyID)
         self.materialID = ti.u8(materialID)
@@ -69,6 +72,10 @@ class ParticleCloud2D:      # memory usage: 108B
         flag2 = Zero2OneVector(flag1)
         self.v = (alpha * vPIC + (1 - alpha) * (vFLIP * dt[None] + v0)) * flag2 + v0 * flag1
         self.x += vPIC * dt[None] * flag2 + v0 * dt[None] * flag1
+        if ti.static(GlobalVariable.MPMXPBC):
+            self.x[0] -= ti.floor(self.x[0] / GlobalVariable.MPMXSIZE) * GlobalVariable.MPMXSIZE
+        if ti.static(GlobalVariable.MPMYPBC):
+            self.x[1] -= ti.floor(self.x[1] / GlobalVariable.MPMYSIZE) * GlobalVariable.MPMYSIZE
 
     @ti.func
     def _update_stress(self, stress):
@@ -98,6 +105,7 @@ class ParticleCloud2D:      # memory usage: 108B
 
 @ti.dataclass
 class ParticleCloudIncompressible2D:      # memory usage: 108B
+    particleID: int
     bodyID: ti.u8
     materialID: ti.u8
     active: ti.u8
@@ -125,7 +133,8 @@ class ParticleCloudIncompressible2D:      # memory usage: 108B
         self.fix_v = ti.cast(fix_v, ti.u8)
 
     @ti.func
-    def _set_essential(self, bodyID, materialID, density, particle_volume, position, init_v, fix_v):
+    def _set_essential(self, particleID, bodyID, materialID, density, particle_volume, position, init_v, fix_v):
+        self.particleID = particleID
         self.active = ti.u8(1)
         self.bodyID = ti.u8(bodyID)
         self.materialID = ti.u8(materialID)
@@ -150,8 +159,12 @@ class ParticleCloudIncompressible2D:      # memory usage: 108B
     @ti.func
     def _update_particle_state(self, dt, alpha, vPIC, vFLIP):
         v0 = self.v
-        self.v = alpha * vPIC + (1 - alpha) * (vFLIP * dt[None] + v0)
+        self.v = alpha * vPIC + (1 - alpha) * (vFLIP + v0)
         self.x += vPIC * dt[None]
+        if ti.static(GlobalVariable.MPMXPBC):
+            self.x[0] -= ti.floor(self.x[0] / GlobalVariable.MPMXSIZE) * GlobalVariable.MPMXSIZE
+        if ti.static(GlobalVariable.MPMYPBC):
+            self.x[1] -= ti.floor(self.x[1] / GlobalVariable.MPMYSIZE) * GlobalVariable.MPMYSIZE
 
     @ti.func
     def _update_stress(self, stress):
@@ -171,6 +184,7 @@ class ParticleCloudIncompressible2D:      # memory usage: 108B
 
 @ti.dataclass
 class ParticleCloudTwoPhase2D:      # memory usage: 108B
+    particleID: int
     bodyID: ti.u8
     materialID: ti.u8
     active: ti.u8
@@ -213,7 +227,8 @@ class ParticleCloudTwoPhase2D:      # memory usage: 108B
         self.fix_v = ti.cast(fix_v, ti.u8)
 
     @ti.func
-    def _set_essential(self, bodyID, materialID, densitys, densityf, porosity, particle_volume, position, init_v, fix_v, permeability):
+    def _set_essential(self, particleID, bodyID, materialID, densitys, densityf, porosity, particle_volume, position, init_v, fix_v, permeability):
+        self.particleID = particleID
         self.active = ti.u8(1)
         self.bodyID = ti.u8(bodyID)
         self.materialID = ti.u8(materialID)
@@ -286,6 +301,10 @@ class ParticleCloudTwoPhase2D:      # memory usage: 108B
         self.vs = (alpha * vPICs + (1 - alpha) * (vFLIPs + v0s)) * flag2 + v0s * flag1
         self.vf = (alpha * vPICf + (1 - alpha) * (vFLIPf + v0f)) * flag2 + v0f * flag1
         self.x += vPIC * dt[None] * flag2 + v0 * dt[None] * flag1
+        if ti.static(GlobalVariable.MPMXPBC):
+            self.x[0] -= ti.floor(self.x[0] / GlobalVariable.MPMXSIZE) * GlobalVariable.MPMXSIZE
+        if ti.static(GlobalVariable.MPMYPBC):
+            self.x[1] -= ti.floor(self.x[1] / GlobalVariable.MPMYSIZE) * GlobalVariable.MPMYSIZE
 
     @ti.func
     def _update_rigid_body(self, dt):
@@ -298,6 +317,7 @@ class ParticleCloudTwoPhase2D:      # memory usage: 108B
 
 @ti.dataclass
 class ParticleCloud2DAxisy:  # memory usage: 108B
+    particleID: int
     bodyID: ti.u8
     materialID: ti.u8
     active: ti.u8
@@ -323,7 +343,8 @@ class ParticleCloud2DAxisy:  # memory usage: 108B
         self.fix_v = ti.cast(fix_v, ti.u8)
 
     @ti.func
-    def _set_essential(self, bodyID, materialID, density, particle_volume, position, init_v, fix_v):
+    def _set_essential(self, particleID, bodyID, materialID, density, particle_volume, position, init_v, fix_v):
+        self.particleID = particleID
         self.active = ti.u8(1)
         self.bodyID = ti.u8(bodyID)
         self.materialID = ti.u8(materialID)
@@ -360,6 +381,10 @@ class ParticleCloud2DAxisy:  # memory usage: 108B
         flag2 = Zero2OneVector(flag1)
         self.v = (alpha * vPIC + (1 - alpha) * (vFLIP * dt[None] + v0)) * flag2 + v0 * flag1
         self.x += vPIC * dt[None] * flag2 + v0 * dt[None] * flag1
+        if ti.static(GlobalVariable.MPMXPBC):
+            self.x[0] -= ti.floor(self.x[0] / GlobalVariable.MPMXSIZE) * GlobalVariable.MPMXSIZE
+        if ti.static(GlobalVariable.MPMYPBC):
+            self.x[1] -= ti.floor(self.x[1] / GlobalVariable.MPMYSIZE) * GlobalVariable.MPMYSIZE
 
     @ti.func
     def _update_stress(self, stress):
@@ -389,6 +414,7 @@ class ParticleCloud2DAxisy:  # memory usage: 108B
 
 @ti.dataclass
 class LargeScaleParticle:
+    particleID: int
     vol: float
     x: vec3f
     v: vec3f
@@ -402,7 +428,8 @@ class LargeScaleParticle:
         self.stress = float(stress)
 
     @ti.func
-    def _set_essential(self, bodyID, materialID, density, particle_volume, position, init_v, fix_v):
+    def _set_essential(self, particleID, bodyID, materialID, density, particle_volume, position, init_v, fix_v):
+        self.particleID = particleID
         self.m = float(particle_volume * density)
         self.x = float(position)
         self.v = float(init_v)
@@ -440,6 +467,7 @@ class LargeScaleParticle:
 
 @ti.dataclass
 class ParticleCloud:      
+    particleID: int
     bodyID: ti.u8
     materialID: ti.u8
     active: ti.u8
@@ -465,7 +493,8 @@ class ParticleCloud:
         self.fix_v = ti.cast(fix_v, ti.u8)
 
     @ti.func
-    def _set_essential(self, bodyID, materialID, density, particle_volume, position, init_v, fix_v):
+    def _set_essential(self, particleID, bodyID, materialID, density, particle_volume, position, init_v, fix_v):
+        self.particleID = particleID
         self.active = ti.u8(1)
         self.bodyID = ti.u8(bodyID)
         self.materialID = ti.u8(materialID)
@@ -502,6 +531,12 @@ class ParticleCloud:
         flag2 = Zero2OneVector(flag1)
         self.v = (alpha * vPIC + (1 - alpha) * (vFLIP * dt[None] + v0)) * flag2 + v0 * flag1
         self.x += vPIC * dt[None] * flag2 + v0 * dt[None] * flag1
+        if ti.static(GlobalVariable.MPMXPBC):
+            self.x[0] -= ti.floor(self.x[0] / GlobalVariable.MPMXSIZE) * GlobalVariable.MPMXSIZE
+        if ti.static(GlobalVariable.MPMYPBC):
+            self.x[1] -= ti.floor(self.x[1] / GlobalVariable.MPMYSIZE) * GlobalVariable.MPMYSIZE
+        if ti.static(GlobalVariable.MPMXPBC):
+            self.x[2] -= ti.floor(self.x[2] / GlobalVariable.MPMZSIZE) * GlobalVariable.MPMZSIZE
 
     @ti.func
     def _update_stress(self, stress):
@@ -532,6 +567,7 @@ class ParticleCloud:
 
 @ti.dataclass
 class ParticleCoupling:      # memory usage: 108B
+    particleID: int
     bodyID: ti.u8
     materialID: ti.u8
     active: ti.u8
@@ -561,7 +597,8 @@ class ParticleCoupling:      # memory usage: 108B
         self.fix_v = ti.cast(fix_v, ti.u8)
 
     @ti.func
-    def _set_essential(self, bodyID, materialID, density, particle_volume, position, init_v, fix_v):
+    def _set_essential(self, particleID, bodyID, materialID, density, particle_volume, position, init_v, fix_v):
+        self.particleID = particleID
         self.active = ti.u8(1)
         self.coupling = ti.u8(1)
         self.bodyID = ti.u8(bodyID)
@@ -609,7 +646,14 @@ class ParticleCoupling:      # memory usage: 108B
         self.v = (alpha * vPIC + (1 - alpha) * (vFLIP * dt[None] + v0)) * flag2 + v0 * flag1
         deltax = vPIC * dt[None] * flag2 + v0 * dt[None] * flag1
         self.x += deltax
-        self.verletDisp += deltax
+        if ti.static(GlobalVariable.MPMXPBC):
+            self.x[0] -= ti.floor(self.x[0] / GlobalVariable.MPMXSIZE) * GlobalVariable.MPMXSIZE
+        if ti.static(GlobalVariable.MPMYPBC):
+            self.x[1] -= ti.floor(self.x[1] / GlobalVariable.MPMYSIZE) * GlobalVariable.MPMYSIZE
+        if ti.static(GlobalVariable.MPMXPBC):
+            self.x[2] -= ti.floor(self.x[2] / GlobalVariable.MPMZSIZE) * GlobalVariable.MPMZSIZE
+        if int(self.coupling) == 1:
+            self.verletDisp += deltax
     
     @ti.func
     def _update_stress(self, stress):
@@ -633,7 +677,8 @@ class ParticleCoupling:      # memory usage: 108B
     def _update_rigid_body(self, dt):
         deltax = self.v * dt[None]
         self.x += deltax
-        self.verletDisp += deltax
+        if int(self.coupling) == 1:
+            self.verletDisp += deltax
     
     @ti.func
     def _compute_particle_velocity(self, xg):
@@ -663,6 +708,7 @@ class ParticleCoupling:      # memory usage: 108B
 
 @ti.dataclass
 class ImplicitParticleCoupling:
+    particleID: int
     bodyID: ti.u8
     materialID: ti.u8
     active: ti.u8
@@ -693,7 +739,8 @@ class ImplicitParticleCoupling:
         self.fix_v = ti.cast(fix_v, ti.u8)
 
     @ti.func
-    def _set_essential(self, bodyID, materialID, density, particle_volume, position, init_v, fix_v):
+    def _set_essential(self, particleID, bodyID, materialID, density, particle_volume, position, init_v, fix_v):
+        self.particleID = particleID
         self.active = ti.u8(1)
         self.coupling = ti.u8(1)
         self.bodyID = ti.u8(bodyID)
@@ -759,13 +806,23 @@ class ImplicitParticleCoupling:
         vFLIP = 0.5 * (acc + self.a) * dt[None]
         self.a = acc
         self.v = (alpha * vPIC + (1 - alpha) * (vFLIP + v0)) * flag2 + v0 * flag1
-        self.x += disp * flag2 + v0 * dt[None] * flag1
+        deltax = disp * flag2 + v0 * dt[None] * flag1
+        self.x += deltax
+        if ti.static(GlobalVariable.MPMXPBC):
+            self.x[0] -= ti.floor(self.x[0] / GlobalVariable.MPMXSIZE) * GlobalVariable.MPMXSIZE
+        if ti.static(GlobalVariable.MPMYPBC):
+            self.x[1] -= ti.floor(self.x[1] / GlobalVariable.MPMYSIZE) * GlobalVariable.MPMYSIZE
+        if ti.static(GlobalVariable.MPMXPBC):
+            self.x[2] -= ti.floor(self.x[2] / GlobalVariable.MPMZSIZE) * GlobalVariable.MPMZSIZE
+        if int(self.coupling) == 1:
+            self.verletDisp += deltax
 
     @ti.func
     def _update_rigid_body(self, dt):
         deltax = self.v * dt[None]
         self.x += deltax
-        self.verletDisp += deltax
+        if int(self.coupling) == 1:
+            self.verletDisp += deltax
     
     @ti.func
     def _compute_particle_velocity(self, xg):
@@ -796,6 +853,7 @@ class ImplicitParticleCoupling:
 
 @ti.dataclass
 class ImplicitParticle:
+    particleID: int
     bodyID: ti.u8
     materialID: ti.u8
     active: ti.u8
@@ -826,7 +884,8 @@ class ImplicitParticle:
         self.fix_v = ti.cast(fix_v, ti.u8)
 
     @ti.func
-    def _set_essential(self, bodyID, materialID, density, particle_volume, position, init_v, fix_v):
+    def _set_essential(self, particleID, bodyID, materialID, density, particle_volume, position, init_v, fix_v):
+        self.particleID = particleID
         self.active = ti.u8(1)
         self.bodyID = ti.u8(bodyID)
         self.materialID = ti.u8(materialID)
@@ -885,6 +944,12 @@ class ImplicitParticle:
         self.a = acc
         self.v = (alpha * vPIC + (1 - alpha) * (vFLIP + v0)) * flag2 + v0 * flag1
         self.x += disp * flag2 + v0 * dt[None] * flag1
+        if ti.static(GlobalVariable.MPMXPBC):
+            self.x[0] -= ti.floor(self.x[0] / GlobalVariable.MPMXSIZE) * GlobalVariable.MPMXSIZE
+        if ti.static(GlobalVariable.MPMYPBC):
+            self.x[1] -= ti.floor(self.x[1] / GlobalVariable.MPMYSIZE) * GlobalVariable.MPMYSIZE
+        if ti.static(GlobalVariable.MPMXPBC):
+            self.x[2] -= ti.floor(self.x[2] / GlobalVariable.MPMZSIZE) * GlobalVariable.MPMZSIZE
 
     @ti.func
     def _update_rigid_body(self, dt):
@@ -897,6 +962,7 @@ class ImplicitParticle:
 
 @ti.dataclass
 class ImplicitParticle2D:
+    particleID: int
     bodyID: ti.u8
     materialID: ti.u8
     active: ti.u8
@@ -927,7 +993,8 @@ class ImplicitParticle2D:
         self.fix_v = ti.cast(fix_v, ti.u8)
 
     @ti.func
-    def _set_essential(self, bodyID, materialID, density, particle_volume, position, init_v, fix_v):
+    def _set_essential(self, particleID, bodyID, materialID, density, particle_volume, position, init_v, fix_v):
+        self.particleID = particleID
         self.active = ti.u8(1)
         self.bodyID = ti.u8(bodyID)
         self.materialID = ti.u8(materialID)
@@ -991,6 +1058,10 @@ class ImplicitParticle2D:
         self.a = acc
         self.v = (alpha * vPIC + (1 - alpha) * (vFLIP + v0)) * flag2 + v0 * flag1
         self.x += disp * flag2 + v0 * dt[None] * flag1
+        if ti.static(GlobalVariable.MPMXPBC):
+            self.x[0] -= ti.floor(self.x[0] / GlobalVariable.MPMXSIZE) * GlobalVariable.MPMXSIZE
+        if ti.static(GlobalVariable.MPMYPBC):
+            self.x[1] -= ti.floor(self.x[1] / GlobalVariable.MPMYSIZE) * GlobalVariable.MPMYSIZE
 
     @ti.func
     def _update_rigid_body(self, dt):
@@ -1016,6 +1087,7 @@ class ParticleCPDI:
 
 @ti.dataclass
 class ParticleCloudIncompressible3D:      # memory usage: 108B
+    particleID: int
     bodyID: ti.u8
     materialID: ti.u8
     active: ti.u8
@@ -1041,7 +1113,8 @@ class ParticleCloudIncompressible3D:      # memory usage: 108B
         self.fix_v = ti.cast(fix_v, ti.u8)
 
     @ti.func
-    def _set_essential(self, bodyID, materialID, density, particle_volume, position, init_v, fix_v):
+    def _set_essential(self, particleID, bodyID, materialID, density, particle_volume, position, init_v, fix_v):
+        self.particleID = particleID
         self.active = ti.u8(1)
         self.bodyID = ti.u8(bodyID)
         self.materialID = ti.u8(materialID)
@@ -1066,8 +1139,14 @@ class ParticleCloudIncompressible3D:      # memory usage: 108B
     @ti.func
     def _update_particle_state(self, dt, alpha, vPIC, vFLIP):
         v0 = self.v
-        self.v = alpha * vPIC + (1 - alpha) * (vFLIP * dt[None] + v0)
+        self.v = alpha * vPIC + (1 - alpha) * (vFLIP + v0)
         self.x += vPIC * dt[None]
+        if ti.static(GlobalVariable.MPMXPBC):
+            self.x[0] -= ti.floor(self.x[0] / GlobalVariable.MPMXSIZE) * GlobalVariable.MPMXSIZE
+        if ti.static(GlobalVariable.MPMYPBC):
+            self.x[1] -= ti.floor(self.x[1] / GlobalVariable.MPMYSIZE) * GlobalVariable.MPMYSIZE
+        if ti.static(GlobalVariable.MPMXPBC):
+            self.x[2] -= ti.floor(self.x[2] / GlobalVariable.MPMZSIZE) * GlobalVariable.MPMZSIZE
 
     @ti.func
     def _update_stress(self, stress):

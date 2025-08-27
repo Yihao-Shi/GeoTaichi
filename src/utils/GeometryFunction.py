@@ -272,11 +272,12 @@ def DistanceFromPointToTriangle(point, vertice1, vertice2, vertice3, normal):
     pa = point - vertice1
     pb = point - vertice2
     pc = point - vertice3
-
-    A = sgn((ba.cross(normal).dot(pa))) + sgn((cb.cross(normal).dot(pb))) + sgn((ac.cross(normal).dot(pc)))
+    norm = ba.cross(ac)
+    
+    A = sgn((ba.cross(norm).dot(pa))) + sgn((cb.cross(norm).dot(pb))) + sgn((ac.cross(norm).dot(pc)))
     dist = ti.sqrt(ti.min(dot2(ba * clamp(0., 1., ba.dot(pa) / dot2(ba)) - pa), dot2(cb * clamp(0., 1., cb.dot(pb) / dot2(cb)) - pb), dot2(ac * clamp(0., 1., ac.dot(pc) / dot2(ac)) - pc))) \
-           if A < 2. else ti.sqrt(normal.dot(pa) * normal.dot(pa) / dot2(normal))
-    return sgn(pa.dot(normal)) * dist
+           if A < 2. else ti.sqrt(norm.dot(pa) * norm.dot(pa) / dot2(norm))
+    return -sgn(pa.dot(normal)) * dist
 
 
 @ti.func

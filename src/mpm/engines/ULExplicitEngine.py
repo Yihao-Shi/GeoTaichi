@@ -62,8 +62,11 @@ class ULExplicitEngine(Engine):
         kernel_assemble_contact_force(scene.mass_cut_off, sims.dt, scene.node)
 
     def compute_demcontact_force_2D(self, sims: Simulation, scene: myScene):
-        kernel_calc_demcontact_2D(scene.element.grid_nodes, int(scene.particleNum[0]), scene.element.grid_size, scene.contact.velocity, scene.particle, scene.material.matProps, sims.dt, scene.contact.polygon_vertices,
-                                  scene.element.LnID, scene.element.shape_fn, scene.element.node_size, scene.node)
+        for materialID in range(scene.material.mapping.shape[0] - 1):
+            start_index = scene.material.mapping[materialID]
+            end_index = scene.material.mapping[materialID + 1]
+            kernel_calc_demcontact_2D(scene.element.grid_nodes, start_index, end_index, scene.element.grid_size, scene.contact.velocity, scene.particle, scene.material.materialID, scene.material.matProps[materialID + 1], sims.dt, 
+                                      scene.contact.polygon_vertices, scene.element.LnID, scene.element.shape_fn, scene.element.node_size, scene.node)
         kernel_assemble_contact_force(scene.mass_cut_off, sims.dt, scene.node)
 
     def compute_contact_force(self, sims: Simulation, scene: myScene):
@@ -76,10 +79,16 @@ class ULExplicitEngine(Engine):
         kernel_compute_grid_velocity(scene.mass_cut_off, scene.node)
 
     def compute_stress_strain(self, sims: Simulation, scene: myScene):
-        kernel_compute_stress_strain(int(scene.particleNum[0]), sims.dt, scene.particle, scene.material.matProps, scene.material.stateVars)
+        for materialID in range(scene.material.mapping.shape[0] - 1):
+            start_index = scene.material.mapping[materialID]
+            end_index = scene.material.mapping[materialID + 1]
+            kernel_compute_stress_strain(start_index, end_index, sims.dt, scene.particle, scene.material.materialID, scene.material.matProps[materialID + 1], scene.material.stateVars)
         
     def compute_stress_strain_2D(self, sims: Simulation, scene: myScene):
-        kernel_compute_stress_strain_2D(int(scene.particleNum[0]), sims.dt, scene.particle, scene.material.matProps, scene.material.stateVars)
+        for materialID in range(scene.material.mapping.shape[0] - 1):
+            start_index = scene.material.mapping[materialID]
+            end_index = scene.material.mapping[materialID + 1]
+            kernel_compute_stress_strain_2D(start_index, end_index, sims.dt, scene.particle, scene.material.materialID, scene.material.matProps[materialID + 1], scene.material.stateVars)
 
     def compute_stress_strain_velocity_projection_2D(self, sims: Simulation, scene: myScene):
         scene.node.vol.fill(0)
@@ -88,8 +97,11 @@ class ULExplicitEngine(Engine):
         scene.element.calc_shape_fn_spline_lower_order(scene.particleNum, scene.particle)
         kernel_dilatational_velocity_p2g(scene.element.grid_nodes_lower_order, int(scene.particleNum[0]), scene.node, scene.particle, scene.element.LnID, scene.element.shape_fn, scene.element.node_size)
         kernel_grid_jacobian(scene.volume_cut_off, scene.is_rigid, scene.node)
-        kernel_gradient_velocity_projection_correction_2D(scene.element.grid_nodes_lower_order, int(scene.particleNum[0]), scene.node, scene.particle, scene.element.LnID, scene.element.shape_fn, 
-                                                          scene.element.node_size, scene.material.matProps, scene.material.stateVars, sims.dt)
+        for materialID in range(scene.material.mapping.shape[0] - 1):
+            start_index = scene.material.mapping[materialID]
+            end_index = scene.material.mapping[materialID + 1]
+            kernel_gradient_velocity_projection_correction_2D(scene.element.grid_nodes_lower_order, start_index, end_index, scene.node, scene.particle, scene.material.materialID, scene.element.LnID, scene.element.shape_fn, 
+                                                              scene.element.node_size, scene.material.matProps[materialID + 1], scene.material.stateVars, sims.dt)
         kernel_grid_pressure_volume(scene.volume_cut_off, scene.is_rigid, scene.node)
         kernel_pressure_correction(scene.element.grid_nodes_lower_order, int(scene.particleNum[0]), scene.node, scene.particle, scene.element.LnID, scene.element.shape_fn, scene.element.node_size)
 
@@ -100,51 +112,74 @@ class ULExplicitEngine(Engine):
         scene.element.calc_shape_fn_spline_lower_order(scene.particleNum, scene.particle)
         kernel_dilatational_velocity_p2g(scene.element.grid_nodes_lower_order, int(scene.particleNum[0]), scene.node, scene.particle, scene.element.LnID, scene.element.shape_fn, scene.element.node_size)
         kernel_grid_jacobian(scene.volume_cut_off, scene.is_rigid, scene.node)
-        kernel_gradient_velocity_projection_correction(scene.element.grid_nodes_lower_order, int(scene.particleNum[0]), scene.node, scene.particle, scene.element.LnID, scene.element.shape_fn, 
-                                                       scene.element.node_size, scene.material.matProps, scene.material.stateVars, sims.dt)
+        for materialID in range(scene.material.mapping.shape[0] - 1):
+            start_index = scene.material.mapping[materialID]
+            end_index = scene.material.mapping[materialID + 1]
+            kernel_gradient_velocity_projection_correction(scene.element.grid_nodes_lower_order, start_index, end_index, scene.node, scene.particle, scene.material.materialID, scene.element.LnID, scene.element.shape_fn, 
+                                                           scene.element.node_size, scene.material.matProps[materialID + 1], scene.material.stateVars, sims.dt)
         kernel_grid_pressure_volume(scene.volume_cut_off, scene.is_rigid, scene.node)
         kernel_pressure_correction(scene.element.grid_nodes_lower_order, int(scene.particleNum[0]), scene.node, scene.particle, scene.element.LnID, scene.element.shape_fn, scene.element.node_size)
         
     def update_velocity_gradient_2D(self, sims: Simulation, scene: myScene):
-        kernel_update_velocity_gradient_2D(scene.element.grid_nodes, int(scene.particleNum[0]), sims.dt, scene.node, scene.particle, scene.material.matProps, scene.material.stateVars,
-                                        scene.element.LnID, scene.element.dshape_fn, scene.element.node_size)
+        for materialID in range(scene.material.mapping.shape[0] - 1):
+            start_index = scene.material.mapping[materialID]
+            end_index = scene.material.mapping[materialID + 1]
+            kernel_update_velocity_gradient_2D(scene.element.grid_nodes, start_index, end_index, sims.dt, scene.node, scene.particle, scene.material.materialID, scene.material.matProps[materialID + 1], scene.material.stateVars,
+                                               scene.element.LnID, scene.element.dshape_fn, scene.element.node_size)
     
     def update_velocity_gradient(self, sims: Simulation, scene: myScene):
-        kernel_update_velocity_gradient(scene.element.grid_nodes, int(scene.particleNum[0]), sims.dt, scene.node, scene.particle, scene.material.matProps, scene.material.stateVars,
-                                        scene.element.LnID, scene.element.dshape_fn, scene.element.node_size)
+        for materialID in range(scene.material.mapping.shape[0] - 1):
+            start_index = scene.material.mapping[materialID]
+            end_index = scene.material.mapping[materialID + 1]
+            kernel_update_velocity_gradient(scene.element.grid_nodes, start_index, end_index, sims.dt, scene.node, scene.particle, scene.material.materialID, scene.material.matProps[materialID + 1], scene.material.stateVars,
+                                            scene.element.LnID, scene.element.dshape_fn, scene.element.node_size)
         
     def update_velocity_gradient_affine_2D(self, sims: Simulation, scene: myScene):
-        kernel_update_velocity_gradient_affine_2D(scene.element.grid_nodes, int(scene.particleNum[0]), scene.element.gnum, scene.element.grid_size, sims.dt, scene.node, scene.particle, 
-                                                  scene.material.matProps, scene.material.stateVars, scene.element.LnID, scene.element.shape_fn, scene.element.node_size)
+        for materialID in range(scene.material.mapping.shape[0] - 1):
+            start_index = scene.material.mapping[materialID]
+            end_index = scene.material.mapping[materialID + 1]
+            kernel_update_velocity_gradient_affine_2D(scene.element.grid_nodes, start_index, end_index, scene.element.gnum, scene.element.grid_size, sims.dt, scene.node, scene.particle, scene.material.materialID, 
+                                                      scene.material.matProps[materialID + 1], scene.material.stateVars, scene.element.LnID, scene.element.shape_fn, scene.element.node_size)
         
     def update_velocity_gradient_affine(self, sims: Simulation, scene: myScene):
-        kernel_update_velocity_gradient_affine(scene.element.grid_nodes, int(scene.particleNum[0]), scene.element.gnum, scene.element.grid_size, sims.dt, scene.node, scene.particle, 
-                                               scene.material.matProps, scene.material.stateVars, scene.element.LnID, scene.element.shape_fn, scene.element.node_size)
+        for materialID in range(scene.material.mapping.shape[0] - 1):
+            start_index = scene.material.mapping[materialID]
+            end_index = scene.material.mapping[materialID + 1]
+            kernel_update_velocity_gradient_affine(scene.element.grid_nodes, start_index, end_index, scene.element.gnum, scene.element.grid_size, sims.dt, scene.node, scene.particle, scene.material.materialID, 
+                                                   scene.material.matProps[materialID + 1], scene.material.stateVars, scene.element.LnID, scene.element.shape_fn, scene.element.node_size)
 
     def update_velocity_gradient_bbar_2D(self, sims: Simulation, scene: myScene):
-        kernel_update_velocity_gradient_bbar_2D(scene.element.grid_nodes, int(scene.particleNum[0]), sims.dt, scene.node, scene.particle, scene.material.matProps, scene.material.stateVars,
-                                                scene.element.LnID, scene.element.dshape_fn, scene.element.dshape_fnc, scene.element.node_size)
+        for materialID in range(scene.material.mapping.shape[0] - 1):
+            start_index = scene.material.mapping[materialID]
+            end_index = scene.material.mapping[materialID + 1]
+            kernel_update_velocity_gradient_bbar_2D(scene.element.grid_nodes, start_index, end_index, sims.dt, scene.node, scene.particle, scene.material.materialID, scene.material.matProps[materialID + 1], scene.material.stateVars,
+                                                    scene.element.LnID, scene.element.dshape_fn, scene.element.dshape_fnc, scene.element.node_size)
     
     def update_velocity_gradient_bbar(self, sims: Simulation, scene: myScene):
-        kernel_update_velocity_gradient_bbar(scene.element.grid_nodes, int(scene.particleNum[0]), sims.dt, scene.node, scene.particle, scene.material.matProps, scene.material.stateVars,
-                                             scene.element.LnID, scene.element.dshape_fn, scene.element.dshape_fnc, scene.element.node_size)
+        for materialID in range(scene.material.mapping.shape[0] - 1):
+            start_index = scene.material.mapping[materialID]
+            end_index = scene.material.mapping[materialID + 1]
+            kernel_update_velocity_gradient_bbar(scene.element.grid_nodes, start_index, end_index, sims.dt, scene.node, scene.particle, scene.material.materialID, scene.material.matProps[materialID + 1], scene.material.stateVars,
+                                                 scene.element.LnID, scene.element.dshape_fn, scene.element.dshape_fnc, scene.element.node_size)
         
     def update_velocity_gradient_axisy_2D(self, sims: Simulation, scene: myScene):
-        kernel_update_velocity_gradient_2DAxisy(scene.element.grid_nodes, int(scene.particleNum[0]), sims.dt, scene.node, scene.particle, scene.material.matProps, scene.material.stateVars,
-                                                scene.element.LnID, scene.element.shape_fn, scene.element.dshape_fn, scene.element.node_size)
+        for materialID in range(scene.material.mapping.shape[0] - 1):
+            start_index = scene.material.mapping[materialID]
+            end_index = scene.material.mapping[materialID + 1]
+            kernel_update_velocity_gradient_2DAxisy(scene.element.grid_nodes, start_index, end_index, sims.dt, scene.node, scene.particle, scene.material.materialID, scene.material.matProps[materialID + 1], scene.material.stateVars,
+                                                    scene.element.LnID, scene.element.shape_fn, scene.element.dshape_fn, scene.element.node_size)
         
     def update_velocity_gradient_bbar_axisy_2D(self, sims: Simulation, scene: myScene):
-        kernel_update_velocity_gradient_bbar_2DAxisy(scene.element.grid_nodes, int(scene.particleNum[0]), sims.dt, scene.node, scene.particle, scene.material.matProps, scene.material.stateVars,
-                                                     scene.element.LnID, scene.element.shape_fn, scene.element.shape_fnc, scene.element.dshape_fn, scene.element.dshape_fnc, scene.element.node_size)
+        for materialID in range(scene.material.mapping.shape[0] - 1):
+            start_index = scene.material.mapping[materialID]
+            end_index = scene.material.mapping[materialID + 1]
+            kernel_update_velocity_gradient_bbar_2DAxisy(scene.element.grid_nodes, start_index, end_index, sims.dt, scene.node, scene.particle, scene.material.materialID, scene.material.matProps[materialID + 1], scene.material.stateVars,
+                                                         scene.element.LnID, scene.element.shape_fn, scene.element.shape_fnc, scene.element.dshape_fn, scene.element.dshape_fnc, scene.element.node_size)
 
     def particle_shifting(self, sims: Simulation, scene: myScene):
         scene.node.vol.fill(0)
         kernel_volume_p2g(scene.element.grid_nodes, int(scene.particleNum[0]), scene.node, scene.particle, scene.element.LnID, scene.element.shape_fn, scene.element.node_size)
         kernel_particle_shifting_delta_correction(scene.element.grid_nodes, int(scene.particleNum[0]), scene.element.grid_size, scene.node, scene.particle, scene.element.LnID, scene.element.dshape_fn, scene.element.node_size)
-
-    def compute_pressure_strain(self, sims: Simulation, scene: myScene):
-        kernel_find_sound_speed(int(scene.particleNum[0]), scene.particle, scene.material.matProps)
-        kernel_compute_stress_strain(int(scene.particleNum[0]), sims.dt, scene.particle, scene.material.matProps, scene.material.stateVars)
         
     def compute_force(self, sims: Simulation, scene: myScene):
         kernel_force_p2g(scene.element.grid_nodes, int(scene.particleNum[0]), sims.gravity, scene.node, scene.particle, scene.element.LnID, scene.element.shape_fn, scene.element.dshape_fn, scene.element.node_size)
@@ -252,12 +287,12 @@ class ULExplicitEngine(Engine):
             grid_mass_reset(scene.mass_cut_off, scene.node)
         self.limit = sims.verlet_distance * sims.verlet_distance
 
-    def usl_updating(self, sims: Simulation, scene: myScene):
+    def usl_updating(self, sims: Simulation, scene: myScene, neighbor=None):
         self.calculate_interpolation(sims, scene)
         self.compute_nodal_kinematic(sims, scene)
         self.compute_grid_velcity(sims, scene)
-        self.apply_particle_traction_constraints(sims, scene)
         self.compute_forces(sims, scene)
+        self.apply_particle_traction_constraints(sims, scene)
         self.apply_traction_constraints(sims, scene)
         self.apply_absorbing_constraints(sims, scene)
         self.compute_grid_kinematic(sims, scene)
@@ -269,7 +304,7 @@ class ULExplicitEngine(Engine):
         self.compute_stress_strains(sims, scene)
         self.pressure_smoothing_(scene)
 
-    def usf_updating(self, sims: Simulation, scene: myScene):
+    def usf_updating(self, sims: Simulation, scene: myScene, neighbor=None):
         self.calculate_interpolation(sims, scene)
         self.compute_nodal_kinematic(sims, scene)
         self.compute_grid_velcity(sims, scene)
@@ -277,8 +312,8 @@ class ULExplicitEngine(Engine):
         self.compute_velocity_gradient(sims, scene)
         self.compute_stress_strains(sims, scene)
         self.pressure_smoothing_(scene)
-        self.apply_particle_traction_constraints(sims, scene)
         self.compute_forces(sims, scene)
+        self.apply_particle_traction_constraints(sims, scene)
         self.apply_traction_constraints(sims, scene)
         self.apply_absorbing_constraints(sims, scene)
         self.compute_grid_kinematic(sims, scene)
@@ -287,12 +322,12 @@ class ULExplicitEngine(Engine):
         self.compute_contact_force_(sims, scene)
         self.compute_particle_kinematic(sims, scene)
 
-    def musl_updating(self, sims: Simulation, scene: myScene):
+    def musl_updating(self, sims: Simulation, scene: myScene, neighbor=None):
         self.calculate_interpolation(sims, scene)
         self.compute_nodal_kinematic(sims, scene)
         self.compute_grid_velcity(sims, scene)
-        self.apply_particle_traction_constraints(sims, scene)
         self.compute_forces(sims, scene)
+        self.apply_particle_traction_constraints(sims, scene)
         self.apply_traction_constraints(sims, scene)
         self.apply_absorbing_constraints(sims, scene)
         self.compute_grid_kinematic(sims, scene)
@@ -307,21 +342,39 @@ class ULExplicitEngine(Engine):
         self.compute_stress_strains(sims, scene)
         self.pressure_smoothing_(scene)
 
-    def velocity_projection_updating(self, sims: Simulation, scene: myScene):
+    def velocity_projection_updating(self, sims: Simulation, scene: myScene, neighbor=None):
         self.calculate_interpolation(sims, scene)
         self.compute_nodal_kinematic(sims, scene)
         self.compute_grid_velcity(sims, scene)
         self.apply_dirichlet_constraints(sims, scene)
         self.compute_stress_strains(sims, scene)
         self.pressure_smoothing_(scene)
-        self.apply_particle_traction_constraints(sims, scene)
         self.compute_forces(sims, scene)
+        self.apply_particle_traction_constraints(sims, scene)
         self.apply_traction_constraints(sims, scene)
         self.apply_absorbing_constraints(sims, scene)
         self.compute_grid_kinematic(sims, scene)
         self.pre_contact_calculate(sims, scene)
         self.apply_kinematic_constraints(sims, scene)
         self.compute_contact_force_(sims, scene)
+        self.compute_velocity_gradient(sims, scene)
+        self.compute_particle_kinematic(sims, scene)
+
+    def first_substep_cfd_coupling(self, sims: Simulation, scene: myScene):
+        self.calculate_interpolation(sims, scene)
+        self.compute_nodal_kinematic(sims, scene)
+        self.compute_grid_velcity(sims, scene)
+        self.apply_dirichlet_constraints(sims, scene)
+        self.compute_stress_strains(sims, scene)
+        self.pressure_smoothing_(scene)
+        self.compute_forces(sims, scene)
+
+    def second_substep_cfd_coupling(self, sims: Simulation, scene: myScene):
+        self.apply_particle_traction_constraints(sims, scene)
+        self.apply_traction_constraints(sims, scene)
+        self.apply_absorbing_constraints(sims, scene)
+        self.compute_grid_kinematic(sims, scene)
+        self.apply_kinematic_constraints(sims, scene)
         self.compute_velocity_gradient(sims, scene)
         self.compute_particle_kinematic(sims, scene)
 
@@ -333,7 +386,7 @@ class ULExplicitEngine(Engine):
         self.apply_kinematic_constraints(sims, scene)
         self.input_layer = self.output_layer
 
-    def lightweight(self, sims: Simulation, scene: myScene):
+    def lightweight(self, sims: Simulation, scene: myScene, neighbor: SpatialHashGrid):
         lightweight_p2g(int(scene.particleNum[0]), scene.element.gnum, scene.element.grid_size, scene.element.igrid_size, sims.gravity, scene.element.calLength, scene.element.boundary_type, scene.node, scene.particle)
         self.apply_particle_traction_constraints(sims, scene)
         self.apply_traction_constraints(sims, scene)
@@ -344,5 +397,5 @@ class ULExplicitEngine(Engine):
         self.compute_contact_force_(sims, scene)
         lightweight_g2p(int(scene.particleNum[0]), sims.alphaPIC, scene.mass_cut_off, sims.fbar_fraction, scene.element.gnum, scene.element.grid_size, scene.element.igrid_size, sims.dt, scene.element.calLength, scene.element.boundary_type, scene.node, scene.particle, scene.material.matProps, scene.material.stateVars)
 
-    def test(self, sims: Simulation, scene: myScene):
+    def test(self, sims: Simulation, scene: myScene, neighbor: SpatialHashGrid):
         pass

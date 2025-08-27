@@ -32,15 +32,21 @@ class BrustSearch(NeighborBase):
         self.sims.set_verlet_distance(rad_min)
         self.sims.set_potential_list_size(rad_max)
 
-        if self.sims.pbc:
+        if self.sims.xpbc:
             pass
-
-        self.particle_pse = PrefixSumExecutor(self.sims.max_particle_num + 1)
-        if self.sims.scheme == "LSDEM":
-            self.point_pse = PrefixSumExecutor(self.sims.max_surface_node_num * self.sims.max_particle_num + 1)
+        if self.sims.ypbc:
+            pass
+        if self.sims.zpbc:
+            pass
         
-        self.set_potential_contact_list(scene)
+        if self.first_run:
+            self.particle_pse = PrefixSumExecutor(self.sims.max_particle_num + 1)
+            if self.sims.scheme == "LSDEM":
+                self.point_pse = PrefixSumExecutor(self.sims.max_surface_node_num * self.sims.max_particle_num + 1)
+            
+            self.set_potential_contact_list(scene)
         self.print_info()
+        self.first_run = False
 
     def print_info(self):
         print(" Neighbor Search Initialize ".center(71,"-"))

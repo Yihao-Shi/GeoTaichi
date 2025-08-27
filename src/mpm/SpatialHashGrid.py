@@ -18,6 +18,7 @@ class SpatialHashGrid(object):
         self.cellSum = 0
         self.grid_size = None
         self.igrid_size = None
+        self.first_run = True
         
     def resize_neighbor(self, scene):
         del self.igrid_size, self.cnum, self.cellSum
@@ -29,6 +30,7 @@ class SpatialHashGrid(object):
             if grid_size is None:
                 rad_max, rad_min = scene.find_bounding_sphere_radius()
                 self.sims.set_verlet_distance(rad_min)
+                self.sims.set_max_radius(rad_max)
                 self.grid_size = 2 * rad_max + self.sims.verlet_distance
             else:
                 self.grid_size = grid_size
@@ -37,13 +39,19 @@ class SpatialHashGrid(object):
                 raise RuntimeError("Particle radius is equal to zero!")
             self.igrid_size = 1. / self.grid_size
 
-            if self.sims.pbc:
+            if self.sims.xpbc:
+                pass
+            if self.sims.ypbc:
+                pass
+            if self.sims.zpbc:
                 pass
 
             self.cnum = ti.Vector([max(1, int(domain * self.igrid_size) + 1) for domain in self.sims.domain])
             self.cellSum = reduce((lambda x, y: int(max(1, x) * max(1, y))), list(self.cnum))
-            self.sorted = BinSort(self.grid_size, self.cnum, self.sims.max_particle_num)
+            if self.first_run:
+                self.sorted = BinSort(self.grid_size, self.cnum, self.sims.max_particle_num)
             self.place_particles = self.place_particle
+        self.first_run = False
 
     def pre_neighbor(self, scene: myScene):
         self.place_particle(scene)

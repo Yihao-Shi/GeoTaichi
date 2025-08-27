@@ -6,6 +6,7 @@ from src.dem.neighbor.NeighborBase import NeighborBase
 from src.dem.SceneManager import myScene
 from src.dem.Simulation import Simulation
 from src.utils.constants import Threshold
+from src.utils.linalg import no_operation
 from src.utils.PrefixSum import PrefixSumExecutor
 from src.utils.TypeDefination import vec3i
 
@@ -26,15 +27,15 @@ class LinkedCell(NeighborBase):
         self.manage_wall_function()
 
     def manage_particle_function(self, scene: myScene):
-        self.place_particle_to_cells = self.no_operation
-        self.particle_hash_tables = self.no_operation_without_paras
+        self.place_particle_to_cells = no_operation
+        self.particle_hash_tables = no_operation
         if self.sims.max_particle_num > 1 or (self.sims.coupling and scene.particleNum[0] > 0):
             self.place_particle_to_cells = self.place_particle_to_cell
             self.particle_hash_tables = self.particle_hash_table
 
     def manage_wall_function(self):
-        self.wall_hash_tables = self.no_operation_without_paras
-        self.place_wall_to_cells = self.no_operation
+        self.wall_hash_tables = no_operation
+        self.place_wall_to_cells = no_operation
         if not self.sims.wall_type is None:
             if self.sims.wall_type == 0:
                 self.place_wall_to_cells = self.place_plane_to_cell
@@ -60,12 +61,16 @@ class LinkedCell(NeighborBase):
         rad_min, rad_max = scene.find_bounding_sphere_radius(self.sims)
         self.sims.set_max_bounding_sphere_radius(rad_max)
         self.sims.set_min_bounding_sphere_radius(rad_min)
-        rad_max = max(max_bounding_rad, rad_max)
-        rad_min = min(min_bounding_rad, rad_min)
+        rad_max = max(max_bounding_rad, rad_max) if abs(rad_max) > 1e-15 else max_bounding_rad
+        rad_min = min(min_bounding_rad, rad_min) if abs(rad_min) > 1e-15 else min_bounding_rad
         self.sims.set_verlet_distance(rad_min)
         self.sims.set_potential_list_size(rad_max)
             
-        if self.sims.pbc:
+        if self.sims.xpbc:
+            pass
+        if self.sims.ypbc:
+            pass
+        if self.sims.zpbc:
             pass
         
         self.grid_size = 2 * (rad_max + self.sims.verlet_distance)
@@ -79,13 +84,15 @@ class LinkedCell(NeighborBase):
                 self.cnum[d] = int(1)
         self.cellSum = int(self.cnum[0] * self.cnum[1] * self.cnum[2])
         
-        self.cell_pse = PrefixSumExecutor(self.cellSum + 1)
-        self.particle_pse = PrefixSumExecutor(self.sims.max_particle_num + 1)
-        if self.sims.scheme == "LSDEM":
-            self.point_pse = PrefixSumExecutor(self.sims.max_surface_node_num * self.sims.max_particle_num + 1)
-        self.set_potential_contact_list(scene)
-        self.set_hash_table()
+        if self.first_run:
+            self.cell_pse = PrefixSumExecutor(self.cellSum + 1)
+            self.particle_pse = PrefixSumExecutor(self.sims.max_particle_num + 1)
+            if self.sims.scheme == "LSDEM":
+                self.point_pse = PrefixSumExecutor(self.sims.max_surface_node_num * self.sims.max_particle_num + 1)
+            self.set_potential_contact_list(scene)
+            self.set_hash_table()
         self.print_info()
+        self.first_run = False
 
     def print_info(self):
         print(" Neighbor Search Initialize ".center(71,"-"))
@@ -148,7 +155,7 @@ class LinkedCell(NeighborBase):
         self.update_verlet_tables_particle_wall(scene)
 
         if self.sims.static_wall is True:
-            self.place_wall_to_cells = self.no_operation
+            self.place_wall_to_cells = no_operation
 
     def update_verlet_table(self, scene):
         self.place_particle_to_cells(scene)

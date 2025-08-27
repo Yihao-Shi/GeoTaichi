@@ -4,6 +4,7 @@ from src.utils.constants import Threshold
 from src.utils.TypeDefination import vec2f, vec3f, vec3i, vec2i
 from src.utils.VectorFunction import SquareLen
 from src.utils.ScalarFunction import linearize, vectorize_id, clamp
+from src.utils.ShapeFunctions import ShapeLinear, GShapeLinear, ShapeLinearCenter, ShapeGIMP, GShapeGIMP, ShapeGIMPCenter, ShapeBsplineQ, GShapeBsplineQ, ShapeBsplineC, GShapeBsplineC
 import src.utils.GlobalVariable as GlobalVariable
 
 
@@ -255,6 +256,49 @@ def apply_traction_constraint_2D(lists: int, constraints: ti.template(), node: t
             direction = int(constraints[nboundary].dirs)
             traction = constraints[nboundary].traction
             node[nodeID, grid_level].force += ti.Vector([(direction == j) * traction for j in ti.static(range(2))], float) 
+
+
+@ti.kernel
+def lightweight_particle_traction_constraint(lists: int, gnum: ti.types.vector(GlobalVariable.DIMENSION, int), grid_size: ti.types.vector(GlobalVariable.DIMENSION, float), igrid_size: ti.types.vector(GlobalVariable.DIMENSION, float), 
+                                             constraints: ti.template(), dt: ti.template(), particle_lengths: ti.template(), boundary_types: ti.template(), node: ti.template(), particle: ti.template()):
+    for d in ti.static(range(GlobalVariable.DIMENSION)): ti.block_local(node.force.get_scalar_field(d))
+    for nboundary in range(lists):
+        particleID = constraints[nboundary].pid
+        bodyID = int(particle[particleID].bodyID)
+        constraints[nboundary]._calc_psize_cp(dt, particle[particleID].velocity_gradient)
+        position = particle[particleID].x
+        psize = particle_lengths[bodyID]
+
+        external_force = constraints[nboundary]._compute_traction_force()
+        for offset in ti.static(ti.grouped(ti.ndrange(*((GlobalVariable.INFLUENCENODE, ) * GlobalVariable.DIMENSION)))):
+            base = ti.floor((position - psize) * igrid_size).cast(int)
+            grid_id = base + offset
+            if all(grid_id >= 0):
+                nodeID = linearize(grid_id, gnum)
+                grid_pos = grid_id * grid_size
+                shape_fn = ti.Vector.zero(float, GlobalVariable.DIMENSION)
+                if ti.static(GlobalVariable.SHAPEFUNCTION == 0): 
+                    for d in ti.static(range(GlobalVariable.DIMENSION)):
+                        shape_fn[d] = ShapeLinear(position[d], grid_pos[d], igrid_size[d], 0)
+                elif ti.static(GlobalVariable.SHAPEFUNCTION == 1): 
+                    for d in ti.static(range(GlobalVariable.DIMENSION)):
+                        shape_fn[d] = ShapeGIMP(position[d], grid_pos[d], igrid_size[d], psize[d])
+                elif ti.static(GlobalVariable.SHAPEFUNCTION == 2): 
+                    boundary_type = boundary_types[nodeID, bodyID]
+                    for d in ti.static(range(GlobalVariable.DIMENSION)):
+                        btypes = int(boundary_type[d])
+                        shape_fn[d] = ShapeBsplineQ(position[d], grid_pos[d], igrid_size[d], btypes)
+                elif ti.static(GlobalVariable.SHAPEFUNCTION == 3): 
+                    boundary_type = boundary_types[nodeID, bodyID]
+                    for d in ti.static(range(GlobalVariable.DIMENSION)):
+                        btypes = int(boundary_type[d])
+                        shape_fn[d] = ShapeBsplineC(position[d], grid_pos[d], igrid_size[d], btypes)
+
+                weight = 1.0
+                for d in ti.static(range(GlobalVariable.DIMENSION)):
+                    weight *= shape_fn[d]
+                pforce = weight * external_force
+                node[nodeID, bodyID].force += pforce
 
 
 @ti.kernel

@@ -7,7 +7,7 @@ from src.mpm.Simulation import Simulation
 from src.mpm.SceneManager import myScene
 from src.mpm.SpatialHashGrid import SpatialHashGrid
 from src.utils.linalg import no_operation
-from src.utils.FreeSurfaceDetection import *
+from src.mpm.engines.FreeSurfaceDetection import *
 
 
 class Engine(object):
@@ -81,7 +81,10 @@ class Engine(object):
             if sims.material_type == "TwoPhaseSingleLayer":
                 self.apply_particle_traction_constraints = self.particle_traction_constraints_twophase
             else:
-                self.apply_particle_traction_constraints = self.particle_traction_constraints
+                if sims.mode == "Lightweight":
+                    self.apply_particle_traction_constraints = self.lightweight_particle_traction_constraints
+                else:
+                    self.apply_particle_traction_constraints = self.particle_traction_constraints
         if sims.ptraction_method == "Virtual":
             if sims.dimension == 2:
                 self.apply_particle_traction_constraints = self.virtual_stress_constraints_2D
@@ -244,7 +247,6 @@ class Engine(object):
         
         self.is_verlet_update = self.is_need_update_verlet_table
         if sims.neighbor_detection:
-            self.compute_nodal_kinematic = no_operation
             if sims.coupling == "Lagrangian":
                 self.execute_board_serach = self.update_verlet_table
                 self.system_resolve = self.compute_nodal_kinematic
@@ -257,6 +259,7 @@ class Engine(object):
             self.compute_boundary_direction = no_operation
             if sims.boundary_direction_detection:
                 self.compute_boundary_direction = self.detection_boundary_direction
+            self.compute_nodal_kinematic = no_operation
 
     def reset_particle_message(self, scene: myScene):
         contact_force_reset(int(scene.particleNum[0]), scene.particle)
@@ -305,16 +308,20 @@ class Engine(object):
             self.system_resolve(sims, scene)
 
     def detection_boundary_direction(self, scene: myScene, neighbor: SpatialHashGrid):
-        find_boundary_direction_by_geometry(neighbor.igrid_size, neighbor.cnum, int(scene.particleNum[0]), scene.particle, neighbor.sorted.object_list, neighbor.sorted.prefix_index, neighbor.sorted.bin_count)
+        find_boundary_direction_by_geometry(neighbor.igrid_size, neighbor.cnum, int(scene.particleNum[0]), scene.particle, neighbor.sorted.object_list, neighbor.sorted.bin_count)
 
     def detection_free_surface(self, scene: myScene, neighbor: SpatialHashGrid):
-        find_free_surface_by_geometry(neighbor.igrid_size, neighbor.cnum, int(scene.particleNum[0]), scene.particle, neighbor.sorted.object_list, neighbor.sorted.prefix_index, neighbor.sorted.bin_count)
+        find_free_surface_by_geometry(neighbor.igrid_size, neighbor.cnum, int(scene.particleNum[0]), scene.particle, neighbor.sorted.object_list, neighbor.sorted.bin_count)
 
     def find_free_surface_by_density(self, sims, scene: myScene):
         self.calculate_interpolation(sims, scene)
         self.system_resolve(sims, scene)
         kernel_mass_g2p(scene.element.grid_nodes, scene.element.cell_volume, scene.element.node_size, scene.element.LnID, scene.element.shape_fn, scene.node, int(scene.particleNum[0]), scene.particle)
-        assign_particle_free_surface(int(scene.particleNum[0]), scene.particle, scene.material.matProps)
+
+        for materialID in range(scene.material.mapping.shape[0] - 1):
+            start_index = scene.material.mapping[materialID]
+            end_index = scene.material.mapping[materialID + 1]
+            assign_particle_free_surface(start_index, end_index, scene.particle, scene.material.materialID, scene.material.matProps[materialID + 1])
 
     def calculate_precontact_2DAxisy(self, sims: Simulation, scene: myScene):
         raise NotImplementedError
@@ -366,6 +373,9 @@ class Engine(object):
     
     def compute_stress_strain_2D(self, sims, scene):
         raise NotImplementedError
+    
+    def update_angular_velocity(self, sims: Simulation, scene: myScene):
+        update_coupling_quanternion(int(scene.particleNum[0]), scene.particle, sims.dt)
     
     def update_velocity_gradient_2D(self, sims: Simulation, scene: myScene):
         raise NotImplementedError
@@ -431,13 +441,16 @@ class Engine(object):
     def virtual_stress_constraints_2D(self, sims: Simulation, scene: myScene):
         apply_particle_virtual_traction_constraint_2D(int(scene.particleNum[0]), scene.element.grid_size, scene.element.cnum, scene.boundary.particle_traction.auxiliary_cell, scene.boundary.particle_traction.auxiliary_node, scene.node, scene.particle)
         apply_virtual_traction_field_2D(scene.element.grid_nodes, int(scene.particleNum[0]), scene.boundary.particle_traction.virtual_force, scene.boundary.particle_traction.virtual_stress, 
-                                     scene.node, scene.particle, scene.element.LnID, scene.element.shape_fn, scene.element.dshape_fn, scene.element.node_size, scene.boundary.particle_traction.auxiliary_node)
+                                        scene.node, scene.particle, scene.element.LnID, scene.element.shape_fn, scene.element.dshape_fn, scene.element.node_size, scene.boundary.particle_traction.auxiliary_node)
 
     def particle_traction_constraints(self, sims: Simulation, scene: myScene):
         apply_particle_traction_constraint(int(scene.boundary.ptraction_list[0]), scene.element.grid_nodes, scene.boundary.particle_traction, sims.dt, scene.node, scene.particle, scene.element.LnID, scene.element.shape_fn, scene.element.node_size)
 
     def particle_traction_constraints_twophase(self, sims: Simulation, scene: myScene):
         apply_particle_traction_constraint_twophase(int(scene.boundary.ptraction_list[0]), scene.element.grid_nodes, scene.boundary.particle_traction, sims.dt, scene.node, scene.particle, scene.element.LnID, scene.element.shape_fn, scene.element.node_size)
+
+    def lightweight_particle_traction_constraints(self, sims: Simulation, scene: myScene):
+        lightweight_particle_traction_constraint(int(scene.boundary.ptraction_list[0]), scene.element.gnum, scene.element.grid_size, scene.element.igrid_size, scene.boundary.particle_traction, sims.dt, scene.element.calLength, scene.element.boundary_type, scene.node, scene.particle)
 
     def traction_constraints(self, sims, scene):
         raise NotImplementedError
@@ -458,7 +471,7 @@ class Engine(object):
         raise NotImplementedError
 
     def is_need_update_verlet_table(self, scene: myScene):
-        return validate_particle_displacement_(self.limit, int(scene.particleNum[0]), scene.particle)
+        return validate_particle_displacement_(self.limit, int(scene.couplingNum[0]), scene.particle)
 
     def pre_calculation(self, sims, scene, neighbor):
         raise NotImplementedError

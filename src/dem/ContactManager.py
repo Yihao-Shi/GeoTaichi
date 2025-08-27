@@ -4,6 +4,7 @@ from src.dem.Simulation import Simulation
 from src.dem.neighbor.BrustSearch import BrustSearch
 from src.dem.neighbor.HierarchicalLinkedCell import HierarchicalLinkedCell
 from src.dem.neighbor.LinkedCell import LinkedCell
+from src.dem.neighbor.BoundingVolumeHierarchy import BoundingVolumeHierarchy
 from src.dem.contact.ContactModelBase import ContactModelBase
 from src.dem.contact.Linear import LinearModel
 from src.dem.contact.HertzMindlin import HertzMindlinModel 
@@ -37,12 +38,14 @@ class ContactManager(object):
                 self.neighbor = LinkedCell(sims, scene)
             elif sims.search == "HierarchicalLinkedCell":
                 self.neighbor = HierarchicalLinkedCell(sims, scene)
+            elif sims.search == "BVH":
+                self.neighbor = BoundingVolumeHierarchy(sims, scene)
             else:
                 raise RuntimeError("Failed to activate neighbor class!")
 
     def particle_particle_initialize(self, sims: Simulation):
         if self.physpp is None:
-            if sims.scheme == "DEM":
+            if sims.scheme == "DEM" or sims.scheme == "PolySuperEllipsoid" or sims.scheme == "PolySuperQuadrics":
                 if sims.max_particle_num > 1 and not sims.particle_particle_contact_model is None:
                     if sims.particle_particle_contact_model == "Linear Model":
                         self.physpp = LinearModel(sims)
@@ -82,7 +85,7 @@ class ContactManager(object):
 
     def particle_wall_initialize(self, sims: Simulation):
         if self.physpw is None:
-            if sims.scheme == "DEM":
+            if sims.scheme == "DEM" or sims.scheme == "PolySuperEllipsoid" or sims.scheme == "PolySuperQuadrics":
                 if sims.max_particle_num > 0 and sims.max_wall_num > 0 and not sims.particle_wall_contact_model is None:
                     if sims.particle_wall_contact_model == "Linear Model":
                         self.physpw = LinearModel(sims)

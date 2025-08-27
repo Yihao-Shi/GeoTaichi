@@ -82,6 +82,23 @@ class VelocityConstraint:
 
 
 @ti.dataclass
+class MacVelocityConstraint:
+    node: int
+    velocity: float
+    signs: ti.u8
+
+    @ti.func
+    def set_boundary_condition(self, node, signs, velocity):
+        self.node = node
+        self.signs = ti.cast(signs, ti.u8)
+        self.velocity = velocity
+
+    @ti.func
+    def clear_boundary_condition(self):
+        self.node = -1
+
+
+@ti.dataclass
 class ReflectionConstraint:
     node: int
     level: ti.u8

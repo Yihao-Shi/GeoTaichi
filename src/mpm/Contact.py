@@ -76,7 +76,7 @@ class GeoContact(ContactBase):
         return self._cut_off
     
     @cut_off.setter
-    def friction(self, cut_off):
+    def cut_off(self, cut_off):
         self._cut_off = cut_off
 
     def print_contact_message(self):

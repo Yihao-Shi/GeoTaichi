@@ -4,6 +4,7 @@ import math, warnings
 import src.utils.GlobalVariable as GlobalVariable
 from src.utils.ObjectIO import DictIO
 from src.utils.TypeDefination import vec3i, vec3f
+from src.utils.TimeTicker import Timer
 
 
 class Simulation(object):
@@ -14,13 +15,16 @@ class Simulation(object):
         self.gravity = vec3f([0, 0, 0])
         self.engine = None
         self.search = None
-        self.is_continue = True
+        self.is_continue = False
         self.coupling = False
         self.scheme = None
         self.static_wall = False
         self.sparse_grid = False
         self.energy_tracking = False
+        self.iterative_model = None
         self.search_direction = "Up"
+        self.history_contact_path = {}
+        self.timer = Timer()
 
         self.dt = ti.field(float, shape=())
         self.delta = 0.
@@ -28,13 +32,15 @@ class Simulation(object):
         self.current_step = 0
         self.current_print = 0
         self.CurrentTime = ti.field(float, shape=())
-
+        
+        self.bvh_rebuild_interval = 1000
         self.max_material_num = 0
         self.max_particle_num = 0
         self.max_sphere_num = 0
         self.max_clump_num = 0
         self.max_level_grid_num = 0
         self.max_rigid_body_num = 0
+        self.max_soft_body_num = 0
         self.max_surface_node_num = 0
         self.max_rigid_template_num = 0
         self.max_wall_num = 0
@@ -43,7 +49,9 @@ class Simulation(object):
         self.compaction_ratio = 0.5
         self.point_particle_coordination_number = 2
         self.point_wall_coordination_number = 1
-        self.pbc = False
+        self.xpbc = False
+        self.ypbc = False
+        self.zpbc = False
         self.wall_type = None
         self.particle_work = None
         self.wall_work = None
@@ -108,9 +116,20 @@ class Simulation(object):
                         "Destroy": 1,
                         "Period": 2
                    }
-        self.boundary = vec3i([DictIO.GetEssential(BOUNDARY, b) for b in boundary])
-        if self.boundary[0] == 2 or self.boundary[1] == 2 or self.boundary[2] == 2:
-            self.activate_period_boundary()
+        self.boundary = [DictIO.GetEssential(BOUNDARY, b) for b in boundary]
+        if self.boundary[0] == 2:
+            self.xpbc = True
+            GlobalVariable.DEMXPBC = True
+            GlobalVariable.DEMXSIZE = self.domain[0]
+        if self.boundary[1] == 2:
+            self.ypbc = True
+            GlobalVariable.DEMYPBC = True
+            GlobalVariable.DEMYSIZE = self.domain[0]
+        if self.dimension == 3:
+            if self.boundary[2] == 2:
+                self.zpbc = True
+                GlobalVariable.DEMZPBC = True
+                GlobalVariable.DEMZSIZE = self.domain[0]
 
     def set_gravity(self, gravity):
         self.gravity = gravity
@@ -125,7 +144,7 @@ class Simulation(object):
 
     def set_search(self, search):
         self.search = search
-        valid = ["Brust", "LinkedCell", "HierarchicalLinkedCell"]
+        valid = ["Brust", "LinkedCell", "HierarchicalLinkedCell", "BVH"]
         if not search in valid:
             raise RuntimeError(f"Keyword:: /search/ is wrong, Only the following is valid: {valid}")
         
@@ -140,9 +159,6 @@ class Simulation(object):
             raise RuntimeError("Coupling MPDEM do not support energy tracking yet!")
         self.energy_tracking = track_energy
         GlobalVariable.TRACKENERGY = track_energy
-
-    def activate_period_boundary(self):
-        self.pbc = True
 
     def update_critical_timestep(self, dt):
         print("The time step is corrected as:", dt, '\n')
@@ -185,6 +201,19 @@ class Simulation(object):
 
         if rigid_body_num > 0 and (self.max_sphere_num > 0 or self.max_clump_num > 0):
             raise RuntimeError("Sphere/Multisphere particles are not supported when using level set method")
+        
+    def set_soft_body_num(self, soft_body_num):
+        if soft_body_num < 0:
+            raise ValueError("Soft body number should be larger than 0!")
+        self.max_soft_body_num = int(soft_body_num)
+        self.max_particle_num += int(soft_body_num)
+
+        if soft_body_num > 0 and (self.max_sphere_num > 0 or self.max_clump_num > 0):
+            raise RuntimeError("Sphere/Multisphere particles are not supported when using level set method")
+        
+    def set_material_point_num(self, material_point_num):
+        if material_point_num < 0:
+            raise ValueError("Material point number should be larger than 0!")
         
     def set_surface_node_num(self, surface_node_num):
         if surface_node_num < 0:
@@ -243,14 +272,13 @@ class Simulation(object):
             if self.wall_type is None:
                 self.max_wall_num = int(digital_elevation_facet_number)
                 self.wall_type = 3
-                self.wall_coordination_number = 1
             elif not self.wall_type is None:
                 self.raise_wall_error_info(curr_wall_type=3)
 
     def set_dem_scheme(self, scheme):
         self.scheme = scheme
 
-        valid = ["DEM", "LSDEM", "LSMPM"]
+        valid = ["DEM", "LSDEM", "LSMPM", "PolySuperEllipsoid", "PolySuperQuadrics"]
         if not scheme in valid:
             raise RuntimeError(f"Keyword:: /scheme/ error. Only the following {valid} is support")
         
@@ -281,8 +309,6 @@ class Simulation(object):
             self.body_coordination_number = max(body_coordination_number, 1)
 
     def set_wall_coordination_number(self, wall_coordination_number):
-        if self.wall_type == 3:
-            wall_coordination_number = 1
         if self.search == "HierarchicalLinkedCell":
             if isinstance(wall_coordination_number, (float, int)):
                 self.wall_coordination_number = [int(wall_coordination_number) for _ in range(self.hierarchical_level)]
@@ -310,6 +336,12 @@ class Simulation(object):
                 raise RuntimeError(f"Keyword:: /wall_per_cell/ should have a size of {self.hierarchical_level}")
         else:
             self.wall_per_cell = wall_per_cell
+
+    def set_iterative_model(self, model):
+        self.iterative_model = model
+        valid_list = ["LagrangianMultiplier", "PCN", "GJK"]
+        if model not in valid_list:
+            raise RuntimeError(f"Keyword:: /iterative_model/ error. Only the following {valid_list} is support")
 
     def set_particle_particle_contact_model(self, model):
         self.particle_particle_contact_model = model
@@ -352,8 +384,10 @@ class Simulation(object):
         if hierarchical_level > 8:
             raise RuntimeError("The maximum level of grid is 8")
         self.hierarchical_level = int(hierarchical_level)
-        if self.hierarchical_level == 1:
-            self.search = "LinkedCell"
+
+    def set_rebuild_interval(self, rebuild_interval):
+        if self.search == "BVH":
+            self.bvh_rebuild_interval = rebuild_interval
     
     def set_hierarchical_size(self, hierarchical_size):
         self.hierarchical_size = list(hierarchical_size)
@@ -391,20 +425,20 @@ class Simulation(object):
 
     def set_compaction_ratio(self, compaction_ratio):
         if isinstance(compaction_ratio, float):
-            if self.scheme == "DEM":
-                self.compaction_ratio = [compaction_ratio, compaction_ratio]
-            elif self.scheme == "LSDEM":
+            if self.scheme == "LSDEM" or self.scheme == "LSMPM":
                 self.compaction_ratio = [compaction_ratio, compaction_ratio, compaction_ratio, compaction_ratio]
+            else:
+                self.compaction_ratio = [compaction_ratio, compaction_ratio]
         elif isinstance(compaction_ratio, (tuple, list)):
-            if self.scheme == "DEM":
-                self.compaction_ratio = list(compaction_ratio)
-            elif self.scheme == "LSDEM":
+            if self.scheme == "LSDEM" or self.scheme == "LSMPM":
                 if len(list(compaction_ratio)) == 2:
                     self.compaction_ratio = [compaction_ratio[0], compaction_ratio[1], compaction_ratio[0], compaction_ratio[1]]
                 elif len(list(compaction_ratio)) == 4:
                     self.compaction_ratio = list(compaction_ratio)
                 else:
                     raise RuntimeError("Keyword:: /compaction_ratio/ dimension error")
+            else:
+                self.compaction_ratio = list(compaction_ratio)
 
     def set_window_parameters(self, windows):
         self.visualize_interval = DictIO.GetAlternative(windows, "VisualizeInterval", self.save_interval)
@@ -469,15 +503,15 @@ class Simulation(object):
         self.potential_contact_points_particle = int(self.point_particle_coordination_number * self.max_surface_node_num)
         self.potential_contact_points_wall = int(self.point_wall_coordination_number * self.max_surface_node_num)
 
-    def set_contact_list_size(self):    
-        if self.scheme == "DEM":
-            self.particle_contact_list_length = int(math.ceil(self.compaction_ratio[0] * self.max_potential_particle_pairs))
-            self.wall_contact_list_length = int(math.ceil(self.compaction_ratio[1] * self.max_potential_wall_pairs))
-        elif self.scheme == "LSDEM":
+    def set_contact_list_size(self): 
+        if self.scheme == "LSDEM" or self.scheme == "LSMPM":
             self.particle_verlet_length = int(math.ceil(self.compaction_ratio[0] * self.max_potential_particle_pairs))
             self.wall_verlet_length = int(math.ceil(self.compaction_ratio[1] * self.max_potential_wall_pairs))
             self.particle_contact_list_length = int(math.ceil(self.compaction_ratio[2] * self.potential_contact_points_particle * self.max_rigid_body_num))
-            self.wall_contact_list_length = int(math.ceil(self.compaction_ratio[3] * self.potential_contact_points_wall * self.max_rigid_body_num))
+            self.wall_contact_list_length = int(math.ceil(self.compaction_ratio[3] * self.potential_contact_points_wall * self.max_rigid_body_num))   
+        else:
+            self.particle_contact_list_length = int(math.ceil(self.compaction_ratio[0] * self.max_potential_particle_pairs))
+            self.wall_contact_list_length = int(math.ceil(self.compaction_ratio[1] * self.max_potential_wall_pairs))
 
     def set_hierarchical_list_size(self, potential_particle_num, max_potential_wall_pairs):
         self.max_potential_particle_pairs = potential_particle_num

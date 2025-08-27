@@ -1,10 +1,9 @@
 import taichi as ti
 
 from src.utils.constants import MThreshold, Threshold, ZEROVEC3f
-from src.utils.ScalarFunction import linearize
 from src.utils.VectorFunction import SquareLen
-from src.utils.BitFunction import Zero2OneVector
-from src.utils.TypeDefination import vec3f
+from src.utils.Quaternion import RodriguesRotationMatrix
+from src.utils.TypeDefination import vec3f, mat3x3
 
 
 @ti.kernel
@@ -148,7 +147,6 @@ def modify_particle_fix_v_in_region(value: ti.types.vector(3, ti.u8), particleNu
     for np in range(particleNum):
         if is_in_region(particle[np].x):
             particle[np].fix_v = value
-            particle[np].unfix_v = Zero2OneVector(value)
 
 
 @ti.kernel
@@ -206,7 +204,6 @@ def modify_particle_fix_v(value: ti.types.vector(3, ti.u8), particleNum: int, pa
     for np in range(particleNum):
         if particle[np].bodyID == ti.u8(bodyID):
             particle[np].fix_v = value
-            particle[np].unfix_v = Zero2OneVector(value)
 
 
 @ti.kernel
@@ -260,6 +257,21 @@ def validate_particle_displacement_(limit: float, particleNum: int, particle: ti
         if flag == 0 and SquareLen(particle[np].verletDisp) > limit:
             flag = 1
     return flag
+
+@ti.kernel
+def kernel_apply_gravity_field_(startIndex: int, endIndex: int, gravity: ti.types.vector(3, float), k0: ti.types.ndarray(), distance: ti.types.ndarray(), particle: ti.template(), materialID: ti.template(), matProps: ti.template(), stateVars: ti.template()):
+    for i in range(startIndex, endIndex):
+        np = materialID[i]
+        direction = gravity.normalized()
+        density = particle[np].m / particle[np].vol
+        gamma = -distance[np] * density * gravity.norm()
+        initial_gravity_stress = mat3x3([k0[i - startIndex] * gamma, 0., 0.],
+                                        [0., k0[i - startIndex] * gamma, 0.],
+                                        [0., 0., gamma])
+        rotation_matrix = RodriguesRotationMatrix(-direction, vec3f(0., 0., 1.))
+        gravity_field = rotation_matrix.transpose() @ initial_gravity_stress @ rotation_matrix
+        particle[np]._add_gravity_field(gravity_field)
+        matProps._initialize_vars(np, particle, stateVars)
 
 # ========================================================= #
 #                Assign Particle to Cell                    #

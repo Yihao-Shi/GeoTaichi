@@ -62,10 +62,10 @@ class MixtureGenerator(object):
 
     def delete_overlap(self, sims: Simulation, dscene: DEMScene, mscene: MPMScene, dem_start_number, dem_end_number, mpm_start_number, mpm_end_number):
         max_radius = max(dscene.find_bounding_sphere_max_radius(None), mscene.find_particle_max_radius())
-        min_radius = max(dscene.find_bounding_sphere_min_radius(None), mscene.find_particle_min_radius())
+        min_radius = min(dscene.find_bounding_sphere_min_radius(None), mscene.find_particle_min_radius())
         cell_size = 2 * max_radius
         ratio = math.ceil(max_radius / min_radius)
-        particle_per_cell = max(ratio * ratio * ratio, 4)
+        particle_per_cell = ratio * ratio * ratio
         cell_num = vec3i(math.ceil(sims.domain[0] / cell_size), math.ceil(sims.domain[1] / cell_size), math.ceil(sims.domain[2] / cell_size))
         total_cell = int(cell_num[0] * cell_num[1] * cell_num[2])
 

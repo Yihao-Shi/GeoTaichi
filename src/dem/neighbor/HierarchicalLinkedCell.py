@@ -1,7 +1,7 @@
 import taichi as ti
 import numpy as np
 
-from src.dem.BaseStruct import HierarchicalCell, HierarchicalBody
+from src.dem.structs.BaseStruct import HierarchicalCell, HierarchicalBody
 from src.dem.neighbor.neighbor_kernel import *
 from src.dem.neighbor.NeighborBase import NeighborBase
 from src.dem.SceneManager import myScene
@@ -63,11 +63,12 @@ class HierarchicalLinkedCell(NeighborBase):
         self.neighbor_initialze(scene, max(self.sims.domain), 0.)
 
     def neighbor_initialze(self, scene: myScene, min_bounding_rad, max_bounding_rad):
-        if self.sims.scheme == "DEM":
-            self.body = HierarchicalBody.field(shape=self.sims.max_particle_num + 1)
-        elif self.sims.scheme == "LSDEM":
-            self.body = HierarchicalBody.field(shape=self.sims.max_rigid_body_num + 1)
-        self.grid = HierarchicalCell.field(shape=self.sims.hierarchical_level)
+        if self.first_run:
+            if self.sims.scheme == "DEM":
+                self.body = HierarchicalBody.field(shape=self.sims.max_particle_num + 1)
+            elif self.sims.scheme == "LSDEM":
+                self.body = HierarchicalBody.field(shape=self.sims.max_rigid_body_num + self.sims.max_soft_body_num + 1)
+            self.grid = HierarchicalCell.field(shape=self.sims.hierarchical_level)
         self.grid.rad_min.fill(min_bounding_rad)
 
         particle_num_in_level = np.zeros(self.sims.hierarchical_level)
@@ -79,7 +80,11 @@ class HierarchicalLinkedCell(NeighborBase):
         self.sims.update_hierarchical_size(max(max_bounding_rad, rad_max[-1]))
         potential_particle_ratio = self.sims.compute_potential_ratios(rad_max)
         
-        if self.sims.pbc:
+        if self.sims.xpbc:
+            pass
+        if self.sims.ypbc:
+            pass
+        if self.sims.zpbc:
             pass
 
         initialize_body_information(int(scene.particleNum[0]), np.array(potential_particle_ratio), np.array(self.sims.body_coordination_number), np.array(self.sims.wall_coordination_number), self.body)
@@ -91,16 +96,18 @@ class HierarchicalLinkedCell(NeighborBase):
         self.wall_in_cell = initialize_grid_information(self.sims.hierarchical_level, np.array(gsize), np.array(cnum), np.array(csum), np.array(factor), np.array(self.sims.wall_per_cell), self.grid)
         if self.sims.wall_type == "Patch":
             initialize_wall_information(int(scene.wallNum[0]), self.sims.hierarchical_level, np.array(self.sims.hierarchical_size), scene.wallbody, scene.wall)
-
-        self.cell_pse = PrefixSumExecutor(self.cellSum + 1)
-        self.particle_pse = PrefixSumExecutor(self.sims.max_particle_num + 1)
-        if self.sims.scheme == "LSDEM":
-            self.point_pse = PrefixSumExecutor(self.sims.max_surface_node_num * self.sims.max_particle_num + 1)
-        pairs_num = get_potential_contact_pairs_num(int(scene.particleNum[0]), self.body)
-        self.sims.set_hierarchical_list_size(pairs_num[0], pairs_num[1])
-        self.set_potential_contact_list(scene)
-        self.set_hash_table()
+        
+        if self.first_run:
+            self.cell_pse = PrefixSumExecutor(self.cellSum + 1)
+            self.particle_pse = PrefixSumExecutor(self.sims.max_particle_num + 1)
+            if self.sims.scheme == "LSDEM":
+                self.point_pse = PrefixSumExecutor(self.sims.max_surface_node_num * self.sims.max_particle_num + 1)
+            pairs_num = get_potential_contact_pairs_num(int(scene.particleNum[0]), self.body)
+            self.sims.set_hierarchical_list_size(pairs_num[0], pairs_num[1])
+            self.set_potential_contact_list(scene)
+            self.set_hash_table()
         self.print_info(potential_particle_ratio)
+        self.first_run = False
 
     def print_info(self, potential_particle_ratio):
         print(" Neighbor Search Initialize ".center(71,"-"))
@@ -170,7 +177,7 @@ class HierarchicalLinkedCell(NeighborBase):
         self.update_verlet_tables_particle_wall(scene)
 
         if self.sims.static_wall is True:
-            self.place_wall_to_cells = self.no_operation
+            self.place_wall_to_cells = no_operation
 
     def update_verlet_table(self, scene):
         self.place_particle_to_cells(scene)

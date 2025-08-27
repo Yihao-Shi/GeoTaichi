@@ -5,16 +5,18 @@ import taichi as ti
 
 from src.mpm.BaseKernel import *
 from src.mpm.Contact import *
+from src.mpm.elements.StaggeredQuadrilateralElement import StaggeredQuadrilateralElement
+from src.mpm.elements.StaggeredHexahedronElement import StaggeredHexahedronElement
 from src.mpm.elements.HexahedronElement8Nodes import HexahedronElement8Nodes
 from src.mpm.elements.QuadrilateralElement4Nodes import QuadrilateralElement4Nodes
-from src.mpm.MaterialManager import ConstitutiveModel
+from src.mpm.MaterialManager import MaterialHandle
 from src.mpm.boundaries.BoundaryConstraint import BoundaryConstraints
 from src.mpm.Simulation import Simulation
 from src.mpm.structs import *
 from src.utils.linalg import no_operation
 from src.utils.DomainBoundary import DomainBoundary
 from src.utils.ObjectIO import DictIO
-from src.utils.TypeDefination import vec2f, vec3f, vec3u8, mat3x3
+from src.utils.TypeDefination import vec2f, vec3f, vec4f, vec3u8, mat3x3
 
 
 class myScene(object):
@@ -41,12 +43,13 @@ class myScene(object):
         self.psize = np.array([], dtype=np.int32)
 
         self.particleNum = np.zeros(1, dtype=np.int32)
+        self.couplingNum = np.zeros(1, dtype=np.int32)
         self.RECTELETYPE = ["Q4N2D", "R8N3D", "Staggered"]
         self.TRIELETYPE = ["T3N2D", "T4N3D"]
 
     def activate_boundary(self, sims):
         self.boundary = BoundaryConstraints()
-        self.boundary.activate_boundary_constraints(sims)
+        self.boundary.activate_boundary_constraints(sims, self.element.element_type)
 
     def is_rectangle_cell(self):
         return self.element_type in self.RECTELETYPE
@@ -94,8 +97,12 @@ class myScene(object):
         return ptemp
 
     def activate_particle(self, sims: Simulation):
+        self.check_materials(sims)
         if self.particle is None and sims.max_particle_num > 0:
             ptemp = self.find_particle_class(sims)
+            """ if sims.solver_type == "Explicit":
+                if sims.stabilize == 'F-Bar Method':
+                    ptemp.members.update({"jacobian": float}) """
             if sims.configuration == "TLMPM":
                 ptemp.members.update({"stress": mat3x3})
             if sims.particle_shifting is True:
@@ -104,18 +111,19 @@ class myScene(object):
                 ptemp.members.update({"free_surface": ti.u8, "mass_density": float, "normal": vec3f})
             self.particle = ptemp.field()
             ti.root.dense(ti.i, sims.max_particle_num).place(self.particle)
-            #self.material.activate_state_variables(sims)
+            """ if sims.solver_type == "Explicit":
+                if sims.stabilize == 'F-Bar Method':
+                    kernel_initialize_particle_fbar(self.particle) """
+            self.material.activate_state_variables(sims)
 
-    def activate_material(self, sims: Simulation, handler: ConstitutiveModel):
+    def activate_material(self, sims: Simulation, material_model, parameters):
         if self.material is None:
-            self.material = handler.initialize(sims)
-            self.material.model_initialization(handler.material)
-        else:
-            warnings.warn("Previous material will be override!")
+            self.material = MaterialHandle(sims)
+        self.material.setup(sims, self.contact, material_model, parameters)
 
     def check_materials(self, sims):
         if self.material is None:
-            self.activate_material(sims, "RigidBody", materials={})
+            self.activate_material(sims, "RigidBody", parameters=None)
 
     def activate_contact(self, sims: Simulation, contact_phys):
         if sims.contact_detection:
@@ -125,6 +133,8 @@ class myScene(object):
                 self.contact = GeoContact(contact_phys)   
             elif sims.contact_detection == "DEMContact":
                 self.contact = DEMContact(contact_phys)
+                if not self.material is None:
+                    self.material.setup_contact(self.contact)
         self.print_contact_message(sims)
 
     def print_contact_message(self, sims: Simulation):
@@ -143,7 +153,7 @@ class myScene(object):
                 elif self.element_type == "Q4N2D" or self.element_type == "Staggered":
                     if not self.element is None:
                         print("Warning: Previous elements will be override!")
-                    self.element = QuadrilateralElement4Nodes(self.element_type, grid_level)
+                    self.element = QuadrilateralElement4Nodes(self.element_type, grid_level, DictIO.GetAlternative(element, "GhostCell", 1))
                 else:
                     raise ValueError("Keyword:: /ElementType/ error!")
                 self.element.create_nodes(sims, vec2f(DictIO.GetEssential(element, "ElementSize")))
@@ -151,14 +161,17 @@ class myScene(object):
             elif sims.dimension == 3:
                 if self.element_type == "T4N3D":
                     raise ValueError("The triangle mesh is not supported currently")
-                elif self.element_type == "R8N3D":
+                elif self.element_type == "R8N3D" or self.element_type == "Staggered":
                     if not self.element is None:
                         print("Warning: Previous elements will be override!")
-                    self.element = HexahedronElement8Nodes(self.element_type, grid_level)
+                    self.element = HexahedronElement8Nodes(self.element_type, grid_level, DictIO.GetAlternative(element, "GhostCell", 1))
                 else:
                     raise ValueError("Keyword:: /ElementType/ error!")
                 self.element.create_nodes(sims, vec3f(DictIO.GetEssential(element, "ElementSize")))
                 self.initialize_element(sims, grid_level)
+            
+            if self.boundary is None:
+                self.activate_boundary(sims)
             self.boundary.set_layer_number(grid_level)
             self.activate_grid(sims, grid_level)
 
@@ -168,7 +181,7 @@ class myScene(object):
             self.element.activate_gauss_cell(sims)
         else:
             self.element.element_initialize(sims)
-        self.element.activate_euler_cell()
+        self.element.activate_euler_cell(sims)
 
     def find_grid_level(self, sims: Simulation):
         grid_level = 1
@@ -233,15 +246,6 @@ class myScene(object):
         if not self.node is None:
             print("Warning: Previous node will be override!")
              
-        '''if self.element_type == "Staggered":
-            if ("Implicit" in sims.solver_type) and (sims.material_type == "Fluid" or sims.material_type == "TwoPhaseDoubleLayer"):
-                self.node = StaggeredGrid(sims, self.element.cnum, self.element.gridSum)
-                if sims.material_type == "TwoPhaseDoubleLayer":
-                    if sims.dimension == 2:
-                        self.node = Nodes2D.field(shape=self.element.gridSum)
-                    elif sims.dimension == 3:
-                        self.node = Nodes.field(shape=self.element.gridSum)
-        else:'''
         gtemp = self.find_grid_class(sims)
         if sims.sparse_grid:
             if sims.AOSOA:
@@ -279,10 +283,10 @@ class myScene(object):
         self.child.place(self.node)
         self.node.fill(0)
 
-        #if sims.sparse_grid:
-        #    self.pid = ti.field(int)
-        #    self.parent.dynamic(ti.i, 1024 * 1024, chunk_size=sims.block_size[1] ** sims.dimension * 8).place(self.pid)
-        
+    #if sims.sparse_grid:
+    #    self.pid = ti.field(int)
+    #    self.parent.dynamic(ti.i, 1024 * 1024, chunk_size=sims.block_size[1] ** sims.dimension * 8).place(self.pid)
+    
         if sims.mapping == "G2P2G":
             self.grandparent = [self.grandparent]
             self.parent = [self.parent]
@@ -355,7 +359,7 @@ class myScene(object):
         return find_particle_min_mass_(int(self.particleNum[0]), self.particle)
     
     def reset_verlet_disp(self):
-        reset_verlet_disp_(int(self.particleNum[0]), self.particle)
+        reset_verlet_disp_(int(self.couplingNum[0]), self.particle)
 
     def get_critical_timestep(self):
         max_vel = find_max_velocity_(int(self.particleNum[0]), self.particle)
@@ -490,6 +494,7 @@ class myScene(object):
 
     def update_coupling_points_number(self, sims: Simulation):
         need_coupling = kernel_compute_coupling_material_points_number(int(self.particleNum[0]), self.particle)
+        self.couplingNum[0] = need_coupling
         sims.set_coupling_particles(need_coupling)
 
     def filter_particles(self, sims: Simulation):
@@ -521,4 +526,37 @@ class myScene(object):
 
     def apply_boundary_condition(self):
         if self.domain_boundary.apply_boundary_conditions(int(self.particleNum[0]), self.particle):
-            update_particle_storage_(self.particleNum, self.particle, self.material.stateVars)
+            self.particleNum[0] = update_particle_storage_(self.particleNum, self.particle, self.material.stateVars)
+
+    def set_initial_gravity_field(self, sims: Simulation, gravity_field):
+        if gravity_field:
+            import types
+
+            gravity = np.array(sims.gravity)
+            if np.linalg.norm(gravity) < 1e-12:
+                raise ValueError("Gravity must be activated")
+            
+            non_rigid_particles = np.where(self.material.materialID_numpy > 0)[0]
+            directions = (gravity / np.linalg.norm(gravity))[0:sims.dimension]
+            point_cloud = np.ascontiguousarray(self.particle.x.to_numpy()[non_rigid_particles])
+            distances = np.full(point_cloud.shape[0], -1.)
+
+            if isinstance(gravity_field, types.FunctionType):
+                distances = gravity_field(point_cloud)
+            elif isinstance(gravity_field, (np.ndarray, list, tuple)):
+                distances = np.asarray(gravity_field)
+            else:
+                projections = point_cloud @ -directions
+                t_max = np.max(projections)
+                distances = t_max - projections
+
+                denominator = (directions[0] / self.psize[non_rigid_particles,0]) ** 2 + (directions[1] / self.psize[non_rigid_particles,1]) ** 2
+                if sims.dimension == 3:
+                    denominator += (directions[2] / self.psize[non_rigid_particles,2]) ** 2
+                distances += np.sqrt(1. / denominator)
+                
+            for materialID in range(self.material.mapping.shape[0] - 1):
+                start_index = self.material.mapping[materialID]
+                end_index = self.material.mapping[materialID + 1]
+                k0 = self.material.matProps[materialID + 1].get_lateral_coefficient(start_index, end_index, self.material.materialID, self.material.stateVars)
+                kernel_apply_gravity_field_(start_index, end_index, sims.gravity, k0, distances, self.particle, self.material.materialID, self.material.matProps[materialID + 1], self.material.stateVars)

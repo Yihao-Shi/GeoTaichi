@@ -1,7 +1,7 @@
 from src.dem.generator.BodyGenerator import ParticleCreator, ParticleGenerator
 from src.dem.generator.LoadFromFile import ParticleReader
 from src.dem.generator.ClumpTemplate import ClumpTemplate
-from src.dem.generator.LevelSetTemplate import LevelSetTemplate
+from src.dem.generator.GeneralShapeTemplate import GeneralShapeTemplate
 from src.dem.generator.WallGenerator import WallGenerator
 from src.dem.SceneManager import myScene
 from src.utils.ObjectIO import DictIO
@@ -61,17 +61,20 @@ class GenerateManager(object):
             template_ptr: ClumpTemplate = self.myTemplate[name]
             template_ptr.clump_template(template_dict)
             template_ptr.clear()
-        elif types == "LSDEM":
+        elif types == "LSDEM" or types == "PolySuperEllipsoid" or types == "PolySuperQuadrics":
             if not "Object" in template_dict:
                 raise RuntimeError("Plase double check if the scheme is set as /LSDEM/")
-            DictIO.append(self.myTemplate, name, LevelSetTemplate())
-            ltemplate_ptr: LevelSetTemplate = self.myTemplate[name]
+            DictIO.append(self.myTemplate, name, GeneralShapeTemplate())
+            ltemplate_ptr: GeneralShapeTemplate = self.myTemplate[name]
             ltemplate_ptr.levelset_template(template_dict)
-            if ltemplate_ptr.soft_template is False:
-                scene.add_rigid_levelset_template(name, ltemplate_ptr.objects.grid.distance_field, ltemplate_ptr.objects.mesh.vertices, ltemplate_ptr.parameter)
+            if types == "LSDEM":
+                if ltemplate_ptr.soft_template is False:
+                    scene.add_rigid_levelset_template(name, ltemplate_ptr.objects.grid.distance_field, ltemplate_ptr.objects.mesh.vertices, ltemplate_ptr.parameter)
+            elif types == "PolySuperEllipsoid" or types == "PolySuperQuadrics":
+                scene.add_rigid_implicit_surface_template(name, ltemplate_ptr.objects.mesh.vertices, ltemplate_ptr.objects.physical_parameter)
             ltemplate_ptr.clear()
         else:
-            valid_list = ["DEM", "LSDEM"]
+            valid_list = ["DEM", "LSDEM", "PolySuperEllipsoid", "PolySuperQuadrics"]
             raise RuntimeError(f"Only {valid_list} is valid for Keyword:: /types/")
         
     def insert_template_to_creator(self):
@@ -79,8 +82,9 @@ class GenerateManager(object):
 
     def insert_template_to_generator(self, generator: ParticleGenerator):
         if generator.btype == 'Clump' or generator.btype == 'RigidBody':
-            if len(self.myTemplate) == 0:
-                raise RuntimeError("The template must be set first")
+            if generator.btype == 'Clump' or (generator.btype == 'RigidBody' and generator.write_file is False):
+                if len(self.myTemplate) == 0:
+                    raise RuntimeError("The template must be set first")
             generator.set_template(self.myTemplate)
 
     def insert_region_to_generator(self, generator: ParticleGenerator):

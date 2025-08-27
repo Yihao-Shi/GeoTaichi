@@ -134,6 +134,18 @@ class link(SDF3D):
         q = np.array([p[0], max(abs(p[1]) - self.length, 0.), p[2]])
         return _length(np.array([_length(p[:,[0,1]]) - self.radius1, q[2]])) - self.radius2
     
+class heart(SDF3D):
+    def __init__(self, a=1., b=1., c=1., depth=1.0, thick=9./80., ray=False):
+        super().__init__(ray)
+        self.a = a
+        self.b = b
+        self.c = c
+        self.depth = depth
+        self.thick = thick
+
+    def _distance(self, p):
+        return (self.a * p[0] ** 2 + self.b * p[1] ** 2 + self.c * p[2] ** 2 - 1) ** 3 - self.depth * p[0] ** 2 * p[2] ** 3 - self.thick * p[1] ** 2 * p[2] ** 3
+
 class hexagonal_prism(SDF3D):
     def __init__(self, height1, height2, ray=False):
         super().__init__(ray)

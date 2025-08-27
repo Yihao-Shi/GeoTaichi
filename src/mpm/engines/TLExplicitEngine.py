@@ -39,8 +39,10 @@ class TLExplicitEngine(ULExplicitEngine):
         kernel_mass_p2g(scene.element.grid_nodes, int(scene.particleNum[0]), scene.node, scene.particle, scene.element.LnID, scene.element.shape_fn, scene.element.node_size)
 
     def compute_stress_strain(self, sims: Simulation, scene: myScene):
-        kernel_compute_reference_stress_strain(scene.element.grid_nodes, sims.dt, int(scene.particleNum[0]), scene.node, scene.particle, scene.material.matProps, scene.material.stateVars,
-                                               scene.element.LnID, scene.element.dshape_fn, scene.element.node_size)  
+        for materialID in range(scene.material.mapping.shape[0] - 1):
+            start_index = scene.material.mapping[materialID]
+            end_index = scene.material.mapping[materialID + 1]
+            kernel_compute_reference_stress_strain(start_index, end_index, sims.dt, scene.particle, scene.material.materialID, scene.material.matProps[materialID + 1], scene.material.stateVars)  
         
     def compute_force(self, sims: Simulation, scene: myScene):
         kernel_reference_force_p2g(scene.element.grid_nodes, int(scene.particleNum[0]), sims.gravity, scene.node, scene.particle, scene.element.LnID, scene.element.shape_fn, scene.element.dshape_fn, scene.element.node_size)

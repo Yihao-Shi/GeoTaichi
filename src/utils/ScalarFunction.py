@@ -55,6 +55,10 @@ def sign(x):
     return x
 
 @ti.func
+def copysign(x, y):
+    return ti.abs(x) * sgn(y)
+
+@ti.func
 def sgn(x):
     return ti.select(x >= 0., 1, 0) - ti.select(x <= 0., 1, 0)
 

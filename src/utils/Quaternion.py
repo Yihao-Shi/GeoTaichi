@@ -187,7 +187,7 @@ def SetFromAxisAngle(axis, radians):
 
 
 @ti.func
-def SetFromEuler(yaw, pitch, roll):
+def SetFromEuler(roll, pitch, yaw):
     halfYaw = yaw * 0.5
     halfPitch = pitch * 0.5
     halfRoll = roll * 0.5
@@ -276,3 +276,25 @@ def RotationMatrix2D(origin, target):
     RotationMartix = mat2x2([[cos_theta, -sin_theta],
                              [sin_theta, cos_theta]])
     return RotationMartix
+
+
+@ti.pyfunc
+def ThetaToRotationMatrix(theta):
+    contentInRad = theta * PI / 180
+    rotateX = ti.Matrix([[1., 0., 0.],
+                        [0, ti.cos(contentInRad[0]), -ti.sin(contentInRad[0])],
+                        [0, ti.sin(contentInRad[0]), ti.cos(contentInRad[0])]])
+    rotateY = ti.Matrix([[ti.cos(contentInRad[1]), 0, ti.sin(contentInRad[1])],
+                        [0., 1., 0.],
+                        [-ti.sin(contentInRad[1]), 0, ti.cos(contentInRad[1])]])
+    rotateZ = ti.Matrix([[ti.cos(contentInRad[2]), -ti.sin(contentInRad[2]), 0],
+                        [ti.sin(contentInRad[2]), ti.cos(contentInRad[2]), 0],
+                        [0., 0., 1.]])
+    return rotateZ @ rotateY @ rotateX
+
+@ti.pyfunc
+def ThetaToRotationMatrix2D(theta):
+    angle_rad = theta * PI / 180
+    R = ti.Matrix([[ti.cos(angle_rad), -ti.sin(angle_rad)],
+                   [ti.sin(angle_rad),  ti.cos(angle_rad)]])
+    return R

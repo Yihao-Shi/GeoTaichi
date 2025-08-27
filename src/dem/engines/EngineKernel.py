@@ -243,9 +243,9 @@ def move_spheres_verlet_(bodyNum: int, dt: ti.template(), sphere: ti.template(),
 
         mass, is_fix = particle[np].m, sphere[nsphere].fix_v
         old_av, old_vel, old_disp = sphere[nsphere].a, particle[np].v, particle[np].verletDisp
-
         vel_half = old_vel + 0.5 * dt[None] * old_av
         force = cundall_damp1st(fdamp, cforce + gravity * mass , vel_half)
+
         delta_x = dt[None] * vel_half 
         av = force / mass * int(is_fix)
         vel = vel_half + 0.5 * av * dt[None]

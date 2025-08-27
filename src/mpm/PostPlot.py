@@ -26,13 +26,16 @@ def write_vtk_file(sims: Simulation, start_file, end_file, read_path, write_path
     for printNum in range(start_file, end_file):
         data = {}
         particle_file = (read_path + "/particles/MPMParticle{0:06d}.npz").format(printNum)
-        if not os.access(particle_file, os.F_OK): continue
+        if not os.access(particle_file, os.F_OK): 
+            raise ValueError(f"File {read_path}/particles/MPMParticle f{0:06d}.npz does not exist!")
 
         print((" MPM Postprocessing: Output VTK File" + str(printNum) + ' ').center(71, '-'))
         particle_info = np.load(particle_file, allow_pickle=True)
         if printNum == start_file:
             position0 = np.ascontiguousarray(DictIO.GetEssential(particle_info, "position"))
+            particle_id0 = np.ascontiguousarray(DictIO.GetEssential(particle_info, "particleID"))
         
+        particle_id = np.ascontiguousarray(DictIO.GetEssential(particle_info, "particleID"))
         position = DictIO.GetEssential(particle_info, "position")
         posx = np.ascontiguousarray(position[:, 0])
         posy = np.ascontiguousarray(position[:, 1])
@@ -47,7 +50,9 @@ def write_vtk_file(sims: Simulation, start_file, end_file, read_path, write_path
             volume = np.ascontiguousarray(DictIO.GetEssential(particle_info, "volume"))
             data.update({"volume": volume})
         if DictIO.GetAlternative(kwargs, "write_displacement", True):
-            disp = position - position0
+            id_map = {pid: idx for idx, pid in enumerate(particle_id0)}
+            indices = np.array([id_map[pid] for pid in particle_id])
+            disp = position - position0[indices]
             dispx = np.ascontiguousarray(disp[:, 0])
             dispy = np.ascontiguousarray(disp[:, 1])
             dispz = np.zeros(disp.shape[0])

@@ -2,9 +2,12 @@ import taichi as ti
 import numpy as np
 
 from src.utils.constants import ZEROVEC3f, Threshold, SQRT3, DBL_EPSILON
-from src.utils.MatrixFunction import matrix_form
-from src.utils.TypeDefination import vec3f, vec6f, mat2x2, mat3x3
+from src.utils.TypeDefination import vec3f, vec6f, mat2x2, mat3x3, vec2f
 
+
+@ti.func
+def equal(vec1, vec2):
+    return (abs(vec1 - vec2) < Threshold).all()
 
 @ti.func
 def dot2(vector):
@@ -47,7 +50,7 @@ def TACIHI_NUMPY_SUB(TI_VEC, NP_VEC):
 def summation(vector):
     result = 0.
     for n in ti.static(range(vector.n)):
-        result += vector[n]
+        result += vector[n] * vector[n]
     return result
 
 @ti.func
@@ -70,7 +73,7 @@ def MeanValue(var):
 @ti.func
 def voigt_tensor_dot(vec1, vec2):
     return vec1[0] * vec2[0] + vec1[1] * vec2[1] + vec1[2] * vec2[2] + \
-           vec1[3] * vec2[3] + vec1[4] * vec2[4] + vec1[5] * vec2[5]
+           2. * (vec1[3] * vec2[3] + vec1[4] * vec2[4] + vec1[5] * vec2[5])
 
 @ti.func
 def voigt_tensor_trace(vector):
@@ -130,7 +133,9 @@ def equivalent_voigt(vector):
 
 @ti.func
 def principal_tensor(vector):
-    matrix = matrix_form(vector)
+    matrix = mat3x3([[vector[0], vector[3], vector[5]], 
+                   [vector[3], vector[1], vector[4]], 
+                   [vector[5], vector[4], vector[2]]])
     m = matrix.trace()
     dd = matrix[0, 1] * matrix[0, 1]
     ee = matrix[1, 2] * matrix[1, 2]
@@ -157,9 +162,9 @@ def principal_tensor(vector):
 
 @ti.func
 def outer_product(vec1, vec2):
-    return mat3x3([[vec1[0] * vec2[0], vec1[1] * vec2[0], vec1[2] * vec2[0]],
-                   [vec1[0] * vec2[1], vec1[1] * vec2[1], vec1[2] * vec2[1]],
-                   [vec1[0] * vec2[2], vec1[1] * vec2[2], vec1[2] * vec2[2]]])
+    return mat3x3([[vec1[0] * vec2[0], vec1[0] * vec2[1], vec1[0] * vec2[2]],
+                   [vec1[1] * vec2[0], vec1[1] * vec2[1], vec1[1] * vec2[2]],
+                   [vec1[2] * vec2[0], vec1[2] * vec2[1], vec1[2] * vec2[2]]])
 
 @ti.func
 def outer_product2D(vec1, vec2):
@@ -187,3 +192,32 @@ def truncation(vector):
         if ti.abs(vector[i]) < DBL_EPSILON:
             vector[i] = 0.
     return vector
+
+
+@ti.func
+def cross_matrix(vec):
+    return mat3x3([0., -vec[2], vec[1]], [vec[2], 0., -vec[0]], [-vec[1], vec[0], 0.])
+
+@ti.func
+def spherical_angle(vec):
+    return vec2f(ti.acos(vec[2]), ti.atan2(vec[1], vec[0]))
+
+@ti.func
+def normal_from_angles(alpha, beta):
+    return vec3f(ti.sin(alpha) * ti.cos(beta), ti.sin(alpha) * ti.sin(beta), ti.cos(alpha))
+
+@ti.func
+def coord_global2local(scale, rotation_matrix, coord, offset):
+    return rotation_matrix.transpose() @ (coord - offset) / scale
+
+@ti.func
+def coord_local2global(scale, rotation_matrix, coord, offset):
+    return rotation_matrix @ coord * scale + offset
+
+@ti.func
+def global2local(vec, scale, rotation_matrix):
+    return rotation_matrix.transpose() @ vec / scale
+
+@ti.func
+def local2global(vec, scale, rotation_matrix):
+    return rotation_matrix @ vec * scale

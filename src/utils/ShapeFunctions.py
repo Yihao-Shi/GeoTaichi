@@ -383,6 +383,171 @@ def GShapeBsplineC(xp, xg, idx, btype):
         dnx = (0.5 * d + 2.) * d + 2.
     return dnx * idx
 
+@ti.func
+def ShapeBsplineC_THB(xp, xg, dx, nlevel, ntype):
+    nx = 0.
+    r = xp - xg
+    subdx = dx / (2.0 ** nlevel)
+    r /= subdx
+    if ntype == 3:
+        if -2.00 <= r < -1.00:
+            nx = r**3 / 6.0 + r**2 + 2.0*r + 4.0/3.0
+        elif -1.00 <= r < 0.00:
+            nx = -r**3 / 2.0 - r**2 + 2.0/3.0
+        elif 0.00 <= r < 1.00:
+            nx = 0.5*r**3 - r**2 + 2.0/3.0
+        elif 1.00 <= r <= 2.00:
+            nx = -r**3 / 6.0 + r**2 - 2.0*r + 4.0/3.0
+        else:
+            nx = 0.0
+    elif ntype ==1 or ntype ==9:
+        if 0.00 <= r < 1.00:
+            nx = r**3 / 6.0 - r + 1.0
+        elif 1.00 <= r <= 2.00:
+            nx = -r**3 / 6.0 + r**2 - 2.0*r + 4.0/3.0
+        elif -2.00 <= r < -1.00:
+            nx = r**3 / 6.0 + r**2 + 2.0*r + 4.0/3.0
+        elif -1.00 <= r < 0.00:
+            nx = -r**3 / 6.0 + r + 1.0
+    elif ntype == 2:
+        if -1.00 <= r < 0.00:
+            nx = -r**3 / 3.0 - r**2 + 2.0/3.0
+        elif 0.00 <= r < 1.00:
+            nx = 0.5*r**3 - r**2 + 2.0/3.0
+        elif 1.00 <= r <= 2.00:
+            nx = -r**3 / 6.0 + r**2 - 2.0*r + 4.0/3.0
+    elif ntype == 8:
+        if -2.00 <= r < -1.00:
+            nx = r**3 / 6.0 + r**2 + 2.0*r + 4.0/3.0
+        elif -1.00 <= r < 0.00:
+            nx = -r**3 / 2.0 - r**2 + 2.0/3.0
+        elif 0.00 <= r < 1.00:
+            nx = r**3 / 3.0 - r**2 + 2.0/3.0
+    elif ntype == 4:
+        if -2.00 <= r < -1.00:
+            nx = r**3 /6.0 + r**2 + 2.0*r + 4.0/3.0
+        elif -1.00 <= r < 0.00:
+            nx = -r**3/ 2.0 - r**2 + 2.0/3.0
+        elif 0.00 <= r < 0.50:
+            nx = r**3 / 3.0 - r**2 + 2.0/3.0
+        elif 0.50 <= r < 1.00:
+            nx = r**3 - 2.0*r**2 + 0.5*r + 7.0/12.0
+        elif 1.00 <= r < 1.50:
+            nx = -2.0/3.0*r**3 + 3.0*r**2 - 4.5*r + 9.0/4.0
+    elif ntype == 7:
+        if 1.00 <= r < 2.00:
+            nx = -r**3 /6.0 + r**2 - 2.0*r + 4.0/3.0
+        elif 0.00 <= r < 1.00:
+            nx = r**3/ 2.0 - r**2 + 2.0/3.0
+        elif -0.50 <= r < 0.00:
+            nx = -r**3/3.0 - r**2 + 2.0/3.0
+        elif -1.00 <= r < -0.50:
+            nx = -r**3 - 2.0*r**2 - 0.5*r + 7.0/12.0
+        elif -1.50 <= r < -1.00:
+            nx = 2.0/3.0*r**3 + 3.0*r**2 + 4.5*r + 9.0/4.0
+    elif ntype == 5:
+        if -1.50 <= r < -0.5:
+            nx = 1.0/6.0*r**3 + 3.0/4.0*r**2 + 9.0/8.0*r + 9.0/16.0
+        elif -0.50 <= r < 0.00:
+            nx = -3.0/2.0*r**3 - 7.0/4.0*r**2 - 1.0/8.0*r + 17.0/48.0
+        elif 0.00 <= r < 0.50:
+            nx = 11.0/6.0*r**3 - 7.0/4.0*r**2 - 1.0/8.0*r + 17.0/48.0
+        elif 0.50 <= r < 1.00:
+            nx = -2.0/3.0*r**3 + 2.0*r**2 - 2.0*r + 2.0/3.0
+    elif ntype == 6:
+        if 0.50 <= r < 1.50:
+            nx = -1.0/6.0*r**3 + 3.0/4.0*r**2 - 9.0/8.0*r + 9.0/16.0
+        elif 0.00 <= r < 0.50:
+            nx = 3.0/2.0*r**3 - 7.0/4.0*r**2 + 1.0/8.0*r + 17.0/48.0
+        elif -0.50 <= r < 0.00:
+            nx = -11.0/6.0*r**3 - 7.0/4.0*r**2 + 1.0/8.0*r + 17.0/48.0
+        elif -1.00 <= r < -0.50:
+            nx = 2.0/3.0*r**3 + 2.0*r**2 + 2.0*r + 2.0/3.0
+    return nx
+
+
+@ti.func
+def GShapeBsplineC_THB(xp, xg, dx, nlevel, ntype):
+    dnx = 0.
+    r = xp - xg
+    subdx = dx / (2.0 ** nlevel)
+    r /= subdx
+    if ntype == 3:
+        if -2.00 <= r < -1.00:
+            dnx = r**2 /2.0 + 2.0*r + 2.0
+        elif -1.00 <= r < 0.00:
+            dnx = -1.5 * r**2 - 2.0*r
+        elif 0.00 <= r < 1.00:
+            dnx = 1.5 * r**2 - 2.0*r
+        elif 1.00 <= r <= 2.00:
+            dnx = -0.5*r**2 + 2.0*r - 2.0
+        else:
+            dnx = 0.0
+    elif ntype == 1 or ntype == 9:
+        if 0.00 <= r < 1.00:
+            dnx = 0.5 * r**2 - 1.0
+        elif 1.00 <= r <= 2.00:
+            dnx = -0.5*r**2 + 2.0*r - 2.0
+        elif -2.00 <= r < -1.00:
+            dnx = r**2 /2.0 + 2.0*r + 2.0
+        elif -1.00 <= r < 0.00:
+            dnx = -0.5 * r**2 + 1.0
+    elif ntype == 2:
+        if -1.00 <= r < 0.00:
+            dnx = -r**2 - 2.0*r
+        elif 0.00 <= r < 1.00:
+            dnx = 1.5 * r**2 - 2.0*r
+        elif 1.00 <= r <= 2.00:
+            dnx = -0.5*r**2 + 2.0*r - 2.0
+    elif ntype == 8:
+        if -2.00 <= r < -1.00:
+            dnx = r**2 /2.0 + 2.0*r + 2.0
+        elif -1.00 <= r < 0.00:
+            dnx = -1.5 * r**2 - 2.0*r
+        elif 0.00 <= r < 1.00:
+            dnx = r**2 - 2.0*r
+    elif ntype == 4:
+        if -2.00 <= r < -1.00:
+            dnx = r**2 /2.0 + 2.0*r + 2.0
+        elif -1.00 <= r < 0.00:
+            dnx = -1.5 * r**2 - 2.0*r
+        elif 0.00 <= r < 0.50:
+            dnx = r**2 - 2.0*r
+        elif 0.50 <= r < 1.00:
+            dnx = 3.0*r**2 - 4.0*r + 0.5
+        elif 1.00 <= r < 1.50:
+            dnx = -2.0*r**2 + 6.0*r - 4.5
+    elif ntype == 7:
+        if 1.00 <= r < 2.00:
+            dnx = -r**2 /2.0 + 2.0*r - 2.0
+        elif 0.00 <= r < 1.00:
+            dnx = 1.5 * r**2 - 2.0*r
+        elif -0.50 <= r < 0.00:
+            dnx = -r**2 - 2.0*r
+        elif -1.00 <= r < -0.50:
+            dnx = -3.0*r**2 - 4.0*r - 0.5
+        elif -1.50 <= r < -1.00:
+            dnx = 2.0*r**2 + 6.0*r + 4.5
+    elif ntype == 5:
+        if -1.50 <= r < -0.5:
+            dnx = 0.5*r**2 + 1.5*r + 9.0/8.0
+        elif -0.50 <= r < 0.00:
+            dnx = -4.5* r**2 - 3.5*r - 1.0/8.0
+        elif 0.00 <= r < 0.50:
+            dnx = 11.0/2.0* r**2 - 3.5*r - 1.0/8.0
+        elif 0.50 <= r < 1.00:
+            dnx = -2.0*r**2 + 4.0*r - 2.0
+    elif ntype == 6:
+        if 0.50 <= r < 1.50:
+            dnx = -0.5*r**2 + 1.5*r - 9.0/8.0
+        elif 0.00 <= r < 0.50:
+            dnx = 4.5* r**2 - 3.5*r + 1.0/8.0
+        elif -0.50 <= r < 0.00:
+            dnx = -11.0/2.0* r**2 - 3.5*r + 1.0/8.0
+        elif -1.00 <= r < -0.50:
+            dnx = 2.0*r**2 + 4.0*r + 2.0
+    return dnx / subdx
+
 
 # ========================================================= #
 #              Cubic spline radial function                 #
@@ -468,24 +633,24 @@ def GQuinticSplineRadial(smoothing_length, relative_distance):
 #                      Guass Kernel                         #
 # ========================================================= #
 @ti.func
-def Guassian(smoothing_length, relative_distance):
+def Guassian(smoothing_length, relative_distance, cut_off=3.):
     norm_distance = relative_distance.norm()
     multiplier = 1.0 / ((SQRT_PI * smoothing_length) * (SQRT_PI * smoothing_length) * (SQRT_PI * smoothing_length))
     radius = norm_distance / smoothing_length
     basis_function = multiplier
-    if radius >= 0.0 and radius <= 3.0:
+    if radius >= 0.0 and radius <= cut_off:
         basis_function *= ti.exp(-radius * radius)
     else:
         basis_function = 0.0
     return basis_function
 
 @ti.func
-def GGuassian(smoothing_length, relative_distance):
+def GGuassian(smoothing_length, relative_distance, cut_off=3.):
     norm_distance = relative_distance.norm()
     multiplier = 1.0 / ((SQRT_PI * smoothing_length) * (SQRT_PI * smoothing_length) * (SQRT_PI * smoothing_length))
     radius = norm_distance / smoothing_length
     dw_dr = multiplier
-    if radius >= 0.0 and radius <= 3.0:
+    if radius >= 0.0 and radius <= cut_off:
         dw_dr *= -2. * radius * ti.exp(-radius * radius)
     else:
         dw_dr = 0.0
@@ -502,24 +667,24 @@ def GGuassian(smoothing_length, relative_distance):
 #                   Super Guass Kernel                      #
 # ========================================================= #
 @ti.func
-def SuperGuassian(smoothing_length, relative_distance):
+def SuperGuassian(smoothing_length, relative_distance, cut_off=3.):
     norm_distance = relative_distance.norm()
     multiplier = 1.0 / ((SQRT_PI * smoothing_length) * (SQRT_PI * smoothing_length) * (SQRT_PI * smoothing_length))
     radius = norm_distance / smoothing_length
     basis_function = multiplier
-    if radius >= 0.0 and radius <= 3.0:
+    if radius >= 0.0 and radius <= cut_off:
         basis_function *= ti.exp(-radius * radius) * (3./2. + 1. - radius * radius)
     else:
         basis_function = 0.0
     return basis_function
 
 @ti.func
-def GSuperGuassian(smoothing_length, relative_distance):
+def GSuperGuassian(smoothing_length, relative_distance, cut_off=3.):
     norm_distance = relative_distance.norm()
     multiplier = 1.0 / ((SQRT_PI * smoothing_length) * (SQRT_PI * smoothing_length) * (SQRT_PI * smoothing_length))
     radius = norm_distance / smoothing_length
     dw_dr = multiplier
-    if radius >= 0.0 and radius <= 3.0:
+    if radius >= 0.0 and radius <= cut_off:
         dw_dr *= radius * ti.exp(-radius * radius) * (-3 + 2. * radius * radius - 4.)
     else:
         dw_dr = 0.0

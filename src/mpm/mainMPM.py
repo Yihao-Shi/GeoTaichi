@@ -6,9 +6,7 @@ from src.mpm.SpatialHashGrid import SpatialHashGrid
 from src.mpm.engines.ULExplicitEngine import ULExplicitEngine
 from src.mpm.engines.ULExplicitTwoPhaseEngine import ULExplicitTwoPhaseEngine
 from src.mpm.engines.TLExplicitEngine import TLExplicitEngine
-# from src.mpm.engines.ULImplicitEngine import ImplicitEngine
-# from src.mpm.engines.IncompressibleEngine import IncompressibleEngine
-from src.mpm.MaterialManager import ConstitutiveModel
+from src.mpm.engines.ULImplicitEngine import ImplicitEngine
 from src.mpm.GenerateManager import GenerateManager
 from src.mpm.MPMBase import Solver
 from src.mpm.PostPlot import write_vtk_file
@@ -32,7 +30,6 @@ class MPM(object):
         self.sims = Simulation()
         self.scene = myScene()
         self.generator = GenerateManager()
-        self.material_handle = ConstitutiveModel()
         self.enginer = None
         self.neighbor = None
         self.recorder = None
@@ -66,10 +63,12 @@ class MPM(object):
         self.sims.set_visualize(DictIO.GetAlternative(kwargs, "visualize", True))
         self.sims.set_sparse_grid(DictIO.GetAlternative(kwargs, "sparse_grid", None))
         self.sims.set_particle_shifting(DictIO.GetAlternative(kwargs, "particle_shifting", False))
+        self.sims.set_stress_integration(DictIO.GetAlternative(kwargs, "stress_integration", "ReturnMapping"))
         self.sims.set_discretization(DictIO.GetAlternative(kwargs, "discretization", "FEM"))
-        #self.sims.set_THB(DictIO.GetAlternative(kwargs, "set_THB", False))
+        self.sims.set_THB(DictIO.GetAlternative(kwargs, "set_THB", False))
         self.sims.set_particle_traction_method(DictIO.GetAlternative(kwargs, "particle_traction_method", "Stable"))
         self.sims.set_AOSOA(DictIO.GetAlternative(kwargs, "AOSOA", False))
+        self.sims.set_random_field(DictIO.GetAlternative(kwargs, "random_field", False))
         if log: 
             self.print_basic_simulation_info()
             print('\n')
@@ -153,11 +152,9 @@ class MPM(object):
         self.scene.activate_contact(self.sims, contact_phys)
 
     def add_material(self, model, material):
-        self.material_handle.save_material(model, material)
+        self.scene.activate_material(self.sims, model, material)
 
     def add_element(self, element):
-        self.scene.activate_boundary(self.sims)
-        self.scene.activate_material(self.sims, self.material_handle)
         self.scene.activate_element(self.sims, element)
         self.scene.activate_particle(self.sims)
 
@@ -254,16 +251,14 @@ class MPM(object):
                         self.enginer = ULExplicitTwoPhaseEngine(self.sims)
                     else:
                         self.enginer = ULExplicitEngine(self.sims)
-                """ elif self.sims.solver_type == "Implicit":
+                elif self.sims.solver_type == "Implicit":
                     if self.sims.material_type == "Solid":
                         self.enginer = ImplicitEngine(self.sims)
-                    elif self.sims.material_type == "Fluid":
-                        self.enginer = IncompressibleEngine(self.sims)
                 elif self.sims.solver_type == "SimiImplicit":
                     if self.sims.material_type == "TwoPhaseDoubleLayer":
                         self.enginer = None
                     else:
-                        raise RuntimeError("Keyword:: /material_type/ should be set as $TwoPhase$") """
+                        raise RuntimeError("Keyword:: /material_type/ should be set as $TwoPhase$")
             elif self.sims.configuration == "TLMPM":
                 if self.sims.solver_type == "Explicit":
                     self.enginer = TLExplicitEngine(self.sims)
@@ -289,6 +284,7 @@ class MPM(object):
         self.sims.set_window_parameters(window)
 
     def add_essentials(self, kwargs):
+        self.scene.set_initial_gravity_field(self.sims, DictIO.GetAlternative(kwargs, "gravity_field", False))
         self.scene.boundary.copy_dict_to_field(self.sims)
         self.add_spatial_grid()
         self.add_engine()

@@ -17,7 +17,7 @@ class ContactManager:
         self.physpw = None
         self.have_initialise = False
 
-    def initialize(self, csims, msims, dsims, mscene, dscene):
+    def initialize(self, csims, mscene, dscene):
         self.neighbor.set_potential_contact_list(mscene, dscene)
         self.collision_list(csims)
         self.have_initialise = True
@@ -62,9 +62,9 @@ class ContactManager:
                         raise ValueError('Particle to Particle Contact Model error!')
                 else:
                     self.physpp = ContactModelBase()
-            self.physpp.manage_function("particle", dem_scheme, None)
+            self.physpp.manage_function("particle", sims.enhanced_coupling, dem_scheme)
         
-    def particle_wall_initialize(self, sims: Simulation, material_type, wall_type):
+    def particle_wall_initialize(self, sims: Simulation, material_type):
         if self.physpw is None:
             if sims.wall_interaction is True and not sims.particle_wall_contact_model is None:
                 if material_type == "Fluid" and sims.particle_wall_contact_model != "Fluid Particle":
@@ -82,16 +82,16 @@ class ContactManager:
                     raise ValueError('Particle to Wall Contact Model error!')
             else:
                 self.physpw = ContactModelBase()
-            self.physpw.manage_function("wall", None, wall_type)
+            self.physpw.manage_function("wall", None)
 
     def collision_list(self, sims: Simulation):
         if self.physpp:
-            self.physpp.collision_initialize(sims.particle_contact_list_length)
+            self.physpp.collision_initialize(sims.enhanced_coupling, sims.particle_contact_list_length)
         else:
             raise RuntimeError("Particle(MPM)-Particle(DEM) contact model have not been activated successfully!")
         
         if self.physpw:   
-            self.physpw.collision_initialize(sims.wall_contact_list_length)
+            self.physpw.collision_initialize(sims.enhanced_coupling, sims.wall_contact_list_length)
         else:
             raise RuntimeError("Particle(MPM)-Wall contact model have not been activated successfully!")
 

@@ -46,6 +46,7 @@ class BasicShape(object):
         self._is_center = False
         self._is_inertia = False
         self._reset = True
+        self.physical_parameter = {}
         
         self.is_simple_shape = 0
         self._ray = ray
@@ -347,8 +348,8 @@ class BasicShape(object):
         self._is_inertia = True
 
     def mesh_operation(self):
+        self.mesh.apply_translation(-self.mesh.center_mass)
         if self._reset:
-            self.mesh.apply_translation(-self.mesh.center_mass)
             _, new_axis = tm.inertia.principal_axis(self.mesh.moment_inertia)
             default_axis = np.eye(3)
             rotation_matrix = transformation_matrix_coordinate_system(new_axis, default_axis)
@@ -704,9 +705,13 @@ class polysuperellipsoid(SuperSurface):
         super().__init__(xrad1, yrad1, zrad1, xrad2, yrad2, zrad2)
         self.epsilon_e = epsilon_e
         self.epsilon_n = epsilon_n
+        self.physical_parameter.update({"xrad1": self.xrad1, "yrad1": self.yrad1, "zrad1": self.zrad1, 
+                                        "epsilon_e": self.epsilon_e, "epsilon_n": self.epsilon_n, 
+                                        "xrad2": self.xrad2, "yrad2": self.yrad2, "zrad2": self.zrad2})
 
         if epsilon_e == epsilon_n == 0:
             raise ValueError("Please define non zero epsilons for superellipsoid shape.")
+        self._reset = False
         
     def fx(self, p):
         p = self.transfer(p)
@@ -754,9 +759,14 @@ class polysuperquadrics(SuperSurface):
         self.epsilon_x = epsilon_x
         self.epsilon_y = epsilon_y
         self.epsilon_z = epsilon_z
+        self.physical_parameter.update({"xrad1": self.xrad1, "yrad1": self.yrad1, "zrad1": self.zrad1, 
+                                        "epsilon_x": self.epsilon_x, "epsilon_y": self.epsilon_y, "epsilon_z": self.epsilon_z, 
+                                        "xrad2": self.xrad2, "yrad2": self.yrad2, "zrad2": self.zrad2})
+
 
         if epsilon_x == epsilon_y == epsilon_z == 0:
             raise ValueError("Please define non zero epsilons for polysuperquadrics shape.")
+        self._reset = False
         
     def _estimate_bounding_box(self):
         self._lower_bound = -np.array([self.xrad1, self.yrad1, self.zrad1])

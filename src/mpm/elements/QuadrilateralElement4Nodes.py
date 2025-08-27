@@ -5,9 +5,11 @@ import taichi as ti
 
 from src.mpm.elements.QuadrilateralKernel import *
 from src.mpm.structs import HexahedronGuassCell, HexahedronCell, ParticleCPDI, IncompressibleCell
+from src.mpm.elements.ElementNodesTHB_Generate import ElemNodesGen
 from src.mpm.elements.ElementBase import ElementBase
 from src.mpm.Simulation import Simulation
-from src.utils.GaussPoint import GaussPointInRectangle
+from src.mesh.GaussPoint import GaussPointInRectangle
+from src.mesh.QuadMesh import QuadrilateralMesh
 from src.utils.PrefixSum import PrefixSumExecutor
 from src.utils.linalg import round32, flip2d_linear
 from src.utils.ShapeFunctions import *
@@ -17,8 +19,9 @@ import src.utils.GlobalVariable as GlobalVariable
 
 Threshold = 1e-12
 class QuadrilateralElement4Nodes(ElementBase):
-    def __init__(self, element_type, grid_level) -> None:
-        super().__init__(element_type, grid_level)
+    def __init__(self, element_type, grid_level, ghost_cell) -> None:
+        super().__init__(element_type, grid_level, ghost_cell)
+        self.mesh = None
         self.grid_size = vec2f(2., 2.)
         self.igrid_size = vec2f(0.5, 0.5)
         self.start_local_coord = vec2f(-1, -1)
@@ -45,7 +48,6 @@ class QuadrilateralElement4Nodes(ElementBase):
         self.dshape_fnc = None
         self.b_matrix = None
         self.node_size = None
-        self.nodal_coords = None
         self.calculate = None
         self.calLength = None
         self.calLength_lower_order = None
@@ -66,22 +68,66 @@ class QuadrilateralElement4Nodes(ElementBase):
             grid_size = ti.Vector(grid_size)
         domain = np.array(sims.domain)
         grid_size = np.array(grid_size)
-        cnum = np.floor((domain + Threshold) / grid_size)          
+        cnum = np.floor((domain + 1e-16) / grid_size)          
         for d in range(2):
             if cnum[d] == 0:
                 cnum[d] = 1
-        if self.element_type == "Staggered":   
+        if sims.linear_solver == "MGPCG":   
             multiplier = 2 * sims.multilevel
             cnum = np.array(multiplier * np.ceil(cnum / multiplier), dtype=np.int32) 
 
         self.grid_size = vec2f(domain / cnum)
         self.igrid_size = 1. / self.grid_size
         self.cell_volume = self.calc_volume()
-        self.cnum = vec2i(cnum)
+        self.cnum = vec2i(cnum) + 2 * self.ghost_cell
         self.gnum = self.cnum + 1
         self.gridSum = int(self.gnum[0] * self.gnum[1])
         self.cellSum = int(self.cnum[0] * self.cnum[1])
-        self.set_nodal_coords()
+        self.mesh = QuadrilateralMesh(*self.cnum, *self.grid_size, self.ghost_cell)
+
+    def create_nodes_THB(self, sims: Simulation, grid_size):
+        self.grid_size = grid_size
+        self.gnum = vec2i([int((sims.domain[i] + Threshold) / grid_size[i]) + 1 for i in range(2)]) 
+        modelRange = np.array([[0., 0.,], sims.domain])
+        modelRange = modelRange.T
+        THBparameter = sims.THBparameter
+        self.grid_layer = THBparameter['grid_layer']
+        subdomain = THBparameter['subdomain']
+        print('Debug THB information:')
+        nbNode, nbElem, ElemList, nodeList = ElemNodesGen(grid_size[0], modelRange, self.grid_layer, subdomain )
+        print(f'Numbers of Element and Node: {nbElem}, {nbNode}')
+        self.gridSum = nbNode
+        self.nodal_coords = np.array([nodeList[i].coord for i in range(1, nbNode + 1)])
+        self.Nlevel = np.array([nodeList[i].level for i in range(1, nbNode + 1)])
+        self.Ntype = np.array([nodeList[i].Ntype for i in range(1, nbNode + 1)])
+        self.ti_nodal_coords = ti.Vector.field(2, float)
+        self.ti_Nlevels = ti.field(int)
+        self.ti_Ntype = ti.field(int)
+        snode = ti.root.dense(ti.i, self.nodal_coords.shape[0])
+        snode.place(self.ti_nodal_coords)
+        snode.dense(ti.j, 2).place(self.ti_Nlevels)
+        snode.dense(ti.j, 2).place(self.ti_Ntype)
+        self.ti_nodal_coords.from_numpy(self.nodal_coords)
+        self.ti_Nlevels.from_numpy(self.Nlevel)
+        self.ti_Ntype.from_numpy(self.Ntype)
+        # Element
+        self.ElemNode = np.array([ElemList[i].includeNode[:4] for i in range(1, nbElem + 1)])
+        self.ElemList_childElem = np.array([ElemList[i].childElem for i in range(1, nbElem + 1)])
+        self.ElemList_nbInfNode = np.array([ElemList[i].nbInfNode for i in range(1, nbElem + 1)])
+        self.ElemList_influenNode = np.array([ElemList[i].influenNode for i in range(1, nbElem + 1)])
+        self.ti_elem_childElem = ti.field(int)
+        self.ti_elem_nbInfNode = ti.field(int)
+        self.ti_elem_influenNode = ti.field(int)
+        self.ti_elemNode = ti.field(int)
+        element_snode = ti.root.dense(ti.i, self.ElemNode.shape[0])
+        element_snode.place(self.ti_elem_nbInfNode)
+        element_snode.dense(ti.j, self.grid_layer).place(self.ti_elem_childElem)
+        element_snode.dense(ti.j, 25).place(self.ti_elem_influenNode)
+        element_snode.dense(ti.j, 4).place(self.ti_elemNode)
+        self.ti_elemNode.from_numpy(self.ElemNode)
+        self.ti_elem_childElem.from_numpy(self.ElemList_childElem)
+        self.ti_elem_nbInfNode.from_numpy(self.ElemList_nbInfNode)
+        self.ti_elem_influenNode.from_numpy(self.ElemList_influenNode)
 
     def set_characteristic_length(self, sims: Simulation):
         if sims.shape_function == "CPDI1" or sims.shape_function == "CPDI2":
@@ -90,11 +136,6 @@ class QuadrilateralElement4Nodes(ElementBase):
             self.calLength = ti.Vector.field(2, float, shape=sims.max_body_num)
             if sims.stabilize == "F-Bar Method":
                 self.calLength_lower_order = ti.Vector.field(2, float, shape=sims.max_body_num)
-
-    def set_nodal_coords(self):
-        X = np.linspace(0., self.cnum[0] * self.grid_size[0], int(self.gnum[0]))
-        Y = np.linspace(0., self.cnum[1] * self.grid_size[1], int(self.gnum[1]))
-        self.nodal_coords = flip2d_linear(np.array(list(product(X, Y))), size_u=X.shape[0], size_v=Y.shape[0])
 
     def element_initialize(self, sims: Simulation, local_coordiates=False):
         self.choose_shape_function(sims)
@@ -114,12 +155,12 @@ class QuadrilateralElement4Nodes(ElementBase):
                 self.gauss_point.create_gauss_point()
             if sims.mode == "Normal":
                 self.set_essential_field(is_bbar, sims)
-        
-        self.node_connectivity = ti.Vector.field(self.grid_nodes, int, shape=self.get_total_cell_number())
-        find_nodes_per_element_(0, self.get_total_cell_number(), self.gnum, self.node_connectivity, set_connectivity)
                 
         if sims.solver_type == "Implicit":
-            self.pse = PrefixSumExecutor(self.gridSum)
+            if sims.discretization == "FEM":
+                self.pse = PrefixSumExecutor(self.gridSum)
+            elif sims.discretization == "FDM":
+                self.pse = PrefixSumExecutor(self.cellSum)
             self.flag = ti.field(int, shape=self.pse.get_length())
 
     def compute_inertia_tensor(self, shape_function_type):
@@ -187,12 +228,14 @@ class QuadrilateralElement4Nodes(ElementBase):
                     self.grid_nodes_lower_order = 9
                     self.lower_shape_function = ShapeBsplineQ
                     self.lower_grad_shape_function = GShapeBsplineQ
+            elif sims.isTHB:
+                self.grid_nodes = 25
+                self.shape_function = ShapeBsplineC_THB
+                self.grad_shape_function = GShapeBsplineC_THB
         else:
             raise KeyError(f"The shape function type {sims.shape_function} is not exist!")
         
-        if sims.mode == "Lightweight":
-            GlobalVariable.INFLUENCENODE = self.influenced_node
-        
+        GlobalVariable.INFLUENCENODE = self.influenced_node
         self.influenced_dofs = 2 * self.grid_nodes
 
     def get_nonzero_grids_per_row(self):
@@ -256,9 +299,6 @@ class QuadrilateralElement4Nodes(ElementBase):
             set_particle_characteristic_length_gimp(particleNum, 1., self.calLength, particle, psize)
         elif sims.shape_function == "CPDI1" or sims.shape_function == "CPDI2":
             set_particle_characteristic_length_cpdi(particleNum, self.calLength, particle, psize)
-
-    def get_nodal_coords(self):
-        return self.nodal_coords
     
     def get_element_number(self, sims: Simulation):
         if sims.shape_function == "Linear":
@@ -275,11 +315,11 @@ class QuadrilateralElement4Nodes(ElementBase):
         self.gauss_cell = HexahedronGuassCell.field(shape=(self.get_total_cell_number() * sims.gauss_number ** 2, self.grid_level))
         activate_cell(self.cell)
 
-    def activate_euler_cell(self):
+    def activate_euler_cell(self, sims: Simulation):
         if self.element_type == "Staggered":
             if not self.cell is None:
                 print("Warning: Previous Euler cells will be override!")
-            self.cell = IncompressibleCell()
+            self.cell = IncompressibleCell(self.cnum, self.cellSum, self.ghost_cell)
 
     def set_up_cell_active_flag(self, fb: ti.FieldsBuilder):
         self.cell_active = ti.field(u1)
@@ -325,14 +365,6 @@ class QuadrilateralElement4Nodes(ElementBase):
     
     def calc_critical_timestep(self, velocity):
         return ti.min(self.grid_size[0], self.grid_size[1]) / velocity if velocity > 0. else 10000
-    
-    def initial_estimate_active_dofs(self, cutoff, node):
-        return estimate_active_dofs(cutoff, node)
-    
-    def find_active_nodes(self, cutoff, node):
-        find_active_node(self.gridSum, cutoff, node, self.flag)
-        self.pse.run(self.flag)
-        return set_active_dofs(self.gridSum, cutoff, node, self.flag)
 
     def calc_local_shape_fn(self, particleNum, particle):
         update(self.grid_nodes, self.influenced_node, self.grid_size, self.igrid_size, self.gnum, self.start_local_coord, particleNum[0],

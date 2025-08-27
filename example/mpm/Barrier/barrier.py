@@ -26,27 +26,27 @@ mpm.memory_allocate(memory={
                                                                "max_reflection_constraint":   0
                                                           }
                             })
-
-mpm.add_contact(contact_type="MPMContact", friction=0.577)
-  
-mpm.add_material(model="SoilStructureInteraction",
-                 material=[{
-                               "IsStructure":          False,
+                            
+mpm.add_contact(contact_type="MPMContact", friction= 0.577)
+                            
+mpm.add_material(model="DruckerPrager",
+                 material={
                                "MaterialID":           1,
                                "Density":              2500.,
                                "YoungModulus":         2.e7,
-                               "PossionRatio":        0.3,
+                               "PoissonRatio":        0.3,
                                "Cohesion":             0.,
                                "Friction":             30.,
                                "Dilation":             0.
-                           },
-                           {
-                               "IsStructure":          True,
+                           })
+                           
+mpm.add_material(model="LinearElastic",
+                 material={
                                "MaterialID":           2,
                                "Density":              2500.,
                                "YoungModulus":         2.e7,
                                "PoissionRatio":        0.3
-                           }])
+                           })
 
 mpm.add_element(element={
                              "ElementType":               "R8N3D",
@@ -58,7 +58,7 @@ mpm.add_region(region=[{
                             "Type": "Rectangle",
                             "BoundingBoxPoint": ti.Vector([0.1, 0.1, 0.1]),
                             "BoundingBoxSize": ti.Vector([8., 0.1, 4.]),
-                            "zdirection": ti.Vector([0., 0., 1.])
+                            
                       },
                       
                       {
@@ -66,7 +66,7 @@ mpm.add_region(region=[{
                             "Type": "Rectangle",
                             "BoundingBoxPoint": ti.Vector([8.1, 0.1, 0.1]),
                             "BoundingBoxSize": ti.Vector([1., 0.1, 5.]),
-                            "zdirection": ti.Vector([0., 0., 1.])
+                            
                       }])
 
 mpm.add_body(body={
@@ -75,10 +75,6 @@ mpm.add_body(body={
                                        "nParticlesPerCell":  2,
                                        "BodyID":             0,
                                        "MaterialID":         1,
-                                       "ParticleStress": {
-                                                              "GravityField":     True,
-                                                              "InternalStress":   ti.Vector([-0., -0., -0., 0., 0., 0.])
-                                                         },
                                        "Traction":       {},
                                        "InitialVelocity":ti.Vector([0., 0., 0.]),
                                        "FixVelocity":    ["Free", "Free", "Free"]    
@@ -90,10 +86,6 @@ mpm.add_body(body={
                                        "nParticlesPerCell":  2,
                                        "BodyID":             1,
                                        "MaterialID":         2,
-                                       "ParticleStress": {
-                                                              "GravityField":     True,
-                                                              "InternalStress":   ti.Vector([-0., -0., -0., 0., 0., 0.])
-                                                         },
                                        "Traction":       {},
                                        "InitialVelocity":    ti.Vector([0., 0., 0.]),
                                        "FixVelocity":        ["Free", "Free", "Free"]    
@@ -133,7 +125,7 @@ mpm.add_boundary_condition(boundary=[
 
 mpm.select_save_data(grid=True)
 
-mpm.run()
+mpm.run(gravity_field=True)
 
 mpm.postprocessing(start_file=0, end_file=31, write_background_grid=True)
 

@@ -91,7 +91,8 @@ class WallGenerator(object):
         wallID = DictIO.GetAlternative(wall_dict, "WallID", int(scene.wallNum[0]))
         matID = DictIO.GetEssential(wall_dict, "MaterialID")
         center = DictIO.GetEssential(wall_dict, "WallCenter")
-        norm = DictIO.GetEssential(wall_dict, "OuterNormal").normalized()
+        norm = DictIO.GetEssential(wall_dict, "OuterNormal")
+        norm = norm / np.linalg.norm(norm) if np.linalg.norm(norm) != 0. else norm
         scene.check_wall_number(sims, body_number=1)
         wallNum = int(scene.wallNum[0])
         scene.wall[wallNum].add_materialID(matID)
@@ -124,8 +125,9 @@ class WallGenerator(object):
         wallID = DictIO.GetEssential(wall_dict, "WallID")
         matID = DictIO.GetEssential(wall_dict, "MaterialID")
         vertices = DictIO.GetEssential(wall_dict, "WallVertice")
-        norm = DictIO.GetEssential(wall_dict, "OuterNormal").normalized().to_numpy()
+        norm = np.asarray(DictIO.GetEssential(wall_dict, "OuterNormal"))
         init_v = DictIO.GetAlternative(wall_dict, "InitialVelocity", vec3f([0, 0, 0]))
+        norm = norm / np.linalg.norm(norm) if np.linalg.norm(norm) != 0. else norm
         
         poly_arr = np.array([list(item) for item in vertices.values()])
 
@@ -177,9 +179,12 @@ class WallGenerator(object):
         direction = DictIO.GetAlternative(wall_dict, "Orientation", np.array([0, 0, 1]))
 
         mesh: tm.Trimesh = tm.load(file)
+        mass_center = mesh.center_mass
+        mesh.apply_translation(-mass_center)
         mesh.apply_scale(scale)
-        mesh.apply_translation(np.array(offset))
         mesh.apply_transform(transformation_matrix_direction(np.array([0, 0, 1]), direction))
+        mesh.apply_translation(mass_center)
+        mesh.apply_translation(np.asarray(offset))
         return mesh
 
     def add_file_facet(self, wall_dict, sims, scene: myScene):
@@ -187,12 +192,17 @@ class WallGenerator(object):
         matID = DictIO.GetEssential(wall_dict, "MaterialID")
         init_v = DictIO.GetAlternative(wall_dict, "InitialVelocity", vec3f([0, 0, 0]))
         direction = DictIO.GetAlternative(wall_dict, "Orientation", np.array([0, 0, 1]))
+        iscounterclockwise = DictIO.GetAlternative(wall_dict, "Counterclockwise", None)
 
         mesh: tm.Trimesh = self.mesh_from_file(wall_dict)
         vertices = np.array(mesh.vertices)
         faces = np.array(mesh.faces)
         scene.check_wall_number(sims, body_number=faces.shape[0])
-        kernel_add_facet(int(scene.wallNum[0]), wallID, matID, vertices, faces, init_v, scene.wall)
+        if iscounterclockwise is None:
+            norm = mesh.face_normals
+            kernel_add_facet_files(int(scene.wallNum[0]), wallID, matID, vertices, faces, norm, init_v, scene.wall)
+        else:
+            kernel_add_facet_files_autonorm(iscounterclockwise, int(scene.wallNum[0]), wallID, matID, vertices, faces, init_v, scene.wall)
         scene.wallNum[0] += faces.shape[0]
         self.print_facet_info(matID, direction, init_v, faces.shape[0])
 
@@ -206,17 +216,24 @@ class WallGenerator(object):
     def add_patch_wall(self, wall_dict, sims, scene: myScene):
         wallID = DictIO.GetEssential(wall_dict, "WallID")
         matID = DictIO.GetEssential(wall_dict, "MaterialID")
-        init_v = DictIO.GetAlternative(wall_dict, "InitialVelocity", vec3f([0, 0, 0]))
+        velocity = DictIO.GetAlternative(wall_dict, "Velocity", vec3f([0, 0, 0]))
+        rotate_center = DictIO.GetAlternative(wall_dict, "RotateCenter", vec3f([0, 0, 0]))
+        angular_velocity = DictIO.GetAlternative(wall_dict, "AngularVelocity", vec3f([0, 0, 0]))
         direction = DictIO.GetAlternative(wall_dict, "Orientation", np.array([0, 0, 1]))
-        iscounterclockwise = DictIO.GetAlternative(wall_dict, "Counterclockwise", True)
+        iscounterclockwise = DictIO.GetAlternative(wall_dict, "Counterclockwise", None)
 
         mesh: tm.Trimesh = self.mesh_from_file(wall_dict)
         vertices = np.array(mesh.vertices)
-        faces = np.array(mesh.faces)
+        faces = np.array(mesh.faces, dtype=np.int32)
         scene.check_wall_number(sims, body_number=faces.shape[0])
-        kernel_add_patch(iscounterclockwise, int(scene.wallNum[0]), wallID, matID, vertices, faces, init_v, scene.wall)
+        if iscounterclockwise is None:
+            norm = mesh.face_normals
+            kernel_add_patch(int(scene.wallNum[0]), wallID, matID, vertices, faces, norm, scene.wall)
+        else:
+            kernel_add_patch_autonorm(iscounterclockwise, int(scene.wallNum[0]), wallID, matID, vertices, faces, scene.wall)
         scene.wallNum[0] += faces.shape[0]
-        self.print_facet_info(matID, direction, init_v, faces.shape[0])
+        scene.geometry.append(scene.wallNum[0] - faces.shape[0], scene.wallNum[0], rotate_center, velocity, angular_velocity, scene.wall)
+        self.print_facet_info(matID, direction, velocity, faces.shape[0])
 
         if DictIO.GetAlternative(wall_dict, "Visualize", False):
             self.visualize_mesh(vertices, faces)
@@ -228,7 +245,6 @@ class WallGenerator(object):
     def add_digital_elevation_wall(self, wall_dict, sims: Simulation, scene: myScene):
         wallID = DictIO.GetEssential(wall_dict, "WallID")
         matID = DictIO.GetEssential(wall_dict, "MaterialID")
-        init_v = DictIO.GetAlternative(wall_dict, "InitialVelocity", vec3f([0, 0, 0]))
         cell_size = DictIO.GetEssential(wall_dict, "CellSize")
         main_axis = DictIO.GetAlternative(wall_dict, "MainAxis", 'x')
         digital_elevation = DictIO.GetEssential(wall_dict, "DigitalElevation")
@@ -240,11 +256,11 @@ class WallGenerator(object):
         cell_number = [int(i - 1) for i in grid_number]
         digital_elevation = np.array(digital_elevation).reshape(-1)
         
-        wall_number = kernel_add_dem_wall(int(scene.wallNum[0]), no_data, cell_size, cell_number, digital_elevation, wallID, matID, init_v, scene.wall)
+        wall_number = kernel_add_dem_wall(int(scene.wallNum[0]), no_data, cell_size, cell_number, digital_elevation, wallID, matID, scene.wall)
         scene.check_wall_number(sims, body_number=wall_number)
         scene.digital_elevation.set_digital_elevation(matID, cell_size, cell_number)
         sims.set_digital_elevation_grid_num(grid_number)
-        self.print_facet_info(matID, None, init_v, wall_number)
+        self.print_facet_info(matID, None, [0., 0., 0.], wall_number)
         scene.wallNum[0] += wall_number
 
         if DictIO.GetAlternative(wall_dict, "Visualize", False):
@@ -292,8 +308,9 @@ class WallGenerator(object):
                                      DictIO.GetEssential(wall_info, "point"), 
                                      DictIO.GetEssential(wall_info, "norm"))
                 print("Inserted plane number: ", wall_number)
-            elif sims.wall_type == 1 or sims.wall_type == 2:
-                kernel_rebuild_triangular(int(scene.wallNum[0]), wall_number, scene.wall, 
+
+            elif sims.wall_type == 1:
+                kernel_rebuild_facet(int(scene.wallNum[0]), wall_number, scene.wall, 
                                           DictIO.GetAlternative(wall_info, "active", np.zeros(wall_number) + 1), 
                                           DictIO.GetAlternative(wall_info, "wallID", np.zeros(wall_number)), 
                                           DictIO.GetEssential(wall_info, "materialID"), 
@@ -302,10 +319,23 @@ class WallGenerator(object):
                                           DictIO.GetEssential(wall_info, "point3"), 
                                           DictIO.GetEssential(wall_info, "norm"), 
                                           DictIO.GetAlternative(wall_info, "velocity", np.zeros((wall_number, 3))))
-                if sims.wall_type == 1:
-                    print("Inserted facet number: ", wall_number)
-                elif sims.wall_type == 2:
-                    print("Inserted patch number: ", wall_number)
+                print("Inserted facet number: ", wall_number)
+            
+            elif sims.wall_type == 2:
+                velocity = DictIO.GetAlternative(wall_info, "velocity", vec3f([0, 0, 0]))
+                rotate_center = DictIO.GetAlternative(wall_info, "rotate_center", vec3f([0, 0, 0]))
+                angular_velocity = DictIO.GetAlternative(wall_info, "angular_velocity", vec3f([0, 0, 0]))
+                kernel_rebuild_patch(int(scene.wallNum[0]), wall_number, scene.wall, 
+                                          DictIO.GetAlternative(wall_info, "active", np.zeros(wall_number) + 1), 
+                                          DictIO.GetAlternative(wall_info, "wallID", np.zeros(wall_number)), 
+                                          DictIO.GetEssential(wall_info, "materialID"), 
+                                          DictIO.GetEssential(wall_info, "point1"), 
+                                          DictIO.GetEssential(wall_info, "point2"), 
+                                          DictIO.GetEssential(wall_info, "point3"), 
+                                          DictIO.GetEssential(wall_info, "norm"))
+                
+                scene.geometry.append(scene.wallNum[0], scene.wallNum[0] + wall_number, rotate_center, velocity, angular_velocity, scene.wall)
+                print("Inserted patch number: ", wall_number)
             scene.wallNum[0] += wall_number
         
     def restart_npz_servo(self, wall, servo, sims: Simulation, scene: myScene):    

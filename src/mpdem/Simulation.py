@@ -4,15 +4,21 @@ import math
 from src.dem.Simulation import Simulation as DEMSimulation
 from src.mpm.Simulation import Simulation as MPMSimulation
 from src.utils.TypeDefination import vec3f
+from src.utils.TimeTicker import Timer
 
 
 class Simulation(object):
     def __init__(self) -> None:
         self.domain = vec3f(0., 0., 0.)
-        self.coupling_scheme = "DEM-MPM"
+        self.coupling_scheme = "MPDEM"
         self.particle_interaction = True
         self.wall_interaction = False
+        self.enhanced_coupling = False
         self.is_continue = True
+        self.history_contact_path = {}
+        self.infludence_domain = 0
+        self.dependent_domain = 0
+        self.timer = Timer()
 
         self.dt = ti.field(float, shape=())
         self.delta = 0.
@@ -50,7 +56,7 @@ class Simulation(object):
         self.domain = domain
 
     def set_coupling_scheme(self, coupling_scheme):
-        valid_scheme = ["DEM-MPM", "MPM", "DEM", "Soil-Structure-Interface"]
+        valid_scheme = ["MPDEM", "DEMPM", "MPM", "DEM", "CFDEM"]
         if not coupling_scheme in valid_scheme:
             raise RuntimeError(f"KeyWord:: /CouplingScheme/ {coupling_scheme} is invalid. Only the followings are valid: {valid_scheme}")
         self.coupling_scheme = coupling_scheme
@@ -60,6 +66,15 @@ class Simulation(object):
 
     def set_wall_interaction(self, wall_interaction):
         self.wall_interaction = wall_interaction
+
+    def set_CFD_coupling_domain(self, coupling_domain):
+        self.infludence_domain = int(coupling_domain[0])
+        self.dependent_domain = int(coupling_domain[1])
+
+    def set_enhanced_coupling(self, enhanced_coupling):
+        if not isinstance(enhanced_coupling, bool):
+            raise ValueError("KeyWord:: /EnhancedCoupling/ should be a boolean value")
+        self.enhanced_coupling = enhanced_coupling
 
     def set_timestep(self, timestep):
         self.dt[None] = timestep
@@ -129,12 +144,12 @@ class Simulation(object):
     def set_potential_list_size(self, msims: MPMSimulation, dsims: DEMSimulation, dem_rad_max, mpm_rad_max):
         potential_particle_ratio = ((dem_rad_max + mpm_rad_max + msims.verlet_distance + dsims.verlet_distance) / (dem_rad_max + mpm_rad_max)) ** 3
         self.potential_particle_num = int(potential_particle_ratio * self.body_coordination_number)
-        self.max_potential_particle_pairs = int(self.potential_particle_num * msims.max_coupling_particle_particle)
+        self.max_potential_particle_pairs = int(self.potential_particle_num * msims.max_coupling_particle_num)
         self.particle_contact_list_length = int(math.ceil(self.compaction_ratio[0] * self.max_potential_particle_pairs))
         if dsims.max_wall_num > 0 and self.wall_interaction:
-            self.max_potential_wall_pairs = int(self.wall_coordination_number * msims.max_coupling_particle_particle)    
+            self.max_potential_wall_pairs = int(self.wall_coordination_number * msims.max_coupling_particle_num)    
             if dsims.wall_type == 3:
-                self.wall_contact_list_length = int(msims.max_coupling_particle_particle)
+                self.wall_contact_list_length = int(msims.max_coupling_particle_num)
             else:
                 self.wall_contact_list_length = int(math.ceil(self.compaction_ratio[1] * self.max_potential_wall_pairs))
 

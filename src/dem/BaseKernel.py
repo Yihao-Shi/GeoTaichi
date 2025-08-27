@@ -52,6 +52,50 @@ def update_particle_storage_(particleNum: ti.types.ndarray(), sphereNum: ti.type
     clumpNum[0] = remaining_clump
     particleNum[0] = remaining_particle
 
+@ti.kernel
+def update_LSparticle_storage_(particleNum: ti.types.ndarray(), rigidNum: ti.types.ndarray(), surfaceNum: ti.types.ndarray(), particle: ti.template(), box: ti.template(), rigid: ti.template()):
+    remaining_particle = 0
+    remaining_node = 0
+    delete_particle = 0
+    delete_node = 0
+    ti.loop_config(serialize=True)
+    for np in range(particleNum[0]):
+        if int(particle[np].active) == 1:
+            vertice_num = rigid[np].endNode - rigid[np].startNode
+            particle[remaining_particle] = particle[np]
+            box[remaining_particle] = box[np]
+            rigid[remaining_particle] = rigid[np]
+            rigid[remaining_particle].startNode -= delete_node
+            rigid[remaining_particle].endNode -= delete_node
+            remaining_particle += 1
+            remaining_node += vertice_num
+        else:
+            delete_particle += 1
+            delete_node += rigid[np].endNode - rigid[np].startNode
+    particleNum[0] = remaining_particle
+    rigidNum[0] = remaining_particle
+    surfaceNum[0] = remaining_node
+
+@ti.kernel
+def update_LSsurface_storage_(rigidNum: int, rigid: ti.template(), surface: ti.template()):
+    for nb in range(rigidNum):
+        for i in range(rigid[nb].startNode, rigid[nb].endNode):
+            surface[i] = nb
+
+@ti.kernel
+def update_ISparticle_storage_(particleNum: ti.types.ndarray(), rigidNum: ti.types.ndarray(), particle: ti.template(), rigid: ti.template()):
+    remaining_particle = 0
+    delete_particle = 0
+    ti.loop_config(serialize=True)
+    for np in range(particleNum[0]):
+        if int(particle[np].active) == 1:
+            particle[remaining_particle] = particle[np]
+            rigid[remaining_particle] = rigid[np]
+            remaining_particle += 1
+        else:
+            delete_particle += 1
+    particleNum[0] = remaining_particle
+    rigidNum[0] = remaining_particle
 
 @ti.kernel
 def particle_calm(particleNum: int, particle: ti.template()):
@@ -90,6 +134,28 @@ def find_particle_min_mass_(particleNum: int, particle: ti.template()) -> float:
         mass = particle[np]._get_mass()
         ti.atomic_min(min_mass, mass)
     return min_mass
+
+
+@ti.kernel
+def find_left_bottom_scene_(particleNum: int, particle: ti.template()) -> ti.types.vector(3, float):
+    left_bottom_scene = vec3f(MThreshold, MThreshold, MThreshold)
+    for np in range(particleNum):
+        position = particle[np]._get_position()
+        ti.atomic_min(left_bottom_scene[0], position[0])
+        ti.atomic_min(left_bottom_scene[1], position[1])
+        ti.atomic_min(left_bottom_scene[2], position[2])
+    return left_bottom_scene
+
+
+@ti.kernel
+def find_right_top_scene_(particleNum: int, particle: ti.template()) -> ti.types.vector(3, float):
+    right_top_scene = vec3f(-MThreshold, -MThreshold, -MThreshold)
+    for np in range(particleNum):
+        position = particle[np]._get_position()
+        ti.atomic_max(right_top_scene[0], position[0])
+        ti.atomic_max(right_top_scene[1], position[1])
+        ti.atomic_max(right_top_scene[2], position[2])
+    return right_top_scene
 
 
 @ti.kernel
@@ -278,6 +344,13 @@ def modify_sphere_groupID_in_region(value: int, sphereNum: int, sphere: ti.templ
         particleID = sphere[nsphere].sphereIndex
         if is_in_region(particle[particleID].x):
             particle[particleID].groupID = ti.u8(value)
+
+
+@ti.kernel
+def modify_levelset_groupID_in_region(value: int, rigidNum: int, rigid: ti.template(), is_in_region: ti.template()):
+    for nrigid in range(rigidNum):
+        if is_in_region(rigid[nrigid].mass_center):
+            rigid[nrigid].groupID = ti.u8(value)
 
 
 @ti.kernel
@@ -843,12 +916,32 @@ def create_level_set_surface(surfaceNum: int, surfaceSum: int, surface_node: ti.
 
 
 @ti.kernel
-def kernel_visualize_surface_(rigidNum: int, surface_node: ti.template(), visualzie_surface_node: ti.template(), rigid: ti.template(), box: ti.template()):
+def kernel_add_polysuperellipsoid_parameter(surfaceNum: int, surface: ti.template(), xrad1: float, yrad1: float, zrad1: float, epsilon_e: float, epsilon_n: float, xrad2: float, yrad2: float, zrad2: float):
+    surface[surfaceNum]._add_template_parameter(xrad1, yrad1, zrad1, epsilon_e, epsilon_n, xrad2, yrad2, zrad2)
+
+
+@ti.kernel
+def kernel_add_polysuperquadrics_parameter(surfaceNum: int, surface: ti.template(), xrad1: float, yrad1: float, zrad1: float, epsilon_x: float, epsilon_y: float, epsilon_z: float, xrad2: float, yrad2: float, zrad2: float):
+    surface[surfaceNum]._add_template_parameter(xrad1, yrad1, zrad1, epsilon_x, epsilon_y, epsilon_z, xrad2, yrad2, zrad2)
+
+@ti.kernel
+def kernel_visualize_levelset_surface_(rigidNum: int, surface_node: ti.template(), visualzie_surface_node: ti.template(), rigid: ti.template(), box: ti.template()):
     for master in range(rigidNum):
         for node in range(rigid[master]._start_node(), rigid[master]._end_node()):
             gnode = rigid[master].local_node_to_global(node)
             rotate_matrix = SetToRotate(rigid[master].q)
             visualzie_surface_node[gnode] = rigid[master].mass_center + rotate_matrix @ (box[master].scale * surface_node[node].x)
+
+@ti.kernel
+def kernel_visualize_implicit_surface_(rigidNum: int, template_vertice_num: ti.types.ndarray(), stacked_vertices: ti.types.ndarray(), total_vertice_num: ti.types.ndarray(), visualzie_surface_node: ti.template(), rigid: ti.template()):
+    for master in range(rigidNum):
+        templateID = rigid[master].templateID
+        scale = rigid[master].scale
+        begin_index = total_vertice_num[master]
+        for node in range(template_vertice_num[templateID], template_vertice_num[templateID + 1]):
+            gnode = node - template_vertice_num[templateID]
+            rotate_matrix = SetToRotate(rigid[master].q)
+            visualzie_surface_node[begin_index + gnode] = rigid[master].mass_center + rotate_matrix @ (scale * vec3f(stacked_vertices[node, 0], stacked_vertices[node, 1], stacked_vertices[node, 2]))
 
 @ti.kernel
 def kernel_postvisualize_surface_(surface_num: int, surface_node: ti.types.ndarray(), position: ti.types.ndarray(), quanternion: ti.types.ndarray(), start_node: ti.types.ndarray(), 

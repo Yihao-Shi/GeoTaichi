@@ -4,18 +4,18 @@ import numpy as np
 from src.utils.TypeDefination import (vec2i, vec2f, vec3f, vec3i, mat3x3, vec4f, vec5f, vec6f, vec8f,
                                       mat6x3, mat4x4, mat2x2, mat2x5, mat3x5, mat5x5, mat6x6, mat8x3, mat3x9, mat9x9)
 
-BLOCK_SZ = 64
+BLOCK_SZ = 128
 WARP_SZ = 32
 
 ILThreshold = 1e6
 LThreshold = 1e-6
 Threshold = 1e-14
 MThreshold = 1e15
-PENALTY = 1e20
+PENALTY = 1e25
 DBL_DIG = 15
 DBL_EPSILON = 2.2204460492503131e-16
 DBL_MAX = 1.7976931348623158e308
-DBL_MAX = 2.2250738585072014e-308
+DBL_MIN = 2.2250738585072014e-308
 DBL_MAX_10_EXP = 308
 DBL_MAX_EXP = 1024
 DBL_MIN_10_EXP = -307
@@ -91,10 +91,10 @@ ZEROMAT9x9 = mat9x9([0, 0, 0, 0, 0, 0, 0, 0, 0],
                     [0, 0, 0, 0, 0, 0, 0, 0, 0])
 
 # Consititutive models
-FTOL = 1.e-9        # yield function tolerance
-STOL = 1.e-6        # stress tolerance
+FTOL = 1.e-6        # yield function tolerance
+STOL = 1.e-3        # stress tolerance
 LTOL = 1.e-6        # detecting tolerance
-MAXITS = 15         # maximum iteration number
+MAXITS = 3         # maximum iteration number
 NSUB = 10
 dTmin = 1e-4
 EPS = 1.e-16        # machine error
@@ -106,3 +106,15 @@ Gtolerance = 1e-5
 
 # WENO intepolation
 WENO_EPS = 1e-6
+
+# Bounding volume hierarchy
+IS_LEAF         = 1
+PRIMITIVE_NONE  = 0
+PRIMITIVE_TRI   = 1
+PRIMITIVE_SHAPE = 2
+SHPAE_NONE      = 0
+SHPAE_SPHERE    = 1
+SHPAE_QUAD      = 2
+SHPAE_SPOT      = 3
+SHPAE_LASER     = 4
+MAX_PRIM        = 6

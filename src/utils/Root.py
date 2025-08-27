@@ -437,251 +437,83 @@ def namedtuple(typename, field_names, *, rename=False, defaults=None, module=Non
 
 import taichi as ti
 @ti.func
-def cubic_roots(coef, x0, x1, tol=1e-10):
-    """
-    implemets cubic roots as https://github.com/cemyuksel/cyCodeBase/blob/master/cyPolynomial.h
-    Finds the roots of the cubic polynomial between x0 and x1 with tol and returns the roots.
-    :param coef: vector([d,c,b,a]) f = a * x*x*x + b * x*x + c * x + d
-    :param x0: x_min
-    :param x1: x_max
-    :param tol:
-    :return: vector([root0,root1,root2]) if there are less than 3 roots, return 10
-    """
-    ret = False
-    roots_0 = 10.0
-    roots_1 = 10.0
-    roots_2 = 10.0
-    y0 = cubic_eval(coef, x0)
-    y1 = cubic_eval(coef, x1)
-    a = coef[3] *3
-    b_2 = coef[2]
-    c = coef[1]
-    deriv = ti.Vector([c, 2 * b_2, a, 0])
-    delta_4 = b_2 * b_2 - a * c
-    if delta_4 > 0:
-        d_2 = ti.sqrt(delta_4)
-        q = - (b_2 + d_2 * NewSign(b_2))
-        rv0 = q / a
-        rv1 = c / q
-        xa = ti.min(rv0, rv1)
-        xb = ti.max(rv0, rv1)
-        if IsDifferentSign(y0,y1):
-            if xa >= x1 or xb <= x0 or (xa <= x0 and xb >= x1):
-                roots_0 = FindClosed(coef, deriv, x0, x1, y0, tol)
-                ret = True
-        else:
-            if (xa >= x1 or xb <= x0) or (xa <= x0 and xb >= x1):
-                ret = True
-
-        if ret == False:
-            if xa > x0:
-                ya = cubic_eval(coef, xa)
-                if IsDifferentSign(y0,ya):
-                    roots_0 = FindClosed(coef, deriv, x0, xa, y0, tol)
-                    if IsDifferentSign(ya,y1) or (xb < x1 and IsDifferentSign(ya, cubic_eval(coef, xb))):
-                        defPoly0,defPoly1,defPoly2 = PolynomialDeflate(coef, roots_0)
-                        roots_1, roots_2 = QuadraticRoots(defPoly0, defPoly1, defPoly2, xa, x1)
-                elif xb < x1:
-                    yb = cubic_eval(coef, xb)
-                    if IsDifferentSign(ya,yb):
-                        roots_0 = FindClosed(coef, deriv, xa, xb, ya, tol)
-                        if IsDifferentSign(yb,y1):
-                            defPoly0, defPoly1, defPoly2 = PolynomialDeflate(coef, roots_0)
-                            roots_1, roots_2 = QuadraticRoots(defPoly0, defPoly1, defPoly2, xb, x1)
-                    elif IsDifferentSign(yb,y1):
-                        roots_0 = FindClosed(coef, deriv, xb, x1, yb, tol)
-                elif IsDifferentSign(ya,y1):
-                    roots_0 = FindClosed(coef, deriv, xa, x1, ya, tol)
-            else:
-                yb = cubic_eval(coef, xb)
-                if IsDifferentSign(y0,yb):
-                    roots_0 = FindClosed(coef, deriv, x0, xb,  y0, tol)
-                    if IsDifferentSign(yb,y1):
-                        defPoly0, defPoly1, defPoly2 = PolynomialDeflate(coef, roots_0)
-                        roots_1, roots_2 = QuadraticRoots(defPoly0, defPoly1, defPoly2, xb, x1)
-                elif IsDifferentSign(yb,y1):
-                    roots_0 = FindClosed(coef, deriv, xb, x1, yb, tol)
-    elif IsDifferentSign(y0,y1):
-        roots_0 = FindClosed(coef, deriv, x0,  x1, y0, tol)
-    return roots_0,roots_1,roots_2
-
-@ti.func
-def cubic_first_root(coef, x0, x1, tol=6e-4):
-    """
-    Finds the first root of the cubic polynomial between x0 and x1 with tol and returns the root.
-    :param coef: vector([d,c,b,a]) f = a * x*x*x + b * x*x + c * x + d
-    !!check if it returns the minimal root
-    :param x0: x_min
-    :param x1: x_max
-    :param tol:
-    :return: float
-    """
-    ret = False
-    root = 10.0
-    y0 = cubic_eval(coef, x0)
-    y1 = cubic_eval(coef, x1)
-    a = coef[3] * 3
-    b_2 = coef[2]
-    c = coef[1]
-    deriv = ti.Vector([c, 2*b_2, a, 0])
-    delta_4 = b_2*b_2 - a*c
-    if delta_4 > 0:
-        d_2 = ti.sqrt(delta_4)
-        q = - ( b_2 + d_2 * NewSign(b_2) )
-        rv0 = q / a
-        rv1 = c / q
-        xa = ti.min(rv0, rv1)
-        xb = ti.max(rv0, rv1)
-        if IsDifferentSign(y0,y1):
-            if xa >= x1 or xb <= x0 or ( xa <= x0 and xb >= x1 ):
-                root = FindClosed(coef, deriv, x0, x1, y0, tol)
-                ret = True
-        else:
-            if (xa >= x1 or xb <= x0) or ( xa <= x0 and xb >= x1 ):
-                ret = True
-
-        if ret == False:
-            if xa > x0:
-                ya = cubic_eval(coef, xa)
-                if IsDifferentSign(y0,ya):
-                    root = FindClosed(coef, deriv, x0, xa, y0, tol)
-                elif xb < x1:
-                    yb = cubic_eval(coef, xb)
-                    if IsDifferentSign(ya,yb):
-                        root = FindClosed(coef, deriv, xa, xb, ya, tol)
-                    elif IsDifferentSign(yb,y1):
-                        root = FindClosed(coef, deriv, xb, x1, yb, tol)
-                elif IsDifferentSign(ya,y1):
-                    root = FindClosed(coef, deriv, xa, x1, ya, tol)
-            else:
-                yb = cubic_eval(coef, xb)
-                if IsDifferentSign(y0,yb):
-                    root = FindClosed(coef, deriv, x0, xb,  y0, tol)
-                elif IsDifferentSign(yb,y1):
-                    root = FindClosed(coef, deriv, xb, x1, yb, tol)
-    elif IsDifferentSign(y0,y1):
-        root = FindClosed(coef, deriv, x0,  x1, y0, tol)
-    return root
-
-@ti.func
-def CubicHasRoot(coef, x0, x1):
-    ret = 0
-    y0 = cubic_eval(coef, x0)
-    y1 = cubic_eval(coef, x1)
-    if IsDifferentSign(y0,y1):
-        ret = 1
+def solve_quadratic(a, b, c):
+    res = 0
+    x0 = x1 = 0.0
+    d = b * b - 4 * a * c
+    if d < 0:
+        x0 = -b / (2 * a)
+        res = 0
     else:
-        a = coef[3] * 3.
-        b_2 = coef[2]
-        c = coef[1]
-        delta_4 = b_2 * b_2 - a * c
-        if delta_4 > 0:
-            d_2 = ti.sqrt(delta_4)
-            q = - (b_2 + d_2 * NewSign(b_2))
-            rv0 = q / a
-            rv1 = c / q
-            xa = ti.min(rv0, rv1)
-            xb = ti.max(rv0, rv1)
-            if (xa >= x1 or xb <= x0) or ( xa <= x0 and xb >= x1 ):
-                ret = 0
-            elif xa > x0:
-                ya = cubic_eval(coef, xa)
-                if IsDifferentSign(y0,ya):
-                    ret = 1
-                elif xb < x1:
-                    yb = cubic_eval(coef, xb)
-                    if IsDifferentSign(y0,yb):
-                        ret = 1
-            elif xa <= x0:
-                yb = cubic_eval(coef, xb)
-                if IsDifferentSign(y0,yb):
-                    ret = 1
-    return ret
+        q = -(b + ti.math.sign(b) * ti.math.sqrt(d)) / 2
+        if ti.abs(a) > 1e-12 * ti.abs(q):
+            x0 = q / a
+            res += 1
+        if ti.abs(q) > 1e-12 * ti.abs(c):
+            if res == 0:
+                x0 = c / q
+            elif res == 1:
+                x1 = c / q
+            res += 1
+        if res == 2 and x0 > x1:
+            x0, x1 = x1, x0
+    return res, x0, x1
+
 
 @ti.func
-def QuadraticRoots(defPoly0, defPoly1, defPoly2, x0, x1):
-    roots_0 = 10.0
-    roots_1 = 10.0
-    c = defPoly0
-    b = defPoly1
-    a = defPoly2
-    delta = b * b - 4 * a * c
-    if delta > 0:
-        d = ti.sqrt(delta)
-        q = -0.5 * (b + d * NewSign(b))
-        rv0 = q / a
-        rv1 = c / q
-        r0 = ti.min(rv0, rv1)
-        r1 = ti.max(rv0, rv1)
-        if (r0 >= x0) and (r0 <= x1):
-            roots_0 = r0
-        if (r1 >= x0) and (r1 <= x1):
-            roots_1 = r1
-    elif delta == 0:
-        r0 = -0.5 * b / a
-        if (r0 >= x0) and (r0 <= x1):
-            roots_0 = r0
-    return roots_0, roots_1
+def newtons_method(a, b, c, d, x0, init_dir):
+    if init_dir != 0:
+        y0 = d + x0 * (c + x0 * (b + x0 * a))
+        ddy0 = 2 * b + x0 * (6 * a)
+        x0 += init_dir * ti.math.sqrt(ti.abs(2 * y0 / ddy0))
+    for i in range(100):
+        y = d + x0 * (c + x0 * (b + x0 * a))
+        dy = c + x0 * (2 * b + x0 * 3 * a)
+        if dy == 0:
+            break
+        x1 = x0 - y / dy
+        if ti.abs(x0 - x1) < 1e-6:
+            break
+        x0 = x1
+    return x0
+
 
 @ti.func
-def PolynomialDeflate(coef, root):
-    defPoly2 = coef[3]
-    defPoly1 = coef[2] + root * defPoly2
-    defPoly0 = coef[1] + root * defPoly1
-    return defPoly0, defPoly1, defPoly2
+def solve_cubic(a, b, c, d):
+    nr = 0
+    x0 = x1 = x2 = 1.0
+    ncrit, xc0, xc1 = solve_quadratic(3 * a, 2 * b, c)
+    if ncrit == 0:
+        x0 = newtons_method(a, b, c, d, xc0, 0)
+        nr = 1
+    elif ncrit == 1:
+        nr, x0, x1 = solve_quadratic(3 * a, 2 * b, c)
+    else:
+        yc0 = d + xc0 * (c + xc0 * (b + xc0 * a))
+        yc1 = d + xc1 * (c + xc1 * (b + xc1 * a))
+        if yc0 * a >= 0:
+            x0 = newtons_method(a, b, c, d, xc0, -1)
+            nr += 1
+        if yc0 * yc1 <= 0:
+            _x = 1.0
+            if ti.abs(yc0) < ti.abs(yc1):
+                _x = newtons_method(a, b, c, d, xc0, 1)
+            else:
+                _x = newtons_method(a, b, c, d, xc1, -1)
+            if nr == 0:
+                x0 = _x
+            elif nr == 1:
+                x1 = _x
+            nr += 1
 
-@ti.func
-def cubic_eval(coef, x):
-    return x * (x * (coef[3] * x + coef[2]) + coef[1]) + coef[0]
+        if yc1 * a <= 0:
+            _x = newtons_method(a, b, c, d, xc1, 1)
 
-@ti.func
-def NewSign(x):
-    return ti.cast((x >= 0) - (x < 0), float)
-
-@ti.func
-def IsDifferentSign(a, b):
-    return (a < 0) != (b < 0)
-
-@ti.func
-def FindClosed(coef, deriv, x0, x1, y0, xError):
-    ep2 = 2 * xError
-    xr = (x0 + x1) / 2
-    ret = False
-    if x1 - x0 > ep2:
-        xr0 = xr
-        for _ in range(16):
-            xn = xr - cubic_eval(coef, xr) / cubic_eval(deriv, xr)
-            xn = ti.max(x0, ti.min(x1, xn))
-            if abs(xr - xn) <= xError:
-                ret = True
-                xr = xn
-                break
-            xr = xn
-        if ret == False:
-            if not ti.math.isinf(xr):
-                xr = xr0
-            yr = cubic_eval(coef, xr)
-            xb0 = x0
-            xb1 = x1
-            while True:
-                side = IsDifferentSign(y0,yr)
-                if side:
-                    xb1 = xr
-                else:
-                    xb0 = xr
-                dy = cubic_eval(deriv, xr)
-                dx = yr / dy
-                xn = xr - dx
-                if (xn > xb0) and (xn < xb1):
-                    stepsize = ti.abs(xr - xn)
-                    xr = xn
-                    if stepsize > xError:
-                        yr = cubic_eval(coef, xr)
-                    else:
-                        break
-                else:
-                    xr = (xb0 + xb1) / 2
-                    if (xr == xb0) or (xr == xb1) or (xb1 - xb0 <= ep2):
-                        break
-                    yr = cubic_eval(coef, xr)
-    return xr
+            if nr == 0:
+                x0 = _x
+            elif nr == 1:
+                x1 = _x
+            elif nr == 2:
+                x2 = _x
+            nr += 2
+    return nr, x0, x1, x2

@@ -11,7 +11,7 @@ class DomainBoundary:
         self.xboundary = None
         self.yboundary = None
         self.zboundary = None
-        self.need_run = False
+        self.need_run = 0
 
     def find_boundary_function(self, boundary_condition):
         if boundary_condition == 0:
@@ -30,13 +30,13 @@ class DomainBoundary:
             self.xboundary = self.find_boundary_function(boundary[0])
             self.yboundary = self.find_boundary_function(boundary[1])
             self.zboundary = self.find_boundary_function(boundary[2])
-            self.need_run = True
+            self.need_run = 1
 
     @ti.kernel
     def apply_boundary_conditions(self, particleNum: int, particle: ti.template()) -> int:
-        not_in_xdomain, not_in_ydomain, not_in_zdomain = False, False, False
+        not_in_xdomain, not_in_ydomain, not_in_zdomain = 0, 0, 0
         for np in range(particleNum):
-            if particle[np].active == 1:
+            if int(particle[np].active) == 1:
                 not_in_xdomain |= self.xboundary(np, 0, particle)
                 not_in_ydomain |= self.yboundary(np, 1, particle)
                 not_in_zdomain |= self.zboundary(np, 2, particle)
@@ -44,42 +44,42 @@ class DomainBoundary:
 
     @ti.func
     def none_boundary(self, np, axis, particle):
-        return False
+        return 0
 
     @ti.func
     def destroy_boundary(self, np, axis: ti.template(), particle):
-        in_domain = True
+        in_domain = 1
         position = particle[np].x
-        if in_domain == True and position[axis] < 0.: 
-            in_domain = False
+        if in_domain == 1 and position[axis] < 0.: 
+            in_domain = 0
             particle[np].active = ti.u8(0)
-        elif in_domain == True and position[axis] > self.domain[axis]: 
-            in_domain = False
+        elif in_domain == 1 and position[axis] > self.domain[axis]: 
+            in_domain = 0
             particle[np].active = ti.u8(0)
         return not in_domain
 
     @ti.func
     def reflect_boundary(self, np, axis: ti.template(), particle):
-        in_domain = True
+        in_domain = 1
         position = particle[np].x
-        if in_domain == True and position[axis] < 0.: 
-            in_domain = False
+        if in_domain == 1 and position[axis] < 0.: 
+            in_domain = 0
             particle[np].x[axis] = LThreshold * self.domain[axis]
             particle[np].v[axis] = -particle[np].v[axis]
-        elif in_domain == True and position[axis] > self.domain[axis]: 
-            in_domain = False
+        elif in_domain == 1 and position[axis] > self.domain[axis]: 
+            in_domain = 0
             particle[np].x[axis] = (1. - LThreshold) * self.domain[axis]
             particle[np].v[axis] = -particle[np].v[axis]
-        return False
+        return 0
 
     @ti.func
     def period_boundary(self, np, axis: ti.template(), particle):
-        in_domain = True
+        in_domain = 1
         position = particle[np].x
-        if in_domain == True and position[axis] < 0.: 
-            in_domain = False
+        if in_domain == 1 and position[axis] < 0.: 
+            in_domain = 0
             particle[np].x[axis] += self.domain[axis]
-        elif in_domain == True and position[axis] > self.domain[axis]: 
-            in_domain = False
+        elif in_domain == 1 and position[axis] > self.domain[axis]: 
+            in_domain = 0
             particle[np].x[axis] -= self.domain[axis]
-        return False
+        return 0

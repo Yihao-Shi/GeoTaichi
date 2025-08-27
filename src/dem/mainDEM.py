@@ -32,7 +32,7 @@ class DEM(object):
         self.enginer = None
         self.recorder = None
         self.solver = None
-        self.history_contact_path=dict()
+        self.first_run = True
 
     def set_configuration(self, log=True, **kwargs):
         if np.linalg.norm(np.array(self.sims.get_simulation_domain()) - np.zeros(3)) < 1e-10:
@@ -45,6 +45,7 @@ class DEM(object):
         self.sims.set_dem_scheme(DictIO.GetAlternative(kwargs, "scheme", "DEM"))
         self.sims.set_track_energy(DictIO.GetAlternative(kwargs, "track_energy", False))
         self.sims.set_visualize(DictIO.GetAlternative(kwargs, "visualize", True))
+        self.sims.set_iterative_model(DictIO.GetAlternative(kwargs, "iterative_model", "LagrangianMultiplier"))
         if log: 
             self.print_basic_simulation_info()
             print('\n')
@@ -66,12 +67,16 @@ class DEM(object):
             self.sims.set_particle_num(DictIO.GetEssential(memory, "max_particle_number"))
             self.sims.set_sphere_num(DictIO.GetAlternative(memory, "max_sphere_number", 0))
             self.sims.set_clump_num(DictIO.GetAlternative(memory, "max_clump_number", 0))
-        elif self.sims.scheme == "LSDEM":
+        else:
             self.sims.set_rigid_body_num(DictIO.GetEssential(memory, "max_rigid_body_number"))
-            self.sims.set_level_grid_num(DictIO.GetEssential(memory, "levelset_grid_number"))
-            self.sims.set_surface_node_num(DictIO.GetEssential(memory, "surface_node_number"))
             self.sims.set_rigid_template_num(DictIO.GetAlternative(memory, "max_rigid_template_number", 1))
-            self.sims.set_point_coordination_number(DictIO.GetAlternative(memory, "point_coordination_number", [4, 2]))
+            if self.sims.scheme == "LSDEM" or self.sims.scheme == "LSMPM":
+                self.sims.set_level_grid_num(DictIO.GetEssential(memory, "levelset_grid_number"))
+                self.sims.set_surface_node_num(DictIO.GetEssential(memory, "surface_node_number"))
+                self.sims.set_point_coordination_number(DictIO.GetAlternative(memory, "point_coordination_number", [4, 2]))
+                if self.sims.scheme == "LSMPM":
+                    self.sims.set_soft_body_num(DictIO.GetEssential(memory, "max_soft_body_number"))
+                    self.sims.set_material_point_num(DictIO.GetEssential(memory, "max_material_point_number"))
         self.sims.set_patch_num(DictIO.GetAlternative(memory, "max_patch_number", 0))
         self.sims.set_facet_num(DictIO.GetAlternative(memory, "max_facet_number", 0))
         self.sims.set_servo_wall_num(DictIO.GetAlternative(memory, "max_servo_wall_number", 0))
@@ -79,6 +84,7 @@ class DEM(object):
         self.sims.set_digital_elevation_facet_num(DictIO.GetAlternative(memory, "max_digital_elevation_facet_number", 0))
         self.sims.set_compaction_ratio(DictIO.GetAlternative(memory, "compaction_ratio", [0.15, 0.05]))
         self.sims.set_hierarchical_level(DictIO.GetAlternative(memory, "hierarchical_level", 1))
+        self.sims.set_rebuild_interval(DictIO.GetAlternative(memory, "bvh_rebuild_interval", 1000))
         if self.sims.search == "HierarchicalLinkedCell":
             self.sims.set_hierarchical_size(DictIO.GetEssential(memory, "hierarchical_size"))
         self.sims.define_work_load()
@@ -129,9 +135,12 @@ class DEM(object):
     def add_template(self, template):
         types = self.sims.scheme
         self.generator.add_my_template(self.scene, template, types)
-        if self.sims.max_particle_num > 0 and types == "LSDEM":
-            self.scene.add_rigid_template_grid_field(self.sims)
-
+        if self.sims.max_particle_num > 0:
+            if (types == "LSDEM" or types == "LSMPM"):
+                self.scene.add_rigid_template_grid_field(self.sims)
+            elif (types == "PolySuperEllipsoid" or types == "PolySuperQuadrics"):
+                self.scene.add_rigid_implicit_surface_parameter(self.sims)
+        
     def create_body(self, body):
         self.generator.create_body(body, self.sims, self.scene)
 
@@ -147,11 +156,13 @@ class DEM(object):
     def add_wall_from_file(self, body):
         self.generator.read_wall_file(body, self.sims, self.scene)
 
-    def choose_contact_model(self, particle_particle_contact_model=None, particle_wall_contact_model=None):
+    def choose_neighbor(self):
         if self.contactor is None:
             self.contactor = ContactManager()
             self.contactor.choose_neighbor(self.sims, self.scene)
-        
+
+    def choose_contact_model(self, particle_particle_contact_model=None, particle_wall_contact_model=None):
+        self.choose_neighbor()
         if self.sims.max_material_num == 0:
             raise RuntimeError("memory_allocate should be launched first!")
         self.sims.set_particle_particle_contact_model(particle_particle_contact_model)
@@ -168,9 +179,9 @@ class DEM(object):
         pass
 
     def load_history_contact(self):
-        file_number = DictIO.GetAlternative(self.history_contact_path, "file_number", 0)
-        ppcontact = DictIO.GetAlternative(self.history_contact_path, "ppcontact", None)
-        pwcontact = DictIO.GetAlternative(self.history_contact_path, "pwcontact", None)
+        file_number = DictIO.GetAlternative(self.sims.history_contact_path, "file_number", 0)
+        ppcontact = DictIO.GetAlternative(self.sims.history_contact_path, "ppcontact", None)
+        pwcontact = DictIO.GetAlternative(self.sims.history_contact_path, "pwcontact", None)
 
         if not ppcontact is None:
             self.contactor.physpp.restart(self.contactor.neighbor, file_number, ppcontact, True)
@@ -180,7 +191,7 @@ class DEM(object):
     def select_save_data(self, particle=True, sphere=False, clump=False, surface=True, grid=False, bounding=False, wall=False, 
                          particle_particle_contact=False, particle_wall_contact=False):
         self.sims.set_save_data(particle, sphere, clump, surface, grid, bounding, wall, particle_particle_contact, particle_wall_contact)
-        self.scene.activate_levelset_visualization(self.sims)
+        self.scene.activate_surface_node_visualization(self.sims)
 
     def read_restart(self, file_number, file_path, particle=True, sphere=True, clump=False, wall=True, servo=False, ppcontact=True, pwcontact=True, is_continue=True):
         self.sims.set_is_continue(is_continue)
@@ -210,10 +221,12 @@ class DEM(object):
             ppcontact_path = file_path+"/contacts"
         if pwcontact:
             pwcontact_path = file_path+"/contacts"
-
-        self.add_body_from_file(body={"FileType": "NPZ", "Template": {"Restart": True, "ParticleFile": particle_path, "SphereFile": sphere_path, "ClumpFile": clump_path}})
-        self.add_wall_from_file(body={"FileType": "NPZ", "WallFile": wall_path, "ServoFile": servo_path})
-        self.history_contact_path.update(file_number=file_number, ppcontact=ppcontact_path, pwcontact=pwcontact_path)
+        
+        if particle:
+            self.add_body_from_file(body={"FileType": "NPZ", "Template": {"Restart": True, "ParticleFile": particle_path, "SphereFile": sphere_path, "ClumpFile": clump_path}})
+        if wall:
+            self.add_wall_from_file(body={"FileType": "NPZ", "WallFile": wall_path, "ServoFile": servo_path})
+        self.sims.history_contact_path.update(file_number=file_number, ppcontact=ppcontact_path, pwcontact=pwcontact_path)
 
     def modify_parameters(self, **kwargs):
         if len(kwargs) > 0:
@@ -245,6 +258,8 @@ class DEM(object):
         self.solver.set_callback_function(functions)
 
     def add_essentials(self, kwargs):
+        if self.contactor is None:
+            self.choose_contact_model()
         if self.sims.max_particle_num >= 0:
             if self.contactor.have_initialise is False:
                 self.contactor.initialize(self.sims, self.scene, kwargs)
@@ -283,6 +298,7 @@ class DEM(object):
             self.solver.Solver(self.scene)
         else:
             self.solver.Visualize(self.scene)
+        self.first_run = False
 
     def check_critical_timestep(self):
         print("#", " Check Timestep ... ...".ljust(67))
@@ -298,19 +314,21 @@ class DEM(object):
     def update_material_properties(self, materialID, property_name, value, override=True):
         self.scene.update_material_properties(override, materialID, property_name, value)
     
-    def update_particle_properties(self, particle_type, property_name, value, override=True, bodyID=None, region_name=None, function=None):
+    def update_particle_properties(self, property_name, value, override=True, bodyID=None, region_name=None, function=None):
         if not bodyID is None:
-            self.scene.update_particle_properties(override, particle_type, property_name, value, bodyID)
+            self.scene.update_particle_properties(override, property_name, value, bodyID)
         elif not region_name is None:
             region: RegionFunction = self.generator.get_region_ptr(region_name)
-            self.scene.update_particle_properties_in_region(override, particle_type, property_name, value, region.function)
+            self.scene.update_particle_properties_in_region(self.sims, override, property_name, value, region.function)
         elif not function is None:
-            self.scene.update_particle_properties_in_region(override, particle_type, property_name, value, ti.pyfunc(function))
-        self.contactor.neighbor.pre_neighbor(self.scene)
+            self.scene.update_particle_properties_in_region(self.sims, override, property_name, value, ti.pyfunc(function))
+        if not self.first_run:
+            self.contactor.neighbor.pre_neighbor(self.scene)
 
     def update_wall_status(self, wallID, property_name, value, override=True):
         self.scene.update_wall_properties(self.sims, override, property_name, value, wallID)
-        self.contactor.neighbor.pre_neighbor(self.scene)
+        if not self.first_run:
+            self.contactor.neighbor.update_verlet_table(self.scene)
 
     def update_contact_properties(self, materialID1, materialID2, property_name, value, overide=True):
         self.contactor.update_contact_property(self.sims, materialID1, materialID2, property_name, value, overide)
@@ -320,9 +338,9 @@ class DEM(object):
             self.scene.delete_particles(bodyID)
         elif not region_name is None:
             region: RegionFunction = self.generator.get_region_ptr(region_name)
-            self.scene.delete_particles_in_region(region.function)
+            self.scene.delete_particles_in_region(self.sims, region.function)
         elif not function is None:
-            self.scene.delete_particles_in_region(ti.pyfunc(function))
+            self.scene.delete_particles_in_region(self.sims, ti.pyfunc(function))
 
     def postprocessing(self, start_file=0, end_file=-1, read_path=None, write_path=None, scheme=None, **kwargs):
         if read_path is None:

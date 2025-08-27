@@ -7,15 +7,16 @@ import taichi as ti
 from src.dem.generator.BrustNeighbor import BruteSearch
 from src.dem.generator.InsertionKernel import *
 from src.dem.generator.LinkedCellNeighbor import LinkedCell
-from src.dem.generator.LevelSetTemplate import LevelSetTemplate
+from src.dem.generator.GeneralShapeTemplate import GeneralShapeTemplate
 from src.dem.generator.ClumpTemplate import ClumpTemplate
 from src.dem.SceneManager import myScene
 from src.dem.Simulation import Simulation
 from src.utils.ObjectIO import DictIO
-from src.utils.ParallelSort import parallel_sort_with_value
+from src.utils.sorting.ParallelSort import parallel_sort_with_value
 from src.utils.RegionFunction import RegionFunction
 from src.utils.TypeDefination import vec3f, vec3i
-from src.utils.orientation import set_orientation
+from src.utils.Orientation import set_orientation
+from src.mesh.TetraMesh import TetraMesh
 from third_party.pyevtk.hl import pointsToVTK
 
 
@@ -36,6 +37,8 @@ class ParticleCreator(object):
             self.create_multisphere(sims, scene, template)
         elif btype == "RigidBody":
             self.create_rigid_body(sims, scene, template)
+        elif btype == "SoftBody":
+            self.create_soft_body(sims, scene, template)
         else:
             lists = ["Sphere", "Clump", "RigidBody"]
             raise RuntimeError(f"Invalid Keyword:: /BodyType/: {btype}. Only the following {lists} are valid")
@@ -131,7 +134,7 @@ class ParticleCreator(object):
             for temp in template:
                 self.create_template_rigid_body(sims, scene, temp)
 
-    def create_template_rigid_body(self, sims, scene: myScene, template):
+    def create_template_rigid_body(self, sims: Simulation, scene: myScene, template):
         bounding_sphere = scene.get_bounding_sphere()
         bounding_box = scene.get_bounding_box()
         master = scene.get_surface()
@@ -141,7 +144,7 @@ class ParticleCreator(object):
         surfaceNum = int(scene.surfaceNum[0])
 
         name = DictIO.GetEssential(template, "Name")
-        template_ptr: LevelSetTemplate = self.get_template_ptr_by_name(name)
+        template_ptr: GeneralShapeTemplate = self.get_template_ptr_by_name(name)
         index = DictIO.GetEssential(scene.prefixID, name)
         com_pos = DictIO.GetEssential(template, "BodyPoint")
         equiv_rad = DictIO.GetAlternative(template, "Radius", None)
@@ -167,20 +170,92 @@ class ParticleCreator(object):
         else:
             raise RuntimeError("Keyword conflict!, You should set either Keyword:: /Radius/ or Keyword:: /ScaleFactor/.")
 
-        gridNum = scene.gridID[index]
-        verticeNum = scene.verticeID[index]
-        scene.check_rigid_body_number(sims, rigid_body_number=1)
-        kernel_create_level_set_rigid_body_(rigid_body, bounding_box, bounding_sphere, master, material, particleNum, gridNum, verticeNum, surfaceNum, vec3f(template_ptr.objects.grid.minBox()), vec3f(template_ptr.objects.grid.maxBox()), 
-                                            template_ptr.boundings.r_bound, vec3f(template_ptr.boundings.x_bound), template_ptr.surface_node_number, template_ptr.objects.grid.grid_space, vec3i(template_ptr.objects.grid.gnum), 
-                                            template_ptr.objects.grid.extent, scale_factor, vec3f(template_ptr.objects.inertia), com_pos, equiv_rad, set_orientations.get_orientation, groupID, matID, init_v, init_w, is_fix)
+        if sims.scheme == "PolySuperEllipsoid" or sims.scheme == "PolySuperQuadrics":
+            if sims.iterative_model == "LagrangianMultiplier":
+                if sims.scheme == "PolySuperEllipsoid":
+                    assert 0.25 <= template_ptr.objects.physical_parameter["epsilon_e"] <= 1, f"The optimal value range of parameter /epsilon_e/ is 0.25 to 1"
+                    assert 0.25 <= template_ptr.objects.physical_parameter["epsilon_n"] <= 1, f"The optimal value range of parameter /epsilon_n/ is 0.25 to 1"
+                elif sims.scheme == "PolySuperQuadrics":
+                    assert 0.25 <= template_ptr.objects.physical_parameter["epsilon_x"] <= 1, f"The optimal value range of parameter /epsilon_x/ is 0.25 to 1"
+                    assert 0.25 <= template_ptr.objects.physical_parameter["epsilon_y"] <= 1, f"The optimal value range of parameter /epsilon_y/ is 0.25 to 1"
+                    assert 0.25 <= template_ptr.objects.physical_parameter["epsilon_z"] <= 1, f"The optimal value range of parameter /epsilon_z/ is 0.25 to 1"
+            template_id = scene.prefixID[name]
+            scene.check_rigid_body_number(sims, rigid_body_number=1)
+            kernel_create_implicit_surface_rigid_body_(rigid_body, bounding_sphere, material, particleNum, template_id, template_ptr.boundings.r_bound, vec3f(template_ptr.boundings.x_bound), 
+                                                scale_factor, vec3f(template_ptr.objects.inertia), com_pos, equiv_rad, set_orientations.get_orientation, groupID, matID, init_v, init_w, is_fix)
+            print(" Implicit surface body Information ".center(71, '-'))
+        else:
+            gridNum = scene.gridID[index]
+            verticeNum = scene.verticeID[index]
+            scene.check_rigid_body_number(sims, rigid_body_number=1)
+            kernel_create_level_set_rigid_body_(rigid_body, bounding_box, bounding_sphere, master, material, particleNum, gridNum, verticeNum, surfaceNum, vec3f(template_ptr.objects.grid.minBox()), vec3f(template_ptr.objects.grid.maxBox()), 
+                                                template_ptr.boundings.r_bound, vec3f(template_ptr.boundings.x_bound), template_ptr.surface_node_number, template_ptr.objects.grid.grid_space, vec3i(template_ptr.objects.grid.gnum), 
+                                                template_ptr.objects.grid.extent, scale_factor, vec3f(template_ptr.objects.inertia), com_pos, equiv_rad, set_orientations.get_orientation, groupID, matID, init_v, init_w, is_fix)
+            
+            print(" Level set body Information ".center(71, '-'))
+        self.print_particle_info(groupID, matID, com_pos, init_v, init_w, fix_v=is_fix, fix_w=is_fix, name=name)
+        
+        faces = scene.add_connectivity(1, template_ptr.surface_node_number, template_ptr.objects)
+        scene.particleNum[0] += 1
+        scene.rigidNum[0] += 1
+        scene.surfaceNum[0] += template_ptr.surface_node_number
+
+    def create_soft_body(self, sims, scene, template):
+        if type(template) is dict:
+            self.create_template_soft_body(sims, scene, template)
+        elif type(template) is list:
+            for temp in template:
+                self.create_template_soft_body(sims, scene, temp)
+
+    def create_template_soft_body(self, sims, scene: myScene, template):
+        bounding_sphere = scene.get_bounding_sphere()
+        bounding_box = scene.get_bounding_box()
+        master = scene.get_surface()
+        rigid_body = scene.get_rigid_ptr()
+        material = scene.get_material_ptr()
+        particleNum = int(scene.particleNum[0])
+        surfaceNum = int(scene.surfaceNum[0])
+
+        name = DictIO.GetEssential(template, "Name")
+        template_ptr: GeneralShapeTemplate = DictIO.GetEssential(self.dgenerator.myTemplate, name)
+        com_pos = DictIO.GetEssential(template, "BodyPoint")
+        equiv_rad = DictIO.GetAlternative(template, "Radius", None)
+        bounding_rad = DictIO.GetAlternative(template, "BoundingRadius", None)
+        scale_factor = DictIO.GetAlternative(template, "ScaleFactor", None) 
+        orientation = DictIO.GetAlternative(template, "BodyOrientation", None)
+        total_points = DictIO.GetAlternative(template, "TotalParticles", 1000)
+        set_orientations = set_orientation(orientation)
+
+        groupID = DictIO.GetEssential(template, "GroupID")
+        matID = DictIO.GetEssential(template, "MaterialID")
+        init_v = DictIO.GetAlternative(template, "InitialVelocity", vec3f([0, 0, 0]))
+        init_w = DictIO.GetAlternative(template, "InitialAngularVelocity", vec3f([0, 0, 0]))
+        fix_str = DictIO.GetAlternative(template, "FixMotion", ["Free", "Free", "Free"])
+        is_fix = vec3i([DictIO.GetEssential(self.FIX, i) for i in fix_str])
+
+        if isinstance(scale_factor, (float, int)):
+            equiv_rad = float(scale_factor) * template_ptr.objects.eqradius
+        elif isinstance(equiv_rad, (float, int)):
+            scale_factor = float(equiv_rad) / template_ptr.objects.eqradius
+        elif isinstance(bounding_rad, (float, int)):
+            equiv_rad = template_ptr.objects.eqradius / template_ptr.boundings.r_bound * bounding_rad
+            scale_factor = float(equiv_rad) / template_ptr.objects.eqradius
+        else:
+            raise RuntimeError("Keyword conflict!, You should set either Keyword:: /Radius/ or Keyword:: /ScaleFactor/.")
+
+        '''tetra = TetraMesh()
+        scene.check_soft_body_number(sims, body_number=1)
+        kernel_create_level_set_soft_body_(rigid_body, bounding_box, bounding_sphere, master, material, particleNum, gridNum, verticeNum, surfaceNum, vec3f(template_ptr.objects.grid.minBox()), vec3f(template_ptr.objects.grid.maxBox()), 
+                                           template_ptr.boundings.r_bound, vec3f(template_ptr.boundings.x_bound), template_ptr.surface_node_number, template_ptr.objects.grid.grid_space, vec3i(template_ptr.objects.grid.gnum), 
+                                           template_ptr.objects.grid.extent, scale_factor, vec3f(template_ptr.objects.inertia), com_pos, equiv_rad, set_orientations.get_orientation, groupID, matID, init_v, init_w, is_fix)
         
         print(" Level set body Information ".center(71, '-'))
         self.print_particle_info(groupID, matID, com_pos, init_v, init_w, fix_v=is_fix, fix_w=is_fix, name=name)
         faces = np.array(template_ptr.objects.mesh.faces, dtype=np.int32)
         scene.connectivity = np.append(scene.connectivity, faces + scene.surfaceNum[0]).reshape(-1, 3)
         scene.particleNum[0] += 1
-        scene.rigidNum[0] += 1
-        scene.surfaceNum[0] += template_ptr.surface_node_number
+        scene.softNum[0] += 1
+        scene.surfaceNum[0] += template_ptr.surface_node_number'''
 
     def print_particle_info(self, groupID, matID, com_pos, init_v, init_w, fix_v=None, fix_w=None, name=None):
         if name:
@@ -242,7 +317,7 @@ class ParticleGenerator(object):
         self.btype = DictIO.GetEssential(body_dict, "BodyType")
         self.name = DictIO.GetEssential(body_dict, "RegionName")
         self.template_dict = DictIO.GetEssential(body_dict, "Template")
-        period = DictIO.GetAlternative(body_dict, "Period", [0, 0, 1e6])
+        period = DictIO.GetAlternative(body_dict, "Period", [self.sims.current_time, self.sims.current_time, 1e6])
         self.start_time = period[0]
         self.end_time = period[1]
         self.insert_interval = period[2]
@@ -318,7 +393,7 @@ class ParticleGenerator(object):
                 lists = ["Generate", "Distribute"]
                 raise RuntimeError(f"Invalid Keyword:: /GenerateType/: {self.type}. Only the following {lists} are valid")
         else:
-            lists = ["Sphere", "Clump", "RigidBody"]
+            lists = ["Sphere", "Clump", "RigidBody", "SoftBody"]
             raise RuntimeError(f"Invalid Keyword:: /BodyType/: {self.btype}. Only the following {lists} are valid")
         
         if self.visualize and not scene.particle is None and not self.write_file:
@@ -568,7 +643,7 @@ class ParticleGenerator(object):
 
             kernel_insert_first_sphere_(self.region.start_point, position, radius, self.insert_body_num, self.insert_particle_in_neighbor, self.sphere_coords, self.sphere_radii, self.neighbor.cell_num, 
                                         self.neighbor.cell_size, self.neighbor.position, self.neighbor.radius, self.neighbor.num_particle_in_cell, self.neighbor.particle_neighbor, self.neighbor.insert_particle)
-            kernel_sphere_possion_sampling_(min_rad, max_rad, self.tries_number, actual_body + start_body_num, self.region.start_point, self.insert_body_num, self.insert_particle_in_neighbor, self.sphere_coords, 
+            kernel_sphere_poisson_sampling_(min_rad, max_rad, self.tries_number, actual_body + start_body_num, self.region.start_point, self.insert_body_num, self.insert_particle_in_neighbor, self.sphere_coords, 
                                             self.sphere_radii, self.neighbor.cell_num, self.neighbor.cell_size, self.neighbor.position, self.neighbor.radius, self.neighbor.num_particle_in_cell, self.neighbor.particle_neighbor, 
                                             self.region.function, self.neighbor.overlap, self.neighbor.insert_particle)
         elif not self.is_poission:
@@ -804,7 +879,7 @@ class ParticleGenerator(object):
             kernel_insert_first_multisphere_(self.region.start_point, template_ptr.nspheres, template_ptr.r_equiv, template_ptr.x_pebble, template_ptr.rad_pebble, position, radius, self.insert_body_num, self.insert_particle_in_neighbor, 
                                              self.clump_coords, self.clump_radii, self.clump_orients, set_orientations.get_orientation, self.pebble_coords, self.pebble_radii, self.neighbor.cell_num, self.neighbor.cell_size, self.neighbor.position, 
                                              self.neighbor.radius, self.neighbor.num_particle_in_cell, self.neighbor.particle_neighbor, self.neighbor.insert_particle)
-            kernel_multisphere_possion_sampling_(template_ptr, min_rad, max_rad, self.tries_number, actual_body, self.region.start_point, self.insert_body_num, self.insert_particle_in_neighbor, self.clump_coords, self.clump_radii, self.clump_orients, 
+            kernel_multisphere_poisson_sampling_(template_ptr, min_rad, max_rad, self.tries_number, actual_body, self.region.start_point, self.insert_body_num, self.insert_particle_in_neighbor, self.clump_coords, self.clump_radii, self.clump_orients, 
                                                  set_orientations.get_orientation, self.pebble_coords, self.pebble_radii, self.neighbor.cell_num, self.neighbor.cell_size, self.neighbor.position, self.neighbor.radius, self.neighbor.num_particle_in_cell, 
                                                  self.neighbor.particle_neighbor, self.region.function, self.neighbor.overlap, self.neighbor.insert_particle)
         elif not self.is_poission:
@@ -970,8 +1045,10 @@ class ParticleGenerator(object):
     def get_bounding_radius(self, template_dict):
         rad_min, rad_max = 0., 0.
         if "Radius" in template_dict or ("MinRadius" in template_dict and "MaxRadius" in template_dict):
+            if self.myTemplate is None:
+                raise RuntimeError("The template must be set first")
             name = DictIO.GetEssential(template_dict, "Name")
-            template_ptr: LevelSetTemplate = self.get_template_ptr_by_name(name)
+            template_ptr: GeneralShapeTemplate = self.get_template_ptr_by_name(name)
             weight = template_ptr.boundings.r_bound / template_ptr.objects.eqradius
             rad_min = DictIO.GetEssential(template_dict, "MinRadius", "Radius") * weight
             rad_max = DictIO.GetEssential(template_dict, "MaxRadius", "Radius") * weight
@@ -1041,7 +1118,10 @@ class ParticleGenerator(object):
         if self.write_file:
             self.write_body_text(start_body_num, end_body_num)
         else:
-            self.insert_rigid_levelset(scene, template, start_body_num, end_body_num, body_count)
+            if self.sims.scheme == "PolySuperEllipsoid" or self.sims.scheme == "PolySuperQuadrics":
+                self.insert_rigid_implicit_surface(scene, template, start_body_num, end_body_num, body_count)
+            else:
+                self.insert_rigid_levelset(scene, template, start_body_num, end_body_num, body_count)
 
     def lattice_LSbodys(self, scene: myScene):
         bounding_sphere = scene.get_bounding_sphere()
@@ -1103,14 +1183,23 @@ class ParticleGenerator(object):
         if self.write_file:
             self.write_body_text(start_body_num, end_body_num)
         else:
-            self.insert_rigid_levelset(scene, template, start_body_num, end_body_num, body_count)
+            if self.sims.scheme == "PolySuperEllipsoid" or self.sims.scheme == "PolySuperQuadrics":
+                self.insert_rigid_implicit_surface(scene, template, start_body_num, end_body_num, body_count)
+            else:
+                self.insert_rigid_levelset(scene, template, start_body_num, end_body_num, body_count)
 
     def add_levelsets_to_scene(self, scene: myScene):
         if type(self.template_dict) is dict:
-            self.insert_rigid_levelset(scene, self.template_dict, 0, self.insert_body_num[None], self.insert_body_num[None])
+            if self.sims.scheme == "PolySuperEllipsoid" or self.sims.scheme == "PolySuperQuadrics":
+                self.insert_rigid_implicit_surface(scene, self.template_dict, 0, self.insert_body_num[None], self.insert_body_num[None])
+            else:
+                self.insert_rigid_levelset(scene, self.template_dict, 0, self.insert_body_num[None], self.insert_body_num[None])
         elif type(self.template_dict) is list:
             for temp in self.template_dict:
-                self.insert_rigid_levelset(scene, temp, 0, self.insert_body_num[None], self.insert_body_num[None])
+                if self.sims.scheme == "PolySuperEllipsoid" or self.sims.scheme == "PolySuperQuadrics":
+                    self.insert_rigid_implicit_surface(scene, temp, 0, self.insert_body_num[None], self.insert_body_num[None])
+                else:
+                    self.insert_rigid_levelset(scene, temp, 0, self.insert_body_num[None], self.insert_body_num[None])
 
     def insert_rigid_levelset(self, scene: myScene, template, start_body_num, end_body_num, body_count):
         bounding_sphere = scene.get_bounding_sphere()
@@ -1129,7 +1218,7 @@ class ParticleGenerator(object):
         is_fix = vec3i([DictIO.GetEssential(self.FIX, i) for i in fix_str])
 
         name = DictIO.GetEssential(template, "Name")
-        template_ptr: LevelSetTemplate = self.get_template_ptr_by_name(name)
+        template_ptr: GeneralShapeTemplate = self.get_template_ptr_by_name(name)
         index = DictIO.GetEssential(scene.prefixID, name)
 
         gridNum = scene.gridID[index]
@@ -1139,6 +1228,44 @@ class ParticleGenerator(object):
                                     vec3f(template_ptr.boundings.x_bound), template_ptr.surface_node_number, template_ptr.objects.grid.grid_space, vec3i(template_ptr.objects.grid.gnum), template_ptr.objects.grid.extent,
                                     vec3f(template_ptr.objects.inertia), template_ptr.objects.eqradius, groupID, matID, init_v, init_w, is_fix, start_body_num, end_body_num, self.sphere_coords, self.sphere_radii, self.orients)
         print(" Level-set body Information ".center(71, '-'))
+        self.print_particle_info(groupID, matID, init_v, init_w, fix_v=is_fix, fix_w=is_fix, body_num=body_count)
+
+        faces = scene.add_connectivity(body_count, template_ptr.surface_node_number, template_ptr.objects)
+        scene.particleNum[0] += body_count
+        scene.rigidNum[0] += body_count
+        scene.surfaceNum[0] += template_ptr.surface_node_number * body_count
+        self.faces = np.append(self.faces, faces).reshape(-1, 3)
+
+    def insert_rigid_implicit_surface(self, scene: myScene, template, start_body_num, end_body_num, body_count):
+        bounding_sphere = scene.get_bounding_sphere()
+        rigid_body = scene.get_rigid_ptr()
+        material = scene.get_material_ptr()
+        particleNum = int(scene.particleNum[0])
+            
+        groupID = DictIO.GetEssential(template, "GroupID")
+        matID = DictIO.GetEssential(template, "MaterialID")
+        init_v = DictIO.GetAlternative(template, "InitialVelocity", vec3f([0, 0, 0]))
+        init_w = DictIO.GetAlternative(template, "InitialAngularVelocity", vec3f([0, 0, 0]))
+        fix_str = DictIO.GetAlternative(template, "FixMotion", ["Free", "Free", "Free"])
+        is_fix = vec3i([DictIO.GetEssential(self.FIX, i) for i in fix_str])
+
+        name = DictIO.GetEssential(template, "Name")
+        template_ptr: GeneralShapeTemplate = self.get_template_ptr_by_name(name)
+        template_id = scene.prefixID[name]
+
+        if self.sims.iterative_model == "LagrangianMultiplier":
+            if self.sims.scheme == "PolySuperEllipsoid":
+                assert 0.25 <= template_ptr.objects.physical_parameter["epsilon_e"] <= 1, f"The optimal value range of parameter /epsilon_e/ is 0.25 to 1"
+                assert 0.25 <= template_ptr.objects.physical_parameter["epsilon_n"] <= 1, f"The optimal value range of parameter /epsilon_n/ is 0.25 to 1"
+            elif self.sims.scheme == "PolySuperQuadrics":
+                assert 0.25 <= template_ptr.objects.physical_parameter["epsilon_x"] <= 1, f"The optimal value range of parameter /epsilon_x/ is 0.25 to 1"
+                assert 0.25 <= template_ptr.objects.physical_parameter["epsilon_y"] <= 1, f"The optimal value range of parameter /epsilon_y/ is 0.25 to 1"
+                assert 0.25 <= template_ptr.objects.physical_parameter["epsilon_z"] <= 1, f"The optimal value range of parameter /epsilon_z/ is 0.25 to 1"
+
+        scene.check_rigid_body_number(self.sims, rigid_body_number=body_count)
+        kernel_add_implicit_surface_packing(rigid_body, bounding_sphere, material, particleNum, template_id, template_ptr.boundings.r_bound, vec3f(template_ptr.boundings.x_bound), 
+                                            vec3f(template_ptr.objects.inertia), template_ptr.objects.eqradius, groupID, matID, init_v, init_w, is_fix, start_body_num, end_body_num, self.sphere_coords, self.sphere_radii, self.orients)
+        print(" Implicit surface body Information ".center(71, '-'))
         self.print_particle_info(groupID, matID, init_v, init_w, fix_v=is_fix, fix_w=is_fix, body_num=body_count)
 
         faces = scene.add_connectivity(body_count, template_ptr.surface_node_number, template_ptr.objects)

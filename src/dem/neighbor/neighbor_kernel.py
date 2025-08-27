@@ -6,6 +6,7 @@ from src.utils.TypeDefination import vec3f, vec3i, vec2i
 from src.utils.Quaternion import SetToRotate
 from src.utils.VectorFunction import SquaredLength, SquareLen
 from src.utils.ScalarFunction import linearize3D, vectorize_id
+import src.utils.GlobalVariable as GlobalVariable
 
 
 @ti.kernel
@@ -133,7 +134,9 @@ def calculate_particles_position_(particleNum: int, igrid_size: float, particle:
     particle_count.fill(0)
     for np in range(particleNum):  
         if int(particle[np].active) == 0: continue
-        grid_idx = ti.floor(particle[np].x * igrid_size , int)
+        position = particle[np].x
+        grid_idx = ti.floor(position * igrid_size , int)
+        assert 0 <= grid_idx[0] < cnum[0] and 0 <= grid_idx[1] < cnum[1] and 0 <= grid_idx[2] < cnum[2], f"Particle {np} is located at [{position[0]}, {position[1]}, {position[2]}]. Out of simulation domain!"
         cellID = linearize3D(grid_idx[0], grid_idx[1], grid_idx[2], cnum)
         particle_current[np] = ti.atomic_add(particle_count[cellID + 1], 1)
     
@@ -236,7 +239,44 @@ def board_search_coupled_particle_linked_cell_(potential_particle_num: int, verl
                                                particle_particle: ti.template(), cnum: ti.types.vector(3, int), particleNum: int):
     particle_particle.fill(0)
     for master in range(particleNum):
-        if int(particle1[master].active) == 0 or int(particle1[master].coupling) == 0: continue
+        if int(particle1[master].active) != 0 or int(particle1[master].coupling) != 0:
+            position = particle1[master].x
+            radius = particle1[master].rad
+
+            grid_start = ti.floor((position - radius - verlet_distance1 - verlet_distance2 - max_radius) * igrid_size, int)
+            grid_end = ti.ceil((position + radius + verlet_distance1 + verlet_distance2 + max_radius) * igrid_size, int)
+            x_begin = ti.max(grid_start[0], 0)
+            x_end = ti.min(grid_end[0], cnum[0])
+            y_begin = ti.max(grid_start[1], 0)
+            y_end = ti.min(grid_end[1], cnum[1])
+            z_begin = ti.max(grid_start[2], 0)
+            z_end = ti.min(grid_end[2], cnum[2])
+
+            sques = master * potential_particle_num
+            for neigh_i in range(x_begin, x_end):
+                for neigh_j in range(y_begin, y_end):
+                    for neigh_k in range(z_begin, z_end):
+                        cellID = linearize3D(neigh_i, neigh_j, neigh_k, cnum)
+                        for hash_index in range(particle_count[cellID], particle_count[cellID + 1]):
+                            slave = particleID[hash_index]
+                            pos2 = particle2[slave].x 
+                            rad2 = particle2[slave].rad
+                            search_radius = (radius + rad2 + verlet_distance1 + verlet_distance2)
+                            valid = SquaredLength(pos2, position) <= search_radius * search_radius
+                            if valid: 
+                                potential_list_particle_particle[sques] = slave
+                                sques += 1
+            neighbors = sques - master * potential_particle_num
+            assert neighbors <= potential_particle_num, f"Keyword:: /body_coordination_number/ is too small, Particle {master} has {neighbors} potential contact number"
+            particle_particle[master + 1] = neighbors
+
+@ti.kernel
+def board_search_enhanced_coupled_particle_linked_cell_(potential_particle_num: int, verlet_distance1: float, verlet_distance2: float, max_radius: float, igrid_size: float, particle_count: ti.template(), 
+                                               particleID: ti.template(), particle1: ti.template(), particle2: ti.template(), potential_list_particle_particle: ti.template(), 
+                                               particle_particle: ti.template(), cnum: ti.types.vector(3, int), particleNum: int):
+    particle_particle.fill(0)
+    for master in range(particleNum):
+        if int(particle1[master].active) == 0: continue
         position = particle1[master].x
         radius = particle1[master].rad
 
@@ -258,8 +298,9 @@ def board_search_coupled_particle_linked_cell_(potential_particle_num: int, verl
                         slave = particleID[hash_index]
                         pos2 = particle2[slave].x 
                         rad2 = particle2[slave].rad
+                        norm = particle2[slave].normal
                         search_radius = (radius + rad2 + verlet_distance1 + verlet_distance2)
-                        valid = SquaredLength(pos2, position) <= search_radius * search_radius
+                        valid = (position - pos2).dot(norm) <= search_radius
                         if valid: 
                             potential_list_particle_particle[sques] = slave
                             sques += 1
@@ -398,10 +439,13 @@ def board_search_lsparticle_wall_linked_cell_(particleNum: int, potential_point_
         for node in range(start_node, end_node):
             gnode = node - start_node + global_node
             surface_node = mass_center1 + rotate_matrix1 @ (scale * vertice[node].x)
-            if wall[wall_id]._is_in_plane(surface_node) and wall[wall_id]._is_sphere_intersect(surface_node, verlet_distance) == 1:
-                sques = ti.atomic_add(point_wall[gnode + 1], 1)
+            projected_point = wall[wall_id]._point_projection(surface_node)
+            if wall[wall_id]._is_in_plane(projected_point) and wall[wall_id]._is_sphere_intersect(surface_node, verlet_distance) == 1:
+                point_wall[gnode + 1] = 1
+                sques = 0#ti.atomic_add(point_wall[gnode + 1], 1)
                 potential_list_point_wall[sques + gnode * potential_point_num] = wall_id
                 assert sques < potential_point_num, f"Keyword:: /point_coordination_number[1]/ is too small, Node {gnode} has {sques+1} potential contact number"
+    
     '''
     for master in range(particleNum):
         mass_center1 = rigid[master]._get_position()
@@ -409,17 +453,24 @@ def board_search_lsparticle_wall_linked_cell_(particleNum: int, potential_point_
         scale = box[master].scale
         start_node, end_node, global_node = rigid[master]._start_node(), rigid[master]._end_node(), rigid[master].startNode
         sques = 0
-        for neigh in range(particle_wall[master], particle_wall[master + 1]):
-            #TODO: AABB
-            wall_id = pwlist[neigh].endID2
-            for node in range(start_node, end_node):
-                gnode = node - start_node + global_node
-                surface_node = mass_center1 + rotate_matrix1 @ (scale * vertice[node].x)
-                if wall[wall_id]._is_in_plane(surface_node) and wall[wall_id]._is_sphere_intersect(surface_node, verlet_distance) == 1:
-                    potential_list_point_wall[sques + master * potential_point_num]._set(gnode, wall_id)
-                    sques += 1
-        assert sques <= potential_point_num, f"Keyword:: /point_coordination_number[1]/ is too small, Node {master} has {sques} potential contact number"
-        point_wall[master + 1] = sques'''
+
+        for node in range(start_node, end_node):
+            gnode = node - start_node + global_node
+            surface_node = mass_center1 + rotate_matrix1 @ (scale * vertice[node].x)
+
+            target_wall_id = -1
+            min_dist = 0.
+            for neigh in range(particle_wall[master], particle_wall[master + 1]):
+                wall_id = pwlist[neigh].endID2
+                projected_point = wall[wall_id]._point_projection(surface_node)
+                if wall[wall_id]._is_in_plane(projected_point) and wall[wall_id]._is_sphere_intersect(surface_node, verlet_distance) == 1:
+                    dist = wall[wall_id]._get_norm_distance(surface_node)
+                    if min_dist < dist:
+                        min_dist = dist
+                        target_wall_id = wall_id
+            if target_wall_id > -1:
+                potential_list_point_wall[gnode * potential_point_num] = target_wall_id
+                point_wall[master + 1] = 1'''
 
 # ============================================ Plane ================================================= #
 @ti.kernel
@@ -620,7 +671,6 @@ def board_search_particle_patch_linked_cell_(particleNum: int, potential_wall_nu
                     cellID = linearize3D(neigh_i, neigh_j, neigh_k, cnum)
                     for hash_index in range(wall_count[cellID], wall_count[cellID + 1]):
                         wall_id = wallID[hash_index]
-                        #if particle_id==0:print(wall_id)
                         valid = wall[wall_id]._is_sphere_intersect(position, (radius + 2 * verlet_distance))
                         if valid: 
                             potential_list_particle_wall[sques] = wall_id
@@ -628,39 +678,6 @@ def board_search_particle_patch_linked_cell_(particleNum: int, potential_wall_nu
         neighbors = sques - particle_id * potential_wall_num
         assert neighbors <= potential_wall_num, f"Keyword:: /wall_coordination_number/ is too small, Particle {particle_id} has {neighbors} potential contact number"
         particle_wall[particle_id + 1] = neighbors
-
-@ti.kernel
-def get_intersection_type_(particle_wall: int, particleNum: int, potential_wall_num: int, potential_list_particle_wall: ti.template(), prefix_sum_particle_wall: ti.template(), 
-                           potential_list_particle_particle: ti.template(), particle: ti.template(), wall: ti.template()):
-    for cwlist in range(particle_wall):
-        end1, end2 = potential_list_particle_wall[cwlist].end1, potential_list_particle_wall[cwlist].end2
-        pos, rad = particle[end1].x, particle[end1].rad
-        valid = wall[end2]._is_sphere_intersect(pos, rad) 
-        potential_list_particle_wall[cwlist].wall_type = valid
-
-    for particle_id in range(particleNum):
-        to_beg = particle_id * potential_wall_num
-        to_end = to_beg + prefix_sum_particle_wall[particle_id]
-
-        for cwlist_i in range(to_beg, to_end):
-            contact_type1 = potential_list_particle_wall[cwlist_i].wall_type
-            if contact_type1 > 0:
-                wall_id1 = potential_list_particle_particle[cwlist_i].end2
-                norm1 = wall[wall_id1].norm
-                for cwlist_j in range(cwlist_i + 1, to_end):
-                    contact_type2 = potential_list_particle_wall[cwlist_j].wall_type
-                    wall_id2 = potential_list_particle_particle[cwlist_j].end2
-                    norm2 = wall[wall_id2].norm
-                    if contact_type2 > 0 and SquaredLength(norm1, norm2) < 1e-6:
-                        if contact_type1 == 1 and (contact_type2 == 2 or contact_type2 == 3):
-                            contact_type2 = 0
-                        elif contact_type1 == 2:
-                            if contact_type2 == 2: contact_type2 = 0
-                            elif contact_type2 == 1: contact_type1 = 0
-                            else: contact_type2 = 0
-                        elif contact_type1 == 3: contact_type1 = 0
-                    potential_list_particle_wall[cwlist_j].wall_type = contact_type2
-            potential_list_particle_wall[cwlist_i].wall_type = contact_type1
 
 @ti.kernel
 def insert_digital_elevation_facet_(igrid_size: float, wallNum: int, cnum: ti.types.vector(2, int), wall: ti.template(), wallID: ti.template()):
@@ -675,11 +692,33 @@ def insert_digital_elevation_facet_(igrid_size: float, wallNum: int, cnum: ti.ty
     for i in range(1, cellSum):
         wallID[i] = wallID[i] + wallID[i - 1]
 
+# =========================================== Digital elevation model =========================================== #
+@ti.kernel
+def board_search_particle_digital_elevation_(particleNum: int, potential_wall_num: int, verlet_distance: float, icell_size: float, cnum: ti.types.vector(2, int), particle: ti.template(), wall: ti.template(),
+                                             wallID: ti.template(), potential_list_particle_wall: ti.template(), particle_wall: ti.template()):
+    particle_wall.fill(0)
+    for particle_id in range(particleNum):
+        particle_pos, particle_rad = particle[particle_id].x, particle[particle_id].rad
+
+        xStart, yStart, _ = ti.floor((particle_pos - particle_rad) * icell_size , int)
+        xEnd, yEnd, _ = ti.ceil((particle_pos + particle_rad) * icell_size , int)
+        
+        sques = particle_id * potential_wall_num
+        for neigh_x in range(xStart, xEnd):
+            for neigh_y in range(yStart, yEnd):
+                cellID = linearize3D(neigh_x, neigh_y, 0, cnum)
+                startID, endID = wallID[cellID], wallID[cellID + 1]
+                for wall_id in range(startID, endID):
+                    valid = wall[wall_id]._is_sphere_intersect(particle_pos, (particle_rad + 2 * verlet_distance))
+                    if valid: 
+                        potential_list_particle_wall[sques] = wall_id
+                        sques += 1
+        neighbors = sques - particle_id * potential_wall_num
+        assert neighbors <= potential_wall_num, f"Keyword:: /wall_coordination_number/ is too small, Particle {particle_id} has {neighbors} potential contact number"
+        particle_wall[particle_id + 1] = neighbors
 
 # ================================================================= #
-#                                                                   #
 #                   Hierarchical Linked Cell                        #
-#                                                                   #
 # ================================================================= #
 @ti.kernel
 def initialize_radius_range(particleNum: int, hierarchical_level: int, hierarchical_size: ti.types.ndarray(), particle_num_in_level: ti.types.ndarray(), body: ti.template(), grid: ti.template(), particle: ti.template()):
@@ -1238,3 +1277,83 @@ def board_search_particle_patch_linked_cell_hierarchical_(particleNum: int, leve
         particle_wall[particle_id + 1] = neighbors
 
 
+# ================================================================= #
+#                                                                   #
+#                              BVH                                  #
+#                                                                   #
+# ================================================================= #
+@ti.kernel
+def board_search_particle_particle_bvh_(batch_id: int, particleNum: int, potential_particle_num: int, prefix_batch_size: ti.template(), nodes: ti.template(), morton_codes: ti.template(), aabbs: ti.template(), particle: ti.template(), potential_list_particle_particle: ti.template(), particle_particle: ti.template()):
+    prefix_batch_num = prefix_batch_size[batch_id]
+    batch_num = prefix_batch_size[batch_id + 1] - prefix_batch_num
+    prefix_i_node = 2 * prefix_batch_num - batch_id
+    particle_particle.fill(0)
+    for master in range(particleNum):
+        if int(particle[master].active) == 0: continue
+        query_stack = ti.Vector.zero(ti.i32, 64)
+        stack_depth = 1
+        index = particle[master]._get_multisphere_index1()
+        
+        sques = master * potential_particle_num
+        while stack_depth > 0:
+            stack_depth -= 1
+            node_idx = query_stack[stack_depth]
+            node = nodes[prefix_i_node + node_idx]
+            # Check if the AABB intersects with the node's bounding box
+            if aabbs[prefix_batch_num + master].intersects(node.bound):
+                # If it's a leaf node, add the AABB index to the query results
+                if node.left == -1 and node.right == -1:
+                    code = morton_codes[prefix_batch_num + node_idx - (batch_num - 1)]
+                    slave = ti.i32(code & ti.u64(0xFFFFFFFF))
+                    if master < slave and not index == particle[slave]._get_multisphere_index2():
+                        potential_list_particle_particle[sques] = slave
+                        sques += 1
+                else:
+                    # Push children onto the stack
+                    if node.right != -1:
+                        query_stack[stack_depth] = node.right
+                        stack_depth += 1
+                    if node.left != -1:
+                        query_stack[stack_depth] = node.left
+                        stack_depth += 1
+        neighbors = sques - master * potential_particle_num
+        assert neighbors <= potential_particle_num, f"Keyword:: /body_coordination_number/ is too small, Particle {master} has {neighbors} potential contact number"
+        particle_particle[master + 1] = neighbors
+
+
+@ti.kernel
+def board_search_particle_wall_bvh_(particle_batch_id: int, wall_batch_id: int, particleNum: int, potential_wall_num: int, prefix_batch_size: ti.template(), nodes: ti.template(), morton_codes: ti.template(), aabbs: ti.template(), particle: ti.template(), potential_list_particle_wall: ti.template(), particle_wall: ti.template()):
+    prefix_particle_batch_num = prefix_batch_size[particle_batch_id]
+    prefix_wall_batch_num = prefix_batch_size[wall_batch_id]
+    wall_batch_num = prefix_batch_size[wall_batch_id + 1] - prefix_wall_batch_num
+    prefix_i_node = 2 * prefix_wall_batch_num - wall_batch_id
+    particle_wall.fill(0)
+    for master in range(particleNum):
+        if int(particle[master].active) == 0: continue
+        query_stack = ti.Vector.zero(ti.i32, 64)
+        stack_depth = 1
+        
+        sques = master * potential_wall_num
+        while stack_depth > 0:
+            stack_depth -= 1
+            node_idx = query_stack[stack_depth]
+            node = nodes[prefix_i_node + node_idx]
+            # Check if the AABB intersects with the node's bounding box
+            if aabbs[prefix_particle_batch_num + master].intersects(node.bound):
+                # If it's a leaf node, add the AABB index to the query results
+                if node.left == -1 and node.right == -1:
+                    code = morton_codes[prefix_wall_batch_num + node_idx - (wall_batch_num - 1)]
+                    slave = ti.i32(code & ti.u64(0xFFFFFFFF))
+                    potential_list_particle_wall[sques] = slave
+                    sques += 1
+                else:
+                    # Push children onto the stack
+                    if node.right != -1:
+                        query_stack[stack_depth] = node.right
+                        stack_depth += 1
+                    if node.left != -1:
+                        query_stack[stack_depth] = node.left
+                        stack_depth += 1
+        neighbors = sques - master * potential_wall_num
+        assert neighbors <= potential_wall_num, f"Keyword:: /wall_coordination_number/ is too small, Particle {master} has {neighbors} potential contact number"
+        particle_wall[master + 1] = neighbors

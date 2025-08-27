@@ -31,7 +31,6 @@ class DEMPM(object):
         self.enginer = None
         self.solver = None
         self.recorder = None
-        self.history_contact_path = dict()
 
     def set_configuration(self, log=True, **kwargs):
         if np.linalg.norm(np.array(self.mpm.sims.get_simulation_domain()) - np.zeros(3)) < 1e-10 and \
@@ -57,11 +56,15 @@ class DEMPM(object):
             else:
                 self.sims.set_domain(self.mpm.sims.get_simulation_domain())
         
-        self.sims.set_coupling_scheme(DictIO.GetAlternative(kwargs, "coupling_scheme", "DEM-MPM"))
+        self.sims.set_coupling_scheme(DictIO.GetAlternative(kwargs, "coupling_scheme", "MPDEM"))
         self.sims.set_particle_interaction(DictIO.GetAlternative(kwargs, "particle_interaction", True))
         self.sims.set_wall_interaction(DictIO.GetAlternative(kwargs, "wall_interaction", False))
         self.mpm.sims.set_gravity(DictIO.GetAlternative(kwargs, "gravity", [0., 0., -9.8]))
         self.dem.sims.set_gravity(DictIO.GetAlternative(kwargs, "gravity", [0., 0., -9.8]))
+        self.sims.set_CFD_coupling_domain(DictIO.GetAlternative(kwargs, "CFD_coupling_domain", [3, 6]))
+        self.sims.set_enhanced_coupling(DictIO.GetAlternative(kwargs, "enhanced_coupling", False))
+        if self.sims.enhanced_coupling:
+            self.mpm.sims.set_norm_adaptivity(True)
         
         if self.mpm.sims.coupling is False:
             raise RuntimeError(f"KeyWord::: /coupling/ should be activated in MPM")
@@ -113,8 +116,10 @@ class DEMPM(object):
         print(("Save Path: " + str(self.sims.path)).ljust(67))
 
     def add_body(self, mpm_body=None, dem_particle=None, write_file=False, check_overlap=False):
-        self.generator.add_mixture(check_overlap, dem_particle, mpm_body, self.sims, self.dem.scene, self.mpm.scene, self.dem.sims, self.mpm.sims)
-
+        if self.sims.coupling_scheme != "LSMPM":
+            self.generator.add_mixture(check_overlap, dem_particle, mpm_body, self.sims, self.dem.scene, self.mpm.scene, self.dem.sims, self.mpm.sims)
+        else:
+            raise RuntimeError("Please use add_LSbody to generate deformable particles")
         if write_file:
             self.dem.add_recorder()
             self.dem.recorder.save_particle(self.dem.sims, self.dem.scene)
@@ -123,20 +128,37 @@ class DEMPM(object):
             self.mpm.add_recorder()
             self.mpm.recorder.save_particle(self.mpm.sims, self.mpm.scene)
 
+    def create_LSbody(self, body):
+        self.generator.create_LSbody(body)
+    
+    def add_LSbody(self, body):
+        self.generator.add_LSbody(body)
+
+    def read_file(self, mpm_body, dem_particle):
+        self.generator.read_files(dem_particle, mpm_body, self.dem.scene, self.mpm.scene, self.dem.sims, self.mpm.sims)
+
     def choose_contact_model(self, particle_particle_contact_model, particle_wall_contact_model=None):
+        if self.dem.contactor is None:
+            self.dem.choose_contact_model()
+        if self.mpm.neighbor is None:
+            self.mpm.add_spatial_grid()
+
         if self.contactor is None:
             self.contactor = ContactManager()
-            self.contactor.choose_neighbor(self.sims, self.mpm.sims, self.dem.sims, self.mpm.neighbor, self.dem.contactor.neighbor)
+            if self.sims.coupling_scheme != "CFDEM":
+                self.contactor.choose_neighbor(self.sims, self.mpm.sims, self.dem.sims, self.mpm.neighbor, self.dem.contactor.neighbor)
         
-        if self.sims.max_material_num == 0:
-            raise RuntimeError("memory_allocate should be launched first!")
-        self.sims.set_particle_particle_contact_model(particle_particle_contact_model)
-        self.sims.set_particle_wall_contact_model(particle_wall_contact_model)
-        self.contactor.particle_particle_initialize(self.sims, self.mpm.sims.material_type, self.dem.sims.scheme)
-        self.contactor.particle_wall_initialize(self.sims, self.mpm.sims.material_type, self.dem.sims.wall_type)
+        if self.sims.coupling_scheme != "CFDEM":
+            if self.sims.max_material_num == 0:
+                raise RuntimeError("memory_allocate should be launched first!")
+            self.sims.set_particle_particle_contact_model(particle_particle_contact_model)
+            self.sims.set_particle_wall_contact_model(particle_wall_contact_model)
+            self.contactor.particle_particle_initialize(self.sims, self.mpm.sims.material_type, self.dem.sims.scheme)
+            self.contactor.particle_wall_initialize(self.sims, self.mpm.sims.material_type)
 
     def add_property(self, DEMmaterial, MPMmaterial, property, dType="all"):
-        self.contactor.add_contact_property(self.sims, MPMmaterial, DEMmaterial, property, dType)
+        if self.sims.coupling_scheme != "CFDEM":
+            self.contactor.add_contact_property(self.sims, MPMmaterial, DEMmaterial, property, dType)
 
     def modify_parameters(self, **kwargs):
         if len(kwargs) > 0:
@@ -175,7 +197,7 @@ class DEMPM(object):
     def read_restart(self, file_number, file_path, ppcontact=False, pwcontact=False):
         ppcontact_path = None
         pwcontact_path = None
-        if (self.dem.sims.is_continue and self.mpm.sims.is_continue) is True:
+        if self.dem.sims.is_continue != self.mpm.sims.is_continue:
             raise RuntimeError(f"The continue flag in MPM {self.mpm.sims.is_continue} and DEM {self.dem.sims.is_continue} is different")
         else:
             self.sims.is_continue = self.dem.sims.is_continue
@@ -193,12 +215,12 @@ class DEMPM(object):
             ppcontact_path = file_path+"/contacts"
         if pwcontact:
             pwcontact_path = file_path+"/contacts"
-        self.history_contact_path.update(file_number=file_number, ppcontact=ppcontact_path, pwcontact=pwcontact_path)
+        self.sims.history_contact_path.update(file_number=file_number, ppcontact=ppcontact_path, pwcontact=pwcontact_path)
 
     def load_history_contact(self):
-        file_number = DictIO.GetAlternative(self.history_contact_path, "file_number", 0)
-        ppcontact = DictIO.GetAlternative(self.history_contact_path, "ppcontact", None)
-        pwcontact = DictIO.GetAlternative(self.history_contact_path, "pwcontact", None)
+        file_number = DictIO.GetAlternative(self.sims.history_contact_path, "file_number", 0)
+        ppcontact = DictIO.GetAlternative(self.sims.history_contact_path, "ppcontact", None)
+        pwcontact = DictIO.GetAlternative(self.sims.history_contact_path, "pwcontact", None)
 
         if not ppcontact is None:
             self.contactor.physpp.restart(self.contactor.neighbor, file_number, ppcontact, True)
@@ -206,22 +228,33 @@ class DEMPM(object):
             self.contactor.physpw.restart(self.contactor.neighbor, file_number, pwcontact, False)
 
     def add_essentials(self, kwargs: dict):
+        def split_function(dicts, name):
+            split_dict = {}
+            for keys, values in dicts.items():
+                if name in keys:
+                    split_dict.update({keys.replace(name, "", 1): values})
+            return split_dict
         self.mpm.scene.update_coupling_points_number(self.mpm.sims)
         if self.dem.scene.particleNum[0] > 0 or self.mpm.scene.particleNum[0] > 0:
-            if self.contactor.have_initialise is False:
-                self.contactor.initialize(self.sims, self.mpm.sims, self.dem.sims, self.mpm.scene, self.dem.scene)
+            if self.sims.coupling_scheme != "CFDEM":
+                if self.contactor.have_initialise is False:
+                    self.contactor.initialize(self.sims, self.mpm.scene, self.dem.scene)
         else:
             raise RuntimeError("DEM/MPM particle should be added first")
         self.load_history_contact() 
-        kwargs.update({"max_bounding_radius": self.sims.max_bounding_rad, "min_bounding_radius": self.sims.min_bounding_rad})
-        self.mpm.add_essentials(kwargs)
-        self.dem.add_essentials(kwargs)
+        self.mpm.add_essentials(split_function(kwargs, "mpm_"))
+        dem_function = split_function(kwargs, "dem_")
+        dem_function.update({"max_bounding_radius": self.sims.max_bounding_rad, "min_bounding_radius": self.sims.min_bounding_rad})
+        self.dem.add_essentials(dem_function)
+
+        if self.contactor is None:
+            self.choose_contact_model(None, None)
 
         self.recorder = WriteFile(self.sims, self.mpm.sims, self.dem.sims, self.dem.recorder, self.mpm.recorder, self.contactor.physpp, self.contactor.physpw, self.contactor.neighbor)
         if self.enginer is None:
             self.enginer = Engine(self.sims, self.mpm.sims, self.dem.sims, self.mpm.scene, self.dem.scene, self.mpm.enginer, self.dem.enginer,
                                   self.contactor.neighbor, self.mpm.neighbor, self.dem.contactor.neighbor, self.contactor.physpp, self.contactor.physpw)
-        self.enginer.manage_function()
+        self.enginer.manage_function(DictIO.GetAlternative(kwargs, 'drag_model', {}))
 
         if self.solver is None:
             self.solver = Solver(self.sims, self.mpm.sims, self.dem.sims, self.mpm.recorder, self.dem.recorder, self.generator, self.enginer, self.recorder)
@@ -243,7 +276,7 @@ class DEMPM(object):
         print("#", " Check Timestep ... ...".ljust(67))
         dem_critical_timestep = self.dem.get_critical_timestep()
         mpm_critical_timestep = self.mpm.scene.get_critical_timestep()
-        dempm_critical_timestep = self.get_critical_timestep()
+        dempm_critical_timestep = self.get_critical_timestep() if self.sims.coupling_scheme != "CFDEM" else mpm_critical_timestep
         critical_timestep = min(dem_critical_timestep, mpm_critical_timestep, dempm_critical_timestep)
         if self.sims.CFL * critical_timestep < self.sims.dt[None]:
             self.sims.update_critical_timestep(self.mpm.sims, self.dem.sims, self.sims.CFL * critical_timestep)

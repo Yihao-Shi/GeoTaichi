@@ -4,6 +4,7 @@ import warnings
 from src.utils.ObjectIO import DictIO
 from src.utils.TypeDefination import vec2f, vec3i, vec3f
 import src.utils.GlobalVariable as GlobalVariable
+from src.utils.TimeTicker import Timer
 
 
 class Simulation(object):
@@ -19,14 +20,17 @@ class Simulation(object):
         self.alphaPIC = 0.
         self.shape_smooth = 0.
         self.fbar_fraction = 0.99
+        self.max_radius = 0.
         self.coupling = False
         self.neighbor_detection = False
         self.free_surface_detection = False
         self.sparse_grid = False
         self.boundary_direction_detection = False
+        self.stress_integration = None
         self.stabilize = None
         self.pressure_smoothing = False
         self.strain_smoothing = False
+        self.random_field = False
         self.mapping = None
         self.shape_function = None
         self.wall_type = None
@@ -39,8 +43,10 @@ class Simulation(object):
         self.particle_shifting = False
         self.isTHB = False
         self.AOSOA = False
+        self.norm_adaptivity = False
         self.THBparameter = {}
         self.grid_layer = 0
+        self.timer = Timer()
 
         self.dt = ti.field(float, shape=())
         self.delta = 0.
@@ -51,10 +57,10 @@ class Simulation(object):
         
         self.max_body_num = 2
         self.max_material_num = 0
-        self.max_particle_num = 0
+        self.max_particle_num = 1
+        self.max_coupling_particle_num = 1
         self.verlet_distance_multiplier = 0
         self.verlet_distance = 0.
-        self.max_coupling_particle_particle = 0
         self.nvelocity = 0
         self.nfriction = 0
         self.nreflection = 0
@@ -62,7 +68,9 @@ class Simulation(object):
         self.ntraction = 0
         self.nptraction = 0
         self.ndisplacement = 0
-        self.pbc = False
+        self.xpbc = False
+        self.ypbc = False
+        self.zpbc = False
         self.is_continue = True
 
         self.time = 0.
@@ -134,9 +142,20 @@ class Simulation(object):
                         "Destroy": 1,
                         "Period": 2
                    }
-        self.boundary = vec3i([DictIO.GetEssential(BOUNDARY, b) for b in boundary])
-        if self.boundary[0] == 2 or self.boundary[1] == 2 or self.boundary[2] == 2:
-            self.activate_period_boundary()
+        self.boundary = [DictIO.GetEssential(BOUNDARY, b) for b in boundary]
+        if self.boundary[0] == 2:
+            self.xpbc = True
+            GlobalVariable.MPMXPBC = True
+            GlobalVariable.MPMXSIZE = self.domain[0]
+        if self.boundary[1] == 2:
+            self.ypbc = True
+            GlobalVariable.MPMYPBC = True
+            GlobalVariable.MPMYSIZE = self.domain[1]
+        if self.dimension == 3:
+            if self.boundary[2] == 2:
+                self.zpbc = True
+                GlobalVariable.MPMZPBC = True
+                GlobalVariable.MPMZSIZE = self.domain[2]
 
     def set_gravity(self, gravity):
         self.gravity = gravity
@@ -156,11 +175,11 @@ class Simulation(object):
         if not stabilize in typelist:
             raise RuntimeError(f"KeyWord:: /stabilize: {stabilize}/ is invalid. The valid type are given as follows: {typelist}")
         self.stabilize = stabilize
-        if self.mode == "Lightweight":
-            if self.stabilize == "B-Bar Method":
-                GlobalVariable.BBAR = True
-            elif self.stabilize == "F-Bar Method":
-                raise RuntimeError("F-bar method should be actived under normal mode:: mode=str(Normal)")
+        
+        if self.stabilize == "B-Bar Method":
+            GlobalVariable.BBAR = True
+        elif self.stabilize == "F-Bar Method":
+            GlobalVariable.FBAR = True
 
     def set_shape_smoothing(self, shape_smooth):
         if self.shape_function == "SmoothLinear":
@@ -184,15 +203,13 @@ class Simulation(object):
             raise RuntimeError(f"Keyword:: /material_type/ error. Only {valid_list} is valid!")
         self.material_type = material_type
 
-        if self.mode == "Lightweight":
-            if self.material_type == "TwoPhaseSingleLayer":
-                GlobalVariable.TWOPHASESINGLELAYER = True
+        if self.material_type == "TwoPhaseSingleLayer":
+            GlobalVariable.TWOPHASESINGLELAYER = True
 
     def set_visualize(self, visualize):
         self.visualize = visualize
 
     def set_THB(self, THBparameter):
-        raise RuntimeError("Current version do not support THB")
         if THBparameter:
             self.isTHB = True
             self.THBparameter = THBparameter
@@ -207,8 +224,13 @@ class Simulation(object):
     
     def set_particle_shifting(self, particle_shifting):
         self.particle_shifting = particle_shifting
-        if self.mode == "Lightweight":
-            GlobalVariable.PARTICLESHIFTING = particle_shifting
+        GlobalVariable.PARTICLESHIFTING = particle_shifting
+
+    def set_stress_integration(self, stress_integration):
+        typelist = ["ReturnMapping", "SubStepping"]
+        if not stress_integration in typelist:
+            raise RuntimeError(f"KeyWord:: /stress_integration: {stress_integration}/ is invalid. The valid type are given as follows: {typelist}")
+        self.stress_integration = stress_integration
 
     def set_discretization(self, discretization):
         typelist = ["FEM", "FDM"]
@@ -254,6 +276,7 @@ class Simulation(object):
         self.coupling = coupling
 
     def set_free_surface_detection(self, free_surface_detection):
+        if self.norm_adaptivity: free_surface_detection = True
         self.free_surface_detection = free_surface_detection
         if free_surface_detection is True:
             self.neighbor_detection = True
@@ -276,8 +299,10 @@ class Simulation(object):
     def set_is_continue(self, is_continue):
         self.is_continue = is_continue
 
-    def activate_period_boundary(self):
-        self.pbc = True
+    def set_norm_adaptivity(self, is_adaptivity):
+        self.norm_adaptivity = is_adaptivity
+        if is_adaptivity:
+            self.set_free_surface_detection(True)
 
     def set_timestep(self, timestep):
         self.dt[None] = timestep
@@ -326,8 +351,13 @@ class Simulation(object):
         if self.verlet_distance < 1e-16:
             self.verlet_distance = self.verlet_distance_multiplier * rad_min 
 
+    def set_max_radius(self, max_radius):
+        self.max_radius = max(self.max_radius, max_radius)
+
     def set_coupling_particles(self, coupling_particles):
-        self.max_coupling_particle_particle = coupling_particles
+        if coupling_particles == 0:
+            raise RuntimeError("It is unnecessary to using coupling modules because there is no materail points are considered in coupling process")
+        self.max_coupling_particle_num = coupling_particles
 
     def set_velocity_projection_scheme(self, velocity_projection_scheme: str):
         self.velocity_projection_scheme = velocity_projection_scheme
@@ -340,11 +370,10 @@ class Simulation(object):
         if velocity_projection_scheme not in valid_type:
             raise RuntimeError(f"Keyword:: /velocity_projection_scheme/ is error, followings are valid {valid_type}")
         
-        if self.mode == "Lightweight":
-            if self.velocity_projection_scheme == "Affine":
-                GlobalVariable.APIC = True
-            elif self.velocity_projection_scheme == "Taylor":
-                GlobalVariable.TPIC = True
+        if self.velocity_projection_scheme == "Affine":
+            GlobalVariable.APIC = True
+        elif self.velocity_projection_scheme == "Taylor":
+            GlobalVariable.TPIC = True
 
     def set_window_parameters(self, windows):
         self.visualize_interval = DictIO.GetAlternative(windows, "VisualizeInterval", self.save_interval)
@@ -387,6 +416,11 @@ class Simulation(object):
                     self.block_size = list(AOSOA)
                 else:
                     raise ValueError(f"Keyword:: /AOSOA/ is empty. The input {AOSOA} is invalid. For example, you can input [grid_block_size, leaf_block_size].")
+                
+    def set_random_field(self, random_field):
+        if random_field:
+            self.random_field = True
+            GlobalVariable.RANDOMFIELD = True
         
     def set_save_data(self, particle, grid, object):
         if particle: self.monitor_type.append('particle')
@@ -436,9 +470,6 @@ class Simulation(object):
 
     def set_linear_solver(self, linear_solver):
         self.linear_solver = linear_solver
-
-        if self.material_type == "Fluid" and self.solver_type == "Implicit":
-            self.linear_solver = "MGPCG"
 
         valid_list = ["CG", "PCG", "BiCG", "MGPCG"]
         if linear_solver not in valid_list:

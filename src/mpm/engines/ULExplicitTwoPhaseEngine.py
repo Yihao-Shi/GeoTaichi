@@ -5,7 +5,7 @@ from src.mpm.SceneManager import myScene
 from src.mpm.Simulation import Simulation
 from src.mpm.SpatialHashGrid import SpatialHashGrid
 from src.utils.linalg import no_operation
-from src.utils.FreeSurfaceDetection import *
+from src.mpm.engines.FreeSurfaceDetection import *
 
 
 class ULExplicitTwoPhaseEngine(ULExplicitEngine):
@@ -26,21 +26,36 @@ class ULExplicitTwoPhaseEngine(ULExplicitEngine):
         self.apply_velocity_constraints(sims, scene)
     
     def compute_stress_strain(self, sims: Simulation, scene: myScene):
-        kernel_compute_stress_strain_twophase(int(scene.particleNum[0]), sims.dt, scene.particle, scene.material.matProps, scene.material.stateVars)
+        for materialID in range(scene.material.mapping.shape[0] - 1):
+            start_index = scene.material.mapping[materialID]
+            end_index = scene.material.mapping[materialID + 1]
+            kernel_compute_stress_strain_twophase(start_index, end_index, sims.dt, scene.particle, scene.material.materialID, scene.material.matProps[materialID + 1], scene.material.stateVars)
         
     def compute_stress_strain_2D(self, sims: Simulation, scene: myScene):
-        kernel_compute_stress_strain_twophase2D(int(scene.particleNum[0]), sims.dt, scene.particle, scene.material.matProps, scene.material.stateVars)
+        for materialID in range(scene.material.mapping.shape[0] - 1):
+            start_index = scene.material.mapping[materialID]
+            end_index = scene.material.mapping[materialID + 1]
+            kernel_compute_stress_strain_twophase2D(start_index, end_index, sims.dt, scene.particle, scene.material.materialID, scene.material.matProps[materialID + 1], scene.material.stateVars)
         
     def update_velocity_gradient_2D(self, sims: Simulation, scene: myScene):
-        kernel_update_velocity_gradient_twophase_2D(scene.element.grid_nodes, int(scene.particleNum[0]), sims.dt, scene.node, scene.particle, scene.material.matProps, scene.material.stateVars,
+        for materialID in range(scene.material.mapping.shape[0] - 1):
+            start_index = scene.material.mapping[materialID]
+            end_index = scene.material.mapping[materialID + 1]
+            kernel_update_velocity_gradient_twophase_2D(scene.element.grid_nodes, start_index, end_index, sims.dt, scene.node, scene.particle, scene.material.materialID, scene.material.matProps[materialID + 1], scene.material.stateVars,
                                                     scene.element.LnID, scene.element.dshape_fn, scene.element.node_size)
         
     def update_velocity_gradient_bbar_2D(self, sims: Simulation, scene: myScene):
-        kernel_update_velocity_gradient_bbar_twophase_2D(scene.element.grid_nodes, int(scene.particleNum[0]), sims.dt, scene.node, scene.particle, scene.material.matProps, scene.material.stateVars,
+        for materialID in range(scene.material.mapping.shape[0] - 1):
+            start_index = scene.material.mapping[materialID]
+            end_index = scene.material.mapping[materialID + 1]
+            kernel_update_velocity_gradient_bbar_twophase_2D(scene.element.grid_nodes, start_index, end_index, sims.dt, scene.node, scene.particle, scene.material.materialID, scene.material.matProps[materialID + 1], scene.material.stateVars,
                                                          scene.element.LnID, scene.element.dshape_fn, scene.element.dshape_fnc, scene.element.node_size)
     
     def update_velocity_gradient(self, sims: Simulation, scene: myScene):
-        kernel_update_velocity_gradient_twophase(scene.element.grid_nodes, int(scene.particleNum[0]), sims.dt, scene.node, scene.particle, scene.material.matProps, scene.material.stateVars,
+        for materialID in range(scene.material.mapping.shape[0] - 1):
+            start_index = scene.material.mapping[materialID]
+            end_index = scene.material.mapping[materialID + 1]
+            kernel_update_velocity_gradient_twophase(scene.element.grid_nodes, start_index, end_index, sims.dt, scene.node, scene.particle, scene.material.materialID, scene.material.matProps[materialID + 1], scene.material.stateVars,
                                                  scene.element.LnID, scene.element.dshape_fn, scene.element.node_size)
         
     def compute_force(self, sims: Simulation, scene: myScene):

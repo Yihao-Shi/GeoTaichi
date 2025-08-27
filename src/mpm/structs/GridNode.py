@@ -29,10 +29,6 @@ class ContactNodes:
         self.grad_domain = ZEROVEC3f
 
     @ti.func
-    def _set_dofs(self, rowth):
-        pass
-
-    @ti.func
     def _update_nodal_mass(self, m):
         self.m += m
 
@@ -189,10 +185,6 @@ class ContactNodes2D:
         self.force = ZEROVEC2f
         self.contact_force = ZEROVEC2f
         self.grad_domain = ZEROVEC2f
-
-    @ti.func
-    def _set_dofs(self, rowth):
-        pass
 
     @ti.func
     def _update_nodal_mass(self, m):
@@ -352,10 +344,6 @@ class NodeTwoPhase2D:
         self.forcef = ZEROVEC2f
 
     @ti.func
-    def _set_dofs(self, rowth):
-        pass
-
-    @ti.func
     def _update_nodal_mass(self, m, ms, mf):
         self.m += m
         self.ms += ms
@@ -448,7 +436,7 @@ class NodeTwoPhase2D:
             self.force[dirs] = 0.
 
     @ti.func
-    def rigid_body_reflection_constraint(self, norm1, norm2, norm3):
+    def rigid_body_reflection_constraint(self, dirs, signs):
         pass
 
     # @ti.func
@@ -474,7 +462,7 @@ class NodeTwoPhase2D:
     #             self.momentum = ZEROVEC2f
 
     @ti.func
-    def rigid_friction_constraint(self, norm):
+    def rigid_friction_constraint(self, dirs, signs):
         pass
 
 
@@ -507,10 +495,6 @@ class Nodes:
         self.m = 0.
         self.momentum = ZEROVEC3f
         self.force = ZEROVEC3f
-
-    @ti.func
-    def _set_dofs(self, rowth):
-        pass
 
     @ti.func
     def _update_nodal_mass(self, m):
@@ -639,10 +623,6 @@ class Nodes2D:
         self.force = ZEROVEC2f
 
     @ti.func
-    def _set_dofs(self, rowth):
-        pass
-
-    @ti.func
     def _update_nodal_mass(self, m):
         self.m += m
 
@@ -744,11 +724,14 @@ class IncompressibleNodes2D:
     m: float
     force: vec2f
     momentum: vec2f
+    vbar: vec2f
     
     @ti.func
     def _grid_reset(self):
         self.m = 0.
         self.momentum = ZEROVEC2f
+        self.vbar = ZEROVEC2f
+        self.force = ZEROVEC2f
 
     @ti.func
     def _update_nodal_mass(self, m):
@@ -759,28 +742,48 @@ class IncompressibleNodes2D:
         self.momentum += momentum
 
     @ti.func
-    def _compute_nodal_velocity(self):
-        self.momentum /= self.m
-        self.force = self.momentum
+    def _compute_nodal_velocity(self, gravity, dt):
+        self.vbar = self.momentum
+        acceleration = self.force / self.m + vec2f(gravity[0], gravity[1])
+        self.momentum += acceleration * dt[None]
 
     @ti.func
     def _compute_nodal_acceleration(self, dt):
-        self.force = (self.momentum - self.force) / dt[None]
+        self.force = self.momentum - self.vbar
 
     @ti.func
-    def _add_gravity(self, gravity, dt):
-        self.momentum += vec2f(gravity[0], gravity[1]) * dt[None]
+    def velocity_constraint(self, dirs, prescribed_velocity):
+        self.momentum[dirs] = prescribed_velocity 
+        self.force[dirs] = 0.
+
+    @ti.func
+    def rigid_body_velocity_constraint(self, dirs):
+        pass
+
+    @ti.func
+    def reflection_constraint(self, dirs, signs):
+        pre_velocity = self.momentum[dirs]
+        if pre_velocity * signs > 0:
+            self.momentum[dirs] = 0.
+            self.force[dirs] = 0.
+
+    @ti.func
+    def rigid_body_reflection_constraint(self, dirs, signs):
+        pass
 
 @ti.dataclass
 class IncompressibleNodes3D:
     m: float
     force: vec3f
     momentum: vec3f
+    vbar: vec3f
     
     @ti.func
     def _grid_reset(self):
         self.m = 0.
+        self.vbar = ZEROVEC3f
         self.momentum = ZEROVEC3f
+        self.force = ZEROVEC3f
 
     @ti.func
     def _update_nodal_mass(self, m):
@@ -791,21 +794,37 @@ class IncompressibleNodes3D:
         self.momentum += momentum
 
     @ti.func
-    def _compute_nodal_velocity(self):
-        self.momentum /= self.m
-        self.force = self.momentum
+    def _compute_nodal_velocity(self, gravity, dt):
+        self.vbar = self.momentum
+        acceleration = self.force / self.m + gravity
+        self.momentum += acceleration * dt[None]
 
     @ti.func
     def _compute_nodal_acceleration(self, dt):
-        self.force = (self.momentum - self.force) / dt[None]
+        self.force = self.momentum - self.force
 
     @ti.func
-    def _add_gravity(self, gravity, dt):
-        self.momentum += gravity * dt[None]
+    def velocity_constraint(self, dirs, prescribed_velocity):
+        self.momentum[dirs] = prescribed_velocity 
+        self.force[dirs] = 0.
+
+    @ti.func
+    def rigid_body_velocity_constraint(self, dirs):
+        pass
+
+    @ti.func
+    def reflection_constraint(self, dirs, signs):
+        pre_velocity = self.momentum[dirs]
+        if pre_velocity * signs > 0:
+            self.momentum[dirs] = 0.
+            self.force[dirs] = 0.
+
+    @ti.func
+    def rigid_body_reflection_constraint(self, dirs, signs):
+        pass
 
 @ti.dataclass
 class ImplicitNodes:
-    dof: int
     m: float
     inertia: vec3f
     ext_force: vec3f
@@ -820,7 +839,6 @@ class ImplicitNodes:
         self.ext_force = ZEROVEC3f
         self.inertia = ZEROVEC3f
         self.displacement = ZEROVEC3f
-        self.dof = -1
 
     @ti.func
     def _reset_internal_force(self):
@@ -869,14 +887,9 @@ class ImplicitNodes:
     def _update_nodal_disp(self, disp):
         self.displacement += disp
 
-    @ti.func
-    def _set_dofs(self, rowth):
-        self.dof = int(rowth)
-
 
 @ti.dataclass
 class ImplicitNodes2D:
-    dof: int
     m: float
     inertia: vec2f
     ext_force: vec2f
@@ -891,7 +904,6 @@ class ImplicitNodes2D:
         self.ext_force = ZEROVEC2f
         self.inertia = ZEROVEC2f
         self.displacement = ZEROVEC2f
-        self.dof = -1
 
     @ti.func
     def _reset_internal_force(self):
@@ -939,7 +951,3 @@ class ImplicitNodes2D:
     @ti.func
     def _update_nodal_disp(self, disp):
         self.displacement += disp
-
-    @ti.func
-    def _set_dofs(self, rowth):
-        self.dof = int(rowth)

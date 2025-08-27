@@ -50,10 +50,18 @@ class BoundaryConstraints(object):
         self.myRegion = myRegion
         self.psize = psize
 
-    def activate_boundary_constraints(self, sims: Simulation):
+    def activate_boundary_constraints(self, sims: Simulation, element_type):
         if self.velocity_boundary is None and sims.nvelocity > 0.:
-            self.velocity_boundary = VelocityConstraint.field(shape=sims.nvelocity)
-            kernel_initialize_boundary(self.velocity_boundary)
+            if element_type == "Staggered":
+                constraint_num = sims.nvelocity
+                if isinstance(sims.nvelocity, (int, float)):
+                    constraint_num = [int(sims.nvelocity) for _ in range(sims.dimension)]
+                self.velocity_boundary = [MacVelocityConstraint.field(shape=constraint_num[d]) for d in range(sims.dimension)]
+                for velocity_boundary in self.velocity_boundary:
+                    kernel_initialize_boundary(velocity_boundary)
+            else:
+                self.velocity_boundary = VelocityConstraint.field(shape=sims.nvelocity)
+                kernel_initialize_boundary(self.velocity_boundary)
 
         if self.reflection_boundary is None and sims.nreflection > 0.:
             self.reflection_boundary = ReflectionConstraint.field(shape=sims.nreflection)
@@ -193,6 +201,57 @@ class BoundaryConstraints(object):
         values_repeated = np.tile(values, len(args[-1]) * len(args[0]))
         return dict(zip(map(tuple, keys), values_repeated))
     
+    def set_velocity_constraints_mac_cell_2D(self, sims: Simulation, boundary, start_point, end_point, face_map: dict):
+        if self.velocity_boundary is None:
+            raise RuntimeError("Error:: /max_velocity_constraint/ is set as zero!")
+        
+        xvelocity = DictIO.GetAlternative(boundary, "VelocityX", None)
+        yvelocity = DictIO.GetAlternative(boundary, "VelocityY", None)
+        zvelocity = DictIO.GetAlternative(boundary, "VelocityZ", None)
+        default_val = [xvelocity, yvelocity, 0]
+        velocity = DictIO.GetAlternative(boundary, "Velocity", default_val)
+        freedoms = self.get_freedoms(sims, velocity)
+        dirs, values = zip(*freedoms)
+
+        face_ids = []
+        xface_centers = face_map['x']['face_centers']
+        yface_centers = face_map['y']['face_centers']
+        xmask = ((xface_centers[:, 0] >= start_point[0]) & (xface_centers[:, 0] <= end_point[0]) &
+                 (xface_centers[:, 1] >= start_point[1]) & (xface_centers[:, 1] <= end_point[1]))
+        face_ids.append(np.where(xmask)[0])
+        ymask = ((yface_centers[:, 0] >= start_point[0]) & (yface_centers[:, 0] <= end_point[0]) &
+                 (yface_centers[:, 1] >= start_point[1]) & (yface_centers[:, 1] <= end_point[1]))
+        face_ids.append(np.where(ymask)[0] + len(xface_centers))
+    
+    def set_velocity_constraints_mac_cell(self, sims: Simulation, boundary, start_point, end_point, face_map: dict):
+        if self.velocity_boundary is None:
+            raise RuntimeError("Error:: /max_velocity_constraint/ is set as zero!")
+        
+        xvelocity = DictIO.GetAlternative(boundary, "VelocityX", None)
+        yvelocity = DictIO.GetAlternative(boundary, "VelocityY", None)
+        zvelocity = DictIO.GetAlternative(boundary, "VelocityZ", None)
+        default_val = [xvelocity, yvelocity, zvelocity]
+        velocity = DictIO.GetAlternative(boundary, "Velocity", default_val)
+        freedoms = self.get_freedoms(sims, velocity)
+        dirs, values = zip(*freedoms)
+
+        face_ids = []
+        xface_centers = face_map['x']['face_centers']
+        yface_centers = face_map['y']['face_centers']
+        xmask = ((xface_centers[:, 0] >= start_point[0]) & (xface_centers[:, 0] <= end_point[0]) &
+                 (xface_centers[:, 1] >= start_point[1]) & (xface_centers[:, 1] <= end_point[1]) &
+                 (xface_centers[:, 2] >= start_point[2]) & (xface_centers[:, 2] <= end_point[2]))
+        face_ids.append(np.where(xmask)[0])
+        ymask = ((yface_centers[:, 0] >= start_point[0]) & (yface_centers[:, 0] <= end_point[0]) &
+                 (yface_centers[:, 1] >= start_point[1]) & (yface_centers[:, 1] <= end_point[1]) &
+                 (yface_centers[:, 2] >= start_point[2]) & (yface_centers[:, 2] <= end_point[2]))
+        face_ids.append(np.where(ymask)[0] + len(xface_centers))
+        zface_centers = face_map['z']['face_centers']
+        zmask = ((zface_centers[:, 0] >= start_point[0]) & (zface_centers[:, 0] <= end_point[0]) &
+                    (zface_centers[:, 1] >= start_point[1]) & (zface_centers[:, 1] <= end_point[1]) &
+                    (zface_centers[:, 2] >= start_point[2]) & (zface_centers[:, 2] <= end_point[2]))
+        face_ids.append(np.where(zmask)[0] + len(xface_centers) + len(yface_centers))
+
     def set_velocity_constraints(self, sims: Simulation, boundary, level, nlevel, start_point, end_point, inodes):
         if self.velocity_boundary is None:
             raise RuntimeError("Error:: /max_velocity_constraint/ is set as zero!")
@@ -321,6 +380,7 @@ class BoundaryConstraints(object):
     def copy_dict_to_field(self, sims):
         nvelocity = len(self.velocity_dict)
         if nvelocity > 0:
+            self.velocity_list[0] = 0
             self.check_velocity_constraint_num(sims, nvelocity)
             keys, values = self.split_dict_to_arrays(dict(sorted(self.velocity_dict.items(), key=lambda item: item)))
             nodeID = np.ascontiguousarray(keys[:, 0])
@@ -331,6 +391,7 @@ class BoundaryConstraints(object):
 
         nreflection = len(self.reflection_dict)
         if nreflection > 0:
+            self.reflection_list[0] = 0
             self.check_reflection_constraint_num(sims, nreflection)
             keys, values = self.split_dict_to_arrays(dict(sorted(self.reflection_dict.items(), key=lambda item: item)))
             nodeID = np.ascontiguousarray(keys[:, 0])
@@ -342,6 +403,7 @@ class BoundaryConstraints(object):
 
         nfriction = len(self.friction_dict)
         if nfriction > 0:
+            self.friction_list[0] = 0
             self.check_friction_constraint_num(sims, nfriction)
             keys, values = self.split_dict_to_arrays(dict(sorted(self.friction_dict.items(), key=lambda item: item)))
             nodeID = np.ascontiguousarray(keys[:, 0])
@@ -353,6 +415,7 @@ class BoundaryConstraints(object):
         
         ntraction = len(self.traction_dict)
         if ntraction > 0:
+            self.traction_list[0] = 0
             self.check_traction_constraint_num(sims, ntraction)
             keys, values = self.split_dict_to_arrays(dict(sorted(self.traction_dict.items(), key=lambda item: item)))
             nodeID = np.ascontiguousarray(keys[:, 0])
@@ -363,6 +426,7 @@ class BoundaryConstraints(object):
 
         ndisplacement = len(self.displacement_dict)
         if ndisplacement > 0:
+            self.displacement_list[0] = 0
             self.check_displacement_constraint_num(sims, ndisplacement)
             keys, values = self.split_dict_to_arrays(dict(sorted(self.displacement_dict.items(), key=lambda item: item)))
             nodeID = np.ascontiguousarray(keys[:, 0])
@@ -496,32 +560,38 @@ class BoundaryConstraints(object):
 
     def set_boundary_conditions(self, sims: Simulation, element: ElementBase, boundary):
         self.new_boundaries = True
-        boundary_type = DictIO.GetEssential(boundary, "BoundaryType")
-
-        level = DictIO.GetAlternative(boundary, "NLevel", "All")
         start_point = DictIO.GetEssential(boundary, "StartPoint")
         end_point = DictIO.GetEssential(boundary, "EndPoint")
-        self.check_boundary_domain(sims, start_point, end_point)
-        inodes = element.get_boundary_nodes(start_point, end_point)
-        level, nlevel = self.check_nlevel(level)
+        
+        if element.element_type == "Staggered":
+            if sims.dimension == 2:
+                self.set_velocity_constraints_mac_cell_2D(sims, boundary, start_point, end_point, element.mesh.face_map)
+            elif sims.dimension == 3:
+                self.set_velocity_constraints_mac_cell(sims, boundary, start_point, end_point, element.mesh.face_map)
+        else:
+            boundary_type = DictIO.GetEssential(boundary, "BoundaryType")
+            level = DictIO.GetAlternative(boundary, "NLevel", "All")
+            self.check_boundary_domain(sims, start_point, end_point)
+            inodes = element.get_boundary_nodes(start_point, end_point)
+            level, nlevel = self.check_nlevel(level)
 
-        if sims.mode == "Normal":
-            if sims.shape_function == "QuadBSpline" or sims.shape_function == "CubicBSpline":
-                for nl in range(level, level + nlevel):
-                    add_boundary_flags(nl, element.gridSum, inodes, element.boundary_flag)
+            if sims.mode == "Normal":
+                if sims.shape_function == "QuadBSpline" or sims.shape_function == "CubicBSpline":
+                    for nl in range(level, level + nlevel):
+                        add_boundary_flags(nl, element.gridSum, inodes, element.boundary_flag)
 
-        if boundary_type == "VelocityConstraint":
-            self.set_velocity_constraints(sims, boundary, level, nlevel, start_point, end_point, inodes)
-        elif boundary_type == "ReflectionConstraint":
-            self.set_reflection_constraints(sims, boundary, level, nlevel, start_point, end_point, inodes)
-        elif boundary_type == "FrictionConstraint":
-            self.set_friction_constraints(sims, boundary, level, nlevel, start_point, end_point, inodes)
-        elif boundary_type == "AbsorbingConstraint":
-            self.set_absorbing_constraints(sims, boundary, level, nlevel, start_point, end_point, inodes)
-        elif boundary_type == "TractionConstraint":
-            self.set_traction_constraints(sims, boundary, level, nlevel, start_point, end_point, inodes)
-        elif boundary_type == "DisplacementConstraint":
-            self.set_displacement_constraints(sims, boundary, level, nlevel, start_point, end_point, inodes)
+            if boundary_type == "VelocityConstraint":
+                self.set_velocity_constraints(sims, boundary, level, nlevel, start_point, end_point, inodes)
+            elif boundary_type == "ReflectionConstraint":
+                self.set_reflection_constraints(sims, boundary, level, nlevel, start_point, end_point, inodes)
+            elif boundary_type == "FrictionConstraint":
+                self.set_friction_constraints(sims, boundary, level, nlevel, start_point, end_point, inodes)
+            elif boundary_type == "AbsorbingConstraint":
+                self.set_absorbing_constraints(sims, boundary, level, nlevel, start_point, end_point, inodes)
+            elif boundary_type == "TractionConstraint":
+                self.set_traction_constraints(sims, boundary, level, nlevel, start_point, end_point, inodes)
+            elif boundary_type == "DisplacementConstraint":
+                self.set_displacement_constraints(sims, boundary, level, nlevel, start_point, end_point, inodes)
         
     def clear_boundary_constraint(self, sims: Simulation, element: ElementBase, boundary):
         boundary_type = DictIO.GetEssential(boundary, "BoundaryType")
@@ -719,26 +789,27 @@ class BoundaryConstraints(object):
                                                             "EndPoint":       end_point
                                                         })
             
-        if sims.boundary[2] == 0:
-            start_point = vec3f(0, 0, 0)
-            end_point = vec3f(sims.domain[0], sims.domain[1], 0)
-            norm = vec3f(0, 0, -1)
-            self.set_boundary_conditions(sims, boundary={
-                                                            "BoundaryType":   "ReflectionConstraint",
-                                                            "Norm":           norm,
-                                                            "StartPoint":     start_point,
-                                                            "EndPoint":       end_point
-                                                        })
-            
-            start_point = vec3f(0, 0, sims.domain[2])
-            end_point = vec3f(sims.domain[0], sims.domain[1], sims.domain[2])
-            norm = vec3f(0, 0, 1)
-            self.set_boundary_conditions(sims, boundary={
-                                                            "BoundaryType":   "ReflectionConstraint",
-                                                            "Norm":           norm,
-                                                            "StartPoint":     start_point,
-                                                            "EndPoint":       end_point
-                                                        })
+        if sims.dimension == 3:
+            if sims.boundary[2] == 0:
+                start_point = vec3f(0, 0, 0)
+                end_point = vec3f(sims.domain[0], sims.domain[1], 0)
+                norm = vec3f(0, 0, -1)
+                self.set_boundary_conditions(sims, boundary={
+                                                                "BoundaryType":   "ReflectionConstraint",
+                                                                "Norm":           norm,
+                                                                "StartPoint":     start_point,
+                                                                "EndPoint":       end_point
+                                                            })
+                
+                start_point = vec3f(0, 0, sims.domain[2])
+                end_point = vec3f(sims.domain[0], sims.domain[1], sims.domain[2])
+                norm = vec3f(0, 0, 1)
+                self.set_boundary_conditions(sims, boundary={
+                                                                "BoundaryType":   "ReflectionConstraint",
+                                                                "Norm":           norm,
+                                                                "StartPoint":     start_point,
+                                                                "EndPoint":       end_point
+                                                            })
             
     def set_boundary_types(self, sims: Simulation, element: ElementBase):
         grid_level = self.grid_layer

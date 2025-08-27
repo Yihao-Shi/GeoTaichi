@@ -7,9 +7,10 @@ from src.mpm.elements.HexahedronKernel import *
 from src.mpm.structs import HexahedronGuassCell, HexahedronCell, ParticleCPDI, IncompressibleCell
 from src.mpm.elements.ElementBase import ElementBase
 from src.mpm.Simulation import Simulation
-from src.utils.GaussPoint import GaussPointInRectangle
+from src.mesh.GaussPoint import GaussPointInRectangle
+from src.mesh.HexMesh import HexahedronMesh
 from src.utils.PrefixSum import PrefixSumExecutor
-from src.utils.linalg import round32 ,flip3d_linear
+from src.utils.linalg import round32
 from src.utils.ShapeFunctions import *
 from src.utils.TypeDefination import u1, vec3f, vec3i
 import src.utils.GlobalVariable as GlobalVariable
@@ -17,8 +18,9 @@ import src.utils.GlobalVariable as GlobalVariable
 
 Threshold = 1e-12
 class HexahedronElement8Nodes(ElementBase):
-    def __init__(self, element_type, grid_level) -> None:
-        super().__init__(element_type, grid_level)
+    def __init__(self, element_type, grid_level, ghost_cell) -> None:
+        super().__init__(element_type, grid_level, ghost_cell)
+        self.mesh = None
         self.grid_size = vec3f(2., 2., 2.)
         self.igrid_size = vec3f(0.5, 0.5, 0.5)
         self.start_local_coord = vec3f(-1, -1, -1)
@@ -63,18 +65,18 @@ class HexahedronElement8Nodes(ElementBase):
         for d in range(3):
             if cnum[d] == 0:
                 cnum[d] = 1      
-        if self.element_type == "Staggered":   
+        if sims.linear_solver == "MGPCG":   
             multiplier = 2 * sims.multilevel
             cnum = np.array(multiplier * np.ceil(cnum / multiplier), dtype=np.int32) 
         
         self.grid_size = vec3f(domain / cnum)
         self.igrid_size = 1. / self.grid_size
         self.cell_volume = self.calc_volume()
-        self.cnum = vec3i(cnum)
+        self.cnum = vec3i(cnum) + 2 * self.ghost_cell
         self.gnum = self.cnum + 1
         self.gridSum = int(self.gnum[0] * self.gnum[1] * self.gnum[2])
         self.cellSum = int(self.cnum[0] * self.cnum[1] * self.cnum[2])
-        self.set_nodal_coords()
+        self.mesh = HexahedronMesh(*self.cnum, *self.grid_size, self.ghost_cell)
 
     def set_characteristic_length(self, sims: Simulation):
         if sims.shape_function == "CPDI1" or sims.shape_function == "CPDI2":
@@ -83,30 +85,6 @@ class HexahedronElement8Nodes(ElementBase):
             self.calLength = ti.Vector.field(3, float, shape=sims.max_body_num)
             if sims.stabilize == "F-Bar Method":
                 self.calLength_lower_order = ti.Vector.field(3, float, shape=sims.max_body_num)
-
-    def set_nodal_coords(self):
-        X = np.linspace(0., self.cnum[0] * self.grid_size[0], int(self.gnum[0]))
-        Y = np.linspace(0., self.cnum[1] * self.grid_size[1], int(self.gnum[1]))
-        Z = np.linspace(0., self.cnum[2] * self.grid_size[2], int(self.gnum[2]))
-        self.nodal_coords = flip3d_linear(np.array(list(product(X, Y, Z))), size_u=X.shape[0], size_v=Y.shape[0], size_w=Z.shape[0])
-
-    def set_node_connectivity(self):
-        total_cell_number = self.get_total_cell_number()
-        self.node_connectivity = np.zeros((total_cell_number, 8))
-        self.node_connectivity[:, 0] = np.arange(0, total_cell_number, 1)
-        self.node_connectivity[:, 1] = np.arange(0, total_cell_number, 1) + 1
-        self.node_connectivity[:, 2] = np.arange(0, total_cell_number, 1) + self.cnum[0] + 1
-        self.node_connectivity[:, 3] = np.arange(0, total_cell_number, 1) + self.cnum[0]
-        self.node_connectivity[:, 4] = np.arange(0, total_cell_number, 1) + self.cnum[0] * self.cnum[1]
-        self.node_connectivity[:, 5] = np.arange(0, total_cell_number, 1) + self.cnum[0] * self.cnum[1] + 1
-        self.node_connectivity[:, 6] = np.arange(0, total_cell_number, 1) + self.cnum[0] * self.cnum[1] + self.cnum[0] + 1
-        self.node_connectivity[:, 7] = np.arange(0, total_cell_number, 1) + self.cnum[0] * self.cnum[1] + self.cnum[0]
-
-    def get_nodal_coords(self):
-        return self.nodal_coords
-    
-    def get_node_connectivity(self):
-        return self.node_connectivity
 
     def element_initialize(self, sims: Simulation, local_coordiates=False):
         self.choose_shape_function(sims)
@@ -127,10 +105,11 @@ class HexahedronElement8Nodes(ElementBase):
                 self.set_essential_field(is_bbar, sims.max_particle_num, sims.shape_function, sims.mls)
         
         if sims.solver_type == "Implicit":
-            self.pse = PrefixSumExecutor(self.gridSum)
+            if sims.discretization == "FEM":
+                self.pse = PrefixSumExecutor(self.gridSum)
+            elif sims.discretization == "FDM":
+                self.pse = PrefixSumExecutor(self.cellSum)
             self.flag = ti.field(int, shape=self.pse.get_length())
-
-        self.set_node_connectivity()
 
     def compute_inertia_tensor(self, shape_function_type):
         if shape_function_type == "QuadBSpline":
@@ -199,9 +178,7 @@ class HexahedronElement8Nodes(ElementBase):
         else:
             raise KeyError(f"The shape function type {sims.shape_function} is not exist!")
         
-        if sims.mode == "Lightweight":
-            GlobalVariable.INFLUENCENODE = self.influenced_node
-        
+        GlobalVariable.INFLUENCENODE = self.influenced_node
         self.influenced_dofs = 3 * self.grid_nodes
 
     def get_nonzero_grids_per_row(self):
@@ -275,11 +252,11 @@ class HexahedronElement8Nodes(ElementBase):
         self.gauss_cell = HexahedronGuassCell.field(shape=(self.get_total_cell_number() * sims.gauss_number ** 3, self.grid_level))
         activate_cell(self.cell)
 
-    def activate_euler_cell(self):
+    def activate_euler_cell(self, sims: Simulation):
         if self.element_type == "Staggered":
             if not self.cell is None:
                 print("Warning: Previous Euler cells will be override!")
-            self.cell = ()
+            self.cell = IncompressibleCell(self.cnum, self.cellSum, self.ghost_cell)
 
     def set_up_cell_active_flag(self, fb: ti.FieldsBuilder):
         self.cell_active = ti.field(u1)
@@ -334,14 +311,6 @@ class HexahedronElement8Nodes(ElementBase):
     
     def calc_critical_timestep(self, velocity):
         return ti.min(self.grid_size[0], self.grid_size[1], self.grid_size[2]) / velocity if velocity > 0. else 10000
-    
-    def initial_estimate_active_dofs(self, cutoff, node):
-        return estimate_active_dofs(cutoff, node)
-    
-    def find_active_nodes(self, cutoff, node):
-        find_active_node(self.gridSum, cutoff, node, self.flag)
-        self.pse.run(self.flag)
-        return set_active_dofs(self.gridSum, cutoff, node, self.flag)
 
     def calc_local_shape_fn(self, particleNum, particle):
         update(self.grid_nodes, self.influenced_node, self.grid_size, self.igrid_size, self.gnum, self.start_local_coord, particleNum[0],

@@ -7,63 +7,73 @@ class ObjectIO:
         with open(FilePath, "r") as f:
             self.Object = json.load(f)
 
-    def GetConfigSetting(self, keyWord):
+    def GetConfigSetting(self, keyword):
         try:
-            if keyWord in self.Object: 
-                return self.Object[keyWord]
+            if keyword in self.Object: 
+                return self.Object[keyword]
             else:
                 raise KeyError
         except:
-            print(f"KeyError: {keyWord} is not included in the JSON file!", '\n')
+            print(f"KeyError: {keyword} is not included in the JSON file!", '\n')
     
-    def GetEssential(self, dict, keyWord):
+    def GetEssential(self, dictionary, keyword):
         try:
-            if keyWord in dict: 
-                return dict[keyWord]
+            if keyword in dictionary: 
+                return dictionary[keyword]
             else:
                 raise KeyError
         except:
-            print(f"KeyError: {keyWord} is not included in the data dictionary!", '\n')
+            print(f"KeyError: {keyword} is not included in the data dictionary!", '\n')
     
-    def GetAlternative(self, dict, keyWord):
-        if keyWord in dict:
-            return dict[keyWord]
+    def GetAlternative(self, dictionary, keyword):
+        if keyword in dictionary:
+            return dictionary[keyword]
         else:
             return []
     
 
 class DictIO:
     @staticmethod
-    def GetEssential(dict, *arg):
-        for keyWord in arg:
-            if keyWord in dict: 
-                return dict[keyWord]
+    def GetEssential(dictionary, *arg):
+        dictionary = {key.lower() if isinstance(key, str) else key: value for key, value in dictionary.items()}
+        for keyword in arg:
+            keyword_lower = keyword.lower() if isinstance(keyword, str) else keyword
+            if keyword_lower in dictionary: 
+                return dictionary[keyword_lower]
         raise KeyError(f"KeyError: {arg} is not included in the data dictionary!", '\n')
     
     @staticmethod
-    def GetAlternative(dict, keyWord, default):
-        if keyWord in dict:
-            return dict[keyWord]
-        else:
-            # print("Warning: Parameter", keyWord, "is not specified, using default as", default, '\n')
-            return default
+    def GetAlternative(dictionary, keyword, default):
+        dictionary = {key.lower() if isinstance(key, str) else key: value for key, value in dictionary.items()}
+        keyword_lower = keyword.lower() if isinstance(keyword, str) else keyword
+        if keyword_lower in dictionary:
+            return dictionary[keyword_lower]
+        return default
 
     @staticmethod
-    def GetOptional(dict, keyWord):
-        if keyWord in dict:
-            return dict[keyWord]
-        else:
-            return None
+    def GetOptional(dictionary, keyword):
+        dictionary = {key.lower() if isinstance(key, str) else key: value for key, value in dictionary.items()}
+        keyword_lower = keyword.lower() if isinstance(keyword, str) else keyword
+        if keyword_lower in dictionary:
+            return dictionary[keyword_lower]
+        return None
 
     @staticmethod
-    def append(dict, keyword, value):
-        if keyword in dict:
-            dict[keyword].append(value)
+    def append(dictionary, keyword, value):
+        if keyword in dictionary:
+            dictionary[keyword].append(value)
         else:
-            dict[keyword] = value
+            dictionary[keyword] = value
 
     @staticmethod
-    def overrides(dict, **kwargs):
+    def overrides(dictionary, **kwargs):
         for keyword in kwargs:
-            dict[keyword] = kwargs.get(keyword)
+            dictionary[keyword] = kwargs.get(keyword)
+
+    @staticmethod
+    def merge(dict1, dict2):
+        for key, value in dict2.items():
+            if key not in dict1: 
+                dict1[key] = value
+        return dict1
 

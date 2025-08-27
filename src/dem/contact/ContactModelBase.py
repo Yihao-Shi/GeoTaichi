@@ -2,7 +2,7 @@ import taichi as ti
 import os
 import numpy as np
 
-from src.dem.BaseStruct import (ContactTable, HistoryContactTable, DigitalContactTable)
+from src.dem.structs.BaseStruct import (ContactTable, ISContactTable, HistoryContactTable, HistoryISContactTable, DigitalContactTable)
 from src.dem.contact.ContactKernel import *
 from src.dem.Simulation import Simulation
 from src.dem.SceneManager import myScene
@@ -22,13 +22,16 @@ class ContactModelBase(object):
         self.resolve = None
         self.update_contact_table = None
         self.cplist = None
+        self.contact_type = None
         self.hist_cplist = None
         self.contact_active = None
         self.deactivate_exist = None
         self.surfaceProps = None
         self.contact_model = None
         self.null_model = True
+        self.iterative_model = None
         self.model_type = -1
+        self.first_run = True
 
     def manage_function(self, object_type, work_type):
         self.resolve = self.no_operation
@@ -50,22 +53,22 @@ class ContactModelBase(object):
                     elif self.sims.scheme == "LSDEM":
                         self.resolve = self.tackle_LSparticle_LSparticle_contact_cplist
                         self.update_contact_table = self.update_LSparticle_LSparticle_contact_table
+                    elif self.sims.scheme == "PolySuperEllipsoid" or self.sims.scheme == "PolySuperQuadrics":
+                        self.resolve = self.tackle_ISparticle_ISparticle_contact_cplist
+                        self.update_contact_table = self.update_ISparticle_ISparticle_contact_table
             elif object_type == "wall":
-                if self.sims.wall_type != 3:
-                    if work_type == 0 or work_type == 1:
-                        self.resolve = self.tackle_particle_wall_contact_bit_table
-                    elif work_type == 2:
-                        if self.sims.scheme == "DEM":
-                            self.resolve = self.tackle_particle_wall_contact_cplist
-                            self.update_contact_table = self.update_particle_wall_contact_table
-                        elif self.sims.scheme == "LSDEM":
-                            self.resolve = self.tackle_LSparticle_wall_contact_cplist
-                            self.update_contact_table = self.update_LSparticle_wall_contact_table
-                elif self.sims.wall_type == 3:
+                if work_type == 0 or work_type == 1:
+                    self.resolve = self.tackle_particle_wall_contact_bit_table
+                elif work_type == 2:
                     if self.sims.scheme == "DEM":
-                        self.resolve = self.tackle_particle_digital_elevation_contact_cplist
+                        self.resolve = self.tackle_particle_wall_contact_cplist
+                        self.update_contact_table = self.update_particle_wall_contact_table
                     elif self.sims.scheme == "LSDEM":
-                        self.resolve = self.tackle_LSparticle_digital_elevation_contact_cplist
+                        self.resolve = self.tackle_LSparticle_wall_contact_cplist
+                        self.update_contact_table = self.update_LSparticle_wall_contact_table
+                    elif self.sims.scheme == "PolySuperEllipsoid" or self.sims.scheme == "PolySuperQuadrics":
+                        self.resolve = self.tackle_ISparticle_wall_contact_cplist
+                        self.update_contact_table = self.update_particle_wall_contact_table
 
             self.update_ppcontact_table = self.update_particle_contact_table
             if self.sims.scheme == "DEM":
@@ -80,16 +83,17 @@ class ContactModelBase(object):
                     self.update_pwcontact_table = self.update_wall_contact_table_hierarchical
             elif self.sims.scheme == "LSDEM":
                 self.update_pwcontact_table = self.update_LSwall_contact_table
+            elif self.sims.scheme == "PolySuperEllipsoid" or self.sims.scheme == "PolySuperQuadrics":
+                if self.sims.wall_type == 1 or self.sims.wall_type == 2:
+                    self.update_pwcontact_table = self.update_ISwall_contact_table
 
             if self.sims.scheme == "LSDEM":
                 if self.sims.search == "HierarchicalLinkedCell":
                     self.update_verlet_particle_particle_tables = self.update_particle_verlet_table_hierarchical
-                    if self.sims.wall_type != 3:
-                        self.update_verlet_particle_wall_tables = self.update_wall_verlet_table_hierarchical
+                    self.update_verlet_particle_wall_tables = self.update_wall_verlet_table_hierarchical
                 else:
                     self.update_verlet_particle_particle_tables = self.update_particle_verlet_table
-                    if self.sims.wall_type != 3:
-                        self.update_verlet_particle_wall_tables = self.update_wall_verlet_table
+                    self.update_verlet_particle_wall_tables = self.update_wall_verlet_table
 
             if object_type == "particle":
                 if self.sims.scheme == "DEM":
@@ -102,6 +106,11 @@ class ContactModelBase(object):
                         self.contact_model = LSparticle_contact_model_type0
                     elif self.model_type == 1:
                         self.contact_model = LSparticle_contact_model_type1
+                elif self.sims.scheme == "PolySuperEllipsoid" or self.sims.scheme == "PolySuperQuadrics":
+                    if self.model_type == 1:
+                        self.contact_model = ISparticle_contact_model_type1
+                    elif self.model_type == 2:
+                        self.contact_model = ISparticle_contact_model_type2
             elif object_type == "wall":
                 if self.sims.scheme == "DEM":
                     if self.model_type == 1:
@@ -110,26 +119,42 @@ class ContactModelBase(object):
                         self.contact_model = wall_contact_model_type2
                 elif self.sims.scheme == "LSDEM":
                     self.contact_model = LSparticle_wall_contact_model
+                elif self.sims.scheme == "PolySuperEllipsoid" or self.sims.scheme == "PolySuperQuadrics":
+                    if self.model_type == 1:
+                        self.contact_model = ISparticle_wall_contact_model_type1
+                    elif self.model_type == 2:
+                        self.contact_model = ISparticle_wall_contact_model_type2
 
             if self.resolve is None:
                 raise RuntimeError("Internal error!")
 
     def collision_initialize(self, object_type, work_type, max_object_pairs, object_num1, object_num2):
-        if not self.null_model:
-            if object_type == 'particle' or (object_type == 'wall' and self.sims.wall_type != 3):
-                self.cplist = ContactTable.field(shape=max_object_pairs)
+        if not self.null_model and self.first_run:
+            if object_type == 'particle' or object_type == 'wall':
+                if (self.sims.scheme == "PolySuperEllipsoid" or self.sims.scheme == "PolySuperQuadrics") and object_type == 'particle':
+                    self.cplist = ISContactTable.field(shape=max_object_pairs)
+                else:
+                    self.cplist = ContactTable.field(shape=max_object_pairs)
                 if work_type == 0 or work_type == 1:
                     self.deactivate_exist = ti.field(ti.u8, shape=())
                     self.contact_active = ti.field(u1)
                     ti.root.dense(ti.i, round32(object_num1 * object_num2)//32).quant_array(ti.i, dimensions=32, max_num_bits=32).place(self.contact_active)
-                    self.hist_cplist = ContactTable.field(shape=max_object_pairs)
-                elif work_type == 2:
+                    
+                if self.sims.scheme == "PolySuperEllipsoid" or self.sims.scheme == "PolySuperQuadrics" and object_type == 'particle':
+                    self.hist_cplist = HistoryISContactTable.field(shape=max_object_pairs)
+                else:
                     self.hist_cplist = HistoryContactTable.field(shape=max_object_pairs)
+
+                if (self.sims.scheme == "PolySuperEllipsoid" or self.sims.scheme == "PolySuperQuadrics"):
+                    self.contact_type = ti.field(ti.u8, shape=max_object_pairs)
+                    if self.sims.wall_type == 0:
+                        self.contact_type.fill(1)
             elif object_type == 'wall' and self.sims.wall_type == 3:
                 if self.sims.scheme == "DEM":
                     self.cplist = DigitalContactTable.field(shape=int(self.sims.max_particle_num))
                 elif self.sims.scheme == "LSDEM":
                     self.cplist = DigitalContactTable.field(shape=int(self.sims.max_surface_node_num * self.sims.max_rigid_body_num))
+        self.first_run = False
 
     def get_componousID(self, max_material_num, materialID1, materialID2):
         return int(materialID1 * max_material_num + materialID2)
@@ -174,7 +199,6 @@ class ContactModelBase(object):
         if not contact is None:
             if not os.path.exists(contact):
                 raise EOFError("Invaild contact path")
-            
             if is_particle_particle:
                 contact_info = np.load(contact + "/DEMContactPP{0:06d}.npz".format(file_number), allow_pickle=True) 
                 self.rebuild_ppcontact_list(pcontact, contact_info)
@@ -185,39 +209,34 @@ class ContactModelBase(object):
     def rebuild_contact_list(self, contact_info):
         object_object = DictIO.GetEssential(contact_info, "contact_num")
         DstID = DictIO.GetEssential(contact_info, "end2")
+        normal_force = DictIO.GetEssential(contact_info, "normal_force")
+        tangential_force = DictIO.GetEssential(contact_info, "tangential_force")
         oldTangOverlap = DictIO.GetEssential(contact_info, "oldTangentialOverlap")
-        return object_object, DstID, oldTangOverlap
-    
-    def rebuild_LScontact_list(self, contact_info):
-        object_object = DictIO.GetEssential(contact_info, "contact_num")
-        LocID = DictIO.GetEssential(contact_info, "end1")
-        DstID = DictIO.GetEssential(contact_info, "end2")
-        oldTangOverlap = DictIO.GetEssential(contact_info, "oldTangentialOverlap")
-        return object_object, LocID, DstID, oldTangOverlap
+        return object_object, DstID, normal_force, tangential_force, oldTangOverlap
 
     def get_ppcontact_output(self, contact_path, current_time, current_print, scene: myScene, pcontact: NeighborBase):
-        end1, end2, normal_force, tangential_force, oldTangentialOverlap = self.get_contact_output(scene, pcontact.particle_particle)
-        particleParticle = np.ascontiguousarray(pcontact.particle_particle.to_numpy()[0:scene.particleNum[0] + 1])
+        particleParticle = np.ascontiguousarray(pcontact.hist_particle_particle.to_numpy()[0:scene.particleNum[0] + 1])
+        end1, end2, normal_force, tangential_force, oldTangentialOverlap = self.get_contact_output(scene, particleParticle)
         np.savez(contact_path+f'{current_print:06d}', t_current=current_time, contact_num=particleParticle, end1=end1, end2=end2, normal_force=normal_force, 
                                                       tangential_force=tangential_force, oldTangentialOverlap=oldTangentialOverlap)
         
     def get_pwcontact_output(self, contact_path, current_time, current_print, scene: myScene, pcontact: NeighborBase):
-        end1, end2, normal_force, tangential_force, oldTangentialOverlap = self.get_contact_output(scene, pcontact.particle_wall)
-        particleWall = np.ascontiguousarray(pcontact.particle_wall.to_numpy()[0:scene.particleNum[0] + 1])
+        particleWall = np.ascontiguousarray(pcontact.hist_particle_wall.to_numpy()[0:scene.particleNum[0] + 1])
+        end1, end2, normal_force, tangential_force, oldTangentialOverlap = self.get_contact_output(scene, particleWall)
         np.savez(contact_path+f'{current_print:06d}', t_current=current_time, contact_num=particleWall, end1=end1, end2=end2, normal_force=normal_force, 
                                                       tangential_force=tangential_force, oldTangentialOverlap=oldTangentialOverlap)
     
     def rebuild_ppcontact_list(self, pcontact: NeighborBase, contact_info):
-        object_object, DstID, oldTangOverlap = self.rebuild_contact_list(contact_info)
+        object_object, DstID, normal_force, tangential_force, oldTangOverlap = self.rebuild_contact_list(contact_info)
         if DstID.shape[0] > self.cplist.shape[0]:
             raise RuntimeError("/body_coordination_number/ should be enlarged")
-        kernel_rebulid_history_contact_list(self.cplist, pcontact.hist_particle_particle, object_object, DstID, oldTangOverlap)
+        kernel_rebulid_history_contact_list(self.cplist, pcontact.hist_particle_particle, object_object, DstID, normal_force, tangential_force, oldTangOverlap)
 
     def rebuild_pwcontact_list(self, pcontact: NeighborBase, contact_info):
-        object_object, DstID, oldTangOverlap = self.rebuild_contact_list(contact_info)
+        object_object, DstID, normal_force, tangential_force, oldTangOverlap = self.rebuild_contact_list(contact_info)
         if DstID.shape[0] > self.cplist.shape[0]:
             raise RuntimeError("/body_coordination_number/ should be enlarged")
-        kernel_rebulid_history_contact_list(self.cplist, pcontact.hist_particle_wall, object_object, DstID, oldTangOverlap)
+        kernel_rebulid_history_contact_list(self.cplist, pcontact.hist_particle_wall, object_object, DstID, normal_force, tangential_force, oldTangOverlap)
     
     # ========================================================= #
     #                   Bit Table Resolve                       #
@@ -252,14 +271,6 @@ class ContactModelBase(object):
         
     def tackle_particle_wall_contact_cplist(self, sims: Simulation, scene: myScene, pcontact: NeighborBase):
         kernel_particle_wall_force_assemble_(int(scene.particleNum[0]), sims.dt, sims.max_material_num, self.surfaceProps, scene.particle, scene.wall, self.cplist, pcontact.hist_particle_wall, self.contact_model)
-
-    def tackle_particle_digital_elevation_contact_cplist(self, sims: Simulation, scene: myScene, pcontact: NeighborBase):
-        kernel_particle_digital_elevation_force_assemble_(int(scene.particleNum[0]), sims.dt, sims.max_material_num, self.surfaceProps, scene.particle, scene.wall, 
-                                                          scene.digital_elevation.idigital_size, scene.digital_elevation.digital_dim, pcontact.digital_wall, self.cplist, self.contact_model)
-        
-    def tackle_LSparticle_digital_elevation_contact_cplist(self, sims: Simulation, scene: myScene, pcontact: NeighborBase):
-        kernel_LSparticle_digital_elevation_force_assemble_(int(scene.surfaceNum[0]), sims.dt, sims.max_material_num, self.surfaceProps, scene.rigid, scene.vertice, scene.surface, scene.particle,
-                                                            scene.box, scene.wall, scene.digital_elevation.idigital_size, scene.digital_elevation.digital_dim, pcontact.digital_wall, self.cplist, self.contact_model)
     
     def update_LSparticle_LSparticle_contact_table(self, sims: Simulation, scene: myScene, pcontact: NeighborBase):
         copy_contact_table(pcontact.hist_lsparticle_lsparticle, int(scene.surfaceNum[0]), self.cplist, self.hist_cplist)
@@ -270,14 +281,31 @@ class ContactModelBase(object):
         copy_contact_table(pcontact.hist_lsparticle_wall, int(scene.surfaceNum[0]), self.cplist, self.hist_cplist)
         self.update_pwcontact_table(sims, scene, pcontact)
         kernel_inherit_contact_history(int(scene.surfaceNum[0]), self.cplist, self.hist_cplist, pcontact.lsparticle_wall, pcontact.hist_lsparticle_wall)
+    
+    def update_ISparticle_ISparticle_contact_table(self, sims: Simulation, scene: myScene, pcontact: NeighborBase):
+        copy_contact_table(pcontact.hist_particle_particle, int(scene.rigidNum[0]), self.cplist, self.hist_cplist)
+        self.update_ppcontact_table(sims, scene, pcontact)
+        kernel_inherit_IScontact_history(int(scene.rigidNum[0]), self.cplist, self.hist_cplist, pcontact.particle_particle, pcontact.hist_particle_particle)
+        
+    def update_ISparticle_wall_contact_table(self, sims: Simulation, scene: myScene, pcontact: NeighborBase):
+        copy_contact_table(pcontact.hist_particle_wall, int(scene.rigidNum[0]), self.cplist, self.hist_cplist)
+        self.update_pwcontact_table(sims, scene, pcontact)
+        kernel_inherit_IScontact_history(int(scene.rigidNum[0]), self.cplist, self.hist_cplist, pcontact.particle_wall, pcontact.hist_particle_wall)
         
     def tackle_LSparticle_LSparticle_contact_cplist(self, sims: Simulation, scene: myScene, pcontact: NeighborBase):
         kernel_LSparticle_LSparticle_force_assemble_(int(scene.surfaceNum[0]), sims.dt, sims.max_material_num, self.surfaceProps, scene.rigid, scene.rigid_grid, 
                                                      scene.vertice, scene.surface, scene.box, self.cplist, pcontact.hist_lsparticle_lsparticle, self.contact_model)
         
+    def tackle_ISparticle_ISparticle_contact_cplist(self, sims: Simulation, scene: myScene, pcontact: NeighborBase):
+        kernel_ISparticle_ISparticle_force_assemble_(int(scene.particleNum[0]), sims.dt, sims.max_material_num, self.surfaceProps, scene.particle, scene.rigid, scene.surface, self.cplist, pcontact.hist_particle_particle, self.contact_model, self.iterative_model)
+        
     def tackle_LSparticle_wall_contact_cplist(self, sims: Simulation, scene: myScene, pcontact: NeighborBase):
         kernel_LSparticle_wall_force_assemble_(int(scene.surfaceNum[0]), sims.dt, sims.max_material_num, self.surfaceProps, scene.rigid, scene.vertice, scene.surface, 
                                                scene.box, scene.wall, self.cplist, pcontact.hist_lsparticle_wall, self.contact_model)
+        
+    def tackle_ISparticle_wall_contact_cplist(self, sims: Simulation, scene: myScene, pcontact: NeighborBase):
+        kernel_ISparticle_wall_force_assemble_(int(scene.particleNum[0]), sims.dt, sims.max_material_num, self.surfaceProps, scene.rigid, scene.surface, 
+                                               scene.wall, self.cplist, pcontact.hist_particle_wall, self.contact_type, self.contact_model)
     
     def update_particle_contact_table(self, sims: Simulation, scene: myScene, pcontact: NeighborBase):
         update_contact_table_(sims.potential_particle_num, int(scene.particleNum[0]), pcontact.particle_particle, pcontact.potential_list_particle_particle, self.cplist)
@@ -296,6 +324,9 @@ class ContactModelBase(object):
 
     def update_wall_contact_table(self, sims: Simulation, scene: myScene, pcontact: NeighborBase):
         update_contact_table_(sims.wall_coordination_number, int(scene.particleNum[0]), pcontact.particle_wall, pcontact.potential_list_particle_wall, self.cplist)
+
+    def update_ISwall_contact_table(self, sims: Simulation, scene: myScene, pcontact: NeighborBase):
+        update_wall_contact_table_(sims.wall_coordination_number, int(scene.particleNum[0]), scene.rigid, scene.surface, scene.wall, pcontact.particle_wall, pcontact.potential_list_particle_wall, self.cplist, self.contact_type)
 
     def update_wall_contact_table_hierarchical(self, sims: Simulation, scene: myScene, pcontact: HierarchicalLinkedCell):
         update_wall_contact_table_hierarchical_(int(scene.particleNum[0]), pcontact.particle_wall, pcontact.potential_list_particle_wall, self.cplist, pcontact.body)

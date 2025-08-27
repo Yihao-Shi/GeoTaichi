@@ -5,7 +5,7 @@ import taichi as ti
 from src.utils.constants import PI
 from src.utils.ObjectIO import DictIO
 from src.utils.TypeDefination import vec2f, vec3f
-from src.utils.Quaternion import RodriguesRotationMatrix, RotationMatrix2D
+from src.utils.Quaternion import ThetaToRotationMatrix, ThetaToRotationMatrix2D
 
 
 @ti.data_oriented
@@ -31,8 +31,8 @@ class RegionFunction(object):
             pass
 
         self.name = ""
-        self.ydirection = vec2f([0, 1])
-        self.zdirection = vec3f([0, 0, 1])
+        self.rotate2D = 0.
+        self.rotate = vec3f([0, 0, 0])
         self.start_point = vec3f([0, 0, 0])
         self.region_size = vec3f([0, 0, 0])
         self.local_start_point = vec3f([0, 0, 0])
@@ -42,7 +42,7 @@ class RegionFunction(object):
         self.function = None
 
     def finalize(self):
-        del self.name, self.zdirection, self.start_point, self.region_size, self.local_start_point, self.local_region_size, self.cal_volume, self.function
+        del self.name, self.rotate, self.start_point, self.region_size, self.local_start_point, self.local_region_size, self.cal_volume, self.function
         
     def dem_finalize(self):
         self.finalize()
@@ -70,15 +70,15 @@ class RegionFunction(object):
             if self.start_point[0] < 0.: return False
             elif self.start_point[1] < 0.: return False
             elif self.start_point[2] < 0.: return False
-            elif self.start_point[0] + self.region_size[0] > domain[0]: return False
-            elif self.start_point[1] + self.region_size[1] > domain[1]: return False
-            elif self.start_point[2] + self.region_size[2] > domain[2]: return False
+            elif self.start_point[0] + self.region_size[0] > (1 + 1e-7) * domain[0]: return False
+            elif self.start_point[1] + self.region_size[1] > (1 + 1e-7) * domain[1]: return False
+            elif self.start_point[2] + self.region_size[2] > (1 + 1e-7) * domain[2]: return False
             else: return True
         elif self.dims == 2:
             if self.start_point[0] < 0.: return False
             elif self.start_point[1] < 0.: return False
-            elif self.start_point[0] + self.region_size[0] > domain[0]: return False
-            elif self.start_point[1] + self.region_size[1] > domain[1]: return False
+            elif self.start_point[0] + self.region_size[0] > (1 + 1e-7) * domain[0]: return False
+            elif self.start_point[1] + self.region_size[1] > (1 + 1e-7) * domain[1]: return False
             else: return True
 
     def check_in_domain(self, domain):
@@ -95,6 +95,7 @@ class RegionFunction(object):
                                 "Cylinder":           self.RegionCylinder,
                                 "QuarterCylinder":    self.RegionQuarterCylinder,
                                 "Rectangle2D":        self.RegionRetangle2D,
+                                "Triangle2D":         self.RegionTriangle2D,
                                 "Cone2D":             self.RegionCone2D,
                                 "Polygon2D":          self.RegionPolygon2D
                            }
@@ -106,6 +107,7 @@ class RegionFunction(object):
                               "Cylinder":           self.RegionCylinderVolume,
                               "QuarterCylinder":    self.RegionQuarterCylinderVolume,
                               "Rectangle2D":        self.RegionRetangle2DVolume,
+                              "Triangle2D":         self.RegionTriangle2DVolume,
                               "Cone2D":             self.RegionCone2DVolume,
                               "Polygon2D":          self.RegionPolygon2DVolume
                          }
@@ -114,11 +116,12 @@ class RegionFunction(object):
         if not (self.region_type in function_hashmap or self.region_type == "UserDefined"):
             raise KeyError("Region Type error")
         self.name = DictIO.GetEssential(region_dict, "Name")
-        self.zdirection = DictIO.GetAlternative(region_dict, "zdirection", [0, 0, 1])
-        self.ydirection = DictIO.GetAlternative(region_dict, "ydirection", [0, 1])
+        self.rotate = DictIO.GetAlternative(region_dict, "rotate", [0., 0., 0.])
+        self.rotate2D = DictIO.GetAlternative(region_dict, "rotate2D", 0.)
         self.all_in = 1 if DictIO.GetAlternative(region_dict, "all_in", True) else 0
-        self.zdirection = vec3f(self.zdirection).normalized()
-        self.ydirection = vec2f(self.ydirection).normalized()
+        self.rotate = np.asarray(self.rotate)
+        if not isinstance(self.rotate2D, (int, float)):
+            raise RuntimeError("Keyword:: /rotate2D/ should be a float type!")
         
         if self.region_type == "UserDefined":
             self.cal_volume = ti.pyfunc(DictIO.GetEssential(region_dict, "RegionVolume"))
@@ -158,7 +161,10 @@ class RegionFunction(object):
         print("Region Name:", self.name)
         print("Region Type:", self.region_type)
         print("Bounding Box:", self.start_point, self.region_size)
-        print("Direction:", self.zdirection, '\n')
+        if self.dims == 3:
+            print("Rotate angle:", self.rotate, '\n')
+        elif self.dims == 2:
+            print("Rotate angle:", self.rotate2D, '\n')
 
     def calcuate_actual_bounding_box(self):
         if self.dims == 3:
@@ -171,7 +177,7 @@ class RegionFunction(object):
             vertice7 = vec3f(self.local_start_point[0],                             self.local_start_point[1] + self.local_region_size[1], self.local_start_point[2] + self.local_region_size[2])
             vertice8 = vec3f(self.local_start_point[0] + self.local_region_size[0], self.local_start_point[1] + self.local_region_size[1], self.local_start_point[2] + self.local_region_size[2])
 
-            rotation_matrix = RodriguesRotationMatrix(vec3f(0, 0, 1), self.zdirection).transpose()
+            rotation_matrix = ThetaToRotationMatrix(self.rotate).transpose()
             vertice1 = rotation_matrix @ (vertice1 - self.rotate_center) + self.rotate_center
             vertice2 = rotation_matrix @ (vertice2 - self.rotate_center) + self.rotate_center
             vertice3 = rotation_matrix @ (vertice3 - self.rotate_center) + self.rotate_center
@@ -195,7 +201,7 @@ class RegionFunction(object):
             vertice4 = vec2f(self.local_start_point[0] + self.local_region_size[0],
                              self.local_start_point[1] + self.local_region_size[1])
 
-            rotation_matrix = RotationMatrix2D(vec2f(0, 1), self.ydirection).transpose()
+            rotation_matrix = ThetaToRotationMatrix2D(self.rotate2D).transpose()
             vertice1 = rotation_matrix @ (vertice1 - self.rotate_center) + self.rotate_center
             vertice2 = rotation_matrix @ (vertice2 - self.rotate_center) + self.rotate_center
             vertice3 = rotation_matrix @ (vertice3 - self.rotate_center) + self.rotate_center
@@ -256,6 +262,10 @@ class RegionFunction(object):
     @ti.pyfunc
     def RegionRetangle2DVolume(self):
         return self.local_region_size[0] * self.local_region_size[1]
+    
+    @ti.pyfunc
+    def RegionTriangle2DVolume(self):
+        return 0.5 * self.local_region_size[0] * self.local_region_size[1]
 
     @ti.pyfunc
     def RegionCone2DVolume(self):
@@ -285,7 +295,7 @@ class RegionFunction(object):
     # ================================================================= #
     @ti.pyfunc
     def RegionRetangle(self, new_position, new_radius=0.):
-        rotation_matrix = RodriguesRotationMatrix(vec3f(0, 0, 1), self.zdirection)
+        rotation_matrix = ThetaToRotationMatrix(vec3f(self.rotate))
         local_position = rotation_matrix.transpose() @ (new_position - self.rotate_center) + self.rotate_center
         xpos = local_position[0]
         ypos = local_position[1]
@@ -312,7 +322,7 @@ class RegionFunction(object):
     # ============================================= #
     @ti.pyfunc
     def RegionTrianglarPrism(self, new_position, new_radius=0.):
-        rotation_matrix = RodriguesRotationMatrix(vec3f(0, 0, 1), self.zdirection)
+        rotation_matrix = ThetaToRotationMatrix(vec3f(self.rotate))
         local_position = rotation_matrix.transpose() @ (new_position - self.rotate_center) + self.rotate_center
         xpos = local_position[0]
         ypos = local_position[1]
@@ -329,7 +339,7 @@ class RegionFunction(object):
 
     @ti.pyfunc
     def RegionSpheroid(self, new_position, new_radius=0.):
-        rotation_matrix = RodriguesRotationMatrix(vec3f(0, 0, 1), self.zdirection)
+        rotation_matrix = ThetaToRotationMatrix(vec3f(self.rotate))
         local_position = rotation_matrix.transpose() @ (new_position - self.rotate_center) + self.rotate_center
         xpos = local_position[0]
         ypos = local_position[1]
@@ -346,7 +356,7 @@ class RegionFunction(object):
 
     @ti.pyfunc
     def RegionCylinder(self, new_position, new_radius=0.):
-        rotation_matrix = RodriguesRotationMatrix(vec3f(0, 0, 1), self.zdirection)
+        rotation_matrix = ThetaToRotationMatrix(vec3f(self.rotate))
         local_position = rotation_matrix.transpose() @ (new_position - self.rotate_center) + self.rotate_center
         xpos = local_position[0]
         ypos = local_position[1]
@@ -364,7 +374,7 @@ class RegionFunction(object):
 
     @ti.pyfunc
     def RegionQuarterCylinder(self, new_position, new_radius=0.):
-        rotation_matrix = RodriguesRotationMatrix(vec3f(0, 0, 1), self.zdirection)
+        rotation_matrix = ThetaToRotationMatrix(vec3f(self.rotate))
         local_position = rotation_matrix.transpose() @ (new_position - self.rotate_center) + self.rotate_center
         xpos = local_position[0]
         ypos = local_position[1]
@@ -383,7 +393,7 @@ class RegionFunction(object):
     
     @ti.pyfunc
     def RegionRetangle2D(self, new_position, new_radius=0.):
-        rotation_matrix = RotationMatrix2D(vec2f(0, 1), self.ydirection)
+        rotation_matrix = ThetaToRotationMatrix2D(self.rotate2D)
         local_position = rotation_matrix.transpose() @ (new_position - self.rotate_center) + self.rotate_center
         xpos = local_position[0]
         ypos = local_position[1]
@@ -393,10 +403,23 @@ class RegionFunction(object):
         l1 = self.local_region_size[1]
         return x0 + self.all_in * new_radius <= xpos <= x0 + l0 - self.all_in * new_radius and \
             x1 + self.all_in * new_radius <= ypos <= x1 + l1 - self.all_in * new_radius
+    
+    @ti.pyfunc
+    def RegionTriangle2D(self, new_position, new_radius=0.):
+        rotation_matrix = ThetaToRotationMatrix2D(self.rotate2D)
+        local_position = rotation_matrix.transpose() @ (new_position - self.rotate_center) + self.rotate_center
+        xpos = local_position[0]
+        ypos = local_position[1]
+        x0 = self.local_start_point[0]
+        x1 = self.local_start_point[1]
+        l0 = self.local_region_size[0]
+        l1 = self.local_region_size[1]
+        return x0 + self.all_in * new_radius <= xpos <= x0 + l0 - self.all_in * new_radius and \
+            x1 + self.all_in * new_radius <= ypos <= x1 + l1 - self.all_in * new_radius + (x0 - xpos) * (l1 - self.all_in * new_radius) / (l0 - self.all_in * new_radius)
 
     @ti.pyfunc
     def RegionCone2D(self, new_position, new_radius=0.):
-        rotation_matrix = RotationMatrix2D(vec2f(0, 1), self.ydirection)
+        rotation_matrix = ThetaToRotationMatrix2D(self.rotate2D)
         local_position = rotation_matrix.transpose() @ (new_position - self.rotate_center) + self.rotate_center
         xpos = local_position[0]
         ypos = local_position[1]
@@ -409,7 +432,7 @@ class RegionFunction(object):
     
     @ti.pyfunc
     def RegionPolygon2D(self, new_position, new_radius=0.):
-        rotation_matrix = RotationMatrix2D(vec2f(0, 1), self.zdirection)
+        rotation_matrix = ThetaToRotationMatrix2D(self.rotate)
         local_position = rotation_matrix.transpose() @ (new_position - self.rotate_center) + self.rotate_center
         xpos = local_position[0]
         ypos = local_position[1]
@@ -425,6 +448,6 @@ class RegionFunction(object):
     
     @ti.pyfunc
     def SpecifiedRotate(self, position):
-        rotation_matrix = RodriguesRotationMatrix(vec3f(0, 0, 1), self.zdirection)
+        rotation_matrix = ThetaToRotationMatrix(self.rotate)
         return rotation_matrix.transpose() @ (position - self.rotate_center) + self.rotate_center 
     

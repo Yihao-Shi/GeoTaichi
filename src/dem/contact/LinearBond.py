@@ -14,7 +14,3 @@ class LinearBondModel(ContactModelBase):
     def add_surface_property(self, materialID1, materialID2, property):
         pass
 
-
-@ti.dataclass
-class LinearBondSurfaceProperty:
-    pass

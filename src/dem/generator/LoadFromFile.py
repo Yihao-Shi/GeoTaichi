@@ -3,7 +3,7 @@ import trimesh
 import os
 
 from src.dem.generator.InsertionKernel import *
-from src.dem.generator.LevelSetTemplate import LevelSetTemplate
+from src.dem.generator.GeneralShapeTemplate import GeneralShapeTemplate
 from src.dem.SceneManager import myScene
 from src.dem.Simulation import Simulation
 from src.utils.ObjectIO import DictIO
@@ -37,7 +37,7 @@ class ParticleReader(object):
     def set_system_strcuture(self, body_dict):
         self.file_type = DictIO.GetEssential(body_dict, "FileType")
         self.template_dict = DictIO.GetEssential(body_dict, "Template")
-        period = DictIO.GetAlternative(body_dict, "Period", [0, 0, 1e6])
+        period = DictIO.GetAlternative(body_dict, "Period", [self.sims.current_time, self.sims.current_time, 1e6])
         self.start_time = period[0]
         self.end_time = period[1]
         self.insert_interval = period[2]
@@ -83,11 +83,42 @@ class ParticleReader(object):
         else:
             raise RuntimeError("Invalid file type. Only the following file types are aviliable: ['TXT', 'NPZ', 'OBJ']")
 
-        if self.sims.current_time + self.next_generate_time > self.end_time or self.insert_interval > self.sims.time or self.end_time > self.sims.time or\
+        if self.sims.current_time + self.insert_interval > self.end_time or self.insert_interval > self.sims.time or \
             self.end_time == 0 or self.start_time > self.end_time:
             self.deactivate()
         else:
             self.next_generate_time = self.sims.current_time + self.insert_interval
+        return 1
+    
+    def regenerate(self, scene: myScene):
+        if self.sims.current_time < self.next_generate_time: return 0
+        if self.sims.current_time < self.start_time or self.sims.current_time > self.end_time: return 0
+        if self.file_type == "TXT":
+            if type(self.template_dict) is dict:
+                self.load_txt_file(scene, self.template_dict)
+            elif type(self.template_dict) is list:
+                for temp in self.template_dict:
+                    self.load_txt_file(scene, temp)
+        elif self.file_type == "NPZ":
+            if type(self.template_dict) is dict:
+                self.load_npz_file(scene, self.template_dict)
+            elif type(self.template_dict) is list:
+                for temp in self.template_dict:
+                    self.load_npz_file(scene, temp)
+        elif self.file_type == "OBJ":
+            if type(self.template_dict) is dict:
+                self.load_obj_file(scene, self.template_dict)
+            elif type(self.template_dict) is list:
+                for temp in self.template_dict:
+                    self.load_obj_file(scene, temp)
+        else:
+            raise RuntimeError("Invalid file type. Only the following file types are aviliable: ['TXT', 'NPZ', 'OBJ']")
+
+        if self.sims.current_time + self.insert_interval > self.end_time:
+            self.deactivate()
+        else:
+            self.next_generate_time = self.sims.current_time + self.insert_interval
+        return 1
 
     def print_particle_info(self, groupID, matID, init_v, init_w, fix_v=None, fix_w=None, body_num=0, particle_volume=0, name=None):
         if body_num == 0:
@@ -118,7 +149,10 @@ class ParticleReader(object):
             self.load_txt_multispheres(scene, template)
         elif btype == "RigidBody":
             print('#', "Start adding Level-set(s) ......")
-            self.load_txt_levelsets(scene, template)
+            if self.sims.scheme == "LSDEM":
+                self.load_txt_levelsets(scene, template)
+            else:
+                self.load_txt_implicit_surface(scene, template)
         else:
             raise ValueError("Particle type error")
 
@@ -222,7 +256,7 @@ class ParticleReader(object):
         surfaceNum = int(scene.surfaceNum[0])
 
         name = DictIO.GetEssential(template, "Name")
-        template_ptr: LevelSetTemplate = self.get_template_ptr_by_name(name)
+        template_ptr: GeneralShapeTemplate = self.get_template_ptr_by_name(name)
         index = DictIO.GetEssential(scene.prefixID, name)
         groupID = DictIO.GetEssential(template, "GroupID")
         matID = DictIO.GetEssential(template, "MaterialID")
@@ -261,14 +295,64 @@ class ParticleReader(object):
         scene.surfaceNum[0] += template_ptr.surface_node_number * body_num
         self.faces = np.append(self.faces, faces).reshape(-1, 3)
 
+    def load_txt_implicit_surface(self, scene: myScene, template):
+        bounding_sphere = scene.get_bounding_sphere()
+        rigid_body = scene.get_rigid_ptr()
+        material = scene.get_material_ptr()
+        particleNum = int(scene.particleNum[0])
+            
+        groupID = DictIO.GetEssential(template, "GroupID")
+        matID = DictIO.GetEssential(template, "MaterialID")
+        offset = DictIO.GetAlternative(template, "Translation", [0, 0, 0])
+        init_v = DictIO.GetAlternative(template, "InitialVelocity", vec3f([0, 0, 0]))
+        init_w = DictIO.GetAlternative(template, "InitialAngularVelocity", vec3f([0, 0, 0]))
+        fix_str = DictIO.GetAlternative(template, "FixMotion", ["Free", "Free", "Free"])
+        is_fix = vec3i([DictIO.GetEssential(self.FIX, i) for i in fix_str])
+        file = DictIO.GetAlternative(template, "File", "BoundingSphere.txt")
+        body_num = DictIO.GetAlternative(template, "ParticleNumber", -1)
+
+        name = DictIO.GetEssential(template, "Name")
+        template_ptr: GeneralShapeTemplate = self.get_template_ptr_by_name(name)
+        template_id = scene.prefixID[name]
+
+        if self.sims.iterative_model == "LagrangianMultiplier":
+            if self.sims.scheme == "PolySuperEllipsoid":
+                assert 0.25 <= template_ptr.objects.physical_parameter["epsilon_e"] <= 1, f"The optimal value range of parameter /epsilon_e/ is 0.25 to 1"
+                assert 0.25 <= template_ptr.objects.physical_parameter["epsilon_n"] <= 1, f"The optimal value range of parameter /epsilon_n/ is 0.25 to 1"
+            elif self.sims.scheme == "PolySuperQuadrics":
+                assert 0.25 <= template_ptr.objects.physical_parameter["epsilon_x"] <= 1, f"The optimal value range of parameter /epsilon_x/ is 0.25 to 1"
+                assert 0.25 <= template_ptr.objects.physical_parameter["epsilon_y"] <= 1, f"The optimal value range of parameter /epsilon_y/ is 0.25 to 1"
+                assert 0.25 <= template_ptr.objects.physical_parameter["epsilon_z"] <= 1, f"The optimal value range of parameter /epsilon_z/ is 0.25 to 1"
+
+        if not os.path.exists(file):
+            raise EOFError("Invaild particle path")
+        particle_cloud = np.loadtxt(file, unpack=True, comments='#').transpose()
+        body_num = particle_cloud.shape[0] if body_num == -1 else min(body_num, particle_cloud.shape[0])
+        particle_cloud = particle_cloud[0:body_num]
+        body_num = particle_cloud.shape[0]
+
+        coords = np.ascontiguousarray(particle_cloud[:, [0, 1, 2]]) + np.array(offset)
+        radii = np.ascontiguousarray(particle_cloud[:, 3])
+        orients = np.ascontiguousarray(particle_cloud[:, [4, 5, 6]])
+        
+        scene.check_rigid_body_number(self.sims, rigid_body_number=body_num)
+        kernel_add_implicit_surface_files(rigid_body, bounding_sphere, material, particleNum, template_id, template_ptr.boundings.r_bound, vec3f(template_ptr.boundings.x_bound), vec3f(template_ptr.objects.inertia), 
+                                            template_ptr.objects.eqradius, body_num, coords, radii, orients, groupID, matID, init_v, init_w, is_fix)
+        print(" Implicit surface body Information ".center(71, '-'))
+        self.print_particle_info(groupID, matID, init_v, init_w, fix_v=is_fix, fix_w=is_fix, body_num=body_num)
+
+        faces = scene.add_connectivity(body_num, template_ptr.surface_node_number, template_ptr.objects)
+        scene.particleNum[0] += body_num
+        scene.rigidNum[0] += body_num
+        scene.surfaceNum[0] += template_ptr.surface_node_number * body_num
+        self.faces = np.append(self.faces, faces).reshape(-1, 3)
+
     # ========================================================= #
     #                          npz File                         #
     # ========================================================= #
     def load_npz_file(self, scene, template):
         print('#', "Start adding body(s) ......")
-        restart = DictIO.GetAlternative(template, "Restart", False)
-
-        if restart:
+        if self.sims.scheme == "DEM":
             particle_file_name = DictIO.GetAlternative(template, "ParticleFile", None)
             sphere_file_name = DictIO.GetAlternative(template, "SphereFile", None)
             clump_file_name = DictIO.GetAlternative(template, "ClumpFile", None)
@@ -284,17 +368,179 @@ class ParticleReader(object):
                 if particle_file_name is None:
                     raise EOFError("Invalid path to read particle information")
                 self.restart_clumps(scene, clump_file_name)
-            print('\n')
-        else:
-            btype = DictIO.GetEssential(template, "BodyType")
-            if btype == "Sphere":
-                print('#', "Start adding sphere(s) ......")
-                self.load_npz_spheres(scene, template)
-            elif btype == "Clump":
-                print('#', "Start adding Clump(s) ......")
-                self.load_npz_multispheres(scene, template)
-            else:
-                raise ValueError("Particle type error")
+        elif self.sims.scheme == "LSDEM":
+            rigid_file_name = DictIO.GetAlternative(template, "RigidFile", None)
+            grid_file_name = DictIO.GetAlternative(template, "GridFile", None)
+            bounding_sphere_file_name = DictIO.GetAlternative(template, "BoundingSphereFile", None)
+            bounding_box_file_name = DictIO.GetAlternative(template, "BoundingBoxFile", None)
+            surface_file_name = DictIO.GetAlternative(template, "SurfaceFile", None)
+            if not rigid_file_name is None:
+                self.restart_rigid_particles(scene, rigid_file_name)
+            if not grid_file_name is None:
+                self.restart_levelset_grids(scene, grid_file_name)
+            if not bounding_sphere_file_name is None:
+                self.restart_bounding_volumes(scene, bounding_sphere_file_name, bounding_box_file_name)
+            if not surface_file_name is None:
+                self.restart_surfaces(scene, surface_file_name)
+        elif self.sims.scheme == "PolySuperEllipsoid" or self.sims.scheme == "PolySuperQuadrics":
+            rigid_file_name = DictIO.GetAlternative(template, "RigidFile", None)
+            bounding_sphere_file_name = DictIO.GetAlternative(template, "BoundingSphereFile", None)
+            surface_file_name = DictIO.GetAlternative(template, "SurfaceFile", None)
+            if not rigid_file_name is None:
+                self.restart_rigid_particles(scene, rigid_file_name)
+            if not bounding_sphere_file_name is None:
+                self.restart_bounding_volumes(scene, bounding_sphere_file_name, None)
+            if not surface_file_name is None:
+                self.restart_surfaces(scene, surface_file_name)
+        print('\n')
+        
+    def restart_rigid_particles(self, scene: myScene, rigid_file_name):
+        if not os.path.exists(rigid_file_name):
+            raise EOFError("Invaild rigid particle path")
+        
+        particle_info = np.load(rigid_file_name, allow_pickle=True) 
+        rigid_number = int(DictIO.GetEssential(particle_info, "body_num"))
+        if self.sims.is_continue:
+            self.sims.current_time = DictIO.GetEssential(particle_info, "t_current")
+            self.sims.CurrentTime[None] = DictIO.GetEssential(particle_info, "t_current")
+
+        scene.check_rigid_body_number(self.sims, rigid_body_number=rigid_number)
+        if self.sims.scheme == "LSDEM":
+            kernel_rebulid_levelset_body(int(scene.rigidNum[0]), rigid_number, scene.rigid, 
+                                    DictIO.GetEssential(particle_info, "groupID"), 
+                                    DictIO.GetEssential(particle_info, "materialID"),
+                                    DictIO.GetEssential(particle_info, "startNode"),
+                                    DictIO.GetEssential(particle_info, "endNode"),
+                                    DictIO.GetEssential(particle_info, "localNode"),
+                                    DictIO.GetEssential(particle_info, "mass"),
+                                    DictIO.GetEssential(particle_info, "equivalentRadius"),
+                                    DictIO.GetEssential(particle_info, "mass_center"),
+                                    DictIO.GetEssential(particle_info, "acceleration"),
+                                    DictIO.GetEssential(particle_info, "angular_moment"),
+                                    DictIO.GetEssential(particle_info, "velocity"),
+                                    DictIO.GetEssential(particle_info, "omega"),
+                                    DictIO.GetEssential(particle_info, "quanternion"),
+                                    DictIO.GetEssential(particle_info, "inverse_inertia"),
+                                    DictIO.GetEssential(particle_info, "is_fix"))
+        elif self.sims.scheme == "PolySuperEllipsoid" or self.sims.scheme == "PolySuperQuadrics":
+            kernel_rebulid_implicit_surface_body(int(scene.rigidNum[0]), rigid_number, scene.rigid, 
+                                                 DictIO.GetEssential(particle_info, "groupID"), 
+                                                 DictIO.GetEssential(particle_info, "materialID"),
+                                                 DictIO.GetEssential(particle_info, "templateID"),
+                                                 DictIO.GetEssential(particle_info, "scale"),
+                                                 DictIO.GetEssential(particle_info, "mass"),
+                                                 DictIO.GetEssential(particle_info, "equivalentRadius"),
+                                                 DictIO.GetEssential(particle_info, "mass_center"),
+                                                 DictIO.GetEssential(particle_info, "acceleration"),
+                                                 DictIO.GetEssential(particle_info, "angular_moment"),
+                                                 DictIO.GetEssential(particle_info, "velocity"),
+                                                 DictIO.GetEssential(particle_info, "omega"),
+                                                 DictIO.GetEssential(particle_info, "quanternion"),
+                                                 DictIO.GetEssential(particle_info, "inverse_inertia"),
+                                                 DictIO.GetAlternative(particle_info, "is_fix", np.ones((rigid_number, 3))))
+        scene.rigidNum[0] += rigid_number
+        print("Inserted rigid body Number: ", rigid_number)
+        
+    def restart_levelset_grids(self, scene: myScene, grid_file_name):
+        if not os.path.exists(grid_file_name):
+            raise EOFError("Invaild level-set grid path")
+        
+        grid_info = np.load(grid_file_name, allow_pickle=True) 
+        grid_number = int(DictIO.GetEssential(grid_info, "total_grid_num"))
+        if self.sims.is_continue:
+            self.sims.current_time = DictIO.GetEssential(grid_info, "t_current")
+            self.sims.CurrentTime[None] = DictIO.GetEssential(grid_info, "t_current")
+
+        scene.check_grid_number(self.sims, grid_number=grid_number)
+        scene.gridID = DictIO.GetEssential(grid_info, "grid_num")
+        kernel_rebulid_levelset_grid(int(scene.gridNum[0]), grid_number, scene.rigid_grid, 
+                                DictIO.GetEssential(grid_info, "distance_field"))
+        scene.gridNum[0] += grid_number
+        print("Inserted grid Number: ", grid_number)
+        
+    def restart_bounding_volumes(self, scene: myScene, bounding_sphere_file_name, bounding_box_file_name):
+        if not os.path.exists(bounding_sphere_file_name):
+            raise EOFError("Invaild bounding sphere path")
+        
+        bounding_sphere_info = np.load(bounding_sphere_file_name, allow_pickle=True) 
+        particle_number = int(DictIO.GetEssential(bounding_sphere_info, "body_num"))
+        if self.sims.is_continue:
+            self.sims.current_time = DictIO.GetEssential(bounding_sphere_info, "t_current")
+            self.sims.CurrentTime[None] = DictIO.GetEssential(bounding_sphere_info, "t_current")
+        
+        scene.check_particle_num(self.sims, particle_number=particle_number)
+
+        kernel_rebulid_bounding_sphere(int(scene.particleNum[0]), particle_number, scene.particle, 
+                                       DictIO.GetEssential(bounding_sphere_info, "active"),
+                                       DictIO.GetEssential(bounding_sphere_info, "radius"),
+                                       DictIO.GetEssential(bounding_sphere_info, "center"))
+        
+        if bounding_box_file_name is not None:
+            if not os.path.exists(bounding_box_file_name):
+                raise EOFError("Invaild bounding box path")
+            
+            bounding_sphere_info = np.load(bounding_box_file_name, allow_pickle=True) 
+            kernel_rebulid_bounding_box(int(scene.particleNum[0]), particle_number, scene.box, 
+                                       DictIO.GetEssential(bounding_sphere_info, "min_box"),
+                                       DictIO.GetEssential(bounding_sphere_info, "max_box"),
+                                       DictIO.GetEssential(bounding_sphere_info, "startGrid"),
+                                       DictIO.GetEssential(bounding_sphere_info, "grid_num"),
+                                       DictIO.GetEssential(bounding_sphere_info, "grid_space"),
+                                       DictIO.GetEssential(bounding_sphere_info, "scale"),
+                                       DictIO.GetEssential(bounding_sphere_info, "extent"))
+        scene.particleNum[0] += particle_number
+        print("Inserted bounding volume Number: ", particle_number)
+        
+    def restart_surfaces(self, scene: myScene, surface_file_name):
+        if not os.path.exists(surface_file_name):
+            raise EOFError("Invaild surface path")
+        
+        surface_info = np.load(surface_file_name, allow_pickle=True) 
+        scene.connectivity = DictIO.GetEssential(surface_info, "connectivity")
+        scene.face_index = DictIO.GetEssential(surface_info, "face_index")
+        scene.vertice_index = DictIO.GetEssential(surface_info, "vertice_index")
+
+        if self.sims.scheme == "LSDEM":
+            scene.verticeID = DictIO.GetEssential(surface_info, "surface_num")
+            surface_number = DictIO.GetEssential(surface_info, "total_surface_num")
+            if self.sims.is_continue:
+                self.sims.current_time = DictIO.GetEssential(surface_info, "t_current")
+                self.sims.CurrentTime[None] = DictIO.GetEssential(surface_info, "t_current")
+
+            scene.check_surface_node_number(self.sims, surface_node_number=int(scene.verticeID[-1]))
+            master = DictIO.GetEssential(surface_info, "master")
+            scene.surface.from_numpy(np.pad(master, (0, scene.surface.shape[0] - master.shape[0]), mode='constant', constant_values=0))
+            kernel_rebulid_surface_node(0, int(scene.verticeID[-1]), scene.vertice,
+                                        DictIO.GetEssential(surface_info, "vertices"),
+                                        DictIO.GetEssential(surface_info, "parameters"))
+            scene.surfaceNum[0] += surface_number
+            print("Inserted surface node Number: ", surface_number)
+        elif self.sims.scheme == "PolySuperEllipsoid" or self.sims.scheme == "PolySuperQuadrics":
+            scene.surfaceNum[0] += sum(scene.vertice_index)
+        
+    def restart_particles(self, scene: myScene, particle_file_name):
+        if not os.path.exists(particle_file_name):
+            raise EOFError("Invaild particle path")
+        
+        particle_info = np.load(particle_file_name, allow_pickle=True) 
+        particle_number = int(DictIO.GetEssential(particle_info, "body_num"))
+        if self.sims.is_continue:
+            self.sims.current_time = DictIO.GetEssential(particle_info, "t_current")
+            self.sims.CurrentTime[None] = DictIO.GetEssential(particle_info, "t_current")
+
+        scene.check_particle_num(self.sims, particle_number=particle_number)
+        kernel_rebulid_particle(int(scene.particleNum[0]), particle_number, scene.particle, 
+                                DictIO.GetAlternative(particle_info, "active", np.zeros(particle_number) + 1), 
+                                DictIO.GetEssential(particle_info, "Index"),
+                                DictIO.GetEssential(particle_info, "groupID"),
+                                DictIO.GetEssential(particle_info, "materialID"),
+                                DictIO.GetEssential(particle_info, "mass"),
+                                DictIO.GetEssential(particle_info, "radius"),
+                                DictIO.GetEssential(particle_info, "position"),
+                                DictIO.GetEssential(particle_info, "velocity"),
+                                DictIO.GetEssential(particle_info, "omega"))
+        scene.particleNum[0] += particle_number
+        print("Inserted particle Number: ", particle_number)
         
     def restart_particles(self, scene: myScene, particle_file_name):
         if not os.path.exists(particle_file_name):
@@ -329,7 +575,7 @@ class ParticleReader(object):
 
         scene.check_sphere_number(self.sims, body_number=sphere_number)
         kernel_rebuild_sphere(int(scene.sphereNum[0]), sphere_number, scene.sphere, 
-                              DictIO.GetEssential(sphere_info, "Index"),
+                              DictIO.GetEssential(sphere_info, "sphereIndex"),
                               DictIO.GetEssential(sphere_info, "inverseInertia"),
                               DictIO.GetEssential(sphere_info, "quanternion"),
                               DictIO.GetEssential(sphere_info, "acceleration"),
@@ -362,12 +608,6 @@ class ParticleReader(object):
         scene.clumpNum[0] += clump_number
         print("Inserted clump Number: ", clump_number)
 
-    def load_npz_spheres(self, scene, template):
-        pass
-
-    def load_npz_multispheres(self, scene, template):
-        pass
-
     # ========================================================= #
     #                          OBJ File                         #
     # ========================================================= #
@@ -381,13 +621,13 @@ class ParticleReader(object):
 
         scale_factor = DictIO.GetAlternative(template, "ScaleFactor", 1.)
         offset = DictIO.GetAlternative(template, "Translation", vec3f([0, 0, 0]))
-        orientation = DictIO.GetAlternative(template, "Orientation", vec3f([0, 0, 1]))
+        orientation = DictIO.GetAlternative(template, "Orientation", vec3f([0, 0, 0]))
 
         discretize_domain = DictIO.GetEssential(template, "DiscretizeDomain")
         max_rad = DictIO.GetEssential(template, "MaxRadius", "Radius")
         min_rad = DictIO.GetEssential(template, "MinRadius", "Radius")
 
-        rotation = RodriguesRotationMatrix(vec3f([0., 0., 1.]), orientation)
+        rotation = ThetaToRotationMatrix(orientation)
         mesh = trimesh.load(body_file)
         mesh.apply_scale(scale_factor)
         rot_matrix = trimesh.transformations.rotation_matrix(rotation, orientation, mesh.vertices.mean(axis=0))

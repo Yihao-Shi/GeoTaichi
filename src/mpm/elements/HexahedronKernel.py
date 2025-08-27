@@ -1,10 +1,10 @@
 import taichi as ti
 
-
 from src.utils.constants import ZEROMAT3x3, ZEROVEC3f, Threshold
 from src.utils.ShapeFunctions import local_linear_shapefn
 from src.utils.ScalarFunction import linearize3D, vectorize_id, linearize
 from src.utils.TypeDefination import vec3f, vec3i, vec3u8, vec2f
+import src.utils.GlobalVariable as GlobalVariable
 
 @ti.func
 def set_connectivity(cell_id, gnum, node_connectivity):
@@ -226,25 +226,39 @@ def update(total_nodes: int, influenced_node: int, element_size: ti.types.vector
         natural_particle_size = calc_natural_size(ielement_size, local_element_size, psize)
         jacobian = ZEROMAT3x3
         activeID = np * total_nodes
-        for k, j, i in ti.ndrange(influenced_node, influenced_node, influenced_node):
-            if i < 0 or i >= gnum[0]: continue
-            if j < 0 or j >= gnum[1]: continue
-            if k < 0 or k >= gnum[2]: continue
+        for k in range(base_bound[2], base_bound[2] + influenced_node):
+            kp = k
+            if ti.static(GlobalVariable.MPMZPBC): 
+                kp = k % gnum[2] if k > 0 else (k - 1) % gnum[2]
+            else:
+                if k < 0 or k >= gnum[2]: continue
+            for j in range(base_bound[1], base_bound[1] + influenced_node):
+                jp = j
+                if ti.static(GlobalVariable.MPMYPBC): 
+                    jp = j % gnum[1] if j > 0 else (j - 1) % gnum[1]
+                else:
+                    if j < 0 or j >= gnum[1]: continue
+                for i in range(base_bound[0], base_bound[0] + influenced_node):
+                    ip = i
+                    if ti.static(GlobalVariable.MPMXPBC): 
+                        ip = i % gnum[0] if i > 0 else (i - 1) % gnum[0]
+                    else:
+                        if i < 0 or i >= gnum[0]: continue
 
-            natural_coords = start_natural_coords + vec3i([i, j, k]) * local_element_size
-            linear_index = set_node_index(gnum, base_bound, natural_coords)
-            linear_id = linearize3D(linear_index[0], linear_index[1], linear_index[2], gnum)
-            nodal_coords = linear_index * element_size
-            shapen0, shapen1, shapen2 = shapefn(natural_particle_position, natural_coords, ilocal_element_size, natural_particle_size, shape_function)
-            shapeval = shapen0 * shapen1 * shapen2
-            if shapeval > Threshold:
-                dshapen0, dshapen1, dshapen2 = grad_shapefn(natural_particle_position, natural_coords, ilocal_element_size, natural_particle_size, grad_shape_function)
-                local_grad_shapeval = vec3f([dshapen0 * shapen1 * shapen2, shapen0 * dshapen1 * shapen2, shapen0 * shapen1 * dshapen2])
-                LnID[activeID] = linear_id
-                shape_fn[activeID] = shapeval
-                dshape_fn[activeID] = local_grad_shapeval
-                get_jacobian(nodal_coords, local_grad_shapeval, jacobian)
-                activeID += 1
+                    natural_coords = start_natural_coords + vec3i([ip, jp, kp]) * local_element_size
+                    linear_index = set_node_index(gnum, base_bound, natural_coords)
+                    linear_id = linearize3D(linear_index[0], linear_index[1], linear_index[2], gnum)
+                    nodal_coords = linear_index * element_size
+                    shapen0, shapen1, shapen2 = shapefn(natural_particle_position, natural_coords, ilocal_element_size, natural_particle_size, shape_function)
+                    shapeval = shapen0 * shapen1 * shapen2
+                    if shapeval > Threshold:
+                        dshapen0, dshapen1, dshapen2 = grad_shapefn(natural_particle_position, natural_coords, ilocal_element_size, natural_particle_size, grad_shape_function)
+                        local_grad_shapeval = vec3f([dshapen0 * shapen1 * shapen2, shapen0 * dshapen1 * shapen2, shapen0 * shapen1 * dshapen2])
+                        LnID[activeID] = linear_id
+                        shape_fn[activeID] = shapeval
+                        dshape_fn[activeID] = local_grad_shapeval
+                        get_jacobian(nodal_coords, local_grad_shapeval, jacobian)
+                        activeID += 1
         node_size[np] = ti.u8(activeID - np * total_nodes)
         assemble(np, total_nodes, jacobian, dshape_fn, node_size)
 
@@ -260,29 +274,43 @@ def updatebbar(total_nodes: int, influenced_node: int, element_size: ti.types.ve
         natural_particle_size = calc_natural_size(ielement_size, local_element_size, psize)
         jacobian = ZEROMAT3x3
         activeID = np * total_nodes
-        for k, j, i in ti.ndrange(influenced_node, influenced_node, influenced_node):
-            if i < 0 or i >= gnum[0]: continue
-            if j < 0 or j >= gnum[1]: continue
-            if k < 0 or k >= gnum[2]: continue
+        for k in range(base_bound[2], base_bound[2] + influenced_node):
+            kp = k
+            if ti.static(GlobalVariable.MPMZPBC): 
+                kp = k % gnum[2] if k > 0 else (k - 1) % gnum[2]
+            else:
+                if k < 0 or k >= gnum[2]: continue
+            for j in range(base_bound[1], base_bound[1] + influenced_node):
+                jp = j
+                if ti.static(GlobalVariable.MPMYPBC): 
+                    jp = j % gnum[1] if j > 0 else (j - 1) % gnum[1]
+                else:
+                    if j < 0 or j >= gnum[1]: continue
+                for i in range(base_bound[0], base_bound[0] + influenced_node):
+                    ip = i
+                    if ti.static(GlobalVariable.MPMXPBC): 
+                        ip = i % gnum[0] if i > 0 else (i - 1) % gnum[0]
+                    else:
+                        if i < 0 or i >= gnum[0]: continue
 
-            natural_coords = start_natural_coords + vec3i([i, j, k]) * local_element_size
-            linear_index = set_node_index(gnum, base_bound, natural_coords)
-            linear_id = linearize3D(linear_index[0], linear_index[1], linear_index[2], gnum)
-            nodal_coords = linear_index * element_size
-            
-            shapen0, shapen1, shapen2 = shapefn(natural_particle_position, natural_coords, ilocal_element_size, natural_particle_size, shape_function)
-            shapeval = shapen0 * shapen1 * shapen2
-            if shapeval > Threshold:
-                dshapen0, dshapen1, dshapen2 = grad_shapefn(natural_particle_position, natural_coords, ilocal_element_size, natural_particle_size, grad_shape_function)
-                shapenc0, shapenc1, shapenc2 = shapefnc(natural_particle_position, natural_coords, ilocal_element_size, natural_particle_size, shape_function_center)
-                local_grad_shapeval = vec3f([dshapen0 * shapen1 * shapen2, shapen0 * dshapen1 * shapen2, shapen0 * shapen1 * dshapen2])
-                local_grad_shapevalc = vec3f([dshapen0 * shapenc1 * shapenc2, shapenc0 * dshapen1 * shapenc2, shapenc0 * shapenc1 * dshapen2])
-                LnID[activeID] = linear_id
-                shape_fn[activeID] = shapeval
-                dshape_fn[activeID] = local_grad_shapeval
-                dshape_fnc[activeID] = local_grad_shapevalc
-                get_jacobian(nodal_coords, local_grad_shapeval, jacobian)
-                activeID += 1
+                    natural_coords = start_natural_coords + vec3i([ip, jp, kp]) * local_element_size
+                    linear_index = set_node_index(gnum, base_bound, natural_coords)
+                    linear_id = linearize3D(linear_index[0], linear_index[1], linear_index[2], gnum)
+                    nodal_coords = linear_index * element_size
+                    
+                    shapen0, shapen1, shapen2 = shapefn(natural_particle_position, natural_coords, ilocal_element_size, natural_particle_size, shape_function)
+                    shapeval = shapen0 * shapen1 * shapen2
+                    if shapeval > Threshold:
+                        dshapen0, dshapen1, dshapen2 = grad_shapefn(natural_particle_position, natural_coords, ilocal_element_size, natural_particle_size, grad_shape_function)
+                        shapenc0, shapenc1, shapenc2 = shapefnc(natural_particle_position, natural_coords, ilocal_element_size, natural_particle_size, shape_function_center)
+                        local_grad_shapeval = vec3f([dshapen0 * shapen1 * shapen2, shapen0 * dshapen1 * shapen2, shapen0 * shapen1 * dshapen2])
+                        local_grad_shapevalc = vec3f([dshapen0 * shapenc1 * shapenc2, shapenc0 * dshapen1 * shapenc2, shapenc0 * shapenc1 * dshapen2])
+                        LnID[activeID] = linear_id
+                        shape_fn[activeID] = shapeval
+                        dshape_fn[activeID] = local_grad_shapeval
+                        dshape_fnc[activeID] = local_grad_shapevalc
+                        get_jacobian(nodal_coords, local_grad_shapeval, jacobian)
+                        activeID += 1
         node_size[np] = ti.u8(activeID - np * total_nodes)
         assemble_bbar(np, total_nodes, jacobian, dshape_fn, dshape_fnc, node_size)
 
@@ -303,13 +331,25 @@ def global_update(total_nodes: int, influenced_node: int, element_size: ti.types
         base_bound = calc_base_cell(ielement_size, psize, position)
         activeID = np * total_nodes
         for k in range(base_bound[2], base_bound[2] + influenced_node):
-            if k < 0 or k >= gnum[2]: continue
+            kp = k
+            if ti.static(GlobalVariable.MPMZPBC): 
+                kp = k % gnum[2] if k > 0 else (k - 1) % gnum[2]
+            else:
+                if k < 0 or k >= gnum[2]: continue
             for j in range(base_bound[1], base_bound[1] + influenced_node):
-                if j < 0 or j >= gnum[1]: continue
+                jp = j
+                if ti.static(GlobalVariable.MPMYPBC): 
+                    jp = j % gnum[1] if j > 0 else (j - 1) % gnum[1]
+                else:
+                    if j < 0 or j >= gnum[1]: continue
                 for i in range(base_bound[0], base_bound[0] + influenced_node):
-                    if i < 0 or i >= gnum[0]: continue
-                    nodeID = int(i + j * gnum[0] + k * gnum[0] * gnum[1])
-                    node_coords = vec3i(i, j, k) * element_size
+                    ip = i
+                    if ti.static(GlobalVariable.MPMXPBC): 
+                        ip = i % gnum[0] if i > 0 else (i - 1) % gnum[0]
+                    else:
+                        if i < 0 or i >= gnum[0]: continue
+                    nodeID = int(ip + jp * gnum[0] + kp * gnum[0] * gnum[1])
+                    node_coords = vec3i(ip, jp, kp) * element_size
                     shapen0, shapen1, shapen2 = shapefn(particle[np].x, node_coords, ielement_size, psize, shape_function)
                     shapeval = shapen0 * shapen1 * shapen2
                     if shapeval > Threshold:
@@ -330,13 +370,25 @@ def global_update_smooth(total_nodes: int, influenced_node: int, element_size: t
         activeID = np * total_nodes
         total_volume = 8. * psize[0] * psize[1] * psize[2]
         for k in range(base_bound[2], base_bound[2] + influenced_node):
-            if k < 0 or k >= gnum[2]: continue
+            kp = k
+            if ti.static(GlobalVariable.MPMZPBC): 
+                kp = k % gnum[2] if k > 0 else (k - 1) % gnum[2]
+            else:
+                if k < 0 or k >= gnum[2]: continue
             for j in range(base_bound[1], base_bound[1] + influenced_node):
-                if j < 0 or j >= gnum[1]: continue
+                jp = j
+                if ti.static(GlobalVariable.MPMYPBC): 
+                    jp = j % gnum[1] if j > 0 else (j - 1) % gnum[1]
+                else:
+                    if j < 0 or j >= gnum[1]: continue
                 for i in range(base_bound[0], base_bound[0] + influenced_node):
-                    if i < 0 or i >= gnum[0]: continue
-                    nodeID = int(i + j * gnum[0] + k * gnum[0] * gnum[1])
-                    node_coords = vec3i(i, j, k) * element_size
+                    ip = i
+                    if ti.static(GlobalVariable.MPMXPBC): 
+                        ip = i % gnum[0] if i > 0 else (i - 1) % gnum[0]
+                    else:
+                        if i < 0 or i >= gnum[0]: continue
+                    nodeID = int(ip + jp * gnum[0] + kp * gnum[0] * gnum[1])
+                    node_coords = vec3i(ip, jp, kp) * element_size
 
                     shapen0, shapen1, shapen2 = shapefn(position, node_coords, ielement_size, psize, shape_function)
                     shapeval = shapen0 * shapen1 * shapen2
@@ -406,14 +458,29 @@ def global_update_spline(total_nodes: int, influenced_node: int, element_size: t
         base_bound = calc_base_cell(ielement_size, psize, position)
         activeID = np * total_nodes
         for k in range(base_bound[2], base_bound[2] + influenced_node):
-            if k < 0 or k >= gnum[2]: continue
+            kp = k
+            if ti.static(GlobalVariable.MPMZPBC): 
+                kp = k % gnum[2] if k > 0 else (k - 1) % gnum[2]
+            else:
+                if k < 0 or k >= gnum[2]: continue
             for j in range(base_bound[1], base_bound[1] + influenced_node):
-                if j < 0 or j >= gnum[1]: continue
+                jp = j
+                if ti.static(GlobalVariable.MPMYPBC): 
+                    jp = j % gnum[1] if j > 0 else (j - 1) % gnum[1]
+                else:
+                    if j < 0 or j >= gnum[1]: continue
                 for i in range(base_bound[0], base_bound[0] + influenced_node):
-                    if i < 0 or i >= gnum[0]: continue
-                    nodeID = int(i + j * gnum[0] + k * gnum[0] * gnum[1])
-                    node_coords = vec3i(i, j, k) * element_size
+                    ip = i
+                    if ti.static(GlobalVariable.MPMXPBC): 
+                        ip = i % gnum[0] if i > 0 else (i - 1) % gnum[0]
+                    else:
+                        if i < 0 or i >= gnum[0]: continue
+                    nodeID = int(ip + jp * gnum[0] + kp * gnum[0] * gnum[1])
+                    node_coords = vec3i(ip, jp, kp) * element_size
                     btype = boundtype[nodeID, bodyID]
+                    if ti.static(GlobalVariable.MPMXPBC): btype[0] = 0
+                    if ti.static(GlobalVariable.MPMYPBC): btype[1] = 0
+                    if ti.static(GlobalVariable.MPMZPBC): btype[2] = 0
                     shapen0, shapen1, shapen2 = shapefn_spline(particle[np].x, node_coords, ielement_size, btype, shape_function)
                     shapeval = shapen0 * shapen1 * shapen2
                     if shapeval > Threshold:
@@ -434,14 +501,29 @@ def global_update_spline_fn(total_nodes: int, influenced_node: int, element_size
         base_bound = calc_base_cell(ielement_size, psize, position)
         activeID = np * total_nodes
         for k in range(base_bound[2], base_bound[2] + influenced_node):
-            if k < 0 or k >= gnum[2]: continue
+            kp = k
+            if ti.static(GlobalVariable.MPMZPBC): 
+                kp = k % gnum[2] if k > 0 else (k - 1) % gnum[2]
+            else:
+                if k < 0 or k >= gnum[2]: continue
             for j in range(base_bound[1], base_bound[1] + influenced_node):
-                if j < 0 or j >= gnum[1]: continue
+                jp = j
+                if ti.static(GlobalVariable.MPMYPBC): 
+                    jp = j % gnum[1] if j > 0 else (j - 1) % gnum[1]
+                else:
+                    if j < 0 or j >= gnum[1]: continue
                 for i in range(base_bound[0], base_bound[0] + influenced_node):
-                    if i < 0 or i >= gnum[0]: continue
-                    nodeID = int(i + j * gnum[0] + k * gnum[0] * gnum[1])
-                    node_coords = vec3i(i, j, k) * element_size
+                    ip = i
+                    if ti.static(GlobalVariable.MPMXPBC): 
+                        ip = i % gnum[0] if i > 0 else (i - 1) % gnum[0]
+                    else:
+                        if i < 0 or i >= gnum[0]: continue
+                    nodeID = int(ip + jp * gnum[0] + kp * gnum[0] * gnum[1])
+                    node_coords = vec3i(ip, jp, kp) * element_size
                     btype = boundtype[nodeID, bodyID]
+                    if ti.static(GlobalVariable.MPMXPBC): btype[0] = 0
+                    if ti.static(GlobalVariable.MPMYPBC): btype[1] = 0
+                    if ti.static(GlobalVariable.MPMZPBC): btype[2] = 0
                     shapen0, shapen1, shapen2 = shapefn_spline(particle[np].x, node_coords, ielement_size, btype, shape_function)
                     shapeval = shapen0 * shapen1 * shapen2
                     if shapeval > Threshold:
@@ -457,25 +539,38 @@ def global_updatebbar(total_nodes: int, influenced_node: int, element_size: ti.t
         position, psize = particle[np].x, calLength[int(particle[np].bodyID)]
         base_bound = calc_base_cell(ielement_size, psize, position)
         activeID = np * total_nodes
-        for k, j, i in ti.ndrange((base_bound[2], base_bound[2] + influenced_node), (base_bound[1], base_bound[1] + influenced_node), (base_bound[0], base_bound[0] + influenced_node)):
-            if i < 0 or i >= gnum[0]: continue
-            if j < 0 or j >= gnum[1]: continue
-            if k < 0 or k >= gnum[2]: continue
-
-            nodeID = int(i + j * gnum[0] + k * gnum[0] * gnum[1])
-            node_coords = vec3i(i, j, k) * element_size
-            shapen0, shapen1, shapen2 = shapefn(particle[np].x, node_coords, ielement_size, psize, shape_function)
-            shapeval = shapen0 * shapen1 * shapen2
-            if shapeval > Threshold:
-                dshapen0, dshapen1, dshapen2 = grad_shapefn(particle[np].x, node_coords, ielement_size, psize, grad_shape_function)
-                grad_shapeval = vec3f([dshapen0 * shapen1 * shapen2, shapen0 * dshapen1 * shapen2, shapen0 * shapen1 * dshapen2])
-                shapenc0, shapenc1, shapenc2 = shapefnc(particle[np].x, node_coords, ielement_size, psize, shape_function_center)
-                grad_shapevalc = vec3f([dshapen0 * shapenc1 * shapenc2, shapenc0 * dshapen1 * shapenc2, shapenc0 * shapenc1 * dshapen2])
-                LnID[activeID] = nodeID
-                shape_fn[activeID]=shapeval
-                dshape_fn[activeID]=grad_shapeval
-                dshape_fnc[activeID]=grad_shapevalc
-                activeID += 1
+        for k in range(base_bound[2], base_bound[2] + influenced_node):
+            kp = k
+            if ti.static(GlobalVariable.MPMZPBC): 
+                kp = k % gnum[2] if k > 0 else (k - 1) % gnum[2]
+            else:
+                if k < 0 or k >= gnum[2]: continue
+            for j in range(base_bound[1], base_bound[1] + influenced_node):
+                jp = j
+                if ti.static(GlobalVariable.MPMYPBC): 
+                    jp = j % gnum[1] if j > 0 else (j - 1) % gnum[1]
+                else:
+                    if j < 0 or j >= gnum[1]: continue
+                for i in range(base_bound[0], base_bound[0] + influenced_node):
+                    ip = i
+                    if ti.static(GlobalVariable.MPMXPBC): 
+                        ip = i % gnum[0] if i > 0 else (i - 1) % gnum[0]
+                    else:
+                        if i < 0 or i >= gnum[0]: continue
+                    nodeID = int(ip + jp * gnum[0] + kp * gnum[0] * gnum[1])
+                    node_coords = vec3i(ip, jp, kp) * element_size
+                    shapen0, shapen1, shapen2 = shapefn(particle[np].x, node_coords, ielement_size, psize, shape_function)
+                    shapeval = shapen0 * shapen1 * shapen2
+                    if shapeval > Threshold:
+                        dshapen0, dshapen1, dshapen2 = grad_shapefn(particle[np].x, node_coords, ielement_size, psize, grad_shape_function)
+                        grad_shapeval = vec3f([dshapen0 * shapen1 * shapen2, shapen0 * dshapen1 * shapen2, shapen0 * shapen1 * dshapen2])
+                        shapenc0, shapenc1, shapenc2 = shapefnc(particle[np].x, node_coords, ielement_size, psize, shape_function_center)
+                        grad_shapevalc = vec3f([dshapen0 * shapenc1 * shapenc2, shapenc0 * dshapen1 * shapenc2, shapenc0 * shapenc1 * dshapen2])
+                        LnID[activeID] = nodeID
+                        shape_fn[activeID]=shapeval
+                        dshape_fn[activeID]=grad_shapeval
+                        dshape_fnc[activeID]=grad_shapevalc
+                        activeID += 1
         node_size[np] = ti.u8(activeID - np * total_nodes)
     
 
@@ -508,42 +603,24 @@ def activate_cell(cell: ti.template()):
     for i, j in cell:
         cell[i, j].active = ti.u8(1)
 
-@ti.kernel
-def find_active_node(gridSum: int, cutoff: float, node: ti.template(), flag: ti.template()):
-    flag.fill(0)
-    for ng in range(node.shape[0]):
-        for nb in range(node.shape[1]):
-            if node[ng, nb].m > cutoff:
-                flag[ng + nb * gridSum] = 1
-                
-@ti.kernel
-def estimate_active_dofs(cutoff: float, node: ti.template()) -> int:
-    total_active_nodes = 0
-    for ng in range(node.shape[0]):
-        for nb in range(node.shape[1]):
-            if node[ng, nb].m > cutoff:
-                total_active_nodes += 1
-    return 3 * total_active_nodes
-
-@ti.kernel
-def set_active_dofs(gridSum: int, cutoff: float, node: ti.template(), flag: ti.template()) -> int:
-    for ng in range(node.shape[0]):
-        for nb in range(node.shape[1]):
-            if node[ng, nb].m > cutoff:
-                dofs = 3 * (flag[ng + nb * gridSum] - 1)
-                node[ng, nb]._set_dofs(dofs)
-    return 3 * flag[flag.shape[0] - 1]
-
 @ti.func
-def get_boundary_type(grid_id, gnum, boundary_1, boundary_2, boundary1, boundary2):
+def get_boundary_type(grid_id, gnum, boundary_1, boundary1):
     btype = 0
-    if (grid_id - 1 < 0 or boundary_1 == -2) and grid_id < 0.5 * gnum:
+    if grid_id - 1 < 0:
         btype = 1
-    elif grid_id - 2 < 0 or boundary_2 == -1 and grid_id < 0.5 * gnum:
+    elif grid_id - 2 < 0 :
         btype = 2
-    elif grid_id + 1 >= gnum or boundary1 == 2 and grid_id >= 0.5 * gnum:
+    elif grid_id + 1 >= gnum:
         btype = 4
-    elif grid_id + 2 >= gnum or boundary2 == 1 and grid_id >= 0.5 * gnum:
+    elif grid_id + 2 >= gnum:
+        btype = 3
+    if boundary_1 == -2 and grid_id < 0.5 * gnum:
+        btype = 1
+    elif boundary_1 == -1 and grid_id < 0.5 * gnum:
+        btype = 2
+    elif boundary1 == 2 and grid_id > 0.5 * gnum:
+        btype = 4
+    elif boundary1 == 1 and grid_id > 0.5 * gnum:
         btype = 3
     return btype
 
@@ -552,56 +629,43 @@ def kernel_set_boundary_type(gridSum: int, grid_level: int, gnum: ti.types.vecto
     ti.loop_config(bit_vectorize=True)
     for i in boundary_flag:
         if i < gridSum * grid_level:
-            Ind = vec3i(vectorize_id(i % gridSum, gnum))
+            ix, iy, iz = vectorize_id(int(i % gridSum), gnum)
+            xtype = min(2, ix) - min(gnum[0] - 1 - ix, 2) 
+            ytype = min(2, iy) - min(gnum[1] - 1 - iy, 2) 
+            ztype = min(2, iz) - min(gnum[2] - 1 - iz, 2) 
+            if xtype < 0: xtype += 3
+            elif xtype > 0: xtype += 2
+            if ytype < 0: ytype += 3
+            elif ytype > 0: ytype += 2
+            if ztype < 0: ztype += 3
+            elif ztype > 0: ztype += 2
+            """ Ind = vec3i(vectorize_id(i % gridSum, gnum))
             xtype, ytype, ztype = 0, 0, 0
             if Ind[0] - 1 < 0:
                 xtype = 1
             elif Ind[0] + 1 >= gnum[0]:
                 xtype = 4
             else:
-                xtype = get_boundary_type(Ind[0], gnum[0], -boundary_flag[i]-boundary_flag[i-1], -boundary_flag[i-1], boundary_flag[i], boundary_flag[i]+boundary_flag[i+1])
+                ind_1 = int(boundary_flag[i-1])
+                ind_0 = int(boundary_flag[i])
+                ind1 = int(boundary_flag[i+1])
+                xtype = get_boundary_type(Ind[0], gnum[0], -ind_0-ind_1, ind_0+ind1)
             if Ind[1] - 1 < 0:
                 ytype = 1
             elif Ind[1] + 1 >= gnum[1]:
                 ytype = 4
             else:
-                ytype = get_boundary_type(Ind[1], gnum[1], -boundary_flag[int(i // gridSum) * gridSum + linearize(Ind, gnum)]-boundary_flag[int(i // gridSum) * gridSum + linearize(Ind + vec3i(0, -1, 0), gnum)], 
-                                                           -boundary_flag[int(i // gridSum) * gridSum + linearize(Ind + vec3i(0, -1, 0), gnum)], 
-                                                           boundary_flag[int(i // gridSum) * gridSum + linearize(Ind, gnum)]+boundary_flag[int(i // gridSum) * gridSum + linearize(Ind + vec3i(0, 1, 0), gnum)], 
-                                                           boundary_flag[int(i // gridSum) * gridSum + linearize(Ind + vec3i(0, 1, 0), gnum)])
+                ind_1 = int(boundary_flag[int(i // gridSum) * gridSum + linearize(Ind + vec3i(0, -1, 0), gnum)])
+                ind_0 = int(boundary_flag[int(i // gridSum) * gridSum + linearize(Ind, gnum)])
+                ind1 = int(boundary_flag[int(i // gridSum) * gridSum + linearize(Ind + vec3i(0, 1, 0), gnum)])
+                ytype = get_boundary_type(Ind[1], gnum[1], -ind_0-ind_1, ind_0+ind1)
             if Ind[2] - 1 < 0:
                 ztype = 1
             elif Ind[2] + 1 >= gnum[2]:
                 ztype = 4
             else:
-                ztype = get_boundary_type(Ind[2], gnum[2], -boundary_flag[int(i // gridSum) * gridSum + linearize(Ind, gnum)]-boundary_flag[int(i // gridSum) * gridSum + linearize(Ind + vec3i(0, 0, -1), gnum)], 
-                                                        -boundary_flag[int(i // gridSum) * gridSum + linearize(Ind + vec3i(0, 0, -1), gnum)], 
-                                                        boundary_flag[int(i // gridSum) * gridSum + linearize(Ind, gnum)]+boundary_flag[int(i // gridSum) * gridSum + linearize(Ind + vec3i(0, 0, 1), gnum)], 
-                                                        boundary_flag[int(i // gridSum) * gridSum + linearize(Ind + vec3i(0, 0, 1), gnum)])
-                
-            if (Ind[1] - 1 >= 0 and int(boundary_flag[int(i // gridSum) * gridSum + linearize(Ind - vec3i(0, 1, 0), gnum)]) != 1) or \
-                (Ind[1] + 1 <= gnum[1] and int(boundary_flag[int(i // gridSum) * gridSum + linearize(Ind + vec3i(0, 1, 0), gnum)]) != 1) or \
-                (Ind[2] - 1 >= 0 and int(boundary_flag[int(i // gridSum) * gridSum + linearize(Ind - vec3i(0, 0, 1), gnum)]) != 1) or \
-                (Ind[2] + 1 <= gnum[2] and int(boundary_flag[int(i // gridSum) * gridSum + linearize(Ind + vec3i(0, 0, 1), gnum)]) != 1) or \
-                (Ind[1] - 1 < 0 and Ind[2] - 1 < 0 and int(boundary_flag[int(i // gridSum) * gridSum + linearize(Ind + vec3i(0, 1, 1), gnum)]) != 1) or \
-                (Ind[1] - 1 < 0 and Ind[2] - 1 >= 0 and int(boundary_flag[int(i // gridSum) * gridSum + linearize(Ind + vec3i(0, 1, -1), gnum)]) != 1) or \
-                (Ind[1] - 1 >= 0 and Ind[2] - 1 < 0 and int(boundary_flag[int(i // gridSum) * gridSum + linearize(Ind + vec3i(0, -1, 1), gnum)]) != 1) or \
-                (Ind[1] - 1 >= 0 and Ind[2] - 1 >= 0 and int(boundary_flag[int(i // gridSum) * gridSum + linearize(Ind + vec3i(0, -1, -1), gnum)]) != 1):
-                xtype = get_boundary_type(Ind[0], gnum[0], 0, 0, 0, 0)
-            if (Ind[0] - 1 >= 0 and int(boundary_flag[i-1]) != 1) or (Ind[0] + 1 <= gnum[0] and int(boundary_flag[i+1]) != 1) or \
-                (Ind[2] - 1 >= 0 and int(boundary_flag[int(i // gridSum) * gridSum + linearize(Ind - vec3i(0, 0, 1), gnum)]) != 1) or \
-                (Ind[2] + 1 <= gnum[2] and int(boundary_flag[int(i // gridSum) * gridSum + linearize(Ind + vec3i(0, 0, 1), gnum)]) != 1) or \
-                (Ind[0] - 1 < 0 and Ind[2] - 1 < 0 and int(boundary_flag[int(i // gridSum) * gridSum + linearize(Ind + vec3i(1, 0, 1), gnum)]) != 1) or \
-                (Ind[0] - 1 < 0 and Ind[2] - 1 >= 0 and int(boundary_flag[int(i // gridSum) * gridSum + linearize(Ind + vec3i(1, 0, -1), gnum)]) != 1) or \
-                (Ind[0] - 1 >= 0 and Ind[2] - 1 < 0 and int(boundary_flag[int(i // gridSum) * gridSum + linearize(Ind + vec3i(-1, 0, 1), gnum)]) != 1) or \
-                (Ind[0] - 1 >= 0 and Ind[2] - 1 >= 0 and int(boundary_flag[int(i // gridSum) * gridSum + linearize(Ind + vec3i(-1, 0, -1), gnum)]) != 1):
-                ytype = get_boundary_type(Ind[1], gnum[1], 0, 0, 0, 0)
-            if (Ind[0] - 1 >= 0 and int(boundary_flag[i-1]) != 1) or (Ind[0] + 1 <= gnum[0] and int(boundary_flag[i+1]) != 1) or \
-                (Ind[1] - 1 >= 0 and int(boundary_flag[int(i // gridSum) * gridSum + linearize(Ind - vec3i(0, 1, 0), gnum)]) != 1) or \
-                (Ind[1] + 1 <= gnum[1] and int(boundary_flag[int(i // gridSum) * gridSum + linearize(Ind + vec3i(0, 1, 0), gnum)]) != 1) or \
-                (Ind[0] - 1 < 0 and Ind[1] - 1 < 0 and int(boundary_flag[int(i // gridSum) * gridSum + linearize(Ind + vec3i(1, 1, 0), gnum)]) != 1) or \
-                (Ind[0] - 1 < 0 and Ind[1] - 1 >= 0 and int(boundary_flag[int(i // gridSum) * gridSum + linearize(Ind + vec3i(1, -1, 0), gnum)]) != 1) or \
-                (Ind[0] - 1 >= 0 and Ind[1] - 1 < 0 and int(boundary_flag[int(i // gridSum) * gridSum + linearize(Ind + vec3i(-1, 1, 0), gnum)]) != 1) or \
-                (Ind[0] - 1 >= 0 and Ind[1] - 1 >= 0 and int(boundary_flag[int(i // gridSum) * gridSum + linearize(Ind + vec3i(-1, -1, 0), gnum)]) != 1):
-                ztype = get_boundary_type(Ind[2], gnum[2], 0, 0, 0, 0)
+                ind_1 = int(boundary_flag[int(i // gridSum) * gridSum + linearize(Ind + vec3i(0, 0, -1), gnum)])
+                ind_0 = int(boundary_flag[int(i // gridSum) * gridSum + linearize(Ind, gnum)])
+                ind1 = int(boundary_flag[int(i // gridSum) * gridSum + linearize(Ind + vec3i(0, 0, 1), gnum)])
+                ztype = get_boundary_type(Ind[2], gnum[2], -ind_0-ind_1, ind_0+ind1) """
             boundary_type[int(i % gridSum), int(i // gridSum)] = vec3u8(xtype, ytype, ztype)

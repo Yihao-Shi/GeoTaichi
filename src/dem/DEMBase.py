@@ -9,7 +9,6 @@ from src.dem.Recorder import WriteFile
 from src.dem.SceneManager import myScene
 from src.dem.Simulation import Simulation
 from src.utils.constants import Threshold
-from src.utils.ObjectIO import DictIO
 from src.utils.TypeDefination import vec3f
 
 
@@ -26,9 +25,6 @@ class Solver(object):
         self.contact = contact
         self.engine = engine
         self.recorder = recorder
-
-        self.function = None
-        self.calm = None
 
         self.last_save_time = 0.
         self.last_print_time = 0.
@@ -53,17 +49,28 @@ class Solver(object):
             self.postprocess.append(lambda: self.engine.calm(self.sims.current_step, self.calm_interval, scene))
 
     def save_file(self, scene):
-        print('# Step =', self.sims.current_step, '   ', 'Save Number =', self.sims.current_print, '   ', 'Simulation time =', self.sims.current_time, '\n')
+        print('# Step =', self.sims.current_step, '   ', 'Save Number =', self.sims.current_print, '   ', 'Simulation time =', self.sims.current_time)
         self.recorder.output(self.sims, scene)
+        self.sims.timer.profile0()
+        print('\n')
+
+    def compile(self, scene):
+        print("Compiling first ... ...")
+        start_time = time.time()
+        self.core(scene)
+        end_time = time.time()
+        print(f'Compiling time = {end_time - start_time} \n')
 
     def Solver(self, scene: myScene):
         print("#", " Start Simulation ".center(67,"="), "#")
+        
+        self.engine.pre_calculation(self.sims, scene, self.contact.neighbor)
         if self.sims.current_time < Threshold:
             self.save_file(scene)
             self.sims.current_print += 1
             self.last_save_time = -0.8 * self.sims.delta
 
-        self.engine.pre_calculation(self.sims, scene, self.contact.neighbor)
+        self.compile(scene)
         start_time = time.time()
         while self.sims.current_time <= self.sims.time:
             self.core(scene)
@@ -79,10 +86,9 @@ class Solver(object):
 
             self.sims.current_time += self.sims.delta
             self.sims.current_step += 1
-
         end_time = time.time()
 
-        if abs(self.sims.current_time - self.last_save_time) > self.sims.save_interval:
+        if abs(self.sims.current_time - self.last_save_time) > 0.99 * self.sims.save_interval:
             self.save_file(scene)
             self.last_save_time = 1. * self.sims.current_time
             self.sims.current_print += 1
@@ -120,13 +126,14 @@ class Solver(object):
 
         for i, val in enumerate([0, 1, 0, 2, 1, 3, 2, 3, 4, 5, 4, 6, 5, 7, 6, 7, 0, 4, 1, 5, 2, 6, 3, 7]):
             box_lines_indices[i] = val
-        
+
+        self.engine.pre_calculation(self.sims, scene, self.contact.neighbor)
         if self.sims.current_time < Threshold:
             self.save_file(scene)
             self.sims.current_print += 1
             self.last_save_time = -0.8 * self.sims.delta
 
-        self.engine.pre_calculation(self.sims, scene, self.contact.neighbor)
+        self.compile(scene)
         start_time = time.time()
         while window.running:
             self.core(scene)
@@ -168,8 +175,10 @@ class Solver(object):
         print("#", " End Simulation ".center(67,"="), "#", '\n')
 
     def core(self, scene):
+        self.sims.timer.begin('Reset')
         self.engine.reset_wall_message(scene)
         self.engine.reset_particle_message(scene)
+        self.sims.timer.end('Reset')
         self.engine.update_neighbor_lists(self.sims, scene, self.contact.neighbor)
         self.engine.integration(self.sims, scene, self.contact.neighbor)
         for functions in self.postprocess:

@@ -28,7 +28,19 @@ def get_dataclass_to_dict(state_vars, selected_vars=None, start_index=0, end_ind
         valid_vars = set(selected_vars) & set(all_fields)
         for var in valid_vars:
             attr_field = getattr(state_vars, var)
-            exported_data[var] = numpy.ascontiguousarray(attr_field.to_numpy()[start_index:end_index])
+            if end_index == -1: end_index = attr_field.shape[0]
+            temp_data = numpy.ascontiguousarray(attr_field.to_numpy()[start_index:end_index])
+            if temp_data.ndim == 2 and temp_data.shape[1] == 6:
+                full_tensor = numpy.zeros((temp_data.shape[0], 3, 3))
+                full_tensor[:, 0, 0] = temp_data[:, 0]
+                full_tensor[:, 1, 1] = temp_data[:, 1]
+                full_tensor[:, 2, 2] = temp_data[:, 2]
+                full_tensor[:, 0, 1] = full_tensor[:, 1, 0] = temp_data[:, 3]
+                full_tensor[:, 1, 2] = full_tensor[:, 2, 1] = temp_data[:, 4]
+                full_tensor[:, 0, 2] = full_tensor[:, 2, 0] = temp_data[:, 5]
+                exported_data[var] = numpy.ascontiguousarray(full_tensor)
+            else:
+                exported_data[var] = temp_data
     return exported_data
 
 def bounding_box(points):
@@ -126,6 +138,14 @@ def round32(n):
     else: return ((n >> 5) + 1) << 5
 
 
+def rotation_matrix_direction_2D(dir1, dir2):
+    cos_theta = numpy.dot(dir1, dir2)
+    sin_theta = math.pow(1 - cos_theta * cos_theta, 0.5)
+    RotationMartix = numpy.array([[cos_theta, -sin_theta],
+                                  [sin_theta, cos_theta]])
+    return RotationMartix
+
+
 def rotation_matrix_direction(dir1, dir2):
     cos_theta = numpy.dot(dir1, dir2)
     norm_vec = numpy.cross(dir1, dir2)
@@ -197,6 +217,26 @@ def reduced(var1, var2):
     return var1 * var2 / (var1 + var2) 
 
 
+def set_to_rotation(qs):
+    qs = numpy.asarray(qs)
+    qx = qs[:, 0]
+    qy = qs[:, 1]
+    qz = qs[:, 2]
+    qw = qs[:, 3]
+
+    R = numpy.empty((qs.shape[0], 3, 3), dtype=qs.dtype)
+    R[:, 0, 0] = 1 - 2*(qy*qy + qz*qz)
+    R[:, 0, 1] = 2*(qx*qy - qz*qw)
+    R[:, 0, 2] = 2*(qx*qz + qy*qw)
+    R[:, 1, 0] = 2*(qx*qy + qz*qw)
+    R[:, 1, 1] = 1 - 2*(qx*qx + qz*qz)
+    R[:, 1, 2] = 2*(qy*qz - qx*qw)
+    R[:, 2, 0] = 2*(qx*qz - qy*qw)
+    R[:, 2, 1] = 2*(qy*qz + qx*qw)
+    R[:, 2, 2] = 1 - 2*(qx*qx + qy*qy)
+    return R
+
+
 def Sphere2Certesian(vector):
     return vector[0] * numpy.array([numpy.sin(vector[1]) * numpy.cos(vector[2]), numpy.sin(vector[1]) * numpy.sin(vector[2]), numpy.cos(vector[1])])
 
@@ -254,6 +294,32 @@ def doolittle(matrix_a):
                     matrix_l[k][i] = 0.0
 
     return matrix_l, matrix_u
+
+
+def remove_connectivity_by_inactive_faces(connectivity, faceID, vertexCount, active):
+    prefix_vertex_id = numpy.zeros(len(vertexCount)+1, dtype=int)
+    prefix_vertex_id[1:] = numpy.cumsum(vertexCount)
+    prefix_face_id = numpy.zeros(len(faceID)+1, dtype=int)
+    prefix_face_id[1:] = numpy.cumsum(faceID)
+    keep_indices = numpy.where(active)[0]
+    new_vertexCount = vertexCount[keep_indices]
+    new_faceID = faceID[keep_indices]
+    mapping = numpy.full(prefix_vertex_id[-1], -1, dtype=int)
+    new_id = 0
+    for i in range(len(vertexCount)):
+        start = prefix_vertex_id[i]
+        end = prefix_vertex_id[i+1]
+        if active[i]:
+            mapping[start:end] = numpy.arange(new_id, new_id + (end - start))
+            new_id += (end - start)
+    keep_faces_list = [connectivity[prefix_face_id[i]:prefix_face_id[i+1]] for i in keep_indices]
+    new_connectivity = numpy.vstack(keep_faces_list) if keep_faces_list else numpy.empty((0,3), dtype=connectivity.dtype)
+    new_connectivity = mapping[new_connectivity]
+    return new_connectivity, new_faceID, new_vertexCount
+
+
+def square_norm(array):
+    return sum([i * i for i in array])
 
 
 def ndot(array1, array2):

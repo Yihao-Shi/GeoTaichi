@@ -27,6 +27,8 @@ def write_dem_vtk_file(sims: Simulation, start_file, end_file, read_path, write_
     for printNum in range(start_file, end_file):
         data = {}
         particle_file = read_path + "/particles/DEMParticle{0:06d}.npz".format(printNum)
+        sphere_file = read_path + "/particles/DEMSphere{0:06d}.npz".format(printNum)
+        clump_file = read_path + "/particles/DEMClump{0:06d}.npz".format(printNum)
         if not os.access(particle_file, os.F_OK): continue
 
         print((" DEM Postprocessing: Output VTK File" + str(printNum) + ' ').center(71, '-'))
@@ -34,7 +36,26 @@ def write_dem_vtk_file(sims: Simulation, start_file, end_file, read_path, write_
         
         if printNum == start_file:
             position0 = np.ascontiguousarray(DictIO.GetEssential(particle_info, "position"))
+            if os.access(sphere_file, os.F_OK): 
+                sphere_info = np.load(sphere_file, allow_pickle=True)
+                sphere_id0 = np.ascontiguousarray(DictIO.GetEssential(sphere_info, "grainIndex"))
+                particle_index0 = -1 - np.ascontiguousarray(DictIO.GetEssential(sphere_info, "sphereIndex"))
+            if os.access(clump_file, os.F_OK): 
+                clump_info = np.load(sphere_file, allow_pickle=True)
+                clump_id0 = np.ascontiguousarray(DictIO.GetEssential(clump_info, "grainIndex"))
+                mass_center0 = np.ascontiguousarray(DictIO.GetEssential(clump_info, "mass_center"))
 
+        if os.access(sphere_file, os.F_OK): 
+            sphere_info = np.load(sphere_file, allow_pickle=True)
+            sphere_id = np.ascontiguousarray(DictIO.GetEssential(sphere_info, "grainIndex"))
+            particle_index = -1 - np.ascontiguousarray(DictIO.GetEssential(sphere_info, "sphereIndex"))
+        if os.access(clump_file, os.F_OK): 
+            clump_info = np.load(sphere_file, allow_pickle=True)
+            clump_id = np.ascontiguousarray(DictIO.GetEssential(clump_info, "grainIndex"))
+            start_index = np.ascontiguousarray(DictIO.GetEssential(clump_info, "startIndex"))
+            end_index = np.ascontiguousarray(DictIO.GetEssential(clump_info, "endIndex"))
+            mass_center = np.ascontiguousarray(DictIO.GetEssential(clump_info, "mass_center"))
+            
         position = np.ascontiguousarray(DictIO.GetEssential(particle_info, "position"))
         posx = np.ascontiguousarray(position[:, 0])
         posy = np.ascontiguousarray(position[:, 1])
@@ -50,7 +71,23 @@ def write_dem_vtk_file(sims: Simulation, start_file, end_file, read_path, write_
             radii = np.ascontiguousarray(DictIO.GetEssential(particle_info, "radius"))
             data.update({"radius": radii})
         if DictIO.GetAlternative(kwargs, "write_displacement", True):
-            disp =  position - position0
+            disp = np.zeros((position.shape[0], 3))
+            if os.access(sphere_file, os.F_OK): 
+                id_map = {pid: idx for idx, pid in enumerate(sphere_id0)}
+                indices = np.array([id_map[pid] for pid in sphere_id])
+                disp[particle_index] = position[particle_index] - position0[particle_index0[indices]]
+            if os.access(clump_file, os.F_OK): 
+                id_map = {pid: idx for idx, pid in enumerate(clump_id0)}
+                indices = np.array([id_map[pid] for pid in clump_id])
+                counts = end_index - start_index
+                total_length = counts.sum()
+                cum = np.concatenate(([0], np.cumsum(counts)))
+                x = np.arange(total_length)
+                segments = np.searchsorted(cum, x, side='right') - 1
+                offsets = x - cum[segments]
+                index = start_index[segments] + offsets
+                index = np.concatenate([index, np.array([end_index[-1]])])
+                disp[index] = np.repeat(mass_center - mass_center0[indices], counts)
             dispx = np.ascontiguousarray(disp[:, 0])
             dispy = np.ascontiguousarray(disp[:, 1])
             dispz = np.ascontiguousarray(disp[:, 2])
@@ -87,7 +124,7 @@ def write_lsdem_vtk_file(sims: Simulation, start_file, end_file, read_path, writ
         surface_file = read_path + "/particles/LSDEMSurface{0:06d}.npz".format(printNum)
         if not os.access(surface_file, os.F_OK): continue
         surface_info = np.load(surface_file, allow_pickle=True)
-        surface_num = max(int(DictIO.GetEssential(surface_info, "surface_num")), surface_num)
+        surface_num = max(int(DictIO.GetEssential(surface_info, "total_surface_num")), surface_num)
     vertices = ti.Vector.field(3, float, shape=surface_num)
 
     for printNum in range(start_file, end_file):
@@ -103,7 +140,7 @@ def write_lsdem_vtk_file(sims: Simulation, start_file, end_file, read_path, writ
         if printNum == start_file:
             position0 = np.ascontiguousarray(DictIO.GetEssential(particle_info, "mass_center"))
 
-        surface_num = np.ascontiguousarray(DictIO.GetEssential(surface_info, "surface_num"))
+        surface_num = np.ascontiguousarray(DictIO.GetEssential(surface_info, "total_surface_num"))
         master = np.ascontiguousarray(DictIO.GetEssential(surface_info, "master"))
         connectivity = np.ascontiguousarray(DictIO.GetEssential(surface_info, "connectivity"))
         surface_node = np.ascontiguousarray(DictIO.GetEssential(surface_info, "vertices"))

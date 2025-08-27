@@ -1,7 +1,7 @@
 import taichi as ti
 import numpy as np
 
-from src.dem.contact.EnergyConservation import PenaltyProperty
+from src.physics_model.contact_model.EnergyConservingModel import PenaltyProperty
 from src.dem.Simulation import Simulation as DEMSimulation
 from src.dem.SceneManager import myScene as DEMScene
 from src.mpdem.contact.ContactModelBase import ContactModelBase

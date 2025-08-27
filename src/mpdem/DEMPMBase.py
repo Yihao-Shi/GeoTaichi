@@ -60,23 +60,28 @@ class Solver:
         print('# Step =', self.sims.current_step, '   ', 'Save Number =', self.sims.current_print, '   ', 'Simulation time =', self.sims.current_time, '\n')
         self.recorder.output(self.sims, self.msims, mscene, self.dsims, dscene)
 
+    def compile(self):
+        print("Compiling first ... ...")
+        start_time = time.time()
+        self.core()
+        end_time = time.time()
+        print(f'Compiling time = {end_time - start_time} \n')
+
     def CouplingSolver(self, mscene: MPMScene, dscene: DEMScene):
         print("#", " Start Simulation ".center(67,"="), "#")
-
+        
+        self.engine.pre_calculate()
         if self.sims.current_time < Threshold:
             self.save_file(mscene, dscene)
             self.sims.current_print += 1
             self.msims.current_print += 1
             self.dsims.current_print += 1
             self.last_save_time = -0.8 * self.sims.delta
-        self.engine.pre_calculate()
             
+        self.compile()
         start_time = time.time()
         while self.sims.current_time <= self.sims.time:
-            self.engine.reset_message()
-            self.engine.compute()
-            for functions in self.postprocess:
-                functions()
+            self.core()
 
             new_body = self.generator.regenerate(self.sims, mscene, dscene)
             if self.sims.current_time - self.last_save_time + 0.1 * self.sims.delta> self.sims.save_interval or new_body:
@@ -95,7 +100,7 @@ class Solver:
             self.sims.current_step += 1
         end_time = time.time()
 
-        if abs(self.sims.current_time - self.last_save_time) > self.sims.save_interval:
+        if abs(self.sims.current_time - self.last_save_time) > 0.99 * self.sims.save_interval:
             self.save_file(mscene, dscene)
             self.last_save_time = 1. * self.sims.current_time
             self.sims.current_print += 1
@@ -105,6 +110,13 @@ class Solver:
 
         print('Physical time = ', end_time - start_time)
         print("#", " End Simulation ".center(67,"="), "#", '\n')
+
+    def core(self):
+        self.engine.reset_message()
+        self.engine.compute()
+        for functions in self.postprocess:
+            functions()
+
 
 
 
