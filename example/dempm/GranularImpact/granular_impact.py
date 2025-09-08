@@ -5,7 +5,7 @@ init(device_memory_GB=4)
 dempm = DEMPM()
 
 dempm.set_configuration(domain=ti.Vector([0.5, 0.1, 0.3]),
-                        coupling_scheme="DEM-MPM",
+                        coupling_scheme="MPDEM",
                         particle_interaction=True,
                         wall_interaction=True)
 

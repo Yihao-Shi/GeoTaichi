@@ -145,7 +145,7 @@ class BodyGenerator(Generator):
         return region.expected_particle_number
     
     def rotate_body(self, region: RegionFunction, start_particle_num, end_particle_num):
-        kernel_position_rotate_(region.zdirection, region.rotate_center, self.particle, start_particle_num, end_particle_num)
+        kernel_position_rotate_(region.rotate, region.rotate_center, self.particle, start_particle_num, end_particle_num)
 
     def generate_material_points(self, scene: myScene, template):
         name = DictIO.GetEssential(template, "RegionName")

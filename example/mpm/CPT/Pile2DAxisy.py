@@ -22,7 +22,7 @@ mpm.set_solver(solver={
 
 mpm.memory_allocate(memory={
                                 "max_material_number":    1,
-                                "max_particle_number":    99500,
+                                "max_particle_number":    101143,
                                 "max_constraint_number":  {
                                                                "max_velocity_constraint":     134474,
                                                                "max_particle_traction_constraint":   134474,

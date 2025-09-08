@@ -1,8 +1,8 @@
-import numpy as np
+import taichi as ti
 
 from src.dem.neighbor.LinkedCell import LinkedCell 
 from src.dem.engines.ExplicitEngine import ExplicitEngine as DEMExplicitEngine
-from src.dem.engines.EngineKernel import get_contact_stiffness
+from src.dem.engines.EngineKernel import get_contact_stiffness, get_gain, servo, get_wall_contact_force
 from src.dem.SceneManager import myScene as DEMScene
 from src.dem.Simulation import Simulation as DEMSimulation
 from src.mpdem.contact.ContactModelBase import ContactModelBase
@@ -98,6 +98,19 @@ class Engine(object):
         if self.dsims.max_servo_wall_num > 0 and self.dsims.servo_status == "On" and self.sims.wall_interaction:
             self.update_servo_wall = self.update_servo_motion
 
+    def set_servo_mechanism(self, callback=None):  
+        if self.dsims.max_servo_wall_num > 0 and self.dsims.servo_status == "On":
+            if self.dsims.servo_type == "StiffnessControl":
+                self.update_servo_wall = self.update_servo_stiffness_control
+            elif self.dsims.servo_type == "GainControl":
+                self.update_servo_wall = self.update_servo_gain_control
+            if callback is None:
+                self.callback = no_operation
+            else:
+                self.callback = ti.kernel(callback)
+        else:
+            self.update_servo_wall = no_operation
+
     def pre_calculate(self):
         self.mengine.pre_calculation(self.msims, self.mscene, self.mneighbor)
         self.dengine.pre_calculation(self.dsims, self.dscene, self.dneighbor)
@@ -132,9 +145,17 @@ class Engine(object):
         self.neighbor.update_verlet_table(self.mscene, self.dscene)
         self.apply_contact_model()
 
-    def update_servo_motion(self):
+    def update_servo_stiffness_control(self):
         get_contact_stiffness(self.sims.max_material_num, int(self.mscene.particleNum[0]), self.mscene.particle, self.dscene.wall, 
                               self.physpw.surfaceProps, self.physpw.cplist, self.neighbor.particle_wall)
+        self.callback()
+        get_gain(self.dsims.dt, int(self.dscene.servoNum[0]), self.dscene.servo, self.dscene.wall)
+        servo(int(self.dscene.servoNum[0]), self.dscene.wall, self.dscene.servo)
+
+    def update_servo_gain_control(self):
+        get_wall_contact_force(int(self.dscene.particleNum[0]), self.dscene.wall, self.physpw.cplist, self.neighbor.particle_wall)
+        self.callback()
+        servo(int(self.dscene.servoNum[0]), self.dscene.wall, self.dscene.servo)
 
     def dem_integration(self):
         if self.dengine.is_verlet_update(self.dengine.limit1) == 1:

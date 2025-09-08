@@ -53,6 +53,7 @@ class MultiLinkedCell(object):
             self.update_particle_particle_auxiliary_lists = self. update_particle_particle_auxiliary_list
             if self.dsims.scheme == "DEM":
                 if self.dsims.search == "HierarchicalLinkedCell":
+                    raise RuntimeError("This have not been supported yet")
                     self.update_verlet_tables_particle_particle = self.update_verlet_table_particle_particle_hierarchical
                 elif self.dsims.search == "LinkedCell":
                     if self.csims.enhanced_coupling:
@@ -61,6 +62,7 @@ class MultiLinkedCell(object):
                         self.update_verlet_tables_particle_particle = self.update_verlet_table_particle_particle
             elif self.dsims.scheme == "LSDEM":
                 if self.dsims.search == "HierarchicalLinkedCell":
+                    raise RuntimeError("This have not been supported yet")
                     self.update_verlet_tables_particle_particle = self.update_verlet_table_particle_lsparticle_hierarchical
                 elif self.dsims.search == "LinkedCell":
                     self.update_verlet_tables_particle_particle = self.update_verlet_table_particle_lsparticle
@@ -148,12 +150,12 @@ class MultiLinkedCell(object):
         mscene.reset_verlet_disp()
 
     def update_verlet_table_particle_particle(self, mscene: MPMScene, dscene: DEMScene):
-        board_search_coupled_particle_linked_cell_(self.csims.potential_particle_num, self.msims.verlet_distance, self.dsims.verlet_distance, self.dsims.max_bounding_sphere_radius, self.dem_spatial_grid.igrid_size, self.dem_spatial_grid.particle_count, 
+        board_search_coupled_particle_linked_cell_(self.csims.potential_particle_num, self.msims.verlet_distance, self.dsims.verlet_distance, self.dsims.max_bounding_sphere_radius, self.dem_spatial_grid.grid_size, self.dem_spatial_grid.igrid_size, self.dsims.domain, self.dem_spatial_grid.particle_count, 
                                                    self.dem_spatial_grid.ParticleID, mscene.particle, dscene.particle, self.potential_list_particle_particle, self.particle_particle, self.dem_spatial_grid.cnum, int(mscene.couplingNum[0]))
         self.particle_pse.run(self.particle_particle)
 
     def update_verlet_table_enhanced_particle_particle(self, mscene: MPMScene, dscene: DEMScene):
-        board_search_enhanced_coupled_particle_linked_cell_(self.csims.potential_particle_num, self.msims.verlet_distance, self.dsims.verlet_distance, self.msims.max_radius, self.mpm_spatial_grid.igrid_size, self.mpm_spatial_grid.sorted.bin_count, 
+        board_search_enhanced_coupled_particle_linked_cell_(self.csims.potential_particle_num, self.msims.verlet_distance, self.dsims.verlet_distance, self.msims.max_radius, self.mpm_spatial_grid.grid_size, self.mpm_spatial_grid.igrid_size, self.msims.domain, self.mpm_spatial_grid.sorted.bin_count, 
                                                    self.mpm_spatial_grid.sorted.object_list, dscene.particle, mscene.particle, self.potential_list_particle_particle, self.particle_particle, self.mpm_spatial_grid.cnum, int(dscene.particleNum[0]))
         self.particle_pse.run(self.particle_particle)
 
@@ -163,7 +165,7 @@ class MultiLinkedCell(object):
         self.particle_pse.run(self.particle_particle)
 
     def update_verlet_table_particle_lsparticle(self, mscene: MPMScene, dscene: DEMScene):
-        board_search_coupled_lsparticle_linked_cell_(self.csims.potential_particle_num, self.msims.verlet_distance, self.dsims.verlet_distance, self.dsims.max_bounding_sphere_radius, self.dem_spatial_grid.igrid_size, self.dem_spatial_grid.particle_count, 
+        board_search_coupled_lsparticle_linked_cell_(self.csims.potential_particle_num, self.msims.verlet_distance, self.dsims.verlet_distance, self.dsims.max_bounding_sphere_radius, self.dem_spatial_grid.grid_size, self.dem_spatial_grid.igrid_size, self.dsims.domain, self.dem_spatial_grid.particle_count, 
                                                      self.dem_spatial_grid.ParticleID, mscene.particle, dscene.rigid, dscene.box, dscene.rigid_grid, self.potential_list_particle_particle, 
                                                      self.particle_particle, self.dem_spatial_grid.cnum, int(mscene.couplingNum[0]))
         self.particle_pse.run(self.particle_particle)

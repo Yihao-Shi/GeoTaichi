@@ -129,7 +129,7 @@ class BodyReader(Generator):
         particle_number = DictIO.GetAlternative(template, "ParticleNumber", particle_cloud.shape[0])
         particle_count = particle_number if particle_number != -1 else particle_cloud.shape[0]
         particle_stress = DictIO.GetAlternative(template, "ParticleStress", {"InternalStress": [0, 0, 0, 0, 0, 0]})
-        orientation = DictIO.GetAlternative(template, "Orientation", vec3f([0, 0, 1]) if self.sims.dimension == 3 else [0., 1.])
+        orientation = DictIO.GetAlternative(template, "Orientation", vec3f([0, 0, 0]) if self.sims.dimension == 3 else 0.)
         init_v = DictIO.GetAlternative(template, "InitialVelocity", [0., 0., 0.] if self.sims.dimension == 3 else [0., 0.])
         fix_v_str = DictIO.GetAlternative(template, "FixVelocity", ["Free", "Free", "Free"] if self.sims.dimension == 3 else ["Free", "Free"])
         rigid_body = DictIO.GetAlternative(template, "RigidBody", False)
@@ -212,32 +212,27 @@ class BodyReader(Generator):
 
             if particle_number > self.sims.max_particle_num:
                 raise RuntimeError("/max_particle_number/ should be enlarged")
-            if self.sims.coupling or self.sims.neighbor_detection:
-                kernel_rebulid_particle_coupling(particle_number, scene.particle, scene.is_rigid,
-                                                 DictIO.GetEssential(particle_info, "bodyID"), 
-                                                 DictIO.GetEssential(particle_info, "materialID"), 
-                                                 DictIO.GetEssential(particle_info, "active"), 
-                                                 DictIO.GetEssential(particle_info, "free_surface"), 
-                                                 DictIO.GetEssential(particle_info, "normal"), 
-                                                 DictIO.GetEssential(particle_info, "mass"), 
-                                                 DictIO.GetEssential(particle_info, "position"), 
-                                                 DictIO.GetEssential(particle_info, "velocity"), 
-                                                 DictIO.GetEssential(particle_info, "volume"), 
-                                                 DictIO.GetEssential(particle_info, "stress"), 
-                                                 DictIO.GetEssential(particle_info, "velocity_gradient"), 
-                                                 DictIO.GetEssential(particle_info, "fix_v"))
-            else:
-                kernel_rebulid_particle(particle_number, scene.particle, scene.is_rigid,
-                                        DictIO.GetEssential(particle_info, "bodyID"), 
-                                        DictIO.GetEssential(particle_info, "materialID"), 
-                                        DictIO.GetEssential(particle_info, "active"), 
-                                        DictIO.GetEssential(particle_info, "mass"),
-                                        DictIO.GetEssential(particle_info, "position"), 
-                                        DictIO.GetEssential(particle_info, "velocity"), 
-                                        DictIO.GetEssential(particle_info, "volume"), 
-                                        DictIO.GetEssential(particle_info, "stress"), 
-                                        DictIO.GetEssential(particle_info, "velocity_gradient"), 
-                                        DictIO.GetEssential(particle_info, "fix_v"))
+            kernel_rebulid_particle(particle_number, scene.particle, scene.is_rigid,
+                                    DictIO.GetEssential(particle_info, "bodyID"), 
+                                    DictIO.GetEssential(particle_info, "materialID"), 
+                                    DictIO.GetEssential(particle_info, "active"), 
+                                    DictIO.GetEssential(particle_info, "mass"),
+                                    DictIO.GetEssential(particle_info, "position"), 
+                                    DictIO.GetEssential(particle_info, "velocity"), 
+                                    DictIO.GetEssential(particle_info, "volume"), 
+                                    DictIO.GetEssential(particle_info, "stress"), 
+                                    DictIO.GetEssential(particle_info, "velocity_gradient"), 
+                                    DictIO.GetEssential(particle_info, "fix_v"))
+            if self.sims.coupling:
+                kernel_rebulid_particle_coupling(particle_number, scene.particle, 
+                                                 DictIO.GetEssential(particle_info, "coupling"), 
+                                                 DictIO.GetEssential(particle_info, "radius"))
+            if self.sims.neighbor_detection:
+                kernel_rebulid_particle_neighbor_detection(particle_number, scene.particle, 
+                                                            DictIO.GetEssential(particle_info, "free_surface"), 
+                                                            DictIO.GetEssential(particle_info, "mass_density"), 
+                                                            DictIO.GetEssential(particle_info, "normal"))
+            
             psize = DictIO.GetEssential(particle_info, "psize")
             scene.push_psize(psize)
             traction = DictIO.GetAlternative(template, "Traction", {})
@@ -245,7 +240,7 @@ class BodyReader(Generator):
             stateVars = DictIO.GetEssential(particle_info, "state_vars")
             scene.material.reload_state_variables(stateVars)
             scene.particleNum[0] = particle_number
-            self.print_particle_info(bodyID, materialID, init_v, fix_v, particle_num)
+            print("Insert particle Number: ", particle_number)
         else:
             bodyID = DictIO.GetEssential(template, "BodyID")
             self.check_bodyID(scene, bodyID)
@@ -262,7 +257,7 @@ class BodyReader(Generator):
                     raise RuntimeError(f"Material ID {materialID} should be larger than 0")
                 
             particle_stress = DictIO.GetAlternative(template, "ParticleStress", {"InternalStress": [0, 0, 0, 0, 0, 0]})
-            orientation = DictIO.GetAlternative(template, "Orientation", vec3f([0, 0, 1]))
+            orientation = DictIO.GetAlternative(template, "Orientation", vec3f([0, 0, 0]) if self.sims.dimension == 3 else 0.)
             init_v = DictIO.GetAlternative(template, "InitialVelocity", vec3f([0, 0, 0]))
             fix_v_str = DictIO.GetAlternative(template, "FixVelocity", ["Free", "Free", "Free"])
             fix_v = vec3u8([DictIO.GetEssential(self.FIX, is_fix) for is_fix in fix_v_str])
@@ -273,6 +268,11 @@ class BodyReader(Generator):
             psize = DictIO.GetEssential(particle_cloud, "psize")
             volume = DictIO.GetEssential(particle_cloud, "volume")
             particle_num = coords.shape[0]
+
+            if isinstance(density, (np.ndarray, list, tuple)):
+                density = np.asarray(density)
+            elif isinstance(density, (int, float)):
+                density = np.repeat(density, particle_num)
 
             self.rotate_body(orientation, coords, init_particle_num, particle_num)
             scene.check_particle_num(self.sims, particle_number=particle_num)
@@ -319,7 +319,7 @@ class BodyReader(Generator):
 
         scale_factor = DictIO.GetAlternative(template, "ScaleFactor", default=1.0)
         offset = np.array(DictIO.GetAlternative(template, "Offset", [0., 0., 0.]))
-        orientation = DictIO.GetAlternative(template, "Orientation", vec3f([0, 0, 1]))
+        orientation = DictIO.GetAlternative(template, "Orientation", vec3f([0, 0, 0]) if self.sims.dimension == 3 else 0.)
         nParticlesPerCell = DictIO.GetAlternative(template, "nParticlesPerCell", 2)
         
         mesh = tm.load(particle_file)
@@ -332,6 +332,11 @@ class BodyReader(Generator):
         voxelized_points_np = voxelized_mesh.points.copy()
         particle_num = voxelized_points_np.shape[0]
         particle_volume = 4./3. * np.pi * (0.5 * diameter) ** 3
+            
+        if isinstance(density, (np.ndarray, list, tuple)):
+            density = np.asarray(density)
+        elif isinstance(density, (int, float)):
+            density = np.repeat(density, particle_num)
 
         psize = np.repeat(0.5 * diameter, particle_num * 3).reshape((particle_num, 3))
         volume = np.repeat(particle_volume, particle_num)

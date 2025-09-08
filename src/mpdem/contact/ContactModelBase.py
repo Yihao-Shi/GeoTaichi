@@ -138,13 +138,13 @@ class ContactModelBase(object):
         object_object, DstID, oldTangOverlap = self.rebuild_contact_list(contact_info)
         if DstID.shape[0] > self.cplist.shape[0]:
             raise RuntimeError("/body_coordination_number/ should be enlarged")
-        kernel_rebulid_history_contact_list(self.cplist, pcontact.hist_particle_particle, object_object, DstID, oldTangOverlap)
+        kernel_rebulid_coupling_history_contact_list(self.cplist, pcontact.hist_particle_particle, object_object, DstID, oldTangOverlap)
 
     def rebuild_pwcontact_list(self, pcontact: MultiLinkedCell, contact_info):
         object_object, DstID, oldTangOverlap = self.rebuild_contact_list(contact_info)
         if DstID.shape[0] > self.cplist.shape[0]:
             raise RuntimeError("/body_coordination_number/ should be enlarged")
-        kernel_rebulid_history_contact_list(self.cplist, pcontact.hist_particle_wall, object_object, DstID, oldTangOverlap)
+        kernel_rebulid_coupling_history_contact_list(self.cplist, pcontact.hist_particle_wall, object_object, DstID, oldTangOverlap)
     
     # ========================================================= #
     #              Particle Contact Matrix Resolve              #

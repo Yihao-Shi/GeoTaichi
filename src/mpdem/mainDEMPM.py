@@ -212,9 +212,9 @@ class DEMPM(object):
                 self.sims.current_time = self.mpm.sims.current_time
                 self.sims.CurrentTime[None] = self.mpm.sims.current_time
         if ppcontact:
-            ppcontact_path = file_path+"/contacts"
+            ppcontact_path = file_path+"/DEMPMcontacts"
         if pwcontact:
-            pwcontact_path = file_path+"/contacts"
+            pwcontact_path = file_path+"/DEMPMcontacts"
         self.sims.history_contact_path.update(file_number=file_number, ppcontact=ppcontact_path, pwcontact=pwcontact_path)
 
     def load_history_contact(self):

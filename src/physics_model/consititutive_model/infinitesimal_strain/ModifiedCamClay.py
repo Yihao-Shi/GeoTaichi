@@ -220,7 +220,7 @@ class ModifiedCamClayModel(PlasticMaterial):
     
     @ti.func
     def UpdateInternalVariables(self, np, internal_vars, stateVars):
-        stateVars[np].pc = internal_vars[0]
+        stateVars[np].pc = ti.max(1, internal_vars[0])
 
     @ti.func
     def get_current_material_parameter(self, state_vars):

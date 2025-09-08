@@ -130,7 +130,7 @@ class ParticleGenerator(object):
         self.insert_interval = 1e10
         self.tries_number = 0
         self.porosity = 0.345
-        self.is_poission = False
+        self.is_poisson = False
         self.type = None
         self.btype = None
         self.name = None
@@ -165,7 +165,7 @@ class ParticleGenerator(object):
         self.visualize = DictIO.GetAlternative(body_dict, "Visualize", False)
         self.save_path = DictIO.GetAlternative(body_dict, "SavePath", '')
         self.tries_number = DictIO.GetAlternative(body_dict, "TryNumber", 100)
-        self.is_poission = DictIO.GetAlternative(body_dict, "PoissionSampling", False)
+        self.is_poisson = DictIO.GetAlternative(body_dict, "PoissonSampling", False)
 
     def set_template(self, template_ptr):
         self.myTemplate = template_ptr

@@ -32,7 +32,7 @@ def kernel_position_rotate_(target: ti.types.vector(3, float), offset: ti.types.
         body_coords[nb, 2] = coords[2]
 
 @ti.kernel
-def kernel_position_rotate_2D(target: ti.types.vector(2, float), offset: ti.types.vector(2, float), body_coords: ti.types.ndarray(), start_particle_num: int, end_particle_num: int):
+def kernel_position_rotate_2D(target: float, offset: ti.types.vector(2, float), body_coords: ti.types.ndarray(), start_particle_num: int, end_particle_num: int):
     R = ThetaToRotationMatrix2D(target)
     for nb in range(start_particle_num, end_particle_num):
         coords = vec2f(body_coords[nb, 0], body_coords[nb, 1])
@@ -165,14 +165,12 @@ def kernel_read_particle_file_2D(particles: ti.template(), particleNum: int, par
 
 @ti.kernel
 def kernel_rebulid_particle(particle_number: int, particle: ti.template(), is_rigid: ti.template(), bodyID: ti.types.ndarray(), materialID: ti.types.ndarray(), active: ti.types.ndarray(),
-                            mass: ti.types.ndarray(), position: ti.types.ndarray(), velocity: ti.types.ndarray(), volume: ti.types.ndarray(), traction: ti.types.ndarray(),
-                            strain: ti.types.ndarray(), stress: ti.types.ndarray(), psize: ti.types.ndarray(), velocity_gradient: ti.types.ndarray(), fix_v: ti.types.ndarray()):
+                            mass: ti.types.ndarray(), position: ti.types.ndarray(), velocity: ti.types.ndarray(), volume: ti.types.ndarray(), stress: ti.types.ndarray(), velocity_gradient: ti.types.ndarray(), fix_v: ti.types.ndarray()):
     for np in range(particle_number):
         if materialID[np] == 0:
             is_rigid[bodyID[np]] = 1
         particle[np]._restart(bodyID[np], materialID[np], active[np], mass[np], vec3f(position[np, 0], position[np, 1], position[np, 2]), vec3f(velocity[np, 0], velocity[np, 1], velocity[np, 2]), volume[np], 
-                              vec3f(traction[np, 0], traction[np, 1], traction[np, 2]), vec6f(strain[np, 0], strain[np, 1], strain[np, 2], strain[np, 3], strain[np, 4], strain[np, 5]), 
-                              vec6f(stress[np, 0], stress[np, 1], stress[np, 2], stress[np, 3], stress[np, 4], stress[np, 5]), vec3f(psize[np, 0], psize[np, 1], psize[np, 2]), 
+                              vec6f(stress[np, 0], stress[np, 1], stress[np, 2], stress[np, 3], stress[np, 4], stress[np, 5]), 
                               mat3x3(velocity_gradient[np, 0, 0], velocity_gradient[np, 0, 1], velocity_gradient[np, 0, 2], 
                                      velocity_gradient[np, 1, 0], velocity_gradient[np, 1, 1], velocity_gradient[np, 1, 2], 
                                      velocity_gradient[np, 2, 0], velocity_gradient[np, 2, 1], velocity_gradient[np, 2, 2]), 
@@ -180,16 +178,15 @@ def kernel_rebulid_particle(particle_number: int, particle: ti.template(), is_ri
         
 
 @ti.kernel
-def kernel_rebulid_particle_coupling(particle_number: int, particle: ti.template(), is_rigid: ti.template(), bodyID: ti.types.ndarray(), materialID: ti.types.ndarray(), active: ti.types.ndarray(), free_surface: ti.types.ndarray(), 
-                                     normal: ti.types.ndarray(), position: ti.types.ndarray(), velocity: ti.types.ndarray(), mass: ti.types.ndarray(), volume: ti.types.ndarray(), radius: ti.types.ndarray(), 
-                                     traction: ti.types.ndarray(), strain: ti.types.ndarray(), stress: ti.types.ndarray(), psize: ti.types.ndarray(), velocity_gradient: ti.types.ndarray(), fix_v: ti.types.ndarray()):
+def kernel_rebulid_particle_coupling(particle_number: int, particle: ti.template(), coupling: ti.types.ndarray(), radius: ti.types.ndarray()):
     for np in range(particle_number):
-        if materialID[np] == 0:
-            is_rigid[bodyID[np]] = 1
-        particle[np]._restart(bodyID[np], materialID[np], active[np], free_surface[np], vec3f(normal[np, 0], normal[np, 1], normal[np, 2]), mass[np], vec3f(position[np, 0], position[np, 1], position[np, 2]),
-                              vec3f(velocity[np, 0], velocity[np, 1], velocity[np, 2]), volume[np], radius[np], vec3f(traction[np, 0], traction[np, 1], traction[np, 2]), vec6f(strain[np, 0], strain[np, 1], strain[np, 2], strain[np, 3], strain[np, 4], strain[np, 5]), 
-                              vec6f(stress[np, 0], stress[np, 1], stress[np, 2], stress[np, 3], stress[np, 4], stress[np, 5]), vec3f(psize[np, 0], psize[np, 1], psize[np, 2]), 
-                              mat3x3(velocity_gradient[np, 0, 0], velocity_gradient[np, 0, 1], velocity_gradient[np, 0, 2], 
-                                     velocity_gradient[np, 1, 0], velocity_gradient[np, 1, 1], velocity_gradient[np, 1, 2], 
-                                     velocity_gradient[np, 2, 0], velocity_gradient[np, 2, 1], velocity_gradient[np, 2, 2]), 
-                              vec3u8(fix_v[np, 0], fix_v[np, 1], fix_v[np, 2]))
+        particle[np].coupling = ti.u8(coupling[np])
+        particle[np].rad = radius[np]
+        
+
+@ti.kernel
+def kernel_rebulid_particle_neighbor_detection(particle_number: int, particle: ti.template(), free_surface: ti.types.ndarray(), mass_density: ti.types.ndarray(), normal: ti.types.ndarray(),):
+    for np in range(particle_number):
+        particle[np].free_surface = ti.u8(free_surface[np])
+        particle[np].mass_density = mass_density[np]
+        particle[np].normal = vec3f(normal[np, 0], normal[np, 1], normal[np, 2])

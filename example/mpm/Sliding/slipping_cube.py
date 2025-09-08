@@ -12,7 +12,7 @@ mpm.set_configuration(domain=ti.Vector([20., 4., 6.]),
                       shape_function="Linear")
 
 mpm.set_solver(solver={
-                           "Timestep":                   1e-3,
+                           "Timestep":                   1e-4,
                            "SimulationTime":             6,
                            "SaveInterval":               0.1
                       })
