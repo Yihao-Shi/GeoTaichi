@@ -133,7 +133,7 @@ class Solid(MaterialModel):
         raise NotImplementedError
 
     def get_sound_speed(self, density, young, poisson):
-        return np.where(density > 0, 0, np.sqrt(young * (1 - poisson) / (1 + poisson) / (1 - 2 * poisson) / density))
+        return np.where(density > 0, np.sqrt(young * (1 - poisson) / (1 + poisson) / (1 - 2 * poisson) / density), 0)
     
     @ti.func
     def update_particle_volume(self, np, velocity_gradient, stateVars, dt):
@@ -219,7 +219,7 @@ class Fluid(MaterialModel):
         return self.define_state_vars()
 
     def get_sound_speed(self, density, modulus):
-        return np.where(density > 0, 0, np.sqrt(modulus / density))
+        return np.where(density > 0, np.sqrt(modulus / density), 0)
 
     @ti.func
     def _initialize_vars_(np, particle, stateVars):
