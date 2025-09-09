@@ -133,6 +133,7 @@ Discrete element method is a powerful tool to simulate the movement of granular 
   - Two velocity updating schemes, symlectic Euler/velocity Verlet
   - Four contact models, including linear elastic, hertz-mindlin, linear rolling and energy conserving model
   - Supporting plane (infinite plane)/facet (servo wall)/triangle patch (suitable for complex boundary condition)
+  - Supporting [periodic boundary](example/dem/PeriodicBoundary) for sphere particles
 
 ### Material Point Method 
 The material point method (MPM) is a numerical technique used to simulate the behavior of solids, liquids, gases, and any other continuum material. Unlike other mesh-based methods like the finite element method, MPM does not encounter the drawbacks of mesh-based methods (high deformation tangling, advection errors etc.) which makes it a promising and powerful tool in computational mechanics. 
@@ -144,6 +145,7 @@ The material point method (MPM) is a numerical technique used to simulate the be
   - Supporting Dirichlet (Fix/Reflect/Friction)/Neumann boundary conditions
   - Supporting total/updating Lagrangian explicit MPM 
   - Free surface detection
+  - Supporting input [external CAD files](example/mpm/ExternalOBJ)
 
 ### MPDEM coupling
   - Two contact models, including linear elastic, hertz-mindlin, Energy conserving model (Barrier functions)
