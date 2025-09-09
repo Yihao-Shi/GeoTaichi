@@ -41,20 +41,20 @@ def write_dem_vtk_file(sims: Simulation, start_file, end_file, read_path, write_
                 sphere_id0 = np.ascontiguousarray(DictIO.GetEssential(sphere_info, "grainIndex"))
                 particle_index0 = -1 - np.ascontiguousarray(DictIO.GetEssential(sphere_info, "sphereIndex"))
             if os.access(clump_file, os.F_OK): 
-                clump_info = np.load(sphere_file, allow_pickle=True)
+                clump_info = np.load(clump_file, allow_pickle=True)
                 clump_id0 = np.ascontiguousarray(DictIO.GetEssential(clump_info, "grainIndex"))
-                mass_center0 = np.ascontiguousarray(DictIO.GetEssential(clump_info, "mass_center"))
+                mass_center0 = np.ascontiguousarray(DictIO.GetEssential(clump_info, "centerOfMass"))
 
         if os.access(sphere_file, os.F_OK): 
             sphere_info = np.load(sphere_file, allow_pickle=True)
             sphere_id = np.ascontiguousarray(DictIO.GetEssential(sphere_info, "grainIndex"))
             particle_index = -1 - np.ascontiguousarray(DictIO.GetEssential(sphere_info, "sphereIndex"))
         if os.access(clump_file, os.F_OK): 
-            clump_info = np.load(sphere_file, allow_pickle=True)
+            clump_info = np.load(clump_file, allow_pickle=True)
             clump_id = np.ascontiguousarray(DictIO.GetEssential(clump_info, "grainIndex"))
             start_index = np.ascontiguousarray(DictIO.GetEssential(clump_info, "startIndex"))
             end_index = np.ascontiguousarray(DictIO.GetEssential(clump_info, "endIndex"))
-            mass_center = np.ascontiguousarray(DictIO.GetEssential(clump_info, "mass_center"))
+            mass_center = np.ascontiguousarray(DictIO.GetEssential(clump_info, "centerOfMass"))
             
         position = np.ascontiguousarray(DictIO.GetEssential(particle_info, "position"))
         posx = np.ascontiguousarray(position[:, 0])
@@ -79,15 +79,15 @@ def write_dem_vtk_file(sims: Simulation, start_file, end_file, read_path, write_
             if os.access(clump_file, os.F_OK): 
                 id_map = {pid: idx for idx, pid in enumerate(clump_id0)}
                 indices = np.array([id_map[pid] for pid in clump_id])
-                counts = end_index - start_index
+                counts = end_index - start_index + 1
                 total_length = counts.sum()
                 cum = np.concatenate(([0], np.cumsum(counts)))
                 x = np.arange(total_length)
                 segments = np.searchsorted(cum, x, side='right') - 1
                 offsets = x - cum[segments]
                 index = start_index[segments] + offsets
-                index = np.concatenate([index, np.array([end_index[-1]])])
-                disp[index] = np.repeat(mass_center - mass_center0[indices], counts)
+                #index = np.concatenate([index, np.array([end_index[-1]])])
+                disp[index] = np.repeat(mass_center - mass_center0[indices], counts, axis=0)
             dispx = np.ascontiguousarray(disp[:, 0])
             dispy = np.ascontiguousarray(disp[:, 1])
             dispz = np.ascontiguousarray(disp[:, 2])
