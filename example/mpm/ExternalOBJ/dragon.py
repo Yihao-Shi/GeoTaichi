@@ -1,5 +1,3 @@
-import sys
-sys.path.append('/home/eleven/work/GeoTaichi')
 import numpy as np
 
 from geotaichi import *
