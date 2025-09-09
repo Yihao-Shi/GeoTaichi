@@ -1647,7 +1647,7 @@ def kernel_update_velocity_gradient_affine(total_nodes: int, start_index: int, e
                 shape_fn = shapefn[ln]
 
                 Wp += shape_fn * outer_product(pointer, pointer)
-                Bp += shape_fn * outer_product(pointer, gv)
+                Bp += shape_fn * outer_product(gv, pointer)
             velocity_gradient = truncation(Bp @ Wp.inverse())
             particle[np].velocity_gradient = velocity_gradient
             particle[np].vol *= matProps.update_particle_volume(np, velocity_gradient, stateVars, dt)
@@ -2591,7 +2591,7 @@ def kernel_update_displacement_gradient_affine(total_nodes: int, start_index: in
                 shape_fn = shapefn[ln]
 
                 Wp += shape_fn * outer_product(pointer, pointer)
-                Bp += shape_fn * outer_product(pointer, gu)
+                Bp += shape_fn * outer_product(gu, pointer)
             velocity_gradient = truncation(Bp @ Wp.inverse()) / dt[None]
             particle[np].velocity_gradient = velocity_gradient
 

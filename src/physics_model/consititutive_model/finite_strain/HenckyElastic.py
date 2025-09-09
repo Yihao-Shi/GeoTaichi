@@ -3,7 +3,7 @@ import taichi as ti
 from src.physics_model.consititutive_model.finite_strain.FiniteStrainModel import FiniteStrainModel
 import src.utils.GlobalVariable as GlobalVariable
 from src.utils.constants import ZEROMAT6x6
-from src.utils.MatrixFunction import principal_tensor, Diagonal
+from src.utils.MatrixFunction import principal_tensor, Diagonal, matrix_form
 from src.utils.TypeDefination import mat3x3
 from src.utils.ObjectIO import DictIO
 
@@ -43,7 +43,11 @@ class HenckyElasticModel(FiniteStrainModel):
     @ti.func
     def _initialize_vars_(self, np, particle, stateVars):
         stateVars[np].deformation_gradient = ti.Matrix.identity(float, GlobalVariable.DIMENSION)    
-        stateVars[np].stress0 = particle[np].stress
+        stress = particle[np].stress
+        if ti.static(stress.n == 3):   
+            stateVars[np].stress0 = stress
+        else:
+            stateVars[np].stress0 = matrix_form(stress)
     
     @ti.func
     def elastic_part(self):

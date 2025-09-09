@@ -2,7 +2,7 @@ import taichi as ti
 
 from src.utils.constants import Threshold, ZEROVEC3f
 from src.utils.GeometryFunction import intersectionOBBs
-from src.utils.TypeDefination import vec3f, vec3i, vec2i
+from src.utils.TypeDefination import vec3f, vec3i, vec2i, vec2f
 from src.utils.Quaternion import SetToRotate
 from src.utils.VectorFunction import SquaredLength, SquareLen
 from src.utils.ScalarFunction import linearize3D, vectorize_id, sgn
@@ -724,9 +724,10 @@ def board_search_particle_digital_elevation_(particleNum: int, potential_wall_nu
     particle_wall.fill(0)
     for particle_id in range(particleNum):
         particle_pos, particle_rad = particle[particle_id].x, particle[particle_id].rad
+        proj_pos = vec2f(particle_pos[0], particle_pos[1])
 
-        xStart, yStart, _ = ti.floor((particle_pos - particle_rad) * icell_size , int)
-        xEnd, yEnd, _ = ti.min(ti.ceil((particle_pos + particle_rad) * icell_size , int), cnum - 1)
+        xStart, yStart = ti.floor((proj_pos - particle_rad) * icell_size , int)
+        xEnd, yEnd = ti.min(ti.ceil((proj_pos + particle_rad) * icell_size , int), cnum - 1)
         
         sques = particle_id * potential_wall_num
         for neigh_x in range(xStart, xEnd):
