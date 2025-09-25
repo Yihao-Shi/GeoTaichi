@@ -251,14 +251,14 @@ def lightweight_g2p(particleNum: int, alpha: float, cutoff: float, fraction: flo
                     dpos = position - grid_pos
                     if ti.static(GlobalVariable.DIMENSION == 2):
                         Wp += weight * outer_product2D(dpos, dpos)
-                        velocity_gradient += weight * outer_product2D(dpos, velocity)
+                        velocity_gradient += weight * outer_product2D(velocity, dpos)
                     elif ti.static(GlobalVariable.DIMENSION == 3):
                         Wp += weight * outer_product(dpos, dpos)
-                        velocity_gradient += weight * outer_product(dpos, velocity)
+                        velocity_gradient += weight * outer_product(velocity, dpos)
                 else:
                     if ti.static(GlobalVariable.DIMENSION == 2):
                         weight_grad = ti.Vector([dshape_fn[0] * shape_fn[1], shape_fn[0] * dshape_fn[1]]) 
-                        velocity_gradient_increment = outer_product2D(weight_grad, velocity)
+                        velocity_gradient_increment = outer_product2D(velocity, weight_grad)
                         velocity_gradient += velocity_gradient_increment
                         if ti.static(GlobalVariable.BBAR):
                             weight_gradc = vec3f([dshape_fn[0] * shape_fnc[1], shape_fnc[0] * dshape_fn[1]])
@@ -271,7 +271,7 @@ def lightweight_g2p(particleNum: int, alpha: float, cutoff: float, fraction: flo
                         weight_grad = ti.Vector([dshape_fn[0] * shape_fn[1] * shape_fn[2], 
                                                 shape_fn[0] * dshape_fn[1] * shape_fn[2], 
                                                 shape_fn[0] * shape_fn[1] * dshape_fn[2]])
-                        velocity_gradient_increment = outer_product(weight_grad, velocity)
+                        velocity_gradient_increment = outer_product(velocity, weight_grad)
                         velocity_gradient += velocity_gradient_increment
                         if ti.static(GlobalVariable.BBAR):
                             weight_gradc = vec3f([dshape_fn[0] * shape_fnc[1] * shape_fnc[2], 
@@ -1624,7 +1624,7 @@ def kernel_update_velocity_gradient(total_nodes: int, start_index: int, end_inde
                 nodeID = LnID[ln]
                 gv = node[nodeID, bodyID].momentum
                 dshape_fn = dshapefn[ln]
-                velocity_gradient += outer_product(dshape_fn, gv)
+                velocity_gradient += outer_product(gv, dshape_fn)
             particle[np].velocity_gradient = truncation(velocity_gradient)
             particle[np].vol *= matProps.update_particle_volume(np, velocity_gradient, stateVars, dt)
 
@@ -1670,7 +1670,7 @@ def kernel_update_velocity_gradient_bbar(total_nodes: int, start_index: int, end
                 temp_dshape = (dshape_fnc - dshape_fn) / 3.
                 
                 average_bmatrix = temp_dshape[0] * gv[0] + temp_dshape[1] * gv[1] + temp_dshape[2] * gv[2]
-                velocity_gradient += outer_product(dshape_fn, gv)
+                velocity_gradient += outer_product(gv, dshape_fn)
                 velocity_gradient[0, 0] += average_bmatrix
                 velocity_gradient[1, 1] += average_bmatrix
                 velocity_gradient[2, 2] += average_bmatrix
@@ -1694,7 +1694,7 @@ def kernel_update_velocity_gradient_2D(total_nodes: int, start_index: int, end_i
                 nodeID = LnID[ln]
                 gv = node[nodeID, bodyID].momentum
                 dshape_fn = dshapefn[ln]
-                velocity_gradient += outer_product2D(dshape_fn, gv)
+                velocity_gradient += outer_product2D(gv, dshape_fn)
             particle[np].velocity_gradient = truncation(velocity_gradient)
             particle[np].vol *= matProps.update_particle_volume_2D(np, velocity_gradient, stateVars, dt)
 
@@ -1736,7 +1736,7 @@ def kernel_update_velocity_gradient_2DAxisy(total_nodes: int, start_index: int, 
                 gv = node[nodeID, bodyID].momentum
                 shape_fn = shapefn[ln]
                 dshape_fn = dshapefn[ln]
-                velocity_gradient0 = outer_product2D(dshape_fn, gv)
+                velocity_gradient0 = outer_product2D(gv, dshape_fn)
                 velocity_gradient += mat3x3([[velocity_gradient0[0, 0], velocity_gradient0[0, 1], 0],
                                             [velocity_gradient0[1, 0], velocity_gradient0[1, 1], 0],
                                             [0, 0, shape_fn * gv[0] / position[0]]])
@@ -1761,7 +1761,7 @@ def kernel_update_velocity_gradient_bbar_2D(total_nodes: int, start_index: int, 
                 temp_dshape = 0.5 * (dshape_fnc - dshape_fn)
 
                 average_bmatrix = temp_dshape[0] * gv[0] + temp_dshape[1] * gv[1]
-                velocity_gradient += outer_product2D(dshape_fn, gv)
+                velocity_gradient += outer_product2D(gv, dshape_fn)
                 velocity_gradient[0, 0] += average_bmatrix
                 velocity_gradient[1, 1] += average_bmatrix
 
@@ -1819,8 +1819,8 @@ def kernel_update_velocity_gradient_twophase(total_nodes: int, start_index: int,
                 gvs = node[nodeID, bodyID].momentums
                 gvf = node[nodeID, bodyID].momentumf
                 dshape_fn = dshapefn[ln]
-                solid_velocity_gradient += outer_product(dshape_fn, gvs)
-                fluid_velocity_gradient += outer_product(dshape_fn, gvf)
+                solid_velocity_gradient += outer_product(gvs, dshape_fn)
+                fluid_velocity_gradient += outer_product(gvf, dshape_fn)
             porosity, pvolume = particle[np].porosity, particle[np].vol
             pvolume *= matProps.update_particle_volume(np, solid_velocity_gradient, stateVars, dt)
             porosity = matProps.update_particle_porosity(solid_velocity_gradient, porosity, dt) 
@@ -1845,8 +1845,8 @@ def kernel_update_velocity_gradient_twophase_2D(total_nodes: int, start_index: i
                 gvs = node[nodeID, bodyID].momentums
                 gvf = node[nodeID, bodyID].momentumf
                 dshape_fn = dshapefn[ln]
-                solid_velocity_gradient += outer_product2D(dshape_fn, gvs)
-                fluid_velocity_gradient += outer_product2D(dshape_fn, gvf)
+                solid_velocity_gradient += outer_product2D(gvs, dshape_fn)
+                fluid_velocity_gradient += outer_product2D(gvf, dshape_fn)
             porosity, pvolume = particle[np].porosity, particle[np].vol
             pvolume *= matProps.update_particle_volume_2D(np, solid_velocity_gradient, stateVars, dt)
             porosity = matProps.update_particle_porosity(solid_velocity_gradient, porosity, dt)
@@ -2565,7 +2565,7 @@ def kernel_update_displacement_gradient(total_nodes: int, start_index: int, end_
                 nodeID = LnID[ln]
                 gu = node[nodeID, bodyID].displacement
                 dshape_fn = dshapefn[ln]
-                displacement_gradient += outer_product(dshape_fn, gu)
+                displacement_gradient += outer_product(gu, dshape_fn)
             velocity_gradient = displacement_gradient / dt[None]
             particle[np].velocity_gradient = truncation(velocity_gradient)
 
@@ -2616,7 +2616,7 @@ def kernel_update_displacement_gradient_bbar(total_nodes: int, start_index: int,
                 temp_dshape = (dshape_fnc - dshape_fn) / 3.
                 
                 average_bmatrix = temp_dshape[0] * gv[0] + temp_dshape[1] * gv[1] + temp_dshape[2] * gv[2]
-                displacement_gradient += outer_product(dshape_fn, gv)
+                displacement_gradient += outer_product(gv, dshape_fn)
                 displacement_gradient[0, 0] += average_bmatrix
                 displacement_gradient[1, 1] += average_bmatrix
                 displacement_gradient[2, 2] += average_bmatrix
@@ -2642,7 +2642,7 @@ def kernel_update_displacement_gradient_2D(total_nodes: int, start_index: int, e
                 nodeID = LnID[ln]
                 gu = node[nodeID, bodyID].displacement
                 dshape_fn = dshapefn[ln]
-                displacement_gradient += outer_product2D(dshape_fn, gu)
+                displacement_gradient += outer_product2D(gu, dshape_fn)
             velocity_gradient = displacement_gradient / dt[None]
             particle[np].velocity_gradient = truncation(velocity_gradient)
 
@@ -2692,7 +2692,7 @@ def kernel_update_displacement_gradient_bbar_2D(total_nodes: int, start_index: i
                 temp_dshape = (dshape_fnc - dshape_fn) / 3.
 
                 average_bmatrix = temp_dshape[0] * gv[0] + temp_dshape[1] * gv[1]
-                displacement_gradient += outer_product2D(dshape_fn, gv)
+                displacement_gradient += outer_product2D(gv, dshape_fn)
                 displacement_gradient[0, 0] += average_bmatrix
                 displacement_gradient[1, 1] += average_bmatrix
 

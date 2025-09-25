@@ -168,8 +168,8 @@ def outer_product(vec1, vec2):
 
 @ti.func
 def outer_product2D(vec1, vec2):
-    return mat2x2([vec1[0] * vec2[0], vec1[1] * vec2[0]],
-                  [vec1[0] * vec2[1], vec1[1] * vec2[1]])
+    return mat2x2([vec1[0] * vec2[0], vec1[0] * vec2[1]],
+                  [vec1[1] * vec2[0], vec1[1] * vec2[1]])
 
 @ti.func
 def SquareLen(vec):

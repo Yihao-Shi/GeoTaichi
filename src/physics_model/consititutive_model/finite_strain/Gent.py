@@ -34,6 +34,7 @@ class Gent(FiniteStrainModel):
         self.bulk = self.young / (3. * (1 - 2. * self.poisson))
         self.Jm1 = Jm1
         self.Jm2 = Jm2
+        self.max_sound_speed = self.get_sound_speed(self.density, self.young, self.poisson)
         
     def print_message(self, materialID):
         print(" Constitutive Model Information ".center(71, '-'))

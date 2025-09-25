@@ -31,6 +31,7 @@ class Hydrogel(FiniteStrainModel):
         self.shear = 0.5 * self.young / (1. + self.poisson)
         self.bulk = self.young / (3. * (1 - 2. * self.poisson))
         self.Jm = Jm
+        self.max_sound_speed = self.get_sound_speed(self.density, self.young, self.poisson)
         
     def print_message(self, materialID):
         print(" Constitutive Model Information ".center(71, '-'))
