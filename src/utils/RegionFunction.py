@@ -135,10 +135,12 @@ class RegionFunction(object):
                 raise RuntimeError("Error: The 2D model is constructed by 3D region!")
             
         if "Polygon" in self.region_type:
-            self.polygon = np.array(DictIO.GetEssential(region_dict, "Vertices"))
-        else:
-            self.local_start_point = DictIO.GetEssential(region_dict, "BoundingBoxPoint")
-            self.local_region_size = DictIO.GetEssential(region_dict, "BoundingBoxSize")
+            polygon = np.asarray(DictIO.GetEssential(region_dict, "Vertices"))
+            self.polygon = ti.Vector.field(self.dims, dtype=ti.f64, shape=polygon.shape[0])
+            self.polygon.from_numpy(polygon)
+
+        self.local_start_point = DictIO.GetEssential(region_dict, "BoundingBoxPoint")
+        self.local_region_size = DictIO.GetEssential(region_dict, "BoundingBoxSize")
         if not isinstance(self.local_start_point, ti.lang.matrix.Vector):
             if self.dims == 3:
                 self.local_start_point = vec3f(self.local_start_point)
@@ -277,11 +279,12 @@ class RegionFunction(object):
     
     @ti.pyfunc
     def RegionPolygon2DVolume(self):
-        area = 0
-        for j in range(int(0.5 * self.polygon.shape[0])):
-            i = 2 * j
-            area += self.polygon[i + 1, 0] * (self.polygon[i + 2, 1]-self.polygon[i, 1]) + self.polygon[i + 1, 1] * (self.polygon[i, 0] - self.polygon[i + 2, 0])
-        return 0.5 * area
+        n = int(self.polygon.shape[0])
+        area = 0.0
+        for i in range(n):
+            j = (i + 1) % n
+            area += self.polygon[i, 0] * self.polygon[j, 1] - self.polygon[j, 0] * self.polygon[i, 1]
+        return 0.5 * abs(area)
 
 
     # ================================================================= #
@@ -432,16 +435,16 @@ class RegionFunction(object):
     
     @ti.pyfunc
     def RegionPolygon2D(self, new_position, new_radius=0.):
-        rotation_matrix = ThetaToRotationMatrix2D(self.rotate)
+        rotation_matrix = ThetaToRotationMatrix2D(self.rotate2D)
         local_position = rotation_matrix.transpose() @ (new_position - self.rotate_center) + self.rotate_center
         xpos = local_position[0]
         ypos = local_position[1]
 
         count = 0
         for i in range(self.polygon.shape[0]):
-            p1 = vec2f(self.polygon[i, 0], self.polygon[i, 1])
+            p1 = self.polygon[i]
             index = (i + 1) % self.polygon.shape[0]
-            p2 = vec2f(self.polygon[index, 0], self.polygon[index, 1])
+            p2 = self.polygon[index]
             if ((p1[1] > ypos) != (p2[1] > ypos)) and (xpos < (p2[0] - p1[0]) * (ypos - p1[1]) / (p2[1] - p1[1]) + p1[0]):
                 count += 1
         return count % 2 == 1
