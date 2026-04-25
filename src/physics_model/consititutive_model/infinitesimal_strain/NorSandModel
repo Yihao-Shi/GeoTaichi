@@ -1,0 +1,185 @@
+import taichi as ti
+from src.physics_model.consititutive_model.infinitesimal_strain.InfinitesimalStrainModel import InfinitesimalStrainModel
+
+@ti.data_oriented
+class NorSandModel(InfinitesimalStrainModel):
+    """
+    NorSand constitutive model (Jefferies, 1993; Jefferies & Been, 2006)
+    Implementação para o GeoTaichi MPM - Convenção: compressão positiva internamente,
+    tração positiva na interface GeoTaichi.
+
+    Parâmetros (material dict):
+        G0      : coeficiente de rigidez cisalhante (G = G0 * sqrt(p/pref))
+        kappa   : índice de recompressão elástico
+        lambda  : índice de compressão virgem (CSL)
+        M       : razão de tensões no estado crítico (triaxial compressão)
+        N       : parâmetro de forma da superfície de plastificação (0 = log, 0<N<1 = cap)
+        beta    : parâmetro de dilatância plástica (beta > 0 para rejeitos)
+        vc0     : volume específico na CSL com p=1 kPa (intercept em escala natural)
+        v0      : volume específico inicial (1 + e0)
+        h       : módulo de hardening plástico
+    """
+
+    def __init__(self, materialID):
+        super().__init__(materialID)
+
+    def model_initialize(self, material):
+        self.G0     = material["G0"]
+        self.kappa  = material["kappa"]
+        self.lmbda  = material["lambda"]
+        self.M      = material["M"]
+        self.N      = material["N"]
+        self.beta   = material["beta"]
+        self.vc0    = material["vc0"]
+        self.v0     = material["v0"]
+        self.h      = material["h"]
+
+    def define_state_vars(self):
+        return {
+            "stress":     ti.Matrix.zero(ti.f64, 3, 3),
+            "pi":         1e-3,          # pressão de imagem inicial (evita singularidade)
+            "void_ratio": self.v0 - 1.0  # índice de vazios inicial
+        }
+
+    # =========================================================================
+    # Invariantes de tensão (convenção compressão positiva)
+    # =========================================================================
+    @ti.func
+    def invariants(self, sigma):
+        p = sigma.trace() / 3.0
+        s = sigma - p * ti.Matrix.identity(ti.f64, 3)
+        q = ti.sqrt(1.5 * (s * s).sum())
+        return p, q, s
+
+    # =========================================================================
+    # Razão de tensões de imagem η_i(p, p_i) — superfície de plastificação NorSand
+    #
+    # N = 0:  η_i = M * (1 + ln(p_i/p))              [superfície log clássica]
+    # N ≠ 0:  η_i = M/N * (1 - (1-N)*(p/p_i)^(N/(1-N)))  [cap generalizado]
+    # =========================================================================
+    @ti.func
+    def eta(self, p, pi):
+        p_eff  = ti.max(p,  1e-4)
+        pi_eff = ti.max(pi, 1e-4)
+        result = 0.0
+        if ti.abs(self.N) < 1e-12:
+            result = self.M * (1.0 + ti.log(pi_eff / p_eff))
+        else:
+            result = (self.M / self.N) * (
+                1.0 - (1.0 - self.N) * (p_eff / pi_eff) ** (self.N / (1.0 - self.N))
+            )
+        return result
+
+    # =========================================================================
+    # Atualização constitutiva — return mapping com sub-passos
+    # =========================================================================
+    @ti.func
+    def compute_stress(self, deps_taichi, state):
+
+        # Conversão de convenção: GeoTaichi (tração +) → geotecnia (compressão +)
+        deps  = -deps_taichi
+        sigma = -state["stress"]
+        pi    = state["pi"]
+        e     = state["void_ratio"]
+
+        p_min  = 1e-4
+        n_sub  = 20
+        deps_sub = deps / n_sub
+
+        for _ in range(n_sub):
+
+            # --- Invariantes e estado atual ---
+            p, q, s = self.invariants(sigma)
+            p_eff   = ti.max(p, p_min)
+            v       = 1.0 + e          # volume específico
+
+            # --- Módulos elásticos dependentes do estado ---
+            G = self.G0 * ti.sqrt(p_eff / 100.0)
+            # CORREÇÃO 1: K = v*p/κ  (volume específico obrigatório — NorSand standard)
+            K = ti.max(v * p_eff / self.kappa, 100.0)
+
+            # --- Decomposição do incremento de deformação ---
+            deps_v   = deps_sub.trace()
+            deps_dev = deps_sub - (deps_v / 3.0) * ti.Matrix.identity(ti.f64, 3)
+
+            # --- CORREÇÃO 2: atualização de e via forma exponencial (estável para Δεv grandes)
+            # de = -(1+e)*Δεv → e_new = (1+e_old)*exp(-Δεv) - 1
+            e = (1.0 + e) * ti.exp(-deps_v) - 1.0
+            v = 1.0 + e
+
+            # --- Preditor elástico ---
+            sigma_trial = sigma + 2.0 * G * deps_dev + K * deps_v * ti.Matrix.identity(ti.f64, 3)
+
+            # --- Invariantes do preditor ---
+            p_t, q_t, s_t = self.invariants(sigma_trial)
+            p_t = ti.max(p_t, p_min)
+
+            eta_val = self.eta(p_t, pi)
+            f       = q_t - eta_val * p_t  # função de plastificação
+
+            if f > 1e-10:  # tolerância numérica explícita
+
+                # -----------------------------------------------------------------
+                # Gradientes da superfície de plastificação
+                # ∂f/∂q = 1  (sempre)
+                # ∂f/∂p = (M - η) / (1 - N)  [válido para N=0 e N≠0 — ver derivação]
+                # -----------------------------------------------------------------
+                dFdq = 1.0
+                dFdp = (self.M - eta_val) / (1.0 - self.N)
+
+                # Direção deviatorica normalizada: n = s/||s||_F
+                n = s_t.normalized(1e-12)
+
+                # --- Parâmetro de estado ψ = v - vc0 + λ*ln(p) ---
+                psi = v - self.vc0 + self.lmbda * ti.log(p_t)
+
+                # --- Pressão de imagem na CSL ---
+                # α̅ = -3.5/β: com β>0 e ψ<0 (fofo) → pi* > p_t (hardening correto)
+                alpha_bar = -3.5 / self.beta
+                pi_star   = p_t * ti.exp(alpha_bar * psi / self.M)
+
+                # -----------------------------------------------------------------
+                # CORREÇÃO 3: Módulo de hardening Hc derivado de ∂f/∂p_i
+                #
+                # Da superfície:  ∂f/∂p_i = -p * (M/p_i) * (p/p_i)^(N/(1-N))
+                # Regra de hard.: dp_i = h*(pi*-pi)*dεs_p   (acionada por dεs_p)
+                # Portanto:  Hc = -(∂f/∂p_i) * h*(pi*-pi) > 0 para solo fofo
+                # -----------------------------------------------------------------
+                pi_eff   = ti.max(pi, p_min)
+                exp_N    = self.N / (1.0 - self.N + 1e-12)   # N/(1-N)
+                dfdpi    = -p_t * (self.M / pi_eff) * ti.pow(p_t / pi_eff, exp_N)
+                Hc       = -dfdpi * self.h * (pi_star - pi)
+
+                # Limite físico contra snap-back numérico
+                elastic_stiffness = 3.0 * G * dFdq * dFdq + K * dFdp * dFdp
+                Hc = ti.max(Hc, -0.8 * elastic_stiffness)
+
+                # --- Multiplicador plástico ---
+                denom  = ti.max(elastic_stiffness + Hc, 1e-6)
+                dgamma = f / denom
+                dgamma = ti.min(dgamma, 0.05)  # limita por sub-passo
+
+                # -----------------------------------------------------------------
+                # CORREÇÃO 4: Retorno deviatorico com fator √(3/2)
+                #
+                # ∂f/∂s_ij = ∂f/∂q * ∂q/∂s_ij = 1 * (3/2)*s_ij/q = √(3/2)*n_ij
+                # Δs = -2G * dγ * dFdq * √(3/2) * n
+                # Verificação: dq = -3G*dγ*dFdq  ← consistente com denominador 3G*dFdq²
+                # -----------------------------------------------------------------
+                s_corr = s_t - 2.0 * G * dgamma * dFdq * ti.sqrt(1.5) * n
+                p_corr = ti.max(p_t - K * dgamma * dFdp, p_min)
+                sigma  = s_corr + p_corr * ti.Matrix.identity(ti.f64, 3)
+
+                # --- Hardening: p_i → p_i*  acionado por deformação plástica cisalhante ---
+                deps_s_p = dgamma * dFdq   # = dgamma (pois dFdq=1), mas explícito para robustez
+                pi      += self.h * (pi_star - pi) * deps_s_p
+
+            else:
+                sigma = sigma_trial
+
+        # Retorno à convenção GeoTaichi (tração +)
+        state["stress"]     = -sigma
+        state["pi"]         = ti.max(pi, p_min)
+        state["void_ratio"] = e
+
+        return state["stress"], state
