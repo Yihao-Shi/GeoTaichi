@@ -13,43 +13,28 @@ import src.utils.GlobalVariable as GlobalVariable
 class NorSandModel(PlasticMaterial):
     """
     NorSand constitutive model — Jefferies (1993); Jefferies & Been (2006)
+    Integrado ao framework PlasticMaterial do GeoTaichi.
 
-    Convenção de sinais GeoTaichi: tração positiva.
-        p_GT  = SphericalTensor(σ) ≤ 0   (tensão média, tração positiva)
-        p_c   = -p_GT             > 0   (compressão positiva, uso interno)
+    Convenção GeoTaichi: tração positiva.
+        p_GT = SphericalTensor(σ) ≤ 0  (compressão → p_GT negativo)
+        p_c  = -p_GT > 0               (compressão positiva, uso interno)
 
-    Parâmetros obrigatórios (dict material):
-        G0      : coeficiente de rigidez cisalhante  [G = G0·√(p_c/p_ref)]
-        kappa   : índice de recompressão elástica κ
-        lambda  : índice de compressão virgem λ (CSL)
-        M       : razão de tensões no estado crítico (triaxial compressão)
-        N       : parâmetro de forma da superfície (0=log, 0<N<1=cap generalizado)
-        beta    : parâmetro de dilatância plástica  (sempre > 0)
-        vc0     : volume específico da CSL em p=1 kPa (escala ln natural)
-        v0      : volume específico inicial = 1 + e0
-        h       : módulo de hardening
+    Variável interna plástica (única): pi  (pressão de imagem)
+    void_ratio: armazenado em stateVars, fixo durante substepping
+                (evita instabilidade por acumulação de de dentro do NBURKDP2)
 
-    Parâmetros opcionais:
-        p_ref   : pressão de referência para G (default 100 kPa)
+    material_params (vetor Taichi):
+        [0] = void_ratio  (do início do passo — FIXO durante substepping)
+        [1] = pi          (do início do passo)
+        [2] = p_c         (= -p_GT do início do passo)
 
-    Variáveis de estado por partícula (stateVars, criadas em activate_state_variables):
-        pi         : pressão de imagem (compressão positiva) > 0
-        void_ratio : índice de vazios e = v - 1
-
-    Vetor material_params (uso interno nos kernels Taichi):
-        [0] = void_ratio   (estado atual do sub-passo)
-        [1] = pi           (estado atual do sub-passo)
-        [2] = p_c          (pressão no início do sub-passo = -p_GT)
-
-    Vetor internal_vars (uso interno nos kernels Taichi):
-        [0] = pi
-        [1] = void_ratio
+    internal_vars (vetor Taichi — único elemento):
+        [0] = pi          (evolui durante substepping)
     """
 
     def __init__(self, material_type="Solid", configuration="UL",
                  solver_type="Explicit", stress_integration="SubStepping"):
         super().__init__(material_type, configuration, solver_type, stress_integration)
-        # Parâmetros do modelo (inicializados em model_initialize)
         self.G0       = 100.
         self.kappa    = 0.01
         self.lmbda    = 0.05
@@ -65,7 +50,7 @@ class NorSandModel(PlasticMaterial):
         self.max_sound_speed = 0.
 
     # =========================================================================
-    # Inicialização Python — chamada pelo framework antes da simulação
+    # Inicialização Python
     # =========================================================================
     def model_initialize(self, material):
         self.density  = DictIO.GetAlternative(material, 'Density',  1800.)
@@ -89,21 +74,21 @@ class NorSandModel(PlasticMaterial):
         print("Constitutive model = NorSand")
         print(f"Model ID:           {materialID}")
         print(f"Density:            {self.density} kg/m³")
-        print(f"G0:                 {self.G0}  [G=G0·√(p/p_ref)]")
+        print(f"G0:                 {self.G0}")
         print(f"kappa (κ):          {self.kappa}")
         print(f"lambda (λ):         {self.lmbda}")
-        print(f"M (CSL slope):      {self.M}")
-        print(f"N (surface shape):  {self.N}")
+        print(f"M:                  {self.M}")
+        print(f"N:                  {self.N}")
         print(f"beta (dilatancy):   {self.beta_dil}")
-        print(f"vc0 (CSL @ 1 kPa): {self.vc0}")
+        print(f"vc0:                {self.vc0}")
         print(f"v0 (= 1+e0):       {self.v0}  →  e0 = {self.v0-1:.4f}")
         print(f"h (hardening):      {self.h}")
         print(f"p_ref:              {self.p_ref} kPa\n")
 
     # =========================================================================
-    # Declaração das variáveis de estado por partícula
-    # O framework cria ti.Struct.field({'pi': float, 'void_ratio': float})
-    # via activate_state_variables — seguindo o mesmo padrão do MCC {'pc': float}
+    # Variáveis de estado por partícula
+    # pi:         pressão de imagem (variável interna plástica)
+    # void_ratio: índice de vazios (fixo durante substepping, atualizado no fim)
     # =========================================================================
     def define_state_vars(self):
         return {
@@ -111,37 +96,27 @@ class NorSandModel(PlasticMaterial):
             'void_ratio': float,
         }
 
-    # =========================================================================
-    # Coeficiente K0 para inicialização do campo de tensões geostáticas
-    # Fórmula de Jaky:  K0 = 1 - sin(φ'),  sin(φ') = 3M/(6+M)
-    # =========================================================================
     def get_lateral_coefficient(self, start_index, end_index, materialID, stateVars):
         sin_phi = 3. * self.M / (6. + self.M)
         return np.repeat(1. - sin_phi, end_index - start_index)
 
     # =========================================================================
-    # Inicialização das variáveis de estado após campo gravitacional
-    # Chamado pelo engine após as tensões geostáticas serem aplicadas
-    # pi0 ≈ p_c (condição normalmente consolidada)
+    # Inicialização pós-campo gravitacional
+    # NC: pi0 = p_c0;  void_ratio = v0 - 1
     # =========================================================================
     @ti.func
     def _initialize_vars_update_lagrangian(self, np, particle, stateVars):
-        p_GT = SphericalTensor(particle[np].stress)   # ≤ 0 em compressão
-        p_c  = ti.max(-p_GT, 1e-2)                    # compressão positiva
-        stateVars[np].pi         = p_c                 # NC: pi0 = p0
-        stateVars[np].void_ratio = self.v0 - 1.0      # e0 uniforme
+        p_GT = SphericalTensor(particle[np].stress)
+        p_c  = ti.max(-p_GT, 1e-2)
+        stateVars[np].pi         = p_c
+        stateVars[np].void_ratio = self.v0 - 1.0
 
     # =========================================================================
-    # Razão de tensões de imagem η_i(p_c, pi)
-    #
-    # N = 0  → superfície logarítmica clássica (Jefferies 1993):
-    #           η_i = M · (1 + ln(pi/p_c))
-    #
-    # N ≠ 0  → cap generalizado (Jefferies & Been 2006):
-    #           η_i = (M/N) · [1 - (1-N)·(p_c/pi)^(N/(1-N))]
+    # Helpers internos
     # =========================================================================
     @ti.func
     def _eta_image(self, p_c, pi):
+        """Razão de tensões de imagem η_i(p_c, pi)"""
         p_eff  = ti.max(p_c, 1e-4)
         pi_eff = ti.max(pi,  1e-4)
         result = 0.0
@@ -153,24 +128,17 @@ class NorSandModel(PlasticMaterial):
             )
         return result
 
-    # =========================================================================
-    # Pressão de imagem na CSL: pi* = p_c · exp(ᾱ · ψ / M)
-    # ᾱ = -3.5/β;  ψ = v - vc0 + λ·ln(p_c)
-    # Solo fofo (ψ > 0): pi* > p_c → superfície se expande (hardening) ✓
-    # Solo denso (ψ < 0): pi* < p_c → superfície se contrai (softening) ✓
-    # =========================================================================
     @ti.func
     def _pi_star(self, p_c, void_ratio):
+        """Pressão de imagem na CSL: pi* = p_c * exp(ᾱ·ψ/M)"""
         v   = 1.0 + void_ratio
         psi = v - self.vc0 + self.lmbda * ti.log(ti.max(p_c, 1e-4))
         return ti.max(p_c * ti.exp(-3.5 / self.beta_dil * psi / self.M), 1e-4)
 
     # =========================================================================
-    # Módulos elásticos dependentes do estado
-    #   K = v · p_c / κ       (NorSand: rigidez volumétrica inclui volume esp.)
-    #   G = G0 · √(p_c/p_ref) (módulo cisalhante dependente de pressão)
-    #
-    # material_params[0] = void_ratio;  material_params[2] = p_c (início do passo)
+    # Módulos elásticos
+    # K = v·p_c/κ    G = G0·√(p_c/p_ref)
+    # material_params[0] = void_ratio (FIXO do início do passo)
     # =========================================================================
     @ti.func
     def ComputeElasticModulus(self, stress, material_params):
@@ -184,27 +152,23 @@ class NorSandModel(PlasticMaterial):
 
     @ti.func
     def ComputeElasticStress(self, alpha, dstrain, stress, material_params):
-        """Atualização elástica: σ_trial = σ + Cₑ : (α·Δε)"""
         K, G = self.ComputeElasticModulus(stress, material_params)
         stress += ElasticTensorMultiplyVector(alpha * dstrain, K, G)
         return stress
 
     # =========================================================================
-    # Invariantes de tensão (2-invariantes: p_GT e q)
+    # Invariantes
     # =========================================================================
     @ti.func
     def ComputeStressInvariants(self, stress):
-        p = SphericalTensor(stress)             # p_GT ≤ 0 para solo
-        q = EquivalentDeviatoricStress(stress)  # q ≥ 0
+        p = SphericalTensor(stress)
+        q = EquivalentDeviatoricStress(stress)
         return p, q
 
     # =========================================================================
-    # Função de plastificação NorSand
-    #
-    # Em termos de p_c (compressão +):  f = q - η_i · p_c
-    # Em termos de p_GT (GeoTaichi):    f = q + η_i · p_GT   (p_GT = -p_c)
-    #
-    # f > 0 → estado plástico (fora da superfície de plastificação)
+    # Função de plastificação
+    # f = q - η_i · p_c = q + η_i · p_GT
+    # internal_vars[0] = pi (único)
     # =========================================================================
     @ti.func
     def ComputeYieldFunction(self, stress, internal_vars, material_params):
@@ -221,130 +185,99 @@ class NorSandModel(PlasticMaterial):
         return f > -FTOL, f
 
     # =========================================================================
-    # Gradiente da função de plastificação: ∂f/∂σ
+    # ∂f/∂σ  (gradiente da superfície de plastificação)
     #
-    # Derivação em convenção GeoTaichi (p_GT = SphericalTensor ≤ 0):
+    # f = q - η_i(p_c,pi)·p_c,   p_c = -p_GT
     #
-    #   ∂f/∂σ = ∂f/∂q · DqDsigma(σ) + ∂f/∂p_GT · DpDsigma()
-    #
-    #   ∂f/∂q    = 1   (sempre)
-    #
-    #   ∂f/∂p_GT = η_i - M·(p_c/pi)^(N/(1-N))
-    #
-    # Verificação (N=0):  ∂f/∂p_GT = η_i - M  (= -(M-η_i))
-    #   Solo fofo (η_i < M): ∂f/∂p_GT < 0 → aumento de compressão tende a fechar f ✓
+    # ∂f/∂p_GT = η_i - M·(p_c/pi)^(N/(1-N))
+    # ∂f/∂σ   = DqDsigma(σ) + dfdp_GT · DpDsigma()
     # =========================================================================
     @ti.func
     def ComputeDfDsigma(self, yield_state, stress, internal_vars, material_params):
-        pi   = internal_vars[0]
-        p_GT = SphericalTensor(stress)
-        p_c  = ti.max(-p_GT, 1e-4)
-        pi_e = ti.max(pi, 1e-4)
-        eta  = self._eta_image(p_c, pi_e)
-        exp_N     = self.N / (1.0 - self.N + 1e-12)   # N/(1-N)
-        dfdp_GT   = eta - self.M * ti.pow(p_c / pi_e, exp_N)
+        pi    = internal_vars[0]
+        p_GT  = SphericalTensor(stress)
+        p_c   = ti.max(-p_GT, 1e-4)
+        pi_e  = ti.max(pi, 1e-4)
+        eta   = self._eta_image(p_c, pi_e)
+        exp_N = self.N / (1.0 - self.N + 1e-12)
+        dfdp_GT = eta - self.M * ti.pow(p_c / pi_e, exp_N)
         return DqDsigma(stress) + dfdp_GT * DpDsigma()
 
     # =========================================================================
-    # Gradiente do potencial plástico: ∂g/∂σ  (regra de fluxo não-associada)
+    # ∂g/∂σ  (gradiente do potencial plástico — regra de fluxo)
     #
-    # Dilatância de Rowe:  D = dεv_p_c / dεs_p = M - η_curr
-    #   (positivo → contrativo para solo fofo com η_curr < M)
+    # Dilatância de Rowe:  D = M - η_curr  (η_curr = q/p_c atual)
+    # ∂g/∂p_GT = η_curr - M = -D
+    # ∂g/∂σ   = DqDsigma(σ) + (η_curr - M) · DpDsigma()
     #
-    # Em GeoTaichi (compressão negativa):
-    #   dεv_p_GT / dεs_p = -(M - η_curr) = η_curr - M
-    #
-    # Logo: ∂g/∂p_GT = η_curr - M
-    #   ∂g/∂σ = DqDsigma(σ) + (η_curr - M) · DpDsigma()
-    #
-    # Verificação:
-    #   Solo fofo (η_curr < M):  ∂g/∂p_GT < 0 → tr(dε_p_GT) < 0 (compressão) ✓
-    #   Estado crítico (η = M):  ∂g/∂p_GT = 0 → sem variação volumétrica ✓
-    #   Solo denso (η > M):      ∂g/∂p_GT > 0 → dilatação ✓
+    # Solo fofo (η < M):  ∂g/∂p_GT < 0 → dεv_p_GT < 0 → compressão ✓
     # =========================================================================
     @ti.func
     def ComputeDgDsigma(self, yield_state, stress, internal_vars, material_params):
-        pi   = internal_vars[0]
         p_GT = SphericalTensor(stress)
         p_c  = ti.max(-p_GT, 1e-4)
-        pi_e = ti.max(pi, 1e-4)
         q    = EquivalentDeviatoricStress(stress)
-        # η_curr = q/p_c (razão de tensões atual, não a de imagem)
         eta_curr = q / ti.max(p_c, 1e-4)
         dgdp_GT  = eta_curr - self.M
         return DqDsigma(stress) + dgdp_GT * DpDsigma()
 
     # =========================================================================
-    # Módulo de hardening H
+    # Módulo de hardening H  (negativo para hardening — padrão do framework)
     #
-    # Regra de hardening NorSand (acionada por deformação plástica cisalhante):
-    #   dpi = h · (pi* - pi) · dλ
+    # Framework usa:  den = ∂f:C:∂g - H
+    # Para dlambda > 0:  H < 0 → hardening (den maior) ✓
     #
-    # Gradiente da superfície em relação a pi:
-    #   ∂f/∂pi = -M · p_c · (p_c/pi)^(N/(1-N)) / pi
-    #   (sempre ≤ 0: aumento de pi expande a superfície, reduz f)
+    # H = (∂f/∂pi) · (dpi/dλ)
+    #   = (-M·p_c·(p_c/pi)^exp_N / pi) · h·(pi*-pi)
     #
-    # Módulo de hardening (negativo para hardening — padrão GeoTaichi):
-    #   H = ∂f/∂pi · h · (pi* - pi)
+    # Solo fofo: pi* > pi → (pi*-pi) > 0; ∂f/∂pi < 0 → H < 0 ✓ (hardening)
+    # Solo denso: pi* < pi → H > 0 ✓ (softening)
     #
-    # Verificação de sinais:
-    #   Solo fofo: pi* > pi → (pi*-pi) > 0; ∂f/∂pi < 0 → H < 0 (hardening) ✓
-    #   Solo denso: pi* < pi → (pi*-pi) < 0; ∂f/∂pi < 0 → H > 0 (softening) ✓
-    #   (Consistente com o padrão do MCC no GeoTaichi)
+    # state_vars é stateVars[np] → acesso direto ao void_ratio armazenado
+    # (ESTÁVEL: não o void_ratio acumulado no substepping)
     # =========================================================================
     @ti.func
     def ComputePlasticModulus(self, yield_state, dgdsigma, stress,
                                internal_vars, state_vars, material_params):
         pi         = internal_vars[0]
-        void_ratio = internal_vars[1]
+        # CRÍTICO: usa state_vars.void_ratio (fixo, do início do passo)
+        # NÃO usa internal_vars[1] (que causava instabilidade por acumulação)
+        void_ratio = state_vars.void_ratio
         p_c        = ti.max(material_params[2], 1e-4)
         pi_e       = ti.max(pi, 1e-4)
 
         pi_star = self._pi_star(p_c, void_ratio)
         exp_N   = self.N / (1.0 - self.N + 1e-12)
         dfdpi   = -self.M * p_c * ti.pow(p_c / pi_e, exp_N) / pi_e
-        H       = dfdpi * self.h * (pi_star - pi)
-        return H
+
+        # H = (∂f/∂pi) · h · (pi* - pi)  →  negativo para hardening
+        H = dfdpi * self.h * (pi_star - pi)
+
+        # Limite físico: impede snap-back numérico
+        K, G = self.ComputeElasticModulus(stress, material_params)
+        H_min = -0.9 * (3.0 * G + K)
+        return ti.max(H, H_min)
 
     # =========================================================================
-    # Incremento das variáveis internas por sub-passo plástico
+    # Incremento da variável interna plástica (apenas pi)
     #
-    # Retorna [dpi, de] — incrementos que o framework acumula antes de
-    # chamar UpdateInternalVariables (mesmo padrão do MCC que retorna [dpc])
-    #
-    # dpi = h · (pi* - pi) · dλ           [hardening de pi]
-    # de  = (1+e) · tr(dλ · ∂g/∂σ_GT)    [variação de e via deformação plástica]
-    #
-    # Nota sobre de:
-    #   ψ = v - vc0 + λ·ln(p_c) captura efeitos elásticos via p_c e plásticos via v.
-    #   Aqui atualizamos e apenas via deformação PLÁSTICA; a mudança elástica de
-    #   pressão (e portanto de ψ) é capturada pelo ln(p_c) no próximo sub-passo.
+    # CORREÇÃO CENTRAL: retorna ti.Vector([dpi]) com UM único elemento.
+    # Remover void_ratio do loop de substepping elimina a instabilidade:
+    #   void_ratio não acumula de = v·dlambda·(-M) dentro do NBURKDP2,
+    #   o que levava K = v·p/κ → 0 e explodia a simulação.
     # =========================================================================
     @ti.func
     def ComputeInternalVariables(self, dlambda, dgdsigma, internal_vars, material_params):
         pi         = internal_vars[0]
-        void_ratio = internal_vars[1]
+        void_ratio = material_params[0]   # fixo do início do passo
         p_c        = ti.max(material_params[2], 1e-4)
-        v          = 1.0 + void_ratio
-        pi_e       = ti.max(pi, 1e-4)
 
         pi_star = self._pi_star(p_c, void_ratio)
-
-        # Incremento de pi
-        dpi = self.h * (pi_star - pi) * dlambda
-
-        # Incremento de e via deformação volumétrica plástica (convenção GT)
-        dv_p_GT = voigt_tensor_trace(dlambda * dgdsigma)  # < 0 para compressão
-        de      = v * dv_p_GT                              # (1+e)·dεv_p_GT
-
-        return ti.Vector([dpi, de])
+        dpi     = self.h * (pi_star - pi) * dlambda
+        return ti.Vector([dpi])
 
     # =========================================================================
     # Empacotamento do estado para os kernels Taichi
-    # Seguindo o padrão exato do MCC:
-    #   GetMaterialParameter → ti.Vector usado em todos os Compute*
-    #   GetInternalVariables → ti.Vector dos escalares que evoluem plasticamente
-    #   UpdateInternalVariables → escreve de volta em stateVars (recebe NEW values)
     # =========================================================================
     @ti.func
     def GetMaterialParameter(self, stress, state_vars):
@@ -352,28 +285,44 @@ class NorSandModel(PlasticMaterial):
         pi         = state_vars.pi
         p_GT       = SphericalTensor(stress)
         p_c        = ti.max(-p_GT, 1e-4)
-        # [0] = void_ratio, [1] = pi, [2] = p_c no início do sub-passo
         return ti.Vector([void_ratio, pi, p_c])
 
     @ti.func
     def GetInternalVariables(self, state_vars):
-        return ti.Vector([state_vars.pi, state_vars.void_ratio])
+        # ÚNICO elemento: pi
+        return ti.Vector([state_vars.pi])
 
     @ti.func
     def UpdateInternalVariables(self, np, internal_vars, stateVars):
-        # O framework acumula os deltas de ComputeInternalVariables e passa
-        # os valores NOVOS aqui (mesmo comportamento do MCC com pc)
-        stateVars[np].pi         = ti.max(internal_vars[0], 1e-4)
-        stateVars[np].void_ratio = ti.max(internal_vars[1], 0.01)
+        stateVars[np].pi = ti.max(internal_vars[0], 1e-4)
+
+    # =========================================================================
+    # Atualização do void_ratio ao fim de cada passo (fora do substepping)
+    # Usa relação elástica logarítmica:
+    #   Δe = -κ · ln(p_c_new / p_c_old)
+    # Aproximação consistente com a rigidez K = v·p/κ usada no modelo.
+    # =========================================================================
+    @ti.func
+    def UpdateStateVariables(self, np, stress, internal_vars, stateVars):
+        p_GT    = SphericalTensor(stress)
+        p_c_new = ti.max(-p_GT, 1e-4)
+        pi_new  = stateVars[np].pi
+        e_old   = stateVars[np].void_ratio
+        v_old   = 1.0 + e_old
+
+        # Aproximação: variação de e via linha elástica κ
+        # de ≈ -κ · ln(p_c_new / p_c_ref),  p_c_ref estimado via pi atual
+        # Na linha NC: e_NC = vc0 - λ·ln(pi) → referência
+        e_nc    = self.vc0 - 1.0 - self.lmbda * ti.log(pi_new)
+        # e atual = e_NC + κ·ln(pi/p_c)  (swelling line)
+        e_new   = e_nc + self.kappa * ti.log(pi_new / p_c_new)
+        e_new   = ti.max(e_new, 0.05)   # físico: e > 0
+        stateVars[np].void_ratio = e_new
 
     @ti.func
     def get_current_material_parameter(self, state_vars):
         return state_vars.pi, state_vars.void_ratio
 
-    # =========================================================================
-    # Para o solver implícito (não acionado pelo SubStepping explícito)
-    # Implementado por completude — segue o mesmo padrão do MCC
-    # =========================================================================
     @ti.func
     def compute_elastic_tensor(self, np, current_stress, stateVars):
         material_params = self.GetMaterialParameter(current_stress, stateVars[np])
