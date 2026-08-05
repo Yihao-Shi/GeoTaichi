@@ -59,6 +59,17 @@ class Solver:
             self.last_save_time = -0.8 * self.sims.delta
 
         self.compile(scene, neighbor)
+        # compile() triggers JIT by running a full core() step, but current_time
+        # was never advanced for it, so every Solver() call performed one step
+        # the clock did not see. A driver that calls Solver() repeatedly over
+        # short segments of `sub` steps therefore advanced the solution by
+        # (sub+1)/sub per unit reported time -- measured at 1.0770 / 1.0527 /
+        # 1.0400 / 1.0322 for sub = 13 / 19 / 25 / 31, matching (sub+1)/sub to
+        # four decimals. Count the step rather than discarding it; the loop
+        # below then performs one fewer iteration, so the total work per call
+        # matches the requested interval exactly.
+        self.sims.current_time += self.sims.delta
+        self.sims.current_step += 1
         start_time = time.time()
         while self.sims.current_time <= self.sims.time:
             self.core(scene, neighbor)
