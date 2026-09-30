@@ -79,7 +79,7 @@ dem.add_property(materialID1=0,
                  materialID2=0,
                  property={
                             "ShearModulus":               5e6,
-                            "Possion":                    0.45,
+                            "Poisson":                    0.45,
                             "Friction":                   0.5,
                             "Restitution":                0.3,   
                            }
