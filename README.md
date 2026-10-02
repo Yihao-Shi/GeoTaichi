@@ -10,7 +10,7 @@ A [Taichi](https://github.com/taichi-dev/taichi)-based numerical package for hig
 Developed by [Multiscale Geomechanics Lab](https://person.zju.edu.cn/en/nguo), Zhejiang University.
 
 <p align="center">
-    <img src="https://github.com/Yihao-Shi/GeoTaichi/blob/main/images/GeoTaichi.png" width="90%" height="90%" />
+    <img src="images/GeoTaichi.png" width="90%" height="90%" />
 </p>
 
 
@@ -18,7 +18,7 @@ Developed by [Multiscale Geomechanics Lab](https://person.zju.edu.cn/en/nguo), Z
 
 GeoTaichi is a collection of several numerical tools, currently including __Discrete Element Method (DEM)__, __Material Point Method (MPM)__, __Material Point-Discrete element method (MPDEM)__, and __Finite Element Method (FEM)__, that cover the analysis of the __Soil-Gravel-Structure-Interaction__ in geotechnical engineering. The main components of GeoTaichi is illustrated as follows:
 <p align="center">
-    <img src="https://github.com/Yihao-Shi/GeoTaichi/blob/main/images/main_component.png" width="50%" height="50%" />
+    <img src="images/main_component.png" width="50%" height="50%" />
 </p>
 
 GeoTaichi is a research project that is currently __under development__. Our vision is to share with the geotechnical community a free, open-source (under the GPL-3.0 License) software that facilitates the relevant computational research. In the Taichi ecosystem, we hope to emphasize the potential of Taichi for scientific computing. Furthermore, GeoTaichi is high parallelized, multi-platform (supporting for Windows, Linux and Macs) and multi-architecture (supporting for both CPU and GPU).
@@ -27,12 +27,30 @@ GeoTaichi is a research project that is currently __under development__. Our vis
 
 Have a cool example? Submit a [PR](https://github.com/Yihao-Shi/GeoTaichi/pulls)!
 
-### Material point method (MPM)
+### [Material point method (MPM)](src/mpm/README.md#mpm-theory-log)
+#### Explicit MPM
 | [Column collapse](example/mpm/ColumnCollapse/DPmaterial.py) | [Dam break](example/mpm/ColumnCollapse/NewtonianFluid.py) | [Strip footing](example/mpm/Footing/StripFootingTresca.py) | [Progressive failure process of sensitive clay](example/mpm/ColumnCollapse/SoftDP.py) |
 | --- | --- | --- | --- |
 | ![Column collapse](images/soil.gif) | ![Dam break](images/newtonian.gif) | ![Strip footing](images/footing.gif) | ![Clay](images/clay.gif) |
 
-### Discrete element method (DEM)
+#### Semi-implicit incompressible MPM
+
+| [Flow around a cylinder](examples/cfdem/FullyResolved/IBMFixedCylinder2D/cylinder_flow_ibm_2d.py) | [Lid-driven cavity (n64)](examples/mpm/IncompressibleFluid/lid_driven_cavity_2d.py) | [Taylor–Green vortex](examples/mpm/IncompressibleFluid/taylor_green_vortex_2d.py) |
+| --- | --- | --- |
+| ![Flow around a cylinder](images/cylinder_fluid.gif) | ![Lid-driven cavity (n64)](images/lid_driven_cavity_n64.gif) | ![Taylor–Green vortex](images/taylor_green_vortex.gif) |
+
+| [Dam break around a square obstacle](examples/mpm/IncompressibleFluid/dam_break_visible_sdf_2d.py) | [3D large-tank dam break](examples/mpm/IncompressibleFluid/large_tank_incompressible_3d.py) | [3D piston wavemaker](examples/mpm/IncompressibleFluid/wavemaker_tank_3d.py) |
+| --- | --- | --- |
+| ![Dam break around a square obstacle](images/dam_break_square_2d.gif) | ![3D large-tank dam break](images/large_tank_3d.gif) | ![3D piston wavemaker](images/wavemaker_3d.gif) |
+
+#### Two phase semi-implicit MPM
+
+| [Dam break through a porous column](examples/mmpm/DamBreakPorousElastic2D/double_point_dam_break_porous_elastic.py) | [Submarine granular landslide](examples/mmpm/SubmarineLandslide/submarine_landslide_2d.py) | [U-tube flow through a porous bed](examples/mmpm/UTubeFlow2D/u_tube_flow_2d.py) |
+| --- | --- | --- |
+| ![Dam break through a porous column](images/dam_break_porous_elastic_2d.gif) | ![Submarine granular landslide](images/submarine_landslide.gif) | ![U-tube flow through a porous bed](images/u_tube_flow_2d.gif) |
+
+### [Discrete element method (DEM)](src/dem/README.md#dem-theory-log)
+#### Explicit soft constraint
 | [Granular packing](example/dem/GranularPackings/polyLevelSet/packing_generate.py) | [Screw and nut](example/dem/ParticleSliding/screw_and_nut.py) | [Debris Flow](example/dem/DebrisFlow) | 
 | --- | --- | --- | 
 | ![Granular packing](images/lsdem.gif) | ![Screw and nut](images/screw_nut.gif) | ![Debris Flow](images/debris_flow.gif) | 
@@ -40,11 +58,41 @@ Have a cool example? Submit a [PR](https://github.com/Yihao-Shi/GeoTaichi/pulls)
 |[Rotating drum](example/dem/RotatingDrums) | [Triaxial shear test](example/dem/TriaxialTest) |
 | --- | --- | 
 | ![Rotating drum](images/drums.gif) | ![Triaxial shear test](images/force_chain.gif) |
+#### Implicit affine body dynamics (ABD)
+Coming soon！
 
-### Coupled material point-discrete element method (MPDEM)
+### [FEM](src/fem/README.md#fem-theory-log) / [IGA](src/iga/README.md#iga-theory-log)
+Coming soon！
+
+### [FEM-MPM](src/fempm/README.md#fem--mpm-coupling-theory-log) / [IGA-MPM](src/igampm/README.md#iga--mpm-coupling-theory-log)
+#### Explicit soft constraint
+Coming soon！
+
+#### Incremental potential contact
+Coming soon！
+
+### [FEM-DEM](src/fedem/README.md#fedem-coupling-theory-log)
+#### Explicit soft constraint
+| [Hertz contact (von Mises stress)](examples/fedem/HertzContact/hertz_contact.py) | [Mixed funnel](examples/fedem/MixedFunnel/mixed_funnel.py) | [Isotropic compaction (100% soft grains)](examples/fedem/IsotropicCompaction/isotropic_compaction.py) |
+| --- | --- | --- |
+| ![Hertz contact (von Mises stress)](images/hertz_contact.png) | ![Mixed funnel](images/mixed_funnel.gif) | ![Isotropic compaction](images/isotropic_compaction_100.gif) |
+
+#### Incremental potential contact
+Coming soon！
+
+### [MPM-DEM](src/mpdem/README.md#mpdem-theory-log)
+#### Explicit MPM-DEM
 | [A sphere impacting granular bed](example/dempm/SphereImpact/plane_strain.py) | [Granular column impacting cubic particles](example/dempm/GranularImpact/granular_impact.py) | [Box sinking into water](example/dempm/BoxSinking/box.py) |
 | --- | --- | --- |
 | ![A sphere impacting granular bed](images/mpdem1.gif) | ![Granular column impacting cubic particles](images/mpdem2.gif) | ![Box sinking into water](images/box_sinking.gif) |
+
+#### Immersed boundary method
+
+| [Drafting, kissing and tumbling](examples/cfdem/FullyResolved/IBMDraftingKissingTumbling/drafting_kissing_tumbling.py) | [Sphere settling in oil](examples/cfdem/FullyResolved/IBMResolvedSphereSettling/sphere_settling.py) | [IBM dam break](examples/cfdem/FullyResolved/IBMLevelSetDamBreak3D/dam_break_levelset_ibm_3d.py) |
+| --- | --- | --- |
+| ![Drafting, kissing and tumbling](images/dkt.gif) | ![Sphere settling in oil](images/sphere_oil.gif) | ![IBM dam break](images/ibm_break.gif) |
+#### Incremental potential contact
+Coming soon！
 
 ## Quick start
 ### Installation
@@ -120,48 +168,15 @@ procedure:
 
 ### Document
 
-Currently, only the tutorial of DEM in Chinese version is available in [doc](https://github.com/Yihao-Shi/GeoTaichi/blob/main/docs/GeoTaichi_tutorial_DEM_Chinese_version.pdf). 
-Users can set up simulations by specifying numerical parameters and configuring the desired simulation settings in a Python script. More detailed about Python scripts can be found in the [example floder](https://github.com/Yihao-Shi/GeoTaichi/tree/main/example).
+Documentation is maintained alongside the source. Module READMEs describe supported formulations, theory logs, configuration, workflows, and limitations:
 
-## Features
-### Discrete Element Method 
-Discrete element method is a powerful tool to simulate the movement of granular materials through a series of calculations that trace individual particles constituting the granular material.
-  - Sphere, multisphere particles and level-set DEM
-  - Unified approach for creating level-set functions for irregularly shaped particle
-  - Generating particle packings by specifying initial void ratio or particle number in a box/cylinder/sphere/triangular prism
-  - Three neighbor search algorithms, brust search/linked-cell/multilevel linked-cell
-  - Two velocity updating schemes, symlectic Euler/velocity Verlet
-  - Four contact models, including linear elastic, hertz-mindlin, linear rolling and energy conserving model
-  - Supporting plane (infinite plane)/facet (servo wall)/triangle patch (suitable for complex boundary condition)
-  - Supporting [periodic boundary](example/dem/PeriodicBoundary) for sphere particles
+- Core solvers: [MPM](src/mpm/README.md#mpm-theory-log), [DEM](src/dem/README.md#dem-theory-log), [FEM](src/fem/README.md#fem-theory-log), and [IGA](src/iga/README.md#iga-theory-log).
+- Coupled solvers: [MPM–DEM](src/mpdem/README.md#mpdem-theory-log), [FEM–DEM](src/fedem/README.md#fedem-coupling-theory-log), [FEM–MPM](src/fempm/README.md#fem--mpm-coupling-theory-log), and [IGA–MPM](src/igampm/README.md#iga--mpm-coupling-theory-log).
+- Shared models and numerics: [Constitutive models](src/physics_model/consititutive_model/README.md), [Contact models](src/physics_model/contact_model/README.md), [Contact detection](src/contact_detection/README.md), and [Linear solvers](src/linear_solver/README.md).
+- Usage and development: [Python examples](examples/), [Solver integration principles](docs/solver_integration_principles.md), [Blender add-on](blender/README.md), [Developer tools](tools/README.md), and [Tests and verification](tests/README.md).
 
-### Material Point Method 
-The material point method (MPM) is a numerical technique used to simulate the behavior of solids, liquids, gases, and any other continuum material. Unlike other mesh-based methods like the finite element method, MPM does not encounter the drawbacks of mesh-based methods (high deformation tangling, advection errors etc.) which makes it a promising and powerful tool in computational mechanics. 
-  - Nine Constitutive Models, including linear elastic/neo-hookean/Von-Mises/isotropic hardening plastic/(state-dependent) Mohr-Coulomb/Drucker-Prager/(cohesive) modified cam-clay/Newtonian fluid/Bingham fluid
-  - Two improved velocity projection techniques, including TPIC/APIC/MLS
-  - Three stress update schemes, including USF/USL/MUSL
-  - Three stabilization techniques, including mix integration/B-bar method/F-bar method
-  - Two smoothing mehod, including strain/pressure smoothing
-  - Supporting Dirichlet (Fix/Reflect/Friction)/Neumann boundary conditions
-  - Supporting total/updating Lagrangian explicit MPM 
-  - Free surface detection
-  - Supporting input [external CAD files](example/mpm/ExternalOBJ)
+Start with the README for your solver and a matching Python example. Additional derivations and technical notes are available in [docs](docs/helper/geotaichi_user_theory_manual.pdf).
 
-### MPDEM coupling
-  - Two contact models, including linear elastic, hertz-mindlin, Energy conserving model (Barrier functions)
-  - Support DEM-MPM-Mesh contact, feasible simulating complex boundary conditions 
-  - Multilevel neighbor search
-  - Two way or one way coupling
-
-### Postprocessing
-  - Restart from a specific time step
-  - A simple GUI powered by [Taichi](https://github.com/taichi-dev/taichi)
-  - VTU([Paraview](http://www.paraview.org/)) and NPZ(binary files) files are generated in the process of simualtion
-  - Supporting force chain visualization
-
-## Under development
-  - Developing a well-structured IGA modules
-  
 ## License
 This project is licensed under the GNU General Public License v3 - see the [LICENSE](https://www.gnu.org/licenses/) for details.
 
@@ -198,9 +213,13 @@ We thank all amazing contributors for their great work and open source spirit. W
 </a>
 
 ### Contact us
-- If you spot any issues or need help, please find our contact information on the lab website.
+- If you spot any issue or need any help, please mail directly to <a href = "mailto:shiyh@zju.edu.cn">shiyh@zju.edu.cn</a>.
 
 ## Release Notes
+V0.5.0 (Oct 2, 2026)
+
+- Please click [here](https://github.com/Yihao-Shi/GeoTaichi/releases/tag/GeoTaichi-v0.5) for more details
+
 V0.4.0 (Aug 27, 2025)
 
 - Please click [here](https://github.com/Yihao-Shi/GeoTaichi/releases/tag/GeoTaichi-v0.4) for more details
