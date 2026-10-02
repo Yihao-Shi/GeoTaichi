@@ -73,9 +73,9 @@ Coming soon！
 
 ### [FEM-DEM](src/fedem/README.md#fedem-coupling-theory-log)
 #### Explicit soft constraint
-| [Hertz contact (von Mises stress)](examples/fedem/HertzContact/hertz_contact.py) | [Mixed funnel](examples/fedem/MixedFunnel/mixed_funnel.py) | [Isotropic compaction (100% soft grains)](examples/fedem/IsotropicCompaction/isotropic_compaction.py) |
+| [Hertz contact](examples/fedem/HertzContact/hertz_contact.py) | [Mixed funnel](examples/fedem/MixedFunnel/mixed_funnel.py) | [Isotropic compaction (100% soft grains)](examples/fedem/IsotropicCompaction/isotropic_compaction.py) |
 | --- | --- | --- |
-| ![Hertz contact (von Mises stress)](images/hertz_contact.png) | ![Mixed funnel](images/mixed_funnel.gif) | ![Isotropic compaction](images/isotropic_compaction_100.gif) |
+| ![Hertz contact](images/hertz_contact.png) | ![Mixed funnel](images/mixed_funnel.gif) | ![Isotropic compaction](images/isotropic_compaction_100.gif) |
 
 #### Incremental potential contact
 Coming soon！
