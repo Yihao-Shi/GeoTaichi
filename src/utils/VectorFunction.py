@@ -81,10 +81,7 @@ def voigt_tensor_trace(vector):
 
 @ti.func
 def vsign(x):
-    for i in ti.static(range(x.n)):
-        if x[i] != 0:
-            x[i] /= ti.abs(x[i])
-    return x 
+    return ti.cast((x >= 0.0), float) - ti.cast((x <= 0.0), float) 
 
 @ti.func
 def Squared(vec):
@@ -97,14 +94,7 @@ def SquaredLength(vec1, vec2):
 
 @ti.func
 def SIGN(vector):
-    for i in ti.static(range(vector.n)):
-        if vector[i] > Threshold:
-            vector[i] = vector[i]
-        elif vector[i] < -Threshold:
-            vector[i] = -vector[i]
-        else:
-            vector[i] = 0
-    return vector
+    return vector * vsign(vector)
 
 @ti.func
 def clamp(low_bound, high_bound, vec):
@@ -126,6 +116,13 @@ def symtensordot(vector1, vector2):
 def voigt_form(matrix):
     return vec6f(matrix[0, 0], matrix[1, 1], matrix[2, 2],
                  0.5 * (matrix[0, 1] + matrix[1, 0]), 0.5 * (matrix[1, 2] + matrix[2, 1]), 0.5 * (matrix[0, 2] + matrix[2, 0]))
+
+
+@ti.func
+def voigt_form_2d(matrix):
+    return vec6f(matrix[0, 0], matrix[1, 1], 0.,
+                 0.5 * (matrix[0, 1] + matrix[1, 0]), 0., 0.)
+
 
 @ti.func
 def equivalent_voigt(vector):

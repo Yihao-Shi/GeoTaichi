@@ -17,6 +17,7 @@ class ElasticPerfectlyPlasticModel(PlasticMaterial):
         self._yield_residual = 0.
 
     def model_initialize(self, material):
+        self.material = material
         density = DictIO.GetAlternative(material, 'Density', 2650)
         young = DictIO.GetEssential(material, 'YoungModulus')
         poisson = DictIO.GetAlternative(material, 'PoissonRatio', 0.3)
@@ -24,6 +25,13 @@ class ElasticPerfectlyPlasticModel(PlasticMaterial):
         _yield_residual = DictIO.GetAlternative(material, 'ResidualYieldStress', _yield)
         pdstrain_peak = DictIO.GetAlternative(material, 'PlasticDevStrain', 0.) 
         pdstrain_residual = DictIO.GetAlternative(material, 'ResidualPlasticDevStrain', 0.)
+        self.validate_elastic_parameters(density, young, poisson)
+        self.validate_nonnegative_parameters(
+            YieldStress=_yield,
+            ResidualYieldStress=_yield_residual,
+            PlasticDevStrain=pdstrain_peak,
+            ResidualPlasticDevStrain=pdstrain_residual,
+        )
         self.choose_soft_function(material)
         self.add_material(density, young, poisson, _yield, _yield_residual, pdstrain_peak, pdstrain_residual)
         self.add_coupling_material(material)
@@ -41,9 +49,9 @@ class ElasticPerfectlyPlasticModel(PlasticMaterial):
         self.max_sound_speed = self.get_sound_speed(self.density, self.young, self.poisson)
 
     def print_message(self, materialID):
-        print(" Constitutive Model Information ".center(71, '-'))
-        print('Constitutive model: Elastic Perfectly Plastic Model')
-        print("Model ID: ", materialID)
+        self.print_console_header()
+        print('Constitutive model: Elastic Perfectly Plastic')
+        print("Material ID: ", materialID)
         if GlobalVariable.RANDOMFIELD is False:
             print('Density: ', self.density)
             print('Young Modulus: ', self.young)
@@ -96,7 +104,7 @@ class ElasticPerfectlyPlasticModel(PlasticMaterial):
         if ti.static(self.is_soft):
             stateVars[np].strain = vec6f(0, 0, 0, 0, 0, 0)
         else:
-            stateVars[np].epdstrain = 0.
+            stateVars[np].epstrain = 0.
     
     # ==================================================== Von-Mises Model ==================================================== #
     @ti.func
@@ -110,7 +118,7 @@ class ElasticPerfectlyPlasticModel(PlasticMaterial):
     @ti.func
     def ComputeYieldFunction(self, stress, internal_vars, material_params):
         seqv = self.ComputeStressInvariant(stress)
-        yield_stress = material_params[1]
+        yield_stress = material_params[2]
         yield_shear = self.ComputeShearFunction(seqv, yield_stress)
         return yield_shear
 
@@ -124,7 +132,7 @@ class ElasticPerfectlyPlasticModel(PlasticMaterial):
         return yield_state, yield_shear
     
     @ti.func
-    def ComputeDfDsigma(self, stress, internal_vars, material_params):
+    def ComputeDfDsigma(self, yield_state, stress, internal_vars, material_params):
         df_dp = 0.
         df_dq = 1.
         
@@ -134,7 +142,7 @@ class ElasticPerfectlyPlasticModel(PlasticMaterial):
         return df_dsigma
     
     @ti.func
-    def ComputeDgDsigma(self, stress, internal_vars, material_params):
+    def ComputeDgDsigma(self, yield_state, stress, internal_vars, material_params):
         dg_dp = 0.
         dg_dq = 1.
         
@@ -147,10 +155,10 @@ class ElasticPerfectlyPlasticModel(PlasticMaterial):
     def ComputePlasticModulus(self, yield_state, dgdsigma, stress, internal_vars, state_vars, material_params):
         if ti.static(self.is_soft):
             strain = vec6f(internal_vars[0], internal_vars[1], internal_vars[2], internal_vars[3], internal_vars[4], internal_vars[5])
-            pdstrain = EquivalentStrain(strain)
+            pdstrain = EquivalentDeviatoricStrain(strain)
 
             df_dyield = -1
-            dfyield_dpstrain = self.soft_function.soft_deriv(self.soft_param, self._yield_peak, self._yield_residual, self.pdstrain_peak, self.pdstrain_residual, pdstrain)
+            dfyield_dpstrain = self.soft_function.soft_deriv(self._yield_peak, self._yield_residual, self.pdstrain_peak, self.pdstrain_residual, pdstrain)
             dfdpdstrain = df_dyield * dfyield_dpstrain
             r_func = voigt_tensor_dot(DeqepsilonqDepsilon(strain), dgdsigma)
             return dfdpdstrain * r_func
@@ -162,15 +170,20 @@ class ElasticPerfectlyPlasticModel(PlasticMaterial):
         if ti.static(self.is_soft):
             return dlambda * dgdsigma
         else:
-            depstrain = EquivalentStrain(dlambda * dgdsigma)
+            depstrain = EquivalentDeviatoricStrain(
+                dlambda * dgdsigma
+            )
             return ti.Vector([depstrain])
         
     @ti.func
     def GetMaterialParameter(self, stress, state_vars):
         bulk, shear, _yield_peak = self.get_current_material_parameter(state_vars)
         if ti.static(self.is_soft):
-            pdstrain = EquivalentStrain(state_vars.strain)
-            _yield_peak = self.soft_function.soft(self.soft_param, _yield_peak, self._yield_residual, self.pdstrain_peak, self.pdstrain_residual, pdstrain)
+            pdstrain = EquivalentDeviatoricStrain(state_vars.strain)
+            _yield_residual = self._yield_residual
+            if ti.static(GlobalVariable.RANDOMFIELD):
+                _yield_residual = self.residual_frac * _yield_peak
+            _yield_peak = self.soft_function.soft(_yield_peak, _yield_residual, self.pdstrain_peak, self.pdstrain_residual, pdstrain)
         return ti.Vector([bulk, shear, _yield_peak])
 
     @ti.func

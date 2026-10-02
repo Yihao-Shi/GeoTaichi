@@ -36,11 +36,14 @@ class HexahedronElement8Nodes(ElementBase):
         self.influenced_dofs = 24
         self.cell_volume = 0.
         self.cell_active = None
+        self.cell_volumefrac = None
         self.gauss_point = None
         self.cell = None
         self.gauss_cell = None
         self.LnID = None
         self.shape_fn = None
+        self.dshape_fn = None
+        self.dshape_fnc = None
         self.b_matrix = None
         self.node_size = None
         self.calculate = None
@@ -61,15 +64,17 @@ class HexahedronElement8Nodes(ElementBase):
             grid_size = vec3f(grid_size)
         domain = np.array(sims.domain)
         grid_size = np.array(grid_size)
-        cnum = np.floor((domain + Threshold) / grid_size) 
+        cnum = np.floor((1. + 1e-6) * domain / grid_size)
         for d in range(3):
             if cnum[d] == 0:
                 cnum[d] = 1      
         if sims.linear_solver == "MGPCG":   
-            multiplier = 2 * sims.multilevel
+            multiplier = 2 ** max(0, int(sims.multilevel) - 1)
             cnum = np.array(multiplier * np.ceil(cnum / multiplier), dtype=np.int32) 
+            self.grid_size = vec3f(domain / cnum)
+        else:
+            self.grid_size = vec3f(grid_size)
         
-        self.grid_size = vec3f(domain / cnum)
         self.igrid_size = 1. / self.grid_size
         self.cell_volume = self.calc_volume()
         self.cnum = vec3i(cnum) + 2 * self.ghost_cell
@@ -83,7 +88,7 @@ class HexahedronElement8Nodes(ElementBase):
             self.calLength = ParticleCPDI.field(shape=sims.max_particle_num)
         else:
             self.calLength = ti.Vector.field(3, float, shape=sims.max_body_num)
-            if sims.stabilize == "F-Bar Method":
+            if sims.stabilize == "Displacement F-Bar Method":
                 self.calLength_lower_order = ti.Vector.field(3, float, shape=sims.max_body_num)
 
     def element_initialize(self, sims: Simulation, local_coordiates=False):
@@ -101,7 +106,7 @@ class HexahedronElement8Nodes(ElementBase):
             if sims.gauss_number > 0:
                 self.gauss_point = GaussPointInRectangle(gauss_point=sims.gauss_number)
                 self.gauss_point.create_gauss_point()
-            if sims.mode == "Normal":
+            if sims.mode == "Normal" and self.need_shape_cache(sims):
                 self.set_essential_field(is_bbar, sims.max_particle_num, sims.shape_function, sims.mls)
         
         if sims.solver_type == "Implicit":
@@ -110,6 +115,12 @@ class HexahedronElement8Nodes(ElementBase):
             elif sims.discretization == "FDM":
                 self.pse = PrefixSumExecutor(self.cellSum)
             self.flag = ti.field(int, shape=self.pse.get_length())
+
+    def need_shape_cache(self, sims: Simulation):
+        if (self.element_type == "Staggered" and sims.material_type == "Fluid" and
+            sims.solver_type == "Implicit" and sims.discretization == "FDM"):
+            return False
+        return True
 
     def compute_inertia_tensor(self, shape_function_type):
         if shape_function_type == "QuadBSpline":
@@ -156,7 +167,7 @@ class HexahedronElement8Nodes(ElementBase):
             
             self.shape_function = ShapeBsplineQ
             self.grad_shape_function = GShapeBsplineQ
-            if sims.stabilize == "F-Bar Method":
+            if sims.stabilize == "Displacement F-Bar Method":
                 self.influenced_node_lower_order = 2
                 self.grid_nodes_lower_order = 8
                 self.lower_shape_function = ShapeLinear
@@ -169,7 +180,7 @@ class HexahedronElement8Nodes(ElementBase):
             
             self.shape_function = ShapeBsplineC
             self.grad_shape_function = GShapeBsplineC
-            if sims.stabilize == "F-Bar Method":
+            if sims.stabilize == "Displacement F-Bar Method":
                 self.influenced_node_lower_order = 3
                 self.grid_nodes_lower_order = 27
                 self.lower_shape_function = ShapeBsplineQ
@@ -234,11 +245,11 @@ class HexahedronElement8Nodes(ElementBase):
             set_particle_characteristic_length_gimp(particleNum, sims.shape_smooth, self.calLength, particle, psize)
         elif sims.shape_function == "QuadBSpline":
             self.calLength.fill(0.5 * self.grid_size)
-            if sims.stabilize == "F-Bar Method":
+            if sims.stabilize == "Displacement F-Bar Method":
                 self.calLength_lower_order.fill(vec3f(0., 0., 0.))
         elif sims.shape_function == "CubicBSpline":
             self.calLength.fill(self.grid_size)
-            if sims.stabilize == "F-Bar Method":
+            if sims.stabilize == "Displacement F-Bar Method":
                 self.calLength_lower_order.fill(0.5 * self.grid_size)
         elif sims.shape_function == "GIMP":
             set_particle_characteristic_length_gimp(particleNum, 1., self.calLength, particle, psize)
@@ -258,6 +269,10 @@ class HexahedronElement8Nodes(ElementBase):
                 print("Warning: Previous Euler cells will be override!")
             self.cell = IncompressibleCell(self.cnum, self.cellSum, self.ghost_cell)
 
+    def create_element_volume_fraction(self):
+        self.cell_volumefrac = ti.field(dtype=float)
+        ti.root.dense(ti.i, int(self.cellSum)).place(self.cell_volumefrac)
+
     def set_up_cell_active_flag(self, fb: ti.FieldsBuilder):
         self.cell_active = ti.field(u1)
         fb.dense(ti.i, round32(self.get_total_cell_number())//32).quant_array(ti.i, dimensions=32, max_num_bits=32).place(self.cell_active)
@@ -265,6 +280,9 @@ class HexahedronElement8Nodes(ElementBase):
     
     def reset_cell_status(self):
         kernel_reset_cell_status(self.cell_active)
+
+    def set_cell_type(self, cell_volumefrac, cell_rigid, node_type, axis_offset=0, h0=0):
+        update_cell_type_3D(self.cnum, cell_volumefrac, cell_rigid, node_type)
 
     def update_particle_in_cell(self, particleNum, particle):
         kernel_find_located_cell(self.igrid_size, self.gnum, particleNum[0], particle)
@@ -274,8 +292,13 @@ class HexahedronElement8Nodes(ElementBase):
         print("The number of nodes = ", self.gnum)
 
     def get_boundary_nodes(self, start_point, end_point):
-        start_bound = np.ceil([point - Threshold for point in start_point] * self.igrid_size)
-        end_bound = np.floor([point + Threshold for point in end_point] * self.igrid_size) + 1
+        start_point = np.asarray(start_point)
+        end_point = np.asarray(end_point)
+        region_size = end_point - start_point
+        start_point = start_point - 1e-6 * region_size
+        end_point = end_point + 1e-6 * region_size
+        start_bound = np.ceil([point for point in start_point] * self.igrid_size)
+        end_bound = np.floor([point for point in end_point] * self.igrid_size) + 1
         end_bound = np.maximum(end_bound, start_bound + 1)
 
         xnode = np.arange(start_bound[0], end_bound[0], 1)

@@ -10,9 +10,7 @@ import re
 from ._structures import Infinity
 
 
-__all__ = [
-    "parse", "Version", "LegacyVersion", "InvalidVersion", "VERSION_PATTERN"
-]
+__all__ = ["parse", "Version", "LegacyVersion", "InvalidVersion", "VERSION_PATTERN"]
 
 
 _Version = collections.namedtuple(
@@ -103,11 +101,16 @@ class LegacyVersion(_BaseVersion):
 
 
 _legacy_version_component_re = re.compile(
-    r"(\d+ | [a-z]+ | \.| -)", re.VERBOSE,
+    r"(\d+ | [a-z]+ | \.| -)",
+    re.VERBOSE,
 )
 
 _legacy_version_replacement_map = {
-    "pre": "c", "preview": "c", "-": "final-", "rc": "c", "dev": "@",
+    "pre": "c",
+    "preview": "c",
+    "-": "final-",
+    "rc": "c",
+    "dev": "@",
 }
 
 
@@ -135,8 +138,7 @@ def _legacy_cmpkey(version):
     # as before all PEP 440 versions.
     epoch = -1
 
-    # This scheme is taken from pkg_resources.parse_version setuptools prior to
-    # it's adoption of the packaging library.
+    # Preserve the legacy ordering used before adoption of PEP 440.
     parts = []
     for part in _parse_version_parts(version.lower()):
         if part.startswith("*"):
@@ -153,6 +155,7 @@ def _legacy_cmpkey(version):
     parts = tuple(parts)
 
     return epoch, parts
+
 
 # Deliberately not anchored to the start and end of the string, to make it
 # easier for 3rd party code to reuse
@@ -257,9 +260,7 @@ class Version(_BaseVersion):
 
         # Local version segment
         if self._version.local is not None:
-            parts.append(
-                "+{}".format(".".join(str(x) for x in self._version.local))
-            )
+            parts.append("+{}".format(".".join(str(x) for x in self._version.local)))
 
         return "".join(parts)
 
@@ -335,8 +336,7 @@ def _parse_local_version(local):
     """
     if local is not None:
         return tuple(
-            part.lower() if not part.isdigit() else int(part)
-            for part in _local_version_seperators.split(local)
+            part.lower() if not part.isdigit() else int(part) for part in _local_version_seperators.split(local)
         )
 
 
@@ -347,12 +347,14 @@ def _cmpkey(epoch, release, pre, post, dev, local):
     # re-reverse it back into the correct order and make it a tuple and use
     # that for our sorting key.
     release = tuple(
-        reversed(list(
-            itertools.dropwhile(
-                lambda x: x == 0,
-                reversed(release),
+        reversed(
+            list(
+                itertools.dropwhile(
+                    lambda x: x == 0,
+                    reversed(release),
+                )
             )
-        ))
+        )
     )
 
     # We need to "trick" the sorting algorithm to put 1.0.dev0 before 1.0a0.
@@ -385,9 +387,6 @@ def _cmpkey(epoch, release, pre, post, dev, local):
         # - Numeric segments sort numerically
         # - Shorter versions sort before longer versions when the prefixes
         #   match exactly
-        local = tuple(
-            (i, "") if isinstance(i, int) else (-Infinity, i)
-            for i in local
-        )
+        local = tuple((i, "") if isinstance(i, int) else (-Infinity, i) for i in local)
 
     return epoch, release, pre, post, dev, local

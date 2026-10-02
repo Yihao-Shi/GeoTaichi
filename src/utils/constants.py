@@ -2,7 +2,7 @@ from math import pi, sqrt
 import numpy as np
 
 from src.utils.TypeDefination import (vec2i, vec2f, vec3f, vec3i, mat3x3, vec4f, vec5f, vec6f, vec8f,
-                                      mat6x3, mat4x4, mat2x2, mat2x5, mat3x5, mat5x5, mat6x6, mat8x3, mat3x9, mat9x9)
+                                      mat6x3, mat4x4, mat2x2, mat2x5, mat3x5, mat5x5, mat8x3, mat3x9)
 
 BLOCK_SZ = 128
 WARP_SZ = 32
@@ -70,31 +70,16 @@ ZEROMAT5x5 = mat5x5([[0., 0., 0., 0., 0.],
                      [0., 0., 0., 0., 0.], 
                      [0., 0., 0., 0., 0.], 
                      [0., 0., 0., 0., 0.]])
-ZEROMAT6x6 = mat6x6([[0., 0., 0., 0., 0., 0.], 
-                     [0., 0., 0., 0., 0., 0.], 
-                     [0., 0., 0., 0., 0., 0.], 
-                     [0., 0., 0., 0., 0., 0.], 
-                     [0., 0., 0., 0., 0., 0.],
-                     [0., 0., 0., 0., 0., 0.]])
 ZEROMAT6x3 = mat6x3([[0., 0., 0.], [0., 0., 0.], [0., 0., 0.], 
                      [0., 0., 0.], [0., 0., 0.], [0., 0., 0.]])
 ZEROMAT8x3 = mat8x3([[0., 0., 0.], [0., 0., 0.], [0., 0., 0.], [0., 0., 0.], 
                      [0., 0., 0.], [0., 0., 0.], [0., 0., 0.], [0., 0., 0.]])
-ZEROMAT9x9 = mat9x9([0, 0, 0, 0, 0, 0, 0, 0, 0], 
-                    [0, 0, 0, 0, 0, 0, 0, 0, 0], 
-                    [0, 0, 0, 0, 0, 0, 0, 0, 0], 
-                    [0, 0, 0, 0, 0, 0, 0, 0, 0], 
-                    [0, 0, 0, 0, 0, 0, 0, 0, 0], 
-                    [0, 0, 0, 0, 0, 0, 0, 0, 0], 
-                    [0, 0, 0, 0, 0, 0, 0, 0, 0], 
-                    [0, 0, 0, 0, 0, 0, 0, 0, 0], 
-                    [0, 0, 0, 0, 0, 0, 0, 0, 0])
 
 # Consititutive models
 FTOL = 1.e-6        # yield function tolerance
 STOL = 1.e-3        # stress tolerance
 LTOL = 1.e-6        # detecting tolerance
-MAXITS = 3         # maximum iteration number
+MAXITS = 5         # maximum iteration number
 NSUB = 10
 dTmin = 1e-4
 EPS = 1.e-16        # machine error

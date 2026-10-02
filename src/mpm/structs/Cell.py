@@ -39,9 +39,11 @@ class IncompressibleCell:
         self.pressure = None
         self.type = None
         self.surface_tension = None
+        self.fluid_sdf = None
+        self.solid_sdf = None
         self.dofID = None
 
-    def set_ptr(self, pressure=None, cell_type=None, surface_tension=None):
+    def set_ptr(self, pressure=None, cell_type=None, surface_tension=None, fluid_sdf=None, solid_sdf=None):
         if pressure is None:
             self.pressure = ti.field(dtype=float, shape=self.cnum, offset=0 * self.cnum - self.ghost_cell)
         else:
@@ -54,6 +56,14 @@ class IncompressibleCell:
             self.surface_tension = ti.field(dtype=float, shape=self.cnum, offset=0 * self.cnum - self.ghost_cell)
         else:
             self.surface_tension = surface_tension
+        if fluid_sdf is None:
+            self.fluid_sdf = ti.field(dtype=float, shape=self.cnum, offset=0 * self.cnum - self.ghost_cell)
+        else:
+            self.fluid_sdf = fluid_sdf
+        if solid_sdf is None:
+            self.solid_sdf = ti.field(dtype=float, shape=self.cnum, offset=0 * self.cnum - self.ghost_cell)
+        else:
+            self.solid_sdf = solid_sdf
 
 @ti.data_oriented
 class IncompressibleFace:

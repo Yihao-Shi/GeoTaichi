@@ -1,7 +1,7 @@
 import taichi as ti
 
 from src.utils.constants import ZEROVEC2f, ZEROVEC3f
-from src.utils.ScalarFunction import sign, sgn
+from src.utils.ScalarFunction import sgn
 from src.utils.TypeDefination import vec2f, vec3f, mat3x2
 
 
@@ -22,7 +22,7 @@ class ContactNodes:
 
     @ti.func
     def _grid_reset(self):
-        self.m = 0.
+        self.m = 0.0
         self.momentum = ZEROVEC3f
         self.force = ZEROVEC3f
         self.contact_force = ZEROVEC3f
@@ -54,14 +54,14 @@ class ContactNodes:
 
     @ti.func
     def _compute_nodal_kinematic(self, damp, dt):
-        unbalanced_force = self.force 
+        unbalanced_force = self.force
         velocity = self.momentum
         for d in ti.static(range(3)):
-            if velocity[d] * unbalanced_force[d] > 0.: 
+            if velocity[d] * unbalanced_force[d] > 0.0:
                 unbalanced_force[d] -= damp * ti.abs(unbalanced_force[d]) * sgn(velocity[d])
         acceleration = unbalanced_force / self.m
         self.momentum += acceleration * dt[None]
-        self.force = acceleration 
+        self.force = acceleration
 
     @ti.func
     def _update_nodal_kinematic(self):
@@ -80,7 +80,7 @@ class ContactNodes:
 
     @ti.func
     def _contact_force_assemble(self, dt):
-        contact_acceleration =  self.contact_force / self.m
+        contact_acceleration = self.contact_force / self.m
         self.force += contact_acceleration
         self.momentum += contact_acceleration * dt[None]
 
@@ -90,35 +90,35 @@ class ContactNodes:
 
     @ti.func
     def contact_velocity_constraint(self, dirs):
-        self.contact_force[dirs] = 0.
+        self.contact_force[dirs] = 0.0
 
     @ti.func
     def contact_reflection_constraint(self, dirs, signs):
-        pre_velocity = self.momentum[dirs] 
+        pre_velocity = self.momentum[dirs]
         if pre_velocity * signs > 0:
-            self.contact_force[abs(dirs)] = 0.
-        
+            self.contact_force[abs(dirs)] = 0.0
+
     @ti.func
     def velocity_constraint(self, dirs, prescribed_velocity):
-        self.momentum[dirs] = prescribed_velocity 
-        self.force[dirs] = 0.
+        self.momentum[dirs] = prescribed_velocity
+        self.force[dirs] = 0.0
 
     @ti.func
     def rigid_body_velocity_constraint(self, dirs):
-        self.grad_domain[dirs] = 0.
+        self.grad_domain[dirs] = 0.0
 
     @ti.func
     def reflection_constraint(self, dirs, signs):
         pre_velocity = self.momentum[dirs]
         if pre_velocity * signs > 0:
-            self.momentum[dirs] = 0.
-            self.force[dirs] = 0.
+            self.momentum[dirs] = 0.0
+            self.force[dirs] = 0.0
 
     @ti.func
     def rigid_body_reflection_constraint(self, dirs, signs):
         pre_gradient = self.grad_domain[dirs]
         if pre_gradient * signs > 0:
-            self.grad_domain[dirs] = 0.
+            self.grad_domain[dirs] = 0.0
 
     @ti.func
     def friction_constraint(self, mu, dirs_n, signs, dt):
@@ -131,10 +131,12 @@ class ContactNodes:
         acc_n = acceleration[dirs_n]
         acc_t = ti.sqrt(acceleration[dir_t0] * acceleration[dir_t0] + acceleration[dir_t1] * acceleration[dir_t1])
         vel_t = ti.sqrt(velocity[dir_t0] * velocity[dir_t0] + velocity[dir_t1] * velocity[dir_t1])
-        if acc_n * signs > 0.0:                                                                         # dynamic friction
+        if acc_n * signs > 0.0:  # dynamic friction
             if vel_t != 0.0:
-                vel_net = vec2f(0., 0.)
-                vel_net[0] = velocity[dir_t0] + acceleration[dir_t0] * dt[None]                        # friction is applied opposite to the vel_net
+                vel_net = vec2f(0.0, 0.0)
+                vel_net[0] = (
+                    velocity[dir_t0] + acceleration[dir_t0] * dt[None]
+                )  # friction is applied opposite to the vel_net
                 vel_net[1] = velocity[dir_t1] + acceleration[dir_t1] * dt[None]
                 vel_net_t = ti.sqrt(vel_net[0] * vel_net[0] + vel_net[1] * vel_net[1])
                 vel_fricion = mu * abs(acc_n) * dt[None]
@@ -145,8 +147,8 @@ class ContactNodes:
                 else:
                     acceleration[dir_t0] -= mu * abs[acc_n] * (vel_net[0] / vel_net_t)
                     acceleration[dir_t1] -= mu * abs[acc_n] * (vel_net[1] / vel_net_t)
-            else:                                                                                     # static friction
-                if acc_t <= mu * abs(acc_n):                                                          # since acc_t is positive
+            else:  # static friction
+                if acc_t <= mu * abs(acc_n):  # since acc_t is positive
                     acceleration[dir_t0] = 0
                     acceleration[dir_t1] = 0
                 else:
@@ -155,12 +157,12 @@ class ContactNodes:
                     acceleration[dir_t1] -= mu * abs(acc_n) * (acceleration[dir_t1] / acc_t)
             self.momentum += acceleration * dt[None]
             self.force = acceleration
-            
+
     @ti.func
     def rigid_friction_constraint(self, dirs, signs):
         pre_gradient = self.grad_domain[dirs]
         if pre_gradient * signs > 0:
-            self.grad_domain[dirs] = 0.
+            self.grad_domain[dirs] = 0.0
 
 
 @ti.dataclass
@@ -180,7 +182,7 @@ class ContactNodes2D:
 
     @ti.func
     def _grid_reset(self):
-        self.m = 0.
+        self.m = 0.0
         self.momentum = ZEROVEC2f
         self.force = ZEROVEC2f
         self.contact_force = ZEROVEC2f
@@ -212,14 +214,14 @@ class ContactNodes2D:
 
     @ti.func
     def _compute_nodal_kinematic(self, damp, dt):
-        unbalanced_force = self.force 
+        unbalanced_force = self.force
         velocity = self.momentum
         for d in ti.static(range(2)):
-            if velocity[d] * unbalanced_force[d] > 0.: 
+            if velocity[d] * unbalanced_force[d] > 0.0:
                 unbalanced_force[d] -= damp * ti.abs(unbalanced_force[d]) * sgn(velocity[d])
         acceleration = unbalanced_force / self.m
         self.momentum += acceleration * dt[None]
-        self.force = acceleration 
+        self.force = acceleration
 
     @ti.func
     def _update_nodal_kinematic(self):
@@ -238,45 +240,45 @@ class ContactNodes2D:
 
     @ti.func
     def _contact_force_assemble(self, dt):
-        contact_acceleration =  self.contact_force / self.m
+        contact_acceleration = self.contact_force / self.m
         self.force += contact_acceleration
         self.momentum += contact_acceleration * dt[None]
 
     @ti.func
     def _update_nodal_grad_domain(self, grad_domain):
         self.grad_domain += grad_domain
-        
+
     @ti.func
     def contact_velocity_constraint(self, dirs):
-        self.contact_force[dirs] = 0.
+        self.contact_force[dirs] = 0.0
 
     @ti.func
     def contact_reflection_constraint(self, dirs, signs):
-        pre_velocity = self.momentum[dirs] 
+        pre_velocity = self.momentum[dirs]
         if pre_velocity * signs > 0:
-            self.contact_force[abs(dirs)] = 0.
-        
+            self.contact_force[abs(dirs)] = 0.0
+
     @ti.func
     def velocity_constraint(self, dirs, prescribed_velocity):
-        self.momentum[dirs] = prescribed_velocity 
-        self.force[dirs] = 0.
+        self.momentum[dirs] = prescribed_velocity
+        self.force[dirs] = 0.0
 
     @ti.func
     def rigid_body_velocity_constraint(self, dirs):
-        self.grad_domain[dirs] = 0.
+        self.grad_domain[dirs] = 0.0
 
     @ti.func
     def reflection_constraint(self, dirs, signs):
         pre_velocity = self.momentum[dirs]
         if pre_velocity * signs > 0:
-            self.momentum[dirs] = 0.
-            self.force[dirs] = 0.
+            self.momentum[dirs] = 0.0
+            self.force[dirs] = 0.0
 
     @ti.func
     def rigid_body_reflection_constraint(self, dirs, signs):
         pre_gradient = self.grad_domain[dirs]
         if pre_gradient * signs > 0:
-            self.grad_domain[dirs] = 0.
+            self.grad_domain[dirs] = 0.0
 
     @ti.func
     def friction_constraint(self, mu, dirs_n, signs, dt):
@@ -287,61 +289,90 @@ class ContactNodes2D:
         acc_n = acceleration[dirs_n]
         acc_t = acceleration[dir_t]
         vel_t = velocity[dir_t]
-        if acc_n * signs > 0.0:                                                                         # dynamic friction
+        if acc_n * signs > 0.0:  # dynamic friction
             if vel_t != 0.0:
-                vel_net = velocity[dir_t] + acc_t * dt[None]                                           # friction is applied opposite to the vel_net
+                vel_net = velocity[dir_t] + acc_t * dt[None]  # friction is applied opposite to the vel_net
                 vel_frictional = dt[None] * mu * abs(acc_n)
                 if abs(vel_net) <= vel_frictional:
                     acc_t = -vel_t / dt[None]
                 else:
-                    acc_t -= sign(vel_net) * mu * abs(acc_n)
-            else:                                                                                     # static friction
-                if abs(acc_t) <= mu * abs(acc_n):                                                     # since acc_t is positive
-                    acc_t = 0.
+                    acc_t -= sgn(vel_net) * mu * abs(acc_n)
+            else:  # static friction
+                if abs(acc_t) <= mu * abs(acc_n):  # since acc_t is positive
+                    acc_t = 0.0
                 else:
-                    acc_t -= sign(acc_t) * mu * abs(acc_n)
+                    acc_t -= sgn(acc_t) * mu * abs(acc_n)
             self.momentum += vec2f(acc_n, acc_t) * dt[None]
             self.force[dir_t] = acc_t
-            
+
     @ti.func
     def rigid_friction_constraint(self, dirs, signs):
         pre_gradient = self.grad_domain[dirs]
         if pre_gradient * signs > 0:
-            self.grad_domain[dirs] = 0.
+            self.grad_domain[dirs] = 0.0
 
 
 @ti.dataclass
-class NodeTwoPhase2D:
+class NodeTwoPhase:
+    dof: int
     m: float
     ms: float
     mf: float
-    force: vec2f
-    forces: vec2f
-    forcef: vec2f
-    momentum: vec2f
-    momentums: vec2f
-    momentumf: vec2f
+    drag: vec3f
+    force: vec3f
+    forces: vec3f
+    forcef: vec3f
+    momentum: vec3f
+    momentums: vec3f
+    momentumf: vec3f
+    pressure: float
+    dpressure: float
+    dragval: float
+    porosity: float
+    weight: float
+    contact_force_s: vec3f
+    contact_force_f: vec3f
+    extra_stabilize: vec3f
+    grad_domain: vec3f
 
     @ti.func
     def _tlgrid_reset(self):
-        self.momentum = ZEROVEC2f
-        self.momentums = ZEROVEC2f
-        self.momentumf = ZEROVEC2f
-        self.force = ZEROVEC2f
-        self.forces = ZEROVEC2f
-        self.forcef = ZEROVEC2f
-    
+        self.momentum = ZEROVEC3f
+        self.momentums = ZEROVEC3f
+        self.momentumf = ZEROVEC3f
+        self.drag = ZEROVEC3f
+        self.force = ZEROVEC3f
+        self.forces = ZEROVEC3f
+        self.forcef = ZEROVEC3f
+        self.contact_force_s = ZEROVEC3f
+        self.contact_force_f = ZEROVEC3f
+        self.grad_domain = ZEROVEC3f
+
     @ti.func
     def _grid_reset(self):
-        self.m = 0.
-        self.ms = 0.
-        self.mf = 0.
-        self.momentum = ZEROVEC2f
-        self.momentums = ZEROVEC2f
-        self.momentumf = ZEROVEC2f
-        self.force = ZEROVEC2f
-        self.forces = ZEROVEC2f
-        self.forcef = ZEROVEC2f
+        self.m = 0.0
+        self.ms = 0.0
+        self.mf = 0.0
+        self.drag = ZEROVEC3f
+        self.momentum = ZEROVEC3f
+        self.momentums = ZEROVEC3f
+        self.momentumf = ZEROVEC3f
+        self.force = ZEROVEC3f
+        self.forces = ZEROVEC3f
+        self.forcef = ZEROVEC3f
+        self.dof = -1
+        self.pressure = 0.0
+        self.dpressure = 0.0
+        self.dragval = 0.0
+        self.porosity = 0.0
+        self.weight = 0.0
+        self.contact_force_s = ZEROVEC3f
+        self.contact_force_f = ZEROVEC3f
+        self.grad_domain = ZEROVEC3f
+
+    @ti.func
+    def _set_dofs(self, rowth):
+        self.dof = int(rowth)
 
     @ti.func
     def _update_nodal_mass(self, m, ms, mf):
@@ -355,13 +386,18 @@ class NodeTwoPhase2D:
         self.momentums += momentums
         self.momentumf += momentumf
 
-    @ti.func   # notef
+    @ti.func
+    def _update_nodal_pressure_(self, pressure):
+        self.pressure += pressure
+
+    @ti.func
     def _compute_nodal_velocity(self, cutoff):
         if self.m > cutoff:
             self.momentum /= self.m
         if self.ms > cutoff:
             self.momentums /= self.ms
-        if self.mf > cutoff:  
+            self.pressure /= self.ms
+        if self.mf > cutoff:
             self.momentumf /= self.mf
 
     @ti.func
@@ -370,41 +406,63 @@ class NodeTwoPhase2D:
         self.forcef += forcef
 
     @ti.func
-    def _update_external_force(self, external_force, external_forcef):
+    def _update_nodal_dragforce(self, force):
+        self.drag += force
+
+    @ti.func
+    def _update_nodal_dragval(self, value):
+        self.dragval += value
+
+    @ti.func
+    def _update_external_force(self, external_force, external_forces, external_forcef):
         self.force += external_force
+        self.forces += external_forces
         self.forcef += external_forcef
 
     @ti.func
-    def _update_internal_force(self, internal_force, internal_forcef):
+    def _update_internal_force(self, internal_force, internal_forces, internal_forcef):
         self.force += internal_force
+        self.forces += internal_forces
         self.forcef += internal_forcef
 
-    @ti.func  # note
+    @ti.func
     def _compute_nodal_kinematic(self, damp, dt):
         unbalanced_force = self.force / self.m
-        velocity = self.momentum
-        for d in ti.static(range(2)):
-            if velocity[d] * unbalanced_force[d] > 0.: 
-                unbalanced_force[d] -= damp * ti.abs(unbalanced_force[d]) * sgn(velocity[d])
-        self.momentum += unbalanced_force * dt[None]
         self.force = unbalanced_force
+        self.momentum += unbalanced_force * dt[None]
 
     @ti.func
     def _compute_nodal_kinematic_fluid(self, damp, dt):
         unbalanced_force = self.forcef / self.mf
         velocity = self.momentumf
-        for d in ti.static(range(2)):
-            if velocity[d] * unbalanced_force[d] > 0.: 
+        for d in ti.static(range(3)):
+            if velocity[d] * unbalanced_force[d] > 0.0:
                 unbalanced_force[d] -= damp * ti.abs(unbalanced_force[d]) * sgn(velocity[d])
-        self.momentumf += unbalanced_force * dt[None]   # velocity
-        self.forcef = unbalanced_force   # acceleration
+        self.momentumf += unbalanced_force * dt[None]
+        self.forcef = unbalanced_force
 
     @ti.func
     def _compute_nodal_kinematic_solid(self, damp, dt):
         unbalanced_force = (self.force - self.forcef * self.mf) / self.ms
-        forces = unbalanced_force # - damp * unbalanced_force.norm() * vsign(self.momentum)
+        forces = unbalanced_force
         self.momentums += forces * dt[None]
         self.forces = forces
+
+    @ti.func
+    def _compute_nodal_kinematic_semi(self, damp, dt, forces, forcef):
+        self.forces = forces
+        self.forcef = forcef
+        self.momentums += forces * dt[None]
+        self.momentumf += forcef * dt[None]
+
+    @ti.func
+    def _correct_nodal_kinematic_semi(self, dt, forces, forcef):
+        self.momentums += forces * dt[None]
+        self.momentumf += forcef * dt[None]
+
+    @ti.func
+    def _correct_nodal_kinematic_u_p(self, dt, force):
+        self.momentum += force * dt[None]
 
     @ti.func
     def _update_nodal_kinematic(self):
@@ -416,28 +474,240 @@ class NodeTwoPhase2D:
         self.momentumf /= self.mf
 
     @ti.func
+    def _update_nodal_dpressure(self, dpressure):
+        self.dpressure = dpressure
+
+    @ti.func
     def velocity_constraint(self, dirs, prescribed_velocity):
-        self.momentum[dirs] = prescribed_velocity 
-        self.momentums[dirs] = prescribed_velocity 
-        self.momentumf[dirs] = prescribed_velocity 
-        self.force[dirs] = 0.
-        self.forces[dirs] = 0.
-        self.forcef[dirs] = 0.
+        self.momentum[dirs] = prescribed_velocity
+        self.momentums[dirs] = prescribed_velocity
+        self.momentumf[dirs] = prescribed_velocity
+        self.force[dirs] = 0.0
+        self.forces[dirs] = 0.0
+        self.forcef[dirs] = 0.0
+        self.extra_stabilize[dirs] = 0.0
+
+    @ti.func
+    def force_constraint(self, dirs):
+        self.force[dirs] = 0.0
+        self.forces[dirs] = 0.0
+        self.forcef[dirs] = 0.0
 
     @ti.func
     def rigid_body_velocity_constraint(self, dirs):
-        pass
+        self.grad_domain[dirs] = 0.0
 
     @ti.func
     def reflection_constraint(self, dirs, signs):
         pre_velocity = self.momentum[dirs]
         if pre_velocity * signs > 0:
-            self.momentum[dirs] = 0.
-            self.force[dirs] = 0.
+            self.momentum[dirs] = 0.0
+            self.force[dirs] = 0.0
 
     @ti.func
     def rigid_body_reflection_constraint(self, dirs, signs):
-        pass
+        if self.grad_domain[dirs] * signs > 0.0:
+            self.grad_domain[dirs] = 0.0
+
+
+@ti.dataclass
+class NodeTwoPhase2D:
+    dof: int
+    m: float
+    ms: float
+    mf: float
+    # x: vec2f
+    drag: vec2f
+    force: vec2f
+    forces: vec2f
+    forcef: vec2f
+    momentum: vec2f
+    momentums: vec2f
+    momentumf: vec2f
+    pressure: float  # semi_u_p
+    dpressure: float  # semi
+    dragval: float
+    porosity: float
+    weight: float
+    contact_force_s: vec2f  # contact
+    contact_force_f: vec2f
+    extra_stabilize: vec2f  # semi_stabilization
+    grad_domain: vec2f
+
+    @ti.func
+    def _tlgrid_reset(self):
+        self.momentum = ZEROVEC2f
+        self.momentums = ZEROVEC2f
+        self.momentumf = ZEROVEC2f
+        self.drag = ZEROVEC2f
+        self.force = ZEROVEC2f
+        self.forces = ZEROVEC2f
+        self.forcef = ZEROVEC2f
+        self.contact_force_s = ZEROVEC2f
+        self.contact_force_f = ZEROVEC2f
+        self.grad_domain = ZEROVEC2f
+
+    @ti.func
+    def _grid_reset(self):
+        self.m = 0.0
+        self.ms = 0.0
+        self.mf = 0.0
+        self.drag = ZEROVEC2f
+        self.momentum = ZEROVEC2f
+        self.momentums = ZEROVEC2f
+        self.momentumf = ZEROVEC2f
+        self.force = ZEROVEC2f
+        self.forces = ZEROVEC2f
+        self.forcef = ZEROVEC2f
+        self.dof = -1
+        self.pressure = 0.0
+        self.dpressure = 0.0
+        self.dragval = 0.0
+        self.porosity = 0.0
+        self.weight = 0.0
+        self.contact_force_s = ZEROVEC2f
+        self.contact_force_f = ZEROVEC2f
+        # self.extra_stabilize = ZEROVEC2f
+        self.grad_domain = ZEROVEC2f
+
+    @ti.func
+    def _set_dofs(self, rowth):
+        self.dof = int(rowth)
+
+    @ti.func
+    def _update_nodal_mass(self, m, ms, mf):
+        self.m += m
+        self.ms += ms
+        self.mf += mf
+
+    @ti.func
+    def _update_nodal_momentum(self, momentum, momentums, momentumf):
+        self.momentum += momentum
+        self.momentums += momentums
+        self.momentumf += momentumf
+
+    @ti.func
+    def _update_nodal_pressure_(self, pressure):
+        self.pressure += pressure
+
+    @ti.func  # notef
+    def _compute_nodal_velocity(self, cutoff):
+        if self.m > cutoff:
+            self.momentum /= self.m
+        if self.ms > cutoff:
+            self.momentums /= self.ms
+            self.pressure /= self.ms
+        if self.mf > cutoff:
+            self.momentumf /= self.mf
+
+    @ti.func
+    def _update_nodal_force(self, force, forcef):
+        self.force += force
+        self.forcef += forcef
+
+    @ti.func
+    def _update_nodal_dragforce(self, force):
+        self.drag += force
+
+    @ti.func
+    def _update_nodal_dragval(self, value):
+        self.dragval += value
+
+    @ti.func
+    def _update_external_force(self, external_force, external_forces, external_forcef):
+        self.force += external_force
+        self.forces += external_forces
+        self.forcef += external_forcef
+
+    @ti.func
+    def _update_internal_force(self, internal_force, internal_forces, internal_forcef):
+        self.force += internal_force
+        self.forces += internal_forces
+        self.forcef += internal_forcef
+
+    @ti.func  # note
+    def _compute_nodal_kinematic(self, damp, dt):
+        unbalanced_force = self.force / self.m
+        self.force = unbalanced_force
+        self.momentum += unbalanced_force * dt[None]
+
+    @ti.func
+    def _compute_nodal_kinematic_fluid(self, damp, dt):
+        unbalanced_force = self.forcef / self.mf
+        velocity = self.momentumf
+        for d in ti.static(range(2)):
+            if velocity[d] * unbalanced_force[d] > 0.0:
+                unbalanced_force[d] -= damp * ti.abs(unbalanced_force[d]) * sgn(velocity[d])
+        self.momentumf += unbalanced_force * dt[None]  # velocity
+        self.forcef = unbalanced_force  # acceleration
+
+    @ti.func
+    def _compute_nodal_kinematic_solid(self, damp, dt):
+        unbalanced_force = (self.force - self.forcef * self.mf) / self.ms
+        forces = unbalanced_force  # - damp * unbalanced_force.norm() * vsign(self.momentum)
+        self.momentums += forces * dt[None]
+        self.forces = forces
+
+    @ti.func
+    def _compute_nodal_kinematic_semi(self, damp, dt, forces, forcef):
+        self.forces = forces
+        self.forcef = forcef
+        self.momentums += forces * dt[None]
+        self.momentumf += forcef * dt[None]
+
+    @ti.func
+    def _correct_nodal_kinematic_semi(self, dt, forces, forcef):
+        self.momentums += forces * dt[None]
+        self.momentumf += forcef * dt[None]
+
+    @ti.func
+    def _correct_nodal_kinematic_u_p(self, dt, force):
+        self.momentum += force * dt[None]
+
+    @ti.func
+    def _update_nodal_kinematic(self):
+        self.force /= self.m
+        self.forces /= self.ms
+        self.forcef /= self.mf
+        self.momentum /= self.m
+        self.momentums /= self.ms
+        self.momentumf /= self.mf
+
+    @ti.func
+    def _update_nodal_dpressure(self, dpressure):
+        self.dpressure = dpressure
+
+    @ti.func
+    def velocity_constraint(self, dirs, prescribed_velocity):
+        self.momentum[dirs] = prescribed_velocity
+        self.momentums[dirs] = prescribed_velocity
+        self.momentumf[dirs] = prescribed_velocity
+        self.force[dirs] = 0.0
+        self.forces[dirs] = 0.0
+        self.forcef[dirs] = 0.0
+        self.extra_stabilize[dirs] = 0.0
+
+    @ti.func
+    def force_constraint(self, dirs):
+        self.force[dirs] = 0.0
+        self.forces[dirs] = 0.0
+        self.forcef[dirs] = 0.0
+
+    @ti.func
+    def rigid_body_velocity_constraint(self, dirs):
+        self.grad_domain[dirs] = 0.0
+
+    @ti.func
+    def reflection_constraint(self, dirs, signs):
+        pre_velocity = self.momentum[dirs]
+        if pre_velocity * signs > 0:
+            self.momentum[dirs] = 0.0
+            self.force[dirs] = 0.0
+
+    @ti.func
+    def rigid_body_reflection_constraint(self, dirs, signs):
+        if self.grad_domain[dirs] * signs > 0.0:
+            self.grad_domain[dirs] = 0.0
 
     # @ti.func
     # def friction_constraint(self, mu, norm, dt):
@@ -462,8 +732,41 @@ class NodeTwoPhase2D:
     #             self.momentum = ZEROVEC2f
 
     @ti.func
-    def rigid_friction_constraint(self, dirs, signs):
+    def rigid_friction_constraint(self, norm):
         pass
+
+    @ti.func
+    def _update_nodal_grad_domain(self, grad_domain):
+        self.grad_domain += grad_domain
+
+    @ti.func
+    def _update_contact_force_fluid(self, force):
+        self.contact_force_f += force
+
+    @ti.func
+    def _contact_force_assemble_fluid(self, dt):
+        contact_acceleration = self.contact_force_f / self.mf
+        self.forcef += contact_acceleration
+        self.momentumf += contact_acceleration * dt[None]
+
+    @ti.func
+    def _update_contact_force_solid(self, force):
+        self.contact_force_s += force
+
+    @ti.func
+    def _contact_force_assemble_solid(self, dt):
+        contact_acceleration = self.contact_force_s / self.ms
+        self.forces += contact_acceleration
+        self.momentums += contact_acceleration * dt[None]
+
+    @ti.func
+    def _contact_force_assemble_mixture(self, dt):
+        contact_accelerationf = self.contact_force_f / self.mf
+        self.forcef += contact_accelerationf
+        self.momentumf += contact_accelerationf * dt[None]
+        contact_accelerations = self.contact_force_s / self.ms
+        self.forces += contact_accelerations
+        self.momentums += contact_accelerations * dt[None]
 
 
 @ti.dataclass
@@ -472,7 +775,7 @@ class ExtraNode:
 
     @ti.func
     def _grid_reset(self):
-        self.vol = 0.
+        self.vol = 0.0
 
     @ti.func
     def _update_nodal_volume(self, volume):
@@ -489,10 +792,10 @@ class Nodes:
     def _tlgrid_reset(self):
         self.momentum = ZEROVEC3f
         self.force = ZEROVEC3f
-    
+
     @ti.func
     def _grid_reset(self):
-        self.m = 0.
+        self.m = 0.0
         self.momentum = ZEROVEC3f
         self.force = ZEROVEC3f
 
@@ -522,14 +825,14 @@ class Nodes:
 
     @ti.func
     def _compute_nodal_kinematic(self, damp, dt):
-        unbalanced_force = self.force 
+        unbalanced_force = self.force
         velocity = self.momentum
         for d in ti.static(range(3)):
-            if velocity[d] * unbalanced_force[d] > 0.: 
+            if velocity[d] * unbalanced_force[d] > 0.0:
                 unbalanced_force[d] -= damp * ti.abs(unbalanced_force[d]) * sgn(velocity[d])
         acceleration = unbalanced_force / self.m
         self.momentum += acceleration * dt[None]
-        self.force = acceleration 
+        self.force = acceleration
 
     @ti.func
     def _update_nodal_kinematic(self):
@@ -543,11 +846,11 @@ class Nodes:
     @ti.func
     def contact_reflection_constraint(self, dirs, signs):
         pass
-        
+
     @ti.func
     def velocity_constraint(self, dirs, prescribed_velocity):
-        self.momentum[dirs] = prescribed_velocity 
-        self.force[dirs] = 0.
+        self.momentum[dirs] = prescribed_velocity
+        self.force[dirs] = 0.0
 
     @ti.func
     def rigid_body_velocity_constraint(self, dirs):
@@ -557,8 +860,8 @@ class Nodes:
     def reflection_constraint(self, dirs, signs):
         pre_velocity = self.momentum[dirs]
         if pre_velocity * signs > 0:
-            self.momentum[dirs] = 0.
-            self.force[dirs] = 0.
+            self.momentum[dirs] = 0.0
+            self.force[dirs] = 0.0
 
     @ti.func
     def rigid_body_reflection_constraint(self, dirs, signs):
@@ -568,17 +871,19 @@ class Nodes:
     def friction_constraint(self, mu, dirs_n, signs, dt):
         velocity = self.momentum
         acceleration = self.force - velocity * dt[None]
-        dir = mat3x2([1, 2], [0, 2], [0, 1])
+        dir = ti.Matrix([[1, 2], [0, 2], [0, 1]], dt=int)
         dir_t0 = dir[dirs_n, 0]
         dir_t1 = dir[dirs_n, 1]
 
         acc_n = acceleration[dirs_n]
         acc_t = ti.sqrt(acceleration[dir_t0] * acceleration[dir_t0] + acceleration[dir_t1] * acceleration[dir_t1])
         vel_t = ti.sqrt(velocity[dir_t0] * velocity[dir_t0] + velocity[dir_t1] * velocity[dir_t1])
-        if acc_n * signs > 0.0:                                                                         # dynamic friction
+        if acc_n * signs > 0.0:  # dynamic friction
             if vel_t != 0.0:
-                vel_net = vec2f(0., 0.)
-                vel_net[0] = velocity[dir_t0] + acceleration[dir_t0] * dt[None]                        # friction is applied opposite to the vel_net
+                vel_net = vec2f(0.0, 0.0)
+                vel_net[0] = (
+                    velocity[dir_t0] + acceleration[dir_t0] * dt[None]
+                )  # friction is applied opposite to the vel_net
                 vel_net[1] = velocity[dir_t1] + acceleration[dir_t1] * dt[None]
                 vel_net_t = ti.sqrt(vel_net[0] * vel_net[0] + vel_net[1] * vel_net[1])
                 vel_fricion = mu * abs(acc_n) * dt[None]
@@ -587,10 +892,10 @@ class Nodes:
                     acceleration[dir_t0] = -velocity[dir_t0] / dt[None]
                     acceleration[dir_t1] = -velocity[dir_t1] / dt[None]
                 else:
-                    acceleration[dir_t0] -= mu * abs[acc_n] * (vel_net[0] / vel_net_t)
-                    acceleration[dir_t1] -= mu * abs[acc_n] * (vel_net[1] / vel_net_t)
-            else:                                                                                     # static friction
-                if acc_t <= mu * abs(acc_n):                                                          # since acc_t is positive
+                    acceleration[dir_t0] -= mu * abs(acc_n) * (vel_net[0] / vel_net_t)
+                    acceleration[dir_t1] -= mu * abs(acc_n) * (vel_net[1] / vel_net_t)
+            else:  # static friction
+                if acc_t <= mu * abs(acc_n):  # since acc_t is positive
                     acceleration[dir_t0] = 0
                     acceleration[dir_t1] = 0
                 else:
@@ -599,7 +904,7 @@ class Nodes:
                     acceleration[dir_t1] -= mu * abs(acc_n) * (acceleration[dir_t1] / acc_t)
             self.momentum += acceleration * dt[None]
             self.force = acceleration
-            
+
     @ti.func
     def rigid_friction_constraint(self, dirs, signs):
         pass
@@ -615,10 +920,10 @@ class Nodes2D:
     def _tlgrid_reset(self):
         self.momentum = ZEROVEC2f
         self.force = ZEROVEC2f
-    
+
     @ti.func
     def _grid_reset(self):
-        self.m = 0.
+        self.m = 0.0
         self.momentum = ZEROVEC2f
         self.force = ZEROVEC2f
 
@@ -648,14 +953,14 @@ class Nodes2D:
 
     @ti.func
     def _compute_nodal_kinematic(self, damp, dt):
-        unbalanced_force = self.force 
+        unbalanced_force = self.force
         velocity = self.momentum
         for d in ti.static(range(2)):
-            if velocity[d] * unbalanced_force[d] > 0.: 
+            if velocity[d] * unbalanced_force[d] > 0.0:
                 unbalanced_force[d] -= damp * ti.abs(unbalanced_force[d]) * sgn(velocity[d])
         acceleration = unbalanced_force / self.m
         self.momentum += acceleration * dt[None]
-        self.force = acceleration 
+        self.force = acceleration
 
     @ti.func
     def _update_nodal_kinematic(self):
@@ -669,11 +974,11 @@ class Nodes2D:
     @ti.func
     def contact_reflection_constraint(self, dirs, signs):
         pass
-        
+
     @ti.func
     def velocity_constraint(self, dirs, prescribed_velocity):
-        self.momentum[dirs] = prescribed_velocity 
-        self.force[dirs] = 0.
+        self.momentum[dirs] = prescribed_velocity
+        self.force[dirs] = 0.0
 
     @ti.func
     def rigid_body_velocity_constraint(self, dirs):
@@ -683,8 +988,8 @@ class Nodes2D:
     def reflection_constraint(self, dirs, signs):
         pre_velocity = self.momentum[dirs]
         if pre_velocity * signs > 0:
-            self.momentum[dirs] = 0.
-            self.force[dirs] = 0.
+            self.momentum[dirs] = 0.0
+            self.force[dirs] = 0.0
 
     @ti.func
     def rigid_body_reflection_constraint(self, dirs, signs):
@@ -699,25 +1004,26 @@ class Nodes2D:
         acc_n = acceleration[dirs_n]
         acc_t = acceleration[dir_t]
         vel_t = velocity[dir_t]
-        if acc_n * signs > 0.0:                                                                        # dynamic friction
+        if acc_n * signs > 0.0:  # dynamic friction
             if vel_t != 0.0:
-                vel_net = velocity[dir_t] + acc_t * dt[None]                                           # friction is applied opposite to the vel_net
+                vel_net = velocity[dir_t] + acc_t * dt[None]  # friction is applied opposite to the vel_net
                 vel_frictional = dt[None] * mu * abs(acc_n)
                 if abs(vel_net) <= vel_frictional:
                     acc_t = -vel_t / dt[None]
                 else:
-                    acc_t -= sign(vel_net) * mu * abs(acc_n)
-            else:                                                                                     # static friction
-                if abs(acc_t) <= mu * abs(acc_n):                                                     # since acc_t is positive
-                    acc_t = 0.
+                    acc_t -= sgn(vel_net) * mu * abs(acc_n)
+            else:  # static friction
+                if abs(acc_t) <= mu * abs(acc_n):  # since acc_t is positive
+                    acc_t = 0.0
                 else:
-                    acc_t -= sign(acc_t) * mu * abs(acc_n)
+                    acc_t -= sgn(acc_t) * mu * abs(acc_n)
             self.momentum += vec2f(acc_n, acc_t) * dt[None]
             self.force[dir_t] = acc_t
-            
+
     @ti.func
     def rigid_friction_constraint(self, dirs, signs):
         pass
+
 
 @ti.dataclass
 class IncompressibleNodes2D:
@@ -725,10 +1031,10 @@ class IncompressibleNodes2D:
     force: vec2f
     momentum: vec2f
     vbar: vec2f
-    
+
     @ti.func
     def _grid_reset(self):
-        self.m = 0.
+        self.m = 0.0
         self.momentum = ZEROVEC2f
         self.vbar = ZEROVEC2f
         self.force = ZEROVEC2f
@@ -753,8 +1059,8 @@ class IncompressibleNodes2D:
 
     @ti.func
     def velocity_constraint(self, dirs, prescribed_velocity):
-        self.momentum[dirs] = prescribed_velocity 
-        self.force[dirs] = 0.
+        self.momentum[dirs] = prescribed_velocity
+        self.force[dirs] = 0.0
 
     @ti.func
     def rigid_body_velocity_constraint(self, dirs):
@@ -764,12 +1070,13 @@ class IncompressibleNodes2D:
     def reflection_constraint(self, dirs, signs):
         pre_velocity = self.momentum[dirs]
         if pre_velocity * signs > 0:
-            self.momentum[dirs] = 0.
-            self.force[dirs] = 0.
+            self.momentum[dirs] = 0.0
+            self.force[dirs] = 0.0
 
     @ti.func
     def rigid_body_reflection_constraint(self, dirs, signs):
         pass
+
 
 @ti.dataclass
 class IncompressibleNodes3D:
@@ -777,10 +1084,10 @@ class IncompressibleNodes3D:
     force: vec3f
     momentum: vec3f
     vbar: vec3f
-    
+
     @ti.func
     def _grid_reset(self):
-        self.m = 0.
+        self.m = 0.0
         self.vbar = ZEROVEC3f
         self.momentum = ZEROVEC3f
         self.force = ZEROVEC3f
@@ -805,8 +1112,8 @@ class IncompressibleNodes3D:
 
     @ti.func
     def velocity_constraint(self, dirs, prescribed_velocity):
-        self.momentum[dirs] = prescribed_velocity 
-        self.force[dirs] = 0.
+        self.momentum[dirs] = prescribed_velocity
+        self.force[dirs] = 0.0
 
     @ti.func
     def rigid_body_velocity_constraint(self, dirs):
@@ -816,12 +1123,13 @@ class IncompressibleNodes3D:
     def reflection_constraint(self, dirs, signs):
         pre_velocity = self.momentum[dirs]
         if pre_velocity * signs > 0:
-            self.momentum[dirs] = 0.
-            self.force[dirs] = 0.
+            self.momentum[dirs] = 0.0
+            self.force[dirs] = 0.0
 
     @ti.func
     def rigid_body_reflection_constraint(self, dirs, signs):
         pass
+
 
 @ti.dataclass
 class ImplicitNodes:
@@ -834,7 +1142,7 @@ class ImplicitNodes:
 
     @ti.func
     def _grid_reset(self):
-        self.m = 0.
+        self.m = 0.0
         self.momentum = ZEROVEC3f
         self.ext_force = ZEROVEC3f
         self.inertia = ZEROVEC3f
@@ -880,8 +1188,16 @@ class ImplicitNodes:
     def _update_nodal_kinematic_newmark(self, beta, gamma, dt):
         previous_velocity = self.momentum
         previous_acceleration = self.inertia
-        self.momentum = gamma / beta / dt[None] * self.displacement - (gamma / beta - 1.) * previous_velocity - 0.5 * dt[None] * (gamma / beta - 2.) * previous_acceleration
-        self.inertia = 1. / beta / dt[None] / dt[None] * self.displacement - 1. / beta / dt[None] * previous_velocity - (0.5 / beta - 1.) * previous_acceleration
+        self.momentum = (
+            gamma / beta / dt[None] * self.displacement
+            - (gamma / beta - 1.0) * previous_velocity
+            - 0.5 * dt[None] * (gamma / beta - 2.0) * previous_acceleration
+        )
+        self.inertia = (
+            1.0 / beta / dt[None] / dt[None] * self.displacement
+            - 1.0 / beta / dt[None] * previous_velocity
+            - (0.5 / beta - 1.0) * previous_acceleration
+        )
 
     @ti.func
     def _update_nodal_disp(self, disp):
@@ -899,7 +1215,7 @@ class ImplicitNodes2D:
 
     @ti.func
     def _grid_reset(self):
-        self.m = 0.
+        self.m = 0.0
         self.momentum = ZEROVEC2f
         self.ext_force = ZEROVEC2f
         self.inertia = ZEROVEC2f
@@ -945,8 +1261,16 @@ class ImplicitNodes2D:
     def _update_nodal_kinematic_newmark(self, beta, gamma, dt):
         previous_velocity = self.momentum
         previous_acceleration = self.inertia
-        self.momentum = gamma / beta / dt[None] * self.displacement - (gamma / beta - 1.) * previous_velocity - 0.5 * dt[None] * (gamma / beta - 2.) * previous_acceleration
-        self.inertia = 1. / beta / dt[None] / dt[None] * self.displacement - 1. / beta / dt[None] * previous_velocity - (0.5 / beta - 1.) * previous_acceleration
+        self.momentum = (
+            gamma / beta / dt[None] * self.displacement
+            - (gamma / beta - 1.0) * previous_velocity
+            - 0.5 * dt[None] * (gamma / beta - 2.0) * previous_acceleration
+        )
+        self.inertia = (
+            1.0 / beta / dt[None] / dt[None] * self.displacement
+            - 1.0 / beta / dt[None] * previous_velocity
+            - (0.5 / beta - 1.0) * previous_acceleration
+        )
 
     @ti.func
     def _update_nodal_disp(self, disp):

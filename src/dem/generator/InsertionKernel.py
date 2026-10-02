@@ -1,6 +1,7 @@
 import taichi as ti
 
 from src.utils.constants import PI
+from src.utils.GeometryFunction import intersectionOBBs
 from src.utils.Quaternion import ThetaToRotationMatrix, RandomGenerator, SetFromEuler, SetToRotate
 from src.utils.TypeDefination import vec3f, vec2f, vec2i, vec4f, vec3u8, vec3i
 from src.utils.ScalarFunction import vectorize_id, linearize3D, equal_to
@@ -75,8 +76,8 @@ def create_bounding_sphere_(rigidNum, scale, com_pos, bounding_sphere, r_bound, 
 @ti.func
 def create_bounding_box(rigidNum, scale, bounding_box, minBox, maxBox, gridNum, space, gnum, extent):
     bounding_box[rigidNum]._set_bounding_box(minBox, maxBox)
-    bounding_box[rigidNum]._scale(scale, vec3f(0, 0, 0))
-    bounding_box[rigidNum]._add_grid(gridNum, scale * space, gnum, scale, extent)
+    bounding_box[rigidNum]._add_grid(gridNum, space, gnum, scale, extent)
+    bounding_box[rigidNum]._scale(vec3f(0, 0, 0))
 
 @ti.func
 def create_deformable_grids_(gridNum, gridSum, grid, scale, distance_fields: ti.types.ndarray()):
@@ -94,7 +95,7 @@ def create_deformable_surface(rigidNum, surfaceNum, surfaceSum, surface_node, sc
 
 @ti.kernel
 def kernel_create_level_set_rigid_body_(rigid_body: ti.template(), bounding_box: ti.template(), bounding_sphere: ti.template(), master: ti.template(), material: ti.template(), rigidNum: int, gridNum: int, verticeNum: int, surfaceNum: int, minBox: ti.types.vector(3, float), 
-                                        maxBox: ti.types.vector(3, float), r_bound: float, x_bound: ti.types.vector(3, float), surfaceSum: int, space: float, gnum: ti.types.vector(3, int), extent: int, scale_factor: float, inertia: ti.types.vector(3, float), 
+                                        maxBox: ti.types.vector(3, float), r_bound: float, x_bound: ti.types.vector(3, float), surfaceSum: int, reference_surface_area: float, space: float, gnum: ti.types.vector(3, int), extent: int, scale_factor: float, inertia: ti.types.vector(3, float), 
                                         com_pos: ti.types.vector(3, float), equiv_rad: float, get_orientation: ti.template(), groupID: int, matID: int, init_v: ti.types.vector(3, float), init_w: ti.types.vector(3, float), is_fix: ti.types.vector(3, int)):
     density = material[matID]._get_density()
     mass = 4./3. * PI * equiv_rad * equiv_rad * equiv_rad
@@ -105,6 +106,7 @@ def kernel_create_level_set_rigid_body_(rigid_body: ti.template(), bounding_box:
     
     create_bounding_sphere_(rigidNum, scale_factor, com_pos, bounding_sphere, r_bound, rotation_matrix @ x_bound)
     create_bounding_box(rigidNum, scale_factor, bounding_box, minBox, maxBox, gridNum, space, gnum, extent)
+    bounding_box[rigidNum]._set_reference_surface_area(reference_surface_area)
     for i in range(surfaceSum):
         master[i + surfaceNum] = rigidNum
 
@@ -122,7 +124,6 @@ def kernel_create_implicit_surface_rigid_body_(rigid_body: ti.template(), boundi
     orientation = get_orientation()
     q = SetFromEuler(*orientation)
     rotation_matrix = SetToRotate(q)
-    print(SetToRotate(q))
     
     create_bounding_sphere_(rigidNum, scale_factor, com_pos, bounding_sphere, r_bound, rotation_matrix @ x_bound)
     rigid_body[rigidNum]._add_body_attribute(scale_factor, com_pos, mass, equiv_rad, inv_inertia, q)
@@ -252,8 +253,9 @@ def kernel_add_multisphere_files(particle: ti.template(), clump: ti.template(), 
 
 @ti.kernel
 def kernel_add_levelset_packing(rigid_body: ti.template(), bounding_box: ti.template(), bounding_sphere: ti.template(), master: ti.template(), material: ti.template(), rigidNum: int, gridNum: int, surfaceNum: int, verticeNum: int, minBox: ti.types.vector(3, float), 
-                                maxBox: ti.types.vector(3, float), r_bound: float, x_bound: ti.types.vector(3, float), surfaceSum: int, space: float, gnum: ti.types.vector(3, int), extent: int, inertia: ti.types.vector(3, float), eqradius: float, 
-                                groupID: int, matID: int, init_v: ti.types.vector(3, float), init_w: ti.types.vector(3, float), is_fix: ti.types.vector(3, int), start_body_num: int, end_body_num: int, coords: ti.template(), radii: ti.template(), orients: ti.template()):
+                                maxBox: ti.types.vector(3, float), r_bound: float, x_bound: ti.types.vector(3, float), surfaceSum: int, reference_surface_area: float, space: float, gnum: ti.types.vector(3, int), extent: int, inertia: ti.types.vector(3, float), eqradius: float, 
+                                groupID: int, matID: int, init_v: ti.types.vector(3, float), init_w: ti.types.vector(3, float), is_fix: ti.types.vector(3, int), start_body_num: int, end_body_num: int, coords: ti.template(), radii: ti.template(), orients: ti.template(),
+                                coordinates_are_mass_centers: ti.template()):
     density = material[matID]._get_density()
     for nb in range(end_body_num - start_body_num):
         bounding_x, bounding_r = coords[start_body_num + nb], radii[start_body_num + nb] 
@@ -261,12 +263,16 @@ def kernel_add_levelset_packing(rigid_body: ti.template(), bounding_box: ti.temp
         orientation = orients[start_body_num + nb]
         q = SetFromEuler(*orientation)
         rotation_matrix = SetToRotate(q)
-        com_pos, equiv_rad = bounding_x - scale_factor * rotation_matrix @ x_bound, scale_factor * eqradius
+        com_pos = bounding_x
+        if ti.static(not coordinates_are_mass_centers):
+            com_pos = bounding_x - scale_factor * rotation_matrix @ x_bound
+        equiv_rad = scale_factor * eqradius
         mass = 4./3. * PI * equiv_rad * equiv_rad * equiv_rad
         inv_inertia = 1. / (inertia * scale_factor ** 5)
 
         create_bounding_sphere_(rigidNum + nb, scale_factor, com_pos, bounding_sphere, r_bound, rotation_matrix @ x_bound)
         create_bounding_box(rigidNum + nb, scale_factor, bounding_box, minBox, maxBox, gridNum, space, gnum, extent)
+        bounding_box[rigidNum + nb]._set_reference_surface_area(reference_surface_area)
         for i in range(surfaceSum):
             master[i + surfaceNum + nb * surfaceSum] = rigidNum + nb
 
@@ -296,7 +302,7 @@ def kernel_add_implicit_surface_packing(rigid_body: ti.template(), bounding_sphe
 
 @ti.kernel
 def kernel_add_levelset_files(rigid_body: ti.template(), bounding_box: ti.template(), bounding_sphere: ti.template(), master: ti.template(), rigidNum: int, gridNum: int, surfaceNum: int, 
-                              r_bound: float, x_bound: ti.types.vector(3, float), minBox: ti.types.vector(3, float), maxBox: ti.types.vector(3, float), surfaceSum: int, inertia: ti.types.vector(3, float), eqradius: float, 
+                              r_bound: float, x_bound: ti.types.vector(3, float), minBox: ti.types.vector(3, float), maxBox: ti.types.vector(3, float), surfaceSum: int, reference_surface_area: float, inertia: ti.types.vector(3, float), eqradius: float, 
                               space: float, gnum: ti.types.vector(3, int), extent: int, body_num: int, coords: ti.types.ndarray(), radii: ti.types.ndarray(), orients: ti.types.ndarray()):
     for nb in range(body_num):
         bounding_x, bounding_r = vec3f([coords[nb, 0], coords[nb, 1], coords[nb, 2]]), radii[nb] 
@@ -310,6 +316,7 @@ def kernel_add_levelset_files(rigid_body: ti.template(), bounding_box: ti.templa
 
         create_bounding_sphere_(rigidNum + nb, scale_factor, com_pos, bounding_sphere, r_bound, rotation_matrix @ x_bound)
         create_bounding_box(rigidNum + nb, scale_factor, bounding_box, minBox, maxBox, gridNum, space, gnum, extent)
+        bounding_box[rigidNum + nb]._set_reference_surface_area(reference_surface_area)
         for i in range(surfaceSum):
             master[i + surfaceNum + nb * surfaceSum] = rigidNum + nb
 
@@ -477,14 +484,15 @@ def kernel_insert_first_sphere_(start_point: ti.types.vector(3, float), position
     insert_body_num[None] += 1
 
 @ti.kernel
-def kernel_sphere_poisson_sampling_(min_rad: float, max_rad: float, tries_default: int, expected_body_num: int, start_point: ti.types.vector(3, float), insert_body_num: ti.template(), insert_particle_in_neighbor: ti.template(), 
+def kernel_sphere_poisson_sampling_(radius_dist: ti.types.ndarray(), tries_default: int, expected_body_num: int, start_point: ti.types.vector(3, float), insert_body_num: ti.template(), insert_particle_in_neighbor: ti.template(), 
                                     sphere_coords: ti.template(), sphere_radii: ti.template(), cell_num: ti.types.vector(3, int), cell_size: float, position: ti.template(), radius: ti.template(), num_particle_in_cell: ti.template(), 
                                     particle_neighbor: ti.template(), check_in_domain: ti.template(), overlap: ti.template(), insert_particle: ti.template()):
     tries = 0
+    start_index = insert_body_num[None]
     while tries < insert_body_num[None] and tries < expected_body_num:
         source_x, source_rad = sphere_coords[tries], sphere_radii[tries]
         for _ in range(tries_default):
-            sphere_radius = min_rad + ti.random() * (max_rad - min_rad)
+            sphere_radius = radius_dist[insert_body_num[None] - start_index]
             u, v = ti.random(), ti.random()
             theta, phi = 2 * PI * u, ti.acos(2 * v - 1)
             randvector = vec3f([ti.sin(theta) * ti.sin(phi), ti.cos(theta) * ti.sin(phi), ti.cos(phi)]).normalized()
@@ -499,15 +507,55 @@ def kernel_sphere_poisson_sampling_(min_rad: float, max_rad: float, tries_defaul
                 insert_body_num[None] += 1
         tries += 1
 
+@ti.kernel
+def kernel_insert_first_rigid_(start_point: ti.types.vector(3, float), position: ti.types.vector(3, float), radius: float, insert_body_num: ti.template(), 
+                                insert_particle_in_neighbor: ti.template(), sphere_coords: ti.template(), sphere_radii: ti.template(), orients: ti.template(), cell_num: ti.types.vector(3, int), cell_size: float, 
+                                neighbor_position: ti.template(), neighbor_radius: ti.template(), orient: ti.template(), num_particle_in_cell: ti.template(), particle_neighbor: ti.template(), insert_particle: ti.template(), get_orientation: ti.template()):
+    ori = get_orientation()
+    sphere_coords[insert_body_num[None]] = position
+    sphere_radii[insert_body_num[None]] = radius
+    orients[insert_body_num[None]] = ori
+    insert_particle(cell_num, cell_size, position - start_point, radius, ori, insert_particle_in_neighbor, neighbor_position, neighbor_radius, orient, num_particle_in_cell, particle_neighbor)
+    insert_body_num[None] += 1
+
+@ti.kernel
+def kernel_rigid_poisson_sampling_(radius_dist: ti.types.ndarray(), tries_default: int, expected_body_num: int, start_point: ti.types.vector(3, float), insert_body_num: ti.template(), insert_particle_in_neighbor: ti.template(), 
+                                    sphere_coords: ti.template(), sphere_radii: ti.template(), orients: ti.template(), template_xbound: ti.types.vector(3, float), template_rbound: float, minBox: ti.types.vector(3, float), maxBox: ti.types.vector(3, float),
+                                    cell_num: ti.types.vector(3, int), cell_size: float, position: ti.template(), radius: ti.template(), orient: ti.template(), num_particle_in_cell: ti.template(),
+                                    particle_neighbor: ti.template(), check_in_domain: ti.template(), overlap: ti.template(), insert_particle: ti.template(), get_orientation: ti.template()):
+    tries = 0
+    start_index = insert_body_num[None]
+    while tries < insert_body_num[None] and tries < expected_body_num:
+        source_x, source_rad = sphere_coords[tries], sphere_radii[tries]
+        for _ in range(tries_default):
+            sphere_radius = radius_dist[insert_body_num[None] - start_index]
+            u, v = ti.random(), ti.random()
+            theta, phi = 2 * PI * u, ti.acos(2 * v - 1)
+            randvector = vec3f([ti.sin(theta) * ti.sin(phi), ti.cos(theta) * ti.sin(phi), ti.cos(phi)]).normalized()
+            offset = randvector * ((1 + ti.random()) * sphere_radius + source_rad)
+            sphere_coord = source_x + offset
+            ori = get_orientation()
+    
+            if check_in_domain(sphere_coord, sphere_radius) and insert_body_num[None] < expected_body_num and \
+               overlap(cell_num, cell_size, sphere_coord - start_point, sphere_radius, insert_particle_in_neighbor, position, radius, orient, num_particle_in_cell, particle_neighbor,
+                       template_xbound, template_rbound, minBox, maxBox, ori) == 0:
+                sphere_coords[insert_body_num[None]] = sphere_coord
+                sphere_radii[insert_body_num[None]] = sphere_radius
+                orients[insert_body_num[None]] = ori
+                insert_particle(cell_num, cell_size, sphere_coord - start_point, sphere_radius, ori, insert_particle_in_neighbor, position, radius, orient, num_particle_in_cell, particle_neighbor)
+                insert_body_num[None] += 1
+        tries += 1
+
 @ti.kernel                
-def kernel_sphere_generate_without_overlap_(min_rad: float, max_rad: float, tries_default: int, expected_body_num: int, start_point: ti.types.vector(3, float), region_size: ti.types.vector(3, float),
+def kernel_sphere_generate_without_overlap_(radius_dist: ti.types.ndarray(), tries_default: int, expected_body_num: int, start_point: ti.types.vector(3, float), region_size: ti.types.vector(3, float),
                                             insert_body_num: ti.template(), insert_particle_in_neighbor: ti.template(),  sphere_coords: ti.template(), sphere_radii: ti.template(), 
                                             cell_num: ti.types.vector(3, int), cell_size: float, position: ti.template(), radius: ti.template(), num_particle_in_cell: ti.template(), 
                                             particle_neighbor: ti.template(), check_in_domain: ti.template(), overlap: ti.template(), insert_particle: ti.template()):
+    start_index = insert_body_num[None]
     while insert_body_num[None] < expected_body_num:
         count = 0
         for _ in range(tries_default):
-            sphere_radius = min_rad + ti.random() * (max_rad - min_rad)
+            sphere_radius = radius_dist[insert_body_num[None] - start_index]
             offset = vec3f([ti.random(), ti.random(), ti.random()]) * region_size
             sphere_coord = start_point + offset 
             
@@ -523,14 +571,45 @@ def kernel_sphere_generate_without_overlap_(min_rad: float, max_rad: float, trie
             break
 
 @ti.kernel                
-def kernel_sphere_generate_lattice_(min_rad: float, max_rad: float, expected_body_num: int, position_distribution: ti.types.vector(3, int), start_point: ti.types.vector(3, float), valid: ti.template(),
+def kernel_rigid_generate_without_overlap_(radius_dist: ti.types.ndarray(), tries_default: int, expected_body_num: int, start_point: ti.types.vector(3, float), region_size: ti.types.vector(3, float),
+                                            insert_body_num: ti.template(), insert_particle_in_neighbor: ti.template(),  sphere_coords: ti.template(), sphere_radii: ti.template(), orients: ti.template(),
+                                            template_xbound: ti.types.vector(3, float), template_rbound: float, minBox: ti.types.vector(3, float), maxBox: ti.types.vector(3, float),
+                                            cell_num: ti.types.vector(3, int), cell_size: float, position: ti.template(), radius: ti.template(), orient: ti.template(), num_particle_in_cell: ti.template(), 
+                                            particle_neighbor: ti.template(), check_in_domain: ti.template(), overlap: ti.template(), insert_particle: ti.template(), get_orientation: ti.template()):
+    start_index = insert_body_num[None]
+    while insert_body_num[None] < expected_body_num:
+        count = 0
+        for _ in range(tries_default):
+            sphere_radius = radius_dist[insert_body_num[None] - start_index]
+            offset = vec3f([ti.random(), ti.random(), ti.random()]) * region_size
+            sphere_coord = start_point + offset 
+            ori = get_orientation()
+            
+            if check_in_domain(sphere_coord, sphere_radius) and \
+               overlap(cell_num, cell_size, sphere_coord - start_point, sphere_radius, insert_particle_in_neighbor, position, radius, orient, num_particle_in_cell, particle_neighbor, 
+                       template_xbound, template_rbound, minBox, maxBox, ori) == 0: 
+                sphere_coords[insert_body_num[None]] = sphere_coord
+                sphere_radii[insert_body_num[None]] = sphere_radius
+                orients[insert_body_num[None]] = ori
+                insert_particle(cell_num, cell_size, sphere_coord - start_point, sphere_radius, ori, insert_particle_in_neighbor, position, radius, orient, num_particle_in_cell, particle_neighbor)
+                insert_body_num[None] += 1
+                break
+            count += 1
+        if count == tries_default:
+            break
+
+@ti.kernel                
+def kernel_sphere_generate_lattice_(max_rad: float, radius_dist: ti.types.ndarray(), expected_body_num: int, available_num: int, position_distribution: ti.types.vector(3, int), start_point: ti.types.vector(3, float), valid: ti.template(),
                                     insert_body_num: ti.template(), insert_particle_in_neighbor: ti.template(),  sphere_coords: ti.template(), sphere_radii: ti.template(), 
                                     cell_num: ti.types.vector(3, int), cell_size: float, position: ti.template(), radius: ti.template(), num_particle_in_cell: ti.template(), 
                                     particle_neighbor: ti.template(), check_in_domain: ti.template(), overlap: ti.template(), insert_particle: ti.template()):
     tries = insert_body_num[None]
+    start_index = insert_body_num[None]
+    target_num = expected_body_num - start_index
     while tries < expected_body_num:
-        sphere_radius = min_rad + ti.random() * (max_rad - min_rad)
-        randomID = expected_body_num - insert_body_num[None] - 1
+        sample_id = tries - start_index
+        sphere_radius = radius_dist[sample_id]
+        randomID = ti.min(available_num - 1, int((float(sample_id) + 0.5) * float(available_num) / float(target_num)))
         offset = vec3f([ti.random(), ti.random(), ti.random()]) * (max_rad - sphere_radius)
         sphere_coord = start_point + (vec3f(vectorize_id(valid[randomID], position_distribution)) + 0.5) * 2. * max_rad + offset
         if check_in_domain(sphere_coord, sphere_radius):
@@ -538,6 +617,33 @@ def kernel_sphere_generate_lattice_(min_rad: float, max_rad: float, expected_bod
                 sphere_coords[insert_body_num[None]] = sphere_coord
                 sphere_radii[insert_body_num[None]] = sphere_radius
                 insert_particle(cell_num, cell_size, sphere_coord - start_point, sphere_radius, insert_particle_in_neighbor, position, radius, num_particle_in_cell, particle_neighbor)
+                insert_body_num[None] += 1
+        valid[randomID] = -1
+        tries += 1
+
+@ti.kernel
+def kernel_rigid_generate_lattice_(max_rad: float, radius_dist: ti.types.ndarray(), expected_body_num: int, available_num: int, position_distribution: ti.types.vector(3, int), start_point: ti.types.vector(3, float), valid: ti.template(),
+                                   insert_body_num: ti.template(), insert_particle_in_neighbor: ti.template(), sphere_coords: ti.template(), sphere_radii: ti.template(), orients: ti.template(),
+                                   template_xbound: ti.types.vector(3, float), template_rbound: float, minBox: ti.types.vector(3, float), maxBox: ti.types.vector(3, float),
+                                   cell_num: ti.types.vector(3, int), cell_size: float, position: ti.template(), radius: ti.template(), orient: ti.template(), num_particle_in_cell: ti.template(), 
+                                   particle_neighbor: ti.template(), check_in_domain: ti.template(), overlap: ti.template(), insert_particle: ti.template(), get_orientation: ti.template()):
+    tries = insert_body_num[None]
+    start_index = insert_body_num[None]
+    target_num = expected_body_num - start_index
+    while tries < expected_body_num:
+        sample_id = tries - start_index
+        sphere_radius = radius_dist[sample_id]
+        randomID = ti.min(available_num - 1, int((float(sample_id) + 0.5) * float(available_num) / float(target_num)))
+        offset = vec3f([ti.random(), ti.random(), ti.random()]) * (max_rad - sphere_radius)
+        sphere_coord = start_point + (vec3f(vectorize_id(valid[randomID], position_distribution)) + 0.5) * 2. * max_rad + offset
+        ori = get_orientation()
+        if check_in_domain(sphere_coord, sphere_radius):
+            if overlap(cell_num, cell_size, sphere_coord - start_point, sphere_radius, insert_particle_in_neighbor, position, radius, orient, 
+                       num_particle_in_cell, particle_neighbor, template_xbound, template_rbound, minBox, maxBox, ori) == 0:
+                sphere_coords[insert_body_num[None]] = sphere_coord
+                sphere_radii[insert_body_num[None]] = sphere_radius
+                orients[insert_body_num[None]] = ori
+                insert_particle(cell_num, cell_size, sphere_coord - start_point, sphere_radius, ori, insert_particle_in_neighbor, position, radius, orient, num_particle_in_cell, particle_neighbor)
                 insert_body_num[None] += 1
         valid[randomID] = -1
         tries += 1
@@ -558,11 +664,12 @@ def fill_valid(valid: ti.template()):
         valid[i] = i
 
 @ti.kernel
-def kernel_distribute_sphere_(min_rad: float, max_rad: float, volume_expect: float, insert_body_num: ti.template(), insert_particle_in_neighbor: ti.template(), 
+def kernel_distribute_sphere_(radius_dist: ti.types.ndarray(), volume_expect: float, insert_body_num: ti.template(), insert_particle_in_neighbor: ti.template(), 
                               sphere_coords: ti.template(), sphere_radii: ti.template(), start_point: ti.types.vector(3, float), region_size: ti.types.vector(3, float), check_in_domain: ti.template()) -> float:
     inserted_volume = 0.
+    start_index = insert_body_num[None]
     while inserted_volume < volume_expect:
-        sphere_radius = min_rad + ti.random() * (max_rad - min_rad)
+        sphere_radius = radius_dist[insert_body_num[None] - start_index]
         offset = vec3f([ti.random(), ti.random(), ti.random()]) * region_size
         sphere_coord = start_point + offset 
         
@@ -571,6 +678,51 @@ def kernel_distribute_sphere_(min_rad: float, max_rad: float, volume_expect: flo
             sphere_coords[insert_body_num[None]] = sphere_coord
             sphere_radii[insert_body_num[None]] = sphere_radius
             inserted_volume += pvol
+            insert_body_num[None] += 1
+            insert_particle_in_neighbor[None] += 1
+    return inserted_volume
+
+
+@ti.kernel
+def kernel_distribute_affine_body_(
+    radius_dist: ti.types.ndarray(),
+    volume_expect: float,
+    template_volume: float,
+    template_bounding_radius: float,
+    insert_body_num: ti.template(),
+    insert_particle_in_neighbor: ti.template(),
+    body_coords: ti.template(),
+    bounding_radii: ti.template(),
+    body_orients: ti.template(),
+    start_point: ti.types.vector(3, float),
+    region_size: ti.types.vector(3, float),
+    check_in_domain: ti.template(),
+    get_orientation: ti.template(),
+) -> float:
+    """Randomly distribute overlapping affine bodies to a target volume.
+
+    Only the region boundary is enforced here.  Pairwise overlap is
+    intentional and is removed afterwards by the frictionless DiffIPC
+    projection in :class:`ParticleGenerator`.
+    """
+    inserted_volume = 0.0
+    start_index = insert_body_num[None]
+    while (
+        inserted_volume < volume_expect
+        and insert_body_num[None] - start_index < radius_dist.shape[0]
+    ):
+        local_index = insert_body_num[None] - start_index
+        bounding_radius = radius_dist[local_index]
+        scale = bounding_radius / ti.max(
+            template_bounding_radius, 1.0e-30
+        )
+        offset = vec3f([ti.random(), ti.random(), ti.random()]) * region_size
+        coordinate = start_point + offset
+        if check_in_domain(coordinate, bounding_radius):
+            body_coords[insert_body_num[None]] = coordinate
+            bounding_radii[insert_body_num[None]] = bounding_radius
+            body_orients[insert_body_num[None]] = get_orientation()
+            inserted_volume += template_volume * scale * scale * scale
             insert_body_num[None] += 1
             insert_particle_in_neighbor[None] += 1
     return inserted_volume
@@ -781,11 +933,11 @@ def kernel_rebulid_particle(start: int, number: int, particle: ti.template(), ac
 
 
 @ti.kernel
-def kernel_rebuild_sphere(start: int, number: int, sphere: ti.template(), sphereIndex: ti.types.ndarray(), inv_I: ti.types.ndarray(), q: ti.types.ndarray(), 
+def kernel_rebuild_sphere(start: int, number: int, sphere: ti.template(), grainIndex: ti.types.ndarray(), sphereIndex: ti.types.ndarray(), inv_I: ti.types.ndarray(), q: ti.types.ndarray(), 
                           a: ti.types.ndarray(), angmoment: ti.types.ndarray(), fix_v: ti.types.ndarray(), fix_w: ti.types.ndarray()):
     for ssphere in range(start, start + number):
         nsphere = ssphere - start
-        sphere[ssphere]._restart(sphereIndex[nsphere], inv_I[nsphere], vec4f(q[nsphere, 0], q[nsphere, 1], q[nsphere, 2], q[nsphere, 3]), vec3f(a[nsphere, 0], a[nsphere, 1], a[nsphere, 2]),
+        sphere[ssphere]._restart(grainIndex[nsphere], sphereIndex[nsphere], inv_I[nsphere], vec4f(q[nsphere, 0], q[nsphere, 1], q[nsphere, 2], q[nsphere, 3]), vec3f(a[nsphere, 0], a[nsphere, 1], a[nsphere, 2]),
                                  vec3f(angmoment[nsphere, 0], angmoment[nsphere, 1], angmoment[nsphere, 2]), vec3u8(fix_v[nsphere, 0], fix_v[nsphere, 1], fix_v[nsphere, 2]), vec3u8(fix_w[nsphere, 0], fix_w[nsphere, 1], fix_w[nsphere, 2]))
 
 
@@ -817,19 +969,18 @@ def kernel_rebuild_facet(start: int, number: int, wall: ti.template(), active: t
 
 @ti.kernel
 def kernel_rebuild_patch(start: int, number: int, wall: ti.template(), active: ti.types.ndarray(), wallID: ti.types.ndarray(), materialID: ti.types.ndarray(), point1: ti.types.ndarray(), 
-                              point2: ti.types.ndarray(), point3: ti.types.ndarray(), norm: ti.types.ndarray()):
+                              point2: ti.types.ndarray(), point3: ti.types.ndarray(), norm: ti.types.ndarray(), shell_offset: ti.types.ndarray()):
     for swall in range(start, start + number):
         nwall = swall - start
         wall[swall]._restart(active[nwall], wallID[nwall], materialID[nwall], vec3f(point1[nwall, 0], point1[nwall, 1], point1[nwall, 2]), vec3f(point2[nwall, 0], point2[nwall, 1], point2[nwall, 2]), 
-                             vec3f(point3[nwall, 0], point3[nwall, 1], point3[nwall, 2]), vec3f(norm[nwall, 0], norm[nwall, 1], norm[nwall, 2]))
-
+                             vec3f(point3[nwall, 0], point3[nwall, 1], point3[nwall, 2]), vec3f(norm[nwall, 0], norm[nwall, 1], norm[nwall, 2]), shell_offset[nwall])
 
 @ti.kernel
-def kernel_rebuild_servo(start: int, number: int, servo: ti.template(), active: ti.types.ndarray(), startIndex: ti.types.ndarray(), endIndex: ti.types.ndarray(), alpha: ti.types.ndarray(), 
+def kernel_rebuild_servo(start: int, number: int, servo: ti.template(), active: ti.types.ndarray(), startIndex: ti.types.ndarray(), endIndex: ti.types.ndarray(), alpha: ti.types.ndarray(), gain: ti.types.ndarray(), 
                          target_stress: ti.types.ndarray(), max_velocity: ti.types.ndarray()):
     for sservo in range(start, start + number):
         nservo = sservo - start
-        servo[sservo]._restart(active[nservo], startIndex[nservo], endIndex[nservo], alpha[nservo], target_stress[nservo], max_velocity[nservo])
+        servo[sservo]._restart(active[nservo], startIndex[nservo], endIndex[nservo], alpha[nservo], gain[nservo], target_stress[nservo], max_velocity[nservo])
 
 
 @ti.kernel
@@ -878,7 +1029,7 @@ def kernel_add_facet_files_autonorm(iscounterclockwise: int, start: int, wallID:
         wall[swall].add_wall_geometry_(wallID, vertice1, vertice2, vertice3, init_v)
 
 @ti.kernel
-def kernel_add_patch(start: int, wallID: int, matID: int, vertices: ti.types.ndarray(), faces: ti.types.ndarray(), norm: ti.types.ndarray(), wall: ti.template()):
+def kernel_add_patch(start: int, wallID: int, matID: int, shell_offset: float, vertices: ti.types.ndarray(), faces: ti.types.ndarray(), norm: ti.types.ndarray(), wall: ti.template()):
     for swall in range(start, start + faces.shape[0]):
         nwall = swall - start
         vertice1 = vec3f(vertices[faces[nwall, 0], 0], vertices[faces[nwall, 0], 1], vertices[faces[nwall, 0], 2]) 
@@ -888,10 +1039,11 @@ def kernel_add_patch(start: int, wallID: int, matID: int, vertices: ti.types.nda
 
         wall[swall].add_materialID(matID)
         wall[swall].add_wall_geometry(wallID, vertice1, vertice2, vertice3)
+        wall[swall].add_shell_offset(shell_offset)
         wall[swall].norm = normal
 
 @ti.kernel
-def kernel_add_patch_autonorm(iscounterclockwise: int, start: int, wallID: int, matID: int, vertices: ti.types.ndarray(), faces: ti.types.ndarray(), wall: ti.template()):
+def kernel_add_patch_autonorm(iscounterclockwise: int, start: int, wallID: int, matID: int, shell_offset: float, vertices: ti.types.ndarray(), faces: ti.types.ndarray(), wall: ti.template()):
     for swall in range(start, start + faces.shape[0]):
         nwall = swall - start
         vertice1 = vec3f(vertices[faces[nwall, 0], 0], vertices[faces[nwall, 0], 1], vertices[faces[nwall, 0], 2]) 
@@ -903,6 +1055,7 @@ def kernel_add_patch_autonorm(iscounterclockwise: int, start: int, wallID: int, 
 
         wall[swall].add_materialID(matID)
         wall[swall].add_wall_geometry(wallID, vertice1, vertice2, vertice3)
+        wall[swall].add_shell_offset(shell_offset)
 
 
 @ti.kernel

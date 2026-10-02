@@ -1,14 +1,29 @@
 import taichi as ti
 
-from src.utils.constants import MThreshold, ZEROVEC3f, LThreshold
+from src.utils.constants import MThreshold, ZEROVEC3f, LThreshold, Threshold
 from src.utils.Quaternion import SetFromTwoVec, SetToRotate, RodriguesRotationMatrix
-from src.utils.TypeDefination import vec3f, vec4f, vec2i
+from src.utils.TypeDefination import real, vec3f, vec4f, vec2i
 from src.utils.VectorFunction import SquareLen
 from src.utils.BitFunction import Zero2OneVector
 
 
 @ti.kernel
-def update_particle_storage_(particleNum: ti.types.ndarray(), sphereNum: ti.types.ndarray(), clumpNum: ti.types.ndarray(), particle: ti.template(), sphere: ti.template(), clump: ti.template()):
+def kernel_adaptive_timestep(particleNum: int, particle: ti.template()) -> float:
+    min_dt = MThreshold
+    for np in range(particleNum):
+        ti.atomic_min(min_dt, 0.1 * particle[np].rad / (particle[np].v.norm() + Threshold))
+    return min_dt
+
+
+@ti.kernel
+def update_particle_storage_(
+    particleNum: ti.types.ndarray(),
+    sphereNum: ti.types.ndarray(),
+    clumpNum: ti.types.ndarray(),
+    particle: ti.template(),
+    sphere: ti.template(),
+    clump: ti.template(),
+):
     active = True
     remaining_sphere = 0
     remaining_clump = 0
@@ -52,8 +67,16 @@ def update_particle_storage_(particleNum: ti.types.ndarray(), sphereNum: ti.type
     clumpNum[0] = remaining_clump
     particleNum[0] = remaining_particle
 
+
 @ti.kernel
-def update_LSparticle_storage_(particleNum: ti.types.ndarray(), rigidNum: ti.types.ndarray(), surfaceNum: ti.types.ndarray(), particle: ti.template(), box: ti.template(), rigid: ti.template()):
+def update_LSparticle_storage_(
+    particleNum: ti.types.ndarray(),
+    rigidNum: ti.types.ndarray(),
+    surfaceNum: ti.types.ndarray(),
+    particle: ti.template(),
+    box: ti.template(),
+    rigid: ti.template(),
+):
     remaining_particle = 0
     remaining_node = 0
     delete_particle = 0
@@ -76,14 +99,18 @@ def update_LSparticle_storage_(particleNum: ti.types.ndarray(), rigidNum: ti.typ
     rigidNum[0] = remaining_particle
     surfaceNum[0] = remaining_node
 
+
 @ti.kernel
 def update_LSsurface_storage_(rigidNum: int, rigid: ti.template(), surface: ti.template()):
     for nb in range(rigidNum):
         for i in range(rigid[nb].startNode, rigid[nb].endNode):
             surface[i] = nb
 
+
 @ti.kernel
-def update_ISparticle_storage_(particleNum: ti.types.ndarray(), rigidNum: ti.types.ndarray(), particle: ti.template(), rigid: ti.template()):
+def update_ISparticle_storage_(
+    particleNum: ti.types.ndarray(), rigidNum: ti.types.ndarray(), particle: ti.template(), rigid: ti.template()
+):
     remaining_particle = 0
     delete_particle = 0
     ti.loop_config(serialize=True)
@@ -97,18 +124,56 @@ def update_ISparticle_storage_(particleNum: ti.types.ndarray(), rigidNum: ti.typ
     particleNum[0] = remaining_particle
     rigidNum[0] = remaining_particle
 
+
 @ti.kernel
-def particle_calm(particleNum: int, particle: ti.template()):
+def update_servo_storage_(servoNum: ti.types.ndarray(), wall: ti.template(), servo: ti.template()):
+    remaining_servo = 0
+    delete_servo = 0
+    ti.loop_config(serialize=True)
+    for ns in range(servoNum[0]):
+        end_ind = int(servo[ns].endIndex)
+        for nw in range(int(servo[ns].startIndex), int(servo[ns].endIndex)):
+            if int(wall[nw].active) == 0:
+                end_ind -= 1
+        servo[ns].endIndex = ti.u8(end_ind)
+
+    ti.loop_config(serialize=True)
+    for ns in range(1, servoNum[0]):
+        nwall = servo[ns].endIndex - servo[ns].startIndex
+        servo[ns].startIndex = servo[ns - 1].endIndex
+        servo[ns].endIndex = servo[ns].startIndex + nwall
+        if nwall == 0:
+            servo[ns].active = ti.u8(0)
+
+    ti.loop_config(serialize=True)
+    for ns in range(servoNum[0]):
+        if int(servo[ns].active) == 1:
+            servo[remaining_servo] = servo[ns]
+            remaining_servo += 1
+        else:
+            delete_servo += 1
+    servoNum[0] = remaining_servo
+
+
+@ti.kernel
+def update_wall_storage_(wallNum: ti.types.ndarray(), wall: ti.template()):
+    remaining_wall = 0
+    delete_wall = 0
+    ti.loop_config(serialize=True)
+    for nw in range(wallNum[0]):
+        if int(wall[nw].active) == 1:
+            wall[remaining_wall] = wall[nw]
+            remaining_wall += 1
+        else:
+            delete_wall += 1
+    wallNum[0] = remaining_wall
+
+
+@ti.kernel
+def object_calm(particleNum: int, particle: ti.template()):
     for np in range(particleNum):
         particle[np].v = ZEROVEC3f
         particle[np].w = ZEROVEC3f
-                   
-                       
-@ti.kernel
-def clump_calm(clumpNum: int, clump: ti.template()):
-    for nclump in range(clumpNum):
-        clump[nclump].v = ZEROVEC3f
-        clump[nclump].w = ZEROVEC3f
 
 
 @ti.kernel
@@ -119,7 +184,7 @@ def reset_verlet_disp_(objectNum: int, object: ti.template()):
 
 @ti.kernel
 def find_particle_verlet_disp_(particleNum: int, particle: ti.template()) -> float:
-    max_verlet_disp = 0.
+    max_verlet_disp = 0.0
     for np in range(particleNum):
         verletDisp = particle[np].verletDisp
         verletDispLen = verletDisp[0] * verletDisp[0] + verletDisp[1] * verletDisp[1] + verletDisp[2] * verletDisp[2]
@@ -137,13 +202,34 @@ def find_particle_min_mass_(particleNum: int, particle: ti.template()) -> float:
 
 
 @ti.kernel
+def find_lsmpm_contact_min_mass_(particleNum: int, rigid: ti.template()) -> float:
+    min_mass = MThreshold
+    for body_id in range(particleNum):
+        mass = rigid[body_id]._get_mass()
+        if int(rigid[body_id].is_soft) == 1:
+            mass /= ti.max(rigid[body_id]._get_vertice_number(), 1)
+        ti.atomic_min(min_mass, mass)
+    return min_mass
+
+
+@ti.kernel
+def find_particle_total_mass_(particleNum: int, particle: ti.template()) -> float:
+    total_mass = 0.0
+    for np in range(particleNum):
+        mass = particle[np]._get_mass()
+        ti.atomic_add(total_mass, mass)
+    return total_mass
+
+
+@ti.kernel
 def find_left_bottom_scene_(particleNum: int, particle: ti.template()) -> ti.types.vector(3, float):
     left_bottom_scene = vec3f(MThreshold, MThreshold, MThreshold)
     for np in range(particleNum):
         position = particle[np]._get_position()
-        ti.atomic_min(left_bottom_scene[0], position[0])
-        ti.atomic_min(left_bottom_scene[1], position[1])
-        ti.atomic_min(left_bottom_scene[2], position[2])
+        radius = particle[np]._get_radius()
+        ti.atomic_min(left_bottom_scene[0], position[0] - radius)
+        ti.atomic_min(left_bottom_scene[1], position[1] - radius)
+        ti.atomic_min(left_bottom_scene[2], position[2] - radius)
     return left_bottom_scene
 
 
@@ -152,9 +238,10 @@ def find_right_top_scene_(particleNum: int, particle: ti.template()) -> ti.types
     right_top_scene = vec3f(-MThreshold, -MThreshold, -MThreshold)
     for np in range(particleNum):
         position = particle[np]._get_position()
-        ti.atomic_max(right_top_scene[0], position[0])
-        ti.atomic_max(right_top_scene[1], position[1])
-        ti.atomic_max(right_top_scene[2], position[2])
+        radius = particle[np]._get_radius()
+        ti.atomic_max(right_top_scene[0], position[0] + radius)
+        ti.atomic_max(right_top_scene[1], position[1] + radius)
+        ti.atomic_max(right_top_scene[2], position[2] + radius)
     return right_top_scene
 
 
@@ -163,6 +250,17 @@ def validate_displacement_(limit: float, objectNum: int, object: ti.template()) 
     flag = 0
     for nobject in range(objectNum):
         if flag == 0 and SquareLen(object[nobject].verletDisp) >= limit:
+            flag = 1
+    return flag
+
+
+@ti.kernel
+def validate_deformable_bounding_sphere_(limit: float, objectNum: int, particle: ti.template()) -> int:
+    flag = 0
+    for np in range(objectNum):
+        center_displacement = particle[np].verletDisp.norm()
+        radial_growth = ti.max(0.0, particle[np].rad - particle[np].rad_verlet)
+        if flag == 0 and (center_displacement + radial_growth) ** 2 >= limit:
             flag = 1
     return flag
 
@@ -199,7 +297,7 @@ def find_min_extent_(bodyNum: int, box: ti.template()) -> float:
 
 @ti.kernel
 def find_particle_max_radius_(particleNum: int, particle: ti.template()) -> float:
-    max_radius = 0.
+    max_radius = 0.0
     for np in range(particleNum):
         radius = particle[np]._get_radius()
         ti.atomic_max(max_radius, radius)
@@ -217,7 +315,7 @@ def find_particle_min_radius_(particleNum: int, particle: ti.template()) -> floa
 
 @ti.kernel
 def find_patch_max_radius_(wallNum: int, wall: ti.template()) -> float:
-    max_radius = 0.
+    max_radius = 0.0
     for nw in range(wallNum):
         radius = wall[nw]._get_bounding_radius()
         ti.atomic_max(max_radius, radius)
@@ -232,6 +330,7 @@ def find_patch_min_radius_(wallNum: int, wall: ti.template()) -> float:
         ti.atomic_min(min_radius, radius)
     return min_radius
 
+
 @ti.kernel
 def kernel_delete_particles(particleNum: int, particle: ti.template(), bodyID: int):
     for np in range(particleNum):
@@ -240,14 +339,28 @@ def kernel_delete_particles(particleNum: int, particle: ti.template(), bodyID: i
 
 
 @ti.kernel
-def kernel_delete_particles_in_region(particleNum: int, particle: ti.template(), is_in_region: ti.template()):
+def kernel_delete_lsparticles(particleNum: int, particle: ti.template(), bodyID: int):
     for np in range(particleNum):
-        if is_in_region(particle[np].x):
+        if particle[np].bodyID == bodyID:
             particle[np].active = ti.u8(0)
 
+
 @ti.kernel
-def apply_boundary_conditions(domain: ti.types.vector(3, float), particleNum: int, particle: ti.template(), 
-                              xboundary: ti.template(), yboundary: ti.template(), zboundary: ti.template()) -> int:
+def kernel_delete_particles_in_region(particleNum: int, particle: ti.template(), is_in_region: ti.template()):
+    for np in range(particleNum):
+        if is_in_region(particle[np].x, particle[np].rad):
+            particle[np].active = ti.u8(0)
+
+
+@ti.kernel
+def apply_boundary_conditions(
+    domain: ti.types.vector(3, float),
+    particleNum: int,
+    particle: ti.template(),
+    xboundary: ti.template(),
+    yboundary: ti.template(),
+    zboundary: ti.template(),
+) -> int:
     not_in_xdomain, not_in_ydomain, not_in_zdomain = False, False, False
     for np in range(particleNum):
         if particle[np].active == 1:
@@ -256,47 +369,52 @@ def apply_boundary_conditions(domain: ti.types.vector(3, float), particleNum: in
             not_in_zdomain |= zboundary(np, 2, domain, particle)
     return not_in_xdomain | not_in_ydomain | not_in_zdomain
 
+
 @ti.func
 def none_boundary(np, axis, domain, particle):
     pass
+
 
 @ti.func
 def destroy_boundary(np, axis, domain, particle):
     in_domain = True
     position = particle[np].x
-    if in_domain == True and position[axis] < 0.: 
+    if in_domain == True and position[axis] < 0.0:
         in_domain = False
         particle[np].active = ti.u8(0)
-    elif in_domain == True and position[axis] > domain[axis]: 
+    elif in_domain == True and position[axis] > domain[axis]:
         in_domain = False
         particle[np].active = ti.u8(0)
     return not in_domain
+
 
 @ti.func
 def reflect_boundary(np, axis, domain, particle):
     in_domain = True
     position = particle[np].x
-    if in_domain == True and position[axis] < 0.: 
+    if in_domain == True and position[axis] < 0.0:
         in_domain = False
         particle[np].x[axis] = LThreshold * domain[axis]
         particle[np].v = -particle[np].v
-    elif in_domain == True and position[axis] > domain[axis]: 
+    elif in_domain == True and position[axis] > domain[axis]:
         in_domain = False
-        particle[np].x[axis] = (1. - LThreshold) * domain[axis]
+        particle[np].x[axis] = (1.0 - LThreshold) * domain[axis]
         particle[np].v = -particle[np].v
     return False
+
 
 @ti.func
 def period_boundary(np, axis, domain, particle):
     in_domain = True
     position = particle[np].x
-    if in_domain == True and position[axis] < 0.: 
+    if in_domain == True and position[axis] < 0.0:
         in_domain = False
         particle[np].x[axis] += domain[axis]
-    elif in_domain == True and position[axis] > domain[axis]: 
+    elif in_domain == True and position[axis] > domain[axis]:
         in_domain = False
         particle[np].x[axis] -= domain[axis]
     return False
+
 
 @ti.kernel
 def check_in_domain(domain: ti.types.vector(3, float), particleNum: int, particle: ti.template()):
@@ -304,16 +422,24 @@ def check_in_domain(domain: ti.types.vector(3, float), particleNum: int, particl
         if particle[np].active == 1 and not is_in_domain(domain, particle[np].x):
             particle[np].active = ti.u8(0)
 
+
 @ti.func
 def is_in_domain(domain, position):
     in_domain = 1
-    if in_domain == 1 and position[0] < 0.: in_domain = 0
-    elif in_domain == 1 and position[1] < 0.: in_domain = 0
-    elif in_domain == 1 and position[2] < 0.: in_domain = 0
-    elif in_domain == 1 and position[0] > domain[0]: in_domain = 0
-    elif in_domain == 1 and position[1] > domain[1]: in_domain = 0
-    elif in_domain == 1 and position[2] > domain[2]: in_domain = 0
+    if in_domain == 1 and position[0] < 0.0:
+        in_domain = 0
+    elif in_domain == 1 and position[1] < 0.0:
+        in_domain = 0
+    elif in_domain == 1 and position[2] < 0.0:
+        in_domain = 0
+    elif in_domain == 1 and position[0] > domain[0]:
+        in_domain = 0
+    elif in_domain == 1 and position[1] > domain[1]:
+        in_domain = 0
+    elif in_domain == 1 and position[2] > domain[2]:
+        in_domain = 0
     return in_domain
+
 
 @ti.func
 def update_value(factor, pre_val, val):
@@ -331,7 +457,9 @@ def upscale(factor, pre_val, val):
 
 
 @ti.kernel
-def modify_sphere_bodyID_in_region(value: int, sphereNum: int, sphere: ti.template(), particle: ti.template(), is_in_region: ti.template()):
+def modify_sphere_bodyID_in_region(
+    value: int, sphereNum: int, sphere: ti.template(), particle: ti.template(), is_in_region: ti.template()
+):
     for nsphere in range(sphereNum):
         particleID = sphere[nsphere].sphereIndex
         if is_in_region(particle[particleID].x):
@@ -339,7 +467,9 @@ def modify_sphere_bodyID_in_region(value: int, sphereNum: int, sphere: ti.templa
 
 
 @ti.kernel
-def modify_sphere_groupID_in_region(value: int, sphereNum: int, sphere: ti.template(), particle: ti.template(), is_in_region: ti.template()):
+def modify_sphere_groupID_in_region(
+    value: int, sphereNum: int, sphere: ti.template(), particle: ti.template(), is_in_region: ti.template()
+):
     for nsphere in range(sphereNum):
         particleID = sphere[nsphere].sphereIndex
         if is_in_region(particle[particleID].x):
@@ -354,7 +484,14 @@ def modify_levelset_groupID_in_region(value: int, rigidNum: int, rigid: ti.templ
 
 
 @ti.kernel
-def modify_sphere_materialID_in_region(value: int, sphereNum: int, sphere: ti.template(), particle: ti.template(), material: ti.template(), is_in_region: ti.template()):
+def modify_sphere_materialID_in_region(
+    value: int,
+    sphereNum: int,
+    sphere: ti.template(),
+    particle: ti.template(),
+    material: ti.template(),
+    is_in_region: ti.template(),
+):
     for nsphere in range(sphereNum):
         particleID = sphere[nsphere].sphereIndex
         if is_in_region(particle[particleID].x):
@@ -363,23 +500,32 @@ def modify_sphere_materialID_in_region(value: int, sphereNum: int, sphere: ti.te
             particle[particleID].materialID = ti.u8(value)
             density = material[value].density
             ratio = density / old_density
-            particle[particleID].mass *= ratio 
-            sphere[nsphere].inv_I *= 1. / ratio 
+            particle[particleID].mass *= ratio
+            sphere[nsphere].inv_I *= 1.0 / ratio
 
 
 @ti.kernel
-def modify_sphere_radius_in_region(value: float, sphereNum: int, sphere: ti.template(), particle: ti.template(), is_in_region: ti.template()):
+def modify_sphere_radius_in_region(
+    value: float, sphereNum: int, sphere: ti.template(), particle: ti.template(), is_in_region: ti.template()
+):
     for nsphere in range(sphereNum):
         particleID = sphere[nsphere].sphereIndex
         if is_in_region(particle[particleID].x):
             ratio = value / particle[particleID].rad
             particle[particleID].rad = value
             particle[particleID].m *= ratio * ratio * ratio
-            sphere[nsphere].inv_I *= 1. / (ratio * ratio * ratio * ratio * ratio)
+            sphere[nsphere].inv_I *= 1.0 / (ratio * ratio * ratio * ratio * ratio)
 
 
 @ti.kernel
-def modify_sphere_position_in_region(factor: int, value: ti.types.vector(3, float), sphereNum: int, sphere: ti.template(), particle: ti.template(), is_in_region: ti.template()):
+def modify_sphere_position_in_region(
+    factor: int,
+    value: ti.types.vector(3, float),
+    sphereNum: int,
+    sphere: ti.template(),
+    particle: ti.template(),
+    is_in_region: ti.template(),
+):
     for nsphere in range(sphereNum):
         particleID = sphere[nsphere].sphereIndex
         if is_in_region(particle[particleID].x):
@@ -387,7 +533,14 @@ def modify_sphere_position_in_region(factor: int, value: ti.types.vector(3, floa
 
 
 @ti.kernel
-def modify_sphere_velocity_in_region(factor: int, value: ti.types.vector(3, float), sphereNum: int, sphere: ti.template(), particle: ti.template(), is_in_region: ti.template()):
+def modify_sphere_velocity_in_region(
+    factor: int,
+    value: ti.types.vector(3, float),
+    sphereNum: int,
+    sphere: ti.template(),
+    particle: ti.template(),
+    is_in_region: ti.template(),
+):
     for nsphere in range(sphereNum):
         particleID = sphere[nsphere].sphereIndex
         if is_in_region(particle[particleID].x):
@@ -395,7 +548,14 @@ def modify_sphere_velocity_in_region(factor: int, value: ti.types.vector(3, floa
 
 
 @ti.kernel
-def modify_sphere_angular_velocity_in_region(factor: int, value: ti.types.vector(3, float), sphereNum: int, sphere: ti.template(), particle: ti.template(), is_in_region: ti.template()):
+def modify_sphere_angular_velocity_in_region(
+    factor: int,
+    value: ti.types.vector(3, float),
+    sphereNum: int,
+    sphere: ti.template(),
+    particle: ti.template(),
+    is_in_region: ti.template(),
+):
     for nsphere in range(sphereNum):
         particleID = sphere[nsphere].sphereIndex
         if is_in_region(particle[particleID].x):
@@ -403,23 +563,41 @@ def modify_sphere_angular_velocity_in_region(factor: int, value: ti.types.vector
 
 
 @ti.kernel
-def modify_sphere_orientation_in_region(value: ti.types.vector(3, float), sphereNum: int, sphere: ti.template(), particle: ti.template(), is_in_region: ti.template()):
+def modify_sphere_orientation_in_region(
+    value: ti.types.vector(3, float),
+    sphereNum: int,
+    sphere: ti.template(),
+    particle: ti.template(),
+    is_in_region: ti.template(),
+):
     for nsphere in range(sphereNum):
         particleID = sphere[nsphere].sphereIndex
         if is_in_region(particle[particleID].x):
-            sphere[nsphere].q = SetFromTwoVec(vec3f(0., 0., 1), value)
+            sphere[nsphere].q = SetFromTwoVec(vec3f(0.0, 0.0, 1), value)
 
 
 @ti.kernel
-def modify_sphere_fix_v_in_region(value: ti.types.vector(3, ti.u8), sphereNum: int, sphere: ti.template(), particle: ti.template(), is_in_region: ti.template()):
+def modify_sphere_fix_v_in_region(
+    value: ti.types.vector(3, ti.u8),
+    sphereNum: int,
+    sphere: ti.template(),
+    particle: ti.template(),
+    is_in_region: ti.template(),
+):
     for nsphere in range(sphereNum):
         particleID = sphere[nsphere].sphereIndex
         if is_in_region(particle[particleID].x):
             sphere[nsphere].fix_v = Zero2OneVector(value)
 
-        
+
 @ti.kernel
-def modify_sphere_fix_w_in_region(value: ti.types.vector(3, ti.u8), sphereNum: int, sphere: ti.template(), particle: ti.template(), is_in_region: ti.template()):
+def modify_sphere_fix_w_in_region(
+    value: ti.types.vector(3, ti.u8),
+    sphereNum: int,
+    sphere: ti.template(),
+    particle: ti.template(),
+    is_in_region: ti.template(),
+):
     for nsphere in range(sphereNum):
         particleID = sphere[nsphere].sphereIndex
         if is_in_region(particle[particleID].x):
@@ -427,7 +605,9 @@ def modify_sphere_fix_w_in_region(value: ti.types.vector(3, ti.u8), sphereNum: i
 
 
 @ti.kernel
-def modify_clump_bodyID_in_region(value: int, clumpNum: int, clump: ti.template(), particle: ti.template(), is_in_region: ti.template()):
+def modify_clump_bodyID_in_region(
+    value: int, clumpNum: int, clump: ti.template(), particle: ti.template(), is_in_region: ti.template()
+):
     for nclump in range(clumpNum):
         startIndex = clump[nclump].startIndex
         endIndex = clump[nclump].endIndex
@@ -437,14 +617,16 @@ def modify_clump_bodyID_in_region(value: int, clumpNum: int, clump: ti.template(
             if not is_in_region(particle[np].x):
                 is_in_region = 0
                 break
-        
+
         if is_in_region == 1:
             for np in range(startIndex, endIndex):
                 particle[np].bodyID = ti.u8(value)
 
 
 @ti.kernel
-def modify_clump_groupID_in_region(value: int, clumpNum: int, clump: ti.template(), particle: ti.template(), is_in_region: ti.template()):
+def modify_clump_groupID_in_region(
+    value: int, clumpNum: int, clump: ti.template(), particle: ti.template(), is_in_region: ti.template()
+):
     for nclump in range(clumpNum):
         startIndex = clump[nclump].startIndex
         endIndex = clump[nclump].endIndex
@@ -454,14 +636,21 @@ def modify_clump_groupID_in_region(value: int, clumpNum: int, clump: ti.template
             if not is_in_region(particle[np].x):
                 is_in_region = 0
                 break
-        
+
         if is_in_region == 1:
             for np in range(startIndex, endIndex):
                 particle[np].groupID = ti.u8(value)
 
 
 @ti.kernel
-def modify_clump_materialID_in_region(value: int, clumpNum: int, clump: ti.template(), particle: ti.template(), material: ti.template(), is_in_region: ti.template()):
+def modify_clump_materialID_in_region(
+    value: int,
+    clumpNum: int,
+    clump: ti.template(),
+    particle: ti.template(),
+    material: ti.template(),
+    is_in_region: ti.template(),
+):
     for nclump in range(clumpNum):
         startIndex = clump[nclump].startIndex
         endIndex = clump[nclump].endIndex
@@ -471,7 +660,7 @@ def modify_clump_materialID_in_region(value: int, clumpNum: int, clump: ti.templ
             if not is_in_region(particle[np].x):
                 is_in_region = 0
                 break
-        
+
         if is_in_region == 1:
             for np in range(startIndex, endIndex):
                 old_materialID = particle[np].materialID
@@ -479,12 +668,14 @@ def modify_clump_materialID_in_region(value: int, clumpNum: int, clump: ti.templ
                 particle[np].materialID = ti.u8(value)
                 density = material[value].density
                 ratio = density / old_density
-                particle[np].mass *= ratio 
-            clump[nclump].inv_I *= 1. / ratio 
+                particle[np].mass *= ratio
+            clump[nclump].inv_I *= 1.0 / ratio
 
 
 @ti.kernel
-def modify_clump_radius_in_region(value: float, clumpNum: int, clump: ti.template(), particle: ti.template(), is_in_region: ti.template()):
+def modify_clump_radius_in_region(
+    value: float, clumpNum: int, clump: ti.template(), particle: ti.template(), is_in_region: ti.template()
+):
     for nclump in range(clumpNum):
         startIndex = clump[nclump].startIndex
         endIndex = clump[nclump].endIndex
@@ -494,18 +685,25 @@ def modify_clump_radius_in_region(value: float, clumpNum: int, clump: ti.templat
             if not is_in_region(particle[np].x):
                 is_in_region = 0
                 break
-        
+
         equivalent_radius = clump[nclump].equi_r
         if is_in_region == 1:
             for np in range(startIndex, endIndex):
                 ratio = value / equivalent_radius
                 particle[np].rad *= ratio
                 particle[np].m *= ratio * ratio * ratio
-            clump[nclump].inv_I *= 1. / (ratio * ratio * ratio * ratio * ratio)
+            clump[nclump].inv_I *= 1.0 / (ratio * ratio * ratio * ratio * ratio)
 
 
 @ti.kernel
-def modify_clump_position_in_region(factor: int, value: ti.types.vector(3, float), clumpNum: int, clump: ti.template(), particle: ti.template(), is_in_region: ti.template()):
+def modify_clump_position_in_region(
+    factor: int,
+    value: ti.types.vector(3, float),
+    clumpNum: int,
+    clump: ti.template(),
+    particle: ti.template(),
+    is_in_region: ti.template(),
+):
     for nclump in range(clumpNum):
         startIndex = clump[nclump].startIndex
         endIndex = clump[nclump].endIndex
@@ -515,7 +713,7 @@ def modify_clump_position_in_region(factor: int, value: ti.types.vector(3, float
             if not is_in_region(particle[np].x):
                 is_in_region = 0
                 break
-        
+
         if is_in_region == 1:
             for np in range(startIndex, endIndex):
                 particle[np].x = factor * particle[np].x + value
@@ -523,7 +721,14 @@ def modify_clump_position_in_region(factor: int, value: ti.types.vector(3, float
 
 
 @ti.kernel
-def modify_clump_velocity_in_region(factor: int, value: ti.types.vector(3, float), clumpNum: int, clump: ti.template(), particle: ti.template(), is_in_region: ti.template()):
+def modify_clump_velocity_in_region(
+    factor: int,
+    value: ti.types.vector(3, float),
+    clumpNum: int,
+    clump: ti.template(),
+    particle: ti.template(),
+    is_in_region: ti.template(),
+):
     for nclump in range(clumpNum):
         startIndex = clump[nclump].startIndex
         endIndex = clump[nclump].endIndex
@@ -533,7 +738,7 @@ def modify_clump_velocity_in_region(factor: int, value: ti.types.vector(3, float
             if not is_in_region(particle[np].x):
                 is_in_region = 0
                 break
-        
+
         if is_in_region == 1:
             for np in range(startIndex, endIndex):
                 particle[np].v = factor * particle[np].v + value
@@ -541,7 +746,14 @@ def modify_clump_velocity_in_region(factor: int, value: ti.types.vector(3, float
 
 
 @ti.kernel
-def modify_clump_angular_velocity_in_region(factor: int, value: ti.types.vector(3, float), clumpNum: int, clump: ti.template(), particle: ti.template(), is_in_region: ti.template()):
+def modify_clump_angular_velocity_in_region(
+    factor: int,
+    value: ti.types.vector(3, float),
+    clumpNum: int,
+    clump: ti.template(),
+    particle: ti.template(),
+    is_in_region: ti.template(),
+):
     for nclump in range(clumpNum):
         startIndex = clump[nclump].startIndex
         endIndex = clump[nclump].endIndex
@@ -551,7 +763,7 @@ def modify_clump_angular_velocity_in_region(factor: int, value: ti.types.vector(
             if not is_in_region(particle[np].x):
                 is_in_region = 0
                 break
-        
+
         if is_in_region == 1:
             center_vel = clump[nclump].v
             mass_center = clump[nclump].mass_center
@@ -560,11 +772,17 @@ def modify_clump_angular_velocity_in_region(factor: int, value: ti.types.vector(
                 particle_vel = center_vel + angular_vel.cross(particle[np].x - mass_center)
                 particle[np].v = particle_vel
                 particle[np].w = angular_vel
-            clump[nclump].w = factor * clump[nclump].w  + value
+            clump[nclump].w = factor * clump[nclump].w + value
 
 
 @ti.kernel
-def modify_clump_orientation_in_region(value: ti.types.vector(3, float), clumpNum: int, clump: ti.template(), particle: ti.template(), is_in_region: ti.template()):
+def modify_clump_orientation_in_region(
+    value: ti.types.vector(3, float),
+    clumpNum: int,
+    clump: ti.template(),
+    particle: ti.template(),
+    is_in_region: ti.template(),
+):
     for nclump in range(clumpNum):
         startIndex = clump[nclump].startIndex
         endIndex = clump[nclump].endIndex
@@ -574,18 +792,24 @@ def modify_clump_orientation_in_region(value: ti.types.vector(3, float), clumpNu
             if not is_in_region(particle[np].x):
                 is_in_region = 0
                 break
-        
+
         if is_in_region == 1:
             rmatrix = SetToRotate(clump[nclump].q)
             mass_center = clump[nclump].mass_center
-            clump[nclump].q = SetFromTwoVec(vec3f(0., 0., 1), value)
+            clump[nclump].q = SetFromTwoVec(vec3f(0.0, 0.0, 1), value)
             update_rmatrix = SetToRotate(clump[nclump].q)
             for np in range(startIndex, endIndex):
                 particle[np].x = update_rmatrix @ (rmatrix.transpose() @ (particle[np].x - mass_center)) + mass_center
 
 
 @ti.kernel
-def modify_clump_fix_v_in_region(value: ti.types.vector(3, ti.u8), clumpNum: int, clump: ti.template(), particle: ti.template(), is_in_region: ti.template()):
+def modify_clump_fix_v_in_region(
+    value: ti.types.vector(3, ti.u8),
+    clumpNum: int,
+    clump: ti.template(),
+    particle: ti.template(),
+    is_in_region: ti.template(),
+):
     for nclump in range(clumpNum):
         startIndex = clump[nclump].startIndex
         endIndex = clump[nclump].endIndex
@@ -599,9 +823,15 @@ def modify_clump_fix_v_in_region(value: ti.types.vector(3, ti.u8), clumpNum: int
         if is_in_region == 1:
             clump[nclump].fix_v = Zero2OneVector(value)
 
-        
+
 @ti.kernel
-def modify_clump_fix_w_in_region(value: ti.types.vector(3, ti.u8), clumpNum: int, clump: ti.template(), particle: ti.template(), is_in_region: ti.template()):
+def modify_clump_fix_w_in_region(
+    value: ti.types.vector(3, ti.u8),
+    clumpNum: int,
+    clump: ti.template(),
+    particle: ti.template(),
+    is_in_region: ti.template(),
+):
     for nclump in range(clumpNum):
         startIndex = clump[nclump].startIndex
         endIndex = clump[nclump].endIndex
@@ -651,7 +881,9 @@ def modify_sphere_groupID(value: int, sphereNum: int, sphere: ti.template(), par
 
 
 @ti.kernel
-def modify_sphere_materialID(value: int, sphereNum: int, sphere: ti.template(), particle: ti.template(), material: ti.template(), bodyID: int):
+def modify_sphere_materialID(
+    value: int, sphereNum: int, sphere: ti.template(), particle: ti.template(), material: ti.template(), bodyID: int
+):
     for nsphere in range(sphereNum):
         particleID = sphere[nsphere].sphereIndex
         if nsphere == bodyID:
@@ -660,8 +892,8 @@ def modify_sphere_materialID(value: int, sphereNum: int, sphere: ti.template(), 
             particle[particleID].materialID = ti.u8(value)
             density = material[value].density
             ratio = density / old_density
-            particle[particleID].mass *= ratio 
-            sphere[nsphere].inv_I *= 1. / ratio 
+            particle[particleID].mass *= ratio
+            sphere[nsphere].inv_I *= 1.0 / ratio
 
 
 @ti.kernel
@@ -672,11 +904,18 @@ def modify_sphere_radius(value: float, sphereNum: int, sphere: ti.template(), pa
             ratio = value / particle[particleID].rad
             particle[particleID].rad = value
             particle[particleID].m *= ratio * ratio * ratio
-            sphere[nsphere].inv_I *= 1. / (ratio * ratio * ratio * ratio * ratio)
+            sphere[nsphere].inv_I *= 1.0 / (ratio * ratio * ratio * ratio * ratio)
 
 
 @ti.kernel
-def modify_sphere_position(factor: int, value: ti.types.vector(3, float), sphereNum: int, sphere: ti.template(), particle: ti.template(), bodyID: int):
+def modify_sphere_position(
+    factor: int,
+    value: ti.types.vector(3, float),
+    sphereNum: int,
+    sphere: ti.template(),
+    particle: ti.template(),
+    bodyID: int,
+):
     for nsphere in range(sphereNum):
         particleID = sphere[nsphere].sphereIndex
         if nsphere == bodyID:
@@ -684,7 +923,14 @@ def modify_sphere_position(factor: int, value: ti.types.vector(3, float), sphere
 
 
 @ti.kernel
-def modify_sphere_velocity(factor: int, value: ti.types.vector(3, float), sphereNum: int, sphere: ti.template(), particle: ti.template(), bodyID: int):
+def modify_sphere_velocity(
+    factor: int,
+    value: ti.types.vector(3, float),
+    sphereNum: int,
+    sphere: ti.template(),
+    particle: ti.template(),
+    bodyID: int,
+):
     for nsphere in range(sphereNum):
         particleID = sphere[nsphere].sphereIndex
         if nsphere == bodyID:
@@ -692,7 +938,14 @@ def modify_sphere_velocity(factor: int, value: ti.types.vector(3, float), sphere
 
 
 @ti.kernel
-def modify_sphere_angular_velocity(factor: int, value: ti.types.vector(3, float), sphereNum: int, sphere: ti.template(), particle: ti.template(), bodyID: int):
+def modify_sphere_angular_velocity(
+    factor: int,
+    value: ti.types.vector(3, float),
+    sphereNum: int,
+    sphere: ti.template(),
+    particle: ti.template(),
+    bodyID: int,
+):
     for nsphere in range(sphereNum):
         particleID = sphere[nsphere].sphereIndex
         if nsphere == bodyID:
@@ -700,21 +953,27 @@ def modify_sphere_angular_velocity(factor: int, value: ti.types.vector(3, float)
 
 
 @ti.kernel
-def modify_sphere_orientation(value: ti.types.vector(3, float), sphereNum: int, sphere: ti.template(), particle: ti.template(), bodyID: int):
+def modify_sphere_orientation(
+    value: ti.types.vector(3, float), sphereNum: int, sphere: ti.template(), particle: ti.template(), bodyID: int
+):
     for nsphere in range(sphereNum):
         if nsphere == bodyID:
-            sphere[nsphere].q = SetFromTwoVec(vec3f(0., 0., 1), value)
+            sphere[nsphere].q = SetFromTwoVec(vec3f(0.0, 0.0, 1), value)
 
 
 @ti.kernel
-def modify_sphere_fix_v(value: ti.types.vector(3, ti.u8), sphereNum: int, sphere: ti.template(), particle: ti.template(), bodyID: int):
+def modify_sphere_fix_v(
+    value: ti.types.vector(3, ti.u8), sphereNum: int, sphere: ti.template(), particle: ti.template(), bodyID: int
+):
     for nsphere in range(sphereNum):
         if nsphere == bodyID:
             sphere[nsphere].fix_v = Zero2OneVector(value)
 
-        
+
 @ti.kernel
-def modify_sphere_fix_w(value: ti.types.vector(3, ti.u8), sphereNum: int, sphere: ti.template(), particle: ti.template(), bodyID: int):
+def modify_sphere_fix_w(
+    value: ti.types.vector(3, ti.u8), sphereNum: int, sphere: ti.template(), particle: ti.template(), bodyID: int
+):
     for nsphere in range(sphereNum):
         if nsphere == bodyID:
             sphere[nsphere].fix_w = Zero2OneVector(value)
@@ -743,7 +1002,9 @@ def modify_clump_groupID(value: int, clumpNum: int, clump: ti.template(), partic
 
 
 @ti.kernel
-def modify_clump_materialID(value: int, clumpNum: int, clump: ti.template(), particle: ti.template(), material: ti.template(), bodyID: int):
+def modify_clump_materialID(
+    value: int, clumpNum: int, clump: ti.template(), particle: ti.template(), material: ti.template(), bodyID: int
+):
     for nclump in range(clumpNum):
         startIndex = clump[nclump].startIndex
         endIndex = clump[nclump].endIndex
@@ -755,8 +1016,8 @@ def modify_clump_materialID(value: int, clumpNum: int, clump: ti.template(), par
                 particle[np].materialID = ti.u8(value)
                 density = material[value].density
                 ratio = density / old_density
-                particle[np].mass *= ratio 
-            clump[nclump].inv_I *= 1. / ratio 
+                particle[np].mass *= ratio
+            clump[nclump].inv_I *= 1.0 / ratio
 
 
 @ti.kernel
@@ -764,18 +1025,25 @@ def modify_clump_radius(value: float, clumpNum: int, clump: ti.template(), parti
     for nclump in range(clumpNum):
         startIndex = clump[nclump].startIndex
         endIndex = clump[nclump].endIndex
-        
+
         equivalent_radius = clump[nclump].equi_r
         if nclump == bodyID:
             for np in range(startIndex, endIndex):
                 ratio = value / equivalent_radius
                 particle[np].rad *= ratio
                 particle[np].m *= ratio * ratio * ratio
-            clump[nclump].inv_I *= 1. / (ratio * ratio * ratio * ratio * ratio)
+            clump[nclump].inv_I *= 1.0 / (ratio * ratio * ratio * ratio * ratio)
 
 
 @ti.kernel
-def modify_clump_position(factor: int, value: ti.types.vector(3, float), clumpNum: int, clump: ti.template(), particle: ti.template(), bodyID: int):
+def modify_clump_position(
+    factor: int,
+    value: ti.types.vector(3, float),
+    clumpNum: int,
+    clump: ti.template(),
+    particle: ti.template(),
+    bodyID: int,
+):
     for nclump in range(clumpNum):
         startIndex = clump[nclump].startIndex
         endIndex = clump[nclump].endIndex
@@ -787,7 +1055,14 @@ def modify_clump_position(factor: int, value: ti.types.vector(3, float), clumpNu
 
 
 @ti.kernel
-def modify_clump_velocity(factor: int, value: ti.types.vector(3, float), clumpNum: int, clump: ti.template(), particle: ti.template(), bodyID: int):
+def modify_clump_velocity(
+    factor: int,
+    value: ti.types.vector(3, float),
+    clumpNum: int,
+    clump: ti.template(),
+    particle: ti.template(),
+    bodyID: int,
+):
     for nclump in range(clumpNum):
         startIndex = clump[nclump].startIndex
         endIndex = clump[nclump].endIndex
@@ -799,7 +1074,14 @@ def modify_clump_velocity(factor: int, value: ti.types.vector(3, float), clumpNu
 
 
 @ti.kernel
-def modify_clump_angular_velocity(factor: int, value: ti.types.vector(3, float), clumpNum: int, clump: ti.template(), particle: ti.template(), bodyID: int):
+def modify_clump_angular_velocity(
+    factor: int,
+    value: ti.types.vector(3, float),
+    clumpNum: int,
+    clump: ti.template(),
+    particle: ti.template(),
+    bodyID: int,
+):
     for nclump in range(clumpNum):
         startIndex = clump[nclump].startIndex
         endIndex = clump[nclump].endIndex
@@ -812,11 +1094,13 @@ def modify_clump_angular_velocity(factor: int, value: ti.types.vector(3, float),
                 particle_vel = center_vel + angular_vel.cross(particle[np].x - mass_center)
                 particle[np].v = particle_vel
                 particle[np].w = angular_vel
-            clump[nclump].w = factor * clump[nclump].w  + value
+            clump[nclump].w = factor * clump[nclump].w + value
 
 
 @ti.kernel
-def modify_clump_orientation(value: ti.types.vector(3, float), clumpNum: int, clump: ti.template(), particle: ti.template(), bodyID: int):
+def modify_clump_orientation(
+    value: ti.types.vector(3, float), clumpNum: int, clump: ti.template(), particle: ti.template(), bodyID: int
+):
     for nclump in range(clumpNum):
         startIndex = clump[nclump].startIndex
         endIndex = clump[nclump].endIndex
@@ -824,21 +1108,25 @@ def modify_clump_orientation(value: ti.types.vector(3, float), clumpNum: int, cl
         if nclump == bodyID:
             rmatrix = SetToRotate(clump[nclump].q)
             mass_center = clump[nclump].mass_center
-            clump[nclump].q = SetFromTwoVec(vec3f(0., 0., 1), value)
+            clump[nclump].q = SetFromTwoVec(vec3f(0.0, 0.0, 1), value)
             update_rmatrix = SetToRotate(clump[nclump].q)
             for np in range(startIndex, endIndex):
                 particle[np].x = update_rmatrix @ (rmatrix.transpose() @ (particle[np].x - mass_center)) + mass_center
 
 
 @ti.kernel
-def modify_clump_fix_v(value: ti.types.vector(3, ti.u8), clumpNum: int, clump: ti.template(), particle: ti.template(), bodyID: int):
+def modify_clump_fix_v(
+    value: ti.types.vector(3, ti.u8), clumpNum: int, clump: ti.template(), particle: ti.template(), bodyID: int
+):
     for nclump in range(clumpNum):
         if nclump == bodyID:
             clump[nclump].fix_v = Zero2OneVector(value)
 
-        
+
 @ti.kernel
-def modify_clump_fix_w(value: ti.types.vector(3, ti.u8), clumpNum: int, clump: ti.template(), particle: ti.template(), bodyID: int):
+def modify_clump_fix_w(
+    value: ti.types.vector(3, ti.u8), clumpNum: int, clump: ti.template(), particle: ti.template(), bodyID: int
+):
     for nclump in range(clumpNum):
         if nclump == bodyID:
             clump[nclump].fix_w = Zero2OneVector(value)
@@ -859,21 +1147,27 @@ def modify_wall_materialID(wallID: int, value: int, wallNum: int, wall: ti.templ
 
 
 @ti.kernel
-def modify_plane_position(factor: int, wallID: int, value: ti.types.vector(3, float), wallNum: int, wall: ti.template()):
+def modify_plane_position(
+    factor: int, wallID: int, value: ti.types.vector(3, float), wallNum: int, wall: ti.template()
+):
     for wall_id in range(wallNum):
         if wall[wall_id].wallID == wallID:
             wall[wall_id].point = wall[wall_id].point * factor + value
 
 
 @ti.kernel
-def modify_plane_orientation(factor: int, wallID: int, value: ti.types.vector(3, float), wallNum: int, wall: ti.template()):
+def modify_plane_orientation(
+    factor: int, wallID: int, value: ti.types.vector(3, float), wallNum: int, wall: ti.template()
+):
     for wall_id in range(wallNum):
         if wall[wall_id].wallID == wallID:
             wall[wall_id].norm = wall[wall_id].norm * factor + value
 
 
 @ti.kernel
-def modify_triangle_position(factor: int, wallID: int, value: ti.types.vector(3, float), wallNum: int, wall: ti.template()):
+def modify_triangle_position(
+    factor: int, wallID: int, value: ti.types.vector(3, float), wallNum: int, wall: ti.template()
+):
     for wall_id in range(wallNum):
         if wall[wall_id].wallID == wallID:
             wall[wall_id].vertice1 = wall[wall_id].vertice1 * factor + value
@@ -883,14 +1177,24 @@ def modify_triangle_position(factor: int, wallID: int, value: ti.types.vector(3,
 
 
 @ti.kernel
-def modify_triangle_velocity(factor: int, wallID: int, value: ti.types.vector(3, float), wallNum: int, wall: ti.template()):
+def modify_triangle_velocity(
+    factor: int, wallID: int, value: ti.types.vector(3, float), wallNum: int, wall: ti.template()
+):
     for wall_id in range(wallNum):
         if wall[wall_id].wallID == wallID:
             wall[wall_id].v = wall[wall_id].v * factor + value
 
 
 @ti.kernel
-def modify_triangle_orientation(mode: int, factor: int, wallID: int, new_direction: ti.types.vector(3, float), rotation_center: ti.types.vector(3, float), wallNum: int, wall: ti.template()):
+def modify_triangle_orientation(
+    mode: int,
+    factor: int,
+    wallID: int,
+    new_direction: ti.types.vector(3, float),
+    rotation_center: ti.types.vector(3, float),
+    wallNum: int,
+    wall: ti.template(),
+):
     for wall_id in range(wallNum):
         if wall[wall_id].wallID == wallID:
             if mode == 1:
@@ -903,37 +1207,92 @@ def modify_triangle_orientation(mode: int, factor: int, wallID: int, new_directi
 
 
 @ti.kernel
-def create_level_set_grids_(gridNum: int, gridSum: int, grid: ti.template(), distance_fields: ti.types.ndarray()):
+def create_level_set_grids_(
+    gridNum: int,
+    gridSum: int,
+    grid: ti.template(),
+    distance_fields: ti.types.ndarray(),
+):
     for i in range(gridSum):
         grid[i + gridNum]._set_grid(distance_fields[i])
 
 
 @ti.kernel
-def create_level_set_surface(surfaceNum: int, surfaceSum: int, surface_node: ti.template(), surface_nodes: ti.types.ndarray(), parameters: ti.types.ndarray()):
+def create_level_set_surface(
+    surfaceNum: int,
+    surfaceSum: int,
+    surface_node: ti.template(),
+    surface_nodes: ti.types.ndarray(),
+    parameters: ti.types.ndarray(),
+):
     for i in range(surfaceSum):
-        surface_node[i + surfaceNum]._set_surface_node(vec3f(surface_nodes[i, 0], surface_nodes[i, 1], surface_nodes[i, 2]))
+        surface_node[i + surfaceNum]._set_surface_node(
+            vec3f(surface_nodes[i, 0], surface_nodes[i, 1], surface_nodes[i, 2])
+        )
         surface_node[i + surfaceNum]._set_coefficient(parameters[i])
 
 
 @ti.kernel
-def kernel_add_polysuperellipsoid_parameter(surfaceNum: int, surface: ti.template(), xrad1: float, yrad1: float, zrad1: float, epsilon_e: float, epsilon_n: float, xrad2: float, yrad2: float, zrad2: float):
+def kernel_add_polysuperellipsoid_parameter(
+    surfaceNum: int,
+    surface: ti.template(),
+    xrad1: float,
+    yrad1: float,
+    zrad1: float,
+    epsilon_e: float,
+    epsilon_n: float,
+    xrad2: float,
+    yrad2: float,
+    zrad2: float,
+):
     surface[surfaceNum]._add_template_parameter(xrad1, yrad1, zrad1, epsilon_e, epsilon_n, xrad2, yrad2, zrad2)
 
 
 @ti.kernel
-def kernel_add_polysuperquadrics_parameter(surfaceNum: int, surface: ti.template(), xrad1: float, yrad1: float, zrad1: float, epsilon_x: float, epsilon_y: float, epsilon_z: float, xrad2: float, yrad2: float, zrad2: float):
-    surface[surfaceNum]._add_template_parameter(xrad1, yrad1, zrad1, epsilon_x, epsilon_y, epsilon_z, xrad2, yrad2, zrad2)
+def kernel_add_polysuperquadrics_parameter(
+    surfaceNum: int,
+    surface: ti.template(),
+    xrad1: float,
+    yrad1: float,
+    zrad1: float,
+    epsilon_x: float,
+    epsilon_y: float,
+    epsilon_z: float,
+    xrad2: float,
+    yrad2: float,
+    zrad2: float,
+):
+    surface[surfaceNum]._add_template_parameter(
+        xrad1, yrad1, zrad1, epsilon_x, epsilon_y, epsilon_z, xrad2, yrad2, zrad2
+    )
+
 
 @ti.kernel
-def kernel_visualize_levelset_surface_(rigidNum: int, surface_node: ti.template(), visualzie_surface_node: ti.template(), rigid: ti.template(), box: ti.template()):
+def kernel_visualize_levelset_surface_(
+    rigidNum: int,
+    surface_node: ti.template(),
+    visualzie_surface_node: ti.template(),
+    rigid: ti.template(),
+    box: ti.template(),
+):
     for master in range(rigidNum):
         for node in range(rigid[master]._start_node(), rigid[master]._end_node()):
             gnode = rigid[master].local_node_to_global(node)
             rotate_matrix = SetToRotate(rigid[master].q)
-            visualzie_surface_node[gnode] = rigid[master].mass_center + rotate_matrix @ (box[master].scale * surface_node[node].x)
+            visualzie_surface_node[gnode] = rigid[master].mass_center + rotate_matrix @ (
+                box[master].scale * surface_node[node].x
+            )
+
 
 @ti.kernel
-def kernel_visualize_implicit_surface_(rigidNum: int, template_vertice_num: ti.types.ndarray(), stacked_vertices: ti.types.ndarray(), total_vertice_num: ti.types.ndarray(), visualzie_surface_node: ti.template(), rigid: ti.template()):
+def kernel_visualize_implicit_surface_(
+    rigidNum: int,
+    template_vertice_num: ti.types.ndarray(),
+    stacked_vertices: ti.types.ndarray(),
+    total_vertice_num: ti.types.ndarray(),
+    visualzie_surface_node: ti.template(),
+    rigid: ti.template(),
+):
     for master in range(rigidNum):
         templateID = rigid[master].templateID
         scale = rigid[master].scale
@@ -941,24 +1300,43 @@ def kernel_visualize_implicit_surface_(rigidNum: int, template_vertice_num: ti.t
         for node in range(template_vertice_num[templateID], template_vertice_num[templateID + 1]):
             gnode = node - template_vertice_num[templateID]
             rotate_matrix = SetToRotate(rigid[master].q)
-            visualzie_surface_node[begin_index + gnode] = rigid[master].mass_center + rotate_matrix @ (scale * vec3f(stacked_vertices[node, 0], stacked_vertices[node, 1], stacked_vertices[node, 2]))
+            visualzie_surface_node[begin_index + gnode] = rigid[master].mass_center + rotate_matrix @ (
+                scale * vec3f(stacked_vertices[node, 0], stacked_vertices[node, 1], stacked_vertices[node, 2])
+            )
+
 
 @ti.kernel
-def kernel_postvisualize_surface_(surface_num: int, surface_node: ti.types.ndarray(), position: ti.types.ndarray(), quanternion: ti.types.ndarray(), start_node: ti.types.ndarray(), 
-                                  start_local_node: ti.types.ndarray(), masterID: ti.types.ndarray(), scale: ti.types.ndarray(), vertices: ti.template()):
+def kernel_postvisualize_surface_(
+    surface_num: int,
+    surface_node: ti.types.ndarray(),
+    position: ti.types.ndarray(),
+    quanternion: ti.types.ndarray(),
+    start_node: ti.types.ndarray(),
+    start_local_node: ti.types.ndarray(),
+    masterID: ti.types.ndarray(),
+    scale: ti.types.ndarray(),
+    vertices: ti.template(),
+):
     for iterate in range(surface_num):
         master = masterID[iterate]
         local_node = iterate - start_node[master] + start_local_node[master]
-        rotation_matrix = SetToRotate(vec4f([quanternion[master, 0], quanternion[master, 1], quanternion[master, 2], quanternion[master, 3]]))
-        vertices[iterate] = vec3f([position[master, 0], position[master, 1], position[master, 2]]) + rotation_matrix @ (scale[master] * vec3f([surface_node[local_node, 0], surface_node[local_node, 1], surface_node[local_node, 2]]))
+        rotation_matrix = SetToRotate(
+            vec4f([quanternion[master, 0], quanternion[master, 1], quanternion[master, 2], quanternion[master, 3]])
+        )
+        vertices[iterate] = vec3f([position[master, 0], position[master, 1], position[master, 2]]) + rotation_matrix @ (
+            scale[master]
+            * vec3f([surface_node[local_node, 0], surface_node[local_node, 1], surface_node[local_node, 2]])
+        )
+
 
 @ti.kernel
 def check_radius_(rigidNum: int, rigid: ti.template()) -> bool:
     check = True
     for i in range(1, rigidNum):
-        if check and rigid[i-1].equi_r > rigid[i].equi_r:
+        if check and rigid[i - 1].equi_r > rigid[i].equi_r:
             check = False
     return check
+
 
 def GetConnectivity(surface_node_number, faces, i):
     return faces + i * surface_node_number

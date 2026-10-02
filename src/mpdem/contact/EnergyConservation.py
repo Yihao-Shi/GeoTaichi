@@ -17,7 +17,7 @@ class EnergyConservationModel(ContactModelBase):
         self.model_type = 0
 
     def calcu_critical_timestep(self, mscene: MPMScene, dsims: DEMSimulation, dscene: DEMScene, max_material_num):
-        mass = min(mscene.find_particle_min_mass(), dscene.find_particle_min_mass(dsims.scheme))
+        mass = min(mscene.find_particle_min_mass(), dscene.find_particle_min_mass(dsims))
         stiffness = self.find_max_stiffness(max_material_num)
         return ti.sqrt(mass / stiffness)
 

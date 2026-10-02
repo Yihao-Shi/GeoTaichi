@@ -1,5 +1,6 @@
 import taichi as ti
 
+import src.utils.GlobalVariable as GlobalVariable
 from src.utils.constants import PI, ZEROMAT3x3, ZEROVEC3f
 from src.utils.MatrixFunction import get_eigenvalue
 from src.utils.ShapeFunctions import GGuassian, Guassian
@@ -8,7 +9,9 @@ from src.utils.VectorFunction import Normalize, Squared
 
 
 @ti.kernel
-def assign_particle_free_surface(start_index: int, end_index: int, particle: ti.template(), materialID: ti.template(), material: ti.template()):
+def assign_particle_free_surface(
+    start_index: int, end_index: int, particle: ti.template(), materialID: ti.template(), material: ti.template()
+):
     density_ratio_tolerance = 0.76
     for i in range(start_index, end_index):
         np = materialID[i]
@@ -21,7 +24,14 @@ def assign_particle_free_surface(start_index: int, end_index: int, particle: ti.
 
 
 @ti.kernel
-def find_boundary_direction_by_geometry(igrid_size: float, cnum: ti.types.vector(3, int), particleNum: int, particle: ti.template(), particleID: ti.template(), particle_count: ti.template()):
+def find_boundary_direction_by_geometry(
+    igrid_size: float,
+    cnum: ti.types.vector(3, int),
+    particleNum: int,
+    particle: ti.template(),
+    particleID: ti.template(),
+    particle_count: ti.template(),
+):
     for np in range(particleNum):
         normal = ZEROVEC3f
         if particle[np].free_surface == ti.u8(1) and int(particle[np].active) == 1:
@@ -38,26 +48,40 @@ def find_boundary_direction_by_geometry(igrid_size: float, cnum: ti.types.vector
             y_end = ti.min(grid_idx[1] + 2, cnum[1])
             z_begin = ti.max(grid_idx[2] - 1, 0)
             z_end = ti.min(grid_idx[2] + 2, cnum[2])
-            
+
             for neigh_i in range(x_begin, x_end):
                 for neigh_j in range(y_begin, y_end):
                     for neigh_k in range(z_begin, z_end):
                         cellID = linearize3D(neigh_i, neigh_j, neigh_k, cnum)
                         for hash_index in range(particle_count[cellID], particle_count[cellID + 1]):
                             neighborID = particleID[hash_index]
-                            if np == neighborID: continue
+                            if np == neighborID:
+                                continue
                             bodyID2 = particle[neighborID].bodyID
                             if bodyID1 == bodyID2:
                                 rel_coord = particle[neighborID].x - p_coord
                                 kernel_gradient = GGuassian(smoothing_length, -rel_coord)
-                                renormalization_matrix_inv += particle[neighborID].m / particle[neighborID].mass_density * kernel_gradient.outer_product(rel_coord)
-                                temporary_vec += particle[neighborID].m / particle[neighborID].mass_density * kernel_gradient
+                                renormalization_matrix_inv += (
+                                    particle[neighborID].m
+                                    / particle[neighborID].mass_density
+                                    * kernel_gradient.outer_product(rel_coord)
+                                )
+                                temporary_vec += (
+                                    particle[neighborID].m / particle[neighborID].mass_density * kernel_gradient
+                                )
             normal = Normalize(-renormalization_matrix_inv.inverse() @ temporary_vec)
         particle[np].normal = normal
 
 
 @ti.kernel
-def find_free_surface_by_geometry(igrid_size: float, cnum: ti.types.vector(3, int), particleNum: int, particle: ti.template(), particleID: ti.template(), particle_count: ti.template()):
+def find_free_surface_by_geometry(
+    igrid_size: float,
+    cnum: ti.types.vector(3, int),
+    particleNum: int,
+    particle: ti.template(),
+    particleID: ti.template(),
+    particle_count: ti.template(),
+):
     for np in range(particleNum):
         if particle[np].free_surface == ti.u8(1) and int(particle[np].active) == 1:
             p_coord = particle[np].x
@@ -80,13 +104,14 @@ def find_free_surface_by_geometry(igrid_size: float, cnum: ti.types.vector(3, in
                         t_coord = p_coord + smoothing_length * normal
                         for hash_index in range(particle_count[cellID], particle_count[cellID + 1]):
                             neighborID = particleID[hash_index]
-                            if np == neighborID: continue
-                            n_coord = particle[neighborID].x 
+                            if np == neighborID:
+                                continue
+                            n_coord = particle[neighborID].x
                             rel_coord_np = n_coord - p_coord
                             distance_np = rel_coord_np.norm()
                             rel_coord_nt = n_coord - t_coord
                             distance_nt = rel_coord_nt.norm()
-                            
+
                             if distance_np < ti.sqrt(2) * smoothing_length:
                                 if ti.acos(normal.dot(rel_coord_np) / distance_np) < 0.25 * PI:
                                     particle[np].free_surface = ti.u8(0)
@@ -100,7 +125,16 @@ def find_free_surface_by_geometry(igrid_size: float, cnum: ti.types.vector(3, in
 
 
 @ti.kernel
-def find_free_surface_by_geometry_eigen(icell_size: float, radius: float, cnum: ti.types.vector(3, int), start_point: ti.types.vector(3, float), particleNum: int, particle: ti.template(), particleID: ti.template(), hash_table: ti.template()):
+def find_free_surface_by_geometry_eigen(
+    icell_size: float,
+    radius: float,
+    cnum: ti.types.vector(3, int),
+    start_point: ti.types.vector(3, float),
+    particleNum: int,
+    particle: ti.template(),
+    particleID: ti.template(),
+    hash_table: ti.template(),
+):
     for np in range(particleNum):
         if int(particle[np].free_surface) == 1:
             p_coord = particle[np].x - start_point
@@ -115,19 +149,24 @@ def find_free_surface_by_geometry_eigen(icell_size: float, radius: float, cnum: 
             y_end = ti.min(grid_idx[1] + 3, cnum[1])
             z_begin = ti.max(grid_idx[2] - 2, 0)
             z_end = ti.min(grid_idx[2] + 3, cnum[2])
-            
+
             for neigh_i in range(x_begin, x_end):
                 for neigh_j in range(y_begin, y_end):
                     for neigh_k in range(z_begin, z_end):
                         cellID = linearize3D(neigh_i, neigh_j, neigh_k, cnum)
-                        for hash_index in range(hash_table[cellID].current, hash_table[cellID].current + hash_table[cellID].count):
+                        for hash_index in range(
+                            hash_table[cellID].current, hash_table[cellID].current + hash_table[cellID].count
+                        ):
                             neighborID = particleID[hash_index]
-                            if np == neighborID: continue
+                            if np == neighborID:
+                                continue
                             rel_coord = particle[neighborID].x - p_coord - start_point
                             kernel_gradient = GGuassian(smoothing_length, -rel_coord)
-                            renormalization_matrix_inv += particle[neighborID].vol * kernel_gradient.outer_product(rel_coord)
+                            renormalization_matrix_inv += particle[neighborID].vol * kernel_gradient.outer_product(
+                                rel_coord
+                            )
                             temporary_vec += particle[neighborID].vol * kernel_gradient
-            
+
             vector = get_eigenvalue(renormalization_matrix_inv)
             lambda_ = vector[0]
             normal = Normalize(-renormalization_matrix_inv.inverse() @ temporary_vec)
@@ -138,15 +177,18 @@ def find_free_surface_by_geometry_eigen(icell_size: float, radius: float, cnum: 
                             for neigh_k in range(z_begin, z_end):
                                 cellID = linearize3D(neigh_i, neigh_j, neigh_k, cnum)
                                 t_coord = p_coord + smoothing_length * normal
-                                for hash_index in range(hash_table[cellID].current, hash_table[cellID].current + hash_table[cellID].count):
+                                for hash_index in range(
+                                    hash_table[cellID].current, hash_table[cellID].current + hash_table[cellID].count
+                                ):
                                     neighborID = particleID[hash_index]
-                                    if np == neighborID: continue
+                                    if np == neighborID:
+                                        continue
                                     n_coord = particle[neighborID].x - start_point
                                     rel_coord_np = n_coord - p_coord
                                     distance_np = rel_coord_np.norm()
                                     rel_coord_nt = n_coord - t_coord
                                     distance_nt = rel_coord_nt.norm()
-                                    
+
                                     if distance_np < ti.sqrt(2) * smoothing_length:
                                         if ti.acos(normal.dot(rel_coord_np) / distance_np) < 0.25 * PI:
                                             particle[np].free_surface = ti.u8(0)
@@ -163,11 +205,21 @@ def find_free_surface_by_geometry_eigen(icell_size: float, radius: float, cnum: 
             particle[np].normal = normal
             particle[np].lambda_ = lambda_
 
+
 # ========================================================= #
 #                     Surface Tension                       #
 # ========================================================= #
 @ti.kernel
-def kernel_calculate_surface_tension(kappa: float, igrid_size: float, cnum: ti.types.vector(3, int), particleNum: int, particle: ti.template(), particleID: ti.template(), particle_current: ti.template(), particle_count: ti.template()):
+def kernel_calculate_surface_tension(
+    kappa: float,
+    igrid_size: float,
+    cnum: ti.types.vector(3, int),
+    particleNum: int,
+    particle: ti.template(),
+    particleID: ti.template(),
+    particle_current: ti.template(),
+    particle_count: ti.template(),
+):
     # reference: J.P. Morris. Simulating surface tension with smoothed particle hydrodynamics. International Journal for Numerical Methods in Fluids. 2000 (33) 333-353.
     for np in range(particleNum):
         if particle[np].free_surface == ti.u8(1) and int(particle[np].active) == 1:
@@ -184,20 +236,96 @@ def kernel_calculate_surface_tension(kappa: float, igrid_size: float, cnum: ti.t
             z_end = ti.min(grid_idx[2] + 2, cnum[2])
 
             normala = particle[np].normal
-            Na = 1. if Squared(normala) > epsilon * epsilon else 0.
-            curvature_star, eta = 0., 0.
+            Na = 1.0 if Squared(normala) > epsilon * epsilon else 0.0
+            curvature_star, eta = 0.0, 0.0
             for neigh_i in range(x_begin, x_end):
                 for neigh_j in range(y_begin, y_end):
                     for neigh_k in range(z_begin, z_end):
                         cellID = linearize3D(neigh_i, neigh_j, neigh_k, cnum)
-                        for hash_index in range(particle_count[cellID] - particle_current[cellID], particle_count[cellID]):
+                        for hash_index in range(
+                            particle_count[cellID] - particle_current[cellID], particle_count[cellID]
+                        ):
                             neighborID = particleID[hash_index]
-                            if np == neighborID: continue
+                            if np == neighborID:
+                                continue
                             rel_coord = particle[neighborID].x - p_coord
                             normalb = particle[neighborID].normal
-                            Nb = 1. if Squared(normalb) > epsilon * epsilon else 0.
-                            curvature_star += min(Na, Nb) * particle[neighborID].vol * (normalb - normala) * GGuassian(smoothing_length, -rel_coord)
+                            Nb = 1.0 if Squared(normalb) > epsilon * epsilon else 0.0
+                            curvature_star += (
+                                min(Na, Nb)
+                                * particle[neighborID].vol
+                                * (normalb - normala)
+                                * GGuassian(smoothing_length, -rel_coord)
+                            )
                             eta += min(Na, Nb) * particle[neighborID].vol * Guassian(smoothing_length, -rel_coord)
             curvature = curvature_star / eta
             particle[np].external_force -= curvature * normala * kappa
 
+
+# ---- SemiImplicit TwoPhaseSingleLayer compatibility kernels ----
+@ti.kernel
+def assign_particle_free_surface_poisson(particleNum: int, particle: ti.template(), material: ti.template()):
+    density_ratio_tolerance = 0.76 * 0.6
+    for np in range(particleNum):
+        if int(particle[np].active) == 1:
+            is_free_surface = 0
+            materialID = int(particle[np].materialID)
+            if particle[np].mass_density / material[materialID].solid_density <= density_ratio_tolerance:
+                is_free_surface = 1
+            particle[np].free_surface = ti.u8(is_free_surface)
+
+
+@ti.kernel
+def assign_particle_free_surface_by_volume_multilayer(
+    particleNum: int,
+    particle: ti.template(),
+    cell_volumefrac: ti.template(),
+    grid_size: ti.template(),
+    cnum: ti.template(),
+):
+    volume_fraction_tolerance = 0.3
+    for np in range(particleNum):
+        if int(particle[np].active) == 1:
+            is_free_surface = 0
+            ic = ti.floor((particle[np].x / grid_size), int)
+            if ti.static(GlobalVariable.DIMENSION == 2):
+                for dx, dy in ti.ndrange((-1, 2), (-1, 2)):
+                    neigh = ic + ti.Vector([dx, dy])
+                    if 0 <= neigh[0] < cnum[0] and 0 <= neigh[1] < cnum[1]:
+                        icell = neigh[0] + neigh[1] * cnum[0]
+                        if cell_volumefrac[icell] <= volume_fraction_tolerance:
+                            is_free_surface = 1
+            else:
+                for dx, dy, dz in ti.ndrange((-1, 2), (-1, 2), (-1, 2)):
+                    neigh = ic + ti.Vector([dx, dy, dz])
+                    if 0 <= neigh[0] < cnum[0] and 0 <= neigh[1] < cnum[1] and 0 <= neigh[2] < cnum[2]:
+                        icell = neigh[0] + cnum[0] * (neigh[1] + neigh[2] * cnum[1])
+                        if cell_volumefrac[icell] <= volume_fraction_tolerance:
+                            is_free_surface = 1
+            particle[np].free_surface = ti.u8(is_free_surface)
+
+
+@ti.kernel
+def record_free_surface_particle_2D(
+    domain: ti.types.vector(2, float),
+    grid_size: ti.types.vector(2, float),
+    particleNum: int,
+    particle: ti.template(),
+    free_paticleNum: ti.types.ndarray(),
+    free_particle_list: ti.template(),
+):
+    free_paticleNum[0] = ti.u8(0)
+    free_particle_list.fill(-1)
+    for np in range(particleNum):
+        if particle[np].free_surface == ti.u8(1):
+            p_coord = particle[np].x
+            if (
+                p_coord[0] < grid_size[0] * 1.5
+                or p_coord[0] > domain[0] - grid_size[0] * 1.5
+                or p_coord[1] < grid_size[1] * 1.5
+                or p_coord[1] > domain[1] - grid_size[1] * 1.5
+            ):
+                particle[np].free_surface = ti.u8(0)
+            else:
+                index = ti.atomic_add(free_paticleNum[0], 1)
+                free_particle_list[index] = np

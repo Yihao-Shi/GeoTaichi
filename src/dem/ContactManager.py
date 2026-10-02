@@ -10,7 +10,6 @@ from src.dem.contact.Linear import LinearModel
 from src.dem.contact.HertzMindlin import HertzMindlinModel 
 from src.dem.contact.LinearRolling import LinearRollingModel
 from src.dem.contact.JiangRolling import JiangRollingResistanceModel
-from src.dem.contact.LinearBond import LinearBondModel 
 from src.dem.contact.EnergyConservation import EnergyConservation
 
 from src.utils.ObjectIO import DictIO
@@ -25,8 +24,15 @@ class ContactManager(object):
         self.physpw = None
         self.have_initialise = False
 
-    def initialize(self, sims: Simulation, scene, kwargs):
-        self.neighbor.neighbor_initialze(scene, DictIO.GetAlternative(kwargs, "min_bounding_radius", max(sims.domain)), DictIO.GetAlternative(kwargs, "max_bounding_radius", 0.))
+    def initialize(self, sims: Simulation, scene, **kwargs):
+        # Bodies and walls can be created after the neighbor object itself.
+        # Rebind the scheme/particle/wall hooks against the completed scene
+        # before allocating hash tables; otherwise a neighbor constructed
+        # while ``wall_type`` was unset retains no-op facet functions and
+        # silently omits particle--wall contact.
+        self.neighbor.manage_function(scene)
+        self.neighbor.neighbor_initialze(scene, DictIO.GetAlternative(kwargs, "min_bounding_radius", max(sims.domain)), 
+                                         DictIO.GetAlternative(kwargs, "max_bounding_radius", 0.))
         self.collision_list(sims)
         self.have_initialise = True
 
@@ -44,7 +50,9 @@ class ContactManager(object):
                 raise RuntimeError("Failed to activate neighbor class!")
 
     def particle_particle_initialize(self, sims: Simulation):
+        deactivate=False
         if self.physpp is None:
+            if sims.max_particle_num == 0: deactivate = True
             if sims.scheme == "DEM" or sims.scheme == "PolySuperEllipsoid" or sims.scheme == "PolySuperQuadrics":
                 if sims.max_particle_num > 1 and not sims.particle_particle_contact_model is None:
                     if sims.particle_particle_contact_model == "Linear Model":
@@ -55,8 +63,6 @@ class ContactManager(object):
                         self.physpp = LinearRollingModel(sims)
                     elif sims.particle_particle_contact_model == "Jiang Rolling Model":
                         self.physpp = JiangRollingResistanceModel(sims)
-                    elif sims.particle_particle_contact_model == "Linear Bond Model":
-                        self.physpp = LinearBondModel(sims)
                     elif sims.particle_particle_contact_model == "User Defined":
                         pass
                     elif not sims.particle_particle_contact_model is None:
@@ -65,7 +71,7 @@ class ContactManager(object):
                 else:
                     self.physpp = ContactModelBase(sims)
 
-            elif sims.scheme == "LSDEM":
+            elif sims.scheme == "LSDEM" or sims.scheme == "LSMPM":
                 if sims.max_particle_num > 1 and not sims.particle_particle_contact_model is None:
                     if sims.particle_particle_contact_model == "Linear Model":
                         self.physpp = LinearModel(sims)
@@ -80,23 +86,25 @@ class ContactManager(object):
                         raise ValueError('Particle to Particle Contact Model error!')
                 else:
                     self.physpp = ContactModelBase(sims)
+
+            if deactivate: self.physpp.null_model = True
             self.physpp.manage_function("particle", sims.particle_work)
                 
 
     def particle_wall_initialize(self, sims: Simulation):
+        deactivate=False
         if self.physpw is None:
+            if sims.max_particle_num == 0 or sims.max_wall_num == 0: deactivate = True
             if sims.scheme == "DEM" or sims.scheme == "PolySuperEllipsoid" or sims.scheme == "PolySuperQuadrics":
                 if sims.max_particle_num > 0 and sims.max_wall_num > 0 and not sims.particle_wall_contact_model is None:
                     if sims.particle_wall_contact_model == "Linear Model":
                         self.physpw = LinearModel(sims)
                     elif sims.particle_wall_contact_model == "Hertz Mindlin Model":
                         self.physpw = HertzMindlinModel(sims)
-                    elif sims.particle_particle_contact_model == "Linear Rolling Model":
+                    elif sims.particle_wall_contact_model == "Linear Rolling Model":
                         self.physpw = LinearRollingModel(sims)
-                    elif sims.particle_particle_contact_model == "Jiang Rolling Model":
+                    elif sims.particle_wall_contact_model == "Jiang Rolling Model":
                         self.physpw = JiangRollingResistanceModel(sims)
-                    elif sims.particle_wall_contact_model == "Linear Bond Model":
-                        self.physpw = LinearBondModel(sims)
                     elif sims.particle_wall_contact_model == "User Defined":
                         pass
                     else:
@@ -105,7 +113,7 @@ class ContactManager(object):
                 else:
                     self.physpw = ContactModelBase(sims)
 
-            elif sims.scheme == "LSDEM":
+            elif sims.scheme == "LSDEM" or sims.scheme == "LSMPM":
                 if sims.max_particle_num > 0 and sims.max_wall_num > 0 and not sims.particle_wall_contact_model is None:
                     if sims.particle_wall_contact_model == "Linear Model":
                         self.physpw = LinearModel(sims)
@@ -120,6 +128,8 @@ class ContactManager(object):
                         raise ValueError(f'Particle to Wall Contact Model error! Input {sims.particle_wall_contact_model} is invalid, only the following is available {model_list}')
                 else:
                     self.physpw = ContactModelBase(sims)
+
+            if deactivate: self.physpw.null_model = True
             self.physpw.manage_function("wall", sims.wall_work)
 
     def collision_list(self, sims: Simulation):
@@ -182,4 +192,3 @@ class ContactManager(object):
                 self.physpp.update_properties(materialID1, materialID2, property_name, value, overide)
             if not self.physpw is None:
                 self.physpw.update_properties(materialID1, materialID2, property_name, value, overide)
-

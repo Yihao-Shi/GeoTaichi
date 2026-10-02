@@ -15,6 +15,9 @@ class BrustSearch(NeighborBase):
         self.update_verlet_tables_particle_particle(scene)
         self.update_verlet_tables_particle_wall(scene)
 
+    def pre_neighbor(self, scene):
+        self.pre_calculation(scene)
+
     def update_verlet_table(self, scene):
         self.update_verlet_tables_particle_particle(scene)
         self.update_verlet_tables_particle_wall(scene)
@@ -29,7 +32,8 @@ class BrustSearch(NeighborBase):
         self.sims.set_min_bounding_sphere_radius(rad_min)
         rad_max = max(max_bounding_rad, rad_max)
         rad_min = min(min_bounding_rad, rad_min)
-        self.sims.set_verlet_distance(rad_min)
+        self.sims.set_verlet_distance(
+            self._verlet_reference_radius(scene, rad_min))
         self.sims.set_potential_list_size(rad_max)
 
         if self.sims.xpbc:
@@ -41,8 +45,8 @@ class BrustSearch(NeighborBase):
         
         if self.first_run:
             self.particle_pse = PrefixSumExecutor(self.sims.max_particle_num + 1)
-            if self.sims.scheme == "LSDEM":
-                self.point_pse = PrefixSumExecutor(self.sims.max_surface_node_num * self.sims.max_particle_num + 1)
+            if self.sims.scheme == "LSDEM" or self.sims.scheme == "LSMPM":
+                self.point_pse = PrefixSumExecutor(self.sims.max_ls_contact_node_num + 1)
             
             self.set_potential_contact_list(scene)
         self.print_info()
@@ -56,19 +60,19 @@ class BrustSearch(NeighborBase):
         print("Potental contact wall per particle: ", self.sims.wall_coordination_number, '\n')
 
     def update_verlet_table_particle_particle(self, scene: myScene):
-        board_search_particle_particle_brust_(self.sims.max_potential_particle_pairs, int(scene.particleNum[0]), self.sims.verlet_distance, scene.particle, self.potential_list_particle_particle, self.particle_particle)
+        board_search_particle_particle_brust_(self.sims.potential_particle_num, int(scene.particleNum[0]), self.sims.verlet_distance, scene.particle, self.potential_list_particle_particle, self.particle_particle)
         self.particle_pse.run(self.particle_particle)
 
     def update_verlet_table_particle_plane(self, scene: myScene):
-        board_search_particle_wall_brust_(self.sims.max_potential_wall_pairs, int(scene.particleNum[0]), int(scene.wallNum[0]), self.sims.verlet_distance, scene.particle, scene.wall, self.potential_list_particle_wall, self.particle_wall)
+        board_search_particle_wall_brust_(self.sims.wall_coordination_number, int(scene.particleNum[0]), int(scene.wallNum[0]), self.sims.verlet_distance, scene.particle, scene.wall, self.potential_list_particle_wall, self.particle_wall)
         self.particle_pse.run(self.particle_wall)
 
     def update_verlet_table_particle_facet(self, scene: myScene):
-        board_search_particle_wall_brust_(self.sims.max_potential_wall_pairs, int(scene.particleNum[0]), int(scene.wallNum[0]), self.sims.verlet_distance, scene.particle, scene.wall, self.potential_list_particle_wall, self.particle_wall)
+        board_search_particle_wall_brust_(self.sims.wall_coordination_number, int(scene.particleNum[0]), int(scene.wallNum[0]), self.sims.verlet_distance, scene.particle, scene.wall, self.potential_list_particle_wall, self.particle_wall)
         self.particle_pse.run(self.particle_wall)
 
     def update_verlet_table_particle_patch(self, scene: myScene):
-        board_search_particle_wall_brust_(self.sims.max_potential_wall_pairs, int(scene.particleNum[0]), int(scene.wallNum[0]), self.sims.verlet_distance, scene.particle, scene.wall, self.potential_list_particle_wall, self.particle_wall)
+        board_search_particle_wall_brust_(self.sims.wall_coordination_number, int(scene.particleNum[0]), int(scene.wallNum[0]), self.sims.verlet_distance, scene.particle, scene.wall, self.potential_list_particle_wall, self.particle_wall)
         self.particle_pse.run(self.particle_wall)
 
 

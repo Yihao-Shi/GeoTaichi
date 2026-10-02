@@ -89,9 +89,9 @@ class GaussPointInTriangle:
             self.weight[6 ] = 0.0771137608903
             self.weight[7 ] = 0.0771137608903
             self.weight[8 ] = 0.0771137608903
-            self.weight[9] = 0.1756152576332
-            self.weight[10] = 0.1756152576332
-            self.weight[11] = 0.1756152576332
+            self.weight[9] = 0.1756152574332
+            self.weight[10] = 0.1756152574332
+            self.weight[11] = 0.1756152574332
             self.weight[12] =-0.1495700444677
 
 
@@ -116,8 +116,8 @@ class GaussPointInTriangle:
             self.weight[3] = 0.25
 
         elif self.ngp == 5:
-            self.gpcoords = np.zeros((4, self.dim))
-            self.weight = np.zeros(4)
+            self.gpcoords = np.zeros((5, self.dim))
+            self.weight = np.zeros(5)
             self.gpcoords[0, :] = [ 0.25,  0.25,  0.25 ]
             self.gpcoords[1, :] = [ 1./2.,   1./6.,   1./6. ]
             self.gpcoords[2, :] = [ 1./6.,   1./2.,   1./6. ]
@@ -134,10 +134,10 @@ class GaussPointInTriangle:
         self.create_gauss_point()
 
     def get_ith_weight(self, i):
-        return self.gpcoords[i, 0]
+        return self.weight[i]
 
     def get_ith_coord(self, i):
-        return self.gpcoords[i, 1], self.gpcoords[i, 2], self.gpcoords[i, 3]
+        return tuple(self.gpcoords[i])
 
 
 class GaussPointInRectangle:
@@ -365,4 +365,4 @@ class GaussPointInRectangle:
         return self.weight[i]
 
     def get_ith_coord(self, i):
-        return self.gpcoords[i, 1], self.gpcoords[i, 2], self.gpcoords[i, 3]
+        return tuple(self.gpcoords[i])

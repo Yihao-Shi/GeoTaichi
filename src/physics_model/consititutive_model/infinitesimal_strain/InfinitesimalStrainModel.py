@@ -12,6 +12,8 @@ class InfinitesimalStrainModel(Solid):
 
     def get_state_vars(self):
         state_vars = self.define_state_vars()
+        if GlobalVariable.TRACKENERGY:
+            state_vars.update({"plastic_energy": float})
         if self.is_elastic is False and self.solver_type == 1:
             state_vars.update({"yield_state": ti.u8})
         if "UL" in self.configuration:
@@ -44,8 +46,30 @@ class InfinitesimalStrainModel(Solid):
         return 1. + dt[None] * (strain_rate[0] + strain_rate[1] + strain_rate[2])
 
     @ti.func
-    def update_particle_volume_bbar_2D(self, np, velocity_gradient, stateVars, dt):
-        return (ti.Matrix.identity(float, 2) + velocity_gradient * dt[None]).determinant()
+    def update_particle_volume_bbar_2D(
+        self, np, velocity_gradient, stateVars, dt
+    ):
+        return (
+            ti.Matrix.identity(float, 2) + velocity_gradient * dt[None]
+        ).determinant()
+
+    @ti.func
+    def ComputePKStress2D(self, np, previous_PKstress, velocity_gradient, stateVars, dt):  
+        previous_cauchy_stress = self.PK2CauchyStress2D(np, previous_PKstress, stateVars)
+        cauchy_stress = self.ComputeStress2D(np, previous_cauchy_stress, velocity_gradient, stateVars, dt)
+        PKstress2D = self.Cauchy2PKStress2D(np, stateVars, cauchy_stress)
+        if ti.static(previous_PKstress.n == 3):
+            deformation_gradient = stateVars[np].deformation_gradient
+            j = deformation_gradient.determinant()
+            PKstress = ti.Matrix.zero(float, 3, 3)
+            PKstress[0, 0] = PKstress2D[0, 0]
+            PKstress[0, 1] = PKstress2D[0, 1]
+            PKstress[1, 0] = PKstress2D[1, 0]
+            PKstress[1, 1] = PKstress2D[1, 1]
+            PKstress[2, 2] = cauchy_stress[2] * j
+            return PKstress
+        else:
+            return PKstress2D
 
     @ti.func
     def ComputePKStress(self, np, previous_PKstress, velocity_gradient, stateVars, dt):  

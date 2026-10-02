@@ -237,6 +237,47 @@ class ParticleLoad:
         self.psize[1] *= ti.sqrt(deformation_gradient_rate[0, 1] ** 2 + deformation_gradient_rate[1, 1] ** 2 + deformation_gradient_rate[2, 1] ** 2)
         self.psize[2] *= ti.sqrt(deformation_gradient_rate[0, 2] ** 2 + deformation_gradient_rate[1, 2] ** 2 + deformation_gradient_rate[2, 2] ** 2)
 
+
+@ti.dataclass
+class ParticleLoadTwoPhase:
+    pid: int
+    tractions: vec3f
+    tractionf: vec3f
+    psize: vec3f
+
+    @ti.func
+    def set_boundary_condition(self, pid, traction, tractionf, psize):
+        self.pid = pid
+        self.tractions += traction
+        self.tractionf += tractionf
+        self.psize = psize
+
+    @ti.func
+    def clear_boundary_condition(self):
+        self.pid = -1
+        self.tractions = vec3f(0., 0., 0.)
+        self.tractionf = vec3f(0., 0., 0.)
+
+    @ti.func
+    def _compute_traction_force(self):
+        psize = self.psize
+        area = vec3f(psize[1] * psize[2], psize[0] * psize[2], psize[0] * psize[1])
+        return 4. * (self.tractions - self.tractionf) * area, 4. * self.tractionf * area
+
+    @ti.func
+    def _calc_psize_cp(self, dt, velocity_gradient):
+        deformation_gradient_rate = DELTA + dt[None] * velocity_gradient
+        self.psize[0] *= deformation_gradient_rate[0, 0]
+        self.psize[1] *= deformation_gradient_rate[1, 1]
+        self.psize[2] *= deformation_gradient_rate[2, 2]
+
+    @ti.func
+    def _calc_psize_r(self, dt, velocity_gradient):
+        deformation_gradient_rate = DELTA + dt[None] * velocity_gradient
+        self.psize[0] *= ti.sqrt(deformation_gradient_rate[0, 0] ** 2 + deformation_gradient_rate[1, 0] ** 2 + deformation_gradient_rate[2, 0] ** 2)
+        self.psize[1] *= ti.sqrt(deformation_gradient_rate[0, 1] ** 2 + deformation_gradient_rate[1, 1] ** 2 + deformation_gradient_rate[2, 1] ** 2)
+        self.psize[2] *= ti.sqrt(deformation_gradient_rate[0, 2] ** 2 + deformation_gradient_rate[1, 2] ** 2 + deformation_gradient_rate[2, 2] ** 2)
+
     
 @ti.dataclass
 class ParticleLoad2D:
@@ -357,7 +398,8 @@ class VirtualLoad:
         self.virtual_stress = virtual_stress
         self.virtual_force = virtual_force
 
-    def set_lists(self, cellSum, gridSum, grid_level):
+    def set_lists(self, cellSum, gridSum, grid_level, node_capacity=None):
+        node_slots = gridSum if node_capacity is None else int(node_capacity)
         self.auxiliary_cell = ti.field(ti.types.quant.int(bits=2, signed=False))
         bitpack = ti.BitpackedFields(max_num_bits=32)
         bitpack.place(self.auxiliary_cell)
@@ -366,7 +408,7 @@ class VirtualLoad:
         self.auxiliary_node = ti.field(ti.types.quant.int(bits=1, signed=False))
         bitpack = ti.BitpackedFields(max_num_bits=32)
         bitpack.place(self.auxiliary_node)
-        ti.root.dense(ti.ij, (gridSum, grid_level)).place(bitpack)
+        ti.root.dense(ti.ij, (node_slots, grid_level)).place(bitpack)
 
     def stress_check(self, dim):
         return True

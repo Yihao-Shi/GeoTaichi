@@ -43,9 +43,7 @@ def tablelegend(ax, col_labels=None, row_labels=None, title_label="", *args, **k
     
     """
     #################### same as `matplotlib.axes.Axes.legend` #####################
-    handles, labels, extra_args, kwargs = mlegend._parse_legend_args([ax], *args, **kwargs)
-    if len(extra_args):
-        raise TypeError('legend only accepts two non-keyword arguments')
+    handles, labels, kwargs = mlegend._parse_legend_args([ax], *args, **kwargs)
     
     if col_labels is None and row_labels is None:
         ax.legend_ = mlegend.Legend(ax, handles, labels, **kwargs)

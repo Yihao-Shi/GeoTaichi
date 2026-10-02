@@ -10,6 +10,7 @@ class Cell:
     maximum distance of any theoretical point within a cell to a given
     polygon's exterior boundary.
     """
+
     def __init__(self, x, y, h, polygon):
         self.x = x
         self.y = y
@@ -56,8 +57,7 @@ class Cell:
 
 
 def polylabel(polygon, tolerance=1.0):
-    """Finds pole of inaccessibility for a given polygon. Based on
-    Vladimir Agafonkin's https://github.com/mapbox/polylabel
+    """Finds the pole of inaccessibility for a given polygon.
 
     Parameters
     ----------
@@ -87,7 +87,7 @@ def polylabel(polygon, tolerance=1.0):
     'POINT (59.35615556364569 121.8391962974644)'
     """
     if not polygon.is_valid:
-        raise TopologicalError('Invalid polygon')
+        raise TopologicalError("Invalid polygon")
     minx, miny, maxx, maxy = polygon.bounds
     width = maxx - minx
     height = maxy - miny

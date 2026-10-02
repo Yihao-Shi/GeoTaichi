@@ -17,6 +17,9 @@ SHAPEFUNCTION = 0
 INFLUENCENODE = 2
 TWOPHASESINGLELAYER = False
 
+# Constitutive model
+DRIFTCORRECT = True
+
 # PBC
 MPMXPBC = False
 MPMYPBC = False
@@ -36,3 +39,11 @@ max_degree = 2
 
 # Contact model
 ADAPTIVESTIFF = False
+ENABLESHELL = False
+
+# LSMPM soft--soft contact can optionally advance the normal penalty
+# penetration from the same relative velocity used by the transposed surface
+# force transfer.  The default keeps the legacy instantaneous-SDF path; paper
+# diagnostics enable the work-conjugate path explicitly before Taichi kernels
+# are compiled.
+LSMPM_SOFT_SOFT_WORK_CONJUGATE = False

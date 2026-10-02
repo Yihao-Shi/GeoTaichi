@@ -9,6 +9,484 @@ from src.utils.ScalarFunction import linearize3D, vectorize_id, sgn
 import src.utils.GlobalVariable as GlobalVariable
 
 
+@ti.func
+def _affine_aabb_overlap(min0, max0, min1, max1):
+    return (min0[0] <= max1[0] and max0[0] >= min1[0] and
+            min0[1] <= max1[1] and max0[1] >= min1[1] and
+            min0[2] <= max1[2] and max0[2] >= min1[2])
+
+
+@ti.func
+def _affine_clamped_cell(position, igrid_size, cnum):
+    return ti.min(ti.max(ti.floor(position * igrid_size, int), vec3i([0, 0, 0])), cnum - 1)
+
+
+@ti.func
+def _affine_add_vertex_face_candidate(vertex_id, face_id, candidate_capacity, candidate_vertex,
+                                      candidate_face, candidate_count, candidate_overflow):
+    slot = ti.atomic_add(candidate_count[None], 1)
+    if slot < candidate_capacity:
+        candidate_vertex[slot] = vertex_id
+        candidate_face[slot] = face_id
+    else:
+        candidate_overflow[None] = 1
+
+
+@ti.func
+def _affine_add_edge_edge_candidate(edge0_id, edge1_id, candidate_capacity, candidate_edge0,
+                                    candidate_edge1, candidate_count, candidate_overflow):
+    slot = ti.atomic_add(candidate_count[None], 1)
+    if slot < candidate_capacity:
+        candidate_edge0[slot] = edge0_id
+        candidate_edge1[slot] = edge1_id
+    else:
+        candidate_overflow[None] = 1
+
+
+@ti.kernel
+def initialize_affine_vertex_bounds_(vertexNum: int, margin: float, swept: ti.template(), x: ti.template(),
+                                     dx: ti.template(), vertex_min: ti.template(), vertex_max: ti.template()):
+    for vertex_id in range(vertexNum):
+        p0 = x[vertex_id]
+        pmin = p0
+        pmax = p0
+        if ti.static(swept):
+            p1 = p0 + dx[vertex_id]
+            pmin = ti.min(pmin, p1)
+            pmax = ti.max(pmax, p1)
+        expand = ti.Vector([margin, margin, margin])
+        vertex_min[vertex_id] = pmin - expand
+        vertex_max[vertex_id] = pmax + expand
+
+
+@ti.kernel
+def initialize_affine_face_bounds_(faceNum: int, margin: float, swept: ti.template(), x: ti.template(),
+                                   dx: ti.template(), faces: ti.template(), face_min: ti.template(),
+                                   face_max: ti.template(), face_center: ti.template(),
+                                   face_radius: ti.template()):
+    for face_id in range(faceNum):
+        face = faces[face_id]
+        p0 = x[face[0]]
+        p1 = x[face[1]]
+        p2 = x[face[2]]
+        bmin = ti.min(p0, ti.min(p1, p2))
+        bmax = ti.max(p0, ti.max(p1, p2))
+        if ti.static(swept):
+            q0 = p0 + dx[face[0]]
+            q1 = p1 + dx[face[1]]
+            q2 = p2 + dx[face[2]]
+            bmin = ti.min(bmin, ti.min(q0, ti.min(q1, q2)))
+            bmax = ti.max(bmax, ti.max(q0, ti.max(q1, q2)))
+        expand = ti.Vector([margin, margin, margin])
+        bmin -= expand
+        bmax += expand
+        center = 0.5 * (bmin + bmax)
+        radius = 0.0
+        radius = ti.max(radius, (p0 - center).norm())
+        radius = ti.max(radius, (p1 - center).norm())
+        radius = ti.max(radius, (p2 - center).norm())
+        if ti.static(swept):
+            radius = ti.max(radius, (p0 + dx[face[0]] - center).norm())
+            radius = ti.max(radius, (p1 + dx[face[1]] - center).norm())
+            radius = ti.max(radius, (p2 + dx[face[2]] - center).norm())
+        face_min[face_id] = bmin
+        face_max[face_id] = bmax
+        face_center[face_id] = center
+        face_radius[face_id] = radius + margin
+
+
+@ti.kernel
+def initialize_affine_edge_bounds_(edgeNum: int, margin: float, swept: ti.template(), x: ti.template(),
+                                   dx: ti.template(), edges: ti.template(), edge_min: ti.template(),
+                                   edge_max: ti.template(), edge_center: ti.template(),
+                                   edge_radius: ti.template()):
+    for edge_id in range(edgeNum):
+        edge = edges[edge_id]
+        p0 = x[edge[0]]
+        p1 = x[edge[1]]
+        bmin = ti.min(p0, p1)
+        bmax = ti.max(p0, p1)
+        if ti.static(swept):
+            q0 = p0 + dx[edge[0]]
+            q1 = p1 + dx[edge[1]]
+            bmin = ti.min(bmin, ti.min(q0, q1))
+            bmax = ti.max(bmax, ti.max(q0, q1))
+        expand = ti.Vector([margin, margin, margin])
+        bmin -= expand
+        bmax += expand
+        center = 0.5 * (bmin + bmax)
+        radius = ti.max((p0 - center).norm(), (p1 - center).norm())
+        if ti.static(swept):
+            radius = ti.max(radius, (p0 + dx[edge[0]] - center).norm())
+            radius = ti.max(radius, (p1 + dx[edge[1]] - center).norm())
+        edge_min[edge_id] = bmin
+        edge_max[edge_id] = bmax
+        edge_center[edge_id] = center
+        edge_radius[edge_id] = radius + margin
+
+
+@ti.kernel
+def set_affine_bvh_aabbs_(vertexNum: int, faceNum: int, edgeNum: int,
+                          vertex_prefix: int, face_prefix: int, edge_prefix: int,
+                          vertex_min: ti.template(), vertex_max: ti.template(),
+                          face_min: ti.template(), face_max: ti.template(),
+                          edge_min: ti.template(), edge_max: ti.template(),
+                          aabbs: ti.template()):
+    for vertex_id in range(vertexNum):
+        aabbs[vertex_prefix + vertex_id].min = vertex_min[vertex_id]
+        aabbs[vertex_prefix + vertex_id].max = vertex_max[vertex_id]
+    for face_id in range(faceNum):
+        aabbs[face_prefix + face_id].min = face_min[face_id]
+        aabbs[face_prefix + face_id].max = face_max[face_id]
+    for edge_id in range(edgeNum):
+        aabbs[edge_prefix + edge_id].min = edge_min[edge_id]
+        aabbs[edge_prefix + edge_id].max = edge_max[edge_id]
+
+
+@ti.kernel
+def insert_affine_faces_to_cell_(faceNum: int, igrid_size: float, face_per_cell: int,
+                                 face_min: ti.template(), face_max: ti.template(),
+                                 cell_count: ti.template(), cell_face: ti.template(),
+                                 cell_overflow: ti.template(), cnum: ti.types.vector(3, int)):
+    cell_count.fill(0)
+    cell_overflow[None] = 0
+    for face_id in range(faceNum):
+        min_coord = _affine_clamped_cell(face_min[face_id], igrid_size, cnum)
+        max_coord = _affine_clamped_cell(face_max[face_id], igrid_size, cnum) + 1
+        for neigh_i in range(min_coord[0], max_coord[0]):
+            for neigh_j in range(min_coord[1], max_coord[1]):
+                for neigh_k in range(min_coord[2], max_coord[2]):
+                    cell_id = linearize3D(neigh_i, neigh_j, neigh_k, cnum)
+                    local = ti.atomic_add(cell_count[cell_id], 1)
+                    if local < face_per_cell:
+                        cell_face[cell_id * face_per_cell + local] = face_id
+                    else:
+                        cell_overflow[None] = 1
+
+
+@ti.kernel
+def insert_affine_edges_to_cell_(edgeNum: int, igrid_size: float, edge_per_cell: int,
+                                 edge_min: ti.template(), edge_max: ti.template(),
+                                 cell_count: ti.template(), cell_edge: ti.template(),
+                                 cell_overflow: ti.template(), cnum: ti.types.vector(3, int)):
+    cell_count.fill(0)
+    cell_overflow[None] = 0
+    for edge_id in range(edgeNum):
+        min_coord = _affine_clamped_cell(edge_min[edge_id], igrid_size, cnum)
+        max_coord = _affine_clamped_cell(edge_max[edge_id], igrid_size, cnum) + 1
+        for neigh_i in range(min_coord[0], max_coord[0]):
+            for neigh_j in range(min_coord[1], max_coord[1]):
+                for neigh_k in range(min_coord[2], max_coord[2]):
+                    cell_id = linearize3D(neigh_i, neigh_j, neigh_k, cnum)
+                    local = ti.atomic_add(cell_count[cell_id], 1)
+                    if local < edge_per_cell:
+                        cell_edge[cell_id * edge_per_cell + local] = edge_id
+                    else:
+                        cell_overflow[None] = 1
+
+
+@ti.kernel
+def board_search_affine_vertex_face_linked_cell_(vertexNum: int, face_per_cell: int,
+                                                 candidate_capacity: int, igrid_size: float,
+                                                 cell_count: ti.template(), cell_face: ti.template(),
+                                                 vertex_min: ti.template(), vertex_max: ti.template(),
+                                                 face_min: ti.template(), face_max: ti.template(),
+                                                 node2body: ti.template(), face2body: ti.template(),
+                                                 candidate_vertex: ti.template(), candidate_face: ti.template(),
+                                                 candidate_count: ti.template(), candidate_overflow: ti.template(),
+                                                 cnum: ti.types.vector(3, int)):
+    candidate_count[None] = 0
+    candidate_overflow[None] = 0
+    for vertex_id in range(vertexNum):
+        min_coord = _affine_clamped_cell(vertex_min[vertex_id], igrid_size, cnum)
+        max_coord = _affine_clamped_cell(vertex_max[vertex_id], igrid_size, cnum) + 1
+        for neigh_i in range(min_coord[0], max_coord[0]):
+            for neigh_j in range(min_coord[1], max_coord[1]):
+                for neigh_k in range(min_coord[2], max_coord[2]):
+                    cell_id = linearize3D(neigh_i, neigh_j, neigh_k, cnum)
+                    stored = ti.min(cell_count[cell_id], face_per_cell)
+                    for local in range(stored):
+                        face_id = cell_face[cell_id * face_per_cell + local]
+                        if node2body[vertex_id] != face2body[face_id]:
+                            if _affine_aabb_overlap(vertex_min[vertex_id], vertex_max[vertex_id], face_min[face_id], face_max[face_id]):
+                                owner = _affine_clamped_cell(ti.max(vertex_min[vertex_id], face_min[face_id]), igrid_size, cnum)
+                                if owner[0] == neigh_i and owner[1] == neigh_j and owner[2] == neigh_k:
+                                    _affine_add_vertex_face_candidate(vertex_id, face_id, candidate_capacity,
+                                                                     candidate_vertex, candidate_face,
+                                                                        candidate_count, candidate_overflow)
+
+
+@ti.kernel
+def board_search_affine_edge_edge_linked_cell_(edgeNum: int, edge_per_cell: int,
+                                               candidate_capacity: int, igrid_size: float,
+                                               cell_count: ti.template(), cell_edge: ti.template(),
+                                               edge_min: ti.template(), edge_max: ti.template(),
+                                               edge2body: ti.template(),
+                                               candidate_edge0: ti.template(), candidate_edge1: ti.template(),
+                                               candidate_count: ti.template(), candidate_overflow: ti.template(),
+                                               cnum: ti.types.vector(3, int)):
+    candidate_count[None] = 0
+    candidate_overflow[None] = 0
+    for edge_id in range(edgeNum):
+        min_coord = _affine_clamped_cell(edge_min[edge_id], igrid_size, cnum)
+        max_coord = _affine_clamped_cell(edge_max[edge_id], igrid_size, cnum) + 1
+        for neigh_i in range(min_coord[0], max_coord[0]):
+            for neigh_j in range(min_coord[1], max_coord[1]):
+                for neigh_k in range(min_coord[2], max_coord[2]):
+                    cell_id = linearize3D(neigh_i, neigh_j, neigh_k, cnum)
+                    stored = ti.min(cell_count[cell_id], edge_per_cell)
+                    for local in range(stored):
+                        other_edge = cell_edge[cell_id * edge_per_cell + local]
+                        if edge_id < other_edge and edge2body[edge_id] != edge2body[other_edge]:
+                            if _affine_aabb_overlap(edge_min[edge_id], edge_max[edge_id], edge_min[other_edge], edge_max[other_edge]):
+                                owner = _affine_clamped_cell(ti.max(edge_min[edge_id], edge_min[other_edge]), igrid_size, cnum)
+                                if owner[0] == neigh_i and owner[1] == neigh_j and owner[2] == neigh_k:
+                                    _affine_add_edge_edge_candidate(edge_id, other_edge, candidate_capacity,
+                                                                    candidate_edge0, candidate_edge1,
+                                                                    candidate_count, candidate_overflow)
+
+
+@ti.kernel
+def initialize_affine_face_levels_(faceNum: int, levels: int, hierarchical_size: ti.types.ndarray(),
+                                   face_radius: ti.template(), face_level: ti.template()):
+    for face_id in range(faceNum):
+        level = levels - 1
+        for grid_level in range(levels):
+            if face_radius[face_id] <= hierarchical_size[grid_level]:
+                level = grid_level
+                break
+        face_level[face_id] = level
+
+
+@ti.kernel
+def initialize_affine_edge_levels_(edgeNum: int, levels: int, hierarchical_size: ti.types.ndarray(),
+                                   edge_radius: ti.template(), edge_level: ti.template()):
+    for edge_id in range(edgeNum):
+        level = levels - 1
+        for grid_level in range(levels):
+            if edge_radius[edge_id] <= hierarchical_size[grid_level]:
+                level = grid_level
+                break
+        edge_level[edge_id] = level
+
+
+@ti.kernel
+def insert_affine_faces_to_cell_hierarchical_(faceNum: int, face_min: ti.template(), face_max: ti.template(),
+                                              face_level: ti.template(), cell_count: ti.template(),
+                                              cell_face: ti.template(), cell_overflow: ti.template(),
+                                              grid: ti.template()):
+    cell_count.fill(0)
+    cell_overflow[None] = 0
+    for face_id in range(faceNum):
+        grid_level = face_level[face_id]
+        igrid_size = grid[grid_level].igrid_size
+        cnum = grid[grid_level].cnum
+        cell_index = grid[grid_level].cell_index
+        face_cells = grid[grid_level].wall_cells
+        face_per_cell = grid[grid_level].wall_per_cell
+        min_coord = _affine_clamped_cell(face_min[face_id], igrid_size, cnum)
+        max_coord = _affine_clamped_cell(face_max[face_id], igrid_size, cnum) + 1
+        for neigh_i in range(min_coord[0], max_coord[0]):
+            for neigh_j in range(min_coord[1], max_coord[1]):
+                for neigh_k in range(min_coord[2], max_coord[2]):
+                    local_cell = linearize3D(neigh_i, neigh_j, neigh_k, cnum)
+                    cell_id = cell_index + local_cell
+                    local = ti.atomic_add(cell_count[cell_id], 1)
+                    if local < face_per_cell:
+                        cell_face[face_cells + local_cell * face_per_cell + local] = face_id
+                    else:
+                        cell_overflow[None] = 1
+
+
+@ti.kernel
+def insert_affine_edges_to_cell_hierarchical_(edgeNum: int, edge_min: ti.template(), edge_max: ti.template(),
+                                              edge_level: ti.template(), cell_count: ti.template(),
+                                              cell_edge: ti.template(), cell_overflow: ti.template(),
+                                              grid: ti.template()):
+    cell_count.fill(0)
+    cell_overflow[None] = 0
+    for edge_id in range(edgeNum):
+        grid_level = edge_level[edge_id]
+        igrid_size = grid[grid_level].igrid_size
+        cnum = grid[grid_level].cnum
+        cell_index = grid[grid_level].cell_index
+        edge_cells = grid[grid_level].wall_cells
+        edge_per_cell = grid[grid_level].wall_per_cell
+        min_coord = _affine_clamped_cell(edge_min[edge_id], igrid_size, cnum)
+        max_coord = _affine_clamped_cell(edge_max[edge_id], igrid_size, cnum) + 1
+        for neigh_i in range(min_coord[0], max_coord[0]):
+            for neigh_j in range(min_coord[1], max_coord[1]):
+                for neigh_k in range(min_coord[2], max_coord[2]):
+                    local_cell = linearize3D(neigh_i, neigh_j, neigh_k, cnum)
+                    cell_id = cell_index + local_cell
+                    local = ti.atomic_add(cell_count[cell_id], 1)
+                    if local < edge_per_cell:
+                        cell_edge[edge_cells + local_cell * edge_per_cell + local] = edge_id
+                    else:
+                        cell_overflow[None] = 1
+
+
+@ti.kernel
+def board_search_affine_vertex_face_linked_cell_hierarchical_(vertexNum: int, levels: int,
+                                                              candidate_capacity: int,
+                                                              cell_count: ti.template(),
+                                                              cell_face: ti.template(),
+                                                              vertex_min: ti.template(), vertex_max: ti.template(),
+                                                              face_min: ti.template(), face_max: ti.template(),
+                                                              node2body: ti.template(), face2body: ti.template(),
+                                                              candidate_vertex: ti.template(), candidate_face: ti.template(),
+                                                              candidate_count: ti.template(),
+                                                              candidate_overflow: ti.template(),
+                                                              grid: ti.template()):
+    candidate_count[None] = 0
+    candidate_overflow[None] = 0
+    for vertex_id in range(vertexNum):
+        for grid_level in range(levels):
+            igrid_size = grid[grid_level].igrid_size
+            cnum = grid[grid_level].cnum
+            cell_index = grid[grid_level].cell_index
+            face_cells = grid[grid_level].wall_cells
+            face_per_cell = grid[grid_level].wall_per_cell
+            min_coord = _affine_clamped_cell(vertex_min[vertex_id], igrid_size, cnum)
+            max_coord = _affine_clamped_cell(vertex_max[vertex_id], igrid_size, cnum) + 1
+            for neigh_i in range(min_coord[0], max_coord[0]):
+                for neigh_j in range(min_coord[1], max_coord[1]):
+                    for neigh_k in range(min_coord[2], max_coord[2]):
+                        local_cell = linearize3D(neigh_i, neigh_j, neigh_k, cnum)
+                        cell_id = cell_index + local_cell
+                        stored = ti.min(cell_count[cell_id], face_per_cell)
+                        for local in range(stored):
+                            face_id = cell_face[face_cells + local_cell * face_per_cell + local]
+                            if node2body[vertex_id] != face2body[face_id]:
+                                if _affine_aabb_overlap(vertex_min[vertex_id], vertex_max[vertex_id], face_min[face_id], face_max[face_id]):
+                                    owner = _affine_clamped_cell(ti.max(vertex_min[vertex_id], face_min[face_id]), igrid_size, cnum)
+                                    if owner[0] == neigh_i and owner[1] == neigh_j and owner[2] == neigh_k:
+                                        _affine_add_vertex_face_candidate(vertex_id, face_id, candidate_capacity,
+                                                                         candidate_vertex, candidate_face,
+                                                                        candidate_count, candidate_overflow)
+
+
+@ti.kernel
+def board_search_affine_edge_edge_linked_cell_hierarchical_(edgeNum: int, levels: int,
+                                                            candidate_capacity: int,
+                                                            cell_count: ti.template(),
+                                                            cell_edge: ti.template(),
+                                                            edge_min: ti.template(), edge_max: ti.template(),
+                                                            edge2body: ti.template(),
+                                                            candidate_edge0: ti.template(),
+                                                            candidate_edge1: ti.template(),
+                                                            candidate_count: ti.template(),
+                                                            candidate_overflow: ti.template(),
+                                                            grid: ti.template()):
+    candidate_count[None] = 0
+    candidate_overflow[None] = 0
+    for edge_id in range(edgeNum):
+        for grid_level in range(levels):
+            igrid_size = grid[grid_level].igrid_size
+            cnum = grid[grid_level].cnum
+            cell_index = grid[grid_level].cell_index
+            edge_cells = grid[grid_level].wall_cells
+            edge_per_cell = grid[grid_level].wall_per_cell
+            min_coord = _affine_clamped_cell(edge_min[edge_id], igrid_size, cnum)
+            max_coord = _affine_clamped_cell(edge_max[edge_id], igrid_size, cnum) + 1
+            for neigh_i in range(min_coord[0], max_coord[0]):
+                for neigh_j in range(min_coord[1], max_coord[1]):
+                    for neigh_k in range(min_coord[2], max_coord[2]):
+                        local_cell = linearize3D(neigh_i, neigh_j, neigh_k, cnum)
+                        cell_id = cell_index + local_cell
+                        stored = ti.min(cell_count[cell_id], edge_per_cell)
+                        for local in range(stored):
+                            other_edge = cell_edge[edge_cells + local_cell * edge_per_cell + local]
+                            if edge_id < other_edge and edge2body[edge_id] != edge2body[other_edge]:
+                                if _affine_aabb_overlap(edge_min[edge_id], edge_max[edge_id], edge_min[other_edge], edge_max[other_edge]):
+                                    owner = _affine_clamped_cell(ti.max(edge_min[edge_id], edge_min[other_edge]), igrid_size, cnum)
+                                    if owner[0] == neigh_i and owner[1] == neigh_j and owner[2] == neigh_k:
+                                        _affine_add_edge_edge_candidate(edge_id, other_edge, candidate_capacity,
+                                                                        candidate_edge0, candidate_edge1,
+                                                                        candidate_count, candidate_overflow)
+
+
+@ti.kernel
+def board_search_affine_vertex_face_bvh_(vertex_batch_id: int, face_batch_id: int, vertexNum: int,
+                                         candidate_capacity: int, prefix_batch_size: ti.template(),
+                                         nodes: ti.template(), morton_codes: ti.template(),
+                                         primitive_ids: ti.template(), use_extended_morton: ti.template(),
+                                         aabbs: ti.template(),
+                                         node2body: ti.template(), face2body: ti.template(),
+                                         candidate_vertex: ti.template(), candidate_face: ti.template(),
+                                         candidate_count: ti.template(), candidate_overflow: ti.template()):
+    prefix_vertex_batch_num = prefix_batch_size[vertex_batch_id]
+    prefix_face_batch_num = prefix_batch_size[face_batch_id]
+    face_batch_num = prefix_batch_size[face_batch_id + 1] - prefix_face_batch_num
+    prefix_i_node = 2 * prefix_face_batch_num - face_batch_id
+    candidate_count[None] = 0
+    candidate_overflow[None] = 0
+    for vertex_id in range(vertexNum):
+        query_stack = ti.Vector.zero(ti.i32, 64)
+        stack_depth = 1
+        while stack_depth > 0:
+            stack_depth -= 1
+            node_idx = query_stack[stack_depth]
+            node = nodes[prefix_i_node + node_idx]
+            if aabbs[prefix_vertex_batch_num + vertex_id].intersects(node.bound, 0.0, 0.0):
+                if node.left == -1 and node.right == -1:
+                    morton_index = prefix_face_batch_num + node_idx - (face_batch_num - 1)
+                    code = morton_codes[morton_index]
+                    face_id = ti.i32(code & ti.u64(0xFFFFFFFF))
+                    if ti.static(use_extended_morton):
+                        face_id = primitive_ids[morton_index]
+                    if node2body[vertex_id] != face2body[face_id]:
+                        _affine_add_vertex_face_candidate(vertex_id, face_id, candidate_capacity,
+                                                         candidate_vertex, candidate_face,
+                                                         candidate_count, candidate_overflow)
+                else:
+                    if node.right != -1 and stack_depth < 64:
+                        query_stack[stack_depth] = node.right
+                        stack_depth += 1
+                    if node.left != -1 and stack_depth < 64:
+                        query_stack[stack_depth] = node.left
+                        stack_depth += 1
+
+
+@ti.kernel
+def board_search_affine_edge_edge_bvh_(edge_batch_id: int, edgeNum: int, candidate_capacity: int,
+                                       prefix_batch_size: ti.template(), nodes: ti.template(),
+                                       morton_codes: ti.template(), primitive_ids: ti.template(),
+                                       use_extended_morton: ti.template(), aabbs: ti.template(),
+                                       edge2body: ti.template(), candidate_edge0: ti.template(),
+                                       candidate_edge1: ti.template(), candidate_count: ti.template(),
+                                       candidate_overflow: ti.template()):
+    prefix_edge_batch_num = prefix_batch_size[edge_batch_id]
+    edge_batch_num = prefix_batch_size[edge_batch_id + 1] - prefix_edge_batch_num
+    prefix_i_node = 2 * prefix_edge_batch_num - edge_batch_id
+    candidate_count[None] = 0
+    candidate_overflow[None] = 0
+    for edge_id in range(edgeNum):
+        query_stack = ti.Vector.zero(ti.i32, 64)
+        stack_depth = 1
+        while stack_depth > 0:
+            stack_depth -= 1
+            node_idx = query_stack[stack_depth]
+            node = nodes[prefix_i_node + node_idx]
+            if aabbs[prefix_edge_batch_num + edge_id].intersects(node.bound, 0.0, 0.0):
+                if node.left == -1 and node.right == -1:
+                    morton_index = prefix_edge_batch_num + node_idx - (edge_batch_num - 1)
+                    other_edge = ti.i32(morton_codes[morton_index] & ti.u64(0xFFFFFFFF))
+                    if ti.static(use_extended_morton):
+                        other_edge = primitive_ids[morton_index]
+                    if edge_id < other_edge and edge2body[edge_id] != edge2body[other_edge]:
+                        _affine_add_edge_edge_candidate(edge_id, other_edge, candidate_capacity,
+                                                        candidate_edge0, candidate_edge1,
+                                                        candidate_count, candidate_overflow)
+                else:
+                    if node.right != -1 and stack_depth < 64:
+                        query_stack[stack_depth] = node.right
+                        stack_depth += 1
+                    if node.left != -1 and stack_depth < 64:
+                        query_stack[stack_depth] = node.left
+                        stack_depth += 1
+
+
 @ti.kernel
 def reset_relative_displacement(particleNum: int, object_object: ti.template(), oblist: ti.template()):
     total_contact = ti.max(object_object[particleNum], 1)
@@ -43,7 +521,7 @@ def validate_pwrelative_displacement_(limit: float, particleNum: int, dt: ti.tem
         end1, end2 = pwlist[nc].endID1, pwlist[nc].endID2
         particle_rad = particle[end1]._get_radius()
         vel1, vel2 = rigid[end1]._get_velocity(), wall[end2]._get_velocity()
-        w1, norm = rigid[end1]._get_angular_velocity(), wall[end2].norm
+        w1, norm = rigid[end1]._get_angular_velocity(), wall[end2]._get_norm(particle[end1].x)
 
         v_rel = vel1 + w1.cross(-norm) * particle_rad - vel2 
         verletDisp = pwlist[nc].verletDisp + v_rel * dt[None]
@@ -51,6 +529,58 @@ def validate_pwrelative_displacement_(limit: float, particleNum: int, dt: ti.tem
             flag = 1
         pwlist[nc].verletDisp = verletDisp
     return flag
+
+
+@ti.kernel
+def accumulate_pprelative_displacement_(particleNum: int, dt: ti.template(), particle: ti.template(), rigid: ti.template(), particle_particle: ti.template(), pplist: ti.template()):
+    """Accumulate LSDEM point-pair sweep without a host scalar read."""
+
+    total_contact = particle_particle[particleNum]
+    for nc in range(total_contact):
+        end1, end2 = pplist[nc].endID1, pplist[nc].endID2
+        pos1, pos2 = particle[end1].x, particle[end2].x
+        rad1, rad2 = particle[end1].rad, particle[end2].rad
+        vel1, vel2 = rigid[end1]._get_velocity(), rigid[end2]._get_velocity()
+        w1, w2 = rigid[end1]._get_angular_velocity(), rigid[end2]._get_angular_velocity()
+
+        norm = (pos1 - pos2).normalized(Threshold)
+        relative_velocity = (
+            vel1
+            + w1.cross(-norm) * rad1
+            - (vel2 + w2.cross(norm) * rad2)
+        )
+        pplist[nc].verletDisp += relative_velocity * dt[None]
+
+
+@ti.kernel
+def accumulate_pwrelative_displacement_(particleNum: int, dt: ti.template(), particle: ti.template(), wall: ti.template(), rigid: ti.template(), particle_wall: ti.template(), pwlist: ti.template()):
+    """Accumulate LSDEM surface-point/facet sweep on the device."""
+
+    total_contact = particle_wall[particleNum]
+    for nc in range(total_contact):
+        end1, end2 = pwlist[nc].endID1, pwlist[nc].endID2
+        particle_radius = particle[end1]._get_radius()
+        velocity = rigid[end1]._get_velocity()
+        wall_velocity = wall[end2]._get_velocity()
+        angular_velocity = rigid[end1]._get_angular_velocity()
+        normal = wall[end2]._get_norm(particle[end1].x)
+
+        relative_velocity = (
+            velocity
+            + angular_velocity.cross(-normal) * particle_radius
+            - wall_velocity
+        )
+        pwlist[nc].verletDisp += relative_velocity * dt[None]
+
+
+@ti.kernel
+def flag_relative_displacement_(limit: float, particleNum: int, object_object: ti.template(), oblist: ti.template(), rebuild_required: ti.template()):
+    """Set one shared device flag when an accumulated point sweep is spent."""
+
+    total_contact = object_object[particleNum]
+    for nc in range(total_contact):
+        if SquareLen(oblist[nc].verletDisp) >= limit:
+            ti.atomic_max(rebuild_required[None], 1)
 
 @ti.kernel
 def initial_object_object(object_object: ti.template(), hist_object_object: ti.template()):
@@ -65,6 +595,7 @@ def initial_object_object(object_object: ti.template(), hist_object_object: ti.t
 @ti.kernel
 def board_search_particle_particle_brust_(potential_particle_num: int, particleNum: int, verlet_distance: float, particle: ti.template(), 
                                           potential_list_particle_particle: ti.template(), particle_particle: ti.template()):
+    particle_particle.fill(0)
     for master in range(particleNum -1):
         if int(particle[master].active) == 0: continue
         pos1 = particle[master].x
@@ -85,6 +616,7 @@ def board_search_particle_particle_brust_(potential_particle_num: int, particleN
 @ti.kernel
 def board_search_particle_wall_brust_(potential_wall_num: int, particleNum: int, wallNum: int, verlet_distance: float, particle: ti.template(), 
                                       wall: ti.template(), potential_list_particle_wall: ti.template(), particle_wall: ti.template()):
+    particle_wall.fill(0)
     for particle_id in range(particleNum):
         if int(particle[particle_id].active) == 0: continue
         position = particle[particle_id].x
@@ -103,6 +635,7 @@ def board_search_particle_wall_brust_(potential_wall_num: int, particleNum: int,
 @ti.kernel
 def board_search_particle_wall_brust_hierarchical_(particleNum: int, wallNum: int, verlet_distance: float, particle: ti.template(), wall: ti.template(), 
                                                    body: ti.template(), potential_list_particle_wall: ti.template(), particle_wall: ti.template()):
+    particle_wall.fill(0)
     for particle_id in range(particleNum):
         if int(particle[particle_id].active) == 0: continue
         position = particle[particle_id].x
@@ -242,7 +775,23 @@ def board_search_lsparticle_lsparticle_linked_cell_(particleNum: int, potential_
         master, slave = pplist[nc].endID1, pplist[nc].endID2
         rotate_matrix1, rotate_matrix2 = SetToRotate(rigid[master].q), SetToRotate(rigid[slave].q)
         mass_center1, mass_center2 = rigid[master]._get_position(), rigid[slave]._get_position()
-        if intersectionOBBs(mass_center1, mass_center2, box[master]._get_dim(), box[slave]._get_dim(), rotate_matrix1, rotate_matrix2):
+        aabb1, aabb2 = box[master]._get_shape_center(), box[slave]._get_shape_center()
+
+        if ti.static(GlobalVariable.DEMXPBC):
+            if ti.abs(mass_center2[0] - mass_center1[0]) > 0.5 * GlobalVariable.DEMXSIZE: 
+                mass_center2[0] -= sgn(mass_center2[0] - mass_center1[0]) * GlobalVariable.DEMXSIZE
+        if ti.static(GlobalVariable.DEMYPBC):
+            if ti.abs(mass_center2[1] - mass_center1[1]) > 0.5 * GlobalVariable.DEMYSIZE: 
+                mass_center2[1] -= sgn(mass_center2[1] - mass_center1[1]) * GlobalVariable.DEMYSIZE
+        if ti.static(GlobalVariable.DEMZPBC):
+            if ti.abs(mass_center2[2] - mass_center1[2]) > 0.5 * GlobalVariable.DEMZSIZE: 
+                mass_center2[2] -= sgn(mass_center2[2] - mass_center1[2]) * GlobalVariable.DEMZSIZE
+                
+        obb1 = mass_center1 + rotate_matrix1 @ aabb1
+        obb2 = mass_center2 + rotate_matrix2 @ aabb2 
+        extent1 = box[master]._get_shape_dim() + 2. * verlet_distance * vec3f(1., 1., 1.)
+        extent2 = box[slave]._get_shape_dim() + 2. * verlet_distance * vec3f(1., 1., 1.)
+        if intersectionOBBs(obb1, obb2, extent1, extent2, rotate_matrix1, rotate_matrix2):
             scale = box[master].scale
             start_node, end_node, global_node = rigid[master]._start_node(), rigid[master]._end_node(), rigid[master].startNode
             for node in range(start_node, end_node):
@@ -253,6 +802,7 @@ def board_search_lsparticle_lsparticle_linked_cell_(particleNum: int, potential_
                     sques = ti.atomic_add(point_particle[gnode + 1], 1)
                     potential_list_point_particle[sques + gnode * potential_point_num] = slave
                     assert sques < potential_point_num, f"Keyword:: /point_coordination_numbers[0]/ is too small, Node {gnode} on particle {master} has {sques+1} potential contact number"
+
 
 @ti.kernel
 def board_search_coupled_particle_linked_cell_(potential_particle_num: int, verlet_distance1: float, verlet_distance2: float, max_radius: float, grid_size: float, igrid_size: float, domain: ti.types.vector(3, float), particle_count: ti.template(), 
@@ -465,6 +1015,8 @@ def board_search_lsparticle_wall_linked_cell_(particleNum: int, potential_point_
     total_contact = particle_wall[particleNum]
     for nc in range(total_contact):
         master, wall_id = pwlist[nc].endID1, pwlist[nc].endID2
+        if int(wall[wall_id].active) == 0:
+            continue
         mass_center1 = rigid[master]._get_position()
         rotate_matrix1 = SetToRotate(rigid[master].q)
         start_node, end_node, global_node = rigid[master]._start_node(), rigid[master]._end_node(), rigid[master].startNode
@@ -472,12 +1024,22 @@ def board_search_lsparticle_wall_linked_cell_(particleNum: int, potential_point_
         for node in range(start_node, end_node):
             gnode = node - start_node + global_node
             surface_node = mass_center1 + rotate_matrix1 @ (scale * vertice[node].x)
+            # Use the unsigned point--triangle distance for the Verlet skin,
+            # so the adjacent facet is already available before a node crosses
+            # a shared edge.  A deeply penetrated active face is retained until
+            # it separates even when its distance exceeds the skin.
+            signed_distance = wall[wall_id]._point_to_wall_distance(surface_node)
             projected_point = wall[wall_id]._point_projection(surface_node)
-            if wall[wall_id]._is_in_plane(projected_point) and wall[wall_id]._is_sphere_intersect(surface_node, verlet_distance) == 1:
-                point_wall[gnode + 1] = 1
-                sques = 0#ti.atomic_add(point_wall[gnode + 1], 1)
-                potential_list_point_wall[sques + gnode * potential_point_num] = wall_id
+            within_verlet_skin = ti.abs(signed_distance) <= verlet_distance
+            active_penetration = (
+                signed_distance < 0.
+                and wall[wall_id]._is_in_plane(projected_point)
+            )
+            if within_verlet_skin or active_penetration:
+                sques = ti.atomic_add(point_wall[gnode + 1], 1)
                 assert sques < potential_point_num, f"Keyword:: /point_coordination_number[1]/ is too small, Node {gnode} has {sques+1} potential contact number"
+                potential_list_point_wall[sques + gnode * potential_point_num] = wall_id
+
 
 # ============================================ Plane ================================================= #
 @ti.kernel
@@ -537,8 +1099,10 @@ def insert_facet_to_cell_(wallNum: int, grid_size: float, igrid_size: float, dom
                 for neigh_j in range(minCoord[1], maxCoord[1]):
                     for neigh_k in range(minCoord[2], maxCoord[2]):
                         cellID = linearize3D(neigh_i, neigh_j, neigh_k, cnum)
-                        wall_location = cellID * facet_in_cell + ti.atomic_add(wall_count[cellID], 1)                       
-                        wallID[wall_location] = wall_id
+                        wall_offset = ti.atomic_add(wall_count[cellID], 1)
+                        if wall_offset < facet_in_cell:
+                            wall_location = cellID * facet_in_cell + wall_offset
+                            wallID[wall_location] = wall_id
                         assert wall_count[cellID] <= facet_in_cell, f"Keyword:: /wall_per_cell/ is too small. Cell {cellID} has at least {wall_count[cellID]} walls"
 
 @ti.kernel
@@ -725,22 +1289,25 @@ def board_search_particle_digital_elevation_(particleNum: int, potential_wall_nu
     for particle_id in range(particleNum):
         particle_pos, particle_rad = particle[particle_id].x, particle[particle_id].rad
         proj_pos = vec2f(particle_pos[0], particle_pos[1])
+        search_rad = particle_rad + 2. * verlet_distance
 
-        xStart, yStart = ti.floor((proj_pos - particle_rad) * icell_size , int)
-        xEnd, yEnd = ti.min(ti.ceil((proj_pos + particle_rad) * icell_size , int), cnum - 1)
+        start_cell = ti.max(ti.floor((proj_pos - search_rad) * icell_size, int), vec2i([0, 0]))
+        end_cell = ti.min(ti.ceil((proj_pos + search_rad) * icell_size, int), cnum - 1)
+        xStart, yStart = start_cell
+        xEnd, yEnd = end_cell
         
-        sques = particle_id * potential_wall_num
-        for neigh_x in range(xStart, xEnd):
-            for neigh_y in range(yStart, yEnd):
+        base = particle_id * potential_wall_num
+        neighbors = 0
+        for neigh_x in range(xStart, xEnd + 1):
+            for neigh_y in range(yStart, yEnd + 1):
                 cellID = linearize3D(neigh_x, neigh_y, 0, cnum)
                 startID, endID = wallID[cellID], wallID[cellID + 1]
                 for wall_id in range(startID, endID):
-                    valid = wall[wall_id]._is_sphere_intersect(particle_pos, (particle_rad + 2 * verlet_distance))
-                    if valid: 
-                        potential_list_particle_wall[sques] = wall_id
-                        sques += 1
-        neighbors = sques - particle_id * potential_wall_num
-        assert neighbors <= potential_wall_num, f"Keyword:: /wall_coordination_number/ is too small, Particle {particle_id} has {neighbors} potential contact number"
+                    valid = wall[wall_id]._is_sphere_intersect(particle_pos, search_rad)
+                    if valid:
+                        assert neighbors < potential_wall_num, f"Keyword:: /wall_coordination_number/ is too small, Particle {particle_id} has {neighbors + 1} potential contact number"
+                        potential_list_particle_wall[base + neighbors] = wall_id
+                        neighbors += 1
         particle_wall[particle_id + 1] = neighbors
 
 # ================================================================= #
@@ -811,8 +1378,8 @@ def calculate_particles_position_hierarchical_(particleNum: int, particle: ti.te
         cnum = grid[grid_level].cnum
         position = particle[np].x
         grid_idx = ti.min(ti.floor(position * grid[grid_level].igrid_size, int), cnum - 1)
-        cellID = start_index + linearize3D(grid_idx[0], grid_idx[1], grid_idx[2], cnum)
         assert 0 <= grid_idx[0] < cnum[0] and 0 <= grid_idx[1] < cnum[1] and 0 <= grid_idx[2] < cnum[2], f"Particle {np} is located at [{position[0]}, {position[1]}, {position[2]}] belongs to cell [{grid_idx[0]}, {grid_idx[1]}, {grid_idx[2]}]. Out of simulation domain!"
+        cellID = start_index + linearize3D(grid_idx[0], grid_idx[1], grid_idx[2], cnum)
         particle_current[np] = ti.atomic_add(particle_count[cellID + 1], 1)
     
 @ti.kernel
@@ -1070,6 +1637,7 @@ def board_search_particle_particle_linked_cell_hierarchical2_(particleNum: int, 
 @ti.kernel
 def board_search_particle_particle_linked_cell_hierarchical_interlevel_(startID: int, endID: int, verlet_distance: float, particle_count: ti.template(), particleID: ti.template(), 
                                                                         particle: ti.template(), potential_list_particle_particle: ti.template(), particle_particle: ti.template(), body: ti.template(), grid: ti.template()):
+    particle_particle.fill(0)
     for master in range(startID, endID):
         position = particle[master].x
         radius = particle[master].rad
@@ -1111,6 +1679,7 @@ def board_search_particle_particle_linked_cell_hierarchical_interlevel_(startID:
 @ti.kernel
 def board_search_particle_particle_linked_cell_hierarchical_crosslevel_(startID: int, endID: int, verlet_distance: float, domain: ti.types.vector(3, float), particle_count: ti.template(), particleID: ti.template(), 
                                                                         particle: ti.template(), potential_list_particle_particle: ti.template(), particle_particle: ti.template(), body: ti.template(), grid: ti.template()):
+    particle_particle.fill(0)
     for master in range(startID, endID):
         position = particle[master].x
         radius = particle[master].rad
@@ -1427,7 +1996,7 @@ def board_search_particle_patch_linked_cell_hierarchical_(particleNum: int, leve
 #                                                                   #
 # ================================================================= #
 @ti.kernel
-def board_search_particle_particle_bvh_(batch_id: int, particleNum: int, potential_particle_num: int, prefix_batch_size: ti.template(), nodes: ti.template(), morton_codes: ti.template(), aabbs: ti.template(), particle: ti.template(), potential_list_particle_particle: ti.template(), particle_particle: ti.template()):
+def board_search_particle_particle_bvh_(batch_id: int, particleNum: int, potential_particle_num: int, verlet_distance: float, prefix_batch_size: ti.template(), nodes: ti.template(), morton_codes: ti.template(), aabbs: ti.template(), particle: ti.template(), potential_list_particle_particle: ti.template(), particle_particle: ti.template()):
     prefix_batch_num = prefix_batch_size[batch_id]
     batch_num = prefix_batch_size[batch_id + 1] - prefix_batch_num
     prefix_i_node = 2 * prefix_batch_num - batch_id
@@ -1444,7 +2013,7 @@ def board_search_particle_particle_bvh_(batch_id: int, particleNum: int, potenti
             node_idx = query_stack[stack_depth]
             node = nodes[prefix_i_node + node_idx]
             # Check if the AABB intersects with the node's bounding box
-            if aabbs[prefix_batch_num + master].intersects(node.bound):
+            if aabbs[prefix_batch_num + master].intersects(node.bound, 0., 0.):
                 # If it's a leaf node, add the AABB index to the query results
                 if node.left == -1 and node.right == -1:
                     code = morton_codes[prefix_batch_num + node_idx - (batch_num - 1)]
@@ -1464,9 +2033,99 @@ def board_search_particle_particle_bvh_(batch_id: int, particleNum: int, potenti
         assert neighbors <= potential_particle_num, f"Keyword:: /body_coordination_number/ is too small, Particle {master} has {neighbors} potential contact number"
         particle_particle[master + 1] = neighbors
 
+@ti.kernel
+def board_search_coupled_particle_bvh_(batch_id: int, particleNum: int, potential_particle_num: int, verlet_distance1: float, verlet_distance2: float, prefix_batch_size: ti.template(), nodes: ti.template(), morton_codes: ti.template(), 
+                                       particle1: ti.template(), particle2: ti.template(), potential_list_particle_particle: ti.template(), particle_particle: ti.template()):
+    prefix_batch_num = prefix_batch_size[batch_id]
+    batch_num = prefix_batch_size[batch_id + 1] - prefix_batch_num
+    prefix_i_node = 2 * prefix_batch_num - batch_id
+    particle_particle.fill(0)
+    for master in range(particleNum):
+        if int(particle1[master].active) != 0 or int(particle1[master].coupling) != 0:
+            position = particle1[master].x
+            radius = particle1[master].rad
+            query_stack = ti.Vector.zero(ti.i32, 64)
+            stack_depth = 1
+            sques = master * potential_particle_num
+            # isques = (master + 1) * potential_particle_num - 1
+            while stack_depth > 0:
+                stack_depth -= 1
+                node_idx = query_stack[stack_depth]
+                node = nodes[prefix_i_node + node_idx]
+                # Check if the AABB intersects with the node's bounding box
+                search_radius = radius + verlet_distance1 + verlet_distance2
+                if node.bound.inside(position, search_radius):
+                    # If it's a leaf node, add the AABB index to the query results
+                    if node.left == -1 and node.right == -1:
+                        code = morton_codes[prefix_batch_num + node_idx - (batch_num - 1)]
+                        slave = ti.i32(code & ti.u64(0xFFFFFFFF))
+                        pos2 = particle2[slave].x 
+                        rad2 = particle2[slave].rad
+                        search_radius = (radius + rad2 + verlet_distance1 + verlet_distance2)
+                        valid = SquaredLength(pos2, position) <= search_radius * search_radius
+                        if valid: 
+                            potential_list_particle_particle[sques] = slave
+                            sques += 1
+                    else:
+                        # Push children onto the stack
+                        if node.right != -1:
+                            query_stack[stack_depth] = node.right
+                            stack_depth += 1
+                        if node.left != -1:
+                            query_stack[stack_depth] = node.left
+                            stack_depth += 1
+            neighbors = sques - master * potential_particle_num
+            assert neighbors <= potential_particle_num, f"Keyword:: /body_coordination_number/ is too small, Particle {master} has {neighbors} potential contact number"
+            particle_particle[master + 1] = neighbors
 
 @ti.kernel
-def board_search_particle_wall_bvh_(particle_batch_id: int, wall_batch_id: int, particleNum: int, potential_wall_num: int, prefix_batch_size: ti.template(), nodes: ti.template(), morton_codes: ti.template(), aabbs: ti.template(), particle: ti.template(), potential_list_particle_wall: ti.template(), particle_wall: ti.template()):
+def board_search_coupled_lsparticle_bvh_(batch_id: int, particleNum: int, potential_particle_num: int, verlet_distance1: float, verlet_distance2: float, prefix_batch_size: ti.template(), nodes: ti.template(), morton_codes: ti.template(), 
+                                         particle1: ti.template(), rigid: ti.template(), box: ti.template(), grid: ti.template(), potential_list_particle_particle: ti.template(), particle_particle: ti.template()):
+    prefix_batch_num = prefix_batch_size[batch_id]
+    batch_num = prefix_batch_size[batch_id + 1] - prefix_batch_num
+    prefix_i_node = 2 * prefix_batch_num - batch_id
+    particle_particle.fill(0)
+    for master in range(particleNum):
+        if int(particle1[master].active) == 0 or int(particle1[master].coupling) == 0: continue
+        position = particle1[master].x
+        radius = particle1[master].rad
+        query_stack = ti.Vector.zero(ti.i32, 64)
+        stack_depth = 1
+        sques = master * potential_particle_num
+        # isques = (master + 1) * potential_particle_num - 1
+        while stack_depth > 0:
+            stack_depth -= 1
+            node_idx = query_stack[stack_depth]
+            node = nodes[prefix_i_node + node_idx]
+            # Check if the AABB intersects with the node's bounding box
+            search_radius = radius + verlet_distance1 + verlet_distance2
+            if node.bound.inside(position, search_radius):
+                # If it's a leaf node, add the AABB index to the query results
+                if node.left == -1 and node.right == -1:
+                    code = morton_codes[prefix_batch_num + node_idx - (batch_num - 1)]
+                    slave = ti.i32(code & ti.u64(0xFFFFFFFF))
+                    mass_center = rigid[slave]._get_position()
+                    rotate_matrix = SetToRotate(rigid[slave].q)
+                    surface_node = rotate_matrix.transpose() @ (position - mass_center)
+                    verlet_distance = verlet_distance1 + verlet_distance2
+                    if not box[slave]._in_box(surface_node): continue
+                    if box[slave].distance(surface_node, grid) < verlet_distance + radius: 
+                        potential_list_particle_particle[sques] = slave
+                        sques += 1
+                else:
+                    # Push children onto the stack
+                    if node.right != -1:
+                        query_stack[stack_depth] = node.right
+                        stack_depth += 1
+                    if node.left != -1:
+                        query_stack[stack_depth] = node.left
+                        stack_depth += 1
+        neighbors = sques - master * potential_particle_num
+        assert neighbors <= potential_particle_num, f"Keyword:: DEMPM /body_coordination_number/ is too small, Particle {master} has {neighbors} potential contact number"
+        particle_particle[master + 1] = neighbors
+
+@ti.kernel
+def board_search_particle_wall_bvh_(particle_batch_id: int, wall_batch_id: int, particleNum: int, potential_wall_num: int, verlet_distance: float, prefix_batch_size: ti.template(), nodes: ti.template(), morton_codes: ti.template(), aabbs: ti.template(), particle: ti.template(), wall: ti.template(), potential_list_particle_wall: ti.template(), particle_wall: ti.template()):
     prefix_particle_batch_num = prefix_batch_size[particle_batch_id]
     prefix_wall_batch_num = prefix_batch_size[wall_batch_id]
     wall_batch_num = prefix_batch_size[wall_batch_id + 1] - prefix_wall_batch_num
@@ -1483,13 +2142,59 @@ def board_search_particle_wall_bvh_(particle_batch_id: int, wall_batch_id: int, 
             node_idx = query_stack[stack_depth]
             node = nodes[prefix_i_node + node_idx]
             # Check if the AABB intersects with the node's bounding box
-            if aabbs[prefix_particle_batch_num + master].intersects(node.bound):
+            if aabbs[prefix_particle_batch_num + master].intersects(node.bound, 0., 0.):
                 # If it's a leaf node, add the AABB index to the query results
                 if node.left == -1 and node.right == -1:
                     code = morton_codes[prefix_wall_batch_num + node_idx - (wall_batch_num - 1)]
-                    slave = ti.i32(code & ti.u64(0xFFFFFFFF))
-                    potential_list_particle_wall[sques] = slave
-                    sques += 1
+                    wall_id = ti.i32(code & ti.u64(0xFFFFFFFF))
+                    if int(wall[wall_id].active) == 1:
+                        potential_list_particle_wall[sques] = wall_id
+                        sques += 1
+                else:
+                    # Push children onto the stack
+                    if node.right != -1:
+                        query_stack[stack_depth] = node.right
+                        stack_depth += 1
+                    if node.left != -1:
+                        query_stack[stack_depth] = node.left
+                        stack_depth += 1
+        neighbors = sques - master * potential_wall_num
+        assert neighbors <= potential_wall_num, f"Keyword:: /wall_coordination_number/ is too small, Particle {master} has {neighbors} potential contact number"
+        particle_wall[master + 1] = neighbors
+
+@ti.kernel
+def board_search_coupled_particle_wall_bvh_(wall_batch_id: int, particleNum: int, potential_wall_num: int, verlet_distance: float, prefix_batch_size: ti.template(), nodes: ti.template(), morton_codes: ti.template(), particle: ti.template(), wall: ti.template(), potential_list_particle_wall: ti.template(), particle_wall: ti.template()):
+    prefix_wall_batch_num = prefix_batch_size[wall_batch_id]
+    wall_batch_num = prefix_batch_size[wall_batch_id + 1] - prefix_wall_batch_num
+    prefix_i_node = 2 * prefix_wall_batch_num - wall_batch_id
+    particle_wall.fill(0)
+    for master in range(particleNum):
+        if int(particle[master].active) == 0 or int(particle[master].coupling) == 0: continue
+        position = particle[master].x
+        radius = particle[master].rad
+
+        query_stack = ti.Vector.zero(ti.i32, 64)
+        stack_depth = 1
+        
+        sques = master * potential_wall_num
+        while stack_depth > 0:
+            stack_depth -= 1
+            node_idx = query_stack[stack_depth]
+            node = nodes[prefix_i_node + node_idx]
+            # Check if the AABB intersects with the node's bounding box
+            if node.bound.inside(position, 2 * verlet_distance + radius):
+                # If it's a leaf node, add the AABB index to the query results
+                if node.left == -1 and node.right == -1:
+                    code = morton_codes[prefix_wall_batch_num + node_idx - (wall_batch_num - 1)]
+                    wall_id = ti.i32(code & ti.u64(0xFFFFFFFF))
+                    if (
+                        int(wall[wall_id].active) == 1
+                        and wall[wall_id]._is_sphere_intersect(
+                            position, radius + 2 * verlet_distance
+                        ) == 1
+                    ):
+                        potential_list_particle_wall[sques] = wall_id
+                        sques += 1
                 else:
                     # Push children onto the stack
                     if node.right != -1:

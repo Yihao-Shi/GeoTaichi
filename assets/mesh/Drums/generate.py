@@ -62,3 +62,9 @@ def inverse_normal(path):
         
 inverse_normal('drum_side_raw.stl')
 inverse_normal('drum_back_raw.stl')
+
+# 加载 STL
+mesh = trimesh.load('drum_side_raw.stl')
+
+# 可视化，并自动显示法向（鼠标交互）
+mesh.show()

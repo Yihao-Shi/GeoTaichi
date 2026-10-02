@@ -13,9 +13,9 @@ class UserDefined(MaterialModel):
         self.density = density
         
     def print_message(self, materialID):
-        print(" Constitutive Model Information ".center(71, '-'))
-        print('Constitutive model: Rigid Body')
-        print("Model ID: ", materialID)
+        self.print_console_header()
+        print('Constitutive model: User-defined')
+        print("Material ID: ", materialID)
         print('Density: ', self.density, '\n')
 
     @ti.func

@@ -6,7 +6,6 @@ from src.dem.Simulation import Simulation as DEMSimulation
 from src.dem.SceneManager import myScene as DEMScene
 from src.dem.contact.ContactKernel import *
 from src.mpdem.contact.ContactModelBase import ContactModelBase
-from src.mpdem.contact.MultiLinkedCell import MultiLinkedCell
 from src.mpm.SceneManager import myScene as MPMScene
 from src.utils.ObjectIO import DictIO
 
@@ -19,13 +18,13 @@ class LinearModel(ContactModelBase):
         self.model_type = 1
 
     def calcu_critical_timestep(self, mscene: MPMScene, dsims: DEMSimulation, dscene: DEMScene, max_material_num):
-        mass = min(mscene.find_particle_min_mass(), dscene.find_particle_min_mass(dsims.scheme))
+        mass = min(mscene.find_particle_min_mass(), dscene.find_particle_min_mass(dsims))
         stiffness = self.find_max_stiffness(max_material_num, mscene, dsims, dscene)
         return ti.sqrt(mass / stiffness)
 
     def find_max_stiffness(self, max_material_num, mscene: MPMScene, dsims: DEMSimulation, dscene: DEMScene):
         maxstiff = 0.
-        radius = max(mscene.find_particle_max_radius(), dscene.find_particle_max_radius(dsims.scheme))
+        radius = max(mscene.find_particle_max_radius(), dscene.find_particle_max_radius(dsims))
         for materialID1 in range(max_material_num):
             for materialID2 in range(max_material_num):
                 componousID = self.get_componousID(max_material_num, materialID1, materialID2)

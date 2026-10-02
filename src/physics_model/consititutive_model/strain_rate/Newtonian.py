@@ -13,6 +13,7 @@ class NewtonianModel(Fluid):
         super().__init__(material_type, configuration, solver_type)
 
     def model_initialize(self, material):
+        self.material = material
         density = DictIO.GetAlternative(material, 'Density', 1000)
         modulus = DictIO.GetAlternative(material, 'Modulus', 3.6e5)
         viscosity = DictIO.GetAlternative(material, 'Viscosity', 1e-3)
@@ -20,9 +21,10 @@ class NewtonianModel(Fluid):
         cq = DictIO.GetAlternative(material, 'cQ', 2.)
         element_length = DictIO.GetAlternative(material, 'ElementLength', 0.)
         atmospheric_pressure = DictIO.GetAlternative(material, 'atmospheric_pressure', 0.)
-        self.add_material(density, modulus, viscosity, element_length, cl, cq, atmospheric_pressure)
+        surface_tension = DictIO.GetAlternative(material, 'SurfaceTension', DictIO.GetAlternative(material, 'surface_tension', 0.))
+        self.add_material(density, modulus, viscosity, element_length, cl, cq, atmospheric_pressure, surface_tension)
 
-    def add_material(self, density, modulus, viscosity, element_length, cl, cq, atmospheric_pressure, gamma=1.):
+    def add_material(self, density, modulus, viscosity, element_length, cl, cq, atmospheric_pressure, surface_tension=0., gamma=1.):
         self.density = density
         self.modulus = modulus
         self.viscosity = viscosity
@@ -30,16 +32,18 @@ class NewtonianModel(Fluid):
         self.cl = cl
         self.cq = cq
         self.atmospheric_pressure = atmospheric_pressure
+        self.surface_tension = surface_tension
         self.gamma = gamma
         self.max_sound_speed = self.get_sound_speed(self.density, self.modulus)
 
     def print_message(self, materialID):
-        print(" Constitutive Model Information ".center(71, '-'))
-        print('Constitutive model = Newtonian Model')
-        print("Model ID: ", materialID)
+        self.print_console_header()
+        print('Constitutive model: Newtonian')
+        print("Material ID: ", materialID)
         print("Model density = ",  self.density)
         print('Bulk Modulus = ', self.modulus)
         print('Viscosity = ', self.viscosity)
+        print('Surface tension = ', self.surface_tension)
         print("Characteristic Element Length = ", self.element_length)
         print("Artifical Viscosity Parameter = ", self.cl, self.cq, '\n')
 
@@ -51,9 +55,10 @@ class NewtonianModel(Fluid):
     
     @ti.func
     def _initialize_vars_(self, np, particle, stateVars):
-        stress = particle[np].stress
-        stateVars[np].pressure = SphericalTensor(stress)
-        stateVars[np].rho = self.density
+        if ti.static(self.solver_type == 0):
+            stress = particle[np].stress
+            stateVars[np].pressure = SphericalTensor(stress)
+            stateVars[np].rho = self.density
 
     @ti.func
     def shear_stress(self, strain_rate):

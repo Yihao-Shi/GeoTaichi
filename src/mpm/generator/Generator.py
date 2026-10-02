@@ -57,7 +57,7 @@ class Generator(object):
                 initialStress = vec6f([float(initialStress), float(initialStress), float(initialStress), 0., 0., 0.])
             elif isinstance(initialStress, (tuple, list)):
                 initialStress = vec6f(initialStress)
-            if self.sims.material_type == "TwoPhaseSingleLayer":
+            if self.sims.material_type == "TwoPhaseSingleLayer" or self.sims.material_type == "TwoPhaseDoubleLayer":
                 porePressure = DictIO.GetAlternative(particle_stress, "PorePressure", 0.)
                 self.set_internal_stress(scene, particle_num, initialStress, porePressure)
             else:
@@ -67,7 +67,7 @@ class Generator(object):
         if initialStress.n != 6:
             raise ValueError(f"The dimension of initial stress: {initialStress.n} is inconsistent with the dimension of stress vigot tensor in 3D: 6")
         kernel_apply_vigot_stress_(int(scene.particleNum[0]), int(scene.particleNum[0]) + particle_num, initialStress, scene.particle)
-        if self.sims.material_type == "TwoPhaseSingleLayer":
+        if self.sims.material_type == "TwoPhaseSingleLayer" or self.sims.material_type == "TwoPhaseDoubleLayer":
             kernel_apply_pore_pressure_(int(scene.particleNum[0]), int(scene.particleNum[0]) + particle_num, porePressure, scene.particle)
 
     def set_traction(self, particle_num, tractions, scene: myScene, region: RegionFunction=None):

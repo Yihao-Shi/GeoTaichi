@@ -10,12 +10,13 @@ import jax
 import numpy as np
 
 
-class Mesh():
+class Mesh:
     """
     A custom mesh manager might be better using a third-party library like
     meshio.
     """
-    def __init__(self, points, cells, ele_type='TET4'):
+
+    def __init__(self, points, cells, ele_type="TET4"):
         # TODO (Very important for debugging purpose!): Assert that cells must have correct orders
         self.points = points
         self.cells = cells
@@ -61,32 +62,31 @@ def check_mesh_TET4(points, cells):
         v12 = np.cross(v1, v2)
         v3 = p4 - p1
         return np.dot(v12, v3)
+
     qlts = jax.vmap(quality)(points[cells])
     return qlts
 
 
 def get_meshio_cell_type(ele_type):
-    """Reference:
-    https://github.com/nschloe/meshio/blob/9dc6b0b05c9606cad73ef11b8b7785dd9b9ea325/src/meshio/xdmf/common.py#L36
-    """
-    if ele_type == 'TET4':
-        cell_type = 'tetra'
-    elif ele_type == 'TET10':
-        cell_type = 'tetra10'
-    elif ele_type == 'HEX8':
-        cell_type = 'hexahedron'
-    elif ele_type == 'HEX27':
-        cell_type = 'hexahedron27'
-    elif  ele_type == 'HEX20':
-        cell_type = 'hexahedron20'
-    elif ele_type == 'TRI3':
-        cell_type = 'triangle'
-    elif ele_type == 'TRI6':
-        cell_type = 'triangle6'
-    elif ele_type == 'QUAD4':
-        cell_type = 'quad'
-    elif ele_type == 'QUAD8':
-        cell_type = 'quad8'
+    """Map a GeoTaichi element name to a meshio cell type."""
+    if ele_type == "TET4":
+        cell_type = "tetra"
+    elif ele_type == "TET10":
+        cell_type = "tetra10"
+    elif ele_type == "HEX8":
+        cell_type = "hexahedron"
+    elif ele_type == "HEX27":
+        cell_type = "hexahedron27"
+    elif ele_type == "HEX20":
+        cell_type = "hexahedron20"
+    elif ele_type == "TRI3":
+        cell_type = "triangle"
+    elif ele_type == "TRI6":
+        cell_type = "triangle6"
+    elif ele_type == "QUAD4":
+        cell_type = "quad"
+    elif ele_type == "QUAD8":
+        cell_type = "quad8"
     else:
         raise NotImplementedError
     return cell_type
@@ -99,7 +99,7 @@ def rectangle_mesh(Nx, Ny, domain_x, domain_y):
     dim = 2
     x = onp.linspace(0, domain_x, Nx + 1)
     y = onp.linspace(0, domain_y, Ny + 1)
-    xv, yv = onp.meshgrid(x, y, indexing='ij')
+    xv, yv = onp.meshgrid(x, y, indexing="ij")
     points_xy = onp.stack((xv, yv), axis=dim)
     points = points_xy.reshape(-1, dim)
     points_inds = onp.arange(len(points))
@@ -109,7 +109,7 @@ def rectangle_mesh(Nx, Ny, domain_x, domain_y):
     inds3 = points_inds_xy[1:, 1:]
     inds4 = points_inds_xy[:-1, 1:]
     cells = onp.stack((inds1, inds2, inds3, inds4), axis=dim).reshape(-1, 4)
-    out_mesh = meshio.Mesh(points=points, cells={'quad': cells})
+    out_mesh = meshio.Mesh(points=points, cells={"quad": cells})
     return out_mesh
 
 
@@ -121,7 +121,7 @@ def box_mesh(Nx, Ny, Nz, domain_x, domain_y, domain_z):
     x = onp.linspace(0, domain_x, Nx + 1)
     y = onp.linspace(0, domain_y, Ny + 1)
     z = onp.linspace(0, domain_z, Nz + 1)
-    xv, yv, zv = onp.meshgrid(x, y, z, indexing='ij')
+    xv, yv, zv = onp.meshgrid(x, y, z, indexing="ij")
     points_xyz = onp.stack((xv, yv, zv), axis=dim)
     points = points_xyz.reshape(-1, dim)
     points_inds = onp.arange(len(points))
@@ -134,13 +134,12 @@ def box_mesh(Nx, Ny, Nz, domain_x, domain_y, domain_z):
     inds6 = points_inds_xyz[1:, :-1, 1:]
     inds7 = points_inds_xyz[1:, 1:, 1:]
     inds8 = points_inds_xyz[:-1, 1:, 1:]
-    cells = onp.stack((inds1, inds2, inds3, inds4, inds5, inds6, inds7, inds8),
-                      axis=dim).reshape(-1, 8)
-    out_mesh = meshio.Mesh(points=points, cells={'hexahedron': cells})
+    cells = onp.stack((inds1, inds2, inds3, inds4, inds5, inds6, inds7, inds8), axis=dim).reshape(-1, 8)
+    out_mesh = meshio.Mesh(points=points, cells={"hexahedron": cells})
     return out_mesh
 
 
-def box_mesh_gmsh(Nx, Ny, Nz, Lx, Ly, Lz, data_dir, ele_type='HEX8'):
+def box_mesh_gmsh(Nx, Ny, Nz, Lx, Ly, Lz, data_dir, ele_type="HEX8"):
     """References:
     https://gitlab.onelab.info/gmsh/gmsh/-/blob/master/examples/api/hex.py
     https://gitlab.onelab.info/gmsh/gmsh/-/blob/gmsh_4_7_1/tutorial/python/t1.py
@@ -149,25 +148,25 @@ def box_mesh_gmsh(Nx, Ny, Nz, Lx, Ly, Lz, data_dir, ele_type='HEX8'):
     Accepts ele_type = 'HEX8', 'TET4' or 'TET10', mesh will be generated with the help of gmsh
     """
 
-    assert ele_type != 'HEX20', f"gmsh cannot produce HEX20 mesh?"
+    assert ele_type != "HEX20", f"gmsh cannot produce HEX20 mesh?"
 
     cell_type = get_meshio_cell_type(ele_type)
     _, _, _, _, degree, _ = get_elements(ele_type)
 
-    msh_dir = os.path.join(data_dir, 'msh')
+    msh_dir = os.path.join(data_dir, "msh")
     os.makedirs(msh_dir, exist_ok=True)
-    msh_file = os.path.join(msh_dir, 'box.msh')
+    msh_file = os.path.join(msh_dir, "box.msh")
 
-    offset_x = 0.
-    offset_y = 0.
-    offset_z = 0.
+    offset_x = 0.0
+    offset_y = 0.0
+    offset_z = 0.0
     domain_x = Lx
     domain_y = Ly
     domain_z = Lz
 
     gmsh.initialize()
     gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)  # save in old MSH format
-    if cell_type.startswith('tetra'):
+    if cell_type.startswith("tetra"):
         Rec2d = False  # tris or quads
         Rec3d = False  # tets, prisms or hexas
     else:
@@ -185,8 +184,8 @@ def box_mesh_gmsh(Nx, Ny, Nz, Lx, Ly, Lz, data_dir, ele_type='HEX8'):
     gmsh.finalize()
 
     mesh = meshio.read(msh_file)
-    points = mesh.points # (num_total_nodes, dim)
-    cells =  mesh.cells_dict[cell_type] # (num_cells, num_nodes)
+    points = mesh.points  # (num_total_nodes, dim)
+    cells = mesh.cells_dict[cell_type]  # (num_cells, num_nodes)
     out_mesh = meshio.Mesh(points=points, cells={cell_type: cells})
 
     return out_mesh
@@ -201,13 +200,13 @@ def cylinder_mesh_gmsh(data_dir, R=5, H=10, circle_mesh=5, hight_mesh=20, rect_r
     hight_mesh:num of meshs in hight
     rect_ratio: rect length/R
     """
-    rect_coor = R*rect_ratio
-    msh_dir = os.path.join(data_dir, 'msh')
+    rect_coor = R * rect_ratio
+    msh_dir = os.path.join(data_dir, "msh")
     os.makedirs(msh_dir, exist_ok=True)
-    geo_file = os.path.join(msh_dir, 'cylinder.geo')
-    msh_file = os.path.join(msh_dir, 'cylinder.msh')
+    geo_file = os.path.join(msh_dir, "cylinder.geo")
+    msh_file = os.path.join(msh_dir, "cylinder.msh")
 
-    string='''
+    string = """
         Point(1) = {{0, 0, 0, 1.0}};
         Point(2) = {{-{rect_coor}, {rect_coor}, 0, 1.0}};
         Point(3) = {{{rect_coor}, {rect_coor}, 0, 1.0}};
@@ -256,19 +255,21 @@ def cylinder_mesh_gmsh(data_dir, R=5, H=10, circle_mesh=5, hight_mesh=20, rect_r
           Surface{{1:5}}; Layers {{{hight_mesh}}}; Recombine;
         }}
 
-        Mesh 3;'''.format(R=R, H=H, rect_coor=rect_coor, circle_mesh=circle_mesh, hight_mesh=hight_mesh)
+        Mesh 3;""".format(
+        R=R, H=H, rect_coor=rect_coor, circle_mesh=circle_mesh, hight_mesh=hight_mesh
+    )
 
     with open(geo_file, "w") as f:
         f.write(string)
     os.system("gmsh -3 {geo_file} -o {msh_file} -format msh2".format(geo_file=geo_file, msh_file=msh_file))
 
     mesh = meshio.read(msh_file)
-    points = mesh.points # (num_total_nodes, dim)
-    cells =  mesh.cells_dict['hexahedron'] # (num_cells, num_nodes)
+    points = mesh.points  # (num_total_nodes, dim)
+    cells = mesh.cells_dict["hexahedron"]  # (num_cells, num_nodes)
 
     # The mesh somehow has two redundant points...
     points = onp.vstack((points[1:14], points[15:]))
     cells = onp.where(cells > 14, cells - 2, cells - 1)
 
-    out_mesh = meshio.Mesh(points=points, cells={'hexahedron': cells})
+    out_mesh = meshio.Mesh(points=points, cells={"hexahedron": cells})
     return out_mesh

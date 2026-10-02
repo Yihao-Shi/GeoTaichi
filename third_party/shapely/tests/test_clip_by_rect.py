@@ -1,5 +1,5 @@
 """
-Tests for GEOSClipByRect based on unit tests from libgeos.
+Tests for GEOSClipByRect.
 
 There are some expected differences due to Shapely's handling of empty
 geometries.
@@ -11,7 +11,7 @@ from shapely.geos import geos_version
 import pytest
 
 
-pytestmark = pytest.mark.skipif(geos_version < (3, 5, 0), reason='GEOS 3.5.0 required')
+pytestmark = pytest.mark.skipif(geos_version < (3, 5, 0), reason="GEOS 3.5.0 required")
 
 
 def test_point_outside():

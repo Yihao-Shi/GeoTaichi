@@ -1,5 +1,6 @@
 import numpy as np
-import matplotlib.pyplot as plt
+
+THB_MAX_INFLUENCE_NODES = 32
 
 # Define the Element class
 class Element:
@@ -8,7 +9,7 @@ class Element:
         self.childElem = []
         self.neighbor = [0] * 4
         self.includeNode = [0] * 8
-        self.influenNode = [0] * 25
+        self.influenNode = [0] * THB_MAX_INFLUENCE_NODES
         self.nbInfNode = 0
         self.level = -1
         self.center = [0.0] * 2
@@ -30,16 +31,25 @@ npelem = 2
 nbParticle = 0
 ParticleInfor = []
 
-def ElemNodesGen(baseLength, modelRange, level, refineBound):
+def ElemNodesGen(baseLength, modelRange, level, refineBound, write_debug_files=False):
     global ElemList, nodeList, nbElem, nbNode, ParticleInfor
     
     Nx = int((modelRange[0][1] - modelRange[0][0]) / baseLength + 0.5) + 1
     Ny = int((modelRange[1][1] - modelRange[1][0]) / baseLength + 0.5) + 1
 
-    nodeList = [Node() for _ in range(2000000)]
-    ElemList = [Element() for _ in range(2000001)]
+    base_node_count = Nx * Ny
+    base_element_count = (Nx - 1) * (Ny - 1)
+    # A refined quadrilateral replaces one leaf with four leaves.  Allocate a
+    # conservative problem-sized upper bound instead of two million Python
+    # objects for every THB case.  Each division creates at most five nodes;
+    # shared edge nodes only reduce the actual count.
+    max_element_count = base_element_count * 4 ** level
+    max_division_count = base_element_count * sum(4 ** layer for layer in range(level))
+    max_node_count = base_node_count + 5 * max_division_count
+    nodeList = [Node() for _ in range(max_node_count + 1)]
+    ElemList = [Element() for _ in range(max_element_count + 1)]
 
-    for i in range(1, 2000001):
+    for i in range(1, max_element_count + 1):
         ElemList[i].childElem = [0] * level
 
     for iy in range(1, Ny + 1):
@@ -206,8 +216,8 @@ def ElemNodesGen(baseLength, modelRange, level, refineBound):
                 nbNode += nbNewnode
                 nbElem += 3
 
-        for elem in ElemList:
-            elem.divide = False
+        for i in range(1, nbElem + 1):
+            ElemList[i].divide = False
 
     for e in range(1, nbElem + 1):
         elem = ElemList[e]
@@ -353,6 +363,17 @@ def ElemNodesGen(baseLength, modelRange, level, refineBound):
             if (nodeInflZone[0][0]-threshold <= ElemList[e].center[0] <= nodeInflZone[0][1]+threshold and
                 nodeInflZone[1][0]-threshold <= ElemList[e].center[1] <= nodeInflZone[1][1]+threshold):
                 ElemList[e].nbInfNode += 1
+                if ElemList[e].nbInfNode > THB_MAX_INFLUENCE_NODES:
+                    raise RuntimeError(
+                        "THB influenced-node capacity exceeded: "
+                        f"element={e}, center={ElemList[e].center}, "
+                        f"level={ElemList[e].level}, node={i}, "
+                        f"count={ElemList[e].nbInfNode}, "
+                        f"capacity={THB_MAX_INFLUENCE_NODES}. "
+                        "Increase the THB support capacity or adjust the "
+                        "refinement patch so each particle support fits the "
+                        "allocated THB kernel width."
+                    )
                 ElemList[e].influenNode[ElemList[e].nbInfNode - 1] = i
 
     # check node information
@@ -397,6 +418,9 @@ def ElemNodesGen(baseLength, modelRange, level, refineBound):
     # plt.axis('equal')
     # plt.tight_layout()
     # plt.show()
+
+    if not write_debug_files:
+        return nbNode, nbElem, ElemList, nodeList
 
     # >>>>>>>>>> Output Nodes' boundaries <<<<<<<<<<
     mask = xp[:, 0] == 1
@@ -638,9 +662,4 @@ def ElemNodesGen(baseLength, modelRange, level, refineBound):
     # plt.show()
 
     return nbNode, nbElem, ElemList, nodeList
-
-
-
-
-
 

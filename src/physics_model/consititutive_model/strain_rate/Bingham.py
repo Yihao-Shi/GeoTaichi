@@ -2,7 +2,7 @@ import taichi as ti
 
 from src.physics_model.consititutive_model.MaterialKernel import SphericalTensor
 from src.physics_model.consititutive_model.MaterialModel import Fluid
-from src.utils.constants import ZEROVEC6f, EYE, Threshold
+from src.utils.constants import ZEROVEC6f, EYE
 from src.utils.ObjectIO import DictIO
 from src.utils.VectorFunction import voigt_tensor_trace, voigt_tensor_dot
 
@@ -15,6 +15,7 @@ class BinghamModel(Fluid):
         self.critical_rate = 0.
 
     def model_initialize(self, material):
+        self.material = material
         density = DictIO.GetAlternative(material, 'Density', 1000)
         modulus = DictIO.GetEssential(material, 'Modulus')
         viscosity = DictIO.GetEssential(material, 'Viscosity')
@@ -22,7 +23,15 @@ class BinghamModel(Fluid):
         critical_rate = DictIO.GetEssential(material, 'CriticalStrainRate')
         gamma = DictIO.GetAlternative(material, 'gamma', 7.)
         atmospheric_pressure = DictIO.GetAlternative(material, 'atmospheric_pressure', 0.)
-        self.add_material(density, modulus, viscosity, _yield, critical_rate, gamma, atmospheric_pressure)
+        self.add_material(
+            density,
+            modulus,
+            viscosity,
+            _yield,
+            critical_rate,
+            atmospheric_pressure,
+            gamma,
+        )
 
     def add_material(self, density, modulus, viscosity, _yield, critical_rate, atmospheric_pressure, gamma=1.):
         self.density = density
@@ -35,9 +44,9 @@ class BinghamModel(Fluid):
         self.max_sound_speed = self.get_sound_speed(self.density, self.modulus)
 
     def print_message(self, materialID):
-        print(" Constitutive Model Information ".center(71, '-'))
-        print('Constitutive model = Bingham Model')
-        print("Model ID: ", materialID)
+        self.print_console_header()
+        print('Constitutive model: Bingham')
+        print("Material ID: ", materialID)
         print("Model density = ",  self.density)
         print('Bulk Modulus = ', self.modulus)
         print('Viscosity = ', self.viscosity)
@@ -60,7 +69,7 @@ class BinghamModel(Fluid):
     def shear_stress(self, strain_rate):
         _yield = self._yield
         viscosity = self.viscosity
-        critical_shear_rate = ti.min(1e-8, self.critical_rate)
+        critical_shear_rate = ti.max(1e-15, self.critical_rate)
 
         # Rate of shear = sqrt(2 * D_ij * D_ij)
         shear_rate = ti.sqrt(2. * voigt_tensor_dot(strain_rate, strain_rate))
@@ -70,8 +79,9 @@ class BinghamModel(Fluid):
             apparent_viscosity = 2. * (_yield / shear_rate + viscosity)
         tau = apparent_viscosity * strain_rate
 
-        trace_invariant2 = 0.5 * (tau[0] * tau[0] + tau[1] * tau[1] + tau[2] * tau[2])
-        for d in ti.static(range(3)): tau[3 + d] *= 2
+        trace_invariant2 = 0.5 * (
+            tau[0] * tau[0] + tau[1] * tau[1] + tau[2] * tau[2]
+        )
         if trace_invariant2 < _yield * _yield: tau = ZEROVEC6f
         return tau
 

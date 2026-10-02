@@ -31,6 +31,9 @@ class LocalGrid(object):
     
     def maxBox(self):
         return self.start_point + self.region_size
+    
+    def BoxSize(self):
+        return self.region_size
 
     def read_grid(self, **template_dict):
         self.grid_space = DictIO.GetEssential(template_dict, "space")

@@ -11,15 +11,17 @@ class HexahedronMesh:
         self.face_map = {}
         self.grid_num = np.array([nx, ny, nz])
         self.grid_size = np.array([dx, dy, dz])
-        self.set_nodal_coords(nx, ny, nz, dx, dy, dz)
-        self.set_node_connectivity(nx, ny, nz)
-        self.generate_structured_grid(nx, ny, nz, dx, dy, dz)
+        if nx * ny * nz < 1000000:
+            self.set_nodal_coords(nx, ny, nz, dx, dy, dz)
+            self.set_node_connectivity(nx, ny, nz)
+            self.generate_structured_grid(nx, ny, nz, dx, dy, dz)
 
     def set_nodal_coords(self, nx, ny, nz, dx, dy, dz):
-        X = np.linspace(-self.ghost_cell * dx, (nx - self.ghost_cell) * dx, int(nx + 1))
-        Y = np.linspace(-self.ghost_cell * dy, (ny - self.ghost_cell) * dy, int(ny + 1))
-        Z = np.linspace(-self.ghost_cell * dz, (nz - self.ghost_cell) * dz, int(nz + 1))
-        self.nodal_coords = flip3d_linear(np.array(list(product(X, Y, Z))), size_u=X.shape[0], size_v=Y.shape[0], size_w=Z.shape[0])
+        X = np.linspace(-self.ghost_cell * dx, (nx - self.ghost_cell) * dx, nx + 1)
+        Y = np.linspace(-self.ghost_cell * dy, (ny - self.ghost_cell) * dy, ny + 1)
+        Z = np.linspace(-self.ghost_cell * dz, (nz - self.ghost_cell) * dz, nz + 1)
+        Xg, Yg, Zg = np.meshgrid(X, Y, Z, indexing="ij")
+        self.nodal_coords = np.stack((Xg, Yg, Zg), axis=-1).reshape(-1, 3)
 
     def set_node_connectivity(self, nx, ny, nz):
         total_cell_number = nx * ny * nz
@@ -122,7 +124,7 @@ class HexahedronMesh:
         }
 
     def write(self, filename='Element.txt'):
-        print('#', "Writing cell(s) into 'Element.txt' ......")
+        print('#', f"Writing cell(s) into {filename} ......")
         with open(filename, 'w') as f:
             f.write("# HexahedronMesh Export\n")
             f.write("\n[node_connectivity]\n")
@@ -148,7 +150,7 @@ class HexahedronMesh:
                     f.write(tag + "\n")
 
     def read(self, filename='Element.txt'):
-        print('#', "Reading 'Element.txt' into cell(s) ......")
+        print('#', f"Reading {filename} into cell(s) ......")
         with open(filename, 'r') as f:
             lines = [line.strip() for line in f if line.strip() and not line.startswith("#")]
 

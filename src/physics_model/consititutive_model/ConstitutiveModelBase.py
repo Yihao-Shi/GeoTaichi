@@ -33,11 +33,14 @@ class ConstitutiveBase:
     
     def reload_state_variables(self, state_vars):
         target_length = self.stateVars.shape[0]
-        for key, value in state_vars.items():
+        for key, value in state_vars.item().items():
             npvalue = np.asarray(value)
             current_length = npvalue.shape[0]
             state_para = np.pad(npvalue, (0, target_length - current_length), mode='constant')
-            getattr(self.stateVars, key).from_numpy(state_para)
+            try:
+                getattr(self.stateVars, key).from_numpy(state_para)
+            except:
+                continue
     
     def find_max_sound_speed(self):
         max_sound_speed = 0.

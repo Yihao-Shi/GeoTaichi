@@ -24,6 +24,7 @@ class StateDependentMohrCoulombModel(InfinitesimalStrainModel):
         self.tensile = 0.
 
     def model_initialize(self, material):
+        self.material = material
         density = DictIO.GetAlternative(material, 'Density', 2650)
         young = DictIO.GetEssential(material, 'YoungModulus')
         poisson = DictIO.GetAlternative(material, 'PoissonRatio', 0.3)
@@ -56,9 +57,9 @@ class StateDependentMohrCoulombModel(InfinitesimalStrainModel):
         self.max_sound_speed = self.get_sound_speed(self.density, self.young, self.poisson)
 
     def print_message(self, materialID):
-        print(" Constitutive Model Information ".center(71, '-'))
-        print('Constitutive model: Willam Mohr-Coulomb Model')
-        print("Model ID: ", materialID)
+        self.print_console_header()
+        print('Constitutive model: State-Dependent Mohr-Coulomb')
+        print("Material ID: ", materialID)
         print('Density: ', self.density)
         print('Young Modulus: ', self.young)
         print('Poisson Ratio: ', self.poisson)

@@ -3,6 +3,7 @@ import taichi as ti
 from src.utils.constants import Threshold
 
 
+
 @ti.func
 def equal_to(i, value):
     return ti.abs(i - value) < Threshold
@@ -48,19 +49,12 @@ def swap(a, b):
     return b, a
 
 @ti.func
-def sign(x):
-    if x >= 0:
-        x = 1
-    else: x = -1
-    return x
-
-@ti.func
 def copysign(x, y):
     return ti.abs(x) * sgn(y)
 
-@ti.func
+@ti.pyfunc
 def sgn(x):
-    return ti.select(x >= 0., 1, 0) - ti.select(x <= 0., 1, 0)
+    return ti.cast((x >= 0.0), float) - ti.cast((x <= 0.0), float)
 
 @ti.func
 def Max(i, j):
@@ -86,9 +80,34 @@ def xor(a, b):
     return (a + b) & 1
 
 
-@ti.func
+@ti.pyfunc
 def PairingFunction(i, j):
-    return int(0.5 * (i + j) * (i + j + 1) + j)
+    a = ti.min(i, j)
+    b = ti.max(i, j)
+    return int(0.5 * (a + b) * (a + b + 1) + b)
+
+
+@ti.pyfunc
+def DePairingFunction(pair_id):
+    w = int(0.5 * (ti.sqrt(8 * pair_id + 1) - 1))
+    t = 0.5 * w * (w + 1)
+    j = ti.cast(pair_id - t, ti.i32)
+    i = ti.cast(w - j, ti.i32)
+    return i, j
+
+
+@ti.pyfunc
+def encode_pair(i, j):
+    a = ti.cast(ti.min(i, j), ti.i64)
+    b = ti.cast(ti.max(i, j), ti.i64)
+    return (a << 32) | b
+
+
+@ti.pyfunc
+def decode_pair(pair_id):
+    i = ti.cast(pair_id >> 32, ti.i32)
+    j = ti.cast(pair_id & 0xffffffff, ti.i32)
+    return i, j
 
 
 @ti.func
@@ -99,6 +118,16 @@ def PairingMapping(i, j, length):
 @ti.func
 def clamp(min_val, max_val, val):
     return ti.min(ti.max(min_val, val), max_val)
+
+
+@ti.func
+def macauley(value):
+    return value if value > 0. else 0.
+
+
+@ti.func
+def macauley_index(value):
+    return 1. if value > 0. else 0.
 
 
 @ti.func

@@ -2,12 +2,14 @@ import taichi as ti
 from taichi.lang.impl import current_cfg
 
 from src.utils.linalg import next_pow2, no_operation, make_list
-from src.utils.WarpReduce import warp_shfl_up_i32
+from src.utils.WarpReduce import warp_scan_up_i32
 from src.utils.BitFunction import merge_i64, split_i64
-
+from src.utils.Kernel import serial, serial_range
 
 WARP_SZ = 32
 BLOCK_SZ = 256
+
+
 @ti.data_oriented
 class PrefixSumExecutor:
     """Parallel Prefix Sum (Scan) Helper
@@ -16,26 +18,26 @@ class PrefixSumExecutor:
 
     References:
         https://developer.download.nvidia.com/compute/cuda/1.1-Beta/x86_website/projects/scan/doc/scan.pdf
-        https://github.com/NVIDIA/cuda-samples/blob/master/Samples/2_Concepts_and_Techniques/shfl_scan/shfl_scan.cu
     """
-    def __init__(self, length, dtype=ti.i32, level=1):
+
+    def __init__(self, batch_length, dtype=ti.i32, batch_size=1):
         self.array_length = []
-        self.level = level
+        self.batch_size = batch_size
         self.large_arr = None
         self.npad = []
         self.dtype = dtype
-        self.initialize(length)
+        self.initialize(batch_length)
 
-    def initialize(self, length):
-        length = make_list(length)
+    def initialize(self, batch_length):
+        batch_length = make_list(batch_length)
         if current_cfg().arch == ti.cuda:
             self.run = self.runGPU
             self.ele_nums = []
             self.ele_nums_pos = []
             self.array_length = []
-            for l in range(self.level):
-                if length[l] > 2:
-                    ele_num = length[l]
+            for l in range(self.batch_size):
+                if batch_length[l] > 2:
+                    ele_num = batch_length[l]
                     start_pos = 0
                     ele_nums = [ele_num]
                     ele_nums_pos = [start_pos]
@@ -50,38 +52,42 @@ class PrefixSumExecutor:
                     self.ele_nums_pos.append(ele_nums_pos)
                     self.array_length.append(start_pos)
                 else:
-                    self.array_length.append(length[l])
-                    self.run = no_operation
+                    self.array_length.append(batch_length[l])
+                    self.run = serial if batch_length[l] == 2 else no_operation
         elif current_cfg().arch == ti.cpu:
             self.run = self.runCPU
             self.npad = []
-            for l in range(self.level):
-                if length[l] > 2:
-                    self.large_arr = ti.field(self.dtype, shape=next_pow2(length[l] + 1))
-                    self.npad.append(next_pow2(length[l] + 1))
-                    self.array_length.append(length[l])
+            for l in range(self.batch_size):
+                if batch_length[l] > 2:
+                    self.large_arr = ti.field(self.dtype, shape=next_pow2(batch_length[l] + 1))
+                    self.npad.append(next_pow2(batch_length[l] + 1))
+                    self.array_length.append(batch_length[l])
                 else:
-                    self.array_length.append(length[l])
-                    self.run = no_operation
+                    self.array_length.append(batch_length[l])
+                    self.run = serial if batch_length[l] == 2 else no_operation
+        elif current_cfg().arch == ti.metal:
+            self.run = self.runMetal
+            self.array_length = [int(length) for length in batch_length]
         else:
             raise RuntimeError(f"{str(current_cfg().arch)} is not supported for prefix sum.")
 
-    def get_length(self, level=0):
-        return self.array_length[level]
+    def get_length(self, batch_size=None):
+        return sum(self.array_length) if batch_size is None else self.array_length[batch_size]
 
-    def runGPU(self, input_arr, nlevel=0):
-        ele_nums = self.ele_nums[nlevel]
-        ele_nums_pos = self.ele_nums_pos[nlevel]
+    def runGPU(self, input_arr):
+        for batch_num in range(self.batch_size):
+            ele_nums = self.ele_nums[batch_num]
+            ele_nums_pos = self.ele_nums_pos[batch_num]
 
-        # Kogge-Stone construction
-        for i in range(len(ele_nums) - 1):
-            if i == len(ele_nums) - 2:
-                self.scan_add_inclusive(input_arr, ele_nums_pos[i], ele_nums_pos[i + 1], 1)
-            else:
-                self.scan_add_inclusive(input_arr, ele_nums_pos[i], ele_nums_pos[i + 1], 0)
-        
-        for i in range(len(ele_nums) - 3, -1, -1):
-            self.uniform_add(input_arr, ele_nums_pos[i], ele_nums_pos[i + 1])
+            # Kogge-Stone construction
+            for i in range(len(ele_nums) - 1):
+                if i == len(ele_nums) - 2:
+                    self.scan_add_inclusive(input_arr, ele_nums_pos[i], ele_nums_pos[i + 1], 1)
+                else:
+                    self.scan_add_inclusive(input_arr, ele_nums_pos[i], ele_nums_pos[i + 1], 0)
+
+            for i in range(len(ele_nums) - 3, -1, -1):
+                self.uniform_add(input_arr, ele_nums_pos[i], ele_nums_pos[i + 1])
 
     @ti.kernel
     def scan_add_inclusive(self, arr_in: ti.template(), in_beg: int, in_end: int, single_block: int):
@@ -92,19 +98,19 @@ class PrefixSumExecutor:
 
             thread_id = i % BLOCK_SZ
             block_id = int((i - in_beg) // BLOCK_SZ)
-            lane_id = thread_id & 0x1f
+            lane_id = thread_id & 0x1F
             warp_id = thread_id // WARP_SZ
 
-            pad_shared = ti.simt.block.SharedArray((65, ), self.dtype)
+            pad_shared = ti.simt.block.SharedArray((65,), self.dtype)
             if ti.static(self.dtype == ti.i64):
                 val1, val2 = split_i64(val)
-                val1 = warp_shfl_up_i32(lane_id, val1)
+                val1 = warp_scan_up_i32(lane_id, val1)
                 ti.simt.block.sync()
-                val2 = warp_shfl_up_i32(lane_id, val2)
-                ti.simt.block.sync() 
+                val2 = warp_scan_up_i32(lane_id, val2)
+                ti.simt.block.sync()
                 val = merge_i64(val1, val2)
             else:
-                val = warp_shfl_up_i32(lane_id, val)
+                val = warp_scan_up_i32(lane_id, val)
             ti.simt.block.sync()
 
             # Put warp scan results to smem
@@ -130,14 +136,12 @@ class PrefixSumExecutor:
             if single_block == 0 and (thread_id == BLOCK_SZ - 1):
                 arr_in[in_end + block_id] = val
 
-
     @ti.kernel
     def uniform_add(self, arr_in: ti.template(), in_beg: int, in_end: int):
         ti.loop_config(block_dim=BLOCK_SZ)
         for i in range(in_beg + BLOCK_SZ, in_end):
             block_id = int((i - in_beg) // BLOCK_SZ)
             arr_in[i] += arr_in[in_end + block_id - 1]
-
 
     @ti.kernel
     def blit_from_field_to_field(self, dst: ti.template(), src: ti.template(), offset: int, size: int):
@@ -152,18 +156,24 @@ class PrefixSumExecutor:
         self.blit_from_field_to_field(self.large_arr, input_arr, 0, length)
         offset = 1
         d = npad >> 1
-        while(d > 0):
+        while d > 0:
             self.down_sweep(d, npad, offset, self.large_arr)
             offset <<= 1
             d >>= 1
-        
+
         self.large_arr[npad - 1] = 0
         d = 1
-        while(d < npad):
+        while d < npad:
             offset >>= 1
             self.up_sweep(d, npad, offset, self.large_arr)
             d <<= 1
         self.blit_from_field_to_field(input_arr, self.large_arr, 1, length)
+
+    def runMetal(self, input_arr, nlevel=0):
+        if nlevel < 0 or nlevel >= len(self.array_length):
+            raise ValueError(f"Invalid prefix-sum batch index {nlevel}")
+        start = sum(self.array_length[:nlevel])
+        serial_range(input_arr, start, start + self.array_length[nlevel])
 
     @ti.kernel
     def down_sweep(self, d: int, n: int, offset: int, output: ti.template()):
@@ -172,7 +182,6 @@ class PrefixSumExecutor:
                 ai = offset * (2 * i + 1) - 1
                 bi = offset * (2 * i + 2) - 1
                 output[bi] += output[ai]
-
 
     @ti.kernel
     def up_sweep(self, d: int, n: int, offset: int, output: ti.template()):
@@ -183,13 +192,3 @@ class PrefixSumExecutor:
                 tmp = output[ai]
                 output[ai] = output[bi]
                 output[bi] += tmp
-
-
-@ti.kernel
-def serial(input: ti.template()):
-    n = input.shape[0]
-    ti.loop_config(serialize=True)
-    for i in range(1, n): 
-        input[i] = input[i] + input[i - 1]
-    
-  

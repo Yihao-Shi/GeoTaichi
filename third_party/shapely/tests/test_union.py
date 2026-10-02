@@ -10,6 +10,7 @@ from shapely.ops import cascaded_union, unary_union
 
 def halton(base):
     """Returns an iterator over an infinite Halton sequence"""
+
     def value(index):
         result = 0.0
         f = 1.0 / base
@@ -19,6 +20,7 @@ def halton(base):
             i = i // base
             f = f / base
         return result
+
     i = 1
     while i > 0:
         yield value(i)
@@ -43,7 +45,7 @@ class UnionTestCase(unittest.TestCase):
         # into a collection of polygon patches
         with pytest.warns(ShapelyDeprecationWarning, match="is deprecated"):
             u = cascaded_union(spots)
-        self.assertTrue(u.geom_type in ('Polygon', 'MultiPolygon'))
+        self.assertTrue(u.geom_type in ("Polygon", "MultiPolygon"))
 
     def setUp(self):
         # Instead of random points, use deterministic, pseudo-random Halton
@@ -56,14 +58,11 @@ class UnionTestCase(unittest.TestCase):
     def test_unary_union(self):
         patches = [Point(xy).buffer(0.05) for xy in self.coords]
         u = unary_union(patches)
-        self.assertEqual(u.geom_type, 'MultiPolygon')
+        self.assertEqual(u.geom_type, "MultiPolygon")
         self.assertAlmostEqual(u.area, 0.71857254056)
 
     def test_unary_union_multi(self):
-        # Test of multipart input based on comment by @schwehr at
-        # https://github.com/Toblerity/Shapely/issues/47#issuecomment-21809308
+        # Test multipart input.
         patches = MultiPolygon([Point(xy).buffer(0.05) for xy in self.coords])
-        self.assertAlmostEqual(unary_union(patches).area,
-                               0.71857254056)
-        self.assertAlmostEqual(unary_union([patches, patches]).area,
-                               0.71857254056)
+        self.assertAlmostEqual(unary_union(patches).area, 0.71857254056)
+        self.assertAlmostEqual(unary_union([patches, patches]).area, 0.71857254056)

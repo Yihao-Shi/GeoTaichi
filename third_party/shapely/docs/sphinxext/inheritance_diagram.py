@@ -43,9 +43,7 @@ from docutils.parsers.rst import directives
 from sphinx.roles import xfileref_role
 
 def my_import(name):
-    """Module importer - taken from the python documentation.
-
-    This function allows importing names with dots in them."""
+    """Import names containing dots."""
     
     mod = __import__(name)
     components = name.split('.')

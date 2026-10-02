@@ -85,8 +85,8 @@ class ParticleCreator(object):
         gauss = GaussPointInTriangle(npic)
         self.dscene.check_soft_body_number(self.dsims, body_number=1)
         self.mscene.check_particle_num(self.msims, particle_number=npic * template_ptr.objects.tetramesh.cell.shape[0])
-        kernel_create_level_set_body_(rigid_body, bounding_box, bounding_sphere, master, material, particleNum, gridNum, verticeNum, surfaceNum, vec3f(template_ptr.objects.grid.minBox()), vec3f(template_ptr.objects.grid.maxBox()), 
-                                      template_ptr.boundings.r_bound, vec3f(template_ptr.boundings.x_bound), template_ptr.surface_node_number, template_ptr.objects.grid.grid_space, vec3i(template_ptr.objects.grid.gnum), 
+        kernel_create_level_set_body_(rigid_body, bounding_box, bounding_sphere, master, material, particleNum, gridNum, verticeNum, surfaceNum, vec3f(template_ptr.objects.grid.minBox()), vec3f(template_ptr.objects.grid.maxBox()),
+                                      template_ptr.boundings.r_bound, vec3f(template_ptr.boundings.x_bound), template_ptr.surface_node_number, template_ptr.surface_area, template_ptr.objects.grid.grid_space, vec3i(template_ptr.objects.grid.gnum),
                                       template_ptr.objects.grid.extent, scale_factor, vec3f(template_ptr.objects.inertia), com_pos, equiv_rad, set_orientations.get_orientation, groupID, matID, init_v, init_w, is_fix)
         
         print(" Level set body Information ".center(71, '-'))
@@ -290,8 +290,8 @@ class ParticleGenerator(object):
         gauss = GaussPointInTriangle(npic)
         scene.check_soft_body_number(self.sims, body_number=body_count)
         kernel_add_levelset_packing(rigid_body, bounding_box, bounding_sphere, surface, material, particleNum, gridNum, surfaceNum, verticeNum, vec3f(template_ptr.objects.grid.minBox()), vec3f(template_ptr.objects.grid.maxBox()), template_ptr.boundings.r_bound, 
-                                    vec3f(template_ptr.boundings.x_bound), template_ptr.surface_node_number, template_ptr.objects.grid.grid_space, vec3i(template_ptr.objects.grid.gnum), template_ptr.objects.grid.extent,
-                                    vec3f(template_ptr.objects.inertia), template_ptr.objects.eqradius, groupID, matID, init_v, init_w, is_fix, start_body_num, end_body_num, self.sphere_coords, self.sphere_radii, self.orients)
+                                    vec3f(template_ptr.boundings.x_bound), template_ptr.surface_node_number, template_ptr.surface_area, template_ptr.objects.grid.grid_space, vec3i(template_ptr.objects.grid.gnum), template_ptr.objects.grid.extent,
+                                    vec3f(template_ptr.objects.inertia), template_ptr.objects.eqradius, groupID, matID, init_v, init_w, is_fix, start_body_num, end_body_num, self.sphere_coords, self.sphere_radii, self.orients, False)
         print(" Level-set body Information ".center(71, '-'))
         self.print_particle_info(groupID, matID, init_v, init_w, fix_v=is_fix, fix_w=is_fix, body_num=body_count)
 
@@ -301,5 +301,3 @@ class ParticleGenerator(object):
         scene.softNum[0] += body_count
         scene.surfaceNum[0] += template_ptr.surface_node_number * body_count
         self.faces = np.append(self.faces, faces).reshape(-1, 3)
-
-

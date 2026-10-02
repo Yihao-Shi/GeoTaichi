@@ -18,9 +18,9 @@ class RigidModel(MaterialModel):
         self.add_material(density)
         
     def print_message(self, materialID):
-        print(" Constitutive Model Information ".center(71, '-'))
+        self.print_console_header()
         print('Constitutive model: Rigid Body')
-        print("Model ID: ", materialID)
+        print("Material ID: ", materialID)
         print('Density: ', self.density, '\n')
 
     @ti.func

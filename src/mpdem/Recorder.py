@@ -41,9 +41,9 @@ class WriteFile:
             os.makedirs(self.contact_path)
 
     def manage_function(self, sims: Simulation, dsims: DEMSimulation):
-        if sims.particle_interaction and dsims.max_particle_num > 0. and 'ppcontact' in dsims.monitor_type:
+        if sims.particle_interaction and dsims.max_particle_num > 0. and 'ppcontact' in sims.monitor_type:
             self.save_ppcontact = self.MonitorPPContact
-        if sims.wall_interaction and dsims.max_wall_num > 0. and 'pwcontact' in dsims.monitor_type:
+        if sims.wall_interaction and dsims.max_wall_num > 0. and 'pwcontact' in sims.monitor_type:
             self.save_pwcontact = self.MonitorPWContact
 
     def output(self, sims, msims, mscene, dsims, dscene):

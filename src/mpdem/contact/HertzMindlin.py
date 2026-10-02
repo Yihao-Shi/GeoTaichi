@@ -19,7 +19,7 @@ class HertzMindlinModel(ContactModelBase):
         self.model_type = 1
 
     def calcu_critical_timestep(self, mscene: MPMScene, dsims:DEMSimulation, dscene: DEMScene, max_material_num):
-        radius = min(mscene.find_particle_min_radius(), dscene.find_particle_min_radius(dsims.scheme))
+        radius = min(mscene.find_particle_min_radius(), dscene.find_particle_min_radius(dsims))
         density = min(mscene.find_min_density(), dscene.find_min_density())
         modulus, poisson = self.find_max_mparas(max_material_num)
         return PI * radius * ti.sqrt(density / modulus) / (0.1631 * poisson + 0.8766)

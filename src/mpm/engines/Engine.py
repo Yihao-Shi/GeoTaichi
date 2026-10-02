@@ -35,10 +35,13 @@ class Engine(object):
 
         self.reset_grid_messages = self.reset_grid_message
         if sims.sparse_grid:
-            self.reset_grid_messages = self.deactivate_grid
+            if sims.configuration == "TLMPM":
+                self.reset_grid_messages = self.reset_sparse_tlgrid_message
+            else:
+                self.reset_grid_messages = self.reset_sparse_grid_message
 
-        self.limit = 0.
-        
+        self.limit = 0.0
+
     def choose_engine(self, sims: Simulation):
         if sims.mode == "Normal":
             if sims.mapping == "USL":
@@ -51,10 +54,10 @@ class Engine(object):
                 self.compute = self.g2p2g
             else:
                 raise ValueError(f"The mapping scheme {sims.mapping} is not supported yet")
-            
-            if sims.velocity_projection_scheme == "Affine":
-                self.compute = self.velocity_projection_updating
 
+            if sims.stabilize == "Displacement F-Bar Method":
+                if sims.mapping != "USL" and sims.mapping != "MUSL":
+                    raise RuntimeError("Displacement F-Bar Method only supports USL or MUSL scheme")
             if sims.TESTMODE:
                 self.compute = self.test
         elif sims.mode == "Lightweight":
@@ -78,7 +81,7 @@ class Engine(object):
             elif sims.dimension == 3:
                 self.apply_traction_constraints = self.traction_constraints
         if int(scene.boundary.ptraction_list[0]) > 0:
-            if sims.material_type == "TwoPhaseSingleLayer":
+            if sims.material_type == "TwoPhaseSingleLayer" or sims.material_type == "TwoPhaseDoubleLayer":
                 self.apply_particle_traction_constraints = self.particle_traction_constraints_twophase
             else:
                 if sims.mode == "Lightweight":
@@ -101,10 +104,15 @@ class Engine(object):
         self.bulid_neighbor_list = no_operation
         self.execute_board_serach = no_operation
         self.system_resolve = no_operation
+        self.nodal_kinematic_for_density = no_operation
         self.compute_velocity_gradient = no_operation
         self.calculate_velocity_gradient = no_operation
+        self.compute_affine_velocity_gradient = no_operation
         self.compute_particle_kinematic = no_operation
         self.calculate_interpolation = no_operation
+        taylor_kinematics = (
+            self.compute_nodal_kinematics_taylor_sparse if sims.sparse_grid else self.compute_nodal_kinematics_taylor
+        )
         if sims.mode == "Normal":
             self.calculate_interpolation = self.calculate_interpolations
 
@@ -114,19 +122,13 @@ class Engine(object):
             if sims.stabilize == "B-Bar Method":
                 self.compute_forces = self.compute_force_bbar
                 self.compute_velocity_gradient = self.update_velocity_gradient_bbar
-                if sims.velocity_projection_scheme == "Affine":
-                    self.compute_velocity_gradient = self.update_velocity_gradient_affine
-            elif sims.stabilize == "F-Bar Method":
+            elif sims.stabilize == "F-Bar Method" or sims.stabilize == "Displacement F-Bar Method":
                 self.compute_forces = self.compute_force
-                if sims.velocity_projection_scheme == "Affine":
-                    self.calculate_velocity_gradient = self.update_velocity_gradient_affine
-                else:
-                    self.calculate_velocity_gradient = self.update_velocity_gradient
+                self.calculate_velocity_gradient = self.update_velocity_gradient
                 if sims.mls:
                     self.compute_forces = self.compute_force_mls
-                if sims.material_type == "Solid":
-                    self.compute_velocity_gradient = self.update_velocity_gradient_fbar
-                elif sims.material_type == "Fluid":
+                self.compute_velocity_gradient = self.update_velocity_gradient_fbar
+                if sims.stabilize == "Displacement F-Bar Method":
                     self.compute_velocity_gradient = self.update_velocity_gradient
                     self.compute_stress_strains = self.compute_stress_strain_velocity_projection
             else:
@@ -134,8 +136,9 @@ class Engine(object):
                 self.compute_velocity_gradient = self.update_velocity_gradient
                 if sims.mls:
                     self.compute_forces = self.compute_force_mls
-                if sims.velocity_projection_scheme == "Affine":
-                    self.compute_velocity_gradient = self.update_velocity_gradient_affine
+
+            if sims.velocity_projection_scheme == "Affine":
+                self.compute_affine_velocity_gradient = self.update_velocity_gradient_affine
 
             if sims.gauss_number > 0:
                 self.compute_forces = self.compute_force_gauss
@@ -153,7 +156,7 @@ class Engine(object):
                 self.pressure_smoothing_ = self.pressure_smoothing
 
             if sims.velocity_projection_scheme == "Affine" or sims.velocity_projection_scheme == "Taylor":
-                self.compute_nodal_kinematic = self.compute_nodal_kinematics_taylor
+                self.compute_nodal_kinematic = taylor_kinematics
         elif sims.dimension == 2:
             self.compute_particle_kinematic = self.compute_particle_kinematics
             if not sims.is_2DAxisy:
@@ -161,28 +164,23 @@ class Engine(object):
                 if sims.stabilize == "B-Bar Method":
                     self.compute_forces = self.compute_force_bbar_2D
                     self.compute_velocity_gradient = self.update_velocity_gradient_bbar_2D
-                    if sims.velocity_projection_scheme == "Affine":
-                        self.compute_velocity_gradient = self.update_velocity_gradient_affine_2D
-                elif sims.stabilize == "F-Bar Method":
+                elif sims.stabilize == "F-Bar Method" or sims.stabilize == "Displacement F-Bar Method":
                     self.compute_forces = self.compute_force_2D
                     if sims.mls:
                         self.compute_forces = self.compute_force_mls_2D
-                    if sims.material_type == "Solid":
-                        self.compute_velocity_gradient = self.update_velocity_gradient_fbar
-                    elif sims.material_type == "Fluid":
+                    self.compute_velocity_gradient = self.update_velocity_gradient_fbar
+                    if sims.stabilize == "Displacement F-Bar Method":
                         self.compute_velocity_gradient = self.update_velocity_gradient_2D
                         self.compute_stress_strains = self.compute_stress_strain_velocity_projection_2D
-                    if sims.velocity_projection_scheme == "Affine":
-                        self.calculate_velocity_gradient = self.update_velocity_gradient_affine_2D
-                    else:
-                        self.calculate_velocity_gradient = self.update_velocity_gradient_2D
+                    self.calculate_velocity_gradient = self.update_velocity_gradient_2D
                 else:
                     self.compute_forces = self.compute_force_2D
                     self.compute_velocity_gradient = self.update_velocity_gradient_2D
                     if sims.mls:
                         self.compute_forces = self.compute_force_mls_2D
-                    if sims.velocity_projection_scheme == "Affine":
-                        self.compute_velocity_gradient = self.update_velocity_gradient_affine_2D
+
+                if sims.velocity_projection_scheme == "Affine":
+                    self.compute_affine_velocity_gradient = self.update_velocity_gradient_affine_2D
 
                 if sims.gauss_number > 0:
                     self.compute_forces = self.compute_force_gauss_2D
@@ -198,6 +196,9 @@ class Engine(object):
                         self.compute_contact_force_ = self.compute_demcontact_force_2D
                     else:
                         raise RuntimeError("Wrong contact type!")
+
+                if sims.pressure_smoothing:
+                    self.pressure_smoothing_ = self.pressure_smoothing
             elif sims.is_2DAxisy:
                 self.compute_stress_strains = self.compute_stress_strain
                 if sims.stabilize == "B-Bar Method":
@@ -243,13 +244,15 @@ class Engine(object):
                 if sims.is_2DAxisy:
                     self.compute_nodal_kinematic = self.compute_nodal_kinematics_taylor_2DAxisy
                 else:
-                    self.compute_nodal_kinematic = self.compute_nodal_kinematics_taylor
-        
+                    self.compute_nodal_kinematic = taylor_kinematics
+
         self.is_verlet_update = self.is_need_update_verlet_table
+        self.nodal_kinematic_for_density = self.compute_nodal_kinematic
         if sims.neighbor_detection:
             if sims.coupling == "Lagrangian":
                 self.execute_board_serach = self.update_verlet_table
                 self.system_resolve = self.compute_nodal_kinematic
+                self.compute_nodal_kinematic = no_operation
             self.bulid_neighbor_list = self.board_search
 
             self.free_surface_by_geometry = no_operation
@@ -259,7 +262,6 @@ class Engine(object):
             self.compute_boundary_direction = no_operation
             if sims.boundary_direction_detection:
                 self.compute_boundary_direction = self.detection_boundary_direction
-            self.compute_nodal_kinematic = no_operation
 
     def reset_particle_message(self, scene: myScene):
         contact_force_reset(int(scene.particleNum[0]), scene.particle)
@@ -267,8 +269,11 @@ class Engine(object):
     def reset_grid_message(self, scene: myScene):
         grid_reset(scene.mass_cut_off, scene.node)
 
-    def deactivate_grid(self, scene: myScene):
-        scene.parent.deactivate_all()
+    def reset_sparse_grid_message(self, scene: myScene):
+        scene.node.fill(0)
+
+    def reset_sparse_tlgrid_message(self, scene: myScene):
+        tlgrid_reset(scene.mass_cut_off, scene.node)
 
     def valid_contact(self, sims: Simulation, scene: myScene):
         if sims.contact_detection == "GeoContact":
@@ -277,51 +282,159 @@ class Engine(object):
 
     def calculate_interpolations(self, sims: Simulation, scene: myScene):
         scene.element.calculate(scene.particleNum, scene.particle)
+        if scene.sparse_grid is not None:
+            scene.sparse_grid.rebuild(
+                int(scene.particleNum[0]),
+                scene.element.grid_nodes,
+                scene.element.LnID,
+                scene.element.node_size,
+                scene.element.gnum,
+            )
 
-    def pressure_smoothing(self, scene: myScene):
-        scene.node.pressure.fill(0)
-        kernel_pressure_p2g(int(scene.particleNum[0]), scene.element.grid_nodes, scene.node, scene.particle, scene.element.LnID, scene.element.shape_fn, scene.element.node_size)
-        kernel_grid_pressure(scene.mass_cut_off, scene.is_rigid, scene.node)
-        kernel_pressure_g2p(int(scene.particleNum[0]), scene.element.grid_nodes, scene.node, scene.particle, scene.element.LnID, scene.element.shape_fn, scene.element.node_size)
+    def pressure_smoothing(self, sims: Simulation, scene: myScene):
+        if sims.current_step % 20 == 0:
+            scene.node.pressure.fill(0)
+            kernel_pressure_p2g(
+                int(scene.particleNum[0]),
+                scene.element.grid_nodes,
+                scene.element.gnum,
+                scene.node,
+                scene.particle,
+                scene.element.LnID,
+                scene.element.shape_fn,
+                scene.element.node_size,
+            )
+            kernel_grid_pressure(scene.mass_cut_off, scene.is_rigid, scene.node)
+            kernel_pressure_g2p(
+                int(scene.particleNum[0]),
+                scene.element.grid_nodes,
+                scene.node,
+                scene.particle,
+                scene.element.LnID,
+                scene.element.shape_fn,
+                scene.element.node_size,
+            )
 
     def compute_nodal_kinematics(self, sims: Simulation, scene: myScene):
-        kernel_mass_momentum_p2g(scene.element.grid_nodes, int(scene.particleNum[0]), scene.node, scene.particle, scene.element.LnID, scene.element.shape_fn, scene.element.node_size)
+        kernel_mass_momentum_p2g(
+            scene.element.grid_nodes,
+            int(scene.particleNum[0]),
+            scene.element.gnum,
+            scene.node,
+            scene.particle,
+            scene.element.LnID,
+            scene.element.shape_fn,
+            scene.element.node_size,
+        )
 
     def compute_nodal_kinematics_taylor(self, sims: Simulation, scene: myScene):
-        kernel_mass_momentum_taylor_p2g(scene.element.grid_nodes, int(scene.particleNum[0]), scene.element.gnum, scene.element.grid_size, scene.node, scene.particle, scene.element.LnID, scene.element.shape_fn, scene.element.node_size)
+        kernel_mass_momentum_taylor_p2g(
+            scene.element.grid_nodes,
+            int(scene.particleNum[0]),
+            scene.element.gnum,
+            scene.element.grid_size,
+            scene.node,
+            scene.particle,
+            scene.element.LnID,
+            scene.element.shape_fn,
+            scene.element.node_size,
+        )
+
+    def compute_nodal_kinematics_taylor_sparse(self, sims: Simulation, scene: myScene):
+        kernel_mass_momentum_taylor_p2g_sparse(
+            scene.element.grid_nodes,
+            int(scene.particleNum[0]),
+            scene.element.grid_size,
+            scene.node,
+            scene.particle,
+            scene.element.LnID,
+            scene.element.shape_fn,
+            scene.element.node_size,
+            scene.sparse_grid.block_count,
+            scene.sparse_grid.block_size,
+            scene.sparse_grid.block_volume,
+            scene.sparse_grid.active_block_ids,
+        )
 
     def compute_nodal_kinematics_taylor_2DAxisy(self, sims: Simulation, scene: myScene):
-        kernel_mass_momentum_taylor_p2g_2DAxisy(scene.element.grid_nodes, int(scene.particleNum[0]), scene.element.gnum, scene.element.grid_size, scene.node, scene.particle, scene.element.LnID, scene.element.shape_fn, scene.element.node_size)
+        kernel_mass_momentum_taylor_p2g_2DAxisy(
+            scene.element.grid_nodes,
+            int(scene.particleNum[0]),
+            scene.element.gnum,
+            scene.element.grid_size,
+            scene.node,
+            scene.particle,
+            scene.element.LnID,
+            scene.element.shape_fn,
+            scene.element.node_size,
+        )
 
     def update_verlet_table(self, sims: Simulation, scene: myScene, neighbor: SpatialHashGrid):
         scene.check_in_domain(sims)
-        self.find_free_surface_by_density(sims, scene)
+        if sims.free_surface_detection:
+            self.reset_grid_messages(scene)
+            self.find_free_surface_by_density(sims, scene)
+            self.reset_grid_messages(scene)
         neighbor.place_particles(scene)
         self.compute_boundary_direction(scene, neighbor)
         self.free_surface_by_geometry(scene, neighbor)
-        scene.reset_verlet_disp()
+        if sims.coupling == "Lagrangian":
+            scene.reset_verlet_disp()
 
     def board_search(self, sims: Simulation, scene: myScene, neighbor: SpatialHashGrid):
-        if self.is_need_update_verlet_table(scene) == 1:
+        sims.timer.end("Neighbor search")
+        if sims.coupling != "Lagrangian":
+            self.update_verlet_table(sims, scene, neighbor)
+        elif self.is_need_update_verlet_table(scene) == 1:
             self.update_verlet_table(sims, scene, neighbor)
         else:
             self.system_resolve(sims, scene)
+        sims.timer.end("Neighbor search")
 
     def detection_boundary_direction(self, scene: myScene, neighbor: SpatialHashGrid):
-        find_boundary_direction_by_geometry(neighbor.igrid_size, neighbor.cnum, int(scene.particleNum[0]), scene.particle, neighbor.sorted.object_list, neighbor.sorted.bin_count)
+        find_boundary_direction_by_geometry(
+            neighbor.igrid_size,
+            neighbor.cnum,
+            int(scene.particleNum[0]),
+            scene.particle,
+            neighbor.sorted.object_list,
+            neighbor.sorted.bin_count,
+        )
 
     def detection_free_surface(self, scene: myScene, neighbor: SpatialHashGrid):
-        find_free_surface_by_geometry(neighbor.igrid_size, neighbor.cnum, int(scene.particleNum[0]), scene.particle, neighbor.sorted.object_list, neighbor.sorted.bin_count)
+        find_free_surface_by_geometry(
+            neighbor.igrid_size,
+            neighbor.cnum,
+            int(scene.particleNum[0]),
+            scene.particle,
+            neighbor.sorted.object_list,
+            neighbor.sorted.bin_count,
+        )
 
     def find_free_surface_by_density(self, sims, scene: myScene):
         self.calculate_interpolation(sims, scene)
-        self.system_resolve(sims, scene)
-        kernel_mass_g2p(scene.element.grid_nodes, scene.element.cell_volume, scene.element.node_size, scene.element.LnID, scene.element.shape_fn, scene.node, int(scene.particleNum[0]), scene.particle)
+        self.nodal_kinematic_for_density(sims, scene)
+        kernel_mass_g2p(
+            scene.element.grid_nodes,
+            scene.element.cell_volume,
+            scene.element.node_size,
+            scene.element.LnID,
+            scene.element.shape_fn,
+            scene.node,
+            int(scene.particleNum[0]),
+            scene.particle,
+        )
 
         for materialID in range(scene.material.mapping.shape[0] - 1):
             start_index = scene.material.mapping[materialID]
             end_index = scene.material.mapping[materialID + 1]
-            assign_particle_free_surface(start_index, end_index, scene.particle, scene.material.materialID, scene.material.matProps[materialID + 1])
+            assign_particle_free_surface(
+                start_index,
+                end_index,
+                scene.particle,
+                scene.material.materialID,
+                scene.material.matProps[materialID + 1],
+            )
 
     def calculate_precontact_2DAxisy(self, sims: Simulation, scene: myScene):
         raise NotImplementedError
@@ -334,10 +447,10 @@ class Engine(object):
 
     def compute_demcontact_force_2D(self, sims: Simulation, scene: myScene):
         raise NotImplementedError
-    
+
     def compute_contact_force(self, sims: Simulation, scene: myScene):
         raise NotImplementedError
-    
+
     def compute_force(self, sims: Simulation, scene: myScene):
         raise NotImplementedError
 
@@ -349,10 +462,10 @@ class Engine(object):
 
     def compute_force_bbar_2DAxisy(self, sims: Simulation, scene: myScene):
         raise NotImplementedError
-    
+
     def compute_force_mls(self, sims: Simulation, scene: myScene):
         raise NotImplementedError
-        
+
     def compute_force_mls_2D(self, sims: Simulation, scene: myScene):
         raise NotImplementedError
 
@@ -370,57 +483,87 @@ class Engine(object):
 
     def compute_stress_strain(self, sims, scene):
         raise NotImplementedError
-    
+
     def compute_stress_strain_2D(self, sims, scene):
         raise NotImplementedError
-    
+
     def update_angular_velocity(self, sims: Simulation, scene: myScene):
         update_coupling_quanternion(int(scene.particleNum[0]), scene.particle, sims.dt)
-    
+
     def update_velocity_gradient_2D(self, sims: Simulation, scene: myScene):
         raise NotImplementedError
-    
+
     def update_velocity_gradient(self, sims: Simulation, scene: myScene):
         raise NotImplementedError
-        
+
     def update_velocity_gradient_affine_2D(self, sims: Simulation, scene: myScene):
         raise NotImplementedError
-        
+
     def update_velocity_gradient_affine(self, sims: Simulation, scene: myScene):
         raise NotImplementedError
 
     def update_velocity_gradient_bbar_2D(self, sims: Simulation, scene: myScene):
         raise NotImplementedError
-    
+
     def update_velocity_gradient_bbar(self, sims: Simulation, scene: myScene):
         raise NotImplementedError
-    
+
     def update_velocity_gradient_axisy_2D(self, sims: Simulation, scene: myScene):
         raise NotImplementedError
-        
+
     def update_velocity_gradient_bbar_axisy_2D(self, sims: Simulation, scene: myScene):
         raise NotImplementedError
-    
+
     def compute_stress_strain_velocity_projection_2D(self, sims: Simulation, scene: myScene):
         raise NotImplementedError
 
     def compute_stress_strain_velocity_projection(self, sims: Simulation, scene: myScene):
         raise NotImplementedError
-    
+
     def update_velocity_gradient_fbar(self, sims: Simulation, scene: myScene):
         scene.node.jacobian.fill(0)
         self.calculate_velocity_gradient(sims, scene)
-        kernel_jacobian_p2g(scene.element.grid_nodes, sims.dt, int(scene.particleNum[0]), scene.node, scene.particle, scene.element.LnID, scene.element.shape_fn, scene.element.node_size)
+        kernel_jacobian_p2g(
+            scene.element.grid_nodes,
+            sims.dt,
+            int(scene.particleNum[0]),
+            scene.element.gnum,
+            scene.node,
+            scene.particle,
+            scene.element.LnID,
+            scene.element.shape_fn,
+            scene.element.node_size,
+        )
         kernel_grid_jacobian(scene.volume_cut_off, scene.is_rigid, scene.node)
-        kernel_update_velocity_gradient_fbar(sims.fbar_fraction, scene.volume_cut_off, scene.element.grid_nodes, sims.dt, int(scene.particleNum[0]), scene.node, scene.particle, 
-                                             scene.element.LnID, scene.element.shape_fn, scene.element.node_size)
-        
+        kernel_update_velocity_gradient_fbar(
+            sims.fbar_fraction,
+            scene.volume_cut_off,
+            scene.element.grid_nodes,
+            sims.dt,
+            int(scene.particleNum[0]),
+            scene.node,
+            scene.particle,
+            scene.element.LnID,
+            scene.element.shape_fn,
+            scene.element.node_size,
+        )
+
     def compute_external_force(self, sims: Simulation, scene: myScene):
-        kernel_external_force_p2g(scene.element.grid_nodes, sims.gravity, int(scene.particleNum[0]), scene.node, scene.particle, scene.element.LnID, scene.element.shape_fn, scene.element.node_size)
+        kernel_external_force_p2g(
+            scene.element.grid_nodes,
+            scene.element.gnum,
+            sims.gravity,
+            int(scene.particleNum[0]),
+            scene.node,
+            scene.particle,
+            scene.element.LnID,
+            scene.element.shape_fn,
+            scene.element.node_size,
+        )
 
     def compute_internal_force(self, sims, scene):
         raise NotImplementedError
-    
+
     def compute_internal_force_bbar(self, sims, scene):
         raise NotImplementedError
 
@@ -432,38 +575,139 @@ class Engine(object):
 
     def apply_dirichlet_constraints(self, sims, scene):
         raise NotImplementedError
-    
+
     def virtual_stress_constraints(self, sims: Simulation, scene: myScene):
-        apply_particle_virtual_traction_constraint(int(scene.particleNum[0]), scene.element.grid_size, scene.element.cnum, scene.boundary.particle_traction.auxiliary_cell, scene.boundary.particle_traction.auxiliary_node, scene.node, scene.particle)
-        apply_virtual_traction_field(scene.element.grid_nodes, int(scene.particleNum[0]), scene.boundary.particle_traction.virtual_force, scene.boundary.particle_traction.virtual_stress, 
-                                     scene.node, scene.particle, scene.element.LnID, scene.element.shape_fn, scene.element.dshape_fn, scene.element.node_size, scene.boundary.particle_traction.auxiliary_node)
-        
+        if scene.sparse_grid is not None:
+            apply_particle_virtual_traction_constraint_sparse(
+                int(scene.particleNum[0]),
+                scene.element.grid_size,
+                scene.element.cnum,
+                scene.element.gnum,
+                scene.boundary.particle_traction.auxiliary_cell,
+                scene.boundary.particle_traction.auxiliary_node,
+                scene.node,
+                scene.particle,
+                scene.sparse_grid.block_count,
+                scene.sparse_grid.block_size,
+                scene.sparse_grid.block_volume,
+                scene.sparse_grid.block_map,
+                scene.sparse_grid.active_block_ids,
+            )
+        else:
+            apply_particle_virtual_traction_constraint(
+                int(scene.particleNum[0]),
+                scene.element.grid_size,
+                scene.element.cnum,
+                scene.boundary.particle_traction.auxiliary_cell,
+                scene.boundary.particle_traction.auxiliary_node,
+                scene.node,
+                scene.particle,
+            )
+        apply_virtual_traction_field(
+            scene.element.grid_nodes,
+            int(scene.particleNum[0]),
+            scene.boundary.particle_traction.virtual_force,
+            scene.boundary.particle_traction.virtual_stress,
+            scene.node,
+            scene.particle,
+            scene.element.LnID,
+            scene.element.shape_fn,
+            scene.element.dshape_fn,
+            scene.element.node_size,
+            scene.boundary.particle_traction.auxiliary_node,
+        )
+
     def virtual_stress_constraints_2D(self, sims: Simulation, scene: myScene):
-        apply_particle_virtual_traction_constraint_2D(int(scene.particleNum[0]), scene.element.grid_size, scene.element.cnum, scene.boundary.particle_traction.auxiliary_cell, scene.boundary.particle_traction.auxiliary_node, scene.node, scene.particle)
-        apply_virtual_traction_field_2D(scene.element.grid_nodes, int(scene.particleNum[0]), scene.boundary.particle_traction.virtual_force, scene.boundary.particle_traction.virtual_stress, 
-                                        scene.node, scene.particle, scene.element.LnID, scene.element.shape_fn, scene.element.dshape_fn, scene.element.node_size, scene.boundary.particle_traction.auxiliary_node)
+        if scene.sparse_grid is not None:
+            apply_particle_virtual_traction_constraint_sparse_2D(
+                int(scene.particleNum[0]),
+                scene.element.grid_size,
+                scene.element.cnum,
+                scene.element.gnum,
+                scene.boundary.particle_traction.auxiliary_cell,
+                scene.boundary.particle_traction.auxiliary_node,
+                scene.node,
+                scene.particle,
+                scene.sparse_grid.block_count,
+                scene.sparse_grid.block_size,
+                scene.sparse_grid.block_volume,
+                scene.sparse_grid.block_map,
+                scene.sparse_grid.active_block_ids,
+            )
+        else:
+            apply_particle_virtual_traction_constraint_2D(
+                int(scene.particleNum[0]),
+                scene.element.grid_size,
+                scene.element.cnum,
+                scene.boundary.particle_traction.auxiliary_cell,
+                scene.boundary.particle_traction.auxiliary_node,
+                scene.node,
+                scene.particle,
+            )
+        apply_virtual_traction_field_2D(
+            scene.element.grid_nodes,
+            int(scene.particleNum[0]),
+            scene.boundary.particle_traction.virtual_force,
+            scene.boundary.particle_traction.virtual_stress,
+            scene.node,
+            scene.particle,
+            scene.element.LnID,
+            scene.element.shape_fn,
+            scene.element.dshape_fn,
+            scene.element.node_size,
+            scene.boundary.particle_traction.auxiliary_node,
+        )
 
     def particle_traction_constraints(self, sims: Simulation, scene: myScene):
-        apply_particle_traction_constraint(int(scene.boundary.ptraction_list[0]), scene.element.grid_nodes, scene.boundary.particle_traction, sims.dt, scene.node, scene.particle, scene.element.LnID, scene.element.shape_fn, scene.element.node_size)
+        apply_particle_traction_constraint(
+            int(scene.boundary.ptraction_list[0]),
+            scene.element.grid_nodes,
+            scene.boundary.particle_traction,
+            sims.dt,
+            scene.node,
+            scene.particle,
+            scene.element.LnID,
+            scene.element.shape_fn,
+            scene.element.node_size,
+        )
 
     def particle_traction_constraints_twophase(self, sims: Simulation, scene: myScene):
-        apply_particle_traction_constraint_twophase(int(scene.boundary.ptraction_list[0]), scene.element.grid_nodes, scene.boundary.particle_traction, sims.dt, scene.node, scene.particle, scene.element.LnID, scene.element.shape_fn, scene.element.node_size)
+        apply_particle_traction_constraint_twophase(
+            int(scene.boundary.ptraction_list[0]),
+            scene.element.grid_nodes,
+            scene.boundary.particle_traction,
+            sims.dt,
+            scene.node,
+            scene.particle,
+            scene.element.LnID,
+            scene.element.shape_fn,
+            scene.element.node_size,
+            int(sims.particle_traction_update_area),
+        )
 
     def lightweight_particle_traction_constraints(self, sims: Simulation, scene: myScene):
-        lightweight_particle_traction_constraint(int(scene.boundary.ptraction_list[0]), scene.element.gnum, scene.element.grid_size, scene.element.igrid_size, scene.boundary.particle_traction, sims.dt, scene.element.calLength, scene.element.boundary_type, scene.node, scene.particle)
+        lightweight_particle_traction_constraint(
+            int(scene.boundary.ptraction_list[0]),
+            scene.element.gnum,
+            scene.element.grid_size,
+            scene.element.igrid_size,
+            scene.boundary.particle_traction,
+            sims.dt,
+            scene.element.calLength,
+            scene.element.boundary_type,
+            scene.node,
+            scene.particle,
+        )
 
     def traction_constraints(self, sims, scene):
         raise NotImplementedError
-    
+
     def traction_constraints_2D(self, sims, scene):
         raise NotImplementedError
 
     def velocity_constraints(self, sims, scene):
         raise NotImplementedError
-    
-    def velocity_projection_updating(self, sims, scene):
-        raise NotImplementedError
-        
+
     def compute_particle_kinematics(self, sims, scene):
         raise NotImplementedError
 
@@ -487,9 +731,14 @@ class Engine(object):
 
     def g2p2g(self, sims, scene):
         raise NotImplementedError
-    
+
     def lightweight(self, sims, scene):
         raise NotImplementedError
-    
+
     def test(self, sims, scene):
         raise NotImplementedError
+
+    def adaptive_timestep(self, sims: Simulation, scene: myScene):
+        if sims.adaptive_timestep > 0 and sims.current_step % sims.adaptive_timestep == 0:
+            min_dt = scene.adaptive_timestep(sims)
+            sims.set_timestep(min(sims.init_delta, sims.CFL * min_dt))

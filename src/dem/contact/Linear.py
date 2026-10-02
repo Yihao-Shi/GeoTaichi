@@ -13,19 +13,50 @@ class LinearModel(ContactModelBase):
     def __init__(self, sims) -> None:
         super().__init__(sims)
         self.surfaceProps = LinearSurfaceProperty.field(shape=self.sims.max_material_num * self.sims.max_material_num)
+        self.wall_elastic_energy_scratch = ti.field(
+            dtype=ti.lang.impl.current_cfg().default_fp, shape=()
+        )
         self.null_model = False
         self.model_type = 1
 
+    def lsparticle_wall_elastic_energy(self, scene, neighbor, wall_id):
+        """Return current elastic energy supported by one facet-wall group."""
+
+        if self.sims.scheme != "LSDEM":
+            raise RuntimeError(
+                "wall-group elastic energy is currently available for LSDEM"
+            )
+        kernel_accumulate_linear_lsparticle_wall_elastic_energy(
+            int(scene.surfaceNum[0]),
+            int(wall_id),
+            self.sims.max_material_num,
+            self.surfaceProps,
+            scene.rigid,
+            scene.vertice,
+            scene.surface,
+            scene.box,
+            scene.wall,
+            self.cplist,
+            neighbor.hist_lsparticle_wall,
+            self.wall_elastic_energy_scratch,
+        )
+        return float(self.wall_elastic_energy_scratch[None])
+
     def calcu_critical_timestep(self, scene: myScene):
-        mass = scene.find_particle_min_mass(self.sims.scheme)
+        mass = scene.find_particle_min_mass(self.sims)
         stiffness = self.find_max_stiffness(scene)
         return ti.sqrt(mass / stiffness)
 
     def find_max_stiffness(self, scene: myScene):
         maxstiff = 0.
-        radius = scene.find_particle_max_radius(self.sims.scheme)
-        if self.sims.scheme == "LSDEM":
-            maxstiff = kernel_find_max_stiffness(int(scene.particleNum[0]), scene.rigid, scene.surface, scene.vertice, self.surfaceProps)
+        radius = scene.find_particle_max_radius(self.sims)
+        if self.sims.scheme == "LSMPM":
+            maxstiff = kernel_find_max_stiffness_lsmpm(
+                self.sims.max_material_num, int(scene.surfaceNum[0]),
+                scene.rigid, scene.surface, scene.vertice, scene.box,
+                self.surfaceProps)
+        elif self.sims.scheme == "LSDEM":
+            maxstiff = kernel_find_max_stiffness(self.sims.max_material_num, int(scene.surfaceNum[0]), scene.rigid, scene.surface, scene.vertice, self.surfaceProps)
         else:
             for materialID1 in range(self.sims.max_material_num):
                 for materialID2 in range(self.sims.max_material_num):

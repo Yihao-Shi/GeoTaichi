@@ -13,6 +13,7 @@ class LinearElasticModel(ElasticMaterial):
         self.is_elastic = True
 
     def model_initialize(self, material):
+        self.material = material
         density = DictIO.GetAlternative(material, 'Density', 2650)
         young = DictIO.GetEssential(material, 'YoungModulus')
         poisson = DictIO.GetAlternative(material, 'PoissonRatio', 0.3)
@@ -29,9 +30,9 @@ class LinearElasticModel(ElasticMaterial):
         self.max_sound_speed = self.get_sound_speed(self.density, self.young, self.poisson)
 
     def print_message(self, materialID):
-        print(" Constitutive Model Information ".center(71, '-'))
-        print('Constitutive model: Elastic Model')
-        print("Model ID: ", materialID)
+        self.print_console_header()
+        print('Constitutive model: Linear Elastic')
+        print("Material ID: ", materialID)
         print('Density: ', self.density)
         print('Young Modulus: ', self.young)
         print('Poisson Ratio: ', self.poisson, '\n')
@@ -63,5 +64,3 @@ class LinearElasticModel(ElasticMaterial):
             return state_vars.bulk, state_vars.shear
         else:
             return self.bulk, self.shear
-
-

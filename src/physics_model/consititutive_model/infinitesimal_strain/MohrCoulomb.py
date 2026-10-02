@@ -24,6 +24,7 @@ class MohrCoulombModel(PlasticMaterial):
         self.tensile = 0.
 
     def model_initialize(self, material):
+        self.material = material
         density = DictIO.GetAlternative(material, 'Density', 2650)
         young = DictIO.GetEssential(material, 'YoungModulus')
         poisson = DictIO.GetAlternative(material, 'PoissonRatio', 0.3)
@@ -36,6 +37,22 @@ class MohrCoulombModel(PlasticMaterial):
         psi_residual = DictIO.GetAlternative(material, 'ResidualDilation', psi_peak)
         pdstrain_peak = DictIO.GetAlternative(material, 'PlasticDevStrain', 0.) 
         pdstrain_residual = DictIO.GetAlternative(material, 'ResidualPlasticDevStrain', 0.)
+        self.validate_elastic_parameters(density, young, poisson)
+        self.validate_nonnegative_parameters(
+            Cohesion=c_peak,
+            ResidualCohesion=c_residual,
+            Tensile=tensile,
+            PlasticDevStrain=pdstrain_peak,
+            ResidualPlasticDevStrain=pdstrain_residual,
+        )
+        self.validate_friction_angle("Friction", fai_peak)
+        self.validate_friction_angle(
+            "ResidualFriction", fai_residual
+        )
+        self.validate_friction_angle("Dilation", psi_peak)
+        self.validate_friction_angle(
+            "ResidualDilation", psi_residual
+        )
         self.choose_soft_function(material)
         self.add_material(density, young, poisson, c_peak, fai_peak * PI / 180., psi_peak * PI / 180., c_residual, fai_residual * PI / 180., psi_residual * PI / 180., pdstrain_peak, pdstrain_residual, tensile)
         self.add_coupling_material(material)
@@ -61,9 +78,9 @@ class MohrCoulombModel(PlasticMaterial):
         self.max_sound_speed = self.get_sound_speed(self.density, self.young, self.poisson)
 
     def print_message(self, materialID):
-        print(" Constitutive Model Information ".center(71, '-'))
+        self.print_console_header()
         print('Constitutive model: Mohr-Coulomb Model')
-        print("Model ID: ", materialID)
+        print("Material ID: ", materialID)
         if GlobalVariable.RANDOMFIELD is False:
             print('Density: ', self.density)
             print('Young Modulus: ', self.young)
@@ -304,8 +321,8 @@ class MohrCoulombModel(PlasticMaterial):
                 sin_fai, cos_fai = ti.sin(fai), ti.cos(fai)
                 bulk, shear, fai_peak, psi_peak, c_peak, tensile = self.get_current_material_parameter(state_vars)
                 fai_residual, c_residual, pdstrain_peak, pdstrain_residual = self.fai_residual, self.c_residual, self.pdstrain_peak, self.pdstrain_residual
-                dfai_dpstrain = self.soft_function.soft_deriv(self.soft_param, fai_peak, fai_residual, pdstrain_peak, pdstrain_residual, pdstrain)
-                dc_dpstrain = self.soft_function.soft_deriv(self.soft_param, c_peak, c_residual, pdstrain_peak, pdstrain_residual, pdstrain)
+                dfai_dpstrain = self.soft_function.soft_deriv(fai_peak, fai_residual, pdstrain_peak, pdstrain_residual, pdstrain)
+                dc_dpstrain = self.soft_function.soft_deriv(c_peak, c_residual, pdstrain_peak, pdstrain_residual, pdstrain)
                 df_dfai = ti.sqrt(1.5) * sqrt2J2 * (sin_fai * ti.sin(lode + PI / 3.) / (ti.sqrt(3.) * cos_fai * cos_fai) + ti.cos(lode + PI / 3.) / (3. * cos_fai * cos_fai)) + SphericalTensor(stress) / (cos_fai * cos_fai)
                 df_dc = -1
                 dfdpdstrain = df_dfai * dfai_dpstrain + df_dc * dc_dpstrain
@@ -329,9 +346,11 @@ class MohrCoulombModel(PlasticMaterial):
         if ti.static(self.is_soft):
             pdstrain = EquivalentDeviatoricStrain(state_vars.strain)
             fai_residual, psi_residual, c_residual, pdstrain_peak, pdstrain_residual = self.fai_residual, self.psi_residual, self.c_residual, self.pdstrain_peak, self.pdstrain_residual
-            fai_peak = self.soft_function.soft(self.soft_param, fai_peak, fai_residual, pdstrain_peak, pdstrain_residual, pdstrain)
-            psi_peak = self.soft_function.soft(self.soft_param, psi_peak, psi_residual, pdstrain_peak, pdstrain_residual, pdstrain)
-            c_peak = self.soft_function.soft(self.soft_param, c_peak, c_residual, pdstrain_peak, pdstrain_residual, pdstrain)
+            if ti.static(GlobalVariable.RANDOMFIELD):
+                fai_residual, psi_residual, c_residual = self.residual_frac * fai_peak, self.residual_frac * psi_peak, self.residual_frac * c_peak
+            fai_peak = self.soft_function.soft(fai_peak, fai_residual, pdstrain_peak, pdstrain_residual, pdstrain)
+            psi_peak = self.soft_function.soft(psi_peak, psi_residual, pdstrain_peak, pdstrain_residual, pdstrain)
+            c_peak = self.soft_function.soft(c_peak, c_residual, pdstrain_peak, pdstrain_residual, pdstrain)
             apex = c_peak / ti.max(ti.tan(fai_peak), Threshold)
             if tensile > apex: tensile = ti.max(apex, Threshold)
         return ti.Vector([bulk, shear, fai_peak, psi_peak, c_peak, tensile])

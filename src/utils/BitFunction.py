@@ -46,6 +46,28 @@ def morton3d32(x, y, z):
 
 
 @ti.func
+def expandBits60(v):
+    """
+    Expands a 20-bit integer into 60 bits by inserting 2 zeros before each bit.
+    """
+    v = ti.cast(v, ti.u64) & ti.u64(0x00000000000FFFFF)
+    v = (v | (v << ti.u64(32))) & ti.u64(0x001F00000000FFFF)
+    v = (v | (v << ti.u64(16))) & ti.u64(0x001F0000FF0000FF)
+    v = (v | (v << ti.u64(8))) & ti.u64(0x100F00F00F00F00F)
+    v = (v | (v << ti.u64(4))) & ti.u64(0x10C30C30C30C30C3)
+    v = (v | (v << ti.u64(2))) & ti.u64(0x1249249249249249)
+    return v
+
+
+@ti.func
+def morton3d60(x, y, z):
+    xi = ti.cast(ti.floor(min(max(x * 1048576.0, 0.0), 1048575.0)), ti.u64)
+    yi = ti.cast(ti.floor(min(max(y * 1048576.0, 0.0), 1048575.0)), ti.u64)
+    zi = ti.cast(ti.floor(min(max(z * 1048576.0, 0.0), 1048575.0)), ti.u64)
+    return (expandBits60(xi) << ti.u64(2)) | (expandBits60(yi) << ti.u64(1)) | expandBits60(zi)
+
+
+@ti.func
 def demorton3d32(md):
     x = md &        0x09249249
     y = (md >> 1) & 0x09249249
@@ -131,24 +153,7 @@ def split_i64(value_i64):
     a = ti.cast(value_i64 >> 32, ti.i32)
     b = ti.cast(value_i64 & ti.i64(0xFFFFFFFF), ti.i32)
     return ti.Vector([a, b])
-
-
-@ti.func
-def split_f64(value):
-    bits = ti.bit_cast(value, ti.i64)
-    high_bits = (bits >> 32) & ti.u64(0xFFFFFFFF)
-    low_bits = bits & ti.u64(0xFFFFFFFF)
-    high_f32 = ti.bit_cast(ti.i32(high_bits), ti.f32)  
-    low_f32 = ti.bit_cast(ti.i32(low_bits), ti.f32)
-    return high_f32, low_f32   
-
-
-@ti.func
-def merge_f64(high_f32, low_f32):
-    high_bits = ti.bit_cast(high_f32, ti.i32)      
-    low_bits = ti.bit_cast(low_f32, ti.i32)        
-    combined_bits = (ti.i64(high_bits) << 32) | ti.i64(low_bits)  
-    return ti.bit_cast(combined_bits, ti.f64)     
+   
 
 
 @ti.func
@@ -162,6 +167,33 @@ def split_f64_precision(value):
 def merge_f64_precision(high_f32, low_f32):
     return ti.cast(high_f32 + low_f32, ti.f32)
 
+
+
+@ti.func
+def split_f64(x):
+    bits = ti.bit_cast(x, ti.u64)
+    lo = ti.cast(bits & ti.u64(0xFFFFFFFF), ti.u32)
+    hi = ti.cast(bits >> 32, ti.u32)
+    return lo, hi
+
+@ti.func
+def merge_f64(lo, hi):
+    lo = ti.cast(lo, ti.u32)
+    hi = ti.cast(hi, ti.u32)
+    bits = ti.cast(lo, ti.u64) | (ti.cast(hi, ti.u64) << 32)
+    return ti.bit_cast(bits, ti.f64)
+
+
+@ti.func
+def ffs_u32(x: ti.u32) -> ti.i32:
+    idx = 0
+    if x != ti.u32(0):
+        idx = 1
+        v = x
+        while (v & ti.u32(1)) == ti.u32(0):
+            v = ti.bit_shr(v, 1)
+            idx += 1
+    return idx
 
 @ti.func
 def atomic_cas(input: int, compare: int, values: int):

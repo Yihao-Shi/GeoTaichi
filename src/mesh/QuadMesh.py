@@ -12,9 +12,10 @@ class QuadrilateralMesh:
         self.face_map = {}
         self.grid_num = np.array([nx, ny])
         self.grid_size = np.array([dx, dy])
-        self.set_nodal_coords(nx, ny, dx, dy)
-        self.set_node_connectivity(nx, ny)
-        self.generate_structured_grid(nx, ny, dx, dy)
+        if nx * ny < 1000000:
+            self.set_nodal_coords(nx, ny, dx, dy)
+            self.set_node_connectivity(nx, ny)
+            self.generate_structured_grid(nx, ny, dx, dy)
 
     def set_nodal_coords(self, nx, ny, dx=1.0, dy=1.0):
         X = np.linspace(-self.ghost_cell * dx, (nx - self.ghost_cell) * dx, int(nx + 1))
@@ -86,7 +87,7 @@ class QuadrilateralMesh:
         }
 
     def write(self, filename='Element.txt'):
-        print('#', "Writing cell(s) into 'Element.txt' ......")
+        print('#', f"Writing cell(s) into {filename} ......")
         with open(filename, 'w') as f:
             f.write("# QuadMesh Export\n")
             f.write("\n[node_connectivity]\n")
@@ -112,7 +113,7 @@ class QuadrilateralMesh:
                     f.write(tag + "\n")
 
     def read(self, filename='Element.txt'):
-        print('#', "Reading 'Element.txt' into cell(s) ......")
+        print('#', f"Reading {filename} into cell(s) ......")
         with open(filename, 'r') as f:
             lines = [line.strip() for line in f if line.strip() and not line.startswith("#")]
 

@@ -55,6 +55,7 @@ class HierarchicalLinkedCell(NeighborBase):
             elif self.sims.wall_type == 2:
                 self.place_wall_to_cells = self.place_patch_to_cell
                 self.wall_hash_tables = self.patch_hash_table
+        self.check_memory()
 
     def resize_neighbor(self, scene):
         del self.cell_pse, self.cellSum
@@ -66,17 +67,20 @@ class HierarchicalLinkedCell(NeighborBase):
         if self.first_run:
             if self.sims.scheme == "DEM":
                 self.body = HierarchicalBody.field(shape=self.sims.max_particle_num + 1)
-            elif self.sims.scheme == "LSDEM":
+            elif self.sims.scheme == "LSDEM" or self.sims.scheme == "LSMPM":
                 self.body = HierarchicalBody.field(shape=self.sims.max_rigid_body_num + self.sims.max_soft_body_num + 1)
             self.grid = HierarchicalCell.field(shape=self.sims.hierarchical_level)
         self.grid.rad_min.fill(min_bounding_rad)
 
         particle_num_in_level = np.zeros(self.sims.hierarchical_level)
+
         initialize_radius_range(int(scene.particleNum[0]), self.sims.hierarchical_level, np.array(self.sims.hierarchical_size), particle_num_in_level, self.body, self.grid, scene.particle)
         rad_min, rad_max = self.grid.rad_min.to_numpy(), self.grid.rad_max.to_numpy()
         self.sims.set_max_bounding_sphere_radius(rad_max)
         self.sims.set_min_bounding_sphere_radius(rad_min)
-        self.sims.set_verlet_distance(min(min_bounding_rad, rad_min[0]))
+        bounding_rad_min = min(min_bounding_rad, rad_min[0])
+        self.sims.set_verlet_distance(
+            self._verlet_reference_radius(scene, bounding_rad_min))
         self.sims.update_hierarchical_size(max(max_bounding_rad, rad_max[-1]))
         potential_particle_ratio = self.sims.compute_potential_ratios(rad_max)
 
@@ -89,12 +93,13 @@ class HierarchicalLinkedCell(NeighborBase):
         self.wall_in_cell = initialize_grid_information(self.sims.hierarchical_level, np.array(gsize), np.array(cnum), np.array(csum), np.array(factor), np.array(self.sims.wall_per_cell), self.grid)
         if self.sims.wall_type == "Patch":
             initialize_wall_information(int(scene.wallNum[0]), self.sims.hierarchical_level, np.array(self.sims.hierarchical_size), scene.wallbody, scene.wall)
-        
+        self.check_memory()
+
         if self.first_run:
             self.cell_pse = PrefixSumExecutor(self.cellSum + 1)
             self.particle_pse = PrefixSumExecutor(self.sims.max_particle_num + 1)
-            if self.sims.scheme == "LSDEM":
-                self.point_pse = PrefixSumExecutor(self.sims.max_surface_node_num * self.sims.max_particle_num + 1)
+            if self.sims.scheme == "LSDEM" or self.sims.scheme == "LSMPM":
+                self.point_pse = PrefixSumExecutor(self.sims.max_ls_contact_node_num + 1)
             pairs_num = get_potential_contact_pairs_num(int(scene.particleNum[0]), self.body)
             self.sims.set_hierarchical_list_size(pairs_num[0], pairs_num[1])
             self.set_potential_contact_list(scene)
@@ -235,4 +240,3 @@ class HierarchicalLinkedCell(NeighborBase):
             board_search_particle_particle_linked_cell_hierarchical_crosslevel_(int(scene.particleNum[0]), self.sims.verlet_distance, self.sims.domain, self.particle_count, self.ParticleID, 
                                                                                 scene.particle, self.potential_list_particle_particle, self.particle_particle, self.body, self.grid)
             self.particle_pse.run(self.particle_particle)
-

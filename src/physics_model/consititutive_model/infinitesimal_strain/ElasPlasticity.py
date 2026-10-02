@@ -5,8 +5,10 @@ from src.physics_model.consititutive_model.SoftenModel import *
 from src.physics_model.consititutive_model.infinitesimal_strain.RateDependent import *
 from src.utils.constants import LTOL, MAXITS, NSUB, EPS, STOL, dTmin, FTOL
 from src.physics_model.consititutive_model.infinitesimal_strain.InfinitesimalStrainModel import InfinitesimalStrainModel
-from src.utils.VectorFunction import voigt_tensor_dot, Squared
+from src.utils.VectorFunction import voigt_tensor_dot
 from src.utils.ObjectIO import DictIO
+
+import src.utils.GlobalVariable as GlobalVariable
 
 
 @ti.data_oriented
@@ -61,39 +63,49 @@ class ElasticMaterial(InfinitesimalStrainModel):
         bulk_modulus, shear_modulus = self.ComputeElasticModulus(current_stress, material_params)
         return ComputeElasticStiffnessTensor(bulk_modulus, shear_modulus)
 
+    @ti.func
+    def compute_stiffness_tensor(self, np, current_stress, stateVars):
+        return self.compute_elastic_tensor(np, current_stress, stateVars)
+
 
 @ti.data_oriented
 class PlasticMaterial(ElasticMaterial):
     def __init__(self, material_type, configuration, solver_type="Explicit", stress_integration="ReturnMapping"):
         super().__init__(material_type, configuration, solver_type)
-        if stress_integration == "ReturnMapping":
+        if stress_integration in ("ReturnMapping", "ImplicitIntegration"):
             self.core = self.ImplicitIntegration
         elif stress_integration == "SubStepping":
             self.core = self.ExplicitIntegration
+        elif stress_integration == "ImplicitIntegrationAL":
+            if not hasattr(self, "ImplicitIntegrationAL"):
+                raise RuntimeError(f"{type(self).__name__} does not support stress_integration='ImplicitIntegrationAL'")
+            self.core = self.ImplicitIntegrationAL
+        else:
+            raise RuntimeError(f"Unsupported stress_integration='{stress_integration}'")
         self.rate_dependent_function = False
         self.is_rate_dependent = False
-        self.soft_function = False
+        self.soft_function = None
         self.is_soft = False
-        self.soft_param = 1.
         self.cirtial_state_model = False
 
     def choose_soft_function(self, material):
         soft_type = DictIO.GetAlternative(material, "SoftType", None)
         if soft_type == "Linear":
-            self.soft_param = DictIO.GetAlternative(material, 'SoftenParameter', 1.) 
-            self.soft_function = LinearSoft()
+            params = DictIO.GetAlternative(material, 'SoftenParameter', 1.) 
+            self.soft_function = LinearSoft(params)
             self.is_soft = True
         elif soft_type == "Exponential":
-            self.soft_param = DictIO.GetAlternative(material, 'SoftenParameter', 5.) 
-            self.soft_function = ExponentialSoft()
+            alpha = DictIO.GetAlternative(material, 'alpha', 1.) 
+            beta = DictIO.GetAlternative(material, 'beta', 5.) 
+            self.soft_function = ExponentialSoft(alpha, beta)
             self.is_soft = True
         else:
-            self.soft_function = False
+            self.soft_function = None
         
     def set_rate_dependent_model(self, material):
-        rate_dependent = DictIO.GetAlternative(material, "RateDependent", None)
-        if rate_dependent is not None:
-            self.rate_dependent_function = RateDependent(rate_dependent)
+        rate_dependent = DictIO.GetAlternative(material, "RateDependent", False)
+        if rate_dependent is True:
+            self.rate_dependent_function = RateDependent(material)
             self.is_rate_dependent = True
         else:
             self.rate_dependent_function = False
@@ -104,6 +116,10 @@ class PlasticMaterial(ElasticMaterial):
  
     @ti.func
     def ComputeYieldState(self, stress, internal_vars, material_params):
+        raise NotImplementedError
+    
+    @ti.func
+    def ComputeDfDmuI(self, stress, internal_vars, material_params):
         raise NotImplementedError
     
     @ti.func
@@ -135,72 +151,101 @@ class PlasticMaterial(ElasticMaterial):
         pass
 
     @ti.func
+    def UpdateMaterialParameter(self, stress, internal_vars, state_vars, material_params):
+        return material_params
+
+    @ti.func
+    def GetPlasticStrainRate(self, trial_stress, update_stress):
+        raise NotImplementedError
+    
+    @ti.func
+    def GetDfDlambda(self, yield_state, dstrain, bulk_modulus, shear_modulus, stress, internal_vars, state_vars, material_params):
+        df_dsigma = self.ComputeDfDsigma(yield_state, stress, internal_vars, material_params)
+        dg_dsigma = self.ComputeDgDsigma(yield_state, stress, internal_vars, material_params)
+        dsigma_dlambda = -DsigmaDlambda(dg_dsigma, bulk_modulus, shear_modulus)
+        df_dlambda = voigt_tensor_dot(dsigma_dlambda, df_dsigma) - self.ComputePlasticModulus(yield_state, dg_dsigma, stress, internal_vars, state_vars, material_params)
+        return df_dlambda
+    
+    @ti.func
+    def GetDlambdaLinearize(self, yield_state, dstrain, bulk_modulus, shear_modulus, stress, internal_vars, state_vars, material_params):
+        df_dsigma = self.ComputeDfDsigma(yield_state, stress, internal_vars, material_params)
+        dg_dsigma = self.ComputeDgDsigma(yield_state, stress, internal_vars, material_params)
+        dsigma_dlambda = -DsigmaDlambda(dg_dsigma, bulk_modulus, shear_modulus)
+        df_dlambda = voigt_tensor_dot(dsigma_dlambda, df_dsigma) - self.ComputePlasticModulus(yield_state, dg_dsigma, stress, internal_vars, state_vars, material_params)
+        dlambda = voigt_tensor_dot(dsigma_dlambda, dstrain) / df_dlambda 
+        return dlambda
+    
+    @ti.func
+    def GetDlambda(self, yield_state, f_function, bulk_modulus, shear_modulus, stress, internal_vars, state_vars, material_params):
+        df_dsigma = self.ComputeDfDsigma(yield_state, stress, internal_vars, material_params)
+        dg_dsigma = self.ComputeDgDsigma(yield_state, stress, internal_vars, material_params)
+        dsigma_dlambda = -DsigmaDlambda(dg_dsigma, bulk_modulus, shear_modulus)
+        df_dlambda = voigt_tensor_dot(dsigma_dlambda, df_dsigma) - self.ComputePlasticModulus(yield_state, dg_dsigma, stress, internal_vars, state_vars, material_params)
+        dlambda = f_function / df_dlambda
+        return dlambda
+
+    @ti.func
     def Substepping(self, dT, dstrain, stress, internal_vars, state_vars, material_params):
+        material_params = self.UpdateMaterialParameter(stress, internal_vars, state_vars, material_params)
         yield_state, _ = self.ComputeYieldState(stress, internal_vars, material_params)
         bulk_modulus, shear_modulus = self.ComputeElasticModulus(stress, material_params)
         dsig_e = ElasticTensorMultiplyVector(dT * dstrain, bulk_modulus, shear_modulus)
 
         dfdsigma = self.ComputeDfDsigma(yield_state, stress, internal_vars, material_params)
         dgdsigma = self.ComputeDgDsigma(yield_state, stress, internal_vars, material_params)
-        tempMat = ElasticTensorMultiplyVector(dgdsigma, bulk_modulus, shear_modulus)
-        den = voigt_tensor_dot(dfdsigma, tempMat) - self.ComputePlasticModulus(yield_state, dgdsigma, stress, internal_vars, state_vars, material_params)
-        abeta = 1. / den if ti.abs(den) > Threshold else 0.
-        dlambda = ti.max(voigt_tensor_dot(dfdsigma, dsig_e) * abeta, 0)
-        dstress = dsig_e - dlambda * tempMat
+        dsigma_dlambda = -DsigmaDlambda(dgdsigma, bulk_modulus, shear_modulus)
+        df_dlambda = voigt_tensor_dot(dfdsigma, dsigma_dlambda) - self.ComputePlasticModulus(yield_state, dgdsigma, stress, internal_vars, state_vars, material_params)
+        safe_den = df_dlambda if ti.abs(df_dlambda) > Threshold else Threshold
+        dlambda = ti.max(voigt_tensor_dot(dfdsigma, dsig_e) / safe_den , 0)
+        dstress = dsig_e - dlambda * dsigma_dlambda
         dinternal_vars = self.ComputeInternalVariables(dlambda, dgdsigma, internal_vars, material_params)
         return dstress, dinternal_vars
     
     @ti.func
-    def line_search(self, stress, dstress, f_function, internal_vars, material_params):
-        alpha = 1.
-        while True:
-            _, f_function_new = self.ComputeYieldState(stress - alpha * dstress, internal_vars, material_params)
-            if ti.abs(f_function_new) < ti.abs(f_function) or alpha < 1e-5: 
-                break
-            alpha /= 2.
-        return alpha
-    
-    @ti.func
     def ConsistentCorrection(self, yield_state, f_function, stress, internal_vars, state_vars, material_params):
+        material_params = self.UpdateMaterialParameter(stress, internal_vars, state_vars, material_params)
         bulk_modulus, shear_modulus = self.ComputeElasticModulus(stress, material_params)
         dfdsigma = self.ComputeDfDsigma(yield_state, stress, internal_vars, material_params)
         dgdsigma = self.ComputeDgDsigma(yield_state, stress, internal_vars, material_params)
-        tempMat = ElasticTensorMultiplyVector(dgdsigma, bulk_modulus, shear_modulus)
-        den = voigt_tensor_dot(dfdsigma, tempMat) - self.ComputePlasticModulus(yield_state, dgdsigma, stress, internal_vars, state_vars, material_params)
-        abeta = 1. / den if ti.abs(den) > Threshold else 0.
-        dlambda = f_function * abeta
-        dstress = dlambda * tempMat
+        dsigma_dlambda = -DsigmaDlambda(dgdsigma, bulk_modulus, shear_modulus)
+        df_dlambda = voigt_tensor_dot(dfdsigma, dsigma_dlambda) - self.ComputePlasticModulus(yield_state, dgdsigma, stress, internal_vars, state_vars, material_params)
+        safe_den = df_dlambda if ti.abs(df_dlambda) > Threshold else Threshold
+        dlambda = f_function / safe_den 
+        dstress = dlambda * dsigma_dlambda
         dinternal_vars = self.ComputeInternalVariables(dlambda, dgdsigma, internal_vars, material_params)
-        alpha = 1. # self.line_search(stress, dstress, f_function, internal_vars, material_params)
-        return stress - alpha * dstress, internal_vars + alpha * dinternal_vars
+        return stress - dstress, internal_vars + dinternal_vars
     
     @ti.func
     def NormalCorrection(self, yield_state, f_function, stress, internal_vars, material_params):
         dfdsigma = self.ComputeDfDsigma(yield_state, stress, internal_vars, material_params)
         dfdsigmadfdsigma = voigt_tensor_dot(dfdsigma, dfdsigma)
-        abeta = 1. / dfdsigmadfdsigma if ti.abs(dfdsigmadfdsigma) > Threshold else 0.
-        dlambda = f_function * abeta
+        safe_den = dfdsigmadfdsigma if ti.abs(dfdsigmadfdsigma) > Threshold else Threshold
+        dlambda = f_function / safe_den
         dstress = dlambda * dfdsigma
-        alpha = 1. # self.line_search(stress, dstress, f_function, internal_vars, material_params)
-        return stress - alpha * dstress
+        return stress - dstress
     
     @ti.func
     def DriftCorrect(self, yield_state, f_function, stress, internal_vars, state_vars, material_params):
         for _ in range(MAXITS):
+            material_params = self.UpdateMaterialParameter(stress, internal_vars, state_vars, material_params)
             stress_new, internal_vars_new = self.ConsistentCorrection(yield_state, f_function, stress, internal_vars, state_vars, material_params)
-            yield_state_new, f_function_new = self.ComputeYieldState(stress_new, internal_vars_new, material_params)
+            material_params_new = self.UpdateMaterialParameter(stress_new, internal_vars_new, state_vars, material_params)
+            yield_state_new, f_function_new = self.ComputeYieldState(stress_new, internal_vars_new, material_params_new)
 
             if ti.abs(f_function_new) > ti.abs(f_function):
                 stress_new = self.NormalCorrection(yield_state, f_function, stress, internal_vars, material_params)
-                yield_state_new, f_function_new = self.ComputeYieldState(stress_new, internal_vars, material_params)
+                material_params_new = self.UpdateMaterialParameter(stress_new, internal_vars, state_vars, material_params)
+                yield_state_new, f_function_new = self.ComputeYieldState(stress_new, internal_vars, material_params_new)
                 internal_vars_new = internal_vars
 
             stress = stress_new
             internal_vars = internal_vars_new
+            material_params = material_params_new
             yield_state = yield_state_new
             f_function = f_function_new
             if ti.abs(f_function_new) <= FTOL:
                 break
+        assert f_function < 1e-1, f"Stress Integration failed, current F is {f_function}"
         return stress, internal_vars
 
     @ti.func
@@ -219,7 +264,9 @@ class PlasticMaterial(ElasticMaterial):
         elif ti.abs(f_function0) <= FTOL and f_function1 > FTOL:
             dstress = self.ComputeElasticStressIncrement(dstrain, stress, material_params)
             dfdsigma = self.ComputeDfDsigma(yield_state0, stress, internal_vars, material_params)
-            cos_theta = voigt_tensor_dot(dfdsigma, dstress) / ti.sqrt(Squared(dfdsigma)) / ti.sqrt(Squared(dstress))
+            df_norm = ti.sqrt(ti.max(voigt_tensor_dot(dfdsigma, dfdsigma), Threshold))
+            dsig_norm = ti.sqrt(ti.max(voigt_tensor_dot(dstress, dstress), Threshold))
+            cos_theta = voigt_tensor_dot(dfdsigma, dstress) / df_norm / dsig_norm
 
             if cos_theta >= -LTOL:
                 alpha = 0.
@@ -285,6 +332,10 @@ class PlasticMaterial(ElasticMaterial):
 
     @ti.func
     def ExplicitIntegration(self, np, previous_stress, de, dw, stateVars):
+        if ti.static(self.is_rate_dependent):
+            dev_strain = DeviatoricTensor(de)
+            stateVars[np].strain_rate = ti.sqrt(2. * voigt_tensor_dot(dev_strain, dev_strain))
+
         state_vars = stateVars[np]
         internal_vars = self.GetInternalVariables(state_vars)
         material_params = self.GetMaterialParameter(previous_stress, state_vars)
@@ -293,16 +344,34 @@ class PlasticMaterial(ElasticMaterial):
         
         ############################## STEP5 ##############################
         stress = self.ComputeElasticStress(alpha, de, previous_stress, material_params)
+        trial_stress = self.ComputeElasticStress(1., de, previous_stress, material_params)
         if ti.abs(1. - alpha) > Threshold:
-            stress, internal_vars = self.NBURKDP2(np, (1. - alpha) * de, stress, internal_vars, state_vars, material_params)
+            stress, internal_vars = self.NBURKDP2((1. - alpha) * de, stress, internal_vars, state_vars, material_params)
+        update_stress = stress
+        
+        if ti.static(GlobalVariable.TRACKENERGY):
+            bulk_modulus, shear_modulus = self.ComputeElasticModulus(previous_stress, material_params)
+            a1 = bulk_modulus + (4./3.) * shear_modulus
+            a2 = bulk_modulus - (2./3.) * shear_modulus
+            b1 = (a1 + a2) / ((a1 - a2) * (a1 + 2. * a2))
+            b2 = -a2 / ((a1 - a2) * (a1 + 2. * a2))
+            dstress = trial_stress - update_stress
+            dep = ZEROVEC6f
+            dep[0] = b1 * dstress[0] + b2 * (dstress[1] + dstress[2])
+            dep[1] = b1 * dstress[1] + b2 * (dstress[0] + dstress[2])
+            dep[2] = b1 * dstress[2] + b2 * (dstress[0] + dstress[1])
+            dep[3] = dstress[3] / shear_modulus
+            dep[4] = dstress[4] / shear_modulus
+            dep[5] = dstress[5] / shear_modulus
+            stateVars[np].plastic_energy += voigt_tensor_dot(update_stress, dep)
 
-        update_stress = stress + self.ComputeSigrotStress(dw, previous_stress)
+        update_stress += self.ComputeSigrotStress(dw, previous_stress)
         self.UpdateInternalVariables(np, internal_vars, stateVars)
         self.UpdateStateVariables(np, update_stress, internal_vars, stateVars)
         return update_stress
     
     @ti.func
-    def NBURKDP2(self, np, dstrain, sig, internal_vars, state_vars, material_params):
+    def NBURKDP2(self, dstrain, sig, internal_vars, state_vars, material_params):
         T = 0.
         dT = 1.
         while(T < 1):
@@ -347,7 +416,7 @@ class PlasticMaterial(ElasticMaterial):
         return sig, internal_vars
     
     @ti.func
-    def RKDP2(self, np, dstrain, sig, internal_vars, state_vars, material_params):
+    def RKDP2(self, dstrain, sig, internal_vars, state_vars, material_params):
         ############################## STEP6 ##############################
         T = 0.
         dT = 1.
@@ -400,9 +469,10 @@ class PlasticMaterial(ElasticMaterial):
             ############################## STEP12 ##############################
 
             ############################## STEP13 ##############################
-            yield_state, f_function = self.ComputeYieldState(sig, internal_vars, material_params)
-            if ti.abs(f_function) > FTOL:
-                sig, internal_vars = self.DriftCorrect(yield_state, f_function, sig, internal_vars, state_vars, material_params)
+            if ti.static(GlobalVariable.DRIFTCORRECT):
+                yield_state, f_function = self.ComputeYieldState(sig, internal_vars, material_params)
+                if ti.abs(f_function) > FTOL:
+                    sig, internal_vars = self.DriftCorrect(yield_state, f_function, sig, internal_vars, state_vars, material_params)
             ############################## STEP13 ##############################
             
             ############################## STEP14 ##############################
@@ -488,9 +558,10 @@ class PlasticMaterial(ElasticMaterial):
             ############################## STEP12 ##############################
 
             ############################## STEP13 ##############################
-            yield_state, f_function = self.ComputeYieldState(sig, internal_vars, material_params)
-            if ti.abs(f_function) > FTOL:
-                sig, internal_vars = self.DriftCorrect(yield_state, f_function, sig, internal_vars, state_vars, material_params)
+            if ti.static(GlobalVariable.DRIFTCORRECT):
+                yield_state, f_function = self.ComputeYieldState(sig, internal_vars, material_params)
+                if ti.abs(f_function) > FTOL:
+                    sig, internal_vars = self.DriftCorrect(yield_state, f_function, sig, internal_vars, state_vars, material_params)
             ############################## STEP13 ##############################
             
             ############################## STEP14 ##############################
@@ -502,6 +573,10 @@ class PlasticMaterial(ElasticMaterial):
     
     @ti.func
     def ImplicitIntegration(self, np, previous_stress, de, dw, stateVars):
+        if ti.static(self.is_rate_dependent):
+            dev_strain = DeviatoricTensor(de)
+            stateVars[np].strain_rate = ti.sqrt(2. * voigt_tensor_dot(dev_strain, dev_strain))
+
         state_vars = stateVars[np]
         internal_vars = self.GetInternalVariables(state_vars)
         material_params = self.GetMaterialParameter(previous_stress, state_vars)
@@ -516,32 +591,37 @@ class PlasticMaterial(ElasticMaterial):
         if ti.static(self.solver_type == 1):
             stateVars[np].yield_state = ti.u8(yield_state_trial)
         
-        if yield_state_trial > 0:
+        if f_function_trial > FTOL:
             Tolerance = 1e-4
-        
-            yield_state, f_function = self.ComputeYieldState(previous_stress, internal_vars, material_params)
-            if yield_state > 0:
-                df_dsigma_trial = self.ComputeDfDsigma(yield_state_trial, trial_stress, internal_vars, material_params)
-                dg_dsigma_trial = self.ComputeDgDsigma(yield_state_trial, trial_stress, internal_vars, material_params)
-                temp_matrix = ElasticTensorMultiplyVector(dg_dsigma_trial, bulk_modulus, shear_modulus)
-                den = voigt_tensor_dot(temp_matrix, df_dsigma_trial) - self.ComputePlasticModulus(yield_state_trial, dg_dsigma_trial, trial_stress, internal_vars, state_vars, material_params)
-                lambda_trial = f_function_trial / den if ti.abs(den) > Tolerance else 0.
 
-                update_stress -= lambda_trial * temp_matrix
-                internal_vars += self.ComputeInternalVariables(lambda_trial, dg_dsigma_trial, internal_vars, material_params)
-            else:
-                df_dsigma = self.ComputeDfDsigma(yield_state, previous_stress, internal_vars, material_params)
-                dg_dsigma = self.ComputeDgDsigma(yield_state, previous_stress, internal_vars, material_params)
-                temp_matrix = ElasticTensorMultiplyVector(dg_dsigma, bulk_modulus, shear_modulus)
-                den = voigt_tensor_dot(temp_matrix, df_dsigma) - self.ComputePlasticModulus(yield_state, dg_dsigma, previous_stress, internal_vars, state_vars, material_params)
-                lambda_ = voigt_tensor_dot(temp_matrix, de) / den if ti.abs(den) > Tolerance else 0.
+            df_dsigma_trial = self.ComputeDfDsigma(yield_state_trial, trial_stress, internal_vars, material_params)
+            dg_dsigma_trial = self.ComputeDgDsigma(yield_state_trial, trial_stress, internal_vars, material_params)
+            dsigma_dlambda_trial = -DsigmaDlambda(dg_dsigma_trial, bulk_modulus, shear_modulus)
+            df_dlambda_trial = voigt_tensor_dot(dsigma_dlambda_trial, df_dsigma_trial) - self.ComputePlasticModulus(yield_state_trial, dg_dsigma_trial, trial_stress, internal_vars, state_vars, material_params)
+            safe_den = df_dlambda_trial if ti.abs(df_dlambda_trial) > Threshold else Threshold
+            lambda_trial = f_function_trial / safe_den
+            update_stress -= lambda_trial * dsigma_dlambda_trial
+            internal_vars += self.ComputeInternalVariables(lambda_trial, dg_dsigma_trial, internal_vars, material_params)
 
-                update_stress -= lambda_ * temp_matrix
-                internal_vars += self.ComputeInternalVariables(lambda_, dg_dsigma, internal_vars, material_params)
+            if ti.static(GlobalVariable.DRIFTCORRECT):
+                yield_state, f_function = self.ComputeYieldState(update_stress, internal_vars, material_params)
+                if ti.abs(f_function) > Tolerance:
+                    update_stress, internal_vars = self.DriftCorrect(yield_state, f_function, update_stress, internal_vars, state_vars, material_params)
 
-            yield_state, f_function = self.ComputeYieldState(update_stress, internal_vars, material_params)
-            if ti.abs(f_function) > Tolerance:
-                update_stress, internal_vars = self.DriftCorrect(yield_state, f_function, update_stress, internal_vars, state_vars, material_params)
+        if ti.static(GlobalVariable.TRACKENERGY):
+            a1 = bulk_modulus + (4./3.) * shear_modulus
+            a2 = bulk_modulus - (2./3.) * shear_modulus
+            b1 = (a1 + a2) / ((a1 - a2) * (a1 + 2. * a2))
+            b2 = -a2 / ((a1 - a2) * (a1 + 2. * a2))
+            dstress = trial_stress - update_stress
+            dep = ZEROVEC6f
+            dep[0] = b1 * dstress[0] + b2 * (dstress[1] + dstress[2])
+            dep[1] = b1 * dstress[1] + b2 * (dstress[0] + dstress[2])
+            dep[2] = b1 * dstress[2] + b2 * (dstress[0] + dstress[1])
+            dep[3] = dstress[3] / shear_modulus
+            dep[4] = dstress[4] / shear_modulus
+            dep[5] = dstress[5] / shear_modulus
+            stateVars[np].plastic_energy += voigt_tensor_dot(update_stress, dep)
 
         update_stress += self.ComputeSigrotStress(dw, previous_stress)
         self.UpdateInternalVariables(np, internal_vars, stateVars)

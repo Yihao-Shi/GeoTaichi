@@ -176,7 +176,7 @@ class ParticleReader(object):
         fix_w = vec3i([DictIO.GetEssential(self.FIX, i) for i in fix_w_str])
 
         if not os.path.exists(file):
-            raise EOFError("Invaild particle path")
+            raise EOFError(f"Invaild particle path: {file}")
         particle_cloud = np.loadtxt(file, unpack=True, comments='#').transpose() 
         particle_num = particle_cloud.shape[0] if particle_num == -1 else min(particle_num, particle_cloud.shape[0])
         particle_cloud = particle_cloud[0:particle_num]
@@ -212,9 +212,9 @@ class ParticleReader(object):
         body_num = DictIO.GetAlternative(template, "BodyNumber", -1)
         
         if not os.path.exists(clump_file):
-            raise EOFError("Invaild clump file path")
+            raise EOFError(f"Invaild clump file path: {clump_file}")
         if not os.path.exists(pebble_file):
-            raise EOFError("Invaild pebble file path")
+            raise EOFError(f"Invaild pebble file path: {pebble_file}")
         
         clump_cloud = np.loadtxt(clump_file, unpack=True, comments='#').transpose()
         pebble_cloud = np.loadtxt(pebble_file, unpack=True, comments='#').transpose() 
@@ -269,7 +269,7 @@ class ParticleReader(object):
         body_num = DictIO.GetAlternative(template, "ParticleNumber", -1)
 
         if not os.path.exists(file):
-            raise EOFError("Invaild particle path")
+            raise EOFError(f"Invaild particle path: {file}")
         particle_cloud = np.loadtxt(file, unpack=True, comments='#').transpose()
         body_num = particle_cloud.shape[0] if body_num == -1 else min(body_num, particle_cloud.shape[0])
         particle_cloud = particle_cloud[0:body_num]
@@ -283,7 +283,7 @@ class ParticleReader(object):
         verticeNum = scene.verticeID[index]
         scene.check_rigid_body_number(self.sims, rigid_body_number=body_num)
         kernel_add_levelset_files(rigid_body, bounding_box, bounding_sphere, surface, particleNum, gridNum, surfaceNum, template_ptr.boundings.r_bound, vec3f(template_ptr.boundings.x_bound), 
-                                  vec3f(template_ptr.objects.grid.minBox()), vec3f(template_ptr.objects.grid.maxBox()), template_ptr.surface_node_number, vec3f(template_ptr.objects.inertia), 
+                                  vec3f(template_ptr.objects.grid.minBox()), vec3f(template_ptr.objects.grid.maxBox()), template_ptr.surface_node_number, template_ptr.surface_area, vec3f(template_ptr.objects.inertia), 
                                   template_ptr.objects.eqradius, template_ptr.objects.grid.grid_space, vec3i(template_ptr.objects.grid.gnum), template_ptr.objects.grid.extent, body_num, coords, radii, orients)
         kernel_add_rigid_body(rigid_body, material, particleNum, surfaceNum, verticeNum, body_num, template_ptr.surface_node_number, groupID, matID, init_v, init_w, is_fix)
         print(" Level-set body Information ".center(71, '-'))
@@ -325,7 +325,7 @@ class ParticleReader(object):
                 assert 0.25 <= template_ptr.objects.physical_parameter["epsilon_z"] <= 1, f"The optimal value range of parameter /epsilon_z/ is 0.25 to 1"
 
         if not os.path.exists(file):
-            raise EOFError("Invaild particle path")
+            raise EOFError(f"Invaild particle path: {file}")
         particle_cloud = np.loadtxt(file, unpack=True, comments='#').transpose()
         body_num = particle_cloud.shape[0] if body_num == -1 else min(body_num, particle_cloud.shape[0])
         particle_cloud = particle_cloud[0:body_num]
@@ -396,7 +396,7 @@ class ParticleReader(object):
         
     def restart_rigid_particles(self, scene: myScene, rigid_file_name):
         if not os.path.exists(rigid_file_name):
-            raise EOFError("Invaild rigid particle path")
+            raise EOFError(f"Invaild rigid particle path: {rigid_file_name}")
         
         particle_info = np.load(rigid_file_name, allow_pickle=True) 
         rigid_number = int(DictIO.GetEssential(particle_info, "body_num"))
@@ -443,7 +443,7 @@ class ParticleReader(object):
         
     def restart_levelset_grids(self, scene: myScene, grid_file_name):
         if not os.path.exists(grid_file_name):
-            raise EOFError("Invaild level-set grid path")
+            raise EOFError(f"Invaild level-set grid path: {grid_file_name}")
         
         grid_info = np.load(grid_file_name, allow_pickle=True) 
         grid_number = int(DictIO.GetEssential(grid_info, "total_grid_num"))
@@ -460,7 +460,7 @@ class ParticleReader(object):
         
     def restart_bounding_volumes(self, scene: myScene, bounding_sphere_file_name, bounding_box_file_name):
         if not os.path.exists(bounding_sphere_file_name):
-            raise EOFError("Invaild bounding sphere path")
+            raise EOFError(f"Invaild bounding sphere path: {bounding_sphere_file_name}")
         
         bounding_sphere_info = np.load(bounding_sphere_file_name, allow_pickle=True) 
         particle_number = int(DictIO.GetEssential(bounding_sphere_info, "body_num"))
@@ -477,7 +477,7 @@ class ParticleReader(object):
         
         if bounding_box_file_name is not None:
             if not os.path.exists(bounding_box_file_name):
-                raise EOFError("Invaild bounding box path")
+                raise EOFError(f"Invaild bounding box path: {bounding_box_file_name}")
             
             bounding_sphere_info = np.load(bounding_box_file_name, allow_pickle=True) 
             kernel_rebulid_bounding_box(int(scene.particleNum[0]), particle_number, scene.box, 
@@ -493,7 +493,7 @@ class ParticleReader(object):
         
     def restart_surfaces(self, scene: myScene, surface_file_name):
         if not os.path.exists(surface_file_name):
-            raise EOFError("Invaild surface path")
+            raise EOFError(f"Invaild surface path: {surface_file_name}")
         
         surface_info = np.load(surface_file_name, allow_pickle=True) 
         scene.connectivity = DictIO.GetEssential(surface_info, "connectivity")
@@ -520,31 +520,7 @@ class ParticleReader(object):
         
     def restart_particles(self, scene: myScene, particle_file_name):
         if not os.path.exists(particle_file_name):
-            raise EOFError("Invaild particle path")
-        
-        particle_info = np.load(particle_file_name, allow_pickle=True) 
-        particle_number = int(DictIO.GetEssential(particle_info, "body_num"))
-        if self.sims.is_continue:
-            self.sims.current_time = DictIO.GetEssential(particle_info, "t_current")
-            self.sims.CurrentTime[None] = DictIO.GetEssential(particle_info, "t_current")
-
-        scene.check_particle_num(self.sims, particle_number=particle_number)
-        kernel_rebulid_particle(int(scene.particleNum[0]), particle_number, scene.particle, 
-                                DictIO.GetAlternative(particle_info, "active", np.zeros(particle_number) + 1), 
-                                DictIO.GetEssential(particle_info, "Index"),
-                                DictIO.GetEssential(particle_info, "groupID"),
-                                DictIO.GetEssential(particle_info, "materialID"),
-                                DictIO.GetEssential(particle_info, "mass"),
-                                DictIO.GetEssential(particle_info, "radius"),
-                                DictIO.GetEssential(particle_info, "position"),
-                                DictIO.GetEssential(particle_info, "velocity"),
-                                DictIO.GetEssential(particle_info, "omega"))
-        scene.particleNum[0] += particle_number
-        print("Inserted particle Number: ", particle_number)
-        
-    def restart_particles(self, scene: myScene, particle_file_name):
-        if not os.path.exists(particle_file_name):
-            raise EOFError("Invaild particle path")
+            raise EOFError(f"Invaild particle path: {particle_file_name}")
         
         particle_info = np.load(particle_file_name, allow_pickle=True) 
         particle_number = int(DictIO.GetEssential(particle_info, "body_num"))
@@ -568,13 +544,14 @@ class ParticleReader(object):
 
     def restart_spheres(self, scene: myScene, sphere_file_name):
         if not os.path.exists(sphere_file_name):
-            raise EOFError("Invaild sphere path")
+            raise EOFError(f"Invaild sphere path: {sphere_file_name}")
         
         sphere_info = np.load(sphere_file_name, allow_pickle=True) 
         sphere_number = int(DictIO.GetEssential(sphere_info, "body_num"))
 
         scene.check_sphere_number(self.sims, body_number=sphere_number)
         kernel_rebuild_sphere(int(scene.sphereNum[0]), sphere_number, scene.sphere, 
+                              DictIO.GetEssential(sphere_info, "grainIndex"),
                               DictIO.GetEssential(sphere_info, "sphereIndex"),
                               DictIO.GetEssential(sphere_info, "inverseInertia"),
                               DictIO.GetEssential(sphere_info, "quanternion"),
@@ -587,7 +564,7 @@ class ParticleReader(object):
 
     def restart_clumps(self, scene: myScene, clump_file_name):
         if not os.path.exists(clump_file_name):
-            raise EOFError("Invaild clump path")
+            raise EOFError(f"Invaild clump path: {clump_file_name}")
         
         clump_info = np.load(clump_file_name, allow_pickle=True) 
         clump_number = int(DictIO.GetEssential(clump_info, "body_num"))
@@ -641,4 +618,3 @@ class ParticleReader(object):
         scene.check_particle_num(self.sims, particle_number=len(voxelized_points_np))
         scene.check_sphere_number(self.sims, body_number=len(voxelized_points_np))
         generate_sphere_from_file(min_rad, max_rad, groupID, matID, init_v, init_w)
-

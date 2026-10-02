@@ -8,7 +8,7 @@ from src.utils.PrefixSum import PrefixSumExecutor
 BLOCK_SZ = 64
 @ti.data_oriented
 class RadixSort(object):
-    def __init__(self, input_len, dtype, val_col=0, mode='general') -> None:
+    def __init__(self, input_len, dtype, batch_size=1, val_col=0, mode='general') -> None:
         self.dtype = dtype
         self.data_in = ti.field(dtype=dtype, shape=(input_len, val_col+1))
         self.data_out = ti.field(dtype=dtype, shape=(input_len, val_col+1))
@@ -19,8 +19,9 @@ class RadixSort(object):
         if val_col > 0:
             self.sort_with_value = True
         self.max_bits = 64 if dtype == ti.i64 else 32
+        self.batch_size = batch_size
         
-        if mode=='general':
+        if mode == 'general':
             radix = 8
             self.num_buckets = 1 << radix
             self.num_iters = int(self.max_bits / radix)
@@ -44,35 +45,73 @@ class RadixSort(object):
                 raise RuntimeError(f"{str(current_cfg().arch)} is not supported for radix sort.")
             
     def radix_sort_general(self, input_len):
-        self.general_radix_sort(input_len, self.hist, self.prefix_sum, self.offset, self.data_out, self.data_in)
+        source = self.data_in
+        destination = self.data_out
+        for byte_index in range(self.num_iters):
+            self.general_radix_sort_pass(
+                input_len,
+                byte_index * 8,
+                self.hist,
+                self.prefix_sum,
+                self.offset,
+                destination,
+                source,
+            )
+            source, destination = destination, source
+
+        # The number of byte passes is even for both i32 and i64, so the
+        # ping-pong result normally ends in data_in.  Keep data_out as the
+        # public result field expected by the contact-detection callers.
+        if source is not self.data_out:
+            self.copy_rows(input_len, self.data_out, source)
     
     @ti.kernel
-    def general_radix_sort(self, input_len: int, hist: ti.template(), prefix_sum: ti.template(), offset: ti.template(), data_out: ti.template(), data_in: ti.template()):
+    def general_radix_sort_pass(
+        self,
+        input_len: int,
+        shift: int,
+        hist: ti.template(),
+        prefix_sum: ti.template(),
+        offset: ti.template(),
+        data_out: ti.template(),
+        data_in: ti.template(),
+    ):
         """
-        Radix sort the morton codes, using 8 bits at a time.
+        Apply one stable 8-bit least-significant-digit radix pass.
         """
-        for i in ti.static(range(self.num_iters)):
-            # Clear histogram
-            for j in range(self.num_buckets):
-                hist[j] = 0
+        for bucket in range(self.num_buckets):
+            hist[bucket] = 0
 
-            # Fill histogram
-            ti.loop_config(serialize=True)
-            for i_a in range(input_len):
-                code = (data_in[i_a, 0] >> (i * 8)) & 0xFF
-                offset[i_a] = ti.atomic_add(hist[ti.i32(code)], 1)
+        # Serialized insertion makes the byte pass stable, which is required
+        # for least-significant-digit radix sorting and preserves value order.
+        ti.loop_config(serialize=True)
+        for input_index in range(input_len):
+            code = (data_in[input_index, 0] >> shift) & 0xFF
+            offset[input_index] = ti.atomic_add(hist[ti.i32(code)], 1)
 
-            # Compute prefix sum
-            prefix_sum[0] = 0
-            for j in range(1, self.num_buckets):  # sequential prefix sum
-                prefix_sum[j] = prefix_sum[j - 1] + hist[j - 1]
+        prefix_sum[0] = 0
+        ti.loop_config(serialize=True)
+        for bucket in range(1, self.num_buckets):
+            prefix_sum[bucket] = prefix_sum[bucket - 1] + hist[bucket - 1]
 
-            # Reorder morton codes
-            for i_a in range(input_len):
-                code = (data_in[i_a, 0] >> (i * 8)) & 0xFF
-                idx = ti.i32(offset[i_a] + prefix_sum[ti.i32(code)])
-                for j in ti.static(range(self.val_col)):
-                    data_out[idx, j] = data_in[i_a, j]
+        for input_index in range(input_len):
+            code = (data_in[input_index, 0] >> shift) & 0xFF
+            output_index = ti.i32(
+                offset[input_index] + prefix_sum[ti.i32(code)]
+            )
+            for column in ti.static(range(self.val_col)):
+                data_out[output_index, column] = data_in[input_index, column]
+
+    @ti.kernel
+    def copy_rows(
+        self,
+        input_len: int,
+        destination: ti.template(),
+        source: ti.template(),
+    ):
+        for row in range(input_len):
+            for column in ti.static(range(self.val_col)):
+                destination[row, column] = source[row, column]
 
     def radix_sort_cpu(self, input_len):
         for move in range(30):

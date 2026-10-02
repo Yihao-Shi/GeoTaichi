@@ -8,6 +8,7 @@ from src.mpm.Simulation import Simulation
 from src.utils.linalg import flip3d_linear
 from src.utils.ShapeFunctions import *
 from src.utils.TypeDefination import vec3f, vec3i
+import src.utils.GlobalVariable as GlobalVariable
 
 
 Threshold = 1e-12
@@ -30,6 +31,7 @@ class StaggeredHexahedronElement(ElementBase):
         self.cell = None
         self.LnID = None
         self.shape_fn = None
+        self.dshape_fn = None
         self.node_size = None
         self.calculate = None
         self.calLength = None
@@ -68,8 +70,14 @@ class StaggeredHexahedronElement(ElementBase):
     
     def element_initialize(self, sims: Simulation):
         self.choose_shape_function(sims)
-        if sims.max_particle_num > 0:
+        if sims.max_particle_num > 0 and self.need_shape_cache(sims):
             self.set_essential_field(sims.max_particle_num, sims.shape_function, sims.mls)
+
+    def need_shape_cache(self, sims: Simulation):
+        if (sims.material_type == "Fluid" and sims.solver_type == "Implicit" and
+            sims.discretization == "FDM"):
+            return False
+        return True
 
     def calc_volume(self):
         volume = 1.
@@ -119,6 +127,7 @@ class StaggeredHexahedronElement(ElementBase):
         else:
             raise KeyError(f"The shape function type {sims.shape_function} is not exist!")
         
+        GlobalVariable.INFLUENCENODE = self.influenced_node
         self.influenced_dofs = 3 * self.grid_nodes
 
     def set_essential_field(self, max_particle_num, shape_function, mls):

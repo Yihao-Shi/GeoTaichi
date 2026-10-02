@@ -2,6 +2,8 @@ import numpy, math, warnings
 from copy import deepcopy
 from decimal import Decimal, ROUND_HALF_UP
 
+from src.utils.FieldIO import field_to_numpy_slice
+
 
 def no_operation(*args, **kwargs):
     pass
@@ -29,7 +31,7 @@ def get_dataclass_to_dict(state_vars, selected_vars=None, start_index=0, end_ind
         for var in valid_vars:
             attr_field = getattr(state_vars, var)
             if end_index == -1: end_index = attr_field.shape[0]
-            temp_data = numpy.ascontiguousarray(attr_field.to_numpy()[start_index:end_index])
+            temp_data = field_to_numpy_slice(attr_field, start_index, end_index)
             if temp_data.ndim == 2 and temp_data.shape[1] == 6:
                 full_tensor = numpy.zeros((temp_data.shape[0], 3, 3))
                 full_tensor[:, 0, 0] = temp_data[:, 0]
@@ -78,10 +80,7 @@ def flip2d(array2d, size_u=0, size_v=0):
         size_u = array2d.shape[1]
         size_v = array2d.shape[0]
 
-    new_array2d = numpy.zeros((size_v, size_u, 2))
-    for i in range(size_v):
-        for j in range(size_u):
-            new_array2d[i, j] = array2d[j, i]
+    new_array2d = array2d.transpose()
     return new_array2d
 
 
@@ -93,11 +92,7 @@ def flip3d(array3d, size_u=0, size_v=0, size_w=0):
         size_v = array3d.shape[1]
         size_w = array3d.shape[0]
 
-    new_array3d = numpy.zeros((size_w, size_v, size_u, 3))
-    for i in range(size_w):
-        for j in range(size_v):
-            for k in range(size_u):
-                new_array3d[i, j, k] = array3d[k, j, i]
+    new_array3d = array3d.transpose()
     return new_array3d
 
 
@@ -867,3 +862,6 @@ def binomial_coefficient(k, i):
     if i > k:
         return 0.
     return math.factorial(k) / (math.factorial(k - i) * math.factorial(i))
+
+def triangle_normal(v0, v1, v2):
+    return np_normalized(numpy.cross(v1 - v0, v2 - v0))

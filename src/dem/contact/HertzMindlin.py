@@ -17,10 +17,32 @@ class HertzMindlinModel(ContactModelBase):
         self.model_type = 1
 
     def calcu_critical_timestep(self, scene: myScene):
-        radius = scene.find_particle_min_radius(self.sims.scheme)
+        radius = scene.find_particle_min_radius(self.sims)
         density = scene.find_min_density()
         modulus, Poisson = self.find_max_mparas()
-        return PI * radius * ti.sqrt(density / modulus) / (0.1631 * Poisson + 0.8766)
+        wave_timestep = (
+            PI * radius * ti.sqrt(density / modulus)
+            / (0.1631 * Poisson + 0.8766)
+        )
+        if self.sims.scheme == "LSMPM":
+            penetration_bound = max(
+                float(self.sims.point_verlet_distance),
+                float(scene.find_min_grid_space(self.sims)),
+            )
+            stiffness = kernel_find_max_hertz_stiffness_lsmpm(
+                self.sims.max_material_num,
+                int(scene.surfaceNum[0]),
+                penetration_bound,
+                scene.rigid,
+                scene.surface,
+                scene.vertice,
+                scene.box,
+                self.surfaceProps,
+            )
+            contact_mass = scene.find_particle_min_mass(self.sims)
+            quadrature_timestep = ti.sqrt(contact_mass / stiffness)
+            return ti.min(wave_timestep, quadrature_timestep)
+        return wave_timestep
 
     def find_max_mparas(self):
         maxmodulus, maxpoisson = 0., 0.
@@ -32,7 +54,7 @@ class HertzMindlinModel(ContactModelBase):
                               (2 * self.surfaceProps[componousID].ShearModulus - self.surfaceProps[componousID].YoungModulus)
                     modulus = 2 * self.surfaceProps[componousID].ShearModulus * (2 - Poisson)
                     maxpoisson = ti.max(maxpoisson, Poisson)
-                    maxmodulus = ti.max(maxpoisson, modulus)
+                    maxmodulus = ti.max(maxmodulus, modulus)
         return maxmodulus, maxpoisson
     
     def add_surface_property(self, materialID1, materialID2, property):

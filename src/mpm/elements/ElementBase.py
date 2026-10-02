@@ -42,6 +42,9 @@ class ElementBase(object):
 
     def create_nodes(self, *args):
         raise NotImplementedError
+    
+    def set_characteristic_length(self, *args):
+        pass
 
     def calc_volume(self):
         raise NotImplementedError

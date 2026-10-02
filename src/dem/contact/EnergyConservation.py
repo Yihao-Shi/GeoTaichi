@@ -23,29 +23,81 @@ class EnergyConservation(ContactModelBase):
         self.model_type = 0
 
     def calcu_critical_timestep(self, scene: myScene):
-        mass = scene.find_particle_min_mass(self.sims.scheme)
+        mass = scene.find_particle_min_mass(self.sims)
         stiffness = self.find_max_stiffness(scene)
         return ti.sqrt(mass / stiffness)
 
     def find_max_stiffness(self, scene: myScene):
         maxstiff = 0.
         if self.types == 1:
-            for materialID1 in range(self.sims.max_material_num):
-                for materialID2 in range(self.sims.max_material_num):
-                    componousID = self.get_componousID(self.sims.max_material_num, materialID1, materialID2)
-                    if self.surfaceProps[componousID].kn > 0.:
-                        maxstiff = ti.max(ti.max(maxstiff, self.surfaceProps[componousID].kn), self.surfaceProps[componousID].ks)
+            if self.sims.scheme == "LSMPM":
+                penetration_bound = max(
+                    float(self.sims.point_verlet_distance),
+                    float(scene.find_min_grid_space(self.sims)),
+                )
+                gradient_bound = 1. + max(
+                    float(self.sims.soft_levelset_reinit_grad_threshold), 0.
+                )
+                maxstiff = kernel_find_max_penalty_stiffness_lsmpm(
+                    self.sims.max_material_num,
+                    int(scene.surfaceNum[0]),
+                    penetration_bound,
+                    gradient_bound,
+                    scene.rigid,
+                    scene.surface,
+                    scene.vertice,
+                    scene.box,
+                    self.surfaceProps,
+                )
+            elif self.sims.scheme == "LSDEM":
+                maxstiff = kernel_find_max_stiffness(
+                    self.sims.max_material_num,
+                    int(scene.surfaceNum[0]),
+                    scene.rigid,
+                    scene.surface,
+                    scene.vertice,
+                    self.surfaceProps,
+                )
+            else:
+                for materialID1 in range(self.sims.max_material_num):
+                    for materialID2 in range(self.sims.max_material_num):
+                        componousID = self.get_componousID(
+                            self.sims.max_material_num, materialID1, materialID2
+                        )
+                        if self.surfaceProps[componousID].kn > 0.:
+                            maxstiff = ti.max(
+                                ti.max(
+                                    maxstiff,
+                                    self.surfaceProps[componousID].kn,
+                                ),
+                                self.surfaceProps[componousID].ks,
+                            )
         elif self.types == 2:
-            for materialID1 in range(self.sims.max_material_num):
-                for materialID2 in range(self.sims.max_material_num):
-                    componousID = self.get_componousID(self.sims.max_material_num, materialID1, materialID2)
-                    if self.surfaceProps[componousID].kappa > 0.:
-                        kappa = self.surfaceProps[componousID].kappa
-                        ratio = kernel_get_min_ratio(componousID, int(scene.particleNum[0]), self.surfaceProps, scene.rigid)
-                        kn = -kappa * (2. * ti.log(ratio) + ((ratio - 1) * (3 * ratio + 1)) / ratio ** 2)
-                        maxstiff = ti.max(maxstiff, kn)
+            if self.sims.scheme == "LSMPM":
+                gradient_bound = 1. + max(
+                    float(self.sims.soft_levelset_reinit_grad_threshold), 0.
+                )
+                maxstiff = kernel_find_max_barrier_stiffness_lsmpm(
+                    self.sims.max_material_num,
+                    int(scene.surfaceNum[0]),
+                    gradient_bound,
+                    scene.rigid,
+                    scene.surface,
+                    scene.vertice,
+                    scene.box,
+                    self.surfaceProps,
+                )
+            else:
+                for materialID1 in range(self.sims.max_material_num):
+                    for materialID2 in range(self.sims.max_material_num):
+                        componousID = self.get_componousID(self.sims.max_material_num, materialID1, materialID2)
+                        if self.surfaceProps[componousID].kappa > 0.:
+                            kappa = self.surfaceProps[componousID].kappa
+                            ratio = kernel_get_min_ratio(componousID, int(scene.particleNum[0]), self.surfaceProps, scene.rigid)
+                            kn = -kappa * (2. * ti.log(ratio) + ((ratio - 1) * (3 * ratio + 1)) / ratio ** 2)
+                            maxstiff = ti.max(maxstiff, kn)
         return maxstiff
-    
+
     def find_max_penetration(self):
         max_penetration = 0.
         if self.types == 2:
@@ -62,6 +114,11 @@ class EnergyConservation(ContactModelBase):
             ks = DictIO.GetEssential(property, 'TangentialStiffness')
             mu = DictIO.GetEssential(property, 'Friction')
             theta = DictIO.GetAlternative(property, 'FreeParameter', 2.5)
+            if theta < 2.:
+                raise ValueError(
+                    "Energy Conserving Model requires FreeParameter >= 2 "
+                    "for a finite explicit-contact tangent at zero gap"
+                )
             ndratio = DictIO.GetAlternative(property, 'NormalViscousDamping', 0.)
             sdratio = DictIO.GetAlternative(property, 'TangentialViscousDamping', 0.)
             componousID = 0
@@ -107,4 +164,3 @@ class EnergyConservation(ContactModelBase):
             self.surfaceProps[componousID].ndratio = factor * self.surfaceProps[componousID].ndratio + value
         elif property_name == "TangentialViscousDamping":
             self.surfaceProps[componousID].sdratio = factor * self.surfaceProps[componousID].sdratio + value
-    

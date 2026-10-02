@@ -1,10 +1,21 @@
-from math import sqrt
+from math import isfinite, sqrt
 
 import taichi as ti
 from taichi.lang.impl import current_cfg
 
 from src.utils.constants import BLOCK_SZ
 from src.linear_solver.LinearOperator import LinearOperator
+
+
+from src.linear_solver.MatrixFreeCGKernel import (
+    reset,
+    init,
+    reduce_shared,
+    reduce_atomic,
+    update_x,
+    update_r,
+    update_p,
+)
 
 
 class MatrixFreeCG(object):
@@ -17,17 +28,23 @@ class MatrixFreeCG(object):
         self.scalar_rest()
 
         if current_cfg().arch == ti.cuda:
-            self.reduce = reduce_shared
+            self.reduce = reduce_atomic
         elif current_cfg().arch == ti.cpu:
             self.reduce = reduce_atomic
         else:
             raise RuntimeError(f"{str(current_cfg().arch)} is not supported for preconditioned bi-conjuction gradient.")
 
     def scalar_rest(self):
-        self.alpha = 0.
-        self.beta = 0.
+        self.alpha = 0.0
+        self.beta = 0.0
+        self.last_initial_residual = 0.0
+        self.last_residual = 0.0
+        self.last_iterations = 0
+        self.last_converged = False
+        self.last_breakdown_reason = ""
+        self.last_residual_restarts = 0
 
-    def solve(self, A: LinearOperator, b, x, size, tol=1e-6, maxiter=5000):
+    def solve(self, A: LinearOperator, b, x, size, tol=1e-6, maxiter=5000, rel_tol=0.0):
         """Matrix-free conjugate-gradient solver.
 
         Use conjugate-gradient method to solve the linear system Ax = b, where A is implicitly
@@ -41,95 +58,91 @@ class MatrixFreeCG(object):
             maxiter (int): Maximum number of iterations.
             tol: Tolerance(absolute) for convergence.
         """
-        succeeded = True
+        tol = float(tol)
+        rel_tol = float(rel_tol)
+        maxiter = int(maxiter)
+        if not isfinite(tol) or tol < 0.0:
+            raise ValueError("CG absolute tolerance must be finite and non-negative")
+        if not isfinite(rel_tol) or rel_tol < 0.0:
+            raise ValueError("CG relative tolerance must be finite and non-negative")
+        if maxiter < 0:
+            raise ValueError("CG maxiter must be non-negative")
+
         reset(size, self.p, self.r, self.Ap, self.Ax)
         self.scalar_rest()
         A.matvec(x, self.Ax)
         init(size, b, self.p, self.r, self.Ap, self.Ax)
         initial_rTr = self.reduce(size, self.r, self.r)
+        initial_residual = sqrt(max(initial_rTr, 0.0))
+        convergence_tol = max(tol, rel_tol * initial_residual)
+        self.last_initial_residual = initial_residual
+        self.last_residual = initial_residual
+        if not isfinite(initial_rTr) or initial_rTr < 0.0:
+            self.last_residual = float("inf")
+            self.last_breakdown_reason = "non_finite_initial_residual"
+            return False
+        if initial_residual <= convergence_tol:
+            self.last_converged = True
+            return True
+
         old_rTr = initial_rTr
-        new_rTr = initial_rTr
         update_p(size, self.p, self.r, self.beta)
-        if sqrt(initial_rTr) >= tol:  # Do nothing if the initial residual is small enough
-            # -- Main loop --
-            for _ in range(maxiter):
-                A.matvec(self.p, self.Ap)  # compute Ap = A x p
-                pAp = self.reduce(size, self.p, self.Ap)
-                self.alpha = old_rTr / pAp
-                update_x(size, x, self.p, self.alpha)
-                update_r(size, self.r, self.Ap, self.alpha)
-                new_rTr = self.reduce(size, self.r, self.r)
-                if sqrt(new_rTr) < tol:
+        reliable_update_interval = 32
+        for iteration in range(maxiter):
+            A.matvec(self.p, self.Ap)
+            pAp = self.reduce(size, self.p, self.Ap)
+            if not isfinite(pAp) or pAp <= 0.0:
+                self.last_breakdown_reason = "non_positive_curvature"
+                break
+            self.alpha = old_rTr / pAp
+            if not isfinite(self.alpha):
+                self.last_breakdown_reason = "non_finite_alpha"
+                break
+            update_x(size, x, self.p, self.alpha)
+            update_r(size, self.r, self.Ap, self.alpha)
+            new_rTr = self.reduce(size, self.r, self.r)
+            self.last_iterations = iteration + 1
+            if not isfinite(new_rTr) or new_rTr < 0.0:
+                self.last_residual = float("inf")
+                self.last_breakdown_reason = "non_finite_residual"
+                break
+            self.last_residual = sqrt(new_rTr)
+            if self.last_residual <= convergence_tol or (iteration + 1) % reliable_update_interval == 0:
+                A.matvec(x, self.Ax)
+                init(size, b, self.p, self.r, self.Ap, self.Ax)
+                verified_rTr = self.reduce(size, self.r, self.r)
+                if not isfinite(verified_rTr) or verified_rTr < 0.0:
+                    self.last_residual = float("inf")
+                    self.last_breakdown_reason = "non_finite_residual"
                     break
-                self.beta = new_rTr / old_rTr
-                update_p(size, self.p, self.r, self.beta)
-                old_rTr = new_rTr
-        if new_rTr >= tol:
-            succeeded = False
-        return succeeded
-        
+                self.last_residual = sqrt(verified_rTr)
+                if self.last_residual <= convergence_tol:
+                    self.last_converged = True
+                    break
+                old_rTr = verified_rTr
+                update_p(size, self.p, self.r, 0.0)
+                self.last_residual_restarts += 1
+                continue
+            if old_rTr <= 0.0:
+                self.last_breakdown_reason = "non_positive_previous_residual"
+                break
+            self.beta = new_rTr / old_rTr
+            if not isfinite(self.beta):
+                self.last_breakdown_reason = "non_finite_beta"
+                break
+            update_p(size, self.p, self.r, self.beta)
+            old_rTr = new_rTr
 
-@ti.kernel
-def reset(size: int, p: ti.template(), r: ti.template(), Ap: ti.template(), Ax: ti.template()):
-    for i in range(size):
-        p[i] = 0.
-        r[i] = 0.
-        Ap[i] = 0.
-        Ax[i] = 0.
-
-
-@ti.kernel
-def init(size: int, b: ti.template(), p: ti.template(), r: ti.template(), Ap: ti.template(), Ax: ti.template()):
-    for i in range(size):
-        r[i] = b[i] - Ax[i]
-        p[i] = 0.0
-        Ap[i] = 0.0
-
-
-@ti.kernel
-def reduce_shared(size: int, p: ti.template(), q: ti.template()) -> float:
-    result = float(0.0)
-    ti.loop_config(block_dim=BLOCK_SZ)
-    for i in range(size):
-        thread_id = i % BLOCK_SZ
-        pad_vector = ti.simt.block.SharedArray((64, ), ti.f64)
-
-        pad_vector[thread_id] = p[i] * q[i]
-        ti.simt.block.sync()
-
-        j = int(0.5 * BLOCK_SZ)
-        while j != 0:
-            if thread_id < j:
-                pad_vector[thread_id] += pad_vector[thread_id + j]
-            ti.simt.block.sync()
-            j >>= 1
-
-        if thread_id == 0:
-            result += pad_vector[thread_id]
-    return result
-
-
-@ti.kernel
-def reduce_atomic(size: int, p: ti.template(), q: ti.template()) -> float:
-    result = float(0.0)
-    for i in range(size):
-        result += p[i] * q[i]
-    return result
-
-
-@ti.kernel
-def update_x(size: int, x: ti.template(), p: ti.template(), alpha: float):
-    for i in range(size):
-        x[i] += alpha * p[i]
-
-
-@ti.kernel
-def update_r(size: int, r: ti.template(), Ap: ti.template(), alpha: float):
-    for i in range(size):
-        r[i] -= alpha * Ap[i]
-
-
-@ti.kernel
-def update_p(size: int, p: ti.template(), r: ti.template(), beta: float):
-    for i in range(size):
-        p[i] = r[i] + beta * p[i]
+        if not self.last_converged:
+            A.matvec(x, self.Ax)
+            init(size, b, self.p, self.r, self.Ap, self.Ax)
+            verified_rTr = self.reduce(size, self.r, self.r)
+            if isfinite(verified_rTr) and verified_rTr >= 0.0:
+                self.last_residual = sqrt(verified_rTr)
+                self.last_converged = self.last_residual <= convergence_tol
+            else:
+                self.last_residual = float("inf")
+                self.last_breakdown_reason = "non_finite_residual"
+            if not self.last_converged and not self.last_breakdown_reason:
+                self.last_breakdown_reason = "maximum_iterations"
+        return self.last_converged

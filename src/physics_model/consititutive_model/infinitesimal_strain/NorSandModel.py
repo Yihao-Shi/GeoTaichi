@@ -5,8 +5,6 @@ from src.physics_model.consititutive_model.infinitesimal_strain.MaterialKernel i
 from src.physics_model.consititutive_model.infinitesimal_strain.ElasPlasticity import PlasticMaterial
 from src.utils.constants import FTOL
 from src.utils.ObjectIO import DictIO
-from src.utils.VectorFunction import voigt_tensor_trace, voigt_tensor_dot
-import src.utils.GlobalVariable as GlobalVariable
 
 
 @ti.data_oriented
@@ -49,30 +47,53 @@ class NorSandModel(PlasticMaterial):
         self.is_soft  = True
         self.max_sound_speed = 0.
 
-    # =========================================================================
-    # Inicialização Python
-    # =========================================================================
     def model_initialize(self, material):
-        self.density  = DictIO.GetAlternative(material, 'Density',  1800.)
-        self.G0       = DictIO.GetEssential(material,   'G0')
-        self.kappa    = DictIO.GetEssential(material,   'kappa')
-        self.lmbda    = DictIO.GetEssential(material,   'lambda')
-        self.M        = DictIO.GetEssential(material,   'M')
-        self.N        = DictIO.GetEssential(material,   'N')
-        self.beta_dil = DictIO.GetEssential(material,   'beta')
-        self.vc0      = DictIO.GetEssential(material,   'vc0')
-        self.v0       = DictIO.GetEssential(material,   'v0')
-        self.h        = DictIO.GetEssential(material,   'h')
-        self.p_ref    = DictIO.GetAlternative(material, 'p_ref', 100.)
+        self.material = material
+        density  = DictIO.GetAlternative(material, 'Density',  1800.)
+        G0       = DictIO.GetEssential(material,   'G0')
+        kappa    = DictIO.GetEssential(material,   'kappa')
+        lmbda    = DictIO.GetEssential(material,   'lambda')
+        M        = DictIO.GetEssential(material,   'M')
+        N        = DictIO.GetEssential(material,   'N')
+        beta_dil = DictIO.GetEssential(material,   'beta', 'DilatancyBeta')
+        vc0      = DictIO.GetEssential(material,   'vc0', 'CriticalSpecificVolume')
+        v0       = DictIO.GetEssential(material,   'v0', 'InitialSpecificVolume')
+        h        = DictIO.GetEssential(material,   'h', 'HardeningModulus')
+        p_ref    = DictIO.GetAlternative(material, 'p_ref', DictIO.GetAlternative(material, 'PressureRef', 100.))
+        self.add_material(density, G0, kappa, lmbda, M, N, beta_dil, vc0, v0, h, p_ref)
         self.add_coupling_material(material)
 
+    def add_material(self, density, G0, kappa, lmbda, M, N, beta_dil, vc0, v0, h, p_ref):
+        self.density  = density
+        self.G0       = G0
+        self.kappa    = kappa
+        self.lmbda    = lmbda
+        self.M        = M
+        self.N        = N
+        self.beta_dil = beta_dil
+        self.vc0      = vc0
+        self.v0       = v0
+        self.h        = h
+        self.p_ref    = p_ref
+        self.bulk     = max(self.v0 * self.p_ref / self.kappa, 100.)
+        self.shear    = self.G0
+        self.young    = 9. * self.bulk * self.shear / (3. * self.bulk + self.shear)
+        self.poisson  = 0.5 * (3. * self.bulk - 2. * self.shear) / (3. * self.bulk + self.shear)
+        self.max_sound_speed = self.get_sound_speed()
+
     def get_sound_speed(self):
-        return 0.
+        if self.density <= 0.:
+            return 0.
+        constrained_modulus = self.bulk + 4. * self.shear / 3.
+        return np.sqrt(max(constrained_modulus, 0.) / self.density)
+
+    def random_field_initialize(self, parameter):
+        raise RuntimeError("NorSand does not support random-field material parameters yet")
 
     def print_message(self, materialID):
-        print(" Constitutive Model Information ".center(71, '-'))
-        print("Constitutive model = NorSand")
-        print(f"Model ID:           {materialID}")
+        self.print_console_header()
+        print("Constitutive model: NorSand")
+        print(f"Material ID:        {materialID}")
         print(f"Density:            {self.density} kg/m³")
         print(f"G0:                 {self.G0}")
         print(f"kappa (κ):          {self.kappa}")

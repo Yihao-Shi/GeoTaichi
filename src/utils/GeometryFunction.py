@@ -1,4 +1,6 @@
 import taichi as ti
+import numpy as np
+import trimesh
 
 from src.utils.constants import PI, Threshold
 from src.utils.Quaternion import RodriguesRotationMatrix
@@ -511,40 +513,49 @@ def intersectionOBBs(center1, center2, extent1, extent2, rotate_matrix1, rotate_
 
     a0, a1, a2 = 0.5 * extent1
     b0, b1, b2 = 0.5 * extent2
-    A0, A1, A2 = rotate_matrix1 @ vec3f(1, 0, 0), rotate_matrix1 @ vec3f(0, 1, 0), rotate_matrix1 @ vec3f(0, 0, 1)
-    B0, B1, B2 = rotate_matrix2 @ vec3f(1, 0, 0), rotate_matrix2 @ vec3f(0, 1, 0), rotate_matrix2 @ vec3f(0, 0, 1)
-    not_intersect = True
-    if not_intersect and ti.abs(A0.dot(dvector)) < a0 + (b0 * amatrix[0, 0] + b1 * amatrix[0, 1] + b2 * amatrix[0, 2]):
-        not_intersect = False
-    if not_intersect and ti.abs(A1.dot(dvector)) < a1 + (b0 * amatrix[1, 0] + b1 * amatrix[1, 1] + b2 * amatrix[1, 2]):
-        not_intersect = False
-    if not_intersect and ti.abs(A2.dot(dvector)) < a2 + (b0 * amatrix[2, 0] + b1 * amatrix[2, 1] + b2 * amatrix[2, 2]):
-        not_intersect = False
-    if not_intersect and ti.abs(B0.dot(dvector)) < b0 + (a0 * amatrix[0, 0] + a1 * amatrix[1, 0] + a2 * amatrix[2, 0]):
-        not_intersect = False
-    if not_intersect and ti.abs(B1.dot(dvector)) < b1 + (a0 * amatrix[0, 1] + a1 * amatrix[1, 1] + a2 * amatrix[2, 1]):
-        not_intersect = False
-    if not_intersect and ti.abs(B2.dot(dvector)) < b2 + (a0 * amatrix[0, 2] + a1 * amatrix[1, 2] + a2 * amatrix[2, 2]):
-        not_intersect = False
-    if not_intersect and ti.abs(cmatrix[1, 0] * A2.dot(dvector) - cmatrix[2, 0] * A1.dot(dvector)) < (a1 * amatrix[2, 0] + a2 * amatrix[1, 0]) + (b1 * amatrix[0, 2] + b2 * amatrix[0, 1]):
-        not_intersect = False
-    if not_intersect and ti.abs(cmatrix[1, 1] * A2.dot(dvector) - cmatrix[2, 1] * A1.dot(dvector)) < (a1 * amatrix[2, 1] + a2 * amatrix[1, 1]) + (b0 * amatrix[0, 2] + b2 * amatrix[0, 0]):
-        not_intersect = False
-    if not_intersect and ti.abs(cmatrix[1, 2] * A2.dot(dvector) - cmatrix[2, 2] * A1.dot(dvector)) < (a1 * amatrix[2, 2] + a2 * amatrix[1, 2]) + (b0 * amatrix[0, 1] + b1 * amatrix[0, 0]):
-        not_intersect = False
-    if not_intersect and ti.abs(cmatrix[2, 0] * A0.dot(dvector) - cmatrix[0, 0] * A2.dot(dvector)) < (a0 * amatrix[2, 0] + a2 * amatrix[0, 0]) + (b1 * amatrix[1, 2] + b2 * amatrix[1, 1]):
-        not_intersect = False
-    if not_intersect and ti.abs(cmatrix[2, 1] * A0.dot(dvector) - cmatrix[0, 1] * A2.dot(dvector)) < (a0 * amatrix[2, 1] + a2 * amatrix[0, 1]) + (b0 * amatrix[1, 2] + b2 * amatrix[1, 0]):
-        not_intersect = False
-    if not_intersect and ti.abs(cmatrix[2, 2] * A0.dot(dvector) - cmatrix[0, 2] * A2.dot(dvector)) < (a0 * amatrix[2, 2] + a2 * amatrix[0, 2]) + (b0 * amatrix[1, 1] + b1 * amatrix[1, 0]):
-        not_intersect = False
-    if not_intersect and ti.abs(cmatrix[0, 0] * A1.dot(dvector) - cmatrix[1, 0] * A0.dot(dvector)) < (a0 * amatrix[1, 0] + a1 * amatrix[0, 0]) + (b1 * amatrix[2, 2] + b2 * amatrix[2, 1]):
-        not_intersect = False
-    if not_intersect and ti.abs(cmatrix[0, 1] * A1.dot(dvector) - cmatrix[1, 1] * A0.dot(dvector)) < (a0 * amatrix[1, 1] + a1 * amatrix[0, 1]) + (b0 * amatrix[2, 2] + b2 * amatrix[2, 0]):
-        not_intersect = False
-    if not_intersect and ti.abs(cmatrix[0, 2] * A1.dot(dvector) - cmatrix[1, 2] * A0.dot(dvector)) < (a0 * amatrix[1, 2] + a1 * amatrix[0, 2]) + (b0 * amatrix[2, 1] + b1 * amatrix[2, 0]):
-        not_intersect = False
-    return not not_intersect
+    A0 = vec3f(rotate_matrix1[0, 0], rotate_matrix1[1, 0], rotate_matrix1[2, 0])
+    A1 = vec3f(rotate_matrix1[0, 1], rotate_matrix1[1, 1], rotate_matrix1[2, 1])
+    A2 = vec3f(rotate_matrix1[0, 2], rotate_matrix1[1, 2], rotate_matrix1[2, 2])
+    B0 = vec3f(rotate_matrix2[0, 0], rotate_matrix2[1, 0], rotate_matrix2[2, 0])
+    B1 = vec3f(rotate_matrix2[0, 1], rotate_matrix2[1, 1], rotate_matrix2[2, 1])
+    B2 = vec3f(rotate_matrix2[0, 2], rotate_matrix2[1, 2], rotate_matrix2[2, 2])
+
+    separated = False  
+    if not separated and ti.abs(A0.dot(dvector)) > a0 + (b0 * amatrix[0, 0] + b1 * amatrix[0, 1] + b2 * amatrix[0, 2]):
+        separated = True
+    if not separated and ti.abs(A1.dot(dvector)) > a1 + (b0 * amatrix[1, 0] + b1 * amatrix[1, 1] + b2 * amatrix[1, 2]):
+        separated = True
+    if not separated and ti.abs(A2.dot(dvector)) > a2 + (b0 * amatrix[2, 0] + b1 * amatrix[2, 1] + b2 * amatrix[2, 2]):
+        separated = True
+
+    if not separated and ti.abs(B0.dot(dvector)) > b0 + (a0 * amatrix[0, 0] + a1 * amatrix[1, 0] + a2 * amatrix[2, 0]):
+        separated = True
+    if not separated and ti.abs(B1.dot(dvector)) > b1 + (a0 * amatrix[0, 1] + a1 * amatrix[1, 1] + a2 * amatrix[2, 1]):
+        separated = True
+    if not separated and ti.abs(B2.dot(dvector)) > b2 + (a0 * amatrix[0, 2] + a1 * amatrix[1, 2] + a2 * amatrix[2, 2]):
+        separated = True
+
+    if not separated and ti.abs(cmatrix[1, 0] * A2.dot(dvector) - cmatrix[2, 0] * A1.dot(dvector)) > (a1 * amatrix[2, 0] + a2 * amatrix[1, 0]) + (b1 * amatrix[0, 2] + b2 * amatrix[0, 1]):
+        separated = True
+    if not separated and ti.abs(cmatrix[1, 1] * A2.dot(dvector) - cmatrix[2, 1] * A1.dot(dvector)) > (a1 * amatrix[2, 1] + a2 * amatrix[1, 1]) + (b0 * amatrix[0, 2] + b2 * amatrix[0, 0]):
+        separated = True
+    if not separated and ti.abs(cmatrix[1, 2] * A2.dot(dvector) - cmatrix[2, 2] * A1.dot(dvector)) > (a1 * amatrix[2, 2] + a2 * amatrix[1, 2]) + (b0 * amatrix[0, 1] + b1 * amatrix[0, 0]):
+        separated = True
+
+    if not separated and ti.abs(cmatrix[2, 0] * A0.dot(dvector) - cmatrix[0, 0] * A2.dot(dvector)) > (a0 * amatrix[2, 0] + a2 * amatrix[0, 0]) + (b1 * amatrix[1, 2] + b2 * amatrix[1, 1]):
+        separated = True
+    if not separated and ti.abs(cmatrix[2, 1] * A0.dot(dvector) - cmatrix[0, 1] * A2.dot(dvector)) > (a0 * amatrix[2, 1] + a2 * amatrix[0, 1]) + (b0 * amatrix[1, 2] + b2 * amatrix[1, 0]):
+        separated = True
+    if not separated and ti.abs(cmatrix[2, 2] * A0.dot(dvector) - cmatrix[0, 2] * A2.dot(dvector)) > (a0 * amatrix[2, 2] + a2 * amatrix[0, 2]) + (b0 * amatrix[1, 1] + b1 * amatrix[1, 0]):
+        separated = True
+
+    if not separated and ti.abs(cmatrix[0, 0] * A1.dot(dvector) - cmatrix[1, 0] * A0.dot(dvector)) > (a0 * amatrix[1, 0] + a1 * amatrix[0, 0]) + (b1 * amatrix[2, 2] + b2 * amatrix[2, 1]):
+        separated = True
+    if not separated and ti.abs(cmatrix[0, 1] * A1.dot(dvector) - cmatrix[1, 1] * A0.dot(dvector)) > (a0 * amatrix[1, 1] + a1 * amatrix[0, 1]) + (b0 * amatrix[2, 2] + b2 * amatrix[2, 0]):
+        separated = True
+    if not separated and ti.abs(cmatrix[0, 2] * A1.dot(dvector) - cmatrix[1, 2] * A0.dot(dvector)) > (a0 * amatrix[1, 2] + a1 * amatrix[0, 2]) + (b0 * amatrix[2, 1] + b1 * amatrix[2, 0]):
+        separated = True
+    return not separated  
 
 
 @ti.func
@@ -619,7 +630,7 @@ def intersection_triangleOBBs(mass_center, extent, rotate_matrix, vertice1, vert
             not_intersect = False
     return not not_intersect
 
-@ti.func
+@ti.pyfunc
 def dist3D_Segment_to_Segment(A0,A1,B0,B1):
     u = A1 - A0
     v = B1 - B0
@@ -678,7 +689,7 @@ def dist3D_Segment_to_Segment(A0,A1,B0,B1):
     dP = - w - (sc * u) + (tc * v) # Qc - Pc
     return dP, sc, tc
 
-@ti.func
+@ti.pyfunc
 def dist3D_Point_Triangle(P, V0, V1, V2):
     cord0 = 0.0
     cord1 = 0.0
@@ -730,3 +741,105 @@ def dist3D_Point_Triangle(P, V0, V1, V2):
         cord0 = 1.0
     return cord0, cord1, cord2
 
+@ti.pyfunc
+def point_to_segment_distance2D(px, py, x1, y1, x2, y2):
+    vx, vy = x2 - x1, y2 - y1
+    wx, wy = px - x1, py - y1
+
+    distance = 0.
+    c1 = vx * wx + vy * wy
+    if c1 <= 0:
+        distance = ti.sqrt((px - x1)**2 + (py - y1)**2)
+    else:
+        c2 = vx * vx + vy * vy
+        if c2 <= c1:
+            distance = ti.sqrt((px - x2)**2 + (py - y2)**2)
+        else:
+            b = c1 / c2
+            bx, by = x1 + b * vx, y1 + b * vy
+            distance = ti.sqrt((px - bx)**2 + (py - by)**2)
+    return distance
+
+@ti.pyfunc
+def point_in_polygon(x, y, polygon):
+    inside = False
+    n = len(polygon)
+    for i in range(n):
+        x1, y1 = polygon[i, 0], polygon[i, 1]
+        x2, y2 = polygon[(i + 1) % polygon.n, 0], polygon[(i + 1) % polygon.n, 1]
+        if ((y1 > y) != (y2 > y)) and \
+           (x < (x2 - x1) * (y - y1) / (y2 - y1) + x1):
+            inside = not inside
+    return inside
+
+@ti.pyfunc
+def circle_inside_geometry(polygon, cx, cy, r):
+    inside = True
+    if not point_in_polygon(cx, cy, polygon):
+        inside = False
+    else:
+        for i in range(len(polygon)):
+            x1, y1 = polygon[i, 0], polygon[i, 1]
+            x2, y2 = polygon[(i + 1) % polygon.n, 0], polygon[(i + 1) % polygon.n, 1]
+            dist = point_to_segment_distance2D(cx, cy, x1, y1, x2, y2)
+            if dist < r:
+                inside = False
+                break
+    return inside
+
+import numpy as np
+
+def distance_along_direction_to_surface(mesh: trimesh.Trimesh,
+                                            points: np.ndarray,
+                                            direction: np.ndarray,
+                                            max_distance=np.inf):
+    """
+    points: (N,3)
+    direction: (3,) 所有点共用同一射线方向
+    返回:
+      distances: (N,) 数组: 每个点的最近交点距离; 若无交点 -> np.nan
+    """
+    points = np.asarray(points, dtype=float)
+    direction = np.asarray(direction, dtype=float)
+
+    if points.ndim != 2 or points.shape[1] != 3:
+        raise ValueError("points 必须是 (N,3)")
+
+    # 归一化方向
+    norm = np.linalg.norm(direction)
+    if norm == 0:
+        raise ValueError("direction 不能为零向量")
+    direction = direction / norm
+
+    N = len(points)
+    origins = points
+    directions = np.repeat(direction.reshape(1, 3), N, axis=0)
+
+    # 求交
+    locations, index_ray, index_tri = mesh.ray.intersects_location(
+        ray_origins=origins,
+        ray_directions=directions,
+        multiple_hits=True
+    )
+
+    # 先全设为 nan
+    distances = np.full(N, np.nan, dtype=float)
+
+    if len(locations) == 0:
+        return distances  # 所有点都没撞到
+
+    # 对每条射线，可能有多个交点，需要取最近的
+    # index_ray: 对应 origins 的下标
+    # locations: 对应每个交点的坐标
+    deltas = locations - origins[index_ray]
+    dists = np.linalg.norm(deltas, axis=1)
+
+    # 把每个 ray 的最小距离写到结果里
+    for i, ray_idx in enumerate(index_ray):
+        di = dists[i]
+        if di > max_distance:
+            continue
+        if np.isnan(distances[ray_idx]) or di < distances[ray_idx]:
+            distances[ray_idx] = di
+
+    return distances

@@ -1,6 +1,6 @@
 import taichi as ti
 
-from src.utils.constants import ZEROVEC3f, SQRT3, PI, DBL_EPSILON
+from src.utils.constants import ZEROMAT3x3, ZEROVEC3f, SQRT3, PI, DBL_EPSILON
 from src.utils.ScalarFunction import clamp
 from src.utils.TypeDefination import vec3f, mat3x3, mat4x4, mat2x2, mat3x4
 
@@ -17,6 +17,153 @@ def matrix_form(tensor):
     return mat3x3([[tensor[0], tensor[3], tensor[5]], 
                    [tensor[3], tensor[1], tensor[4]], 
                    [tensor[5], tensor[4], tensor[2]]])
+
+
+@ti.func
+def matrix_form_2d(tensor):
+    return mat2x2([[tensor[0], tensor[3]],
+                   [tensor[3], tensor[1]]])
+
+
+@ti.func
+def matrix_form_3d_from_stress(stress):
+    matrix = mat3x3([[0., 0., 0.],
+                     [0., 0., 0.],
+                     [0., 0., 0.]])
+    if ti.static(stress.n == 3):
+        matrix = stress
+    elif ti.static(stress.n == 2):
+        matrix = mat3x3([[stress[0, 0], stress[0, 1], 0.],
+                         [stress[1, 0], stress[1, 1], 0.],
+                         [0., 0., 0.]])
+    else:
+        matrix = matrix_form(stress)
+    return matrix
+
+
+@ti.func
+def Eig3Symmetric(stress):
+    matrix = ZEROMAT3x3
+    directors = ZEROMAT3x3
+    xN1 = ZEROVEC3f
+    xN2 = ZEROVEC3f
+    xN3 = ZEROVEC3f
+
+    matrix[0, 0] = stress[0]
+    matrix[0, 1] = stress[3]
+    matrix[0, 2] = stress[5]
+    matrix[1, 0] = stress[3]
+    matrix[1, 1] = stress[1]
+    matrix[1, 2] = stress[4]
+    matrix[2, 0] = stress[5]
+    matrix[2, 1] = stress[4]
+    matrix[2, 2] = stress[2]
+
+    directors[0, 0] = 1.
+    directors[1, 0] = 0.
+    directors[2, 0] = 0.
+    directors[0, 1] = 0.
+    directors[1, 1] = 1.
+    directors[2, 1] = 0.
+    directors[0, 2] = 0.
+    directors[1, 2] = 0.
+    directors[2, 2] = 1.
+
+    abs_max_s = 0.
+    for i in ti.static(range(3)):
+        for j in ti.static(range(3)):
+            abs_max_s = max(abs_max_s, abs(matrix[i, j]))
+    tolerance = 1.e-20 * abs_max_s
+    iteration = 0
+    max_iteration = 50
+
+    while iteration < max_iteration and (abs(matrix[0, 1]) + abs(matrix[1, 2]) + abs(matrix[0, 2])) > tolerance:
+        iteration += 1
+        ip, iq = 0, 0
+        for k in ti.static(range(3)):
+            if k == 0:
+                ip, iq = 0, 1
+            elif k == 1:
+                ip, iq = 1, 2
+            else:
+                ip, iq = 0, 2
+            if abs(matrix[ip, iq]) > 1.e-50:
+                tau = (matrix[iq, iq] - matrix[ip, ip]) / (2. * matrix[ip, iq])
+                sign_tau = 1. if tau >= 0. else -1.
+                tangent = sign_tau / (abs(tau) + ti.sqrt(1.0 + tau * tau))
+                cosine = 1. / ti.sqrt(1. + tangent * tangent)
+                sine = tangent * cosine
+
+                a1p = cosine * matrix[0, ip] - sine * matrix[0, iq]
+                a2p = cosine * matrix[1, ip] - sine * matrix[1, iq]
+                a3p = cosine * matrix[2, ip] - sine * matrix[2, iq]
+                matrix[0, iq] = sine * matrix[0, ip] + cosine * matrix[0, iq]
+                matrix[1, iq] = sine * matrix[1, ip] + cosine * matrix[1, iq]
+                matrix[2, iq] = sine * matrix[2, ip] + cosine * matrix[2, iq]
+                matrix[0, ip] = a1p
+                matrix[1, ip] = a2p
+                matrix[2, ip] = a3p
+
+                v1p = cosine * directors[0, ip] - sine * directors[0, iq]
+                v2p = cosine * directors[1, ip] - sine * directors[1, iq]
+                v3p = cosine * directors[2, ip] - sine * directors[2, iq]
+                directors[0, iq] = sine * directors[0, ip] + cosine * directors[0, iq]
+                directors[1, iq] = sine * directors[1, ip] + cosine * directors[1, iq]
+                directors[2, iq] = sine * directors[2, ip] + cosine * directors[2, iq]
+                directors[0, ip] = v1p
+                directors[1, ip] = v2p
+                directors[2, ip] = v3p
+
+                ap1 = cosine * matrix[ip, 0] - sine * matrix[iq, 0]
+                ap2 = cosine * matrix[ip, 1] - sine * matrix[iq, 1]
+                ap3 = cosine * matrix[ip, 2] - sine * matrix[iq, 2]
+                matrix[iq, 0] = sine * matrix[ip, 0] + cosine * matrix[iq, 0]
+                matrix[iq, 1] = sine * matrix[ip, 1] + cosine * matrix[iq, 1]
+                matrix[iq, 2] = sine * matrix[ip, 2] + cosine * matrix[iq, 2]
+                matrix[ip, 0] = ap1
+                matrix[ip, 1] = ap2
+                matrix[ip, 2] = ap3
+
+    s1 = matrix[0, 0]
+    s2 = matrix[1, 1]
+    s3 = matrix[2, 2]
+    mean_stress = (s1 + s2 + s3) / 3.
+    deviatoric_norm = ti.sqrt(((s1 - s2) ** 2 + (s2 - s3) ** 2 + (s3 - s1) ** 2) / 2.)
+
+    is1 = 0
+    is2 = 1
+    is3 = 2
+    if s1 > s2:
+        temp = s2
+        s2 = s1
+        s1 = temp
+        itemp = is2
+        is2 = is1
+        is1 = itemp
+    if s2 > s3:
+        temp = s3
+        s3 = s2
+        s2 = temp
+        itemp = is3
+        is3 = is2
+        is2 = itemp
+    if s1 > s2:
+        temp = s2
+        s2 = s1
+        s1 = temp
+        itemp = is2
+        is2 = is1
+        is1 = itemp
+    for i in ti.static(range(3)):
+        xN1[i] = directors[i, is1]
+        xN2[i] = directors[i, is2]
+        xN3[i] = directors[i, is3]
+    return xN1, xN2, xN3, s1, s2, s3, mean_stress, deviatoric_norm
+
+
+@ti.func
+def Eig_3(stress):
+    return Eig3Symmetric(stress)
 
 
 @ti.func
@@ -231,21 +378,41 @@ def eig(matrix):
 @ti.func
 def get_eigenvalue_3x3(matrix):
     value = ZEROVEC3f
-    I1 = matrix[0, 0] + matrix[1, 1] + matrix[2, 2]
-    I2 = 0.5 * (I1 * I1 - matrix[0, 0] * matrix[0, 0] - matrix[1, 1] * matrix[1, 1] - matrix[2, 2] * matrix[2, 2])
-    I3 = matrix[0, 0] * matrix[1, 1] * matrix[2, 2] + matrix[1, 0] * matrix[2, 1] * matrix[0, 2] + matrix[1, 2] * matrix[0, 1] * matrix[2, 0] - \
-         matrix[0, 2] * matrix[1, 1] * matrix[2, 0] - matrix[0, 1] * matrix[1, 0] * matrix[2, 2] - matrix[0, 0] * matrix[1, 2] * matrix[2, 1]
+    mean = matrix.trace() / 3.0
+    deviator = matrix - mean * ti.Matrix.identity(float, 3)
+    squared_norm = 0.0
+    for row, column in ti.static(ti.ndrange(3, 3)):
+        squared_norm += deviator[row, column] * deviator[row, column]
+    p_squared = squared_norm / 6.0
 
-    J2 = 1./3. * (I1 * I1 - 3. * I2)
-    J3 = 1./27. * (2. * I1 * I1 * I1 - 9. * I1 * I2 + 27. * I3)
-    lode = clamp(-1, 1, 1./3. * ti.acos(1.5 * ti.sqrt(3) * J3 / J2 ** 1.5))
-    A = 2./3. * ti.sqrt(3. * J2)
-    cos_theta_23 = ti.cos(lode + 2. * PI / 3.)
-    cos_theta_43 = ti.cos(lode + 4. * PI / 3.)
-    I_3 = 1./3. * I1
-    value[0] = A * cos_theta_23 + I_3
-    value[1] = A * cos_theta_43 + I_3
-    value[2] = A * ti.cos(lode) + I_3
+    # For an isotropic tensor all three roots coincide.  Handling that case
+    # explicitly also avoids the undefined 0 / 0 in the trigonometric form.
+    if p_squared <= DBL_EPSILON * ti.max(1.0, mean * mean):
+        value = vec3f(mean, mean, mean)
+    else:
+        p = ti.sqrt(p_squared)
+        normalized = deviator / p
+        determinant = (
+            normalized[0, 0]
+            * (
+                normalized[1, 1] * normalized[2, 2]
+                - normalized[1, 2] * normalized[2, 1]
+            )
+            - normalized[0, 1]
+            * (
+                normalized[1, 0] * normalized[2, 2]
+                - normalized[1, 2] * normalized[2, 0]
+            )
+            + normalized[0, 2]
+            * (
+                normalized[1, 0] * normalized[2, 1]
+                - normalized[1, 1] * normalized[2, 0]
+            )
+        )
+        angle = ti.acos(clamp(-1.0, 1.0, 0.5 * determinant)) / 3.0
+        value[2] = mean + 2.0 * p * ti.cos(angle)
+        value[0] = mean + 2.0 * p * ti.cos(angle + 2.0 * PI / 3.0)
+        value[1] = 3.0 * mean - value[0] - value[2]
     return value
 
 
@@ -352,28 +519,83 @@ def determinant3x3(mat):
 
 @ti.func
 def determinant4x4(mat):
-    det = mat[0, 0] * 0  # keep type
-    for i in ti.static(range(4)):
-        det = det + (-1) ** i * \
-        (mat[i, 0] * 
-            (
-                E(mat, i + 1, 1, 4) * (E(mat, i + 2, 2, 4) * E(mat, i + 3, 3, 4) - E(mat, i + 3, 2, 4) * E(mat, i + 2, 3, 4))
-                - E(mat, i + 2, 1, 4) * (E(mat, i + 1, 2, 4) * E(mat, i + 3, 3, 4) - E(mat, i + 3, 2, 4) * E(mat, i + 1, 3, 4))
-                + E(mat, i + 3, 1, 4) * (E(mat, i + 1, 2, 4) * E(mat, i + 2, 3, 4) - E(mat, i + 2, 2, 4) * E(mat, i + 1, 3, 4))
-            )
-        )
-    return det
+    minor0 = ti.Matrix(
+        [
+            [mat[1, 1], mat[1, 2], mat[1, 3]],
+            [mat[2, 1], mat[2, 2], mat[2, 3]],
+            [mat[3, 1], mat[3, 2], mat[3, 3]],
+        ]
+    )
+    minor1 = ti.Matrix(
+        [
+            [mat[1, 0], mat[1, 2], mat[1, 3]],
+            [mat[2, 0], mat[2, 2], mat[2, 3]],
+            [mat[3, 0], mat[3, 2], mat[3, 3]],
+        ]
+    )
+    minor2 = ti.Matrix(
+        [
+            [mat[1, 0], mat[1, 1], mat[1, 3]],
+            [mat[2, 0], mat[2, 1], mat[2, 3]],
+            [mat[3, 0], mat[3, 1], mat[3, 3]],
+        ]
+    )
+    minor3 = ti.Matrix(
+        [
+            [mat[1, 0], mat[1, 1], mat[1, 2]],
+            [mat[2, 0], mat[2, 1], mat[2, 2]],
+            [mat[3, 0], mat[3, 1], mat[3, 2]],
+        ]
+    )
+    return (
+        mat[0, 0] * determinant3x3(minor0)
+        - mat[0, 1] * determinant3x3(minor1)
+        + mat[0, 2] * determinant3x3(minor2)
+        - mat[0, 3] * determinant3x3(minor3)
+    )
+
+
+@ti.func
+def cofactor5x5(mat, excluded_row, excluded_column):
+    # With four retained rows/columns, rotating the natural minor ordering
+    # contributes (-1)^excluded_row and (-1)^excluded_column.  Their product
+    # is exactly the cofactor sign, so this cyclic minor is the cofactor.
+    minor = ti.Matrix(
+        [
+            [
+                E(mat, excluded_row + 1, excluded_column + 1, 5),
+                E(mat, excluded_row + 1, excluded_column + 2, 5),
+                E(mat, excluded_row + 1, excluded_column + 3, 5),
+                E(mat, excluded_row + 1, excluded_column + 4, 5),
+            ],
+            [
+                E(mat, excluded_row + 2, excluded_column + 1, 5),
+                E(mat, excluded_row + 2, excluded_column + 2, 5),
+                E(mat, excluded_row + 2, excluded_column + 3, 5),
+                E(mat, excluded_row + 2, excluded_column + 4, 5),
+            ],
+            [
+                E(mat, excluded_row + 3, excluded_column + 1, 5),
+                E(mat, excluded_row + 3, excluded_column + 2, 5),
+                E(mat, excluded_row + 3, excluded_column + 3, 5),
+                E(mat, excluded_row + 3, excluded_column + 4, 5),
+            ],
+            [
+                E(mat, excluded_row + 4, excluded_column + 1, 5),
+                E(mat, excluded_row + 4, excluded_column + 2, 5),
+                E(mat, excluded_row + 4, excluded_column + 3, 5),
+                E(mat, excluded_row + 4, excluded_column + 4, 5),
+            ],
+        ]
+    )
+    return determinant4x4(minor)
 
 
 @ti.func
 def determinant5x5(mat):
-    det = mat[0, 0] * 0  # keep type
-    for i in ti.static(range(5)):
-        sub_vector = mat4x4([E(mat, i + 1, 1, 5), E(mat, i + 2, 1, 5), E(mat, i + 3, 1, 5), E(mat, i + 4, 1, 5)],
-                            [E(mat, i + 1, 2, 5), E(mat, i + 2, 2, 5), E(mat, i + 3, 2, 5), E(mat, i + 4, 2, 5)],
-                            [E(mat, i + 1, 3, 5), E(mat, i + 2, 3, 5), E(mat, i + 3, 3, 5), E(mat, i + 4, 3, 5)],
-                            [E(mat, i + 1, 4, 5), E(mat, i + 2, 4, 5), E(mat, i + 3, 4, 5), E(mat, i + 4, 4, 5)])
-        det = det + (-1) ** i * (mat[i, 0] * determinant4x4(sub_vector))
+    det = mat[0, 0] * 0
+    for column in ti.static(range(5)):
+        det += mat[0, column] * cofactor5x5(mat, 0, column)
     return det
 
 
@@ -454,42 +676,14 @@ def get_jacobian_inverse4(mat):
 
 @ti.func
 def get_jacobian_inverse5(mat):
-    inv_determinant = 1.0 / determinant5x5(mat)
-    return inv_determinant * ti.Matrix(
+    inverse_determinant = 1.0 / determinant5x5(mat)
+    return inverse_determinant * ti.Matrix(
         [
             [
-                (-1) ** (i + j)
-                * (
-                    (
-                        E(mat, i + 1, j + 1, 5)
-                        * ( 
-                            E(mat, i + 2, j + 2, 5) * (E(mat, i + 3, j + 3, 5) * E(mat, i + 4, j + 4, 5) - E(mat, i + 4, j + 3, 5) * E(mat, i + 3, j + 4, 5))
-                            - E(mat, i + 3, j + 2, 5) * (E(mat, i + 2, j + 3, 5) * E(mat, i + 4, j + 4, 5) - E(mat, i + 4, j + 3, 5) * E(mat, i + 2, j + 4, 5))
-                            + E(mat, i + 4, j + 2, 5) * (E(mat, i + 2, j + 3, 5) * E(mat, i + 3, j + 4, 5) - E(mat, i + 3, j + 3, 5) * E(mat, i + 2, j + 4, 5))
-                        )
-                        - E(mat, i + 2, j + 1, 5)
-                        * (
-                            E(mat, i + 1, j + 2, 5) * (E(mat, i + 3, j + 3, 5) * E(mat, i + 4, j + 4, 5) - E(mat, i + 4, j + 3, 5) * E(mat, i + 3, j + 4, 5))
-                            - E(mat, i + 3, j + 2, 5) * (E(mat, i + 1, j + 3, 5) * E(mat, i + 4, j + 4, 5) - E(mat, i + 4, j + 3, 5) * E(mat, i + 1, j + 4, 5))
-                            + E(mat, i + 4, j + 2, 5) * (E(mat, i + 1, j + 3, 5) * E(mat, i + 3, j + 4, 5) - E(mat, i + 3, j + 3, 5) * E(mat, i + 1, j + 4, 5))
-                        )
-                        + E(mat, i + 3, j + 1, 5)
-                        * (
-                            E(mat, i + 1, j + 2, 5) * (E(mat, i + 2, j + 3, 5) * E(mat, i + 4, j + 4, 5) - E(mat, i + 4, j + 3, 5) * E(mat, i + 2, j + 4, 5))
-                            - E(mat, i + 2, j + 2, 5) * (E(mat, i + 1, j + 3, 5) * E(mat, i + 4, j + 4, 5) - E(mat, i + 4, j + 3, 5) * E(mat, i + 1, j + 4, 5))
-                            + E(mat, i + 4, j + 2, 5) * (E(mat, i + 1, j + 3, 5) * E(mat, i + 2, j + 4, 5) - E(mat, i + 2, j + 3, 5) * E(mat, i + 1, j + 4, 5))
-                        )
-                        + E(mat, i + 4, j + 1, 5)
-                        * (
-                            E(mat, i + 1, j + 2, 5) * (E(mat, i + 2, j + 3, 5) * E(mat, i + 3, j + 4, 5) - E(mat, i + 3, j + 3, 5) * E(mat, i + 2, j + 4, 5))
-                            - E(mat, i + 2, j + 2, 5) * (E(mat, i + 1, j + 3, 5) * E(mat, i + 3, j + 4, 5) - E(mat, i + 3, j + 3, 5) * E(mat, i + 1, j + 4, 5))
-                            + E(mat, i + 3, j + 2, 5) * (E(mat, i + 1, j + 3, 5) * E(mat, i + 2, j + 4, 5) - E(mat, i + 2, j + 3, 5) * E(mat, i + 1, j + 4, 5))
-                        )
-                    )
-                )
-                for i in ti.static(range(5))
+                cofactor5x5(mat, column, row)
+                for column in ti.static(range(5))
             ]
-            for j in ti.static(range(5))
+            for row in ti.static(range(5))
         ]
     )
 

@@ -2,7 +2,8 @@ import taichi as ti
 import numpy as np
 
 from src.contact_detection.bounding_volume_hierarchy.AABB import AABB
-from src.utils.BitFunction import morton3d32
+from src.utils.BitFunction import morton3d32, morton3d60
+from src.utils.sorting.RadixSort import RadixSort
 from src.utils.TypeDefination import vec3f
 
 
@@ -60,10 +61,11 @@ class LBVH(object):
         https://research.nvidia.com/sites/default/files/pubs/2012-06_Maximizing-Parallelism-in/karras2012hpg_paper.pdf
     """
 
-    def __init__(self, n_aabbs=0, aabb: AABB=None):
+    def __init__(self, n_aabbs=0, aabb: AABB=None, extended_morton=False):
         if aabb is None:
             aabb = AABB(n_aabbs)
         self.aabb = aabb
+        self.extended_morton = bool(extended_morton)
 
         # Maximum stack depth for traversal
         self.max_stack_depth = 64
@@ -71,6 +73,7 @@ class LBVH(object):
         self.aabb_max = ti.field(vec3f, shape=(self.aabb.n_batches))
         self.scale = ti.field(vec3f, shape=(self.aabb.n_batches))
         self.morton_codes = ti.field(ti.u64, shape=(self.aabb.n_aabbs))
+        self.morton_object_bits = ti.field(ti.i32, shape=(self.aabb.n_batches))
 
         # Histogram for radix sort
         max_bits = 64
@@ -84,6 +87,8 @@ class LBVH(object):
         self.offset = ti.field(ti.u32, shape=(self.aabb.n_aabbs))
         # Temporary storage for radix sort
         self.tmp_morton_codes = ti.field(ti.u64, shape=(self.aabb.n_aabbs))
+        self.primitive_ids = ti.field(ti.i32, shape=(self.aabb.n_aabbs))
+        self.tmp_primitive_ids = ti.field(ti.i32, shape=(self.aabb.n_aabbs))
 
         @ti.dataclass
         class Node:
@@ -114,15 +119,28 @@ class LBVH(object):
         self.internal2batch = ti.field(ti.u8, shape=self.aabb.n_aabbs - self.aabb.n_batches)
 
     def initialize(self, domain=None, active_aabbs=None):
-        leaf2batch = np.repeat(np.arange(self.aabb.n_batches, dtype=np.uint8), np.asarray(self.aabb.batch_size))
-        internal2batch = np.repeat(np.arange(self.aabb.n_batches, dtype=np.uint8), np.asarray(self.aabb.batch_size) - 1)
+        self.aabb.reset(active_aabbs)
+        current_batch_size = np.asarray(self.aabb.current_batch_size, dtype=np.int32)
+        leaf2batch_active = np.repeat(np.arange(self.aabb.n_batches, dtype=np.uint8), current_batch_size)
+        internal2batch_active = np.repeat(np.arange(self.aabb.n_batches, dtype=np.uint8), current_batch_size - 1)
+        leaf2batch = np.zeros(self.leaf2batch.shape[0], dtype=np.uint8)
+        internal2batch = np.zeros(self.internal2batch.shape[0], dtype=np.uint8)
+        leaf2batch[:leaf2batch_active.shape[0]] = leaf2batch_active
+        internal2batch[:internal2batch_active.shape[0]] = internal2batch_active
+        object_bits = []
+        for batch_size in self.aabb.current_batch_size:
+            bits = 0
+            while (1 << bits) < max(int(batch_size), 1):
+                bits += 1
+            object_bits.append(bits)
         self.leaf2batch.from_numpy(leaf2batch)
         self.internal2batch.from_numpy(internal2batch)
-        self.prefix_batch_size.from_numpy(np.asarray(self.aabb.prefix_batch_size).astype(np.int32))
-        if active_aabbs is not None:
-            self.aabb.reset(active_aabbs)
+        self.morton_object_bits.from_numpy(np.asarray(object_bits, dtype=np.int32))
+        self.prefix_batch_size.from_numpy(np.pad(np.asarray(self.aabb.prefix_current_batch_size).astype(np.int32),
+                                                (0, self.prefix_batch_size.shape[0] - len(self.aabb.prefix_current_batch_size)), mode='constant', 
+                                                constant_values=self.aabb.prefix_current_batch_size[-1]))
         if domain is None:
-            self.adaptive_simulation_domain(self.aabb.n_batches, self.aabb.n_aabbs)
+            self.adaptive_simulation_domain(self.aabb.n_batches, self.aabb.current_n_aabbs)
         else:
             self.initial_simulation_domain(self.aabb.n_batches, domain)
 
@@ -154,18 +172,28 @@ class LBVH(object):
             for i in ti.static(range(3)):
                 self.scale[batch_id][i] = ti.select(scale[i] > 1e-7, 1.0 / scale[i], 1)
 
-    def build(self):
+    def build(self, currnet_n_aabb=None):
         """
         Build the BVH from the axis-aligned bounding boxes (AABBs).
         """
-        self.adaptive_simulation_domain(self.aabb.n_batches, self.aabb.n_aabbs)
-        self.compute_morton_codes(self.aabb.n_aabbs)
-        self.radix_sort_morton_codes(self.aabb.n_batches, self.aabb.n_aabbs)
-        self.build_radix_tree(self.aabb.n_batches, self.aabb.n_aabbs)
-        self.compute_bounds(self.aabb.n_batches, self.aabb.n_aabbs)
+        if currnet_n_aabb is None:
+            currnet_n_aabb = self.aabb.current_n_aabbs
+        self.build_prefix(self.aabb.n_batches, currnet_n_aabb)
 
-    def refit(self):
-        self.compute_bounds(self.aabb.n_batches, self.aabb.n_aabbs)
+    def build_prefix(self, n_batches, currnet_n_aabb):
+        self.adaptive_simulation_domain(n_batches, currnet_n_aabb)
+        self.compute_morton_codes(currnet_n_aabb)
+        self.radix_sort_morton_codes(n_batches, currnet_n_aabb)
+        self.build_radix_tree(n_batches, currnet_n_aabb)
+        self.compute_bounds(n_batches, currnet_n_aabb)
+
+    def refit(self, currnet_n_aabb=None):
+        if currnet_n_aabb is None:
+            currnet_n_aabb = self.aabb.current_n_aabbs
+        self.refit_prefix(self.aabb.n_batches, currnet_n_aabb)
+
+    def refit_prefix(self, n_batches, currnet_n_aabb):
+        self.compute_bounds(n_batches, currnet_n_aabb)
 
     @ti.kernel
     def compute_morton_codes(self, currnet_n_aabb: int):
@@ -181,8 +209,18 @@ class LBVH(object):
             prefix_batch_num = self.prefix_batch_size[batch_id]
             center = self.aabb.get_center(n_aabb) - self.aabb_min[batch_id]
             scaled_center = center * self.scale[batch_id]
-            morton_code = morton3d32(*scaled_center)
-            self.morton_codes[n_aabb] = (ti.u64(morton_code) << 32) | ti.u64(n_aabb - prefix_batch_num)
+            local_id = n_aabb - prefix_batch_num
+            if ti.static(self.extended_morton):
+                morton_code = morton3d60(*scaled_center)
+                object_bits = self.morton_object_bits[batch_id]
+                spatial_code = (morton_code >> ti.u64(object_bits)) << ti.u64(object_bits)
+                tag = ti.u64(batch_id & 0x3) << ti.u64(61)
+                self.morton_codes[n_aabb] = spatial_code | ti.u64(local_id) | tag
+                self.primitive_ids[n_aabb] = local_id
+            else:
+                morton_code = morton3d32(*scaled_center)
+                self.morton_codes[n_aabb] = (ti.u64(morton_code) << 32) | ti.u64(local_id)
+                self.primitive_ids[n_aabb] = local_id
 
     @ti.kernel
     def radix_sort_morton_codes(self, n_batches: int, currnet_n_aabb: int):
@@ -215,10 +253,12 @@ class LBVH(object):
                 code = (self.morton_codes[n_aabb] >> (i * 8)) & 0xFF
                 idx = ti.i32(self.offset[n_aabb] + self.prefix_sum[batch_id * self.num_buckets + ti.i32(code)])
                 self.tmp_morton_codes[prefix_batch_num + idx] = self.morton_codes[n_aabb]
+                self.tmp_primitive_ids[prefix_batch_num + idx] = self.primitive_ids[n_aabb]
 
             # Swap the temporary and original morton codes
             for n_aabb in range(currnet_n_aabb):
                 self.morton_codes[n_aabb] = self.tmp_morton_codes[n_aabb]
+                self.primitive_ids[n_aabb] = self.tmp_primitive_ids[n_aabb]
 
     @ti.kernel
     def build_radix_tree(self, n_batches: int, currnet_n_aabb: int):
@@ -296,6 +336,21 @@ class LBVH(object):
                 if x & (ti.u64(1) << (63 - b)):
                     result = b
                     break
+            if ti.static(self.extended_morton):
+                if x == ti.u64(0):
+                    tie = ti.u64(self.primitive_ids[prefix_batch_num + ti.i32(i)] ^ self.primitive_ids[prefix_batch_num + ti.i32(j)])
+                    result = 128
+                    for b in range(64):
+                        if tie & (ti.u64(1) << (63 - b)):
+                            result = 64 + b
+                            break
+        return result
+
+    @ti.func
+    def primitive_index(self, morton_index):
+        result = ti.i32(self.morton_codes[morton_index] & ti.u64(0xFFFFFFFF))
+        if ti.static(self.extended_morton):
+            result = self.primitive_ids[morton_index]
         return result
 
     @ti.kernel
@@ -317,7 +372,7 @@ class LBVH(object):
             batch_size = self.prefix_batch_size[batch_id + 1] - prefix_batch_num
             prefix_i_node = 2 * prefix_batch_num - batch_id
             i_leaf = prefix_i_node + i_aabb + batch_size - 1
-            idx = ti.i32(self.morton_codes[n_aabb])
+            idx = self.primitive_index(n_aabb)
             self.nodes[i_leaf].bound.min = self.aabb.aabbs[prefix_batch_num + idx].min
             self.nodes[i_leaf].bound.max = self.aabb.aabbs[prefix_batch_num + idx].max
 
@@ -353,11 +408,10 @@ class LBVH(object):
                 node_idx = query_stack[stack_depth]
                 node = self.nodes[prefix_i_node + node_idx]
                 # Check if the AABB intersects with the node's bounding box
-                if aabbs[master].intersects(node.bound):
+                if aabbs[master].intersects(node.bound, 0., 0.):
                     # If it's a leaf node, add the AABB index to the query results
                     if node.left == -1 and node.right == -1:
-                        code = self.morton_codes[prefix_batch_num + node_idx - (batch_num - 1)]
-                        slave = ti.i32(code & ti.u64(0xFFFFFFFF))
+                        slave = self.primitive_index(prefix_batch_num + node_idx - (batch_num - 1))
                         potential_list_object_object[sques] = slave
                         sques += 1
                     else:
@@ -393,11 +447,10 @@ class LBVH(object):
                 node_idx = query_stack[stack_depth]
                 node = self.nodes[prefix_slave_i_node + node_idx]
                 # Check if the AABB intersects with the node's bounding box
-                if aabbs[prefix_master_batch_num + master].intersects(node.bound):
+                if aabbs[prefix_master_batch_num + master].intersects(node.bound, 0., 0.):
                     # If it's a leaf node, add the AABB index to the query results
                     if node.left == -1 and node.right == -1:
-                        code = self.morton_codes[prefix_slave_batch_num + node_idx - (slave_batch_num - 1)]
-                        slave = ti.i32(code & ti.u64(0xFFFFFFFF))
+                        slave = self.primitive_index(prefix_slave_batch_num + node_idx - (slave_batch_num - 1))
                         potential_list_object_object[sques] = slave
                         sques += 1
                     else:
