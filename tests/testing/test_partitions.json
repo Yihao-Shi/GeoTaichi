@@ -1,0 +1,190 @@
+{
+  "version": 2,
+  "partitions": {
+    "all": {
+      "description": "All correctness tests; scalability benchmarks are separate.",
+      "paths": [
+        "tests/unit",
+        "tests/integration",
+        "tests/verification",
+        "tests/regression"
+      ]
+    },
+    "quick": {
+      "description": "Unit tests not explicitly marked slow or GPU-only.",
+      "paths": ["tests/unit"],
+      "markers": "unit and not slow and not gpu and not cuda and not metal and not vulkan"
+    },
+    "required": {
+      "description": "Minimal merge-gate contracts.",
+      "paths": ["tests"],
+      "markers": "required"
+    },
+    "unit": {
+      "description": "All isolated unit tests.",
+      "paths": ["tests/unit"],
+      "markers": "unit"
+    },
+    "integration": {
+      "description": "Tests spanning multiple production components.",
+      "paths": ["tests/integration"],
+      "markers": "integration"
+    },
+    "verification": {
+      "description": "Analytical and published-reference verification tests.",
+      "paths": ["tests/verification"],
+      "markers": "verification"
+    },
+    "regression": {
+      "description": "Tests preserving an explicit bug fix or workflow contract.",
+      "paths": ["tests/regression"],
+      "markers": "regression"
+    },
+    "benchmarks": {
+      "description": "Opt-in performance and scalability tests.",
+      "paths": ["tests/benchmarks"],
+      "markers": "benchmark",
+      "pytest_args": ["--run-benchmarks"]
+    },
+    "materials": {
+      "description": "Constitutive and material-model tests in every layer.",
+      "paths": ["tests"],
+      "markers": "materials"
+    },
+    "contact": {
+      "description": "Contact detection, response, friction, and assembly.",
+      "paths": ["tests"],
+      "markers": "contact"
+    },
+    "ipc": {
+      "description": "Incremental Potential Contact across all solvers.",
+      "paths": ["tests"],
+      "markers": "ipc"
+    },
+    "assembly": {
+      "description": "Every sparse and matrix-free assembly path.",
+      "paths": ["tests"],
+      "markers": "assembly"
+    },
+    "matrix-free": {
+      "description": "Matrix-free operator and diagonal preconditioner tests.",
+      "paths": ["tests"],
+      "markers": "matrix_free"
+    },
+    "hash-triplet": {
+      "description": "Hash-triplet assembly and node-block Jacobi tests.",
+      "paths": ["tests"],
+      "markers": "hash_triplet"
+    },
+    "coo": {
+      "description": "Coordinate sparse assembly and scalar Jacobi tests.",
+      "paths": ["tests"],
+      "markers": "coo"
+    },
+    "linear-solver": {
+      "description": "Linear-system and preconditioner tests.",
+      "paths": ["tests"],
+      "markers": "linear_solver"
+    },
+    "geometry": {
+      "description": "Closest-point, topology, interpolation, and quadrature.",
+      "paths": ["tests"],
+      "markers": "geometry"
+    },
+    "coupling": {
+      "description": "Multi-physics and multi-discretization coupling tests.",
+      "paths": ["tests"],
+      "markers": "coupling"
+    },
+    "io": {
+      "description": "Serialization, restart, recorder, and VTU output.",
+      "paths": ["tests"],
+      "markers": "io"
+    },
+    "gallery": {
+      "description": "Gallery configuration, recorder, and artifact contracts.",
+      "paths": ["tests"],
+      "markers": "gallery"
+    },
+    "dem": {
+      "description": "DEM tests, including IPC affine bodies.",
+      "paths": ["tests"],
+      "markers": "dem"
+    },
+    "mpm": {
+      "description": "MPM tests, including coupled solvers.",
+      "paths": ["tests"],
+      "markers": "mpm"
+    },
+    "iga": {
+      "description": "IGA tests, including coupled IGA-MPM.",
+      "paths": ["tests"],
+      "markers": "iga"
+    },
+    "iga-mpm": {
+      "description": "Coupled IGA-MPM tests only.",
+      "paths": ["tests"],
+      "markers": "igampm"
+    },
+    "mpm-dem": {
+      "description": "Coupled MPM-DEM tests only.",
+      "paths": ["tests"],
+      "markers": "mpdem"
+    },
+    "lsm": {
+      "description": "Level-set and LSM-MPM tests.",
+      "paths": ["tests"],
+      "markers": "lsm"
+    },
+    "fem": {
+      "description": "FEM tests.",
+      "paths": ["tests"],
+      "markers": "fem"
+    },
+    "pinn": {
+      "description": "PINN tests; currently reserved until a maintained PINN oracle is added.",
+      "paths": ["tests"],
+      "markers": "pinn"
+    },
+    "cpu": {
+      "description": "Tests explicitly assigned to the CPU backend.",
+      "paths": ["tests"],
+      "markers": "cpu"
+    },
+    "gpu": {
+      "description": "Tests exercising any GPU backend.",
+      "paths": ["tests"],
+      "markers": "gpu"
+    },
+    "cuda": {
+      "description": "Tests requiring the CUDA backend.",
+      "paths": ["tests"],
+      "markers": "cuda"
+    },
+    "metal": {
+      "description": "Tests explicitly requiring the Taichi Metal backend.",
+      "paths": ["tests"],
+      "markers": "metal"
+    },
+    "vulkan": {
+      "description": "Tests explicitly requiring the Taichi Vulkan backend.",
+      "paths": ["tests"],
+      "markers": "vulkan"
+    },
+    "serial": {
+      "description": "Tests that must be run without concurrent pytest workers.",
+      "paths": ["tests"],
+      "markers": "serial"
+    },
+    "requires-network": {
+      "description": "Tests that explicitly require external network access.",
+      "paths": ["tests"],
+      "markers": "requires_network"
+    },
+    "slow": {
+      "description": "Long-running correctness tests.",
+      "paths": ["tests"],
+      "markers": "slow and not benchmark"
+    }
+  }
+}

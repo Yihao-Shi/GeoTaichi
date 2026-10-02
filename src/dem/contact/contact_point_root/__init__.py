@@ -1,0 +1,3 @@
+from src.dem.contact.contact_point_root.ErodedGJK import GJKiteration
+from src.dem.contact.contact_point_root.PCN import PCNiteration
+from src.dem.contact.contact_point_root.LagrangianMultiplier import LagrangianMultiplieriteration

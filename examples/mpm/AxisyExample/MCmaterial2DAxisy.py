@@ -1,0 +1,92 @@
+
+from geotaichi import *
+
+init(dim=2, device_memory_GB=6)
+
+mpm = MPM()
+
+mpm.set_configuration(domain=ti.Vector([6, 2.25]),
+                      is_2DAxisy=True,
+                      background_damping=0.0,
+                      gravity=ti.Vector([0., -9.8]),
+                      alphaPIC=0.00,
+                      mapping="USL", 
+                      shape_function="GIMP",
+                      )
+
+mpm.set_solver(solver={
+                           "Timestep":                   1e-5,
+                           "SimulationTime":             1,
+                           "SaveInterval":               0.2,
+                           "SavePath":                   'ColumnMC2DAxisy'
+                      })
+
+mpm.memory_allocate(memory={
+                                "max_material_number":    1,
+                                "max_particle_number":    5.12e5,
+                                "max_constraint_number":  {
+                                                               "max_velocity_constraint":   83000,
+                                                               "max_friction_constraint": 83000
+                                                          }
+                            })
+
+mpm.add_material(model="MohrCoulomb",
+                 material={
+                               "MaterialID":           1,
+                               "Density":              2700.,
+                               "YoungModulus":         20e6,
+                               "PoissonRatio":         0.2,
+                               "Cohesion":             0.,
+                               "Friction":             33,
+                               "Dilation":             0.1,
+                               "Tensile":              0.
+                 })
+
+mpm.add_element(element={
+                             "ElementType":               "Q4N2D",
+                             "ElementSize":               ti.Vector([0.05, 0.05]),
+                             "Contact":   {}
+                        })
+
+mpm.add_region(region={
+                            "Name": "region1",
+                            "Type": "Rectangle2D",
+                            "BoundingBoxPoint": ti.Vector([0., 0.]),
+                            "BoundingBoxSize": ti.Vector([1., 2.]),
+                            
+                      })
+
+mpm.add_body(body={
+                       "Template": {
+                                       "RegionName":         "region1",
+                                       "nParticlesPerCell":  2,
+                                       "BodyID":             0,
+                                       "MaterialID":         1,
+                                       "InitialVelocity":ti.Vector([0, 0]),
+                                       "FixVelocity":    ["Free", "Free"]
+                                       
+                                   }
+                   })
+
+mpm.add_boundary_condition(boundary=[
+                                        {
+                                             "BoundaryType":   "FrictionConstraint",
+                                             "Norm":           [0., -1.],
+                                             "Friction":        0.3,
+                                             "StartPoint":     [0., 0.],
+                                             "EndPoint":       [6., 0.]
+                                        },
+
+                                        {
+                                             "BoundaryType":   "VelocityConstraint",
+                                             "Velocity":       [0., None],
+                                             "StartPoint":     [0., 0.],
+                                             "EndPoint":       [0., 2.25]
+                                        },
+                                    ])
+
+mpm.select_save_data(grid=False)
+
+mpm.run(gravity_field=True)
+
+mpm.postprocessing(read_path='ColumnMC2DAxisy', write_background_grid=False)

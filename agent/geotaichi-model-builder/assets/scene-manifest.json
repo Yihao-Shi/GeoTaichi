@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "scene_id": "replace-with-stable-uuid",
+  "source": {
+    "application": "Blender",
+    "version": "",
+    "file": ""
+  },
+  "coordinate_system": {
+    "up_axis": "Z",
+    "handedness": "right",
+    "length_unit": "m",
+    "meters_per_unit": 1.0
+  },
+  "frame": {
+    "start": 1,
+    "end": 250,
+    "fps": 24.0
+  },
+  "objects": [],
+  "metadata": {}
+}

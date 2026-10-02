@@ -1,0 +1,13 @@
+*.xls
+*.gif
+*.png
+*.tiff
+*.txt
+*.vtr
+*.vtu
+*.vtk
+*.vtp
+*.pdf
+*.eps
+*.svg
+**/draw?.py

@@ -1,0 +1,10 @@
+schema_version = "1.0.0"
+id = "geotaichi_solver_job"
+version = "0.3.0"
+name = "GeoTaichi SolverJob"
+tagline = "Run GeoTaichi jobs and animate VTU result sequences"
+maintainer = "GeoTaichi contributors"
+type = "add-on"
+
+blender_version_min = "4.2.0"
+license = ["SPDX:GPL-3.0-or-later"]

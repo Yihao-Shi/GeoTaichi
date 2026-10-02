@@ -1,0 +1,92 @@
+{
+  "schema_version": 1,
+  "description": "Evidence-based physical validation rubric for GeoTaichi model-agent reviews.",
+  "decision_threshold": 80.0,
+  "groups": {
+    "execution_integrity": {
+      "weight": 25.0,
+      "description": "The run completed with finite state, no capacity overflow, and a valid solver/timestep state."
+    },
+    "contract_observable": {
+      "weight": 35.0,
+      "description": "The model contract's falsifiable observable was checked against an expected value, range, or trend."
+    },
+    "physical_invariants": {
+      "weight": 30.0,
+      "description": "At least one solver-specific conservation, equilibrium, contact, or convergence requirement passed."
+    },
+    "reproducibility": {
+      "weight": 10.0,
+      "description": "The command, effective backend, precision, and reduced/production status were recorded."
+    }
+  },
+  "check_kinds": {
+    "contract_observable": "Contract-selected analytical, benchmark, or bounded-trend observable.",
+    "analytical": "Comparison with an analytical value or curve.",
+    "benchmark": "Comparison with a maintained or published benchmark.",
+    "mass_balance": "Mass conservation residual or relative drift.",
+    "volume_balance": "Volume conservation residual or relative drift.",
+    "momentum_balance": "Linear or angular momentum balance.",
+    "energy_balance": "Conservative energy balance or justified dissipative inequality.",
+    "force_balance": "Static or dynamic resultant force/moment balance.",
+    "contact_gap": "Non-penetration or bounded signed contact gap.",
+    "penetration": "Maximum penetration relative to an explicit allowed scale.",
+    "action_reaction": "Equal-and-opposite coupling/contact exchange residual.",
+    "pressure_connectivity": "Pressure-domain connectivity and fluid-domain validity.",
+    "convergence": "Nonlinear, linear, or refinement convergence requirement.",
+    "derivative_consistency": "Finite-difference residual, tangent, or Hessian consistency.",
+    "mesh_quality": "Positive element measures, quality metric bounds, consistent orientation, and a stable first solver step for generated meshes."
+  },
+  "module_policies": {
+    "mpm": {
+      "required_check_sets": [
+        ["mass_balance", "volume_balance", "momentum_balance", "energy_balance", "force_balance", "analytical", "benchmark"]
+      ]
+    },
+    "dem": {
+      "required_check_sets": [
+        ["contact_gap", "penetration", "momentum_balance", "energy_balance", "analytical", "benchmark"]
+      ]
+    },
+    "mpdem": {
+      "required_check_sets": [
+        ["contact_gap", "penetration"],
+        ["action_reaction", "momentum_balance", "energy_balance", "benchmark"]
+      ]
+    },
+    "cfdem": {
+      "required_check_sets": [
+        ["mass_balance", "volume_balance", "pressure_connectivity"],
+        ["action_reaction", "momentum_balance", "benchmark"]
+      ]
+    },
+    "fem": {
+      "required_check_sets": [
+        ["force_balance", "energy_balance", "analytical", "benchmark", "derivative_consistency"]
+      ]
+    },
+    "fedem": {
+      "required_check_sets": [
+        ["contact_gap", "penetration"],
+        ["action_reaction", "momentum_balance", "energy_balance", "force_balance", "benchmark"]
+      ]
+    },
+    "fempm": {
+      "required_check_sets": [
+        ["contact_gap", "penetration"],
+        ["action_reaction", "momentum_balance", "energy_balance", "benchmark"]
+      ]
+    },
+    "iga": {
+      "required_check_sets": [
+        ["force_balance", "energy_balance", "analytical", "benchmark", "derivative_consistency"]
+      ]
+    },
+    "igampm": {
+      "required_check_sets": [
+        ["contact_gap", "penetration"],
+        ["action_reaction", "momentum_balance", "energy_balance", "benchmark"]
+      ]
+    }
+  }
+}

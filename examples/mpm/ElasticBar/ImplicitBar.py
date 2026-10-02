@@ -1,0 +1,86 @@
+import os
+import sys
+
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
+if ROOT not in sys.path:
+    sys.path.append(ROOT)
+
+
+from geotaichi import *
+
+init(device_memory_GB=5, kernel_profiler=True)
+
+mpm = MPM()
+
+mpm.set_configuration(domain=ti.Vector([5., 3., 5.]), 
+                      alphaPIC=0.00, 
+                      mapping="Newmark", 
+                      stabilize=None,
+                      shape_function="Linear",
+                      solver_type="Implicit")
+                      
+mpm.set_implicit_solver_parameters(implicit_parameters={})
+
+mpm.set_solver(solver={
+                           "Timestep":                   1e-2,
+                           "SimulationTime":             2.,
+                           "SaveInterval":               0.1
+                      })
+
+mpm.memory_allocate(memory={
+                                "max_material_number":    1,
+                                "max_particle_number":    84000,
+                                "max_constraint_number":  {
+                                                               "max_displacement_constraint":  18483
+                                                          }
+                            })
+
+mpm.add_material(model="LinearElastic",
+                 material={
+                               "MaterialID":           1,
+                               "Density":              2500.,
+                               "YoungModulus":         2e7,
+                               "PoissonRatio":        0.3
+                 })
+
+mpm.add_element(element={
+                             "ElementType":               "R8N3D",
+                             "ElementSize":               ti.Vector([0.05, 0.05, 0.05])
+                        })
+
+mpm.add_region(region={
+                            "Name": "region1",
+                            "Type": "Rectangle",
+                            "BoundingBoxPoint": ti.Vector([0.5, 1., 3.5]),
+                            "BoundingBoxSize": ti.Vector([3.0, 0.5, 0.5]),
+                            
+                      })
+
+mpm.add_body(body={
+                       "Template": {
+                                       "RegionName":         "region1",
+                                       "nParticlesPerCell":  2,
+                                       "BodyID":             0,
+                                       "MaterialID":         1,
+                                       "InitialVelocity":ti.Vector([0, 0, 0]),
+                                       "FixVelocity":    ["Free", "Free", "Free"]    
+                                       
+                                   }
+                   })
+
+mpm.add_boundary_condition(boundary=[
+                                        {    
+                                             "BoundaryType":   "DisplacementConstraint",
+                                             "Displacement":   [0., 0., 0.],
+                                             "StartPoint":     [0.5, 0, 0],
+                                             "EndPoint":       [0.5, 3., 5.]
+                                        }
+                                    ])
+
+mpm.select_save_data()
+
+mpm.run()
+
+ti.profiler.print_kernel_profiler_info()
+
+mpm.postprocessing()

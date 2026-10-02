@@ -1,0 +1,13 @@
+{
+  "archive": "friction/cube_cube.tar.gz",
+  "archive_sha256": "1b3ddd33327957d759564a3aeb3e44ea80e3e4cead49e12dc534761e80570d38",
+  "case_count": 446,
+  "contents_sha256": "72f21aeba625e7d2fb083d5edd726b20abfa25bd325479cbea3d0d1477e8c73b",
+  "data_repository": "https://github.com/ipc-sim/ipc-toolkit-tests-data.git",
+  "data_commit": "c7eba549d9a80d15569a013c473f0aff104ac44a",
+  "data_tree": "36a61594710494f491617a157e84b08b1cbf3cd5",
+  "generator_repository": "https://github.com/ipc-sim/ipc-toolkit.git",
+  "generator_commit": "0697169c5d45117c138c60a41cbf62449ac1bb09",
+  "license": "MIT",
+  "upstream_path": "friction/cube_cube/friction_data_{0..445}.json"
+}

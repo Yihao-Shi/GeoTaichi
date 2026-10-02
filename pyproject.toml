@@ -1,0 +1,164 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "GeoTaichi"
+version = "0.3.0"
+description = "A Taichi-based numerical package for high-performance simulations of multiscale and multiphysics geophysical problems. "
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "psutil",
+    "scikit-image",
+    "taichi == 1.7.0",
+    "numpy == 2.2.4",
+    "six",
+    "alphashape == 1.3.1",
+    "docutils == 0.22.4",
+    "gmsh == 4.15.2",
+    "imageio == 2.37.0",
+    "matplotlib == 3.10.1",
+    "meshio == 5.3.5",
+    "networkx == 3.4.2",
+    "open3d == 0.19.0",
+    "pandas == 2.2.3",
+    "pillow == 11.1.0",
+    "pyglet >= 1.5, < 2.0",
+    "pygments == 2.19.1",
+    "pynvml == 11.4.1",
+    "PyOpenGL >= 3.1.4",
+    "pyparsing == 3.2.3",
+    "pyvista == 0.47.1",
+    "freetype-py >= 2.5",
+    "scipy == 1.15.2",
+    "tqdm == 4.67.1",
+    "trimesh == 4.6.6",
+    "xlrd == 2.0.2",
+]
+
+[tool.setuptools.packages.find]
+where = [".", "agent/geotaichi-mcp/src"]
+include = [
+    "geotaichi",
+    "geotaichi_mcp",
+    "geotaichi_mcp.*",
+    "src",
+    "src.*",
+    "third_party.pyevtk",
+    "third_party.pyevtk.*",
+    "third_party.pyrender",
+    "third_party.pyrender.*",
+]
+
+[tool.setuptools.package-data]
+geotaichi = [
+    "assets/*"
+]
+geotaichi_mcp = [
+    "py.typed"
+]
+"third_party.pyrender" = [
+    "LICENSE",
+    "README_GEOTAICHI.md",
+    "fonts/*.ttf",
+    "shaders/*",
+]
+
+[tool.setuptools.exclude-package-data]
+"*" = ["._*", "**/._*"]
+
+[tool.setuptools.data-files]
+"share/geotaichi-mcp" = [
+    "agent/geotaichi-model-builder/references/capability-index.json",
+    "agent/geotaichi-model-builder/references/physics-validation-rubric.json",
+    "agent/geotaichi-model-builder/references/workflow-mpm.md",
+    "agent/geotaichi-model-builder/references/workflow-dem.md",
+    "agent/geotaichi-model-builder/references/workflow-fem.md",
+    "agent/geotaichi-model-builder/references/workflow-iga.md",
+    "agent/geotaichi-model-builder/references/workflow-coupling.md",
+    "agent/geotaichi-model-builder/assets/model-contract.json",
+    "agent/geotaichi-model-builder/assets/solver-job.json",
+    "agent/geotaichi-model-builder/assets/scene-manifest.json",
+    "agent/geotaichi-model-builder/assets/*_model_template.py",
+]
+
+[tool.black]
+line-length = 120
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+pythonpath = ["agent/geotaichi-mcp/src"]
+testpaths = [
+    "tests/unit",
+    "tests/integration",
+    "tests/verification",
+    "tests/regression",
+    "tests/benchmarks",
+]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-ra --strict-markers --basetemp=tests/.pytest_tmp"
+markers = [
+    # Test layer
+    "unit: isolated, deterministic tests for one small behavior",
+    "integration: tests spanning two or more GeoTaichi components",
+    "regression: tests preserving an existing bug fix or legacy behavior",
+    "verification: tests comparing a numerical result with an analytical or published reference",
+    "benchmark: performance and scalability tests, never correctness gates",
+    "required: the minimal deterministic merge-gate test set",
+    # Physics/domain
+    "materials: constitutive/material-model tests",
+    "contact: contact detection, response, or assembly tests",
+    "ipc: Incremental Potential Contact tests",
+    "assembly: sparse or matrix-free operator assembly tests",
+    "matrix_free: matrix-free operator and preconditioner tests",
+    "hash_triplet: block hash-triplet assembly and preconditioner tests",
+    "coo: coordinate sparse assembly and preconditioner tests",
+    "linear_solver: linear-system and preconditioner tests",
+    "geometry: geometry, topology, interpolation, or closest-point tests",
+    "coupling: multi-physics or multi-discretization coupling tests",
+    "io: serialization, restart, recorder, or visualization-output tests",
+    "gallery: gallery configuration and artifact tests",
+    # Solver/discretization
+    "dem: Discrete Element Method tests",
+    "mpm: Material Point Method tests",
+    "iga: Isogeometric Analysis tests",
+    "igampm: coupled IGA-MPM tests",
+    "mpdem: coupled MPM-DEM tests",
+    "fedem: coupled FEM-DEM tests",
+    "fempm: coupled FEM-MPM tests",
+    "lsm: Level Set Method tests",
+    "pinn: Physics-Informed Neural Network tests",
+    "fem: Finite Element Method tests",
+    # Execution backend/capability
+    "cpu: tests intended for a CPU backend",
+    "gpu: tests requiring or specifically exercising a GPU backend",
+    "cuda: tests requiring the Taichi CUDA backend",
+    "metal: tests requiring the Taichi Metal backend",
+    "vulkan: tests requiring the Taichi Vulkan backend",
+    "slow: tests excluded from the default quick partition",
+    "serial: tests that must not execute concurrently",
+    "isolated_dimension(dimension): run a dimension-specialized node in a clean child pytest process",
+    "requires_network: tests requiring network access",
+]
+
+[project.scripts]
+gs = "geotaichi._main:main"
+geotaichi-mcp = "geotaichi_mcp.server:main"
+geotaichi-job = "geotaichi_mcp.job_cli:main"
+
+[project.optional-dependencies]
+test = [
+    "pytest >= 7.0",
+    "sympy >= 1.12",
+]
+gen = [
+    "sympy >= 1.12",
+]
+docs = [
+]
+mcp = [
+    "fastmcp >= 3.0.0; python_version >= '3.10'",
+]

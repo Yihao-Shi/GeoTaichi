@@ -1,0 +1,353 @@
+"""3D incompressible two-phase MPM leakage benchmark without the elastic plate.
+
+Geometry and material data follow Zhang et al. (2027), CMAME 463:119401,
+Section 5.1 and Fig. 30.  The upper free surface is the zero-pressure boundary;
+the paper's particle-replenishing inlet is not available in the MPM solver.
+"""
+
+import argparse
+import json
+import math
+import os
+import sys
+from pathlib import Path
+
+import numpy as np
+import taichi as ti
+
+ROOT = Path(__file__).resolve().parents[3]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from geotaichi import MPM, init
+
+
+DX_DEFAULT = 0.005
+DOMAIN = (0.36, 0.16, 0.36)
+UPPER_ORIGIN = np.array((0.03, 0.05, 0.125))
+UPPER_SIZE = np.array((0.30, 0.06, 0.20))
+BED_HEIGHT = 0.06
+WATER_HEIGHT = 0.20
+CRACK_LEFT = UPPER_ORIGIN[0] + 0.147
+CRACK_RIGHT = CRACK_LEFT + 0.006
+RECEIVER_ORIGIN = np.array((0.03, 0.02, 0.005))
+RECEIVER_SIZE = np.array((0.30, 0.12, 0.09))
+POROSITY = 0.40
+K0 = 1.0 - math.sin(math.radians(26.0))
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="3D two-phase incompressible MPM granular-water leakage")
+    parser.add_argument("--arch", default=os.environ.get("GEOTAICHI_ARCH", "gpu"))
+    parser.add_argument("--dx", type=float, default=DX_DEFAULT)
+    parser.add_argument("--dt", type=float, default=2.0e-5)
+    parser.add_argument("--time", type=float, default=6.0)
+    parser.add_argument("--save-interval", type=float, default=0.1)
+    parser.add_argument("--ppc", type=int, default=2)
+    parser.add_argument("--pressure-iterations", type=int, default=1000)
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=Path(__file__).resolve().parent / "OutputData" / "paper_section_5_1_no_plate",
+    )
+    parser.add_argument("--strict", action="store_true")
+    parser.add_argument("--no-post", action="store_true")
+    return parser.parse_args()
+
+
+def validate(args):
+    if min(args.dx, args.dt, args.time, args.save_interval) <= 0.0 or min(args.ppc, args.pressure_iterations) <= 0:
+        raise ValueError("dx, dt, time, save interval, ppc, and pressure iterations must be positive")
+    cells = np.asarray(DOMAIN) / args.dx
+    if not np.allclose(cells, np.round(cells), atol=1.0e-12, rtol=0.0):
+        raise ValueError(f"dx={args.dx:g} must divide domain {DOMAIN}")
+    if np.any(np.round(cells).astype(int) % 2):
+        raise ValueError("two-level MGPCG requires an even cell count along every axis")
+
+
+@ti.kernel
+def initialize_stress(particle_count: int, particle: ti.template()):
+    for p in range(particle_count):
+        water_head = ti.max(UPPER_ORIGIN[2] + WATER_HEIGHT - particle[p].x[2], 0.0)
+        particle[p].pressure = 1000.0 * 9.81 * water_head
+        if int(particle[p].phase) == 1:
+            soil_head = ti.max(UPPER_ORIGIN[2] + BED_HEIGHT - particle[p].x[2], 0.0)
+            vertical = (1.0 - POROSITY) * (7850.0 - 1000.0) * 9.81 * soil_head
+            particle[p].stress = ti.Vector([-K0 * vertical, -K0 * vertical, -vertical, 0.0, 0.0, 0.0])
+
+
+def solid_cell(start, end, normal):
+    return {
+        "BoundaryType": "SolidCell",
+        "StartPoint": list(start),
+        "EndPoint": list(end),
+        "Norm": list(normal),
+        "CellThickness": 1,
+    }
+
+
+def boundaries(dx):
+    ux0, uy0, uz0 = UPPER_ORIGIN
+    ux1, uy1, uz1 = UPPER_ORIGIN + UPPER_SIZE
+    rx0, ry0, rz0 = RECEIVER_ORIGIN
+    rx1, ry1, rz1 = RECEIVER_ORIGIN + RECEIVER_SIZE
+    # A 6 mm slit cannot be represented exactly on the 5 mm pressure grid.
+    # Leave one centered cell open (5 mm), rather than rounding it up to 10 mm.
+    crack_left = round(0.5 * (CRACK_LEFT + CRACK_RIGHT) / dx) * dx
+    crack_right = crack_left + dx
+    return [
+        # Upper tank: no-slip side walls and a split bottom leaving the 6 mm crack open.
+        solid_cell((ux0, uy0, uz0), (ux0, uy1, uz1), (-1.0, 0.0, 0.0)),
+        solid_cell((ux1, uy0, uz0), (ux1, uy1, uz1), (1.0, 0.0, 0.0)),
+        solid_cell((ux0, uy0, uz0), (ux1, uy0, uz1), (0.0, -1.0, 0.0)),
+        solid_cell((ux0, uy1, uz0), (ux1, uy1, uz1), (0.0, 1.0, 0.0)),
+        solid_cell((ux0, uy0, uz0), (crack_left, uy1, uz0), (0.0, 0.0, -1.0)),
+        solid_cell((crack_right, uy0, uz0), (ux1, uy1, uz0), (0.0, 0.0, -1.0)),
+        # Open-top receiving container.
+        solid_cell((rx0, ry0, rz0), (rx1, ry1, rz0), (0.0, 0.0, -1.0)),
+        solid_cell((rx0, ry0, rz0), (rx0, ry1, rz1), (-1.0, 0.0, 0.0)),
+        solid_cell((rx1, ry0, rz0), (rx1, ry1, rz1), (1.0, 0.0, 0.0)),
+        solid_cell((rx0, ry0, rz0), (rx1, ry0, rz1), (0.0, -1.0, 0.0)),
+        solid_cell((rx0, ry1, rz0), (rx1, ry1, rz1), (0.0, 1.0, 0.0)),
+    ]
+
+
+def write_metrics(output, expected_fluid, expected_solid, args):
+    files = sorted((output / "particles").glob("MPMParticle*.npz"))
+    if len(files) < 2:
+        raise RuntimeError("Section 5.1 run produced fewer than two particle snapshots")
+    rows = []
+    finite = True
+    receiver_min = RECEIVER_ORIGIN
+    receiver_max = RECEIVER_ORIGIN + RECEIVER_SIZE
+    for file_name in files:
+        with np.load(file_name) as data:
+            active = data["active"] > 0
+            phase = data["phase"]
+            fluid = active & (phase == 2)
+            solid = active & (phase == 1)
+            position = data["position"]
+            fluid_velocity = data["fluid_velocity"]
+            solid_velocity = data["solid_velocity"]
+            pressure = data["pressure"]
+            porosity = data["porosity"]
+            finite &= bool(
+                np.isfinite(position[active]).all()
+                and np.isfinite(fluid_velocity[fluid]).all()
+                and np.isfinite(solid_velocity[solid]).all()
+                and np.isfinite(pressure[active]).all()
+            )
+            outside = np.any(
+                (position[active] < -1.0e-10 * args.dx) | (position[active] > np.asarray(DOMAIN) + 1.0e-10 * args.dx),
+                axis=1,
+            )
+            fluid_position = position[fluid]
+            solid_position = position[solid]
+            fluid_captured = np.all(
+                (fluid_position >= receiver_min - 0.5 * args.dx) & (fluid_position <= receiver_max + 0.5 * args.dx),
+                axis=1,
+            )
+            rows.append(
+                [
+                    float(data["t_current"]),
+                    int(np.count_nonzero(fluid)),
+                    int(np.count_nonzero(solid)),
+                    int(np.count_nonzero(fluid_position[:, 2] < UPPER_ORIGIN[2] - 0.5 * args.dx)),
+                    int(np.count_nonzero(fluid_captured)),
+                    int(np.count_nonzero(solid_position[:, 2] < UPPER_ORIGIN[2] - 0.5 * args.dx)),
+                    float(np.linalg.norm(fluid_velocity[fluid], axis=1).max()),
+                    float(np.linalg.norm(solid_velocity[solid], axis=1).max()),
+                    float(pressure[fluid].min()),
+                    float(pressure[fluid].max()),
+                    int(np.count_nonzero(outside)),
+                    float(porosity[solid].min()),
+                    float(porosity[solid].max()),
+                ]
+            )
+    rows = np.asarray(rows, dtype=np.float64)
+    metrics = {
+        "case": "Section 5.1 3D granular-water leakage without elastic plate",
+        "physical_crack_width_m": CRACK_RIGHT - CRACK_LEFT,
+        "represented_crack_width_m": args.dx,
+        "snapshots": len(rows),
+        "final_time_s": float(rows[-1, 0]),
+        "duration_complete": math.isclose(float(rows[-1, 0]), args.time, abs_tol=0.1 * args.dt),
+        "expected_fluid_particles": expected_fluid,
+        "expected_solid_particles": expected_solid,
+        "particle_conservation": bool(np.all(rows[:, 1] == expected_fluid) and np.all(rows[:, 2] == expected_solid)),
+        "finite": finite,
+        "maximum_leaked_fluid_particles": int(rows[:, 3].max()),
+        "maximum_captured_fluid_particles": int(rows[:, 4].max()),
+        "maximum_leaked_solid_particles": int(rows[:, 5].max()),
+        "maximum_fluid_speed_mps": float(rows[:, 6].max()),
+        "maximum_solid_speed_mps": float(rows[:, 7].max()),
+        "minimum_fluid_pressure_pa": float(rows[:, 8].min()),
+        "maximum_fluid_pressure_pa": float(rows[:, 9].max()),
+        "maximum_particles_outside_domain": int(rows[:, 10].max()),
+        "minimum_solid_porosity": float(rows[:, 11].min()),
+        "maximum_solid_porosity": float(rows[:, 12].max()),
+    }
+    metrics["passed"] = bool(
+        metrics["finite"]
+        and metrics["duration_complete"]
+        and metrics["particle_conservation"]
+        and metrics["maximum_particles_outside_domain"] == 0
+        and metrics["maximum_leaked_fluid_particles"] > 0
+        and metrics["maximum_captured_fluid_particles"] > 0
+        and 0.01 <= metrics["maximum_fluid_speed_mps"] < 5.0
+        and metrics["maximum_solid_speed_mps"] < 5.0
+        and metrics["minimum_solid_porosity"] > 0.0
+        and metrics["maximum_solid_porosity"] <= 0.64 + 1.0e-8
+    )
+    np.savetxt(
+        output / "leakage_diagnostics.csv",
+        rows,
+        delimiter=",",
+        header=(
+            "time_s,fluid_particles,solid_particles,leaked_fluid_particles,captured_fluid_particles,"
+            "leaked_solid_particles,fluid_speed_max_mps,solid_speed_max_mps,fluid_pressure_min_pa,"
+            "fluid_pressure_max_pa,particles_outside_domain,solid_porosity_min,solid_porosity_max"
+        ),
+        comments="",
+    )
+    (output / "metrics.json").write_text(json.dumps(metrics, indent=2, sort_keys=True) + "\n")
+    print(json.dumps(metrics, sort_keys=True))
+    if args.strict and not metrics["passed"]:
+        raise RuntimeError("Section 5.1 leakage validation failed; inspect metrics.json")
+
+
+def run(args):
+    validate(args)
+    args.output = args.output.expanduser().resolve()
+    args.output.mkdir(parents=True, exist_ok=True)
+    point_spacing = args.dx / args.ppc
+    expected = math.ceil((np.prod(UPPER_SIZE) + UPPER_SIZE[0] * UPPER_SIZE[1] * BED_HEIGHT) / point_spacing**3)
+    print(
+        f"# Section 5.1 leakage: spacing={point_spacing:g} m, physical crack=0.006 m, "
+        f"grid crack={args.dx:g} m, "
+        f"fluid+solid capacity~{expected}, elastic plate omitted"
+    )
+
+    init(dim=3, arch=args.arch, default_fp="float64", device_memory_GB=6.0, offline_cache=True, debug=False)
+    mpm = MPM()
+    mpm.set_configuration(
+        domain=list(DOMAIN),
+        background_damping=0.02,
+        gravity=[0.0, 0.0, -9.81],
+        alphaPIC=0.05,
+        mapping="USL",
+        shape_function="QuadBSpline",
+        material_type="TwoPhaseDoubleLayer",
+        solver_type="SemiImplicit",
+        velocity_projection="Affine",
+        delayed_fluid_advection=True,
+        particle_shifting=True,
+        free_surface_detection=False,
+        visualize=True,
+    )
+    mpm.set_solver(
+        {
+            "Timestep": args.dt,
+            "SimulationTime": args.time,
+            "SaveInterval": args.save_interval,
+            "SavePath": str(args.output),
+        }
+    )
+    mpm.set_semi_implicit_solver_parameters(
+        {
+            "assemble_type": "MatrixFree",
+            "pressure_solver": "MGPCG",
+            "linear_solver": "MGPCG",
+            "max_iteration_number": args.pressure_iterations,
+            "residual_tolerance": 1.0e-7,
+            "multilevel": 2,
+            "pre_and_post_smoothing": 2,
+            "bottom_smoothing": 8,
+        }
+    )
+    mpm.memory_allocate(
+        {
+            "max_material_number": 1,
+            "max_particle_number": int(1.1 * expected),
+            "max_constraint_number": {"max_velocity_constraint": 1024},
+        }
+    )
+    mpm.add_material(
+        model="DruckerPrager",
+        material={
+            "MaterialID": 1,
+            "SolidDensity": 7850.0,
+            "FluidDensity": 1000.0,
+            "Porosity": POROSITY,
+            "MaximumPorosity": 0.64,
+            "FluidBulkModulus": 2.2e9,
+            "Permeability": 1.0e-8,
+            "FluidViscosity": 1.0e-3,
+            "GrainDiameter": 3.0e-3,
+            "DragModel": "Ergun",
+            "YoungModulus": 1.0e8,
+            "PoissonRatio": 0.25,
+            "Cohesion": 0.0,
+            "Friction": 26.0,
+            "Dilation": 0.0,
+            "dpType": "MiddleCircumscribed",
+        },
+    )
+    mpm.add_element({"ElementType": "R8N3D", "ElementSize": [args.dx] * 3})
+    mpm.add_region(
+        [
+            {
+                "Name": "upper_water",
+                "Type": "Rectangle",
+                "BoundingBoxPoint": UPPER_ORIGIN.tolist(),
+                "BoundingBoxSize": [UPPER_SIZE[0], UPPER_SIZE[1], WATER_HEIGHT],
+            },
+            {
+                "Name": "granular_bed",
+                "Type": "Rectangle",
+                "BoundingBoxPoint": UPPER_ORIGIN.tolist(),
+                "BoundingBoxSize": [UPPER_SIZE[0], UPPER_SIZE[1], BED_HEIGHT],
+            },
+        ]
+    )
+    mpm.add_body(
+        {
+            "Template": [
+                {
+                    "RegionName": "upper_water",
+                    "nParticlesPerCell": args.ppc,
+                    "BodyID": 0,
+                    "MaterialID": 1,
+                    "Phase": "Fluid",
+                    "InitialVelocity": [0.0, 0.0, 0.0],
+                    "FixVelocity": ["Free", "Free", "Free"],
+                },
+                {
+                    "RegionName": "granular_bed",
+                    "nParticlesPerCell": args.ppc,
+                    "BodyID": 0,
+                    "MaterialID": 1,
+                    "Phase": "Solid",
+                    "InitialVelocity": [0.0, 0.0, 0.0],
+                    "FixVelocity": ["Free", "Free", "Free"],
+                },
+            ]
+        }
+    )
+    particle_count = int(mpm.scene.particleNum[0])
+    if particle_count > int(1.1 * expected):
+        raise RuntimeError("particle capacity estimate is too small")
+    initialize_stress(particle_count, mpm.scene.particle)
+    initial_phase = mpm.scene.particle.phase.to_numpy()[:particle_count]
+    expected_fluid = int(np.count_nonzero(initial_phase == 2))
+    expected_solid = int(np.count_nonzero(initial_phase == 1))
+    mpm.add_boundary_condition(boundaries(args.dx))
+    mpm.select_save_data(particle=True, grid=True, object=False)
+    mpm.run()
+    write_metrics(args.output, expected_fluid, expected_solid, args)
+    if not args.no_post:
+        mpm.postprocessing()
+
+
+if __name__ == "__main__":
+    run(parse_args())

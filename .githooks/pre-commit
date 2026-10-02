@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+files=()
+while IFS= read -r -d '' file; do
+    [[ "$file" == third_party/* ]] && continue
+    files+=("$file")
+done < <(git diff --cached --name-only --diff-filter=ACMR -z -- '*.py')
+
+((${#files[@]})) || exit 0
+
+for file in "${files[@]}"; do
+    if ! git diff --quiet -- "$file"; then
+        echo "pre-commit: $file has unstaged changes; stage or stash them first" >&2
+        exit 1
+    fi
+done
+
+python -m black --quiet -- "${files[@]}"
+git add -- "${files[@]}"
