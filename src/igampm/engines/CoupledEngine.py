@@ -470,6 +470,7 @@ class Engine(
             self.implicit_snapshot_mpm_plastic_history = ti.Vector.field(
                 history_state_size, ti.f64, shape=particle_capacity
             )
+        self.implicit_snapshot_grid_mass = ti.field(ti.f64, shape=grid_capacity)
         self.implicit_snapshot_grid_velocity = ti.Vector.field(config.DIM, ti.f64, shape=grid_capacity)
         self.implicit_snapshot_grid_acceleration = ti.Vector.field(config.DIM, ti.f64, shape=grid_capacity)
         self.implicit_initialized = False

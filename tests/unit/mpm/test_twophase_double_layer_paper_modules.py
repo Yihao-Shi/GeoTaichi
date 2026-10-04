@@ -2,6 +2,7 @@ import numpy as np
 import taichi as ti
 
 from geotaichi import init
+from examples.mmpm.TwoPhaseWavemaker3D.two_layer_two_phase_wavemaker_3d import set_moving_piston_mac_boundary
 from src.mpm.boundaries.BoundaryCore import apply_particle_traction_constraint_twophase
 from src.mpm.boundaries.BoundaryStrcut import ParticleLoadTwoPhase2D
 from src.mpm.engines.TwoPhaseDoubleLayerKernel import (
@@ -17,6 +18,7 @@ from src.mpm.engines.TwoPhaseDoubleLayerKernel import (
     kernel_enforce_double_layer_solid_plane_nodes2d,
     kernel_enforce_double_layer_solid_plane_nodes3d,
     kernel_enforce_double_layer_solid_cell_faces2d,
+    kernel_enforce_double_layer_solid_cell_faces3d,
     kernel_mac_p2g_double_layer2d,
     kernel_reset_double_layer_grid,
     kernel_normalize_double_layer_mac_fields2d,
@@ -25,10 +27,12 @@ from src.mpm.engines.TwoPhaseDoubleLayerKernel import (
     kernel_assemble_double_layer_pressure_rhs,
     kernel_correct_double_layer_velocity2d,
     kernel_coarsen_double_layer_grid_type2d,
+    kernel_constrain_double_layer_particles_to_solid_region2d,
     kernel_correct_double_layer_solid_velocity_paper2d,
     kernel_delta_correct_double_layer_fluid2d,
     kernel_mark_double_layer_solid_cell_region2d,
     kernel_project_double_layer_pressure_to_solid_nodes2d,
+    kernel_project_solid_grid_velocity_to_mac3d,
     kernel_sample_double_layer_solid_pressure_from_nodes2d,
     kernel_update_double_layer_solid_state2d,
     kernel_update_double_layer_fluid_volume2d,
@@ -76,6 +80,11 @@ class _VolumeParticle:
     porosity: float
     rad: float
     x: vec2f
+    v: vec2f
+    vs: vec2f
+    vf: vec2f
+    fluid_velocity_gradient: mat2x2
+    fix_v: ti.types.vector(2, ti.u8)
     grad_E2: vec2f
 
 
@@ -103,10 +112,26 @@ def _setup_double_layer_volume_correction(
         particle[p].vol = 0.01
         particle[p].porosity = 0.39
         particle[p].x = vec2f(0.5, 0.5 + 0.1 * p)
+        particle[p].v = vec2f(0.0, 0.0)
+        particle[p].vs = vec2f(0.0, 0.0)
+        particle[p].vf = vec2f(0.0, 0.0)
+        particle[p].fluid_velocity_gradient = mat2x2([[1.0, 0.0], [0.0, 0.0]])
+        particle[p].fix_v = ti.Vector([0, 0], ti.u8)
         lnid[p] = 4
         shape_fn[p] = 1.0
         dshape_fn[p] = vec2f(10.0, 0.0)
         node_size[p] = 1
+
+
+@ti.kernel
+def _setup_wall_overlap_particle(particle: ti.template()):
+    particle[0].active = ti.u8(1)
+    particle[0].materialID = ti.u8(1)
+    particle[0].phase = ti.u8(PHASE_FLUID)
+    particle[0].x = vec2f(0.891, 0.2)
+    particle[0].v = vec2f(0.1, -0.2)
+    particle[0].vs = vec2f(0.0, 0.0)
+    particle[0].vf = vec2f(0.1, -0.2)
 
 
 @ti.kernel
@@ -688,6 +713,8 @@ def test_double_layer_fluid_volume_correction_preserves_mass_and_solid_position(
     shape_fn = ti.field(float, shape=2)
     dshape_fn = ti.Vector.field(2, float, shape=2)
     node_size = ti.field(int, shape=2)
+    cell_type = ti.field(int, shape=(10, 10))
+    cell_type.fill(FLUID_CELL)
     _setup_double_layer_volume_correction(node, particle, material_mapping, lnid, shape_fn, dshape_fn, node_size)
 
     kernel_update_double_layer_fluid_volume2d(
@@ -715,6 +742,43 @@ def test_double_layer_fluid_volume_correction_preserves_mass_and_solid_position(
         ti.Vector([1.0, 1.0]),
         ti.Vector([0.1, 0.1]),
         ti.Vector([3, 3]),
+        ti.Vector([10, 10]),
+        0.0,
+        cell_type,
+        node,
+        particle,
+        lnid,
+        dshape_fn,
+        node_size,
+    )
+    assert np.allclose(particle.to_numpy()["x"], before)
+    cell_type[5, 6] = AIR_CELL
+    kernel_delta_correct_double_layer_fluid2d(
+        1,
+        2,
+        ti.Vector([1.0, 1.0]),
+        ti.Vector([0.1, 0.1]),
+        ti.Vector([3, 3]),
+        ti.Vector([10, 10]),
+        1.0,
+        cell_type,
+        node,
+        particle,
+        lnid,
+        dshape_fn,
+        node_size,
+    )
+    assert np.allclose(particle.to_numpy()["x"], before)
+    cell_type[5, 6] = FLUID_CELL
+    kernel_delta_correct_double_layer_fluid2d(
+        1,
+        2,
+        ti.Vector([1.0, 1.0]),
+        ti.Vector([0.1, 0.1]),
+        ti.Vector([3, 3]),
+        ti.Vector([10, 10]),
+        1.0,
+        cell_type,
         node,
         particle,
         lnid,
@@ -723,7 +787,27 @@ def test_double_layer_fluid_volume_correction_preserves_mass_and_solid_position(
     )
     after = particle.to_numpy()["x"]
     assert after[0, 0] < before[0, 0]
+    assert np.isclose(particle.to_numpy()["v"][0, 0], after[0, 0] - before[0, 0])
     assert np.allclose(after[1], before[1])
+
+
+def test_double_layer_particle_constraint_matches_non_aligned_solid_cells():
+    init(dim=2, arch="cpu", cpu_max_num_threads=2, offline_cache=False, log=False)
+    particle = _VolumeParticle.field(shape=1)
+    _setup_wall_overlap_particle(particle)
+    kernel_constrain_double_layer_particles_to_solid_region2d(
+        1,
+        ti.Vector([0.9, 0.38]),
+        ti.Vector([0.01, 0.01]),
+        ti.Vector([0.892, 0.0]),
+        ti.Vector([0.9, 0.37]),
+        particle,
+    )
+    constrained = particle.to_numpy()
+    assert constrained["x"][0, 0] < 0.89
+    assert np.isclose(constrained["v"][0, 0], 0.0)
+    assert np.isclose(constrained["vf"][0, 0], 0.0)
+    assert np.isclose(constrained["v"][0, 1], -0.2)
 
 
 def test_double_layer_solid_fluidizes_above_maximum_porosity_and_recovers_below_it():
@@ -1011,7 +1095,7 @@ def test_cell_centered_transfer_keeps_both_sides_of_grid_crossing_in_pressure_do
     assert types[1, 1] == FLUID_CELL
 
 
-def test_double_layer_volume_fraction_classifies_holes_and_reconstructs_surface_distance():
+def test_double_layer_volume_fraction_keeps_empty_vertical_gaps_as_air():
     init(dim=2, arch="cpu", cpu_max_num_threads=2, offline_cache=False, log=False)
     shape = (4, 4)
     cell_volume = DX * DY
@@ -1054,6 +1138,7 @@ def test_double_layer_volume_fraction_classifies_holes_and_reconstructs_surface_
 
     cell_fluid_mass.fill(0.0)
     cell_fluid_mass[2, 0] = 0.9 * RHO_F * cell_volume
+    cell_fluid_mass[2, 1] = 0.2 * RHO_F * cell_volume
     cell_fluid_mass[2, 3] = 0.9 * RHO_F * cell_volume
     kernel_classify_double_layer_fluid_cells2d(
         0,
@@ -1065,7 +1150,7 @@ def test_double_layer_volume_fraction_classifies_holes_and_reconstructs_surface_
         cell_type,
     )
     assert cell_type[2, 1] == FLUID_CELL
-    assert cell_type[2, 2] == FLUID_CELL
+    assert cell_type[2, 2] == AIR_CELL
 
 
 def test_double_layer_multigrid_keeps_thin_fluid_support_on_coarse_level():
@@ -1143,8 +1228,10 @@ def test_solid_plane_node_constraint_works_in_3d():
     )
 
     constrained = node.to_numpy()
-    assert np.allclose(constrained["momentum"][13, 0], [0.0, 3.0, 0.0], atol=1.0e-7)
-    assert np.allclose(constrained["momentums"][13, 0], [0.0, 3.0, 0.0], atol=1.0e-7)
+    # The Taichi fields are float32; an oblique projection can retain one ULP
+    # (1.192e-7 here) in the cancelled normal components.
+    assert np.allclose(constrained["momentum"][13, 0], [0.0, 3.0, 0.0], atol=2.0e-7)
+    assert np.allclose(constrained["momentums"][13, 0], [0.0, 3.0, 0.0], atol=2.0e-7)
 
 
 def test_pressure_matrix_uses_neumann_for_solid_walls_and_dirichlet_for_air():
@@ -1302,6 +1389,79 @@ def _weighted_divergence_norm(cell_type, fluid_velocity_x, fluid_velocity_y, sol
             div_s += (solid_velocity_y[i, j + 1] - solid_velocity_y[i, j]) / DY
             residuals.append((1.0 - PHI) * div_s + PHI * div_f)
     return np.linalg.norm(np.asarray(residuals, dtype=np.float64))
+
+
+def test_solid_mac_projection_zeroes_static_wall_then_allows_moving_override():
+    init(dim=3, arch="cpu", cpu_max_num_threads=2, offline_cache=False, log=False)
+    cell_type = ti.field(int, shape=(2, 2, 2))
+    node = NodeTwoPhase.field(shape=(27, 1))
+    cal_length = ti.Vector.field(3, float, shape=1)
+    solid_mass_x = ti.field(float, shape=(3, 2, 2))
+    solid_mass_y = ti.field(float, shape=(2, 3, 2))
+    solid_mass_z = ti.field(float, shape=(2, 2, 3))
+    solid_velocity_x = ti.field(float, shape=(3, 2, 2))
+    solid_velocity_y = ti.field(float, shape=(2, 3, 2))
+    solid_velocity_z = ti.field(float, shape=(2, 2, 3))
+    cell_type.fill(FLUID_CELL)
+    solid_velocity_x.fill(7.0)
+    solid_velocity_y.fill(7.0)
+    solid_velocity_z.fill(7.0)
+    for j in range(2):
+        for k in range(2):
+            cell_type[0, j, k] = SOLID_CELL
+
+    kernel_project_solid_grid_velocity_to_mac3d(
+        1.0e-12,
+        ti.Vector([1.0, 1.0, 1.0]),
+        ti.Vector([3, 3, 3]),
+        MAC_SHAPE_LINEAR,
+        2,
+        node,
+        cal_length,
+        cell_type,
+        solid_mass_x,
+        solid_mass_y,
+        solid_mass_z,
+        solid_velocity_x,
+        solid_velocity_y,
+        solid_velocity_z,
+    )
+
+    velocity_x = solid_velocity_x.to_numpy()
+    assert np.all(velocity_x[1] == 0.0)
+    assert np.all(velocity_x[[0, 2]] == 7.0)
+    assert np.all(solid_velocity_y.to_numpy() == 7.0)
+    assert np.all(solid_velocity_z.to_numpy() == 7.0)
+
+    fluid_velocity_x = ti.field(float, shape=(3, 2, 2))
+    fluid_velocity_y = ti.field(float, shape=(2, 3, 2))
+    fluid_velocity_z = ti.field(float, shape=(2, 2, 3))
+    fluid_acceleration_x = ti.field(float, shape=(3, 2, 2))
+    fluid_acceleration_y = ti.field(float, shape=(2, 3, 2))
+    fluid_acceleration_z = ti.field(float, shape=(2, 2, 3))
+    set_moving_piston_mac_boundary(
+        2.0,
+        0.5,
+        2.0,
+        2.0,
+        ti.Vector([1.0, 1.0, 1.0]),
+        cell_type,
+        solid_velocity_x,
+    )
+    kernel_enforce_double_layer_solid_cell_faces3d(
+        cell_type,
+        fluid_velocity_x,
+        fluid_velocity_y,
+        fluid_velocity_z,
+        fluid_acceleration_x,
+        fluid_acceleration_y,
+        fluid_acceleration_z,
+        solid_velocity_x,
+        solid_velocity_y,
+        solid_velocity_z,
+    )
+    assert np.all(solid_velocity_x.to_numpy()[1] == 2.0)
+    assert np.all(fluid_velocity_x.to_numpy()[1] == 2.0)
 
 
 def test_pressure_projection_reduces_weighted_divergence_with_code_sign_convention():

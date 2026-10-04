@@ -50,7 +50,9 @@ PISTON_MEAN_X = 0.08
 WAVE_FREQUENCY = 0.9
 WAVE_VELOCITY = 0.24
 WAVE_RAMP = 1.2
-K0 = 1.0 - math.sin(math.radians(32.0))
+SOIL_YOUNG_MODULUS = 12.0e6
+SOIL_COHESION = 300.0
+SOIL_FRICTION = 26.0
 GAUGE_X = (0.45, 1.20, 2.10)
 GAUGE_HALF_WIDTH = 0.06
 
@@ -75,6 +77,9 @@ def parse_args():
     parser.add_argument("--frequency", type=float, default=WAVE_FREQUENCY)
     parser.add_argument("--ramp-time", type=float, default=WAVE_RAMP)
     parser.add_argument("--maximum-porosity", type=float, default=0.56)
+    parser.add_argument("--soil-young-modulus", type=float, default=SOIL_YOUNG_MODULUS)
+    parser.add_argument("--soil-cohesion", type=float, default=SOIL_COHESION)
+    parser.add_argument("--soil-friction", type=float, default=SOIL_FRICTION)
     parser.add_argument(
         "--output",
         type=Path,
@@ -100,6 +105,8 @@ def validate_geometry(args):
         raise ValueError(
             "alpha PIC must lie in [0, 1], maximum porosity in [0.40, 1], and wave velocity must be nonnegative"
         )
+    if args.soil_young_modulus <= 0.0 or args.soil_cohesion < 0.0 or not 0.0 <= args.soil_friction < 90.0:
+        raise ValueError("soil Young's modulus must be positive, cohesion nonnegative, and friction in [0, 90)")
     cells = np.asarray(TANK, dtype=float) / args.dx
     if not np.allclose(cells, np.round(cells), rtol=0.0, atol=1.0e-12):
         raise ValueError(f"dx={args.dx:g} must divide the tank dimensions {TANK}")
@@ -159,7 +166,10 @@ def set_moving_piston_mac_boundary(
 
 
 @ti.kernel
-def initialize_hydrostatic_state(particle_count: int, water_depth: float, particle: ti.template()):
+def initialize_hydrostatic_state(
+    particle_count: int, water_depth: float, friction_angle: float, particle: ti.template()
+):
+    k0 = 1.0 - ti.sin(friction_angle * math.pi / 180.0)
     for p in range(particle_count):
         water_head = ti.max(water_depth - particle[p].x[2], 0.0)
         particle[p].pressure = 1000.0 * 9.81 * water_head
@@ -171,7 +181,7 @@ def initialize_hydrostatic_state(particle_count: int, water_depth: float, partic
             soil_head = ti.max(slope_surface - particle[p].x[2], 0.0)
             effective_vertical = (1.0 - particle[p].porosity) * (2650.0 - 1000.0) * 9.81 * soil_head
             particle[p].stress = ti.Vector(
-                [-K0 * effective_vertical, -K0 * effective_vertical, -effective_vertical, 0.0, 0.0, 0.0]
+                [-k0 * effective_vertical, -k0 * effective_vertical, -effective_vertical, 0.0, 0.0, 0.0]
             )
 
 
@@ -234,6 +244,7 @@ def evaluate_metrics(rows, expected_fluid, expected_solid, args):
         "duration_complete": duration_complete,
         "maximum_fluid_speed_mps": float(np.max(rows[:, 4])),
         "maximum_solid_speed_mps": float(np.max(rows[:, 5])),
+        "maximum_solid_displacement_m": float(np.max(rows[:, 23])),
         "maximum_particles_outside_tank": int(np.max(rows[:, 11])),
         "maximum_enclosed_air_cells": int(np.max(rows[:, 12])),
         "maximum_fluid_particles_in_air_cells": int(np.max(rows[:, 13])),
@@ -248,6 +259,9 @@ def evaluate_metrics(rows, expected_fluid, expected_solid, args):
         "maximum_incident_high_frequency_surface_roughness_m": float(incident_rows[:, 21].max()),
         "minimum_solid_porosity": float(np.min(rows[:, 17])),
         "maximum_solid_porosity": float(np.max(rows[:, 18])),
+        "soil_young_modulus_pa": args.soil_young_modulus,
+        "soil_cohesion_pa": args.soil_cohesion,
+        "soil_friction_deg": args.soil_friction,
         "fluid_surface_excursion_m": float(np.max(rows[:, 3]) - np.min(rows[:, 3])),
         "surface_gauge_x_m": GAUGE_X,
         "surface_gauge_excursion_m": {
@@ -270,6 +284,7 @@ def evaluate_metrics(rows, expected_fluid, expected_solid, args):
             "global_surface_drift_m": 0.50 * args.dx,
             "maximum_fluid_speed_mps": 1.25 * math.sqrt(2.0 * 9.81 * WATER_DEPTH),
             "maximum_solid_speed_mps": 1.0,
+            "minimum_solid_displacement_m": 0.05 * args.dx,
             "surface_roughness_m": 0.50 * args.dx,
         },
     }
@@ -278,7 +293,7 @@ def evaluate_metrics(rows, expected_fluid, expected_solid, args):
         and duration_complete
         and particle_conservation
         and metrics["maximum_particles_outside_tank"] == 0
-        and metrics["maximum_enclosed_air_cells"] <= 2
+        and metrics["maximum_enclosed_air_cells"] == 0
         and metrics["maximum_fluid_particles_in_deep_air_cells"] == 0
         and metrics["maximum_fluid_particles_in_solid_cells"] == 0
         and metrics["maximum_fluid_particles_behind_piston"] == 0
@@ -299,6 +314,7 @@ def evaluate_metrics(rows, expected_fluid, expected_solid, args):
         and metrics["surface_gauge_excursion_m"][str(GAUGE_X[1])] >= 0.5 * expected_amplitude
         and metrics["maximum_fluid_speed_mps"] < metrics["strict_tolerances"]["maximum_fluid_speed_mps"]
         and metrics["maximum_solid_speed_mps"] < metrics["strict_tolerances"]["maximum_solid_speed_mps"]
+        and metrics["maximum_solid_displacement_m"] >= metrics["strict_tolerances"]["minimum_solid_displacement_m"]
     )
     return metrics
 
@@ -312,6 +328,7 @@ def write_metrics(output, expected_fluid, expected_solid, args):
         raise RuntimeError("wavemaker run produced fewer than two particle snapshots")
 
     rows = []
+    initial_solid_position = None
     for file_name in files:
         frame = Path(file_name).stem.removeprefix("MPMParticle")
         grid_name = grid_files.get(frame)
@@ -327,6 +344,9 @@ def write_metrics(output, expected_fluid, expected_solid, args):
             solid_velocity = data["solid_velocity"]
             pressure = data["pressure"]
             porosity = data["porosity"]
+            if initial_solid_position is None:
+                initial_solid_position = position[solid].copy()
+            solid_displacement = float(np.linalg.norm(position[solid] - initial_solid_position, axis=1).max())
             piston_position = PISTON_MEAN_X + piston_displacement(
                 float(data["t_current"]), args.frequency, args.wave_velocity, args.ramp_time
             )
@@ -386,6 +406,7 @@ def write_metrics(output, expected_fluid, expected_solid, args):
                     float(np.max(porosity[solid])),
                     int(np.count_nonzero(position[fluid, 0] < piston_position - 1.0e-6 * args.dx)),
                     *surface_profile,
+                    solid_displacement,
                 ]
             )
     rows = np.asarray(rows, dtype=np.float64)
@@ -400,7 +421,8 @@ def write_metrics(output, expected_fluid, expected_solid, args):
             ",particles_outside_tank,enclosed_air_cells,fluid_particles_in_air_cells,"
             "fluid_particles_in_deep_air_cells,global_mean_surface_m,"
             "fluid_particles_in_solid_cells,solid_porosity_min,solid_porosity_max,fluid_particles_behind_piston,"
-            "cross_tank_surface_roughness_m,high_frequency_surface_roughness_m,instantaneous_wave_height_m"
+            "cross_tank_surface_roughness_m,high_frequency_surface_roughness_m,instantaneous_wave_height_m,"
+            "solid_displacement_max_m"
         ),
         comments="",
     )
@@ -501,10 +523,10 @@ def run(args):
             "FluidViscosity": 1.0e-3,
             "GrainDiameter": 3.0e-3,
             "DragModel": "Ergun",
-            "YoungModulus": 3.0e7,
+            "YoungModulus": args.soil_young_modulus,
             "PoissonRatio": 0.30,
-            "Cohesion": 1500.0,
-            "Friction": 32.0,
+            "Cohesion": args.soil_cohesion,
+            "Friction": args.soil_friction,
             "Dilation": 0.0,
         },
     )
@@ -552,7 +574,7 @@ def run(args):
     initial_phase = mpm.scene.particle.phase.to_numpy()[:particle_count]
     expected_fluid = int(np.count_nonzero(initial_phase == 2))
     expected_solid = int(np.count_nonzero(initial_phase == 1))
-    initialize_hydrostatic_state(particle_count, WATER_DEPTH, mpm.scene.particle)
+    initialize_hydrostatic_state(particle_count, WATER_DEPTH, args.soil_friction, mpm.scene.particle)
 
     walls = [
         ([wall, wall, wall], [TANK[0] - wall, wall, TANK[2]], [0.0, -1.0, 0.0]),

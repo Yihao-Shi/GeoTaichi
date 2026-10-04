@@ -131,7 +131,7 @@ def main():
         },
     )
     dem.add_attribute(1, {"Density": 2500.0, "ForceLocalDamping": 0.0, "TorqueLocalDamping": 0.0})
-    sphere = gt.polyhedron(file=str(SPHERE_MESH)).grids(space=0.20, extent=4)
+    sphere = gt.polyhedron(file=str(SPHERE_MESH)).grids(space=0.20, extent=5)
     dem.add_template({"Name": "sphere", "Object": sphere})
     dem.add_region(
         {

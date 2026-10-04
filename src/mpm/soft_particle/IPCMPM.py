@@ -2703,12 +2703,12 @@ class IPCMPM:
     def _differentiate_traction_position(self):
         for traction_id in range(self.mpm.tractionNum[0]):
             particle = self.mpm.traction[traction_id].particleID
-            traction = self.mpm.traction[traction_id].traction
+            traction = self.mpm.particle_traction_force(traction_id)
             position_vjp = ti.Vector.zero(ti.f64, config.DIM)
             for local_id in range(self.mpm.offset[particle]):
                 node = self.mpm.LnID[particle, local_id]
                 block = self.mpm.node2dof[node] - 1
-                if block >= 0:
+                if self.mpm.grid[node].m > self.mpm.val_lim:
                     dofs = config.DIM * block
                     adjoint = ti.Vector(
                         [self.mpm.incre_resolution[dofs + component] for component in ti.static(range(config.DIM))]

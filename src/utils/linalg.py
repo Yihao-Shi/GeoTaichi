@@ -8,6 +8,7 @@ from src.utils.FieldIO import field_to_numpy_slice
 def no_operation(*args, **kwargs):
     pass
 
+
 def read_dict_list(input, func, is_return=False, *arg, **kwargs):
     auxiliary = []
     if isinstance(input, dict):
@@ -17,7 +18,8 @@ def read_dict_list(input, func, is_return=False, *arg, **kwargs):
             auxiliary.append(func(lst, *arg, **kwargs))
     if is_return:
         return auxiliary
-    
+
+
 def get_dataclass_to_dict(state_vars, selected_vars=None, start_index=0, end_index=-1):
     exported_data = {}
     if state_vars:
@@ -30,7 +32,8 @@ def get_dataclass_to_dict(state_vars, selected_vars=None, start_index=0, end_ind
         valid_vars = set(selected_vars) & set(all_fields)
         for var in valid_vars:
             attr_field = getattr(state_vars, var)
-            if end_index == -1: end_index = attr_field.shape[0]
+            if end_index == -1:
+                end_index = attr_field.shape[0]
             temp_data = field_to_numpy_slice(attr_field, start_index, end_index)
             if temp_data.ndim == 2 and temp_data.shape[1] == 6:
                 full_tensor = numpy.zeros((temp_data.shape[0], 3, 3))
@@ -45,6 +48,7 @@ def get_dataclass_to_dict(state_vars, selected_vars=None, start_index=0, end_ind
                 exported_data[var] = temp_data
     return exported_data
 
+
 def bounding_box(points):
     if points.ndim == 1:
         return [(min(points)), (max(points))]
@@ -55,7 +59,11 @@ def bounding_box(points):
             return [(min(x_coordinates), min(y_coordinates)), (max(x_coordinates), max(y_coordinates))]
         elif points.shape[2] == 3:
             x_coordinates, y_coordinates, z_coordinates = zip(*points)
-            return [(min(x_coordinates), min(y_coordinates), min(z_coordinates)), (max(x_coordinates), max(y_coordinates), max(z_coordinates))]
+            return [
+                (min(x_coordinates), min(y_coordinates), min(z_coordinates)),
+                (max(x_coordinates), max(y_coordinates), max(z_coordinates)),
+            ]
+
 
 def make_list(input):
     if isinstance(input, (int, float)):
@@ -63,15 +71,18 @@ def make_list(input):
     elif isinstance(input, (list, tuple, numpy.ndarray)):
         return list(input)
 
-def align_size(x, align):
-  return (x + (align - 1)) &~ (align - 1)
 
-def ranges(nv, start = 0):
+def align_size(x, align):
+    return (x + (align - 1)) & ~(align - 1)
+
+
+def ranges(nv, start=0):
     shifts = numpy.cumsum(nv)
     id_arr = numpy.ones(shifts[-1], dtype=numpy.int_)
-    id_arr[shifts[:-1]] = -numpy.asarray(nv[:-1])+1
+    id_arr[shifts[:-1]] = -numpy.asarray(nv[:-1]) + 1
     id_arr[0] = start
     return id_arr.cumsum()
+
 
 def flip2d(array2d, size_u=0, size_v=0):
     array2d = numpy.array(array2d)
@@ -109,7 +120,7 @@ def flip3d_linear(array3d, size_u, size_v, size_w):
 def right_round(num, keep_n):
     if isinstance(num, float):
         num = str(num)
-    return Decimal(num).quantize((Decimal('0.' + '0'*keep_n)),rounding=ROUND_HALF_UP)
+    return Decimal(num).quantize((Decimal("0." + "0" * keep_n)), rounding=ROUND_HALF_UP)
 
 
 def NonNegative(x):
@@ -121,80 +132,130 @@ def NonNegative(x):
 
 def next_pow2(x):
     x -= 1
-    x |= (x >> 1)
-    x |= (x >> 2)
-    x |= (x >> 4)
-    x |= (x >> 8)
-    x |= (x >> 16)
+    x |= x >> 1
+    x |= x >> 2
+    x |= x >> 4
+    x |= x >> 8
+    x |= x >> 16
     return x + 1
 
+
 def round32(n):
-    if(n % 32 == 0): return n
-    else: return ((n >> 5) + 1) << 5
+    if n % 32 == 0:
+        return n
+    else:
+        return ((n >> 5) + 1) << 5
 
 
 def rotation_matrix_direction_2D(dir1, dir2):
     cos_theta = numpy.dot(dir1, dir2)
     sin_theta = math.pow(1 - cos_theta * cos_theta, 0.5)
-    RotationMartix = numpy.array([[cos_theta, -sin_theta],
-                                  [sin_theta, cos_theta]])
+    RotationMartix = numpy.array([[cos_theta, -sin_theta], [sin_theta, cos_theta]])
     return RotationMartix
 
 
 def rotation_matrix_direction(dir1, dir2):
     cos_theta = numpy.dot(dir1, dir2)
     norm_vec = numpy.cross(dir1, dir2)
-    norm_vec_invert = numpy.array([[0., -norm_vec[2], norm_vec[1]], 
-                                   [norm_vec[2], 0., -norm_vec[0]],
-                                   [-norm_vec[1], norm_vec[0], 0.]])
+    norm_vec_invert = numpy.array(
+        [[0.0, -norm_vec[2], norm_vec[1]], [norm_vec[2], 0.0, -norm_vec[0]], [-norm_vec[1], norm_vec[0], 0.0]]
+    )
     RotationMartix = numpy.eye(3) + norm_vec_invert + (norm_vec_invert @ norm_vec_invert) / (1 + cos_theta)
     return RotationMartix
 
+
 def transformation_matrix_direction(dir1, dir2):
     RotationMartix = rotation_matrix_direction(dir1, dir2)
-    return numpy.array([[RotationMartix[0, 0], RotationMartix[0, 1], RotationMartix[0, 2], 0],
-                        [RotationMartix[1, 0], RotationMartix[1, 1], RotationMartix[1, 2], 0],
-                        [RotationMartix[2, 0], RotationMartix[2, 1], RotationMartix[2, 2], 0],
-                        [0., 0., 0., 1.]])
+    return numpy.array(
+        [
+            [RotationMartix[0, 0], RotationMartix[0, 1], RotationMartix[0, 2], 0],
+            [RotationMartix[1, 0], RotationMartix[1, 1], RotationMartix[1, 2], 0],
+            [RotationMartix[2, 0], RotationMartix[2, 1], RotationMartix[2, 2], 0],
+            [0.0, 0.0, 0.0, 1.0],
+        ]
+    )
 
 
 def transformation_matrix_coordinate_system(axis1, axis2):
-    '''
+    """
     Return a transformation matrix from axis1 to axis2
     axis1 [nxn]: the old coordinate system
     axis2 [nxn]: the new coordinate system
-    '''
+    """
     # reference: https://ocw.mit.edu/courses/16-07-dynamics-fall-2009/dd277ec654440f4c2b5b07d6c286c3fd_MIT16_07F09_Lec26.pdf
-    return numpy.array([[numpy.dot(axis1[0, :], axis2[0, :]), numpy.dot(axis1[0, :], axis2[1, :]), numpy.dot(axis1[0, :], axis2[2, :]), 0],
-                        [numpy.dot(axis1[1, :], axis2[0, :]), numpy.dot(axis1[1, :], axis2[1, :]), numpy.dot(axis1[1, :], axis2[2, :]), 0],
-                        [numpy.dot(axis1[2, :], axis2[0, :]), numpy.dot(axis1[2, :], axis2[1, :]), numpy.dot(axis1[2, :], axis2[2, :]), 0],
-                        [0., 0., 0., 1.]])
+    return numpy.array(
+        [
+            [
+                numpy.dot(axis1[0, :], axis2[0, :]),
+                numpy.dot(axis1[0, :], axis2[1, :]),
+                numpy.dot(axis1[0, :], axis2[2, :]),
+                0,
+            ],
+            [
+                numpy.dot(axis1[1, :], axis2[0, :]),
+                numpy.dot(axis1[1, :], axis2[1, :]),
+                numpy.dot(axis1[1, :], axis2[2, :]),
+                0,
+            ],
+            [
+                numpy.dot(axis1[2, :], axis2[0, :]),
+                numpy.dot(axis1[2, :], axis2[1, :]),
+                numpy.dot(axis1[2, :], axis2[2, :]),
+                0,
+            ],
+            [0.0, 0.0, 0.0, 1.0],
+        ]
+    )
 
 
 def rotation_matrix_coordinate_system(axis1, axis2):
-    '''
+    """
     Return a rotation matrix from axis1 to axis2
     axis1 [nxn]: the old coordinate system
     axis2 [nxn]: the new coordinate system
-    '''
+    """
     # reference: https://ocw.mit.edu/courses/16-07-dynamics-fall-2009/dd277ec654440f4c2b5b07d6c286c3fd_MIT16_07F09_Lec26.pdf
-    return numpy.array([[numpy.dot(axis1[0, :], axis2[0, :]), numpy.dot(axis1[0, :], axis2[1, :]), numpy.dot(axis1[0, :], axis2[2, :])],
-                        [numpy.dot(axis1[1, :], axis2[0, :]), numpy.dot(axis1[1, :], axis2[1, :]), numpy.dot(axis1[1, :], axis2[2, :])],
-                        [numpy.dot(axis1[2, :], axis2[0, :]), numpy.dot(axis1[2, :], axis2[1, :]), numpy.dot(axis1[2, :], axis2[2, :])]])
+    return numpy.array(
+        [
+            [
+                numpy.dot(axis1[0, :], axis2[0, :]),
+                numpy.dot(axis1[0, :], axis2[1, :]),
+                numpy.dot(axis1[0, :], axis2[2, :]),
+            ],
+            [
+                numpy.dot(axis1[1, :], axis2[0, :]),
+                numpy.dot(axis1[1, :], axis2[1, :]),
+                numpy.dot(axis1[1, :], axis2[2, :]),
+            ],
+            [
+                numpy.dot(axis1[2, :], axis2[0, :]),
+                numpy.dot(axis1[2, :], axis2[1, :]),
+                numpy.dot(axis1[2, :], axis2[2, :]),
+            ],
+        ]
+    )
 
 
 def matrix_from_quanternion(q):
     q = q.reshape(-1, 4)
     qw, qx, qy, qz = q[:, 3], q[:, 0], q[:, 1], q[:, 2]
-    return numpy.array([[1 - 2 * (qy * qy + qz * qz), 2 * (qx * qy - qz * qw), 2 * (qx * qz + qy * qw)], 
-                       [2 * (qx * qy + qz * qw), 1 - 2 * (qx * qx + qz * qz), 2 * (qy * qz - qx * qw)], 
-                       [2 * (qx * qz - qy * qw), 2 * (qy * qz + qx * qw), 1 - 2 * (qx * qx + qy * qy)]])
+    return numpy.array(
+        [
+            [1 - 2 * (qy * qy + qz * qz), 2 * (qx * qy - qz * qw), 2 * (qx * qz + qy * qw)],
+            [2 * (qx * qy + qz * qw), 1 - 2 * (qx * qx + qz * qz), 2 * (qy * qz - qx * qw)],
+            [2 * (qx * qz - qy * qw), 2 * (qy * qz + qx * qw), 1 - 2 * (qx * qx + qy * qy)],
+        ]
+    )
 
 
 def heaviside_function(epsilon, phi):
-    h = 0.
-    ieps = 1. / epsilon
-    return numpy.select([phi > epsilon, numpy.logical_and(phi > -epsilon, phi < epsilon)], [1., 0.5 * (1 + phi * ieps + numpy.sin(math.pi * phi * ieps) / math.pi)], default=0.)
+    h = 0.0
+    ieps = 1.0 / epsilon
+    return numpy.select(
+        [phi > epsilon, numpy.logical_and(phi > -epsilon, phi < epsilon)],
+        [1.0, 0.5 * (1 + phi * ieps + numpy.sin(math.pi * phi * ieps) / math.pi)],
+        default=0.0,
+    )
 
 
 def linearize(xInd, yInd, zInd, nGPx, nGPy):
@@ -202,14 +263,14 @@ def linearize(xInd, yInd, zInd, nGPx, nGPy):
 
 
 def vectorize(i, nGPx, nGPy):
-    xInd = (i % (nGPx * nGPy)) % nGPx 
-    yInd = (i % (nGPx * nGPy)) // nGPx 
+    xInd = (i % (nGPx * nGPy)) % nGPx
+    yInd = (i % (nGPx * nGPy)) // nGPx
     zInd = i // (nGPx * nGPy)
     return xInd, yInd, zInd
 
 
 def reduced(var1, var2):
-    return var1 * var2 / (var1 + var2) 
+    return var1 * var2 / (var1 + var2)
 
 
 def set_to_rotation(qs):
@@ -220,48 +281,50 @@ def set_to_rotation(qs):
     qw = qs[:, 3]
 
     R = numpy.empty((qs.shape[0], 3, 3), dtype=qs.dtype)
-    R[:, 0, 0] = 1 - 2*(qy*qy + qz*qz)
-    R[:, 0, 1] = 2*(qx*qy - qz*qw)
-    R[:, 0, 2] = 2*(qx*qz + qy*qw)
-    R[:, 1, 0] = 2*(qx*qy + qz*qw)
-    R[:, 1, 1] = 1 - 2*(qx*qx + qz*qz)
-    R[:, 1, 2] = 2*(qy*qz - qx*qw)
-    R[:, 2, 0] = 2*(qx*qz - qy*qw)
-    R[:, 2, 1] = 2*(qy*qz + qx*qw)
-    R[:, 2, 2] = 1 - 2*(qx*qx + qy*qy)
+    R[:, 0, 0] = 1 - 2 * (qy * qy + qz * qz)
+    R[:, 0, 1] = 2 * (qx * qy - qz * qw)
+    R[:, 0, 2] = 2 * (qx * qz + qy * qw)
+    R[:, 1, 0] = 2 * (qx * qy + qz * qw)
+    R[:, 1, 1] = 1 - 2 * (qx * qx + qz * qz)
+    R[:, 1, 2] = 2 * (qy * qz - qx * qw)
+    R[:, 2, 0] = 2 * (qx * qz - qy * qw)
+    R[:, 2, 1] = 2 * (qy * qz + qx * qw)
+    R[:, 2, 2] = 1 - 2 * (qx * qx + qy * qy)
     return R
 
 
 def Sphere2Certesian(vector):
-    return vector[0] * numpy.array([numpy.sin(vector[1]) * numpy.cos(vector[2]), numpy.sin(vector[1]) * numpy.sin(vector[2]), numpy.cos(vector[1])])
+    return vector[0] * numpy.array(
+        [numpy.sin(vector[1]) * numpy.cos(vector[2]), numpy.sin(vector[1]) * numpy.sin(vector[2]), numpy.cos(vector[1])]
+    )
 
 
 def Certesian2Sphere(vector):
     vec = numpy.zeros(3)
     r = numpy.linalg.norm(vector)
-    if r != 0.:
+    if r != 0.0:
         theta = numpy.arccos(vector[2] / r)
         vecProj = numpy.array([vector[0], vector[1], 0])
         normProj = numpy.linalg.norm(vecProj)
 
-        phi = 0.
-        if normProj != 0.:
+        phi = 0.0
+        if normProj != 0.0:
             cosVal = vecProj[0] / normProj
-            phi = numpy.arccos(cosVal) if vec[1] > 0. else 2 * math.pi - numpy.arccos(cosVal)
+            phi = numpy.arccos(cosVal) if vec[1] > 0.0 else 2 * math.pi - numpy.arccos(cosVal)
         vec = numpy.array([r, theta, phi])
     return vec
 
 
 def iterRead(input, function):
     if isinstance(input, dict):
-       function(input)
+        function(input)
     elif isinstance(input, list):
         for i in input:
             function(i)
 
 
 def doolittle(matrix_a):
-    """ Doolittle's Method for LU-factorization.
+    """Doolittle's Method for LU-factorization.
 
     :param matrix_a: Input matrix (must be a square matrix)
     :type matrix_a: list, tuple
@@ -292,9 +355,13 @@ def doolittle(matrix_a):
 
 
 def remove_connectivity_by_inactive_faces(connectivity, faceID, vertexCount, active):
-    prefix_vertex_id = numpy.zeros(len(vertexCount)+1, dtype=int)
+    connectivity = numpy.asarray(connectivity)
+    faceID = numpy.asarray(faceID, dtype=int)
+    vertexCount = numpy.asarray(vertexCount, dtype=int)
+    active = numpy.asarray(active, dtype=bool)
+    prefix_vertex_id = numpy.zeros(len(vertexCount) + 1, dtype=int)
     prefix_vertex_id[1:] = numpy.cumsum(vertexCount)
-    prefix_face_id = numpy.zeros(len(faceID)+1, dtype=int)
+    prefix_face_id = numpy.zeros(len(faceID) + 1, dtype=int)
     prefix_face_id[1:] = numpy.cumsum(faceID)
     keep_indices = numpy.where(active)[0]
     new_vertexCount = vertexCount[keep_indices]
@@ -303,12 +370,14 @@ def remove_connectivity_by_inactive_faces(connectivity, faceID, vertexCount, act
     new_id = 0
     for i in range(len(vertexCount)):
         start = prefix_vertex_id[i]
-        end = prefix_vertex_id[i+1]
+        end = prefix_vertex_id[i + 1]
         if active[i]:
             mapping[start:end] = numpy.arange(new_id, new_id + (end - start))
-            new_id += (end - start)
-    keep_faces_list = [connectivity[prefix_face_id[i]:prefix_face_id[i+1]] for i in keep_indices]
-    new_connectivity = numpy.vstack(keep_faces_list) if keep_faces_list else numpy.empty((0,3), dtype=connectivity.dtype)
+            new_id += end - start
+    keep_faces_list = [connectivity[prefix_face_id[i] : prefix_face_id[i + 1]] for i in keep_indices]
+    new_connectivity = (
+        numpy.vstack(keep_faces_list) if keep_faces_list else numpy.empty((0, 3), dtype=connectivity.dtype)
+    )
     new_connectivity = mapping[new_connectivity]
     return new_connectivity, new_faceID, new_vertexCount
 
@@ -334,7 +403,7 @@ def scalar_multiply(vector, scalar):
 
 
 def inner_sum(vector):
-    result = 0.
+    result = 0.0
     for i in vector:
         result += i
     return result
@@ -345,7 +414,7 @@ def vector_subtract(vector1, vector2, coeff=1.0):
 
 
 def inner_multiply(vector):
-    result = 1.
+    result = 1.0
     for i in vector:
         result *= i
     return result
@@ -391,9 +460,11 @@ def vector_cross(vector1, vector2):
         v2 = vector2
 
     # Compute cross product
-    vector_out = [(v1[1] * v2[2]) - (v1[2] * v2[1]),
-                  (v1[2] * v2[0]) - (v1[0] * v2[2]),
-                  (v1[0] * v2[1]) - (v1[1] * v2[0])]
+    vector_out = [
+        (v1[1] * v2[2]) - (v1[2] * v2[1]),
+        (v1[2] * v2[0]) - (v1[0] * v2[2]),
+        (v1[0] * v2[1]) - (v1[1] * v2[0]),
+    ]
 
     # Return the cross product of the input vectors
     return vector_out
@@ -476,7 +547,7 @@ def vector_mean(*args):
     sz = len(args)
     mean_vector = [0.0 for _ in range(len(args[0]))]
     for input_vector in args:
-        mean_vector = [a+b for a, b in zip(mean_vector, input_vector)]
+        mean_vector = [a + b for a, b in zip(mean_vector, input_vector)]
     mean_vector = [a / sz for a in mean_vector]
     return mean_vector
 
@@ -489,7 +560,7 @@ def vector_magnitude(vector_in):
 
 
 def vector_angle_between(vector1, vector2, **kwargs):
-    degrees = kwargs.get('degrees', True)
+    degrees = kwargs.get("degrees", True)
     magn1 = vector_magnitude(vector1)
     magn2 = vector_magnitude(vector2)
     acos_val = vector_dot(vector1, vector2) / (magn1 * magn2)
@@ -629,7 +700,7 @@ def matrix_scalar(m, sc):
     mm = [[0.0 for _ in range(len(m[0]))] for _ in range(len(m))]
     for i in range(len(m)):
         for j in range(len(m[0])):
-                mm[i][j] = float(m[i][j] * sc)
+            mm[i][j] = float(m[i][j] * sc)
     return mm
 
 
@@ -657,8 +728,9 @@ def lu_decomposition(matrix_a):
     q = len(matrix_a)
     for idx, m_a in enumerate(matrix_a):
         if len(m_a) != q:
-            raise ValueError("The input must be a square matrix. " +
-                             "Row " + str(idx + 1) + " has a size of " + str(len(m_a)) + ".")
+            raise ValueError(
+                "The input must be a square matrix. " + "Row " + str(idx + 1) + " has a size of " + str(len(m_a)) + "."
+            )
 
     # Return L and U matrices
     return doolittle(matrix_a)
@@ -730,7 +802,7 @@ def lu_factor(matrix_a, b):
 def linspace(start, stop, num, repeat_num, repeat, decimals=18):
     if (num - 2) % repeat > 0:
         raise ValueError("Input value /num/ and /repeat/ do not satisfy the equation")
-    
+
     jump, per_jump = 0, 0
     if 0 < repeat_num * repeat < num - 2:
         jump = num - repeat_num * repeat - 2
@@ -739,7 +811,7 @@ def linspace(start, stop, num, repeat_num, repeat, decimals=18):
             raise ValueError("Input value /repeat_num/ and /jump/ do not satisfy the equation")
     elif repeat_num * repeat > num - 2:
         raise ValueError("Input value /repeat_num/ and /repeat/ do not satisfy the equation")
-    
+
     start = float(start)
     stop = float(stop)
     if abs(start - stop) <= 10e-8:
@@ -761,7 +833,9 @@ def linspace(start, stop, num, repeat_num, repeat, decimals=18):
                 is_jump += 1
 
             for _ in range(repeats):
-                relist += [float(("{:." + str(decimals) + "f}").format((start + (float(x) * float(delta) / float(div)))))]
+                relist += [
+                    float(("{:." + str(decimals) + "f}").format((start + (float(x) * float(delta) / float(div)))))
+                ]
 
         relist += [stop]
         return relist
@@ -772,11 +846,11 @@ def Interpolation(pt, Extr, knownVal):
     # Performs interpolation in a 2D space that is denoted x just for the purpose of the present function, with
     # pt the point where we want to know the value through interpolation
     # knownVal, known values at x0, x1 with eg knownVal[0] = value at x0
-    # Extr = (x0,x1) 
+    # Extr = (x0,x1)
     x0 = Extr[:, 0]
     gx = Extr[:, 1] - x0
     f0 = knownVal[:, 0]
-    f1 = knownVal[:, 1] 
+    f1 = knownVal[:, 1]
     return (pt[0] - x0) / gx * (f1 - f0) + f0
 
 
@@ -789,9 +863,9 @@ def biInterpolate(pt, xExtr, yExtr, knownVal):
     y0 = yExtr[:, 0]
     gx = xExtr[:, 1] - x0
     gy = yExtr[:, 1] - y0
-    f00 = knownVal[:, 0, 0] 
-    f01 = knownVal[:, 0, 1] 
-    f10 = knownVal[:, 1, 0] 
+    f00 = knownVal[:, 0, 0]
+    f01 = knownVal[:, 0, 1]
+    f10 = knownVal[:, 1, 0]
     f11 = knownVal[:, 1, 1]
     bracket = (pt[:, 1] - y0) / gy * (f11 - f10 - f01 + f00) + f10 - f00
     return (pt[:, 0] - x0) / gx * bracket + (pt[:, 1] - y0) / gy * (f01 - f00) + f00
@@ -808,13 +882,13 @@ def triInterpolate(pt, xExtr, yExtr, zExtr, knownVal):
     gx = xExtr[1] - x0
     gy = yExtr[1] - y0
     gz = zExtr[1] - z0
-    f000 = knownVal[:, 0, 0, 0] 
-    f010 = knownVal[:, 0, 1, 0] 
-    f100 = knownVal[:, 1, 0, 0] 
+    f000 = knownVal[:, 0, 0, 0]
+    f010 = knownVal[:, 0, 1, 0]
+    f100 = knownVal[:, 1, 0, 0]
     f110 = knownVal[:, 1, 1, 0]
-    f001 = knownVal[:, 0, 0, 1] 
-    f011 = knownVal[:, 0, 1, 1] 
-    f101 = knownVal[:, 1, 0, 1] 
+    f001 = knownVal[:, 0, 0, 1]
+    f011 = knownVal[:, 0, 1, 1]
+    f101 = knownVal[:, 1, 0, 1]
     f111 = knownVal[:, 1, 1, 1]
     f00 = (pt[2] - z0) / gz * (f001 - f000) + f000
     f01 = (pt[2] - z0) / gz * (f011 - f010) + f010
@@ -825,9 +899,9 @@ def triInterpolate(pt, xExtr, yExtr, zExtr, knownVal):
 
 
 def generate_grid(x0, y0, z0, x1, y1, z1, resolution, order="z"):
-    X = numpy.linspace(x0, x1, resolution+1)
-    Y = numpy.linspace(y0, y1, resolution+1)
-    Z = numpy.linspace(z0, z1, resolution+1)
+    X = numpy.linspace(x0, x1, resolution + 1)
+    Y = numpy.linspace(y0, y1, resolution + 1)
+    Z = numpy.linspace(z0, z1, resolution + 1)
     P = cartesian_product(X, Y, Z, order=order)
     return X, Y, Z, P
 
@@ -850,18 +924,20 @@ def cartesian_product(*arrays, **order):
     dtype = numpy.result_type(*arrays)
     arr = numpy.empty([len(a) for a in arrays] + [la], dtype=dtype)
     for i, a in enumerate(numpy.ix_(*arrays)):
-        arr[...,i] = a
+        arr[..., i] = a
     arr = arr.reshape(-1, la)
     if order == "x":
-        arr[:,0], arr[:,2] = arr[:,2].copy(), arr[:,0].copy()
+        arr[:, 0], arr[:, 2] = arr[:, 2].copy(), arr[:, 0].copy()
     elif order == "y":
-        arr[:,1], arr[:,2] = arr[:,2].copy(), arr[:,1].copy()
+        arr[:, 1], arr[:, 2] = arr[:, 2].copy(), arr[:, 1].copy()
     return arr
+
 
 def binomial_coefficient(k, i):
     if i > k:
-        return 0.
+        return 0.0
     return math.factorial(k) / (math.factorial(k - i) * math.factorial(i))
+
 
 def triangle_normal(v0, v1, v2):
     return np_normalized(numpy.cross(v1 - v0, v2 - v0))

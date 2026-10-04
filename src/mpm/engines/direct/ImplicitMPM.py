@@ -174,14 +174,15 @@ class ImplicitMPM(MPMSolver):
         self.volume_force.fill(0)
         for i in range(self.tractionNum[0]):
             pid = self.traction[i].particleID
-            traction = self.traction[i].traction
+            traction = self.particle_traction_force(i)
             for j in range(self.offset[pid]):
                 grid_id = self.LnID[pid, j]
-                dofs = config.DIM * (self.node2dof[grid_id] - 1)
-                shape_fn = self.shape[pid, j]
-                force = traction * shape_fn
-                for d in ti.static(range(config.DIM)):
-                    self.volume_force[dofs + d] += force[d]
+                if self.grid[grid_id].m > self.val_lim:
+                    dofs = config.DIM * (self.node2dof[grid_id] - 1)
+                    shape_fn = self.shape[pid, j]
+                    force = traction * shape_fn
+                    for d in ti.static(range(config.DIM)):
+                        self.volume_force[dofs + d] += force[d]
 
     @ti.kernel
     def matrix_reset(self):
@@ -429,7 +430,9 @@ class ImplicitMPM(MPMSolver):
                             param1 * disp - 2.0 * param2 * previous_velocity - 2.0 * param3 * previous_acceleration
                         )
                     )
-                    damping_energy = 0.5 * damping * nodal_mass * vel.dot(vel)
+                    velocity_factor = 0.5 * integration[2] / integration[0] / integration[1] / dt
+                    # Integrate the damping force c*m*v_new with respect to displacement.
+                    damping_energy = damping * nodal_mass * disp.dot(vel - 0.5 * velocity_factor * disp)
                     total_energy += inertia_energy + damping_energy
                 self.energy[None] += total_energy
 
@@ -437,9 +440,11 @@ class ImplicitMPM(MPMSolver):
     def get_neumann_energy(self, grid_disp: ti.template()):
         for i in self.neumann.node:
             node_dof = self.neumann.node[i]
-            dofs = config.DIM * (self.node2dof[int(node_dof // config.DIM)] - 1) + int(node_dof % config.DIM)
-            external_force = self.neumann.value[i]
-            self.energy[None] -= grid_disp[dofs] * external_force
+            node_id = int(node_dof // config.DIM)
+            if self.grid[node_id].m > self.val_lim:
+                dofs = config.DIM * (self.node2dof[node_id] - 1) + int(node_dof % config.DIM)
+                external_force = self.neumann.value[i]
+                self.energy[None] -= grid_disp[dofs] * external_force
 
     @ti.func
     def local_stiffness(self, dF_dx1, dF_dx2, d2Psi_dF2):
@@ -597,8 +602,11 @@ class ImplicitMPM(MPMSolver):
     def apply_neumann(self):
         for i in self.neumann.node:
             node_dof = self.neumann.node[i]
-            dofs = config.DIM * (self.node2dof[int(node_dof // config.DIM)] - 1) + int(node_dof % config.DIM)
-            self.rhs[dofs] += self.neumann.value[i]
+            node_id = int(node_dof // config.DIM)
+            # Inactive nodes inherit the preceding active node's prefix sum.
+            if self.grid[node_id].m > self.val_lim:
+                dofs = config.DIM * (self.node2dof[node_id] - 1) + int(node_dof % config.DIM)
+                self.rhs[dofs] += self.neumann.value[i]
 
     @ti.kernel
     def compute_particle_disp(self, grid_disp: ti.template()) -> ti.f64:

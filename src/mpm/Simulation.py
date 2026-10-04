@@ -63,6 +63,7 @@ class Simulation(object):
         self.integration_scheme = None
         self.visualize = True
         self.particle_shifting = False
+        self.particle_shifting_scale = 1.0
         self.density_projection = False
         self.density_projection_tolerance = 0.01
         self.density_projection_error_clamp = 0.01
@@ -671,6 +672,12 @@ class Simulation(object):
     def set_particle_shifting(self, particle_shifting):
         self.particle_shifting = particle_shifting
         GlobalVariable.PARTICLESHIFTING = particle_shifting
+
+    def set_particle_shifting_scale(self, particle_shifting_scale):
+        particle_shifting_scale = float(particle_shifting_scale)
+        if not 0.0 <= particle_shifting_scale <= 1.0:
+            raise ValueError("particle_shifting_scale must be in [0, 1]")
+        self.particle_shifting_scale = particle_shifting_scale
 
     def set_density_projection(
         self, density_projection, tolerance=0.01, error_clamp=0.1, max_shift_ratio=0.05, interior_only=True

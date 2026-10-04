@@ -50,8 +50,8 @@ def cube_centers(count):
 
 def main():
     args = arguments()
-    # ponytail: cap broad-phase over-allocation; raise the env value only if the runtime reports overflow.
-    os.environ.setdefault("GT_AFFINE_MAX_HASH_TRIPLETS", "1000000")
+    # ponytail: fixed cap avoids broad-phase over-allocation; raise it only if a denser packing reports overflow.
+    os.environ.setdefault("GT_AFFINE_MAX_HASH_TRIPLETS", "1500000")
     if str(ROOT) not in sys.path:
         sys.path.insert(0, str(ROOT))
     import geotaichi as gt

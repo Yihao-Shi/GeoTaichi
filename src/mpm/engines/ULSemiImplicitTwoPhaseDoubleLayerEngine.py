@@ -450,6 +450,9 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
             sims.domain,
             scene.element.grid_size,
             scene.element.gnum,
+            scene.element.cnum,
+            sims.particle_shifting_scale,
+            self.cell_type,
             scene.node,
             scene.particle,
             scene.element.LnID,
@@ -475,6 +478,9 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
             sims.domain,
             scene.element.grid_size,
             scene.element.gnum,
+            scene.element.cnum,
+            sims.particle_shifting_scale,
+            self.cell_type,
             scene.node,
             scene.particle,
             scene.element.LnID,
@@ -489,6 +495,7 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
             kernel_constrain_double_layer_particles_to_solid_region2d(
                 int(scene.particleNum[0]),
                 sims.domain,
+                scene.element.grid_size,
                 ti.Vector(start_point.tolist()),
                 ti.Vector(end_point.tolist()),
                 scene.particle,
@@ -530,6 +537,7 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
             kernel_constrain_double_layer_particles_to_solid_region3d(
                 int(scene.particleNum[0]),
                 sims.domain,
+                scene.element.grid_size,
                 ti.Vector(start_point.tolist()),
                 ti.Vector(end_point.tolist()),
                 scene.particle,
@@ -1196,22 +1204,21 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
             scene.element.node_size,
         )
         kernel_normalize_double_layer_nodes2d(scene.mass_cut_off, scene.node)
-        if sims.particle_shifting:
-            if self._update_double_layer_fluid_volume2d(scene):
-                kernel_reset_double_layer_grid(scene.node)
-                kernel_p2g_double_layer_mass2d(
-                    scene.element.grid_nodes,
-                    int(scene.particleNum[0]),
-                    scene.element.grid_size,
-                    scene.element.gnum,
-                    use_affine,
-                    scene.node,
-                    scene.particle,
-                    scene.element.LnID,
-                    scene.element.shape_fn,
-                    scene.element.node_size,
-                )
-                kernel_normalize_double_layer_nodes2d(scene.mass_cut_off, scene.node)
+        if self._update_double_layer_fluid_volume2d(scene):
+            kernel_reset_double_layer_grid(scene.node)
+            kernel_p2g_double_layer_mass2d(
+                scene.element.grid_nodes,
+                int(scene.particleNum[0]),
+                scene.element.grid_size,
+                scene.element.gnum,
+                use_affine,
+                scene.node,
+                scene.particle,
+                scene.element.LnID,
+                scene.element.shape_fn,
+                scene.element.node_size,
+            )
+            kernel_normalize_double_layer_nodes2d(scene.mass_cut_off, scene.node)
         self.apply_velocity_constraints(sims, scene)
         self._apply_solid_plane_node_boundaries2d(scene)
         for _, start_index, end_index, mat_prop in self._iter_twophase_materials(scene):
@@ -1305,6 +1312,7 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
             sims.gravity,
             scene.element.grid_size,
             sims.dt,
+            sims.background_damping,
             scene.node,
             self.fluid_mass_x,
             self.fluid_mass_y,
@@ -1348,6 +1356,7 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
             mac_influenced_node,
             scene.node,
             scene.element.calLength,
+            self.cell_type,
             self.solid_mass_x,
             self.solid_mass_y,
             self.solid_velocity_x,
@@ -1438,22 +1447,21 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
             scene.element.node_size,
         )
         kernel_normalize_double_layer_nodes3d(scene.mass_cut_off, scene.node)
-        if sims.particle_shifting:
-            if self._update_double_layer_fluid_volume3d(scene):
-                kernel_reset_double_layer_grid(scene.node)
-                kernel_p2g_double_layer_mass3d(
-                    scene.element.grid_nodes,
-                    int(scene.particleNum[0]),
-                    scene.element.grid_size,
-                    scene.element.gnum,
-                    use_affine,
-                    scene.node,
-                    scene.particle,
-                    scene.element.LnID,
-                    scene.element.shape_fn,
-                    scene.element.node_size,
-                )
-                kernel_normalize_double_layer_nodes3d(scene.mass_cut_off, scene.node)
+        if self._update_double_layer_fluid_volume3d(scene):
+            kernel_reset_double_layer_grid(scene.node)
+            kernel_p2g_double_layer_mass3d(
+                scene.element.grid_nodes,
+                int(scene.particleNum[0]),
+                scene.element.grid_size,
+                scene.element.gnum,
+                use_affine,
+                scene.node,
+                scene.particle,
+                scene.element.LnID,
+                scene.element.shape_fn,
+                scene.element.node_size,
+            )
+            kernel_normalize_double_layer_nodes3d(scene.mass_cut_off, scene.node)
         self.apply_velocity_constraints(sims, scene)
         self._apply_solid_plane_node_boundaries3d(scene)
         for _, start_index, end_index, mat_prop in self._iter_twophase_materials(scene):
@@ -1558,6 +1566,7 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
             sims.gravity,
             scene.element.grid_size,
             sims.dt,
+            sims.background_damping,
             scene.node,
             self.fluid_mass_x,
             self.fluid_mass_y,
@@ -1613,6 +1622,7 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
             mac_influenced_node,
             scene.node,
             scene.element.calLength,
+            self.cell_type,
             self.solid_mass_x,
             self.solid_mass_y,
             self.solid_mass_z,

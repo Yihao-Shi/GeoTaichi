@@ -1,4 +1,4 @@
-"""Compare the complete E4 settling trajectory with the unmodified experiment.xls."""
+"""Compare the complete E4 settling trajectory with the repository CSV data."""
 
 import argparse
 import json
@@ -13,23 +13,16 @@ from scipy.integrate import solve_ivp
 
 
 def load_velocity_experiment(path):
-    import xlrd
-
-    sheet = xlrd.open_workbook(str(path)).sheet_by_index(0)
-    headers = sheet.row_values(0)
-    return np.array(
-        [
-            [sheet.cell_value(i, headers.index("Line 1")), sheet.cell_value(i, headers.index("data 1"))]
-            for i in range(1, sheet.nrows)
-        ],
-        dtype=float,
-    )
+    data = np.loadtxt(path, delimiter=",", skiprows=1, dtype=float)
+    if data.ndim != 2 or data.shape[1] != 2 or not np.isfinite(data).all():
+        raise ValueError(f"invalid Ten Cate velocity data in {path}")
+    return data
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output", type=Path, nargs="?", default=Path(__file__).parent / "OutputData/semi_resolved_E4")
-    parser.add_argument("--experiment", type=Path, default=Path(__file__).with_name("experiment.xls"))
+    parser.add_argument("--experiment", type=Path, default=Path(__file__).with_name("experiment.csv"))
     args = parser.parse_args()
     experiment = load_velocity_experiment(args.experiment)
     trajectory = args.output / "trajectory.npz"

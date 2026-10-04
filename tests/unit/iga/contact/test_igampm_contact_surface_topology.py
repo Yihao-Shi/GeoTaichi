@@ -27,10 +27,7 @@ class _SquarePatch:
         return (
             [2, 2, 2, 2],
             np.asarray([0, 1, 1, 2, 2, 3, 3, 0], dtype=np.int32),
-            [
-                np.asarray([0.0, 0.0, 1.0, 1.0], dtype=np.float64)
-                for _ in range(4)
-            ],
+            [np.asarray([0.0, 0.0, 1.0, 1.0], dtype=np.float64) for _ in range(4)],
             [1, 1, 1, 1],
         )
 
@@ -93,6 +90,34 @@ def test_explicit_surface_include_and_exclude():
     assert excluded.num_surfaces == 6
     assert (0, 0) not in excluded.surface_keys
     assert (1, 3) not in excluded.surface_keys
+
+
+def test_rectangular_boundary_uses_each_edges_parametric_direction():
+    from src.nurbs.BasicSurface import Rectangle
+
+    rectangle = Rectangle()
+    rectangle.set_parameters(size=[0.03, 1.0])
+    rectangle.generate_knot_u(2, 3)
+    rectangle.generate_knot_v(3, 7)
+    rectangle.generate_ctrlpts()
+    rectangle.generate_weights()
+    sizes, _, knots, degrees = rectangle.gather_boundary_ctrlpts()
+    assert sizes == [3, 7, 3, 7]
+    assert degrees == [2, 3, 2, 3]
+    for size, knot, degree in zip(sizes, knots, degrees):
+        assert len(knot) - degree - 1 == size
+    np.testing.assert_array_equal(knots[1], rectangle.knot_vector_v)
+    np.testing.assert_array_equal(knots[3], rectangle.knot_vector_v)
+
+    iga = SimpleNamespace(
+        patch=SimpleNamespace(
+            primitive=SimpleNamespace(body=OrderedDict(rect={"primitive": rectangle})),
+            prefix_total_num_ctrlpts=np.asarray([0, 21], dtype=np.int32),
+        )
+    )
+    surface = CouplingContactSurface(iga, contact_surface_include=[(0, 0), (0, 1)])
+    assert surface.num_surfaces == 2
+    assert surface.total_ctrlpts == 10
 
 
 @pytest.mark.parametrize(

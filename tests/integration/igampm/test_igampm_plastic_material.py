@@ -13,6 +13,7 @@ pytestmark = [
     pytest.mark.coupling,
     pytest.mark.contact,
     pytest.mark.assembly,
+    pytest.mark.isolated_dimension(2),
 ]
 
 
@@ -49,7 +50,7 @@ def _build_iga_rectangle(output_path, axisymmetric=False):
     )
 
 
-def _build_plastic_mpm_particle(output_path, material_name, axisymmetric=False):
+def _build_plastic_mpm_particle(output_path, material_name, axisymmetric=False, damping=0.0):
     from src.mpm.engines.direct.ImplicitULMPM import ImplicitULMPM
     from src.mpm.generator.Body import Body
 
@@ -85,6 +86,7 @@ def _build_plastic_mpm_particle(output_path, material_name, axisymmetric=False):
         bodies=body,
         newmark=[1.0, 0.5, 1.0],
         gravity=[0.0, 0.0],
+        damping=damping,
         residual=1.0e-8,
         interval=1,
         step=1,
@@ -98,6 +100,74 @@ def _build_plastic_mpm_particle(output_path, material_name, axisymmetric=False):
     )
     mpm.init_F0()
     return mpm
+
+
+@pytest.mark.parametrize("axisymmetric", [False, True])
+def test_cpt_total_potential_force_and_exact_hessian_by_fd(taichi_runtime, tmp_path, monkeypatch, axisymmetric):
+    """Differentiate the actual coupled potential with frozen material history."""
+    config.set_dimension(2)
+    from src.igampm import IGAMPM
+    import src.physics_model.contact_model.ipc.NurbsContact as nurbs_contact
+
+    # Resolve the closest point below the finite-difference perturbation scale.
+    monkeypatch.setattr(nurbs_contact, "CLOSEST_POINT_STATIONARITY_TOL", 1e-13)
+
+    iga = _build_iga_rectangle(tmp_path / "iga", axisymmetric=axisymmetric)
+    mpm = _build_plastic_mpm_particle(tmp_path / "mpm", "DruckerPrager", axisymmetric=axisymmetric, damping=0.05)
+    engine = IGAMPM(
+        iga,
+        mpm,
+        kappa=1e4,
+        dhat=0.08,
+        dmin=0.005,
+        barrier_nnz=20_000,
+        axisymmetric=axisymmetric,
+        axis_offset=0.0,
+        use_physical_barrier=True,
+    ).build()
+    # The exact Hessian must be checked before the production PSD projection.
+    engine.project_lagged_hessians = False
+    exact_material = mpm.assemble_stiffness_matrix_hash
+    monkeypatch.setattr(
+        mpm,
+        "assemble_stiffness_matrix_hash",
+        lambda *args, **kwargs: exact_material(*args, project_spd=False, exact_plastic_tangent=True),
+    )
+    engine.begin_implicit_ipc_step()
+    mpm.F0.from_numpy(np.array([np.diag([1.18, 0.82, 0.90])]))
+    mpm.init_particle_pressure(np.array([0]), [0.0, -150.0], np.array([0.01]))
+    mpm.traction_p2g()
+    iga.patch.velocitys.from_numpy(np.tile([0.03, -0.02], (iga.degree_of_freedom // 2, 1)))
+    iga.patch.accelerations.from_numpy(np.tile([0.2, -0.1], (iga.degree_of_freedom // 2, 1)))
+    system = engine.assemble_monolithic_newton_system(include_friction=False)
+    assert engine.curr_barrier_contact_num > 0
+    count = system["active_dof"]
+    base_mpm = mpm.grid_disp.to_numpy()
+    base = np.linspace(-2e-5, 3e-5, count)
+
+    def evaluate(values, need_matrix=False):
+        iga.grid_disp.from_numpy(values[: iga.degree_of_freedom])
+        displacement = base_mpm.copy()
+        displacement[: mpm.active_dof] = values[iga.degree_of_freedom :]
+        mpm.grid_disp.from_numpy(displacement)
+        assembled = engine.assemble_monolithic_newton_system(include_friction=False, need_matrix=need_matrix)
+        energy = engine.coupled_potential_energy(include_friction=False)
+        gradient = -engine.monolithic_physical_rhs.to_numpy()[:count]
+        matrix = assembled["matrix"].to_scipy(assembled["active_nodes"]).toarray() if need_matrix else None
+        return energy, gradient.copy(), matrix
+
+    _, gradient, hessian = evaluate(base, True)
+    step = 2e-6
+    fd_gradient, fd_hessian = np.zeros_like(gradient), np.zeros_like(hessian)
+    for column in range(count):
+        delta = np.zeros_like(base)
+        delta[column] = step
+        plus, minus = evaluate(base + delta), evaluate(base - delta)
+        fd_gradient[column] = (plus[0] - minus[0]) / (2 * step)
+        fd_hessian[:, column] = (plus[1] - minus[1]) / (2 * step)
+    np.testing.assert_allclose(gradient, fd_gradient, rtol=2e-6, atol=2e-5)
+    np.testing.assert_allclose(hessian, fd_hessian, rtol=3e-4, atol=3e-2)
+    np.testing.assert_allclose(hessian, hessian.T, rtol=1e-11, atol=1e-7)
 
 
 @pytest.mark.parametrize(
@@ -155,6 +225,7 @@ def test_plastic_ulmpm_uses_monolithic_ipc_accd_and_transactional_history(
     volumetric_before = mpm.material.volumetric_plastic_strain.to_numpy().copy()
     plastic_inverse_before = mpm.material.plastic_deformation_inverse.to_numpy().copy()
     deformation_before = mpm.F0.to_numpy().copy()
+    grid_mass_before = mpm.grid.m.to_numpy().copy()
 
     initialize_barrier = engine.initialize_barrier
     barrier_calls = 0
@@ -163,6 +234,7 @@ def test_plastic_ulmpm_uses_monolithic_ipc_accd_and_transactional_history(
         nonlocal barrier_calls
         barrier_calls += 1
         if barrier_calls == 2:
+            mpm.grid.m.fill(13.0)
             raise RuntimeError("post-commit contact refresh failed")
         return initialize_barrier(*args)
 
@@ -171,6 +243,7 @@ def test_plastic_ulmpm_uses_monolithic_ipc_accd_and_transactional_history(
         engine.accept_implicit_ipc_step()
 
     np.testing.assert_array_equal(mpm.F0.to_numpy(), deformation_before)
+    np.testing.assert_array_equal(mpm.grid.m.to_numpy(), grid_mass_before)
     np.testing.assert_array_equal(mpm.material.equivalent_plastic_strain.to_numpy(), equivalent_before)
     np.testing.assert_array_equal(mpm.material.volumetric_plastic_strain.to_numpy(), volumetric_before)
     np.testing.assert_array_equal(mpm.material.plastic_deformation_inverse.to_numpy(), plastic_inverse_before)

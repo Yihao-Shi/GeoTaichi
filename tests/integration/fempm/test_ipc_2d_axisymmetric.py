@@ -33,7 +33,7 @@ def taichi_cpu_runtime():
     ti.reset()
 
 
-def _coupled_system(tmp_path, axisymmetric, search, mpm_material="NeoHookean"):
+def _coupled_system(tmp_path, axisymmetric, search, mpm_material="NeoHookean", damping=0.0):
     radial_origin = 0.5 if axisymmetric else 0.0
     contact_radius = 1.0 if axisymmetric else 0.5
 
@@ -74,6 +74,7 @@ def _coupled_system(tmp_path, axisymmetric, search, mpm_material="NeoHookean"):
         configuration="ULMPM",
         domain=[2.0, 1.0],
         gravity=[0.0, 0.0],
+        background_damping=damping,
         visualize=False,
         axisymmetric=axisymmetric,
         axis_offset=0.0,
@@ -150,6 +151,70 @@ def _coupled_system(tmp_path, axisymmetric, search, mpm_material="NeoHookean"):
     coupling.add_ipc_property(0, 0, friction_coefficient=0.2)
     coupling.add_essentials()
     return coupling
+
+
+@pytest.mark.parametrize("axisymmetric", [False, True])
+def test_cpt_total_potential_force_and_exact_hessian_by_fd(tmp_path, monkeypatch, axisymmetric):
+    """Check the physical derivatives before constraints and PSD projection."""
+    coupling = _coupled_system(tmp_path, axisymmetric, "LinkedCell", "DruckerPrager", damping=0.05)
+    engine, fem, mpm = coupling.enginer, coupling.fem.engine, coupling.mpm.enginer
+    # Exact derivatives are a diagnostic mode; production still uses PSD Newton.
+    fem.classical_assembler.project_pd = False
+    exact_material = mpm.assemble_stiffness_matrix_hash
+    monkeypatch.setattr(
+        mpm,
+        "assemble_stiffness_matrix_hash",
+        lambda *args, **kwargs: exact_material(*args, project_spd=False, exact_plastic_tangent=True),
+    )
+    exact_contact = engine.contact.assemble
+    monkeypatch.setattr(engine.contact, "assemble", lambda *args, **kwargs: exact_contact(*args, project_pd=False))
+    fem.damping = 0.03
+    fem.state.old_velocity.from_numpy(np.tile([0.03, -0.02, 0.0], (engine.fem_nodes, 1)))
+    fem.state.old_acceleration.from_numpy(np.tile([0.2, -0.1, 0.0], (engine.fem_nodes, 1)))
+    fem.state.external_force.from_numpy(np.tile([0.4, -0.8, 0.0], (engine.fem_nodes, 1)))
+    mpm.F0.from_numpy(np.array([np.diag([1.18, 0.82, 0.90])]))
+    mpm.init_particle_pressure(np.array([0]), [0.0, -150.0], np.array([0.01]))
+    mpm.traction_p2g()
+    # Remove only in-plane constraints, leaving virtual z components fixed.
+    constraints = fem.state.constrained.to_numpy().reshape(-1, 3)
+    constraints[:, :2] = 0
+    fem.state.constrained.from_numpy(constraints.reshape(-1))
+    system = engine.assemble_system(include_friction=False)
+    assert system["contact_count"] > 0
+    count = system["active_dof"]
+    free = np.flatnonzero(np.arange(count) % 3 != 2)
+    base_positions = fem.state.position.to_numpy()
+    base_displacement = mpm.grid_disp.to_numpy()
+    base = np.concatenate([base_positions.reshape(-1), np.zeros(count - 3 * engine.fem_nodes)])
+    base[free] += np.linspace(-2e-5, 3e-5, free.size)
+
+    def evaluate(values, need_matrix=False):
+        fem.state.position.from_numpy(values[: 3 * engine.fem_nodes].reshape(-1, 3))
+        displacement = base_displacement.copy()
+        displacement[: mpm.active_dof] = values[3 * engine.fem_nodes :].reshape(-1, 3)[:, :2].reshape(-1)
+        mpm.grid_disp.from_numpy(displacement)
+        energy = engine._total_energy(fem.state.position, mpm.grid_disp, False)
+        assembled = engine.assemble_system(include_friction=False, need_matrix=need_matrix)
+        gradient = -engine.physical_rhs.to_numpy()[:count][free]
+        matrix = (
+            assembled["matrix"].to_scipy(assembled["active_nodes"]).toarray()[np.ix_(free, free)]
+            if need_matrix
+            else None
+        )
+        return energy, gradient.copy(), matrix
+
+    _, gradient, hessian = evaluate(base, True)
+    step = 2e-7
+    fd_gradient, fd_hessian = np.zeros_like(gradient), np.zeros_like(hessian)
+    for column, dof in enumerate(free):
+        delta = np.zeros_like(base)
+        delta[dof] = step
+        plus, minus = evaluate(base + delta), evaluate(base - delta)
+        fd_gradient[column] = (plus[0] - minus[0]) / (2 * step)
+        fd_hessian[:, column] = (plus[1] - minus[1]) / (2 * step)
+    np.testing.assert_allclose(gradient, fd_gradient, rtol=2e-6, atol=2e-5)
+    np.testing.assert_allclose(hessian, fd_hessian, rtol=3e-4, atol=3e-2)
+    np.testing.assert_allclose(hessian, hessian.T, rtol=1e-11, atol=1e-7)
 
 
 @pytest.mark.parametrize(
@@ -234,6 +299,7 @@ def test_fempm_failed_plastic_step_restores_device_state(tmp_path, monkeypatch):
     particle_position = mpm.particle.x.to_numpy().copy()
     particle_velocity = mpm.particle.v.to_numpy().copy()
     particle_acceleration = mpm.particle.a.to_numpy().copy()
+    grid_mass = mpm.grid.m.to_numpy().copy()
     grid_velocity = mpm.grid.v.to_numpy().copy()
     grid_acceleration = mpm.grid.a.to_numpy().copy()
     deformation = mpm.F0.to_numpy().copy()
@@ -246,6 +312,7 @@ def test_fempm_failed_plastic_step_restores_device_state(tmp_path, monkeypatch):
         coupling.fem.engine.state.velocity.fill(8.0)
         mpm.particle.x.fill(9.0)
         mpm.particle.v.fill(10.0)
+        mpm.grid.m.fill(13.0)
         mpm.F0.fill(2.0)
         mpm.material.equivalent_plastic_strain.fill(3.0)
         mpm.material.volumetric_plastic_strain.fill(4.0)
@@ -262,6 +329,7 @@ def test_fempm_failed_plastic_step_restores_device_state(tmp_path, monkeypatch):
     np.testing.assert_array_equal(mpm.particle.v.to_numpy(), particle_velocity)
     np.testing.assert_array_equal(mpm.particle.a.to_numpy(), particle_acceleration)
     np.testing.assert_array_equal(mpm.grid.v.to_numpy(), grid_velocity)
+    np.testing.assert_array_equal(mpm.grid.m.to_numpy(), grid_mass)
     np.testing.assert_array_equal(mpm.grid.a.to_numpy(), grid_acceleration)
     np.testing.assert_array_equal(mpm.F0.to_numpy(), deformation)
     np.testing.assert_array_equal(mpm.material.equivalent_plastic_strain.to_numpy(), equivalent)
@@ -274,6 +342,7 @@ def test_fempm_failed_plastic_step_restores_device_state(tmp_path, monkeypatch):
     def fail_during_preparation():
         mpm.particle.x.fill(11.0)
         mpm.grid.v.fill(12.0)
+        mpm.grid.m.fill(14.0)
         raise RuntimeError("synthetic preparation failure")
 
     monkeypatch.setattr(engine, "_prepare_mpm_step", fail_during_preparation)
@@ -281,6 +350,7 @@ def test_fempm_failed_plastic_step_restores_device_state(tmp_path, monkeypatch):
         engine.substep(verbose=False)
 
     np.testing.assert_array_equal(mpm.particle.x.to_numpy(), particle_position)
+    np.testing.assert_array_equal(mpm.grid.m.to_numpy(), grid_mass)
     np.testing.assert_array_equal(mpm.grid.v.to_numpy(), grid_velocity)
     np.testing.assert_array_equal(mpm.grid.a.to_numpy(), grid_acceleration)
     np.testing.assert_array_equal(mpm.F0.to_numpy(), deformation)

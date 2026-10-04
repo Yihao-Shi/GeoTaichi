@@ -309,15 +309,19 @@ def axisymmetric_particle_count(grid_size, particles_per_cell=PARTICLES_PER_CELL
     return int(np.prod(cells)) * int(particles_per_cell) ** 2
 
 
-def axisymmetric_surface_pressure_load(grid_size, pressure=SURFACE_PRESSURE):
-    """Return consistent axial grid loads for pressure on a revolved top edge."""
-    radial_cells = int(round(SOIL_SIZE[0] / float(grid_size)))
-    radii = np.arange(radial_cells + 1, dtype=np.float64) * float(grid_size)
-    forces = np.zeros(radial_cells + 1, dtype=np.float64)
-    for edge, radius in enumerate(radii[:-1]):
-        forces[edge] -= 2.0 * np.pi * pressure * (0.5 * radius * grid_size + grid_size**2 / 6.0)
-        forces[edge + 1] -= 2.0 * np.pi * pressure * (0.5 * radius * grid_size + grid_size**2 / 3.0)
-    return forces
+def axisymmetric_surface_pressure_particles(points, grid_size):
+    """Return material-point IDs and reference annular areas for top pressure.
+
+    Each point represents a reference annulus of radial width dx/ppc. The
+    forces keep that reference area and follow the selected particle IDs;
+    current shape functions transfer them to the grid at every step.
+    """
+    points = np.asarray(points, dtype=np.float64)
+    particle_spacing = float(grid_size) / PARTICLES_PER_CELL
+    top_height = SOIL_ORIGIN[1] + SOIL_SIZE[1] - 0.5 * particle_spacing
+    particle_ids = np.flatnonzero(np.isclose(points[:, 1], top_height, rtol=0.0, atol=1.0e-12)).astype(np.int32)
+    surface_area = 2.0 * np.pi * points[particle_ids, 0] * particle_spacing
+    return particle_ids, surface_area
 
 
 def axisymmetric_initial_deformation_gradient():
@@ -331,7 +335,7 @@ def axisymmetric_initial_deformation_gradient():
 
 
 def _direct_axisymmetric_boundaries(grid_size):
-    from src.mpm.boundaries.BoundaryCondition import DirichletBoundary, NeumannBoundary
+    from src.mpm.boundaries.BoundaryCondition import DirichletBoundary
 
     ratios = np.asarray(DOMAIN) / float(grid_size)
     grid_num = np.floor(ratios + 8.0 * np.finfo(float).eps * np.maximum(1.0, np.abs(ratios))).astype(np.int32) + 1
@@ -345,12 +349,7 @@ def _direct_axisymmetric_boundaries(grid_size):
         [0.0] * (radial_fixed.size + bottom.size),
     )
 
-    top_row = int(round(SOIL_SIZE[1] / float(grid_size)))
-    top = nodes[top_row, :]
-    pressure_force = axisymmetric_surface_pressure_load(grid_size)
-    neumann = NeumannBoundary()
-    neumann.append([list(2 * top + 1)], list(pressure_force))
-    return dirichlet, neumann
+    return dirichlet
 
 
 def configure_direct_axisymmetric_mpm(
@@ -396,8 +395,7 @@ def configure_direct_axisymmetric_mpm(
         raise RuntimeError(f"axisymmetric CPT generated {particle_count} particles; expected {expected_count}")
     mpm.add_body(body)
     mpm.memory_allocate({"max_particle_number": particle_count}, log=False)
-    dirichlet, neumann = _direct_axisymmetric_boundaries(grid_size)
-    mpm.add_boundary_condition(dirichlet=dirichlet, neumann=neumann)
+    mpm.add_boundary_condition(dirichlet=_direct_axisymmetric_boundaries(grid_size))
     mpm.add_material(**dp_direct_material())
     mpm.add_element({"ElementSize": grid_size, "ShapeFunction": "Linear"})
     step_count = int(math.ceil(simulation_time / dt))
@@ -416,6 +414,9 @@ def configure_direct_axisymmetric_mpm(
             "project_pd": True,
         }
     )
+    mpm.add_engine()
+    particle_ids, surface_area = axisymmetric_surface_pressure_particles(body.bodies["cpt_soil"]["points"], grid_size)
+    mpm.enginer.init_particle_pressure(particle_ids, [0.0, -SURFACE_PRESSURE], surface_area)
     return grid_size, particle_count
 
 

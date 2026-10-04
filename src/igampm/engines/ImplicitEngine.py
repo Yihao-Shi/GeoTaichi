@@ -72,6 +72,7 @@ class ImplicitEngineMixin:
             if ti.static(self.mpm_has_plastic_history):
                 self.implicit_snapshot_mpm_plastic_history[particle] = self.mpm.material.get_history_state(particle)
         for node in self.mpm.grid:
+            self.implicit_snapshot_grid_mass[node] = self.mpm.grid[node].m
             self.implicit_snapshot_grid_velocity[node] = self.mpm.grid[node].v
             self.implicit_snapshot_grid_acceleration[node] = self.mpm.grid[node].a
 
@@ -92,6 +93,7 @@ class ImplicitEngineMixin:
                     self.implicit_snapshot_mpm_plastic_history[particle],
                 )
         for node in self.mpm.grid:
+            self.mpm.grid[node].m = self.implicit_snapshot_grid_mass[node]
             self.mpm.grid[node].v = self.implicit_snapshot_grid_velocity[node]
             self.mpm.grid[node].a = self.implicit_snapshot_grid_acceleration[node]
 
@@ -541,6 +543,9 @@ class ImplicitEngineMixin:
     @ti.kernel
     def _split_device_monolithic_correction(self, active_mpm_dof: ti.i32):
         iga_dof = ti.static(self.iga.degree_of_freedom)
+        for dof in range(iga_dof + active_mpm_dof):
+            if self.monolithic_fixed[dof] != 0:
+                self.monolithic_correction[dof] = self.monolithic_fixed_correction[dof]
         for dof in self.iga.incre_resolution:
             self.iga.incre_resolution[dof] = self.monolithic_correction[dof]
         for dof in self.mpm.incre_resolution:
@@ -1324,7 +1329,10 @@ class ImplicitEngineMixin:
         initial_force_residual = None
         force_tolerance = math.inf
         convergence_reason = None
-        use_residual_merit = bool(getattr(self, "mpm_has_plastic_history", False))
+        has_plastic_history = bool(getattr(self, "mpm_has_plastic_history", False))
+        has_incremental_potential = has_plastic_history and bool(
+            getattr(getattr(self.mpm, "material", None), "has_incremental_potential", False)
+        )
         semi_progress = 0.0
         for iteration in range(max_iterations):
             if self.is_semi and iteration > 1 and semi_progress > 0.999:
@@ -1335,6 +1343,11 @@ class ImplicitEngineMixin:
             active_dof = int(last_system["active_dof"])
             force_residual = float(self._device_monolithic_free_rhs_norm(active_dof))
             dirichlet_residual = float(self._device_dirichlet_residual(active_dof))
+            # Prescribed motion can increase potential through boundary work.
+            # Once imposed data are reached, use the material's energy merit.
+            use_residual_merit = has_plastic_history and (
+                not has_incremental_potential or dirichlet_residual > self.monolithic_dirichlet_tolerance
+            )
             self.last_monolithic_force_residual = force_residual
             self.last_monolithic_dirichlet_residual = dirichlet_residual
             if initial_force_residual is None:

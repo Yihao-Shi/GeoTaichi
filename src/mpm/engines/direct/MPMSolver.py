@@ -200,7 +200,12 @@ class MPMSolver:
             a=ti.types.vector(config.DIM, ti.f64),  # acceleration
         )
 
-        self.traction_dtype = ti.types.struct(particleID=ti.i32, traction=ti.types.vector(config.DIM, ti.f64))
+        self.traction_dtype = ti.types.struct(
+            particleID=ti.i32,
+            traction=ti.types.vector(config.DIM, ti.f64),
+            pressure=ti.types.vector(config.DIM, ti.f64),
+            surface_area=ti.f64,
+        )
 
         self.domain = kwargs.get("domain")
         self.dx = kwargs.get("dx")
@@ -421,6 +426,51 @@ class MPMSolver:
         self.compute_traction = True
         self.assemble_traction_step = self.traction_p2g
         self.add_traction(traction, ti.func(region))
+
+    def init_particle_pressure(self, particle_ids, pressure, surface_area):
+        """Store pressure and reference area on material-point boundary records.
+
+        Like the native particle traction boundary, P2G multiplies pressure
+        by area and uses the current particle support. Area is fixed here.
+        """
+        ids = np.asarray(particle_ids)
+        if ids.ndim != 1 or not np.issubdtype(ids.dtype, np.integer):
+            raise ValueError("particle pressure IDs must be a one-dimensional integer array")
+        if np.any(ids < 0) or np.any(ids >= self.n_particles):
+            raise ValueError("particle pressure IDs must refer to existing particles")
+        pressure = np.asarray(pressure, dtype=np.float64)
+        area = np.asarray(surface_area, dtype=np.float64)
+        if pressure.shape != (config.DIM,) or np.any(~np.isfinite(pressure)):
+            raise ValueError("particle pressure must be a finite vector with one component per dimension")
+        if area.shape != ids.shape or np.any(~np.isfinite(area)) or np.any(area <= 0.0):
+            raise ValueError("particle pressure requires one finite positive reference area per particle")
+        start = int(self.tractionNum[0])
+        if start + ids.size > self.traction.shape[0]:
+            raise ValueError("particle pressure exceeds the allocated traction_number")
+        self.add_particle_pressure(
+            start, np.ascontiguousarray(ids, dtype=np.int32), pressure, np.ascontiguousarray(area)
+        )
+        self.tractionNum[0] = start + ids.size
+        self.compute_traction = True
+        self.assemble_traction_step = self.traction_p2g
+
+    @ti.kernel
+    def add_particle_pressure(
+        self,
+        start: int,
+        ids: ti.types.ndarray(),
+        pressure: ti.types.vector(config.DIM, ti.f64),
+        area: ti.types.ndarray(),
+    ):
+        for i in range(ids.shape[0]):
+            self.traction[start + i].particleID = ids[i]
+            self.traction[start + i].pressure = pressure
+            self.traction[start + i].surface_area = area[i]
+
+    @ti.func
+    def particle_traction_force(self, traction_id):
+        boundary = self.traction[traction_id]
+        return boundary.traction + boundary.pressure * boundary.surface_area
 
     @ti.kernel
     def add_body(

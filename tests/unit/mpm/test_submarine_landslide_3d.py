@@ -5,6 +5,8 @@ import numpy as np
 
 from examples.mmpm.SubmarineLandslide.submarine_landslide_3d import write_metrics
 from examples.mmpm.GranularWaterLeakage3D.granular_water_leakage_3d import (
+    DOMAIN as LEAKAGE_DOMAIN,
+    boundaries as leakage_boundaries,
     write_metrics as write_leakage_metrics,
 )
 from examples.mmpm.TwoPhaseLSDEMCoupling.sphere_impact_submerged_bed_3d import (
@@ -46,9 +48,17 @@ def test_landslide_metrics_require_conserved_downslope_motion(tmp_path):
 def test_sphere_impact_metrics_require_entry_deceleration_and_coupling_force(tmp_path):
     particle_dir = tmp_path / "particles"
     particle_dir.mkdir()
-    phase = np.array([2, 2, 1, 1], dtype=np.uint8)
-    active = np.ones(4, dtype=np.uint8)
-    position = np.array([[0.05, 0.05, 0.12], [0.15, 0.15, 0.14], [0.05, 0.15, 0.05], [0.15, 0.05, 0.08]])
+    directions = []
+    for polar in range(4):
+        z = -0.75 + 0.5 * polar
+        radial = np.sqrt(1.0 - z * z)
+        for azimuth in range(8):
+            angle = 2.0 * np.pi * (azimuth + 0.5) / 8.0
+            directions.append([radial * np.cos(angle), radial * np.sin(angle), z])
+    fluid = np.array([0.1, 0.1, 0.09]) + 0.015 * np.asarray(directions)
+    position = np.vstack((fluid, [0.05, 0.15, 0.05], [0.15, 0.05, 0.08]))
+    phase = np.r_[np.full(len(fluid), 2, dtype=np.uint8), np.ones(2, dtype=np.uint8)]
+    active = np.ones(len(position), dtype=np.uint8)
     for frame, (time, center_z, vertical_velocity, force) in enumerate(
         ((0.0, 0.1625, -4.429446918, 0.0), (0.12, 0.09, -0.2, 100.0))
     ):
@@ -58,9 +68,9 @@ def test_sphere_impact_metrics_require_entry_deceleration_and_coupling_force(tmp
             active=active,
             phase=phase,
             position=position,
-            fluid_velocity=np.zeros((4, 3)),
-            solid_velocity=np.zeros((4, 3)),
-            pressure=np.zeros(4),
+            fluid_velocity=np.zeros((len(position), 3)),
+            solid_velocity=np.zeros((len(position), 3)),
+            pressure=np.zeros(len(position)),
         )
         np.savez(
             particle_dir / f"LSDEMRigid{frame:06d}.npz",
@@ -71,7 +81,7 @@ def test_sphere_impact_metrics_require_entry_deceleration_and_coupling_force(tmp
         )
 
     args = SimpleNamespace(dx=0.005, dt=1.0e-5, time=0.12, drop_height=1.0, ppc=2, strict=True)
-    write_sphere_impact_metrics(tmp_path, 2, 2, args)
+    write_sphere_impact_metrics(tmp_path, len(fluid), 2, args)
 
     assert json.loads((tmp_path / "metrics.json").read_text())["passed"]
 
@@ -103,3 +113,15 @@ def test_leakage_metrics_require_water_to_reach_receiver(tmp_path):
     write_leakage_metrics(tmp_path, 2, 2, args)
 
     assert json.loads((tmp_path / "metrics.json").read_text())["passed"]
+
+
+def test_leakage_upper_tank_side_walls_cover_air_padding():
+    walls = leakage_boundaries(0.005)
+    physical_top = 0.325
+    assert all(wall["BoundaryType"] == "SolidCell" for wall in walls[:4])
+    assert all(wall["EndPoint"][2] == physical_top for wall in walls[:4])
+    assert all(wall["BoundaryType"] == "SolidPlaneCell" for wall in walls[4:8])
+    assert all(wall["StartPoint"][2] == physical_top for wall in walls[4:8])
+    assert all(wall["EndPoint"][2] == LEAKAGE_DOMAIN[2] for wall in walls[4:8])
+    assert walls[8]["EndPoint"][2] == walls[8]["StartPoint"][2]
+    assert walls[9]["EndPoint"][2] == walls[9]["StartPoint"][2]

@@ -44,6 +44,7 @@ def parse_args():
     parser.add_argument("--time", type=float, default=6.0)
     parser.add_argument("--save-interval", type=float, default=0.1)
     parser.add_argument("--ppc", type=int, default=2)
+    parser.add_argument("--alpha-pic", type=float, default=1.0)
     parser.add_argument("--pressure-iterations", type=int, default=1000)
     parser.add_argument(
         "--output",
@@ -58,6 +59,8 @@ def parse_args():
 def validate(args):
     if min(args.dx, args.dt, args.time, args.save_interval) <= 0.0 or min(args.ppc, args.pressure_iterations) <= 0:
         raise ValueError("dx, dt, time, save interval, ppc, and pressure iterations must be positive")
+    if not 0.0 <= args.alpha_pic <= 1.0:
+        raise ValueError("alpha-pic must lie in [0, 1]")
     cells = np.asarray(DOMAIN) / args.dx
     if not np.allclose(cells, np.round(cells), atol=1.0e-12, rtol=0.0):
         raise ValueError(f"dx={args.dx:g} must divide domain {DOMAIN}")
@@ -86,9 +89,20 @@ def solid_cell(start, end, normal):
     }
 
 
+def solid_plane_cell(start, end, normal):
+    boundary = solid_cell(start, end, normal)
+    boundary["BoundaryType"] = "SolidPlaneCell"
+    return boundary
+
+
 def boundaries(dx):
     ux0, uy0, uz0 = UPPER_ORIGIN
-    ux1, uy1, uz1 = UPPER_ORIGIN + UPPER_SIZE
+    ux1, uy1, physical_top = UPPER_ORIGIN + UPPER_SIZE
+    # The paper's upper boundary is an inlet/free-surface plane enclosed by
+    # the tank sides.  Extend the four side walls through the numerical air
+    # padding so splashed particles cannot bypass a wall whose top was
+    # previously flush with the initial water level.
+    numerical_top = DOMAIN[2]
     rx0, ry0, rz0 = RECEIVER_ORIGIN
     rx1, ry1, rz1 = RECEIVER_ORIGIN + RECEIVER_SIZE
     # A 6 mm slit cannot be represented exactly on the 5 mm pressure grid.
@@ -97,10 +111,17 @@ def boundaries(dx):
     crack_right = crack_left + dx
     return [
         # Upper tank: no-slip side walls and a split bottom leaving the 6 mm crack open.
-        solid_cell((ux0, uy0, uz0), (ux0, uy1, uz1), (-1.0, 0.0, 0.0)),
-        solid_cell((ux1, uy0, uz0), (ux1, uy1, uz1), (1.0, 0.0, 0.0)),
-        solid_cell((ux0, uy0, uz0), (ux1, uy0, uz1), (0.0, -1.0, 0.0)),
-        solid_cell((ux0, uy1, uz0), (ux1, uy1, uz1), (0.0, 1.0, 0.0)),
+        solid_cell((ux0, uy0, uz0), (ux0, uy1, physical_top), (-1.0, 0.0, 0.0)),
+        solid_cell((ux1, uy0, uz0), (ux1, uy1, physical_top), (1.0, 0.0, 0.0)),
+        solid_cell((ux0, uy0, uz0), (ux1, uy0, physical_top), (0.0, -1.0, 0.0)),
+        solid_cell((ux0, uy1, uz0), (ux1, uy1, physical_top), (0.0, 1.0, 0.0)),
+        # Plane-only caps prevent splashed particles from bypassing the tank
+        # without adding empty solid cells above the initial free surface to
+        # the multigrid pressure topology.
+        solid_plane_cell((ux0, uy0, physical_top), (ux0, uy1, numerical_top), (-1.0, 0.0, 0.0)),
+        solid_plane_cell((ux1, uy0, physical_top), (ux1, uy1, numerical_top), (1.0, 0.0, 0.0)),
+        solid_plane_cell((ux0, uy0, physical_top), (ux1, uy0, numerical_top), (0.0, -1.0, 0.0)),
+        solid_plane_cell((ux0, uy1, physical_top), (ux1, uy1, numerical_top), (0.0, 1.0, 0.0)),
         solid_cell((ux0, uy0, uz0), (crack_left, uy1, uz0), (0.0, 0.0, -1.0)),
         solid_cell((crack_right, uy0, uz0), (ux1, uy1, uz0), (0.0, 0.0, -1.0)),
         # Open-top receiving container.
@@ -167,6 +188,8 @@ def write_metrics(output, expected_fluid, expected_solid, args):
     rows = np.asarray(rows, dtype=np.float64)
     metrics = {
         "case": "Section 5.1 3D granular-water leakage without elastic plate",
+        "velocity_projection": "Affine",
+        "alpha_pic": getattr(args, "alpha_pic", 1.0),
         "physical_crack_width_m": CRACK_RIGHT - CRACK_LEFT,
         "represented_crack_width_m": args.dx,
         "snapshots": len(rows),
@@ -234,7 +257,7 @@ def run(args):
         domain=list(DOMAIN),
         background_damping=0.02,
         gravity=[0.0, 0.0, -9.81],
-        alphaPIC=0.05,
+        alphaPIC=args.alpha_pic,
         mapping="USL",
         shape_function="QuadBSpline",
         material_type="TwoPhaseDoubleLayer",
@@ -343,6 +366,7 @@ def run(args):
     expected_solid = int(np.count_nonzero(initial_phase == 1))
     mpm.add_boundary_condition(boundaries(args.dx))
     mpm.select_save_data(particle=True, grid=True, object=False)
+
     mpm.run()
     write_metrics(args.output, expected_fluid, expected_solid, args)
     if not args.no_post:

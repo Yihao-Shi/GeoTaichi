@@ -9,18 +9,49 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
-from tools.blender_cfdem_gif import grain_surface, water_surface
+from tools.blender_cfdem_gif import close_enclosed_voids, grain_surface, water_surface
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "tools"))
 import incompressible_gifs
 import mmpm_gifs
 import fedem_gifs
+import two_phase_3d_gifs
 
 with patch.dict(sys.modules, {"paraview.simple": MagicMock()}):
     from tools.vtu2gif import symmetric_color_range
 
 
 class GeometryCheck(unittest.TestCase):
+    def test_particle_surface_void_closure_preserves_outer_air(self):
+        sdf = np.ones((7, 7, 7), dtype=np.float32)
+        sdf[1:6, 1:6, 1:6] = -1
+        sdf[3, 3, 3] = 0.2
+        repaired = close_enclosed_voids(sdf, 0.1)
+        self.assertLess(repaired[3, 3, 3], 0)
+        np.testing.assert_array_equal(repaired[[0, -1]], sdf[[0, -1]])
+
+    def test_3d_two_phase_render_uses_saved_solid_volume_and_separates_water(self):
+        fluid = np.stack(np.meshgrid(*([np.arange(0.25, 0.85, 0.1)] * 3), indexing="ij"), axis=-1).reshape(-1, 3)
+        positions = np.vstack((fluid, [1.4, 0.5, 0.5], [np.nan] * 3))
+        particles = {
+            "position": positions,
+            "volume": np.full(len(positions), 0.001),
+            "active": np.r_[np.ones(len(fluid) + 1), 0],
+            "phase": np.r_[np.full(len(fluid), 2), 1, 2],
+            "porosity": np.full(len(positions), 0.4),
+        }
+        coords = np.stack(np.meshgrid(*([np.arange(21) * 0.1] * 3), indexing="ij"), axis=-1)
+        grid = {"dims": np.array([21] * 3), "coords": coords.reshape(-1, 3), "cell_type": np.zeros((20, 20, 20, 1))}
+        first = two_phase_3d_gifs.phase_geometry(particles, grid, [2] * 3, 2)
+        np.testing.assert_allclose(first["solid_positions"], [[2.8, 1, 1]])
+        np.testing.assert_allclose(first["solid_radii"], [2 * np.cbrt(3 * 0.0006 / (4 * np.pi))])
+        particles["position"][len(fluid), 0] += 0.1
+        moved = two_phase_3d_gifs.phase_geometry(particles, grid, [2] * 3, 2)
+        np.testing.assert_array_equal(first["water"], moved["water"])
+        particles["porosity"][len(fluid)] = 1
+        with self.assertRaises(ValueError):
+            two_phase_3d_gifs.phase_geometry(particles, grid, [2] * 3, 2)
+
     def test_fedem_wall_edges_omit_planar_triangle_diagonals(self):
         vertices, faces = incompressible_gifs.box_mesh([0, 0, 0], [1, 1, 1])
         segments = fedem_gifs.wall_segments(vertices, faces)

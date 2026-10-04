@@ -229,6 +229,7 @@ class BoundaryConstraints(object):
         tolerance = max(1e-9, 1e-6 * float(np.max(domain)))
         if np.any(lower < -tolerance) or np.any(upper > domain + tolerance):
             raise RuntimeError(f"Solid-plane cell boundary [{lower}, {upper}] is out of domain {domain}")
+        lower, upper = self._expand_solid_cell_region(sims, element, boundary, start_point, end_point)
 
         point = DictIO.GetAlternative(boundary, "Point", DictIO.GetAlternative(boundary, "PlanePoint", start_point))
         normal = DictIO.GetAlternative(boundary, "Norm", DictIO.GetAlternative(boundary, "PlaneNormal", None))
@@ -241,9 +242,6 @@ class BoundaryConstraints(object):
             raise RuntimeError("SolidPlaneCell normal length must be positive")
         normal /= norm
 
-        ghost_extent = element.ghost_cell * np.asarray(element.grid_size, dtype=np.float64)[:dim]
-        lower = np.maximum(lower, -ghost_extent)
-        upper = np.minimum(upper, domain + ghost_extent)
         self.solid_cell_plane_regions.append((lower, upper, point, normal))
 
         print("Boundary Type: Solid Plane Cell")

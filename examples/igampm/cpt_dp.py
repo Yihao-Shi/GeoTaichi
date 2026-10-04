@@ -98,11 +98,16 @@ def main():
             activate_friction=False,
             contact_all_mpm_particles=True,
             contact_surface_include=[(0, 0), (0, 1)],
-            monolithic_max_iterations=35,
+            # Allow slower projected-Newton steps without relaxing convergence.
+            monolithic_max_iterations=100,
             monolithic_tolerance=5.0e-4,
             monolithic_linear_solver_tolerance=1.0e-8,
+            monolithic_linear_solver_relative_tolerance=1.0e-7,
             monolithic_linear_solver_max_iters=30_000,
             project_pd=True,
+            # kappa is a pressure in this case, as in FEM--MPM; normalize
+            # the squared-distance barrier before multiplying by area.
+            use_physical_barrier=True,
             **contact_parameters,
         )
     else:

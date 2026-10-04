@@ -38,6 +38,10 @@ SLOPE_HEIGHT = WATER_DEPTH / 3.0
 SLOPE_TOE = 0.35
 SLOPE_RUN = 0.35
 PISTON_MEAN_X = 0.06
+SOIL_YOUNG_MODULUS = 12.0e6
+SOIL_COHESION = 300.0
+SOIL_FRICTION = 26.0
+LSDEM_BODY_COUNT = 5
 
 
 def parse_args():
@@ -51,8 +55,12 @@ def parse_args():
     parser.add_argument("--frequency", type=float, default=0.8)
     parser.add_argument("--wave-velocity", type=float, default=0.10)
     parser.add_argument("--ramp-time", type=float, default=0.75)
-    parser.add_argument("--pressure-iterations", type=int, default=300)
+    parser.add_argument("--alpha-pic", type=float, default=1.0)
+    parser.add_argument("--pressure-iterations", type=int, default=1000)
     parser.add_argument("--device-memory", type=float, default=4.0)
+    parser.add_argument("--soil-young-modulus", type=float, default=SOIL_YOUNG_MODULUS)
+    parser.add_argument("--soil-cohesion", type=float, default=SOIL_COHESION)
+    parser.add_argument("--soil-friction", type=float, default=SOIL_FRICTION)
     parser.add_argument("--strict", action="store_true")
     parser.add_argument("--no-post", action="store_true")
     parser.add_argument(
@@ -71,6 +79,7 @@ def write_metrics(output, expected_fluid, expected_solid, args):
         raise RuntimeError("coupled wavemaker produced fewer than two MPM or LSDEM snapshots")
 
     mpm_rows = []
+    initial_solid_position = None
     finite = True
     for file_name in mpm_files:
         frame = file_name.stem.removeprefix("MPMParticle")
@@ -82,6 +91,9 @@ def write_metrics(output, expected_fluid, expected_solid, args):
             fluid = active & (phase == 2)
             solid = active & (phase == 1)
             position = data["position"]
+            if initial_solid_position is None:
+                initial_solid_position = position[solid].copy()
+            solid_displacement = float(np.linalg.norm(position[solid] - initial_solid_position, axis=1).max())
             time = float(data["t_current"])
             surface = (
                 WATER_DEPTH
@@ -100,7 +112,14 @@ def write_metrics(output, expected_fluid, expected_solid, args):
                 and np.isfinite(surface)
             )
             mpm_rows.append(
-                [time, np.count_nonzero(fluid), np.count_nonzero(solid), np.count_nonzero(outside), surface]
+                [
+                    time,
+                    np.count_nonzero(fluid),
+                    np.count_nonzero(solid),
+                    np.count_nonzero(outside),
+                    surface,
+                    solid_displacement,
+                ]
             )
 
     rigid_rows = []
@@ -109,7 +128,7 @@ def write_metrics(output, expected_fluid, expected_solid, args):
             centers = data["mass_center"]
             forces = data["contact_force"]
             finite &= bool(np.isfinite(centers).all() and np.isfinite(forces).all())
-            rigid_rows.append([float(data["t_current"]), float(np.linalg.norm(forces, axis=1).max())])
+            rigid_rows.append([float(data["t_current"]), float(np.linalg.norm(forces, axis=1).max()), len(centers)])
     mpm_rows = np.asarray(mpm_rows, dtype=np.float64)
     rigid_rows = np.asarray(rigid_rows, dtype=np.float64)
     _, expected_amplitude, _ = linear_piston_wave(args.frequency, WATER_DEPTH, args.wave_velocity)
@@ -125,6 +144,8 @@ def write_metrics(output, expected_fluid, expected_solid, args):
     metrics = {
         "case": "3D two-phase two-point semi-implicit MPM--LSDEM wavemaker",
         "coupling": {"fluid_lsdem": "IBM", "solid_lsdem": "ordinary point-level-set contact"},
+        "velocity_projection": "Affine",
+        "alpha_pic": getattr(args, "alpha_pic", 1.0),
         "final_time_s": float(min(mpm_rows[-1, 0], rigid_rows[-1, 0])),
         "duration_complete": bool(
             math.isclose(mpm_rows[-1, 0], args.time, abs_tol=0.1 * args.dt)
@@ -137,17 +158,25 @@ def write_metrics(output, expected_fluid, expected_solid, args):
             np.all(mpm_rows[:, 1] == expected_fluid) and np.all(mpm_rows[:, 2] == expected_solid)
         ),
         "maximum_mpm_particles_outside_domain": int(mpm_rows[:, 3].max()),
+        "maximum_mpm_solid_displacement_m": float(mpm_rows[:, 5].max()),
         "expected_linear_wave_amplitude_m": expected_amplitude,
         "surface_gauge_excursion_m": float(np.ptp(mpm_rows[:, 4])),
         "maximum_lsdem_displacement_m": maximum_rigid_displacement,
         "maximum_coupling_force_n": float(rigid_rows[:, 1].max()),
+        "expected_lsdem_bodies": LSDEM_BODY_COUNT,
+        "minimum_lsdem_bodies": int(rigid_rows[:, 2].min()),
+        "soil_young_modulus_pa": args.soil_young_modulus,
+        "soil_cohesion_pa": args.soil_cohesion,
+        "soil_friction_deg": args.soil_friction,
     }
     metrics["passed"] = bool(
         metrics["finite"]
         and metrics["duration_complete"]
         and metrics["particle_conservation"]
         and metrics["maximum_mpm_particles_outside_domain"] == 0
+        and metrics["minimum_lsdem_bodies"] == metrics["expected_lsdem_bodies"]
         and metrics["surface_gauge_excursion_m"] >= max(0.75 * args.dx, expected_amplitude)
+        and metrics["maximum_mpm_solid_displacement_m"] >= 0.05 * args.dx
         and metrics["maximum_lsdem_displacement_m"] > 1.0e-5
         and metrics["maximum_coupling_force_n"] > 0.0
     )
@@ -155,7 +184,7 @@ def write_metrics(output, expected_fluid, expected_solid, args):
         output / "coupled_wavemaker_diagnostics.csv",
         mpm_rows,
         delimiter=",",
-        header="time_s,fluid_particles,solid_particles,particles_outside_domain,surface_gauge_m",
+        header="time_s,fluid_particles,solid_particles,particles_outside_domain,surface_gauge_m,solid_displacement_max_m",
         comments="",
     )
     (output / "metrics.json").write_text(json.dumps(metrics, indent=2, sort_keys=True) + "\n")
@@ -188,8 +217,8 @@ def make_slope_region(wall):
 
 
 @ti.kernel
-def initialize_hydrostatic_state(particle_num: int, particle: ti.template()):
-    k0 = 1.0 - ti.sin(32.0 * math.pi / 180.0)
+def initialize_hydrostatic_state(particle_num: int, friction_angle: float, particle: ti.template()):
+    k0 = 1.0 - ti.sin(friction_angle * math.pi / 180.0)
     for p in range(particle_num):
         particle[p].pressure = 1000.0 * 9.81 * ti.max(WATER_DEPTH - particle[p].x[2], 0.0)
         if int(particle[p].phase) == 1:
@@ -207,6 +236,10 @@ def run(args):
         or min(args.ppc, args.pressure_iterations) <= 0
     ):
         raise ValueError("grid, time and wave parameters must be positive")
+    if not 0.0 <= args.alpha_pic <= 1.0:
+        raise ValueError("alpha-pic must lie in [0, 1]")
+    if args.soil_young_modulus <= 0.0 or args.soil_cohesion < 0.0 or not 0.0 <= args.soil_friction < 90.0:
+        raise ValueError("soil Young's modulus must be positive, cohesion nonnegative, and friction in [0, 90)")
     cells = np.asarray(TANK) / args.dx
     if not np.allclose(cells, np.round(cells), atol=1.0e-12) or np.any(np.round(cells).astype(int) % 2):
         raise ValueError("dx must divide the tank into even cell counts for two-level MGPCG")
@@ -246,7 +279,7 @@ def run(args):
     )
     dempm.mpm.set_configuration(
         background_damping=0.03,
-        alphaPIC=0.05,
+        alphaPIC=args.alpha_pic,
         mapping="USL",
         shape_function="QuadBSpline",
         gravity=[0.0, 0.0, -9.81],
@@ -291,12 +324,12 @@ def run(args):
     dempm.dem.memory_allocate(
         {
             "max_material_number": 1,
-            "max_rigid_body_number": 3,
-            "max_rigid_template_number": 1,
-            "levelset_grid_number": 600000,
-            "surface_node_number": 12000,
+            "max_rigid_body_number": LSDEM_BODY_COUNT,
+            "max_rigid_template_number": 2,
+            "levelset_grid_number": 800000,
+            "surface_node_number": 24000,
             "max_plane_number": 0,
-            "body_coordination_number": 6,
+            "body_coordination_number": 12,
             "wall_coordination_number": 0,
             "verlet_distance_multiplier": [0.15, 0.10],
             "point_coordination_number": [6, 2],
@@ -312,7 +345,7 @@ def run(args):
         }
     )
     dempm.memory_allocate(
-        {"body_coordination_number": 3, "wall_coordination_number": 0, "compaction_ratio": [0.1, 0.1]}
+        {"body_coordination_number": LSDEM_BODY_COUNT, "wall_coordination_number": 0, "compaction_ratio": [0.1, 0.1]}
     )
 
     dempm.dem.add_attribute(
@@ -321,30 +354,51 @@ def run(args):
     )
     dempm.dem.add_template(
         {
-            "Name": "wave_sphere",
-            "Object": polyhedron(file=str(ROOT / "assets" / "mesh" / "LSDEM" / "sphere.stl")).grids(
-                space=0.05, extent=20
+            "Name": "tree_trunk",
+            "Object": polyhedron(file=str(ROOT / "assets" / "mesh" / "LSDEM" / "tree_trunk.obj")).grids(
+                space=0.04, extent=32
             ),
             "WriteFile": False,
         }
     )
-    centers = ([0.50, 0.07, 0.18], [0.58, 0.12, 0.19], [0.66, 0.17, 0.18])
+    dempm.dem.add_template(
+        {
+            "Name": "irregular_grain",
+            "Object": polyhedron(file=str(ROOT / "assets" / "mesh" / "LSDEM" / "sand.stl")).grids(
+                space=0.05, extent=12
+            ),
+            "WriteFile": False,
+        }
+    )
+    grain_centers = ([0.82, 0.06, 0.098], [0.87, 0.11, 0.099], [0.92, 0.16, 0.098], [0.98, 0.09, 0.100])
     dempm.dem.create_body(
         {
             "GenerateType": "Create",
             "BodyType": "RigidBody",
             "Template": [
                 {
-                    "Name": "wave_sphere",
+                    "Name": "tree_trunk",
                     "GroupID": 0,
                     "MaterialID": 0,
-                    "BodyPoint": center,
-                    "Radius": 0.025,
-                    "BodyOrientation": "constant",
+                    "BodyPoint": [0.74, 0.12, 0.075],
+                    "Radius": 0.075,
+                    "BodyOrientation": [0.0, 75.0, 8.0],
                     "InitialVelocity": [0.0, 0.0, 0.0],
                     "FixMotion": ["Free", "Free", "Free"],
-                }
-                for center in centers
+                },
+                *[
+                    {
+                        "Name": "irregular_grain",
+                        "GroupID": 0,
+                        "MaterialID": 0,
+                        "BodyPoint": center,
+                        "Radius": 0.018,
+                        "BodyOrientation": [17.0 * index, 29.0 * index, 41.0 * index],
+                        "InitialVelocity": [0.0, 0.0, 0.0],
+                        "FixMotion": ["Free", "Free", "Free"],
+                    }
+                    for index, center in enumerate(grain_centers, start=1)
+                ],
             ],
         }
     )
@@ -368,10 +422,10 @@ def run(args):
             "FluidViscosity": 1.0e-3,
             "GrainDiameter": 3.0e-3,
             "DragModel": "Ergun",
-            "YoungModulus": 30.0e6,
+            "YoungModulus": args.soil_young_modulus,
             "PoissonRatio": 0.30,
-            "Cohesion": 1500.0,
-            "Friction": 32.0,
+            "Cohesion": args.soil_cohesion,
+            "Friction": args.soil_friction,
             "Dilation": 0.0,
         },
     )
@@ -411,7 +465,7 @@ def run(args):
             ]
         }
     )
-    initialize_hydrostatic_state(int(dempm.mpm.scene.particleNum[0]), dempm.mpm.scene.particle)
+    initialize_hydrostatic_state(int(dempm.mpm.scene.particleNum[0]), args.soil_friction, dempm.mpm.scene.particle)
     initial_phase = dempm.mpm.scene.particle.phase.to_numpy()[: int(dempm.mpm.scene.particleNum[0])]
     expected_fluid = int(np.count_nonzero(initial_phase == 2))
     expected_solid = int(np.count_nonzero(initial_phase == 1))

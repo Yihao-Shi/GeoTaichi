@@ -31,10 +31,14 @@ ARCH = os.environ.get(PREFIX + "ARCH", "gpu")
 OUTPUT = Path(os.environ.get(PREFIX + "OUTPUT", Path(__file__).resolve().parent / "OutputData")).expanduser().resolve()
 DX = env_float("DX", 0.01)
 DT = env_float("DT", 1.0e-3)
-SIMULATION_TIME = env_float("TIME", 1.2)
-SAVE_INTERVAL = env_float("SAVE_INTERVAL", 0.1)
+SIMULATION_TIME = env_float("TIME", 70.0)
+SAVE_INTERVAL = env_float("SAVE_INTERVAL", 0.2)
 ALPHA_PIC = env_float("ALPHA_PIC", 1.0)
+VELOCITY_PROJECTION = os.environ.get(PREFIX + "VELOCITY_PROJECTION", "PIC")
+BACKGROUND_DAMPING = env_float("BACKGROUND_DAMPING", 0.5)
 PARTICLE_SHIFTING = os.environ.get(PREFIX + "PARTICLE_SHIFTING", "1") == "1"
+PARTICLE_SHIFTING_END_TIME = env_float("PARTICLE_SHIFTING_END_TIME", 15.0)
+PARTICLE_SHIFTING_SETTLING_SCALE = env_float("PARTICLE_SHIFTING_SETTLING_SCALE", 1.0)
 FLUID_PPC = env_int("FLUID_PPC", 4)
 SOLID_PPC = env_int("SOLID_PPC", 4)
 POROSITY = 0.39
@@ -81,6 +85,8 @@ MAX_VELOCITY_CONSTRAINTS = 2 * (aligned_count(POROUS_SIZE[0], DX) + 1) * (aligne
 
 if min(DX, DT, SIMULATION_TIME, SAVE_INTERVAL, PERMEABILITY, YOUNG_MODULUS) <= 0.0 or min(FLUID_PPC, SOLID_PPC) <= 0:
     raise ValueError("spacing, time, permeability, modulus, and particles per cell must be positive")
+if not 0.0 <= PARTICLE_SHIFTING_SETTLING_SCALE <= 1.0:
+    raise ValueError("particle shifting settling scale must be in [0, 1]")
 if any(count % 2 for count in DOMAIN_CELLS):
     raise ValueError("the two-level MGPCG grid must have even cell counts")
 
@@ -169,6 +175,8 @@ def postprocess(output: Path):
             surface[i] = np.quantile(position[in_bin, 1], 0.98)
     wet_surface = surface[np.isfinite(surface)]
     surface_total_variation = float(np.mean(np.abs(np.diff(wet_surface))))
+    left_surface = float(np.nanmedian(surface[surface_bins[:-1] < POROUS_ORIGIN[0]]))
+    right_surface = float(np.nanmedian(surface[surface_bins[:-1] >= POROUS_RIGHT]))
     np.savetxt(
         output / "porous_dam_break_diagnostics.csv",
         rows,
@@ -205,7 +213,12 @@ def postprocess(output: Path):
         "rest_permeability_m2": PERMEABILITY,
         "drag_model": "Beetstra Eq. (17)-(21)",
         "alpha_pic": ALPHA_PIC,
+        "velocity_projection": VELOCITY_PROJECTION,
+        "background_damping": BACKGROUND_DAMPING,
+        "background_damping_start_time_s": PARTICLE_SHIFTING_END_TIME if PARTICLE_SHIFTING else 0.0,
         "particle_shifting": PARTICLE_SHIFTING,
+        "particle_shifting_end_time_s": PARTICLE_SHIFTING_END_TIME if PARTICLE_SHIFTING else 0.0,
+        "particle_shifting_settling_scale": PARTICLE_SHIFTING_SETTLING_SCALE if PARTICLE_SHIFTING else 0.0,
         "solid_model": "rigid (both velocity components constrained over the full porous column)",
         "maximum_fluid_points_inside_porous": int(np.max(rows[:, 2])),
         "maximum_fluid_points_through_porous": int(np.max(rows[:, 3])),
@@ -214,6 +227,13 @@ def postprocess(output: Path):
         "maximum_solid_displacement_m": float(np.max(rows[:, 8])),
         "maximum_fluid_speed_p99_mps": float(np.max(rows[:, 9])),
         "maximum_fluid_speed_mps": float(np.max(rows[:, 10])),
+        "final_fluid_speed_p99_mps": float(rows[-1, 9]),
+        "final_fluid_speed_mps": float(rows[-1, 10]),
+        "last_second_max_fluid_speed_p99_mps": float(np.max(rows[rows[:, 0] >= rows[-1, 0] - 1.0, 9])),
+        "final_mean_fluid_vx_inside_porous_mps": float(rows[-1, 5]),
+        "last_second_max_abs_mean_fluid_vx_inside_porous_mps": float(
+            np.max(np.abs(rows[rows[:, 0] >= rows[-1, 0] - 1.0, 5]))
+        ),
         "minimum_solid_porosity": float(np.min(rows[:, 11])),
         "maximum_solid_porosity": float(np.max(rows[:, 12])),
         "minimum_solid_volume_ratio": float(np.min(rows[:, 13])),
@@ -222,6 +242,9 @@ def postprocess(output: Path):
         "left_wall_particle_count": int(left_wall_ids.size),
         "left_wall_vertically_mobile_count": int(np.count_nonzero(np.abs(left_wall_vertical_displacement) > 1.0e-5)),
         "final_surface_total_variation_m": surface_total_variation,
+        "final_left_surface_height_m": left_surface,
+        "final_right_surface_height_m": right_surface,
+        "final_surface_head_difference_m": abs(left_surface - right_surface),
         "finite": bool(np.isfinite(rows).all()),
     }
     gravity_velocity_scale = math.sqrt(9.81 * 0.14)
@@ -239,6 +262,9 @@ def postprocess(output: Path):
         and metrics["maximum_solid_displacement_m"] <= 1.0e-10
         and metrics["maximum_fluid_speed_p99_mps"] <= 3.0 * gravity_velocity_scale
         and metrics["maximum_fluid_speed_mps"] <= 5.0 * gravity_velocity_scale
+        and metrics["last_second_max_fluid_speed_p99_mps"] <= 3.0e-2
+        and metrics["last_second_max_abs_mean_fluid_vx_inside_porous_mps"] <= 5.0e-3
+        and metrics["final_surface_head_difference_m"] <= 1.0e-2
         and 0.0 < metrics["minimum_solid_porosity"]
         and metrics["maximum_solid_porosity"] < 1.0
         and metrics["minimum_solid_volume_ratio"] > 0.0
@@ -298,16 +324,19 @@ init(dim=2, arch=ARCH, default_fp="float64", device_memory_GB=env_float("DEVICE_
 mpm = MPM()
 mpm.set_configuration(
     domain=DOMAIN,
-    background_damping=0.01,
+    background_damping=(
+        0.0 if PARTICLE_SHIFTING and 0.0 < PARTICLE_SHIFTING_END_TIME < SIMULATION_TIME else BACKGROUND_DAMPING
+    ),
     gravity=[0.0, -9.81],
     alphaPIC=ALPHA_PIC,
     mapping="USL",
     shape_function="QuadBSpline",
     material_type="TwoPhaseDoubleLayer",
     solver_type="SemiImplicit",
-    velocity_projection="Affine",
+    velocity_projection=VELOCITY_PROJECTION,
     delayed_fluid_advection=True,
     particle_shifting=PARTICLE_SHIFTING,
+    particle_shifting_scale=1.0,
     visualize=True,
 )
 mpm.set_solver(
@@ -438,6 +467,11 @@ mpm.add_boundary_condition(
     ]
 )
 mpm.select_save_data(particle=True, grid=False, object=False)
+if PARTICLE_SHIFTING and 0.0 < PARTICLE_SHIFTING_END_TIME < SIMULATION_TIME:
+    mpm.modify_parameters(SimulationTime=PARTICLE_SHIFTING_END_TIME)
+    mpm.run()
+    mpm.sims.set_particle_shifting_scale(PARTICLE_SHIFTING_SETTLING_SCALE)
+    mpm.modify_parameters(SimulationTime=SIMULATION_TIME, background_damping=BACKGROUND_DAMPING)
 mpm.run()
 
 if not SKIP_POSTPROCESS:

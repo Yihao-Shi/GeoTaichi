@@ -8,7 +8,7 @@ from examples.mpm.Contact.CPT2D.coupled_cpt import (
     axisymmetric_initial_deformation_gradient,
     axisymmetric_penetrator_mesh,
     axisymmetric_particle_count,
-    axisymmetric_surface_pressure_load,
+    axisymmetric_surface_pressure_particles,
     dp_direct_material,
     dp_native_material,
     explicit_contact_parameters,
@@ -103,10 +103,18 @@ def test_extruded_native_capacity_accounts_for_three_dimensional_ppc():
 
 
 def test_axisymmetric_discretization_and_surface_pressure_are_physical():
+    from src.mpm.generator.Body import Body
+
     assert axisymmetric_particle_count(reference.GRID_SIZE) == 100_000
-    force = axisymmetric_surface_pressure_load(reference.GRID_SIZE)
-    assert force.shape == (101,)
-    assert np.sum(force) == pytest.approx(-reference.SURFACE_PRESSURE * np.pi * reference.SOIL_SIZE[0] ** 2)
+    body = Body()
+    body.add_rectangle(
+        reference.SOIL_ORIGIN, reference.SOIL_SIZE, reference.GRID_SIZE, reference.PARTICLES_PER_CELL, name="soil"
+    )
+    points = body.bodies["soil"]["points"]
+    particle_ids, area = axisymmetric_surface_pressure_particles(points, reference.GRID_SIZE)
+    assert area.shape == (200,)
+    assert np.all(points[particle_ids, 1] == np.max(points[:, 1]))
+    assert np.sum(area) == pytest.approx(np.pi * reference.SOIL_SIZE[0] ** 2)
 
 
 def test_axisymmetric_direct_preload_reproduces_reference_hencky_stress():

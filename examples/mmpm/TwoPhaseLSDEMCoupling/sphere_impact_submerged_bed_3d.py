@@ -50,8 +50,8 @@ def parse_args():
     parser.add_argument("--time", type=float, default=0.12)
     parser.add_argument("--save-interval", type=float, default=0.002)
     parser.add_argument("--drop-height", type=float, default=1.0)
-    parser.add_argument("--ppc", type=int, default=1)
-    parser.add_argument("--pressure-iterations", type=int, default=300)
+    parser.add_argument("--ppc", type=int, default=2)
+    parser.add_argument("--pressure-iterations", type=int, default=1000)
     parser.add_argument("--device-memory", type=float, default=4.0)
     parser.add_argument("--strict", action="store_true")
     parser.add_argument("--no-post", action="store_true")
@@ -116,6 +116,21 @@ def cylindrical_boundaries(wall):
     return boundaries
 
 
+def fluid_shell_coverage(fluid_position, center, particle_spacing):
+    relative = fluid_position - center
+    distance = np.linalg.norm(relative, axis=1)
+    radius = 0.5 * SPHERE_DIAMETER
+    shell = (distance >= radius) & (distance <= radius + 3.0 * particle_spacing)
+    if not np.any(shell):
+        return 0.0
+    direction = relative[shell] / distance[shell, None]
+    azimuth = np.floor(
+        ((np.arctan2(direction[:, 1], direction[:, 0]) + 2.0 * math.pi) % (2.0 * math.pi)) * (8.0 / (2.0 * math.pi))
+    ).astype(np.int64)
+    polar = np.clip(np.floor((direction[:, 2] + 1.0) * 2.0).astype(np.int64), 0, 3)
+    return len(np.unique(8 * polar + azimuth)) / 32.0
+
+
 def write_metrics(output, expected_fluid, expected_solid, args):
     mpm_files = sorted((output / "particles").glob("MPMParticle*.npz"))
     rigid_files = sorted((output / "particles").glob("LSDEMRigid*.npz"))
@@ -123,6 +138,8 @@ def write_metrics(output, expected_fluid, expected_solid, args):
         raise RuntimeError("sphere-impact run produced fewer than two MPM or LSDEM snapshots")
     mpm_rows = []
     finite = True
+    angles = 2.0 * math.pi * np.arange(CYLINDER_SIDES) / CYLINDER_SIDES
+    wall_normals = np.column_stack((np.cos(angles), np.sin(angles)))
     for file_name in mpm_files:
         with np.load(file_name) as data:
             active = data["active"] > 0
@@ -140,14 +157,18 @@ def write_metrics(output, expected_fluid, expected_solid, args):
                 (position[active] < -1.0e-10 * args.dx) | (position[active] > np.asarray(DOMAIN) + 1.0e-10 * args.dx),
                 axis=1,
             )
-            radial = np.linalg.norm(position[active, :2] - 0.5 * np.asarray(DOMAIN[:2]), axis=1)
+            radial_position = position[active, :2] - 0.5 * np.asarray(DOMAIN[:2])
+            outside_cylinder = np.any(
+                radial_position @ wall_normals.T > CONTAINER_RADIUS + 1.0e-10 * args.dx,
+                axis=1,
+            )
             mpm_rows.append(
                 [
                     float(data["t_current"]),
                     int(np.count_nonzero(fluid)),
                     int(np.count_nonzero(solid)),
                     int(np.count_nonzero(outside)),
-                    int(np.count_nonzero(radial > CONTAINER_RADIUS + 1.0e-10 * args.dx)),
+                    int(np.count_nonzero(outside_cylinder)),
                     float(np.linalg.norm(data["fluid_velocity"][fluid], axis=1).max()),
                     float(np.linalg.norm(data["solid_velocity"][solid], axis=1).max()),
                 ]
@@ -162,6 +183,15 @@ def write_metrics(output, expected_fluid, expected_solid, args):
             rigid_rows.append([float(data["t_current"]), *center, *velocity, float(np.linalg.norm(force))])
     mpm_rows = np.asarray(mpm_rows, dtype=np.float64)
     rigid_rows = np.asarray(rigid_rows, dtype=np.float64)
+    submerged_coverage = []
+    for mpm_file, rigid_file in zip(mpm_files, rigid_files):
+        with np.load(mpm_file) as particles, np.load(rigid_file) as rigid:
+            center = rigid["mass_center"][0]
+            if center[2] + 0.5 * SPHERE_DIAMETER <= WATER_SURFACE + args.dx:
+                active_fluid = (particles["active"] > 0) & (particles["phase"] == 2)
+                submerged_coverage.append(
+                    fluid_shell_coverage(particles["position"][active_fluid], center, args.dx / args.ppc)
+                )
     impact_speed = math.sqrt(2.0 * 9.81 * args.drop_height)
     radius = 0.5 * SPHERE_DIAMETER
     initial_center_z = WATER_SURFACE + radius
@@ -200,6 +230,7 @@ def write_metrics(output, expected_fluid, expected_solid, args):
         "sphere_maximum_bed_penetration_m": max(0.0, BED_HEIGHT - (minimum_center_z - radius)),
         "sphere_final_vertical_velocity_mps": float(rigid_rows[-1, 6]),
         "maximum_coupling_force_n": float(rigid_rows[:, 7].max()),
+        "minimum_submerged_fluid_shell_coverage": float(min(submerged_coverage, default=0.0)),
     }
     metrics["passed"] = bool(
         metrics["finite"]
@@ -212,6 +243,7 @@ def write_metrics(output, expected_fluid, expected_solid, args):
         and metrics["sphere_minimum_center_z_m"] - radius >= 0.5 * args.dx
         and abs(metrics["sphere_final_vertical_velocity_mps"]) < 0.9 * impact_speed
         and metrics["maximum_coupling_force_n"] > 0.0
+        and metrics["minimum_submerged_fluid_shell_coverage"] >= 0.75
     )
     np.savetxt(
         output / "sphere_impact_trajectory.csv",

@@ -66,6 +66,35 @@ def test_armijo_accepts_a_trial_within_energy_roundoff():
     assert result["step"] == 1.0
 
 
+def test_linear_solve_tolerance_does_not_relax_prescribed_displacements():
+    from src.igampm.engines.ImplicitEngine import ImplicitEngineMixin
+
+    @ti.data_oriented
+    class DirectionEngine(ImplicitEngineMixin):
+        pass
+
+    engine = object.__new__(DirectionEngine)
+    engine.iga = SimpleNamespace(degree_of_freedom=4, incre_resolution=ti.field(ti.f64, shape=4))
+    engine.mpm = SimpleNamespace(incre_resolution=ti.field(ti.f64, shape=6))
+    engine.monolithic_correction = ti.field(ti.f64, shape=10)
+    engine.monolithic_fixed = ti.field(ti.i32, shape=10)
+    engine.monolithic_fixed_correction = ti.field(ti.f64, shape=10)
+    approximate = np.asarray([2e-6, 0, 4e-6, 3e-5, -2e-6, 0, 7e-6, 1e-6, 99, 99], dtype=np.float64)
+    prescribed = np.zeros(10, dtype=np.float64)
+    prescribed[[1, 5]] = [-5e-5, 3e-3]
+    fixed = np.zeros(10, dtype=np.int32)
+    fixed[[1, 5]] = 1
+    engine.monolithic_correction.from_numpy(approximate)
+    engine.monolithic_fixed.from_numpy(fixed)
+    engine.monolithic_fixed_correction.from_numpy(prescribed)
+    engine._split_device_monolithic_correction(4)
+
+    expected = approximate.copy()
+    expected[[1, 5]] = prescribed[[1, 5]]
+    np.testing.assert_array_equal(engine.iga.incre_resolution.to_numpy(), expected[:4])
+    np.testing.assert_array_equal(engine.mpm.incre_resolution.to_numpy(), np.r_[expected[4:8], 0, 0])
+
+
 def test_monolithic_newton_does_not_solve_an_already_balanced_rhs():
     from src.igampm.engines.ImplicitEngine import ImplicitEngineMixin
 
@@ -93,24 +122,31 @@ def test_monolithic_newton_does_not_solve_an_already_balanced_rhs():
     assert result["force_residual"] == pytest.approx(4.3e-7)
 
 
-def test_plastic_monolithic_newton_uses_residual_merit_armijo():
+@pytest.mark.parametrize(
+    ("has_incremental_potential", "prescribed_motion"),
+    [(False, False), (True, False), (True, True)],
+)
+def test_plastic_monolithic_newton_selects_material_line_search(has_incremental_potential, prescribed_motion):
     from src.igampm.engines.ImplicitEngine import ImplicitEngineMixin
 
     engine = object.__new__(ImplicitEngineMixin)
     engine.mpm_has_plastic_history = True
+    engine.is_semi = False
+    engine.semi_contact_converged = lambda: True
     engine.monolithic_force_atol = 1.0e-10
     engine.monolithic_force_rtol = 5.0e-4
     engine.monolithic_dirichlet_tolerance = 1.0e-12
     engine.monolithic_solver_name = "PCG"
     engine.iga = SimpleNamespace(dt=0.1)
-    engine.mpm = SimpleNamespace(dt=0.1)
+    engine.mpm = SimpleNamespace(dt=0.1, material=SimpleNamespace(has_incremental_potential=has_incremental_potential))
     force_residuals = iter((2.0, 0.0))
     engine.assemble_monolithic_newton_system = lambda **kwargs: {
         "active_dof": 3,
         "active_mpm_dof": 3,
     }
     engine._device_monolithic_free_rhs_norm = lambda active_dof: next(force_residuals)
-    engine._device_dirichlet_residual = lambda active_dof: 0.0
+    dirichlet_residuals = iter((0.001 if prescribed_motion else 0.0, 0.0))
+    engine._device_dirichlet_residual = lambda active_dof: next(dirichlet_residuals)
     engine._solve_monolithic_linear_system = lambda *args, **kwargs: {
         "converged": True,
         "residual": 0.0,
@@ -120,16 +156,22 @@ def test_plastic_monolithic_newton_uses_residual_merit_armijo():
     engine._device_monolithic_correction_residual = lambda *args: 1.0
     engine._material_feasible_step_device = lambda: 1.0
     engine._assemble_device_physical_tangent_product = lambda **kwargs: -4.0
+    engine._device_monolithic_directional_derivative = lambda active_dof: -2.0
     calls = []
+    use_energy = has_incremental_potential and not prescribed_motion
 
     def residual_armijo(current_residual, merit_slope, **kwargs):
+        assert not use_energy
         calls.append((current_residual, merit_slope, kwargs))
         return {"accepted": True, "step": 0.5, "residual": 0.1}
 
+    def energy_armijo(directional_derivative, **kwargs):
+        assert use_energy
+        calls.append((directional_derivative, kwargs))
+        return {"accepted": True, "step": 0.5, "energy": 0.1}
+
     engine.fully_implicit_residual_armijo_device = residual_armijo
-    engine.contact_aware_armijo_device = lambda *args, **kwargs: pytest.fail(
-        "plasticity must not use the conservative energy line search"
-    )
+    engine.contact_aware_armijo_device = energy_armijo
 
     result = engine._solve_monolithic_newton_device(
         include_friction=False,
@@ -141,9 +183,13 @@ def test_plastic_monolithic_newton_uses_residual_merit_armijo():
 
     assert result["converged"] is True
     assert result["convergence_reason"] == "force_residual"
-    assert calls[0][0] == pytest.approx(2.0)
-    assert calls[0][1] == pytest.approx(-4.0)
-    assert calls[0][2]["include_friction"] is False
+    if use_energy:
+        assert calls[0][0] == pytest.approx(-2.0)
+        assert calls[0][1]["include_friction"] is False
+    else:
+        assert calls[0][0] == pytest.approx(2.0)
+        assert calls[0][1] == pytest.approx(-4.0)
+        assert calls[0][2]["include_friction"] is False
 
 
 def test_residual_merit_armijo_backtracks_a_failed_trial_query():

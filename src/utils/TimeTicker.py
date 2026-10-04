@@ -7,7 +7,7 @@ from src.utils.constants import Threshold
 
 
 def time_tolerance(timestep):
-    return max(Threshold, 1.0e-9 * abs(float(timestep)))
+    return max(Threshold, 1.0e-6 * abs(float(timestep)))
 
 
 def has_remaining_time(current_time, target_time, timestep):

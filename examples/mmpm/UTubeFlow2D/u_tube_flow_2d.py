@@ -42,7 +42,7 @@ DX = env_float("DX", 0.05)
 DT = env_float("DT", 5.0e-3)
 SIMULATION_TIME = env_float("TIME", 100.0)
 SAVE_INTERVAL = env_float("SAVE_INTERVAL", 2.0)
-PPC = env_int("PPC", 1)
+PPC = env_int("PPC", 2)
 HYDRAULIC_CONDUCTIVITY = env_float("HYDRAULIC_CONDUCTIVITY", 0.05)
 SKIP_POSTPROCESS = os.environ.get(PREFIX + "SKIP_POSTPROCESS", "0") == "1"
 

@@ -73,9 +73,9 @@ Coming soon！
 
 ### [FEM-DEM](src/fedem/README.md#fedem-coupling-theory-log)
 #### Explicit soft constraint
-| [Hertz contact](examples/fedem/HertzContact/hertz_contact.py) | [Mixed funnel](examples/fedem/MixedFunnel/mixed_funnel.py) | [Isotropic compaction (100% soft grains)](examples/fedem/IsotropicCompaction/isotropic_compaction.py) |
+| [Hertz contact](examples/fedem/HertzContact/hertz_contact.py) | [Mixed funnel](examples/fedem/MixedFunnel/mixed_funnel.py) | [Isotropic compaction](examples/fedem/IsotropicCompaction/isotropic_compaction.py) |
 | --- | --- | --- |
-| ![Hertz contact](images/hertz_contact.png) | ![Mixed funnel](images/mixed_funnel.gif) | ![Isotropic compaction](images/isotropic_compaction_100.gif) |
+| <img src="images/hertz_contact.png" alt="Hertz contact" width="300"> | <img src="images/mixed_funnel.gif" alt="Mixed funnel" width="300"> | <img src="images/isotropic_compaction_100.gif" alt="Isotropic compaction" width="300"> |
 
 #### Incremental potential contact
 Coming soon！

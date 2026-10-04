@@ -19,15 +19,16 @@ MESH = ROOT / "assets/bunny_sparse.obj"
 def arguments():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--arch", choices=("cpu", "gpu"), default="gpu")
-    parser.add_argument("--count", type=int, default=8)
-    parser.add_argument("--steps", type=int, default=600)
+    parser.add_argument("--count", type=int, default=6)
+    parser.add_argument("--steps", type=int, default=1200)
     parser.add_argument("--dt", type=float, default=1.0e-3)
     parser.add_argument("--save-every", type=int, default=20)
-    parser.add_argument("--release-time", type=float, default=0.18)
+    parser.add_argument("--release-time", type=float, default=0.40)
+    parser.add_argument("--barrier-stiffness", type=float, default=8.0e8)
     parser.add_argument("--smoke", action="store_true", help="Compile gate without collapse-effect acceptance")
     parser.add_argument("--output-dir", default=str(CASE_DIR / "OutputData/bunny_pile_wall_release"))
     args = parser.parse_args()
-    if args.count < 4 or args.steps <= 0 or args.dt <= 0.0 or args.save_every <= 0:
+    if args.count < 4 or args.steps <= 0 or args.dt <= 0.0 or args.save_every <= 0 or args.barrier_stiffness <= 0.0:
         parser.error("count >= 4 and positive time/output controls are required")
     if not 0.0 < args.release_time < args.steps * args.dt:
         parser.error("release time must lie inside the simulation")
@@ -67,7 +68,7 @@ def main():
         assemble_type="HashTriplet",
         young_modulus=3.0e6,
         dhat=0.006,
-        barrier_stiffness=8.0e5,
+        barrier_stiffness=args.barrier_stiffness,
         local_damping=0.08,
         max_newton_iteration=25,
         linear_tolerance=1.0e-6,
@@ -85,8 +86,8 @@ def main():
             "max_plane_number": 5,
             "body_coordination_number": 12,
             "wall_coordination_number": 5,
-            "max_point_triangle_pairs": 50000,
-            "max_edge_edge_pairs": 120000,
+            "max_point_triangle_pairs": 80000,
+            "max_edge_edge_pairs": 180000,
             "compaction_ratio": [1.0, 1.0],
         },
         log=True,
@@ -142,7 +143,12 @@ def main():
     dem.add_property(
         0,
         0,
-        {"Dhat": 0.006, "BarrierStiffness": 8.0e5, "ContactDampingStiffness": 0.0, "Friction": 0.45},
+        {
+            "Dhat": 0.006,
+            "BarrierStiffness": args.barrier_stiffness,
+            "ContactDampingStiffness": 0.0,
+            "Friction": 0.45,
+        },
         dType="all",
     )
 
@@ -158,18 +164,27 @@ def main():
     dem.run(function=remove_right_wall)
     final_vertices = dem.enginer.state.world_vertices()
     final_centers = np.asarray([vertices.mean(axis=0) for vertices in final_vertices])
+    all_final_vertices = np.concatenate(final_vertices, axis=0)
+    retained_wall_gaps = []
+    for wall_id in (0, 1, 3, 4):
+        point, normal = walls[wall_id]
+        retained_wall_gaps.append(np.min((all_final_vertices - np.asarray(point)) @ np.asarray(normal)))
+    minimum_retained_wall_gap = float(min(retained_wall_gaps))
     initial = np.asarray(initial_centers)
     summary = {
         "case": "affine_bunny_pile_wall_release",
         "bunny_count": args.count,
         "steps": int(dem.sims.current_step),
         "completed_time": float(dem.sims.current_time),
+        "barrier_stiffness": args.barrier_stiffness,
         "wall_released": bool(released[0]),
+        "minimum_retained_wall_gap": minimum_retained_wall_gap,
         "maximum_horizontal_displacement": float(np.max(np.linalg.norm(final_centers[:, :2] - initial[:, :2], axis=1))),
         "finite": bool(np.isfinite(final_centers).all()),
         "passed": bool(
             released[0]
             and np.isfinite(final_centers).all()
+            and minimum_retained_wall_gap > 1.0e-8
             and (args.smoke or np.max(np.linalg.norm(final_centers[:, :2] - initial[:, :2], axis=1)) > 0.05)
         ),
     }

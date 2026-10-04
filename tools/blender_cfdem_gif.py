@@ -43,10 +43,24 @@ CASES = {
 }
 
 
-def water_surface(grid, particles, depth=None):
+def close_enclosed_voids(sdf, spacing):
+    """Remove particle-reconstruction voids without moving the outer surface."""
+    from scipy.ndimage import binary_fill_holes
+
+    fluid = sdf < 0
+    enclosed = binary_fill_holes(fluid) & ~fluid
+    if np.any(enclosed):
+        sdf = sdf.copy()
+        sdf[enclosed] = -0.05 * spacing
+    return sdf
+
+
+def water_surface(grid, particles, depth=None, close_particle_voids=False, occupancy_threshold=0.35):
     from scipy.ndimage import gaussian_filter, zoom
     from skimage.measure import marching_cubes
 
+    if not 0.0 < occupancy_threshold < 1.0:
+        raise ValueError("occupancy threshold must lie in (0, 1)")
     dims = grid["dims"]
     dimension = len(dims)
     coords = grid["coords"].reshape(*dims, dimension)
@@ -67,7 +81,9 @@ def water_surface(grid, particles, depth=None):
     occupancy[grid["cell_type"][..., 0] == 2] = 0
     # ponytail: sub-cell splashes are filtered at this grid resolution;
     # use a finer reconstruction grid if individual droplets matter.
-    sdf = ((0.35 - gaussian_filter(np.minimum(occupancy, 1), 0.65)) * min(spacing)).astype(np.float32)
+    sdf = ((occupancy_threshold - gaussian_filter(np.minimum(occupancy, 1), 0.65)) * min(spacing)).astype(np.float32)
+    if close_particle_voids:
+        sdf = close_enclosed_voids(sdf, min(spacing))
     # Ghost/wall cells are outside the reconstructed fluid.
     sdf[grid["cell_type"][..., 0] == 2] = min(spacing) / 2
     if not np.isfinite(sdf).all() or not sdf.min() < 0 < sdf.max():
@@ -76,6 +92,9 @@ def water_surface(grid, particles, depth=None):
     fine_shape = 2 * np.array(sdf.shape) - 1
     sdf = zoom(sdf, fine_shape / np.array(sdf.shape), order=3, mode="nearest")
     surface_spacing = spacing / 2
+    if close_particle_voids:
+        # Cubic upsampling can reintroduce tiny sign islands through overshoot.
+        sdf = close_enclosed_voids(sdf, min(surface_spacing))
     if dimension == 2:
         if depth is None or depth <= 0:
             raise ValueError("2-D fluid needs a positive display extrusion depth")

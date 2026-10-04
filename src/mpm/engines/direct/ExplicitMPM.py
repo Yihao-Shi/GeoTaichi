@@ -226,7 +226,7 @@ class ExplicitMPM(MPMSolver):
     def traction_p2g(self):
         for i in range(self.tractionNum[0]):
             pid = self.traction[i].particleID
-            traction = self.traction[i].traction
+            traction = self.particle_traction_force(i)
             for j in range(self.offset[pid]):
                 nodeID = self.LnID[pid, j]
                 shape_fn = self.shape[pid, j]
@@ -293,7 +293,8 @@ class ExplicitMPM(MPMSolver):
             node_dof = self.neumann.node[i]
             node_id = int(node_dof // config.DIM)
             d = int(node_dof % config.DIM)
-            self.grid[node_id].a[d] += self.neumann.value[i] / self.grid[node_id].m
+            if self.grid[node_id].m > self.val_lim:
+                self.grid[node_id].a[d] += self.neumann.value[i] / self.grid[node_id].m
 
     def calculate_von_mises(self):
         particle_num = self.particleNum.to_numpy()[0]

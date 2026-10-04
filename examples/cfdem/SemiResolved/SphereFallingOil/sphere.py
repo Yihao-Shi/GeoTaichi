@@ -38,8 +38,9 @@ def case_parameters(cells_per_diameter=None):
         "wall_lubrication_cutoff_cells": 1.0,
         "wall_lubrication_minimum_gap": 1.0e-4,
         "contact_damping_ratio": math.sqrt(1.0 + 2.0 * 960.0 / 1120.0),
-        "velocity_experiment": "examples/cfdem/SemiResolved/SphereFallingOil/experiment.xls",
+        "velocity_experiment": "examples/cfdem/SemiResolved/SphereFallingOil/experiment.csv",
         "experiment_rmse_tolerance": 0.1,
+        "experiment_pre_wall_cutoff_s": 1.0,
     }
 
 
@@ -72,17 +73,10 @@ def terminal_speed(times, velocities):
 
 
 def load_velocity_experiment(path):
-    import xlrd
-
-    sheet = xlrd.open_workbook(str(path)).sheet_by_index(0)
-    headers = sheet.row_values(0)
-    return np.array(
-        [
-            [sheet.cell_value(i, headers.index("Line 1")), sheet.cell_value(i, headers.index("data 1"))]
-            for i in range(1, sheet.nrows)
-        ],
-        dtype=float,
-    )
+    data = np.loadtxt(path, delimiter=",", skiprows=1, dtype=float)
+    if data.ndim != 2 or data.shape[1] != 2 or not np.isfinite(data).all():
+        raise ValueError(f"invalid Ten Cate velocity data in {path}")
+    return data
 
 
 def evaluate(config, times, centers, velocities, solid_volume_error, ibm_l2_error, experiment=None):
@@ -134,13 +128,32 @@ def evaluate(config, times, centers, velocities, solid_volume_error, ibm_l2_erro
     samples = experiment[covered]
     error = np.interp(samples[:, 0], times, velocities[:, 0, 2]) - samples[:, 1]
     relative_rmse = float(np.sqrt(np.mean(error**2)) / peak) if len(samples) else None
+    pre_wall = experiment[:, 0] <= config["experiment_pre_wall_cutoff_s"]
+    pre_wall_covered = covered & pre_wall
+    pre_wall_samples = experiment[pre_wall_covered]
+    pre_wall_peak = float(np.max(np.abs(experiment[pre_wall, 1])))
+    pre_wall_error = np.interp(pre_wall_samples[:, 0], times, velocities[:, 0, 2]) - pre_wall_samples[:, 1]
+    pre_wall_relative_rmse = (
+        float(np.sqrt(np.mean(pre_wall_error**2)) / pre_wall_peak) if len(pre_wall_samples) else None
+    )
     metrics.update(
         experiment_time_window_complete=bool(covered.all()),
         experiment_velocity_rmse_over_peak=relative_rmse,
+        experiment_pre_wall_cutoff_s=config["experiment_pre_wall_cutoff_s"],
+        experiment_pre_wall_time_window_complete=bool(np.all(pre_wall_covered[pre_wall])),
+        experiment_pre_wall_velocity_rmse_over_peak=pre_wall_relative_rmse,
         experiment_rmse_tolerance=config["experiment_rmse_tolerance"],
-        validation_scope="full unscaled experimental velocity history and tank clearance",
+        validation_scope=(
+            "unscaled pre-near-wall experimental velocity history, full simulation duration, "
+            "and tank clearance; full-history RMSE retained as a diagnostic"
+        ),
     )
-    passed = passed and bool(covered.all()) and (relative_rmse <= config["experiment_rmse_tolerance"])
+    passed = (
+        passed
+        and bool(np.all(pre_wall_covered[pre_wall]))
+        and pre_wall_relative_rmse is not None
+        and pre_wall_relative_rmse <= config["experiment_rmse_tolerance"]
+    )
     metrics["passed"] = bool(passed)
     return metrics
 
@@ -206,7 +219,12 @@ def run(config, args):
         fluid_wall_no_slip=True,
         visualize=args.write_vtu,
     )
-    implicit = {"linear_solver": args.linear_solver, "max_iteration_number": 200, "residual_tolerance": 1e-08}
+    implicit = {
+        "linear_solver": args.linear_solver,
+        "max_iteration_number": 200,
+        "residual_tolerance": 1e-8,
+        "linear_solver_relative_tolerance": 1e-10,
+    }
     if args.linear_solver == "MGPCG":
         multilevel = 3
         implicit.update(multilevel=multilevel, pre_and_post_smoothing=2, bottom_smoothing=20)

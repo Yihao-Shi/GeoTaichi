@@ -94,11 +94,14 @@ def test_two_phase_wavemaker_metrics_reject_loss_escape_and_missing_wave():
         dt=2.0e-4,
         dx=0.02,
         maximum_porosity=0.56,
+        soil_young_modulus=12.0e6,
+        soil_cohesion=300.0,
+        soil_friction=26.0,
     )
     time = np.linspace(0.0, args.time, 61)
     _, amplitude, _ = linear_piston_wave(args.frequency, TWO_PHASE_WATER_DEPTH, args.wave_velocity)
     wave = amplitude * np.sin(2.0 * np.pi * args.frequency * time)
-    rows = np.zeros((len(time), 23))
+    rows = np.zeros((len(time), 24))
     rows[:, 0] = time
     rows[:, 1:3] = [1000, 200]
     rows[:, 3] = TWO_PHASE_WATER_DEPTH + wave
@@ -110,6 +113,7 @@ def test_two_phase_wavemaker_metrics_reject_loss_escape_and_missing_wave():
     rows[:, 15] = TWO_PHASE_WATER_DEPTH + 0.2 * wave
     rows[:, 17:19] = [0.39, 0.41]
     rows[:, 20:23] = [0.001, 0.001, 2.0 * amplitude]
+    rows[:, 23] = 0.002
 
     assert evaluate_metrics(rows, 1000, 200, args)["passed"]
     rows[-1, 11] = 1

@@ -23,10 +23,10 @@ class IPCULMPM:
         self.mpm.grid_reset()
         self.mpm.compute_shapefn()
         self.mpm.mass_vel_acc_p2g()
-        self.mpm.assemble_traction_step()
         self.mpm.find_active_node()
         self.mpm.prefix_sum_executor.run(self.mpm.node2dof)
         self.mpm.active_dof = self.mpm.set_active_dof()
+        self.mpm.assemble_traction_step()
         self.mpm.compute_nodal_vel_acc()
         if config.DYNAMIC:
             self.mpm.compute_mass_list(self.mpm.integration)

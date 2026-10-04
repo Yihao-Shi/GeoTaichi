@@ -386,10 +386,10 @@ class ImplicitULMPM(ImplicitMPM):
         self.grid_reset()
         self.compute_shapefn()
         self.mass_vel_acc_p2g()
-        self.assemble_traction_step()
         self.find_active_node()
         self.prefix_sum_executor.run(self.node2dof)
         self.active_dof = self.set_active_dof()
+        self.assemble_traction_step()
         self.compute_nodal_vel_acc()
         if config.DYNAMIC:
             self.compute_mass_list(self.integration)

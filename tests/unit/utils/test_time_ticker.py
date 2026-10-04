@@ -38,6 +38,7 @@ def test_gpu_timer_section_preserves_body_error_when_sync_also_fails(monkeypatch
 
 def test_roundoff_remainder_does_not_create_a_tiny_terminal_step():
     assert not has_remaining_time(0.65 - 3.9e-14, 0.65, 2.0e-4)
+    assert not has_remaining_time(50.0 - 2.0e-11, 50.0, 1.0e-3)
     assert has_remaining_time(0.65 - 1.0e-6, 0.65, 2.0e-4)
 
 

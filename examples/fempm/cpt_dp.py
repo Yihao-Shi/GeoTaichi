@@ -132,7 +132,9 @@ def main():
             linear_solver="PCG",
             project_pd=True,
             max_iterations=64,
-            residual_tolerance=1.0e-3,
+            # Driving displacement scales the initial eliminated residual
+            # with dt; keep its force tolerance comparable in timestep studies.
+            residual_tolerance=1.0e-3 * min(1.0, 5.0e-4 / arguments.dt),
             linear_solver_tolerance=1.0e-6,
             linear_solver_relative_tolerance=1.0e-7,
             linear_solver_max_iters=5_000,

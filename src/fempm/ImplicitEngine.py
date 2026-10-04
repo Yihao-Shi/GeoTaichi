@@ -195,6 +195,7 @@ class FEMPMImplicitEngine:
                     "FEM-MPM finite-strain plasticity requires a " "material-owned device history-state interface"
                 )
             self.snapshot_mpm_plastic_history = ti.Vector.field(history_state_size, ti.f64, shape=particle_capacity)
+        self.snapshot_grid_mass = ti.field(ti.f64, shape=grid_capacity)
         self.snapshot_grid_velocity = ti.Vector.field(self.mpm_dimension, ti.f64, shape=grid_capacity)
         self.snapshot_grid_acceleration = ti.Vector.field(self.mpm_dimension, ti.f64, shape=grid_capacity)
 
@@ -273,10 +274,10 @@ class FEMPMImplicitEngine:
         self.mpm.grid_reset()
         self.mpm.compute_shapefn()
         self.mpm.mass_vel_acc_p2g()
-        self.transfer_mpm_traction()
         self.mpm.find_active_node()
         self.mpm.prefix_sum_executor.run(self.mpm.node2dof)
         self.mpm.active_dof = self.mpm.set_active_dof()
+        self.transfer_mpm_traction()
         self.mpm.compute_nodal_vel_acc()
         self.update_mpm_mass_list()
 
@@ -860,6 +861,7 @@ class FEMPMImplicitEngine:
             if ti.static(self.mpm_has_plastic_history):
                 self.snapshot_mpm_plastic_history[particle] = self.mpm.material.get_history_state(particle)
         for node in self.mpm.grid:
+            self.snapshot_grid_mass[node] = self.mpm.grid[node].m
             self.snapshot_grid_velocity[node] = self.mpm.grid[node].v
             self.snapshot_grid_acceleration[node] = self.mpm.grid[node].a
 
@@ -882,6 +884,7 @@ class FEMPMImplicitEngine:
                     self.snapshot_mpm_plastic_history[particle],
                 )
         for node in self.mpm.grid:
+            self.mpm.grid[node].m = self.snapshot_grid_mass[node]
             self.mpm.grid[node].v = self.snapshot_grid_velocity[node]
             self.mpm.grid[node].a = self.snapshot_grid_acceleration[node]
 

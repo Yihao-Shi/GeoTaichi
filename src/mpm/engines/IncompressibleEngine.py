@@ -1222,6 +1222,7 @@ class IncompressibleEngine(Engine):
             total_dofs,
             maxiter=total_dofs,
             tol=sims.residual_tolerance,
+            rel_tol=sims.linear_solver_relative_tolerance,
         )
         self.require_pressure_solver_success(solved, "density-projection PCG")
         kernel_update_cell_pressure(
@@ -1972,6 +1973,7 @@ class IncompressibleEngine(Engine):
             total_dofs,
             maxiter=total_dofs,
             tol=sims.residual_tolerance,
+            rel_tol=sims.linear_solver_relative_tolerance,
         )
         self.require_pressure_solver_success(solved, "pressure PCG")
         sims.timer.end("Poisson solve")

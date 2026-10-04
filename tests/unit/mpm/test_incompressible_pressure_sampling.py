@@ -38,6 +38,13 @@ def test_particle_boundary_is_reapplied_only_when_shifting_runs():
     assert mgpcg_step.count("enforce_particle_boundary") == 1
 
 
+def test_incompressible_pcg_forwards_relative_tolerance():
+    from src.mpm.engines.IncompressibleEngine import IncompressibleEngine
+
+    for step in (IncompressibleEngine.fdm_discretization_pcg, IncompressibleEngine.density_projection_pcg):
+        assert "rel_tol=sims.linear_solver_relative_tolerance" in inspect.getsource(step)
+
+
 class _ArrayField:
     def __init__(self, array):
         self.array = np.asarray(array)

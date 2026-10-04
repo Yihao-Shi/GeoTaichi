@@ -23,7 +23,7 @@ init(
 )
 
 mesh_path = Path(ROOT) / "assets/mesh/LSDEM/sphere.stl"
-sdf_extent = int(os.environ.get("GT_SOFT_LEVELSET_EXTENT", "4"))
+sdf_extent = int(os.environ.get("GT_SOFT_LEVELSET_EXTENT", "5"))
 save_path = os.environ.get(
     "GT_MPDEM_SAVE_PATH",
     os.environ.get("GT_DEM_SAVE_PATH", "OutputData/soft_rigid_generated_explicit"),

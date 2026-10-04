@@ -78,19 +78,21 @@ def test_nonassociated_flow_is_not_silently_accepted():
         _model(DilationAngle=5.0)
 
 
+@pytest.mark.parametrize(
+    "deformation",
+    [
+        np.diag(np.exp([-0.001, 0.0005, -0.002])),
+        np.array([[1.12, 0.06, -0.01], [0.02, 0.92, 0.04], [0.01, -0.03, 0.84]]),
+        np.eye(3) * np.exp(0.05),
+    ],
+    ids=["elastic", "cone", "apex"],
+)
 def test_associated_incremental_energy_has_analytic_symmetric_tangent(
     taichi_material_cpu,
+    deformation,
 ):
     model = _model()
     evaluate = _evaluator(model)
-    deformation = np.array(
-        [
-            [1.12, 0.06, -0.01],
-            [0.02, 0.92, 0.04],
-            [0.01, -0.03, 0.84],
-        ],
-        dtype=np.float64,
-    )
     energy, pk1, tangent, projected = evaluate(deformation)
 
     assert np.isfinite(energy)
@@ -166,6 +168,7 @@ def test_total_deformation_contract_preserves_plastic_part_and_tangent(
 ):
     model = _model()
     committed_total = ti.Matrix.field(3, 3, ti.f64, shape=())
+    energy = ti.field(ti.f64, shape=())
     stress = ti.Matrix.field(3, 3, ti.f64, shape=())
     tangent = ti.Matrix.field(9, 9, ti.f64, shape=())
 
@@ -181,6 +184,7 @@ def test_total_deformation_contract_preserves_plastic_part_and_tangent(
         total = ti.Matrix.zero(ti.f64, 3, 3)
         for row, column in ti.static(ti.ndrange(3, 3)):
             total[row, column] = values[row, column]
+        energy[None] = model.total_strain_energy_density_at(0, total)
         stress[None] = model.total_first_piola_stress_at(0, total)
         tangent[None] = model.total_first_piola_tangent_at(0, total)
 
@@ -197,6 +201,7 @@ def test_total_deformation_contract_preserves_plastic_part_and_tangent(
 
     step = 2.0e-7
     numerical = np.zeros((9, 9), dtype=np.float64)
+    numerical_energy_gradient = np.zeros(9, dtype=np.float64)
     for column in range(9):
         material_axis = column // 3
         spatial_axis = column % 3
@@ -205,11 +210,15 @@ def test_total_deformation_contract_preserves_plastic_part_and_tangent(
         plus[spatial_axis, material_axis] += step
         minus[spatial_axis, material_axis] -= step
         evaluate(np.ascontiguousarray(plus))
+        plus_energy = float(energy[None])
         plus_stress = stress.to_numpy()[()].copy()
         evaluate(np.ascontiguousarray(minus))
+        minus_energy = float(energy[None])
         minus_stress = stress.to_numpy()[()].copy()
+        numerical_energy_gradient[column] = (plus_energy - minus_energy) / (2.0 * step)
         numerical[:, column] = (_flatten_column_major(plus_stress) - _flatten_column_major(minus_stress)) / (2.0 * step)
     np.testing.assert_allclose(analytic, numerical, rtol=5.0e-4, atol=3.0e-2)
+    np.testing.assert_allclose(_flatten_column_major(total_pk1), numerical_energy_gradient, rtol=5.0e-7, atol=2.0e-4)
 
     elastic_trial = trial_total @ plastic_inverse
     evaluate_elastic = _evaluator(model)

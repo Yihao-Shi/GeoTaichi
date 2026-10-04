@@ -134,6 +134,7 @@ class MPM(SolverDiagnosticsMixin):
         self.sims.set_visualize(DictIO.GetAlternative(kwargs, "visualize", self.sims.visualize))
         self.sims.set_sparse_grid(DictIO.GetAlternative(kwargs, "sparse_grid", None))
         self.sims.set_particle_shifting(DictIO.GetAlternative(kwargs, "particle_shifting", False))
+        self.sims.set_particle_shifting_scale(DictIO.GetAlternative(kwargs, "particle_shifting_scale", 1.0))
         self.sims.set_density_projection(
             DictIO.GetAlternative(kwargs, "density_projection", False),
             DictIO.GetAlternative(kwargs, "density_projection_tolerance", 0.01),
@@ -168,6 +169,13 @@ class MPM(SolverDiagnosticsMixin):
             raise RuntimeError("KeyError:: /solver_type/ should be set as Implicit")
 
         linear_solver = DictIO.GetAlternative(implicit_parameters, "linear_solver", "PCG")
+        self.sims.set_linear_solver_relative_tolerance(
+            DictIO.GetAlternative(
+                implicit_parameters,
+                "linear_solver_relative_tolerance",
+                self.sims.linear_solver_relative_tolerance,
+            )
+        )
         if self.sims.material_type == "Solid":
             self.sims.set_calculate_reaction_force(
                 DictIO.GetAlternative(implicit_parameters, "calculate_reaction_force", False)
@@ -179,9 +187,6 @@ class MPM(SolverDiagnosticsMixin):
                 DictIO.GetAlternative(implicit_parameters, "displacement_tolerance", 1e-4)
             )
             self.sims.set_residual_tolerance(DictIO.GetAlternative(implicit_parameters, "residual_tolerance", 1e-10))
-            self.sims.set_linear_solver_relative_tolerance(
-                DictIO.GetAlternative(implicit_parameters, "linear_solver_relative_tolerance", 0.0)
-            )
             self.sims.set_symmetrize_matrix_free_tangent(
                 DictIO.GetAlternative(implicit_parameters, "symmetrize_matrix_free_tangent", False)
             )

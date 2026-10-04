@@ -19,6 +19,34 @@ MAC_SHAPE_QUAD_BSPLINE = 2
 MAC_SHAPE_CUBIC_BSPLINE = 3
 
 
+@ti.func
+def _double_layer_shifting_is_interior2d(position, grid_size, cnum, cell_type):
+    cell = ti.floor(position / grid_size).cast(int)
+    active = 0 <= cell[0] < cnum[0] and 0 <= cell[1] < cnum[1]
+    if active:
+        active = cell_type[cell] == FLUID_CELL
+        for d in ti.static(range(2)):
+            for side in ti.static((-1, 1)):
+                neighbor = cell + side * ti.Vector.unit(2, d)
+                if 0 <= neighbor[d] < cnum[d]:
+                    active = active and cell_type[neighbor] != AIR_CELL
+    return active
+
+
+@ti.func
+def _double_layer_shifting_is_interior3d(position, grid_size, cnum, cell_type):
+    cell = ti.floor(position / grid_size).cast(int)
+    active = 0 <= cell[0] < cnum[0] and 0 <= cell[1] < cnum[1] and 0 <= cell[2] < cnum[2]
+    if active:
+        active = cell_type[cell] == FLUID_CELL
+        for d in ti.static(range(3)):
+            for side in ti.static((-1, 1)):
+                neighbor = cell + side * ti.Vector.unit(3, d)
+                if 0 <= neighbor[d] < cnum[d]:
+                    active = active and cell_type[neighbor] != AIR_CELL
+    return active
+
+
 @ti.kernel
 def kernel_reset_double_layer_grid(node: ti.template()):
     for ng, nb in node:
@@ -1035,15 +1063,16 @@ def kernel_classify_double_layer_fluid_cells2d(
         if cell_type[I] == 3:
             cell_type[I] = FLUID_CELL
 
-    # This is a single-phase free-surface model: a wet vertical column cannot
-    # contain an air pocket below its highest fluid cell.
+    # Promote under-filled interior cells, but never invent liquid across an
+    # empty gap between disconnected containers.
     for i in range(cell_type.shape[0]):
         top = -1
         for j in range(cell_type.shape[1]):
             if cell_type[i, j] == FLUID_CELL:
                 top = j
         for j in range(top):
-            cell_type[i, j] = FLUID_CELL
+            if cell_fluid_mass[i, j] > Threshold:
+                cell_type[i, j] = FLUID_CELL
 
 
 @ti.kernel
@@ -1108,21 +1137,29 @@ def kernel_mark_double_layer_solid_plane_region2d(
 def kernel_constrain_double_layer_particles_to_solid_region2d(
     particle_count: int,
     domain: ti.types.vector(2, float),
+    grid_size: ti.types.vector(2, float),
     start_point: ti.types.vector(2, float),
     end_point: ti.types.vector(2, float),
     particle: ti.template(),
 ):
     eps = 1.0e-6 * ti.max(domain[0], domain[1])
+    discrete_start = ZEROVEC2f
+    discrete_end = ZEROVEC2f
+    for d in ti.static(range(2)):
+        first_cell = ti.ceil(start_point[d] / grid_size[d] - 0.5)
+        last_cell = ti.floor(end_point[d] / grid_size[d] - 0.5)
+        discrete_start[d] = ti.max(0.0, first_cell * grid_size[d])
+        discrete_end[d] = ti.min(domain[d], (last_cell + 1.0) * grid_size[d])
     for np in range(particle_count):
         if int(particle[np].active) == 1 and int(particle[np].materialID) > 0:
             position = particle[np].x
             inside = True
             for d in ti.static(range(2)):
-                inside = inside and position[d] >= start_point[d] - eps and position[d] <= end_point[d] + eps
+                inside = inside and position[d] >= discrete_start[d] - eps and position[d] <= discrete_end[d] + eps
             if inside:
                 prefer_boundary_axis = 0
                 for d in ti.static(range(2)):
-                    if start_point[d] <= eps or end_point[d] >= domain[d] - eps:
+                    if discrete_start[d] <= eps or discrete_end[d] >= domain[d] - eps:
                         prefer_boundary_axis = 1
 
                 best_axis = -1
@@ -1130,24 +1167,26 @@ def kernel_constrain_double_layer_particles_to_solid_region2d(
                 target = 0.0
                 normal = 0.0
                 for d in ti.static(range(2)):
-                    use_axis = prefer_boundary_axis == 0 or start_point[d] <= eps or end_point[d] >= domain[d] - eps
+                    use_axis = (
+                        prefer_boundary_axis == 0 or discrete_start[d] <= eps or discrete_end[d] >= domain[d] - eps
+                    )
                     if use_axis:
                         candidate = 0.0
                         candidate_normal = 0.0
-                        if start_point[d] <= eps:
-                            candidate = end_point[d] + eps
+                        if discrete_start[d] <= eps:
+                            candidate = discrete_end[d] + eps
                             candidate_normal = 1.0
-                        elif end_point[d] >= domain[d] - eps:
-                            candidate = start_point[d] - eps
+                        elif discrete_end[d] >= domain[d] - eps:
+                            candidate = discrete_start[d] - eps
                             candidate_normal = -1.0
                         else:
-                            lower_distance = ti.abs(position[d] - start_point[d])
-                            upper_distance = ti.abs(end_point[d] - position[d])
+                            lower_distance = ti.abs(position[d] - discrete_start[d])
+                            upper_distance = ti.abs(discrete_end[d] - position[d])
                             if lower_distance < upper_distance:
-                                candidate = start_point[d] - eps
+                                candidate = discrete_start[d] - eps
                                 candidate_normal = -1.0
                             else:
-                                candidate = end_point[d] + eps
+                                candidate = discrete_end[d] + eps
                                 candidate_normal = 1.0
                         distance = ti.abs(candidate - position[d])
                         if distance < best_distance:
@@ -1674,6 +1713,7 @@ def kernel_predict_double_layer2d(
     gravity: ti.types.vector(3, float),
     grid_size: ti.types.vector(2, float),
     dt: ti.template(),
+    damping: float,
     node: ti.template(),
     fluid_mass_x: ti.template(),
     fluid_mass_y: ti.template(),
@@ -1747,7 +1787,12 @@ def kernel_predict_double_layer2d(
                 dt,
             )
             nu = face_fluid_viscosity_x[I] / ti.max(face_fluid_density_x[I], 1.0e-12)
-            acc = gravity[0] + acc_f[0] + nu * _mac_laplacian2d(I, grid_size, fluid_velocity_x)
+            acc = (
+                gravity[0]
+                + acc_f[0]
+                + nu * _mac_laplacian2d(I, grid_size, fluid_velocity_x)
+                - damping * fluid_velocity_x[I]
+            )
             fluid_velocity_x[I] += dt[None] * acc
         fluid_acceleration_x[I] = acc
         if I[0] == 0 or I[0] == fluid_velocity_x.shape[0] - 1:
@@ -1771,7 +1816,12 @@ def kernel_predict_double_layer2d(
                 dt,
             )
             nu = face_fluid_viscosity_y[I] / ti.max(face_fluid_density_y[I], 1.0e-12)
-            acc = gravity[1] + acc_f[1] + nu * _mac_laplacian2d(I, grid_size, fluid_velocity_y)
+            acc = (
+                gravity[1]
+                + acc_f[1]
+                + nu * _mac_laplacian2d(I, grid_size, fluid_velocity_y)
+                - damping * fluid_velocity_y[I]
+            )
             fluid_velocity_y[I] += dt[None] * acc
         fluid_acceleration_y[I] = acc
         if I[1] == 0 or I[1] == fluid_velocity_y.shape[1] - 1:
@@ -1788,13 +1838,25 @@ def kernel_project_solid_grid_velocity_to_mac2d(
     influenced_node: int,
     node: ti.template(),
     calLength: ti.template(),
+    cell_type: ti.template(),
     solid_mass_x: ti.template(),
     solid_mass_y: ti.template(),
     solid_velocity_x: ti.template(),
     solid_velocity_y: ti.template(),
 ):
+    # SolidCell denotes a stationary external wall.  Moving-wall callbacks run
+    # after this projection and may overwrite these normal face velocities.
     for I in ti.grouped(solid_velocity_x):
-        if solid_mass_x[I] > cutoff:
+        static_wall = False
+        if 0 < I[0] < solid_velocity_x.shape[0] - 1:
+            left = I - vec2i(1, 0)
+            right = I
+            static_wall = (cell_type[left] == SOLID_CELL and cell_type[right] == FLUID_CELL) or (
+                cell_type[left] == FLUID_CELL and cell_type[right] == SOLID_CELL
+            )
+        if static_wall:
+            solid_velocity_x[I] = 0.0
+        elif solid_mass_x[I] > cutoff:
             face_pos = vec2f(I[0] * grid_size[0], (I[1] + 0.5) * grid_size[1])
             velocity, weight_sum = _sample_solid_grid_velocity2d(
                 face_pos,
@@ -1810,7 +1872,16 @@ def kernel_project_solid_grid_velocity_to_mac2d(
                 solid_velocity_x[I] = velocity[0]
 
     for I in ti.grouped(solid_velocity_y):
-        if solid_mass_y[I] > cutoff:
+        static_wall = False
+        if 0 < I[1] < solid_velocity_y.shape[1] - 1:
+            down = I - vec2i(0, 1)
+            up = I
+            static_wall = (cell_type[down] == SOLID_CELL and cell_type[up] == FLUID_CELL) or (
+                cell_type[down] == FLUID_CELL and cell_type[up] == SOLID_CELL
+            )
+        if static_wall:
+            solid_velocity_y[I] = 0.0
+        elif solid_mass_y[I] > cutoff:
             face_pos = vec2f((I[0] + 0.5) * grid_size[0], I[1] * grid_size[1])
             velocity, weight_sum = _sample_solid_grid_velocity2d(
                 face_pos,
@@ -2285,6 +2356,9 @@ def kernel_delta_correct_double_layer_fluid2d(
     domain: ti.types.vector(2, float),
     grid_size: ti.types.vector(2, float),
     gnum: ti.types.vector(2, int),
+    cnum: ti.types.vector(2, int),
+    shifting_scale: float,
+    cell_type: ti.template(),
     node: ti.template(),
     particle: ti.template(),
     LnID: ti.template(),
@@ -2304,6 +2378,7 @@ def kernel_delta_correct_double_layer_fluid2d(
             int(particle[np].active) == 1
             and int(particle[np].materialID) > 0
             and int(particle[np].phase) == PHASE_FLUID
+            and _double_layer_shifting_is_interior2d(particle[np].x, grid_size, cnum, cell_type)
         ):
             bodyID = int(particle[np].bodyID)
             offset = np * total_nodes
@@ -2318,15 +2393,25 @@ def kernel_delta_correct_double_layer_fluid2d(
             denominator += gradient.dot(gradient)
 
     if denominator > Threshold:
-        step = error_norm / denominator
+        step = shifting_scale * error_norm / denominator
         for np in range(particle_count):
             if (
                 int(particle[np].active) == 1
                 and int(particle[np].materialID) > 0
                 and int(particle[np].phase) == PHASE_FLUID
+                and _double_layer_shifting_is_interior2d(particle[np].x, grid_size, cnum, cell_type)
             ):
-                particle[np].x -= step * particle[np].grad_E2
+                shift = -step * particle[np].grad_E2
+                max_shift = 0.05 * ti.min(grid_size[0], grid_size[1])
+                shift_norm = shift.norm()
+                if shift_norm > max_shift:
+                    shift *= max_shift / shift_norm
+                velocity_correction = particle[np].fluid_velocity_gradient @ shift
                 for d in ti.static(range(2)):
+                    if int(particle[np].fix_v[d]) == 0:
+                        particle[np].vf[d] += velocity_correction[d]
+                        particle[np].v[d] += velocity_correction[d]
+                    particle[np].x[d] += shift[d]
                     particle[np].x[d] = ti.min(ti.max(particle[np].x[d], 1.0e-8), domain[d] - 1.0e-8)
 
 
@@ -3349,7 +3434,8 @@ def kernel_classify_double_layer_fluid_cells3d(
             if cell_type[i, j, k] == FLUID_CELL:
                 top = k
         for k in range(top):
-            cell_type[i, j, k] = FLUID_CELL
+            if cell_fluid_mass[i, j, k] > Threshold:
+                cell_type[i, j, k] = FLUID_CELL
 
 
 @ti.kernel
@@ -3394,21 +3480,29 @@ def kernel_mark_double_layer_solid_cell_region3d(
 def kernel_constrain_double_layer_particles_to_solid_region3d(
     particle_count: int,
     domain: ti.types.vector(3, float),
+    grid_size: ti.types.vector(3, float),
     start_point: ti.types.vector(3, float),
     end_point: ti.types.vector(3, float),
     particle: ti.template(),
 ):
     eps = 1.0e-6 * ti.max(ti.max(domain[0], domain[1]), domain[2])
+    discrete_start = ZEROVEC3f
+    discrete_end = ZEROVEC3f
+    for d in ti.static(range(3)):
+        first_cell = ti.ceil(start_point[d] / grid_size[d] - 0.5)
+        last_cell = ti.floor(end_point[d] / grid_size[d] - 0.5)
+        discrete_start[d] = ti.max(0.0, first_cell * grid_size[d])
+        discrete_end[d] = ti.min(domain[d], (last_cell + 1.0) * grid_size[d])
     for np in range(particle_count):
         if int(particle[np].active) == 1 and int(particle[np].materialID) > 0:
             position = particle[np].x
             inside = True
             for d in ti.static(range(3)):
-                inside = inside and position[d] >= start_point[d] - eps and position[d] <= end_point[d] + eps
+                inside = inside and position[d] >= discrete_start[d] - eps and position[d] <= discrete_end[d] + eps
             if inside:
                 prefer_boundary_axis = 0
                 for d in ti.static(range(3)):
-                    if start_point[d] <= eps or end_point[d] >= domain[d] - eps:
+                    if discrete_start[d] <= eps or discrete_end[d] >= domain[d] - eps:
                         prefer_boundary_axis = 1
 
                 best_axis = -1
@@ -3416,24 +3510,26 @@ def kernel_constrain_double_layer_particles_to_solid_region3d(
                 target = 0.0
                 normal = 0.0
                 for d in ti.static(range(3)):
-                    use_axis = prefer_boundary_axis == 0 or start_point[d] <= eps or end_point[d] >= domain[d] - eps
+                    use_axis = (
+                        prefer_boundary_axis == 0 or discrete_start[d] <= eps or discrete_end[d] >= domain[d] - eps
+                    )
                     if use_axis:
                         candidate = 0.0
                         candidate_normal = 0.0
-                        if start_point[d] <= eps:
-                            candidate = end_point[d] + eps
+                        if discrete_start[d] <= eps:
+                            candidate = discrete_end[d] + eps
                             candidate_normal = 1.0
-                        elif end_point[d] >= domain[d] - eps:
-                            candidate = start_point[d] - eps
+                        elif discrete_end[d] >= domain[d] - eps:
+                            candidate = discrete_start[d] - eps
                             candidate_normal = -1.0
                         else:
-                            lower_distance = ti.abs(position[d] - start_point[d])
-                            upper_distance = ti.abs(end_point[d] - position[d])
+                            lower_distance = ti.abs(position[d] - discrete_start[d])
+                            upper_distance = ti.abs(discrete_end[d] - position[d])
                             if lower_distance < upper_distance:
-                                candidate = start_point[d] - eps
+                                candidate = discrete_start[d] - eps
                                 candidate_normal = -1.0
                             else:
-                                candidate = end_point[d] + eps
+                                candidate = discrete_end[d] + eps
                                 candidate_normal = 1.0
                         distance = ti.abs(candidate - position[d])
                         if distance < best_distance:
@@ -3916,6 +4012,7 @@ def kernel_predict_double_layer3d(
     gravity: ti.types.vector(3, float),
     grid_size: ti.types.vector(3, float),
     dt: ti.template(),
+    damping: float,
     node: ti.template(),
     fluid_mass_x: ti.template(),
     fluid_mass_y: ti.template(),
@@ -4001,7 +4098,12 @@ def kernel_predict_double_layer3d(
                 dt,
             )
             nu = face_fluid_viscosity_x[I] / ti.max(face_fluid_density_x[I], 1.0e-12)
-            acc = gravity[0] + acc_f[0] + nu * _mac_laplacian3d(I, grid_size, fluid_velocity_x)
+            acc = (
+                gravity[0]
+                + acc_f[0]
+                + nu * _mac_laplacian3d(I, grid_size, fluid_velocity_x)
+                - damping * fluid_velocity_x[I]
+            )
             fluid_velocity_x[I] += dt[None] * acc
         fluid_acceleration_x[I] = acc
         if I[0] == 0 or I[0] == fluid_velocity_x.shape[0] - 1:
@@ -4024,7 +4126,12 @@ def kernel_predict_double_layer3d(
                 dt,
             )
             nu = face_fluid_viscosity_y[I] / ti.max(face_fluid_density_y[I], 1.0e-12)
-            acc = gravity[1] + acc_f[1] + nu * _mac_laplacian3d(I, grid_size, fluid_velocity_y)
+            acc = (
+                gravity[1]
+                + acc_f[1]
+                + nu * _mac_laplacian3d(I, grid_size, fluid_velocity_y)
+                - damping * fluid_velocity_y[I]
+            )
             fluid_velocity_y[I] += dt[None] * acc
         fluid_acceleration_y[I] = acc
         if I[1] == 0 or I[1] == fluid_velocity_y.shape[1] - 1:
@@ -4047,7 +4154,12 @@ def kernel_predict_double_layer3d(
                 dt,
             )
             nu = face_fluid_viscosity_z[I] / ti.max(face_fluid_density_z[I], 1.0e-12)
-            acc = gravity[2] + acc_f[2] + nu * _mac_laplacian3d(I, grid_size, fluid_velocity_z)
+            acc = (
+                gravity[2]
+                + acc_f[2]
+                + nu * _mac_laplacian3d(I, grid_size, fluid_velocity_z)
+                - damping * fluid_velocity_z[I]
+            )
             fluid_velocity_z[I] += dt[None] * acc
         fluid_acceleration_z[I] = acc
         if I[2] == 0 or I[2] == fluid_velocity_z.shape[2] - 1:
@@ -4064,6 +4176,7 @@ def kernel_project_solid_grid_velocity_to_mac3d(
     influenced_node: int,
     node: ti.template(),
     calLength: ti.template(),
+    cell_type: ti.template(),
     solid_mass_x: ti.template(),
     solid_mass_y: ti.template(),
     solid_mass_z: ti.template(),
@@ -4071,8 +4184,19 @@ def kernel_project_solid_grid_velocity_to_mac3d(
     solid_velocity_y: ti.template(),
     solid_velocity_z: ti.template(),
 ):
+    # SolidCell denotes a stationary external wall.  Moving-wall callbacks run
+    # after this projection and may overwrite these normal face velocities.
     for I in ti.grouped(solid_velocity_x):
-        if solid_mass_x[I] > cutoff:
+        static_wall = False
+        if 0 < I[0] < solid_velocity_x.shape[0] - 1:
+            left = I - vec3i(1, 0, 0)
+            right = I
+            static_wall = (cell_type[left] == SOLID_CELL and cell_type[right] == FLUID_CELL) or (
+                cell_type[left] == FLUID_CELL and cell_type[right] == SOLID_CELL
+            )
+        if static_wall:
+            solid_velocity_x[I] = 0.0
+        elif solid_mass_x[I] > cutoff:
             face_pos = vec3f(I[0] * grid_size[0], (I[1] + 0.5) * grid_size[1], (I[2] + 0.5) * grid_size[2])
             velocity, weight_sum = _sample_solid_grid_velocity3d(
                 face_pos,
@@ -4088,7 +4212,16 @@ def kernel_project_solid_grid_velocity_to_mac3d(
                 solid_velocity_x[I] = velocity[0]
 
     for I in ti.grouped(solid_velocity_y):
-        if solid_mass_y[I] > cutoff:
+        static_wall = False
+        if 0 < I[1] < solid_velocity_y.shape[1] - 1:
+            down = I - vec3i(0, 1, 0)
+            up = I
+            static_wall = (cell_type[down] == SOLID_CELL and cell_type[up] == FLUID_CELL) or (
+                cell_type[down] == FLUID_CELL and cell_type[up] == SOLID_CELL
+            )
+        if static_wall:
+            solid_velocity_y[I] = 0.0
+        elif solid_mass_y[I] > cutoff:
             face_pos = vec3f((I[0] + 0.5) * grid_size[0], I[1] * grid_size[1], (I[2] + 0.5) * grid_size[2])
             velocity, weight_sum = _sample_solid_grid_velocity3d(
                 face_pos,
@@ -4104,7 +4237,16 @@ def kernel_project_solid_grid_velocity_to_mac3d(
                 solid_velocity_y[I] = velocity[1]
 
     for I in ti.grouped(solid_velocity_z):
-        if solid_mass_z[I] > cutoff:
+        static_wall = False
+        if 0 < I[2] < solid_velocity_z.shape[2] - 1:
+            back = I - vec3i(0, 0, 1)
+            front = I
+            static_wall = (cell_type[back] == SOLID_CELL and cell_type[front] == FLUID_CELL) or (
+                cell_type[back] == FLUID_CELL and cell_type[front] == SOLID_CELL
+            )
+        if static_wall:
+            solid_velocity_z[I] = 0.0
+        elif solid_mass_z[I] > cutoff:
             face_pos = vec3f((I[0] + 0.5) * grid_size[0], (I[1] + 0.5) * grid_size[1], I[2] * grid_size[2])
             velocity, weight_sum = _sample_solid_grid_velocity3d(
                 face_pos,
@@ -4600,6 +4742,9 @@ def kernel_delta_correct_double_layer_fluid3d(
     domain: ti.types.vector(3, float),
     grid_size: ti.types.vector(3, float),
     gnum: ti.types.vector(3, int),
+    cnum: ti.types.vector(3, int),
+    shifting_scale: float,
+    cell_type: ti.template(),
     node: ti.template(),
     particle: ti.template(),
     LnID: ti.template(),
@@ -4619,6 +4764,7 @@ def kernel_delta_correct_double_layer_fluid3d(
             int(particle[np].active) == 1
             and int(particle[np].materialID) > 0
             and int(particle[np].phase) == PHASE_FLUID
+            and _double_layer_shifting_is_interior3d(particle[np].x, grid_size, cnum, cell_type)
         ):
             bodyID = int(particle[np].bodyID)
             offset = np * total_nodes
@@ -4633,15 +4779,25 @@ def kernel_delta_correct_double_layer_fluid3d(
             denominator += gradient.dot(gradient)
 
     if denominator > Threshold:
-        step = error_norm / denominator
+        step = shifting_scale * error_norm / denominator
         for np in range(particle_count):
             if (
                 int(particle[np].active) == 1
                 and int(particle[np].materialID) > 0
                 and int(particle[np].phase) == PHASE_FLUID
+                and _double_layer_shifting_is_interior3d(particle[np].x, grid_size, cnum, cell_type)
             ):
-                particle[np].x -= step * particle[np].grad_E2
+                shift = -step * particle[np].grad_E2
+                max_shift = 0.05 * ti.min(grid_size[0], ti.min(grid_size[1], grid_size[2]))
+                shift_norm = shift.norm()
+                if shift_norm > max_shift:
+                    shift *= max_shift / shift_norm
+                velocity_correction = particle[np].fluid_velocity_gradient @ shift
                 for d in ti.static(range(3)):
+                    if int(particle[np].fix_v[d]) == 0:
+                        particle[np].vf[d] += velocity_correction[d]
+                        particle[np].v[d] += velocity_correction[d]
+                    particle[np].x[d] += shift[d]
                     particle[np].x[d] = ti.min(ti.max(particle[np].x[d], 1.0e-8), domain[d] - 1.0e-8)
 
 
