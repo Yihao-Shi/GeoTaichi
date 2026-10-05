@@ -61,7 +61,7 @@ uses
 
 $$
 \boldsymbol{M}^{-1}
-=\operatorname{blockdiag}(\boldsymbol{A}_{00}^{-1},
+=\mathrm{blockdiag}(\boldsymbol{A}_{00}^{-1},
 \boldsymbol{A}_{11}^{-1},\ldots).
 $$
 

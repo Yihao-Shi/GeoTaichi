@@ -221,7 +221,7 @@ $$
 $$
 
 For control variables $\boldsymbol{z}$ and deformation-gradient Jacobian
-$\boldsymbol{J}_F=\partial\operatorname{vec}\boldsymbol{F}/
+$\boldsymbol{J}_F=\partial\mathrm{vec}\boldsymbol{F}/
 \partial\boldsymbol{z}$, the chain rule gives
 
 $$

@@ -40,13 +40,13 @@ The energy density, second Piola stress, and first Piola stress are
 
 $$
 \Psi_{SVK}
-=\frac{\lambda}{2}\operatorname{tr}(\boldsymbol{E}_{GL})^2
+=\frac{\lambda}{2}\mathrm{tr}(\boldsymbol{E}_{GL})^2
 +\mu\boldsymbol{E}_{GL}:\boldsymbol{E}_{GL}.
 $$
 
 $$
 \boldsymbol{S}
-=\lambda\operatorname{tr}(\boldsymbol{E}_{GL})\boldsymbol{1}
+=\lambda\mathrm{tr}(\boldsymbol{E}_{GL})\boldsymbol{1}
 +2\mu\boldsymbol{E}_{GL},
 \qquad
 \boldsymbol{P}=\boldsymbol{F}\boldsymbol{S}.
@@ -139,13 +139,13 @@ $$
 \Psi_{ARAP}=\sum_{a=1}^{2}k_a(\sigma_a-1)^2.
 $$
 
-If $\boldsymbol{C}_s=\boldsymbol{Q}\operatorname{diag}(\sigma_1^2,\sigma_2^2)\boldsymbol{Q}^T$,
+If $\boldsymbol{C}_s=\boldsymbol{Q}\mathrm{diag}(\sigma_1^2,\sigma_2^2)\boldsymbol{Q}^T$,
 its first Piola surface stress is
 
 $$
 \boldsymbol{P}_s
 =\boldsymbol{F}_s\boldsymbol{Q}
-\operatorname{diag}\!\left(
+\mathrm{diag}\!\left(
 \frac{2k_1(\sigma_1-1)}{\sigma_1},
 \frac{2k_2(\sigma_2-1)}{\sigma_2}
 \right)\boldsymbol{Q}^T.
@@ -170,7 +170,7 @@ The compressible surface energy and first Piola stress are
 $$
 \Psi_{NH}^{s}
 =\frac{\mu_s}{2}
-\left(\operatorname{tr}\boldsymbol{C}_s-2-2\ln J_s\right)
+\left(\mathrm{tr}\boldsymbol{C}_s-2-2\ln J_s\right)
 +\frac{\lambda_s}{2}(\ln J_s)^2,
 $$
 
@@ -375,7 +375,7 @@ With tension-positive Cauchy stress, define compression-positive mean stress
 $p$, deviatoric stress, and equivalent shear stress by
 
 $$
-p=-\frac{1}{3}\operatorname{tr}\boldsymbol{\sigma},
+p=-\frac{1}{3}\mathrm{tr}\boldsymbol{\sigma},
 \qquad
 \boldsymbol{s}=\boldsymbol{\sigma}+p\boldsymbol{1},
 \qquad

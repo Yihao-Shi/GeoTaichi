@@ -63,7 +63,7 @@ $$
 The basis has local support and forms a partition of unity:
 
 $$
-\operatorname{supp}N_{i,p}=[\xi_i,\xi_{i+p+1}),
+\mathrm{supp}N_{i,p}=[\xi_i,\xi_{i+p+1}),
 \qquad
 N_{i,p}\geq0,
 \qquad

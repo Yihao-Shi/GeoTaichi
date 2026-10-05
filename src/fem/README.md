@@ -72,7 +72,7 @@ reference configuration is
 
 $$
 \rho_0\ddot{\boldsymbol{u}}
-=\operatorname{Div}_{X}\boldsymbol{P}+\rho_0\boldsymbol{b}
+=\mathrm{Div}_{X}\boldsymbol{P}+\rho_0\boldsymbol{b}
 \quad\text{in }\Omega_0.
 $$
 

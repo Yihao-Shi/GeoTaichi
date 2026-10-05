@@ -78,7 +78,7 @@ and define the finite-face overlap fraction
 $$
 \chi
 =\frac{
-\operatorname{area}
+\mathrm{area}
 \left[
 \mathcal{D}(\boldsymbol{x}_q,r_c)
 \cap

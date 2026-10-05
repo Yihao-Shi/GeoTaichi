@@ -122,7 +122,7 @@ finite-face contact fraction is
 $$
 \chi
 =\frac{
-\operatorname{area}
+\mathrm{area}
 \left[
 \mathcal{D}(\boldsymbol{x}_q,r_c)
 \cap
@@ -162,7 +162,7 @@ For an interior projection, define the area coordinates
 $$
 \lambda_0
 =\frac{
-\operatorname{area}
+\mathrm{area}
 \triangle(\boldsymbol{x}_q,\boldsymbol{x}_1,\boldsymbol{x}_2)
 }{A_f},
 $$
@@ -170,13 +170,13 @@ $$
 $$
 \lambda_1
 =\frac{
-\operatorname{area}
+\mathrm{area}
 \triangle(\boldsymbol{x}_q,\boldsymbol{x}_0,\boldsymbol{x}_2)
 }{A_f},
 \qquad
 \lambda_2
 =\frac{
-\operatorname{area}
+\mathrm{area}
 \triangle(\boldsymbol{x}_q,\boldsymbol{x}_0,\boldsymbol{x}_1)
 }{A_f}.
 $$
@@ -714,7 +714,7 @@ where $\mathbf n_b$ points from the wall into the specimen. After an accepted
 fully implicit step, the next prescribed normal velocity is
 
 $$
-\mathbf v_b=\mathbf n_b\,\operatorname{clip}\!\left[
+\mathbf v_b=\mathbf n_b\,\mathrm{clip}\!\left[
 g\frac{p^\star-p_b}{p^\star},-v_{\max},v_{\max}\right].
 $$
 

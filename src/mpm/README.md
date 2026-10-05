@@ -332,7 +332,7 @@ does positive work:
 
 $$
 f_{i,a}^{damp}
-=-\zeta|f_{i,a}|\operatorname{sign}(v_{i,a})
+=-\zeta|f_{i,a}|\mathrm{sign}(v_{i,a})
 \quad \text{if } v_{i,a}f_{i,a}>0.
 $$
 
@@ -398,8 +398,8 @@ For B-bar, split a velocity gradient into deviatoric and volumetric parts,
 
 $$
 \boldsymbol{L}_p
-=\operatorname{dev}\boldsymbol{L}_p
-+\frac{1}{d}\operatorname{tr}(\boldsymbol{L}_p)\boldsymbol{I}.
+=\mathrm{dev}\boldsymbol{L}_p
++\frac{1}{d}\mathrm{tr}(\boldsymbol{L}_p)\boldsymbol{I}.
 $$
 
 Replace its local volumetric rate by a cell-projected rate
@@ -418,7 +418,7 @@ $$
 =\boldsymbol{L}_p
 +\frac{1}{d}
 \left(
-\overline{\ell}_p-\operatorname{tr}\boldsymbol{L}_p
+\overline{\ell}_p-\mathrm{tr}\boldsymbol{L}_p
 \right)\boldsymbol{I}.
 $$
 
@@ -427,7 +427,7 @@ deviatoric rows and replaces only its volumetric row:
 
 $$
 \boldsymbol{B}_{pi}^{Bbar}
-=\operatorname{dev}\boldsymbol{B}_{pi}
+=\mathrm{dev}\boldsymbol{B}_{pi}
 +\frac{1}{d}\boldsymbol{m}\,
 \overline{\boldsymbol{G}}_{pi}^{T},
 $$
@@ -482,7 +482,7 @@ $\boldsymbol{I}+\nabla\boldsymbol{u}$ inside an implicit displacement solve.
 Pressure smoothing projects the particle mean stress to nodes and back:
 
 $$
-p_p=\frac{1}{d}\operatorname{tr}\boldsymbol{\sigma}_p,
+p_p=\frac{1}{d}\mathrm{tr}\boldsymbol{\sigma}_p,
 \qquad
 p_i
 =\frac{\sum_pN_{pi}m_pp_p}{\sum_pN_{pi}m_p},
@@ -494,7 +494,7 @@ Only the spherical stress changes,
 
 $$
 \boldsymbol{\sigma}_p^{sm}
-=\operatorname{dev}\boldsymbol{\sigma}_p
+=\mathrm{dev}\boldsymbol{\sigma}_p
 +\overline{p}_p\boldsymbol{I}.
 $$
 
@@ -683,14 +683,14 @@ by nonnegative values,
 $$
 \boldsymbol{H}_p
 =\boldsymbol{Q}_p
-\operatorname{diag}(\lambda_{p,a})
+\mathrm{diag}(\lambda_{p,a})
 \boldsymbol{Q}_p^T,
 $$
 
 $$
 \boldsymbol{H}_p^+
 =\boldsymbol{Q}_p
-\operatorname{diag}\left(\max(\lambda_{p,a},0)\right)
+\mathrm{diag}\left(\max(\lambda_{p,a},0)\right)
 \boldsymbol{Q}_p^T.
 $$
 

@@ -228,7 +228,7 @@ multiplier is
 $$
 \chi
 =\frac{
-\operatorname{area}
+\mathrm{area}
 \left[
 \mathcal D(\boldsymbol{x}_q,r_c)\cap\mathcal W
 \right]
@@ -818,7 +818,7 @@ The cell solid fraction and porosity are
 
 $$
 \phi_{s,I}
-=\operatorname{clamp}
+=\mathrm{clamp}
 \left(
 \sum_p\frac{V_pW_{pI}}{Z_p},
 0,
@@ -839,7 +839,7 @@ $$
 
 $$
 \overline\epsilon_{f,p}
-=\operatorname{clamp}
+=\mathrm{clamp}
 \left(
 \frac{\sum_I\widetilde W_{pI}\epsilon_{f,I}}
 {\sum_I\widetilde W_{pI}},
@@ -1040,7 +1040,7 @@ estimate is
 
 $$
 \phi_s
-=\operatorname{clamp}
+=\mathrm{clamp}
 \left(
 \frac{\sum_{a=1}^{8}\langle-\phi_a\rangle_+}
 {\sum_{a=1}^{8}|\phi_a|},
@@ -1081,7 +1081,7 @@ $$
 
 $$
 \varphi_s
-=\operatorname{clamp}
+=\mathrm{clamp}
 \left(
 \frac{\phi_s\rho_s}{\rho_m},
 0,
@@ -1198,7 +1198,7 @@ sampled at the eight cell vertices to obtain a cell solid fraction
 $\alpha_c$ and rigid velocity $\boldsymbol{u}_{b,c}$.  At a MAC face,
 
 $$
-\alpha_f=\operatorname{clamp}\!\left(
+\alpha_f=\mathrm{clamp}\!\left(
 \frac{\alpha_L+\alpha_R}{2},0,1\right),
 \qquad
 u_f^{IBM}=u_f^*+\alpha_f(u_{b,f}-u_f^*).

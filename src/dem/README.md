@@ -146,11 +146,11 @@ where the balance equation is evaluated, define
 
 $$
 \mathcal D_{\alpha}(f_k,u_k)
-=f_k\left[1-\alpha\,\operatorname{sgn}(f_ku_k)\right],
+=f_k\left[1-\alpha\,\mathrm{sgn}(f_ku_k)\right],
 \qquad k\in\{1,2,3\},
 $$
 
-with $\operatorname{sgn}(0)=0$. The damped force and moment are therefore
+with $\mathrm{sgn}(0)=0$. The damped force and moment are therefore
 
 $$
 F_{i,k}^{d}=\mathcal D_{\alpha_f}(F_{i,k},v_{i,k}),
@@ -314,7 +314,7 @@ integer quantizer, then
 $$
 \boldsymbol{q}_i=\lfloor Q\boldsymbol{u}_i\rfloor,
 \qquad
-z_i=\operatorname{interleave}(q_{i,x},q_{i,y},q_{i,z}).
+z_i=\mathrm{interleave}(q_{i,x},q_{i,y},q_{i,z}).
 $$
 
 The binary tree is formed from common prefixes of the sorted $z_i$. Query
@@ -710,7 +710,7 @@ velocity is
 
 $$
 v_n
-=\operatorname{clip}
+=\mathrm{clip}
 \left(Ge_F,-v_{max},v_{max}\right).
 $$
 
@@ -744,7 +744,7 @@ $\boldsymbol{u}_B$ on side $B$. The signed revolute angle is
 
 $$
 \theta
-=\operatorname{atan2}
+=\mathrm{atan2}
 \left(
 \boldsymbol{u}_B\cdot\boldsymbol{v}_A,
 \boldsymbol{u}_B\cdot\boldsymbol{u}_A

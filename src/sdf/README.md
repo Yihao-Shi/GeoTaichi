@@ -26,9 +26,9 @@ used by closed primitives is
 $$
 d(\boldsymbol{x})=
 \begin{cases}
--\operatorname{dist}(\boldsymbol{x},\partial\Omega),
+-\mathrm{dist}(\boldsymbol{x},\partial\Omega),
 &\boldsymbol{x}\in\Omega,\\
-\operatorname{dist}(\boldsymbol{x},\partial\Omega),
+\mathrm{dist}(\boldsymbol{x},\partial\Omega),
 &\boldsymbol{x}\notin\Omega.
 \end{cases}
 $$
@@ -76,7 +76,7 @@ $$
 and the capsule around segment $[\boldsymbol{a},\boldsymbol{b}]$,
 
 $$
-t=\operatorname{clamp}
+t=\mathrm{clamp}
 \left(
 \frac{(\boldsymbol{x}-\boldsymbol{a})\cdot
 (\boldsymbol{b}-\boldsymbol{a})}
@@ -120,7 +120,7 @@ $$
 For smoothing radius $k>0$, the polynomial smooth union is
 
 $$
-h=\operatorname{clamp}
+h=\mathrm{clamp}
 \left(\frac12+\frac{d_B-d_A}{2k},0,1\right),
 $$
 

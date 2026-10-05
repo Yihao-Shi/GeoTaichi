@@ -64,7 +64,7 @@ proximity into one-dimensional order. If $z_i$ and $z_j$ are two keys, their
 radix-tree affinity is the longest common prefix
 
 $$
-\delta(i,j)=\operatorname{clz}(z_i\mathbin{\mathtt{xor}}z_j),
+\delta(i,j)=\mathrm{clz}(z_i\mathbin{\mathtt{xor}}z_j),
 $$
 
 with an index tie-break for coincident keys. Internal nodes cover contiguous

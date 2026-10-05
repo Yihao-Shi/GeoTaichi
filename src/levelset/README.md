@@ -115,7 +115,7 @@ interface localization gives
 $$
 \theta=\frac{\phi_i}{\phi_i-\phi_j},
 \qquad
-d_i=\operatorname{sign}(\phi_i)\,\theta h.
+d_i=\mathrm{sign}(\phi_i)\,\theta h.
 $$
 
 ## Free-surface sampling
