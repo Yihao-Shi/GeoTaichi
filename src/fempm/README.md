@@ -1,43 +1,19 @@
-# Explicit and Monolithic Finite Element–Material Point Coupling with Contact
+# Finite Element Method–Material Point Method (FEM–MPM) Coupling with IPC
 
 `src/fempm` provides two-way contact between MPM material points and deforming
-FEM boundaries. It has an explicit DEM-law path and a monolithic
+FEM boundaries. It has an explicit DEM-law path and a fully coupled
 implicit IPC path. The child solvers retain their constitutive state, while
 FEMPM owns surface topology, broad-phase storage, contact assembly,
 synchronized time, and coupled output.
 
-## Capabilities
+[Theory log and derivations](#fem--mpm-coupling-theory-log) | [Examples](../../examples/)
 
-- Three-dimensional explicit FEM–MPM coupling.
-- Two- and three-dimensional implicit IPC coupling, including Cartesian and
-  no-swirl axisymmetric two-dimensional modes. Planar contact uses point--edge
-  primitives; three-dimensional contact uses point--triangle primitives.
-- Dynamic prefix-sum `LinkedCell` and linear `BVH` broad phases.
-- DEM linear spring-dashpot and Hertz–Mindlin contact laws.
-- One independent property for every MPM-material/FEM-body pair.
-- Persistent particle/face tangential-overlap history across list rebuilds.
-- Equal-and-opposite contact force transfer to the MPM point and the three FEM
-  face nodes.
-- Shared FEM/MPM/contact critical-timestep gate and synchronized output.
-- Elastic implicit FEM plus Direct finite-strain Neo-Hookean, associated
-  Drucker--Prager, von Mises, or Modified Cam--Clay MPM in one Newton system.
-- IPC point--edge/point--triangle barrier contact, analytic distance Hessians, PSD
-  projected Newton, conservative CCD/ACCD, Armijo line search, and lagged IPC
-  friction.
-- Device `COO` or `HashTriplet` assembly with Taichi PCG; Scipy is available
-  only as an explicitly selected linear solver.
+## Example-backed capabilities
 
-The MPM side uses `ParticleCoupling`. Its equivalent contact radius is stored
-in `particle.rad`, and the contact force is accumulated in
-`particle.external_force`; the ordinary MPM P2G force kernel then transfers it
-to the background grid. The FEM side receives the opposite nodal force before
-its explicit update. MPM material ids follow the MPM convention `1..N`, while
-FEM body ids normally start at zero.
-
-The scalar contact laws are defined in the
-[shared contact-model theory](../physics_model/contact_model/README.md), and
-the finite-strain material laws are defined in the
-[shared constitutive-model theory](../physics_model/consititutive_model/README.md).
+- Explicit finite element method–material point method (FEM–MPM) contact: [point–membrane example](../../examples/fempm/explicit_point_membrane.py).
+- Fully coupled implicit FEM–MPM incremental potential contact (IPC): [elastic/Drucker–Prager contact](../../examples/fempm/implicit_ipc_elastic_contact.py) and [von Mises contact](../../examples/fempm/implicit_ipc_von_mises_contact.py).
+- Axisymmetric FEM–MPM soil–structure interaction: [Drucker–Prager CPT](../../examples/fempm/cpt_dp.py).
+- The linked implicit examples use elastic FEM and ULMPM, with finite-radius barrier contact, coupled assembly, and lagged friction where enabled.
 
 ## Package layout
 
@@ -45,7 +21,7 @@ the finite-strain material laws are defined in the
 | --- | --- |
 | mainFEMPM.py | Public FEMPM facade and coupled lifecycle |
 | Engine.py | Explicit FEM--MPM stepping and force exchange |
-| ImplicitEngine.py | Monolithic Barrier IPC Newton solve |
+| ImplicitEngine.py | Fully coupled Barrier IPC Newton solve |
 | ContactManager.py | Contact properties, capacities, and model selection |
 | Patch.py | Deforming FEM contact surface |
 | contact/ | Explicit laws and implicit IPC pullback |
@@ -297,7 +273,7 @@ $$
 Therefore the exact pullback preserves the contact action--reaction null mode
 even though FEM and MPM use unrelated discretizations.
 
-### 4. Monolithic equilibrium and plasticity
+### 4. Fully coupled equilibrium and plasticity
 
 Collect FEM nodal positions and active MPM grid displacements in
 
@@ -342,7 +318,7 @@ $$
 =-\left(\boldsymbol{r}_M+\boldsymbol{r}_M^c\right).
 $$
 
-The FEM body uses total-Lagrangian quadrature. The Direct MPM body uses the
+The FEM body uses total-Lagrangian quadrature. The MPM body uses the
 updated total deformation gradient
 
 $$
@@ -354,12 +330,11 @@ $$
 \right]\boldsymbol{F}_{p,n}.
 $$
 
-Finite-strain Drucker--Prager, von Mises, and Modified Cam--Clay return
+Finite-strain Drucker--Prager and von Mises return
 mappings are defined in the
 [shared constitutive theory](../physics_model/consititutive_model/README.md#finite-strain-multiplicative-plasticity).
 Accepted plastic history is frozen while evaluating every Newton trial and is
-committed only after the complete FEM--MPM step converges. Modified Cam--Clay
-adds an outer fixed point for its lagged hardening state.
+committed only after the complete FEM--MPM step converges.
 
 When the MPM material has no global incremental potential, line search uses
 the residual merit
@@ -377,7 +352,7 @@ $$
 =-\|\boldsymbol{R}_{free}\|^2.
 $$
 
-This keeps plastic return mapping inside the same monolithic contact
+This keeps plastic return mapping inside the same fully coupled contact
 equilibrium without pretending that a non-potential material is hyperelastic.
 
 ### 5. Friction and feasible line search
@@ -529,7 +504,7 @@ Use `add_surface`, `choose_contact_model`, and `add_property`.
 The implicit branch uses `mpm_backend="Direct"`, implicit FEM/MPM solvers,
 elastic FEM, and either elastic or supported associated finite-strain MPM
 plasticity. `MPMmaterial` in the historical `add_property` signature denotes
-the Direct MPM body id on this branch; the clearer
+the MPM body id on this branch; the clearer
 `add_ipc_property(MPMbody, FEMbody, ...)` alias is preferred.
 
 For a planar solve, configure both children with `dimension=2`. For an
@@ -545,16 +520,16 @@ the elastic state and tangent are 3-by-3, and contact/grid unknowns remain
 two-dimensional. Passing `plane_strain=False` with these plastic laws is
 rejected; no intrinsic-2D DP/J2 approximation is used.
 The explicitly stored third FEM component is automatically constrained, and
-the monolithic coupling embeds each two-component MPM block into its physical
+the fully coupled coupling embeds each two-component MPM block into its physical
 top-left block. Explicit DEM-law FEMPM remains three-dimensional.
-Direct-MPM and FEM nodal Neumann data are resultant forces. FEM
+MPM and FEM nodal Neumann data are resultant forces. FEM
 `add_traction` performs the axisymmetric boundary integration, whereas a raw
 resultant supplied at a degree of freedom must already include the desired
 revolved measure.
 
 ```python
-# Direct ULMPM material choices include NeoHookean, DruckerPrager, VonMises,
-# and ModifiedCamClay. For associated Drucker--Prager, DilationAngle must
+# ULMPM examples use NeoHookean, DruckerPrager, and VonMises.
+# For associated Drucker--Prager, DilationAngle must
 # equal FrictionAngle. VonMises optionally accepts HardeningModulus.
 mpm.add_material(
     model="VonMises",
@@ -600,9 +575,9 @@ followed by a cache refresh and an unapplied updated-system correction probe.
 The step is accepted only when `||delta x||_inf / dt <= friction_tolerance`;
 the maximum count is a safety cap, not a convergence substitute.
 
-FEM nodes precede compact active MPM grid nodes in the monolithic unknown.
+FEM nodes precede compact active MPM grid nodes in the fully coupled unknown.
 The FEM internal energy is Total Lagrangian: its rest-shape gradients and
-reference quadrature weights remain fixed and `F = dx/dX`. The Direct MPM
+reference quadrature weights remain fixed and `F = dx/dX`. The MPM
 side is Updated Lagrangian and advances total `F_n`; its shared plastic
 material state owns `F_p,n^{-1}` and forms `F_e,tr = F_tr F_p,n^{-1}`. IPC distance, friction, and
 CCD are evaluated in the current spatial configuration. The coupled method is
@@ -616,7 +591,7 @@ timestep; capacity, configuration, and other runtime errors are never retried.
 An accepted reduced timestep becomes the synchronized child/coupling timestep.
 If all attempts fail, the configured entry timestep is restored and structured
 failure data remains available through `diagnostics_snapshot()`.
-An all-zero Direct-MPM `F0` field is initialized to identity; otherwise every
+An all-zero MPM `F0` field is initialized to identity; otherwise every
 particle must provide a finite positive-determinant map in the full material
 dimension.
 The Cartesian/axisymmetric 2D branch pulls back the analytic point--edge
@@ -653,19 +628,19 @@ the FEDEM subtriangle-area distribution.
   `FEMPM` factory configures this automatically.
 - The explicit branch requires explicit FEM. Standalone FEM Barrier IPC is not
   combined with this penalty-contact path.
-- Classical volume/TRI3, cloth TRI3, and explicit HEX8 elastoplastic FEM may
+- Elastic volume/TRI3 and cloth TRI3 FEM may
   supply the coupled triangular boundary. Cloth TRI3 uses its device
-  membrane/bending assembler in the monolithic line search.
+  membrane/bending assembler in the fully coupled line search.
 - Search, distance culling, contact response, and force exchange run in Taichi.
   Python is restricted to setup, validation, time-loop orchestration, and I/O.
-- Implicit IPC requires elastic implicit FEM and Direct implicit ULMPM.
+- Implicit IPC requires elastic implicit FEM and implicit ULMPM.
   Supported MPM laws are Neo-Hookean elasticity, perfect associated
   Drucker--Prager, and associated von Mises with optional linear isotropic
-  hardening, plus Modified Cam--Clay with its coupled history update. The
+  hardening, with coupled history updates. The
   plastic laws use their shared finite-strain updates and consistent tangents.
-  FEM elastoplasticity, Direct TLMPM plasticity, and standalone child FEM/MPM
+  FEM elastoplasticity, TLMPM plasticity, and standalone child FEM/MPM
   IPC are rejected on this coupled path.
-- Ordinary Direct MPM may couple to cloth FEM; soft-particle MPM--cloth IPC is
+- Continuum-solid MPM may couple to cloth FEM; soft-particle MPM--cloth IPC is
   intentionally unsupported and raises explicitly.
 - Finite-strain Drucker--Prager currently requires associated flow
   (`DilationAngle == FrictionAngle`), has no hardening or tensile-cutoff

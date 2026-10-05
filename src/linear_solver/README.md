@@ -234,7 +234,7 @@ solution = result["x"]
 
 Solvers normally scatter directly from element/contact kernels rather than
 passing NumPy triplets. `append_raw_from()` combines compatible device block
-systems without a host round trip and is used by monolithic coupling.
+systems without a host round trip and is used by fully coupled coupling.
 `tol` is the absolute residual floor and `rel_tol` scales with the initial
 true residual; Krylov convergence uses
 `max(tol, rel_tol * initial_residual)`. The returned dictionary also contains

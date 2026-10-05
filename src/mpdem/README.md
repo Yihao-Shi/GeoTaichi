@@ -1,49 +1,32 @@
-# Multiphysics Material Point–Discrete Element Coupling with Level-Set and IPC Contact
+# MPM–DEM, MPM–LSDEM Immersed Boundary, and MPM–ABD IPC Coupling
 
 `src/mpdem` couples GeoTaichi MPM particles or continua with DEM particles and
 walls. The public facade is named `DEMPM` internally and is exposed as both
 `geotaichi.DEMPM()` and `geotaichi.MPDEM()`.
 
-## Capabilities
+[Theory log and derivations](#mpdem-theory-log) | [Examples](../../examples/)
 
-- Particle-particle coupling between MPM material points and DEM bodies.
-- Particle-wall coupling against DEM planes, facets, and digital-elevation
-  height fields.
-- Linear, Hertz-Mindlin, energy-conserving, and liquid no-slip penalty laws.
-- Coupled body generation with overlap removal and adaptive boundary radii.
-- Explicit Lagrangian MPDEM/DEMPM stepping.
-- Dense semi-resolved incompressible CFDEM for DEM spheres, with Gaussian
-  solid-fraction mapping, porosity continuity, drag, and pressure feedback.
-- Fully resolved incompressible LSDEM coupling through SDF cell fractions and
-  the volume-fraction immersed-boundary formulation.
-- Hybrid 3D `TwoPhaseDoubleLayer`--LSDEM coupling: fluid points use
-  volume-fraction IBM while solid points retain ordinary level-set contact.
-- Explicit LSMPM soft particles with a material-point bulk, an advected
-  level-set contact surface, and soft--rigid, soft--soft, and wall contact.
-- Monolithic soft-MPM/affine-body IPC paths where supported by the selected
-  child solvers.
-- Coupled contact recorders and restart-aware solver orchestration.
+## Example-backed capabilities
 
-The scalar Linear, Hertz--Mindlin, energy-conserving, liquid no-slip, and
-Barrier IPC laws are defined in the
-[shared contact-model theory](../physics_model/contact_model/README.md).
+- Explicit MPM–DEM interaction: [sphere impact into a granular bed](../../examples/mpdem/MultiSphere/SphereImpactToGranularBed/plane_strain.py).
+- MPM–LSDEM contact: [box water entry](../../examples/mpdem/LevelSet/WaterImpact/box.py) and [rigid–soft particle contact](../../examples/mpdem/LevelSet/SoftRigid/rigid_soft_sphere_drop_box.py).
+- Semi-resolved incompressible sphere coupling: [sphere falling in oil](../../examples/cfdem/SemiResolved/SphereFallingOil/sphere.py).
+- Fully resolved incompressible MPM–LSDEM immersed boundary method (IBM): [3D dam break](../../examples/cfdem/FullyResolved/IBMLevelSetDamBreak3D/dam_break_levelset_ibm_3d.py).
+- Hybrid two-phase MPM–LSDEM coupling: [saturated-bed wavemaker](../../examples/mmpm/TwoPhaseLSDEMCoupling/wavemaker_lsdem_particles_3d.py) and [sphere impact](../../examples/mmpm/TwoPhaseLSDEMCoupling/sphere_impact_submerged_bed_3d.py).
+- Fully coupled material point method–affine body dynamics (MPM–ABD) IPC: [Solid MPM impact](../../examples/mpdem/AffineBody/ABDImpactDP/direct_mpm_abd_impact.py) and [hyperelastic soft-MPM contact](../../examples/mpdem/AffineBody/AffineSoftSphereIPC/affine_soft_sphere_ipc.py).
+- Incompressible fluid–ABD IBM: [moving affine-body example](../../examples/mpm/IncompressibleFluid/affine_body_coupling_3d.py).
 
 ## MPM AffineBody route selection
 
-The informal name “Common MPM--ABD” is ambiguous. Here it means only the
-conventional **Native MPM** fluid--AffineBody route; **Direct MPM--ABD** and
-**LSMPM soft--ABD** are separate monolithic solid solvers.
+MPM–ABD configurations are distinguished by their physical model and contact operator, not by the internal MPM implementation name.
 
-| Coupling route | Required configuration | Coupling operator | Plasticity | Restrictions |
-| --- | --- | --- | --- | --- |
-| Native/common MPM--AffineBody | Native `Implicit` fluid with FDM discretization; `scheme="AffineBody"` | Volume-fraction immersed-boundary coupling followed by the incompressible pressure projection | Not applicable: this is a fluid route | 3D only, fixed timestep, no DEM subcycling, and no Barrier IPC. Native solid MPM--AffineBody is unsupported. |
-| LSMPM soft--AffineBody | `scheme="LSMPM"`, soft bodies created through the LSMPM template pipeline, ordinary Barrier IPC | Monolithic soft-grid displacement and AffineBody-control Newton system | No; hyperelastic materials only | Not an `MPM` facade backend and does not use `create_body()`. Multiple soft materials must all be Neo-Hookean. |
-| Direct MPM--AffineBody | `mpm_backend="Direct"`, `solver_type="Implicit"`, `configuration="ULMPM"`, `scheme="AffineBody"`, ordinary Barrier IPC | Monolithic active MPM-grid displacement and AffineBody-control Newton system | Yes: finite-strain Drucker--Prager, von Mises, and Modified Cam--Clay; Neo-Hookean is the elastic option | 3D only; AffineBody self-contact and mixed contact must use ordinary Barrier IPC; friction is lagged; ordinary Direct MPM self/multibody contact remains unsupported. |
+| Physical route | Coupling operator | Concrete example | Restrictions |
+| --- | --- | --- | --- |
+| Incompressible fluid–ABD | Volume-fraction IBM and pressure projection | [Moving affine body](../../examples/mpm/IncompressibleFluid/affine_body_coupling_3d.py) | 3D, fixed timestep, no DEM subcycling; not IPC |
+| Hyperelastic soft-particle MPM–ABD | Soft-grid displacements and affine controls in one IPC Newton system | [Soft spheres](../../examples/mpdem/AffineBody/AffineSoftSphereIPC/affine_soft_sphere_ipc.py) | Hyperelastic only; follow the `scheme="LSMPM"` template lifecycle |
+| Continuum solid MPM–ABD | Active MPM-grid displacements and affine controls in one IPC Newton system | [Solid-bed impact](../../examples/mpdem/AffineBody/ABDImpactDP/direct_mpm_abd_impact.py) | 3D ULMPM; Neo-Hookean, Drucker–Prager, or von Mises; lagged friction |
 
-For non-AffineBody coupling, ordinary explicit MPDEM/DEMPM uses Native MPM
-with `scheme="DEM"` or `scheme="LSDEM"`; the explicit LSMPM level-set soft
-particle is again a distinct `scheme="LSMPM"` path. The governing equations
-for these routes remain in Sections 1--10 and 13--15 below.
+These examples contain the required API selectors and allocation order. They do not represent different MPM balance laws. Ordinary explicit MPM–DEM/LSDEM and soft-particle contact are documented in Sections 1–10; solid IPC coupling is described in Sections 11–13 and 15.
 
 ## Package layout
 
@@ -55,8 +38,8 @@ for these routes remain in Sections 1--10 and 13--15 below.
 | `ContactManager.py`, `contact/` | Cross-system contact geometry, search, history, and scalar-law selection |
 | `GenerateManager.py`, `generator/` | Mixed generation, overlap removal, and boundary-radius adaptation |
 | `fluid_dynamics/` | Drag correlations, porosity coupling, and volume-fraction IBM |
-| `engines/SoftAffineIPC*` | Hyperelastic soft-MPM/AffineBody monolithic IPC |
-| `engines/DirectAffineIPC*` | Direct-MPM/AffineBody monolithic IPC and plastic history |
+| `engines/SoftAffineIPC*` | Hyperelastic soft-MPM/AffineBody fully coupled IPC |
+| `engines/DirectAffineIPC*` | Continuum-solid MPM/AffineBody fully coupled IPC and plastic history |
 | `Recorder.py` | Child output and persistent cross-contact records |
 
 ## MPDEM theory log
@@ -511,7 +494,7 @@ The explicit LSMPM route represents each deformable particle by material
 points on a body-attached mechanical grid and by a level set used only for
 contact geometry. It can coexist with rigid LSDEM bodies in the same contact
 search. This is distinct from the ordinary MPM-continuum--LSDEM coupling in
-Section 2 and from the monolithic soft--AffineBody IPC route below.
+Section 2 and from the fully coupled soft--AffineBody IPC route below.
 
 For soft body $b$, let $p$ denote material points and $i$ its mechanical-grid
 nodes. The reference lumped mass and current nodal force are
@@ -1334,7 +1317,7 @@ The supported Neo-Hookean, Hencky, Gent, and Hydrogel energies are maintained
 in the
 [shared constitutive-model theory](../physics_model/consititutive_model/README.md).
 This soft route is hyperelastic; finite-strain plasticity belongs to the
-Direct MPM route below.
+continuum-solid MPM route below.
 
 ### 12. Soft--soft Barrier IPC and exact grid pullback
 
@@ -1447,7 +1430,7 @@ $$
 {\partial\boldsymbol{z}_s\partial\boldsymbol{z}_t},
 $$
 
-the exact monolithic pullback is
+the exact fully coupled pullback is
 
 $$
 \boldsymbol{r}_A^c
@@ -1520,116 +1503,9 @@ $$
 where the bounds respectively protect AffineBody deformation/self-contact,
 soft deformation, soft--soft contact, and mixed point--triangle contact.
 
-### 14. Soft point against an affine level set
+### 15. Solid MPM--AffineBody IPC and plasticity
 
-For an affine level-set body, use the frame $\boldsymbol{A}$ from Section 10
-and define
-
-$$
-\boldsymbol{\xi}
-=\boldsymbol{A}^{-1}(\boldsymbol{x}_p-\boldsymbol{y}_0),
-$$
-
-$$
-\boldsymbol{q}
-=\frac{\boldsymbol{\xi}-\boldsymbol{o}}{s_b},
-\qquad
-g=s_b\phi(\boldsymbol{q}).
-$$
-
-Here $s_b$ is the body scale and $\boldsymbol{o}$ is the template-coordinate
-offset. The world gap gradient with respect to the soft point is
-
-$$
-\nabla_{\!x_p}g
-=\boldsymbol{A}^{-T}\nabla_q\phi.
-$$
-
-Let
-
-$$
-w_0=1-\xi_1-\xi_2-\xi_3,
-\qquad
-w_a=\xi_a.
-$$
-
-The first variation of the material coordinate is
-
-$$
-\delta\boldsymbol{\xi}
-=\boldsymbol{A}^{-1}
-\left(
-\delta\boldsymbol{x}_p
--\sum_{a=0}^{3}w_a\delta\boldsymbol{y}_a
-\right).
-$$
-
-Consequently the gap gradient distributes with relative weights
-
-$$
-\left(1,-w_0,-w_1,-w_2,-w_3\right)
-$$
-
-before the soft point is pulled back through $N_{pi}$. For generalized site
-variables $\boldsymbol{z}_s$, define
-
-$$
-\boldsymbol{J}_s
-=\frac{\partial\boldsymbol{q}}{
-\partial\boldsymbol{z}_s}.
-$$
-
-The exact gap derivatives are
-
-$$
-\nabla_sg
-=s_b\boldsymbol{J}_s^T\nabla_q\phi,
-$$
-
-$$
-\nabla_{st}^2g
-=s_b
-\left[
-\boldsymbol{J}_s^T
-\nabla_q^2\phi
-\boldsymbol{J}_t
-+\sum_k
-\frac{\partial\phi}{\partial q_k}
-\frac{\partial^2q_k}
-{\partial\boldsymbol{z}_s\partial\boldsymbol{z}_t}
-\right].
-$$
-
-Let $\bar b(g)=b(g^2)$ denote the signed-gap form of the ordinary IPC
-barrier defined in the shared contact theory. For
-
-$$
-E_c=\Delta t^2A_p\bar b(g),
-$$
-
-the exact blocks are
-
-$$
-\boldsymbol{g}_s^c
-=\Delta t^2A_p\bar b'(g)\nabla_sg,
-$$
-
-$$
-\boldsymbol{H}_{st}^c
-=\Delta t^2A_p
-\left[
-\bar b''(g)\nabla_sg\nabla_tg^T
-+\bar b'(g)\nabla_{st}^2g
-\right].
-$$
-
-A frozen-frame positive-semidefinite tangent retains the first outer-product
-term; the exact geometric tangent retains both terms. In either case, the
-residual remains the derivative of the same ordinary Barrier IPC energy.
-
-### 15. Direct MPM--AffineBody IPC and plasticity
-
-The Direct MPM branch uses active grid displacements and AffineBody controls
+The continuum-solid MPM formulation uses active grid displacements and AffineBody controls
 in one generalized vector,
 
 $$
@@ -1705,9 +1581,7 @@ $$
 $$
 
 History is committed only after the entire MPM--AffineBody equilibrium and
-friction fixed point converge. Modified Cam--Clay adds an outer fixed point
-for its lagged hardening state. The Drucker--Prager, von Mises, and Modified
-Cam--Clay updates are defined in the
+friction fixed point converge. The Drucker--Prager and von Mises updates are defined in the
 [shared constitutive theory](../physics_model/consititutive_model/README.md#finite-strain-multiplicative-plasticity).
 
 The common feasible line-search limit is
@@ -1722,7 +1596,7 @@ $$
 \right).
 $$
 
-The state is committed transactionally: AffineBody controls, Direct MPM grid
+The state is committed transactionally: AffineBody controls, MPM grid
 displacements, particles, deformation gradients, and plastic history either
 all advance or all return to the beginning of the step.
 
@@ -1844,10 +1718,10 @@ capacities should be fixed before the coupled engine is built.
 The standard MPDEM/DEMPM and CFDEM loops are explicit. The four bounded retry
 keys (`enable_step_retry`, `step_retry_max_retries`,
 `step_retry_reduction`, and `step_retry_minimum_timestep`) are accepted only
-for the monolithic LSMPM Soft-Affine and Direct MPM--AffineBody IPC routes,
+for the fully coupled LSMPM Soft-Affine and solid MPM--AffineBody IPC routes,
 whose coupled device states are transactional. All public coupling facades
 expose `diagnostics_snapshot()`; explicit routes report common progress and
-the monolithic routes add nonlinear/contact failure details.
+the fully coupled routes add nonlinear/contact failure details.
 
 The LSMPM Soft-Affine IPC route is split by responsibility:
 `SoftAffineIPCBase.py` owns shared state and transfer helpers,
@@ -1858,7 +1732,7 @@ nonlinear convergence and retry acceptance remain runtime decisions.
 
 Soft-particle/LSMPM paths are hyperelastic-only: finite-strain
 Drucker--Prager and von Mises are rejected at material setup and remain
-available only through ordinary Direct MPM.
+available only through continuum-solid MPM.
 
 ## Tests
 

@@ -1,22 +1,19 @@
-# Discrete Element, Level-Set, and Affine-Body Mechanics with Conservative Contact
+# Discrete Element Method (DEM), Level-Set DEM (LSDEM), and Affine Body Dynamics (ABD)
 
 `src/dem` contains GeoTaichi's discrete-element solvers and the public `DEM`
 facade. It supports spherical and clumped particles, level-set rigid bodies,
 affine deformable bodies, walls, several neighbor-search backends, and a range
 of contact laws.
 
-## Capabilities
+[Theory log and derivations](#dem-theory-log) | [Examples](../../examples/)
 
-- Standard DEM spheres and clumps.
-- Level-set DEM (`LSDEM`) for non-spherical rigid shapes.
-- Level-set MPM soft bodies (`LSMPM`) hosted by the DEM scene workflow.
-- Affine bodies with matrix-free, COO, or HashTriplet nonlinear systems.
-- Plane, facet, patch, digital-elevation, and servo-controlled walls.
-- Linked-cell, hierarchical linked-cell, and BVH-based search paths where
-  supported by the selected scheme.
-- Linear, Hertz-Mindlin, rolling, liquid, energy-conserving, and IPC-family
-  contact responses.
-- Checkpoint/restart, VTK output, energy tracking, and live visualization.
+## Example-backed capabilities
+
+- Spherical and clumped DEM: [sphere packing](../../examples/dem/MultiSphere/RotatingDrum/sphere_packing.py) and [clump packing](../../examples/dem/MultiSphere/GranularPackings/clump_packing.py).
+- Level-set discrete element method (LSDEM) for irregular particles: [polydisperse packing](../../examples/dem/LevelSet/GranularAssemble/polydisperse/packing_generate.py), [screw and nut](../../examples/dem/LevelSet/ParticleParticle/screw_and_nut.py), and [rotating drum](../../examples/dem/LevelSet/RotatingDrum/rotating_drum.py).
+- Affine body dynamics (ABD) with incremental potential contact (IPC): [sphere–wall collision](../../examples/dem/AffineBody/sphere_wall_collision.py) and [inclined-plane sliding](../../examples/dem/AffineBody/cube_incline_sliding.py).
+- ABD joints and motors: [multilink arm](../../examples/dem/AffineBody/robot_multilink_arm.py).
+- Level-set MPM soft particles: [rigid–soft contact](../../examples/mpdem/LevelSet/SoftRigid/rigid_soft_sphere_drop_box.py).
 
 ## Package layout
 

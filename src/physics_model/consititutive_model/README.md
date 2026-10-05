@@ -10,7 +10,7 @@ time integration, then link here instead of duplicating material laws.
 - Finite-strain hyperelasticity: St. Venant--Kirchhoff, Neo-Hookean, Hencky,
   Mooney--Rivlin, Gent, hydrogel, and surface-cloth responses.
 - Multiplicative finite-strain plasticity: associated Drucker--Prager,
-  von Mises with optional isotropic hardening, and Modified Cam--Clay.
+  von Mises with optional isotropic hardening.
 - Infinitesimal and rate-form solids: linear elasticity, J2, Mohr--Coulomb,
   Drucker--Prager, Modified Cam--Clay, NorSand, SANISAND, granular and
   softening models.
@@ -325,106 +325,6 @@ $$
 +\frac{K}{2}(\theta^e)^2
 +\tau_y\Delta\gamma
 +\frac12H_p(\Delta\gamma)^2.
-$$
-
-### Modified Cam--Clay return and lagged hardening
-
-Modified Cam--Clay uses compression-positive mean pressure $p$, deviatoric
-stress $q$, critical-state ratio $M$, and preconsolidation pressure $p_c$:
-
-$$
-f_{MCC}
-=\frac{q^2}{M^2}+p(p-p_c)=0.
-$$
-
-For elastic trace $\theta$ and deviatoric norm $\rho$, define
-
-$$
-p
-=p_0\exp\left[
--\frac{\theta}{\kappa^*}
-+\frac{G_0\rho^2}{\kappa^*p_0}
-\right],
-$$
-
-$$
-G=G_0\frac{p}{p_0},
-\qquad
-q=\sqrt6G\rho.
-$$
-
-At fixed $p_c$, the associated local return solves the three scalar equations
-
-$$
-\theta-\theta^{tr}
--\Delta\lambda(2p-p_c)=0,
-$$
-
-$$
-\rho\left(1+\frac{6G\Delta\lambda}{M^2}\right)
--\rho^{tr}=0,
-$$
-
-$$
-\frac{q^2}{M^2}+p(p-p_c)=0.
-$$
-
-The hyperelastic MCC density is
-
-$$
-\psi_e^{MCC}
-=\kappa^*p_0\left\{
-\exp\left[
--\frac{\theta}{\kappa^*}
-+\frac{G_0\rho^2}{\kappa^*p_0}
-\right]-1
-\right\}.
-$$
-
-If
-
-$$
-\Delta\theta^{pl}=\theta-\theta^{tr},
-\qquad
-\Delta\rho^{pl}=\rho^{tr}-\rho,
-$$
-
-the support-function dissipation at lagged $p_c$ is
-
-$$
-\mathcal{D}_{MCC}
-=\frac{p_c}{2}\left[
-\Delta\theta^{pl}
-+\sqrt{
-(\Delta\theta^{pl})^2
-+\frac23M^2(\Delta\rho^{pl})^2
-}
-\right].
-$$
-
-The fixed-$p_c$ incremental density is therefore
-
-$$
-\psi_{inc}^{MCC}
-=\psi_e^{MCC}+\mathcal{D}_{MCC}.
-$$
-
-Hardening is refreshed outside the fixed-$p_c$ equilibrium solve:
-
-$$
-p_c^{k+1}
-=p_{c,n}\exp\left[
-\frac{\theta-\theta^{tr}}{\lambda^*-\kappa^*}
-\right].
-$$
-
-The corresponding accepted plastic-strain increments are
-
-$$
-\Delta\bar\epsilon^{pl}
-=\frac{2\Delta\lambda q}{M^2},
-\qquad
-\Delta\epsilon_v^{pl}=\theta-\theta^{tr}.
 $$
 
 ### Stress, tangent, and state commit
@@ -823,6 +723,6 @@ $$
 - [MPM material selection](../../mpm/README.md)
 - [FEM material integration](../../fem/README.md)
 - [IGA hyperelastic assembly](../../iga/README.md)
-- [FEM--MPM plasticity inside IPC](../../fempm/README.md#4-monolithic-equilibrium-and-plasticity)
+- [FEM--MPM plasticity inside IPC](../../fempm/README.md#4-fully-coupled-equilibrium-and-plasticity)
 - [IGA--MPM plasticity inside IPC](../../igampm/README.md#8-plastic-constitutive-models-inside-the-ipc-solve)
-- [Direct MPM--AffineBody plasticity inside IPC](../../mpdem/README.md#15-direct-mpm--affinebody-ipc-and-plasticity)
+- [Direct MPM--AffineBody plasticity inside IPC](../../mpdem/README.md#15-solid-mpm--affinebody-ipc-and-plasticity)

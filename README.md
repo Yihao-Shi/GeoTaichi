@@ -2,11 +2,12 @@
 
 ![Github License](https://img.shields.io/github/license/Yihao-Shi/GeoTaichi)          ![Github stars](https://img.shields.io/github/stars/Yihao-Shi/GeoTaichi)          ![Github forks](https://img.shields.io/github/forks/Yihao-Shi/GeoTaichi)         [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](http://makeapullrequest.com) 
 
-[**Quick start**](#quick-start) | [**Examples**](#examples) | [**Paper**](https://www.researchgate.net/publication/380048019_GeoTaichi_A_Taichi-powered_high-performance_numerical_simulator_for_multiscale_geophysical_problems) | [**Citation**](#citation) | [**Contact**](#acknowledgements)
+[**Quick start**](#quick-start) | [**Capabilities**](#core-capabilities) | [**Coupling formulations**](#featured-coupling-formulations) | [**Examples**](#examples) | [**Documentation**](#documentation) | [**Citation**](#citation) | [**Contact**](#contact-us)
 
 ## Brief description
 
-A [Taichi](https://github.com/taichi-dev/taichi)-based numerical package for high-performance simulations of multiscale and multiphysics geophysical problems. 
+GeoTaichi is an open-source, [Taichi](https://github.com/taichi-dev/taichi)-powered simulation framework for granular materials, deformable solids, incompressible fluids, and coupled soil–water–structure interaction. It combines the material point method (MPM), discrete element method (DEM), level-set DEM (LSDEM), affine body dynamics (ABD), finite element method (FEM), and isogeometric analysis (IGA) with explicit, semi-implicit, and implicit solver routes.
+
 Developed by [Multiscale Geomechanics Lab](https://person.zju.edu.cn/en/nguo), Zhejiang University.
 
 <p align="center">
@@ -16,20 +17,23 @@ Developed by [Multiscale Geomechanics Lab](https://person.zju.edu.cn/en/nguo), Z
 
 ## Overview
 
-GeoTaichi is a collection of several numerical tools, currently including __Discrete Element Method (DEM)__, __Material Point Method (MPM)__, __Material Point-Discrete element method (MPDEM)__, and __Finite Element Method (FEM)__, that cover the analysis of the __Soil-Gravel-Structure-Interaction__ in geotechnical engineering. The main components of GeoTaichi is illustrated as follows:
+GeoTaichi targets multiscale and multiphysics geomechanics: large-deformation and elastoplastic solids, arbitrarily shaped grains, free-surface flow, saturated porous media, and contact with deformable or nearly rigid structures. Solver modules can be used independently or combined through explicit contact exchange, immersed boundary methods (IBM), or fully coupled incremental potential contact (IPC).
+
+The component diagram provides an overview of the original solver families; the capability summary and module documentation below describe the current implementation.
+
 <p align="center">
     <img src="images/main_component.png" width="50%" height="50%" />
 </p>
 
-GeoTaichi is a research project that is currently __under development__. Our vision is to share with the geotechnical community a free, open-source (under the GPL-3.0 License) software that facilitates the relevant computational research. In the Taichi ecosystem, we hope to emphasize the potential of Taichi for scientific computing. Furthermore, GeoTaichi is high parallelized, multi-platform (supporting for Windows, Linux and Macs) and multi-architecture (supporting for both CPU and GPU).
+GeoTaichi is an actively developed research project released under GPL-3.0. Taichi provides parallel CPU and GPU execution on supported Windows, Linux, and macOS configurations. Backend, precision, dimensionality, and material support depend on the selected solver; the module READMEs document these restrictions. A feature available in one solver route should not be assumed to be available in every route.
 
 ## Examples
 
-Have a cool example? Submit a [PR](https://github.com/Yihao-Shi/GeoTaichi/pulls)!
+The gallery shows selected examples, not the full capability set. Where an animation is not yet available, links below point to existing Python examples and theory logs. Have an example to share? Submit a [PR](https://github.com/Yihao-Shi/GeoTaichi/pulls)!
 
 ### [Material point method (MPM)](src/mpm/README.md#mpm-theory-log)
 #### Explicit MPM
-| [Column collapse](example/mpm/ColumnCollapse/DPmaterial.py) | [Dam break](example/mpm/ColumnCollapse/NewtonianFluid.py) | [Strip footing](example/mpm/Footing/StripFootingTresca.py) | [Progressive failure process of sensitive clay](example/mpm/ColumnCollapse/SoftDP.py) |
+| [Column collapse](examples/mpm/column_collapse/DPmaterial.py) | [Dam break](examples/mpm/column_collapse/NewtonianFluid.py) | [Strip footing](examples/mpm/Footing2D/FootingTrescaLargeBBar.py) | [Progressive failure process of sensitive clay](examples/mpm/column_collapse2D/SoftDP.py) |
 | --- | --- | --- | --- |
 | ![Column collapse](images/soil.gif) | ![Dam break](images/newtonian.gif) | ![Strip footing](images/footing.gif) | ![Clay](images/clay.gif) |
 
@@ -43,7 +47,7 @@ Have a cool example? Submit a [PR](https://github.com/Yihao-Shi/GeoTaichi/pulls)
 | --- | --- | --- |
 | ![Dam break around a square obstacle](images/dam_break_square_2d.gif) | ![3D large-tank dam break](images/large_tank_3d.gif) | ![3D piston wavemaker](images/wavemaker_3d.gif) |
 
-#### Two phase semi-implicit MPM
+#### Two-phase semi-implicit MPM
 
 | [Dam break through a porous column](examples/mmpm/DamBreakPorousElastic2D/double_point_dam_break_porous_elastic.py) | [Submarine granular landslide](examples/mmpm/SubmarineLandslide/submarine_landslide_2d.py) | [U-tube flow through a porous bed](examples/mmpm/UTubeFlow2D/u_tube_flow_2d.py) |
 | --- | --- | --- |
@@ -51,25 +55,29 @@ Have a cool example? Submit a [PR](https://github.com/Yihao-Shi/GeoTaichi/pulls)
 
 ### [Discrete element method (DEM)](src/dem/README.md#dem-theory-log)
 #### Explicit soft constraint
-| [Granular packing](example/dem/GranularPackings/polyLevelSet/packing_generate.py) | [Screw and nut](example/dem/ParticleSliding/screw_and_nut.py) | [Debris Flow](example/dem/DebrisFlow) | 
+| [Granular packing](examples/dem/LevelSet/GranularAssemble/polydisperse/packing_generate.py) | [Screw and nut](examples/dem/LevelSet/ParticleParticle/screw_and_nut.py) | [Debris flow](examples/dem/LevelSet/DebrisFlow/) |
 | --- | --- | --- | 
 | ![Granular packing](images/lsdem.gif) | ![Screw and nut](images/screw_nut.gif) | ![Debris Flow](images/debris_flow.gif) | 
 
-|[Rotating drum](example/dem/RotatingDrums) | [Triaxial shear test](example/dem/TriaxialTest) |
+| [Rotating drum](examples/dem/LevelSet/RotatingDrum/rotating_drum.py) | [Triaxial shear test](examples/dem/LevelSet/TriaxialShear/) |
 | --- | --- | 
 | ![Rotating drum](images/drums.gif) | ![Triaxial shear test](images/force_chain.gif) |
 #### Implicit affine body dynamics (ABD)
-Coming soon！
+
+Implemented examples include [sphere–wall collision](examples/dem/AffineBody/sphere_wall_collision.py), [cube sliding](examples/dem/AffineBody/cube_incline_sliding.py), and a [multilink arm](examples/dem/AffineBody/robot_multilink_arm.py). See the [ABD mechanics and IPC derivation](src/dem/README.md#5-affine-body-mechanics-and-ipc).
 
 ### [FEM](src/fem/README.md#fem-theory-log) / [IGA](src/iga/README.md#iga-theory-log)
-Coming soon！
+
+Implemented examples include an [implicit FEM cantilever](examples/fem/implicit_volume_cantilever.py), [cloth contact](examples/fem/implicit_cloth_contact.py), an [IGA elastic beam](examples/iga/elastic_beam2d.py), and an [axisymmetric IGA annulus](examples/iga/axisymmetric_annulus.py).
 
 ### [FEM-MPM](src/fempm/README.md#fem--mpm-coupling-theory-log) / [IGA-MPM](src/igampm/README.md#iga--mpm-coupling-theory-log)
 #### Explicit soft constraint
-Coming soon！
+
+See the implemented [FEM–MPM membrane contact](examples/fempm/explicit_point_membrane.py) and [IGA–MPM DEM-law contact](examples/igampm/iga_mpm_explicit_dem_contact.py) examples.
 
 #### Incremental potential contact
-Coming soon！
+
+See [FEM–MPM elastic IPC contact](examples/fempm/implicit_ipc_elastic_contact.py), [FEM–MPM plastic IPC contact](examples/fempm/implicit_ipc_von_mises_contact.py), and [IGA–MPM point–NURBS IPC](examples/igampm/iga_mpm_barrier_contact.py). The module theory logs describe fully coupled assembly, friction, feasibility checks, and material restrictions.
 
 ### [FEM-DEM](src/fedem/README.md#fedem-coupling-theory-log)
 #### Explicit soft constraint
@@ -78,11 +86,12 @@ Coming soon！
 | <img src="images/hertz_contact.png" alt="Hertz contact" width="300"> | <img src="images/mixed_funnel.gif" alt="Mixed funnel" width="300"> | <img src="images/isotropic_compaction_100.gif" alt="Isotropic compaction" width="300"> |
 
 #### Incremental potential contact
-Coming soon！
+
+Fully coupled FEM–ABD IPC is implemented; see the [soft-particle example](examples/fedem/ImplicitAffineIPCSoftParticle/implicit_affine_ipc_soft_particle.py) and [coupling derivation](src/fedem/README.md#4-fully-coupled-affinebody--fem-barrier-ipc).
 
 ### [MPM-DEM](src/mpdem/README.md#mpdem-theory-log)
 #### Explicit MPM-DEM
-| [A sphere impacting granular bed](example/dempm/SphereImpact/plane_strain.py) | [Granular column impacting cubic particles](example/dempm/GranularImpact/granular_impact.py) | [Box sinking into water](example/dempm/BoxSinking/box.py) |
+| [A sphere impacting granular bed](examples/mpdem/MultiSphere/SphereImpactToGranularBed/plane_strain.py) | [Granular column impacting cubic particles](examples/mpdem/MultiSphere/GranularImpact/granular_impact.py) | [Box sinking into water](examples/mpdem/LevelSet/WaterImpact/box.py) |
 | --- | --- | --- |
 | ![A sphere impacting granular bed](images/mpdem1.gif) | ![Granular column impacting cubic particles](images/mpdem2.gif) | ![Box sinking into water](images/box_sinking.gif) |
 
@@ -92,81 +101,90 @@ Coming soon！
 | --- | --- | --- |
 | ![Drafting, kissing and tumbling](images/dkt.gif) | ![Sphere settling in oil](images/sphere_oil.gif) | ![IBM dam break](images/ibm_break.gif) |
 #### Incremental potential contact
-Coming soon！
+
+Implemented routes include [Solid MPM–ABD impact](examples/mpdem/AffineBody/ABDImpactDP/direct_mpm_abd_impact.py) and [hyperelastic soft-MPM–ABD contact](examples/mpdem/AffineBody/AffineSoftSphereIPC/affine_soft_sphere_ipc.py). These are distinct solid IPC routes; incompressible fluid–ABD coupling uses IBM instead.
+
+## Core capabilities
+
+- [MPM](src/mpm/README.md#mpm-theory-log): explicit and implicit solid mechanics, semi-implicit incompressible flow, and two-phase porous-media formulations.
+- [DEM, LSDEM, and ABD](src/dem/README.md#dem-theory-log): spheres and clumps, signed-distance representations of irregular rigid particles, granular contact, and implicit affine-body mechanics with IPC.
+- [FEM](src/fem/README.md#fem-theory-log) and [IGA](src/iga/README.md#iga-theory-log): volume, membrane, and cloth FEM; NURBS-based IGA; explicit and implicit mechanics with formulation-specific material and contact support.
+- [MPM–DEM](src/mpdem/README.md#mpdem-theory-log): explicit continuum–grain contact and semi-resolved incompressible fluid–sphere coupling; examples include [granular-bed impact](examples/mpdem/MultiSphere/SphereImpactToGranularBed/plane_strain.py) and [sphere settling in oil](examples/cfdem/SemiResolved/SphereFallingOil/sphere.py).
+- [MPM–LSDEM](src/mpdem/README.md#mpdem-theory-log): explicit level-set contact, fully resolved incompressible IBM, and hybrid two-phase solid–fluid–grain coupling; examples include [rigid–soft particle contact](examples/mpdem/LevelSet/SoftRigid/rigid_soft_sphere_drop_box.py), [IBM dam break](examples/cfdem/FullyResolved/IBMLevelSetDamBreak3D/dam_break_levelset_ibm_3d.py), and [saturated-bed wavemaker](examples/mmpm/TwoPhaseLSDEMCoupling/wavemaker_lsdem_particles_3d.py).
+- [MPM–ABD](src/mpdem/README.md#mpm-affinebody-route-selection): solid and hyperelastic soft-particle IPC, plus incompressible fluid IBM; examples include [solid-bed impact](examples/mpdem/AffineBody/ABDImpactDP/direct_mpm_abd_impact.py), [soft spheres](examples/mpdem/AffineBody/AffineSoftSphereIPC/affine_soft_sphere_ipc.py), and [moving affine body in fluid](examples/mpm/IncompressibleFluid/affine_body_coupling_3d.py).
+- [FEM–DEM](src/fedem/README.md#fedem-coupling-theory-log): explicit grain–deformable-surface contact, demonstrated by [sphere–membrane interaction](examples/fedem/ExplicitSphereMembrane/explicit_sphere_membrane.py). Deformable-grain examples also include [Hertz contact](examples/fedem/HertzContact/hertz_contact.py), [mixed funnel](examples/fedem/MixedFunnel/mixed_funnel.py), and [isotropic compaction](examples/fedem/IsotropicCompaction/isotropic_compaction.py).
+- [FEM–LSDEM](src/fedem/README.md#3-fem--lsdem-signed-distance-coupling): deforming FEM boundaries interact with rigid-particle signed-distance geometry; see the [level-set/soft-particle example](examples/fedem/ExplicitLevelSetSoftParticle/explicit_levelset_soft_particle.py).
+- [FEM–ABD](src/fedem/README.md#4-fully-coupled-affinebody--fem-barrier-ipc): fully coupled IPC for volume, membrane, and cloth structures; examples include [soft-particle contact](examples/fedem/ImplicitAffineIPCSoftParticle/implicit_affine_ipc_soft_particle.py), [membrane contact](examples/fedem/ImplicitAffineIPCMembrane/implicit_affine_ipc_membrane.py), and [cloth/grain drop](examples/fedem/ClothAffineIrregularDrop/cloth_affine_irregular_drop.py).
+- [FEM–MPM](src/fempm/README.md#fem--mpm-coupling-theory-log): explicit contact exchange and fully coupled implicit IPC with elastic or plastic MPM; examples include [point–membrane contact](examples/fempm/explicit_point_membrane.py), [plastic IPC contact](examples/fempm/implicit_ipc_von_mises_contact.py), and [axisymmetric CPT](examples/fempm/cpt_dp.py).
+- [IGA–MPM](src/igampm/README.md#iga--mpm-coupling-theory-log): independent NURBS structures and MPM continua coupled through explicit contact or implicit point–NURBS IPC; see [explicit contact](examples/igampm/iga_mpm_explicit_dem_contact.py), [IPC contact](examples/igampm/iga_mpm_barrier_contact.py), and [axisymmetric CPT](examples/igampm/cpt_dp.py).
+- [Verification and tests](tests/README.md) distinguish unit/integration checks from numerical comparisons against analytical or published references. Each solver README links its example-backed features to the relevant theory log.
+
+## Novel coupling formulations
+
+GeoTaichi introduces three new coupling formulations: MPM–ABD IPC, incompressible MPM–LSDEM volume-fraction IBM, and IGA–MPM point–NURBS contact coupling. These contributions concern the coupling operators and formulations built on established MPM, ABD, LSDEM, IGA, IBM, and IPC methods. Their derivations, implementation details, and concrete examples are documented in the linked theory logs below.
+
+| Formulation | Method and scope | Theory |
+| --- | --- | --- |
+| Material point method–affine body dynamics coupling (MPM–ABD) | Fully coupled solid MPM–ABD IPC couples active MPM-grid displacements and affine-body controls, including supported finite-strain plasticity. This route is currently 3D with lagged friction. Hyperelastic soft-MPM–ABD IPC and incompressible fluid–ABD IBM are separate routes. | [MPM–ABD derivation](src/mpdem/README.md#15-solid-mpm--affinebody-ipc-and-plasticity) |
+| Incompressible material point method–level-set DEM coupling (MPM–LSDEM IBM) | Fully resolved 3D coupling uses rigid-body signed-distance geometry to estimate solid cell fractions, apply volume-fraction immersed-boundary forcing, and exchange hydrodynamic loads with LSDEM bodies. The fluid free surface and rigid-body SDF have distinct roles. | [Volume-fraction IBM derivation](src/mpdem/README.md#10-fully-resolved-lsdem-and-affinebody-volume-fraction-ibm) |
+| Isogeometric analysis–material point method coupling (IGA–MPM) | Independent deformable NURBS IGA structures and MPM continua interact through point–NURBS contact. The linked 3D examples demonstrate explicit DEM-law exchange and fully coupled implicit IPC with elastic or plastic MPM blocks. | [IGA–MPM theory log](src/igampm/README.md#iga--mpm-coupling-theory-log) |
 
 ## Quick start
-### Installation
-#### Install from source code (recommand)
-##### Ubuntu
-1. Change the current working directory to the desired location and download the GeoTaichi code:
-```
-cd /path/to/desired/location/
-git clone https://github.com/Yihao-Shi/GeoTaichi
+
+### Install from source
+
+GeoTaichi is distributed through this source repository. There is no supported PyPI installation workflow. Use Python 3.10 or newer; the dependency declarations are maintained in [pyproject.toml](pyproject.toml).
+
+Clone the repository and create a Python environment:
+
+```bash
+git clone https://github.com/Yihao-Shi/GeoTaichi.git
 cd GeoTaichi
-```
-2. Install essential dependencies
-```
-# Install python and pip
-sudo apt-get install python3.8
-sudo apt-get install python3-pip
-
-# Install python packages (recommand to add package version)
-bash requirements.sh
-```
-3. Install CUDA, detailed information can be referred to [official installation guide](https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html)
-4. Set up environment variables
-```
-sudo gedit ~/.bashrc
-$ export PYTHONPATH="$PYTHONPATH:/path/to/desired/location/GeoTaichi"
-source ~/.bashrc
-```
-##### Windows
-1. Install Anaconda 
-2. start Anaconda Prompt 
-3. Navigate to a folder where geotaichi_env.yml is located. 
-4. clone geotaichi as:
-```
-git clone https://github.com/Yihao-Shi/GeoTaichi 
-```
-5. run command:
-```
-conda env create -f geotaichi_env.yml 
-```
-6. run command:
-```
-conda activate geotaichi 
-```
-7. correct the environment (the last part should be modified to the path of geotaichi):
-```
-conda env config vars set PYTHONPATH=%PYTHONPATH%;.\path\to\GeoTaichi 
-```
-8. run command:
-```
-conda activate geotaichi 
-```
-9. run a benchmark (column collapse):
-```
-python DPmaterial 
-```
-Remark: line 3 of the examples should be modified based on the availability of the GPU. If CPU is available, the following should be used;
-```
-init('cpu')
-```
-#### Install from pip (easy)
-```
-pip install geotaichi
+python -m venv .venv
 ```
 
-### Working with vtu files
+Activate it on Linux/macOS:
 
-To visualize the VTS files produced by some of the scripts, it is recommended to use [ParaView](http://www.paraview.org/). To visualize the output in ParaView, use the following
-procedure:
-1. Open the .vts or .vtu file in ParaView
-2. Click on the "Apply" button on the left side of the screen
-3. Make sure under "Representation" that "Surface" or "Surface with Edges" is selected
-4. Under "Coloring" select variables and the approriate measure (i.e. "Magnitude", X-direction displacement, etc.)
+```bash
+source .venv/bin/activate
+```
 
-### Document
+Or in Windows PowerShell:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+Install the local checkout, not a GeoTaichi package from PyPI:
+
+```bash
+python -m pip install --upgrade pip
+python -m pip install -e .
+```
+
+The editable install makes `geotaichi` importable without manually setting `PYTHONPATH`. Some geometry dependencies may need platform-specific system libraries. Select a backend supported by your hardware and solver; not all implicit GPU routes support the same precision or devices.
+
+### Run an example
+
+Run commands from the repository root. For a small, CPU-selectable coupling example:
+
+```bash
+python examples/mpdem/AffineBody/ABDImpactDP/direct_mpm_abd_impact.py --arch cpu --steps 10
+```
+
+For the explicit column-collapse example:
+
+```bash
+python examples/mpm/column_collapse/DPmaterial.py
+```
+
+The latter uses the default GPU initialization. If using CPU, change its initialization to `init(arch="cpu", default_fp="float64")`; `arch` must be passed by name, not as `init('cpu')`. Check each example's configuration, input assets, and output directory before running a full simulation.
+
+### Visualization
+
+Simulation outputs can be inspected in ParaView by opening a `.vtu` or `.vts` time series, selecting **Apply**, and choosing the representation and field to display. [Developer tools](tools/README.md) describe the particle-field and Blender rendering workflows used for the gallery. Rendered surfaces are visualization reconstructions, not a replacement for the underlying simulation data.
+
+## Documentation
 
 Documentation is maintained alongside the source. Module READMEs describe supported formulations, theory logs, configuration, workflows, and limitations:
 
@@ -181,9 +199,11 @@ Start with the README for your solver and a matching Python example. Additional 
 This project is licensed under the GNU General Public License v3 - see the [LICENSE](https://www.gnu.org/licenses/) for details.
 
 ## Citation
-Please kindly star :star: this project if it helps you. We take great efforts to develope and maintain it :grin::grin:.
+If GeoTaichi supports your research, please consider starring the repository and citing the relevant publications.
 
-If you publish work that makes use of GeoTaichi, we would appreciate if you would cite the following reference:
+The publications below describe the original framework and GPU level-set DEM. For newer coupling formulations, consult the linked theory logs, examples, and source revision; these papers should not be read as publications of every feature currently in the repository.
+
+If you publish work that makes use of GeoTaichi, please cite the relevant references:
 ```latex
 @article{shi2024geotaichi,
   title={GeoTaichi: A Taichi-powered high-performance numerical simulator for multiscale geophysical problems},
@@ -231,7 +251,7 @@ V0.3.0 (December 12, 2024)
 V0.2.2 (July 22, 2024)
 
 - Fix computing the intersection area between circles and triangles
-- Add "Destory" and "Reflect" boundaries in DEM modules, see [examples](https://github.com/Yihao-Shi/GeoTaichi/blob/main/example/dem/SimpleChute/simple_chute.py)
+- Add "Destory" and "Reflect" boundaries in DEM modules, see the [v0.2.2 release](https://github.com/Yihao-Shi/GeoTaichi/releases/tag/GeoTaichi-v0.2.2)
 
 V0.2 (July 1, 2024)
 

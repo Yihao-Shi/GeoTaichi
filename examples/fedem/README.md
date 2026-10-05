@@ -1,4 +1,6 @@
-# FEM--DEM coupling examples
+# FEM–DEM, FEM–LSDEM, and FEM–Affine Body Dynamics Contact Examples
+
+These examples cover deformable grains, rigid level-set grains, membranes, and affine bodies. The [FEM–DEM coupling theory log](../../src/fedem/README.md#fedem-coupling-theory-log) gives the contact geometry, force exchange, and coupled IPC equations; each case below links the formulation to a concrete simulation.
 
 Each case family has its own directory containing its entry point, local
 support files, assets, and output.  Entry points construct the geometry,

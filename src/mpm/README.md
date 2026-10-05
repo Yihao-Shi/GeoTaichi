@@ -1,47 +1,35 @@
-# Material Point Mechanics for Solids, Fluids, Mixtures, and Contact
+# Material Point Method (MPM): Solid Mechanics, Incompressible Flow, Two-Phase Coupling, and Contact
 
 `src/mpm` provides GeoTaichi's material-point solvers and the public `MPM`
 facade. It includes updated- and total-Lagrangian formulations, explicit and
 implicit time integration, single- and two-phase materials, incompressible
-flow, sparse/adaptive grids, direct point-set workflows, and soft-particle
+flow, sparse/adaptive grids, and soft-particle
 contact modes.
 
-## Capabilities
+[Theory log and derivations](#mpm-theory-log) | [Examples](../../examples/)
 
-- Two- and three-dimensional MPM.
-- Updated-Lagrangian and total-Lagrangian configurations.
-- Explicit, implicit, semi-implicit, and incompressible engines.
-- Solid, fluid, and two-phase constitutive responses.
-- Linear, GIMP, B-spline, moving-least-squares, and adaptive shape functions.
-- Dense, block-sparse, and adaptive background grids.
-- COO and HashTriplet implicit assembly with device Krylov solvers.
-- Direct MPM body construction without the legacy region/template input path.
-- Soft-particle level-set and IPC contact workflows.
-- Dirichlet/Neumann constraints, free-surface tools, recorders, and live
-  visualization.
+## Example-backed capabilities
 
-## Backend and formulation selection
+- Explicit solid MPM: [column collapse](../../examples/mpm/column_collapse/DPmaterial.py) and [total-Lagrangian bar](../../examples/mpm/ElasticBar/TLBar.py).
+- Implicit solid MPM: [Column collapse](../../examples/mpm/column_collapse2D/DPmaterial2DImplicit.py), [ULMPM block](../../examples/mpm/direct/implicit_ulmpm_block2d.py), and [TLMPM beam](../../examples/mpm/examples3d/elastic_beams.py).
+- Semi-implicit incompressible flow: [lid-driven cavity](../../examples/mpm/IncompressibleFluid/lid_driven_cavity_2d.py), [Taylor–Green vortex](../../examples/mpm/IncompressibleFluid/taylor_green_vortex_2d.py), and [3D wavemaker](../../examples/mpm/IncompressibleFluid/wavemaker_tank_3d.py).
+- Two-phase porous-media MPM: [porous-column dam break](../../examples/mmpm/DamBreakPorousElastic2D/double_point_dam_break_porous_elastic.py) and [U-tube flow](../../examples/mmpm/UTubeFlow2D/u_tube_flow_2d.py).
+- Sparse and adaptive grids: [sparse flume](../../examples/mpm/FlumeTest/flume_test.py) and [adaptive slope](../../examples/mpm/random_field/flat_slope.py).
+- Soft-particle MPM/LSDEM contact: [mixed rigid–soft drop](../../examples/mpdem/LevelSet/SoftRigid/rigid_soft_sphere_drop_box.py).
 
-In this document, **Native MPM** is the conventional/common GeoTaichi MPM
-backend selected by `mpm_backend="Native"`. **Direct MPM** is the separate
-point-set backend selected by `mpm_backend="Direct"`. **LSMPM soft-particle**
-mechanics is a third runtime owned by the DEM/MPDEM `scheme="LSMPM"` path; it
-is not another value of `mpm_backend`.
+## Formulations and example selection
 
-| MPM route | Integration and configuration | Material and plasticity support | Contact/coupling role | Main limitations |
-| --- | --- | --- | --- | --- |
-| Native solid ULMPM | Explicit or implicit; 2D or 3D | Shared elastic and incremental elastoplastic material manager | Conventional grid contact; explicit MPDEM/DEMPM uses this family | Native implicit solid MPM is UL only. Native solid MPM does not provide an AffineBody coupling route. |
-| Native solid TLMPM | Explicit only | Shared solid material manager, including its history-dependent models | Reference-support solid dynamics and supported explicit coupling | No implicit TL engine; no standalone soft-particle ownership. |
-| Native incompressible fluid FDM | Pressure-projection path; 2D or 3D standalone | Fluid response; plasticity is not applicable | Fixed-wall/immersed-boundary flow and the only Native/common MPM--AffineBody route | Moving AffineBody coupling is 3D, fixed-step, volume-fraction IBM rather than IPC, and does not allow DEM subcycling. |
-| Direct explicit ULMPM/TLMPM | Explicit; solid-only point-set bodies | Dedicated elastic, elastoplastic, and viscous material list | Standalone point-set dynamics | No Direct explicit axisymmetry; no Native region/template lifecycle; not the monolithic MPM--AffineBody route. |
-| Direct implicit ULMPM | Implicit finite strain; 2D or 3D | Neo-Hookean plus finite-strain Drucker--Prager, von Mises, and Modified Cam--Clay | Ground IPC and monolithic MPM--FEM/IGA/AffineBody cross-contact | Plastic 2D uses plane strain; MPM--AffineBody IPC is 3D and lagged-friction only. Ordinary Direct self/multibody IPC is unsupported. |
-| Direct implicit TLMPM | Implicit total Lagrangian | Neo-Hookean elasticity | Standalone or supported cross-solver elastic workflows | Finite-strain plasticity, axisymmetry, and Direct MPM--AffineBody IPC require ULMPM instead. |
-| LSMPM soft particle | Explicit level-set contact or monolithic soft--AffineBody IPC | Neo-Hookean, Hencky, Mooney--Rivlin, Gent, or Hydrogel hyperelasticity | Advected soft surface, soft--soft/rigid contact, and soft--AffineBody IPC | Current runnable ownership is `scheme="LSMPM"`; plasticity is unsupported, and multiple soft materials must all be Neo-Hookean. |
+MPM is organized here by physical model, Lagrangian configuration, time integration, and contact formulation—not by internal software backend. The implementations share the same MPM balance laws and interpolation principles; their input APIs and supported options differ for engineering reasons. Use the configuration in the linked example rather than treating an implementation name as a different numerical method.
 
-The three AffineBody cases are compared directly in the
-[MPM--AffineBody route matrix](../mpdem/README.md#mpm-affinebody-route-selection).
-Material equations and parameters remain centralized in the
-[shared constitutive-model theory](../physics_model/consititutive_model/README.md).
+| Formulation | Concrete examples | Scope |
+| --- | --- | --- |
+| Explicit solid ULMPM/TLMPM | [Column collapse](../../examples/mpm/column_collapse/DPmaterial.py), [TL elastic bar](../../examples/mpm/ElasticBar/TLBar.py) | Solid dynamics and formulation-specific constitutive response |
+| Implicit solid mechanics | [Column collapse](../../examples/mpm/column_collapse2D/DPmaterial2DImplicit.py), [UL block](../../examples/mpm/direct/implicit_ulmpm_block2d.py), [TL beam](../../examples/mpm/examples3d/elastic_beams.py) | Newton equilibrium; the finite-strain plastic examples use ULMPM |
+| Semi-implicit incompressible flow | [Cavity](../../examples/mpm/IncompressibleFluid/lid_driven_cavity_2d.py), [Wavemaker](../../examples/mpm/IncompressibleFluid/wavemaker_tank_3d.py) | MAC pressure projection and particle transport |
+| Two-phase porous media | [Porous-column dam break](../../examples/mmpm/DamBreakPorousElastic2D/double_point_dam_break_porous_elastic.py), [U-tube](../../examples/mmpm/UTubeFlow2D/u_tube_flow_2d.py) | Solid/fluid field exchange and semi-implicit pressure solve |
+| Soft-particle and cross-solver contact | [Rigid–soft drop](../../examples/mpdem/LevelSet/SoftRigid/rigid_soft_sphere_drop_box.py), [MPM–ABD impact](../../examples/mpdem/AffineBody/ABDImpactDP/direct_mpm_abd_impact.py) | Body-attached soft-particle grids or continuum contact; explicit level-set forces and implicit IPC are distinct contact formulations |
+
+Material equations remain in the [shared constitutive theory](../physics_model/consititutive_model/README.md). Fluid, continuum-solid, and soft-particle MPM–ABD configurations are compared in the [coupling route guide](../mpdem/README.md#mpm-affinebody-route-selection).
 
 ## Package layout
 
@@ -52,7 +40,7 @@ Material equations and parameters remain centralized in the
 | `structs/` | Taichi particle, grid, material, and boundary fields |
 | `engines/` | Explicit, implicit, incompressible, and two-phase operators |
 | `engines/SoftParticleEngine.py` | LSMPM/SDF-specific explicit stepping mixin |
-| `engines/direct/` | Direct point-set MPM assembly and nonlinear solvers |
+| `engines/direct/` | Particle-coordinate input, MPM assembly, and nonlinear solvers |
 | `sparse_grid/` | Block-sparse grid storage and compaction |
 | `soft_particle/` | Level-set and IPC soft-particle mechanics |
 | `boundaries/` | Device boundary constraints |
@@ -582,7 +570,7 @@ $$
 The axis must satisfy $r>0$; an axis offset simply replaces $r$ by the
 distance from that axis.
 
-### 8. Native implicit solid MPM
+### 8. Implicit solid equilibrium
 
 The Newmark family relates a nodal displacement increment
 $\boldsymbol{u}_i$ to acceleration and velocity through
@@ -638,9 +626,9 @@ Here $\mathbb{C}_p^{alg}$ is the elastic or algorithmic constitutive tangent
 defined in the shared constitutive document. Matrix-free, COO, and block
 triplet assembly represent this same linearized operator.
 
-### 9. Direct updated- and total-Lagrangian mechanics
+### 9. Implicit updated- and total-Lagrangian mechanics
 
-The Direct implicit path solves for the active-grid displacement vector
+Implicit finite-strain mechanics solves for the active-grid displacement vector
 $\boldsymbol{u}$. Its updated-Lagrangian particle map is
 
 $$
@@ -1673,63 +1661,17 @@ mpm.run()
 ```
 
 The dictionary input format is retained for compatibility with existing
-GeoTaichi cases. `tests/integration/mpm/` contains complete runnable examples
-for explicit, implicit, sparse-grid, two-phase, and IPC configurations.
+GeoTaichi cases. The linked Python examples demonstrate the supported solver configurations; tests are separate verification and integration checks.
 
-## Direct backend
+## Particle construction and implicit examples
 
-The direct backend accepts particle coordinates through `create_body()` and
-keeps mechanical state in dedicated Taichi fields:
+The [implicit block example](../../examples/mpm/direct/implicit_ulmpm_block2d.py) constructs material points through `create_body()`. Its configuration includes `mpm_backend="Direct"` because that input API currently resides in a separate implementation; this is an implementation selector, not a separate MPM theory. Other examples use region/template input. Follow a complete example rather than mixing the two input lifecycles.
 
-```python
-mpm.set_configuration(
-    dimension=3,
-    mpm_backend="Direct",
-    solver_type="Implicit",
-    configuration="ULMPM",
-    domain=[2.0, 1.0, 1.0],
-)
-body = mpm.create_body()
-body.add_particles(
-    points,
-    volume=particle_volume,
-    grid_size=0.05,
-    xmin=[0.0, 0.0, 0.0],
-    xmax=[2.0, 1.0, 1.0],
-)
-mpm.add_body(body)
-```
+The example-backed implicit ULMPM materials include Neo-Hookean elasticity, finite-strain Drucker–Prager, and von Mises plasticity. The [implicit TL beam](../../examples/mpm/examples3d/elastic_beams.py) uses elastic response. Cross-solver contact is documented under [FEM–MPM](../fempm/README.md), [IGA–MPM](../igampm/README.md), and [MPM–ABD](../mpdem/README.md).
 
-This path is used by monolithic IPC and IGA-MPM coupling. It does not fall
-back to a NumPy stepping backend.
+The [axisymmetric annulus](../../examples/mpm/AxisyExample/axisymmetric_annulus.py) selects explicit or implicit time integration with `--solver explicit|implicit`. Its coordinates are `(r,z)` and require `radius > axis_offset`.
 
-Direct implicit `ULMPM` supports `NeoHookean` and its enabled finite-strain
-plastic models; their definitions and parameters are maintained only in the
-[shared constitutive-model theory](../physics_model/consititutive_model/README.md#finite-strain-multiplicative-plasticity).
-Direct `TLMPM` currently restricts this path to elastic materials.
-
-Standalone Direct IPC-MPM accepts one ordinary MPM body plus optional ground
-contact. Ordinary multi-body/self-contact is outside the supported scope and
-raises explicitly; MPM--FEM/IGA/ABD cross-contact remains available through
-the corresponding coupled solver.
-
-Standalone axisymmetric MPM deliberately has one implementation per time
-integration family: the mature Native backend provides explicit transfer and
-stress update, while Direct `ULMPM` provides the implicit Newton residual and
-tangent.  Direct explicit rejects `axisymmetric=True` instead of maintaining a
-second copy of the Native no-swirl kernels.  Both public routes are available
-through `examples/mpm/AxisyExample/axisymmetric_annulus.py --solver
-explicit|implicit`; stored coordinates are `(r,z)` and require
-`radius > axis_offset`.
-
-Direct implicit ULMPM/TLMPM and Direct soft-particle IPC accept bounded
-transactional retry controls in `set_solver`: `enable_step_retry` (default
-`False`), `step_retry_max_retries` (default `2`),
-`step_retry_reduction` (default `0.5`), and
-`step_retry_minimum_timestep` (default `0`). Only nonlinear, linear-solve, or
-line-search nonconvergence is retried; the reduced timestep is retained after
-success. Explicit and native MPM reject an enabled retry policy because those
-paths do not expose the required nonlinear accepted-state transaction.
+The linked implicit IPC examples describe accepted-state rollback and bounded timestep retry controls. These are solver-specific runtime options, not additional MPM formulations.
 
 ## Sparse and adaptive grids
 
@@ -1747,7 +1689,7 @@ Taichi kernels. SciPy is available only when an API explicitly selects a host
 linear solver or requests sparse output. Mesh/particle import, topology
 preprocessing, recording, and diagnostics remain host-side boundaries.
 
-Every public `MPM` facade exposes `diagnostics_snapshot()`. Direct engines add
+Every public `MPM` facade exposes `diagnostics_snapshot()`. Implicit engines add
 accepted-step/retry/contact details; native engines still report common time,
 step, timestep, target, and terminal task diagnostics.
 

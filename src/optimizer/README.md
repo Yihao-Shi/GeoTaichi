@@ -170,7 +170,7 @@ inlined, as required by Taichi.
   returned solutions.
 - The augmented-Lagrangian implementation stores host-side multiplier state;
   do not treat it as a replacement for the persistent device contact state in
-  `src/fem/contact` or the monolithic IPC solvers.
+  `src/fem/contact` or the fully coupled IPC solvers.
 
 There is currently no dedicated optimizer test directory. Production uses of
 these utilities should be covered by the owning module's tests.

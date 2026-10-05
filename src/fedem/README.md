@@ -1,4 +1,4 @@
-# Coupled Finite Element–Discrete Element Mechanics for Deformable and Level-Set Contact
+# FEM–DEM, FEM–Level-Set DEM, and FEM–Affine Body Dynamics (ABD) Contact Coupling
 
 `src/fedem` is the documentation home for soft-particle contact and provides
 two-way contact between deforming FEM boundary triangles and GeoTaichi DEM
@@ -14,42 +14,24 @@ FEM--LSDEM branch samples that existing rigid SDF at current FEM boundary
 nodes; the FEM--AffineBody IPC branch uses direct point--triangle and
 edge--edge distances and therefore uses no SDF on either side.
 
-## Capabilities
+[Theory log and derivations](#fedem-coupling-theory-log) | [Examples](../../examples/)
 
-- Explicit DEM sphere--FEM triangle coupling.
-- Explicit deformable--deformable soft-particle contact with `Linear`,
-  `HertzMindlin`, or energy-conserving `Barrier` laws.
-- Explicit LSDEM rigid-SDF--FEM soft-particle coupling. Every selected FEM
-  boundary node queries the rigid LSDEM SDF and transfers equal and opposite
-  force and torque through its current lumped surface area; it does not
-  construct a FEM SDF.
-- Monolithic implicit FEM--AffineBody IPC with analytic point--triangle and
-  edge--edge barrier derivatives, CCD/ACCD, Armijo line search, PSD-projected
-  Hessians, and COO or HashTriplet assembly.
-- Linear spring-dashpot and Hertz–Mindlin contact laws.
-- One independent contact property for every DEM-material/FEM-body pair.
-- Source-equivalent circular sphere/triangle contact-area fraction.
-- Tangential-overlap history inherited by particle ID and face ID.
-- Source-compatible opposite-sign FEM nodal reactions distributed by absolute
-  subtriangle area.
-- Deforming surface orientation modes `Parallel`, `Centripetal` (including
-  the legacy `Centrioetal` spelling), and `Inverse`, plus normal offsets.
-- Dynamic linked-cell or BVH broad search. Linked cells use per-rebuild count,
-  prefix sum, and compact fill; no fixed triangle-per-cell capacity.
-- Coupled DEM/FEM/contact output and a shared critical-timestep check.
+## Example-backed capabilities
 
-The explicit Linear, Hertz--Mindlin, energy-conserving Barrier, and implicit
-Barrier IPC laws are defined in the
-[shared contact-model theory](../physics_model/contact_model/README.md).
+- DEM sphere–FEM membrane contact: [sphere–membrane example](../../examples/fedem/ExplicitSphereMembrane/explicit_sphere_membrane.py).
+- Explicit deformable-particle contact: [Hertz contact](../../examples/fedem/HertzContact/hertz_contact.py), [mixed funnel](../../examples/fedem/MixedFunnel/mixed_funnel.py), and [isotropic compaction](../../examples/fedem/IsotropicCompaction/isotropic_compaction.py).
+- FEM–LSDEM signed-distance contact: [rigid level-set/soft-particle example](../../examples/fedem/ExplicitLevelSetSoftParticle/explicit_levelset_soft_particle.py).
+- Fully coupled FEM–affine body dynamics (FEM–ABD) IPC: [volume soft particle](../../examples/fedem/ImplicitAffineIPCSoftParticle/implicit_affine_ipc_soft_particle.py), [membrane](../../examples/fedem/ImplicitAffineIPCMembrane/implicit_affine_ipc_membrane.py), and [cloth/grain drop](../../examples/fedem/ClothAffineIrregularDrop/cloth_affine_irregular_drop.py).
+- Pressure-controlled ABD platens: [FEM–ABD triaxial compression](../../examples/fedem/FEMAffinePressureTriaxial/fem_affine_pressure_triaxial.py).
 
 ## Solver, material, and soft-particle compatibility
 
 | FEDEM route | Required child solvers | Deformable discretization | Plasticity | Principal limitation |
 | --- | --- | --- | --- | --- |
-| Deformable--deformable soft particles | Explicit FEM; contact is owned by the FEM child | `TET4` or `HEX8` volume bodies with extracted boundary triangles | Elastic `TET4/HEX8`, or incremental elastoplastic `HEX8` | This is an explicit contact route; it is not the implicit AffineBody IPC system. |
-| DEM sphere--FEM surface | Explicit FEM + `scheme="DEM"` | Volume, membrane, or cloth FEM surface | Incremental plasticity is available only through explicit `HEX8` FEM | Uses the selected Linear/Hertz--Mindlin law; standalone FEM IPC/AL cannot be combined. |
-| LSDEM rigid SDF--FEM surface | Explicit FEM + `scheme="LSDEM"` | Current FEM boundary nodes against the rigid body's existing SDF | Same explicit `HEX8` plastic restriction | Only the rigid LSDEM body owns an SDF; the FEM body does not. |
-| AffineBody--FEM mesh IPC | Implicit FEM + `scheme="AffineBody"` | Elastic `TET4`, elastic `HEX8`, or cloth | No; FEM elastoplasticity is rejected | Monolithic ordinary Barrier IPC with lagged friction. Existing standalone FEM contact, if present, must also be IPC rather than augmented Lagrangian. |
+| Deformable--deformable soft particles | Explicit FEM; contact is owned by the FEM child | `TET4` or `HEX8` volume bodies with extracted boundary triangles | Elastic `TET4/HEX8` | This is an explicit contact route; it is not the implicit AffineBody IPC system. |
+| DEM sphere--FEM surface | Explicit FEM + `scheme="DEM"` | Volume, membrane, or cloth FEM surface | Elastic examples only | Uses the selected Linear/Hertz--Mindlin law; standalone FEM IPC/AL cannot be combined. |
+| LSDEM rigid SDF--FEM surface | Explicit FEM + `scheme="LSDEM"` | Current FEM boundary nodes against the rigid body's existing SDF | Elastic examples only | Only the rigid LSDEM body owns an SDF; the FEM body does not. |
+| AffineBody--FEM mesh IPC | Implicit FEM + `scheme="AffineBody"` | Elastic `TET4`, elastic `HEX8`, or cloth | No; FEM elastoplasticity is rejected | Fully coupled ordinary Barrier IPC with lagged friction. Existing standalone FEM contact, if present, must also be IPC rather than augmented Lagrangian. |
 
 Thus “soft particle” describes a contact role, not a new bulk element. Its
 bulk response is still determined by the FEM row selected above.
@@ -62,7 +44,7 @@ bulk response is still determined by the FEM row selected above.
 | `Simulation.py` | Shared time controls and contact capacity model |
 | `ContactManager.py` | Contact-law, property, search, and history lifecycle |
 | `Engine.py` | Ordered DEM/contact/FEM explicit step |
-| `AffineIPCEngine.py` | Monolithic AffineBody-control/FEM-node Newton solve |
+| `AffineIPCEngine.py` | Fully coupled AffineBody-control/FEM-node Newton solve |
 | `FEDEMBase.py` | Coupled time loop and callbacks |
 | `Recorder.py` | Child and coupled-contact output |
 | `Patch.py` | Device-resident deforming triangular surface |
@@ -301,7 +283,7 @@ Because both forces act at $\boldsymbol{x}_i$, this exchange preserves
 discrete action--reaction, contact power, and angular momentum before damping
 and frictional dissipation are added.
 
-### 4. Monolithic AffineBody--FEM Barrier IPC
+### 4. Fully coupled AffineBody--FEM Barrier IPC
 
 The AffineBody child uses four vector controls per body. Its kinematics and
 incremental potential are defined in the
@@ -373,7 +355,7 @@ finite-clearance Barrier IPC, edge--edge mollifier, and regularized friction
 are defined in the
 [shared IPC theory](../physics_model/contact_model/README.md#incremental-potential-contact).
 
-With a frozen friction frame $\widehat{\boldsymbol{q}}$, the monolithic
+With a frozen friction frame $\widehat{\boldsymbol{q}}$, the fully coupled
 incremental potential is
 
 $$
@@ -566,7 +548,7 @@ history operations are Taichi kernels/functions.
 For a rigid LSDEM target, use `FEDEM` with `scheme="LSDEM"`: FEM boundary
 nodes query the rigid body's existing SDF. For an implicit elastic volume soft
 particle against an AffineBody, use `FEDEM` with `scheme="AffineBody"` and the
-`IPC` model; that monolithic route rebuilds PT/EE collision candidates during
+`IPC` model; that fully coupled route rebuilds PT/EE collision candidates during
 Newton/CCD and does not use a Verlet multiplier.
 
 ## Construction order
@@ -715,7 +697,7 @@ exposes the bounded attempt/contact/linear-solver record through
 
 ### Pressure-controlled AffineBody platens
 
-An AffineBody wall can be made kinematic inside the monolithic IPC solve with
+An AffineBody wall can be made kinematic inside the fully coupled IPC solve with
 `prescribe_affine_body_velocity(body_id, velocity)`. All four affine controls
 receive the same velocity and their end-of-step positions are eliminated from
 the Newton correction, so the wall translates without rotating or deforming.
@@ -785,9 +767,9 @@ that statically expands every feature Hessian.
   normal force are refreshed between fixed-point iterations while the
   beginning-of-step positions remain fixed. AffineBody self-contact must still
   use lagged friction with its own `friction_iterations=1`; fully implicit
-  mixed or affine self-friction is not accepted by this monolithic engine.
+  mixed or affine self-friction is not accepted by this fully coupled engine.
 - Classical TET4/HEX8, classical TRI3, cloth TRI3, and explicit HEX8
-  elastoplastic FEM can supply the explicit deforming surface. The implicit
+  elastic FEM supplies the explicit deforming surface. The implicit
   soft-particle--AffineBody IPC route is covered with a TET4 volume regression
   and remains elastic FEM only.
 - All hot-path search, contact, force transfer, and time integration remains

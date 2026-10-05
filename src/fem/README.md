@@ -1,4 +1,4 @@
-# Nonlinear Finite Element Mechanics for Solids, Cloth, Plasticity, and Barrier Contact
+# Finite Element Method (FEM): Elastic Solids, Cloth, and IPC Contact
 
 `src/fem` is GeoTaichi's total-Lagrangian finite-element module. Its public
 workflow follows the rest of the project: configure a solver, add a mesh and
@@ -8,41 +8,27 @@ Repository-wide rules for
 device-resident numerical backends are documented in
 [DEVICE_BACKEND_AUDIT.md](../../agent/DEVICE_BACKEND_AUDIT.md).
 
-## Capabilities
+[Theory log and derivations](#fem-theory-log) | [Examples](../../examples/)
 
-- `TET4` and `HEX8` three-dimensional volume elements.
-- Embedded triangular membrane and cloth surfaces in three-dimensional space.
-- St. Venant-Kirchhoff and compressible Neo-Hookean volume materials.
-- Explicit updated-Lagrangian HEX8 elastoplasticity with eight Gauss points,
-  using the shared von Mises, Mohr--Coulomb, Drucker--Prager,
-  state-dependent Mohr--Coulomb, Modified Cam-Clay, granular, SANISAND-MS,
-  and NorSand constitutive implementations.
-- Cloth ARAP and cloth Neo-Hookean surface materials.
-- Explicit lumped-mass dynamics and implicit quasi-static/Newmark solvers.
-- Newton iterations with Armijo backtracking line search.
-- COO or HashTriplet sparse assembly with PCG, BiCGSTAB, or an explicitly
-  selected SciPy solve.
-- IPC contact, including linked-cell or
-  BVH broad phases, CCD, and lagged Coulomb friction.
-- Quadratic or signed-dihedral cloth bending, garment stitches, target
-  springs, and one-sided SDF spring energies.
-- Procedural meshes and mesh import through OBJ, Gmsh, Abaqus, VTK/VTU, and
-  other formats supported by `meshio`.
-- Optional rest shapes for initial pre-strain.
-- Direct edge-matrix deformation gradients for linear TET4 elements.
+## Example-backed capabilities
+
+- Elastic volume FEM: [implicit cantilever](../../examples/fem/implicit_volume_cantilever.py) and [volume self-contact](../../examples/fem/implicit_volume_self_contact.py).
+- Membrane and cloth mechanics: [explicit membrane](../../examples/fem/explicit_membrane.py), [cloth bending](../../examples/fem/cloth/newton_cloth_bending.py), and [cloth IPC contact](../../examples/fem/implicit_cloth_contact.py).
+- Axisymmetric FEM: [annulus](../../examples/fem/axisymmetric_annulus.py).
+- Prescribed rest geometry: [two-layer cloth and sphere](../../examples/fem/cloth/implicit_two_layer_cloth_sphere.py).
+- Frozen one-sided SDF supports: [cloth rollers](../../examples/fem/cloth/newton_cloth_rollers.py).
+- Coupled FEM contact: see [FEM–MPM](../fempm/README.md) and [FEM–DEM/ABD](../fedem/README.md) for concrete examples.
 
 ## Solver, element, material, and contact compatibility
 
 `HEX8` does **not** imply explicit integration, and `TET4` does **not** imply
 implicit integration. The time integrator and the element are independent for
-elastic volume FEM; the explicit-only restriction belongs to the incremental
-elastoplastic branch.
+elastic volume FEM.
 
 | FEM formulation | Time integration | Constitutive support | Plasticity | Contact and coupling limits |
 | --- | --- | --- | --- | --- |
 | Elastic `TET4` volume | Explicit or implicit | St. Venant--Kirchhoff or compressible Neo-Hookean | No; the incremental plastic assembler does not accept `TET4` | Standalone IPC/augmented-Lagrangian contact is implicit. Cross-solver contact is documented under [FEDEM](../fedem/README.md). |
 | Elastic `HEX8` volume | Explicit or implicit | St. Venant--Kirchhoff or compressible Neo-Hookean | No on this elastic route | Same contact split as elastic `TET4`. |
-| Incremental elastoplastic `HEX8` volume | Explicit only, with eight Gauss points | von Mises, Mohr--Coulomb, Drucker--Prager, state-dependent Mohr--Coulomb, Modified Cam--Clay, granular, SANISAND-MS, and NorSand | Yes | Standalone FEM IPC/augmented-Lagrangian contact is rejected. The deforming surface may participate in explicit FEDEM contact. |
 | Embedded cloth surface | Explicit or implicit | Cloth ARAP or cloth Neo-Hookean, with optional bending/stitch/spring/SDF energies | No | Standalone IPC is implicit; explicit DEM contact and implicit AffineBody IPC are FEDEM routes. |
 
 Constitutive equations remain centralized in the
@@ -370,48 +356,6 @@ $$
 
 Outside that range, the one-sided support energy and force vanish.
 
-### 6. HEX8 incremental elastoplasticity
-
-#### Updated-Lagrangian stress integration
-
-Each HEX8 quadrature point carries its own Cauchy stress and internal
-variables. From two consecutive deformation gradients,
-
-$$
-\Delta\boldsymbol{F}=\boldsymbol{F}_{n+1}\boldsymbol{F}_n^{-1},
-\qquad
-\boldsymbol{L}=\frac{\Delta\boldsymbol{F}-\boldsymbol{1}}{\Delta t},
-$$
-
-$$
-\boldsymbol{D}=\frac{1}{2}(\boldsymbol{L}+\boldsymbol{L}^T),
-\qquad
-\boldsymbol{W}=\frac{1}{2}(\boldsymbol{L}-\boldsymbol{L}^T).
-$$
-
-A small-strain constitutive law is embedded in the finite-motion update with
-an objective Cauchy-stress rate, for example the Jaumann rate,
-
-$$
-\overset{\nabla}{\boldsymbol{\sigma}}
-=\dot{\boldsymbol{\sigma}}
--\boldsymbol{W}\boldsymbol{\sigma}
-+\boldsymbol{\sigma}\boldsymbol{W}
-=\mathbb{C}:(\boldsymbol{D}-\boldsymbol{D}^{p}).
-$$
-
-The updated Cauchy stress contributes to the reference weak form through
-
-$$
-\boldsymbol{P}=J\boldsymbol{\sigma}\boldsymbol{F}^{-T}.
-$$
-
-The invariant definitions, return mappings, hardening laws, and state equations
-for J2, Mohr--Coulomb, Drucker--Prager, state-dependent Mohr--Coulomb,
-Modified Cam--Clay, regularized granular rheology, SANISAND-MS, and NorSand
-are maintained in the
-[shared incremental constitutive theory](../physics_model/consititutive_model/README.md#incremental-infinitesimal-elastoplasticity).
-
 ### 7. Contact theory
 
 #### Point--triangle and edge--edge contact kinematics
@@ -671,7 +615,7 @@ fem.set_solver(
 result = fem.run()
 ```
 
-## Cloth example and optional energies
+## Cloth example and one-sided supports
 
 ```python
 cloth = gt.FEM(log=False)
@@ -825,46 +769,10 @@ When pair properties are present, only the listed pairs are active; global
 plane parameters remain available. Pair-specific contact uses the same IPC
 barrier law.
 
-## Explicit HEX8 elastoplasticity
-
-Selecting an incremental solid model on HEX8 creates one persistent stress and
-state record at each of the eight Gauss points. Every explicit step computes
-the incremental spatial velocity gradient from the current and previously
-accepted deformation gradients, calls the shared Taichi constitutive update,
-and assembles `P = J sigma F^{-T}` against reference gradients. Build-time
-preprocessing first accepts the configured rest-to-current deformation, so
-prestrain and initial output use the same Gauss-point history path.
-
-```python
-fem.set_configuration(dimension=3, solver_type="Explicit")
-fem.add_mesh({
-    "Geometry": "Box", "Size": (1, 1, 1), "Divisions": (8, 8, 8),
-    "ElementType": "HEX8",
-})
-fem.add_material(
-    "DruckerPrager",
-    density=1800.0,
-    young_modulus=2.0e7,
-    poisson_ratio=0.3,
-    cohesion=2.0e4,
-    friction=30.0,
-    dilation=5.0,
-)
-fem.set_solver(dt=1.0e-5, step=1000)
-```
-
-This history-dependent path is explicit-only and deliberately rejects
-standalone FEM Barrier IPC. Initial stress can be supplied as six Voigt components with
-`initial_stress=(sxx, syy, szz, sxy, syz, sxz)`.
-Pressure-dependent models without one fixed preprocessing elastic modulus,
-currently Modified Cam Clay, require an explicit finite `dt`; their material
-state supplies the Gauss-point tangent after initialization rather than a
-single automatic wave-speed estimate.
-
 FEM contact uses collision culling rather than treating the spatial query as
 the final contact set. First, the selected `broad_phase` backend produces
 conservative PT/EE AABB overlaps. The common Taichi culling layer then removes
-garment-stitch neighborhoods, evaluates exact PT/EE distances for the current
+topological neighborhoods, evaluates exact PT/EE distances for the current
 Newton configuration, and compacts active stencils with prefix sums. Shared
 mesh topology is rejected by both spatial backends before this common layer.
 

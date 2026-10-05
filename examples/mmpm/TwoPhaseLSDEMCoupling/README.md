@@ -1,4 +1,6 @@
-# TwoPhaseDoubleLayer--LSDEM coupling examples
+# Two-Phase Material Point Method–Level-Set DEM (MPM–LSDEM) Immersed Boundary Coupling
+
+These 3D examples couple a saturated MPM bed, free-surface fluid, and rigid LSDEM grains. Fluid points use volume-fraction immersed boundary forcing (IBM); solid points use level-set contact. See the [MPM–LSDEM IBM theory log](../../../src/mpdem/README.md#10-fully-resolved-lsdem-and-affinebody-volume-fraction-ibm) for geometry, load exchange, and the hybrid two-phase formulation.
 
 - `wavemaker_lsdem_particles_3d.py`: piston wavemaker, saturated trapezoidal
   MPM bed, and three fully resolved LSDEM spheres.

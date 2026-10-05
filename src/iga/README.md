@@ -1,25 +1,17 @@
-# Nonlinear Isogeometric Analysis with NURBS Solids, Dynamics, and Contact
+# Isogeometric Analysis (IGA): NURBS Solids, Dynamics, and MPM Contact Coupling
 
 `src/iga` implements explicit and implicit isogeometric analysis on NURBS
 curves, surfaces, and volumes. The public `IGA` facade mirrors the FEM
 workflow while retaining NURBS control points, knot vectors, weights, and
 patch topology as the geometric representation.
 
-## Capabilities
+[Theory log and derivations](#iga-theory-log) | [Examples](../../examples/)
 
-- Two- and three-dimensional NURBS patches.
-- Explicit dynamics and implicit Newmark/quasi-static analysis.
-- No-swirl axisymmetric NURBS patches in a two-dimensional `(r,z)` meridian
-  for both explicit and implicit integration.
-- Device-side basis evaluation, quadrature, state updates, residuals, and
-  local stiffness assembly.
-- COO and Hash sparse assembly.
-- Device PCG for projected symmetric systems and BiCGSTAB for indefinite
-  systems.
-- Dirichlet constraints and resultant Neumann loads on control-point degrees
-  of freedom.
-- Multi-patch primitive collections and VTU output.
-- Optional independent rest control points for initial pre-strain.
+## Example-backed capabilities
+
+- NURBS-based isogeometric analysis (IGA): [2D elastic beam](../../examples/iga/elastic_beam2d.py) and [3D explicit cantilever](../../examples/iga/explicit_cantilever_3d.py).
+- Axisymmetric NURBS solids: [annulus](../../examples/iga/axisymmetric_annulus.py).
+- Independent IGA structures coupled to MPM continua: [implicit point–NURBS IPC](../../examples/igampm/iga_mpm_barrier_contact.py), [explicit DEM-law contact](../../examples/igampm/iga_mpm_explicit_dem_contact.py), and [axisymmetric CPT](../../examples/igampm/cpt_dp.py).
 
 ## Package layout
 

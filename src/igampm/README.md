@@ -1,37 +1,16 @@
-# Monolithic Isogeometric–Material Point Coupling with IPC and Plasticity
+# Isogeometric Analysis–Material Point Method (IGA–MPM) Coupling with IPC and Plasticity
 
 `src/igampm` couples deformable NURBS IGA patches with MPM bodies through
-either explicit DEM-law contact or one monolithic implicit IPC solve.
+either explicit DEM-law contact or one fully coupled implicit IPC solve.
 
-## Capabilities
+[Theory log and derivations](#iga--mpm-coupling-theory-log) | [Examples](../../examples/)
 
-- Two- and three-dimensional Cartesian IGA-MPM coupling plus no-swirl
-  axisymmetric coupling in a two-dimensional `(r,z)` meridian.
-- Three-dimensional explicit IGA--MPM contact with the shared DEM Linear or
-  Hertz--Mindlin spring/dashpot/Coulomb laws.
-- Finite-radius MPM point--NURBS-surface closest geometry, control-hull AABB
-  culling, persistent tangential history, and equal/opposite rational-basis
-  force transfer for the explicit branch.
-- Implicit IGA plus implicit direct MPM in one IPC Newton system.
-- Elastic IGA coupled to Direct implicit ULMPM with `NeoHookean`, associated
-  finite-strain `DruckerPrager`, associated finite-strain `VonMises`, or
-  associated finite-strain `ModifiedCamClay`.
-- Point-curve and point-surface NURBS contact geometry.
-- Device point--NURBS ACCD plus IGA/MPM material feasibility CCD.
-- COO/Hash sparse assembly and device Krylov solves.
-- Lagged and fully implicit friction Jacobian building blocks.
-- Contact surface include/exclude filtering and gallery-aligned VTU output.
+## Example-backed capabilities
 
-IPC requires both child solvers to be implicit. Linear/Hertz--Mindlin requires
-both to be explicit, the native particle/grid MPM backend, and
-`coupling="Lagrangian"`. The explicit branch is currently 3D Cartesian; use
-IPC for 2D or axisymmetric IGA--MPM coupling.
-Finite-strain plastic MPM additionally requires `configuration="ULMPM"`;
-Direct TLMPM is rejected because it does not yet store an explicit plastic
-gradient. In Cartesian 2D, the finite-strain plastic models use the classical
-3D plane-strain embedding (`F_33=1` for the total incremental map and a 3-by-3
-elastic state); intrinsic 2D plastic invariants are not used. The IGA child
-remains elastic.
+- Explicit isogeometric analysis–material point method (IGA–MPM) contact: [3D DEM-law example](../../examples/igampm/iga_mpm_explicit_dem_contact.py).
+- Fully coupled implicit IGA–MPM incremental potential contact (IPC): [3D deformable NURBS ramp and MPM block](../../examples/igampm/iga_mpm_barrier_contact.py), with Neo-Hookean, Drucker–Prager, or von Mises MPM material selection.
+- Axisymmetric IGA–MPM soil–structure interaction: [Drucker–Prager CPT](../../examples/igampm/cpt_dp.py).
+- The linked IPC examples demonstrate normal point–NURBS contact. A friction-mode argument alone is not a friction example: both current IPC examples disable coupled friction.
 
 ## Package layout
 
@@ -44,7 +23,7 @@ remains elastic.
 | `engines/CoupledEngine.py` | Composed public engine and field allocation |
 | `engines/ExplicitEngine.py` | Explicit IGA/MPM/contact step orchestration |
 | `engines/ContactEngine.py` | Point--NURBS queries, barrier assembly, and contact energy |
-| `engines/ImplicitEngine.py` | Monolithic assembly, material/contact ACCD, Newton, and Armijo search |
+| `engines/ImplicitEngine.py` | Fully coupled assembly, material/contact ACCD, Newton, and Armijo search |
 | `engines/FrictionEngine.py` | Lagged and fully implicit friction orchestration and kernels |
 | `engines/FullyImplicitFriction.py` | Exact Taichi friction residual/Jacobian blocks |
 | `ContactManager.py` | Contact model and parameter validation |
@@ -60,7 +39,7 @@ symbols are second-order tensors, and repeated contact samples are summed.
 
 ### 1. Coupled unknowns and interpolation maps
 
-The monolithic displacement unknown is
+The fully coupled displacement unknown is
 
 $$
 \boldsymbol{q}
@@ -272,9 +251,9 @@ $$
 =\left(\boldsymbol{H}^{z}_{Ai}\right)^T
 $$
 
-is the symmetry condition that a monolithic energy Hessian must satisfy.
+is the symmetry condition that a fully coupled energy Hessian must satisfy.
 
-### 4. Offset IPC barrier and monolithic potential
+### 4. Offset IPC barrier and fully coupled potential
 
 The scalar offset barrier $b(s)$, its first two derivatives, activation
 distance, stiffness scaling, and admissible domain are defined in the
@@ -321,7 +300,7 @@ Thus point--NURBS IPC satisfies action--reaction exactly, and common rigid
 translation is a null mode of the exact contact Hessian. This conclusion does
 not require matching IGA and MPM bases.
 
-For conservative normal contact and lagged friction, the coupled incremental
+For conservative normal contact, the coupled incremental
 potential is
 
 $$
@@ -349,7 +328,7 @@ $$
 
 The off-diagonal blocks $\boldsymbol{K}_{IM}^c$ and
 $\boldsymbol{K}_{MI}^c$ are the direct IGA--MPM coupling. Omitting them turns
-the problem into a staggered force exchange rather than a monolithic IPC
+the problem into a staggered force exchange rather than a fully coupled IPC
 solve.
 
 ### 5. Low-rank exact spectral projection
@@ -586,13 +565,13 @@ $$
 
 ### 8. Plastic constitutive models inside the IPC solve
 
-The complete multiplicative Hencky, associated Drucker--Prager, von Mises,
-and Modified Cam--Clay equations are maintained in the
+The multiplicative Hencky, associated Drucker--Prager, and von Mises
+equations are maintained in the
 [shared constitutive-model theory](../physics_model/consititutive_model/README.md#finite-strain-multiplicative-plasticity).
 This section records only how that local material response enters the coupled
 IGA--MPM solve.
 
-The IGA body remains elastic. For a Direct ULMPM particle $p$, the current
+The IGA body remains elastic. For a ULMPM particle $p$, the current
 total deformation gradient is
 
 $$
@@ -652,13 +631,8 @@ The accepted history is frozen during each global Newton trial. At every new
 $\boldsymbol{q}$, the material model recomputes its local return and tangent;
 the same displacement simultaneously changes the MPM boundary sample,
 closest NURBS parameter, active contact set, and all IPC mixed blocks.
-Plasticity therefore enters IPC through the monolithic equilibrium path even
+Plasticity therefore enters IPC through the fully coupled equilibrium path even
 though the scalar barrier law is material independent.
-
-Modified Cam--Clay adds one outer material fixed point: freeze the lagged
-preconsolidation pressure, solve the complete coupled equilibrium, refresh the
-hardening pressure using the shared constitutive law, and repeat until both
-the material fixed point and global residual converge.
 
 For plastic states, use the residual merit
 
@@ -803,11 +777,11 @@ coupling.set_configuration(
 )
 
 # Configure `coupling.iga` as an implicit IGA model and `coupling.mpm` as an
-# implicit Direct MPM model before building.
+# implicit MPM model before building.
 result = coupling.run(steps=20)
 ```
 
-For plastic MPM, configure the Direct child with `configuration="ULMPM"` and
+For plastic MPM, configure the MPM child with `configuration="ULMPM"` and
 select a supported finite-strain model through its ordinary material API:
 
 ```python
@@ -824,14 +798,12 @@ coupling.mpm.add_material(
 ```
 
 `VonMises` instead takes `YieldStress` and optional `HardeningModulus`.
-`ModifiedCamClay` takes the critical-state ratio, compression and swelling
-indices, reference void ratio, and preconsolidation pressure.
 Assembly, point--NURBS ACCD, material feasibility CCD, PSD-projected lagged
 Hessians, and Armijo search are unchanged. Step preparation, nonlinear solve,
 and acceptance form one transaction. Plastic history is committed only after
 the coupled step is accepted; a preparation, solve, or post-commit failure
-restores IGA control-point state, Direct-MPM particle/grid state, total `F0`, plastic
-history, and entry displacements. A valid preinitialized Direct-MPM `F0` is
+restores IGA control-point state, MPM particle/grid state, total `F0`, plastic
+history, and entry displacements. A valid preinitialized MPM `F0` is
 preserved during `IGAMPM.build()`; only an all-zero field receives the default
 identity state. A partially initialized field, a non-finite entry, or any
 nonpositive determinant is rejected across the full material dimension
@@ -891,7 +863,7 @@ small number of whole NURBS boundaries, so a stable particle--surface table
 plus AABB culling avoids neighbor-list rebuild/history remapping overhead.
 
 Axisymmetric runs set `dimension=2`, `axisymmetric=True`, and one shared
-`axis_offset` on the IGA child, Direct MPM child, and IGAMPM coupling. The
+`axis_offset` on the IGA child, MPM child, and IGAMPM coupling. The
 radial coordinate is component zero. Both material blocks use the full
 three-dimensional no-swirl map, including `F_theta_theta=r/R`, while their
 unknowns remain the two meridional displacement components. Reference volume
@@ -904,12 +876,12 @@ quadrature point. IGA Neumann values are resultant control-point loads; users
 supplying an axisymmetric traction density must integrate its `2*pi*R` measure
 before calling `NeumannBoundary.append`.
 
-## Monolithic implicit solve
+## Fully coupled implicit solve
 
 The implicit engine combines IGA elasticity, MPM mechanics, IPC barrier
-terms, and optional friction in one sparse system. Candidate generation,
+terms in one sparse system. Candidate generation,
 closest-point derivatives, contact Hessians, CCD, sparse scatter, and Krylov
-iterations remain device resident. Newton and lagged-friction outer loops use
+iterations remain device resident. Newton iterations use
 Python only for scalar control flow.
 
 Contact and storage parameters are frozen after `build()`. Reconfiguring the
@@ -942,19 +914,6 @@ The production fully implicit friction law has no NumPy implementation under
 blocks, sparse scatter, residual merit, line search, and BiCGSTAB remain in
 Taichi.  The NumPy implementation is retained only as a test oracle under
 `tests/helpers/igampm_fully_implicit_friction_reference.py`.
-
-## Assembly-only use
-
-Advanced callers may invoke `run(solve=False)` to initialize and return the
-selected Taichi COO or HashTriplet system. This mode is intended for external nonlinear
-drivers and does not emulate the standard lagged-friction outer iteration. It
-does not construct a NumPy/SciPy assembly backend; an external SciPy solve must
-be an explicitly selected linear-system boundary.
-`assemble_monolithic_newton_system()` returns the device dictionary. A host
-conversion is allowed only at an explicitly
-selected external linear-solve/output boundary; COO uses `_to_scipy()`, while
-HashTriplet uses `to_scipy(system["active_nodes"])`.
-Legacy injection of preassembled NumPy/SciPy subsystem blocks is rejected.
 
 ## Tests
 
