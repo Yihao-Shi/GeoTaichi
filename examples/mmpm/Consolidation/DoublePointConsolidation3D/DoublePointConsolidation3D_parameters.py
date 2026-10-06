@@ -1,0 +1,55 @@
+"""Shared model parameters for DoublePointConsolidation3D."""
+
+import os
+import numpy as np
+
+SCRIPT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+SAVE_PATH = os.environ.get(
+    "GEOTAICHI_DOUBLE_POINT_CONSOLIDATION3D_SAVE_PATH",
+    os.path.join(SCRIPT_DIR, "DoublePointConsolidation3D"),
+)
+
+CELL_SIZE = 0.02
+
+BOUNDARY_CELL_THICKNESS = int(os.environ.get("GEOTAICHI_DOUBLE_POINT_CONSOLIDATION3D_BOUNDARY_CELLS", "3"))
+
+COLUMN_WIDTH = float(os.environ.get("GEOTAICHI_DOUBLE_POINT_CONSOLIDATION3D_WIDTH", "0.2"))
+
+COLUMN_DEPTH = float(os.environ.get("GEOTAICHI_DOUBLE_POINT_CONSOLIDATION3D_DEPTH", "0.2"))
+
+COLUMN_HEIGHT = 1.0
+
+COLUMN_ORIGIN = np.array(
+    [
+        BOUNDARY_CELL_THICKNESS * CELL_SIZE,
+        BOUNDARY_CELL_THICKNESS * CELL_SIZE,
+        BOUNDARY_CELL_THICKNESS * CELL_SIZE,
+    ],
+    dtype=np.float64,
+)
+
+SURCHARGE = 1.0e4
+
+PERMEABILITY = float(os.environ.get("GEOTAICHI_DOUBLE_POINT_CONSOLIDATION3D_PERMEABILITY", "1.0e-3"))
+
+YOUNG_MODULUS = 1.0e8
+
+POISSON_RATIO = 0.30
+
+FLUID_DENSITY = 1000.0
+
+GRAVITY = 9.8
+
+DT = float(os.environ.get("GEOTAICHI_DOUBLE_POINT_CONSOLIDATION3D_DT", "1.0e-4"))
+
+SIMULATION_TIME = float(os.environ.get("GEOTAICHI_DOUBLE_POINT_CONSOLIDATION3D_TIME", "0.01456"))
+
+SAVE_INTERVAL = float(os.environ.get("GEOTAICHI_DOUBLE_POINT_CONSOLIDATION3D_SAVE_INTERVAL", str(SIMULATION_TIME)))
+
+PROFILE_BINS = int(
+    os.environ.get(
+        "GEOTAICHI_DOUBLE_POINT_CONSOLIDATION3D_PROFILE_BINS",
+        str(max(1, int(round(COLUMN_HEIGHT / CELL_SIZE)))),
+    )
+)

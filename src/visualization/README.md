@@ -17,17 +17,17 @@ PyOpenGL and does not create a Taichi GGUI window.
 ## Camera and instance-transform model
 
 Visualization owns no governing mechanical equation; it samples already
-computed solver state. If $n$ simulation steps of size $\Delta t$ have been
+computed solver state. If $`n`$ simulation steps of size $`\Delta t`$ have been
 accepted, the displayed physical time is
 
-$$
+```math
 t_n=n\Delta t.
-$$
+```
 
-For camera eye $\boldsymbol{e}$, target $\boldsymbol{c}$, and up hint
-$\boldsymbol{u}_0$, define the orthonormal frame
+For camera eye $`\boldsymbol{e}`$, target $`\boldsymbol{c}`$, and up hint
+$`\boldsymbol{u}_0`$, define the orthonormal frame
 
-$$
+```math
 \boldsymbol{f}
 =\frac{\boldsymbol{c}-\boldsymbol{e}}
 {\|\boldsymbol{c}-\boldsymbol{e}\|},
@@ -37,38 +37,38 @@ $$
 {\|\boldsymbol{f}\times\boldsymbol{u}_0\|},
 \qquad
 \boldsymbol{u}=\boldsymbol{r}\times\boldsymbol{f}.
-$$
+```
 
 The camera-to-world pose is
 
-$$
+```math
 \boldsymbol{T}_{cw}
 =\begin{bmatrix}
-\boldsymbol{r}&\boldsymbol{u}&-\boldsymbol{f}&\boldsymbol{e}\\
+\boldsymbol{r}&\boldsymbol{u}&-\boldsymbol{f}&\boldsymbol{e}\\[0pt]
 0&0&0&1
 \end{bmatrix}.
-$$
+```
 
-With vertical field of view $\theta$, aspect ratio $a$, and camera-space point
-$(x_c,y_c,z_c)$ in front of the OpenGL camera ($z_c<0$), perspective division
+With vertical field of view $`\theta`$, aspect ratio $`a`$, and camera-space point
+$`(x_c,y_c,z_c)`$ in front of the OpenGL camera ($`z_c<0`$), perspective division
 gives
 
-$$
+```math
 x_{ndc}=\frac{x_c}{-z_c\,a\tan(\theta/2)},
 \qquad
 y_{ndc}=\frac{y_c}{-z_c\tan(\theta/2)}.
-$$
+```
 
-A particle at $\boldsymbol{x}_p$ with physical visualization radius $r_p$ and
-global scale $s$ is rendered by instancing a unit sphere with
+A particle at $`\boldsymbol{x}_p`$ with physical visualization radius $`r_p`$ and
+global scale $`s`$ is rendered by instancing a unit sphere with
 
-$$
+```math
 \boldsymbol{T}_p
 =\begin{bmatrix}
-sr_p\boldsymbol{I}_{3\times3}&\boldsymbol{x}_p\\
+sr_p\boldsymbol{I}_{3\times3}&\boldsymbol{x}_p\\[0pt]
 \boldsymbol{0}^T&1
 \end{bmatrix}.
-$$
+```
 
 These transforms affect only rendering; they never modify the mechanical
 positions, radii, or time integration.

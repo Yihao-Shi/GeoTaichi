@@ -14,8 +14,6 @@ without writing shared geometry, which lets each ACCD contact pair own its
 complete device-side iteration.
 """
 
-from __future__ import annotations
-
 import numpy as np
 import taichi as ti
 
@@ -864,8 +862,13 @@ def get_distance_to_surface_moving_fixed_dim(
     weight,
     point,
     basis,
+    span_cache: ti.template() = None,
+    surface_id=0,
+    initial_parameter: ti.template() = None,
 ):
-    """Closest point on a NURBS surface using knot-span multistart."""
+    """Knot-span multistart; optional stationary hulls and an extra seed."""
+    if ti.static(not isinstance(span_cache, type(None))):
+        assert alpha == 0.0, "cached NURBS span bounds require stationary geometry"
     degree_u = ti.static(basis.basis_u.degree)
     degree_v = ti.static(basis.basis_v.degree)
     num_ctrlpts_u = num_knot_u - degree_u - 1
@@ -890,127 +893,182 @@ def get_distance_to_surface_moving_fixed_dim(
     control_seed_v = lower_v
     nearest_control_distance2 = 1.0e300
     control_seed_found = 0
-    for control_v in range(num_ctrlpts_v):
-        greville_v = 0.0
-        if ti.static(degree_v <= 3):
-            for offset_v in ti.static(range(1, degree_v + 1)):
-                greville_v += knot_vector_v[start_knot_v + control_v + offset_v]
-        else:
-            offset_v = 1
-            while offset_v <= degree_v:
-                greville_v += knot_vector_v[start_knot_v + control_v + offset_v]
-                offset_v += 1
-        greville_v /= degree_v
-        for control_u in range(num_ctrlpts_u):
-            control_id = start_ctrlpt + control_v * num_ctrlpts_u + control_u
-            assert weight[control_id] > 0.0, "NURBS contact weights must be positive"
-            control_position = ctrlpts[control_id]
-            if alpha != 0.0:
-                control_position += alpha * control_directions[control_id]
-            control_residual = control_position - point
-            control_distance2 = squared_norm_nd(control_residual)
-            if (
-                _isfinite_vector(control_residual)
-                and _isfinite_scalar(control_distance2)
-                and (control_seed_found == 0 or control_distance2 < nearest_control_distance2)
-            ):
-                greville_u = 0.0
-                if ti.static(degree_u <= 3):
-                    for offset_u in ti.static(range(1, degree_u + 1)):
-                        greville_u += knot_vector_u[start_knot_u + control_u + offset_u]
-                else:
-                    offset_u = 1
-                    while offset_u <= degree_u:
-                        greville_u += knot_vector_u[start_knot_u + control_u + offset_u]
-                        offset_u += 1
-                control_seed_u = greville_u / degree_u
-                control_seed_v = greville_v
-                nearest_control_distance2 = control_distance2
-                control_seed_found = 1
+    if ti.static(not isinstance(span_cache, type(None))):
+        control_id = span_cache.nearest_control_point(surface_id, point)
+        control_seed_u = span_cache.control_greville[control_id][0]
+        control_seed_v = span_cache.control_greville[control_id][1]
+        control_seed_found = 1
+    else:
+        for control_v in range(num_ctrlpts_v):
+            greville_v = 0.0
+            if ti.static(degree_v <= 3):
+                for offset_v in ti.static(range(1, degree_v + 1)):
+                    greville_v += knot_vector_v[start_knot_v + control_v + offset_v]
+            else:
+                offset_v = 1
+                while offset_v <= degree_v:
+                    greville_v += knot_vector_v[start_knot_v + control_v + offset_v]
+                    offset_v += 1
+            greville_v /= degree_v
+            for control_u in range(num_ctrlpts_u):
+                control_id = start_ctrlpt + control_v * num_ctrlpts_u + control_u
+                assert weight[control_id] > 0.0, "NURBS contact weights must be positive"
+                control_position = ctrlpts[control_id]
+                if alpha != 0.0:
+                    control_position += alpha * control_directions[control_id]
+                control_residual = control_position - point
+                control_distance2 = squared_norm_nd(control_residual)
+                if (
+                    _isfinite_vector(control_residual)
+                    and _isfinite_scalar(control_distance2)
+                    and (control_seed_found == 0 or control_distance2 < nearest_control_distance2)
+                ):
+                    greville_u = 0.0
+                    if ti.static(degree_u <= 3):
+                        for offset_u in ti.static(range(1, degree_u + 1)):
+                            greville_u += knot_vector_u[start_knot_u + control_u + offset_u]
+                    else:
+                        offset_u = 1
+                        while offset_u <= degree_u:
+                            greville_u += knot_vector_u[start_knot_u + control_u + offset_u]
+                            offset_u += 1
+                    control_seed_u = greville_u / degree_u
+                    control_seed_v = greville_v
+                    nearest_control_distance2 = control_distance2
+                    control_seed_found = 1
     assert control_seed_found != 0, "NURBS surface control points are non-finite"
     used_control_seed = 0
+    used_initial_seed = 0
 
     # Constrain one solve to every non-empty tensor-product knot span.  A
     # minimum on a span edge/corner is therefore considered explicitly.  The
     # first valid span also dispatches the global nearest-control-point seed;
     # ``seed_kind`` is a runtime loop so the expensive Newton body has only one
     # syntactic call site.
-    for span_u in range(degree_u, num_ctrlpts_u):
+    span_cursor = 0
+    span_end = (num_ctrlpts_u - degree_u) * (num_ctrlpts_v - degree_v)
+    if ti.static(not isinstance(span_cache, type(None))):
+        span_cursor = span_cache.span_tree_prefix[surface_id]
+        span_end = span_cache.span_tree_prefix[surface_id + 1]
+    while span_cursor < span_end:
+        span_u, span_v = degree_u, degree_v
+        if ti.static(not isinstance(span_cache, type(None))):
+            left, _, escape, span = span_cache.span_tree_nodes[span_cursor]
+            node_lower_bound2 = span_cache.span_node_distance_squared(span_cursor, point)
+            if found != 0 and node_lower_bound2 > best_distance2 + 1.0e-14 * (1.0 + best_distance2):
+                span_cursor = escape
+                continue
+            if span < 0:
+                span_cursor = left
+                continue
+            local_span = span - span_cache.prefix_num_spans_field[surface_id]
+            span_u += local_span // (num_ctrlpts_v - degree_v)
+            span_v += local_span % (num_ctrlpts_v - degree_v)
+            span_cursor = escape
+        else:
+            span_u += span_cursor // (num_ctrlpts_v - degree_v)
+            span_v += span_cursor % (num_ctrlpts_v - degree_v)
+            span_cursor += 1
         span_lower_u = knot_vector_u[start_knot_u + span_u]
         span_upper_u = knot_vector_u[start_knot_u + span_u + 1]
-        if span_upper_u > span_lower_u:
-            for span_v in range(degree_v, num_ctrlpts_v):
-                span_lower_v = knot_vector_v[start_knot_v + span_v]
-                span_upper_v = knot_vector_v[start_knot_v + span_v + 1]
-                if span_upper_v > span_lower_v:
-                    # A positive-weight NURBS span lies inside the convex hull
-                    # of its active controls, so this AABB distance is a
-                    # conservative lower bound for the global closest point.
-                    span_lower = ti.Vector.zero(ti.f64, point.n)
-                    span_upper = ti.Vector.zero(ti.f64, point.n)
-                    for direction in ti.static(range(point.n)):
-                        span_lower[direction] = 1.0e300
-                        span_upper[direction] = -1.0e300
-                    for control_v in range(span_v - degree_v, span_v + 1):
-                        for control_u in range(span_u - degree_u, span_u + 1):
-                            control_id = start_ctrlpt + control_v * num_ctrlpts_u + control_u
-                            control_position = ctrlpts[control_id] + alpha * control_directions[control_id]
-                            for direction in ti.static(range(point.n)):
-                                span_lower[direction] = ti.min(span_lower[direction], control_position[direction])
-                                span_upper[direction] = ti.max(span_upper[direction], control_position[direction])
-                    lower_bound2 = 0.0
-                    for direction in ti.static(range(point.n)):
-                        offset = ti.max(
-                            span_lower[direction] - point[direction],
-                            point[direction] - span_upper[direction],
-                            0.0,
-                        )
-                        lower_bound2 += offset * offset
-                    span_can_improve = found == 0 or lower_bound2 <= best_distance2 + 1.0e-14 * (1.0 + best_distance2)
-                    for seed_kind in range(2):
-                        run_seed = (seed_kind == 0 and span_can_improve) or (seed_kind == 1 and used_control_seed == 0)
-                        if run_seed:
-                            seed_u = 0.5 * (span_lower_u + span_upper_u)
-                            seed_v = 0.5 * (span_lower_v + span_upper_v)
-                            seed_lower_u = span_lower_u
-                            seed_upper_u = span_upper_u
-                            seed_lower_v = span_lower_v
-                            seed_upper_v = span_upper_v
-                            if seed_kind == 1:
-                                seed_u = control_seed_u
-                                seed_v = control_seed_v
-                                seed_lower_u = lower_u
-                                seed_upper_u = upper_u
-                                seed_lower_v = lower_v
-                                seed_upper_v = upper_v
-                                used_control_seed = 1
-                            u, v, distance2, residual, success = _surface_projected_newton_candidate(
-                                start_knot_u,
-                                start_knot_v,
-                                start_ctrlpt,
-                                num_knot_u,
-                                num_knot_v,
-                                knot_vector_u,
-                                knot_vector_v,
-                                ctrlpts,
-                                control_directions,
-                                alpha,
-                                weight,
-                                point,
-                                seed_u,
-                                seed_v,
-                                seed_lower_u,
-                                seed_upper_u,
-                                seed_lower_v,
-                                seed_upper_v,
-                                basis,
-                            )
-                            if success != 0 and (found == 0 or distance2 < best_distance2):
-                                best_u = u
-                                best_v = v
-                                best_distance2 = distance2
-                                best_residual = residual
-                                found = 1
+        span_lower_v = knot_vector_v[start_knot_v + span_v]
+        span_upper_v = knot_vector_v[start_knot_v + span_v + 1]
+        if span_upper_u > span_lower_u and span_upper_v > span_lower_v:
+            # A positive-weight NURBS span lies inside the convex hull
+            # of its active controls, so this AABB distance is a
+            # conservative lower bound for the global closest point.
+            span_lower = ti.Vector.zero(ti.f64, point.n)
+            span_upper = ti.Vector.zero(ti.f64, point.n)
+            if ti.static(not isinstance(span_cache, type(None))):
+                span_id = (
+                    span_cache.prefix_num_spans_field[surface_id]
+                    + (span_u - degree_u) * (num_ctrlpts_v - degree_v)
+                    + span_v
+                    - degree_v
+                )
+                span_lower = span_cache.span_lower[span_id]
+                span_upper = span_cache.span_upper[span_id]
+            else:
+                for direction in ti.static(range(point.n)):
+                    span_lower[direction] = 1.0e300
+                    span_upper[direction] = -1.0e300
+                for control_v in range(span_v - degree_v, span_v + 1):
+                    for control_u in range(span_u - degree_u, span_u + 1):
+                        control_id = start_ctrlpt + control_v * num_ctrlpts_u + control_u
+                        control_position = ctrlpts[control_id] + alpha * control_directions[control_id]
+                        for direction in ti.static(range(point.n)):
+                            span_lower[direction] = ti.min(span_lower[direction], control_position[direction])
+                            span_upper[direction] = ti.max(span_upper[direction], control_position[direction])
+            lower_bound2 = 0.0
+            for direction in ti.static(range(point.n)):
+                offset = ti.max(
+                    span_lower[direction] - point[direction],
+                    point[direction] - span_upper[direction],
+                    0.0,
+                )
+                lower_bound2 += offset * offset
+            # Keep one Newton call site to avoid duplicating its large
+            # Taichi IR. The extra seed only tightens the upper bound;
+            # every span that can improve it still runs its old seed.
+            for seed_index in range(ti.static(3 if not isinstance(initial_parameter, type(None)) else 2)):
+                seed_kind = seed_index - ti.static(1 if not isinstance(initial_parameter, type(None)) else 0)
+                span_can_improve = found == 0 or lower_bound2 <= best_distance2 + 1.0e-14 * (1.0 + best_distance2)
+                run_seed = (seed_kind == 0 and span_can_improve) or (seed_kind == 1 and used_control_seed == 0)
+                if ti.static(not isinstance(initial_parameter, type(None))):
+                    run_seed = run_seed or (
+                        seed_kind == -1 and used_initial_seed == 0 and _isfinite_vector(initial_parameter)
+                    )
+                if run_seed:
+                    seed_u = 0.5 * (span_lower_u + span_upper_u)
+                    seed_v = 0.5 * (span_lower_v + span_upper_v)
+                    seed_lower_u = span_lower_u
+                    seed_upper_u = span_upper_u
+                    seed_lower_v = span_lower_v
+                    seed_upper_v = span_upper_v
+                    if seed_kind == 1:
+                        seed_u = control_seed_u
+                        seed_v = control_seed_v
+                        seed_lower_u = lower_u
+                        seed_upper_u = upper_u
+                        seed_lower_v = lower_v
+                        seed_upper_v = upper_v
+                        used_control_seed = 1
+                    if ti.static(not isinstance(initial_parameter, type(None))):
+                        if seed_kind == -1:
+                            seed_u = initial_parameter[0]
+                            seed_v = initial_parameter[1]
+                            seed_lower_u = lower_u
+                            seed_upper_u = upper_u
+                            seed_lower_v = lower_v
+                            seed_upper_v = upper_v
+                            used_initial_seed = 1
+                    u, v, distance2, residual, success = _surface_projected_newton_candidate(
+                        start_knot_u,
+                        start_knot_v,
+                        start_ctrlpt,
+                        num_knot_u,
+                        num_knot_v,
+                        knot_vector_u,
+                        knot_vector_v,
+                        ctrlpts,
+                        control_directions,
+                        alpha,
+                        weight,
+                        point,
+                        seed_u,
+                        seed_v,
+                        seed_lower_u,
+                        seed_upper_u,
+                        seed_lower_v,
+                        seed_upper_v,
+                        basis,
+                    )
+                    if success != 0 and (found == 0 or distance2 < best_distance2):
+                        best_u = u
+                        best_v = v
+                        best_distance2 = distance2
+                        best_residual = residual
+                        found = 1
 
     assert found != 0, "NURBS surface closest-point solve failed"
     return (
@@ -1034,6 +1092,9 @@ def get_distance_to_surface_fixed_dim(
     weight,
     point,
     basis,
+    span_cache: ti.template() = None,
+    surface_id=0,
+    initial_parameter: ti.template() = None,
 ):
     """Closest point on a stationary NURBS surface."""
     return get_distance_to_surface_moving_fixed_dim(
@@ -1050,6 +1111,9 @@ def get_distance_to_surface_fixed_dim(
         weight,
         point,
         basis,
+        span_cache,
+        surface_id,
+        initial_parameter,
     )
 
 

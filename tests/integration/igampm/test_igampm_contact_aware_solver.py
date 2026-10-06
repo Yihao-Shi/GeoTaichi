@@ -38,7 +38,8 @@ def test_monolithic_hash_solver_receives_relative_tolerance():
     assert engine.monolithic_hash_matrix.kwargs["maxiter"] == 123
 
 
-def test_armijo_accepts_a_trial_within_energy_roundoff():
+@pytest.mark.parametrize("accepted", [True, False])
+def test_armijo_accepts_a_trial_within_energy_roundoff(accepted):
     from src.igampm.engines.ImplicitEngine import ImplicitEngineMixin
 
     engine = object.__new__(ImplicitEngineMixin)
@@ -51,19 +52,24 @@ def test_armijo_accepts_a_trial_within_energy_roundoff():
     engine.mpm = SimpleNamespace(grid_disp_temp=object())
     engine.iga = SimpleNamespace(grid_disp_temp=object())
     engine._set_device_trial_displacements = lambda alpha: None
-    engine.initialize_barrier = lambda mpm, iga: None
+    queries = []
+    syncs = []
+    engine.initialize_barrier = lambda mpm, iga: queries.append((mpm, iga))
     engine._conservative_contact_step_device_impl = lambda **kwargs: 1.0
     engine._accept_device_trial_displacements = lambda: None
-    engine._synchronize_device_trial_state_with_accepted = lambda: None
+    engine._sync_device_trial_displacements = lambda: syncs.append("accepted")
+    engine._synchronize_device_trial_state_with_accepted = lambda: syncs.append("restored")
     engine.minimum_contact_distance = lambda: 0.25
 
     result = engine.contact_aware_armijo_device(
         -1.0e-10,
-        energy_function=lambda current: 1.0,
+        energy_function=lambda current: 1.0 if accepted or len(queries) == 1 else 2.0,
     )
 
-    assert result["accepted"] is True
-    assert result["step"] == 1.0
+    assert result["accepted"] is accepted
+    assert result["step"] == (1.0 if accepted else 0.0)
+    assert len(queries) == (2 if accepted else 3)
+    assert syncs == (["accepted"] if accepted else ["restored"])
 
 
 def test_linear_solve_tolerance_does_not_relax_prescribed_displacements():

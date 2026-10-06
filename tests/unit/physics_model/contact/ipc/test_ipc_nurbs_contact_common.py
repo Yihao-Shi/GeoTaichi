@@ -1,8 +1,10 @@
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 import taichi as ti
 
-pytestmark = [pytest.mark.unit, pytest.mark.ipc, pytest.mark.contact]
+pytestmark = [pytest.mark.unit, pytest.mark.ipc, pytest.mark.contact, pytest.mark.usefixtures("taichi_runtime")]
 
 from src.nurbs.core.NurbsGeometry import NurbsBasisFunction1d, NurbsBasisFunction2d
 from src.physics_model.contact_model.ipc.ContactAssembly import psd_project_nd
@@ -15,15 +17,6 @@ from src.physics_model.contact_model.ipc.NurbsContact import (
     get_distance_to_surface_fixed_dim,
     get_distance_to_surface_moving_fixed_dim,
 )
-
-
-def setup_module():
-    ti.reset()
-    ti.init(arch=ti.cpu, default_fp=ti.f64, offline_cache=False)
-
-
-def teardown_module():
-    ti.reset()
 
 
 @ti.data_oriented
@@ -368,6 +361,198 @@ class _MultiSpanClosestHarness:
         self.surface_residual[None] = surface_residual
 
 
+@ti.data_oriented
+class _CachedSurfaceDistanceHarness:
+    def __init__(self, controls, weights, knots_u, knots_v, degrees, points):
+        from src.igampm.contact.ContactSurface import CouplingContactSurface
+
+        count_u = len(knots_u) - degrees[0] - 1
+        count_v = len(knots_v) - degrees[1] - 1
+        primitive = SimpleNamespace(
+            num_ctrlpts_u=count_u,
+            num_ctrlpts_v=count_v,
+            control_points=controls,
+            weights=weights,
+            gather_boundary_ctrlpts=lambda: (
+                [len(controls)],
+                np.arange(len(controls)),
+                [(knots_u, knots_v)],
+                [degrees],
+            ),
+        )
+        iga = SimpleNamespace(
+            patch=SimpleNamespace(
+                primitive=SimpleNamespace(body={"surface": {"primitive": primitive}}), prefix_total_num_ctrlpts=[0]
+            )
+        )
+        self.surface = CouplingContactSurface(iga)
+        self.surface.update_surface_bounds()
+        self.surface.update_span_bounds()
+        self.count_u, self.count_v = len(knots_u), len(knots_v)
+        self.points = ti.Vector.field(3, ti.f64, shape=len(points))
+        self.points.from_numpy(points)
+        self.seeds = ti.Vector.field(2, ti.f64, shape=len(points))
+        self.results = ti.Vector.field(6, ti.f64, shape=len(points))
+
+    @ti.kernel
+    def query(self, cached: ti.template(), seed: ti.types.vector(2, ti.f64)):
+        for i in self.points:
+            u, v, distance = 0.0, 0.0, 0.0
+            residual = ti.Vector.zero(ti.f64, 3)
+            if ti.static(cached):
+                # Match the coupling engine: a vector loaded from a Taichi
+                # field must be recognized as an extra seed, not just Matrix.
+                self.seeds[i] = seed
+                u, v, distance, residual = get_distance_to_surface_fixed_dim(
+                    0,
+                    0,
+                    0,
+                    self.count_u,
+                    self.count_v,
+                    self.surface.knot_vector_u,
+                    self.surface.knot_vector_v,
+                    self.surface.control_points_hat,
+                    self.surface.weights,
+                    self.points[i],
+                    self.surface.basis[0],
+                    self.surface,
+                    0,
+                    self.seeds[i],
+                )
+            else:
+                u, v, distance, residual = get_distance_to_surface_fixed_dim(
+                    0,
+                    0,
+                    0,
+                    self.count_u,
+                    self.count_v,
+                    self.surface.knot_vector_u,
+                    self.surface.knot_vector_v,
+                    self.surface.control_points_hat,
+                    self.surface.weights,
+                    self.points[i],
+                    self.surface.basis[0],
+                )
+            self.results[i] = ti.Vector([u, v, distance, residual[0], residual[1], residual[2]])
+
+
+@pytest.mark.isolated_dimension(3)
+@pytest.mark.parametrize("waves", [False, True], ids=["repeated-knot-rational", "15-waves"])
+def test_cached_surface_projection_preserves_multistart_after_deformation(taichi_runtime, waves):
+    if waves:
+        degrees = (3, 1)
+        knots_u = np.r_[np.zeros(3), np.linspace(0, 1, 121), np.ones(3)]
+        knots_v = np.r_[0.0, np.linspace(0, 1, 13), 1.0]
+    else:
+        degrees = (2, 2)
+        knots_u = np.array([0.0, 0.0, 0.0, 0.5, 0.5, 1.0, 1.0, 1.0])
+        knots_v = np.array([0.0, 0.0, 0.0, 1.0, 1.0, 1.0])
+    count_u, count_v = len(knots_u) - degrees[0] - 1, len(knots_v) - degrees[1] - 1
+    u, v = np.meshgrid(np.linspace(0, 1, count_u), np.linspace(0, 1, count_v))
+    controls = np.c_[0.06 * np.sin(2 * np.pi * (15 if waves else 2) * u.ravel()), 3 * u.ravel(), 3 * v.ravel()]
+    weights = 1 + 0.2 * np.cos(np.arange(len(controls)))
+    points = np.array(
+        [[0.075, y, z] for y, z in [(-0.1, 0), (0.1, 0.5), (0.8, 1.2), (1.51, 2.4), (2.8, 3), (3.1, 3.1)]]
+    )
+    harness = _CachedSurfaceDistanceHarness(controls, weights, knots_u, knots_v, degrees, points)
+    for deformed in (False, True):
+        if deformed:
+            controls[:, 0] += 0.015 * np.cos(3 * controls[:, 1]) * controls[:, 2]
+            harness.surface.control_points_hat.from_numpy(controls)
+            harness.surface.update_surface_bounds()
+            harness.surface.update_span_bounds()
+        harness.query(False, np.array([0.0, 0.0]))
+        reference = harness.results.to_numpy()
+        # Deliberately poor, out-of-domain and invalid hints must not suppress
+        # another wave, boundary minimum, or the uncached Greville seed.
+        for seed in ([0.99, 0.01], [-2.0, 3.0], [np.nan, np.nan]):
+            harness.query(True, np.asarray(seed, dtype=np.float64))
+            actual = harness.results.to_numpy()
+            assert np.isfinite(actual).all()
+            assert np.all((actual[:, :2] >= 0) & (actual[:, :2] <= 1))
+            np.testing.assert_allclose(np.linalg.norm(actual[:, 3:], axis=1), actual[:, 2], rtol=1e-8, atol=2e-9)
+            if np.isfinite(seed).all():
+                # An extra seed can find a better basin near a knot boundary;
+                # it must not worsen the original multistart distance.
+                assert np.all(actual[:, 2] <= reference[:, 2] + 2e-9 + 1e-8 * reference[:, 2])
+            else:
+                np.testing.assert_allclose(actual[:, 2:], reference[:, 2:], rtol=1e-8, atol=2e-9)
+                np.testing.assert_allclose(actual[:, :2], reference[:, :2], rtol=0, atol=2e-8)
+
+
+def test_surface_projection_attempts_tensor_hint_seeds(monkeypatch):
+    from src.physics_model.contact_model.ipc import NurbsContact
+
+    harness = _SurfaceDistanceHarness()
+    attempts = ti.field(ti.i32, shape=())
+    seeds = ti.Vector.field(2, ti.f64, shape=3)
+
+    @ti.func
+    def record_candidate(
+        start_knot_u,
+        start_knot_v,
+        start_ctrlpt,
+        num_knot_u,
+        num_knot_v,
+        knot_vector_u,
+        knot_vector_v,
+        ctrlpts,
+        control_directions,
+        alpha,
+        weight,
+        point,
+        seed_u,
+        seed_v,
+        lower_u,
+        upper_u,
+        lower_v,
+        upper_v,
+        basis,
+    ):
+        index = ti.atomic_add(attempts[None], 1)
+        seeds[index] = ti.Vector([seed_u, seed_v])
+        return seed_u, seed_v, 1.0, ti.Vector.zero(ti.f64, point.n), 1
+
+    monkeypatch.setattr(NurbsContact, "_surface_projected_newton_candidate", record_candidate)
+
+    @ti.kernel
+    def query(hint: ti.types.vector(2, ti.f64), kind: ti.template()):
+        seed = hint
+        if ti.static(kind == "field"):
+            seed = harness.parameter[None]
+        elif ti.static(kind == "literal"):
+            seed = ti.Vector([0.23, 0.67])
+        get_distance_to_surface_fixed_dim(
+            0,
+            0,
+            0,
+            6,
+            6,
+            harness.knots_u,
+            harness.knots_v,
+            harness.ctrlpts,
+            harness.weights,
+            ti.Vector([0.37, 0.62, 0.2]),
+            harness.basis,
+            initial_parameter=seed,
+        )
+
+    # Without a hint, only the span midpoint and Greville seed run.
+    harness.query(np.asarray([0.37, 0.62, 0.2]))
+    assert attempts[None] == 2
+    hint = np.asarray([0.23, 0.67])
+    for kind in ("argument", "field", "literal"):
+        attempts[None] = 0
+        harness.parameter[None] = hint
+        query(hint, kind)
+        assert attempts[None] == 3, kind
+        np.testing.assert_allclose(np.asarray(seeds[0]), hint, rtol=0, atol=1e-14)
+    for invalid in ([np.nan, np.nan], [np.inf, 0.67]):
+        attempts[None] = 0
+        query(np.asarray(invalid), "argument")
+        assert attempts[None] == 2
+
+
 def test_cpu_nurbs_curve_closest_point():
     knots = np.asarray([0.0, 0.0, 0.0, 1.0, 1.0, 1.0])
     ctrlpts = np.asarray([[0.0, 0.0], [0.5, 0.0], [1.0, 0.0]])
@@ -644,3 +829,28 @@ def test_psd_projection_is_dimension_generic():
     ):
         assert np.allclose(projected, projected.T, atol=1.0e-12)
         assert np.min(np.linalg.eigvalsh(projected)) >= -1.0e-12
+
+
+@pytest.mark.isolated_dimension(3)
+def test_surface_projection_uses_field_parameter_seed(taichi_runtime, monkeypatch):
+    from src.physics_model.contact_model.ipc import NurbsContact
+
+    checked_seed = ti.field(ti.i32, shape=())
+    original_finite = NurbsContact._isfinite_vector
+
+    @ti.func
+    def trace_finite(vector):
+        if ti.static(vector.n == 2):
+            if vector[0] == -2.0 and vector[1] == 3.0:
+                ti.atomic_add(checked_seed[None], 1)
+        return original_finite(vector)
+
+    monkeypatch.setattr(NurbsContact, "_isfinite_vector", trace_finite)
+    controls = np.array([[0.0, u, v] for v in (0.0, 1.0) for u in (0.0, 1.0)])
+    knots = np.array([0.0, 0.0, 1.0, 1.0])
+    harness = _CachedSurfaceDistanceHarness(controls, np.ones(4), knots, knots, (1, 1), np.array([[0.1, 0.4, 0.4]]))
+    harness.query(True, np.array([-2.0, 3.0]))
+    # On this plane, Newton gradients and clamped parameters cannot equal
+    # the out-of-domain hint. A check records the field seed's own dispatch.
+    assert checked_seed[None] > 0
+    np.testing.assert_allclose(harness.results.to_numpy()[0, :3], [0.4, 0.4, 0.1], atol=1e-12)

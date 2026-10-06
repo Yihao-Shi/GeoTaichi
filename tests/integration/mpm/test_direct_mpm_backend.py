@@ -375,3 +375,34 @@ def test_direct_ul_active_dof_capacity_is_checked_before_compact_map_write(
     assert undersized.degree_of_freedom == undersized_dof
     with pytest.raises(RuntimeError, match="active-DOF capacity exceeded"):
         _prepare_direct_stiffness(undersized, updated_lagrangian=True)
+
+
+def test_direct_affine_projection_transfers_an_affine_velocity(tmp_path):
+    ti.init(arch=ti.cpu, default_fp=ti.f64, offline_cache=False)
+    mpm = _configure_direct_mpm(tmp_path / "affine")
+    mpm.sims.set_velocity_projection_scheme("Affine")
+    mpm.direct_solver["shape_function"] = "bspline"
+    mpm.add_engine()
+    engine = mpm.enginer
+    assert engine.velocity_proj is True
+    gradient = np.array([[0.7, 0.2], [-0.1, 0.3]])
+    positions = engine.particle.x.to_numpy()[:4]
+    intercept = np.array([0.05, -0.02])
+    engine.particle.v.from_numpy(positions @ gradient.T + intercept)
+    engine.gradv.from_numpy(np.tile(gradient, (4, 1, 1)))
+    engine.compute_shapefn()
+    engine.grid_reset()
+    engine.mass_vel_acc_p2g()
+    mass, momentum = engine.grid.m.to_numpy(), engine.grid.v.to_numpy()
+    active = mass > engine.val_lim
+    grid = engine.body[0]
+    n = np.asarray(grid.grid_num)
+    ids = np.arange(mass.size)[active] - int(grid.goffset)
+    nodes = np.column_stack((ids % n[0], ids // n[0])) * float(grid.grid_size) + np.asarray(grid.xmin)
+    np.testing.assert_allclose(
+        momentum[active] / mass[active, None], nodes @ gradient.T + intercept, rtol=1e-12, atol=1e-12
+    )
+    np.testing.assert_allclose(mass.sum(), engine.particle.m.to_numpy().sum())
+    engine.particle[0].x = [0.0015, 0.25]
+    with pytest.raises(RuntimeError, match="outside its background grid"):
+        engine.compute_shapefn()

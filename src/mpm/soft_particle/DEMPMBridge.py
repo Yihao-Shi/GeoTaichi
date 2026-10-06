@@ -36,6 +36,7 @@ from src.mpm.soft_particle.SoftBodyKernel import (
     soft_surface_force_reset_,
 )
 from src.utils.linalg import no_operation
+from src.mpm.soft_particle.ReferenceMap import advect_soft_levelset_reference_map_
 
 
 def install_dem_soft_particle_backend(dem):
@@ -87,6 +88,21 @@ def bind_explicit_engine(engine, sims, scene):
             SoftParticleExplicitEngineMixin.correct_soft_levelset_volume_when_due,
             engine,
         )
+    if sims.soft_levelset_advection_scheme == "ReferenceMap":
+        if scene.soft_levelset_inverse_derivative is None:
+            import taichi as ti
+
+            scene.soft_levelset_inverse_derivative = ti.Matrix.field(3, 3, float, shape=scene.rigid_grid.shape[0])
+        engine.initialize_soft_levelset_transport = MethodType(
+            SoftParticleExplicitEngineMixin.initialize_soft_levelset_reference_map,
+            engine,
+        )
+        engine.advect_soft_levelset = partial(
+            advect_soft_levelset_reference_map_,
+            reference=scene.soft_levelset_initial_sdf,
+            derivative=scene.soft_levelset_inverse_derivative,
+        )
+        return
     engine.advect_soft_levelset = (
         partial(
             advect_soft_levelset_weno5_,

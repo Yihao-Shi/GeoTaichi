@@ -221,9 +221,20 @@ def test_cpt_total_potential_force_and_exact_hessian_by_fd(tmp_path, monkeypatch
     "axisymmetric,search",
     [(False, "LinkedCell"), (True, "BVH")],
 )
-def test_fempm_planar_point_edge_ipc_assembles_symmetric_system(tmp_path, axisymmetric, search):
+def test_fempm_planar_point_edge_ipc_assembles_symmetric_system(tmp_path, monkeypatch, axisymmetric, search):
+    from src.linear_solver.BuildTriplet import BuildTriplet
+
     coupling = _coupled_system(tmp_path, axisymmetric, search)
+    with monkeypatch.context() as patch:
+        patch.setattr(BuildTriplet, "append_reduced_from", BuildTriplet.append_raw_from)
+        baseline = coupling.enginer.assemble_system(include_friction=True)
+        reference = baseline["matrix"].to_scipy(baseline["active_nodes"]).toarray()
+        reference_rhs = coupling.enginer.rhs.to_numpy().copy()
     system = coupling.enginer.assemble_system(include_friction=True)
+    np.testing.assert_allclose(
+        system["matrix"].to_scipy(system["active_nodes"]).toarray(), reference, rtol=1e-12, atol=1e-8
+    )
+    np.testing.assert_allclose(coupling.enginer.rhs.to_numpy(), reference_rhs, rtol=1e-12, atol=1e-8)
 
     assert system["active_mpm_dof"] > 0
     assert system["contact_count"] >= 1

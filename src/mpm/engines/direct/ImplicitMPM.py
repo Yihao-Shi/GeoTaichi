@@ -138,13 +138,14 @@ class ImplicitMPM(MPMSolver):
                 "implicit MPM keeps sparse reduction and Krylov data in "
                 "Taichi fields on every architecture"
             )
+        self.linear_solver_name = "PCG" if self.project_pd else "BiCGSTAB"
         self.hash_matrix = BuildTriplet(
             dim=config.DIM,
             max_pairs_num=max(1, self.stiffness_nnz),
             max_nonzeros=max(1, stiffness_reduced_nnz),
             max_active_nodes=active_node_capacity,
             symmetric=False,
-            solver="BiCGSTAB",
+            solver=self.linear_solver_name,
             device_reduction=device_reduction,
         )
         self.prefix_sum_executor = PrefixSumExecutor(self.total_background_grid_num)
@@ -589,10 +590,11 @@ class ImplicitMPM(MPMSolver):
             maxiter=self.linear_solver_max_iters,
             return_solution=False,
         )
-        result["backend"] = "taichi_bicgstab"
+        solver_name = getattr(self, "linear_solver_name", "BiCGSTAB")
+        result["backend"] = "taichi_pcg" if solver_name == "PCG" else "taichi_bicgstab"
         if not result["converged"]:
             raise RuntimeError(
-                "Direct implicit MPM Taichi BiCGSTAB did not converge: "
+                f"Direct implicit MPM Taichi {solver_name} did not converge: "
                 f"residual={result['residual']:.6e}, "
                 f"iterations={result['iterations']}"
             )

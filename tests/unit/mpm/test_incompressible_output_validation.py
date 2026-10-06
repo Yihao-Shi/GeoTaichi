@@ -1,17 +1,26 @@
 import numpy as np
 
-from examples.mpm.IncompressibleFluid.validate_dam_break_visible_sdf_2d import box_penetration
-from examples.mpm.IncompressibleFluid.validate_large_tank_incompressible_3d import (
+from examples.mpm.IncompressibleFluid.dam_break_visible_sdf_2d.draw.validate_dam_break_visible_sdf_2d import (
+    polygon_penetration,
+)
+from examples.mpm.IncompressibleFluid.large_tank_incompressible_3d.draw.validate_large_tank_incompressible_3d import (
     enclosed_air_count,
     saved_grid_spacing,
 )
-from examples.mpm.IncompressibleFluid.wavemaker_tank_3d import deep_air_particle_count
+from examples.mpm.IncompressibleFluid.wavemaker_tank_3d.draw.evaluate_wavemaker_tank_3d import deep_air_particle_count
 
 
-def test_square_sdf_penetration_is_zero_outside_and_depth_inside():
-    position = np.array([[0.30, 0.10], [0.35, 0.10], [0.40, 0.10]])
+def test_star_sdf_penetration_respects_tips_and_concave_notches():
+    from examples.mpm.IncompressibleFluid.dam_break_visible_sdf_2d.obstacle import VERTICES
 
-    np.testing.assert_allclose(box_penetration(position), [0.0, 0.0, 0.04])
+    center = VERTICES.mean(axis=0)
+    position = np.vstack(([0.30, 0.10], VERTICES[0], center, center + [0, 0.06], center + 1.3 * (VERTICES[1] - center)))
+
+    penetration = polygon_penetration(position)
+    np.testing.assert_allclose(penetration[:2], 0.0)
+    assert penetration[2] > 0.03
+    assert penetration[3] > 0.0
+    assert penetration[4] == 0.0
 
 
 def test_wavemaker_deep_air_count_excludes_interface_particles():

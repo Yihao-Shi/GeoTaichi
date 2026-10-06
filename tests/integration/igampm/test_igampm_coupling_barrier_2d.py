@@ -90,6 +90,7 @@ def _build_mpm_particle(output_path, axisymmetric=False):
 
 def test_igampm_coupling_barrier_2d_assembles_symmetric_system(
     taichi_runtime,
+    monkeypatch,
     tmp_path,
 ):
     config.set_dimension(2)
@@ -119,7 +120,18 @@ def test_igampm_coupling_barrier_2d_assembles_symmetric_system(
     )
     blocks = coupling.barrier_blocks()
     forces = coupling.barrier_contact_forces()
+    from src.linear_solver.BuildTriplet import BuildTriplet
+
+    with monkeypatch.context() as patch:
+        patch.setattr(BuildTriplet, "append_reduced_from", BuildTriplet.append_raw_from)
+        baseline = coupling.assemble_monolithic_newton_system()
+        reference = baseline["matrix"].to_scipy(baseline["active_nodes"]).toarray()
+        reference_rhs = baseline["rhs"].to_numpy().copy()
     monolithic = coupling.assemble_monolithic_newton_system()
+    np.testing.assert_allclose(
+        monolithic["matrix"].to_scipy(monolithic["active_nodes"]).toarray(), reference, rtol=1e-12, atol=1e-7
+    )
+    np.testing.assert_allclose(monolithic["rhs"].to_numpy(), reference_rhs, rtol=1e-12, atol=1e-7)
     total_active = iga.degree_of_freedom + mpm.active_dof
     monolithic_matrix = monolithic["matrix"].to_scipy(monolithic["active_nodes"])
     monolithic_rhs = monolithic["rhs"].to_numpy()[:total_active]

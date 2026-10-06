@@ -32,7 +32,7 @@ for formulation in up uvp; do
         export GT_SATURATED_COLUMN_SOLVER_TYPE=SemiImplicit
         export GT_SATURATED_COLUMN_PRESSURE_SOLVER=MGPCG GT_SATURATED_COLUMN_PRESSURE_BETA=0
     fi
-    "$case_python" -u examples/mmpm/ColumnCollapse/SaturatedSoilColumnCollapseSemiImplicit2D.py \
+    "$case_python" -u examples/mmpm/ColumnCollapse/SaturatedSoilColumnCollapseSemiImplicit2D/SaturatedSoilColumnCollapseSemiImplicit2D.py \
         > "$validation_root/formal_$formulation/run.log" 2>&1
     printf '0\n' > "$validation_root/formal_$formulation/exit_code"
 done

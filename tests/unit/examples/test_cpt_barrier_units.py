@@ -17,7 +17,7 @@ def _terms(barrier: ti.template(), distance: ti.f64) -> ti.types.vector(3, ti.f6
 
 def test_iga_cpt_pressure_barrier_matches_fem_normalization(taichi_runtime, tmp_path, monkeypatch):
     import geotaichi as gt
-    from examples.igampm import cpt_dp
+    from examples.igampm.cpt_dp import cpt_dp
     from src.physics_model.contact_model.ipc.IPC import Barrier, ipc_barrier_distance_terms_py
 
     monkeypatch.setattr(gt, "init", lambda **kwargs: None)
@@ -32,6 +32,7 @@ def test_iga_cpt_pressure_barrier_matches_fem_normalization(taichi_runtime, tmp_
             time=0.0005,
             save_interval=0.0005,
             resolution_scale=50.0,
+            dilation_angle=None,
             output_dir=str(tmp_path),
         ),
     )

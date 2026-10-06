@@ -816,6 +816,7 @@ class MPM(SolverDiagnosticsMixin):
         kwargs.setdefault("visualize", self.sims.visualize)
         kwargs.setdefault("damping", self.sims.background_damping)
         kwargs.setdefault("alphaPIC", self.sims.alphaPIC)
+        kwargs.setdefault("velocity_projection", self.sims.velocity_projection_scheme == "Affine")
         kwargs.setdefault("track_energy", self.sims.energy_tracking)
         kwargs.setdefault("residual", self.sims.residual_tolerance)
         kwargs.setdefault("max_iters", self.sims.iter_max)

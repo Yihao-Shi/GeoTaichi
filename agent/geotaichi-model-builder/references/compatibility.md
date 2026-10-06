@@ -83,7 +83,7 @@ Reject unsupported combinations before generating a long script.
 - `FEMPM` has a 3D DEM-style `Linear`/`HertzMindlin` branch that
   requires explicit particle/grid MPM with `coupling="Lagrangian"` plus
   explicit FEM. `IPC` requires Direct implicit ULMPM plus implicit elastic FEM;
-  the MPM material may be Neo-Hookean, associated finite-strain
+  the MPM material may be Neo-Hookean, finite-strain
   Drucker--Prager, or associated finite-strain von Mises. It uses monolithic
   `COO` or `HashTriplet`, PSD projection, CCD, and line search. Both contact
   branches support `LinkedCell` and `BVH`; coupled IPC does not combine with
@@ -136,12 +136,16 @@ Reject unsupported combinations before generating a long script.
   Rolling friction is rejected because IGA control points have no rotational
   DOFs. The explicit CFL gate covers MPM waves and contact stiffness; IGA has
   no independent spectral stability estimator.
-- The MPM child may use Direct implicit ULMPM `NeoHookean`, associated
+- The MPM child may use Direct implicit ULMPM `NeoHookean`,
   finite-strain `DruckerPrager`, or associated finite-strain `VonMises`.
   Plastic MPM keeps the IGA child elastic and is not supported by Direct
   TLMPM. Accepted plastic history and `F0` share one device transaction.
   Cartesian 2D plasticity is a 3D plane-strain embedding, not an intrinsic-2D
   return mapping; axisymmetric plasticity uses the 3D no-swirl map.
+  Nonassociated DP accepts independent constant `DilationAngle`; it requires
+  a converged material outer loop around symmetric inner PCG/energy Armijo.
+  The material criterion checks actual stress and predicted plastic volume,
+  not correction changes in the flat tensile cap.
 - Freeze contact configuration before build only after the intended mode is
   final.
 - Contact parameters and, for IPC, the COO/HashTriplet assembly choice are

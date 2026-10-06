@@ -2,6 +2,7 @@
 
 import numpy as np
 import pytest
+import taichi as ti
 
 import src.igampm.config as config
 
@@ -79,6 +80,95 @@ def _build_mpm_particle(output_path):
     mpm.compute_nodal_vel_acc()
     assert mpm.active_dof > 0
     return mpm
+
+
+@pytest.mark.isolated_dimension(3)
+def test_igampm_aabb_pruning_keeps_active_distances_and_safe_ccd(taichi_runtime, tmp_path):
+    from src.igampm import IGAMPM
+    from src.physics_model.contact_model.ipc.NurbsContact import get_distance_to_surface_fixed_dim
+
+    config.set_dimension(3)
+    iga = _build_iga_cube(tmp_path / "iga-bounds")
+    points = iga.patch.control_points.to_numpy()
+    points[:, 2] += 0.16 * points[:, 0] * (1 - points[:, 0]) * points[:, 1] * (1 - points[:, 1])
+    iga.patch.control_points.from_numpy(points)
+    mpm = _build_mpm_particle(tmp_path / "mpm-bounds")
+    engine = IGAMPM(iga, mpm, kappa=1e4, dhat=0.08, dmin=0.005, barrier_nnz=20_000).build()
+    surface = engine.contact_surface
+    reference = ti.field(ti.f64, shape=surface.num_surfaces)
+
+    @ti.kernel
+    def full_query(basis: ti.template()):
+        for sid in range(surface.num_surfaces):
+            start_u = surface.prefix_num_knot_u_field[sid]
+            start_v = surface.prefix_num_knot_v_field[sid]
+            _, _, distance, _ = get_distance_to_surface_fixed_dim(
+                start_u,
+                start_v,
+                surface.prefix_num_ctrlpts_field[sid],
+                surface.prefix_num_knot_u_field[sid + 1] - start_u,
+                surface.prefix_num_knot_v_field[sid + 1] - start_v,
+                surface.knot_vector_u,
+                surface.knot_vector_v,
+                surface.control_points_hat,
+                surface.weights,
+                mpm.p_temp[0],
+                basis,
+            )
+            reference[sid] = distance
+
+    engine.initialize_barrier()
+    full_query(surface.basis[0])  # Every cube boundary has degree (2, 2).
+    actual = engine.contacts.distance.to_numpy()[: surface.num_surfaces]
+    exact = reference.to_numpy()
+    active = exact < 0.08
+    assert active.any() and (~active).any()
+    np.testing.assert_array_equal(engine.contacts.active.to_numpy()[: surface.num_surfaces], active.astype(int))
+    np.testing.assert_allclose(actual[active], exact[active], rtol=1e-12, atol=1e-13)
+    assert np.all(actual <= exact + 1e-13)
+    assert np.any(exact[~active] - actual[~active] > 1e-5)
+
+    # A distant, short segment is certified from the lower bound. A long
+    # approaching segment must still execute ACCD and remain strictly feasible.
+    direction = np.zeros(mpm.degree_of_freedom)
+    direction[: mpm.active_dof].reshape(-1, 3)[:, 2] = 0.001
+    mpm.incre_resolution.from_numpy(direction)
+    iga.incre_resolution.fill(0.0)
+    assert engine.conservative_contact_step_device(verify=False) == 1.0
+    direction[: mpm.active_dof].reshape(-1, 3)[:, 2] = 0.1
+    mpm.incre_resolution.from_numpy(direction)
+    alpha = engine.conservative_contact_step_device()
+    assert 0 < alpha < 1
+    engine._set_device_trial_displacements(alpha)
+    engine.initialize_barrier(mpm.grid_disp_temp, iga.grid_disp_temp)
+    full_query(surface.basis[0])
+    assert reference.to_numpy().min() > 0.005
+
+    # A lower bound below the strict feasibility tolerance must be refined
+    # even when the true distance lies outside the barrier activation radius.
+    translation = np.zeros(iga.degree_of_freedom)
+    translation.reshape(-1, 3)[:, 2] = 0.269
+    iga.grid_disp.from_numpy(translation)
+    strict_engine = IGAMPM(
+        iga, mpm, kappa=1e4, dhat=0.08, dmin=0.005, barrier_nnz=20_000, strict_feasibility_tolerance=0.2971
+    ).build()
+    strict_engine.initialize_barrier()
+    assert strict_engine.minimum_contact_distance() > 0.3021
+
+    # Bounds must not conceal invalid weights or particle coordinates, even
+    # on a non-debug CUDA runtime where device assertions can be disabled.
+    weights = surface.weights.to_numpy()
+    invalid_weights = weights.copy()
+    invalid_weights[0] = -1.0
+    surface.weights.from_numpy(invalid_weights)
+    with pytest.raises(RuntimeError, match="non-finite"):
+        engine.initialize_barrier()
+    surface.weights.from_numpy(weights)
+    positions = mpm.particle.x.to_numpy()
+    positions[0, 0] = np.nan
+    mpm.particle.x.from_numpy(positions)
+    with pytest.raises(RuntimeError, match="non-finite"):
+        engine.initialize_barrier()
 
 
 @pytest.mark.isolated_dimension(3)

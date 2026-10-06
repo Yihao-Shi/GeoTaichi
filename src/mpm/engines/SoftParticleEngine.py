@@ -6,6 +6,19 @@ import numpy as np
 
 
 class SoftParticleExplicitEngineMixin(object):
+    def initialize_soft_levelset_reference_map(self, sims, scene):
+        from src.mpm.soft_particle.ReferenceMap import initialize_soft_reference_sdf_
+
+        initialize_soft_reference_sdf_(
+            int(scene.softNum[0]),
+            scene.soft,
+            scene.rigid_grid,
+            scene.soft_levelset_initial_sdf,
+            scene.soft_levelset_initial_sdf_initialized,
+        )
+        if sims.soft_levelset_volume_correction:
+            SoftParticleExplicitEngineMixin.initialize_soft_levelset_volume_reference(self, sims, scene)
+
     def ensure_soft_grid_reference_mass(self, scene):
         """Refresh cached TLMPM nodal mass when the soft-body set changes."""
         soft_num = int(scene.softNum[0])

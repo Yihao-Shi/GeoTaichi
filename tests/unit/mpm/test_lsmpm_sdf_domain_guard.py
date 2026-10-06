@@ -56,30 +56,36 @@ def test_soft_levelset_domain_tolerance_configuration(taichi_runtime):
     assert simulation.soft_levelset_domain_tolerance_cells == 2.5e-6
 
 
-def test_soft_levelset_advection_configuration_defaults_to_semi_lagrangian(
+def test_soft_levelset_advection_configuration_defaults_to_reference_map(
     taichi_runtime,
 ):
     from src.dem.Simulation import Simulation as DEMSimulation
     from src.mpm.Simulation import Simulation
 
     simulation = Simulation()
-    assert simulation.soft_levelset_advection_scheme == "SemiLagrangian"
+    assert simulation.soft_levelset_advection_scheme == "ReferenceMap"
+    assert not simulation.soft_levelset_reinitialization
     assert simulation.soft_levelset_advection_cfl == 1.0
     dem_simulation = DEMSimulation()
-    assert dem_simulation.soft_levelset_advection_scheme == "SemiLagrangian"
+    assert dem_simulation.soft_levelset_advection_scheme == "ReferenceMap"
     assert dem_simulation.soft_levelset_advection_cfl == 1.0
 
     simulation.set_soft_levelset_reinitialization(
         advection_scheme="weno5",
     )
     assert simulation.soft_levelset_advection_scheme == "WENO5"
+    assert simulation.soft_levelset_reinitialization
     assert simulation.soft_levelset_advection_cfl == 0.20
 
     simulation.set_soft_levelset_reinitialization(
         advection_scheme="semi_lagrangian",
     )
-    assert simulation.soft_levelset_advection_scheme == "SemiLagrangian"
+    assert simulation.soft_levelset_advection_scheme == "ReferenceMap"
+    assert not simulation.soft_levelset_reinitialization
     assert simulation.soft_levelset_advection_cfl == 1.0
+    simulation.set_soft_levelset_reinitialization(advection_scheme="maccormack")
+    assert simulation.soft_levelset_advection_scheme == "MacCormack"
+    assert simulation.soft_levelset_reinitialization
 
 
 def test_triaxial_levelset_extent_includes_verlet_and_deformation_reserve():

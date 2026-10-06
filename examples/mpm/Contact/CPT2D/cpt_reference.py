@@ -88,7 +88,10 @@ IGAMPM_EXPLICIT_CONTACT = {
 }
 
 IPC_CONTACT = {
-    "dhat": 0.5 * GRID_SIZE,
+    # IPC's activation distance is dmin + dhat. Keep it within half a
+    # particle spacing so the initially separated pile does not preload the
+    # soil through the barrier before prescribed penetration starts.
+    "dhat": (0.5 / PARTICLES_PER_CELL - 0.1) * GRID_SIZE,
     "dmin": 0.1 * GRID_SIZE,
     "kappa": 60.0e6,
     "friction_coefficient": 0.0,

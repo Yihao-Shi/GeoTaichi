@@ -84,19 +84,19 @@ run_cpt_smoke() (
     local smoke_root
     smoke_root="$(mktemp -d "${TMPDIR:-/tmp}/geotaichi-cpt-smoke.XXXXXX")"
     trap 'rm -rf "$smoke_root"' EXIT
-    "$python_bin" examples/fempm/cpt_dp.py \
+    "$python_bin" examples/fempm/cpt_dp/cpt_dp.py \
         --contact explicit --arch "${GT_LOCAL_ARCH:-cpu}" \
         --dt 1.0e-5 --time 1.0e-5 --save-interval 1.0e-5 \
         --resolution-scale 8 --output-dir "$smoke_root/fempm-explicit"
-    "$python_bin" examples/igampm/cpt_dp.py \
+    "$python_bin" examples/igampm/cpt_dp/cpt_dp.py \
         --contact explicit --arch "${GT_LOCAL_ARCH:-cpu}" \
         --dt 1.0e-5 --time 1.0e-5 --save-interval 1.0e-5 \
         --resolution-scale 8 --output-dir "$smoke_root/igampm-explicit"
-    "$python_bin" examples/fempm/cpt_dp.py \
+    "$python_bin" examples/fempm/cpt_dp/cpt_dp.py \
         --contact ipc --arch "${GT_LOCAL_ARCH:-cpu}" \
         --dt 5.0e-4 --time 5.0e-4 --save-interval 5.0e-4 \
         --resolution-scale 8 --output-dir "$smoke_root/fempm-ipc"
-    "$python_bin" examples/igampm/cpt_dp.py \
+    "$python_bin" examples/igampm/cpt_dp/cpt_dp.py \
         --contact ipc --arch "${GT_LOCAL_ARCH:-cpu}" \
         --dt 5.0e-4 --time 5.0e-4 --save-interval 5.0e-4 \
         --resolution-scale 8 --output-dir "$smoke_root/igampm-ipc"
@@ -108,20 +108,20 @@ run_axisymmetric_smoke() (
     trap 'rm -rf "$smoke_root"' EXIT
     export MPLCONFIGDIR="$smoke_root/.mplconfig"
     mkdir -p "$MPLCONFIGDIR"
-    "$python_bin" examples/fem/axisymmetric_annulus.py \
+    "$python_bin" examples/fem/axisymmetric_annulus/axisymmetric_annulus.py \
         --solver explicit --arch "${GT_LOCAL_ARCH:-cpu}" \
         --radial-divisions 2 --axial-divisions 2 --steps 1 --dt 1.0e-5 \
         --output-interval 1 --output-dir "$smoke_root/fem-explicit"
-    "$python_bin" examples/fem/axisymmetric_annulus.py \
+    "$python_bin" examples/fem/axisymmetric_annulus/axisymmetric_annulus.py \
         --solver implicit --arch "${GT_LOCAL_ARCH:-cpu}" \
         --radial-divisions 2 --axial-divisions 2 --steps 1 --dt 1.0e-3 \
         --output-interval 1 --output-dir "$smoke_root/fem-implicit"
-    "$python_bin" examples/iga/axisymmetric_annulus.py \
+    "$python_bin" examples/iga/axisymmetric_annulus/axisymmetric_annulus.py \
         --solver explicit --arch "${GT_LOCAL_ARCH:-cpu}" \
         --radial-control-points 3 --axial-control-points 3 \
         --steps 1 --dt 1.0e-5 --output-interval 1 \
         --output-dir "$smoke_root/iga-explicit"
-    "$python_bin" examples/iga/axisymmetric_annulus.py \
+    "$python_bin" examples/iga/axisymmetric_annulus/axisymmetric_annulus.py \
         --solver implicit --arch "${GT_LOCAL_ARCH:-cpu}" \
         --radial-control-points 3 --axial-control-points 3 \
         --steps 1 --dt 1.0e-3 --output-interval 1 \

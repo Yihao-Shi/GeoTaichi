@@ -26,7 +26,7 @@ from examples.fedem.InclinedPlaneFriction.mesh_reference import (
     place_reference,
     tetrahedralize_primitive_reference,
 )
-from examples.fedem.InclinedPlaneFriction.output_audit import collect_native_output
+from examples.fedem.InclinedPlaneFriction.draw.output_audit import collect_native_output
 
 PLATE_OBJ = REPO_ROOT / "assets/mesh/FEDEM/incline_plate.obj"
 PROMPT = (

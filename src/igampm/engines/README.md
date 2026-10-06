@@ -15,6 +15,12 @@ IPC engine. Public engines are exported directly from this package.
 | `_Common.py` | Imports shared by the responsibility mixins; it owns no solver state |
 
 All production per-contact calculations and reductions execute in Taichi.
+IPC queries rebuild current positive-weight control-hull AABBs. Far inactive
+pairs keep conservative distance lower bounds for ACCD; near pairs and retained
+SemiIPC multipliers use the complete closest-point query. ACCD skips moving
+geometry queries only when its relative-motion bound certifies the whole
+segment. Contact buffers retain all particle--surface pairs, and diagnostics
+for inactive pairs can report a distance lower bound.
 Explicit contact rebuilds NURBS bounds, projects points, updates history, and
 scatters DEM-law forces through device kernels. In implicit IPC, every
 point--NURBS ACCD pair owns its complete bounded `while` and

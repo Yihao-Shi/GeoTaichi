@@ -201,6 +201,7 @@ class FiniteStrainModifiedCamClayModel(HenckyAssociatedPlasticityModel):
     @ti.func
     def begin_lagged_incremental_potential(self, particle_id):
         self.lagged_preconsolidation_pressure[particle_id] = self.preconsolidation_pressure[particle_id]
+        self.begin_lagged_plastic_volume(particle_id)
 
     @ti.func
     def refresh_lagged_incremental_potential(self, particle_id, total_deformation_gradient):
@@ -217,8 +218,9 @@ class FiniteStrainModifiedCamClayModel(HenckyAssociatedPlasticityModel):
         )
         previous = self.lagged_preconsolidation_pressure[particle_id]
         error = ti.abs(ti.log(candidate / previous))
+        volume_error = self.refresh_lagged_plastic_volume(particle_id, total_deformation_gradient)
         self.lagged_preconsolidation_pressure[particle_id] = candidate
-        return error
+        return ti.max(error, volume_error)
 
     @ti.func
     def get_history_state(self, particle_id):
@@ -238,6 +240,7 @@ class FiniteStrainModifiedCamClayModel(HenckyAssociatedPlasticityModel):
         self.lagged_preconsolidation_pressure[particle_id] = history_state[2]
         for column, row in ti.static(ti.ndrange(3, 3)):
             self.plastic_deformation_inverse[particle_id][row, column] = history_state[3 + 3 * column + row]
+        self.end_lagged_plastic_volume(particle_id)
 
     @ti.func
     def _elastic_invariants(self, trace_strain, deviatoric_norm):

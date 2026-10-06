@@ -7,10 +7,17 @@ either explicit DEM-law contact or one fully coupled implicit IPC solve.
 
 ## Example-backed capabilities
 
-- Explicit isogeometric analysis–material point method (IGA–MPM) contact: [3D DEM-law example](../../examples/igampm/iga_mpm_explicit_dem_contact.py).
-- Fully coupled implicit IGA–MPM incremental potential contact (IPC): [3D deformable NURBS ramp and MPM block](../../examples/igampm/iga_mpm_barrier_contact.py), with Neo-Hookean, Drucker–Prager, or von Mises MPM material selection.
-- Axisymmetric IGA–MPM soil–structure interaction: [Drucker–Prager CPT](../../examples/igampm/cpt_dp.py).
-- The linked IPC examples demonstrate normal point–NURBS contact. A friction-mode argument alone is not a friction example: both current IPC examples disable coupled friction.
+- Explicit isogeometric analysis–material point method (IGA–MPM) contact: [3D DEM-law example](../../examples/igampm/iga_mpm_explicit_dem_contact/iga_mpm_explicit_dem_contact.py).
+- Fully coupled implicit IGA–MPM incremental potential contact (IPC): [3D deformable NURBS ramp and MPM block](../../examples/igampm/iga_mpm_barrier_contact/iga_mpm_barrier_contact.py), with Neo-Hookean, Drucker–Prager, or von Mises MPM material selection.
+- Axisymmetric IGA–MPM soil–structure interaction: [Drucker–Prager CPT](../../examples/igampm/cpt_dp/cpt_dp.py).
+- Three-dimensional solid structures with DP soil: [flexible barrier](../../examples/igampm/flexible_barrier/flexible_barrier.py), with lagged Coulomb friction, and [upper-clamped wavy plate](../../examples/igampm/wavy_plate_collapse/wavy_plate_collapse.py), with frictionless IPC.
+- The ramp and CPT IPC examples disable coupled friction; the flexible-barrier example enables it.
+
+The wavy-plate script saves complete physical-state checkpoints beside its
+VTUs. Its `--resume` option loads a saved output frame in `--output-dir`;
+geometry, materials, output interval, and the final history row must match
+that checkpoint. Reference geometry is initialized before restoring the
+deformed state, and output numbering continues after the existing frames.
 
 ## Package layout
 
@@ -33,7 +40,7 @@ either explicit DEM-law contact or one fully coupled implicit IPC solve.
 ## IGA--MPM coupling theory log
 
 This section records the continuum and contact equations independently of any
-particular data structure. Superscripts $I$ and $M$ denote IGA and MPM
+particular data structure. Superscripts $`I`$ and $`M`$ denote IGA and MPM
 quantities, respectively. Bold lower-case symbols are vectors, bold upper-case
 symbols are second-order tensors, and repeated contact samples are summed.
 
@@ -41,105 +48,136 @@ symbols are second-order tensors, and repeated contact samples are summed.
 
 The fully coupled displacement unknown is
 
-$$
+```math
 \boldsymbol{q}
 =\left(\boldsymbol{u}^{I},\boldsymbol{u}^{M}\right)^T.
-$$
+```
 
-For a NURBS boundary, let $B_A(\boldsymbol{\xi})$ be the tensor-product
-B-spline basis and $w_A>0$ its rational weight. The rational basis is
+For a NURBS boundary, let $`B_A(\boldsymbol{\xi})`$ be the tensor-product
+B-spline basis and $`w_A>0`$ its rational weight. The rational basis is
 
-$$
+```math
 R_A(\boldsymbol{\xi})
 =\frac{w_AB_A(\boldsymbol{\xi})}
 {\sum_Bw_BB_B(\boldsymbol{\xi})},
 \qquad
 \sum_AR_A=1.
-$$
+```
 
 The current control points and boundary position are
 
-$$
+```math
 \boldsymbol{P}_A
 =\boldsymbol{P}_{A,n}+\boldsymbol{u}_A^I,
 \qquad
 \boldsymbol{X}(\boldsymbol{\xi})
 =\sum_AR_A(\boldsymbol{\xi})\boldsymbol{P}_A.
-$$
+```
 
-An MPM boundary sample $s$ is carried by the background grid through
+An MPM boundary sample $`s`$ is carried by the background grid through
 
-$$
+```math
 \boldsymbol{x}_s
 =\boldsymbol{x}_{s,n}+\sum_iS_{si}\boldsymbol{u}_i^M,
 \qquad
 \sum_iS_{si}=1.
-$$
+```
 
-Here $S_{si}$ is the MPM interpolation weight frozen for the current updated-
+Here $`S_{si}`$ is the MPM interpolation weight frozen for the current updated-
 Lagrangian step. In implicit IPC the sample is a point primitive and
-$d_{min}$ is its complete finite clearance. In explicit DEM-law coupling the
+$`d_{min}`$ is its complete finite clearance. In explicit DEM-law coupling the
 sample is a finite-radius particle, so its radius enters the overlap directly.
 
 For an axisymmetric meridian calculation the distance is still evaluated in
-the $(r,z)$ plane, but a sample represents a ring. If $\bar w_s$ is its
-meridional measure and $R_s$ its reference radius, the physical contact
+the $`(r,z)`$ plane, but a sample represents a ring. If $`\bar w_s`$ is its
+meridional measure and $`R_s`$ its reference radius, the physical contact
 measure is
 
-$$
+```math
 w_s=2\pi R_s\bar w_s.
-$$
+```
 
 ### 2. Point--NURBS closest-point geometry
 
-Let the parameter dimension be $m=1$ for a curve and $m=2$ for a surface.
+IPC updates each boundary's control-hull AABB at every query. With finite
+positive rational weights, the point--AABB distance is a conservative lower
+bound on the point--NURBS distance. Pairs with a lower bound outside the barrier
+activation distance retain that bound for ACCD and skip closest-point
+projection. Near pairs and SemiIPC pairs with a positive multiplier use the
+full span-multistart projection. Thus inactive entries in `contacts.distance`
+and an inactive global minimum may be lower bounds; active contact geometry,
+energy, force, and Hessian retain their full projection values.
+
+For 3D surfaces, knot-span control-hull boxes are refreshed once per geometry
+query and shared by all particles. A balanced span BVH is built once from the
+reference control hulls and refitted after deformation. Stackless traversal
+prunes span subtrees and finds the exact nearest control point, preserving the
+smallest control ID on distance ties. Greville coordinates are precomputed from
+the fixed knots. Each point--surface pair reuses its previous `(u, v)` as an
+additional projected-Newton seed. Its distance tightens the search upper bound,
+but every span whose conservative lower bound can improve it is still searched,
+including span boundaries and the existing nearest-control-point seed. Hints
+remain valid after rollback or particle remapping because they are reevaluated
+on the current geometry. Moving ACCD queries rebuild their moving span hulls;
+stationary caches are never used along an unrefreshed trajectory.
+After an Armijo trial is accepted, its contact table and hulls already match the
+accepted displacement, so only trial vectors are synchronized. Rejected or
+failed searches rebuild contact geometry from the accepted displacement.
+
+For a motion bound $`L`$ and clearance $`d_{min}`$, a pair can accept a whole trial
+segment of length $`\alpha`$ when $`\alpha L\le s(\underline d-d_{min})`$, where
+$`0<s<1`$ is the ACCD safety factor. The remaining clearance is then at least
+$`(1-s)(\underline d-d_{min})>0`$. All pairs remain represented; this culling
+does not discard potentially approaching contact constraints.
+
+Let the parameter dimension be $`m=1`$ for a curve and $`m=2`$ for a surface.
 Define
 
-$$
+```math
 \boldsymbol{r}(\boldsymbol{\xi},\boldsymbol{q})
 =\boldsymbol{X}(\boldsymbol{\xi})-\boldsymbol{x}_s,
 \qquad
 d=\|\boldsymbol{r}\|,
-$$
+```
 
 and obtain the closest parameter from
 
-$$
+```math
 \boldsymbol{\xi}^*
 =\underset{\boldsymbol{\xi}\in\Omega_\xi}{\arg\min}
 \frac12\|\boldsymbol{r}(\boldsymbol{\xi},\boldsymbol{q})\|^2.
-$$
+```
 
 For an interior closest point, introduce the tangents
-$\boldsymbol{t}_a=\boldsymbol{X}_{,a}$ and the stationarity equations
+$`\boldsymbol{t}_a=\boldsymbol{X}_{,a}`$ and the stationarity equations
 
-$$
+```math
 g_a=\boldsymbol{r}\cdot\boldsymbol{t}_a=0.
-$$
+```
 
 The closest-parameter Hessian is
 
-$$
+```math
 H^\xi_{ab}
 =\boldsymbol{t}_a\cdot\boldsymbol{t}_b
 +\boldsymbol{r}\cdot\boldsymbol{X}_{,ab}.
-$$
+```
 
 For a closest point on a parameter-domain edge, only the free parameter
-coordinates are retained in $\boldsymbol{g}$ and $\boldsymbol{H}^\xi$. At a
+coordinates are retained in $`\boldsymbol{g}`$ and $`\boldsymbol{H}^\xi`$. At a
 fixed corner there is no closest-parameter derivative. This active-coordinate
 interpretation makes all formulas below apply to interior, edge, and corner
 features without inventing derivatives through a clamped parameter.
 
 The differential formulas assume a unique closest point and a nonsingular
-free-coordinate $\boldsymbol{H}^\xi$. At an equal-distance feature switch the
+free-coordinate $`\boldsymbol{H}^\xi`$. At an equal-distance feature switch the
 distance remains continuous, but its derivative is understood piecewise.
 
 The unit vector from the MPM point to the NURBS boundary is
 
-$$
+```math
 \boldsymbol{n}=\frac{\boldsymbol{r}}{d}.
-$$
+```
 
 ### 3. Exact direct point--NURBS coupling derivatives
 
@@ -147,138 +185,138 @@ This subsection gives the complete derivative of the minimized distance,
 including motion of the closest NURBS parameter. It is the central formula of
 the implicit IGA--MPM coupling.
 
-Collect the free tangents in a matrix $\boldsymbol{T}$ whose row $a$ is
-$\boldsymbol{t}_a^T$. For any vector-valued generalized block
-$\boldsymbol{y}_a$, define the fixed-parameter residual Jacobian and the
+Collect the free tangents in a matrix $`\boldsymbol{T}`$ whose row $`a`$ is
+$`\boldsymbol{t}_a^T`$. For any vector-valued generalized block
+$`\boldsymbol{y}_a`$, define the fixed-parameter residual Jacobian and the
 stationarity Jacobian by
 
-$$
+```math
 \boldsymbol{J}_a
 =\frac{\partial\boldsymbol{r}}{\partial\boldsymbol{y}_a},
 \qquad
 \boldsymbol{M}_a
 =\frac{\partial\boldsymbol{g}}{\partial\boldsymbol{y}_a}.
-$$
+```
 
-For IGA control point $A$,
+For IGA control point $`A`$,
 
-$$
+```math
 \boldsymbol{J}_A=R_A\boldsymbol{I},
-$$
+```
 
-$$
+```math
 (\boldsymbol{M}_A)_{a,:}
 =R_A\boldsymbol{t}_a^T
 +R_{A,a}\boldsymbol{r}^T.
-$$
+```
 
-For MPM grid node $i$,
+For MPM grid node $`i`$,
 
-$$
+```math
 \boldsymbol{J}_i=-S_{si}\boldsymbol{I},
 \qquad
 \boldsymbol{M}_i=-S_{si}\boldsymbol{T}.
-$$
+```
 
-Implicit differentiation of $\boldsymbol{g}=\boldsymbol{0}$ gives
+Implicit differentiation of $`\boldsymbol{g}=\boldsymbol{0}`$ gives
 
-$$
+```math
 \frac{\partial\boldsymbol{\xi}^*}{\partial\boldsymbol{y}_a}
 =-(\boldsymbol{H}^\xi)^{-1}\boldsymbol{M}_a.
-$$
+```
 
 Let the minimized squared distance be
 
-$$
+```math
 z(\boldsymbol{q})
 =\|\boldsymbol{r}(\boldsymbol{\xi}^*(\boldsymbol{q}),\boldsymbol{q})\|^2.
-$$
+```
 
 The envelope theorem removes the closest-parameter derivative from the first
 derivative:
 
-$$
+```math
 \frac{\partial z}{\partial\boldsymbol{P}_A}
 =2R_A\boldsymbol{r},
 \qquad
 \frac{\partial z}{\partial\boldsymbol{u}_i^M}
 =-2S_{si}\boldsymbol{r}.
-$$
+```
 
 The exact second derivative is the Schur complement of the closest-parameter
 problem:
 
-$$
+```math
 \boldsymbol{H}^{z}_{ab}
 =2\left[
 \boldsymbol{J}_a^T\boldsymbol{J}_b
 -\boldsymbol{M}_a^T(\boldsymbol{H}^\xi)^{-1}\boldsymbol{M}_b
 \right].
-$$
+```
 
 Consequently, the three coupled block families are
 
-$$
+```math
 \boldsymbol{H}^{z}_{AB}
 =2\left[
 R_AR_B\boldsymbol{I}
 -\boldsymbol{M}_A^T(\boldsymbol{H}^\xi)^{-1}\boldsymbol{M}_B
 \right],
-$$
+```
 
-$$
+```math
 \boldsymbol{H}^{z}_{Ai}
 =2\left[
 -R_AS_{si}\boldsymbol{I}
 +\boldsymbol{M}_A^T(\boldsymbol{H}^\xi)^{-1}S_{si}\boldsymbol{T}
 \right],
-$$
+```
 
-$$
+```math
 \boldsymbol{H}^{z}_{ij}
 =2S_{si}S_{sj}\left[
 \boldsymbol{I}
 -\boldsymbol{T}^T(\boldsymbol{H}^\xi)^{-1}\boldsymbol{T}
 \right].
-$$
+```
 
-For a curve, $\boldsymbol{H}^\xi$ is scalar. For a surface it is a $2$ by
-$2$ matrix, reduced to a scalar when the closest point lies on a parameter
+For a curve, $`\boldsymbol{H}^\xi`$ is scalar. For a surface it is a $`2`$ by
+$`2`$ matrix, reduced to a scalar when the closest point lies on a parameter
 edge. The mixed identity
 
-$$
+```math
 \boldsymbol{H}^{z}_{iA}
 =\left(\boldsymbol{H}^{z}_{Ai}\right)^T
-$$
+```
 
 is the symmetry condition that a fully coupled energy Hessian must satisfy.
 
 ### 4. Offset IPC barrier and fully coupled potential
 
-The scalar offset barrier $b(s)$, its first two derivatives, activation
+The scalar offset barrier $`b(s)`$, its first two derivatives, activation
 distance, stiffness scaling, and admissible domain are defined in the
 [shared contact-model theory](../physics_model/contact_model/README.md#incremental-potential-contact).
-Here $s=d^2-d_{min}^2$ is used only to derive how that shared law pulls back
+Here $`s=d^2-d_{min}^2`$ is used only to derive how that shared law pulls back
 through the point--NURBS geometry.
-For sample measure $w_s$, the contact energy is
+For sample measure $`w_s`$, the contact energy is
 
-$$
+```math
 E_c=w_sb(s).
-$$
+```
 
 The IGA and MPM contact residual blocks are therefore
 
-$$
+```math
 \boldsymbol{g}_A^c
 =2w_sb'(s)R_A\boldsymbol{r},
 \qquad
 \boldsymbol{g}_i^c
 =-2w_sb'(s)S_{si}\boldsymbol{r}.
-$$
+```
 
 The exact contact tangent between any two generalized blocks is
 
-$$
+```math
 \boldsymbol{K}_{ab}^c
 =w_s\left[
 b''(s)
@@ -286,15 +324,15 @@ b''(s)
 \left(\frac{\partial s}{\partial\boldsymbol{y}_b}\right)^T
 +b'(s)\boldsymbol{H}_{ab}^{z}
 \right].
-$$
+```
 
 Because both interpolation maps form a partition of unity,
 
-$$
+```math
 \sum_A\boldsymbol{g}_A^c
 +\sum_i\boldsymbol{g}_i^c
 =\boldsymbol{0}.
-$$
+```
 
 Thus point--NURBS IPC satisfies action--reaction exactly, and common rigid
 translation is a null mode of the exact contact Hessian. This conclusion does
@@ -303,105 +341,105 @@ not require matching IGA and MPM bases.
 For conservative normal contact, the coupled incremental
 potential is
 
-$$
+```math
 \Pi(\boldsymbol{q};\boldsymbol{h}_n)
 =\Pi_I(\boldsymbol{u}^I)
 +\Pi_M(\boldsymbol{u}^M;\boldsymbol{h}_n)
 +\sum_cE_c(\boldsymbol{q})
 +D_f(\boldsymbol{q};\widehat{\boldsymbol{q}}).
-$$
+```
 
-Here $\boldsymbol{h}_n$ contains accepted MPM material history and the hat
+Here $`\boldsymbol{h}_n`$ contains accepted MPM material history and the hat
 denotes a lagged friction state. The Newton equations have the block form
 
-$$
+```math
 (\boldsymbol{K}_{II}+\boldsymbol{K}_{II}^c)\Delta\boldsymbol{u}^I
 +\boldsymbol{K}_{IM}^c\Delta\boldsymbol{u}^M
 =-(\boldsymbol{r}_I+\boldsymbol{g}_I^c),
-$$
+```
 
-$$
+```math
 \boldsymbol{K}_{MI}^c\Delta\boldsymbol{u}^I
 +(\boldsymbol{K}_{MM}+\boldsymbol{K}_{MM}^c)\Delta\boldsymbol{u}^M
 =-(\boldsymbol{r}_M+\boldsymbol{g}_M^c).
-$$
+```
 
-The off-diagonal blocks $\boldsymbol{K}_{IM}^c$ and
-$\boldsymbol{K}_{MI}^c$ are the direct IGA--MPM coupling. Omitting them turns
+The off-diagonal blocks $`\boldsymbol{K}_{IM}^c`$ and
+$`\boldsymbol{K}_{MI}^c`$ are the direct IGA--MPM coupling. Omitting them turns
 the problem into a staggered force exchange rather than a fully coupled IPC
 solve.
 
 ### 5. Low-rank exact spectral projection
 
 The exact point--NURBS contact Hessian can be indefinite because closest-point
-curvature appears in $(\boldsymbol{H}^\xi)^{-1}$. Its rank, however, is at
-most the spatial dimension $d_x$ plus the number $m$ of free closest
+curvature appears in $`(\boldsymbol{H}^\xi)^{-1}`$. Its rank, however, is at
+most the spatial dimension $`d_x`$ plus the number $`m`$ of free closest
 parameters.
 
 For each IGA control point and MPM node, define reduced Jacobians
 
-$$
+```math
 \boldsymbol{Q}_A
 =\left(R_A\boldsymbol{I},\boldsymbol{M}_A^T\right)^T,
-$$
+```
 
-$$
+```math
 \boldsymbol{Q}_i
 =\left(-S_{si}\boldsymbol{I},-S_{si}\boldsymbol{T}^T\right)^T,
-$$
+```
 
-and concatenate them as $\boldsymbol{Q}$. Let
-$\varphi(d)=b(d^2-d_{min}^2)$ and define
+and concatenate them as $`\boldsymbol{Q}`$. Let
+$`\varphi(d)=b(d^2-d_{min}^2)`$ and define
 
-$$
+```math
 \alpha=\frac{\varphi'(d)}{2d},
 \qquad
 \beta=\frac14\left[
 \frac{\varphi''(d)}{d^2}
 -\frac{\varphi'(d)}{d^3}
 \right].
-$$
+```
 
 The exact local Hessian factors as
 
-$$
+```math
 \boldsymbol{H}_c
 =\boldsymbol{Q}^T\boldsymbol{K}_{red}\boldsymbol{Q},
-$$
+```
 
-where the spatial block of $\boldsymbol{K}_{red}$ is
+where the spatial block of $`\boldsymbol{K}_{red}`$ is
 
-$$
+```math
 w_s\left[
 2\alpha\boldsymbol{I}
 +4\beta\boldsymbol{r}\boldsymbol{r}^T
 \right],
-$$
+```
 
 and its closest-parameter block is
 
-$$
+```math
 -2w_s\alpha(\boldsymbol{H}^\xi)^{-1}.
-$$
+```
 
-Set $\boldsymbol{G}=\boldsymbol{Q}\boldsymbol{Q}^T$. A Euclidean spectral
+Set $`\boldsymbol{G}=\boldsymbol{Q}\boldsymbol{Q}^T`$. A Euclidean spectral
 projection of the full stencil Hessian can be performed entirely in the small
 reduced space:
 
-$$
+```math
 \boldsymbol{W}
 =\boldsymbol{G}^{1/2}\boldsymbol{K}_{red}\boldsymbol{G}^{1/2},
-$$
+```
 
-$$
+```math
 \boldsymbol{H}_c^+
 =\boldsymbol{Q}^T\boldsymbol{G}^{-1/2}
 [\boldsymbol{W}]_+
 \boldsymbol{G}^{-1/2}\boldsymbol{Q}.
-$$
+```
 
 The inverse square root is a pseudoinverse on the numerical row space, and
-$[\boldsymbol{W}]_+$ clamps negative eigenvalues to zero. Projecting this
+$`[\boldsymbol{W}]_+`$ clamps negative eigenvalues to zero. Projecting this
 single reduced operator preserves the IGA--MPM mixed blocks; projecting the
 IGA and MPM diagonal blocks separately would not represent the same coupled
 energy.
@@ -410,19 +448,19 @@ energy.
 
 #### Lagged smooth Coulomb friction
 
-At a lagged closest parameter $\widehat{\boldsymbol{\xi}}$, freeze the normal
-$\widehat{\boldsymbol{n}}$, rational basis, MPM weights, and total normal
-force $\lambda_n=-w_s\varphi'(d)$. Define the tangent projector
+At a lagged closest parameter $`\widehat{\boldsymbol{\xi}}`$, freeze the normal
+$`\widehat{\boldsymbol{n}}`$, rational basis, MPM weights, and total normal
+force $`\lambda_n=-w_s\varphi'(d)`$. Define the tangent projector
 
-$$
+```math
 \widehat{\boldsymbol{T}}_n
 =\boldsymbol{I}
 -\widehat{\boldsymbol{n}}\widehat{\boldsymbol{n}}^T.
-$$
+```
 
 The relative tangential increment is
 
-$$
+```math
 \boldsymbol{z}_t
 =\widehat{\boldsymbol{T}}_n\left[
 \sum_iS_{si}\Delta\boldsymbol{u}_i^M
@@ -431,17 +469,17 @@ $$
 \right],
 \qquad
 v=\frac{\|\boldsymbol{z}_t\|}{\Delta t}.
-$$
+```
 
 The lagged friction potential is
 
-$$
+```math
 D_f=\mu\lambda_nf_0(v).
-$$
+```
 
-The scalar $C^1$ function $f_0$ is the
+The scalar $`C^1`$ function $`f_0`$ is the
 [shared regularized IPC friction potential](../physics_model/contact_model/README.md#regularized-ipc-friction).
-Freezing the contact frame makes $D_f$ a symmetric coupled potential with
+Freezing the contact frame makes $`D_f`$ a symmetric coupled potential with
 IGA--MPM mixed blocks.
 
 #### Fully implicit friction
@@ -451,57 +489,57 @@ normal force, and endpoint velocities from the current displacement. For
 either child, a Newmark-type update makes the endpoint velocity affine in the
 current displacement,
 
-$$
+```math
 \boldsymbol{v}^{X}
 =c_q^X\boldsymbol{u}^{X}
 +c_v^X\boldsymbol{v}_n^{X}
 +c_a^X\boldsymbol{a}_n^{X},
 \qquad
 X\in\{I,M\}.
-$$
+```
 
 The relative contact velocity is
 
-$$
+```math
 \boldsymbol{v}_{rel}
 =\sum_iS_{si}\boldsymbol{v}_i^M
 -\sum_AR_A(\boldsymbol{\xi}^*)\boldsymbol{v}_A^I,
-$$
+```
 
-$$
+```math
 \boldsymbol{T}_n=\boldsymbol{I}-\boldsymbol{n}\boldsymbol{n}^T,
 \qquad
 \boldsymbol{v}_t=\boldsymbol{T}_n\boldsymbol{v}_{rel},
 \qquad
 v=\|\boldsymbol{v}_t\|.
-$$
+```
 
-The radial resistance $\boldsymbol{\eta}(\boldsymbol{v}_t,\lambda_n)$,
-including its $C^1$ or stabilized speed profile, Stribeck interpolation,
+The radial resistance $`\boldsymbol{\eta}(\boldsymbol{v}_t,\lambda_n)`$,
+including its $`C^1`$ or stabilized speed profile, Stribeck interpolation,
 viscous term, and exact constitutive differential, is defined in the
 [shared fully implicit friction theory](../physics_model/contact_model/README.md#fully-implicit-stribeck-friction).
 The IGA--MPM contribution that is not part of that scalar law is the
 derivative of the moving point--NURBS frame.
 The required geometric differentials include
 
-$$
+```math
 \mathrm d\boldsymbol{n}
 =\frac{\boldsymbol{T}_n}{d}\mathrm d\boldsymbol{r},
 \qquad
 \mathrm d\lambda_n
 =-w_s\varphi''(d)\,\mathrm d d,
-$$
+```
 
-$$
+```math
 \mathrm d\boldsymbol{v}_t
 =\boldsymbol{T}_n\mathrm d\boldsymbol{v}_{rel}
 -\left[
 \mathrm d\boldsymbol{n}\,\boldsymbol{n}^T
 +\boldsymbol{n}\,\mathrm d\boldsymbol{n}^T
 \right]\boldsymbol{v}_{rel}.
-$$
+```
 
-Together with $\mathrm d\boldsymbol{\xi}^*$ from Section 3, these terms
+Together with $`\mathrm d\boldsymbol{\xi}^*`$ from Section 3, these terms
 differentiate the moving contact frame and force magnitude. The resulting
 Jacobian is generally nonsymmetric, so the nonlinear problem is naturally
 viewed as a residual equation rather than minimization of one scalar friction
@@ -512,21 +550,21 @@ potential.
 For a Newton direction, additive continuous collision detection (ACCD) writes
 the moving point and control points as
 
-$$
+```math
 \boldsymbol{x}_s(\alpha)
 =\boldsymbol{x}_s^0+\alpha\Delta\boldsymbol{x}_s,
-$$
+```
 
-$$
+```math
 \boldsymbol{P}_A(\alpha)
 =\boldsymbol{P}_A^0+\alpha\Delta\boldsymbol{P}_A,
 \qquad
 0\leq\alpha\leq1.
-$$
+```
 
 Positive rational weights give the motion bound
 
-$$
+```math
 \left\|
 \Delta\boldsymbol{x}_s
 -\sum_AR_A(\boldsymbol{\xi})\Delta\boldsymbol{P}_A
@@ -534,101 +572,109 @@ $$
 \leq
 \max_A\|\Delta\boldsymbol{x}_s-\Delta\boldsymbol{P}_A\|
 =L.
-$$
+```
 
-At the current trial fraction, let $e=d-d_{min}$ and let
-$0\leq\eta<1$ be the fraction of the current excess gap retained as a safety
+At the current trial fraction, let $`e=d-d_{min}`$ and let
+$`0\leq\eta<1`$ be the fraction of the current excess gap retained as a safety
 margin. Conservative advancement uses
 
-$$
+```math
 \Delta\alpha
 =(1-\eta)\frac{e}{L},
-$$
+```
 
 and recomputes the global closest point after every increment. This keeps the
-accepted path strictly outside $d=d_{min}$ even when the closest NURBS span
+accepted path strictly outside $`d=d_{min}`$ even when the closest NURBS span
 or parameter changes.
 
 Contact feasibility alone is insufficient. For every IGA quadrature point
 and MPM particle, material continuous collision detection also requires
 
-$$
+```math
 \det\boldsymbol{F}(\alpha)>J_{min}>0.
-$$
+```
 
 The admissible line-search fraction is therefore
 
-$$
+```math
 \alpha_{max}
 =\min(\alpha_{contact},\alpha_{IGA},\alpha_{MPM},1).
-$$
+```
 
 ### 8. Plastic constitutive models inside the IPC solve
 
-The multiplicative Hencky, associated Drucker--Prager, and von Mises
+The multiplicative Hencky, associated/nonassociated Drucker--Prager, and von Mises
 equations are maintained in the
 [shared constitutive-model theory](../physics_model/consititutive_model/README.md#finite-strain-multiplicative-plasticity).
 This section records only how that local material response enters the coupled
 IGA--MPM solve.
 
-The IGA body remains elastic. For a ULMPM particle $p$, the current
+Nonassociated DP freezes its flow correction and plastic-volume predictor
+inside each symmetric PCG/energy-Armijo solve. The material outer loop checks
+the physical versus inner Kirchhoff stress and the plastic-volume mismatch;
+equivalent corrections in the flat tensile-apex branch do not force another
+equilibrium solve. History is committed only after this loop converges.
+Particle-local Aitken relaxation updates the predictors; the convergence test
+uses their unrelaxed physical mismatch.
+
+The IGA body remains elastic. For a ULMPM particle $`p`$, the current
 total deformation gradient is
 
-$$
+```math
 \boldsymbol{F}_p(\boldsymbol{u}^M)
 =\left[
 \boldsymbol{I}
 +\sum_i\boldsymbol{u}_i^M\otimes\nabla N_{pi}
 \right]\boldsymbol{F}_{p,n}.
-$$
+```
 
 Plane strain supplies the three-dimensional embedding with incremental
-$F_{33}=1$. In an axisymmetric meridian, the additional hoop stretch is
+$`F_{33}=1`$. In an axisymmetric meridian, the additional hoop stretch is
 
-$$
+```math
 F_{\theta\theta}=1+\frac{u_r}{R}.
-$$
+```
 
-For accepted material history $\boldsymbol{h}_{p,n}$, let the shared
+For accepted material history $`\boldsymbol{h}_{p,n}`$, let the shared
 constitutive model return an incremental density, first Piola stress, and
 algorithmic tangent:
 
-$$
+```math
 W_p=W_p(\boldsymbol{F}_p;\boldsymbol{h}_{p,n}),
 \qquad
 \boldsymbol{P}_p=\frac{\partial W_p}{\partial\boldsymbol{F}_p},
 \qquad
 \mathbb{A}_p^{alg}
 =\frac{\partial\boldsymbol{P}_p}{\partial\boldsymbol{F}_p}.
-$$
+```
 
 Define
 
-$$
+```math
 \boldsymbol{B}_{pi}
 =\frac{\partial\boldsymbol{F}_p}
 {\partial\boldsymbol{u}_i^M}.
-$$
+```
 
 The material residual and tangent entering the MPM diagonal block are
 
-$$
+```math
 \boldsymbol{r}_{i}^{mat}
 =\sum_pV_p^0\boldsymbol{P}_p:\boldsymbol{B}_{pi},
-$$
+```
 
-$$
+```math
 \boldsymbol{K}_{ij}^{mat}
 =\sum_pV_p^0
 \boldsymbol{B}_{pi}:\mathbb{A}_p^{alg}:\boldsymbol{B}_{pj}.
-$$
+```
 
 A projected Newton step may spectrally clamp the symmetric material tangent
 to its positive-semidefinite part. This changes the search metric but not the
 constitutive stress, local return, or accepted history.
 
 The accepted history is frozen during each global Newton trial. At every new
-$\boldsymbol{q}$, the material model recomputes its local return and tangent;
+$`\boldsymbol{q}`$, the material model recomputes its local return and tangent;
 the same displacement simultaneously changes the MPM boundary sample,
 closest NURBS parameter, active contact set, and all IPC mixed blocks.
 Plasticity therefore enters IPC through the fully coupled equilibrium path even
@@ -636,21 +682,21 @@ though the scalar barrier law is material independent.
 
 For plastic states, use the residual merit
 
-$$
+```math
 \mathcal{M}(\boldsymbol{q})
 =\frac12\|\boldsymbol{R}_{free}(\boldsymbol{q})\|^2.
-$$
+```
 
-For a search direction $\boldsymbol{p}$,
+For a search direction $`\boldsymbol{p}`$,
 
-$$
+```math
 \mathcal{M}'(0)
 =\boldsymbol{R}^T\boldsymbol{K}\boldsymbol{p}.
-$$
+```
 
 An exact Newton direction obeys
-$\boldsymbol{K}\boldsymbol{p}=-\boldsymbol{R}$ and therefore
-$\mathcal{M}'(0)=-\|\boldsymbol{R}\|^2$. Every accepted trial must also
+$`\boldsymbol{K}\boldsymbol{p}=-\boldsymbol{R}`$ and therefore
+$`\mathcal{M}'(0)=-\|\boldsymbol{R}\|^2`$. Every accepted trial must also
 satisfy the contact and determinant bounds of Section 7.
 
 Plastic deformation, equivalent plastic strain, volumetric plastic strain,
@@ -660,95 +706,95 @@ constitutive history unchanged.
 
 ### 9. Explicit finite-radius IGA--MPM coupling
 
-The explicit branch treats an MPM particle of radius $R_p$ against a NURBS
+The explicit branch treats an MPM particle of radius $`R_p`$ against a NURBS
 surface. With
 
-$$
+```math
 d=\min_{\boldsymbol{\xi}}
 \|\boldsymbol{X}(\boldsymbol{\xi})-\boldsymbol{x}_p\|,
 \qquad
 \delta=R_p-d,
-$$
+```
 
-contact is active for $\delta>0$. The outward normal acting on the particle is
+contact is active for $`\delta>0`$. The outward normal acting on the particle is
 
-$$
+```math
 \boldsymbol{n}
 =\frac{\boldsymbol{x}_p-\boldsymbol{X}(\boldsymbol{\xi}^*)}{d}.
-$$
+```
 
 The surface and relative velocities are
 
-$$
+```math
 \boldsymbol{v}_s
 =\sum_AR_A(\boldsymbol{\xi}^*)\boldsymbol{v}_A^I,
 \qquad
 \boldsymbol{v}_{rel}=\boldsymbol{v}_p-\boldsymbol{v}_s,
-$$
+```
 
-$$
+```math
 v_n=\boldsymbol{v}_{rel}\cdot\boldsymbol{n},
 \qquad
 \boldsymbol{v}_t
 =\boldsymbol{v}_{rel}-v_n\boldsymbol{n}.
-$$
+```
 
 The Linear and Hertz--Mindlin normal/tangential laws, damping, Coulomb return,
 and stored contact energies are defined in the
 [shared DEM contact theory](../physics_model/contact_model/README.md#discrete-contact-kinematics-and-dem-laws).
 Their resultant force on the particle is
 
-$$
+```math
 \boldsymbol{F}_p
 =f_n\boldsymbol{n}+\boldsymbol{F}_t.
-$$
+```
 
-It is transferred to IGA control point $A$ as
+It is transferred to IGA control point $`A`$ as
 
-$$
+```math
 \boldsymbol{f}_A^I
 =-R_A(\boldsymbol{\xi}^*)\boldsymbol{F}_p.
-$$
+```
 
 Partition of unity gives exact linear-momentum balance,
 
-$$
+```math
 \boldsymbol{F}_p+\sum_A\boldsymbol{f}_A^I=\boldsymbol{0}.
-$$
+```
 
 For the normal force, the moment also cancels exactly:
 
-$$
+```math
 \boldsymbol{x}_p\times(f_n\boldsymbol{n})
 +\sum_A\boldsymbol{P}_A\times
 [-R_Af_n\boldsymbol{n}]
 =(\boldsymbol{x}_p-\boldsymbol{X}^*)
 \times(f_n\boldsymbol{n})
 =\boldsymbol{0}.
-$$
+```
 
 The corresponding contact power is
 
-$$
+```math
 \mathcal{P}_c
 =\boldsymbol{F}_p\cdot\boldsymbol{v}_p
 +\sum_A\boldsymbol{f}_A^I\cdot\boldsymbol{v}_A^I
 =\boldsymbol{F}_p\cdot
 (\boldsymbol{v}_p-\boldsymbol{v}_s).
-$$
+```
 
 The normal spring stores and returns energy, while dashpots and sliding
 friction dissipate it. Tangential force at a finite lever arm produces the
-couple $(\boldsymbol{x}_p-\boldsymbol{X}^*)\times\boldsymbol{F}_t$; exact
+couple $`(\boldsymbol{x}_p-\boldsymbol{X}^*)\times\boldsymbol{F}_t`$; exact
 angular-momentum balance would additionally require particle spin or
 rotational surface degrees of freedom.
 
 The explicit contact scale suggests the stability estimate
 
-$$
+```math
 \Delta t_c
 \sim\sqrt{\frac{m_{min}}{k_{max}}}.
-$$
+```
 
 The synchronized explicit step must satisfy both this contact restriction and
 the MPM material-wave CFL restriction.

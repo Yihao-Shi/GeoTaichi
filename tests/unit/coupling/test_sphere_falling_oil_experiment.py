@@ -2,11 +2,8 @@ from pathlib import Path
 
 import numpy as np
 
-from examples.cfdem.SemiResolved.SphereFallingOil.sphere import (
-    case_parameters,
-    evaluate,
-    load_velocity_experiment,
-)
+from examples.cfdem.SemiResolved.SphereFallingOil.sphere import case_parameters
+from examples.cfdem.SemiResolved.SphereFallingOil.draw.evaluate_sphere import evaluate, load_velocity_experiment
 
 
 def test_ten_cate_experiment_is_dependency_free_and_unchanged():

@@ -73,9 +73,15 @@ def test_classical_circumscribed_cone_parameters(taichi_material_cpu):
     assert model.cohesive_yield_stress == pytest.approx(math.sqrt(2.0) * expected_k)
 
 
-def test_nonassociated_flow_is_not_silently_accepted():
-    with pytest.raises(ValueError, match="associated flow"):
-        _model(DilationAngle=5.0)
+def test_independent_dilation_preserves_friction_cone(taichi_material_cpu):
+    model = _model(DilationAngle=5.0)
+    associated = _model()
+    assert model.alpha == associated.alpha
+    assert model.reference_yield_intercept == associated.reference_yield_intercept
+    assert 0.0 < model.beta < model.alpha
+    assert not model.has_symmetric_tangent
+    assert not model.has_physical_incremental_potential
+    assert model.has_incremental_potential  # frozen inner potential
 
 
 @pytest.mark.parametrize(
@@ -226,3 +232,262 @@ def test_total_deformation_contract_preserves_plastic_part_and_tangent(
     total_cauchy = total_pk1 @ trial_total.T / np.linalg.det(trial_total)
     elastic_cauchy = elastic_pk1 @ elastic_trial.T / np.linalg.det(elastic_trial)
     np.testing.assert_allclose(total_cauchy, elastic_cauchy, rtol=2.0e-12, atol=2.0e-10)
+
+
+def test_lagged_plastic_volume_preserves_inner_derivatives_and_commit_stress(taichi_material_cpu):
+    model = _model(YoungModulus=60.0e6, Density=1600.0, Cohesion=3000.0)
+    total = ti.Matrix.field(3, 3, ti.f64, shape=())
+    energy = ti.field(ti.f64, shape=())
+    stress = ti.Matrix.field(3, 3, ti.f64, shape=())
+    tangent = ti.Matrix.field(9, 9, ti.f64, shape=())
+    history = ti.Vector.field(11, ti.f64, shape=())
+    error = ti.field(ti.f64, shape=())
+
+    @ti.kernel
+    def begin():
+        history[None] = model.get_history_state(0)
+        model.begin_lagged_incremental_potential(0)
+
+    @ti.kernel
+    def refresh():
+        error[None] = model.refresh_lagged_incremental_potential(0, total[None])
+
+    @ti.kernel
+    def evaluate():
+        energy[None] = model.total_strain_energy_density_at(0, total[None])
+        stress[None] = model.total_first_piola_stress_at(0, total[None])
+        tangent[None] = model.total_first_piola_tangent_at(0, total[None])
+
+    @ti.kernel
+    def commit():
+        ignored = model.commit_total_state(0, total[None])
+
+    @ti.kernel
+    def restore():
+        model.set_history_state(0, history[None])
+
+    deformations = [
+        np.diag(np.exp([-0.0015, -0.001, -0.0005])),
+        np.diag(np.exp([0.20, -0.12, -0.25])),
+        np.diag(np.exp([0.04, 0.05, 0.06])),
+        np.diag([3.0, 0.8, 14.0]),
+    ]
+    for branch, deformation in enumerate(deformations):
+        total[None] = deformation
+        begin()
+        old_inverse = model.plastic_deformation_inverse.to_numpy().copy()
+        refresh()
+        refresh()
+        assert error[None] < model.lagged_tolerance
+        np.testing.assert_array_equal(model.plastic_deformation_inverse.to_numpy(), old_inverse)
+        assert model.equivalent_plastic_strain[0] == 0.0
+        evaluate()
+        pk1, analytic = stress.to_numpy()[()], tangent.to_numpy()[()]
+        if branch < 3:
+            # Differentiate the inner potential at fixed history AND frozen weight.
+            step = 1.0e-6
+            numeric_p, numeric_h = np.zeros(9), np.zeros((9, 9))
+            for column in range(9):
+                row, axis = column % 3, column // 3
+                plus, minus = deformation.copy(), deformation.copy()
+                plus[row, axis] += step
+                minus[row, axis] -= step
+                total[None] = plus
+                evaluate()
+                plus_energy, plus_stress = energy[None], stress.to_numpy()[()]
+                total[None] = minus
+                evaluate()
+                numeric_p[column] = (plus_energy - energy[None]) / (2 * step)
+                numeric_h[:, column] = _flatten_column_major(plus_stress - stress.to_numpy()[()]) / (2 * step)
+            np.testing.assert_allclose(_flatten_column_major(pk1), numeric_p, rtol=2.0e-6, atol=0.02)
+            np.testing.assert_allclose(analytic, numeric_h, rtol=1.0e-4, atol=0.2)
+        total[None] = deformation
+        commit()
+        assert model.lagged_plastic_volume_active[0] == 0
+        actual_jp = 1.0 / np.linalg.det(model.plastic_deformation_inverse.to_numpy()[0])
+        assert model.lagged_plastic_jacobian[0] == pytest.approx(actual_jp, rel=1.0e-10)
+        evaluate()
+        np.testing.assert_allclose(stress.to_numpy()[()], pk1, rtol=1.0e-7, atol=0.002)
+        # Retry/history restore must discard the predictor, including before commit.
+        restore()
+        begin()
+        refresh()
+        restore()
+        assert model.lagged_plastic_volume_active[0] == 0
+        np.testing.assert_array_equal(model.plastic_deformation_inverse.to_numpy(), old_inverse)
+
+
+@pytest.mark.parametrize("dilation", [0.0, 15.0])
+@pytest.mark.parametrize("branch", ["elastic", "cone", "apex"])
+def test_nonassociated_physical_return_and_frozen_symmetric_potential(taichi_material_cpu, dilation, branch):
+    model = _model(DilationAngle=dilation)
+    strain = {
+        "elastic": [-0.001, 0.0005, -0.002],
+        "cone": [0.20, -0.12, -0.25],
+        "apex": [0.04, 0.05, 0.06],
+    }[branch]
+    # Independent left/right rotations exercise spectral off-diagonal derivatives.
+    theta = 0.37
+    left = np.array([[np.cos(theta), -np.sin(theta), 0], [np.sin(theta), np.cos(theta), 0], [0, 0, 1]])
+    right = np.array([[1, 0, 0], [0, np.cos(theta), -np.sin(theta)], [0, np.sin(theta), np.cos(theta)]])
+    deformation = left @ np.diag(np.exp(strain)) @ right.T
+    total = ti.Matrix.field(3, 3, ti.f64, shape=())
+    physical_p = ti.Matrix.field(3, 3, ti.f64, shape=())
+    physical_h = ti.Matrix.field(9, 9, ti.f64, shape=())
+    error = ti.field(ti.f64, shape=())
+
+    @ti.kernel
+    def physical():
+        physical_p[None] = model.total_first_piola_stress_at(0, total[None])
+        physical_h[None] = model.total_first_piola_tangent_at(0, total[None])
+
+    @ti.kernel
+    def begin():
+        model.begin_lagged_incremental_potential(0)
+
+    @ti.kernel
+    def refresh():
+        error[None] = model.refresh_lagged_incremental_potential(0, total[None])
+
+    @ti.kernel
+    def commit():
+        ignored = model.commit_total_state(0, total[None])
+
+    total[None] = deformation
+    physical()
+    true_h = physical_h.to_numpy()[()]
+    # Rotated, nearly repeated stretches amplify Taichi SVD roundoff for
+    # tiny perturbations. Use a resolvable step and the operator norm error.
+    step = 2.0e-5
+    numerical = np.zeros((9, 9))
+    for column in range(9):
+        plus, minus = deformation.copy(), deformation.copy()
+        plus[column % 3, column // 3] += step
+        minus[column % 3, column // 3] -= step
+        total[None] = plus
+        physical()
+        plus_p = physical_p.to_numpy()[()]
+        total[None] = minus
+        physical()
+        numerical[:, column] = _flatten_column_major(plus_p - physical_p.to_numpy()[()]) / (2 * step)
+    assert np.linalg.norm(true_h - numerical) / np.linalg.norm(true_h) < 3e-6
+    if branch == "cone":
+        assert np.linalg.norm(true_h - true_h.T) > 0.01 * np.linalg.norm(true_h)
+
+    total[None] = deformation
+    begin()
+    refresh()
+    refresh()
+    assert error[None] < model.lagged_tolerance
+    assert model.equivalent_plastic_strain[0] == 0
+    evaluate = _evaluator(model)
+    energy, inner_p, inner_h, projected = evaluate(deformation)
+    np.testing.assert_allclose(inner_h, inner_h.T, rtol=1e-10, atol=2e-8)
+    numeric_p, numeric_h = np.zeros(9), np.zeros((9, 9))
+    for column in range(9):
+        plus, minus = deformation.copy(), deformation.copy()
+        plus[column % 3, column // 3] += step
+        minus[column % 3, column // 3] -= step
+        plus_e, plus_p = evaluate(plus)[:2]
+        minus_e, minus_p = evaluate(minus)[:2]
+        numeric_p[column] = (plus_e - minus_e) / (2 * step)
+        numeric_h[:, column] = _flatten_column_major(plus_p - minus_p) / (2 * step)
+    jp = model.lagged_plastic_jacobian[0]
+    np.testing.assert_allclose(_flatten_column_major(inner_p), numeric_p, rtol=2e-6, atol=0.001)
+    assert np.linalg.norm(inner_h - numeric_h) / np.linalg.norm(inner_h) < 3e-6
+    total[None] = deformation
+    commit()
+    physical()
+    assert np.linalg.norm(physical_p.to_numpy()[()] - jp * inner_p) / np.linalg.norm(jp * inner_p) < 1e-9
+    trace = float(np.log(np.linalg.svd(projected, compute_uv=False)).sum())
+    assert model.volumetric_plastic_strain[0] == pytest.approx(sum(strain) - trace, abs=1e-12)
+    if branch == "cone":
+        assert model.equivalent_plastic_strain[0] > 0
+        assert model.volumetric_plastic_strain[0] == pytest.approx(
+            3.0 * model.beta * model.equivalent_plastic_strain[0] / math.sqrt(2 / 3),
+            abs=1e-12,
+        )
+        if dilation == 0:
+            assert model.volumetric_plastic_strain[0] == pytest.approx(0, abs=1e-12)
+
+
+def test_nonassociated_apex_fixed_point_checks_stress_not_shift(taichi_material_cpu):
+    model = _model(DilationAngle=0.0)
+    deformation = np.diag(np.exp([0.04, 0.05, 0.06]))
+    error = ti.field(ti.f64, shape=())
+
+    @ti.kernel
+    def refresh():
+        total = ti.Matrix.zero(ti.f64, 3, 3)
+        for row, column in ti.static(ti.ndrange(3, 3)):
+            total[row, column] = deformation[row, column]
+        error[None] = model.refresh_lagged_incremental_potential(0, total)
+
+    @ti.kernel
+    def begin():
+        model.begin_lagged_incremental_potential(0)
+
+    begin()
+    refresh()
+    # Several shifts give the identical capped stress. A changed shift alone
+    # must not demand another global equilibrium solve in this flat branch.
+    model.lagged_flow_shift[0] += 0.02
+    evaluate = _evaluator(model)
+    before = evaluate(deformation)[1]
+    refresh()
+    after = evaluate(deformation)[1]
+    np.testing.assert_allclose(before, after, rtol=1e-12, atol=1e-9)
+    assert error[None] <= model.lagged_tolerance
+
+    # A shift that leaves the cap really changes the stress and must fail.
+    model.lagged_flow_shift[0] = -0.1
+    refresh()
+    assert error[None] > model.lagged_tolerance
+
+
+def test_nonassociated_lagged_solve_converges_for_constrained_uniaxial_load(
+    taichi_material_cpu,
+):
+    model = _model(DilationAngle=0.0)
+    direction = math.sqrt(2.0 / 3.0)
+    axial_strain, lateral_strain = 0.2, -0.1
+    norm = direction * (axial_strain - lateral_strain)
+    multiplier = norm - model.cohesive_yield_stress / (2.0 * model.shear)
+    shift_at_equilibrium = model.alpha * multiplier
+    load = direction * model.cohesive_yield_stress
+    stress_direction = 2.0 * model.shear * direction + 3.0 * model.alpha * model.bulk
+    denominator = 2.0 * model.shear + 9.0 * model.alpha**2 * model.bulk
+    inner_modulus = 4.0 * model.shear / 3.0 + model.bulk - stress_direction**2 / denominator
+    shift_modulus = 3.0 * model.bulk - stress_direction * 9.0 * model.alpha * model.bulk / denominator
+    physical_modulus = model.bulk * (1.0 - 3.0 * model.alpha * direction)
+    assert inner_modulus > 0 and physical_modulus > 0
+    # Both equilibrium tangents are positive, but a full material update
+    # overshoots: this failure exists without contact or an indefinite PCG solve.
+    assert 1.0 - physical_modulus / inner_modulus < -1.0
+    total = ti.Matrix.field(3, 3, ti.f64, shape=())
+    stress = ti.Matrix.field(3, 3, ti.f64, shape=())
+    error = ti.field(ti.f64, shape=())
+
+    @ti.kernel
+    def begin():
+        model.begin_lagged_incremental_potential(0)
+
+    @ti.kernel
+    def refresh():
+        stress[None] = model.total_first_piola_stress_at(0, total[None]) @ total[None].transpose()
+        error[None] = model.refresh_lagged_incremental_potential(0, total[None])
+
+    begin()
+    model.lagged_flow_shift[0] = shift_at_equilibrium + 1e-7
+    for _ in range(5):
+        shift = float(model.lagged_flow_shift[0])
+        # Exact frozen-inner equilibrium under constant Kirchhoff axial load,
+        # with both lateral logarithmic strains constrained.
+        axial = axial_strain - shift_modulus * (shift - shift_at_equilibrium) / inner_modulus
+        total[None] = np.diag(np.exp([axial, lateral_strain, lateral_strain]))
+        refresh()
+        assert stress[None][0, 0] == pytest.approx(load, abs=5e-8)
+        if error[None] <= model.lagged_tolerance:
+            break
+    assert error[None] <= model.lagged_tolerance
+    assert axial == pytest.approx(axial_strain, abs=1e-9)

@@ -40,6 +40,7 @@ def _implicit_system(
     force_elastoplastic=False,
     mpm_material="NeoHookean",
     contact_model="BarrierIPC",
+    dilation=30.0,
 ):
     fem = FEM(log=False)
     fem.set_configuration(dimension=3, solver_type="Implicit")
@@ -106,7 +107,7 @@ def _implicit_system(
         material_parameters.update(
             {
                 "FrictionAngle": 30.0,
-                "DilationAngle": 30.0,
+                "DilationAngle": dilation,
                 "Cohesion": 10.0,
                 "dpType": "Circumscribed",
             }
@@ -246,11 +247,13 @@ def test_implicit_ipc_accepts_coo_device_assembly(tmp_path):
 
 
 @pytest.mark.parametrize("assembly", ["HashTriplet", "COO"])
-def test_implicit_ipc_associated_dp_keeps_ccd_and_armijo_pipeline(tmp_path, assembly):
+@pytest.mark.parametrize("dilation", [0.0, 15.0, 30.0])
+def test_implicit_ipc_dp_keeps_ccd_and_armijo_pipeline(tmp_path, assembly, dilation):
     coupling = _implicit_system(
         tmp_path,
         assembly=assembly,
         mpm_material="DruckerPrager",
+        dilation=dilation,
     )
     result = coupling.run(steps=1, verbose=False)
 

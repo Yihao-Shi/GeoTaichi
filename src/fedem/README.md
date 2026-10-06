@@ -58,27 +58,27 @@ bulk response is still determined by the FEM row selected above.
 ### 1. Deforming FEM interface
 
 For an oriented FEM boundary triangle with current vertices
-$\boldsymbol{x}_0,\boldsymbol{x}_1,\boldsymbol{x}_2$, define
+$`\boldsymbol{x}_0,\boldsymbol{x}_1,\boldsymbol{x}_2`$, define
 
-$$
+```math
 \boldsymbol{a}
 =
 (\boldsymbol{x}_1-\boldsymbol{x}_0)
 \times
 (\boldsymbol{x}_2-\boldsymbol{x}_0),
-$$
+```
 
-$$
+```math
 A_f=\frac{1}{2}\|\boldsymbol{a}\|,
 \qquad
 \boldsymbol{n}_f=\frac{\boldsymbol{a}}{\|\boldsymbol{a}\|}.
-$$
+```
 
-The current lumped surface measure of FEM node $i$ is
+The current lumped surface measure of FEM node $`i`$ is
 
-$$
+```math
 A_i=\frac{1}{3}\sum_{f\ni i}A_f.
-$$
+```
 
 This measure converts a contact traction scale into a nodal force for
 node--wall and node--level-set coupling. Point--triangle and edge--edge IPC
@@ -88,38 +88,38 @@ stencils. The scalar force laws are maintained in the
 
 ### 2. Explicit sphere--triangle coupling
 
-Let a DEM sphere have center $\boldsymbol{x}_p$, radius $R_p$, translational
-velocity $\boldsymbol{v}_p$, and angular velocity
-$\boldsymbol{\omega}_p$. For a FEM face with centroid
+Let a DEM sphere have center $`\boldsymbol{x}_p`$, radius $`R_p`$, translational
+velocity $`\boldsymbol{v}_p`$, and angular velocity
+$`\boldsymbol{\omega}_p`$. For a FEM face with centroid
 
-$$
+```math
 \boldsymbol{x}_f
 =\frac{\boldsymbol{x}_0+\boldsymbol{x}_1+\boldsymbol{x}_2}{3},
-$$
+```
 
 the oriented plane distance, gap, and projected sphere center are
 
-$$
+```math
 d=(\boldsymbol{x}_p-\boldsymbol{x}_f)\cdot\boldsymbol{n}_f,
 \qquad
 g=d-R_p,
-$$
+```
 
-$$
+```math
 \boldsymbol{x}_q
 =\boldsymbol{x}_p-d\boldsymbol{n}_f.
-$$
+```
 
-When $0<d<R_p$, the sphere--plane intersection circle has radius
+When $`0<d<R_p`$, the sphere--plane intersection circle has radius
 
-$$
+```math
 r_c=\sqrt{R_p^2-d^2}.
-$$
+```
 
-Let $\mathcal{D}(\boldsymbol{x}_q,r_c)$ be its disk in the face plane. The
+Let $`\mathcal{D}(\boldsymbol{x}_q,r_c)`$ be its disk in the face plane. The
 finite-face contact fraction is
 
-$$
+```math
 \chi
 =\frac{
 \mathrm{area}
@@ -131,43 +131,43 @@ $$
 }{
 \pi r_c^2
 }.
-$$
+```
 
 The symmetric contact point and relative contact velocity are
 
-$$
+```math
 \boldsymbol{x}_c
 =\boldsymbol{x}_q+\frac{g}{2}\boldsymbol{n}_f,
-$$
+```
 
-$$
+```math
 \boldsymbol{v}_{rel}
 =
 \boldsymbol{v}_p
 +\boldsymbol{\omega}_p
 \times(\boldsymbol{x}_c-\boldsymbol{x}_p)
 -\frac{\boldsymbol{v}_0+\boldsymbol{v}_1+\boldsymbol{v}_2}{3}.
-$$
+```
 
 Let the shared Linear or Hertz--Mindlin law return
-$\boldsymbol{F}_n+\boldsymbol{F}_t$. The force applied to the sphere is
+$`\boldsymbol{F}_n+\boldsymbol{F}_t`$. The force applied to the sphere is
 
-$$
+```math
 \boldsymbol{F}_p
 =\chi(\boldsymbol{F}_n+\boldsymbol{F}_t).
-$$
+```
 
 For an interior projection, define the area coordinates
 
-$$
+```math
 \lambda_0
 =\frac{
 \mathrm{area}
 \triangle(\boldsymbol{x}_q,\boldsymbol{x}_1,\boldsymbol{x}_2)
 }{A_f},
-$$
+```
 
-$$
+```math
 \lambda_1
 =\frac{
 \mathrm{area}
@@ -179,23 +179,23 @@ $$
 \mathrm{area}
 \triangle(\boldsymbol{x}_q,\boldsymbol{x}_0,\boldsymbol{x}_1)
 }{A_f}.
-$$
+```
 
-Then $\lambda_0+\lambda_1+\lambda_2=1$ and the FEM reactions are
+Then $`\lambda_0+\lambda_1+\lambda_2=1`$ and the FEM reactions are
 
-$$
+```math
 \boldsymbol{f}_a^F=-\lambda_a\boldsymbol{F}_p,
 \qquad
 \sum_{a=0}^{2}\boldsymbol{f}_a^F=-\boldsymbol{F}_p.
-$$
+```
 
 The rigid-particle torque is
 
-$$
+```math
 \boldsymbol{\tau}_p
 =(\boldsymbol{x}_c-\boldsymbol{x}_p)
 \times\boldsymbol{F}_p.
-$$
+```
 
 Thus an interior contact transfers equal and opposite linear momentum and the
 finite contact arm supplies the particle moment. If the projected center lies
@@ -205,81 +205,81 @@ finite-face edge convention rather than barycentric interpolation.
 
 ### 3. FEM--LSDEM signed-distance coupling
 
-Let an LSDEM rigid body have center $\boldsymbol{c}$, rotation
-$\boldsymbol{R}$, and body-frame signed-distance interpolant
-$\phi(\boldsymbol{X})$. For FEM node $\boldsymbol{x}_i$,
+Let an LSDEM rigid body have center $`\boldsymbol{c}`$, rotation
+$`\boldsymbol{R}`$, and body-frame signed-distance interpolant
+$`\phi(\boldsymbol{X})`$. For FEM node $`\boldsymbol{x}_i`$,
 
-$$
+```math
 \boldsymbol{X}_i
 =\boldsymbol{R}^T(\boldsymbol{x}_i-\boldsymbol{c}),
 \qquad
 g_i=\phi(\boldsymbol{X}_i).
-$$
+```
 
 The spatial gradient and outward unit normal are
 
-$$
+```math
 \boldsymbol{g}_i
 =\boldsymbol{R}\nabla_{\!X}\phi(\boldsymbol{X}_i),
 \qquad
 \boldsymbol{n}_i
 =\frac{\boldsymbol{g}_i}{\|\boldsymbol{g}_i\|}.
-$$
+```
 
 The rigid velocity is evaluated at the same FEM node:
 
-$$
+```math
 \boldsymbol{v}_r(\boldsymbol{x}_i)
 =\boldsymbol{v}_c
 +\boldsymbol{\omega}
 \times(\boldsymbol{x}_i-\boldsymbol{c}),
-$$
+```
 
-$$
+```math
 \boldsymbol{v}_{rel}
 =\boldsymbol{v}_i-\boldsymbol{v}_r(\boldsymbol{x}_i).
-$$
+```
 
-With FEM nodal mass $m_i$ and rigid mass $m_r$, the pair effective mass is
+With FEM nodal mass $`m_i`$ and rigid mass $`m_r`$, the pair effective mass is
 
-$$
+```math
 m^*
 =\left(\frac{1}{m_i}+\frac{1}{m_r}\right)^{-1}.
-$$
+```
 
 For the conservative linear normal energy
 
-$$
+```math
 U_i
 =\frac{1}{2}A_i k_n
 \langle-g_i\rangle_+^2,
-$$
+```
 
 the exact spatial force contains the raw SDF gradient:
 
-$$
+```math
 \boldsymbol{F}_i^n
 =-\frac{\partial U_i}{\partial\boldsymbol{x}_i}
 =-A_i k_ng_i\boldsymbol{g}_i
 \quad\text{for}\quad g_i<0.
-$$
+```
 
-Keeping $\|\boldsymbol{g}_i\|$ is essential when trilinear interpolation is
+Keeping $`\|\boldsymbol{g}_i\|`$ is essential when trilinear interpolation is
 not an exact signed-distance field. Damping, Hertz--Mindlin contact, the
 energy-conserving Barrier law, and Coulomb return use the same gap, normal,
 effective mass, and nodal measure.
 
 The rigid body receives
 
-$$
+```math
 \boldsymbol{F}_r=-\boldsymbol{F}_i,
 \qquad
 \boldsymbol{\tau}_r
 =(\boldsymbol{x}_i-\boldsymbol{c})
 \times\boldsymbol{F}_r.
-$$
+```
 
-Because both forces act at $\boldsymbol{x}_i$, this exchange preserves
+Because both forces act at $`\boldsymbol{x}_i`$, this exchange preserves
 discrete action--reaction, contact power, and angular momentum before damping
 and frictional dissipation are added.
 
@@ -288,123 +288,123 @@ and frictional dissipation are added.
 The AffineBody child uses four vector controls per body. Its kinematics and
 incremental potential are defined in the
 [shared affine-body theory](../dem/README.md#5-affine-body-mechanics-and-ipc).
-For affine surface vertex $v$,
+For affine surface vertex $`v`$,
 
-$$
+```math
 \boldsymbol{x}_v^A
 =\sum_{a=0}^{3}w_{va}\boldsymbol{y}_a,
 \qquad
 \sum_{a=0}^{3}w_{va}=1.
-$$
+```
 
 FEM surface nodes remain direct unknowns,
 
-$$
+```math
 \boldsymbol{x}_i^F=\boldsymbol{q}_i^F.
-$$
+```
 
 Collect the generalized unknowns as
 
-$$
+```math
 \boldsymbol{q}
 =
 \left(
 \boldsymbol{y},
 \boldsymbol{x}^F
 \right).
-$$
+```
 
 For one point--triangle or edge--edge stencil, let
-$\boldsymbol{z}_s$ be its four geometric sites. Each site is a linear map of
+$`\boldsymbol{z}_s`$ be its four geometric sites. Each site is a linear map of
 the global unknowns,
 
-$$
+```math
 \boldsymbol{z}_s
 =\sum_A B_{sA}\boldsymbol{q}_A.
-$$
+```
 
-For a FEM node, the only nonzero support is $B_{sA}=\boldsymbol{I}$. For an
+For a FEM node, the only nonzero support is $`B_{sA}=\boldsymbol{I}`$. For an
 AffineBody vertex, its four supports are
-$B_{sA}=w_{va}\boldsymbol{I}$. Let the local contact energy have site
+$`B_{sA}=w_{va}\boldsymbol{I}`$. Let the local contact energy have site
 gradient and Hessian blocks
 
-$$
+```math
 \boldsymbol{g}_s
 =\frac{\partial E_c}{\partial\boldsymbol{z}_s},
 \qquad
 \boldsymbol{H}_{st}
 =\frac{\partial^2E_c}
 {\partial\boldsymbol{z}_s\partial\boldsymbol{z}_t}.
-$$
+```
 
 Because every support map is linear, the exact global pullback is
 
-$$
+```math
 \boldsymbol{r}_A^c
 =\sum_sB_{sA}^T\boldsymbol{g}_s,
-$$
+```
 
-$$
+```math
 \boldsymbol{K}_{AB}^c
 =\sum_s\sum_t
 B_{sA}^T\boldsymbol{H}_{st}B_{tB}.
-$$
+```
 
 No second derivative of the affine support map appears. The scalar
 finite-clearance Barrier IPC, edge--edge mollifier, and regularized friction
 are defined in the
 [shared IPC theory](../physics_model/contact_model/README.md#incremental-potential-contact).
 
-With a frozen friction frame $\widehat{\boldsymbol{q}}$, the fully coupled
+With a frozen friction frame $`\widehat{\boldsymbol{q}}`$, the fully coupled
 incremental potential is
 
-$$
+```math
 \Pi_{AF}(\boldsymbol{y},\boldsymbol{x}^F)
 =\Pi_A(\boldsymbol{y})
 +\Pi_F(\boldsymbol{x}^F)
 +\sum_c E_c(\boldsymbol{y},\boldsymbol{x}^F)
 +D_f(\boldsymbol{y},\boldsymbol{x}^F;\widehat{\boldsymbol{q}}).
-$$
+```
 
 After placing AffineBody controls before FEM nodal blocks, the coupled Newton
 system is
 
-$$
+```math
 \left(
 \boldsymbol{K}_{AA}+\boldsymbol{K}_{AA}^c
 \right)\Delta\boldsymbol{y}
 +\boldsymbol{K}_{AF}^c\Delta\boldsymbol{x}^F
 =-\left(\boldsymbol{r}_A+\boldsymbol{r}_A^c\right),
-$$
+```
 
-$$
+```math
 \boldsymbol{K}_{FA}^c\Delta\boldsymbol{y}
 +\left(
 \boldsymbol{K}_{FF}+\boldsymbol{K}_{FF}^c
 \right)\Delta\boldsymbol{x}^F
 =-\left(\boldsymbol{r}_F+\boldsymbol{r}_F^c\right).
-$$
+```
 
 The off-diagonal blocks are the direct AffineBody--FEM coupling; dropping
 them would produce a staggered force exchange rather than one IPC solve.
 
 Partition of unity gives the virtual-work identity
 
-$$
+```math
 \sum_a
 \boldsymbol{r}_a^c\cdot\delta\boldsymbol{y}_a
 +\sum_i
 \boldsymbol{r}_i^c\cdot\delta\boldsymbol{x}_i^F
 =\sum_s
 \boldsymbol{g}_s\cdot\delta\boldsymbol{z}_s.
-$$
+```
 
 It also preserves common translation as a null mode and transfers the local
 contact action--reaction exactly to AffineBody controls and FEM nodes.
 
 For a Newton direction, three feasibility limits are combined:
 
-$$
+```math
 \alpha_{max}
 =\min\left(
 1,
@@ -412,26 +412,26 @@ $$
 \alpha_F,
 \alpha_c
 \right),
-$$
+```
 
-where $\alpha_A$ limits AffineBody self-contact and deformation,
-$\alpha_F$ prevents FEM element inversion, and $\alpha_c$ is mixed PT/EE
+where $`\alpha_A`$ limits AffineBody self-contact and deformation,
+$`\alpha_F`$ prevents FEM element inversion, and $`\alpha_c`$ is mixed PT/EE
 continuous collision detection. Swept AffineBody vertices obey
 
-$$
+```math
 \boldsymbol{x}_v^A(\alpha)
 =\sum_a w_{va}
 \left(
 \boldsymbol{y}_a+\alpha\Delta\boldsymbol{y}_a
 \right),
-$$
+```
 
 while FEM nodes follow
 
-$$
+```math
 \boldsymbol{x}_i^F(\alpha)
 =\boldsymbol{x}_i^F+\alpha\Delta\boldsymbol{x}_i^F.
-$$
+```
 
 ### 5. Friction, convergence, and accepted state
 
@@ -439,13 +439,13 @@ Lagged Coulomb friction freezes closest-feature weights, normals, and normal
 forces during one Newton solve. After the solve, the contact frame is
 refreshed and the unapplied coupled correction is measured in velocity units:
 
-$$
+```math
 \varepsilon_f
 =\frac{\|\Delta\boldsymbol{q}_{unapplied}\|_{\infty}}{\Delta t}.
-$$
+```
 
 The outer fixed point is accepted only when
-$\varepsilon_f\leq\varepsilon_{tol}$. A failed Newton solve, line search,
+$`\varepsilon_f\leq\varepsilon_{tol}`$. A failed Newton solve, line search,
 friction fixed point, or time step restores both children to their accepted
 state. Affine controls, FEM positions, velocities, accelerations, and contact
 history are committed together.
@@ -460,43 +460,43 @@ interpretation and coupled workflows documented here.
 ### Explicit deformable--deformable stencil
 
 For a point--triangle or edge--edge stencil with signed interpolation weights
-$w_i$, define
+$`w_i`$, define
 
-$$
+```math
 \boldsymbol{r}=\sum_iw_i\boldsymbol{x}_i,
 \qquad
 \boldsymbol{n}=\frac{\boldsymbol{r}}{\|\boldsymbol{r}\|},
 \qquad
 \boldsymbol{v}_{rel}=\sum_iw_i\boldsymbol{v}_i.
-$$
+```
 
 With lumped nodal masses, its effective mass is
 
-$$
+```math
 m^*=\left(\sum_i\frac{w_i^2}{m_i}\right)^{-1}.
-$$
+```
 
-For contact thickness $h$, geometric gap $g$, and contact measure $A_c$,
+For contact thickness $`h`$, geometric gap $`g`$, and contact measure $`A_c`$,
 
-$$
+```math
 \delta=h-g,
 \qquad
 K_n=A_ck_n,
 \qquad
 K_t=A_ck_t.
-$$
+```
 
 The [Linear and Hertz--Mindlin laws](../physics_model/contact_model/README.md#discrete-contact-kinematics-and-dem-laws)
 and the [energy-conserving Barrier law](../physics_model/contact_model/README.md#explicit-finite-clearance-logarithmic-barrier-law)
 are defined in the shared contact-model theory.
-If their resultant is $\boldsymbol{F}=f_n\boldsymbol{n}+\boldsymbol{F}_t$,
+If their resultant is $`\boldsymbol{F}=f_n\boldsymbol{n}+\boldsymbol{F}_t`$,
 nodal transfer is
 
-$$
+```math
 \boldsymbol{f}_i=w_i\boldsymbol{F},
 \qquad
 \sum_i\boldsymbol{f}_i=\boldsymbol{0}.
-$$
+```
 
 Thus the contact stencil obeys action--reaction independently of the bulk FEM
 material. Sliding and damping dissipate energy; the conservative normal law
@@ -705,18 +705,18 @@ the Newton correction, so the wall translates without rotating or deforming.
 `add_affine_body_pressure_servo` adds normal stress control. The mixed IPC
 gradient is reduced to the wall resultant
 
-$$
+```math
 \mathbf F_b=\sum_{a=0}^{3}\mathbf f_{b,a}^{\mathrm{IPC}},\qquad
 p_b=\frac{\max(0,-\mathbf F_b\cdot\mathbf n_b)}{A_b},
-$$
+```
 
-where $\mathbf n_b$ points from the wall into the specimen. After an accepted
+where $`\mathbf n_b`$ points from the wall into the specimen. After an accepted
 fully implicit step, the next prescribed normal velocity is
 
-$$
+```math
 \mathbf v_b=\mathbf n_b\,\mathrm{clip}\!\left[
 g\frac{p^\star-p_b}{p^\star},-v_{\max},v_{\max}\right].
-$$
+```
 
 Thus contact and material response remain in the converged IPC system; the
 controller changes only the next wall boundary value. The accepted pressure

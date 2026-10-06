@@ -471,6 +471,9 @@ instead of retaining a dormant compatibility layer.
   API/theory material.
 - Inspect one to three adjacent examples and follow their facade, call order, naming, and output style.
 - Examples use public APIs, only necessary non-default options, repository-relative assets, and a bounded problem size.
+- Each module owns a self-contained example script. Do not import another example or dispatch to it via `runpy`,
+  `exec`, or dynamic loading. Keep scene geometry, initialization, boundaries, solver setup, output, and run logic
+  in that script; ordinary library imports are allowed. Shared solver algorithms remain in `src/`.
 - Keep solver initialization before configuration/allocation and keep generation, boundary, output, and run calls in
   the lifecycle expected by that facade.
 - Check feature combinations against `Simulation.validate_configuration` and the actual consuming source. Do not

@@ -149,22 +149,36 @@ class ContactEngineMixin:
         for s in range(self.mpm.total_surface_num):
             contact_id = s * self.contact_surface.num_surfaces + surface_id
             position = self.mpm.p_temp[s]
-            uknot, vknot, distance, _ = get_distance_to_surface_fixed_dim(
-                prefix_num_knot_u,
-                prefix_num_knot_v,
-                prefix_num_ctrlpts,
-                num_knot_u,
-                num_knot_v,
-                surface.knot_vector_u,
-                surface.knot_vector_v,
-                surface.control_points_hat,
-                surface.weights,
-                position,
-                basis,
+            distance = surface.distance_lower_bound(surface_id, position)
+            uknot = 0.0
+            vknot = 0.0
+            query_threshold = ti.max(
+                self.barrier.activation_distance_term(),
+                self.barrier.dmin[0] + self.strict_feasibility_tolerance,
             )
-            # Keep the distance of every sample--surface pair, including
-            # inactive pairs.  The conservative contact step needs the full
-            # constraint set; the barrier active set remains distance < dhat.
+            needs_projection = distance >= 0.0 and distance <= query_threshold
+            if ti.static(self.is_semi):
+                needs_projection = distance >= 0.0 and (needs_projection or self.semi_multiplier[contact_id] > 0.0)
+            if needs_projection:
+                uknot, vknot, distance, _ = get_distance_to_surface_fixed_dim(
+                    prefix_num_knot_u,
+                    prefix_num_knot_v,
+                    prefix_num_ctrlpts,
+                    num_knot_u,
+                    num_knot_v,
+                    surface.knot_vector_u,
+                    surface.knot_vector_v,
+                    surface.control_points_hat,
+                    surface.weights,
+                    position,
+                    basis,
+                    surface,
+                    surface_id,
+                    self.contact_projection_seed[contact_id],
+                )
+                self.contact_projection_seed[contact_id] = ti.Vector([uknot, vknot])
+            # Retain every pair for ACCD. Far inactive pairs carry a distance
+            # lower bound; active pairs retain the full closest-point result.
             self.contacts[contact_id].surface_id = surface_id
             self.contacts[contact_id].sample_id = s
             self.contacts[contact_id].particle_id = self.mpm.surface_id[s]
@@ -188,16 +202,26 @@ class ContactEngineMixin:
         for s in range(self.mpm.total_surface_num):
             contact_id = s * self.contact_surface.num_surfaces + surface_id
             position = self.mpm.p_temp[s]
-            uknot, distance, _ = get_distance_to_curve_fixed_dim(
-                prefix_num_knot_u,
-                prefix_num_ctrlpts,
-                num_knot_u,
-                surface.knot_vector_u,
-                surface.control_points_hat,
-                surface.weights,
-                position,
-                basis,
+            distance = surface.distance_lower_bound(surface_id, position)
+            uknot = 0.0
+            query_threshold = ti.max(
+                self.barrier.activation_distance_term(),
+                self.barrier.dmin[0] + self.strict_feasibility_tolerance,
             )
+            needs_projection = distance >= 0.0 and distance <= query_threshold
+            if ti.static(self.is_semi):
+                needs_projection = distance >= 0.0 and (needs_projection or self.semi_multiplier[contact_id] > 0.0)
+            if needs_projection:
+                uknot, distance, _ = get_distance_to_curve_fixed_dim(
+                    prefix_num_knot_u,
+                    prefix_num_ctrlpts,
+                    num_knot_u,
+                    surface.knot_vector_u,
+                    surface.control_points_hat,
+                    surface.weights,
+                    position,
+                    basis,
+                )
             self.contacts[contact_id].surface_id = surface_id
             self.contacts[contact_id].sample_id = s
             self.contacts[contact_id].particle_id = self.mpm.surface_id[s]
@@ -232,26 +256,46 @@ class ContactEngineMixin:
         for i in self.barrier_grad:
             self.barrier_grad[i] = 0.0
 
-    @ti.kernel
     def prepare_barrier_matrix_slots(self):
-        """Reserve and invalidate deterministic contact/local-pair slots."""
-        required = ti.static(self.contact_pair_count * self.contact_pair_capacity)
-        capacity = ti.static(self.barrier_hash_matrix.non_diag.blockI.shape[0])
+        if self.compact_contact_slots:
+            self.mark_active_contact_slots(self.contacts, self.barrier_contact_slots)
+            self.contact_slot_prefix.run(self.barrier_contact_slots)
+            self.prepare_contact_matrix_slots(self.barrier_hash_matrix, self.barrier_contact_slots)
+        else:
+            self.prepare_contact_matrix_slots(self.barrier_hash_matrix, self.contact_num)
+
+    @ti.kernel
+    def mark_active_contact_slots(self, contacts: ti.template(), slots: ti.template()):
+        for i in slots:
+            slots[i] = 0
+            if i < ti.static(self.contact_pair_count):
+                slots[i] = contacts[i].active != 0
+
+    @ti.kernel
+    def prepare_contact_matrix_slots(self, matrix: ti.template(), slots: ti.template()):
+        """Reserve local-pair slots, with stable prefix compaction when selected."""
+        required = self.contact_pair_count * self.contact_pair_capacity
+        if ti.static(self.compact_contact_slots):
+            required = slots[ti.static(self.contact_pair_count - 1)] * ti.static(self.contact_pair_capacity)
+        capacity = ti.static(matrix.non_diag.blockI.shape[0])
         stored = ti.min(required, capacity)
-        self.barrier_hash_matrix.raw_non_diag_count[0] = stored
+        matrix.raw_non_diag_count[0] = stored
         if required > capacity:
-            self.barrier_hash_matrix.overflow[0] = 1
+            matrix.overflow[0] = 1
         for slot in range(stored):
-            self.barrier_hash_matrix.non_diag.blockI[slot] = -1
-            self.barrier_hash_matrix.non_diag.blockJ[slot] = -1
+            matrix.non_diag.blockI[slot] = -1
+            matrix.non_diag.blockJ[slot] = -1
             for component in ti.static(range(config.DIM * config.DIM)):
-                self.barrier_hash_matrix.non_diag.blockH[slot][component] = 0.0
+                matrix.non_diag.blockH[slot][component] = 0.0
 
     @ti.func
     def add_barrier_block(self, contact_id, local_i, local_j, block_i, block_j, block):
         ti.atomic_add(self.barrier_nnz_count[0], 1)
         stencil = ti.static(self.contact_stencil_capacity)
-        slot = contact_id * ti.static(self.contact_pair_capacity) + local_i * stencil + local_j
+        matrix_contact_id = contact_id
+        if ti.static(self.compact_contact_slots):
+            matrix_contact_id = self.barrier_contact_slots[contact_id] - 1
+        slot = matrix_contact_id * ti.static(self.contact_pair_capacity) + local_i * stencil + local_j
         if (
             0 <= contact_id < ti.static(self.contact_pair_count)
             and 0 <= local_i < stencil
@@ -1230,15 +1274,18 @@ class ContactEngineMixin:
     def initialize_barrier(self, grid_disp=None, iga_grid_disp=None):
         """Build the complete point--NURBS constraint set on the device.
 
-        The shared fixed-dimension closest-point routines perform safeguarded
-        projected Newton solves with span and Greville multistarts directly in
-        Taichi on every supported architecture.
+        Near pairs use safeguarded projected Newton with span and Greville
+        multistarts. Far inactive pairs retain conservative control-hull
+        distance lower bounds for ACCD instead of running full projection.
         """
         if grid_disp is None:
             grid_disp = self.mpm.grid_disp
         if iga_grid_disp is None:
             iga_grid_disp = self.iga.grid_disp
         self.contact_surface.update_from_patch_displacement(self.iga.patch.control_points, iga_grid_disp)
+        self.contact_surface.update_surface_bounds()
+        if config.DIM == 3:
+            self.contact_surface.update_span_bounds()
         self.update_particle_pos(grid_disp)
         self.reset_contacts()
         for surface_id in range(self.contact_surface.num_surfaces):
@@ -1558,7 +1605,7 @@ class ContactEngineMixin:
         return minimum
 
     def minimum_contact_distance(self):
-        """Minimum distance over all sample--NURBS pairs at the current query."""
+        """Minimum over all pairs; far inactive distances can be lower bounds."""
         expected_pairs = int(self.mpm.total_surface_num) * int(self.contact_surface.num_surfaces)
         if expected_pairs == 0:
             return math.inf
@@ -1566,7 +1613,7 @@ class ContactEngineMixin:
             raise RuntimeError("IGA-MPM contact storage is smaller than the complete " "sample--surface pair set")
         minimum = float(self._device_minimum_contact_distance_kernel(expected_pairs))
         if int(self.contact_query_status[None]) != 0:
-            raise RuntimeError("IGA-MPM IPC closest-point query produced a non-finite " "distance")
+            raise RuntimeError("IGA-MPM IPC closest-point query produced an invalid or non-finite distance")
         return minimum
 
     @staticmethod

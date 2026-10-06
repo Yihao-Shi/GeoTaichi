@@ -18,112 +18,117 @@ backends.
 | `MatrixFreeBICG`, `MatrixFreeBICGSTAB`, `MatrixFreePBICGSTAB` | Nonsymmetric matrix-free methods |
 | `MultiGridPCG*` | Geometric multigrid pressure/Poisson solvers |
 
+`MatrixFreeKrylovKernel.py` shares reductions and vector kernels across CG, PCG,
+BiCGSTAB, and preconditioned BiCGSTAB. Algorithm-specific initialization and the
+fused PCG update remain separate within that module. CSR, COO, and legacy
+row-major CG kernels stay with their respective matrix representations.
+
 ## Sparse block assembly
 
-Let $\mathcal I_e(a)$ map local degree of freedom $a$ of element or contact
-stencil $e$ to a global block row. Assembly is the additive scatter
+Let $`\mathcal I_e(a)`$ map local degree of freedom $`a`$ of element or contact
+stencil $`e`$ to a global block row. Assembly is the additive scatter
 
-$$
+```math
 \boldsymbol{A}_{IJ}
 =\sum_e\sum_{a,b}
 [\mathcal I_e(a)=I]
 [\mathcal I_e(b)=J]\,
 \boldsymbol{A}_{ab}^{e},
-$$
+```
 
-$$
+```math
 \boldsymbol{b}_{I}
 =\sum_e\sum_a
 [\mathcal I_e(a)=I],\boldsymbol{b}_a^e.
-$$
+```
 
 Raw triplets with the same coordinate are therefore reduced by
 
-$$
+```math
 (I,J,\boldsymbol{A}_{IJ}^{(1)}),\ldots,
 (I,J,\boldsymbol{A}_{IJ}^{(m)})
 \longmapsto
 \left(I,J,\sum_{q=1}^{m}\boldsymbol{A}_{IJ}^{(q)}\right).
-$$
+```
 
-For block vector $\boldsymbol{x}$, matrix--vector multiplication is
+For block vector $`\boldsymbol{x}`$, matrix--vector multiplication is
 
-$$
+```math
 (\boldsymbol{A}\boldsymbol{x})_I
 =\sum_J\boldsymbol{A}_{IJ}\boldsymbol{x}_J.
-$$
+```
 
 If only one triangle of a symmetric matrix is stored, every off-diagonal
 block contributes both
-$\boldsymbol{A}_{IJ}\boldsymbol{x}_J$ and
-$\boldsymbol{A}_{IJ}^{T}\boldsymbol{x}_I$. A block-Jacobi preconditioner
+$`\boldsymbol{A}_{IJ}\boldsymbol{x}_J`$ and
+$`\boldsymbol{A}_{IJ}^{T}\boldsymbol{x}_I`$. A block-Jacobi preconditioner
 uses
 
-$$
+```math
 \boldsymbol{M}^{-1}
 =\mathrm{blockdiag}(\boldsymbol{A}_{00}^{-1},
 \boldsymbol{A}_{11}^{-1},\ldots).
-$$
+```
 
 ## Preconditioned conjugate gradients
 
 For a symmetric positive-definite system
-$\boldsymbol{A}\boldsymbol{x}=\boldsymbol{b}$, start with
+$`\boldsymbol{A}\boldsymbol{x}=\boldsymbol{b}`$, start with
 
-$$
+```math
 \boldsymbol{r}_0=\boldsymbol{b}-\boldsymbol{A}\boldsymbol{x}_0,
 \qquad
 \boldsymbol{z}_0=\boldsymbol{M}^{-1}\boldsymbol{r}_0,
 \qquad
 \boldsymbol{p}_0=\boldsymbol{z}_0.
-$$
+```
 
 One PCG iteration is
 
-$$
+```math
 \alpha_k
 =\frac{\boldsymbol{r}_k^T\boldsymbol{z}_k}
 {\boldsymbol{p}_k^T\boldsymbol{A}\boldsymbol{p}_k},
 \qquad
 \boldsymbol{x}_{k+1}=\boldsymbol{x}_k+\alpha_k\boldsymbol{p}_k,
-$$
+```
 
-$$
+```math
 \boldsymbol{r}_{k+1}
 =\boldsymbol{r}_k-\alpha_k\boldsymbol{A}\boldsymbol{p}_k,
 \qquad
 \boldsymbol{z}_{k+1}=\boldsymbol{M}^{-1}\boldsymbol{r}_{k+1},
-$$
+```
 
-$$
+```math
 \beta_k
 =\frac{\boldsymbol{r}_{k+1}^T\boldsymbol{z}_{k+1}}
 {\boldsymbol{r}_k^T\boldsymbol{z}_k},
 \qquad
 \boldsymbol{p}_{k+1}=\boldsymbol{z}_{k+1}+\beta_k\boldsymbol{p}_k.
-$$
+```
 
 Convergence is decided from the true Euclidean residual, not the
 preconditioned recurrence scalar:
 
-$$
+```math
 \|\boldsymbol{b}-\boldsymbol{A}\boldsymbol{x}_k\|_2
 \leq
 \max\left(\varepsilon_{abs},
 \varepsilon_{rel}\|\boldsymbol{r}_0\|_2\right).
-$$
+```
 
 Periodic residual replacement recomputes
-$\boldsymbol{r}=\boldsymbol{b}-\boldsymbol{A}\boldsymbol{x}$ to prevent
+$`\boldsymbol{r}=\boldsymbol{b}-\boldsymbol{A}\boldsymbol{x}`$ to prevent
 finite-precision drift in stiff systems.
 
 ## BiCGSTAB for nonsymmetric systems
 
-Choose a fixed shadow residual $\widehat{\boldsymbol{r}}=\boldsymbol{r}_0$.
-With $\rho_k=\widehat{\boldsymbol{r}}^T\boldsymbol{r}_{k-1}$, the stabilized
+Choose a fixed shadow residual $`\widehat{\boldsymbol{r}}=\boldsymbol{r}_0`$.
+With $`\rho_k=\widehat{\boldsymbol{r}}^T\boldsymbol{r}_{k-1}`$, the stabilized
 recurrence is
 
-$$
+```math
 \beta_k
 =\frac{\rho_k}{\rho_{k-1}}
 \frac{\alpha_{k-1}}{\omega_{k-1}},
@@ -131,70 +136,70 @@ $$
 \boldsymbol{p}_k
 =\boldsymbol{r}_{k-1}
 +\beta_k(\boldsymbol{p}_{k-1}-\omega_{k-1}\boldsymbol{v}_{k-1}),
-$$
+```
 
-$$
+```math
 \boldsymbol{v}_k=\boldsymbol{A}\boldsymbol{p}_k,
 \qquad
 \alpha_k=\frac{\rho_k}
 {\widehat{\boldsymbol{r}}^T\boldsymbol{v}_k},
 \qquad
 \boldsymbol{s}_k=\boldsymbol{r}_{k-1}-\alpha_k\boldsymbol{v}_k,
-$$
+```
 
-$$
+```math
 \boldsymbol{t}_k=\boldsymbol{A}\boldsymbol{s}_k,
 \qquad
 \omega_k=\frac{\boldsymbol{t}_k^T\boldsymbol{s}_k}
 {\boldsymbol{t}_k^T\boldsymbol{t}_k},
-$$
+```
 
-$$
+```math
 \boldsymbol{x}_k
 =\boldsymbol{x}_{k-1}+\alpha_k\boldsymbol{p}_k
 +\omega_k\boldsymbol{s}_k,
 \qquad
 \boldsymbol{r}_k=\boldsymbol{s}_k-\omega_k\boldsymbol{t}_k.
-$$
+```
 
 Zero denominators or non-finite recurrence coefficients are algebraic
 breakdowns and must not be reported as convergence.
 
 ## Geometric multigrid preconditioning
 
-On level $\ell$, the residual equation is
+On level $`\ell`$, the residual equation is
 
-$$
+```math
 \boldsymbol{A}_{\ell}\boldsymbol{e}_{\ell}
 =\boldsymbol{r}_{\ell},
 \qquad
 \boldsymbol{r}_{\ell}
 =\boldsymbol{b}_{\ell}-\boldsymbol{A}_{\ell}\boldsymbol{x}_{\ell}.
-$$
+```
 
 A V-cycle applies pre-smoothing, restricts the defect, solves or repeatedly
 smooths on the coarsest grid, prolongates the correction, and post-smooths:
 
-$$
+```math
 \boldsymbol{r}_{\ell+1}
 =\boldsymbol{R}_{\ell}\boldsymbol{r}_{\ell},
 \qquad
 \boldsymbol{e}_{\ell}
 \leftarrow\boldsymbol{e}_{\ell}
 +\boldsymbol{P}_{\ell}\boldsymbol{e}_{\ell+1}.
-$$
+```
 
 The resulting approximate inverse acts as the PCG preconditioner. Red--black
 Gauss--Seidel and damped Jacobi use, respectively, color-separated relaxation
 and
 
-$$
+```math
 \boldsymbol{x}^{(m+1)}
 =\boldsymbol{x}^{(m)}
 +\omega\boldsymbol{D}^{-1}
 (\boldsymbol{b}-\boldsymbol{A}\boldsymbol{x}^{(m)}),
 \qquad \omega=\frac23.
-$$
+```
 
 ## HashTriplet example
 

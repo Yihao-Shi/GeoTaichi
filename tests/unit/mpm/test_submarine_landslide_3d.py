@@ -3,13 +3,13 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from examples.mmpm.SubmarineLandslide.submarine_landslide_3d import write_metrics
-from examples.mmpm.GranularWaterLeakage3D.granular_water_leakage_3d import (
-    DOMAIN as LEAKAGE_DOMAIN,
-    boundaries as leakage_boundaries,
+from examples.mmpm.SubmarineLandslide.submarine_landslide_3d.draw.evaluate_submarine_landslide_3d import write_metrics
+from examples.mmpm.GranularWaterLeakage3D.granular_water_leakage_3d_parameters import DOMAIN as LEAKAGE_DOMAIN
+from examples.mmpm.GranularWaterLeakage3D.granular_water_leakage_3d import boundaries as leakage_boundaries
+from examples.mmpm.GranularWaterLeakage3D.draw.evaluate_granular_water_leakage_3d import (
     write_metrics as write_leakage_metrics,
 )
-from examples.mmpm.TwoPhaseLSDEMCoupling.sphere_impact_submerged_bed_3d import (
+from examples.mmpm.TwoPhaseLSDEMCoupling.sphere_impact_submerged_bed_3d.draw.evaluate_sphere_impact_submerged_bed_3d import (
     write_metrics as write_sphere_impact_metrics,
 )
 

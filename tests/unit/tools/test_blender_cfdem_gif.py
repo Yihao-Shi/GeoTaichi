@@ -58,6 +58,21 @@ class GeometryCheck(unittest.TestCase):
         self.assertEqual(segments.shape, (12, 2, 3))
         np.testing.assert_allclose(np.linalg.norm(segments[:, 1] - segments[:, 0], axis=1), 1)
 
+    def test_irregular_dam_obstacle_is_extruded_without_changing_its_outline(self):
+        outline = incompressible_gifs.DAM_OBSTACLE_VERTICES
+        vertices, faces = incompressible_gifs.polygon_prism_mesh(outline, 0.06)
+        np.testing.assert_allclose(vertices[: len(outline), ::2], outline)
+        np.testing.assert_allclose(np.unique(vertices[:, 1]), [0.0, 0.06])
+        self.assertEqual(faces.shape, (4 * len(outline), 3))
+        cap = faces[np.all(vertices[faces, 1] == 0.0, axis=1)]
+        triangles = vertices[cap][:, :, ::2]
+        edge_a = triangles[:, 1] - triangles[:, 0]
+        edge_b = triangles[:, 2] - triangles[:, 0]
+        cap_area = 0.5 * np.abs(edge_a[:, 0] * edge_b[:, 1] - edge_a[:, 1] * edge_b[:, 0]).sum()
+        following = np.roll(outline, -1, axis=0)
+        polygon_area = 0.5 * abs(np.sum(outline[:, 0] * following[:, 1] - outline[:, 1] * following[:, 0]))
+        self.assertAlmostEqual(cap_area, polygon_area)
+
     def test_compaction_times_follow_saved_schedule_not_uniform_animation_frames(self):
         config = {
             "loading_protocol": {"compression_step_count": 901},

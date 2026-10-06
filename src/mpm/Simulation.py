@@ -209,8 +209,8 @@ class Simulation(object):
         self.soft_grid_storage = "Dense"
         self.soft_grid_compact = False
         self.soft_levelset_transport = True
-        self.soft_levelset_reinitialization = True
-        self.soft_levelset_advection_scheme = "SemiLagrangian"
+        self.soft_levelset_reinitialization = False
+        self.soft_levelset_advection_scheme = "ReferenceMap"
         self.soft_levelset_advection_cfl = 1.0
         self.soft_levelset_advection_interval = 1
         self.soft_levelset_advection_elapsed = 0.0
@@ -403,12 +403,18 @@ class Simulation(object):
             aliases = {
                 "weno5": "WENO5",
                 "wenofive": "WENO5",
-                "semilagrangian": "SemiLagrangian",
-                "maccormack": "SemiLagrangian",
+                "referencemap": "ReferenceMap",
+                "inversemapping": "ReferenceMap",
+                "semilagrangian": "ReferenceMap",
+                "maccormack": "MacCormack",
             }
             if key not in aliases:
-                raise RuntimeError("LSMPM soft level-set /advection_scheme/ must be " "'WENO5' or 'SemiLagrangian'")
+                raise RuntimeError(
+                    "LSMPM soft level-set /advection_scheme/ must be 'ReferenceMap', 'WENO5' or 'MacCormack'"
+                )
             self.soft_levelset_advection_scheme = aliases[key]
+            if enabled is None:
+                self.soft_levelset_reinitialization = self.soft_levelset_advection_scheme != "ReferenceMap"
             if advection_cfl is None:
                 self.soft_levelset_advection_cfl = 0.20 if self.soft_levelset_advection_scheme == "WENO5" else 1.0
         if advection_cfl is not None:

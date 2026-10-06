@@ -800,7 +800,9 @@ class ImplicitEngineMixin:
                 point_direction = self._contact_point_direction(particle_id)
                 motion_bound = self._point_nurbs_motion_bound(point_direction, start_control, end_control)
                 pair_toc = max_step
-                if motion_bound > 0.0:
+                # The Lipschitz motion bound certifies this whole segment;
+                # no moving closest-point query is needed for a distant pair.
+                if motion_bound > 0.0 and max_step * motion_bound > safety * (distance - clearance):
                     pair_toc = 0.0
                     target_excess = (1.0 - safety) * (distance - clearance)
                     active = 1
@@ -890,7 +892,7 @@ class ImplicitEngineMixin:
                 point_direction = self._contact_point_direction(particle_id)
                 motion_bound = self._point_nurbs_motion_bound(point_direction, start_control, end_control)
                 pair_toc = max_step
-                if motion_bound > 0.0:
+                if motion_bound > 0.0 and max_step * motion_bound > safety * (distance - clearance):
                     pair_toc = 0.0
                     target_excess = (1.0 - safety) * (distance - clearance)
                     active = 1
@@ -960,8 +962,8 @@ class ImplicitEngineMixin:
             self.assemble_friction_system(need_matrix=need_matrix)
 
         # Body forces and tangents remain in each subsystem's native Taichi
-        # fields.  In particular, do not finalize/reduce a source matrix before
-        # append_raw_from(), because that operation consumes its raw blocks.
+        # fields. Body sources append raw blocks; contact sources are bucket
+        # reduced before appending their unique blocks to the same destination.
         self.iga.rhs.fill(0.0)
         if need_matrix:
             self.iga.incre_resolution.fill(0.0)
@@ -1020,13 +1022,13 @@ class ImplicitEngineMixin:
                     active_nodes=active_mpm_nodes,
                     block_offset=iga_nodes,
                 )
-                matrix.append_raw_from(
+                matrix.append_reduced_from(
                     self.barrier_hash_matrix,
                     active_nodes=active_nodes,
                     block_offset=0,
                 )
                 if include_friction:
-                    matrix.append_raw_from(
+                    matrix.append_reduced_from(
                         self.friction_hash_matrix,
                         active_nodes=active_nodes,
                         block_offset=0,
@@ -1296,7 +1298,12 @@ class ImplicitEngineMixin:
                         f"energy={trial_energy:.12e}"
                     )
         finally:
-            self._synchronize_device_trial_state_with_accepted()
+            if accepted:
+                # The successful trial already owns this accepted geometry's
+                # contact table and span hulls; only trial vectors need sync.
+                self._sync_device_trial_displacements()
+            else:
+                self._synchronize_device_trial_state_with_accepted()
 
         self.last_armijo_step = float(alpha if accepted else 0.0)
         self.last_armijo_backtracks = int(backtracks)
@@ -1559,7 +1566,7 @@ class ImplicitEngineMixin:
                 result["material_lagged_error"] = self.mpm.last_material_lagged_error
                 return result
         raise RuntimeError(
-            "IGA-MPM lagged MCC hardening did not converge: "
+            "IGA-MPM lagged material state did not converge: "
             f"error={self.mpm.last_material_lagged_error:.6e} after "
             f"{self.mpm.material_lagged_max_iterations} iterations"
         )

@@ -4,20 +4,22 @@ import importlib
 import numpy as np
 import pytest
 
-from examples.cfdem.SemiResolved.SphereFallingOil.sphere import (
-    case_parameters as oil_case_parameters,
-    evaluate as evaluate_oil,
-)
+from examples.cfdem.SemiResolved.SphereFallingOil.sphere import case_parameters as oil_case_parameters
+from examples.cfdem.SemiResolved.SphereFallingOil.draw.evaluate_sphere import evaluate as evaluate_oil
 from examples.cfdem.FullyResolved.IBMResolvedSphereSettling.sphere_settling import (
     case_parameters as resolved_sphere_case_parameters,
+)
+from examples.cfdem.FullyResolved.IBMResolvedSphereSettling.draw.evaluate_sphere_settling import (
     evaluate as evaluate_resolved_sphere,
 )
 from examples.cfdem.FullyResolved.IBMDraftingKissingTumbling.drafting_kissing_tumbling import (
     adaptive_dem_timestep,
     case_parameters as dkt_case_parameters,
     contact_substep_required,
-    evaluate as evaluate_dkt,
     validate_description as validate_dkt_description,
+)
+from examples.cfdem.FullyResolved.IBMDraftingKissingTumbling.draw.evaluate_drafting_kissing_tumbling import (
+    evaluate as evaluate_dkt,
 )
 from src.mpdem.mainDEMPM import DEMPM
 from src.mpdem.Engine import Engine, dem_substep_count

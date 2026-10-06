@@ -3,24 +3,22 @@ from math import isfinite, sqrt
 import taichi as ti
 from taichi.lang.impl import current_cfg
 
-from src.utils.constants import BLOCK_SZ
 from src.linear_solver.LinearOperator import LinearOperator
 
-
-from src.linear_solver.MatrixFreePBICGSTABKernel import (
-    reset,
-    init,
-    restart,
+from src.linear_solver.MatrixFreeKrylovKernel import (
+    bicgstab_reset as reset,
+    bicgstab_init as init,
+    bicgstab_restart as restart,
     true_residual,
     reduce_shared,
     reduce_atomic,
     copy,
     update_preconditioned,
-    update_p,
-    update_s,
-    update_h,
-    update_x,
-    update_r,
+    bicgstab_update_p as update_p,
+    bicgstab_update_s as update_s,
+    bicgstab_update_h as update_h,
+    bicgstab_update_x as update_x,
+    bicgstab_update_r as update_r,
 )
 
 

@@ -409,7 +409,7 @@ class ImplicitULMPM(ImplicitMPM):
                 break
         if not material_converged:
             raise MPMConvergenceError(
-                "Direct implicit ULMPM lagged MCC hardening did not converge: "
+                "Direct implicit ULMPM lagged material state did not converge: "
                 f"error={self.last_material_lagged_error:.6e} after "
                 f"{self.material_lagged_max_iterations} iterations"
             )

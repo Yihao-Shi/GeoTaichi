@@ -1,7 +1,7 @@
 import taichi as ti
 import numpy as np
 from math import prod
-from third_party.pyevtk.hl import gridToVTK, unstructuredGridToVTK
+from third_party.pyevtk.hl import unstructuredGridToVTK
 from third_party.pyevtk.vtk import VtkHexahedron, VtkQuad
 
 import src.iga.config as config
@@ -319,30 +319,10 @@ class Patch:
                         primitive.weights,
                     )
 
-            samp_pts_list = [np.ascontiguousarray(samp_pts[..., d]) for d in range(config.DIM)]
-            displacement = tuple(np.ascontiguousarray(disp[..., d]) for d in range(config.DIM))
-            von_mises_stress = np.ascontiguousarray(von_mises)
-
-            # pyevtk writes structured arrays in Fortran order.  Use the same
-            # point order for the companion unstructured grid so geometry and
-            # point data retain the exact sampled NURBS-node correspondence.
+            # Emit one representation per frame; the sampled VTU keeps the
+            # same tensor-product cells, positions, displacement and stress.
             vtu_points, connectivity, offsets, cell_types, vtu_point_data = _sampled_grid_vtu_data(
                 samp_pts, disp, von_mises
-            )
-
-            if primitive.dimension == 2:
-                z_shape = samp_pts_list[0].shape + (1,)
-                samp_pts_list = [arr[..., None] for arr in samp_pts_list]  # 变成 (nu, nv, 1)
-                samp_pts_list.append(np.zeros(z_shape, dtype=samp_pts_list[0].dtype))
-                von_mises_stress = von_mises_stress[..., None]
-
-                zero_disp = np.zeros_like(displacement[0])[..., None]
-                displacement = (displacement[0][..., None], displacement[1][..., None], zero_disp)
-
-            gridToVTK(
-                os.path.join(path, f"NurbsVolume{name}{self.current_print:06d}"),
-                *samp_pts_list,
-                pointData={"displacement": displacement, "stress": von_mises_stress},
             )
             unstructuredGridToVTK(
                 os.path.join(path, f"NurbsVolume{name}{self.current_print:06d}"),

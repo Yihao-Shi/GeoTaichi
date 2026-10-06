@@ -189,7 +189,7 @@ minimum MPM/FEM/contact timestep.
 
 For implicit IPC, configure both children as implicit, select
 `mpm_backend="Direct"` with `configuration="ULMPM"`, and choose Neo-Hookean
-elasticity, associated finite-strain Drucker--Prager, or associated
+elasticity, finite-strain Drucker--Prager, or associated
 finite-strain von Mises on the MPM side. Then call
 `choose_contact_model("IPC", dhat=..., kappa=...,
 friction_coefficient=..., friction_mode="lagged")`. The coupled solver owns a
@@ -198,8 +198,13 @@ PSD projection, CCD/ACCD and Armijo. `assemble_type` is `COO` or
 `HashTriplet`; `linear_solver="PCG"` stays on the Taichi device and `Scipy` is
 the explicit host option. Current/swept candidates are rebuilt per query, so
 implicit IPC has no Verlet multiplier. FEM remains elastic. The DP path
-requires `DilationAngle == FrictionAngle` and is perfect plastic; von Mises
-accepts optional `HardeningModulus`. Both plastic models require Direct ULMPM,
+accepts independent constant `DilationAngle` (default `FrictionAngle`) and is
+perfect plastic. Nonassociated DP uses a converged material outer loop around
+symmetric PCG/energy-Armijo inner solves, checking actual stress and predicted
+plastic-volume mismatch. Equivalent shifts in its tensile cap are not errors.
+Particle-local Aitken relaxation damps predictor updates; the physical
+convergence criterion remains unrelaxed.
+Von Mises accepts optional `HardeningModulus`. Both plastic models require Direct ULMPM,
 default to PSD projection, and cannot be combined with standalone child IPC.
 The FEM internal formulation remains Total Lagrangian with a fixed rest shape;
 Direct plastic MPM is Updated Lagrangian, and IPC contact is evaluated in the

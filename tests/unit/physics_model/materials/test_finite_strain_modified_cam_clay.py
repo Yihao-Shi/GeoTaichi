@@ -189,3 +189,26 @@ def test_mcc_hydrostatic_cap_return_handles_repeated_stretches(
 
     assert np.all(np.isfinite(tangent))
     assert abs(_yield_value(model, projected, pc)) < 2.0e-5 * pc * pc
+
+
+def test_mcc_lagged_volume_matches_committed_total_stress(taichi_material_cpu):
+    model = _model()
+    deformation = np.diag(np.exp([0.01, -0.02, -0.04]))
+    _converge_lagged_hardening(model, deformation)
+    stress = ti.Matrix.field(3, 3, ti.f64, shape=2)
+
+    @ti.kernel
+    def commit_and_compare(values: ti.types.ndarray(dtype=ti.f64, ndim=2)):
+        total = ti.Matrix.zero(ti.f64, 3, 3)
+        for row, column in ti.static(ti.ndrange(3, 3)):
+            total[row, column] = values[row, column]
+        stress[0] = model.total_first_piola_stress_at(0, total)
+        ignored = model.commit_total_state(0, total)
+        stress[1] = model.total_first_piola_stress_at(0, total)
+
+    commit_and_compare(np.ascontiguousarray(deformation))
+    assert model.lagged_plastic_volume_active[0] == 0
+    actual_jp = 1.0 / np.linalg.det(model.plastic_deformation_inverse.to_numpy()[0])
+    assert actual_jp < 1.0
+    assert model.lagged_plastic_jacobian[0] == pytest.approx(actual_jp, rel=1.0e-8)
+    np.testing.assert_allclose(stress.to_numpy()[0], stress.to_numpy()[1], rtol=2.0e-8, atol=0.01)

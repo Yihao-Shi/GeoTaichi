@@ -21,7 +21,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from examples.fedem.MixedFunnel.output_audit import collect_native_output
+from examples.fedem.MixedFunnel.draw.output_audit import collect_native_output
 from examples.fedem.MixedFunnel.mesh_reference import (
     place_reference,
     tetrahedralize_irregular_reference,

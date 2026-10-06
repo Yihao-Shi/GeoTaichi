@@ -14,6 +14,6 @@ Both examples insert the solid MPM template first because only the leading
 solid-point prefix enters ordinary LSDEM contact.  Fluid points use IBM.
 
 ```bash
-python examples/mmpm/TwoPhaseLSDEMCoupling/wavemaker_lsdem_particles_3d.py --strict
-python examples/mmpm/TwoPhaseLSDEMCoupling/sphere_impact_submerged_bed_3d.py --drop-height 1.0 --strict
+python examples/mmpm/TwoPhaseLSDEMCoupling/wavemaker_lsdem_particles_3d/wavemaker_lsdem_particles_3d.py --strict
+python examples/mmpm/TwoPhaseLSDEMCoupling/sphere_impact_submerged_bed_3d/sphere_impact_submerged_bed_3d.py --drop-height 1.0 --strict
 ```

@@ -17,10 +17,10 @@ These scripts mirror the Newton cloth examples:
 Example:
 
 ```bash
-python examples/fem/cloth/newton_cloth_bending.py --arch=gpu
-python examples/fem/cloth/newton_cloth_hanging.py --arch=gpu
-python examples/fem/cloth/implicit_cloth_twist.py --arch=gpu
-python examples/fem/cloth/newton_cloth_rollers.py --arch=gpu
+python examples/fem/cloth/newton_cloth_bending/newton_cloth_bending.py --arch=gpu
+python examples/fem/cloth/newton_cloth_hanging/newton_cloth_hanging.py --arch=gpu
+python examples/fem/cloth/implicit_cloth_twist/implicit_cloth_twist.py --arch=gpu
+python examples/fem/cloth/newton_cloth_rollers/newton_cloth_rollers.py --arch=gpu
 ```
 
 The IPC examples use `--contact-model=BarrierIPC`.

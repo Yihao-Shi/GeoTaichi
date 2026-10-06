@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 def test_reference_profile_matches_standard_pile_file():
-    pile = np.loadtxt(ROOT / "examples" / "mpm" / "Contact" / "CPT2D" / "pile.txt")
+    pile = np.loadtxt(ROOT / "assets" / "data" / "MPM" / "CPT2D" / "pile.txt")
     np.testing.assert_allclose(pile[:, :2], np.asarray(reference.PILE_PROFILE))
 
 
@@ -90,11 +90,24 @@ def test_solver_specific_contact_controls_are_separate_and_grid_scaled():
     assert explicit_contact_parameters("igampm") == reference.IGAMPM_EXPLICIT_CONTACT
     grid_size = realized_grid_size(4.0)
     ipc = ipc_contact_parameters(grid_size)
-    assert ipc["dhat"] == pytest.approx(0.5 * grid_size)
+    assert ipc["dhat"] + ipc["dmin"] == pytest.approx(0.5 * grid_size / reference.PARTICLES_PER_CELL)
     assert ipc["dmin"] == pytest.approx(0.1 * grid_size)
     assert ipc["kappa"] == reference.SOIL_MATERIAL["YoungModulus"]
     with pytest.raises(ValueError, match="family"):
         explicit_contact_parameters("mpm")
+
+
+def test_ipc_barrier_does_not_preload_the_initially_separated_cpt_tip():
+    from src.physics_model.contact_model.ipc.IPC import ipc_barrier_distance_terms_py
+
+    half_spacing = 0.5 * reference.GRID_SIZE / reference.PARTICLES_PER_CELL
+    nearest_particle = np.array([half_spacing, reference.SOIL_SIZE[1] - half_spacing])
+    tip = np.asarray(reference.PILE_PROFILE[0])
+    distance = np.linalg.norm(nearest_particle - tip)
+    ipc = ipc_contact_parameters(reference.GRID_SIZE)
+    assert ipc["dhat"] > 0.0
+    assert distance > ipc["dmin"] + ipc["dhat"]
+    assert ipc_barrier_distance_terms_py(distance, ipc["dhat"], ipc["dmin"], ipc["kappa"], True) == (0.0, 0.0, 0.0)
 
 
 def test_extruded_native_capacity_accounts_for_three_dimensional_ppc():
@@ -144,3 +157,20 @@ def test_axisymmetric_fem_penetrator_mesh_is_refined_and_matches_profile():
 def test_environment_override_rejects_nonfinite_or_nonpositive_values(value):
     with pytest.raises(ValueError, match="finite and positive"):
         reference.environment_float({"DT": value}, "DT", 1.0)
+
+
+def test_axisymmetric_preload_includes_geostatic_cauchy_stress():
+    points = np.array([[0.0015, 0.0015], [0.5985, 0.0015], [0.3, 1.4985]])
+    deformation = axisymmetric_initial_deformation_gradient(points)
+    material = reference.COUPLED_DP_MATERIAL
+    young, nu = material["young_modulus"], material["poisson_ratio"]
+    shear, bulk = young / (2 * (1 + nu)), young / (3 * (1 - 2 * nu))
+    log_stretch = np.log(np.diagonal(deformation, axis1=1, axis2=2))
+    trace = log_stretch.sum(axis=1)[:, None]
+    cauchy = (2 * shear * (log_stretch - trace / 3) + bulk * trace) / np.linalg.det(deformation)[:, None]
+    expected = np.asarray(reference.INITIAL_STRESS[:3])[None, :] - (1.5 - points[:, 1])[:, None] * material[
+        "density"
+    ] * 9.8 * np.array([nu / (1 - nu), 1, nu / (1 - nu)])
+    np.testing.assert_allclose(cauchy, expected, rtol=1e-12, atol=1e-7)
+    np.testing.assert_allclose(cauchy[0], cauchy[1])
+    np.testing.assert_allclose((cauchy[2, 1] - cauchy[0, 1]) / (points[2, 1] - points[0, 1]), material["density"] * 9.8)

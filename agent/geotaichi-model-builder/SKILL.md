@@ -180,6 +180,11 @@ Use nearby examples for style and call order. Use the templates under `assets/`
 only as lifecycle scaffolds; populate their dictionaries from the contract and
 current source.
 
+Deliver one self-contained script under each requested module's example directory.
+Do not import or dynamically execute other example scripts for geometry, scene
+setup, solver orchestration, or output. Import solver/library APIs normally;
+keep example-specific setup in the owning script even for comparable variants.
+
 Select the asset matching the facade rather than relying on a generic name:
 
 - `mpm_model_template.py` for `MPM`;
@@ -189,7 +194,7 @@ Select the asset matching the facade rather than relying on a generic name:
 - `fedem_model_template.py` for explicit `FEDEM`/`DEMFEM`; adapt it to the
   documented implicit lifecycle for FEM--AffineBody IPC;
 - `fempm_model_template.py` for `FEMPM`/`MPMFEM` (the canonical asset is
-  explicit; use `examples/fempm/implicit_ipc_elastic_contact.py` for the
+  explicit; use `examples/fempm/implicit_ipc_elastic_contact/implicit_ipc_elastic_contact.py` for the
   Direct-MPM implicit IPC lifecycle);
 - `iga_model_template.py` for pure `IGA` with a Python problem factory;
 - `igampm_model_template.py` for coupled IGA--MPM;

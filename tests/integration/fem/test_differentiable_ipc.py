@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 import taichi as ti
 
-from examples.fem.differentiable_ipc import build_problem
+from examples.fem.differentiable_ipc.differentiable_ipc import build_problem
 
 pytestmark = [pytest.mark.integration, pytest.mark.fem, pytest.mark.ipc, pytest.mark.cpu, pytest.mark.serial]
 

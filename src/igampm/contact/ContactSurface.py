@@ -3,6 +3,7 @@ import taichi as ti
 
 import src.igampm.config as config
 from src.nurbs.core.NurbsGeometry import NurbsBasisFunction1d, NurbsBasisFunction2d
+from src.physics_model.contact_model.ipc.NurbsContact import squared_norm_nd
 
 
 @ti.data_oriented
@@ -201,6 +202,9 @@ class CouplingContactSurface:
 
         self.control_points_hat = ti.Vector.field(config.DIM, ti.f64, shape=max(1, total_ctrlpts))
         self.control_point_direction = ti.Vector.field(config.DIM, ti.f64, shape=max(1, total_ctrlpts))
+        self.surface_lower = ti.Vector.field(config.DIM, ti.f64, shape=max(1, self.num_surfaces))
+        self.surface_upper = ti.Vector.field(config.DIM, ti.f64, shape=max(1, self.num_surfaces))
+        self.surface_bounds_valid = ti.field(ti.i32, shape=max(1, self.num_surfaces))
         self.control_points_id = ti.field(ti.i32, shape=max(1, total_ctrlpts))
         self.weights = ti.field(ti.f64, shape=max(1, total_ctrlpts))
         self.knot_vector_u = ti.field(ti.f64, shape=max(1, total_knot_u))
@@ -211,6 +215,8 @@ class CouplingContactSurface:
             np.concatenate(all_control_point_ids, axis=0) if all_control_point_ids else np.zeros((0,), dtype=np.int32)
         )
         weights_np = np.concatenate(all_weights, axis=0) if all_weights else np.zeros((0,), dtype=np.float64)
+        if not np.all(np.isfinite(ctrlpts_np)) or not np.all(np.isfinite(weights_np)) or np.any(weights_np <= 0):
+            raise ValueError("NURBS contact requires finite control points and finite positive weights")
         knot_u_np = np.concatenate(all_knot_u, axis=0) if all_knot_u else np.zeros((0,), dtype=np.float64)
         knot_v_np = np.concatenate(all_knot_v, axis=0) if all_knot_v else np.zeros((0,), dtype=np.float64)
 
@@ -222,6 +228,156 @@ class CouplingContactSurface:
             self.knot_vector_u.from_numpy(np.asarray(knot_u_np, dtype=np.float64))
         if total_knot_v > 0:
             self.knot_vector_v.from_numpy(np.asarray(knot_v_np, dtype=np.float64))
+        if config.DIM == 3:
+            self._initialize_projection_cache(knot_u_np, knot_v_np, ctrlpts_np)
+
+    def _initialize_projection_cache(self, knot_u, knot_v, control_points):
+        span_controls = []
+        span_prefix = [0]
+        greville = []
+        for sid, basis in enumerate(self.basis):
+            degree_u, degree_v = int(basis.basis_u.degree), int(basis.basis_v.degree)
+            count_u, count_v = self.num_ctrlpts_u[sid + 1], self.num_ctrlpts_v[sid + 1]
+            knots_u = knot_u[self.prefix_num_knot_u[sid] : self.prefix_num_knot_u[sid + 1]]
+            knots_v = knot_v[self.prefix_num_knot_v[sid] : self.prefix_num_knot_v[sid + 1]]
+            greville_u = [knots_u[i + 1 : i + degree_u + 1].sum() / degree_u for i in range(count_u)]
+            greville_v = [knots_v[i + 1 : i + degree_v + 1].sum() / degree_v for i in range(count_v)]
+            greville.extend((u, v) for v in greville_v for u in greville_u)
+            # Include empty spans so device indexing matches the knot grid.
+            for span_u in range(degree_u, count_u):
+                for span_v in range(degree_v, count_v):
+                    first_control = self.prefix_num_ctrlpts[sid] + (span_v - degree_v) * count_u + span_u - degree_u
+                    span_controls.append((first_control, degree_u + 1, degree_v + 1, count_u))
+            span_prefix.append(len(span_controls))
+        self.prefix_num_spans_field = ti.field(ti.i32, shape=len(span_prefix))
+        self.span_controls = ti.Vector.field(4, ti.i32, shape=max(1, len(span_controls)))
+        self.span_lower = ti.Vector.field(3, ti.f64, shape=max(1, len(span_controls)))
+        self.span_upper = ti.Vector.field(3, ti.f64, shape=max(1, len(span_controls)))
+        self.control_greville = ti.Vector.field(2, ti.f64, shape=max(1, self.total_ctrlpts))
+        self.prefix_num_spans_field.from_numpy(np.asarray(span_prefix, dtype=np.int32))
+        if span_controls:
+            self.span_controls.from_numpy(np.asarray(span_controls, dtype=np.int32))
+        if greville:
+            self.control_greville.from_numpy(np.asarray(greville, dtype=np.float64))
+
+        centers = []
+        for first, count_u, count_v, stride in span_controls:
+            ids = first + np.arange(count_u)[None, :] + stride * np.arange(count_v)[:, None]
+            points = control_points[ids.ravel()]
+            centers.append(0.5 * (points.min(axis=0) + points.max(axis=0)))
+        centers = np.asarray(centers)
+        nodes, node_prefix = [], [0]
+
+        def build_tree(spans):
+            node = len(nodes)
+            nodes.append([-1, -1, -1, -1])
+            if len(spans) == 1:
+                nodes[node][3] = int(spans[0])
+            else:
+                axis = int(np.argmax(np.ptp(centers[spans], axis=0)))
+                order = spans[np.argsort(centers[spans, axis], kind="stable")]
+                middle = len(order) // 2
+                nodes[node][0] = build_tree(order[:middle])
+                nodes[node][1] = build_tree(order[middle:])
+            nodes[node][2] = len(nodes)  # Escape skips the entire subtree.
+            return node
+
+        for sid in range(self.num_surfaces):
+            spans = np.arange(span_prefix[sid], span_prefix[sid + 1])
+            if len(spans):
+                build_tree(spans)
+            node_prefix.append(len(nodes))
+        self.span_tree_prefix = ti.field(ti.i32, shape=len(node_prefix))
+        self.span_tree_nodes = ti.Vector.field(4, ti.i32, shape=max(1, len(nodes)))
+        self.span_tree_lower = ti.Vector.field(3, ti.f64, shape=max(1, len(nodes)))
+        self.span_tree_upper = ti.Vector.field(3, ti.f64, shape=max(1, len(nodes)))
+        self.span_tree_prefix.from_numpy(np.asarray(node_prefix, dtype=np.int32))
+        if nodes:
+            self.span_tree_nodes.from_numpy(np.asarray(nodes, dtype=np.int32))
+
+    def update_span_bounds(self):
+        """Refresh leaf hulls and refit the fixed-topology span hierarchy."""
+        self._update_span_bounds()
+        self._refit_span_tree()
+
+    @ti.kernel
+    def _update_span_bounds(self):
+        """Refresh stationary span hulls once for all particle queries."""
+        for span in range(self.prefix_num_spans_field[self.num_surfaces]):
+            first, count_u, count_v, stride = self.span_controls[span]
+            lower = ti.Vector([ti.math.inf, ti.math.inf, ti.math.inf], dt=ti.f64)
+            upper = -lower
+            for local_control in range(count_u * count_v):
+                control_id = first + (local_control // count_u) * stride + local_control % count_u
+                point = self.control_points_hat[control_id]
+                lower = ti.min(lower, point)
+                upper = ti.max(upper, point)
+            self.span_lower[span] = lower
+            self.span_upper[span] = upper
+
+    @ti.kernel
+    def _refit_span_tree(self):
+        # ponytail: serial refit of a few thousand nodes; use per-level kernels
+        # if refitting becomes significant relative to particle queries.
+        ti.loop_config(serialize=True)
+        for reverse_node in range(self.span_tree_prefix[self.num_surfaces]):
+            node = self.span_tree_prefix[self.num_surfaces] - 1 - reverse_node
+            left, right, _, span = self.span_tree_nodes[node]
+            if span >= 0:
+                self.span_tree_lower[node] = self.span_lower[span]
+                self.span_tree_upper[node] = self.span_upper[span]
+            else:
+                self.span_tree_lower[node] = ti.min(self.span_tree_lower[left], self.span_tree_lower[right])
+                self.span_tree_upper[node] = ti.max(self.span_tree_upper[left], self.span_tree_upper[right])
+
+    @ti.func
+    def span_node_distance_squared(self, node, point):
+        offset = ti.max(self.span_tree_lower[node] - point, point - self.span_tree_upper[node], 0.0)
+        return squared_norm_nd(offset)
+
+    @ti.func
+    def _nearest_span_control(self, span, point, best_control, best_distance2):
+        first, count_u, count_v, stride = self.span_controls[span]
+        for local_control in range(count_u * count_v):
+            control = first + (local_control // count_u) * stride + local_control % count_u
+            distance2 = squared_norm_nd(self.control_points_hat[control] - point)
+            if distance2 < ti.math.inf and (
+                best_control < 0
+                or distance2 < best_distance2
+                or (distance2 == best_distance2 and control < best_control)
+            ):
+                best_control, best_distance2 = control, distance2
+        return best_control, best_distance2
+
+    @ti.func
+    def nearest_control_point(self, surface_id, point):
+        """Exact control-point seed search using conservative span hulls."""
+        assert self.surface_bounds_valid[surface_id] != 0, "invalid NURBS control hull"
+        root = self.span_tree_prefix[surface_id]
+        end = self.span_tree_prefix[surface_id + 1]
+        node = root
+        # A greedy leaf provides an upper bound before stackless traversal.
+        while self.span_tree_nodes[node][3] < 0:
+            left, right = self.span_tree_nodes[node][0], self.span_tree_nodes[node][1]
+            node = left
+            if self.span_node_distance_squared(right, point) < self.span_node_distance_squared(left, point):
+                node = right
+        best_control, best_distance2 = self._nearest_span_control(self.span_tree_nodes[node][3], point, -1, 1.0e300)
+        node = root
+        while node < end:
+            left, _, escape, span = self.span_tree_nodes[node]
+            if best_control < 0 or self.span_node_distance_squared(node, point) <= best_distance2 + 1.0e-14 * (
+                1.0 + best_distance2
+            ):
+                if span >= 0:
+                    best_control, best_distance2 = self._nearest_span_control(span, point, best_control, best_distance2)
+                    node = escape
+                else:
+                    node = left
+            else:
+                node = escape
+        assert best_control >= 0, "NURBS surface controls have non-finite distances"
+        return best_control
 
     @staticmethod
     def _surface_key_set(value):
@@ -280,6 +436,48 @@ class CouplingContactSurface:
             for d in ti.static(range(config.DIM)):
                 displacement[d] = grid_disp[config.DIM * control_id + d]
             self.control_points_hat[i] = control_points[control_id] + displacement
+
+    @ti.kernel
+    def update_surface_bounds(self):
+        """Bound positive-weight NURBS geometry by its current control hull."""
+        for surface_id in range(self.num_surfaces):
+            lower = ti.Vector.zero(ti.f64, config.DIM)
+            upper = ti.Vector.zero(ti.f64, config.DIM)
+            valid = 1
+            for component in ti.static(range(config.DIM)):
+                lower[component] = ti.math.inf
+                upper[component] = -ti.math.inf
+            for control_id in range(
+                self.prefix_num_ctrlpts_field[surface_id], self.prefix_num_ctrlpts_field[surface_id + 1]
+            ):
+                if not (self.weights[control_id] > 0.0 and self.weights[control_id] < ti.math.inf):
+                    valid = 0
+                point = self.control_points_hat[control_id]
+                for component in ti.static(range(config.DIM)):
+                    if not (ti.abs(point[component]) < ti.math.inf):
+                        valid = 0
+                    lower[component] = ti.min(lower[component], point[component])
+                    upper[component] = ti.max(upper[component], point[component])
+            self.surface_lower[surface_id] = lower
+            self.surface_upper[surface_id] = upper
+            self.surface_bounds_valid[surface_id] = valid
+
+    @ti.func
+    def distance_lower_bound(self, surface_id, position):
+        offset = ti.max(self.surface_lower[surface_id] - position, position - self.surface_upper[surface_id], 0.0)
+        # Round down to keep pruning conservative on the activation boundary.
+        scale = ti.max(
+            1.0, position.norm(), self.surface_lower[surface_id].norm(), self.surface_upper[surface_id].norm()
+        )
+        distance = ti.max(0.0, offset.norm() - 1.0e-13 * scale)
+        valid = self.surface_bounds_valid[surface_id] != 0
+        for component in ti.static(range(config.DIM)):
+            valid = valid and ti.abs(position[component]) < ti.math.inf
+        if not valid:
+            # The common minimum-distance reduction rejects this sentinel on
+            # every backend, including CUDA with debug assertions disabled.
+            distance = -1.0
+        return distance
 
     @ti.kernel
     def update_control_point_direction(self, grid_direction: ti.template()):

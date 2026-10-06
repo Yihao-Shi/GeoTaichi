@@ -347,6 +347,7 @@ class BuildTriplet:
         pattern_cache_max_age=25,
         device_reduction=None,
         raw_only=False,
+        reduction="hash",
     ):
         if dim not in (1, 2, 3, 4):
             raise ValueError(
@@ -394,7 +395,16 @@ class BuildTriplet:
         # reused by every Krylov iteration.  This avoids repeating small
         # determinant/inverse calculations in each preconditioner application.
         self.diag_inverse = ti.Vector.field(self.dim * self.dim, dtype=float, shape=max_active_nodes)
-        self.non_diag = HashReduction(
+        if reduction not in ("hash", "bucket"):
+            raise ValueError("reduction must be 'hash' or 'bucket'")
+        if reduction == "bucket" and self.raw_only:
+            raise ValueError("bucket sources must be reducible")
+        reducer = HashReduction
+        if reduction == "bucket":
+            from src.linear_solver.BucketReduction import BucketReduction
+
+            reducer = BucketReduction
+        self.non_diag = reducer(
             max_pairs_num,
             dim,
             max_nonzeros,
@@ -472,6 +482,13 @@ class BuildTriplet:
         copied directly between Taichi fields; the destination is reduced
         only once after all subsystems have been appended.
         """
+        self._append_source(source, active_nodes, block_offset, scale, reduced=False)
+
+    def append_reduced_from(self, source, *, active_nodes=None, block_offset=0, scale=1.0):
+        """Reduce a source on device, then append its diagonal and unique blocks."""
+        self._append_source(source, active_nodes, block_offset, scale, reduced=True)
+
+    def _append_source(self, source, active_nodes, block_offset, scale, *, reduced):
         if not isinstance(source, BuildTriplet):
             raise TypeError("source must be a BuildTriplet")
         if self.full_symmetric_input:
@@ -501,14 +518,16 @@ class BuildTriplet:
             )
         if block_offset < 0 or block_offset + active_nodes > self.max_active_nodes:
             raise ValueError("shifted source blocks exceed destination node capacity")
+        if reduced:
+            source.finalize_taichi_assembly()
         self._append_raw_fields(
             active_nodes,
             block_offset,
             source.diag,
-            source.non_diag.blockI,
-            source.non_diag.blockJ,
-            source.non_diag.blockH,
-            source.raw_non_diag_count,
+            source.non_diag.tripletI if reduced else source.non_diag.blockI,
+            source.non_diag.tripletJ if reduced else source.non_diag.blockJ,
+            source.non_diag.tripletH if reduced else source.non_diag.blockH,
+            source.non_diag.element_pair_num if reduced else source.raw_non_diag_count,
             source.overflow,
             scale,
         )
@@ -1686,4 +1705,4 @@ class BuildTriplet:
     def _bicg_update_x_r(self, active_nodes: int, alpha: float, omega: float):
         for i in range(active_nodes):
             self.x[i] += alpha * self.p_hat[i] + omega * self.s_hat[i]
-        self.r[i] = self.s[i] - omega * self.t[i]
+            self.r[i] = self.s[i] - omega * self.t[i]

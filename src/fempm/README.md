@@ -10,9 +10,10 @@ synchronized time, and coupled output.
 
 ## Example-backed capabilities
 
-- Explicit finite element method–material point method (FEM–MPM) contact: [point–membrane example](../../examples/fempm/explicit_point_membrane.py).
-- Fully coupled implicit FEM–MPM incremental potential contact (IPC): [elastic/Drucker–Prager contact](../../examples/fempm/implicit_ipc_elastic_contact.py) and [von Mises contact](../../examples/fempm/implicit_ipc_von_mises_contact.py).
-- Axisymmetric FEM–MPM soil–structure interaction: [Drucker–Prager CPT](../../examples/fempm/cpt_dp.py).
+- Explicit finite element method–material point method (FEM–MPM) contact: [point–membrane example](../../examples/fempm/explicit_point_membrane/explicit_point_membrane.py).
+- Fully coupled implicit FEM–MPM incremental potential contact (IPC): [elastic/Drucker–Prager contact](../../examples/fempm/implicit_ipc_elastic_contact/implicit_ipc_elastic_contact.py) and [von Mises contact](../../examples/fempm/implicit_ipc_von_mises_contact/implicit_ipc_von_mises_contact.py).
+- Axisymmetric FEM–MPM soil–structure interaction: [Drucker–Prager CPT](../../examples/fempm/cpt_dp/cpt_dp.py).
+- Three-dimensional solid structures with DP soil: [flexible barrier](../../examples/fempm/flexible_barrier/flexible_barrier.py) and [upper-clamped wavy plate](../../examples/fempm/wavy_plate_collapse/wavy_plate_collapse.py).
 - The linked implicit examples use elastic FEM and ULMPM, with finite-radius barrier contact, coupled assembly, and lagged friction where enabled.
 
 ## Package layout
@@ -33,10 +34,10 @@ synchronized time, and coupled output.
 ### 1. Explicit particle--triangle contact
 
 An explicit MPM contact sample is a material point with center
-$\boldsymbol{x}_p$, velocity $\boldsymbol{v}_p$, mass $m_p$, and contact
-radius $R_p$. For an oriented FEM triangle,
+$`\boldsymbol{x}_p`$, velocity $`\boldsymbol{v}_p`$, mass $`m_p`$, and contact
+radius $`R_p`$. For an oriented FEM triangle,
 
-$$
+```math
 \boldsymbol{x}_f
 =\frac{\boldsymbol{x}_0+\boldsymbol{x}_1+\boldsymbol{x}_2}{3},
 \qquad
@@ -52,30 +53,30 @@ $$
 (\boldsymbol{x}_2-\boldsymbol{x}_0)
 \right\|
 }.
-$$
+```
 
 The oriented distance, normal gap, and projection are
 
-$$
+```math
 d=(\boldsymbol{x}_p-\boldsymbol{x}_f)\cdot\boldsymbol{n}_f,
 \qquad
 g=d-R_p,
-$$
+```
 
-$$
+```math
 \boldsymbol{x}_q
 =\boldsymbol{x}_p-d\boldsymbol{n}_f.
-$$
+```
 
-For $0<d<R_p$, let
+For $`0<d<R_p`$, let
 
-$$
+```math
 r_c=\sqrt{R_p^2-d^2}
-$$
+```
 
 and define the finite-face overlap fraction
 
-$$
+```math
 \chi
 =\frac{
 \mathrm{area}
@@ -87,50 +88,50 @@ $$
 }{
 \pi r_c^2
 }.
-$$
+```
 
 MPM points have no rotational contact degree of freedom. The relative
 velocity used by the explicit law is therefore
 
-$$
+```math
 \boldsymbol{v}_{rel}
 =\boldsymbol{v}_p
 -\frac{\boldsymbol{v}_0+\boldsymbol{v}_1+\boldsymbol{v}_2}{3}.
-$$
+```
 
 If the shared Linear or Hertz--Mindlin law returns
-$\boldsymbol{F}_n+\boldsymbol{F}_t$, the particle resultant is
+$`\boldsymbol{F}_n+\boldsymbol{F}_t`$, the particle resultant is
 
-$$
+```math
 \boldsymbol{F}_p
 =\chi(\boldsymbol{F}_n+\boldsymbol{F}_t).
-$$
+```
 
-For an interior projection, let $\lambda_a$ be its triangle area
+For an interior projection, let $`\lambda_a`$ be its triangle area
 coordinates. The FEM reactions are
 
-$$
+```math
 \boldsymbol{f}_a^F
 =-\lambda_a\boldsymbol{F}_p,
 \qquad
 \sum_{a=0}^{2}\lambda_a=1.
-$$
+```
 
 The particle force enters the MPM background grid through its current shape
 functions:
 
-$$
+```math
 \boldsymbol{f}_i^M
 =N_{pi}\boldsymbol{F}_p.
-$$
+```
 
 Partition of unity gives
 
-$$
+```math
 \sum_i\boldsymbol{f}_i^M
 +\sum_{a=0}^{2}\boldsymbol{f}_a^F
 =\boldsymbol{0}.
-$$
+```
 
 Thus the explicit interior stencil preserves linear action--reaction across
 the MPM grid and FEM surface. Damping and sliding friction dissipate energy;
@@ -138,56 +139,56 @@ the normal elastic contribution follows the shared contact potential.
 
 ### 2. Implicit contact geometry
 
-During one implicit step, the current position of MPM surface sample $p$ is
+During one implicit step, the current position of MPM surface sample $`p`$ is
 
-$$
+```math
 \boldsymbol{x}_p(\boldsymbol{u}^M)
 =\boldsymbol{x}_{p,n}
 +\sum_iN_{pi}\boldsymbol{u}_i^M.
-$$
+```
 
 The interpolation weights are frozen over the Newton solve, while the active
 MPM grid displacement is unknown. In three dimensions, for closest triangle
-coordinates $\beta_a$,
+coordinates $`\beta_a`$,
 
-$$
+```math
 \boldsymbol{r}
 =\boldsymbol{x}_p
 -\sum_{a=0}^{2}\beta_a\boldsymbol{x}_a^F,
 \qquad
 d^2=\boldsymbol{r}\cdot\boldsymbol{r},
-$$
+```
 
-$$
+```math
 \beta_0+\beta_1+\beta_2=1.
-$$
+```
 
-In two dimensions, for closest edge coordinate $\xi$,
+In two dimensions, for closest edge coordinate $`\xi`$,
 
-$$
+```math
 \boldsymbol{r}
 =\boldsymbol{x}_p
 -(1-\xi)\boldsymbol{x}_0^F
 -\xi\boldsymbol{x}_1^F.
-$$
+```
 
-With prescribed minimum distance $d_{min}$, define
+With prescribed minimum distance $`d_{min}`$, define
 
-$$
+```math
 s=d^2-d_{min}^2,
 \qquad
 \widehat{s}
 =(d_{min}+\widehat d)^2-d_{min}^2.
-$$
+```
 
-For sample measure $\omega_p$, the active contact energy is
+For sample measure $`\omega_p`$, the active contact energy is
 
-$$
+```math
 E_p^c
 =\omega_p\widehat d\,b(s),
-$$
+```
 
-where the scalar finite-clearance barrier $b$ and its derivatives are defined
+where the scalar finite-clearance barrier $`b`$ and its derivatives are defined
 in the
 [shared IPC theory](../physics_model/contact_model/README.md#incremental-potential-contact).
 
@@ -196,15 +197,15 @@ in the
 Let the local contact sites be the MPM point followed by the two or three FEM
 primitive nodes. Write the local gradient and Hessian blocks as
 
-$$
+```math
 \boldsymbol{g}_p
 =\frac{\partial E_p^c}{\partial\boldsymbol{x}_p},
 \qquad
 \boldsymbol{g}_a^F
 =\frac{\partial E_p^c}{\partial\boldsymbol{x}_a^F},
-$$
+```
 
-$$
+```math
 \boldsymbol{H}_{pp}
 =\frac{\partial^2E_p^c}
 {\partial\boldsymbol{x}_p\partial\boldsymbol{x}_p},
@@ -212,63 +213,63 @@ $$
 \boldsymbol{H}_{pa}
 =\frac{\partial^2E_p^c}
 {\partial\boldsymbol{x}_p\partial\boldsymbol{x}_a^F},
-$$
+```
 
-$$
+```math
 \boldsymbol{H}_{ab}
 =\frac{\partial^2E_p^c}
 {\partial\boldsymbol{x}_a^F\partial\boldsymbol{x}_b^F}.
-$$
+```
 
 The exact residual pullback is
 
-$$
+```math
 \boldsymbol{r}_i^{M,c}
 =N_{pi}\boldsymbol{g}_p,
 \qquad
 \boldsymbol{r}_a^{F,c}
 =\boldsymbol{g}_a^F.
-$$
+```
 
 Because the MPM interpolation is linear in the grid displacement, the
 contact tangent blocks are
 
-$$
+```math
 \boldsymbol{K}_{ij}^{MM,c}
 =N_{pi}N_{pj}\boldsymbol{H}_{pp},
-$$
+```
 
-$$
+```math
 \boldsymbol{K}_{ia}^{MF,c}
 =N_{pi}\boldsymbol{H}_{pa},
 \qquad
 \boldsymbol{K}_{ai}^{FM,c}
 =N_{pi}\boldsymbol{H}_{ap},
-$$
+```
 
-$$
+```math
 \boldsymbol{K}_{ab}^{FF,c}
 =\boldsymbol{H}_{ab}.
-$$
+```
 
-No derivative of $N_{pi}$ appears inside this Newton slice. The local IPC
+No derivative of $`N_{pi}`$ appears inside this Newton slice. The local IPC
 Hessian may be projected to its positive-semidefinite part before this
 pullback; the same projected block then generates all four coupled tangent
 families.
 
 The local distance energy is translation invariant, so
 
-$$
+```math
 \boldsymbol{g}_p+\sum_a\boldsymbol{g}_a^F=\boldsymbol{0}.
-$$
+```
 
-Together with $\sum_iN_{pi}=1$, this gives
+Together with $`\sum_iN_{pi}=1`$, this gives
 
-$$
+```math
 \sum_i\boldsymbol{r}_i^{M,c}
 +\sum_a\boldsymbol{r}_a^{F,c}
 =\boldsymbol{0}.
-$$
+```
 
 Therefore the exact pullback preserves the contact action--reaction null mode
 even though FEM and MPM use unrelated discretizations.
@@ -277,58 +278,58 @@ even though FEM and MPM use unrelated discretizations.
 
 Collect FEM nodal positions and active MPM grid displacements in
 
-$$
+```math
 \boldsymbol{q}
 =
 \left(
 \boldsymbol{x}^F,
 \boldsymbol{u}^M
 \right).
-$$
+```
 
 For elastic or incremental-potential materials, the coupled incremental
 potential is
 
-$$
+```math
 \Pi(\boldsymbol{q};\boldsymbol{h}_n)
 =\Pi_F(\boldsymbol{x}^F)
 +\Pi_M(\boldsymbol{u}^M;\boldsymbol{h}_n)
 +\sum_pE_p^c(\boldsymbol{q})
 +D_f(\boldsymbol{q};\widehat{\boldsymbol{q}}).
-$$
+```
 
-Here $\boldsymbol{h}_n$ is accepted MPM material history and the hat denotes
+Here $`\boldsymbol{h}_n`$ is accepted MPM material history and the hat denotes
 the lagged friction frame. For every supported material, including a
 non-potential plastic update, the first variation is assembled as a residual
 and consistently linearized. The Newton equations are
 
-$$
+```math
 \left(
 \boldsymbol{K}_{FF}+\boldsymbol{K}_{FF}^c
 \right)\Delta\boldsymbol{x}^F
 +\boldsymbol{K}_{FM}^c\Delta\boldsymbol{u}^M
 =-\left(\boldsymbol{r}_F+\boldsymbol{r}_F^c\right),
-$$
+```
 
-$$
+```math
 \boldsymbol{K}_{MF}^c\Delta\boldsymbol{x}^F
 +\left(
 \boldsymbol{K}_{MM}+\boldsymbol{K}_{MM}^c
 \right)\Delta\boldsymbol{u}^M
 =-\left(\boldsymbol{r}_M+\boldsymbol{r}_M^c\right).
-$$
+```
 
 The FEM body uses total-Lagrangian quadrature. The MPM body uses the
 updated total deformation gradient
 
-$$
+```math
 \boldsymbol{F}_p(\boldsymbol{u}^M)
 =\left[
 \boldsymbol{I}
 +\sum_i
 \boldsymbol{u}_i^M\otimes\nabla N_{pi}
 \right]\boldsymbol{F}_{p,n}.
-$$
+```
 
 Finite-strain Drucker--Prager and von Mises return
 mappings are defined in the
@@ -336,21 +337,28 @@ mappings are defined in the
 Accepted plastic history is frozen while evaluating every Newton trial and is
 committed only after the complete FEM--MPM step converges.
 
+Nonassociated DP uses a frozen flow correction and plastic-volume predictor
+for symmetric PCG and energy Armijo. Its material outer loop checks the
+physical versus inner Kirchhoff stress and plastic-volume mismatch; a change
+of correction inside the flat tensile-apex branch alone is not a failure.
+Particle-local Aitken relaxation updates the predictors without relaxing the
+physical convergence test.
+
 When the MPM material has no global incremental potential, line search uses
 the residual merit
 
-$$
+```math
 \mathcal{M}(\boldsymbol{q})
 =\frac{1}{2}
 \|\boldsymbol{R}_{free}(\boldsymbol{q})\|^2.
-$$
+```
 
 For an exact Newton direction,
 
-$$
+```math
 \mathcal{M}'(0)
 =-\|\boldsymbol{R}_{free}\|^2.
-$$
+```
 
 This keeps plastic return mapping inside the same fully coupled contact
 equilibrium without pretending that a non-potential material is hyperelastic.
@@ -361,18 +369,18 @@ Lagged IPC friction freezes closest-feature weights, contact normals, and
 normal-force magnitudes during one Newton solve. After refreshing that frame,
 the fixed-point residual is the unapplied correction velocity
 
-$$
+```math
 \varepsilon_f
 =\frac{
 \|\Delta\boldsymbol{q}_{unapplied}\|_{\infty}
 }{
 \Delta t
 }.
-$$
+```
 
 The accepted line-search step is bounded by
 
-$$
+```math
 \alpha_{max}
 =\min\left(
 1,
@@ -380,13 +388,13 @@ $$
 \alpha_F,
 \alpha_c
 \right).
-$$
+```
 
-Here $\alpha_M$ preserves admissible MPM deformation, $\alpha_F$ prevents FEM
-element inversion, and $\alpha_c$ is point--edge or point--triangle
+Here $`\alpha_M`$ preserves admissible MPM deformation, $`\alpha_F`$ prevents FEM
+element inversion, and $`\alpha_c`$ is point--edge or point--triangle
 continuous collision detection. The swept MPM sample follows
 
-$$
+```math
 \boldsymbol{x}_p(\alpha)
 =\boldsymbol{x}_{p,n}
 +\sum_iN_{pi}
@@ -394,15 +402,15 @@ $$
 \boldsymbol{u}_i^M
 +\alpha\Delta\boldsymbol{u}_i^M
 \right),
-$$
+```
 
 while each FEM node follows
 
-$$
+```math
 \boldsymbol{x}_a^F(\alpha)
 =\boldsymbol{x}_a^F
 +\alpha\Delta\boldsymbol{x}_a^F.
-$$
+```
 
 A failed Newton solve, CCD-limited line search, friction fixed point, or
 constitutive update restores FEM state, MPM particles and grid state,
@@ -411,30 +419,30 @@ deformation gradients, and plastic history to the beginning of the step.
 ### 6. Axisymmetric contact measure
 
 In a no-swirl meridian solve, the geometric closest-point problem remains
-two-dimensional in $(r,z)$, but one MPM surface sample represents a full
-reference ring. If $\omega_p^{mer}$ is its meridional measure at reference
-radius $R_p$, the contact weight is
+two-dimensional in $`(r,z)`$, but one MPM surface sample represents a full
+reference ring. If $`\omega_p^{mer}`$ is its meridional measure at reference
+radius $`R_p`$, the contact weight is
 
-$$
+```math
 \omega_p^{axi}
 =2\pi R_p\omega_p^{mer}.
-$$
+```
 
 Thus
 
-$$
+```math
 E_p^{c,axi}
 =2\pi R_p\omega_p^{mer}
 \widehat d\,b(s).
-$$
+```
 
 The ring factor enters the residual and every coupled Hessian block, while
 contact search and CCD remain point--edge operations in the meridian plane.
 The material kinematics remain three-dimensional through the hoop stretch
 
-$$
+```math
 F_{\theta\theta}=\frac{r}{R}.
-$$
+```
 
 ### 7. Search and capacity invariants
 
@@ -529,7 +537,7 @@ revolved measure.
 
 ```python
 # ULMPM examples use NeoHookean, DruckerPrager, and VonMises.
-# For associated Drucker--Prager, DilationAngle must
+# For associated Drucker--Prager, set DilationAngle to
 # equal FrictionAngle. VonMises optionally accepts HardeningModulus.
 mpm.add_material(
     model="VonMises",
@@ -634,17 +642,19 @@ the FEDEM subtriangle-area distribution.
 - Search, distance culling, contact response, and force exchange run in Taichi.
   Python is restricted to setup, validation, time-loop orchestration, and I/O.
 - Implicit IPC requires elastic implicit FEM and implicit ULMPM.
-  Supported MPM laws are Neo-Hookean elasticity, perfect associated
-  Drucker--Prager, and associated von Mises with optional linear isotropic
+  Supported MPM laws are Neo-Hookean elasticity, perfect Drucker--Prager,
+  and associated von Mises with optional linear isotropic
   hardening, with coupled history updates. The
   plastic laws use their shared finite-strain updates and consistent tangents.
   FEM elastoplasticity, TLMPM plasticity, and standalone child FEM/MPM
   IPC are rejected on this coupled path.
 - Continuum-solid MPM may couple to cloth FEM; soft-particle MPM--cloth IPC is
   intentionally unsupported and raises explicitly.
-- Finite-strain Drucker--Prager currently requires associated flow
-  (`DilationAngle == FrictionAngle`), has no hardening or tensile-cutoff
-  branch, and interprets `Cohesion` as a stress. `dpType` selects
+- Finite-strain Drucker--Prager supports independent `DilationAngle`
+  (defaulting to `FrictionAngle`), uses no dilation evolution or hardening,
+  and interprets `Cohesion` as a stress. Zero-dilation hydrostatic tension
+  uses the cone apex as a tensile cap, without a separate cutoff parameter.
+  `dpType` selects
   `Circumscribed`, `MiddleCircumscribed`, or `Inscribed` Mohr--Coulomb cone
   matching. Plastic MPM defaults to `project_pd=True`.
 - Implicit friction is currently the symmetric lagged IPC potential. Fully

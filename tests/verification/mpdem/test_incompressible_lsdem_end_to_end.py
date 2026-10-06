@@ -7,7 +7,6 @@ import sys
 import numpy as np
 import pytest
 
-
 pytestmark = [
     pytest.mark.verification,
     pytest.mark.mpdem,
@@ -18,7 +17,7 @@ pytestmark = [
 
 
 ROOT = Path(__file__).resolve().parents[3]
-EXAMPLE = ROOT / "examples/mpm/IncompressibleFluid/lsdem_coupling_3d.py"
+EXAMPLE = ROOT / "examples/mpm/IncompressibleFluid/lsdem_coupling_3d/lsdem_coupling_3d.py"
 
 
 def run_solver(tmp_path, solver):
@@ -37,7 +36,7 @@ def run_solver(tmp_path, solver):
             "PYTHONWARNINGS": "error::RuntimeWarning",
         }
     )
-    runner = f'''import json, math, runpy
+    runner = f"""import json, math, runpy
 import numpy as np
 model = runpy.run_path({str(EXAMPLE)!r}, run_name="__main__")
 dempm = model["dempm"]
@@ -64,7 +63,7 @@ print("GT_SOLVER_EVIDENCE=" + json.dumps({{
     "rigid_volume": rigid_volume,
     "solid_volume_relative_error": abs(mapped_solid_volume - rigid_volume) / rigid_volume,
 }}))
-'''
+"""
     completed = subprocess.run(
         [sys.executable, "-c", runner],
         cwd=tmp_path,

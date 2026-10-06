@@ -8,11 +8,15 @@ import argparse
 import json
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 
 import numpy as np
 
 from blender_cfdem_gif import ROOT, water_surface, export
+
+sys.path.insert(0, str(ROOT))
+from examples.mpm.IncompressibleFluid.dam_break_visible_sdf_2d.obstacle import VERTICES as DAM_OBSTACLE_VERTICES
 
 OUTPUTS = ROOT / "examples/mpm/IncompressibleFluid/OutputData"
 BLENDER = "/Applications/Blender.app/Contents/MacOS/Blender"
@@ -40,11 +44,12 @@ CASES = {
         "Flow around a fixed cylinder",
     ),
     "dam_2d": (
-        OUTPUTS / "dam_break_square_sdf_2d_settled_t4_20261002",
-        "dam_break_square_2d.gif",
+        ROOT
+        / "examples/mpm/IncompressibleFluid/dam_break_visible_sdf_2d/OutputData/dam_break_star_sdf_2d_dx005_ppc2_v2",
+        "dam_break_star_obstacle_2d.gif",
         "blender",
         [0.9, 0.06, 0.45],
-        "2D dam break (extruded view)",
+        "2D dam break around a five-point star (preview)",
     ),
     "affine": (
         OUTPUTS / "incompressible_affine_body_coupling_3d_gpu20_20260916",
@@ -93,6 +98,23 @@ def box_mesh(lower, upper):
     return vertices, faces
 
 
+def polygon_prism_mesh(vertices_2d, thickness):
+    count = len(vertices_2d)
+    front = np.column_stack((vertices_2d[:, 0], np.zeros(count), vertices_2d[:, 1]))
+    # A center fan preserves the concave star; a fan from its first tip fills notches.
+    # ponytail: these gallery polygons are star-shaped about their mean, not arbitrary polygons.
+    front = np.vstack((front, front.mean(axis=0)))
+    back = front.copy()
+    back[:, 1] = thickness
+    faces = []
+    stride = count + 1
+    for index in range(count):
+        next_index = (index + 1) % count
+        faces.extend(((count, index, next_index), (stride + count, stride + next_index, stride + index)))
+        faces.extend(((index, stride + next_index, next_index), (index, stride + index, stride + next_index)))
+    return np.vstack((front, back)), np.asarray(faces, dtype=np.int32)
+
+
 def prepare(case, folder, preview=False):
     source, filename, mode, domain, title = CASES[case]
     folder.mkdir(parents=True, exist_ok=True)
@@ -115,7 +137,7 @@ def prepare(case, folder, preview=False):
                     data = {"water": np.clip(vertices, 0, domain) * scale, "water_faces": faces}
                     peak_water_height = max(peak_water_height, float(data["water"][:, 2].max()))
                     if case == "dam_2d":
-                        solid, triangles = box_mesh([0.35, 0, 0.06], [0.46, domain[1], 0.17])
+                        solid, triangles = polygon_prism_mesh(DAM_OBSTACLE_VERTICES, domain[1])
                     elif case == "affine":
                         with np.load(source / f"particles/AffineBody{step}.npz") as body:
                             if abs(frame["time"] - float(body["t_current"])) > 1e-8:

@@ -23,7 +23,7 @@ def _unit_cube():
 
 
 def test_barrier_block_mass_and_surface_measure_do_not_drift_with_refinement():
-    from examples.igampm.iga_mpm_barrier_contact import _soft_block_points
+    from examples.igampm.iga_mpm_barrier_contact.iga_mpm_barrier_contact import _soft_block_points
 
     expected_volume = 0.28 * 0.24 * 0.14
     expected_surface_area = 2.0 * (0.28 * 0.24 + 0.28 * 0.14 + 0.24 * 0.14)

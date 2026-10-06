@@ -5,26 +5,30 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from examples.mpm.IncompressibleFluid.wavemaker_tank_3d import (
-    WATER_ORIGIN,
-    WATER_SIZE,
+from examples.mpm.IncompressibleFluid.wavemaker_tank_3d.wavemaker_tank_3d import WATER_ORIGIN, WATER_SIZE
+from examples.mpm.IncompressibleFluid.wavemaker_tank_3d.draw.evaluate_wavemaker_tank_3d import (
     harmonic_fit,
     linear_piston_wave,
     piston_penetration,
     sdf_surface_profile_metrics,
 )
-from examples.mmpm.TwoPhaseWavemaker3D.two_layer_two_phase_wavemaker_3d import (
+from examples.mmpm.TwoPhaseWavemaker3D.two_layer_two_phase_wavemaker_3d_parameters import (
     SLOPE_HEIGHT,
     SLOPE_RUN,
     SLOPE_TOE,
     TANK as TWO_PHASE_TANK,
     WATER_DEPTH as TWO_PHASE_WATER_DEPTH,
-    evaluate_metrics,
+)
+from examples.mmpm.TwoPhaseWavemaker3D.draw.evaluate_two_layer_two_phase_wavemaker_3d import evaluate_metrics
+from examples.mpm.IncompressibleFluid.wavemaker_tank_3d.draw.evaluate_wavemaker_tank_3d import (
     sdf_mean_surface,
     sdf_surface_gauge,
 )
 
-SCRIPT = Path(__file__).parents[3] / "examples/mpm/IncompressibleFluid/taylor_green_vortex_2d.py"
+SCRIPT = (
+    Path(__file__).parents[3]
+    / "examples/mpm/IncompressibleFluid/taylor_green_vortex_2d/draw/evaluate_taylor_green_vortex_2d.py"
+)
 SPEC = importlib.util.spec_from_file_location("taylor_green_vortex_2d", SCRIPT)
 MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)

@@ -17,55 +17,55 @@ simulation facade.
 
 ## Broad-phase geometry and linear BVH theory
 
-For a primitive with vertices $\boldsymbol{x}_a$ and padding $r\geq0$, its
+For a primitive with vertices $`\boldsymbol{x}_a`$ and padding $`r\geq0`$, its
 axis-aligned bounding box (AABB) is
 
-$$
+```math
 b_k^- = \min_a x_{a,k}-r,
 \qquad
 b_k^+ = \max_a x_{a,k}+r.
-$$
+```
 
-Two boxes $A$ and $B$, with optional expansions $r_A$ and $r_B$, overlap if
+Two boxes $`A`$ and $`B`$, with optional expansions $`r_A`$ and $`r_B`$, overlap if
 and only if their intervals overlap in every coordinate:
 
-$$
+```math
 b_{A,k}^- -r_A\leq b_{B,k}^+ +r_B,
 \qquad
 b_{A,k}^+ +r_A\geq b_{B,k}^- -r_B
 \quad\text{for every }k.
-$$
+```
 
 For linear motion
-$\boldsymbol{x}_a(t)=\boldsymbol{x}_a^0+t\Delta\boldsymbol{x}_a$ on
-$0\leq t\leq1$, a conservative swept box takes componentwise extrema over
+$`\boldsymbol{x}_a(t)=\boldsymbol{x}_a^0+t\Delta\boldsymbol{x}_a`$ on
+$`0\leq t\leq1`$, a conservative swept box takes componentwise extrema over
 both endpoints:
 
-$$
+```math
 b_k^- =\min_a\min(x_{a,k}^0,x_{a,k}^0+\Delta x_{a,k})-r,
 \qquad
 b_k^+ =\max_a\max(x_{a,k}^0,x_{a,k}^0+\Delta x_{a,k})+r.
-$$
+```
 
-For an oriented box with local half extent $\boldsymbol{e}$, center
-$\boldsymbol{c}$, and rotation $\boldsymbol{R}$, the exact world-space AABB
+For an oriented box with local half extent $`\boldsymbol{e}`$, center
+$`\boldsymbol{c}`$, and rotation $`\boldsymbol{R}`$, the exact world-space AABB
 half extent is
 
-$$
+```math
 \boldsymbol{e}_{AABB}=|\boldsymbol{R}|\boldsymbol{e},
 \qquad
 \boldsymbol{b}^{\pm}=\boldsymbol{c}\pm\boldsymbol{e}_{AABB},
-$$
+```
 
 where the absolute value is componentwise. Linear BVH construction maps each
 box center into normalized domain coordinates, quantizes those coordinates,
 and interleaves their bits into a Morton key. Sorting the keys converts spatial
-proximity into one-dimensional order. If $z_i$ and $z_j$ are two keys, their
+proximity into one-dimensional order. If $`z_i`$ and $`z_j`$ are two keys, their
 radix-tree affinity is the longest common prefix
 
-$$
+```math
 \delta(i,j)=\mathrm{clz}(z_i\mathbin{\mathtt{xor}}z_j),
-$$
+```
 
 with an index tie-break for coincident keys. Internal nodes cover contiguous
 key ranges; their boxes are componentwise unions of their descendants.
@@ -74,99 +74,99 @@ key ranges; their boxes are componentwise unions of their descendants.
 
 All vertices follow the normalized linear trajectory
 
-$$
+```math
 \boldsymbol{x}_a(t)=\boldsymbol{x}_a^0+t\Delta\boldsymbol{x}_a,
 \qquad 0\leq t\leq1.
-$$
+```
 
 For two points, with
-$\boldsymbol{r}_0=\boldsymbol{x}_0^0-\boldsymbol{x}_1^0$ and
-$\Delta\boldsymbol{r}=\Delta\boldsymbol{x}_0-\Delta\boldsymbol{x}_1$,
+$`\boldsymbol{r}_0=\boldsymbol{x}_0^0-\boldsymbol{x}_1^0`$ and
+$`\Delta\boldsymbol{r}=\Delta\boldsymbol{x}_0-\Delta\boldsymbol{x}_1`$,
 zero-thickness impact candidates are roots of
 
-$$
+```math
 \|\boldsymbol{r}_0+t\Delta\boldsymbol{r}\|^2
 =a t^2+b t+c=0,
-$$
+```
 
-$$
+```math
 a=\Delta\boldsymbol{r}\cdot\Delta\boldsymbol{r},
 \qquad
 b=2\boldsymbol{r}_0\cdot\Delta\boldsymbol{r},
 \qquad
 c=\boldsymbol{r}_0\cdot\boldsymbol{r}_0.
-$$
+```
 
 For point--triangle and edge--edge CCD, coplanarity is the scalar triple
 product
 
-$$
+```math
 q(t)=\boldsymbol{o}(t)\cdot
 \left[\boldsymbol{a}(t)\times\boldsymbol{b}(t)\right]=0.
-$$
+```
 
-Because each vector is affine in $t$, $q$ is cubic. Every real root in
-$[0,1]$ must still satisfy the primitive-domain condition: the closest point
+Because each vector is affine in $`t`$, $`q`$ is cubic. Every real root in
+$`[0,1]`$ must still satisfy the primitive-domain condition: the closest point
 must lie in the triangle or both closest coordinates must lie on their line
 segments. An identically zero coplanarity polynomial contains no isolated
 impact time and is handled by distance-based conservative advancement.
 
 For a linearly changing signed gap,
 
-$$
+```math
 g(t)=g_0+t\Delta g,
-$$
+```
 
-the first closing root is $t_*=-g_0/\Delta g$ when $g_0>0$ and
-$\Delta g<0$.
+the first closing root is $`t_*=-g_0/\Delta g`$ when $`g_0>0`$ and
+$`\Delta g<0`$.
 
 ### Additive CCD with finite clearance
 
-Let $d(t)$ be exact primitive distance, $d_{min}\geq0$ the required
-clearance, and $L$ a Lipschitz bound on relative motion. The cancellation-safe
+Let $`d(t)`$ be exact primitive distance, $`d_{min}\geq0`$ the required
+clearance, and $`L`$ a Lipschitz bound on relative motion. The cancellation-safe
 excess distance is
 
-$$
+```math
 e(t)=d(t)-d_{min}
 =\frac{d(t)^2-d_{min}^2}{d(t)+d_{min}}.
-$$
+```
 
-With retained-gap fraction $0\leq\eta<1$, conservative advancement uses
+With retained-gap fraction $`0\leq\eta<1`$, conservative advancement uses
 
-$$
+```math
 \Delta t=\frac{(1-\eta)e(t)}{L}
-$$
+```
 
 and recomputes the exact closest distance after every increment. Useful
 relative-motion bounds are
 
-$$
+```math
 L_{PP}=\|\Delta\boldsymbol{x}_0-\Delta\boldsymbol{x}_1\|,
-$$
+```
 
-$$
+```math
 L_{PT}=\|\Delta\boldsymbol{p}\|
 +\max_{a=0,1,2}\|\Delta\boldsymbol{t}_a\|,
-$$
+```
 
-$$
+```math
 L_{EE}=\max_{a=0,1}\|\Delta\boldsymbol{a}_a\|
 +\max_{b=0,1}\|\Delta\boldsymbol{b}_b\|,
-$$
+```
 
 after subtracting any common translational motion from all velocities in a
 stencil.
 
 For a positive-weight NURBS surface,
-$\boldsymbol{x}_s=\sum_iR_i\boldsymbol{P}_i$ with $R_i\geq0$ and
-$\sum_iR_i=1$, convexity gives
+$`\boldsymbol{x}_s=\sum_iR_i\boldsymbol{P}_i`$ with $`R_i\geq0`$ and
+$`\sum_iR_i=1`$, convexity gives
 
-$$
+```math
 \left\|\Delta\boldsymbol{p}
 -\sum_iR_i\Delta\boldsymbol{P}_i\right\|
 \leq
 \max_i\|\Delta\boldsymbol{p}-\Delta\boldsymbol{P}_i\|.
-$$
+```
 
 This remains conservative when the closest surface parameter changes during
 the trial motion.

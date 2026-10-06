@@ -18,12 +18,12 @@ from src.mpm.generator.InsertionKernel import kernel_rebulid_incompressible_part
 from src.mpm.structs.Particle import ParticleCloudIncompressible2D
 from src.mpm.structs.StaggeredGrid import StaggeredGrid
 import src.utils.GlobalVariable as GlobalVariable
-from examples.mpm.IncompressibleFluid.wavemaker_tank_3d import (
+from examples.mpm.IncompressibleFluid.wavemaker_tank_3d.wavemaker_tank_3d import (
     enforce_moving_piston_particles,
-    piston_displacement,
     piston_velocity,
     set_moving_piston_velocity,
 )
+from examples.mpm.IncompressibleFluid.wavemaker_tank_3d.draw.evaluate_wavemaker_tank_3d import piston_displacement
 from examples.mmpm.TwoPhaseWavemaker3D.two_layer_two_phase_wavemaker_3d import (
     set_moving_piston_mac_boundary,
 )

@@ -73,20 +73,13 @@ class FrictionEngineMixin:
         for i in self.friction_grad:
             self.friction_grad[i] = 0.0
 
-    @ti.kernel
     def prepare_friction_matrix_slots(self):
-        """Reserve and invalidate deterministic contact/local-pair slots."""
-        required = ti.static(self.contact_pair_count * self.contact_pair_capacity)
-        capacity = ti.static(self.friction_hash_matrix.non_diag.blockI.shape[0])
-        stored = ti.min(required, capacity)
-        self.friction_hash_matrix.raw_non_diag_count[0] = stored
-        if required > capacity:
-            self.friction_hash_matrix.overflow[0] = 1
-        for slot in range(stored):
-            self.friction_hash_matrix.non_diag.blockI[slot] = -1
-            self.friction_hash_matrix.non_diag.blockJ[slot] = -1
-            for component in ti.static(range(config.DIM * config.DIM)):
-                self.friction_hash_matrix.non_diag.blockH[slot][component] = 0.0
+        if self.compact_contact_slots:
+            self.mark_active_contact_slots(self.friction_contacts, self.friction_contact_slots)
+            self.contact_slot_prefix.run(self.friction_contact_slots)
+            self.prepare_contact_matrix_slots(self.friction_hash_matrix, self.friction_contact_slots)
+        else:
+            self.prepare_contact_matrix_slots(self.friction_hash_matrix, self.friction_contact_num)
 
     @ti.func
     def add_friction_block(self, contact_id, local_i, local_j, block_i, block_j, block):
@@ -99,7 +92,10 @@ class FrictionEngineMixin:
         if finite != 0:
             ti.atomic_add(self.friction_nnz_count[0], 1)
             stencil = ti.static(self.contact_stencil_capacity)
-            slot = contact_id * ti.static(self.contact_pair_capacity) + local_i * stencil + local_j
+            matrix_contact_id = contact_id
+            if ti.static(self.compact_contact_slots):
+                matrix_contact_id = self.friction_contact_slots[contact_id] - 1
+            slot = matrix_contact_id * ti.static(self.contact_pair_capacity) + local_i * stencil + local_j
             if (
                 0 <= contact_id < ti.static(self.contact_pair_count)
                 and 0 <= local_i < stencil
@@ -237,6 +233,9 @@ class FrictionEngineMixin:
                     surface.weights,
                     position,
                     basis,
+                    surface,
+                    surface_id,
+                    ti.Vector([uknot, vknot]),
                 )
                 if ti.static(self.is_semi) or (
                     distance > self.barrier.dmin[0] + 1.0e-12 and distance < self.barrier.activation_distance_term()

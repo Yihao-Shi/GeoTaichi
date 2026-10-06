@@ -49,17 +49,19 @@ def _build_iga_cube(output_path):
     )
 
 
-def _build_mpm_particle(output_path):
+def _build_mpm_particle(output_path, points=None):
     from src.mpm.generator.Body import Body
     from src.mpm.engines.direct.ImplicitULMPM import ImplicitULMPM
 
+    if points is None:
+        points = [[0.5, 0.5, -0.031]]
     body = Body()
     body.add_particles(
-        [[0.5, 0.5, -0.031]],
+        points,
         volume=1.0e-3,
         xmin=[-0.1, -0.1, -0.1],
         xmax=[1.1, 1.1, 0.3],
-        boundary_ids=[0],
+        boundary_ids=list(range(len(points))),
     )
     mpm = ImplicitULMPM(
         domain=[1.2, 1.2, 0.5],
@@ -104,7 +106,9 @@ def test_igampm_coupling_friction_3d_opposes_tangential_motion(
 
     iga = _build_iga_cube(tmp_path / "iga")
     mpm = _build_mpm_particle(tmp_path / "mpm")
-    coupling = IGAMPM(iga, mpm, kappa=1.0e4, dhat=0.08, mu=0.5, epsv=1.0e-3, activate_friction=True, friction_nnz=50_000)
+    coupling = IGAMPM(
+        iga, mpm, kappa=1.0e4, dhat=0.08, mu=0.5, epsv=1.0e-3, activate_friction=True, friction_nnz=50_000
+    )
 
     coupling.initialize_friction()
     print(f"3D IGA-MPM friction contacts: {coupling.curr_friction_contact_num}")
@@ -119,7 +123,7 @@ def test_igampm_coupling_friction_3d_opposes_tangential_motion(
     forces = coupling.friction_contact_forces()
     sym_diff = (K - K.T).tocoo()
     max_sym = float(np.max(np.abs(sym_diff.data))) if sym_diff.nnz else 0.0
-    mpm_force_x = float(np.sum(forces["mpm"][0::config.DIM]))
+    mpm_force_x = float(np.sum(forces["mpm"][0 :: config.DIM]))
     print(
         "3D IGA-MPM friction assembly:",
         f"contacts={coupling.curr_friction_contact_num}",
@@ -136,3 +140,49 @@ def test_igampm_coupling_friction_3d_opposes_tangential_motion(
     assert np.linalg.norm(grad) > 0.0
     assert max_sym < 1.0e-7
     assert mpm_force_x < 0.0
+
+
+@pytest.mark.isolated_dimension(3)
+def test_compact_contact_slots_preserve_normal_and_friction(taichi_runtime, tmp_path):
+    from src.igampm import IGAMPM
+
+    points = [[0.5, 0.5, -0.081], [0.5, 0.5, -0.031]]
+    engines = []
+    for compact in (False, True):
+        iga = _build_iga_cube(tmp_path / str(compact) / "iga")
+        mpm = _build_mpm_particle(tmp_path / str(compact) / "mpm", points)
+        coupling = IGAMPM(
+            iga,
+            mpm,
+            kappa=1.0e4,
+            dhat=0.08,
+            mu=0.5,
+            epsv=1.0e-3,
+            activate_friction=True,
+            compact_contact_slots=compact,
+            **({"barrier_nnz": 289, "friction_nnz": 289} if compact else {}),
+        )
+        engine = coupling.build()
+        engine.initialize_friction()
+        assert engine.curr_barrier_contact_num == 1
+        _set_uniform_x_disp(mpm.node2dof, mpm.grid_disp, 1.0e-4)
+        engine.update_particle_pos(mpm.grid_disp)
+        engine.assemble_barrier_system()
+        engine.assemble_friction_system()
+        engines.append((engine, engine.barrier_matrix(), engine.friction_matrix()))
+
+    full, compact = engines
+    for index in (1, 2):
+        difference = (full[index] - compact[index]).tocoo()
+        assert np.max(np.abs(difference.data), initial=0.0) < 1.0e-7
+    np.testing.assert_allclose(full[0].barrier_grad.to_numpy(), compact[0].barrier_grad.to_numpy())
+    np.testing.assert_allclose(full[0].friction_grad.to_numpy(), compact[0].friction_grad.to_numpy())
+    assert int(compact[0].barrier_hash_matrix.raw_non_diag_count[0]) == 289
+    assert int(compact[0].friction_hash_matrix.raw_non_diag_count[0]) == 289
+    assert int(full[0].barrier_hash_matrix.raw_non_diag_count[0]) == 12 * 289
+    # A second active pair exceeds the one-pair buffer instead of being dropped.
+    active = compact[0].contacts.active.to_numpy()
+    active[0] = 1
+    compact[0].contacts.active.from_numpy(active)
+    compact[0].prepare_barrier_matrix_slots()
+    assert int(compact[0].barrier_hash_matrix.overflow[0]) == 1

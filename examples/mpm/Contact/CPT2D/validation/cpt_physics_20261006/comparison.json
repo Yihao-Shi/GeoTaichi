@@ -1,0 +1,181 @@
+{
+  "scope": "Historical accepted outputs; corrected geostatic initialization has not been rerun.",
+  "surface_definition": "Same original top-row particle IDs, z0 > 1.4969 m.",
+  "volume_definition": "Coupled sum(2*pi*r0*area0*det(F))/same at t0; native saved volumes.",
+  "cases": {
+    "SDMC_DEM": [
+      {
+        "particles": 100000,
+        "original_top_particles": 200,
+        "surface_rise_median_m": -6.884543537033494e-06,
+        "surface_rise_p90_m": 7.497437978032338e-06,
+        "surface_rise_max_m": 0.004890746684369729,
+        "soil_y_max_m": 1.5033907466843697,
+        "time_s": 0.20000000000005924,
+        "source": "examples/mpm/Contact/CPT2D/1_Pile2DAxisy_SDMC_dem/particles/MPMParticle000001.npz",
+        "volume_ratio_to_t0": 0.9999953175931285
+      },
+      {
+        "particles": 100000,
+        "original_top_particles": 200,
+        "surface_rise_median_m": 0.00010722192838419353,
+        "surface_rise_p90_m": 0.0033948671792093815,
+        "surface_rise_max_m": 0.008439105615562381,
+        "soil_y_max_m": 1.510736221787056,
+        "time_s": 2.000000000004635,
+        "source": "examples/mpm/Contact/CPT2D/1_Pile2DAxisy_SDMC_dem/particles/MPMParticle000010.npz",
+        "volume_ratio_to_t0": 0.9999809409749324
+      },
+      {
+        "particles": 100000,
+        "original_top_particles": 200,
+        "surface_rise_median_m": 0.00047371035176979603,
+        "surface_rise_p90_m": 0.0034276566976197955,
+        "surface_rise_max_m": 0.008408201743713484,
+        "soil_y_max_m": 1.5110544364253782,
+        "time_s": 4.000000000017737,
+        "source": "examples/mpm/Contact/CPT2D/1_Pile2DAxisy_SDMC_dem/particles/MPMParticle000020.npz",
+        "volume_ratio_to_t0": 1.0000085935769398
+      },
+      {
+        "particles": 100000,
+        "original_top_particles": 200,
+        "surface_rise_median_m": 0.001257473015596755,
+        "surface_rise_p90_m": 0.003939996350534812,
+        "surface_rise_max_m": 0.00848674385210657,
+        "soil_y_max_m": 1.5108516195897908,
+        "time_s": 9.99999999979059,
+        "source": "examples/mpm/Contact/CPT2D/1_Pile2DAxisy_SDMC_dem/particles/MPMParticle000050.npz",
+        "volume_ratio_to_t0": 1.0000087148522605
+      }
+    ],
+    "FEM-MPM": [
+      {
+        "particles": 100000,
+        "original_top_particles": 200,
+        "surface_rise_median_m": 0.011597738012660397,
+        "surface_rise_p90_m": 0.06523811643884411,
+        "surface_rise_max_m": 0.12898776567790593,
+        "soil_y_max_m": 1.6274877656779059,
+        "time_s": 3.9859999999824414,
+        "source": "examples/fempm/cpt_dp/OutputData/cpt_ipc_20261004/checkpoints/state_3.986000_007200.npz",
+        "volume_ratio_to_t0": 1.0115330978524995,
+        "plastic_volume_ratio_to_t0": 1.0135714411716474,
+        "J_quantiles": [
+          0.9934856750368599,
+          0.9976697566013675,
+          1.0508046684966148,
+          2.4418153982869626,
+          469.3537483582493
+        ],
+        "Jp_quantiles": [
+          1.000000000005834,
+          1.000518986174613,
+          1.0629893968233552,
+          2.477343060714829,
+          469.3495191764131
+        ],
+        "hoop_identity_max_error": 2.9753977059954195e-14,
+        "plastic_log_volume_history_max_error": 3.957814075688563e-10
+      },
+      {
+        "particles": 100000,
+        "original_top_particles": 200,
+        "surface_rise_median_m": 0.027344597515688185,
+        "surface_rise_p90_m": 0.08069414621239948,
+        "surface_rise_max_m": 0.14483655250265293,
+        "soil_y_max_m": 1.6433365525026529,
+        "time_s": 8.835999999929545,
+        "source": "examples/fempm/cpt_dp/OutputData/cpt_ipc_20261004/latest_state.npz",
+        "volume_ratio_to_t0": 1.0279871110539494,
+        "plastic_volume_ratio_to_t0": 1.0316313646701176,
+        "J_quantiles": [
+          0.9944829812587059,
+          1.0173630241447533,
+          1.171819068593358,
+          3.9262660403833016,
+          469.3573414364553
+        ],
+        "Jp_quantiles": [
+          1.0000000000162927,
+          1.0243693528046283,
+          1.1857678849279365,
+          3.959571992020241,
+          469.3495191817939
+        ],
+        "hoop_identity_max_error": 4.5075054799781356e-14,
+        "plastic_log_volume_history_max_error": 4.056375234883191e-10
+      }
+    ],
+    "IGA-MPM": [
+      {
+        "particles": 100000,
+        "original_top_particles": 200,
+        "surface_rise_median_m": 0.015020427435214367,
+        "surface_rise_p90_m": 0.06840351122960923,
+        "surface_rise_max_m": 0.16182170105364335,
+        "soil_y_max_m": 1.6681816642216023,
+        "time_s": 3.9999374999996746,
+        "source": "examples/igampm/cpt_dp/OutputData/cpt_ipc_20261004/checkpoints/state_3.999937_004300.npz",
+        "volume_ratio_to_t0": 1.0162801462041868,
+        "plastic_volume_ratio_to_t0": 1.018513067529468,
+        "J_quantiles": [
+          0.9943918738866828,
+          0.9977517217639547,
+          1.0622803706498845,
+          2.492834593992035,
+          3897.5438467967756
+        ],
+        "Jp_quantiles": [
+          1.000000000003942,
+          1.0006610263178728,
+          1.0745367671280945,
+          2.524043063205003,
+          3897.838786616081
+        ],
+        "hoop_identity_max_error": 2.0761170560490427e-14,
+        "plastic_log_volume_history_max_error": 1.93005833518915e-10
+      },
+      {
+        "particles": 100000,
+        "original_top_particles": 200,
+        "surface_rise_median_m": 0.044669580914954876,
+        "surface_rise_p90_m": 0.0979250155568879,
+        "surface_rise_max_m": 0.19206229763989868,
+        "soil_y_max_m": 1.698502078861434,
+        "time_s": 10.0,
+        "source": "examples/igampm/cpt_dp/OutputData/cpt_ipc_20261004/latest_state.npz",
+        "volume_ratio_to_t0": 1.0470552521773886,
+        "plastic_volume_ratio_to_t0": 1.051388345540268,
+        "J_quantiles": [
+          0.9943044694707808,
+          1.0388660447907245,
+          1.2301428027666776,
+          4.603106840078202,
+          3934.8210145862954
+        ],
+        "Jp_quantiles": [
+          1.0000000000099292,
+          1.046386527292723,
+          1.243672114948175,
+          4.6592022374326145,
+          3935.1147625926146
+        ],
+        "hoop_identity_max_error": 3.3084646133829665e-14,
+        "plastic_log_volume_history_max_error": 2.1712365236711143e-10
+      }
+    ]
+  },
+  "corrected_preload_max_cauchy_error_vs_SDMC_Pa": 7.799826562404633e-09,
+  "SDMC_initial_dilation_angle_range_deg": [
+    14.989816342517697,
+    15.33126736704386
+  ],
+  "IGA_VTU_VTS_duplicate": {
+    "points": 66,
+    "cells": 32,
+    "points_max_difference": 0.0,
+    "displacement_max_difference": 0.0,
+    "stress_max_difference": 0.0
+  }
+}

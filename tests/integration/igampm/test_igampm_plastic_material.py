@@ -50,7 +50,7 @@ def _build_iga_rectangle(output_path, axisymmetric=False):
     )
 
 
-def _build_plastic_mpm_particle(output_path, material_name, axisymmetric=False, damping=0.0):
+def _build_plastic_mpm_particle(output_path, material_name, axisymmetric=False, damping=0.0, dilation=30.0):
     from src.mpm.engines.direct.ImplicitULMPM import ImplicitULMPM
     from src.mpm.generator.Body import Body
 
@@ -72,7 +72,7 @@ def _build_plastic_mpm_particle(output_path, material_name, axisymmetric=False, 
         material_parameters.update(
             {
                 "FrictionAngle": 30.0,
-                "DilationAngle": 30.0,
+                "DilationAngle": dilation,
                 "Cohesion": 1.0,
                 "dpType": "Circumscribed",
             }
@@ -306,3 +306,82 @@ def test_axisymmetric_plastic_ulmpm_uses_three_dimensional_material_map(
     equivalent_after = mpm.material.equivalent_plastic_strain.to_numpy()
     assert equivalent_after[0] > equivalent_before[0]
     assert np.linalg.det(mpm.F0.to_numpy()[0]) > 0.0
+
+
+@pytest.mark.parametrize("axisymmetric", [False, True])
+@pytest.mark.parametrize("dilation", [0.0, 15.0, 30.0])
+def test_plastic_volume_fixed_point_preserves_assembled_force_at_commit(
+    taichi_runtime, tmp_path, axisymmetric, dilation
+):
+    import taichi as ti
+
+    mpm = _build_plastic_mpm_particle(tmp_path / "mpm", "DruckerPrager", axisymmetric, dilation=dilation)
+    assert mpm.has_lagged_material
+    mpm.F0.from_numpy(np.array([np.diag([1.22, 0.78, 1.16])]))
+    mpm.grid_reset()
+    mpm.compute_shapefn()
+    mpm.mass_vel_acc_p2g()
+    mpm.find_active_node()
+    mpm.prefix_sum_executor.run(mpm.node2dof)
+    active = mpm.set_active_dof()
+    mpm.grid_disp.fill(0.05)
+    mpm.begin_lagged_material_state()
+    assert mpm.refresh_lagged_material_state(mpm.grid_disp) > mpm.material_lagged_tolerance
+    assert mpm.refresh_lagged_material_state(mpm.grid_disp) <= mpm.material_lagged_tolerance
+    mpm.rhs.fill(0.0)
+    mpm.assemble_material_force(active, mpm.grid_disp)
+    before = mpm.rhs.to_numpy().copy()
+
+    @ti.kernel
+    def commit_history_at_same_displacement():
+        for i in range(mpm.particleNum[0]):
+            incremental = ti.Matrix.identity(ti.f64, 3)
+            if ti.static(axisymmetric):
+                incremental = mpm.get_axisymmetric_incremental_map(i, mpm.grid_disp)
+            else:
+                incremental = mpm.get_plane_strain_incremental_map(i, mpm.grid_disp)
+            ignored = mpm.material.commit_total_state(i, incremental @ mpm.F0[i])
+
+    # Retain the original geometry, F_n and basis: only the material state changes.
+    commit_history_at_same_displacement()
+    mpm.rhs.fill(0.0)
+    mpm.assemble_material_force(active, mpm.grid_disp)
+    assert mpm.material.lagged_plastic_volume_active[0] == 0
+    np.testing.assert_allclose(mpm.rhs.to_numpy(), before, rtol=1.0e-8, atol=1.0e-8)
+
+
+@pytest.mark.parametrize("axisymmetric", [False, True])
+def test_nonassociated_ipc_solves_with_pcg_and_physical_flow(taichi_runtime, tmp_path, axisymmetric):
+    from src.igampm import IGAMPM
+
+    iga = _build_iga_rectangle(tmp_path / "iga", axisymmetric)
+    mpm = _build_plastic_mpm_particle(tmp_path / "mpm", "DruckerPrager", axisymmetric, dilation=15.0)
+    mpm.F0.from_numpy(np.array([np.diag([1.18, 0.82, 0.90])]))
+    engine = IGAMPM(
+        iga,
+        mpm,
+        kappa=1e4,
+        dhat=0.08,
+        dmin=0.005,
+        barrier_nnz=20_000,
+        assemble_type="HashTriplet",
+        axisymmetric=axisymmetric,
+        axis_offset=0.0,
+        monolithic_max_iterations=100,
+        monolithic_tolerance=1e-8,
+        monolithic_force_rtol=1e-8,
+        monolithic_force_atol=1e-8,
+    ).build()
+    assert engine.monolithic_hash_matrix.solver == "PCG"
+    assert mpm.hash_matrix.solver == "PCG"
+    result = engine.implicit_ipc_substep(verbose=False)
+    assert result["converged"]
+    assert mpm.last_material_lagged_error <= mpm.material_lagged_tolerance
+    assert engine.last_monolithic_force_residual <= 1e-6
+    assert result["minimum_distance"] > engine.barrier.minimum_distance
+    equivalent = mpm.material.equivalent_plastic_strain[0]
+    assert equivalent > 0
+    assert mpm.material.volumetric_plastic_strain[0] == pytest.approx(
+        3 * mpm.material.beta * equivalent / np.sqrt(2 / 3),
+        abs=1e-9,
+    )

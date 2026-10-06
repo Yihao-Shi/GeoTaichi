@@ -34,7 +34,7 @@ Hertz--Mindlin needs explicit/explicit children. Mixed pairs are rejected
 because they do not share a consistent time discretization or unknown vector.
 
 For finite-strain plastic MPM, select the Direct backend, implicit solver,
-and `configuration="ULMPM"`. The supported coupling materials are associated
+and `configuration="ULMPM"`. The supported coupling materials are
 `DruckerPrager` and associated `VonMises`, alongside elastic `NeoHookean`.
 Keep the IGA child elastic. Direct TLMPM plasticity is rejected because it does
 not yet own explicit plastic-gradient state.
@@ -98,11 +98,33 @@ geometry, matrix block assembly, line search, CCD/ACCD, convergence tolerances,
 and contact buffer/NNZ capacities. Do not assume matrix symmetry when friction
 or another nonsymmetric tangent is active.
 
+IPC control-hull AABB culling keeps every pair but stores a conservative
+distance lower bound for far inactive pairs. Active pairs and positive SemiIPC
+multipliers retain full projection geometry. A reported inactive minimum is
+therefore a lower bound, not necessarily the exact closest distance. ACCD can
+skip a moving query only when its relative-motion bound certifies the complete
+segment; near/approaching pairs still use the accumulated closest-point loop.
+Three-dimensional IPC queries share refreshed knot-span hulls and fixed
+Greville coordinates across particles. A fixed-topology span BVH is refitted
+after deformation and used to prune span subtrees and locate the exact nearest
+control-point seed. Queries also reuse previous closest parameters
+as extra seeds. They retain span multistart and boundary searches; seed reuse
+does not certify a global minimum by itself. Moving ACCD queries do not reuse
+stationary span bounds.
+
 Plastic MPM uses the same point--NURBS ACCD, material CCD, Armijo, and sparse
-assembly paths as elastic MPM. Its history variables and elastic `F0` must be
+assembly paths as elastic MPM. Its history variables and total `F0` must be
 committed only after coupled acceptance and restored together on an acceptance
 failure. `IGAMPM.build()` preserves a valid preinitialized `F0`; it initializes
 only an all-zero field.
+
+Nonassociated DP accepts independent constant `DilationAngle`. Its material
+outer loop refreshes the frozen flow correction and plastic-volume predictor
+around symmetric PCG/energy-Armijo inner solves, checking actual Kirchhoff
+stress and plastic-volume mismatch. Equivalent corrections inside the flat
+tensile cap do not by themselves require another global solve.
+Particle-local Aitken relaxation updates the predictors while the material
+criterion continues to check their unrelaxed physical mismatch.
 
 Set the coupled `assemble_type` to `"COO"` or `"HashTriplet"`. Point--NURBS
 ACCD must use both point and control-point trial directions and rerun the

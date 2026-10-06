@@ -96,11 +96,11 @@ def cylinder_outline(domain, scale):
     return np.asarray(segments) * scale
 
 
-def prepare(case, folder, preview=False):
+def prepare(case, folder, preview=False, allow_failed=False, source=None):
     relative, filename, title, domain, piston = CASES[case]
-    source = ROOT / "examples/mmpm" / relative
+    source = source or ROOT / "examples/mmpm" / relative
     metrics = json.loads((source / "metrics.json").read_text())
-    if not metrics.get("passed"):
+    if not metrics.get("passed") and not allow_failed:
         raise ValueError(f"Source validation failed: {source}")
     paths = sorted((source / "particles").glob("MPMParticle[0-9]*.npz"))
     if not paths:
@@ -129,9 +129,7 @@ def prepare(case, folder, preview=False):
                 grid,
                 domain,
                 scale,
-                close_particle_voids=(
-                    case in {"sphere_impact", "lsdem_wavemaker"} or metrics.get("maximum_enclosed_air_cells") == 0
-                ),
+                close_particle_voids=True,
                 radial_limit=0.5 * domain[0] if case == "sphere_impact" else None,
                 occupancy_threshold=0.35,
             )
@@ -190,11 +188,13 @@ def main():
     parser.add_argument("--preview", action="store_true")
     parser.add_argument("--prepare-only", action="store_true")
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--allow-failed", action="store_true", help="Render a failed run for diagnosis")
+    parser.add_argument("--source", type=Path, help="Override the saved result directory")
     args = parser.parse_args()
     if args.samples <= 0:
         parser.error("--samples must be positive")
     work = args.work_dir or Path(tempfile.mkdtemp(prefix="two_phase_3d_"))
-    manifest, config = prepare(args.case, work / args.case, args.preview)
+    manifest, config = prepare(args.case, work / args.case, args.preview, args.allow_failed, args.source)
     if args.prepare_only:
         return
     command = [

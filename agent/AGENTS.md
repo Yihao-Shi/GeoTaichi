@@ -162,6 +162,8 @@ For MCP tools, transports, resource loading, or persistent task behavior, read
 model-builder Skill; the MCP package consumes them and must not duplicate them.
 
 - Read one to three neighboring examples and preserve their import, setup, output-path, and call-order conventions.
+- Each module's example must be a self-contained script in that module's example directory. Do not import or
+  execute another example script for geometry, setup, solver orchestration, or output; library imports remain allowed.
 - Compile every edited example with `python -m py_compile`; run a short smoke case when practical.
 - Keep the helper manual's theory and API entries synchronized. Follow
   `docs/helper/geotaichi_documentation_spec.md` and document each dictionary key at its full nesting path.

@@ -2,20 +2,13 @@ from math import isfinite, sqrt
 
 import taichi as ti
 
-from src.utils.constants import BLOCK_SZ
 from src.linear_solver.LinearOperator import LinearOperator
 
-
-from src.linear_solver.MatrixFreePCGKernel import (
-    reset,
-    init,
-    reduce_shared,
+from src.linear_solver.MatrixFreeKrylovKernel import (
+    pcg_init as init,
     reduce_atomic,
-    update_x,
-    update_r,
-    update_z,
     update_x_r_z,
-    update_p,
+    cg_update_p as update_p,
 )
 
 

@@ -120,8 +120,8 @@ class Simulation(object):
         self.soft_grid_storage = "Dense"
         self.soft_grid_compact = False
         self.soft_levelset_transport = True
-        self.soft_levelset_reinitialization = True
-        self.soft_levelset_advection_scheme = "SemiLagrangian"
+        self.soft_levelset_reinitialization = False
+        self.soft_levelset_advection_scheme = "ReferenceMap"
         self.soft_levelset_advection_cfl = 1.0
         self.soft_levelset_advection_interval = 1
         self.soft_levelset_advection_elapsed = 0.0

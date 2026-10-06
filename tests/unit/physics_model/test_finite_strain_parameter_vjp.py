@@ -17,14 +17,14 @@ pytestmark = [pytest.mark.materials, pytest.mark.cpu]
 
 
 def _model(kind, values):
-    if kind == "dp":
+    if kind.startswith("dp"):
         model = FiniteStrainDruckerPragerModel().initialize_from_kwargs(
             density=1800.0,
             young_modulus=values[0],
             poisson_ratio=values[1],
             Cohesion=values[2],
             FrictionAngle=values[3],
-            DilationAngle=values[3],
+            DilationAngle=15.0 if kind == "dp_nonassociated" else values[3],
         )
     else:
         model = FiniteStrainVonMisesModel().initialize_from_kwargs(
@@ -92,9 +92,9 @@ def _evaluate(model, deformation, inverse_seed, equivalent_seed, volumetric_seed
     )
 
 
-@pytest.mark.parametrize("kind", ["dp", "vm"])
+@pytest.mark.parametrize("kind", ["dp", "dp_nonassociated", "vm"])
 def test_device_material_parameter_vjp_matches_fd(taichi_runtime, kind):
-    values = np.array([2.0e4, 0.3, 120.0, 28.0 if kind == "dp" else 900.0])
+    values = np.array([2.0e4, 0.3, 120.0, 28.0 if kind.startswith("dp") else 900.0])
     deformation = np.array(
         [[1.24, 0.03, 0.0], [0.0, 0.86, 0.02], [0.0, 0.0, 0.82]],
         dtype=np.float64,
@@ -131,3 +131,47 @@ def test_device_material_parameter_vjp_matches_fd(taichi_runtime, kind):
 
     np.testing.assert_allclose(analytic_parameter_derivative, fd_stress, rtol=2.0e-3, atol=2.0e-4)
     np.testing.assert_allclose(analytic_state, fd_state, rtol=4.0e-3, atol=2.0e-4)
+
+
+def test_nonassociated_frozen_inner_parameter_derivatives(taichi_runtime):
+    values = np.array([2e4, 0.3, 120.0, 28.0])
+    model = _model("dp_nonassociated", values)
+    deformation = np.diag([1.24, 0.86, 0.82])
+    partials = ti.Matrix.field(9, 4, ti.f64, shape=())
+
+    @ti.kernel
+    def evaluate():
+        F = ti.Matrix.zero(ti.f64, 3, 3)
+        for row, column in ti.static(ti.ndrange(3, 3)):
+            F[row, column] = deformation[row, column]
+        model.begin_lagged_incremental_potential(0)
+        ignored = model.refresh_lagged_incremental_potential(0, F)
+        partials[None] = model.first_piola_parameter_derivatives_at(0, F)
+
+    evaluate()
+    shift = float(model.lagged_flow_shift[0])
+
+    def frozen_pk1(parameters):
+        young, poisson, cohesion, angle = parameters
+        mu, bulk = young / (2 * (1 + poisson)), young / (3 * (1 - 2 * poisson))
+        phi = math.radians(angle)
+        q, k = model._cone_parameters(cohesion, phi, model.dp_type)
+        alpha, intercept = math.sqrt(2) * q / 3, math.sqrt(2) * k
+        u, stretch, vt = np.linalg.svd(deformation)
+        strain = np.log(stretch) + shift
+        trace = strain.sum()
+        dev = strain - trace / 3
+        norm = np.linalg.norm(dev)
+        gamma = (2 * mu * norm + alpha * 3 * bulk * trace - intercept) / (2 * mu + 9 * bulk * alpha**2)
+        assert 0 < gamma < norm
+        returned = strain - gamma * (dev / norm + alpha)
+        tau = 2 * mu * (returned - returned.mean()) + bulk * returned.sum()
+        return (u @ np.diag(tau / stretch) @ vt).T.reshape(-1)
+
+    numeric = np.zeros((9, 4))
+    for parameter, step in enumerate([1e-3, 1e-6, 1e-3, 1e-3]):
+        plus, minus = values.copy(), values.copy()
+        plus[parameter] += step
+        minus[parameter] -= step
+        numeric[:, parameter] = (frozen_pk1(plus) - frozen_pk1(minus)) / (2 * step)
+    np.testing.assert_allclose(partials.to_numpy()[()], numeric, rtol=1e-6, atol=1e-5)

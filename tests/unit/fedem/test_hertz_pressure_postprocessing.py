@@ -2,13 +2,9 @@ import math
 
 import numpy as np
 
-from examples.fedem.HertzContact.hertz_contact import (
-    RADIUS,
-    TARGET_INDENTATION,
-    _pressure_profile,
-    _projected_nodal_areas,
-    _write_pressure_sample_archive,
-)
+from examples.fedem.HertzContact.hertz_contact_parameters import RADIUS, TARGET_INDENTATION
+from examples.fedem.HertzContact.draw.evaluate_hertz_contact import _pressure_profile, _write_pressure_sample_archive
+from examples.fedem.HertzContact.hertz_contact import _projected_nodal_areas
 
 
 def test_projected_pressure_profile_is_conservative_and_archived(tmp_path):

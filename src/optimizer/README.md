@@ -20,110 +20,110 @@ functions.
 
 ## Damped Newton method
 
-For an unconstrained objective $f:\mathbb{R}^n\rightarrow\mathbb{R}$,
+For an unconstrained objective $`f:\mathbb{R}^n\rightarrow\mathbb{R}`$,
 Newton's direction solves
 
-$$
+```math
 \boldsymbol{H}_k\boldsymbol{p}_k=-\boldsymbol{g}_k,
 \qquad
 \boldsymbol{g}_k=\nabla f(\boldsymbol{x}_k),
 \qquad
 \boldsymbol{H}_k=\nabla^2f(\boldsymbol{x}_k).
-$$
+```
 
 If the Hessian is numerically unusable, the local fallback direction is a
-scaled negative gradient. Backtracking starts from $\alpha=1$ and accepts the
+scaled negative gradient. Backtracking starts from $`\alpha=1`$ and accepts the
 Armijo condition
 
-$$
+```math
 f(\boldsymbol{x}_k+\alpha\boldsymbol{p}_k)
 \leq
 f(\boldsymbol{x}_k)
 +c_1\alpha\boldsymbol{g}_k^T\boldsymbol{p}_k,
 \qquad 0<c_1<1,
-$$
+```
 
-halving $\alpha$ until the inequality holds or the minimum step is reached.
+halving $`\alpha`$ until the inequality holds or the minimum step is reached.
 The local stationarity test is
 
-$$
+```math
 \|\nabla f(\boldsymbol{x}_k)\|_2^2<\varepsilon.
-$$
+```
 
 ## Inequality-constrained augmented Lagrangian
 
 Consider
 
-$$
+```math
 \min_{\boldsymbol{x}} f(\boldsymbol{x})
 \quad\text{subject to}\quad
 g_i(\boldsymbol{x})\leq0,
 \qquad i=1,\ldots,m.
-$$
+```
 
-With multipliers $\lambda_i\geq0$, penalty $\rho>0$, and
-$\langle z\rangle_+=\max(z,0)$, the Powell--Hestenes--Rockafellar form used
+With multipliers $`\lambda_i\geq0`$, penalty $`\rho>0`$, and
+$`\langle z\rangle_+=\max(z,0)`$, the Powell--Hestenes--Rockafellar form used
 for the primal subproblem is, up to the constant
-$-\sum_i\lambda_i^2/(2\rho)$,
+$`-\sum_i\lambda_i^2/(2\rho)`$,
 
-$$
+```math
 \mathcal L_\rho(\boldsymbol{x},\boldsymbol{\lambda})
 =f(\boldsymbol{x})
 +\frac{\rho}{2}\sum_{i=1}^{m}
 \left\langle
 g_i(\boldsymbol{x})+\frac{\lambda_i}{\rho}
 \right\rangle_+^2.
-$$
+```
 
 Define
 
-$$
+```math
 q_i=g_i(\boldsymbol{x})+\frac{\lambda_i}{\rho},
 \qquad
 \mathcal A=\{i:q_i>0\}.
-$$
+```
 
 Away from the active-set switching surface, its gradient and Hessian are
 
-$$
+```math
 \nabla\mathcal L_\rho
 =\nabla f
 +\rho\sum_{i\in\mathcal A}q_i\nabla g_i,
-$$
+```
 
-$$
+```math
 \nabla^2\mathcal L_\rho
 =\nabla^2f
 +\rho\sum_{i\in\mathcal A}
 \left(
 \nabla g_i\nabla g_i^T+q_i\nabla^2g_i
 \right).
-$$
+```
 
-The inner solve applies damped Newton to $\mathcal L_\rho$. The outer update
+The inner solve applies damped Newton to $`\mathcal L_\rho`$. The outer update
 is the projected multiplier step
 
-$$
+```math
 \lambda_i^{k+1}
 =\max\left(0,\lambda_i^k+\rho_k g_i(\boldsymbol{x}_{k+1})\right).
-$$
+```
 
 If the maximum positive constraint violation is not reduced sufficiently, the
 penalty is increased:
 
-$$
+```math
 \rho_{k+1}
 =\min(\rho_{max},\gamma_\rho\rho_k),
 \qquad \gamma_\rho>1.
-$$
+```
 
 The local stopping test combines feasibility and iterate change,
 
-$$
+```math
 \max_i\langle g_i(\boldsymbol{x}_{k+1})\rangle_+<\varepsilon,
 \qquad
 \|\boldsymbol{x}_{k+1}-\boldsymbol{x}_k\|_2^2<\varepsilon.
-$$
+```
 
 ## Usage pattern
 

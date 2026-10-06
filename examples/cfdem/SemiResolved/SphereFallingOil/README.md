@@ -41,7 +41,7 @@ hide this inconsistency.
 
 ```sh
 python examples/cfdem/SemiResolved/SphereFallingOil/sphere.py --arch gpu --time 1.25 --save-interval 0.025 --write-vtu
-python examples/cfdem/SemiResolved/SphereFallingOil/draw.py
+python examples/cfdem/SemiResolved/SphereFallingOil/draw/draw.py
 ```
 
 The fluid uses semi-implicit incompressible FDM pressure projection,

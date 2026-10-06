@@ -28,42 +28,42 @@ remains in each solver module.
 
 ## Structured-grid geometry and topology
 
-For cell counts $n_k$, spacings $h_k$, and $g$ ghost layers, structured
+For cell counts $`n_k`$, spacings $`h_k`$, and $`g`$ ghost layers, structured
 nodes lie on the Cartesian lattice
 
-$$
+```math
 x_{\boldsymbol{i},k}=(i_k-g)h_k,
 \qquad
 0\leq i_k\leq n_k.
-$$
+```
 
 Each interior face is incident to two cells and each domain-boundary face to
-one. For a face with vertices $\boldsymbol{x}_{a}$, its geometric center is
+one. For a face with vertices $`\boldsymbol{x}_{a}`$, its geometric center is
 
-$$
+```math
 \boldsymbol{x}_f=\frac{1}{n_f}\sum_{a=1}^{n_f}\boldsymbol{x}_{a}.
-$$
+```
 
-On a tensor-product parent cell $[-1,1]^d$, associate each corner $a$ with
-signs $s_{a,k}\in\{-1,1\}$. The multilinear corner basis is
+On a tensor-product parent cell $`[-1,1]^d`$, associate each corner $`a`$ with
+signs $`s_{a,k}\in\{-1,1\}`$. The multilinear corner basis is
 
-$$
+```math
 N_a(\boldsymbol{\xi})
 =2^{-d}\prod_{k=1}^{d}(1+s_{a,k}\xi_k),
 \qquad
 \sum_aN_a=1.
-$$
+```
 
 The physical map and its Jacobian are
 
-$$
+```math
 \boldsymbol{x}(\boldsymbol{\xi})
 =\sum_aN_a(\boldsymbol{\xi})\boldsymbol{x}_a,
 \qquad
 \boldsymbol{J}
 =\frac{\partial\boldsymbol{x}}{\partial\boldsymbol{\xi}}
 =\sum_a\boldsymbol{x}_a\otimes\nabla_{\xi}N_a.
-$$
+```
 
 These identities define the geometry behind the quadrilateral and
 hexahedral connectivity; solver packages attach their own field variables and
@@ -71,47 +71,47 @@ shape-gradient conventions.
 
 ## Gaussian quadrature
 
-The one-dimensional Gauss--Legendre rule with nodes $\xi_q$ and weights
-$w_q$ approximates
+The one-dimensional Gauss--Legendre rule with nodes $`\xi_q`$ and weights
+$`w_q`$ approximates
 
-$$
+```math
 \int_{-1}^{1}f(\xi)\,\mathrm d\xi
 \approx\sum_{q=1}^{n}w_qf(\xi_q).
-$$
+```
 
 Its tensor-product extension is
 
-$$
+```math
 \int_{[-1,1]^d}f(\boldsymbol{\xi})\,\mathrm d\boldsymbol{\xi}
 \approx
 \sum_{q_1=1}^{n_1}\cdots\sum_{q_d=1}^{n_d}
 \left(\prod_{k=1}^{d}w_{q_k}\right)
 f(\xi_{q_1},\ldots,\xi_{q_d}).
-$$
+```
 
 After an isoparametric map, physical integration includes the Jacobian:
 
-$$
+```math
 \int_{\Omega_e}f(\boldsymbol{x})\,\mathrm d\boldsymbol{x}
 \approx
 \sum_q w_q f(\boldsymbol{x}(\boldsymbol{\xi}_q))
 \left|\det\boldsymbol{J}(\boldsymbol{\xi}_q)\right|.
-$$
+```
 
 For triangle and tetrahedron rules, the stored simplex weights are normalized
-to sum to one. If $|S_e|$ is the physical area or volume,
+to sum to one. If $`|S_e|`$ is the physical area or volume,
 
-$$
+```math
 \int_{S_e}f(\boldsymbol{x})\,\mathrm d\boldsymbol{x}
 \approx
 |S_e|\sum_qw_qf(\boldsymbol{x}(\boldsymbol{\lambda}_q)),
 \qquad
 \sum_qw_q=1,
-$$
+```
 
-where $\boldsymbol{\lambda}_q$ are barycentric coordinates, with the final
+where $`\boldsymbol{\lambda}_q`$ are barycentric coordinates, with the final
 coordinate supplied by
-$\lambda_0=1-\sum_{k=1}^{d}\lambda_k$.
+$`\lambda_0=1-\sum_{k=1}^{d}\lambda_k`$.
 
 ## Examples
 

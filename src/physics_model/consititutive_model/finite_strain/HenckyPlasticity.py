@@ -26,6 +26,9 @@ class HenckyAssociatedPlasticityModel(FiniteStrainModel):
         self.is_finite_strain_plastic = True
         self.has_symmetric_tangent = True
         self.has_incremental_potential = True
+        self.requires_lagged_incremental_potential = False
+        self.lagged_tolerance = 1.0e-8
+        self.lagged_max_iterations = 20
         # Scalars followed by the column-major plastic inverse Fp^{-1}.
         # Engines keep the total deformation gradient; the constitutive
         # model owns the plastic part needed to form Fe = F Fp^{-1}.
@@ -36,6 +39,8 @@ class HenckyAssociatedPlasticityModel(FiniteStrainModel):
         self.equivalent_plastic_strain = None
         self.volumetric_plastic_strain = None
         self.plastic_deformation_inverse = None
+        self.lagged_plastic_jacobian = None
+        self.lagged_plastic_volume_active = None
 
     @staticmethod
     def _parameter(material, names, default=None, required=False):
@@ -54,6 +59,11 @@ class HenckyAssociatedPlasticityModel(FiniteStrainModel):
         self.equivalent_plastic_strain.fill(0.0)
         self.volumetric_plastic_strain.fill(0.0)
         self._initialize_plastic_deformation_inverse()
+        if self.requires_lagged_incremental_potential:
+            self.lagged_plastic_jacobian = ti.field(ti.f64, shape=particle_count)
+            self.lagged_plastic_volume_active = ti.field(ti.i32, shape=particle_count)
+            self.lagged_plastic_jacobian.fill(1.0)
+            self.lagged_plastic_volume_active.fill(0)
 
     @ti.kernel
     def _initialize_plastic_deformation_inverse(self):
@@ -78,6 +88,7 @@ class HenckyAssociatedPlasticityModel(FiniteStrainModel):
         self.volumetric_plastic_strain[particle_id] = history_state[1]
         for column, row in ti.static(ti.ndrange(3, 3)):
             self.plastic_deformation_inverse[particle_id][row, column] = history_state[2 + 3 * column + row]
+        self.end_lagged_plastic_volume(particle_id)
 
     @ti.func
     def trial_elastic_deformation(self, particle_id, total_deformation_gradient):
@@ -90,16 +101,61 @@ class HenckyAssociatedPlasticityModel(FiniteStrainModel):
         return 1.0 / self.plastic_deformation_inverse[particle_id].determinant()
 
     @ti.func
+    def incremental_reference_jacobian(self, particle_id):
+        """One frozen volume weight for the inner energy, force and tangent.
+
+        The material fixed point predicts the accepted plastic volume without
+        changing committed history. Outside that solve use the actual volume.
+        The tangent here differentiates the INNER potential at fixed weight.
+        """
+        jacobian = self.plastic_reference_jacobian(particle_id)
+        if ti.static(self.requires_lagged_incremental_potential):
+            if self.lagged_plastic_volume_active[particle_id] != 0:
+                jacobian = self.lagged_plastic_jacobian[particle_id]
+        return jacobian
+
+    @ti.func
+    def begin_lagged_plastic_volume(self, particle_id):
+        if ti.static(self.requires_lagged_incremental_potential):
+            self.lagged_plastic_jacobian[particle_id] = self.plastic_reference_jacobian(particle_id)
+            self.lagged_plastic_volume_active[particle_id] = 1
+
+    @ti.func
+    def refresh_lagged_plastic_volume(self, particle_id, total_deformation_gradient):
+        elastic_trial = self.trial_elastic_deformation(particle_id, total_deformation_gradient)
+        projected_elastic = self.project_elastic_deformation(particle_id, elastic_trial)
+        candidate = total_deformation_gradient.determinant() / projected_elastic.determinant()
+        assert candidate > 0.0, "finite-strain plasticity requires positive predicted plastic volume"
+        error = ti.abs(ti.log(candidate / self.lagged_plastic_jacobian[particle_id]))
+        self.lagged_plastic_jacobian[particle_id] = candidate
+        return error
+
+    @ti.func
+    def end_lagged_plastic_volume(self, particle_id):
+        if ti.static(self.requires_lagged_incremental_potential):
+            self.lagged_plastic_volume_active[particle_id] = 0
+
+    @ti.func
+    def begin_lagged_incremental_potential(self, particle_id):
+        self.begin_lagged_plastic_volume(particle_id)
+
+    @ti.func
+    def refresh_lagged_incremental_potential(self, particle_id, total_deformation_gradient):
+        return self.refresh_lagged_plastic_volume(particle_id, total_deformation_gradient)
+
+    @ti.func
     def total_strain_energy_density_at(self, particle_id, total_deformation_gradient):
         elastic_trial = self.trial_elastic_deformation(particle_id, total_deformation_gradient)
-        return self.plastic_reference_jacobian(particle_id) * self.strain_energy_density_at(particle_id, elastic_trial)
+        return self.incremental_reference_jacobian(particle_id) * self.strain_energy_density_at(
+            particle_id, elastic_trial
+        )
 
     @ti.func
     def total_first_piola_stress_at(self, particle_id, total_deformation_gradient):
         plastic_inverse = self.plastic_deformation_inverse[particle_id]
         elastic_trial = total_deformation_gradient @ plastic_inverse
         return (
-            self.plastic_reference_jacobian(particle_id)
+            self.incremental_reference_jacobian(particle_id)
             * self.first_piola_stress_at(particle_id, elastic_trial)
             @ plastic_inverse.transpose()
         )
@@ -109,7 +165,7 @@ class HenckyAssociatedPlasticityModel(FiniteStrainModel):
         plastic_inverse = self.plastic_deformation_inverse[particle_id]
         elastic_trial = total_deformation_gradient @ plastic_inverse
         elastic_tangent = self.first_piola_tangent_at(particle_id, elastic_trial)
-        reference_jacobian = self.plastic_reference_jacobian(particle_id)
+        reference_jacobian = self.incremental_reference_jacobian(particle_id)
         tangent = ti.Matrix.zero(float, 9, 9)
         row = 0
         while row < 9:
@@ -152,6 +208,7 @@ class HenckyAssociatedPlasticityModel(FiniteStrainModel):
         elastic_trial = self.trial_elastic_deformation(particle_id, total_deformation_gradient)
         committed_elastic = self.commit_state(particle_id, elastic_trial)
         self.plastic_deformation_inverse[particle_id] = total_deformation_gradient.inverse() @ committed_elastic
+        self.end_lagged_plastic_volume(particle_id)
         return total_deformation_gradient
 
     @ti.func
@@ -173,6 +230,9 @@ class HenckyAssociatedPlasticityModel(FiniteStrainModel):
             singular_values[i] = singular_matrix[i, i]
             strain[i] = ti.log(singular_values[i])
             trace_strain += strain[i]
+        # The volumetric strain is exactly log(det F). Avoid amplification of
+        # iterative SVD roundoff in the pressure and hydrostatic apex energy.
+        trace_strain = ti.log(deformation_gradient.determinant())
         deviatoric_strain = strain - (trace_strain / dimension) * ti.Vector.one(float, dimension)
         deviatoric_norm = deviatoric_strain.norm()
         return (
@@ -184,6 +244,34 @@ class HenckyAssociatedPlasticityModel(FiniteStrainModel):
             deviatoric_strain,
             deviatoric_norm,
         )
+
+    @ti.func
+    def plastic_flow_alpha(self):
+        return self.alpha
+
+    @ti.func
+    def _flow_parameter_partial(self, particle_id, parameter_id):
+        return self._material_parameter_partials(particle_id, parameter_id)[2]
+
+    @ti.func
+    def _potential_flow_alpha(self, particle_id):
+        return self.plastic_flow_alpha()
+
+    @ti.func
+    def _potential_flow_parameter_partial(self, particle_id, parameter_id):
+        return self._flow_parameter_partial(particle_id, parameter_id)
+
+    @ti.func
+    def _potential_trial_state(self, particle_id, deformation_gradient):
+        return self._principal_trial_state(deformation_gradient)
+
+    @ti.func
+    def _potential_principal_return(self, particle_id, strain, trace, dev, norm):
+        return self._associated_principal_return(particle_id, strain, trace, dev, norm)
+
+    @ti.func
+    def _potential_strain_jacobian(self, particle_id, strain, trace, dev, norm, multiplier, region):
+        return self._projected_strain_jacobian(particle_id, strain, trace, dev, norm, multiplier, region)
 
     @ti.func
     def current_yield_intercept(self, particle_id):
@@ -210,65 +298,6 @@ class HenckyAssociatedPlasticityModel(FiniteStrainModel):
         return 0.0, 0.0, 0.0, 0.0, 0.0
 
     @ti.func
-    def _return_parameter_derivatives(self, particle_id, deformation_gradient, parameter_id):
-        """Differentiate the principal return map at fixed trial F/history."""
-        response = self._principal_response(particle_id, deformation_gradient)
-        strain = response[3]
-        trace_strain = response[4]
-        deviatoric_strain = response[5]
-        deviatoric_norm = response[6]
-        projected = response[7]
-        plastic_multiplier = response[8]
-        return_region = response[9]
-        dmu, dbulk, dalpha, dyield, dhardening = self._material_parameter_partials(particle_id, parameter_id)
-        dimension = ti.static(3)
-        dprojected = ti.Vector.zero(float, dimension)
-        dplastic_multiplier = 0.0
-        dvolume_increment = 0.0
-        trace_modulus = 3.0 * self.bulk
-        dtrace_modulus = 3.0 * dbulk
-        if return_region == 1 and deviatoric_norm > 1.0e-14:
-            denominator = (
-                2.0 * self.shear
-                + dimension * self.alpha * self.alpha * trace_modulus
-                + self.plastic_hardening_modulus(particle_id)
-            )
-            numerator = (
-                2.0 * self.shear * deviatoric_norm
-                + self.alpha * trace_modulus * trace_strain
-                - self.current_yield_intercept(particle_id)
-            )
-            ddenominator = (
-                2.0 * dmu
-                + dimension * (2.0 * self.alpha * dalpha * trace_modulus + self.alpha * self.alpha * dtrace_modulus)
-                + dhardening
-            )
-            dnumerator = (
-                2.0 * dmu * deviatoric_norm
-                + (dalpha * trace_modulus + self.alpha * dtrace_modulus) * trace_strain
-                - dyield
-            )
-            dplastic_multiplier = (dnumerator * denominator - numerator * ddenominator) / (denominator * denominator)
-            direction = deviatoric_strain / deviatoric_norm
-            dvolumetric_projection = dalpha * plastic_multiplier + self.alpha * dplastic_multiplier
-            for i in ti.static(range(dimension)):
-                dprojected[i] = -dplastic_multiplier * direction[i] - dvolumetric_projection
-            dvolume_increment = dimension * (dalpha * plastic_multiplier + self.alpha * dplastic_multiplier)
-        elif return_region == 2 and self.alpha > 1.0e-14:
-            apex_denominator = self.alpha * trace_modulus
-            dtrace_apex = (
-                dyield * apex_denominator
-                - self.current_yield_intercept(particle_id) * (dalpha * trace_modulus + self.alpha * dtrace_modulus)
-            ) / (apex_denominator * apex_denominator)
-            dplastic_multiplier = (
-                -dtrace_apex * dimension * self.alpha - (trace_strain - self.trace_apex) * dimension * dalpha
-            ) / (dimension * dimension * self.alpha * self.alpha)
-            for i in ti.static(range(dimension)):
-                dprojected[i] = dtrace_apex / dimension
-            dvolume_increment = -dtrace_apex
-        return dprojected, dplastic_multiplier, dvolume_increment
-
-    @ti.func
     def _return_parameter_derivatives_from_response(
         self,
         particle_id,
@@ -280,6 +309,7 @@ class HenckyAssociatedPlasticityModel(FiniteStrainModel):
         plastic_multiplier,
         return_region,
         parameter_id,
+        use_potential=False,
     ):
         """Same return-map derivative with a caller-owned principal response.
 
@@ -288,6 +318,11 @@ class HenckyAssociatedPlasticityModel(FiniteStrainModel):
         independent spectral decompositions in the hot adjoint kernel.
         """
         dmu, dbulk, dalpha, dyield, dhardening = self._material_parameter_partials(particle_id, parameter_id)
+        flow_alpha = self.plastic_flow_alpha()
+        dflow = self._flow_parameter_partial(particle_id, parameter_id)
+        if use_potential:
+            flow_alpha = self._potential_flow_alpha(particle_id)
+            dflow = self._potential_flow_parameter_partial(particle_id, parameter_id)
         dimension = ti.static(3)
         dprojected = ti.Vector.zero(float, dimension)
         dplastic_multiplier = 0.0
@@ -297,7 +332,7 @@ class HenckyAssociatedPlasticityModel(FiniteStrainModel):
         if return_region == 1 and deviatoric_norm > 1.0e-14:
             denominator = (
                 2.0 * self.shear
-                + dimension * self.alpha * self.alpha * trace_modulus
+                + dimension * self.alpha * flow_alpha * trace_modulus
                 + self.plastic_hardening_modulus(particle_id)
             )
             numerator = (
@@ -307,7 +342,11 @@ class HenckyAssociatedPlasticityModel(FiniteStrainModel):
             )
             ddenominator = (
                 2.0 * dmu
-                + dimension * (2.0 * self.alpha * dalpha * trace_modulus + self.alpha * self.alpha * dtrace_modulus)
+                + dimension
+                * (
+                    (dalpha * flow_alpha + self.alpha * dflow) * trace_modulus
+                    + self.alpha * flow_alpha * dtrace_modulus
+                )
                 + dhardening
             )
             dnumerator = (
@@ -317,19 +356,20 @@ class HenckyAssociatedPlasticityModel(FiniteStrainModel):
             )
             dplastic_multiplier = (dnumerator * denominator - numerator * ddenominator) / (denominator * denominator)
             direction = deviatoric_strain / deviatoric_norm
-            dvolumetric_projection = dalpha * plastic_multiplier + self.alpha * dplastic_multiplier
+            dvolumetric_projection = dflow * plastic_multiplier + flow_alpha * dplastic_multiplier
             for i in ti.static(range(dimension)):
                 dprojected[i] = -dplastic_multiplier * direction[i] - dvolumetric_projection
-            dvolume_increment = dimension * (dalpha * plastic_multiplier + self.alpha * dplastic_multiplier)
+            dvolume_increment = dimension * (dflow * plastic_multiplier + flow_alpha * dplastic_multiplier)
         elif return_region == 2 and self.alpha > 1.0e-14:
             apex_denominator = self.alpha * trace_modulus
             dtrace_apex = (
                 dyield * apex_denominator
                 - self.current_yield_intercept(particle_id) * (dalpha * trace_modulus + self.alpha * dtrace_modulus)
             ) / (apex_denominator * apex_denominator)
-            dplastic_multiplier = (
-                -dtrace_apex * dimension * self.alpha - (trace_strain - self.trace_apex) * dimension * dalpha
-            ) / (dimension * dimension * self.alpha * self.alpha)
+            if flow_alpha > 1.0e-14:
+                dplastic_multiplier = (
+                    -dtrace_apex * dimension * flow_alpha - (trace_strain - self.trace_apex) * dimension * dflow
+                ) / (dimension * dimension * flow_alpha * flow_alpha)
             for i in ti.static(range(dimension)):
                 dprojected[i] = dtrace_apex / dimension
             dvolume_increment = -dtrace_apex
@@ -361,6 +401,7 @@ class HenckyAssociatedPlasticityModel(FiniteStrainModel):
                 plastic_multiplier,
                 return_region,
                 parameter_id,
+                use_potential=True,
             )
             dmu, dbulk, _, _, _ = self._material_parameter_partials(particle_id, parameter_id)
             projected_trace = projected[0] + projected[1] + projected[2]
@@ -392,7 +433,7 @@ class HenckyAssociatedPlasticityModel(FiniteStrainModel):
         result = ti.Vector.zero(float, 4)
         plastic_inverse = self.plastic_deformation_inverse[particle_id]
         elastic_trial = total_deformation_gradient @ plastic_inverse
-        reference_jacobian = self.plastic_reference_jacobian(particle_id)
+        reference_jacobian = self.incremental_reference_jacobian(particle_id)
         elastic_derivatives = self.first_piola_parameter_derivatives_at(particle_id, elastic_trial)
         for parameter_id in ti.static(range(4)):
             elastic_derivative = ti.Matrix.zero(float, 3, 3)
@@ -483,18 +524,41 @@ class HenckyAssociatedPlasticityModel(FiniteStrainModel):
         plastic_multiplier,
         return_region,
     ):
-        """Derivative of the principal return map with respect to trial strain."""
+        return self._strain_return_jacobian(
+            particle_id,
+            strain,
+            trace_strain,
+            deviatoric_strain,
+            deviatoric_norm,
+            plastic_multiplier,
+            return_region,
+            self.plastic_flow_alpha(),
+        )
+
+    @ti.func
+    def _strain_return_jacobian(
+        self,
+        particle_id,
+        strain,
+        trace_strain,
+        deviatoric_strain,
+        deviatoric_norm,
+        plastic_multiplier,
+        return_region,
+        flow_alpha,
+    ):
+        """Exact principal Jacobian; nonassociated flow generally is nonsymmetric."""
         dimension = ti.static(strain.n)
         derivative = ti.Matrix.identity(float, dimension)
         if return_region == 1 and deviatoric_norm > 1.0e-14:
             trace_modulus = ti.static(dimension * self.lame_lambda + 2.0 * self.shear)
             denominator = (
                 2.0 * self.shear
-                + dimension * self.alpha * self.alpha * trace_modulus
+                + dimension * self.alpha * flow_alpha * trace_modulus
                 + self.plastic_hardening_modulus(particle_id)
             )
             deviatoric_direction = deviatoric_strain / deviatoric_norm
-            flow_direction = deviatoric_direction + self.alpha
+            flow_direction = deviatoric_direction + flow_alpha
             yield_gradient = (2.0 * self.shear * deviatoric_direction + self.alpha * trace_modulus) / denominator
             for i in ti.static(range(dimension)):
                 for j in ti.static(range(dimension)):
@@ -520,6 +584,19 @@ class HenckyAssociatedPlasticityModel(FiniteStrainModel):
         deviatoric_strain,
         deviatoric_norm,
     ):
+        return self._principal_return_with_flow(
+            particle_id,
+            strain,
+            trace_strain,
+            deviatoric_strain,
+            deviatoric_norm,
+            self.plastic_flow_alpha(),
+        )
+
+    @ti.func
+    def _principal_return_with_flow(
+        self, particle_id, strain, trace_strain, deviatoric_strain, deviatoric_norm, flow_alpha
+    ):
         dimension = ti.static(strain.n)
         projected = strain
         plastic_multiplier = 0.0
@@ -534,21 +611,27 @@ class HenckyAssociatedPlasticityModel(FiniteStrainModel):
         if trial_yield > 0.0:
             denominator = (
                 2.0 * self.shear
-                + dimension * self.alpha * self.alpha * trace_modulus
+                + dimension * self.alpha * flow_alpha * trace_modulus
                 + self.plastic_hardening_modulus(particle_id)
             )
             plastic_multiplier = trial_yield / denominator
             if ti.static(self.alpha > 1.0e-14):
                 if plastic_multiplier >= deviatoric_norm:
                     return_region = 2
-                    plastic_multiplier = (trace_strain - self.trace_apex) / (dimension * self.alpha)
+                    if flow_alpha > 1.0e-14:
+                        plastic_multiplier = (trace_strain - self.trace_apex) / (dimension * flow_alpha)
+                    else:
+                        # Zero-dilation cone cannot return hydrostatic tension.
+                        # At its apex use a tensile cap, with only the deviatoric
+                        # multiplier contributing to equivalent plastic strain.
+                        plastic_multiplier = deviatoric_norm
                     projected = (self.trace_apex / dimension) * ti.Vector.one(float, dimension)
                     plastic_volume_increment = trace_strain - self.trace_apex
             if return_region != 2 and deviatoric_norm > 1.0e-14:
                 return_region = 1
                 projected = strain - (plastic_multiplier / deviatoric_norm) * deviatoric_strain
-                projected -= (self.alpha * plastic_multiplier) * ti.Vector.one(float, dimension)
-                plastic_volume_increment = dimension * self.alpha * plastic_multiplier
+                projected -= (flow_alpha * plastic_multiplier) * ti.Vector.one(float, dimension)
+                plastic_volume_increment = dimension * flow_alpha * plastic_multiplier
         return (
             projected,
             plastic_multiplier,
@@ -755,9 +838,10 @@ class HenckyAssociatedPlasticityModel(FiniteStrainModel):
 
         dimension = ti.static(3)
         trace_modulus = ti.static(dimension * self.lame_lambda + 2.0 * self.shear)
+        flow_alpha = self.plastic_flow_alpha()
         denominator = (
             2.0 * self.shear
-            + dimension * self.alpha * self.alpha * trace_modulus
+            + dimension * self.alpha * flow_alpha * trace_modulus
             + self.plastic_hardening_modulus(particle_id)
         )
         multiplier_strain_gradient = ti.Vector.zero(float, dimension)
@@ -768,16 +852,19 @@ class HenckyAssociatedPlasticityModel(FiniteStrainModel):
         yield_history_derivative = self.yield_intercept_equivalent_plastic_strain_derivative(particle_id)
         if return_region == 1 and deviatoric_norm > 1.0e-14:
             deviatoric_direction = deviatoric_strain / deviatoric_norm
-            flow_direction = deviatoric_direction + self.alpha
+            flow_direction = deviatoric_direction + flow_alpha
             multiplier_strain_gradient = (
                 2.0 * self.shear * deviatoric_direction + self.alpha * trace_modulus
             ) / denominator
             multiplier_equivalent_gradient = -yield_history_derivative / denominator
-            volume_strain_gradient = dimension * self.alpha * multiplier_strain_gradient
-            volume_equivalent_gradient = dimension * self.alpha * multiplier_equivalent_gradient
+            volume_strain_gradient = dimension * flow_alpha * multiplier_strain_gradient
+            volume_equivalent_gradient = dimension * flow_alpha * multiplier_equivalent_gradient
             projected_equivalent_gradient = yield_history_derivative * flow_direction / denominator
         elif return_region == 2:
-            multiplier_strain_gradient = ti.Vector.one(float, dimension) / (dimension * self.alpha)
+            if flow_alpha > 1.0e-14:
+                multiplier_strain_gradient = ti.Vector.one(float, dimension) / (dimension * flow_alpha)
+            elif deviatoric_norm > 1.0e-14:
+                multiplier_strain_gradient = deviatoric_strain / deviatoric_norm
             volume_strain_gradient = ti.Vector.one(float, dimension)
 
         multiplier_vjp = ti.sqrt(2.0 / 3.0) * equivalent_plastic_strain_output_vjp
@@ -845,12 +932,12 @@ class HenckyAssociatedPlasticityModel(FiniteStrainModel):
 
     @ti.func
     def strain_energy_density_at(self, particle_id, deformation_gradient):
-        principal_state = self._principal_trial_state(deformation_gradient)
+        principal_state = self._potential_trial_state(particle_id, deformation_gradient)
         strain = principal_state[3]
         trace_strain = principal_state[4]
         deviatoric_strain = principal_state[5]
         deviatoric_norm = principal_state[6]
-        return_state = self._associated_principal_return(
+        return_state = self._potential_principal_return(
             particle_id,
             strain,
             trace_strain,
@@ -891,9 +978,9 @@ class HenckyAssociatedPlasticityModel(FiniteStrainModel):
             trace_strain,
             deviatoric_strain,
             deviatoric_norm,
-        ) = self._principal_trial_state(deformation_gradient)
+        ) = self._potential_trial_state(particle_id, deformation_gradient)
         dimension = ti.static(deformation_gradient.n)
-        return_state = self._associated_principal_return(
+        return_state = self._potential_principal_return(
             particle_id,
             strain,
             trace_strain,
@@ -929,7 +1016,11 @@ class HenckyAssociatedPlasticityModel(FiniteStrainModel):
         diagonal = ti.Matrix.zero(float, deformation_gradient.n, deformation_gradient.m)
         for i in ti.static(range(deformation_gradient.n)):
             diagonal[i, i] = principal_pk1[i]
-        return matrix_u @ diagonal @ matrix_v.transpose()
+        stress = matrix_u @ diagonal @ matrix_v.transpose()
+        if ti.static(self.alpha > 1.0e-14):
+            if response[9] == 2:
+                stress = self.bulk * self.trace_apex * deformation_gradient.inverse().transpose()
+        return stress
 
     @ti.func
     def first_piola_equivalent_plastic_strain_derivative_at(self, particle_id, deformation_gradient):
@@ -981,7 +1072,7 @@ class HenckyAssociatedPlasticityModel(FiniteStrainModel):
             inverse_stretch[i] = 1.0 / singular_values[i]
             inverse_stretch_squared[i] = inverse_stretch[i] ** 2
 
-        dprojected_dstrain = self._projected_strain_jacobian(
+        dprojected_dstrain = self._potential_strain_jacobian(
             particle_id,
             response[3],
             trace_strain,
@@ -1008,13 +1099,26 @@ class HenckyAssociatedPlasticityModel(FiniteStrainModel):
                 if ti.static(i == j):
                     principal_jacobian[i, j] -= kirchhoff[i] * inverse_stretch_squared[i]
 
-        return self._spectral_matrix_tangent(
+        tangent = self._spectral_matrix_tangent(
             matrix_u,
             matrix_v,
             singular_values,
             principal_pk1,
             principal_jacobian,
         )
+        if ti.static(self.alpha > 1.0e-14):
+            if return_region == 2:
+                inverse = deformation_gradient.inverse()
+                row = 0
+                while row < 9:
+                    column = 0
+                    while column < 9:
+                        tangent[row, column] = (
+                            -self.bulk * self.trace_apex * inverse[row // 3, column % 3] * inverse[column // 3, row % 3]
+                        )
+                        column += 1
+                    row += 1
+        return tangent
 
     @ti.func
     def Psi_at(self, particle_id, deformation_gradient):

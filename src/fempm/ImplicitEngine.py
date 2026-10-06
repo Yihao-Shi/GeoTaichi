@@ -389,7 +389,7 @@ class FEMPMImplicitEngine:
             solver="BiCGSTAB",
             matrix_symmetric=False,
             device_reduction=True,
-            raw_only=True,
+            reduction="bucket",
         )
         body_pairs = int(self.fem_hash.non_diag.max_pairs_num) + int(self.mpm_embedded_hash.non_diag.max_pairs_num)
         total_pairs = body_pairs + contact_capacity
@@ -719,7 +719,7 @@ class FEMPMImplicitEngine:
                     active_nodes=active_mpm_nodes,
                     block_offset=self.fem_nodes,
                 )
-                matrix.append_raw_from(self.contact_hash, active_nodes=active_nodes, block_offset=0)
+                matrix.append_reduced_from(self.contact_hash, active_nodes=active_nodes, block_offset=0)
                 matrix.canonicalize_full_symmetric_input()
             else:
                 matrix = self.monolithic_coo
@@ -1210,7 +1210,7 @@ class FEMPMImplicitEngine:
             if self.mpm.refresh_lagged_material_state(self.mpm.grid_disp) <= self.mpm.material_lagged_tolerance:
                 return True, all_outer_records, last_system
         raise NewtonConvergenceError(
-            "FEMPM lagged MCC hardening did not converge: "
+            "FEMPM lagged material state did not converge: "
             f"error={self.mpm.last_material_lagged_error:.6e} after "
             f"{self.mpm.material_lagged_max_iterations} iterations"
         )

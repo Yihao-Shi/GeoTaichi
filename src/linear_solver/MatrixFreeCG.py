@@ -3,18 +3,15 @@ from math import isfinite, sqrt
 import taichi as ti
 from taichi.lang.impl import current_cfg
 
-from src.utils.constants import BLOCK_SZ
 from src.linear_solver.LinearOperator import LinearOperator
 
-
-from src.linear_solver.MatrixFreeCGKernel import (
-    reset,
-    init,
-    reduce_shared,
+from src.linear_solver.MatrixFreeKrylovKernel import (
+    cg_reset as reset,
+    cg_init as init,
     reduce_atomic,
-    update_x,
-    update_r,
-    update_p,
+    cg_update_x as update_x,
+    cg_update_r as update_r,
+    cg_update_p as update_p,
 )
 
 

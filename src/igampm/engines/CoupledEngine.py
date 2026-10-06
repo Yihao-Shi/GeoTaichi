@@ -19,6 +19,7 @@ from src.utils.StepRetry import StepRetryPolicy
 from src.utils.SolverRuntime import StepSchedule
 from src.utils.TimeTicker import Timer
 from src.utils.linalg import no_operation
+from src.utils.PrefixSum import PrefixSumExecutor
 
 
 @ti.data_oriented
@@ -220,6 +221,11 @@ class Engine(
             self.mpm.total_surface_num * max(1, self.contact_surface.num_surfaces),
         )
         self.contacts = contact_dtype.field(shape=self.contact_capacity)
+        # Seeds are acceleration hints, not accepted contact state. Any finite
+        # parameter remains valid after sample remapping or step rollback.
+        self.contact_projection_seed = (
+            ti.Vector.field(2, ti.f64, shape=self.contact_capacity) if config.DIM == 3 else None
+        )
         self.semi_multiplier = ti.field(ti.f64, shape=self.contact_capacity)
         self.semi_constraint_violation = ti.field(ti.f64, shape=())
         self.friction_contacts = friction_contact_dtype.field(shape=self.contact_capacity)
@@ -252,6 +258,14 @@ class Engine(
         self.contact_stencil_capacity = per_contact_blocks
         self.contact_pair_capacity = per_contact_blocks * per_contact_blocks
         self.contact_pair_count = int(self.mpm.total_surface_num * self.contact_surface.num_surfaces)
+        self.compact_contact_slots = kwargs.get("compact_contact_slots", False)
+        if not isinstance(self.compact_contact_slots, (bool, np.bool_)):
+            raise TypeError("compact_contact_slots must be a boolean")
+        if self.compact_contact_slots:
+            self.contact_slot_prefix = PrefixSumExecutor(self.contact_pair_count)
+            slot_length = self.contact_slot_prefix.get_length()
+            self.barrier_contact_slots = ti.field(ti.i32, shape=slot_length)
+            self.friction_contact_slots = ti.field(ti.i32, shape=slot_length)
         default_contact_blocks = max(
             1,
             self.contact_pair_count * self.contact_pair_capacity,
@@ -273,6 +287,7 @@ class Engine(
             max_active_nodes=active_node_capacity,
             symmetric=False,
             device_reduction=True,
+            reduction="bucket",
         )
         self.friction_hash_matrix = BuildTriplet(
             dim=config.DIM,
@@ -281,6 +296,7 @@ class Engine(
             max_active_nodes=active_node_capacity,
             symmetric=False,
             device_reduction=True,
+            reduction="bucket",
         )
         self.barrier_grad = ti.field(ti.f64, shape=total_dofs)
         self.friction_grad = ti.field(ti.f64, shape=total_dofs)

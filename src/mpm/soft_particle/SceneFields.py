@@ -91,6 +91,11 @@ def activate_soft_material_points(scene, sims):
     scene.sdf_shape = ti.field(float, shape=(max_sdf_nodes, surface_shape_nodes))
     scene.sdf_shape_count = ti.field(int, shape=max_sdf_nodes)
     scene.soft_levelset_velocity = ti.Vector.field(3, float, shape=scene.rigid_grid.shape[0])
+    scene.soft_levelset_initial_sdf = ti.field(float, shape=scene.rigid_grid.shape[0])
+    scene.soft_levelset_initial_sdf_initialized = ti.field(int, shape=sims.max_soft_body_num)
+    scene.soft_levelset_inverse_derivative = None
+    if sims.soft_levelset_advection_scheme == "ReferenceMap":
+        scene.soft_levelset_inverse_derivative = ti.Matrix.field(3, 3, float, shape=scene.rigid_grid.shape[0])
     scene.soft_levelset_projection_weight = ti.field(float, shape=scene.rigid_grid.shape[0])
     scene.soft_contact_trace_force = ti.Vector.field(3, float, shape=scene.rigid_grid.shape[0])
     scene.soft_contact_trace_uncovered = ti.field(int, shape=())

@@ -76,7 +76,7 @@ def dp_native_material():
     }
 
 
-def dp_direct_material():
+def dp_direct_material(dilation_angle=None):
     material = COUPLED_DP_MATERIAL
     return {
         "model": "DruckerPrager",
@@ -84,7 +84,7 @@ def dp_direct_material():
         "young_modulus": material["young_modulus"],
         "poisson_ratio": material["poisson_ratio"],
         "FrictionAngle": material["friction_angle"],
-        "DilationAngle": material["dilation_angle"],
+        "DilationAngle": material["dilation_angle"] if dilation_angle is None else dilation_angle,
         "Cohesion": material["cohesion"],
         "dpType": "Circumscribed",
     }
@@ -324,14 +324,36 @@ def axisymmetric_surface_pressure_particles(points, grid_size):
     return particle_ids, surface_area
 
 
-def axisymmetric_initial_deformation_gradient():
-    """Elastic stretch whose Hencky Kirchhoff stress is the CPT preload."""
+def axisymmetric_initial_deformation_gradient(points=None):
+    """Return the preload, including self weight when particle points are given.
+
+    The no-argument form retains the historical uniform Kirchhoff preload.
+    The CPT drivers pass their points to initialize the actual Cauchy stress
+    profile, with the lateral self-weight coefficient of the saved reference.
+    """
     material = COUPLED_DP_MATERIAL
-    young = material["young_modulus"]
-    poisson = material["poisson_ratio"]
+    young, poisson = material["young_modulus"], material["poisson_ratio"]
     stress = np.asarray(INITIAL_STRESS[:3], dtype=np.float64)
-    log_stretch = ((1.0 + poisson) * stress - poisson * np.sum(stress)) / young
-    return np.diag(np.exp(log_stretch))
+    if points is None:
+        log_stretch = ((1.0 + poisson) * stress - poisson * np.sum(stress)) / young
+        return np.diag(np.exp(log_stretch))
+    points = np.asarray(points, dtype=np.float64)
+    if points.ndim != 2 or points.shape[1] != 2 or not np.all(np.isfinite(points)):
+        raise ValueError("axisymmetric preload points must be a finite (N, 2) array")
+    depth = np.maximum(0.0, SOIL_ORIGIN[1] + SOIL_SIZE[1] - points[:, 1])
+    overburden = material["density"] * abs(GRAVITY[1]) * depth
+    k0 = poisson / (1.0 - poisson)
+    stress = stress[None, :] - overburden[:, None] * np.array([k0, 1.0, k0])
+    log_stretch = ((1.0 + poisson) * stress - poisson * np.sum(stress, axis=1)[:, None]) / young
+    # Hencky produces Kirchhoff stress; solve J=exp(J tr(epsilon_sigma))
+    # so the requested preload is Cauchy stress rather than tau=J sigma.
+    jacobian = np.ones(points.shape[0])
+    for _ in range(12):
+        jacobian = np.exp(jacobian * np.sum(log_stretch, axis=1))
+    deformation = np.zeros((points.shape[0], 3, 3))
+    for axis in range(3):
+        deformation[:, axis, axis] = np.exp(jacobian * log_stretch[:, axis])
+    return deformation
 
 
 def _direct_axisymmetric_boundaries(grid_size):
@@ -359,6 +381,7 @@ def configure_direct_axisymmetric_mpm(
     simulation_time,
     save_interval,
     resolution_scale=1.0,
+    dilation_angle=None,
 ):
     """Configure the Direct implicit axisymmetric DP soil for IPC coupling."""
     validate_run_parameters(dt, simulation_time, save_interval, resolution_scale)
@@ -396,7 +419,7 @@ def configure_direct_axisymmetric_mpm(
     mpm.add_body(body)
     mpm.memory_allocate({"max_particle_number": particle_count}, log=False)
     mpm.add_boundary_condition(dirichlet=_direct_axisymmetric_boundaries(grid_size))
-    mpm.add_material(**dp_direct_material())
+    mpm.add_material(**dp_direct_material(dilation_angle))
     mpm.add_element({"ElementSize": grid_size, "ShapeFunction": "Linear"})
     step_count = int(math.ceil(simulation_time / dt))
     output_interval = max(1, int(round(save_interval / dt)))

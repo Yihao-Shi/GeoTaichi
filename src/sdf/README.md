@@ -20,114 +20,114 @@ Many primitives are re-exported directly from `geotaichi`.
 
 ## Signed-distance definition and differential geometry
 
-For a closed set $\Omega$ with boundary $\partial\Omega$, the signed distance
+For a closed set $`\Omega`$ with boundary $`\partial\Omega`$, the signed distance
 used by closed primitives is
 
-$$
+```math
 d(\boldsymbol{x})=
 \begin{cases}
 -\mathrm{dist}(\boldsymbol{x},\partial\Omega),
-&\boldsymbol{x}\in\Omega,\\
+&\boldsymbol{x}\in\Omega,\\[0pt]
 \mathrm{dist}(\boldsymbol{x},\partial\Omega),
 &\boldsymbol{x}\notin\Omega.
 \end{cases}
-$$
+```
 
 Where the closest point is unique, an exact signed-distance field satisfies
 
-$$
+```math
 \|\nabla d\|=1,
 \qquad
 \boldsymbol{n}=\nabla d,
 \qquad
 \kappa=\nabla\cdot\boldsymbol{n}.
-$$
+```
 
 For a general implicit field whose gradient is not unit length, use
-$\boldsymbol{n}=\nabla d/\|\nabla d\|$. The closest-point approximation is
+$`\boldsymbol{n}=\nabla d/\|\nabla d\|`$. The closest-point approximation is
 
-$$
+```math
 \boldsymbol{x}_{\Gamma}
 \approx\boldsymbol{x}-
 \frac{d(\boldsymbol{x})}{\|\nabla d(\boldsymbol{x})\|^2}
 \nabla d(\boldsymbol{x}).
-$$
+```
 
 Representative exact primitives include the sphere
 
-$$
+```math
 d_{sphere}(\boldsymbol{x})
 =\|\boldsymbol{x}-\boldsymbol{c}\|-r,
-$$
+```
 
-the axis-aligned box with center $\boldsymbol{c}$ and half size
-$\boldsymbol{h}$,
+the axis-aligned box with center $`\boldsymbol{c}`$ and half size
+$`\boldsymbol{h}`$,
 
-$$
+```math
 \boldsymbol{q}=|\boldsymbol{x}-\boldsymbol{c}|-\boldsymbol{h},
-$$
+```
 
-$$
+```math
 d_{box}(\boldsymbol{x})
 =\|\max(\boldsymbol{q},\boldsymbol{0})\|
 +\min\left(\max_k q_k,0\right),
-$$
+```
 
-and the capsule around segment $[\boldsymbol{a},\boldsymbol{b}]$,
+and the capsule around segment $`[\boldsymbol{a},\boldsymbol{b}]`$,
 
-$$
+```math
 t=\mathrm{clamp}
 \left(
 \frac{(\boldsymbol{x}-\boldsymbol{a})\cdot
 (\boldsymbol{b}-\boldsymbol{a})}
 {\|\boldsymbol{b}-\boldsymbol{a}\|^2},0,1
 \right),
-$$
+```
 
-$$
+```math
 d_{capsule}(\boldsymbol{x})
 =\|\boldsymbol{x}-\boldsymbol{a}
 -t(\boldsymbol{b}-\boldsymbol{a})\|-r.
-$$
+```
 
 ## Boolean composition and offsets
 
-For compatible negative-inside fields $d_A$ and $d_B$, hard constructive
+For compatible negative-inside fields $`d_A`$ and $`d_B`$, hard constructive
 solid geometry uses
 
-$$
+```math
 d_{A\cup B}=\min(d_A,d_B),
 \qquad
 d_{A\cap B}=\max(d_A,d_B),
-$$
+```
 
-$$
+```math
 d_{A\setminus B}=\max(d_A,-d_B),
 \qquad
 d_{\neg A}=-d_A.
-$$
+```
 
-Dilation, erosion, and a centered shell of thickness $t$ are
+Dilation, erosion, and a centered shell of thickness $`t`$ are
 
-$$
+```math
 d_{dilate}=d-r,
 \qquad
 d_{erode}=d+r,
 \qquad
 d_{shell}=|d|-\frac{t}{2}.
-$$
+```
 
-For smoothing radius $k>0$, the polynomial smooth union is
+For smoothing radius $`k>0`$, the polynomial smooth union is
 
-$$
+```math
 h=\mathrm{clamp}
 \left(\frac12+\frac{d_B-d_A}{2k},0,1\right),
-$$
+```
 
-$$
+```math
 d_{smooth\ union}
 =h d_A+(1-h)d_B-kh(1-h).
-$$
+```
 
 Smooth intersection and difference use the corresponding sign changes in the
 hard max operations. Hard min/max composition preserves the intended zero set
@@ -138,51 +138,51 @@ an implicit distance-like field rather than an exact Eikonal solution.
 
 Translation and rotation use inverse coordinate maps:
 
-$$
+```math
 d_{translated}(\boldsymbol{x})=d(\boldsymbol{x}-\boldsymbol{t}),
 \qquad
 d_{rotated}(\boldsymbol{x})=d(\boldsymbol{R}^T\boldsymbol{x}).
-$$
+```
 
-Uniform positive scale $s$ preserves distance under
+Uniform positive scale $`s`$ preserves distance under
 
-$$
+```math
 d_s(\boldsymbol{x})=s\,d(\boldsymbol{x}/s).
-$$
+```
 
 For anisotropic scale
-$\boldsymbol{s}=(s_1,\ldots,s_d)$, the package uses the conservative field
+$`\boldsymbol{s}=(s_1,\ldots,s_d)`$, the package uses the conservative field
 
-$$
+```math
 d_{\boldsymbol{s}}(\boldsymbol{x})
 =\min_k(s_k)\,
 d(\boldsymbol{x}\oslash\boldsymbol{s}),
-$$
+```
 
 which preserves sign but is not the exact Euclidean distance except when all
 scales are equal. Twists, bends, repetitions, and transitions likewise act by
 evaluating the source field at an inverse-warped point; a non-isometric warp
-does not in general preserve $\|\nabla d\|=1$.
+does not in general preserve $`\|\nabla d\|=1`$.
 
-Extruding a 2D field $d_2(x,y)$ through height $h$ defines
+Extruding a 2D field $`d_2(x,y)`$ through height $`h`$ defines
 
-$$
+```math
 \boldsymbol{w}
 =\left(d_2(x,y),\ |z|-\frac{h}{2}\right),
-$$
+```
 
-$$
+```math
 d_{ext}
 =\min(\max(w_1,w_2),0)
 +\|\max(\boldsymbol{w},\boldsymbol{0})\|.
-$$
+```
 
-Revolution about the $z$ axis evaluates the profile at
+Revolution about the $`z`$ axis evaluates the profile at
 
-$$
+```math
 d_{rev}(x,y,z)
 =d_2\left(\sqrt{x^2+y^2}-r_0,z\right).
-$$
+```
 
 ## Package layout
 

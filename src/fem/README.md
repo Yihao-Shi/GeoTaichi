@@ -12,11 +12,11 @@ device-resident numerical backends are documented in
 
 ## Example-backed capabilities
 
-- Elastic volume FEM: [implicit cantilever](../../examples/fem/implicit_volume_cantilever.py) and [volume self-contact](../../examples/fem/implicit_volume_self_contact.py).
-- Membrane and cloth mechanics: [explicit membrane](../../examples/fem/explicit_membrane.py), [cloth bending](../../examples/fem/cloth/newton_cloth_bending.py), and [cloth IPC contact](../../examples/fem/implicit_cloth_contact.py).
-- Axisymmetric FEM: [annulus](../../examples/fem/axisymmetric_annulus.py).
-- Prescribed rest geometry: [two-layer cloth and sphere](../../examples/fem/cloth/implicit_two_layer_cloth_sphere.py).
-- Frozen one-sided SDF supports: [cloth rollers](../../examples/fem/cloth/newton_cloth_rollers.py).
+- Elastic volume FEM: [implicit cantilever](../../examples/fem/implicit_volume_cantilever/implicit_volume_cantilever.py) and [volume self-contact](../../examples/fem/implicit_volume_self_contact/implicit_volume_self_contact.py).
+- Membrane and cloth mechanics: [explicit membrane](../../examples/fem/explicit_membrane/explicit_membrane.py), [cloth bending](../../examples/fem/cloth/newton_cloth_bending/newton_cloth_bending.py), and [cloth IPC contact](../../examples/fem/implicit_cloth_contact/implicit_cloth_contact.py).
+- Axisymmetric FEM: [annulus](../../examples/fem/axisymmetric_annulus/axisymmetric_annulus.py).
+- Prescribed rest geometry: [two-layer cloth and sphere](../../examples/fem/cloth/implicit_two_layer_cloth_sphere/implicit_two_layer_cloth_sphere.py).
+- Frozen one-sided SDF supports: [cloth rollers](../../examples/fem/cloth/newton_cloth_rollers/newton_cloth_rollers.py).
 - Coupled FEM contact: see [FEM–MPM](../fempm/README.md) and [FEM–DEM/ABD](../fedem/README.md) for concrete examples.
 
 ## Solver, element, material, and contact compatibility
@@ -51,11 +51,11 @@ Constitutive equations remain centralized in the
 
 ### 1. Total-Lagrangian continuum mechanics
 
-Let $\Omega_0$ be the reference body with material coordinate
-$\boldsymbol{X}$. Its motion, displacement, deformation gradient, and local
+Let $`\Omega_0`$ be the reference body with material coordinate
+$`\boldsymbol{X}`$. Its motion, displacement, deformation gradient, and local
 volume ratio are
 
-$$
+```math
 \boldsymbol{x}=\boldsymbol{\varphi}(\boldsymbol{X},t),
 \qquad
 \boldsymbol{u}=\boldsymbol{x}-\boldsymbol{X},
@@ -64,76 +64,76 @@ $$
 =\boldsymbol{1}+\nabla_{\!X}\boldsymbol{u},
 \qquad
 J=\det\boldsymbol{F}>0.
-$$
+```
 
-For reference density $\rho_0$, body acceleration $\boldsymbol{b}$, and first
-Piola--Kirchhoff stress $\boldsymbol{P}$, balance of linear momentum in the
+For reference density $`\rho_0`$, body acceleration $`\boldsymbol{b}`$, and first
+Piola--Kirchhoff stress $`\boldsymbol{P}`$, balance of linear momentum in the
 reference configuration is
 
-$$
+```math
 \rho_0\ddot{\boldsymbol{u}}
 =\mathrm{Div}_{X}\boldsymbol{P}+\rho_0\boldsymbol{b}
 \quad\text{in }\Omega_0.
-$$
+```
 
 The essential and natural boundary conditions are
 
-$$
+```math
 \boldsymbol{u}=\bar{\boldsymbol{u}}
 \quad\text{on }\Gamma_0^u,
 \qquad
 \boldsymbol{P}\boldsymbol{N}=\bar{\boldsymbol{t}}_0
 \quad\text{on }\Gamma_0^t.
-$$
+```
 
-For every admissible virtual displacement $\boldsymbol{w}$ that vanishes on
-$\Gamma_0^u$, the weak form is
+For every admissible virtual displacement $`\boldsymbol{w}`$ that vanishes on
+$`\Gamma_0^u`$, the weak form is
 
-$$
+```math
 \int_{\Omega_0}\rho_0\boldsymbol{w}\cdot\ddot{\boldsymbol{u}}\,\mathrm dV
 +\int_{\Omega_0}\nabla_{\!X}\boldsymbol{w}:\boldsymbol{P}\,\mathrm dV
 =\int_{\Omega_0}\rho_0\boldsymbol{w}\cdot\boldsymbol{b}\,\mathrm dV
 +\int_{\Gamma_0^t}\boldsymbol{w}\cdot\bar{\boldsymbol{t}}_0\,\mathrm dA.
-$$
+```
 
 For a hyperelastic solid with stored-energy density
-$\Psi(\boldsymbol{F})$,
+$`\Psi(\boldsymbol{F})`$,
 
-$$
+```math
 \boldsymbol{P}=\frac{\partial\Psi}{\partial\boldsymbol{F}},
 \qquad
 \mathbb{A}=\frac{\partial\boldsymbol{P}}
 {\partial\boldsymbol{F}}
 =\frac{\partial^2\Psi}{\partial\boldsymbol{F}^2}.
-$$
+```
 
 In quasi-static analysis, equilibrium is equivalently a stationary point of
 the total potential
 
-$$
+```math
 \Pi(\boldsymbol{u})
 =\int_{\Omega_0}\Psi(\boldsymbol{F})\,\mathrm dV
 -\int_{\Omega_0}\rho_0\boldsymbol{b}\cdot\boldsymbol{u}\,\mathrm dV
 -\int_{\Gamma_0^t}\bar{\boldsymbol{t}}_0\cdot\boldsymbol{u}\,\mathrm dA.
-$$
+```
 
 ### 2. Isoparametric finite-element discretization
 
-On an element with nodes $a=1,\ldots,n_e$ and parent coordinate
-$\boldsymbol{\xi}$, use the same shape functions for the reference and
+On an element with nodes $`a=1,\ldots,n_e`$ and parent coordinate
+$`\boldsymbol{\xi}`$, use the same shape functions for the reference and
 current geometries:
 
-$$
+```math
 \boldsymbol{X}^h(\boldsymbol{\xi})
 =\sum_{a=1}^{n_e}N_a(\boldsymbol{\xi})\boldsymbol{X}_a,
 \qquad
 \boldsymbol{x}^h(\boldsymbol{\xi})
 =\sum_{a=1}^{n_e}N_a(\boldsymbol{\xi})\boldsymbol{x}_a.
-$$
+```
 
 The reference mapping Jacobian and material gradients are
 
-$$
+```math
 \boldsymbol{J}_0
 =\frac{\partial\boldsymbol{X}}{\partial\boldsymbol{\xi}},
 \qquad
@@ -141,69 +141,69 @@ $$
 =\boldsymbol{J}_0^{-T}\nabla_{\!\xi}N_a,
 \qquad
 \mathrm dV=\det(\boldsymbol{J}_0)\,\mathrm d\boldsymbol{\xi}.
-$$
+```
 
 Partition of unity gives the discrete deformation gradient in either of the
 equivalent forms
 
-$$
+```math
 \boldsymbol{F}^h
 =\sum_{a=1}^{n_e}\boldsymbol{x}_a\otimes\nabla_{\!X}N_a
 =\boldsymbol{1}
 +\sum_{a=1}^{n_e}\boldsymbol{u}_a\otimes\nabla_{\!X}N_a.
-$$
+```
 
 If the initial current nodes do not coincide with the reference nodes, the
 body starts from the non-identity initial map
 
-$$
+```math
 \boldsymbol{F}_0
 =\sum_{a=1}^{n_e}\boldsymbol{x}_a(0)\otimes\nabla_{\!X}N_a,
 \qquad
 \boldsymbol{F}_0\neq\boldsymbol{1}.
-$$
+```
 
 It is initially stressed wherever
-$\boldsymbol{P}(\boldsymbol{F}_0)\neq\boldsymbol{0}$; a pure rigid rotation
+$`\boldsymbol{P}(\boldsymbol{F}_0)\neq\boldsymbol{0}`$; a pure rigid rotation
 is non-identity but remains stress-free for an objective elastic energy.
 
-With quadrature points $q$, parent weights $w_q$, and
-$W_q=w_q\det\boldsymbol{J}_0(\boldsymbol{\xi}_q)$, the element energy is
+With quadrature points $`q`$, parent weights $`w_q`$, and
+$`W_q=w_q\det\boldsymbol{J}_0(\boldsymbol{\xi}_q)`$, the element energy is
 
-$$
+```math
 U_e\approx\sum_q W_q\Psi(\boldsymbol{F}_q).
-$$
+```
 
 Its nodal internal force and consistent material tangent are
 
-$$
+```math
 \boldsymbol{f}^{\mathrm{int}}_a
 =\frac{\partial U_e}{\partial\boldsymbol{x}_a}
 =\sum_q W_q\boldsymbol{P}_q\nabla_{\!X}N_a.
-$$
+```
 
-$$
+```math
 (\boldsymbol{K}_{ab})_{ik}
 =\sum_q W_q\mathbb{A}_{iJkL}
 N_{a,J}N_{b,L}.
-$$
+```
 
 The consistent and row-sum lumped mass matrices are
 
-$$
+```math
 M_{ab}=\int_{\Omega_0^e}\rho_0N_aN_b\,\mathrm dV,
 \qquad
 m_a=\sum_bM_{ab}
 =\int_{\Omega_0^e}\rho_0N_a\,\mathrm dV.
-$$
+```
 
 ### 3. Linear tetrahedron and hexahedron
 
 For a TET4 element on
-$\xi\geq0$, $\eta\geq0$, $\zeta\geq0$, and
-$\xi+\eta+\zeta\leq1$, the shape functions are
+$`\xi\geq0`$, $`\eta\geq0`$, $`\zeta\geq0`$, and
+$`\xi+\eta+\zeta\leq1`$, the shape functions are
 
-$$
+```math
 N_0=1-\xi-\eta-\zeta,
 \qquad
 N_1=\xi,
@@ -211,43 +211,43 @@ N_1=\xi,
 N_2=\eta,
 \qquad
 N_3=\zeta.
-$$
+```
 
 Define the reference and current edge matrices
 
-$$
+```math
 \boldsymbol{D}_m
 =\left[\boldsymbol{X}_1-\boldsymbol{X}_0\;\;
 \boldsymbol{X}_2-\boldsymbol{X}_0\;\;
 \boldsymbol{X}_3-\boldsymbol{X}_0\right],
-$$
+```
 
-$$
+```math
 \boldsymbol{D}_s
 =\left[\boldsymbol{x}_1-\boldsymbol{x}_0\;\;
 \boldsymbol{x}_2-\boldsymbol{x}_0\;\;
 \boldsymbol{x}_3-\boldsymbol{x}_0\right].
-$$
+```
 
 Because the gradient is constant inside a linear tetrahedron,
 
-$$
+```math
 \boldsymbol{F}=\boldsymbol{D}_s\boldsymbol{D}_m^{-1},
 \qquad
 V_0=\frac{1}{6}\left|\det\boldsymbol{D}_m\right|.
-$$
+```
 
 For a HEX8 element, associate each node with signs
-$(s_a,t_a,r_a)\in\{-1,1\}^3$. On the parent cube
-$[-1,1]^3$,
+$`(s_a,t_a,r_a)\in\{-1,1\}^3`$. On the parent cube
+$`[-1,1]^3`$,
 
-$$
+```math
 N_a(\xi,\eta,\zeta)
 =\frac{1}{8}(1+s_a\xi)(1+t_a\eta)(1+r_a\zeta).
-$$
+```
 
-The standard $2\times2\times2$ Gauss rule uses every sign combination of
-$1/\sqrt{3}$, with unit one-dimensional weights. The reference Jacobian,
+The standard $`2\times2\times2`$ Gauss rule uses every sign combination of
+$`1/\sqrt{3}`$, with unit one-dimensional weights. The reference Jacobian,
 shape gradients, deformation gradient, and quadrature weight generally vary
 over the element.
 
@@ -271,88 +271,88 @@ thickness before assembling nodal forces and tangents.
 #### Quadratic hinge bending
 
 Consider two neighboring cloth patches sharing an edge. Let their reference
-areas be $A_0$ and $A_1$, and let $c_i$ be the four cotangent hinge
-coefficients, which satisfy $\sum_i c_i=0$. With bending stiffness $k_b$,
-Poisson ratio $\nu_b$, and thickness $h$, define
+areas be $`A_0`$ and $`A_1`$, and let $`c_i`$ be the four cotangent hinge
+coefficients, which satisfy $`\sum_i c_i=0`$. With bending stiffness $`k_b`$,
+Poisson ratio $`\nu_b`$, and thickness $`h`$, define
 
-$$
+```math
 D_b=\frac{k_bh^3}{24(1-\nu_b^2)}.
-$$
+```
 
 The constant hinge matrix and quadratic bending energy are
 
-$$
+```math
 K_{ij}^{b}=\frac{3D_b}{2(A_0+A_1)}c_ic_j,
-$$
+```
 
-$$
+```math
 U_b^{quad}
 =\frac{1}{2}\sum_{i,j}K_{ij}^{b}\boldsymbol{x}_i\cdot\boldsymbol{x}_j
 =\frac{3D_b}{4(A_0+A_1)}
 \left\|\sum_i c_i\boldsymbol{x}_i\right\|^2.
-$$
+```
 
 #### Dihedral-angle bending
 
-Let $\ell$ be the reference shared-edge length, $\theta$ the current signed
-dihedral angle, and $\theta_0$ its rest value. With the dual height
+Let $`\ell`$ be the reference shared-edge length, $`\theta`$ the current signed
+dihedral angle, and $`\theta_0`$ its rest value. With the dual height
 
-$$
+```math
 \bar h=\frac{A_0+A_1}{3\ell},
-$$
+```
 
 the nonlinear hinge energy is
 
-$$
+```math
 U_b^{dih}=D_b\frac{\ell}{\bar h}(\theta-\theta_0)^2.
-$$
+```
 
 Its gradient and exact Hessian are
 
-$$
+```math
 \nabla U_b^{dih}
 =2D_b\frac{\ell}{\bar h}(\theta-\theta_0)\nabla\theta,
-$$
+```
 
-$$
+```math
 \nabla^2U_b^{dih}
 =2D_b\frac{\ell}{\bar h}
 \left[
 \nabla\theta\nabla\theta^T
 +(\theta-\theta_0)\nabla^2\theta
 \right].
-$$
+```
 
 A positive-semidefinite Gauss--Newton approximation retains only
-$2D_b(\ell/\bar h)\nabla\theta\nabla\theta^T$.
+$`2D_b(\ell/\bar h)\nabla\theta\nabla\theta^T`$.
 
 #### Stitch, target, and one-sided support energies
 
-For a stitch node $\boldsymbol{x}$ attached at interpolation coordinate $r$
-on the segment $(\boldsymbol{y}_0,\boldsymbol{y}_1)$, define
+For a stitch node $`\boldsymbol{x}`$ attached at interpolation coordinate $`r`$
+on the segment $`(\boldsymbol{y}_0,\boldsymbol{y}_1)`$, define
 
-$$
+```math
 \boldsymbol{\delta}
 =\boldsymbol{x}-(1-r)\boldsymbol{y}_0-r\boldsymbol{y}_1,
 \qquad
 U_{stitch}=\frac{kA_x}{2}\|\boldsymbol{\delta}\|^2.
-$$
+```
 
 A target spring has energy
 
-$$
+```math
 U_{target}=\frac{k}{2}\|\boldsymbol{x}-\boldsymbol{t}\|^2.
-$$
+```
 
 For a one-sided signed-distance support, let
-$d=(\boldsymbol{x}-\boldsymbol{t})\cdot\boldsymbol{n}$ and
-$\eta=d/\hat d-1$. Within the active range $d\leq\hat d$,
+$`d=(\boldsymbol{x}-\boldsymbol{t})\cdot\boldsymbol{n}`$ and
+$`\eta=d/\hat d-1`$. Within the active range $`d\leq\hat d`$,
 
-$$
+```math
 U_{sdf}=-\frac{kA_x\hat d}{6}\eta^3,
 \qquad
 \nabla_{\!x}U_{sdf}=-\frac{kA_x}{2}\eta^2\boldsymbol{n}.
-$$
+```
 
 Outside that range, the one-sided support energy and force vanish.
 
@@ -360,54 +360,54 @@ Outside that range, the one-sided support energy and force vanish.
 
 #### Point--triangle and edge--edge contact kinematics
 
-For a point--triangle pair, let $\boldsymbol{\beta}$ be the barycentric
+For a point--triangle pair, let $`\boldsymbol{\beta}`$ be the barycentric
 coordinates of the closest point on the triangle. Its relative vector is
 
-$$
+```math
 \boldsymbol{r}
 =\boldsymbol{x}_0-
 \beta_0\boldsymbol{x}_1-
 \beta_1\boldsymbol{x}_2-
 \beta_2\boldsymbol{x}_3.
-$$
+```
 
 The corresponding stencil weights are
 
-$$
+```math
 \boldsymbol{w}^{PT}
 =(1,-\beta_0,-\beta_1,-\beta_2).
-$$
+```
 
-For two closest edge points with coordinates $s$ and $t$,
+For two closest edge points with coordinates $`s`$ and $`t`$,
 
-$$
+```math
 \boldsymbol{r}
 =(1-s)\boldsymbol{x}_0+s\boldsymbol{x}_1
 -(1-t)\boldsymbol{x}_2-t\boldsymbol{x}_3,
-$$
+```
 
-$$
+```math
 \boldsymbol{w}^{EE}=(1-s,s,-(1-t),-t).
-$$
+```
 
 Both stencils can therefore use
 
-$$
+```math
 \boldsymbol{r}=\sum_iw_i\boldsymbol{x}_i,
 \qquad
 d=\|\boldsymbol{r}\|,
 \qquad
 \boldsymbol{n}=\frac{\boldsymbol{r}}{d},
-$$
+```
 
-$$
+```math
 \boldsymbol{v}_{rel}=\sum_iw_i\boldsymbol{v}_i,
 \qquad
 v_n=\boldsymbol{v}_{rel}\cdot\boldsymbol{n},
 \qquad
 \boldsymbol{v}_t=(\boldsymbol{1}-\boldsymbol{n}\otimes\boldsymbol{n})
 \boldsymbol{v}_{rel}.
-$$
+```
 
 #### Shared Barrier IPC law
 
@@ -422,33 +422,33 @@ obey action--reaction.
 Nearly parallel edges require a smooth transition that removes the singular
 edge--edge parameterization. Let
 
-$$
+```math
 e=\|\boldsymbol{e}_a\times\boldsymbol{e}_b\|^2,
 \qquad
 \varepsilon_x
 =10^{-3}\|\boldsymbol{e}_a^0\|^2\|\boldsymbol{e}_b^0\|^2.
-$$
+```
 
-For $e<\varepsilon_x$, define
+For $`e<\varepsilon_x`$, define
 
-$$
+```math
 m_{EE}(e)=\frac{e}{\varepsilon_x}
 \left(2-\frac{e}{\varepsilon_x}\right),
-$$
+```
 
-and use $m_{EE}=1$ otherwise. The mollified barrier is $m_{EE}b$. Its
+and use $`m_{EE}=1`$ otherwise. The mollified barrier is $`m_{EE}b`$. Its
 derivatives follow the product rule,
 
-$$
+```math
 \nabla(m_{EE}b)=m_{EE}\nabla b+b\nabla m_{EE},
-$$
+```
 
-$$
+```math
 \nabla^2(m_{EE}b)
 =m_{EE}\nabla^2b+b\nabla^2m_{EE}
 +\nabla m_{EE}\nabla b^T
 +\nabla b\nabla m_{EE}^T.
-$$
+```
 
 #### Shared IPC friction
 
@@ -459,19 +459,19 @@ magnitudes.
 
 #### Continuous collision detection
 
-For a search direction $\boldsymbol{p}$, line-search motion is
+For a search direction $`\boldsymbol{p}`$, line-search motion is
 
-$$
+```math
 \boldsymbol{x}(\alpha)
 =\boldsymbol{x}_n+\alpha\boldsymbol{p},
 \qquad
 0\leq\alpha\leq1.
-$$
+```
 
 Continuous collision detection computes the earliest point--triangle or
 edge--edge time of impact. The accepted step is bounded by a safety fraction
-of that time so that $d(\alpha)>d_{min}$. The same line search may impose
-$\det\boldsymbol{F}(\alpha)>J_{min}$, preventing both contact penetration and
+of that time so that $`d(\alpha)>d_{min}`$. The same line search may impose
+$`\det\boldsymbol{F}(\alpha)>J_{min}`$, preventing both contact penetration and
 element inversion. Spatial hashing or a bounding-volume hierarchy changes
 only the candidate search, not the contact energy or constraints.
 
@@ -480,19 +480,19 @@ only the candidate search, not the contact energy or constraints.
 After spatial discretization, the unconstrained nodal equations have the
 form
 
-$$
+```math
 \boldsymbol{M}\boldsymbol{a}
 +\boldsymbol{C}\boldsymbol{v}
 +\boldsymbol{f}^{\mathrm{int}}(\boldsymbol{x})
 =\boldsymbol{f}^{\mathrm{ext}},
-$$
+```
 
 where mass-proportional damping is
-$\boldsymbol{C}=\zeta\boldsymbol{M}$ when it is used.
+$`\boldsymbol{C}=\zeta\boldsymbol{M}`$ when it is used.
 
 With a lumped mass matrix, a symplectic Euler step is
 
-$$
+```math
 \boldsymbol{a}_n
 =\boldsymbol{M}_L^{-1}
 \left(
@@ -500,80 +500,80 @@ $$
 -\boldsymbol{f}^{\mathrm{int}}_n
 -\zeta\boldsymbol{M}_L\boldsymbol{v}_n
 \right).
-$$
+```
 
-$$
+```math
 \boldsymbol{v}_{n+1}
 =\boldsymbol{v}_n+\Delta t\boldsymbol{a}_n,
 \qquad
 \boldsymbol{x}_{n+1}
 =\boldsymbol{x}_n+\Delta t\boldsymbol{v}_{n+1}.
-$$
+```
 
 This conditionally stable update requires the time step to resolve the largest
 discrete frequency; a common linear estimate is
 
-$$
+```math
 \Delta t\lesssim\frac{2}{\omega_{\max}}.
-$$
+```
 
 For implicit Newmark integration, define
 
-$$
+```math
 \boldsymbol{x}_{pred}
 =\boldsymbol{x}_n+\Delta t\boldsymbol{v}_n
 +\Delta t^2\left(\frac{1}{2}-\beta\right)\boldsymbol{a}_n.
-$$
+```
 
-For a trial $\boldsymbol{x}_{n+1}$,
+For a trial $`\boldsymbol{x}_{n+1}`$,
 
-$$
+```math
 \boldsymbol{a}_{n+1}
 =\frac{\boldsymbol{x}_{n+1}-\boldsymbol{x}_{pred}}
 {\beta\Delta t^2}.
-$$
+```
 
-$$
+```math
 \boldsymbol{v}_{n+1}
 =\boldsymbol{v}_n+\Delta t
 \left[(1-\gamma)\boldsymbol{a}_n
 +\gamma\boldsymbol{a}_{n+1}\right].
-$$
+```
 
 The nonlinear residual and effective tangent are
 
-$$
+```math
 \boldsymbol{r}
 =\boldsymbol{f}^{\mathrm{int}}(\boldsymbol{x}_{n+1})
 -\boldsymbol{f}^{\mathrm{ext}}_{n+1}
 +\boldsymbol{M}\boldsymbol{a}_{n+1}
 +\zeta\boldsymbol{M}\boldsymbol{v}_{n+1}.
-$$
+```
 
-$$
+```math
 \boldsymbol{K}_{eff}
 =\boldsymbol{K}
 +\left[
 \frac{1}{\beta\Delta t^2}
 +\frac{\zeta\gamma}{\beta\Delta t}
 \right]\boldsymbol{M}.
-$$
+```
 
 Newton's method solves
-$\boldsymbol{K}_{eff}\Delta\boldsymbol{x}=-\boldsymbol{r}$. For a descent
-direction $\boldsymbol{p}$, an Armijo line search accepts a step
-$\alpha\in(0,1]$ when
+$`\boldsymbol{K}_{eff}\Delta\boldsymbol{x}=-\boldsymbol{r}`$. For a descent
+direction $`\boldsymbol{p}`$, an Armijo line search accepts a step
+$`\alpha\in(0,1]`$ when
 
-$$
+```math
 \Pi(\boldsymbol{x}+\alpha\boldsymbol{p})
 \leq
 \Pi(\boldsymbol{x})
 +c\alpha\nabla\Pi(\boldsymbol{x})\cdot\boldsymbol{p},
 \qquad 0<c<1,
-$$
+```
 
 subject also to an admissibility condition such as
-$\det\boldsymbol{F}>J_{min}>0$. In quasi-static analysis the inertia and
+$`\det\boldsymbol{F}>J_{min}>0`$. In quasi-static analysis the inertia and
 damping terms are omitted.
 
 ## Mesh construction and basic volume example
