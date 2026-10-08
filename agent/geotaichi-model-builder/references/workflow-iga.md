@@ -112,6 +112,15 @@ as extra seeds. They retain span multistart and boundary searches; seed reuse
 does not certify a global minimum by itself. Moving ACCD queries do not reuse
 stationary span bounds.
 
+The implicit Newton path checks the residual before assembling a Hessian.
+At one unchanged trial, MPM force and tangent share prepared material data;
+IGA reference quadrature and fixed topology are cached. Coupled HashTriplet
+material blocks scatter into permanent reduced slots, while contact and MPM
+remain dynamic. Reference geometry changes require IGA `precompute()` before
+reuse. The CPT example's `--resume latest_state.npz` initializes reference data
+before loading accepted physical fields and preserves frame numbering in the
+same output directory; newer diagnostics are separated from the resumed branch.
+
 Plastic MPM uses the same point--NURBS ACCD, material CCD, Armijo, and sparse
 assembly paths as elastic MPM. Its history variables and total `F0` must be
 committed only after coupled acceptance and restored together on an acceptance
@@ -128,10 +137,16 @@ criterion continues to check their unrelaxed physical mismatch.
 
 Set the coupled `assemble_type` to `"COO"` or `"HashTriplet"`. Point--NURBS
 ACCD must use both point and control-point trial directions and rerun the
-closest-point query after each accumulated increment. The complete bounded
-loop belongs to one Taichi thread per contact pair, using virtual
-`P_i0 + alpha*dP_i` control points and a device minimum-TOC reduction; do not
-replace it with a Python increment loop or mutate the shared contact surface.
+closest-point query after each accumulated increment. Screen whole segments
+first, then advance active pairs in bounded kernel launches. Pair state stays
+on the device; only the active count is read on the host. Reduce final TOCs
+only, never intermediate increments. Keep virtual `P_i0 + alpha*dP_i` geometry
+without mutating shared control points. This split avoids excessive Taichi 1.7
+CFG compilation of the nested ACCD/closest-point loops. Share immutable basis
+objects by degree across surfaces to avoid duplicate kernel specializations.
+The moving surface evaluator accumulates homogeneous geometry derivatives
+and applies the quotient rule directly, avoiding support-sized rational
+derivative matrices in the nested closest-point kernel.
 
 ## 6. Validation
 
@@ -144,3 +159,7 @@ force transfer, normal-force moment balance, the finite-radius frictional
 couple, and both material/contact timestep estimates.
 Axisymmetric validation additionally checks revolved volume/contact measures
 and the hoop stretch/tangent.
+
+For implicit prescribed motion at constant speed, use
+`DirichletBoundary.append_velocity(dof_id, velocity)`. Do not freeze `v * dt`
+in `append` when adaptive retries or output-aligned steps can change `dt`.

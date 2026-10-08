@@ -94,6 +94,8 @@ class HashReduction:
         self.device_new_entries = ti.field(dtype=ti.i32, shape=1)
         self.device_mapping_misses = ti.field(dtype=ti.i32, shape=1)
         self.device_overflow = ti.field(dtype=ti.i32, shape=1)
+        self.fixed_count = 0
+        self.fixed_rebuild_pending = False
         self.device_epoch = 0
         self.device_pattern_version = 0
         self.device_pattern_rebuilds = 0
@@ -107,6 +109,42 @@ class HashReduction:
         # Krylov matvec on every architecture.  The host path is an explicit
         # numerical oracle only.
         self.go = self.go_with_device_reduction if self.device_reduction else self.go_with_host_reduction
+
+    def install_fixed_pattern(self, coordinates):
+        """Reserve permanent reduced slots before the first assembly."""
+        coordinates = np.asarray(coordinates)
+        if not self.device_reduction or self.device_epoch or self.fixed_count:
+            raise RuntimeError("fixed slots require a fresh device reducer")
+        if coordinates.ndim != 2 or coordinates.shape[1] != 2 or not np.issubdtype(coordinates.dtype, np.integer):
+            raise ValueError("fixed block coordinates must be an integer (n, 2) array")
+        if np.any(coordinates < 0) or np.any(coordinates > np.iinfo(np.int32).max):
+            raise ValueError("fixed block coordinates are outside int32 range")
+        if len(np.unique(coordinates, axis=0)) != len(coordinates):
+            raise ValueError("fixed block coordinates must be unique")
+        if len(coordinates) > self.tripletI.shape[0]:
+            raise ValueError("fixed block pattern exceeds reduced capacity")
+        self.fixed_count = len(coordinates)
+        if self.fixed_count:
+            self._load_fixed_coordinates(np.ascontiguousarray(coordinates, dtype=np.int32))
+            self._clear_device_pattern()
+
+    @ti.kernel
+    def _load_fixed_coordinates(self, coordinates: ti.types.ndarray(dtype=ti.i32, ndim=2)):
+        for i in range(self.fixed_count):
+            self.tripletI[i] = coordinates[i, 0]
+            self.tripletJ[i] = coordinates[i, 1]
+
+    def reset_fixed_values(self):
+        if self.fixed_rebuild_pending:
+            self._clear_device_pattern()
+            self.device_pattern_initialized = False
+            self.fixed_rebuild_pending = False
+        self._reset_fixed_values()
+
+    @ti.kernel
+    def _reset_fixed_values(self):
+        for i in range(self.fixed_count):
+            self.tripletH[i] = ti.Vector.zero(float, self.hessian_size)
 
     def go_with_cpu(self, pairs_num):
         self.go_with_host_reduction(pairs_num)
@@ -131,7 +169,7 @@ class HashReduction:
 
         self.device_epoch += 1
         previous_nnz = int(self.element_pair_num[0])
-        self._begin_device_reduction(previous_nnz)
+        self._begin_device_reduction(previous_nnz, self.device_epoch)
         if pairs_num > 0:
             self._device_map_pattern(pairs_num, int(reuse_raw_mapping), previous_nnz)
         forced_rebuild = False
@@ -140,7 +178,7 @@ class HashReduction:
             # not. Drop stale entries and retry before reporting a real
             # capacity error.
             self._clear_device_pattern()
-            self._begin_device_reduction(0)
+            self._begin_device_reduction(self.fixed_count, self.device_epoch)
             if pairs_num > 0:
                 self._device_map_pattern(pairs_num, 0, 0)
             forced_rebuild = True
@@ -189,9 +227,13 @@ class HashReduction:
         if forced_rebuild:
             self.device_pattern_version += 1
             self.device_pattern_rebuilds += 1
+        elif self.fixed_count and (too_many_stale or expired):
+            # Fixed slots already contain body values and dynamic additions.
+            # Rebuild before the next assembly, never accumulate them twice.
+            self.fixed_rebuild_pending = True
         elif (too_many_stale or expired) and pattern_nnz > 0:
             self._clear_device_pattern()
-            self._begin_device_reduction(0)
+            self._begin_device_reduction(self.fixed_count, self.device_epoch)
             if pairs_num > 0:
                 self._device_map_pattern(pairs_num, 0, 0)
             if int(self.device_overflow[0]) != 0:
@@ -298,26 +340,35 @@ class HashReduction:
 
     @ti.kernel
     def _clear_device_pattern(self):
-        self.element_pair_num[0] = 0
+        self.element_pair_num[0] = self.fixed_count
         self.device_current_unique[0] = 0
         self.device_new_entries[0] = 0
         self.device_mapping_misses[0] = 0
         self.device_overflow[0] = 0
         for slot in self.device_hash_output:
             self.device_hash_output[slot] = -1
-        for index in self.tripletI:
+        for index in range(self.fixed_count, self.tripletI.shape[0]):
             self.tripletI[index] = 0
             self.tripletJ[index] = 0
             self.tripletH[index] = ti.Vector.zero(float, self.hessian_size)
             self.device_last_seen[index] = -1
 
+        ti.loop_config(serialize=True)
+        for index in range(self.fixed_count):
+            slot = self._device_hash(self.tripletI[index], self.tripletJ[index])
+            while self.device_hash_output[slot] >= 0:
+                slot = (slot + 1) & self.device_hash_mask
+            self.device_hash_output[slot] = index
+
     @ti.kernel
-    def _begin_device_reduction(self, pattern_nnz: int):
-        self.device_current_unique[0] = 0
+    def _begin_device_reduction(self, pattern_nnz: int, epoch: int):
+        self.device_current_unique[0] = self.fixed_count
         self.device_new_entries[0] = 0
         self.device_mapping_misses[0] = 0
         self.device_overflow[0] = 0
-        for index in range(pattern_nnz):
+        for index in range(self.fixed_count):
+            self.device_last_seen[index] = epoch
+        for index in range(self.fixed_count, pattern_nnz):
             self.tripletH[index] = ti.Vector.zero(float, self.hessian_size)
 
     @ti.func

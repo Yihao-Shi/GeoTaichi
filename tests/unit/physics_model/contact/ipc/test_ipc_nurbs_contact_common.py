@@ -393,6 +393,12 @@ class _CachedSurfaceDistanceHarness:
         self.points.from_numpy(points)
         self.seeds = ti.Vector.field(2, ti.f64, shape=len(points))
         self.results = ti.Vector.field(6, ti.f64, shape=len(points))
+        self.bounds = ti.field(ti.f64, shape=len(points))
+
+    @ti.kernel
+    def query_bounds(self, threshold: ti.f64):
+        for i in self.points:
+            self.bounds[i] = self.surface.span_distance_lower_bound(0, self.points[i], threshold)
 
     @ti.kernel
     def query(self, cached: ti.template(), seed: ti.types.vector(2, ti.f64)):
@@ -478,6 +484,29 @@ def test_cached_surface_projection_preserves_multistart_after_deformation(taichi
             else:
                 np.testing.assert_allclose(actual[:, 2:], reference[:, 2:], rtol=1e-8, atol=2e-9)
                 np.testing.assert_allclose(actual[:, :2], reference[:, :2], rtol=0, atol=2e-8)
+
+
+@pytest.mark.isolated_dimension(3)
+def test_span_pruning_certifies_pairs_inside_the_whole_surface_box():
+    controls = np.array([[x, y, z] for z in (0.0, 0.1) for x, y in ((0, 0), (1, 0), (1, 1))], dtype=float)
+    points = np.array([[0.1, 0.9, 0.05], [0.5, 0.01, 0.05], [1.02, 0.5, 0.05]])
+    harness = _CachedSurfaceDistanceHarness(
+        controls, np.ones(6), np.array([0, 0, 0.5, 1, 1]), np.array([0, 0, 1, 1]), (1, 1), points
+    )
+    for shift in (0.0, 0.1):
+        deformed = controls.copy()
+        deformed[:, 0] += shift * deformed[:, 1]
+        harness.surface.control_points_hat.from_numpy(deformed)
+        harness.surface.update_surface_bounds()
+        harness.surface.update_span_bounds()
+        harness.query(False, np.zeros(2))
+        harness.query_bounds(0.05)
+        exact = harness.results.to_numpy()[:, 2]
+        lower = harness.bounds.to_numpy()
+        assert lower[0] > 0.05
+        assert np.all(lower >= 0.0)
+        assert np.all(lower <= exact + 1.0e-12)
+        assert np.all(lower[exact <= 0.05] == 0.0)
 
 
 def test_surface_projection_attempts_tensor_hint_seeds(monkeypatch):
@@ -854,3 +883,71 @@ def test_surface_projection_uses_field_parameter_seed(taichi_runtime, monkeypatc
     # the out-of-domain hint. A check records the field seed's own dispatch.
     assert checked_seed[None] > 0
     np.testing.assert_allclose(harness.results.to_numpy()[0, :3], [0.4, 0.4, 0.1], atol=1e-12)
+
+
+@pytest.mark.parametrize("degree", [(2, 2), (3, 1)])
+def test_moving_surface_homogeneous_derivatives_match_rational_basis(degree):
+    """Direct homogeneous sums preserve position and both derivative orders."""
+    du, dv = degree
+    nu, nv = du + 1, dv + 1
+    basis = NurbsBasisFunction2d(du, dv, dimension=3)
+    knots_u = ti.field(ti.f64, shape=2 * nu)
+    knots_v = ti.field(ti.f64, shape=2 * nv)
+    points = ti.Vector.field(3, ti.f64, shape=nu * nv)
+    directions = ti.Vector.field(3, ti.f64, shape=nu * nv)
+    weights = ti.field(ti.f64, shape=nu * nv)
+    actual = ti.Vector.field(3, ti.f64, shape=6)
+    reference = ti.Vector.field(3, ti.f64, shape=6)
+    knots_u.from_numpy(np.repeat([0.0, 1.0], nu))
+    knots_v.from_numpy(np.repeat([0.0, 1.0], nv))
+    rng = np.random.default_rng(27)
+    points.from_numpy(rng.normal(size=(nu * nv, 3)))
+    directions.from_numpy(rng.normal(size=(nu * nv, 3)))
+    weights.from_numpy(rng.uniform(0.5, 2.0, size=nu * nv))
+
+    @ti.kernel
+    def evaluate(u: ti.f64, v: ti.f64, alpha: ti.f64):
+        p, pu, pv, puu, pvv, puv = basis.NurbsBasisMovingInterpolations2ndDers2d(
+            0,
+            0,
+            0,
+            2 * nu,
+            2 * nv,
+            u,
+            v,
+            knots_u,
+            knots_v,
+            points,
+            directions,
+            alpha,
+            weights,
+        )
+        actual[0], actual[1], actual[2] = p, pu, pv
+        actual[3], actual[4], actual[5] = puu, pvv, puv
+        shape, gradient, hessian = basis.NurbsBasis2ndDers2d(
+            0,
+            0,
+            0,
+            2 * nu,
+            2 * nv,
+            u,
+            v,
+            knots_u,
+            knots_v,
+            weights,
+        )
+        for row in range(6):
+            reference[row] = ti.Vector.zero(ti.f64, 3)
+        # Accumulate an independent rational-basis interpolation.
+        for flat in range(nu * nv):
+            point = points[flat] + alpha * directions[flat]
+            reference[0] += shape[flat] * point
+            reference[1] += gradient[flat, 0] * point
+            reference[2] += gradient[flat, 1] * point
+            reference[3] += hessian[flat, 0] * point
+            reference[4] += hessian[flat, 1] * point
+            reference[5] += hessian[flat, 2] * point
+
+    for u, v, alpha in ((0.0, 0.0, 0.0), (0.31, 0.67, 0.41), (1.0, 1.0, 1.0)):
+        evaluate(u, v, alpha)
+        np.testing.assert_allclose(actual.to_numpy(), reference.to_numpy(), rtol=2e-12, atol=2e-12)

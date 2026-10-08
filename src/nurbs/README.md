@@ -94,6 +94,15 @@ R_{A,\alpha\beta}
 
 ## Rational geometry and differential quantities
 
+Moving contact surfaces accumulate the homogeneous numerator and denominator
+and their derivatives directly over the active support. The quotient rule then
+returns position, both tangents, and the three second derivatives. This avoids
+support-sized rational derivative matrices inside the closest-point iteration,
+reducing Taichi compilation work without changing the NURBS geometry.
+`test_moving_surface_homogeneous_derivatives_match_rational_basis` compares all
+six results against the independent rational basis evaluation, including
+nonuniform weights, endpoints, and degree `(3, 1)` wavy surfaces.
+
 For control points $`\boldsymbol{P}_A`$, a NURBS curve, surface, or volume is
 
 ```math

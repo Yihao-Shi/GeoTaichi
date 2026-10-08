@@ -156,6 +156,8 @@ class ContactEngineMixin:
                 self.barrier.activation_distance_term(),
                 self.barrier.dmin[0] + self.strict_feasibility_tolerance,
             )
+            if 0.0 <= distance <= query_threshold:
+                distance = ti.max(distance, surface.span_distance_lower_bound(surface_id, position, query_threshold))
             needs_projection = distance >= 0.0 and distance <= query_threshold
             if ti.static(self.is_semi):
                 needs_projection = distance >= 0.0 and (needs_projection or self.semi_multiplier[contact_id] > 0.0)
@@ -1516,48 +1518,24 @@ class ContactEngineMixin:
         return result
 
     @ti.kernel
-    def _clear_device_tangent_product(self, active_dof: ti.i32):
-        for dof in self.monolithic_tangent_product:
-            if dof < active_dof:
-                self.monolithic_tangent_product[dof] = 0.0
+    def _load_hash_tangent_direction(self, active_nodes: ti.i32):
+        for node in range(active_nodes):
+            for component in ti.static(range(config.DIM)):
+                self.monolithic_hash_matrix.p[node][component] = self.monolithic_correction[
+                    config.DIM * node + component
+                ]
 
     @ti.kernel
-    def _accumulate_device_source_tangent_product(
-        self,
-        source: ti.template(),
-        source_active_nodes: ti.i32,
-        block_offset: ti.i32,
-    ):
-        """Accumulate an unreduced dense-block source matrix times ``p``."""
-        for source_block in range(source_active_nodes):
-            global_row_block = source_block + block_offset
-            for row_component in ti.static(range(config.DIM)):
-                value = 0.0
-                for column_component in ti.static(range(config.DIM)):
-                    entry = row_component * config.DIM + column_component
-                    global_column = config.DIM * global_row_block + column_component
-                    value += source.diag[source_block][entry] * self.monolithic_correction[global_column]
-                ti.atomic_add(
-                    self.monolithic_tangent_product[config.DIM * global_row_block + row_component],
-                    value,
-                )
-
-        for raw_index in range(source.raw_non_diag_count[0]):
-            source_row_block = source.non_diag.blockI[raw_index]
-            source_column_block = source.non_diag.blockJ[raw_index]
-            if 0 <= source_row_block < source_active_nodes and 0 <= source_column_block < source_active_nodes:
-                global_row_block = source_row_block + block_offset
-                global_column_block = source_column_block + block_offset
-                for row_component in ti.static(range(config.DIM)):
-                    value = 0.0
-                    for column_component in ti.static(range(config.DIM)):
-                        entry = row_component * config.DIM + column_component
-                        global_column = config.DIM * global_column_block + column_component
-                        value += source.non_diag.blockH[raw_index][entry] * self.monolithic_correction[global_column]
-                    ti.atomic_add(
-                        self.monolithic_tangent_product[config.DIM * global_row_block + row_component],
-                        value,
-                    )
+    def _restore_physical_tangent_product(self, active_dof: ti.i32, hash_backend: ti.template()):
+        for dof in range(active_dof):
+            if ti.static(hash_backend):
+                self.monolithic_tangent_product[dof] = self.monolithic_hash_matrix.Ap[dof // config.DIM][
+                    dof % config.DIM
+                ]
+            if self.monolithic_fixed[dof] == 0:
+                self.monolithic_tangent_product[dof] += self.monolithic_physical_rhs[dof] - self.monolithic_rhs[dof]
+            else:
+                self.monolithic_tangent_product[dof] = 0.0
 
     @ti.kernel
     def _device_physical_residual_squared(self, active_dof: ti.i32) -> ti.f64:
@@ -1569,27 +1547,24 @@ class ContactEngineMixin:
         return result
 
     def _assemble_device_physical_tangent_product(self, *, active_mpm_dof, include_friction):
-        """Compute physical ``K p`` from source blocks before elimination."""
-        active_mpm_dof = int(active_mpm_dof)
-        iga_nodes = int(self.iga.degree_of_freedom) // config.DIM
-        active_mpm_nodes = active_mpm_dof // config.DIM
-        active_nodes = iga_nodes + active_mpm_nodes
-        active_dof = config.DIM * active_nodes
-        sources = (
-            self.iga.hash_matrix,
-            self.mpm.hash_matrix,
-            self.barrier_hash_matrix,
-            self.friction_hash_matrix if include_friction else None,
-        )
-        for source in sources:
-            if source is not None and (source.symmetric or source.matrix_symmetric):
-                raise RuntimeError("physical tangent product requires full dense source blocks")
-        self._clear_device_tangent_product(active_dof)
-        self._accumulate_device_source_tangent_product(self.iga.hash_matrix, iga_nodes, 0)
-        self._accumulate_device_source_tangent_product(self.mpm.hash_matrix, active_mpm_nodes, iga_nodes)
-        self._accumulate_device_source_tangent_product(self.barrier_hash_matrix, active_nodes, 0)
-        if include_friction:
-            self._accumulate_device_source_tangent_product(self.friction_hash_matrix, active_nodes, 0)
+        """Recover free rows of physical Kp from the assembled constrained matrix.
+
+        With p_c equal to the prescribed correction, b_f - b_eliminated_f
+        is exactly K_fc p_c. This also covers permanent slots that no longer
+        have a separate raw body source. Fixed rows do not enter the merit.
+        """
+        active_dof = int(self.iga.degree_of_freedom) + int(active_mpm_dof)
+        active_nodes = active_dof // config.DIM
+        hash_backend = self.assemble_type == "HashTriplet"
+        if hash_backend:
+            matrix = self.monolithic_hash_matrix
+            self._load_hash_tangent_direction(active_nodes)
+            matrix.matvec(active_nodes, int(matrix.non_diag.element_pair_num[0]), matrix.p, matrix.Ap)
+        else:
+            self.monolithic_coo_matrix.linear_operator.matvec(
+                self.monolithic_correction, self.monolithic_tangent_product
+            )
+        self._restore_physical_tangent_product(active_dof, hash_backend)
         return float(self._device_fully_implicit_merit_slope(active_dof))
 
     @ti.kernel

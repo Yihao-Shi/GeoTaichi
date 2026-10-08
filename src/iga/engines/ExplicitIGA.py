@@ -17,6 +17,8 @@ from src.utils.linalg import no_operation
 @ti.data_oriented
 class ExplicitIGA(IGASolver):
     def __init__(self, primitives, dirichlet=None, neumann=None, **kwargs):
+        if dirichlet is not None and dirichlet.velocity_dofs.size:
+            raise ValueError("append_velocity is supported by implicit IGA only")
         super().__init__(primitives, dirichlet, neumann, **kwargs)
         self.damping = kwargs.get("damping", 0.0)
         self.rhs = ti.field(ti.f64, shape=self.degree_of_freedom)

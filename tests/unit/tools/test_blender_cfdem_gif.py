@@ -58,6 +58,15 @@ class GeometryCheck(unittest.TestCase):
         self.assertEqual(segments.shape, (12, 2, 3))
         np.testing.assert_allclose(np.linalg.norm(segments[:, 1] - segments[:, 0], axis=1), 1)
 
+    def test_fedem_stress_colorbar_caps_global_maximum_at_seventy_percent(self):
+        np.testing.assert_allclose(fedem_gifs.stress_color_range(20000), [0, 14000])
+        np.testing.assert_allclose(fedem_gifs.stress_color_range(144384, 50000), [0, 50000])
+        for maximum in (0, -1, np.nan, np.inf):
+            with self.assertRaises(ValueError):
+                fedem_gifs.stress_color_range(maximum)
+            with self.assertRaises(ValueError):
+                fedem_gifs.stress_color_range(20000, maximum)
+
     def test_irregular_dam_obstacle_is_extruded_without_changing_its_outline(self):
         outline = incompressible_gifs.DAM_OBSTACLE_VERTICES
         vertices, faces = incompressible_gifs.polygon_prism_mesh(outline, 0.06)

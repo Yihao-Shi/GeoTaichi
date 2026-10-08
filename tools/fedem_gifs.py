@@ -2,7 +2,11 @@
 """FEDEM gallery: paper Hertz stress PNG, mixed funnel and 100% compaction GIFs.
 
 python tools/fedem_gifs.py --case all --work-dir /tmp/fedem_gallery
-ParaView extracts native VTU surfaces; Blender renders their unamplified geometry.
+Add --renderer paraview for native FEM von Mises stress (0.7 of the global maximum).
+Both renderers preserve the native deformation and recorded wall motion.
+
+python tools/fedem_gifs.py --case funnel --renderer paraview --fem-color-max 10000
+python tools/fedem_gifs.py --case compaction --renderer paraview
 """
 import argparse
 import csv
@@ -95,6 +99,135 @@ def compaction_times(config, metrics, count, first_time, compression_start=None)
     if abs(times[-1] - metrics["final"]["time"]) > 1e-7:
         raise ValueError("Compaction snapshot schedule disagrees with recorded final time")
     return times
+
+
+def stress_color_range(maximum, color_max=None):
+    upper = 0.7 * float(maximum) if color_max is None else float(color_max)
+    if not np.isfinite([maximum, upper]).all() or min(maximum, upper) <= 0:
+        raise ValueError("von Mises stress must have a finite positive maximum")
+    return [0.0, upper]
+
+
+def render_paraview(path, color_max=None):
+    import vtk
+    from vtk.util.numpy_support import numpy_to_vtk, numpy_to_vtkIdTypeArray
+    from paraview import simple as pv
+
+    config = json.loads(path.read_text())
+    folder = path.parent
+    source = Path(config["source"]) / "native/vtks"
+    pv._DisableFirstRenderCameraReset()
+    view = pv.CreateView("RenderView")
+    view.ViewSize = [config["width"], config["height"]]
+    view.UseColorPaletteForBackground = 0
+    view.Background = [1, 1, 1]
+    view.OrientationAxesVisibility = 0
+    view.UseFXAA = 1
+    readers = {}
+    displays = {}
+    for key, prefix in (("soft", "FEM"), ("rigid", "GraphicLSDEMSurface")):
+        files = [str(p) for p in sorted(source.glob(f"{prefix}[0-9]*.vtu"))]
+        if key == "rigid" and not files:
+            continue
+        readers[key] = pv.XMLUnstructuredGridReader(FileName=files)
+        displays[key] = pv.Show(readers[key], view)
+        displays[key].Representation = "Surface"
+        displays[key].Scale = [config["display_scale"]] * 3
+        displays[key].Position = (-np.array(config["origin_m"]) * config["display_scale"]).tolist()
+    maximum = 0.0
+    for index in range(len(readers["soft"].FileName)):
+        readers["soft"].UpdatePipeline(index)
+        array = readers["soft"].PointData.GetArray("von_mises")
+        if array is None:
+            raise ValueError("FEM output is missing the von_mises point array")
+        bounds = array.GetRange()
+        if not np.isfinite(bounds).all() or bounds[0] < 0:
+            raise ValueError(f"Invalid von Mises stress range: {bounds}")
+        maximum = max(maximum, bounds[1])
+    color_range = stress_color_range(maximum, color_max)
+    config.update(renderer="ParaView", fem_scalar="von_mises", fem_scalar_units="Pa",
+                  fem_stress_maximum=maximum, fem_color_range=color_range,
+                  fem_color_max_factor=color_range[1] / maximum)
+    path.write_text(json.dumps(config, indent=2) + "\n")
+    pv.ColorBy(displays["soft"], ("POINTS", "von_mises"))
+    lut = pv.GetColorTransferFunction("von_mises")
+    lut.ApplyPreset("Viridis (matplotlib)", True)
+    lut.RescaleTransferFunction(*color_range)
+    lut.AutomaticRescaleRangeMode = "Never"
+    displays["soft"].SetScalarBarVisibility(view, True)
+    bar = pv.GetScalarBar(lut, view)
+    bar.Title = "von Mises stress (Pa)"
+    bar.ComponentTitle = ""
+    bar.Orientation = "Horizontal"
+    bar.WindowLocation = "Any Location"
+    bar.Position = [0.22, 0.06]
+    bar.ScalarBarLength = 0.56
+    bar.TitleFontSize = 17
+    bar.LabelFontSize = 15
+    bar.LabelFormat = "%.3g"
+    bar.RangeLabelFormat = "%.3g"
+    bar.AutomaticLabelFormat = 0
+    bar.TitleColor = bar.LabelColor = [0, 0, 0]
+    bar.UseCustomLabels = 1
+    bar.CustomLabels = np.linspace(*color_range, 5).tolist()
+    if "rigid" in displays:
+        pv.ColorBy(displays["rigid"], None)
+        displays["rigid"].DiffuseColor = [0.18, 0.42, 0.72]
+    walls = pv.TrivialProducer()
+    walls.GetClientSideObject().SetOutput(vtk.vtkPolyData())
+    wall_display = pv.Show(walls, view)
+    wall_display.DiffuseColor = [0.60, 0.66, 0.72]
+    wall_display.Opacity = 0.10
+    edges = pv.TrivialProducer()
+    edges.GetClientSideObject().SetOutput(vtk.vtkPolyData())
+    edge_display = pv.Show(edges, view)
+    edge_display.DiffuseColor = [0.30, 0.34, 0.39]
+    edge_display.LineWidth = 1.5
+    caption = pv.Text()
+    caption.Text = config["title"]
+    label = pv.Show(caption, view)
+    label.WindowLocation = "Upper Center"
+    label.FontSize = 19
+    label.Color = [0.10, 0.12, 0.15]
+    clock = pv.Text()
+    clock_display = pv.Show(clock, view)
+    clock_display.WindowLocation = "Lower Left Corner"
+    clock_display.FontSize = 16
+    clock_display.Color = [0.10, 0.12, 0.15]
+    center = np.array(config["domain"]) / 2
+    direction = np.array(config["camera_direction"])
+    view.CameraFocalPoint = center.tolist()
+    view.CameraPosition = (center + direction * max(config["domain"]) * 2).tolist()
+    view.CameraViewUp = [0, 0, 1]
+    view.CameraParallelProjection = 1
+    view.CameraParallelScale = max(config["domain"]) * (0.80 if config["case"] == "compaction" else 0.68)
+    for index, frame in enumerate(config["frames"]):
+        for reader in readers.values():
+            reader.UpdatePipeline(index)
+        with np.load(folder / frame["mesh"]) as data:
+            for producer, vertices, cells, triangles in (
+                (walls, data["walls"], data["walls_faces"], True),
+                (edges, data["wall_segments"].reshape(-1, 3),
+                 np.arange(data["wall_segments"].size // 3).reshape(-1, 2), False),
+            ):
+                points = vtk.vtkPoints()
+                points.SetData(numpy_to_vtk(vertices, deep=True))
+                connectivity = np.c_[np.full(len(cells), cells.shape[1]), cells].astype(np.int64)
+                topology = vtk.vtkCellArray()
+                topology.SetCells(len(cells), numpy_to_vtkIdTypeArray(connectivity.ravel(), deep=True))
+                mesh = vtk.vtkPolyData()
+                mesh.SetPoints(points)
+                (mesh.SetPolys if triangles else mesh.SetLines)(topology)
+                producer.GetClientSideObject().SetOutput(mesh)
+                producer.MarkModified(producer)
+                producer.UpdatePipeline()
+        clock.Text = f"t = {frame['time']:.3f} s"
+        view.ViewTime = index
+        pv.Render(view)
+        pv.SaveScreenshot(str(folder / f"frame_{index:06d}.png"), view,
+                          ImageResolution=[config["width"], config["height"]])
+        print(f"PARAVIEW {config['case']}: {index + 1}/{len(config['frames'])}", flush=True)
+    print(f"von Mises maximum = {maximum:.6g} Pa; colorbar = {color_range}", flush=True)
 
 
 def prepare(case, folder, preview=False):
@@ -207,12 +340,19 @@ def main():
     parser.add_argument("--case", choices=[*CASES, "all"], default="all")
     parser.add_argument("--work-dir", type=Path)
     parser.add_argument("--samples", type=int, default=48)
+    parser.add_argument("--renderer", choices=("blender", "paraview"), default="blender")
+    parser.add_argument("--fem-color-max", type=float, help="ParaView stress upper limit in Pa; default: 0.7 of maximum")
     parser.add_argument("--preview", action="store_true")
     parser.add_argument("--prepare-case", choices=list(CASES), help=argparse.SUPPRESS)
+    parser.add_argument("--render-case", choices=("funnel", "compaction"), help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.samples <= 0:
         parser.error("--samples must be positive")
     work = (args.work_dir or Path(tempfile.mkdtemp(prefix="fedem_blender_"))).resolve()
+    if args.render_case:
+        path, _ = prepare(args.render_case, work / args.render_case, args.preview)
+        render_paraview(path, args.fem_color_max)
+        return
     if args.prepare_case:
         prepare(args.prepare_case, work / args.prepare_case, args.preview)
         return
@@ -232,27 +372,32 @@ def main():
                 print(f"Copied paper von Mises stress PNG: {output}", flush=True)
             continue
         command = [PVPYTHON, str(Path(__file__).resolve()), "--prepare-case", case, "--work-dir", str(work)]
+        if args.renderer == "paraview":
+            command[2] = "--render-case"
+            if args.fem_color_max is not None:
+                command.extend(["--fem-color-max", str(args.fem_color_max)])
         if args.preview:
             command.append("--preview")
         subprocess.run(command, check=True)
         manifest = work / case / "manifest.json"
-        subprocess.run(
-            [
-                BLENDER,
-                "-b",
-                "--factory-startup",
-                "--python-exit-code",
-                "1",
-                "--python",
-                str(ROOT / "tools/blender_cfdem_gif.py"),
-                "--",
-                "--render",
-                str(manifest),
-                "--samples",
-                str(args.samples),
-            ],
-            check=True,
-        )
+        if args.renderer == "blender":
+            subprocess.run(
+                [
+                    BLENDER,
+                    "-b",
+                    "--factory-startup",
+                    "--python-exit-code",
+                    "1",
+                    "--python",
+                    str(ROOT / "tools/blender_cfdem_gif.py"),
+                    "--",
+                    "--render",
+                    str(manifest),
+                    "--samples",
+                    str(args.samples),
+                ],
+                check=True,
+            )
         config = json.loads(manifest.read_text())
         if not args.preview:
             export(config, manifest.parent)

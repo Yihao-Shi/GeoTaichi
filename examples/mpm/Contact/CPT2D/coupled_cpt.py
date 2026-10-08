@@ -581,9 +581,9 @@ def configure_iga_axisymmetric_penetrator(iga, dt, step_count, output_interval, 
     iga.add_primitives(primitives)
     all_control_points = np.arange(pile.control_points.shape[0], dtype=np.int32)
     boundary = DirichletBoundary()
-    boundary.append(
+    boundary.append_velocity(
         [list(2 * all_control_points), list(2 * all_control_points + 1)],
-        [0.0] * all_control_points.size + [-PILE_SPEED * dt] * all_control_points.size,
+        [0.0] * all_control_points.size + [-PILE_SPEED] * all_control_points.size,
     )
     iga.add_boundary_condition(dirichlet=boundary)
     iga.add_element(degree=[2, 2])

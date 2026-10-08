@@ -19,6 +19,13 @@ device-resident numerical backends are documented in
 - Frozen one-sided SDF supports: [cloth rollers](../../examples/fem/cloth/newton_cloth_rollers/newton_cloth_rollers.py).
 - Coupled FEM contact: see [FEM–MPM](../fempm/README.md) and [FEM–DEM/ABD](../fedem/README.md) for concrete examples.
 
+Classical total-Lagrangian assembly already caches reference gradients and
+quadrature weights. FEM--MPM additionally builds a permanent element-pair scatter
+map and accumulates material tangents directly into the coupled HashTriplet
+matrix. Standalone FEM and non-classical contributions retain their existing
+assembly paths. Quadrature and local-node pair loops stay compact instead of
+unrolling a separate copy of each material tangent in the generated kernel.
+
 ## Solver, element, material, and contact compatibility
 
 `HEX8` does **not** imply explicit integration, and `TET4` does **not** imply

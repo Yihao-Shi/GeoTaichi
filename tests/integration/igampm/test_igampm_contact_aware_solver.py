@@ -39,7 +39,8 @@ def test_monolithic_hash_solver_receives_relative_tolerance():
 
 
 @pytest.mark.parametrize("accepted", [True, False])
-def test_armijo_accepts_a_trial_within_energy_roundoff(accepted):
+@pytest.mark.parametrize("prepare_contacts", [True, False])
+def test_armijo_accepts_a_trial_within_energy_roundoff(accepted, prepare_contacts):
     from src.igampm.engines.ImplicitEngine import ImplicitEngineMixin
 
     engine = object.__new__(ImplicitEngineMixin)
@@ -61,14 +62,16 @@ def test_armijo_accepts_a_trial_within_energy_roundoff(accepted):
     engine._synchronize_device_trial_state_with_accepted = lambda: syncs.append("restored")
     engine.minimum_contact_distance = lambda: 0.25
 
+    energies = iter([1.0, 1.0 if accepted else 2.0, 2.0])
     result = engine.contact_aware_armijo_device(
         -1.0e-10,
-        energy_function=lambda current: 1.0 if accepted or len(queries) == 1 else 2.0,
+        energy_function=lambda current: next(energies),
+        prepare_contacts=prepare_contacts,
     )
 
     assert result["accepted"] is accepted
     assert result["step"] == (1.0 if accepted else 0.0)
-    assert len(queries) == (2 if accepted else 3)
+    assert len(queries) == (1 if accepted else 2) + int(prepare_contacts)
     assert syncs == (["accepted"] if accepted else ["restored"])
 
 
@@ -108,7 +111,14 @@ def test_monolithic_newton_does_not_solve_an_already_balanced_rhs():
     engine.monolithic_force_atol = 1.0e-10
     engine.monolithic_force_rtol = 5.0e-4
     engine.monolithic_dirichlet_tolerance = 1.0e-12
-    engine.assemble_monolithic_newton_system = lambda **kwargs: {"active_dof": 3}
+    engine.is_semi = False
+    engine.semi_contact_converged = lambda: True
+
+    def residual_only(**kwargs):
+        assert kwargs["need_matrix"] is False, "an equilibrated RHS must not assemble a Hessian"
+        return {"active_dof": 3}
+
+    engine.assemble_monolithic_newton_system = residual_only
     engine._device_monolithic_free_rhs_norm = lambda active_dof: 4.3e-7
     engine._device_dirichlet_residual = lambda active_dof: 0.0
     engine._solve_monolithic_linear_system = lambda *args, **kwargs: pytest.fail(
@@ -310,6 +320,59 @@ def _build_mpm_particle(output_path):
     mpm.active_dof = mpm.set_active_dof()
     mpm.compute_nodal_vel_acc()
     return mpm
+
+
+def test_newton_reuses_contact_queries_without_changing_solution(tmp_path, monkeypatch):
+    from src.igampm import IGAMPM
+
+    iga = _build_iga_rectangle(tmp_path / "iga-reuse")
+    mpm = _build_mpm_particle(tmp_path / "mpm-reuse")
+    engine = IGAMPM(iga, mpm, kappa=1e4, dhat=0.08, dmin=0.005, barrier_nnz=20_000, project_pd=True).build()
+    engine.begin_implicit_ipc_step()
+    query = engine.initialize_barrier
+    assemble = engine.assemble_monolithic_newton_system
+    armijo = engine.contact_aware_armijo_device
+    queries = []
+
+    def counted_query(*args, **kwargs):
+        queries.append(1)
+        return query(*args, **kwargs)
+
+    monkeypatch.setattr(engine, "initialize_barrier", counted_query)
+    reference = None
+    for refresh in (True, False):
+
+        def assemble_current(*args, **kwargs):
+            if refresh:
+                kwargs["prepare_contacts"] = True
+            return assemble(*args, **kwargs)
+
+        def search_current(*args, **kwargs):
+            if refresh:
+                kwargs["prepare_contacts"] = True
+            return armijo(*args, **kwargs)
+
+        monkeypatch.setattr(engine, "assemble_monolithic_newton_system", assemble_current)
+        monkeypatch.setattr(engine, "contact_aware_armijo_device", search_current)
+        iga.grid_disp.fill(0.0)
+        mpm.grid_disp.fill(0.0)
+        queries.clear()
+        result = engine.solve_monolithic_newton(include_friction=False, max_iterations=30, tolerance=1e-10)
+        assert result["converged"] and result["iterations"] > 0
+        assert engine.minimum_contact_distance() > 0.005
+        actual = (
+            iga.grid_disp.to_numpy(),
+            mpm.grid_disp.to_numpy(),
+            engine.coupled_potential_energy(include_friction=False),
+        )
+        if refresh:
+            reference = actual
+            reference_queries = len(queries)
+        else:
+            for current, expected in zip(actual, reference):
+                np.testing.assert_allclose(current, expected, rtol=1e-9, atol=1e-12)
+            assert len(queries) < reference_queries
+    engine.abort_implicit_ipc_step()
 
 
 def test_conservative_point_nurbs_step_and_armijo_preserve_dmin(tmp_path):
@@ -631,6 +694,8 @@ def test_taichi_monolithic_assembly_merges_blocks_and_eliminates_dirichlet(
         matrix_symmetric=True,
         full_symmetric_input=True,
     )
+    coordinates, _ = iga.fixed_block_coordinates(upper_triangle=True)
+    engine.monolithic_hash_matrix.install_fixed_pattern(coordinates)
     engine.monolithic_rhs = ti.field(ti.f64, shape=total_dof)
     engine.monolithic_physical_rhs = ti.field(ti.f64, shape=total_dof)
     engine.monolithic_correction = ti.field(ti.f64, shape=total_dof)
@@ -699,7 +764,7 @@ def test_taichi_monolithic_assembly_merges_blocks_and_eliminates_dirichlet(
     assert engine.monolithic_hash_matrix.solver == "PCG"
     assert np.all(np.isfinite(matrix))
     assert np.all(np.isfinite(rhs))
-    assert np.isclose(correction_residual, 2.0e-5 / iga.dt)
+    assert np.isclose(correction_residual, max(2.0e-5, np.max(np.abs(fixed_corrections))) / iga.dt)
     assert np.isfinite(directional_derivative)
     identity = np.eye(matrix.shape[0])
     for fixed_dof, correction in zip(fixed_dofs, fixed_corrections):
@@ -774,18 +839,15 @@ def test_public_contact_step_and_armijo_only_upload_then_use_taichi_backend():
 
     contact_source = inspect.getsource(Engine.conservative_contact_step)
     device_contact_source = inspect.getsource(Engine.conservative_contact_step_device)
-    curve_accd_source = inspect.getsource(Engine._point_curve_accd)
-    surface_accd_source = inspect.getsource(Engine._point_surface_accd)
+    advance_accd_source = inspect.getsource(Engine._advance_point_nurbs_accd)
     armijo_source = inspect.getsource(Engine.contact_aware_armijo)
     device_armijo_source = inspect.getsource(Engine.contact_aware_armijo_device)
     assert "_load_external_correction" in contact_source
     assert "conservative_contact_step_device" in contact_source
     assert ".to_numpy(" not in contact_source
     assert "range(self.contact_ccd_max_iterations)" not in device_contact_source
-    assert "while active" in curve_accd_source
-    assert "while active" in surface_accd_source
-    assert "control_points_hat[" not in curve_accd_source
-    assert "control_points_hat[" not in surface_accd_source
+    assert ".to_numpy(" not in advance_accd_source
+    assert "control_points_hat[" not in advance_accd_source
     assert "_load_external_correction" in armijo_source
     assert "contact_aware_armijo_device" in armijo_source
     assert ".to_numpy(" not in armijo_source

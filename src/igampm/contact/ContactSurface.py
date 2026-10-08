@@ -175,7 +175,12 @@ class CouplingContactSurface:
         self.accd_basis_group_offsets = [0]
         grouped_surface_ids = []
         for surface_ids in basis_groups.values():
-            self.accd_basis.append(self.basis[surface_ids[0]])
+            basis = self.basis[surface_ids[0]]
+            # Basis objects contain only degree/dimension. Share their identity
+            # so every contact kernel reuses its specialization across faces.
+            for surface_id in surface_ids:
+                self.basis[surface_id] = basis
+            self.accd_basis.append(basis)
             grouped_surface_ids.extend(surface_ids)
             self.accd_basis_group_offsets.append(len(grouped_surface_ids))
 
@@ -202,6 +207,8 @@ class CouplingContactSurface:
 
         self.control_points_hat = ti.Vector.field(config.DIM, ti.f64, shape=max(1, total_ctrlpts))
         self.control_point_direction = ti.Vector.field(config.DIM, ti.f64, shape=max(1, total_ctrlpts))
+        self.direction_lower = ti.Vector.field(config.DIM, ti.f64, shape=max(1, self.num_surfaces))
+        self.direction_upper = ti.Vector.field(config.DIM, ti.f64, shape=max(1, self.num_surfaces))
         self.surface_lower = ti.Vector.field(config.DIM, ti.f64, shape=max(1, self.num_surfaces))
         self.surface_upper = ti.Vector.field(config.DIM, ti.f64, shape=max(1, self.num_surfaces))
         self.surface_bounds_valid = ti.field(ti.i32, shape=max(1, self.num_surfaces))
@@ -334,6 +341,28 @@ class CouplingContactSurface:
     def span_node_distance_squared(self, node, point):
         offset = ti.max(self.span_tree_lower[node] - point, point - self.span_tree_upper[node], 0.0)
         return squared_norm_nd(offset)
+
+    @ti.func
+    def span_distance_lower_bound(self, surface_id, point, threshold):
+        """Certify distant pairs; return zero as soon as a span may be near."""
+        scale = ti.max(1.0, point.norm(), self.surface_lower[surface_id].norm(), self.surface_upper[surface_id].norm())
+        padding = 1.0e-12 * scale
+        threshold2 = (threshold + padding) ** 2
+        lower2 = ti.math.inf
+        node = self.span_tree_prefix[surface_id]
+        end = self.span_tree_prefix[surface_id + 1]
+        while node < end:
+            left, _, escape, span = self.span_tree_nodes[node]
+            distance2 = self.span_node_distance_squared(node, point)
+            if distance2 > threshold2:
+                lower2 = ti.min(lower2, distance2)
+                node = escape
+            elif span >= 0:
+                lower2 = 0.0
+                break
+            else:
+                node = left
+        return ti.max(0.0, ti.sqrt(lower2) - padding)
 
     @ti.func
     def _nearest_span_control(self, span, point, best_control, best_distance2):
@@ -488,3 +517,21 @@ class CouplingContactSurface:
             for component in ti.static(range(config.DIM)):
                 direction[component] = grid_direction[config.DIM * global_control_id + component]
             self.control_point_direction[local_control_id] = direction
+        for surface_id in range(self.num_surfaces):
+            lower = ti.Vector([ti.math.inf for _ in ti.static(range(config.DIM))])
+            upper = -lower
+            for control_id in range(
+                self.prefix_num_ctrlpts_field[surface_id], self.prefix_num_ctrlpts_field[surface_id + 1]
+            ):
+                lower = ti.min(lower, self.control_point_direction[control_id])
+                upper = ti.max(upper, self.control_point_direction[control_id])
+            self.direction_lower[surface_id] = lower
+            self.direction_upper[surface_id] = upper
+
+    @ti.func
+    def relative_motion_upper_bound(self, surface_id, point_direction):
+        extent = ti.max(
+            ti.abs(point_direction - self.direction_lower[surface_id]),
+            ti.abs(point_direction - self.direction_upper[surface_id]),
+        )
+        return extent.norm() * (1.0 + 1.0e-12)

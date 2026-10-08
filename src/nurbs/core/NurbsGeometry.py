@@ -791,55 +791,62 @@ class NurbsBasisFunction2d:
         alpha,
         weight,
     ):
-        """Interpolate a linearly moving surface from one rational basis pass."""
+        """Interpolate homogeneous derivatives, then apply the rational quotient.
+
+        Accumulating six vectors directly avoids materializing support-sized
+        shape/gradient/Hessian matrices inside every closest-point iteration.
+        """
         num_ctrlpts_u = num_knot_u - 1 - self.basis_u.degree
         num_ctrlpts_v = num_knot_v - 1 - self.basis_v.degree
-        spanU = self.basis_u.FindSpan(
-            start_knot_u, num_ctrlpts_u, xi, knot_vector_u
-        )
-        spanV = self.basis_v.FindSpan(
-            start_knot_v, num_ctrlpts_v, eta, knot_vector_v
-        )
-        shape, gradient, hessian = self.NurbsBasis2ndDers2d(
-            start_knot_u,
-            start_knot_v,
-            start_ctrlpt,
-            num_knot_u,
-            num_knot_v,
-            xi,
-            eta,
-            knot_vector_u,
-            knot_vector_v,
-            weight,
-        )
-
-        position = ti.Vector.zero(float, self.dimension)
-        dirsU = ti.Vector.zero(float, self.dimension)
-        dirsV = ti.Vector.zero(float, self.dimension)
-        ddirsUU = ti.Vector.zero(float, self.dimension)
-        ddirsVV = ti.Vector.zero(float, self.dimension)
-        ddirsUV = ti.Vector.zero(float, self.dimension)
+        span_u = self.basis_u.FindSpan(start_knot_u, num_ctrlpts_u, xi, knot_vector_u)
+        span_v = self.basis_v.FindSpan(start_knot_v, num_ctrlpts_v, eta, knot_vector_v)
+        ders_u = self.basis_u.SecondDersBasisFuncs(start_knot_u, span_u, xi, knot_vector_u)
+        ders_v = self.basis_v.SecondDersBasisFuncs(start_knot_v, span_v, eta, knot_vector_v)
+        w, wu, wv, wuu, wvv, wuv = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+        p = ti.Vector.zero(float, self.dimension)
+        pu = ti.Vector.zero(float, self.dimension)
+        pv = ti.Vector.zero(float, self.dimension)
+        puu = ti.Vector.zero(float, self.dimension)
+        pvv = ti.Vector.zero(float, self.dimension)
+        puv = ti.Vector.zero(float, self.dimension)
         support_u = self.basis_u.degree + 1
-        support_size = support_u * (self.basis_v.degree + 1)
-        uind = spanU - self.basis_u.degree
         flat = 0
-        while flat < support_size:
+        while flat < support_u * (self.basis_v.degree + 1):
             j = flat // support_u
             k = flat - j * support_u
-            vind = spanV - self.basis_v.degree + j
-            linear_id = (
-                start_ctrlpt + uind + k + vind * num_ctrlpts_u
+            control = (
+                start_ctrlpt + span_u - self.basis_u.degree + k
+                + (span_v - self.basis_v.degree + j) * num_ctrlpts_u
             )
-            moving_point = point[linear_id] + alpha * direction[linear_id]
-            position += shape[flat] * moving_point
-            dirsU += gradient[flat, 0] * moving_point
-            dirsV += gradient[flat, 1] * moving_point
-            ddirsUU += hessian[flat, 0] * moving_point
-            ddirsVV += hessian[flat, 1] * moving_point
-            ddirsUV += hessian[flat, 2] * moving_point
+            weight_value = weight[control]
+            n = ders_u[0, k] * ders_v[0, j] * weight_value
+            nu = ders_u[1, k] * ders_v[0, j] * weight_value
+            nv = ders_u[0, k] * ders_v[1, j] * weight_value
+            nuu = ders_u[2, k] * ders_v[0, j] * weight_value
+            nvv = ders_u[0, k] * ders_v[2, j] * weight_value
+            nuv = ders_u[1, k] * ders_v[1, j] * weight_value
+            moving_point = point[control] + alpha * direction[control]
+            w += n
+            wu += nu
+            wv += nv
+            wuu += nuu
+            wvv += nvv
+            wuv += nuv
+            p += n * moving_point
+            pu += nu * moving_point
+            pv += nv * moving_point
+            puu += nuu * moving_point
+            pvv += nvv * moving_point
+            puv += nuv * moving_point
             flat += 1
-        return position, dirsU, dirsV, ddirsUU, ddirsVV, ddirsUV
-    
+        p /= w
+        pu = (pu - wu * p) / w
+        pv = (pv - wv * p) / w
+        puu = (puu - 2.0 * wu * pu - wuu * p) / w
+        pvv = (pvv - 2.0 * wv * pv - wvv * p) / w
+        puv = (puv - wu * pv - wv * pu - wuv * p) / w
+        return p, pu, pv, puu, pvv, puv
+
     @ti.func
     def NurbsSpan(self, start_knot_u, start_knot_v, num_knot_u, num_knot_v, xi, eta, knot_vector_u, knot_vector_v):
         num_ctrlpts_u = num_knot_u - 1 - self.basis_u.degree 

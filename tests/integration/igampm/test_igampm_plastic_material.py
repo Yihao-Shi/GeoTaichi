@@ -385,3 +385,36 @@ def test_nonassociated_ipc_solves_with_pcg_and_physical_flow(taichi_runtime, tmp
         3 * mpm.material.beta * equivalent / np.sqrt(2 / 3),
         abs=1e-9,
     )
+
+
+@pytest.mark.parametrize("axisymmetric", [False, True])
+def test_prepared_material_response_preserves_force_and_tangent(taichi_runtime, tmp_path, axisymmetric):
+    config.set_dimension(2)
+    mpm = _build_plastic_mpm_particle(tmp_path, "DruckerPrager", axisymmetric=axisymmetric, dilation=0.0)
+    mpm.grid_reset()
+    mpm.compute_shapefn()
+    mpm.mass_vel_acc_p2g()
+    mpm.find_active_node()
+    mpm.prefix_sum_executor.run(mpm.node2dof)
+    mpm.active_dof = mpm.set_active_dof()
+    mpm.begin_lagged_material_state()
+    for deformation in (np.diag([1.08, 0.91, 0.96]), np.eye(3) * 1.03):
+        mpm.F0.from_numpy(deformation[None])
+        mpm.refresh_lagged_material_state(mpm.grid_disp)
+        reference = None
+        for prepared in (False, True):
+            mpm.matrix_reset()
+            mpm.hash_matrix.reset_system()
+            if prepared:
+                mpm.prepare_material_response(mpm.grid_disp)
+            mpm.assemble_material_force(mpm.active_dof, mpm.grid_disp, reuse_response=prepared)
+            mpm.assemble_stiffness_matrix_hash(
+                mpm.active_dof, mpm.grid_disp, exact_plastic_tangent=True, reuse_response=prepared
+            )
+            mpm.hash_matrix.finalize_taichi_assembly()
+            actual = (mpm.rhs.to_numpy(), mpm.hash_matrix.to_scipy(mpm.active_dof // 2).toarray())
+            if reference is None:
+                reference = actual
+            else:
+                for value, expected in zip(actual, reference):
+                    np.testing.assert_allclose(value, expected, rtol=1e-12, atol=1e-10)

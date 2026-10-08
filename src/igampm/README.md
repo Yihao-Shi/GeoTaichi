@@ -19,6 +19,26 @@ geometry, materials, output interval, and the final history row must match
 that checkpoint. Reference geometry is initialized before restoring the
 deformed state, and output numbering continues after the existing frames.
 
+The implicit Newton loop evaluates the constrained residual first and builds a
+Hessian only if another correction is needed. Within that trial, Direct ULMPM
+shares its deformation and plastic spectral response between force and tangent.
+The HashTriplet path scatters IGA element blocks directly to permanent reduced
+slots; contact remains bucket-reduced and MPM uses the existing dynamic mapping.
+This changes assembly traffic, not the PSD projection or non-associated flow rule. The residual-merit
+line search uses the assembled constrained operator: for the exact prescribed
+correction $`p_c`$, recover free physical rows through
+$`(Kp)_f=(A_{\mathrm{DBC}}p)_f+b_f-b_{\mathrm{DBC},f}`$.
+This avoids retaining an additional unconstrained raw IGA matrix.
+
+The CPT script also accepts `--resume path/to/latest_state.npz`. It initializes
+reference geometry before restoring physical fields, checks material/grid/output
+settings, and continues frame numbering in the checkpoint's output directory.
+The CPT pile uses velocity constraints, so reduced timesteps also reduce the
+prescribed penetration increment. Resuming an older checkpoint preserves its
+existing penetration depth; it does not correct past boundary-motion errors.
+Diagnostics beyond the restored step are retained in a separate pre-resume log;
+a fresh output directory can instead be used for an independent replay.
+
 ## Package layout
 
 | Path | Responsibility |
@@ -120,15 +140,32 @@ including span boundaries and the existing nearest-control-point seed. Hints
 remain valid after rollback or particle remapping because they are reevaluated
 on the current geometry. Moving ACCD queries rebuild their moving span hulls;
 stationary caches are never used along an unrefreshed trajectory.
+Before a full 3D projection, the same tree can certify that every span is
+outside the activation/strict-feasibility threshold. The minimum bound over
+the pruned subtrees then replaces the full closest distance for that inactive
+pair. Encountering any potentially near leaf retains full projection, as do
+positive SemiIPC multipliers.
 After an Armijo trial is accepted, its contact table and hulls already match the
 accepted displacement, so only trial vectors are synchronized. Rejected or
 failed searches rebuild contact geometry from the accepted displacement.
+Built-in Newton iterations also reuse this accepted query in the next
+assembly and reuse the assembly query at the Armijo base. Internal callers
+pass `prepare_contacts=False` only while they own that exact geometry;
+standalone calls and external solver/energy callbacks retain preparation.
+SemiIPC multiplier updates require a fresh activation query. Lagged friction
+evaluates its normal at the already computed closest parameters.
 
 For a motion bound $`L`$ and clearance $`d_{min}`$, a pair can accept a whole trial
 segment of length $`\alpha`$ when $`\alpha L\le s(\underline d-d_{min})`$, where
 $`0<s<1`$ is the ACCD safety factor. The remaining clearance is then at least
 $`(1-s)(\underline d-d_{min})>0`$. All pairs remain represented; this culling
 does not discard potentially approaching contact constraints.
+The particle direction is interpolated once per sample and Newton direction.
+Each surface also bounds its control-point directions componentwise. The
+farthest corner of this direction box gives a cheap conservative relative
+motion bound. It only certifies whole segments; pairs that it cannot certify
+still compute the original `max_i ||dp-dP_i||` before ACCD, preserving the
+tighter bound for approaching contact.
 
 Let the parameter dimension be $`m=1`$ for a curve and $`m=2`$ for a surface.
 Define
@@ -941,17 +978,27 @@ MPM-surface-sample/NURBS-surface pair receives the positive-weight bound
 common translation cancels exactly, and a closest-parameter change remains
 covered. The boundary sample is a point primitive and `dmin` is its finite
 clearance; the earlier research prototype instead subtracted `particle.rad`.
-One Taichi thread runs the complete bounded ACCD loop for each
-sample--surface pair. It evaluates `p0 + alpha*dp` and
-`P_i0 + alpha*dP_i` without changing the shared contact surface, reruns the
-closest-point query after every increment, stores the pair TOC, and contributes
-to a device atomic-min reduction. Boundaries with the same degree signature
-share one kernel specialization; Python dispatches these basis groups but does
-not iterate or synchronize each ACCD increment. The IGA and MPM `ccd()` calls
+ACCD screens whole segments first, then advances uncertified pairs one iteration
+per Taichi kernel launch. Pair distances, motion bounds, activity flags, and
+TOCs remain on the device; Python reads a scalar active count between bounded
+iterations. Splitting the outer ACCD loop prevents excessive Taichi 1.7 CFG
+optimization of the nested moving closest-point search. Each active pair
+queries `p0 + alpha*dp` and `P_i0 + alpha*dP_i` without mutating the shared
+geometry. A separate atomic-min reduction uses only the final TOCs. Boundaries
+with equal degrees share the same immutable basis object, so all contact
+kernels reuse their degree specialization. The IGA and MPM `ccd()` calls
 separately add deformation-gradient determinant bounds before Armijo search.
-Each moving closest-point state evaluates the rational basis and its first and
-second derivatives once, then interpolates both control-point positions and
-directions in the same support loop. The production Armijo path also reuses the
+Each moving closest-point state accumulates the homogeneous numerator and
+weight denominator and their first and second derivatives in one support loop,
+then applies the quotient rule. It avoids support-sized rational derivative
+matrices inside the nested search, reducing Taichi compilation work. The
+projected Newton search evaluates each candidate once: accepted trial
+derivatives become the next Newton state, and rejected trials continue the
+same bounded backtracking rule. One evaluation site serves both phases.
+The curve search uses the same structure and one solver call for span-midpoint
+and Greville seeds, preserving their order and parameter bounds. Seed searches
+are explicitly serial within each point query, including standalone kernel
+calls; production contact kernels retain their outer particle parallelism. The production Armijo path also reuses the
 base DCD set it has just prepared. The public standalone contact-step helper
 keeps its conservative verification and restore pass by default.
 

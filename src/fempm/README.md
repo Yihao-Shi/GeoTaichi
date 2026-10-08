@@ -450,8 +450,16 @@ Linked cells and BVH generate only conservative candidate sets. Exact
 point--edge or point--triangle distance culling defines the active IPC set.
 For explicit coupling, a Verlet list is rebuilt when the sum of MPM-point and
 FEM-surface motion reaches half the stored skin. For implicit coupling,
-current and swept candidates are rebuilt for every Newton, trial, and CCD
-query, so no Verlet skin participates in feasibility.
+current candidates are rebuilt for each changed Newton/trial state; the residual
+and tangent at the same state share them. CCD rebuilds swept candidates, so no
+Verlet skin participates in feasibility.
+
+Classical FEM material blocks use permanent reduced HashTriplet slots built from
+mesh connectivity, including axisymmetric and 3D solid elements. Existing FEM
+reference gradients and quadrature weights are reused. Other device contributions
+retain their raw assembly path. Newton checks the residual before requesting the
+Hessian; the ensuing matrix assembly reuses that trial's contact candidates and
+MPM material response. A changed trial or material outer iteration recomputes them.
 
 ## Lifecycle
 

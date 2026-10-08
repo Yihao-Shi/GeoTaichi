@@ -306,3 +306,23 @@ def test_implicit_ipc_finite_strain_modified_cam_clay_pipeline(tmp_path):
     assert result["converged"]
     assert result["history"][-1]["material_lagged_iterations"] >= 1
     assert result["history"][-1]["material_lagged_error"] <= (coupling.mpm.enginer.material_lagged_tolerance)
+
+
+def test_residual_first_matrix_reuses_body_force_and_contact_query(tmp_path, monkeypatch):
+    engine = _implicit_system(tmp_path, search="LinkedCell").enginer
+    complete = engine.assemble_system(include_friction=True)
+    expected_matrix = complete["matrix"].to_scipy(complete["active_nodes"]).toarray()
+    expected_rhs = engine.rhs.to_numpy().copy()
+    engine.assemble_system(include_friction=True, need_matrix=False)
+
+    def repeated(*args, **kwargs):
+        pytest.fail("unchanged trial must reuse the prepared force and query")
+
+    monkeypatch.setattr(engine.contact, "prepare", repeated)
+    monkeypatch.setattr(engine.fem, "_assemble_internal_device", repeated)
+    monkeypatch.setattr(engine.mpm, "prepare_material_response", repeated)
+    prepared = engine.assemble_system(include_friction=True, residual_prepared=True)
+    np.testing.assert_allclose(
+        prepared["matrix"].to_scipy(prepared["active_nodes"]).toarray(), expected_matrix, rtol=1e-12, atol=1e-9
+    )
+    np.testing.assert_allclose(engine.rhs.to_numpy(), expected_rhs, rtol=1e-12, atol=1e-9)

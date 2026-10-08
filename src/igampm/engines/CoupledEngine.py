@@ -221,6 +221,7 @@ class Engine(
             self.mpm.total_surface_num * max(1, self.contact_surface.num_surfaces),
         )
         self.contacts = contact_dtype.field(shape=self.contact_capacity)
+        self.contact_point_direction = ti.Vector.field(config.DIM, ti.f64, shape=max(1, self.mpm.total_surface_num))
         # Seeds are acceleration hints, not accepted contact state. Any finite
         # parameter remains valid after sample remapping or step rollback.
         self.contact_projection_seed = (
@@ -376,6 +377,10 @@ class Engine(
         self.contact_step_alpha = ti.field(ti.f64, shape=())
         self.contact_query_status = ti.field(ti.i32, shape=())
         self.contact_accd_toc = ti.field(ti.f64, shape=self.contact_capacity)
+        self.contact_accd_distance = ti.field(ti.f64, shape=self.contact_capacity)
+        self.contact_accd_motion_bound = ti.field(ti.f64, shape=self.contact_capacity)
+        self.contact_accd_active = ti.field(ti.i32, shape=self.contact_capacity)
+        self.contact_accd_active_count = ti.field(ti.i32, shape=())
         self.monolithic_linear_solver_tolerance = float(kwargs.get("monolithic_linear_solver_tolerance", 1.0e-10))
         self.monolithic_linear_solver_relative_tolerance = float(
             kwargs.get("monolithic_linear_solver_relative_tolerance", 0.0)
@@ -429,6 +434,10 @@ class Engine(
                 full_symmetric_input=lagged_symmetric_system,
                 device_reduction=True,
             )
+            coordinates, slots = self.iga.fixed_block_coordinates(upper_triangle=lagged_symmetric_system)
+            self.monolithic_hash_matrix.install_fixed_pattern(coordinates)
+            self.iga_fixed_slots = ti.field(ti.i32, shape=slots.shape)
+            self.iga_fixed_slots.from_numpy(slots)
         else:
             source_hashes = (
                 self.iga.hash_matrix,

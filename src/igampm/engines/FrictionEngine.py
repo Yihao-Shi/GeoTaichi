@@ -21,8 +21,8 @@ from src.igampm.engines.FullyImplicitFriction import (
 from src.igampm.engines.TimeIntegration import newmark_endpoint_velocity_coefficients
 from src.physics_model.contact_model.ipc.ContactAssembly import psd_project_nd
 from src.physics_model.contact_model.ipc.NurbsContact import (
-    get_distance_to_curve_fixed_dim,
-    get_distance_to_surface_fixed_dim,
+    evaluate_distance_to_curve_fixed_dim,
+    evaluate_distance_to_surface_fixed_dim,
 )
 
 
@@ -221,7 +221,7 @@ class FrictionEngineMixin:
                 position = self.mpm.p_temp[sample_id]
                 uknot = self.contacts[c].knot_value[0]
                 vknot = self.contacts[c].knot_value[1]
-                uknot, vknot, distance, pointer = get_distance_to_surface_fixed_dim(
+                distance, pointer = evaluate_distance_to_surface_fixed_dim(
                     prefix_num_knot_u,
                     prefix_num_knot_v,
                     prefix_num_ctrlpts,
@@ -232,10 +232,9 @@ class FrictionEngineMixin:
                     surface.control_points_hat,
                     surface.weights,
                     position,
+                    uknot,
+                    vknot,
                     basis,
-                    surface,
-                    surface_id,
-                    ti.Vector([uknot, vknot]),
                 )
                 if ti.static(self.is_semi) or (
                     distance > self.barrier.dmin[0] + 1.0e-12 and distance < self.barrier.activation_distance_term()
@@ -267,7 +266,7 @@ class FrictionEngineMixin:
                 sample_id = self.contacts[c].sample_id
                 position = self.mpm.p_temp[sample_id]
                 uknot = self.contacts[c].knot_value[0]
-                uknot, distance, pointer = get_distance_to_curve_fixed_dim(
+                distance, pointer = evaluate_distance_to_curve_fixed_dim(
                     prefix_num_knot_u,
                     prefix_num_ctrlpts,
                     num_knot_u,
@@ -275,6 +274,7 @@ class FrictionEngineMixin:
                     surface.control_points_hat,
                     surface.weights,
                     position,
+                    uknot,
                     basis,
                 )
                 if ti.static(self.is_semi) or (
@@ -1663,6 +1663,7 @@ class FrictionEngineMixin:
         initial_step=1.0,
         include_friction=True,
         verbose=False,
+        prepare_contacts=True,
     ):
         """Device-resident residual-merit Armijo for a nonconservative system."""
         current_residual = float(current_residual)
@@ -1681,7 +1682,7 @@ class FrictionEngineMixin:
             float(initial_step),
             None,
             False,
-            prepare_contacts=True,
+            prepare_contacts=prepare_contacts,
         )
         # ``grid_disp_temp`` is the immutable base during the line search;
         # trial states are evaluated in the current fields because the body
@@ -1727,7 +1728,7 @@ class FrictionEngineMixin:
                 self._sync_device_trial_displacements()
             else:
                 self._restore_device_current_from_trial_base()
-            self.initialize_barrier(self.mpm.grid_disp, self.iga.grid_disp)
+                self.initialize_barrier(self.mpm.grid_disp, self.iga.grid_disp)
 
         self.last_armijo_step = float(alpha if accepted else 0.0)
         self.last_armijo_backtracks = int(backtracks)
@@ -1764,10 +1765,12 @@ class FrictionEngineMixin:
         last_armijo = None
         try:
             self._initialize_fully_implicit_velocity_guess_device()
+            contacts_prepared = False
             for iteration in range(max_iterations):
                 last_system = self.assemble_monolithic_newton_system(
                     include_friction=bool(include_friction),
-                    need_matrix=True,
+                    need_matrix=False,
+                    prepare_contacts=not contacts_prepared,
                 )
                 residual_squared = float(self._device_physical_residual_squared(last_system["active_dof"]))
                 residual = math.sqrt(residual_squared)
@@ -1786,6 +1789,12 @@ class FrictionEngineMixin:
                     self.last_monolithic_converged = True
                     break
 
+                last_system = self.assemble_monolithic_newton_system(
+                    include_friction=bool(include_friction),
+                    need_matrix=True,
+                    prepare_contacts=False,
+                    residual_prepared=True,
+                )
                 solve_result = self._solve_monolithic_linear_system(last_system, linear_solve=linear_solve)
                 if not solve_result["converged"]:
                     raise RuntimeError(
@@ -1811,11 +1820,13 @@ class FrictionEngineMixin:
                     initial_step=initial_step,
                     include_friction=bool(include_friction),
                     verbose=verbose,
+                    prepare_contacts=linear_solve is not None,
                 )
                 self.last_monolithic_iterations = iteration + 1
                 last_system["linear_solve"] = solve_result
                 if not last_armijo["accepted"]:
                     break
+                contacts_prepared = linear_solve is None
                 if verbose:
                     print(
                         "IGA-MPM Taichi fully implicit Newton "

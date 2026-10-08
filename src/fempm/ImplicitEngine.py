@@ -8,6 +8,7 @@ import taichi as ti
 
 import src.mpm.config as mpm_config
 from src.fem.engines.ImplicitFEM import NewtonConvergenceError
+from src.fem.engines.ClassicalAssembler import ClassicalAssembler
 from src.fempm.contact.IPCAssembler import FEMPMIPCAssembler
 from src.linear_solver.BuildTriplet import BuildTriplet
 from src.linear_solver.CoordinateSparseMatrix import CoordinateSparseMatrix
@@ -208,6 +209,7 @@ class FEMPMImplicitEngine:
         self.coo_overflow = ti.field(dtype=ti.i32, shape=())
         self.coo_diagonal = ti.field(dtype=ti.f64, shape=self.dof_capacity)
         self._matrix_contact_capacity = 0
+        self.fem_fixed_slots = None
         initial_candidates = self.contact.prepare(self.fem.state.position, self.mpm.grid_disp)
         self._ensure_matrices(initial_candidates)
 
@@ -406,6 +408,13 @@ class FEMPMImplicitEngine:
                 full_symmetric_input=True,
                 device_reduction=True,
             )
+            assembler = self._fem_assembler()
+            if isinstance(assembler, ClassicalAssembler):
+                coordinates, slots = assembler.fixed_block_coordinates()
+                self.monolithic_hash.install_fixed_pattern(coordinates)
+                if self.fem_fixed_slots is None:
+                    self.fem_fixed_slots = ti.field(ti.i32, shape=slots.shape)
+                    self.fem_fixed_slots.from_numpy(slots)
         else:
             # FEM and MPM together own one dense diagonal block per coupled
             # node; contact owns another.  Each raw off-diagonal source entry
@@ -429,52 +438,73 @@ class FEMPMImplicitEngine:
             for component in ti.static(range(3)):
                 self.fem_hash.diag[node][component * 3 + component] += factor * self.fem.state.mass[node]
 
-    def _assemble_fem_source(self, need_matrix=True):
-        internal_force = self.fem._assemble_internal_device(need_stiffness=need_matrix)
-        self.fem.state.assemble_implicit_residual(
-            internal_force,
-            self.fem.damping,
-            self.dt,
-            self.fem.beta,
-            self.fem.gamma,
-            int(self.fem.quasi_static),
-        )
+    def _assemble_fem_source(self, need_matrix=True, residual_prepared=False):
+        assembler = self._fem_assembler()
+        direct = need_matrix and self.assemble_type == "HashTriplet" and self.fem_fixed_slots is not None
+        # The mechanical-only classical path can preserve its residual while
+        # scattering the tangent directly from the same current positions.
+        reuse_force = residual_prepared and direct and self.fem.contact_assembler is None
+        if not reuse_force:
+            internal_force = self.fem._assemble_internal_device(need_stiffness=need_matrix)
+            self.fem.state.assemble_implicit_residual(
+                internal_force,
+                self.fem.damping,
+                self.dt,
+                self.fem.beta,
+                self.fem.gamma,
+                int(self.fem.quasi_static),
+            )
+        else:
+            internal_force = assembler.internal_force
         if need_matrix:
-            stiffness = self.fem._current_stiffness
-            if stiffness.values.size:
-                raise RuntimeError(
-                    "FEMPM IPC cannot consume host FEM triplets; move the "
-                    "contribution to a Taichi scatter_stiffness_to_hash kernel"
-                )
             self.fem_hash.reset_system()
-            if stiffness.base_assembler is not None:
-                stiffness.base_assembler.scatter_stiffness_to_hash(self.fem_hash)
-            for contribution in stiffness.device_contributions:
-                contribution.scatter_stiffness_to_hash(self.fem_hash)
+            if direct:
+                assembler.scatter_stiffness_to_fixed(
+                    self.monolithic_hash,
+                    self.fem_fixed_slots,
+                    self.fem.state.position,
+                )
+            if not reuse_force:
+                stiffness = self.fem._current_stiffness
+                if stiffness.values.size:
+                    raise RuntimeError(
+                        "FEMPM IPC cannot consume host FEM triplets; move the "
+                        "contribution to a Taichi scatter_stiffness_to_hash kernel"
+                    )
+                if stiffness.base_assembler is not None and not direct:
+                    stiffness.base_assembler.scatter_stiffness_to_hash(self.fem_hash)
+                for contribution in stiffness.device_contributions:
+                    contribution.scatter_stiffness_to_hash(self.fem_hash)
             factor = self.fem._dynamic_diagonal_factor()
             if factor:
                 self._add_fem_dynamic_diagonal(factor)
         return internal_force
 
-    def _assemble_mpm_source(self, need_matrix=True):
+    def _assemble_mpm_source(self, need_matrix=True, residual_prepared=False):
         active_dof = int(self.mpm.active_dof)
-        self.mpm.matrix_reset()
+        if not residual_prepared:
+            self.mpm.matrix_reset()
+            self.mpm.assemble_inertia_force(
+                active_dof,
+                self.mpm.damping,
+                self.mpm.gravity,
+                self.mpm.integration,
+                self.mpm.grid_disp,
+            )
+            self.mpm.prepare_material_response(self.mpm.grid_disp)
+            self.mpm.assemble_material_force(active_dof, self.mpm.grid_disp, reuse_response=True)
+            if self.mpm.neumann.num > 0:
+                self.mpm.apply_neumann()
         if need_matrix:
             self.mpm.hash_matrix.reset_system()
-        self.mpm.assemble_inertia_force(
-            active_dof,
-            self.mpm.damping,
-            self.mpm.gravity,
-            self.mpm.integration,
-            self.mpm.grid_disp,
-        )
-        self.mpm.assemble_material_force(active_dof, self.mpm.grid_disp)
-        if need_matrix:
-            self.mpm.assemble_stiffness_matrix_hash(active_dof, self.mpm.grid_disp, project_spd=True)
+            self.mpm.assemble_stiffness_matrix_hash(
+                active_dof,
+                self.mpm.grid_disp,
+                project_spd=True,
+                reuse_response=True,
+            )
             if mpm_config.DYNAMIC:
                 self.mpm.assemble_mass_matrix_hash()
-        if self.mpm.neumann.num > 0:
-            self.mpm.apply_neumann()
         return active_dof
 
     @ti.kernel
@@ -650,6 +680,12 @@ class FEMPMImplicitEngine:
                 self.monolithic_hash.non_diag.blockH[entry] = block
 
     @ti.kernel
+    def _finish_fixed_rhs(self, active_dof: ti.i32):
+        for dof in range(active_dof):
+            if self.fixed[dof]:
+                self.rhs[dof] = self.fixed_correction[dof]
+
+    @ti.kernel
     def _eliminate_coo_constraints(self, active_dof: ti.i32):
         count = self.coo_count[None]
         for entry in range(count):
@@ -684,11 +720,17 @@ class FEMPMImplicitEngine:
         for dof in range(self.dof_capacity):
             self.physical_rhs[dof] = self.rhs[dof] if dof < active_dof else 0.0
 
-    def assemble_system(self, include_friction=True, need_matrix=True):
-        count = self.contact.prepare(self.fem.state.position, self.mpm.grid_disp)
+    def assemble_system(self, include_friction=True, need_matrix=True, *, residual_prepared=False):
+        if residual_prepared:
+            count = self._prepared_contact_count
+        else:
+            count = self.contact.prepare(self.fem.state.position, self.mpm.grid_disp)
+            self._prepared_contact_count = count
         self._ensure_matrices(count)
-        self._assemble_fem_source(need_matrix=need_matrix)
-        active_mpm_dof = self._assemble_mpm_source(need_matrix=need_matrix)
+        if need_matrix and self.assemble_type == "HashTriplet":
+            self.monolithic_hash.reset_system()
+        self._assemble_fem_source(need_matrix=need_matrix, residual_prepared=residual_prepared)
+        active_mpm_dof = self._assemble_mpm_source(need_matrix=need_matrix, residual_prepared=residual_prepared)
         active_mpm_nodes = active_mpm_dof // self.mpm_dimension
         active_nodes = self.fem_nodes + active_mpm_nodes
         active_dof = 3 * active_nodes
@@ -710,7 +752,6 @@ class FEMPMImplicitEngine:
         if need_matrix:
             if self.assemble_type == "HashTriplet":
                 matrix = self.monolithic_hash
-                matrix.reset_system()
                 matrix.append_raw_from(self.fem_hash, active_nodes=self.fem_nodes, block_offset=0)
                 self.mpm_embedded_hash.reset_system()
                 self._embed_mpm_source(active_mpm_nodes)
@@ -739,6 +780,8 @@ class FEMPMImplicitEngine:
         if need_matrix:
             if self.assemble_type == "HashTriplet":
                 self._eliminate_hash_constraints(active_nodes)
+                matrix.eliminate_fixed_constraints(self.fixed, self.fixed_correction, self.rhs)
+                self._finish_fixed_rhs(active_dof)
                 matrix.finalize_taichi_assembly()
             else:
                 self._eliminate_coo_constraints(active_dof)
@@ -1085,7 +1128,7 @@ class FEMPMImplicitEngine:
             if getattr(self.contact, "is_semi", False) and iteration > 1 and semi_progress > 0.999:
                 converged = True
                 break
-            last_system = self.assemble_system(include_friction=include_friction, need_matrix=True)
+            last_system = self.assemble_system(include_friction=include_friction, need_matrix=False)
             self._reduce_system_metrics(int(last_system["active_dof"]))
             residual_norm = math.sqrt(max(float(self.residual_squared[None]), 0.0))
             if initial_norm is None:
@@ -1109,6 +1152,11 @@ class FEMPMImplicitEngine:
                 break
             if iteration == self.max_iterations:
                 break
+            last_system = self.assemble_system(
+                include_friction=include_friction,
+                need_matrix=True,
+                residual_prepared=True,
+            )
             linear_solve = self._solve_linear_system(last_system)
             self._split_direction(int(last_system["active_mpm_dof"]))
             self._reduce_system_metrics(int(last_system["active_dof"]))
@@ -1152,10 +1200,11 @@ class FEMPMImplicitEngine:
         return converged, records, last_system
 
     def _updated_friction_residual(self, include_friction):
-        system = self.assemble_system(include_friction=include_friction, need_matrix=True)
+        system = self.assemble_system(include_friction=include_friction, need_matrix=False)
         self._reduce_system_metrics(int(system["active_dof"]))
         if math.sqrt(max(float(self.residual_squared[None]), 0.0)) <= self.absolute_tolerance:
             return 0.0
+        system = self.assemble_system(include_friction=include_friction, need_matrix=True, residual_prepared=True)
         self._solve_linear_system(system)
         self._split_direction(int(system["active_mpm_dof"]))
         self._reduce_system_metrics(int(system["active_dof"]))

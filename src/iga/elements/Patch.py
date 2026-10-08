@@ -165,6 +165,7 @@ class Patch:
 
             begin_ctrlpts = np.sum(self.total_num_ctrlpts[: self.num_patch + 1])
             begin_knot = [np.sum(self.num_knot[: self.num_patch + 1, d]) for d in range(primitive.dimension)]
+            begin_element = [np.sum(self.num_element[: self.num_patch + 1, d]) for d in range(primitive.dimension)]
 
             def get_influence_node(index, degree, num_ctrlpts):
                 return [i for i in range(index - degree, index + degree + 1) if 0 <= i < num_ctrlpts]
@@ -213,12 +214,12 @@ class Patch:
             )
             self.fill_initial_condition(begin_ctrlpts, primitive.num_ctrlpts, init_v, gravity)
             self.fill_knot_vector(begin_knot[0], primitive.knot_vector_u, self.knot_vector_u)
-            self.fill_element(begin_knot[0], primitive.element_u, self.element_u)
+            self.fill_element(begin_element[0], primitive.element_u, self.element_u)
             self.fill_knot_vector(begin_knot[1], primitive.knot_vector_v, self.knot_vector_v)
-            self.fill_element(begin_knot[1], primitive.element_v, self.element_v)
+            self.fill_element(begin_element[1], primitive.element_v, self.element_v)
             if primitive.dimension == 3:
                 self.fill_knot_vector(begin_knot[2], primitive.knot_vector_w, self.knot_vector_w)
-                self.fill_element(begin_knot[2], primitive.element_w, self.element_w)
+                self.fill_element(begin_element[2], primitive.element_w, self.element_w)
             self.num_patch += 1
 
     def finalize(self):

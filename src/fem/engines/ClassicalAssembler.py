@@ -362,14 +362,18 @@ class ClassicalAssembler:
         scalar_offset: ti.i32,
         block_offset: ti.i32,
         assemble_hash: ti.template(),
+        fixed_slots: ti.template(),
+        direct_fixed: ti.template(),
     ):
         for element_id in range(self.cell_count):
             coordinates = ti.Matrix.zero(self.real_type, self.nodes_per_cell, 3)
             cell = self.connectivity[element_id]
             for local_id, component in ti.static(ti.ndrange(self.nodes_per_cell, 3)):
                 coordinates[local_id, component] = positions[cell[local_id]][component]
-            for local_i, local_j in ti.static(ti.ndrange(self.nodes_per_cell, self.nodes_per_cell)):
-                if ti.static(assemble_hash):
+            for local_i, local_j in ti.ndrange(self.nodes_per_cell, self.nodes_per_cell):
+                if ti.static(direct_fixed):
+                    pass
+                elif ti.static(assemble_hash):
                     if local_i != local_j:
                         pair = (
                             element_id * self.nodes_per_cell * (self.nodes_per_cell - 1)
@@ -387,7 +391,7 @@ class ClassicalAssembler:
                         target.rows[entry] = 3 * cell[local_i] + row
                         target.cols[entry] = 3 * cell[local_j] + column
                         target.data[entry] = 0.0
-            for quadrature_id in ti.static(range(self.quadrature_count)):
+            for quadrature_id in range(self.quadrature_count):
                 weight = self.reference_weights[element_id, quadrature_id]
                 if ti.static(self.is_axisymmetric):
                     deformation_gradient = self._axisymmetric_deformation_gradient(
@@ -397,7 +401,7 @@ class ClassicalAssembler:
                     material_tangent = 0.5 * (material_tangent + material_tangent.transpose())
                     if ti.static(self.project_pd):
                         material_tangent = psd_project_nd(material_tangent)
-                    for local_i, local_j in ti.static(ti.ndrange(self.nodes_per_cell, self.nodes_per_cell)):
+                    for local_i, local_j in ti.ndrange(self.nodes_per_cell, self.nodes_per_cell):
                         block = ti.Matrix.zero(self.real_type, 3, 3)
                         for component_i, component_j in ti.static(ti.ndrange(2, 2)):
                             derivative_i = self._axisymmetric_local_derivative(
@@ -415,7 +419,14 @@ class ClassicalAssembler:
                                     ]
                                     * derivative_j[row_j, column_j]
                                 )
-                        if ti.static(assemble_hash):
+                        if ti.static(direct_fixed):
+                            target.add_fixed_block(
+                                fixed_slots[element_id, local_i * self.nodes_per_cell + local_j],
+                                cell[local_i],
+                                cell[local_j],
+                                block,
+                            )
+                        elif ti.static(assemble_hash):
                             if local_i == local_j:
                                 target.add_block_entry(cell[local_i], cell[local_j], block)
                             else:
@@ -451,7 +462,7 @@ class ClassicalAssembler:
                     material_tangent = 0.5 * (material_tangent + material_tangent.transpose())
                     if ti.static(self.project_pd):
                         material_tangent = psd_project_nd(material_tangent)
-                    for local_i, local_j in ti.static(ti.ndrange(self.nodes_per_cell, self.nodes_per_cell)):
+                    for local_i, local_j in ti.ndrange(self.nodes_per_cell, self.nodes_per_cell):
                         block = ti.Matrix.zero(self.real_type, 3, 3)
                         for spatial_i, spatial_j in ti.static(ti.ndrange(3, 3)):
                             for material_i, material_j in ti.static(ti.ndrange(2, 2)):
@@ -463,7 +474,14 @@ class ClassicalAssembler:
                                     ]
                                     * self.shape_gradients[element_id, quadrature_id, local_j, material_j]
                                 )
-                        if ti.static(assemble_hash):
+                        if ti.static(direct_fixed):
+                            target.add_fixed_block(
+                                fixed_slots[element_id, local_i * self.nodes_per_cell + local_j],
+                                cell[local_i],
+                                cell[local_j],
+                                block,
+                            )
+                        elif ti.static(assemble_hash):
                             if local_i == local_j:
                                 target.add_block_entry(cell[local_i], cell[local_j], block)
                             else:
@@ -488,7 +506,7 @@ class ClassicalAssembler:
                     material_tangent = 0.5 * (material_tangent + material_tangent.transpose())
                     if ti.static(self.project_pd):
                         material_tangent = psd_project_nd(material_tangent)
-                    for local_i, local_j in ti.static(ti.ndrange(self.nodes_per_cell, self.nodes_per_cell)):
+                    for local_i, local_j in ti.ndrange(self.nodes_per_cell, self.nodes_per_cell):
                         block = ti.Matrix.zero(self.real_type, 3, 3)
                         for spatial_i, spatial_j in ti.static(ti.ndrange(3, 3)):
                             for material_i, material_j in ti.static(ti.ndrange(3, 3)):
@@ -500,7 +518,14 @@ class ClassicalAssembler:
                                     ]
                                     * self.shape_gradients[element_id, quadrature_id, local_j, material_j]
                                 )
-                        if ti.static(assemble_hash):
+                        if ti.static(direct_fixed):
+                            target.add_fixed_block(
+                                fixed_slots[element_id, local_i * self.nodes_per_cell + local_j],
+                                cell[local_i],
+                                cell[local_j],
+                                block,
+                            )
+                        elif ti.static(assemble_hash):
                             if local_i == local_j:
                                 target.add_block_entry(cell[local_i], cell[local_j], block)
                             else:
@@ -659,12 +684,28 @@ class ClassicalAssembler:
 
     def scatter_stiffness_to_coo(self, matrix, offset=0):
         self._require_hessian_storage()
-        self._assemble_element_stiffness_direct(self.stiffness_positions, matrix, int(offset), 0, False)
+        self._assemble_element_stiffness_direct(self.stiffness_positions, matrix, int(offset), 0, False, None, False)
 
     def scatter_stiffness_to_hash(self, matrix):
         self._require_hessian_storage()
         block_offset = matrix.reserve_raw_block_slots(self.stiffness_block_pair_count)
-        self._assemble_element_stiffness_direct(self.stiffness_positions, matrix, 0, block_offset, True)
+        self._assemble_element_stiffness_direct(self.stiffness_positions, matrix, 0, block_offset, True, None, False)
+
+    def fixed_block_coordinates(self):
+        """Permanent strict-upper slots for the immutable element connectivity."""
+        cells = np.asarray(self.element.connectivity, dtype=np.int32)
+        first = np.broadcast_to(cells[:, :, None], (self.cell_count, self.nodes_per_cell, self.nodes_per_cell))
+        second = np.broadcast_to(cells[:, None, :], first.shape)
+        pairs = np.stack((first, second), axis=-1).reshape(-1, 2)
+        selected = pairs[:, 0] < pairs[:, 1]
+        coordinates, inverse = np.unique(pairs[selected], axis=0, return_inverse=True)
+        slots = np.full(pairs.shape[0], -1, dtype=np.int32)
+        slots[selected] = inverse
+        return coordinates, slots.reshape(self.cell_count, -1)
+
+    def scatter_stiffness_to_fixed(self, matrix, fixed_slots, positions):
+        self._require_hessian_storage()
+        self._assemble_element_stiffness_direct(positions, matrix, 0, 0, True, fixed_slots, True)
 
     def _sparse_stiffness(self, positions):
         self._require_hessian_storage()

@@ -511,9 +511,9 @@ def configure_iga_axisymmetric_penetrator(iga, dt, step_count, output_interval, 
     iga.add_primitives(primitives)
     all_control_points = np.arange(pile.control_points.shape[0], dtype=np.int32)
     boundary = DirichletBoundary()
-    boundary.append(
+    boundary.append_velocity(
         [list(2 * all_control_points), list(2 * all_control_points + 1)],
-        [0.0] * all_control_points.size + [-PILE_SPEED * dt] * all_control_points.size,
+        [0.0] * all_control_points.size + [-PILE_SPEED] * all_control_points.size,
     )
     iga.add_boundary_condition(dirichlet=boundary)
     iga.add_element(degree=[2, 2])
@@ -626,8 +626,11 @@ def parse_arguments():
     parser.add_argument("--save-interval", type=float)
     parser.add_argument("--resolution-scale", type=float)
     parser.add_argument("--output-dir", default=str(CASE_DIR / "OutputData"))
+    parser.add_argument("--resume", type=Path, help="IPC latest_state.npz to restore")
     arguments = parser.parse_args()
     implicit = arguments.contact == "ipc"
+    if arguments.resume is not None and not implicit:
+        parser.error("--resume requires --contact ipc")
     if arguments.dilation_angle is not None and not implicit:
         parser.error("--dilation-angle is supported by the IPC route")
     if arguments.dt is None:
@@ -656,9 +659,16 @@ def main():
     implicit = arguments.contact == "ipc"
     output_path = Path(arguments.output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
-    if (output_path / "step_diagnostics.jsonl").exists() or (output_path / "cpt_summary.json").exists():
+    existing_run = (output_path / "step_diagnostics.jsonl").exists() or (output_path / "cpt_summary.json").exists()
+    if existing_run and (arguments.resume is None or arguments.resume.resolve().parent != output_path.resolve()):
         raise FileExistsError(f"refusing to overwrite existing run: {output_path}")
-    (output_path / "parameters.json").write_text(json.dumps(vars(arguments), indent=2) + "\n")
+    if arguments.resume is not None:
+        previous = json.loads((arguments.resume.parent / "parameters.json").read_text())
+        for key in ("contact", "default_fp", "dilation_angle", "resolution_scale", "save_interval"):
+            if previous[key] != getattr(arguments, key):
+                raise ValueError(f"checkpoint configuration mismatch: {key}")
+    if not existing_run:
+        (output_path / "parameters.json").write_text(json.dumps(vars(arguments), default=str, indent=2) + "\n")
     step_count = int(math.ceil(arguments.time / arguments.dt))
     output_interval = max(1, int(round(arguments.save_interval / arguments.dt)))
     gt.init(
@@ -761,23 +771,73 @@ def main():
     next_save = [arguments.save_interval]
     started = time.monotonic()
 
+    state = {
+        "particle_position": engine.mpm.particle.x,
+        "particle_velocity": engine.mpm.particle.v,
+        "particle_acceleration": engine.mpm.particle.a,
+        "deformation": engine.mpm.F0,
+        "plastic_inverse": engine.mpm.material.plastic_deformation_inverse,
+        "equivalent_plastic_strain": engine.mpm.material.equivalent_plastic_strain,
+        "volumetric_plastic_strain": engine.mpm.material.volumetric_plastic_strain,
+        "grid_velocity": engine.mpm.grid.v,
+        "grid_acceleration": engine.mpm.grid.a,
+        "pile_position": engine.iga.patch.control_points,
+        "pile_velocity": engine.iga.patch.velocitys,
+        "pile_acceleration": engine.iga.patch.accelerations,
+    }
+    engine._initialize_implicit_ipc_state()
+    if arguments.resume is not None:
+        with np.load(arguments.resume, allow_pickle=False) as saved:
+            metadata = json.loads(str(saved["metadata"]))
+            output_counts = saved["output_counts"].copy() if "output_counts" in saved else None
+            if not 0 <= metadata["time"] < arguments.time:
+                raise ValueError("checkpoint time must precede the requested end time")
+            for name, field in state.items():
+                values = saved[name]
+                if values.shape != field.to_numpy().shape or not np.all(np.isfinite(values)):
+                    raise ValueError(f"invalid checkpoint field: {name}")
+            for name in ("deformation", "plastic_inverse"):
+                if np.any(np.linalg.det(saved[name]) <= 0.0):
+                    raise ValueError(f"checkpoint requires positive determinants: {name}")
+            for name, field in state.items():
+                field.from_numpy(saved[name])
+            if "history" in saved:
+                history = saved["history"].tolist()
+        # ULMPM rebuilds nodal mass/momentum from the restored particles. A
+        # legacy checkpoint has no grid mass mask, so discard all old nodal
+        # accumulators before the first P2G instead of retaining stale values.
+        engine.mpm.grid.m.fill(0.0)
+        engine.mpm.grid.v.fill(0.0)
+        engine.mpm.grid.a.fill(0.0)
+        engine.time = float(metadata["time"])
+        engine.implicit_step_index = int(metadata["step"])
+        for child in (engine.iga, engine.mpm):
+            child.time, child.step_count = engine.time, engine.implicit_step_index
+        next_save[0] = (math.floor((engine.time + 1e-12) / arguments.save_interval) + 1) * arguments.save_interval
+        if existing_run:
+            frame_count = math.ceil((engine.time - 1e-12) / arguments.save_interval) + 1
+            if output_counts is not None:
+                if output_counts.shape != (2,) or output_counts[0] != output_counts[1]:
+                    raise ValueError("checkpoint IGA/MPM frame counts do not match")
+                frame_count = int(output_counts[0])
+            if len(list((output_path / "vtks").glob("GraphicMPMParticle*.vtu"))) != frame_count:
+                raise ValueError("saved frames do not match checkpoint time; resume into an empty output directory")
+            engine.iga.output_count = engine.mpm.output_count = frame_count
+            mpm.sims.current_print = frame_count
+            coupling._last_implicit_recorded_step = engine.implicit_step_index
+            diagnostics_path = output_path / "step_diagnostics.jsonl"
+            lines = diagnostics_path.read_text().splitlines(keepends=True)
+            retained = [line for line in lines if json.loads(line)["step"] <= engine.implicit_step_index]
+            if retained != lines:
+                diagnostics_path.replace(output_path / "step_diagnostics_before_resume.jsonl")
+                diagnostics_path.write_text("".join(retained))
+        print(f"Resuming CPT at t={engine.time:.9g}, step={engine.implicit_step_index}", flush=True)
+
     def checkpoint():
-        state = {
-            "particle_position": engine.mpm.particle.x,
-            "particle_velocity": engine.mpm.particle.v,
-            "particle_acceleration": engine.mpm.particle.a,
-            "deformation": engine.mpm.F0,
-            "plastic_inverse": engine.mpm.material.plastic_deformation_inverse,
-            "equivalent_plastic_strain": engine.mpm.material.equivalent_plastic_strain,
-            "volumetric_plastic_strain": engine.mpm.material.volumetric_plastic_strain,
-            "grid_velocity": engine.mpm.grid.v,
-            "grid_acceleration": engine.mpm.grid.a,
-            "pile_position": engine.iga.patch.control_points,
-            "pile_velocity": engine.iga.patch.velocitys,
-            "pile_acceleration": engine.iga.patch.accelerations,
-        }
         arrays = {name: field.to_numpy() for name, field in state.items()}
         arrays["metadata"] = np.array(json.dumps(engine.diagnostics_snapshot()))
+        arrays["history"] = np.asarray(history, dtype=np.float64).reshape(-1, 5)
+        arrays["output_counts"] = np.array([engine.iga.output_count, engine.mpm.output_count], dtype=np.int64)
         temporary = output_path / "latest_state.tmp.npz"
         np.savez(temporary, **arrays)
         temporary.replace(output_path / "latest_state.npz")
@@ -806,10 +866,10 @@ def main():
             while next_save[0] <= coupled_engine.time + 1e-12:
                 next_save[0] += arguments.save_interval
 
-    engine._initialize_implicit_ipc_state()
     if coupling._last_implicit_recorded_step != engine.implicit_step_index:
         coupling._record_implicit_frame(engine)
-    checkpoint()
+    if not existing_run:
+        checkpoint()
     while engine.time < arguments.time - 1e-12:
         engine._set_implicit_timestep(min(arguments.dt, arguments.time - engine.time, next_save[0] - engine.time))
         result = coupling.run(steps=1, verbose=False, record=False, postprocessing=(sample_cpt,))
@@ -836,6 +896,7 @@ def main():
         "final_pile_top": final_top,
         "fully_inserted": final_top <= 1.5 + 1.0e-6,
         "maximum_active_contacts": max((row[4] for row in history), default=0),
+        "history_start_time": history[0][0] if history else None,
         "converged": bool(result["converged"]),
     }
     (output_path / "cpt_summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")

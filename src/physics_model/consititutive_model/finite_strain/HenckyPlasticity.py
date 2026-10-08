@@ -165,6 +165,11 @@ class HenckyAssociatedPlasticityModel(FiniteStrainModel):
         plastic_inverse = self.plastic_deformation_inverse[particle_id]
         elastic_trial = total_deformation_gradient @ plastic_inverse
         elastic_tangent = self.first_piola_tangent_at(particle_id, elastic_trial)
+        return self._total_tangent_from_elastic(particle_id, elastic_tangent)
+
+    @ti.func
+    def _total_tangent_from_elastic(self, particle_id, elastic_tangent):
+        plastic_inverse = self.plastic_deformation_inverse[particle_id]
         reference_jacobian = self.incremental_reference_jacobian(particle_id)
         tangent = ti.Matrix.zero(float, 9, 9)
         row = 0
@@ -194,6 +199,22 @@ class HenckyAssociatedPlasticityModel(FiniteStrainModel):
                 column += 1
             row += 1
         return tangent
+
+    @ti.func
+    def total_stress_from_response(self, particle_id, total_deformation_gradient, response):
+        inverse = self.plastic_deformation_inverse[particle_id]
+        elastic = total_deformation_gradient @ inverse
+        return flatten_matrix(
+            self.incremental_reference_jacobian(particle_id)
+            * self._stress_from_response(elastic, response)
+            @ inverse.transpose()
+        )
+
+    @ti.func
+    def total_tangent_from_response(self, particle_id, total_deformation_gradient, response):
+        elastic = self.trial_elastic_deformation(particle_id, total_deformation_gradient)
+        tangent = self._tangent_from_response(particle_id, elastic, response)
+        return self._total_tangent_from_elastic(particle_id, tangent)
 
     @ti.func
     def total_dPsi_div_dF_at(self, particle_id, total_deformation_gradient):
@@ -1012,6 +1033,10 @@ class HenckyAssociatedPlasticityModel(FiniteStrainModel):
     @ti.func
     def first_piola_stress_at(self, particle_id, deformation_gradient):
         response = self._principal_response(particle_id, deformation_gradient)
+        return self._stress_from_response(deformation_gradient, response)
+
+    @ti.func
+    def _stress_from_response(self, deformation_gradient, response):
         matrix_u, matrix_v, principal_pk1 = response[0], response[1], response[11]
         diagonal = ti.Matrix.zero(float, deformation_gradient.n, deformation_gradient.m)
         for i in ti.static(range(deformation_gradient.n)):
@@ -1055,6 +1080,10 @@ class HenckyAssociatedPlasticityModel(FiniteStrainModel):
     @ti.func
     def first_piola_tangent_at(self, particle_id, deformation_gradient):
         response = self._principal_response(particle_id, deformation_gradient)
+        return self._tangent_from_response(particle_id, deformation_gradient, response)
+
+    @ti.func
+    def _tangent_from_response(self, particle_id, deformation_gradient, response):
         matrix_u = response[0]
         matrix_v = response[1]
         singular_values = response[2]

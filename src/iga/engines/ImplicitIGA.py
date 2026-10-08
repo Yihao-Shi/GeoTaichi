@@ -35,8 +35,15 @@ class IGAConvergenceError(RuntimeError):
 
 @ti.data_oriented
 class ImplicitIGA(IGASolver):
+    @IGASolver.dt.setter
+    def dt(self, value):
+        IGASolver.dt.fset(self, value)
+        if getattr(self, "dirichlet", None) is not None:
+            self.dirichlet.update_timestep(self.dt)
+
     def __init__(self, primitives, dirichlet=None, neumann=None, **kwargs):
         super().__init__(primitives, dirichlet, neumann, **kwargs)
+        self.dirichlet.update_timestep(self.dt)
         self.integration = kwargs.get("newmark", [0.5, 0.25, 0.5])  # [alpha, beta, gamma]
         integration = np.asarray(self.integration, dtype=np.float64)
         if integration.size < 3 or not np.all(np.isfinite(integration[:3])) or np.any(integration[:3] <= 0.0):
@@ -102,20 +109,18 @@ class ImplicitIGA(IGASolver):
             self.prefix_nnz[i + 1] = self.prefix_nnz[i] + nnz
             self.stiffness_nnz += nnz
         self.total_nnz = int(self.stiffness_nnz + self.degree_of_freedom)
-        # Hash assembly stores one dense block per
-        # (patch, element, Gauss point, local-node pair).  Reserving those
-        # slots explicitly makes the raw coordinate stream deterministic
-        # across Newton iterations, which lets the device pattern cache reuse
-        # its raw-slot mapping. ``stiffness_nnz`` counts scalar entries, hence
-        # the division by the number of scalars in one dense block.
-        raw_hash_pairs = max(
-            1,
-            self.stiffness_nnz // (config.DIM * config.DIM) * self.element.gauss_number,
+        # Sum quadrature contributions into one slot per element node pair.
+        raw_hash_pairs = max(1, self.stiffness_nnz // (config.DIM * config.DIM))
+        reduced_hash_pairs = raw_hash_pairs
+        total_elements = int(np.sum(self.patch.total_num_element[1:]))
+        quadrature_shape = (total_elements, self.element.gauss_number)
+        self.reference_N = ti.field(ti.f64, shape=(*quadrature_shape, self.element.total_knot_range))
+        self.reference_gradient = ti.Vector.field(
+            config.DIM, ti.f64, shape=(*quadrature_shape, self.element.total_knot_range)
         )
-        # Gauss points repeat the same element/control-point block topology.
-        # They increase raw deterministic scatter slots, but cannot increase
-        # the number of distinct reduced block coordinates.
-        reduced_hash_pairs = max(1, self.stiffness_nnz // (config.DIM * config.DIM))
+        self.reference_weight = ti.field(ti.f64, shape=quadrature_shape)
+        self.reference_radius = ti.field(ti.f64, shape=quadrature_shape)
+        self._reference_ready_offsets = set()
         self.hash_matrix = BuildTriplet(
             dim=config.DIM,
             max_pairs_num=raw_hash_pairs,
@@ -161,6 +166,30 @@ class ImplicitIGA(IGASolver):
             )
         self.apply_neumann_step = self.apply_neumann if self.neumann.num > 0 else no_operation
         self.get_neumann_energy_step = self.get_neumann_energy if self.neumann.num > 0 else no_operation
+
+    def fixed_block_coordinates(self, upper_triangle=False):
+        """Build the immutable element-pair scatter map on the host once."""
+        support = tuple(int(v) for v in self.element.knot_range)
+        local = np.array(np.unravel_index(np.arange(self.element.total_knot_range), support, order="F")).T
+        connections = []
+        for pid in range(self.patch.num_patch):
+            elements = tuple(int(v) for v in self.patch.num_element[pid + 1])
+            counts = tuple(int(v) for v in self.patch.num_ctrlpts[pid + 1])
+            element_ids = np.array(np.unravel_index(np.arange(int(np.prod(elements))), elements, order="F")).T
+            ids = local[None, :, :] + element_ids[:, None, :]
+            connections.append(
+                np.ravel_multi_index(ids.reshape(-1, config.DIM).T, counts, order="F").reshape(len(element_ids), -1)
+                + self.patch.prefix_total_num_ctrlpts[pid]
+            )
+        nodes = np.concatenate(connections)
+        count = self.element.total_knot_range
+        rows = np.broadcast_to(nodes[:, :, None], (len(nodes), count, count)).ravel()
+        columns = np.broadcast_to(nodes[:, None, :], (len(nodes), count, count)).ravel()
+        keep = rows < columns if upper_triangle else rows != columns
+        coordinates, inverse = np.unique(np.column_stack((rows[keep], columns[keep])), axis=0, return_inverse=True)
+        slots = np.full(rows.size, -1, dtype=np.int32)
+        slots[keep] = inverse
+        return coordinates.astype(np.int32), slots.reshape(len(nodes), count * count)
 
     @staticmethod
     def _normalize_assemble_type(assemble_type):
@@ -415,8 +444,11 @@ class ImplicitIGA(IGASolver):
         grid_disp: ti.template(),
         need_matrix=True,
         project_spd=False,
+        need_force=True,
+        matrix=None,
+        fixed_slots=None,
     ):
-        if self.assemble_type == "COO":
+        if self.assemble_type == "COO" and matrix is None:
             self.assemble_stiffness_matrix_coo(
                 prefix_num_nnz,
                 total_num_ctrlpts,
@@ -434,7 +466,7 @@ class ImplicitIGA(IGASolver):
                 bool(project_spd),
             )
         else:
-            prefix_hash_pair = int(prefix_num_nnz) // (config.DIM * config.DIM) * self.element.gauss_number
+            prefix_hash_pair = int(prefix_num_nnz) // (config.DIM * config.DIM)
             self.assemble_stiffness_matrix_hash(
                 prefix_hash_pair,
                 total_num_ctrlpts,
@@ -450,7 +482,13 @@ class ImplicitIGA(IGASolver):
                 grid_disp,
                 bool(need_matrix),
                 bool(project_spd),
+                bool(need_force),
+                prefix_hash_pair in self._reference_ready_offsets,
+                self.hash_matrix if matrix is None else matrix,
+                fixed_slots,
+                fixed_slots is not None,
             )
+            self._reference_ready_offsets.add(prefix_hash_pair)
 
     @ti.kernel
     def assemble_stiffness_matrix_coo(
@@ -612,16 +650,20 @@ class ImplicitIGA(IGASolver):
         grid_disp: ti.template(),
         need_matrix: ti.template(),
         project_spd: ti.template(),
+        need_force: ti.template(),
+        reference_prepared: ti.template(),
+        matrix: ti.template(),
+        fixed_slots: ti.template(),
+        direct: ti.template(),
     ):
         dt = self.TIdt[None]
         param1 = 1.0 / (2.0 * dt * dt * integration[0] * integration[1])
         param2 = param1 * dt
         param3 = 0.5 / integration[1] - 1.0
         local_node_count = ti.static(self.element.total_knot_range)
-        raw_pairs_per_element = ti.static(
-            self.element.gauss_number * self.element.total_knot_range * self.element.total_knot_range
-        )
-        if ti.static(need_matrix):
+        raw_pairs_per_element = ti.static(self.element.total_knot_range * self.element.total_knot_range)
+        prefix_element = prefix_hash_pair // raw_pairs_per_element
+        if ti.static(need_matrix and not direct):
             raw_end = prefix_hash_pair + total_num_element * raw_pairs_per_element
             ti.atomic_max(self.hash_matrix.raw_non_diag_count[0], raw_end)
             if raw_end > self.hash_matrix.non_diag.blockI.shape[0]:
@@ -650,32 +692,52 @@ class ImplicitIGA(IGASolver):
                     current_ctrl_coords[local_offset, j] = control_points[j] + grid_disp[config.DIM * ctrlpt_id + j]
 
             for gauss_id in range(self.element.gauss_number):
-                N, dNdnat = self.element.dshapefn(
-                    gauss_id,
-                    elrange_u,
-                    elrange_v,
-                    elrange_w,
-                    prefix_num_knot,
-                    prefix_total_num_ctrlpts,
-                    num_knot,
-                    self.patch,
-                )
-                jacobian = self.calculate_jacobian(dNdnat, rest_ctrl_coords)
-                j1 = self.require_positive_reference_jacobian(jacobian)
-                reference_radius = self._axisymmetric_reference_radius(N, rest_ctrl_coords)
-                volume = self._physical_quadrature_weight(
-                    j1 * j2 * self.element.gauss_weights[gauss_id],
-                    reference_radius,
-                )
-                dnatdX = jacobian.inverse()
-                shape_gradients = self.element.compute_shape_gradients(dNdnat, dnatdX)
+                N = ti.Vector.zero(ti.f64, self.element.total_knot_range)
+                shape_gradients = ti.Matrix.zero(ti.f64, self.element.total_knot_range, config.DIM)
+                volume, reference_radius = 0.0, 1.0
+                if ti.static(reference_prepared):
+                    for node in range(self.element.total_knot_range):
+                        N[node] = self.reference_N[prefix_element + ele, gauss_id, node]
+                        for d in ti.static(range(config.DIM)):
+                            shape_gradients[node, d] = self.reference_gradient[prefix_element + ele, gauss_id, node][d]
+                    volume = self.reference_weight[prefix_element + ele, gauss_id]
+                    reference_radius = self.reference_radius[prefix_element + ele, gauss_id]
+                else:
+                    N, dNdnat = self.element.dshapefn(
+                        gauss_id,
+                        elrange_u,
+                        elrange_v,
+                        elrange_w,
+                        prefix_num_knot,
+                        prefix_total_num_ctrlpts,
+                        num_knot,
+                        self.patch,
+                    )
+                    jacobian = self.calculate_jacobian(dNdnat, rest_ctrl_coords)
+                    j1 = self.require_positive_reference_jacobian(jacobian)
+                    reference_radius = self._axisymmetric_reference_radius(N, rest_ctrl_coords)
+                    volume = self._physical_quadrature_weight(
+                        j1 * j2 * self.element.gauss_weights[gauss_id],
+                        reference_radius,
+                    )
+                    dnatdX = jacobian.inverse()
+                    shape_gradients = self.element.compute_shape_gradients(dNdnat, dnatdX)
+                    for node in range(self.element.total_knot_range):
+                        self.reference_N[prefix_element + ele, gauss_id, node] = N[node]
+                        self.reference_gradient[prefix_element + ele, gauss_id, node] = ti.Vector(
+                            [shape_gradients[node, d] for d in ti.static(range(config.DIM))]
+                        )
+                    self.reference_weight[prefix_element + ele, gauss_id] = volume
+                    self.reference_radius[prefix_element + ele, gauss_id] = reference_radius
                 deformation_gradient = self._constitutive_deformation_gradient(
                     N,
                     shape_gradients,
                     rest_ctrl_coords,
                     current_ctrl_coords,
                 )
-                dPsi_dF = self.material.dPsi_div_dF(deformation_gradient) * volume
+                dPsi_dF = ti.Vector.zero(ti.f64, self.material_dimension * self.material_dimension)
+                if ti.static(need_force):
+                    dPsi_dF = self.material.dPsi_div_dF(deformation_gradient) * volume
                 d2Psi_d2F = ti.Matrix.zero(
                     ti.f64,
                     self.material_dimension * self.material_dimension,
@@ -691,21 +753,29 @@ class ImplicitIGA(IGASolver):
                     local_offset1 = linearize(nodeID1, self.element.knot_range)
                     global_offset1 = linearize(global_nodeID1, num_ctrlpts)
                     block_i = prefix_total_num_ctrlpts + global_offset1
-                    local_gradient = self.compute_local_gradient(
-                        local_offset1,
-                        dPsi_dF,
-                        shape_gradients,
-                        N,
-                        reference_radius,
-                    )
-                    for d in ti.static(range(config.DIM)):
-                        self.rhs[config.DIM * block_i + d] -= local_gradient[d]
+                    if ti.static(need_force):
+                        local_gradient = self.compute_local_gradient(
+                            local_offset1,
+                            dPsi_dF,
+                            shape_gradients,
+                            N,
+                            reference_radius,
+                        )
+                        for d in ti.static(range(config.DIM)):
+                            self.rhs[config.DIM * block_i + d] -= local_gradient[d]
                     if ti.static(need_matrix):
                         for nodeID2 in ti.grouped(ti.ndrange(*self.element.knot_range)):
                             global_nodeID2 = nodeID2 + eleid
                             local_offset2 = linearize(nodeID2, self.element.knot_range)
                             global_offset2 = linearize(global_nodeID2, num_ctrlpts)
                             block_j = prefix_total_num_ctrlpts + global_offset2
+                            slot = -1
+                            if ti.static(direct):
+                                slot = fixed_slots[
+                                    prefix_element + ele, local_offset1 * local_node_count + local_offset2
+                                ]
+                                if block_i != block_j and slot < 0:
+                                    continue
                             local_d2Psi_d2x = self.compute_local_hessian(
                                 local_offset1,
                                 local_offset2,
@@ -714,19 +784,19 @@ class ImplicitIGA(IGASolver):
                                 N,
                                 reference_radius,
                             )
-                            raw_slot = (
-                                prefix_hash_pair
-                                + ele * raw_pairs_per_element
-                                + gauss_id * local_node_count * local_node_count
-                                + local_offset1 * local_node_count
-                                + local_offset2
-                            )
-                            self.set_hash_block_entry(
-                                raw_slot,
-                                block_i,
-                                block_j,
-                                local_d2Psi_d2x,
-                            )
+                            if ti.static(direct):
+                                matrix.add_fixed_block(slot, block_i, block_j, local_d2Psi_d2x)
+                            else:
+                                raw_slot = (
+                                    prefix_hash_pair
+                                    + ele * raw_pairs_per_element
+                                    + local_offset1 * local_node_count
+                                    + local_offset2
+                                )
+                                if gauss_id == 0 or block_i == block_j:
+                                    self.set_hash_block_entry(raw_slot, block_i, block_j, local_d2Psi_d2x)
+                                else:
+                                    self.hash_matrix.atomic_add_raw_block_slot(raw_slot, local_d2Psi_d2x)
 
         for index in range(total_num_ctrlpts):
             ctrlpt_id = prefix_total_num_ctrlpts + index
@@ -741,9 +811,10 @@ class ImplicitIGA(IGASolver):
             )
             grid_a = param1 * disp - param2 * previous_velocity - param3 * previous_acceleration
             for d in ti.static(range(config.DIM)):
-                self.rhs[config.DIM * ctrlpt_id + d] += nodal_mass * (gravity[d] - grid_a[d])
+                if ti.static(need_force):
+                    self.rhs[config.DIM * ctrlpt_id + d] += nodal_mass * (gravity[d] - grid_a[d])
                 if ti.static(need_matrix):
-                    self.hash_matrix.diag[ctrlpt_id][d * config.DIM + d] += param1 * nodal_mass
+                    matrix.diag[ctrlpt_id][d * config.DIM + d] += param1 * nodal_mass
 
     def apply_dirichlet(self):
         if self.assemble_type == "COO":
@@ -1082,7 +1153,9 @@ class ImplicitIGA(IGASolver):
         for i in self.grid_disp:
             self.grid_disp_temp[i] = self.grid_disp[i] + alpha * self.incre_resolution[i]
 
-    def assemble_body_matrix(self, need_matrix=True, project_spd=None):
+    def assemble_body_matrix(
+        self, need_matrix=True, project_spd=None, *, need_force=True, matrix=None, fixed_slots=None
+    ):
         if project_spd is None:
             project_spd = self.project_hessian_to_psd
         if need_matrix:
@@ -1112,6 +1185,9 @@ class ImplicitIGA(IGASolver):
                 self.grid_disp,
                 need_matrix=need_matrix,
                 project_spd=bool(project_spd),
+                need_force=need_force,
+                matrix=matrix,
+                fixed_slots=fixed_slots,
             )
 
     def reset_linear_system(self):
@@ -1221,6 +1297,7 @@ class ImplicitIGA(IGASolver):
 
     def precompute(self):
         super().precompute()
+        self._reference_ready_offsets.clear()
 
     def initial_simulation(self):
         self.precompute()

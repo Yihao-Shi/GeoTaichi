@@ -753,15 +753,71 @@ class ImplicitEngineMixin:
     def _prepare_point_nurbs_accd(self, expected_pairs: ti.i32, max_step: ti.f64):
         self.contact_step_alpha[None] = max_step
         self.contact_query_status[None] = 0
+        for sample in range(self.mpm.total_surface_num):
+            direction = self._contact_point_direction(self.mpm.surface_id[sample])
+            self.contact_point_direction[sample] = direction
+            for component in ti.static(range(config.DIM)):
+                if not ti.abs(direction[component]) < ti.math.inf:
+                    ti.atomic_max(self.contact_query_status[None], 2)
         for contact_id in range(expected_pairs):
             self.contact_accd_toc[contact_id] = max_step
         for local_control_id in range(self.contact_surface.total_ctrlpts):
             weight = self.contact_surface.weights[local_control_id]
             if not (weight > 0.0 and weight < ti.math.inf):
                 ti.atomic_max(self.contact_query_status[None], 1)
+            for component in ti.static(range(config.DIM)):
+                if not ti.abs(self.contact_surface.control_point_direction[local_control_id][component]) < ti.math.inf:
+                    ti.atomic_max(self.contact_query_status[None], 2)
 
     @ti.kernel
-    def _point_curve_accd(
+    def _screen_point_nurbs_accd(
+        self,
+        group_begin: ti.i32,
+        group_end: ti.i32,
+        max_step: ti.f64,
+        safety: ti.f64,
+        clearance: ti.f64,
+        surface: ti.template(),
+    ):
+        self.contact_accd_active_count[None] = 0
+        sample_count = self.mpm.total_surface_num
+        for pair_offset in range((group_end - group_begin) * sample_count):
+            group_offset = pair_offset // sample_count
+            sample_id = pair_offset - group_offset * sample_count
+            surface_id = surface.accd_basis_group_surface_ids[group_begin + group_offset]
+            contact_id = sample_id * surface.num_surfaces + surface_id
+            contact = self.contacts[contact_id]
+            distance = contact.distance
+            pair_toc = 0.0
+            active = 0
+            motion_bound = 0.0
+            if (
+                contact.surface_id == surface_id
+                and 0 <= contact.particle_id < self.mpm.particleNum[0]
+                and clearance < distance < ti.math.inf
+            ):
+                point_direction = self.contact_point_direction[sample_id]
+                motion_bound = surface.relative_motion_upper_bound(surface_id, point_direction)
+                if max_step * motion_bound > safety * (distance - clearance):
+                    motion_bound = self._point_nurbs_motion_bound(
+                        point_direction,
+                        surface.prefix_num_ctrlpts_field[surface_id],
+                        surface.prefix_num_ctrlpts_field[surface_id + 1],
+                    )
+                pair_toc = max_step
+                if motion_bound > 0.0 and max_step * motion_bound > safety * (distance - clearance):
+                    pair_toc = 0.0
+                    active = 1
+                    ti.atomic_add(self.contact_accd_active_count[None], 1)
+            else:
+                ti.atomic_max(self.contact_query_status[None], 2)
+            self.contact_accd_toc[contact_id] = pair_toc
+            self.contact_accd_distance[contact_id] = distance
+            self.contact_accd_motion_bound[contact_id] = motion_bound
+            self.contact_accd_active[contact_id] = active
+
+    @ti.kernel
+    def _advance_point_nurbs_accd(
         self,
         group_begin: ti.i32,
         group_end: ti.i32,
@@ -769,181 +825,92 @@ class ImplicitEngineMixin:
         safety: ti.f64,
         clearance: ti.f64,
         minimum_step: ti.f64,
-        maximum_iterations: ti.i32,
         surface: ti.template(),
         basis: ti.template(),
     ):
-        """Solve point--curve pairs sharing one NURBS degree signature."""
+        """One ACCD iteration; keep the moving NURBS query outside a nested ACCD loop.
+
+        Taichi 1.7's CFG optimizer becomes prohibitively slow when that loop
+        encloses the already nested closest-point search. Only the active count
+        crosses to the host; pair state and all geometry remain on the device.
+        """
+        self.contact_accd_active_count[None] = 0
         sample_count = self.mpm.total_surface_num
         for pair_offset in range((group_end - group_begin) * sample_count):
             group_offset = pair_offset // sample_count
             sample_id = pair_offset - group_offset * sample_count
             surface_id = surface.accd_basis_group_surface_ids[group_begin + group_offset]
-            start_knot = surface.prefix_num_knot_u_field[surface_id]
-            num_knot = surface.prefix_num_knot_u_field[surface_id + 1] - start_knot
-            start_control = surface.prefix_num_ctrlpts_field[surface_id]
-            end_control = surface.prefix_num_ctrlpts_field[surface_id + 1]
-            contact_id = sample_id * self.contact_surface.num_surfaces + surface_id
-            contact = self.contacts[contact_id]
-            particle_id = contact.particle_id
-            distance = contact.distance
-            pair_toc = 0.0
-            pair_valid = (
-                contact.surface_id == surface_id
-                and particle_id >= 0
-                and particle_id < self.mpm.particleNum[0]
-                and distance > clearance
-                and distance < ti.math.inf
-            )
-            if pair_valid:
-                point = self.mpm.p_temp[sample_id]
-                point_direction = self._contact_point_direction(particle_id)
-                motion_bound = self._point_nurbs_motion_bound(point_direction, start_control, end_control)
-                pair_toc = max_step
-                # The Lipschitz motion bound certifies this whole segment;
-                # no moving closest-point query is needed for a distant pair.
-                if motion_bound > 0.0 and max_step * motion_bound > safety * (distance - clearance):
-                    pair_toc = 0.0
-                    target_excess = (1.0 - safety) * (distance - clearance)
-                    active = 1
-                    iteration = 0
-                    while active != 0 and iteration < maximum_iterations:
-                        remaining = max_step - pair_toc
-                        increment = ti.min(
-                            remaining,
-                            point_nurbs_accd_increment(
-                                distance,
-                                motion_bound,
-                                safety,
-                                clearance,
-                            ),
+            contact_id = sample_id * surface.num_surfaces + surface_id
+            if self.contact_accd_active[contact_id] != 0:
+                pair_toc = self.contact_accd_toc[contact_id]
+                remaining = max_step - pair_toc
+                increment = ti.min(
+                    remaining,
+                    point_nurbs_accd_increment(
+                        self.contact_accd_distance[contact_id],
+                        self.contact_accd_motion_bound[contact_id],
+                        safety,
+                        clearance,
+                    ),
+                )
+                active = 0
+                if not (increment < minimum_step and remaining > minimum_step):
+                    trial_toc = pair_toc + increment
+                    trial_point = self.mpm.p_temp[sample_id] + trial_toc * self.contact_point_direction[sample_id]
+                    start_u = surface.prefix_num_knot_u_field[surface_id]
+                    num_u = surface.prefix_num_knot_u_field[surface_id + 1] - start_u
+                    start_control = surface.prefix_num_ctrlpts_field[surface_id]
+                    trial_distance = 0.0
+                    if ti.static(config.DIM == 2):
+                        _, trial_distance, _ = get_distance_to_curve_moving_fixed_dim(
+                            start_u,
+                            start_control,
+                            num_u,
+                            surface.knot_vector_u,
+                            surface.control_points_hat,
+                            surface.control_point_direction,
+                            trial_toc,
+                            surface.weights,
+                            trial_point,
+                            basis,
                         )
-                        if increment < minimum_step and remaining > minimum_step:
-                            active = 0
-                        else:
-                            trial_toc = pair_toc + increment
-                            trial_point = point + trial_toc * point_direction
-                            _, trial_distance, _ = get_distance_to_curve_moving_fixed_dim(
-                                start_knot,
-                                start_control,
-                                num_knot,
-                                surface.knot_vector_u,
-                                surface.control_points_hat,
-                                surface.control_point_direction,
-                                trial_toc,
-                                surface.weights,
-                                trial_point,
-                                basis,
-                            )
-                            trial_valid = trial_distance > clearance and trial_distance < ti.math.inf
-                            target_crossed = pair_toc > 0.0 and trial_distance - clearance < target_excess
-                            if not trial_valid or target_crossed:
-                                active = 0
-                            else:
-                                pair_toc = trial_toc
-                                distance = trial_distance
-                                if pair_toc >= max_step:
-                                    active = 0
-                        iteration += 1
-            else:
-                ti.atomic_max(self.contact_query_status[None], 2)
-            self.contact_accd_toc[contact_id] = pair_toc
-            ti.atomic_min(self.contact_step_alpha[None], pair_toc)
+                    else:
+                        start_v = surface.prefix_num_knot_v_field[surface_id]
+                        num_v = surface.prefix_num_knot_v_field[surface_id + 1] - start_v
+                        _, _, trial_distance, _ = get_distance_to_surface_moving_fixed_dim(
+                            start_u,
+                            start_v,
+                            start_control,
+                            num_u,
+                            num_v,
+                            surface.knot_vector_u,
+                            surface.knot_vector_v,
+                            surface.control_points_hat,
+                            surface.control_point_direction,
+                            trial_toc,
+                            surface.weights,
+                            trial_point,
+                            basis,
+                        )
+                    target_excess = (1.0 - safety) * (self.contacts[contact_id].distance - clearance)
+                    target_crossed = pair_toc > 0.0 and trial_distance - clearance < target_excess
+                    if clearance < trial_distance < ti.math.inf and not target_crossed:
+                        self.contact_accd_toc[contact_id] = trial_toc
+                        self.contact_accd_distance[contact_id] = trial_distance
+                        active = ti.cast(trial_toc < max_step, ti.i32)
+                self.contact_accd_active[contact_id] = active
+                ti.atomic_add(self.contact_accd_active_count[None], active)
 
     @ti.kernel
-    def _point_surface_accd(
-        self,
-        group_begin: ti.i32,
-        group_end: ti.i32,
-        max_step: ti.f64,
-        safety: ti.f64,
-        clearance: ti.f64,
-        minimum_step: ti.f64,
-        maximum_iterations: ti.i32,
-        surface: ti.template(),
-        basis: ti.template(),
-    ):
-        """Solve point--surface pairs sharing one NURBS degree signature."""
-        sample_count = self.mpm.total_surface_num
-        for pair_offset in range((group_end - group_begin) * sample_count):
-            group_offset = pair_offset // sample_count
-            sample_id = pair_offset - group_offset * sample_count
-            surface_id = surface.accd_basis_group_surface_ids[group_begin + group_offset]
-            start_knot_u = surface.prefix_num_knot_u_field[surface_id]
-            start_knot_v = surface.prefix_num_knot_v_field[surface_id]
-            num_knot_u = surface.prefix_num_knot_u_field[surface_id + 1] - start_knot_u
-            num_knot_v = surface.prefix_num_knot_v_field[surface_id + 1] - start_knot_v
-            start_control = surface.prefix_num_ctrlpts_field[surface_id]
-            end_control = surface.prefix_num_ctrlpts_field[surface_id + 1]
-            contact_id = sample_id * self.contact_surface.num_surfaces + surface_id
-            contact = self.contacts[contact_id]
-            particle_id = contact.particle_id
-            distance = contact.distance
-            pair_toc = 0.0
-            pair_valid = (
-                contact.surface_id == surface_id
-                and particle_id >= 0
-                and particle_id < self.mpm.particleNum[0]
-                and distance > clearance
-                and distance < ti.math.inf
-            )
-            if pair_valid:
-                point = self.mpm.p_temp[sample_id]
-                point_direction = self._contact_point_direction(particle_id)
-                motion_bound = self._point_nurbs_motion_bound(point_direction, start_control, end_control)
-                pair_toc = max_step
-                if motion_bound > 0.0 and max_step * motion_bound > safety * (distance - clearance):
-                    pair_toc = 0.0
-                    target_excess = (1.0 - safety) * (distance - clearance)
-                    active = 1
-                    iteration = 0
-                    while active != 0 and iteration < maximum_iterations:
-                        remaining = max_step - pair_toc
-                        increment = ti.min(
-                            remaining,
-                            point_nurbs_accd_increment(
-                                distance,
-                                motion_bound,
-                                safety,
-                                clearance,
-                            ),
-                        )
-                        if increment < minimum_step and remaining > minimum_step:
-                            active = 0
-                        else:
-                            trial_toc = pair_toc + increment
-                            trial_point = point + trial_toc * point_direction
-                            _, _, trial_distance, _ = get_distance_to_surface_moving_fixed_dim(
-                                start_knot_u,
-                                start_knot_v,
-                                start_control,
-                                num_knot_u,
-                                num_knot_v,
-                                surface.knot_vector_u,
-                                surface.knot_vector_v,
-                                surface.control_points_hat,
-                                surface.control_point_direction,
-                                trial_toc,
-                                surface.weights,
-                                trial_point,
-                                basis,
-                            )
-                            trial_valid = trial_distance > clearance and trial_distance < ti.math.inf
-                            target_crossed = pair_toc > 0.0 and trial_distance - clearance < target_excess
-                            if not trial_valid or target_crossed:
-                                active = 0
-                            else:
-                                pair_toc = trial_toc
-                                distance = trial_distance
-                                if pair_toc >= max_step:
-                                    active = 0
-                        iteration += 1
-            else:
-                ti.atomic_max(self.contact_query_status[None], 2)
-            self.contact_accd_toc[contact_id] = pair_toc
-            ti.atomic_min(self.contact_step_alpha[None], pair_toc)
+    def _finish_point_nurbs_accd(self, expected_pairs: ti.i32):
+        # Reduce only final TOCs: intermediate iterates are lower bounds that
+        # would incorrectly keep the global step at the first accepted iterate.
+        for contact_id in range(expected_pairs):
+            ti.atomic_min(self.contact_step_alpha[None], self.contact_accd_toc[contact_id])
 
-    def assemble_monolithic_newton_system(self, include_friction=None, need_matrix=True):
+    def assemble_monolithic_newton_system(
+        self, include_friction=None, need_matrix=True, *, prepare_contacts=True, residual_prepared=False
+    ):
         """Assemble the coupled residual/tangent in Taichi device fields."""
         if include_friction is None:
             include_friction = self.activate_fric
@@ -956,7 +923,8 @@ class ImplicitEngineMixin:
             )
 
         self._initialize_implicit_ipc_state()
-        self.initialize_barrier(self.mpm.grid_disp, self.iga.grid_disp)
+        if prepare_contacts:
+            self.initialize_barrier(self.mpm.grid_disp, self.iga.grid_disp)
         self.assemble_barrier_system(need_matrix=need_matrix)
         if include_friction:
             self.assemble_friction_system(need_matrix=need_matrix)
@@ -964,15 +932,24 @@ class ImplicitEngineMixin:
         # Body forces and tangents remain in each subsystem's native Taichi
         # fields. Body sources append raw blocks; contact sources are bucket
         # reduced before appending their unique blocks to the same destination.
-        self.iga.rhs.fill(0.0)
+        direct_iga = need_matrix and self.assemble_type == "HashTriplet"
+        if direct_iga:
+            self.monolithic_hash_matrix.reset_system()
+        reuse_iga_residual = residual_prepared
+        if not reuse_iga_residual:
+            self.iga.rhs.fill(0.0)
         if need_matrix:
             self.iga.incre_resolution.fill(0.0)
-            self.iga.reset_linear_system()
+            if not direct_iga:
+                self.iga.hash_matrix.reset_system()
         self.iga.assemble_body_matrix(
             need_matrix=need_matrix,
             project_spd=self.project_lagged_hessians,
+            need_force=not reuse_iga_residual,
+            matrix=self.monolithic_hash_matrix if direct_iga else self.iga.hash_matrix,
+            fixed_slots=self.iga_fixed_slots if direct_iga else None,
         )
-        if self.iga.neumann.num > 0:
+        if self.iga.neumann.num > 0 and not reuse_iga_residual:
             self.iga.apply_neumann()
 
         active_mpm_dof = int(self.mpm.active_dof)
@@ -980,28 +957,30 @@ class ImplicitEngineMixin:
             raise RuntimeError(
                 "active MPM degrees of freedom must be a non-negative " "multiple of the spatial dimension"
             )
+        prepared_material = hasattr(self.mpm, "prepare_material_response")
         if need_matrix:
-            self.mpm.matrix_reset()
-        else:
-            self._clear_mpm_body_rhs()
-        if need_matrix:
+            self.mpm.incre_resolution.fill(0.0)
             self.mpm.hash_matrix.reset_system()
-        self.mpm.assemble_inertia_force(
-            active_mpm_dof,
-            self.mpm.damping,
-            self.mpm.gravity,
-            self.mpm.integration,
-            self.mpm.grid_disp,
-        )
-        self.mpm.assemble_material_force(active_mpm_dof, self.mpm.grid_disp)
+        if not residual_prepared:
+            self._clear_mpm_body_rhs()
+            self.mpm.assemble_inertia_force(
+                active_mpm_dof, self.mpm.damping, self.mpm.gravity, self.mpm.integration, self.mpm.grid_disp
+            )
+            if prepared_material:
+                self.mpm.prepare_material_response(self.mpm.grid_disp)
+                self.mpm.assemble_material_force(active_mpm_dof, self.mpm.grid_disp, reuse_response=True)
+            else:
+                self.mpm.assemble_material_force(active_mpm_dof, self.mpm.grid_disp)
+            self.apply_mpm_neumann()
         if need_matrix:
+            material_options = {"reuse_response": True} if prepared_material else {}
             self.mpm.assemble_stiffness_matrix_hash(
                 active_mpm_dof,
                 self.mpm.grid_disp,
                 project_spd=self.project_lagged_hessians,
+                **material_options,
             )
             self.assemble_mpm_mass_matrix()
-        self.apply_mpm_neumann()
 
         iga_nodes = int(self.iga.degree_of_freedom) // config.DIM
         active_mpm_nodes = active_mpm_dof // config.DIM
@@ -1011,12 +990,6 @@ class ImplicitEngineMixin:
         if need_matrix:
             if self.assemble_type == "HashTriplet":
                 matrix = self.monolithic_hash_matrix
-                matrix.reset_system()
-                matrix.append_raw_from(
-                    self.iga.hash_matrix,
-                    active_nodes=iga_nodes,
-                    block_offset=0,
-                )
                 matrix.append_raw_from(
                     self.mpm.hash_matrix,
                     active_nodes=active_mpm_nodes,
@@ -1056,6 +1029,9 @@ class ImplicitEngineMixin:
         if need_matrix and (self.iga.dirichlet.num > 0 or self.mpm.dirichlet.num > 0):
             if self.assemble_type == "HashTriplet":
                 self._eliminate_device_monolithic_dirichlet(active_nodes)
+                matrix.eliminate_fixed_constraints(
+                    self.monolithic_fixed, self.monolithic_fixed_correction, self.monolithic_rhs
+                )
                 self._finish_device_monolithic_dirichlet(active_dof)
             else:
                 self._eliminate_device_monolithic_dirichlet_coo(active_dof)
@@ -1161,30 +1137,28 @@ class ImplicitEngineMixin:
         for basis_group, basis in enumerate(self.contact_surface.accd_basis):
             group_begin = int(self.contact_surface.accd_basis_group_offsets[basis_group])
             group_end = int(self.contact_surface.accd_basis_group_offsets[basis_group + 1])
-            if config.DIM == 2:
-                self._point_curve_accd(
+            self._screen_point_nurbs_accd(
+                group_begin,
+                group_end,
+                max_step,
+                safety,
+                clearance,
+                self.contact_surface,
+            )
+            for _ in range(self.contact_ccd_max_iterations):
+                if self.contact_accd_active_count[None] == 0:
+                    break
+                self._advance_point_nurbs_accd(
                     group_begin,
                     group_end,
                     max_step,
                     safety,
                     clearance,
                     self.contact_ccd_min_step,
-                    self.contact_ccd_max_iterations,
                     self.contact_surface,
                     basis,
                 )
-            else:
-                self._point_surface_accd(
-                    group_begin,
-                    group_end,
-                    max_step,
-                    safety,
-                    clearance,
-                    self.contact_ccd_min_step,
-                    self.contact_ccd_max_iterations,
-                    self.contact_surface,
-                    basis,
-                )
+        self._finish_point_nurbs_accd(expected_pairs)
 
         query_status = int(self.contact_query_status[None])
         if query_status != 0:
@@ -1217,6 +1191,8 @@ class ImplicitEngineMixin:
         c1=None,
         max_backtracks=None,
         verbose=False,
+        *,
+        prepare_contacts=True,
     ):
         """Armijo search that consumes the correction from Taichi fields."""
         directional_derivative = float(directional_derivative)
@@ -1238,7 +1214,8 @@ class ImplicitEngineMixin:
         previous_energy = math.inf
         try:
             self._set_device_trial_displacements(0.0)
-            self.initialize_barrier(self.mpm.grid_disp_temp, self.iga.grid_disp_temp)
+            if prepare_contacts:
+                self.initialize_barrier(self.mpm.grid_disp_temp, self.iga.grid_disp_temp)
             if energy_function is None:
                 previous_energy = self.coupled_potential_energy(
                     self.iga.grid_disp_temp,
@@ -1341,12 +1318,15 @@ class ImplicitEngineMixin:
             getattr(getattr(self.mpm, "material", None), "has_incremental_potential", False)
         )
         semi_progress = 0.0
+        contacts_prepared = False
         for iteration in range(max_iterations):
             if self.is_semi and iteration > 1 and semi_progress > 0.999:
                 self.last_monolithic_converged = True
                 convergence_reason = "semi_ipc_projection_progress"
                 break
-            last_system = self.assemble_monolithic_newton_system(include_friction=include_friction)
+            last_system = self.assemble_monolithic_newton_system(
+                include_friction=include_friction, need_matrix=False, prepare_contacts=not contacts_prepared
+            )
             active_dof = int(last_system["active_dof"])
             force_residual = float(self._device_monolithic_free_rhs_norm(active_dof))
             dirichlet_residual = float(self._device_dirichlet_residual(active_dof))
@@ -1369,6 +1349,12 @@ class ImplicitEngineMixin:
                 self.last_monolithic_converged = True
                 convergence_reason = "force_residual"
                 break
+            last_system = self.assemble_monolithic_newton_system(
+                include_friction=include_friction,
+                need_matrix=True,
+                prepare_contacts=False,
+                residual_prepared=True,
+            )
             solve_result = self._solve_monolithic_linear_system(last_system, linear_solve=linear_solve)
             if not solve_result["converged"]:
                 raise RuntimeError(
@@ -1408,6 +1394,7 @@ class ImplicitEngineMixin:
                     initial_step=initial_step,
                     include_friction=include_friction,
                     verbose=verbose,
+                    prepare_contacts=linear_solve is not None,
                 )
             else:
                 directional_derivative = float(
@@ -1419,10 +1406,15 @@ class ImplicitEngineMixin:
                     include_friction=include_friction,
                     energy_function=energy_function,
                     verbose=verbose,
+                    prepare_contacts=linear_solve is not None or energy_function is not None,
                 )
             self.last_monolithic_iterations = iteration + 1
             if not last_armijo["accepted"]:
                 break
+            # Successful Armijo trials own the accepted geometry's query.
+            # Semi-IPC changes activation through its multipliers; external
+            # callbacks retain the self-contained preparation path.
+            contacts_prepared = not self.is_semi and linear_solve is None and energy_function is None
             if self.is_semi:
                 self._update_semi_multipliers(int(self.mpm.total_surface_num) * int(self.contact_surface.num_surfaces))
                 semi_progress += (1.0 - semi_progress) * float(last_armijo["step"])

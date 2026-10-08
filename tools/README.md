@@ -12,6 +12,19 @@ not correctness tests and are never run during pytest collection.
 - `benchmarks/`: standalone timing and memory studies. Correctness belongs in
   `tests/`; benchmark output belongs in a caller-selected directory outside
   the repository.
+  `benchmarks/igampm/benchmark_wavy_contact.py` compares span candidate screening
+  and CCD motion-bound screening on a saved wavy-plate checkpoint. It alternates
+  warmed baseline/optimized kernels, checks active-distance and motion-screen
+  equivalence, and reports kernel timings rather than whole-step speedups.
+  `benchmarks/fempm/benchmark_fixed_assembly.py` compares raw reduction with
+  permanent-slot FEM material assembly, including matrix equivalence, alternating
+  warmed samples, and explicit CPU/CUDA selection.
+  `benchmarks/igampm/benchmark_fixed_assembly.py` times cached fixed-slot IGA
+  solid assembly and checks it against the raw matrix; run it in separate source
+  snapshots for a kernel comparison.
+  `benchmarks/linear_solver/benchmark_pcg_fusion.py` compares split and fused
+  HashTriplet PCG launches on identical SPD block systems, with independent true
+  residual checks, alternating samples, and CPU/CUDA/Metal selection.
 - `postprocessing/`: parameterized command-line transforms and data summaries
   for existing simulation output; input and output paths must be explicit.
 

@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+import taichi as ti
 
 import src.igampm.config as config
 from src.igampm.contact.ContactSurface import CouplingContactSurface
@@ -52,11 +53,42 @@ def test_default_keeps_coincident_faces_from_distinct_bodies():
     assert len(surface.duplicate_surface_groups) == 4
     assert surface.excluded_surface_keys == []
     assert len(surface.accd_basis) == 1
+    assert all(basis is surface.accd_basis[0] for basis in surface.basis)
     assert surface.accd_basis_group_offsets == [0, 8]
     np.testing.assert_array_equal(
         surface.accd_basis_group_surface_ids.to_numpy()[:8],
         np.arange(8, dtype=np.int32),
     )
+
+
+def test_surface_direction_box_bounds_every_control_and_cancels_translation():
+    surface = CouplingContactSurface(_two_coincident_patches())
+    direction = ti.field(ti.f64, shape=16)
+    bounds = ti.field(ti.f64, shape=surface.num_surfaces)
+
+    @ti.kernel
+    def evaluate(point_direction: ti.types.vector(2, ti.f64)):
+        for sid in bounds:
+            bounds[sid] = surface.relative_motion_upper_bound(sid, point_direction)
+
+    rng = np.random.default_rng(421)
+    controls = rng.normal(size=(8, 2))
+    direction.from_numpy(controls.ravel())
+    surface.update_control_point_direction(direction)
+    ids = surface.control_points_id.to_numpy()
+    for point_direction in rng.normal(size=(4, 2)):
+        evaluate(point_direction)
+        actual = bounds.to_numpy()
+        for sid in range(surface.num_surfaces):
+            face_ids = ids[surface.prefix_num_ctrlpts[sid] : surface.prefix_num_ctrlpts[sid + 1]]
+            exact = np.linalg.norm(controls[face_ids] - point_direction, axis=1).max()
+            assert actual[sid] >= exact
+
+    translation = np.array([0.1, -0.4])
+    direction.from_numpy(np.tile(translation, 8))
+    surface.update_control_point_direction(direction)
+    evaluate(translation)
+    np.testing.assert_array_equal(bounds.to_numpy(), np.zeros(surface.num_surfaces))
 
 
 def test_explicit_duplicate_ownership_policies():

@@ -275,14 +275,20 @@ def _curve_projected_newton_candidate(
     upper,
     basis,
 ):
+    # As in the surface search, accept a trial and reuse its derivatives in
+    # the same loop, with one geometric evaluation site for Newton/backtracking.
     parameter = clamp(lower, upper, seed)
+    trial_parameter = parameter
     residual = ti.Vector.zero(ti.f64, point.n)
     distance2 = 1.0e300
     success = 0
     iteration = 0
-    while iteration < CLOSEST_POINT_MAX_ITERATIONS and success == 0:
-        parameter = clamp(lower, upper, parameter)
-        residual, tangent, curvature, distance2, valid = _curve_closest_state(
+    active = 1
+    in_trial = 0
+    backtrack = 0
+    step = 0.0
+    while active != 0:
+        trial_residual, tangent, curvature, trial_distance2, valid = _curve_closest_state(
             start_knot,
             start_ctrlpt,
             num_knot,
@@ -292,81 +298,49 @@ def _curve_projected_newton_candidate(
             alpha,
             weight,
             point,
-            parameter,
+            trial_parameter,
             basis,
         )
-        if valid == 0:
-            break
-        gradient = residual.dot(tangent)
-        projected_gradient = _projected_gradient_1d(parameter, lower, upper, gradient)
-        tangent_norm = ti.sqrt(ti.max(squared_norm_nd(tangent), 0.0))
-        stationarity_tolerance = CLOSEST_POINT_STATIONARITY_TOL * (1.0 + ti.sqrt(ti.max(distance2, 0.0)) * tangent_norm)
-        if distance2 <= CURVE_DISTANCE_TOL * CURVE_DISTANCE_TOL or ti.abs(projected_gradient) <= stationarity_tolerance:
-            success = 1
-            break
-
-        hessian = squared_norm_nd(tangent) + residual.dot(curvature)
-        width = upper - lower
-        step = 0.0
-        if _isfinite_scalar(hessian) and hessian > 1.0e-14:
-            step = -gradient / hessian
-        else:
-            step = -0.25 * width * ti.math.sign(projected_gradient)
-        if not _isfinite_scalar(step) or projected_gradient * step >= 0.0:
-            step = -0.25 * width * ti.math.sign(projected_gradient)
-
-        accepted = 0
-        backtrack = 0
-        while backtrack < CLOSEST_POINT_MAX_BACKTRACKS and accepted == 0:
-            trial_parameter = clamp(lower, upper, parameter + step)
-            trial_residual, _, _, trial_distance2, trial_valid = _curve_closest_state(
-                start_knot,
-                start_ctrlpt,
-                num_knot,
-                knot_vector_u,
-                ctrlpts,
-                control_directions,
-                alpha,
-                weight,
-                point,
-                trial_parameter,
-                basis,
+        decrease_tolerance = 1.0e-14 * (1.0 + distance2)
+        if valid != 0 and (in_trial == 0 or trial_distance2 <= distance2 + decrease_tolerance):
+            parameter = trial_parameter
+            residual, distance2 = trial_residual, trial_distance2
+            iteration += in_trial
+            gradient = residual.dot(tangent)
+            projected_gradient = _projected_gradient_1d(parameter, lower, upper, gradient)
+            tangent_norm = ti.sqrt(ti.max(squared_norm_nd(tangent), 0.0))
+            stationarity_tolerance = CLOSEST_POINT_STATIONARITY_TOL * (
+                1.0 + ti.sqrt(ti.max(distance2, 0.0)) * tangent_norm
             )
-            decrease_tolerance = 1.0e-14 * (1.0 + distance2)
-            if trial_valid != 0 and trial_distance2 <= distance2 + decrease_tolerance:
-                parameter = trial_parameter
-                residual = trial_residual
-                distance2 = trial_distance2
-                accepted = 1
+            if (
+                distance2 <= CURVE_DISTANCE_TOL * CURVE_DISTANCE_TOL
+                or ti.abs(projected_gradient) <= stationarity_tolerance
+            ):
+                success = 1
+                active = 0
+            elif iteration >= CLOSEST_POINT_MAX_ITERATIONS:
+                active = 0
             else:
-                step *= 0.5
+                hessian = squared_norm_nd(tangent) + residual.dot(curvature)
+                width = upper - lower
+                if _isfinite_scalar(hessian) and hessian > 1.0e-14:
+                    step = -gradient / hessian
+                else:
+                    step = -0.25 * width * ti.math.sign(projected_gradient)
+                if not _isfinite_scalar(step) or projected_gradient * step >= 0.0:
+                    step = -0.25 * width * ti.math.sign(projected_gradient)
+                backtrack = 0
+                in_trial = 1
+        elif in_trial == 0:
+            residual, distance2 = trial_residual, trial_distance2
+            active = 0
+        else:
+            step *= 0.5
             backtrack += 1
-        if accepted == 0:
-            break
-        iteration += 1
-
-    # Always make the returned tuple describe the same final, in-domain point.
-    parameter = clamp(lower, upper, parameter)
-    residual, tangent, _, distance2, valid = _curve_closest_state(
-        start_knot,
-        start_ctrlpt,
-        num_knot,
-        knot_vector_u,
-        ctrlpts,
-        control_directions,
-        alpha,
-        weight,
-        point,
-        parameter,
-        basis,
-    )
-    if valid != 0:
-        gradient = residual.dot(tangent)
-        projected_gradient = _projected_gradient_1d(parameter, lower, upper, gradient)
-        tangent_norm = ti.sqrt(ti.max(squared_norm_nd(tangent), 0.0))
-        stationarity_tolerance = CLOSEST_POINT_STATIONARITY_TOL * (1.0 + ti.sqrt(ti.max(distance2, 0.0)) * tangent_norm)
-        if distance2 <= CURVE_DISTANCE_TOL * CURVE_DISTANCE_TOL or ti.abs(projected_gradient) <= stationarity_tolerance:
-            success = 1
+            if backtrack >= CLOSEST_POINT_MAX_BACKTRACKS:
+                active = 0
+        if active != 0 and in_trial != 0:
+            trial_parameter = clamp(lower, upper, parameter + step)
     return parameter, distance2, residual, success
 
 
@@ -395,12 +369,31 @@ def get_distance_to_curve_moving_fixed_dim(
     best_residual = ti.Vector.zero(ti.f64, point.n)
     found = 0
 
-    # One constrained solve per non-empty knot span captures endpoint features
-    # and prevents a Newton step from skipping a narrow span.
-    for span in range(degree, num_ctrlpts):
-        span_lower = knot_vector_u[start_knot + span]
-        span_upper = knot_vector_u[start_knot + span + 1]
-        if span_upper > span_lower:
+    # Preserve span-midpoint then Greville seed order, but share one solver
+    # call site rather than inlining the full Newton search twice. The serial
+    # loop also preserves the pair-local argmin when called at kernel scope.
+    span_count = num_ctrlpts - degree
+    candidate = 0
+    while candidate < span_count + num_ctrlpts:
+        candidate_lower, candidate_upper = lower, upper
+        seed = 0.0
+        if candidate < span_count:
+            span = degree + candidate
+            candidate_lower = knot_vector_u[start_knot + span]
+            candidate_upper = knot_vector_u[start_knot + span + 1]
+            seed = 0.5 * (candidate_lower + candidate_upper)
+        else:
+            control_point = candidate - span_count
+            if ti.static(degree <= 3):
+                for offset in ti.static(range(1, degree + 1)):
+                    seed += knot_vector_u[start_knot + control_point + offset]
+            else:
+                offset = 1
+                while offset <= degree:
+                    seed += knot_vector_u[start_knot + control_point + offset]
+                    offset += 1
+            seed /= degree
+        if candidate_upper > candidate_lower:
             parameter, distance2, residual, success = _curve_projected_newton_candidate(
                 start_knot,
                 start_ctrlpt,
@@ -411,9 +404,9 @@ def get_distance_to_curve_moving_fixed_dim(
                 alpha,
                 weight,
                 point,
-                0.5 * (span_lower + span_upper),
-                span_lower,
-                span_upper,
+                seed,
+                candidate_lower,
+                candidate_upper,
                 basis,
             )
             if success != 0 and (found == 0 or distance2 < best_distance2):
@@ -421,40 +414,7 @@ def get_distance_to_curve_moving_fixed_dim(
                 best_distance2 = distance2
                 best_residual = residual
                 found = 1
-
-    # Greville/control-point seeds add independent basins for highly curved
-    # rational spans while retaining the same global projected solve.
-    for control_point in range(num_ctrlpts):
-        seed = 0.0
-        if ti.static(degree <= 3):
-            for offset in ti.static(range(1, degree + 1)):
-                seed += knot_vector_u[start_knot + control_point + offset]
-        else:
-            offset = 1
-            while offset <= degree:
-                seed += knot_vector_u[start_knot + control_point + offset]
-                offset += 1
-        seed /= degree
-        parameter, distance2, residual, success = _curve_projected_newton_candidate(
-            start_knot,
-            start_ctrlpt,
-            num_knot,
-            knot_vector_u,
-            ctrlpts,
-            control_directions,
-            alpha,
-            weight,
-            point,
-            seed,
-            lower,
-            upper,
-            basis,
-        )
-        if success != 0 and (found == 0 or distance2 < best_distance2):
-            best_parameter = parameter
-            best_distance2 = distance2
-            best_residual = residual
-            found = 1
+        candidate += 1
 
     assert found != 0, "NURBS curve closest-point solve failed"
     return (
@@ -631,23 +591,32 @@ def _surface_projected_newton_candidate(
     upper_v,
     basis,
 ):
+    # Evaluate each candidate once. Accepted trial derivatives become the next
+    # Newton state; rejected trials only shrink the same direction. Keeping one
+    # state-evaluation call site avoids duplicating large basis IR in nested
+    # Newton/backtracking loops (pathological Taichi 1.7 CFG compilation).
     parameter_u = clamp(lower_u, upper_u, seed_u)
     parameter_v = clamp(lower_v, upper_v, seed_v)
+    trial_u, trial_v = parameter_u, parameter_v
     residual = ti.Vector.zero(ti.f64, point.n)
     distance2 = 1.0e300
     success = 0
     iteration = 0
-    while iteration < CLOSEST_POINT_MAX_ITERATIONS and success == 0:
-        parameter_u = clamp(lower_u, upper_u, parameter_u)
-        parameter_v = clamp(lower_v, upper_v, parameter_v)
+    active = 1
+    in_trial = 0
+    backtrack = 0
+    delta_u, delta_v = 0.0, 0.0
+    gradient_delta_u, gradient_delta_v = 0.0, 0.0
+    using_projected_gradient = 0
+    while active != 0:
         (
-            residual,
+            trial_residual,
             tangent_u,
             tangent_v,
             curvature_uu,
             curvature_vv,
             curvature_uv,
-            distance2,
+            trial_distance2,
             valid,
         ) = _surface_closest_state(
             start_knot_u,
@@ -662,188 +631,100 @@ def _surface_projected_newton_candidate(
             alpha,
             weight,
             point,
-            parameter_u,
-            parameter_v,
+            trial_u,
+            trial_v,
             basis,
         )
-        if valid == 0:
-            break
-
-        gradient_u = residual.dot(tangent_u)
-        gradient_v = residual.dot(tangent_v)
-        projected_u, projected_v = _surface_projected_gradients(
-            parameter_u,
-            parameter_v,
-            lower_u,
-            upper_u,
-            lower_v,
-            upper_v,
-            gradient_u,
-            gradient_v,
-        )
-        tangent_scale = ti.sqrt(
-            ti.max(
-                squared_norm_nd(tangent_u) + squared_norm_nd(tangent_v),
-                0.0,
+        decrease_tolerance = 1.0e-14 * (1.0 + distance2)
+        if valid != 0 and (in_trial == 0 or trial_distance2 <= distance2 + decrease_tolerance):
+            parameter_u, parameter_v = trial_u, trial_v
+            residual, distance2 = trial_residual, trial_distance2
+            iteration += in_trial
+            gradient_u = residual.dot(tangent_u)
+            gradient_v = residual.dot(tangent_v)
+            projected_u, projected_v = _surface_projected_gradients(
+                parameter_u,
+                parameter_v,
+                lower_u,
+                upper_u,
+                lower_v,
+                upper_v,
+                gradient_u,
+                gradient_v,
             )
-        )
-        stationarity_tolerance = CLOSEST_POINT_STATIONARITY_TOL * (
-            1.0 + ti.sqrt(ti.max(distance2, 0.0)) * tangent_scale
-        )
-        if (
-            distance2 <= CURVE_DISTANCE_TOL * CURVE_DISTANCE_TOL
-            or ti.sqrt(projected_u * projected_u + projected_v * projected_v) <= stationarity_tolerance
-        ):
-            success = 1
-            break
+            tangent_scale = ti.sqrt(ti.max(squared_norm_nd(tangent_u) + squared_norm_nd(tangent_v), 0.0))
+            stationarity_tolerance = CLOSEST_POINT_STATIONARITY_TOL * (
+                1.0 + ti.sqrt(ti.max(distance2, 0.0)) * tangent_scale
+            )
+            if (
+                distance2 <= CURVE_DISTANCE_TOL * CURVE_DISTANCE_TOL
+                or ti.sqrt(projected_u * projected_u + projected_v * projected_v) <= stationarity_tolerance
+            ):
+                success = 1
+                active = 0
+            elif iteration >= CLOSEST_POINT_MAX_ITERATIONS:
+                active = 0
+            else:
+                tangent_u_norm2 = squared_norm_nd(tangent_u)
+                tangent_v_norm2 = squared_norm_nd(tangent_v)
+                hessian_uu = tangent_u_norm2 + residual.dot(curvature_uu)
+                hessian_uv = tangent_u.dot(tangent_v) + residual.dot(curvature_uv)
+                hessian_vv = tangent_v_norm2 + residual.dot(curvature_vv)
+                determinant = hessian_uu * hessian_vv - hessian_uv * hessian_uv
+                delta_u = 0.0
+                delta_v = 0.0
+                gradient_delta_u = -projected_u / ti.max(tangent_u_norm2, 1.0e-30)
+                gradient_delta_v = -projected_v / ti.max(tangent_v_norm2, 1.0e-30)
+                using_projected_gradient = 0
+                newton_valid = (
+                    _isfinite_scalar(hessian_uu)
+                    and _isfinite_scalar(hessian_uv)
+                    and _isfinite_scalar(hessian_vv)
+                    and determinant > 1.0e-20
+                    and hessian_uu > 1.0e-14
+                )
+                if newton_valid:
+                    delta_u = (-hessian_vv * gradient_u + hessian_uv * gradient_v) / determinant
+                    delta_v = (hessian_uv * gradient_u - hessian_uu * gradient_v) / determinant
 
-        tangent_u_norm2 = squared_norm_nd(tangent_u)
-        tangent_v_norm2 = squared_norm_nd(tangent_v)
-        hessian_uu = tangent_u_norm2 + residual.dot(curvature_uu)
-        hessian_uv = tangent_u.dot(tangent_v) + residual.dot(curvature_uv)
-        hessian_vv = tangent_v_norm2 + residual.dot(curvature_vv)
-        determinant = hessian_uu * hessian_vv - hessian_uv * hessian_uv
-        delta_u = 0.0
-        delta_v = 0.0
-        gradient_delta_u = -projected_u / ti.max(tangent_u_norm2, 1.0e-30)
-        gradient_delta_v = -projected_v / ti.max(tangent_v_norm2, 1.0e-30)
-        using_projected_gradient = 0
-        newton_valid = (
-            _isfinite_scalar(hessian_uu)
-            and _isfinite_scalar(hessian_uv)
-            and _isfinite_scalar(hessian_vv)
-            and determinant > 1.0e-20
-            and hessian_uu > 1.0e-14
-        )
-        if newton_valid:
-            delta_u = (-hessian_vv * gradient_u + hessian_uv * gradient_v) / determinant
-            delta_v = (hessian_uv * gradient_u - hessian_uu * gradient_v) / determinant
+                if (
+                    not newton_valid
+                    or not _isfinite_scalar(delta_u)
+                    or not _isfinite_scalar(delta_v)
+                    or gradient_u * delta_u + gradient_v * delta_v >= 0.0
+                ):
+                    delta_u = gradient_delta_u
+                    delta_v = gradient_delta_v
+                    using_projected_gradient = 1
 
-        if (
-            not newton_valid
-            or not _isfinite_scalar(delta_u)
-            or not _isfinite_scalar(delta_v)
-            or gradient_u * delta_u + gradient_v * delta_v >= 0.0
-        ):
-            delta_u = gradient_delta_u
-            delta_v = gradient_delta_v
-            using_projected_gradient = 1
+                # A descent Newton step can become a zero or ascent step after box
+                # projection (notably at surface edges/corners).  Do not accept that
+                # unchanged point repeatedly; use a feasible projected-gradient step.
+                projected_step_u = clamp(lower_u, upper_u, parameter_u + delta_u) - parameter_u
+                projected_step_v = clamp(lower_v, upper_v, parameter_v + delta_v) - parameter_v
+                if gradient_u * projected_step_u + gradient_v * projected_step_v >= 0.0:
+                    delta_u = gradient_delta_u
+                    delta_v = gradient_delta_v
+                    using_projected_gradient = 1
 
-        # A descent Newton step can become a zero or ascent step after box
-        # projection (notably at surface edges/corners).  Do not accept that
-        # unchanged point repeatedly; use a feasible projected-gradient step.
-        projected_step_u = clamp(lower_u, upper_u, parameter_u + delta_u) - parameter_u
-        projected_step_v = clamp(lower_v, upper_v, parameter_v + delta_v) - parameter_v
-        if gradient_u * projected_step_u + gradient_v * projected_step_v >= 0.0:
-            delta_u = gradient_delta_u
-            delta_v = gradient_delta_v
-            using_projected_gradient = 1
-
-        accepted = 0
-        backtrack = 0
-        while backtrack < 2 * CLOSEST_POINT_MAX_BACKTRACKS and accepted == 0:
+                backtrack = 0
+                in_trial = 1
+        elif in_trial == 0:
+            residual, distance2 = trial_residual, trial_distance2
+            active = 0
+        else:
+            delta_u *= 0.5
+            delta_v *= 0.5
+            backtrack += 1
+            if backtrack >= 2 * CLOSEST_POINT_MAX_BACKTRACKS:
+                active = 0
+        if active != 0 and in_trial != 0:
             if backtrack == CLOSEST_POINT_MAX_BACKTRACKS and using_projected_gradient == 0:
                 delta_u = gradient_delta_u
                 delta_v = gradient_delta_v
                 using_projected_gradient = 1
             trial_u = clamp(lower_u, upper_u, parameter_u + delta_u)
             trial_v = clamp(lower_v, upper_v, parameter_v + delta_v)
-            (
-                trial_residual,
-                _,
-                _,
-                _,
-                _,
-                _,
-                trial_distance2,
-                trial_valid,
-            ) = _surface_closest_state(
-                start_knot_u,
-                start_knot_v,
-                start_ctrlpt,
-                num_knot_u,
-                num_knot_v,
-                knot_vector_u,
-                knot_vector_v,
-                ctrlpts,
-                control_directions,
-                alpha,
-                weight,
-                point,
-                trial_u,
-                trial_v,
-                basis,
-            )
-            decrease_tolerance = 1.0e-14 * (1.0 + distance2)
-            if trial_valid != 0 and trial_distance2 <= distance2 + decrease_tolerance:
-                parameter_u = trial_u
-                parameter_v = trial_v
-                residual = trial_residual
-                distance2 = trial_distance2
-                accepted = 1
-            else:
-                delta_u *= 0.5
-                delta_v *= 0.5
-            backtrack += 1
-        if accepted == 0:
-            break
-        iteration += 1
-
-    parameter_u = clamp(lower_u, upper_u, parameter_u)
-    parameter_v = clamp(lower_v, upper_v, parameter_v)
-    (
-        residual,
-        tangent_u,
-        tangent_v,
-        _,
-        _,
-        _,
-        distance2,
-        valid,
-    ) = _surface_closest_state(
-        start_knot_u,
-        start_knot_v,
-        start_ctrlpt,
-        num_knot_u,
-        num_knot_v,
-        knot_vector_u,
-        knot_vector_v,
-        ctrlpts,
-        control_directions,
-        alpha,
-        weight,
-        point,
-        parameter_u,
-        parameter_v,
-        basis,
-    )
-    if valid != 0:
-        gradient_u = residual.dot(tangent_u)
-        gradient_v = residual.dot(tangent_v)
-        projected_u, projected_v = _surface_projected_gradients(
-            parameter_u,
-            parameter_v,
-            lower_u,
-            upper_u,
-            lower_v,
-            upper_v,
-            gradient_u,
-            gradient_v,
-        )
-        tangent_scale = ti.sqrt(
-            ti.max(
-                squared_norm_nd(tangent_u) + squared_norm_nd(tangent_v),
-                0.0,
-            )
-        )
-        stationarity_tolerance = CLOSEST_POINT_STATIONARITY_TOL * (
-            1.0 + ti.sqrt(ti.max(distance2, 0.0)) * tangent_scale
-        )
-        if (
-            distance2 <= CURVE_DISTANCE_TOL * CURVE_DISTANCE_TOL
-            or ti.sqrt(projected_u * projected_u + projected_v * projected_v) <= stationarity_tolerance
-        ):
-            success = 1
     return parameter_u, parameter_v, distance2, residual, success
 
 
@@ -899,7 +780,9 @@ def get_distance_to_surface_moving_fixed_dim(
         control_seed_v = span_cache.control_greville[control_id][1]
         control_seed_found = 1
     else:
-        for control_v in range(num_ctrlpts_v):
+        # This argmin belongs to one point, including direct kernel-scope calls.
+        control_v = 0
+        while control_v < num_ctrlpts_v:
             greville_v = 0.0
             if ti.static(degree_v <= 3):
                 for offset_v in ti.static(range(1, degree_v + 1)):
@@ -936,6 +819,7 @@ def get_distance_to_surface_moving_fixed_dim(
                     control_seed_v = greville_v
                     nearest_control_distance2 = control_distance2
                     control_seed_found = 1
+            control_v += 1
     assert control_seed_found != 0, "NURBS surface control points are non-finite"
     used_control_seed = 0
     used_initial_seed = 0

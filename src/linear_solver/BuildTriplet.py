@@ -449,16 +449,63 @@ class BuildTriplet:
         self._full_input_canonicalized = False
 
     def reduce_non_diag(self, pairs_num):
+        if getattr(self.non_diag, "fixed_count", 0) and getattr(self, "_fixed_finalized", False):
+            return
         if self.raw_only:
             raise RuntimeError(
                 "raw-only BuildTriplet sources cannot be reduced directly; "
                 "append them to a reducible destination first"
             )
         self.non_diag.go(pairs_num)
+        self._fixed_finalized = bool(getattr(self.non_diag, "fixed_count", 0))
 
     def reset_system(self):
+        if getattr(self.non_diag, "fixed_count", 0):
+            self.non_diag.reset_fixed_values()
         self._reset_system()
         self._full_input_canonicalized = False
+        self._fixed_finalized = False
+
+    def install_fixed_pattern(self, coordinates):
+        if self.raw_only or not isinstance(self.non_diag, HashReduction):
+            raise ValueError("fixed assembly requires a reducible HashTriplet matrix")
+        coordinates = np.asarray(coordinates)
+        if self.symmetric or coordinates.ndim != 2 or coordinates.shape[1] != 2:
+            raise ValueError("fixed assembly requires dense blocks and an (n, 2) coordinate array")
+        if np.any(coordinates >= self.max_active_nodes):
+            raise ValueError("fixed coordinates exceed node capacity")
+        if self.matrix_symmetric and np.any(coordinates[:, 0] >= coordinates[:, 1]):
+            raise ValueError("symmetric fixed slots must contain the strict upper block triangle")
+        if np.any(coordinates[:, 0] == coordinates[:, 1]):
+            raise ValueError("diagonal blocks use the dedicated diagonal field")
+        self.non_diag.install_fixed_pattern(coordinates)
+
+    @ti.func
+    def add_fixed_block(self, slot, block_i, block_j, block):
+        if block_i == block_j:
+            for row, column in ti.static(ti.ndrange(self.dim, self.dim)):
+                ti.atomic_add(self.diag[block_i][self.scalar_component_index(row, column)], block[row, column])
+        elif slot >= 0:
+            for row, column in ti.static(ti.ndrange(self.dim, self.dim)):
+                ti.atomic_add(
+                    self.non_diag.tripletH[slot][self.scalar_component_index(row, column)], block[row, column]
+                )
+
+    @ti.kernel
+    def eliminate_fixed_constraints(self, fixed: ti.template(), correction: ti.template(), rhs: ti.template()):
+        for slot in range(self.non_diag.fixed_count):
+            i, j = self.non_diag.tripletI[slot], self.non_diag.tripletJ[slot]
+            for row, column in ti.static(ti.ndrange(self.dim, self.dim)):
+                r, c = self.dim * i + row, self.dim * j + column
+                entry = self.scalar_component_index(row, column)
+                value = self.non_diag.tripletH[slot][entry]
+                if fixed[c]:
+                    ti.atomic_add(rhs[r], -value * correction[c])
+                if ti.static(self.matrix_symmetric):
+                    if fixed[r]:
+                        ti.atomic_add(rhs[c], -value * correction[r])
+                if fixed[r] or fixed[c]:
+                    self.non_diag.tripletH[slot][entry] = 0.0
 
     def reserve_raw_block_slots(self, count):
         """Reserve deterministic off-diagonal slots for direct device assembly."""
@@ -489,6 +536,8 @@ class BuildTriplet:
         self._append_source(source, active_nodes, block_offset, scale, reduced=True)
 
     def _append_source(self, source, active_nodes, block_offset, scale, *, reduced):
+        if getattr(self, "_fixed_finalized", False):
+            raise RuntimeError("reset a finalized fixed-slot matrix before appending new sources")
         if not isinstance(source, BuildTriplet):
             raise TypeError("source must be a BuildTriplet")
         if self.full_symmetric_input:
@@ -691,18 +740,17 @@ class BuildTriplet:
         active_nodes = self.max_active_nodes if active_nodes is None else int(active_nodes)
         nnz = int(self.non_diag.element_pair_num[0])
 
-        self._solver_reset(active_nodes)
+        # Matvec and initialization overwrite every PCG workspace before use.
         self._build_block_jacobi(active_nodes)
         self.matvec(active_nodes, nnz, self.x, self.Ax)
-        self._init_pcg(active_nodes)
-        rz_old = self._dot(active_nodes, self.r, self.z)
+        rz_old, residual_squared = self._init_pcg(active_nodes)
         # ``tol`` is an absolute residual tolerance, so convergence must be
         # measured in the unpreconditioned Euclidean norm.  The PCG recurrence
         # still uses r^T M^-1 r below, but that quantity changes under a simple
         # scaling of A/M.  Comparing sqrt(r^T M^-1 r) with ``tol`` can
         # incorrectly accept x=0 for a high-stiffness contact system whose
         # true residual is still orders of magnitude above tolerance.
-        residual = math.sqrt(max(float(self._dot(active_nodes, self.r, self.r)), 0.0))
+        residual = math.sqrt(max(float(residual_squared), 0.0))
         initial_residual = residual
         convergence_tolerance = max(tol, rel_tol * initial_residual)
         converged = residual <= convergence_tolerance
@@ -717,10 +765,8 @@ class BuildTriplet:
             alpha = rz_old / denom
             if not math.isfinite(alpha):
                 break
-            self._pcg_update_x_r(active_nodes, alpha)
-            self._apply_preconditioner(active_nodes, self.r, self.z)
-            rz_new = self._dot(active_nodes, self.r, self.z)
-            residual = math.sqrt(max(float(self._dot(active_nodes, self.r, self.r)), 0.0))
+            rz_new, residual_squared = self._pcg_update_and_reduce(active_nodes, alpha)
+            residual = math.sqrt(max(float(residual_squared), 0.0))
             iterations = iteration + 1
             verify_residual = residual <= convergence_tolerance
             if verify_residual:
@@ -729,17 +775,11 @@ class BuildTriplet:
                 # p=M^-1r so a cancellation in ``r -= alpha Ap`` cannot report
                 # false convergence.
                 self.matvec(active_nodes, nnz, self.x, self.Ax)
-                self._init_pcg(active_nodes)
-                residual = math.sqrt(
-                    max(
-                        float(self._dot(active_nodes, self.r, self.r)),
-                        0.0,
-                    )
-                )
+                rz_old, residual_squared = self._init_pcg(active_nodes)
+                residual = math.sqrt(max(float(residual_squared), 0.0))
                 converged = residual <= convergence_tolerance
                 if converged:
                     break
-                rz_old = self._dot(active_nodes, self.r, self.z)
                 if not math.isfinite(rz_old) or rz_old <= 0.0:
                     break
                 continue
@@ -752,8 +792,8 @@ class BuildTriplet:
         recursive_residual = residual
         if not converged:
             self.matvec(active_nodes, nnz, self.x, self.Ax)
-            self._init_pcg(active_nodes)
-            residual = math.sqrt(max(float(self._dot(active_nodes, self.r, self.r)), 0.0))
+            _, residual_squared = self._init_pcg(active_nodes)
+            residual = math.sqrt(max(float(residual_squared), 0.0))
             converged = residual <= convergence_tolerance
         result = self._result(
             active_nodes,
@@ -1008,6 +1048,9 @@ class BuildTriplet:
         return pairs_num
 
     def finalize_taichi_assembly(self):
+        fixed = getattr(self.non_diag, "fixed_count", 0)
+        if fixed and getattr(self, "_fixed_finalized", False):
+            return int(self.raw_non_diag_count[0])
         if self.raw_only:
             raise RuntimeError(
                 "raw-only BuildTriplet sources cannot be finalized directly; "
@@ -1023,6 +1066,7 @@ class BuildTriplet:
             self._canonicalize_full_symmetric_input(pairs_num)
             self._full_input_canonicalized = True
         self.reduce_non_diag(pairs_num)
+        self._fixed_finalized = bool(fixed)
         return pairs_num
 
     def to_scipy(self, active_nodes=None):
@@ -1662,17 +1706,29 @@ class BuildTriplet:
             dst[i] = src[i]
 
     @ti.kernel
-    def _init_pcg(self, active_nodes: int):
+    def _init_pcg(self, active_nodes: int) -> tuple[float, float]:
+        rz, rr = 0.0, 0.0
         for i in range(active_nodes):
-            self.r[i] = self.rhs[i] - self.Ax[i]
-            self.z[i] = _dense_block_matvec(self.diag_inverse[i], self.r[i], ti.static(self.dim))
-            self.p[i] = self.z[i]
+            residual = self.rhs[i] - self.Ax[i]
+            preconditioned = _dense_block_matvec(self.diag_inverse[i], residual, ti.static(self.dim))
+            self.r[i], self.z[i], self.p[i] = residual, preconditioned, preconditioned
+            for d in ti.static(range(self.dim)):
+                rz += residual[d] * preconditioned[d]
+                rr += residual[d] * residual[d]
+        return rz, rr
 
     @ti.kernel
-    def _pcg_update_x_r(self, active_nodes: int, alpha: float):
+    def _pcg_update_and_reduce(self, active_nodes: int, alpha: float) -> tuple[float, float]:
+        rz, rr = 0.0, 0.0
         for i in range(active_nodes):
             self.x[i] += alpha * self.p[i]
-            self.r[i] -= alpha * self.Ap[i]
+            residual = self.r[i] - alpha * self.Ap[i]
+            preconditioned = _dense_block_matvec(self.diag_inverse[i], residual, ti.static(self.dim))
+            self.r[i], self.z[i] = residual, preconditioned
+            for d in ti.static(range(self.dim)):
+                rz += residual[d] * preconditioned[d]
+                rr += residual[d] * residual[d]
+        return rz, rr
 
     @ti.kernel
     def _pcg_update_p(self, active_nodes: int, beta: float):

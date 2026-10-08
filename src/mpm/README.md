@@ -17,6 +17,12 @@ contact modes.
 - Sparse and adaptive grids: [sparse flume](../../examples/mpm/FlumeTest/flume_test.py) and [adaptive slope](../../examples/mpm/random_field/flat_slope.py).
 - Soft-particle MPM/LSDEM contact: [mixed rigid–soft drop](../../examples/mpdem/LevelSet/SoftRigid/rigid_soft_sphere_drop_box.py).
 
+Implicit FEM--MPM and IGA--MPM may prepare a Direct ULMPM trial response once
+and reuse its deformation and finite-strain plastic spectral response for the
+force and tangent. Reuse is limited to the same displacement and frozen material
+history/lagged flow state; each new trial or outer iteration prepares it again.
+Standalone assembly remains self-contained by default.
+
 ## Formulations and example selection
 
 MPM is organized here by physical model, Lagrangian configuration, time integration, and contact formulation—not by internal software backend. The implementations share the same MPM balance laws and interpolation principles; their input APIs and supported options differ for engineering reasons. Use the configuration in the linked example rather than treating an implementation name as a different numerical method.

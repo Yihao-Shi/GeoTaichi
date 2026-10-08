@@ -132,6 +132,8 @@ def test_igampm_retry_uses_transactional_substep():
     engine.add_implicit_energy_record = lambda _record, _result: None
     engine.last_contact_ccd_step = 1.0
     engine.last_contact_ccd_min_distance = 1.0
+    engine.barrier = type("Barrier", (), {"model": "BarrierIPC"})()
+    engine.is_semi = False
     calls = []
 
     def attempt(**kwargs):

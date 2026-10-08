@@ -5,6 +5,15 @@ shared by FEM, IGA, MPM, DEM affine bodies, and coupled IPC systems. The
 default production paths operate on Taichi fields across CPU, Metal, and CUDA
 backends.
 
+`BuildTriplet.install_fixed_pattern()` reserves permanent reduced off-diagonal
+slots for immutable topology. Device scatter adds directly to those slots;
+dynamic raw sources may overlap them. Reset clears their values, while pattern
+rebuilds preserve their coordinates and defer stale-entry compaction until the
+next assembly. Symmetric matrices store the strict upper block triangle, with
+mirrored matvec and constraint elimination. Finalization is idempotent; reset is
+required before appending another assembly. This path requires dense blocks and
+device hash reduction; dynamic contact can still use bucket reduction upstream.
+
 ## Available representations
 
 | Component | Purpose |
@@ -245,6 +254,12 @@ true residual; Krylov convergence uses
 `max(tol, rel_tol * initial_residual)`. The returned dictionary also contains
 `converged`, `iterations`, `residual`, `initial_residual`, and
 `convergence_tolerance`; `x` is included when `return_solution=True`.
+
+HashTriplet PCG fuses the solution/residual update, block-Jacobi application,
+and the two reductions $`r^Tz`$ and $`r^Tr`$ into one kernel with one scalar-pair
+return. Initialization and true-residual restarts use the same fused reduction
+layout. Each workspace is overwritten before use, avoiding a full reset of
+unused BiCGSTAB vectors. Prospective convergence still requires a fresh $`b-Ax`$.
 
 ## Symmetry and solver selection
 

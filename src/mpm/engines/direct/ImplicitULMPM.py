@@ -24,6 +24,74 @@ class ImplicitULMPM(ImplicitMPM):
         self.last_material_lagged_error = 0.0
         self.last_material_lagged_iterations = 0
 
+        # Owned by one residual/tangent assembly at a fixed trial state.
+        self.trial_material_F = ti.Matrix.field(
+            self.material_dimension, self.material_dimension, ti.f64, shape=self.particle.shape[0]
+        )
+        if self.is_finite_strain_plastic:
+            self.trial_material_response = ti.Struct.field(
+                {
+                    "u": ti.types.matrix(3, 3, ti.f64),
+                    "v": ti.types.matrix(3, 3, ti.f64),
+                    "singular": ti.types.vector(3, ti.f64),
+                    "strain": ti.types.vector(3, ti.f64),
+                    "trace": ti.f64,
+                    "dev": ti.types.vector(3, ti.f64),
+                    "norm": ti.f64,
+                    "projected": ti.types.vector(3, ti.f64),
+                    "multiplier": ti.f64,
+                    "region": ti.i32,
+                    "kirchhoff": ti.types.vector(3, ti.f64),
+                    "pk1": ti.types.vector(3, ti.f64),
+                },
+                shape=self.particle.shape[0],
+            )
+
+    @ti.kernel
+    def prepare_material_response(self, grid_disp: ti.template()):
+        for i in range(self.particleNum[0]):
+            deformation = ti.Matrix.identity(ti.f64, self.material_dimension)
+            if ti.static(self.is_axisymmetric):
+                deformation = self.get_axisymmetric_incremental_map(i, grid_disp) @ self.F0[i]
+            elif ti.static(self.is_plane_strain):
+                deformation = self.get_plane_strain_incremental_map(i, grid_disp) @ self.F0[i]
+            else:
+                deformation = (
+                    ti.Matrix.identity(ti.f64, config.DIM) + self.get_displacement_incre(i, grid_disp)
+                ) @ self.F0[i]
+            self.trial_material_F[i] = deformation
+            if ti.static(self.is_finite_strain_plastic):
+                response = self.material._principal_response(i, self.material.trial_elastic_deformation(i, deformation))
+                self.trial_material_response[i].u = response[0]
+                self.trial_material_response[i].v = response[1]
+                self.trial_material_response[i].singular = response[2]
+                self.trial_material_response[i].strain = response[3]
+                self.trial_material_response[i].trace = response[4]
+                self.trial_material_response[i].dev = response[5]
+                self.trial_material_response[i].norm = response[6]
+                self.trial_material_response[i].projected = response[7]
+                self.trial_material_response[i].multiplier = response[8]
+                self.trial_material_response[i].region = response[9]
+                self.trial_material_response[i].kirchhoff = response[10]
+                self.trial_material_response[i].pk1 = response[11]
+
+    @ti.func
+    def _prepared_material_response(self, i):
+        return (
+            self.trial_material_response[i].u,
+            self.trial_material_response[i].v,
+            self.trial_material_response[i].singular,
+            self.trial_material_response[i].strain,
+            self.trial_material_response[i].trace,
+            self.trial_material_response[i].dev,
+            self.trial_material_response[i].norm,
+            self.trial_material_response[i].projected,
+            self.trial_material_response[i].multiplier,
+            self.trial_material_response[i].region,
+            self.trial_material_response[i].kirchhoff,
+            self.trial_material_response[i].pk1,
+        )
+
     @ti.kernel
     def _begin_lagged_material_state(self):
         for particle_id in range(self.particleNum[0]):
@@ -96,11 +164,16 @@ class ImplicitULMPM(ImplicitMPM):
                 self.grid[nodeID].v += shape_fn * p_mass * v_p2g
                 self.grid[nodeID].a += shape_fn * p_mass * p_acc
 
+    def assemble_material_force(self, active_dof, grid_disp, *, reuse_response=False):
+        self._assemble_material_force(active_dof, grid_disp, bool(reuse_response))
+
     @ti.kernel
-    def assemble_material_force(self, active_dof: int, grid_disp: ti.template()):
+    def _assemble_material_force(self, active_dof: int, grid_disp: ti.template(), reuse_response: ti.template()):
         for i in range(self.particleNum[0]):
             deformation_gradient = ti.Matrix.identity(ti.f64, self.material_dimension)
-            if ti.static(self.is_axisymmetric):
+            if ti.static(reuse_response):
+                deformation_gradient = self.trial_material_F[i]
+            elif ti.static(self.is_axisymmetric):
                 deformation_gradient = self.get_axisymmetric_incremental_map(i, grid_disp) @ self.F0[i]
             elif ti.static(self.is_plane_strain):
                 deformation_gradient = self.get_plane_strain_incremental_map(i, grid_disp) @ self.F0[i]
@@ -110,7 +183,15 @@ class ImplicitULMPM(ImplicitMPM):
             pvol = self.particle[i].vol0
             dPsi_dF = ti.Vector.zero(ti.f64, self.material_dimension * self.material_dimension)
             if ti.static(self.is_finite_strain_plastic):
-                dPsi_dF = self.material.total_dPsi_div_dF_at(i, deformation_gradient) * pvol
+                if ti.static(reuse_response):
+                    dPsi_dF = (
+                        self.material.total_stress_from_response(
+                            i, deformation_gradient, self._prepared_material_response(i)
+                        )
+                        * pvol
+                    )
+                else:
+                    dPsi_dF = self.material.total_dPsi_div_dF_at(i, deformation_gradient) * pvol
             else:
                 dPsi_dF = self.material.dPsi_div_dF(deformation_gradient) * pvol
             for j in range(self.offset[i]):
@@ -159,6 +240,7 @@ class ImplicitULMPM(ImplicitMPM):
         grid_disp,
         project_spd=False,
         exact_plastic_tangent=False,
+        reuse_response=False,
     ):
         """Assemble the exact or projected-Newton material tangent.
 
@@ -170,6 +252,7 @@ class ImplicitULMPM(ImplicitMPM):
             active_dof,
             grid_disp,
             bool(project_spd) or (self.is_finite_strain_plastic and not bool(exact_plastic_tangent)),
+            bool(reuse_response),
         )
 
     @ti.kernel
@@ -178,13 +261,16 @@ class ImplicitULMPM(ImplicitMPM):
         active_dof: int,
         grid_disp: ti.template(),
         project_spd: ti.template(),
+        reuse_response: ti.template(),
     ):
         self.hash_matrix.raw_non_diag_count[0] = self.particleNum[0] * self.stiffness_stencil_stride
         for i in range(self.particleNum[0]):
             self.invalidate_particle_stiffness_slots(i)
             pvol = self.particle[i].vol0
             deformation_gradient = ti.Matrix.identity(ti.f64, self.material_dimension)
-            if ti.static(self.is_axisymmetric):
+            if ti.static(reuse_response):
+                deformation_gradient = self.trial_material_F[i]
+            elif ti.static(self.is_axisymmetric):
                 deformation_gradient = self.get_axisymmetric_incremental_map(i, grid_disp) @ self.F0[i]
             elif ti.static(self.is_plane_strain):
                 deformation_gradient = self.get_plane_strain_incremental_map(i, grid_disp) @ self.F0[i]
@@ -197,7 +283,15 @@ class ImplicitULMPM(ImplicitMPM):
                 self.material_dimension * self.material_dimension,
             )
             if ti.static(self.is_finite_strain_plastic):
-                d2Psi_d2F = self.material.total_d2Psi_div_d2F_at(i, deformation_gradient) * pvol
+                if ti.static(reuse_response):
+                    d2Psi_d2F = (
+                        self.material.total_tangent_from_response(
+                            i, deformation_gradient, self._prepared_material_response(i)
+                        )
+                        * pvol
+                    )
+                else:
+                    d2Psi_d2F = self.material.total_d2Psi_div_d2F_at(i, deformation_gradient) * pvol
             else:
                 d2Psi_d2F = self.material.d2Psi_div_d2F(deformation_gradient) * pvol
             if ti.static(project_spd):

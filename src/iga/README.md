@@ -13,6 +13,17 @@ patch topology as the geometric representation.
 - Axisymmetric NURBS solids: [annulus](../../examples/iga/axisymmetric_annulus/axisymmetric_annulus.py).
 - Independent IGA structures coupled to MPM continua: [implicit point–NURBS IPC](../../examples/igampm/iga_mpm_barrier_contact/iga_mpm_barrier_contact.py), [explicit DEM-law contact](../../examples/igampm/iga_mpm_explicit_dem_contact/iga_mpm_explicit_dem_contact.py), and [axisymmetric CPT](../../examples/igampm/cpt_dp/cpt_dp.py).
 
+Implicit HashTriplet assembly caches reference basis values, gradients, physical
+quadrature weights and radii until `precompute()` refreshes reference geometry.
+Gauss contributions share one raw block per element/node pair. In IGA--MPM the
+same blocks accumulate directly into permanent reduced slots; moving contact and
+MPM mappings remain dynamic. Axisymmetric weights still include the full $`2\pi R`$.
+Direct fixed-slot assembly skips absent off-diagonal slots before computing the
+local Hessian block; diagonal blocks and every represented slot remain unchanged.
+
+Multi-patch initialization uses separate element-span and knot-vector offsets;
+each patch owns its reference-quadrature cache range.
+
 ## Package layout
 
 | Path | Responsibility |
@@ -532,6 +543,12 @@ energy.
 forces at control-point degrees of freedom. It does not integrate a traction
 density over a NURBS boundary. In axisymmetric analysis the supplied value must
 therefore already contain any required `2*pi*R` boundary measure.
+
+Implicit `DirichletBoundary.append_velocity(dof_id, velocity)` prescribes a
+constant velocity. The solver converts it to `velocity * current_dt` whenever
+the timestep changes, including retries and shortened output steps. Ordinary
+`append` retains its prescribed-increment semantics. Explicit IGA rejects
+`append_velocity`.
 
 ## Sparse systems and runtime boundary
 
