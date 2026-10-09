@@ -70,15 +70,9 @@ Implemented examples include an [implicit FEM cantilever](examples/fem/implicit_
 See the implemented [FEM–MPM membrane contact](examples/fempm/explicit_point_membrane/explicit_point_membrane.py) and [IGA–MPM contact](examples/igampm/iga_mpm_explicit_dem_contact/iga_mpm_explicit_dem_contact.py) examples.
 
 #### Incremental potential contact
-
-Implemented fully coupled IPC examples with elastic structures and Drucker–Prager MPM soil include:
-
-| [Flexible barrier (FEM–MPM)](examples/fempm/flexible_barrier/flexible_barrier.py) | [Wavy plate collapse (FEM–MPM)](examples/fempm/wavy_plate_collapse/wavy_plate_collapse.py) | [Axisymmetric CPT (FEM–MPM)](examples/fempm/cpt_dp/cpt_dp.py) |
+| Flexible barrier ([FEM–MPM](examples/fempm/flexible_barrier/flexible_barrier.py), [IGA–MPM](examples/igampm/flexible_barrier/flexible_barrier.py))| Wavy plate collapse ([FEM–MPM](examples/fempm/wavy_plate_collapse/wavy_plate_collapse.py), [IGA–MPM](examples/igampm/wavy_plate_collapse/wavy_plate_collapse.py)) | Axisymmetric CPT ([FEM–MPM](examples/fempm/cpt_dp/cpt_dp.py), [IGA–MPM](examples/igampm/cpt_dp/cpt_dp.py)) |
 | --- | --- | --- |
-| [Flexible barrier (IGA–MPM)](examples/igampm/flexible_barrier/flexible_barrier.py) | [Wavy plate collapse (IGA–MPM)](examples/igampm/wavy_plate_collapse/wavy_plate_collapse.py) | [Axisymmetric CPT (IGA–MPM)](examples/igampm/cpt_dp/cpt_dp.py) |
 | | <img src="images/wavy_plate_collapse.gif" alt="IGA–MPM wavy plate collapse" width="300"> | |
-
-For axisymmetric CPT, use `--contact ipc` to select the IPC route.
 
 ### [FEM-DEM](src/fedem/README.md#fedem-coupling-theory-log)
 #### Explicit soft constraint

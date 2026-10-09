@@ -15,22 +15,24 @@ IPC engine. Public engines are exported directly from this package.
 | `_Common.py` | Imports shared by the responsibility mixins; it owns no solver state |
 
 All production per-contact calculations and reductions execute in Taichi.
-IPC queries rebuild current positive-weight control-hull AABBs. Far inactive
-pairs keep conservative distance lower bounds for ACCD; near pairs and retained
-SemiIPC multipliers use the complete closest-point query. ACCD skips moving
-geometry queries only when its relative-motion bound certifies the whole
-segment. Contact buffers retain all particle--surface pairs, and diagnostics
-for inactive pairs can report a distance lower bound.
+IPC queries rebuild current positive-weight control-hull AABBs. A bulk
+screen stores near candidates per surface; projection, barrier assembly, and
+friction initialization traverse those candidates. The complete pair table
+still stores conservative distance bounds for inactive pairs and rollback.
 Explicit contact rebuilds NURBS bounds, projects points, updates history, and
-scatters DEM-law forces through device kernels. In implicit IPC, every
-point--NURBS ACCD pair owns its complete bounded `while` and
-virtual moving-geometry closest-point queries inside a kernel. Boundaries with
-the same degree signature share a specialization; Python only dispatches those
-basis groups and reads the final scalar minimum. Python coordinates the
-remaining solver-level Newton and friction iterations and reads scalar
-diagnostics. The first three-dimensional compilation is comparatively
-expensive because Taichi inlines the span-multistart projected-Newton closest
-query inside the ACCD loop; later launches reuse the compiled specialization.
+scatters DEM-law forces through device kernels.
+
+For CCD, bounds enclose both current control points and their proposed
+endpoints. Each swept particle box queries a refitted global surface BVH;
+3D candidates also traverse the surface's swept knot-span BVH. Clearance and
+a floating-point guard expand overlap tests. Remaining pairs pass through the
+relative-motion certificate and then the existing moving NURBS ACCD query.
+Only compact CCD candidates advance and contribute to the global minimum;
+noncandidate entries of `contact_accd_toc` are not initialized or meaningful.
+One kernel advances one ACCD iteration. Python dispatches degree groups and
+reads the unfinished-pair count between iterations; pair geometry remains on
+the device. This avoids Taichi's expensive compilation of the closest-point
+search inside an additional kernel-level ACCD loop.
 Direct ULMPM plastic materials reuse the owning MPM residual/tangent kernels;
 this package adds only the coupled acceptance snapshot for material-owned
 history. Elastic MPM therefore allocates no plastic rollback field.

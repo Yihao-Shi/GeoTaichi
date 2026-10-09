@@ -127,13 +127,13 @@ committed only after coupled acceptance and restored together on an acceptance
 failure. `IGAMPM.build()` preserves a valid preinitialized `F0`; it initializes
 only an all-zero field.
 
-Nonassociated DP accepts independent constant `DilationAngle`. Its material
-outer loop refreshes the frozen flow correction and plastic-volume predictor
-around symmetric PCG/energy-Armijo inner solves, checking actual Kirchhoff
-stress and plastic-volume mismatch. Equivalent corrections inside the flat
-tensile cap do not by themselves require another global solve.
-Particle-local Aitken relaxation updates the predictors while the material
-criterion continues to check their unrelaxed physical mismatch.
+Nonassociated DP accepts independent constant `DilationAngle`. FEM--MPM and
+IGA--MPM directly assemble its physical force and complete nonsymmetric
+Jacobian, including the derivative of the trial plastic volume. They select
+device BiCGSTAB automatically, retain both matrix triangles, and use residual
+Armijo with contact/material CCD. No material-consistency outer loop runs for
+nonassociated DP. Associated DP retains PCG and its existing plastic-volume
+consistency iteration; lagged friction still owns its separate outer loop.
 
 Set the coupled `assemble_type` to `"COO"` or `"HashTriplet"`. Point--NURBS
 ACCD must use both point and control-point trial directions and rerun the
@@ -163,3 +163,11 @@ and the hoop stretch/tangent.
 For implicit prescribed motion at constant speed, use
 `DirichletBoundary.append_velocity(dof_id, velocity)`. Do not freeze `v * dt`
 in `append` when adaptive retries or output-aligned steps can change `dt`.
+
+For nonassociated DP IPC, `monolithic_inexact_newton=True` optionally adapts the
+BiCGSTAB relative tolerance from `0.01` down to the configured
+`monolithic_linear_solver_relative_tolerance` floor (which must be at most
+`0.01`). It defaults to false. When enabled, acceptance requires the nonlinear
+force and Dirichlet criteria; a small correction alone is insufficient. CCD
+and residual Armijo remain active. Compare accepted states and residuals from
+the same checkpoint before interpreting short-run timing as an acceleration.

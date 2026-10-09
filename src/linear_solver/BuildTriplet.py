@@ -5,6 +5,8 @@ from taichi.lang.impl import current_cfg
 
 from src.linear_solver.HashReduction import HashReduction
 from src.utils.FieldIO import field_to_numpy_prefix
+from src.utils.PrefixSum import PrefixSumExecutor
+from src.utils.WarpReduce import warp_reduce_sum_f32, warp_reduce_sum_f64
 
 
 def solve_csr_system(rhs, sparse_matrixes):
@@ -447,6 +449,12 @@ class BuildTriplet:
         # launching a second O(raw blocks) device sweep in the same Newton
         # iteration.
         self._full_input_canonicalized = False
+        self._row_cache_key = None
+        self._row_storage_initialized = False
+        self.row_pattern_rebuilds = 0
+        self.use_row_matvec = True
+        self._row_lanes = 32 if current_cfg().arch == ti.cuda else 1
+        self._row_f64 = current_cfg().default_fp == ti.f64
 
     def reduce_non_diag(self, pairs_num):
         if getattr(self.non_diag, "fixed_count", 0) and getattr(self, "_fixed_finalized", False):
@@ -833,89 +841,71 @@ class BuildTriplet:
         matvec = self.transpose_matvec if transpose else self.matvec
         apply_preconditioner = self._apply_transpose_preconditioner if transpose else self._apply_preconditioner
 
-        self._solver_reset(active_nodes)
         self._build_block_jacobi(active_nodes)
         matvec(active_nodes, nnz, self.x, self.Ax)
-        self._init_bicgstab(active_nodes)
-
-        rho_old = 1.0
-        alpha = 1.0
-        omega = 1.0
-        residual = math.sqrt(max(float(self._dot(active_nodes, self.r, self.r)), 0.0))
+        rho = float(self._init_bicgstab(active_nodes))
+        residual = math.sqrt(max(rho, 0.0))
         initial_residual = residual
         convergence_tolerance = max(tol, rel_tol * initial_residual)
         converged = residual <= convergence_tolerance
         iterations = 0
+        rho_old = alpha = omega = 1.0
+        fresh_direction = True
         reliable_update_interval = 32
 
         for iteration in range(maxiter):
             if converged:
                 break
-            rho = self._dot(active_nodes, self.r_hat, self.r)
-            if abs(rho) < 1.0e-30:
+            if not math.isfinite(rho) or abs(rho) < 1.0e-30:
                 break
-            if iteration == 0:
-                self._copy(active_nodes, self.r, self.p)
-            else:
-                beta = (rho / rho_old) * (alpha / omega)
-                self._bicg_update_p(active_nodes, beta, omega)
-
-            apply_preconditioner(active_nodes, self.p, self.p_hat)
+            beta = 0.0 if fresh_direction else (rho / rho_old) * (alpha / omega)
+            self._bicg_update_p_precondition(active_nodes, beta, omega, fresh_direction, transpose)
+            fresh_direction = False
             matvec(active_nodes, nnz, self.p_hat, self.v)
-            denom = self._dot(active_nodes, self.r_hat, self.v)
-            if abs(denom) < 1.0e-30:
+            denom = float(self._dot(active_nodes, self.r_hat, self.v))
+            if not math.isfinite(denom) or abs(denom) < 1.0e-30:
                 break
             alpha = rho / denom
-            self._bicg_update_s(active_nodes, alpha)
-            s_norm = math.sqrt(max(float(self._dot(active_nodes, self.s, self.s)), 0.0))
-            if s_norm <= convergence_tolerance:
+            s_squared = float(self._bicg_update_s(active_nodes, alpha))
+            if not math.isfinite(s_squared):
+                break
+            if math.sqrt(max(s_squared, 0.0)) <= convergence_tolerance:
                 self._bicg_update_x_alpha(active_nodes, alpha)
                 iterations = iteration + 1
                 matvec(active_nodes, nnz, self.x, self.Ax)
-                self._init_bicgstab(active_nodes)
-                residual = math.sqrt(max(float(self._dot(active_nodes, self.r, self.r)), 0.0))
-                converged = residual <= convergence_tolerance
-                if converged:
-                    break
-                rho_old = self._dot(active_nodes, self.r_hat, self.r)
-                alpha = 1.0
-                omega = 1.0
-                if not math.isfinite(rho_old) or abs(rho_old) < 1.0e-30:
-                    break
+                rho = float(self._init_bicgstab(active_nodes))
+                residual = math.sqrt(max(rho, 0.0))
+                converged = math.isfinite(rho) and residual <= convergence_tolerance
+                fresh_direction = True
                 continue
 
             apply_preconditioner(active_nodes, self.s, self.s_hat)
             matvec(active_nodes, nnz, self.s_hat, self.t)
-            tt = self._dot(active_nodes, self.t, self.t)
-            if abs(tt) < 1.0e-30:
+            tt, ts = self._bicg_omega_products(active_nodes)
+            if not math.isfinite(tt) or not math.isfinite(ts) or abs(tt) < 1.0e-30:
                 break
-            omega = self._dot(active_nodes, self.t, self.s) / tt
-            self._bicg_update_x_r(active_nodes, alpha, omega)
-            residual = math.sqrt(max(float(self._dot(active_nodes, self.r, self.r)), 0.0))
+            omega = ts / tt
+            residual_squared, next_rho = self._bicg_update_x_r(active_nodes, alpha, omega)
+            residual = math.sqrt(max(float(residual_squared), 0.0))
             iterations = iteration + 1
             verify_residual = residual <= convergence_tolerance or (iteration + 1) % reliable_update_interval == 0
             if verify_residual:
                 matvec(active_nodes, nnz, self.x, self.Ax)
-                self._init_bicgstab(active_nodes)
-                residual = math.sqrt(max(float(self._dot(active_nodes, self.r, self.r)), 0.0))
-                converged = residual <= convergence_tolerance
-                if converged:
-                    break
-                rho_old = self._dot(active_nodes, self.r_hat, self.r)
-                alpha = 1.0
-                omega = 1.0
-                if not math.isfinite(rho_old) or abs(rho_old) < 1.0e-30:
-                    break
+                rho = float(self._init_bicgstab(active_nodes))
+                residual = math.sqrt(max(rho, 0.0))
+                converged = math.isfinite(rho) and residual <= convergence_tolerance
+                # A replaced shadow residual starts a new BiCG recurrence.
+                fresh_direction = True
                 continue
-            if abs(omega) < 1.0e-30:
+            if not math.isfinite(omega) or abs(omega) < 1.0e-30:
                 break
-            rho_old = rho
+            rho_old, rho = rho, float(next_rho)
 
         if not converged:
             matvec(active_nodes, nnz, self.x, self.Ax)
-            self._init_bicgstab(active_nodes)
-            residual = math.sqrt(max(float(self._dot(active_nodes, self.r, self.r)), 0.0))
-            converged = residual <= convergence_tolerance
+            residual_squared = float(self._init_bicgstab(active_nodes))
+            residual = math.sqrt(max(residual_squared, 0.0))
+            converged = math.isfinite(residual_squared) and residual <= convergence_tolerance
 
         return self._result(
             active_nodes,
@@ -936,12 +926,43 @@ class BuildTriplet:
             return "BiCGSTAB"
         raise ValueError(f"Unknown BuildTriplet solver: {solver}")
 
+    def _prepare_row_matvec(self, active_nodes, nnz, transpose):
+        if not self._row_storage_initialized:
+            # Assembly-only matrices never allocate a Krylov row adjacency.
+            self._row_scan = PrefixSumExecutor(self.max_active_nodes + 1)
+            self._row_offsets = ti.field(ti.i32, shape=self._row_scan.get_length())
+            self._row_cursor = ti.field(ti.i32, shape=self.max_active_nodes)
+            self._row_entries = ti.field(ti.i32, shape=self.max_nonzeros * (2 if self.matrix_symmetric else 1))
+            self._row_storage_initialized = True
+        reducer = self.non_diag
+        version = reducer.device_pattern_version
+        if not isinstance(reducer, HashReduction):
+            version = reducer.device_epoch
+        key = (version, active_nodes, nnz, transpose)
+        if key != self._row_cache_key:
+            self._count_row_entries(active_nodes, nnz, transpose)
+            self._row_scan.run(self._row_offsets)
+            self._scatter_row_entries(active_nodes, nnz, transpose)
+            self._row_cache_key = key
+            self.row_pattern_rebuilds += 1
+
     def matvec(self, active_nodes, nnz, x, Ax):
-        self._matvec(int(active_nodes), int(nnz), x, Ax)
+        active_nodes, nnz = int(active_nodes), int(nnz)
+        if self.use_row_matvec:
+            self._prepare_row_matvec(active_nodes, nnz, False)
+            self._row_matvec(active_nodes, x, Ax, False)
+        else:
+            self._matvec(active_nodes, nnz, x, Ax)
 
     def transpose_matvec(self, active_nodes, nnz, x, Ax):
-        kernel = self._matvec if self.matrix_symmetric else self._transpose_matvec
-        kernel(int(active_nodes), int(nnz), x, Ax)
+        if self.matrix_symmetric:
+            return self.matvec(active_nodes, nnz, x, Ax)
+        active_nodes, nnz = int(active_nodes), int(nnz)
+        if self.use_row_matvec:
+            self._prepare_row_matvec(active_nodes, nnz, True)
+            self._row_matvec(active_nodes, x, Ax, True)
+        else:
+            self._transpose_matvec(active_nodes, nnz, x, Ax)
 
     def assemble_scalar_triplets(self, rows, cols, vals):
         rows = np.asarray(rows, dtype=np.int32)
@@ -1630,6 +1651,75 @@ class BuildTriplet:
             self.s_hat[i] = z
 
     @ti.kernel
+    def _count_row_entries(self, active_nodes: int, nnz: int, transpose: ti.template()):
+        for i in self._row_offsets:
+            self._row_offsets[i] = 0
+        for i in range(active_nodes):
+            self._row_cursor[i] = 0
+        for k in range(nnz):
+            i, j = self.non_diag.tripletI[k], self.non_diag.tripletJ[k]
+            if 0 <= i < active_nodes and 0 <= j < active_nodes:
+                if ti.static(transpose):
+                    self._row_offsets[j + 1] += 1
+                else:
+                    self._row_offsets[i + 1] += 1
+                    if ti.static(self.matrix_symmetric):
+                        self._row_offsets[j + 1] += 1
+
+    @ti.kernel
+    def _scatter_row_entries(self, active_nodes: int, nnz: int, transpose: ti.template()):
+        for k in range(nnz):
+            i, j = self.non_diag.tripletI[k], self.non_diag.tripletJ[k]
+            if 0 <= i < active_nodes and 0 <= j < active_nodes:
+                if ti.static(transpose):
+                    slot = self._row_offsets[j] + ti.atomic_add(self._row_cursor[j], 1)
+                    self._row_entries[slot] = -k - 1
+                else:
+                    slot = self._row_offsets[i] + ti.atomic_add(self._row_cursor[i], 1)
+                    self._row_entries[slot] = k
+                    if ti.static(self.matrix_symmetric):
+                        slot = self._row_offsets[j] + ti.atomic_add(self._row_cursor[j], 1)
+                        self._row_entries[slot] = -k - 1
+
+    @ti.kernel
+    def _row_matvec(self, active_nodes: int, x: ti.template(), Ax: ti.template(), transpose: ti.template()):
+        ti.loop_config(block_dim=128)
+        for thread in range(active_nodes * self._row_lanes):
+            row, lane = thread // self._row_lanes, thread % self._row_lanes
+            value = ti.Vector.zero(float, self.dim)
+            slot = self._row_offsets[row] + lane
+            while slot < self._row_offsets[row + 1]:
+                encoded = self._row_entries[slot]
+                k = ti.max(encoded, -encoded - 1)
+                column = self.non_diag.tripletJ[k]
+                if encoded < 0:
+                    column = self.non_diag.tripletI[k]
+                if ti.static(self.symmetric):
+                    value += _sym_block_matvec(self.non_diag.tripletH[k], x[column], ti.static(self.dim))
+                else:
+                    if encoded < 0:
+                        value += _dense_block_transpose_matvec(
+                            self.non_diag.tripletH[k], x[column], ti.static(self.dim)
+                        )
+                    else:
+                        value += _dense_block_matvec(self.non_diag.tripletH[k], x[column], ti.static(self.dim))
+                slot += self._row_lanes
+            if ti.static(self._row_lanes == 32):
+                for d in ti.static(range(self.dim)):
+                    if ti.static(self._row_f64):
+                        value[d] = warp_reduce_sum_f64(value[d])
+                    else:
+                        value[d] = warp_reduce_sum_f32(value[d])
+            if lane == 0:
+                if ti.static(self.symmetric):
+                    value += _sym_block_matvec(self.diag[row], x[row], ti.static(self.dim))
+                elif ti.static(transpose):
+                    value += _dense_block_transpose_matvec(self.diag[row], x[row], ti.static(self.dim))
+                else:
+                    value += _dense_block_matvec(self.diag[row], x[row], ti.static(self.dim))
+                Ax[row] = value
+
+    @ti.kernel
     def _matvec(self, active_nodes: int, nnz: int, x: ti.template(), Ax: ti.template()):
         for i in range(active_nodes):
             if ti.static(self.symmetric):
@@ -1736,21 +1826,45 @@ class BuildTriplet:
             self.p[i] = self.z[i] + beta * self.p[i]
 
     @ti.kernel
-    def _init_bicgstab(self, active_nodes: int):
+    def _init_bicgstab(self, active_nodes: int) -> float:
+        rr = 0.0
         for i in range(active_nodes):
-            self.r[i] = self.rhs[i] - self.Ax[i]
-            self.r_hat[i] = self.r[i]
-            self.p[i] = self.r[i]
+            residual = self.rhs[i] - self.Ax[i]
+            self.r[i] = residual
+            self.r_hat[i] = residual
+            rr += residual.dot(residual)
+        return rr
 
     @ti.kernel
-    def _bicg_update_p(self, active_nodes: int, beta: float, omega: float):
+    def _bicg_update_p_precondition(
+        self, active_nodes: int, beta: float, omega: float, fresh: int, transpose: ti.template()
+    ):
         for i in range(active_nodes):
-            self.p[i] = self.r[i] + beta * (self.p[i] - omega * self.v[i])
+            direction = self.r[i]
+            if fresh == 0:
+                direction += beta * (self.p[i] - omega * self.v[i])
+            self.p[i] = direction
+            if ti.static(transpose):
+                self.p_hat[i] = _dense_block_transpose_matvec(self.diag_inverse[i], direction, ti.static(self.dim))
+            else:
+                self.p_hat[i] = _dense_block_matvec(self.diag_inverse[i], direction, ti.static(self.dim))
 
     @ti.kernel
-    def _bicg_update_s(self, active_nodes: int, alpha: float):
+    def _bicg_update_s(self, active_nodes: int, alpha: float) -> float:
+        ss = 0.0
         for i in range(active_nodes):
-            self.s[i] = self.r[i] - alpha * self.v[i]
+            value = self.r[i] - alpha * self.v[i]
+            self.s[i] = value
+            ss += value.dot(value)
+        return ss
+
+    @ti.kernel
+    def _bicg_omega_products(self, active_nodes: int) -> tuple[float, float]:
+        tt, ts = 0.0, 0.0
+        for i in range(active_nodes):
+            tt += self.t[i].dot(self.t[i])
+            ts += self.t[i].dot(self.s[i])
+        return tt, ts
 
     @ti.kernel
     def _bicg_update_x_alpha(self, active_nodes: int, alpha: float):
@@ -1758,7 +1872,12 @@ class BuildTriplet:
             self.x[i] += alpha * self.p_hat[i]
 
     @ti.kernel
-    def _bicg_update_x_r(self, active_nodes: int, alpha: float, omega: float):
+    def _bicg_update_x_r(self, active_nodes: int, alpha: float, omega: float) -> tuple[float, float]:
+        rr, rho = 0.0, 0.0
         for i in range(active_nodes):
             self.x[i] += alpha * self.p_hat[i] + omega * self.s_hat[i]
-            self.r[i] = self.s[i] - omega * self.t[i]
+            residual = self.s[i] - omega * self.t[i]
+            self.r[i] = residual
+            rr += residual.dot(residual)
+            rho += self.r_hat[i].dot(residual)
+        return rr, rho

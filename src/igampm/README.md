@@ -646,13 +646,26 @@ equations are maintained in the
 This section records only how that local material response enters the coupled
 IGA--MPM solve.
 
-Nonassociated DP freezes its flow correction and plastic-volume predictor
-inside each symmetric PCG/energy-Armijo solve. The material outer loop checks
-the physical versus inner Kirchhoff stress and the plastic-volume mismatch;
-equivalent corrections in the flat tensile-apex branch do not force another
-equilibrium solve. History is committed only after this loop converges.
-Particle-local Aitken relaxation updates the predictors; the convergence test
-uses their unrelaxed physical mismatch.
+Nonassociated DP directly evaluates its physical return at every Newton trial.
+Its plastic volume is recomputed from that return and differentiated in the
+material Jacobian. The coupled solver automatically uses full nonsymmetric
+storage and device BiCGSTAB with a node-block Jacobi preconditioner
+(scalar Jacobi for COO). It uses residual-norm Armijo with point--NURBS ACCD
+and material feasibility bounds, and has no material-consistency outer loop.
+Associated DP retains the symmetric PCG/frozen-volume path; its existing
+plastic-volume consistency iteration remains. Lagged friction retains its
+own independent outer iteration. History is committed only after acceptance.
+
+Nonassociated DP can enable `monolithic_inexact_newton=True` (default false).
+The linear relative tolerance starts at `0.01`, then follows
+`min(0.01, max(configured_linear_rtol, 0.9 * (R_k/R_previous)**1.5))`,
+where `R` is the free-force residual norm. The configured linear relative
+tolerance is its floor and must not exceed `0.01`. Each friction outer solve
+and timestep retry starts a fresh sequence. Linear solves still verify their
+true residual; nonlinear acceptance requires the configured force and
+Dirichlet tolerances, even if the displacement correction is small. Contact
+CCD and residual Armijo remain active. This option does not alter DP parameters.
+The CPT example enables it with `--contact ipc --dilation-angle 0 --inexact-newton`.
 
 The IGA body remains elastic. For a ULMPM particle $`p`$, the current
 total deformation gradient is
@@ -672,9 +685,9 @@ $`F_{33}=1`$. In an axisymmetric meridian, the additional hoop stretch is
 F_{\theta\theta}=1+\frac{u_r}{R}.
 ```
 
-For accepted material history $`\boldsymbol{h}_{p,n}`$, let the shared
-constitutive model return an incremental density, first Piola stress, and
-algorithmic tangent:
+For a conservative inner solve at accepted material history
+$`\boldsymbol{h}_{p,n}`$, the shared constitutive model returns an incremental
+density, first Piola stress, and algorithmic tangent:
 
 ```math
 W_p=W_p(\boldsymbol{F}_p;\boldsymbol{h}_{p,n}),
@@ -709,6 +722,9 @@ The material residual and tangent entering the MPM diagonal block are
 A projected Newton step may spectrally clamp the symmetric material tangent
 to its positive-semidefinite part. This changes the search metric but not the
 constitutive stress, local return, or accepted history.
+Nonassociated DP instead supplies the physical $`\boldsymbol{P}_p`$ and its
+nonsymmetric derivative directly; there is no scalar $`W_p`$ for this return,
+and its material Jacobian is not PSD projected or symmetrized.
 
 The accepted history is frozen during each global Newton trial. At every new
 $`\boldsymbol{q}`$, the material model recomputes its local return and tangent;
@@ -881,8 +897,9 @@ coupling.mpm.add_material(
 ```
 
 `VonMises` instead takes `YieldStress` and optional `HardeningModulus`.
-Assembly, point--NURBS ACCD, material feasibility CCD, PSD-projected lagged
-Hessians, and Armijo search are unchanged. Step preparation, nonlinear solve,
+Point--NURBS ACCD and material feasibility CCD bound every Armijo update.
+Potential materials retain projected symmetric Hessians; nonassociated DP
+uses the unprojected physical Jacobian and residual Armijo. Step preparation, nonlinear solve,
 and acceptance form one transaction. Plastic history is committed only after
 the coupled step is accepted; a preparation, solve, or post-commit failure
 restores IGA control-point state, MPM particle/grid state, total `F0`, plastic

@@ -145,9 +145,14 @@ def render_paraview(path, color_max=None):
             raise ValueError(f"Invalid von Mises stress range: {bounds}")
         maximum = max(maximum, bounds[1])
     color_range = stress_color_range(maximum, color_max)
-    config.update(renderer="ParaView", fem_scalar="von_mises", fem_scalar_units="Pa",
-                  fem_stress_maximum=maximum, fem_color_range=color_range,
-                  fem_color_max_factor=color_range[1] / maximum)
+    config.update(
+        renderer="ParaView",
+        fem_scalar="von_mises",
+        fem_scalar_units="Pa",
+        fem_stress_maximum=maximum,
+        fem_color_range=color_range,
+        fem_color_max_factor=color_range[1] / maximum,
+    )
     path.write_text(json.dumps(config, indent=2) + "\n")
     pv.ColorBy(displays["soft"], ("POINTS", "von_mises"))
     lut = pv.GetColorTransferFunction("von_mises")
@@ -207,8 +212,12 @@ def render_paraview(path, color_max=None):
         with np.load(folder / frame["mesh"]) as data:
             for producer, vertices, cells, triangles in (
                 (walls, data["walls"], data["walls_faces"], True),
-                (edges, data["wall_segments"].reshape(-1, 3),
-                 np.arange(data["wall_segments"].size // 3).reshape(-1, 2), False),
+                (
+                    edges,
+                    data["wall_segments"].reshape(-1, 3),
+                    np.arange(data["wall_segments"].size // 3).reshape(-1, 2),
+                    False,
+                ),
             ):
                 points = vtk.vtkPoints()
                 points.SetData(numpy_to_vtk(vertices, deep=True))
@@ -224,8 +233,9 @@ def render_paraview(path, color_max=None):
         clock.Text = f"t = {frame['time']:.3f} s"
         view.ViewTime = index
         pv.Render(view)
-        pv.SaveScreenshot(str(folder / f"frame_{index:06d}.png"), view,
-                          ImageResolution=[config["width"], config["height"]])
+        pv.SaveScreenshot(
+            str(folder / f"frame_{index:06d}.png"), view, ImageResolution=[config["width"], config["height"]]
+        )
         print(f"PARAVIEW {config['case']}: {index + 1}/{len(config['frames'])}", flush=True)
     print(f"von Mises maximum = {maximum:.6g} Pa; colorbar = {color_range}", flush=True)
 
@@ -341,7 +351,9 @@ def main():
     parser.add_argument("--work-dir", type=Path)
     parser.add_argument("--samples", type=int, default=48)
     parser.add_argument("--renderer", choices=("blender", "paraview"), default="blender")
-    parser.add_argument("--fem-color-max", type=float, help="ParaView stress upper limit in Pa; default: 0.7 of maximum")
+    parser.add_argument(
+        "--fem-color-max", type=float, help="ParaView stress upper limit in Pa; default: 0.7 of maximum"
+    )
     parser.add_argument("--preview", action="store_true")
     parser.add_argument("--prepare-case", choices=list(CASES), help=argparse.SUPPRESS)
     parser.add_argument("--render-case", choices=("funnel", "compaction"), help=argparse.SUPPRESS)

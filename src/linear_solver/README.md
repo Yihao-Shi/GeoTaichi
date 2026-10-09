@@ -32,6 +32,17 @@ BiCGSTAB, and preconditioned BiCGSTAB. Algorithm-specific initialization and the
 fused PCG update remain separate within that module. CSR, COO, and legacy
 row-major CG kernels stay with their respective matrix representations.
 
+`BuildTriplet` keeps its reduced block-triplet values in place. Its Taichi
+matvec uses a cached row adjacency containing only signed indices into those
+blocks; pattern version, active prefix, and transpose mode invalidate the
+cache. CUDA assigns a warp to each block row, while CPU/Metal use one thread.
+The adjacency is allocated on the first matvec, so assembly-only matrices do
+not reserve it. This is independent of SciPy and does not change assembly.
+BiCGSTAB fuses direction/preconditioning and vector/dot-product updates,
+returning four scalar reductions per ordinary iteration. Every 32 iterations
+it replaces the residual with `b - A*x`, resets the shadow residual, and starts
+with `p = r`; it also verifies the true residual before reporting convergence.
+
 ## Sparse block assembly
 
 Let $`\mathcal I_e(a)`$ map local degree of freedom $`a`$ of element or contact

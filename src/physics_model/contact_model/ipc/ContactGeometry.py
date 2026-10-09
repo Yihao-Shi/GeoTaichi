@@ -8,6 +8,18 @@ displacements, friction gradients, and FEM/MPM/IGA matrix pullbacks.
 import taichi as ti
 
 
+@ti.func
+def aabb_overlap_with_clearance(lower_a, upper_a, lower_b, upper_b, clearance):
+    """Conservative box intersection; invalid bounds must reach validation."""
+    scale = ti.max(1.0, lower_a.norm(), upper_a.norm(), lower_b.norm(), upper_b.norm())
+    padding = ti.max(clearance, 0.0) + 1.0e-12 * scale
+    finite = True
+    for d in ti.static(range(lower_a.n)):
+        finite = finite and ti.abs(lower_a[d]) < ti.math.inf and ti.abs(upper_a[d]) < ti.math.inf
+        finite = finite and ti.abs(lower_b[d]) < ti.math.inf and ti.abs(upper_b[d]) < ti.math.inf
+    return not finite or ((lower_a <= upper_b + padding) & (upper_a >= lower_b - padding)).all()
+
+
 # Stable GeoTaichi feature ids used by ContactDistance's generated kernels.
 # Callers should use these names instead of raw integers when sharing stencils
 # with FEM.

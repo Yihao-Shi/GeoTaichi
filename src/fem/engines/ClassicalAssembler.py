@@ -691,13 +691,13 @@ class ClassicalAssembler:
         block_offset = matrix.reserve_raw_block_slots(self.stiffness_block_pair_count)
         self._assemble_element_stiffness_direct(self.stiffness_positions, matrix, 0, block_offset, True, None, False)
 
-    def fixed_block_coordinates(self):
-        """Permanent strict-upper slots for the immutable element connectivity."""
+    def fixed_block_coordinates(self, upper_triangle=True):
+        """Permanent slots for the upper or both off-diagonal triangles."""
         cells = np.asarray(self.element.connectivity, dtype=np.int32)
         first = np.broadcast_to(cells[:, :, None], (self.cell_count, self.nodes_per_cell, self.nodes_per_cell))
         second = np.broadcast_to(cells[:, None, :], first.shape)
         pairs = np.stack((first, second), axis=-1).reshape(-1, 2)
-        selected = pairs[:, 0] < pairs[:, 1]
+        selected = pairs[:, 0] < pairs[:, 1] if upper_triangle else pairs[:, 0] != pairs[:, 1]
         coordinates, inverse = np.unique(pairs[selected], axis=0, return_inverse=True)
         slots = np.full(pairs.shape[0], -1, dtype=np.int32)
         slots[selected] = inverse

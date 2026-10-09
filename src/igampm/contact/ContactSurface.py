@@ -1,9 +1,34 @@
 import numpy as np
 import taichi as ti
+from src.physics_model.contact_model.ipc.ContactGeometry import aabb_overlap_with_clearance
 
 import src.igampm.config as config
 from src.nurbs.core.NurbsGeometry import NurbsBasisFunction1d, NurbsBasisFunction2d
 from src.physics_model.contact_model.ipc.NurbsContact import squared_norm_nd
+
+
+def _build_hull_tree(centers, groups):
+    nodes, prefix = [], [0]
+
+    def build(indices):
+        node = len(nodes)
+        nodes.append([-1, -1, -1, -1])
+        if len(indices) == 1:
+            nodes[node][3] = int(indices[0])
+        else:
+            axis = int(np.argmax(np.ptp(centers[indices], axis=0)))
+            order = indices[np.argsort(centers[indices, axis], kind="stable")]
+            middle = len(order) // 2
+            nodes[node][0] = build(order[:middle])
+            nodes[node][1] = build(order[middle:])
+        nodes[node][2] = len(nodes)
+        return node
+
+    for indices in groups:
+        if len(indices):
+            build(indices)
+        prefix.append(len(nodes))
+    return nodes, prefix
 
 
 @ti.data_oriented
@@ -235,6 +260,27 @@ class CouplingContactSurface:
             self.knot_vector_u.from_numpy(np.asarray(knot_u_np, dtype=np.float64))
         if total_knot_v > 0:
             self.knot_vector_v.from_numpy(np.asarray(knot_v_np, dtype=np.float64))
+        centers = np.asarray(
+            [
+                0.5
+                * (
+                    ctrlpts_np[self.prefix_num_ctrlpts[sid] : self.prefix_num_ctrlpts[sid + 1]].min(axis=0)
+                    + ctrlpts_np[self.prefix_num_ctrlpts[sid] : self.prefix_num_ctrlpts[sid + 1]].max(axis=0)
+                )
+                for sid in range(self.num_surfaces)
+            ]
+        )
+        nodes, _ = _build_hull_tree(centers, [np.arange(self.num_surfaces)])
+        self.surface_tree_count = len(nodes)
+        self.surface_tree_nodes = ti.Vector.field(4, ti.i32, shape=max(1, len(nodes)))
+        self.swept_surface_lower = ti.Vector.field(config.DIM, ti.f64, shape=max(1, self.num_surfaces))
+        self.swept_surface_upper = ti.Vector.field(config.DIM, ti.f64, shape=max(1, self.num_surfaces))
+        self.swept_tree_lower = ti.Vector.field(config.DIM, ti.f64, shape=max(1, len(nodes)))
+        self.swept_tree_upper = ti.Vector.field(config.DIM, ti.f64, shape=max(1, len(nodes)))
+        self.surface_group_order = ti.field(ti.i32, shape=max(1, self.num_surfaces))
+        if nodes:
+            self.surface_tree_nodes.from_numpy(np.asarray(nodes, dtype=np.int32))
+            self.surface_group_order.from_numpy(np.argsort(grouped_surface_ids).astype(np.int32))
         if config.DIM == 3:
             self._initialize_projection_cache(knot_u_np, knot_v_np, ctrlpts_np)
 
@@ -273,27 +319,14 @@ class CouplingContactSurface:
             points = control_points[ids.ravel()]
             centers.append(0.5 * (points.min(axis=0) + points.max(axis=0)))
         centers = np.asarray(centers)
-        nodes, node_prefix = [], [0]
-
-        def build_tree(spans):
-            node = len(nodes)
-            nodes.append([-1, -1, -1, -1])
-            if len(spans) == 1:
-                nodes[node][3] = int(spans[0])
-            else:
-                axis = int(np.argmax(np.ptp(centers[spans], axis=0)))
-                order = spans[np.argsort(centers[spans, axis], kind="stable")]
-                middle = len(order) // 2
-                nodes[node][0] = build_tree(order[:middle])
-                nodes[node][1] = build_tree(order[middle:])
-            nodes[node][2] = len(nodes)  # Escape skips the entire subtree.
-            return node
-
-        for sid in range(self.num_surfaces):
-            spans = np.arange(span_prefix[sid], span_prefix[sid + 1])
-            if len(spans):
-                build_tree(spans)
-            node_prefix.append(len(nodes))
+        nodes, node_prefix = _build_hull_tree(
+            centers, [np.arange(span_prefix[sid], span_prefix[sid + 1]) for sid in range(self.num_surfaces)]
+        )
+        self.swept_span_lower = ti.Vector.field(3, ti.f64, shape=max(1, len(span_controls)))
+        self.swept_span_upper = ti.Vector.field(3, ti.f64, shape=max(1, len(span_controls)))
+        self.swept_span_tree_lower = ti.Vector.field(3, ti.f64, shape=max(1, len(nodes)))
+        self.swept_span_tree_upper = ti.Vector.field(3, ti.f64, shape=max(1, len(nodes)))
+        self.span_tree_count = len(nodes)
         self.span_tree_prefix = ti.field(ti.i32, shape=len(node_prefix))
         self.span_tree_nodes = ti.Vector.field(4, ti.i32, shape=max(1, len(nodes)))
         self.span_tree_lower = ti.Vector.field(3, ti.f64, shape=max(1, len(nodes)))
@@ -336,6 +369,89 @@ class CouplingContactSurface:
             else:
                 self.span_tree_lower[node] = ti.min(self.span_tree_lower[left], self.span_tree_lower[right])
                 self.span_tree_upper[node] = ti.max(self.span_tree_upper[left], self.span_tree_upper[right])
+
+    def update_swept_bounds(self, max_step):
+        self._update_swept_hulls(float(max_step))
+        self._refit_swept_tree(
+            self.surface_tree_count,
+            self.surface_tree_nodes,
+            self.swept_surface_lower,
+            self.swept_surface_upper,
+            self.swept_tree_lower,
+            self.swept_tree_upper,
+        )
+        if config.DIM == 3:
+            self._refit_swept_tree(
+                self.span_tree_count,
+                self.span_tree_nodes,
+                self.swept_span_lower,
+                self.swept_span_upper,
+                self.swept_span_tree_lower,
+                self.swept_span_tree_upper,
+            )
+
+    @ti.kernel
+    def _update_swept_hulls(self, max_step: ti.f64):
+        for sid in range(self.num_surfaces):
+            lower = ti.Vector([ti.math.inf for _ in ti.static(range(config.DIM))])
+            upper = -lower
+            for control in range(self.prefix_num_ctrlpts_field[sid], self.prefix_num_ctrlpts_field[sid + 1]):
+                begin = self.control_points_hat[control]
+                end = begin + max_step * self.control_point_direction[control]
+                lower, upper = ti.min(lower, begin, end), ti.max(upper, begin, end)
+            self.swept_surface_lower[sid], self.swept_surface_upper[sid] = lower, upper
+        if ti.static(config.DIM == 3):
+            for span in range(self.prefix_num_spans_field[self.num_surfaces]):
+                first, count_u, count_v, stride = self.span_controls[span]
+                lower = ti.Vector([ti.math.inf, ti.math.inf, ti.math.inf], dt=ti.f64)
+                upper = -lower
+                for local in range(count_u * count_v):
+                    control = first + (local // count_u) * stride + local % count_u
+                    begin = self.control_points_hat[control]
+                    end = begin + max_step * self.control_point_direction[control]
+                    lower, upper = ti.min(lower, begin, end), ti.max(upper, begin, end)
+                self.swept_span_lower[span], self.swept_span_upper[span] = lower, upper
+
+    @ti.kernel
+    def _refit_swept_tree(
+        self,
+        count: int,
+        nodes: ti.template(),
+        lower: ti.template(),
+        upper: ti.template(),
+        tree_lower: ti.template(),
+        tree_upper: ti.template(),
+    ):
+        ti.loop_config(serialize=True)
+        for reverse in range(count):
+            node = count - 1 - reverse
+            left, right, _, leaf = nodes[node]
+            if leaf >= 0:
+                tree_lower[node], tree_upper[node] = lower[leaf], upper[leaf]
+            else:
+                tree_lower[node] = ti.min(tree_lower[left], tree_lower[right])
+                tree_upper[node] = ti.max(tree_upper[left], tree_upper[right])
+
+    @ti.func
+    def swept_box_overlap(self, point_lower, point_upper, lower, upper, clearance):
+        return aabb_overlap_with_clearance(point_lower, point_upper, lower, upper, clearance)
+
+    @ti.func
+    def swept_span_overlap(self, sid, point_lower, point_upper, clearance):
+        found = False
+        node, end = self.span_tree_prefix[sid], self.span_tree_prefix[sid + 1]
+        while node < end:
+            left, _, escape, span = self.span_tree_nodes[node]
+            if not self.swept_box_overlap(
+                point_lower, point_upper, self.swept_span_tree_lower[node], self.swept_span_tree_upper[node], clearance
+            ):
+                node = escape
+            elif span >= 0:
+                found = True
+                break
+            else:
+                node = left
+        return found
 
     @ti.func
     def span_node_distance_squared(self, node, point):

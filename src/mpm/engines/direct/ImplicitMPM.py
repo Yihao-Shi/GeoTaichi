@@ -64,6 +64,7 @@ class ImplicitMPM(MPMSolver):
         self.apply_dirichlet_step = self.apply_dirichlet_hash if self.dirichlet.num > 0 else no_operation
         self.add_neumann_energy_step = self.get_neumann_energy if self.neumann.num > 0 else no_operation
         self.is_finite_strain_plastic = bool(getattr(self.material, "is_finite_strain_plastic", False))
+        self.nonassociated_newton = False
         plane_strain_option = kwargs.get(
             "plane_strain",
             self.is_finite_strain_plastic and config.DIM == 2 and not self.is_axisymmetric,
@@ -161,6 +162,17 @@ class ImplicitMPM(MPMSolver):
             ti.f64, shape=self.degree_of_freedom, needs_grad=True
         )  # global displacement in a substep
         self.grid_disp_temp = ti.field(ti.f64, shape=self.degree_of_freedom)  # global displacement per iteration
+
+    def configure_nonassociated_newton(self):
+        """Select the physical DP map before coupled IPC kernels compile."""
+        self.nonassociated_newton = self.is_finite_strain_plastic and bool(
+            getattr(self.material, "is_nonassociated", False)
+        )
+        if self.nonassociated_newton:
+            self.material.use_direct_nonassociated_solve = True
+            self.material.has_incremental_potential = False
+            self.has_lagged_material = False
+        return self.nonassociated_newton
 
     def get_degree_of_freedom(self, **kwargs):
         raise NotImplementedError

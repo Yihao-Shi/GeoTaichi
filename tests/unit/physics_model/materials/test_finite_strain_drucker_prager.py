@@ -84,6 +84,63 @@ def test_independent_dilation_preserves_friction_cone(taichi_material_cpu):
     assert model.has_incremental_potential  # frozen inner potential
 
 
+@pytest.mark.parametrize("dilation", [0.0, 15.0])
+@pytest.mark.parametrize("branch", ["elastic", "cone", "apex"])
+def test_direct_nonassociated_total_tangent_and_commit_stress(taichi_material_cpu, dilation, branch):
+    model = _model(DilationAngle=dilation)
+    model.use_direct_nonassociated_solve = True
+    model.has_incremental_potential = False
+    model.plastic_deformation_inverse[0] = np.diag(np.exp([-0.03, 0.01, -0.02]))
+    strain = {
+        "elastic": [-0.001, 0.0005, -0.002],
+        "cone": [0.20, -0.12, -0.25],
+        "apex": [0.04, 0.05, 0.06],
+    }[branch]
+    theta = 0.37
+    left = np.array([[np.cos(theta), -np.sin(theta), 0], [np.sin(theta), np.cos(theta), 0], [0, 0, 1]])
+    right = np.array([[1, 0, 0], [0, np.cos(theta), -np.sin(theta)], [0, np.sin(theta), np.cos(theta)]])
+    deformation = left @ np.diag(np.exp(strain)) @ right.T @ np.linalg.inv(model.plastic_deformation_inverse[0])
+    total = ti.Matrix.field(3, 3, ti.f64, shape=())
+    stress = ti.Matrix.field(3, 3, ti.f64, shape=())
+    tangent = ti.Matrix.field(9, 9, ti.f64, shape=())
+
+    @ti.kernel
+    def evaluate():
+        stress[None] = model.total_first_piola_stress_at(0, total[None])
+        tangent[None] = model.total_first_piola_tangent_at(0, total[None])
+
+    @ti.kernel
+    def commit():
+        ignored = model.commit_total_state(0, total[None])
+
+    total[None] = deformation
+    evaluate()
+    physical_stress, analytic = stress.to_numpy()[()], tangent.to_numpy()[()]
+    old_inverse = model.plastic_deformation_inverse.to_numpy().copy()
+    numerical = np.zeros((9, 9))
+    step = 2e-5
+    for column in range(9):
+        plus, minus = deformation.copy(), deformation.copy()
+        plus[column % 3, column // 3] += step
+        minus[column % 3, column // 3] -= step
+        total[None] = plus
+        evaluate()
+        plus_stress = stress.to_numpy()[()]
+        total[None] = minus
+        evaluate()
+        numerical[:, column] = _flatten_column_major(plus_stress - stress.to_numpy()[()]) / (2 * step)
+    assert np.linalg.norm(analytic - numerical) / np.linalg.norm(analytic) < 3e-6
+    np.testing.assert_array_equal(model.plastic_deformation_inverse.to_numpy(), old_inverse)
+    if branch == "cone":
+        assert np.linalg.norm(analytic - analytic.T) > 0.01 * np.linalg.norm(analytic)
+    total[None] = deformation
+    commit()
+    evaluate()
+    # SVD roundoff at the cone/apex boundary can populate zero shear entries;
+    # compare against the stress scale rather than those individual zeros.
+    assert np.linalg.norm(stress.to_numpy()[()] - physical_stress) / np.linalg.norm(physical_stress) < 1e-9
+
+
 @pytest.mark.parametrize(
     "deformation",
     [

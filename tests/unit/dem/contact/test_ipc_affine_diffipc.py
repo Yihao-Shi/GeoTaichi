@@ -42,6 +42,55 @@ def _triangle_basis():
     return np.asarray([affine_basis(vertex) for vertex in vertices])
 
 
+@pytest.mark.parametrize("mode", ["ccd", "accd"])
+def test_mesh_diffipc_swept_candidates_match_full_pair_ccd(taichi_runtime, tmp_path, mode):
+    from tests.unit.dem.contact.test_ipc_affine_friction_assembly import _build_affine_contact
+    from src.dem.engines.AffineDiffIPC import TaichiAffineMeshDiffIPCProjector
+
+    dem, controls = _build_affine_contact(tmp_path)
+    operator = dem.enginer.operator
+    projector = TaichiAffineMeshDiffIPCProjector(operator, controls, np.tile([-2.0, 2.0], (2, 3, 1)))
+    projector._ccd_mode = mode
+    projector.direction.from_numpy(np.array([[0.5, 0.0, 0.0], [-0.5, 0.0, 0.0]]))
+    neighbor = operator.neighbor
+    nodes, faces = operator.node2body.to_numpy(), operator.face2body.to_numpy()
+    edges = operator.edge2body.to_numpy()
+    point_pairs = np.array(
+        [(v, f) for v in range(operator.vertex_num) for f in range(operator.face_num) if nodes[v] != faces[f]],
+        dtype=np.int32,
+    )
+    edge_pairs = np.array(
+        [(i, j) for i in range(operator.edge_num) for j in range(i + 1, operator.edge_num) if edges[i] != edges[j]],
+        dtype=np.int32,
+    )
+    neighbor._allocate_candidates(len(point_pairs))
+    neighbor._allocate_edge_candidates(len(edge_pairs))
+    actual = projector._maximum_feasible_step()
+    compact_count = int(neighbor.candidate_count[None]) + int(neighbor.edge_candidate_count[None])
+    assert compact_count < len(point_pairs) + len(edge_pairs)
+    neighbor.candidate_vertex.from_numpy(point_pairs[:, 0].copy())
+    neighbor.candidate_face.from_numpy(point_pairs[:, 1].copy())
+    neighbor.candidate_edge0.from_numpy(edge_pairs[:, 0].copy())
+    neighbor.candidate_edge1.from_numpy(edge_pairs[:, 1].copy())
+    neighbor.candidate_count[None] = len(point_pairs)
+    neighbor.edge_candidate_count[None] = len(edge_pairs)
+    projector._compute_mesh_ccd_step(
+        projector._ccd_eta,
+        projector._ccd_thickness,
+        projector._ccd_maximum_iterations,
+        mode == "accd",
+        neighbor.candidate_count,
+        neighbor.candidate_vertex,
+        neighbor.candidate_face,
+        neighbor.edge_candidate_count,
+        neighbor.candidate_edge0,
+        neighbor.candidate_edge1,
+    )
+    expected = float(operator.ccd_alpha[None])
+    assert 0 < actual < 1
+    assert actual == pytest.approx(expected, rel=1e-10, abs=1e-12)
+
+
 def test_affine_triangle_gap_full_24_dof_derivatives_match_finite_difference():
     source = _identity_controls([0.013, -0.007, 0.061])
     target = _identity_controls([0.0, 0.0, 0.0])

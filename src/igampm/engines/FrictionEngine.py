@@ -215,8 +215,9 @@ class FrictionEngineMixin:
         surface: ti.template(),
         basis: ti.template(),
     ):
-        for c in range(self.contacts.shape[0]):
-            if self.contacts[c].active and self.contacts[c].surface_id == surface_id:
+        for candidate in range(self.contact_candidate_count[surface_id]):
+            c = self.contact_candidates[surface_id, candidate]
+            if self.contacts[c].active:
                 sample_id = self.contacts[c].sample_id
                 position = self.mpm.p_temp[sample_id]
                 uknot = self.contacts[c].knot_value[0]
@@ -261,8 +262,9 @@ class FrictionEngineMixin:
         surface: ti.template(),
         basis: ti.template(),
     ):
-        for c in range(self.contacts.shape[0]):
-            if self.contacts[c].active and self.contacts[c].surface_id == surface_id:
+        for candidate in range(self.contact_candidate_count[surface_id]):
+            c = self.contact_candidates[surface_id, candidate]
+            if self.contacts[c].active:
                 sample_id = self.contacts[c].sample_id
                 position = self.mpm.p_temp[sample_id]
                 uknot = self.contacts[c].knot_value[0]
@@ -580,8 +582,9 @@ class FrictionEngineMixin:
     ):
         """Exact curve-contact residual and complete nonsymmetric Jacobian."""
         iga_nodes = ti.static(self.iga.degree_of_freedom // config.DIM)
-        for c in range(self.contacts.shape[0]):
-            if self.contacts[c].active and self.contacts[c].surface_id == surface_id:
+        for candidate in range(self.contact_candidate_count[surface_id]):
+            c = self.contact_candidates[surface_id, candidate]
+            if self.contacts[c].active:
                 sample_id = self.contacts[c].sample_id
                 particle_id = self.contacts[c].particle_id
                 uknot = self.contacts[c].knot_value[0]
@@ -912,8 +915,9 @@ class FrictionEngineMixin:
     ):
         """Exact surface-contact residual and nonsymmetric IFT Jacobian."""
         iga_nodes = ti.static(self.iga.degree_of_freedom // config.DIM)
-        for c in range(self.contacts.shape[0]):
-            if self.contacts[c].active and self.contacts[c].surface_id == surface_id:
+        for candidate in range(self.contact_candidate_count[surface_id]):
+            c = self.contact_candidates[surface_id, candidate]
+            if self.contacts[c].active:
                 sample_id = self.contacts[c].sample_id
                 particle_id = self.contacts[c].particle_id
                 uknot = self.contacts[c].knot_value[0]

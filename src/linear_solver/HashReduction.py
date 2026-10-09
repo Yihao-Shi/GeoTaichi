@@ -302,6 +302,7 @@ class HashReduction:
             nnz,
         )
         self.element_pair_num[0] = nnz
+        self.device_pattern_version += 1
 
     def configure_pattern_cache(self, *, enabled=None, extra_fraction=None, max_age=None):
         self.pattern_cache.configure(
@@ -523,8 +524,8 @@ class HashReduction:
             nnz,
         )
         self.element_pair_num[0] = nnz
+        self.device_pattern_version += 1
         if self.device_reduction:
-            self.device_pattern_version += 1
             self.device_pattern_initialized = False
         return nnz
 

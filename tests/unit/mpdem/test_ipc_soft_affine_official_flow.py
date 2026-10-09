@@ -1303,6 +1303,22 @@ def _make_swept_ccd_harness():
     operator.mixed_pair_start = ti.field(ti.i32, shape=2)
     operator.mixed_pair_end = ti.field(ti.i32, shape=2)
     operator.ccd_alpha = ti.field(float, shape=())
+    from src.fem.contact.BVHBroadPhase import DynamicBVHBroadPhase
+
+    operator.mixed_bvh_node_count = 5
+    operator.mixed_bvh_position = ti.Vector.field(3, float, shape=5)
+    operator.mixed_bvh_end_position = ti.Vector.field(3, float, shape=5)
+    operator.mixed_candidate_capacity = 2
+    operator.mixed_bvh = DynamicBVHBroadPhase(
+        np.array([[2, 3, 4]], dtype=np.int32),
+        np.empty((0, 2), dtype=np.int32),
+        np.array([0, 1], dtype=np.int32),
+        np.zeros(5),
+        np.zeros(0),
+        np.vstack((np.zeros((2, 3)), triangle)),
+        max_point_triangle_pairs=2,
+        max_edge_edge_pairs=1,
+    )
     return operator
 
 
@@ -2186,11 +2202,11 @@ def test_soft_affine_swept_body_pairs_catch_fast_soft_and_mixed_ccd():
     # The active point starts well above the affine triangle, which translates
     # through it during the proposed affine step.  This separately exercises
     # the affine ``x + dx`` endpoint of the mixed swept box.
-    # The second point is deliberately inactive at the same location: it
-    # must neither enlarge a body AABB nor create an extra mixed pair.
+    # An inactive point closer to the triangle may enter the broad phase,
+    # but must not restrict the accepted CCD step.
     _set_soft_motion(
         operator,
-        positions=[[0.0, 0.0, 2.0], [0.0, 0.0, 2.0]],
+        positions=[[0.0, 0.0, 2.0], [0.0, 0.0, 0.2]],
         directions=[[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
         active=(1, 0),
     )
@@ -2203,8 +2219,12 @@ def test_soft_affine_swept_body_pairs_catch_fast_soft_and_mixed_ccd():
         eta=0.2,
         max_iteration=1000,
     )
-    assert int(operator.mixed_pair_num[None]) == 1
+    assert int(operator.mixed_bvh.point_triangle_count[None]) == 2
     assert 0.0 < mixed_alpha < 1.0
+    operator.scene.soft_point[1].active = 1
+    operator.ccd_alpha[None] = 1.0
+    operator._compute_mixed_ccd_alpha(0.2, 0.0, 1000, False)
+    assert float(operator.ccd_alpha[None]) == pytest.approx(0.1 * mixed_alpha)
 
 
 def test_bilateral_pp_pullback_is_equal_opposite_and_symmetric():

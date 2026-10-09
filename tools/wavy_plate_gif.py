@@ -57,11 +57,22 @@ def render(source, folder, output, fps, preview):
         print(f"PREPARE {index + 1}/{len(iga)}", flush=True)
     if iga_max <= 0 or speed_max <= 0:
         raise ValueError("Saved frames must contain nonzero IGA stress and MPM speed")
-    config = dict(source=str(source), output=str(output), renderer="ParaView", frames=frames, fps=fps,
-                  camera_direction=[1, -1, 0.75], deformation_scale=1, iga_opacity=0.45,
-                  iga_von_mises_range=[0, 0.7 * iga_max], iga_stress_units="Pa",
-                  mpm_speed_range=[0, speed_max], mpm_speed_units="m/s",
-                  mpm_scalar="velocity", mpm_component="Magnitude")
+    config = dict(
+        source=str(source),
+        output=str(output),
+        renderer="ParaView",
+        frames=frames,
+        fps=fps,
+        camera_direction=[1, -1, 0.75],
+        deformation_scale=1,
+        iga_opacity=0.45,
+        iga_von_mises_range=[0, 0.7 * iga_max],
+        iga_stress_units="Pa",
+        mpm_speed_range=[0, speed_max],
+        mpm_speed_units="m/s",
+        mpm_scalar="velocity",
+        mpm_component="Magnitude",
+    )
     pv._DisableFirstRenderCameraReset()
     view = pv.CreateView("RenderView")
     view.ViewSize = [960, 800]

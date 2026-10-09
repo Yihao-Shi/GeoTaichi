@@ -88,6 +88,92 @@ def test_buildtriplet_bicgstab_matches_scipy(taichi_runtime, dimension):
     _assert_matches_scipy(system, result, reference, info, rhs)
 
 
+def test_bicgstab_restarts_from_preconditioned_true_residual(taichi_runtime, monkeypatch):
+    size = 128
+    dense = 2 * np.eye(size) - 1.01 * np.eye(size, k=-1) - 0.99 * np.eye(size, k=1)
+    system = BuildTriplet(
+        dim=1,
+        max_pairs_num=3 * size,
+        max_nonzeros=3 * size,
+        max_active_nodes=size,
+        symmetric=False,
+        matrix_symmetric=False,
+    )
+    system.load_from_scipy_blocks(csr_matrix(dense), active_nodes=size)
+    initialize, matvec = system._init_bicgstab, system.matvec
+    pending = []
+    checked = []
+
+    def initialize_and_capture(active_nodes):
+        result = initialize(active_nodes)
+        pending[:] = [system.r.to_numpy() * system.diag_inverse.to_numpy()]
+        return result
+
+    def check_direction(active_nodes, nnz, x, ax):
+        if x is system.p_hat and pending:
+            np.testing.assert_allclose(x.to_numpy(), pending.pop(), rtol=1e-13, atol=1e-14)
+            checked.append(True)
+        return matvec(active_nodes, nnz, x, ax)
+
+    monkeypatch.setattr(system, "_init_bicgstab", initialize_and_capture)
+    monkeypatch.setattr(system, "matvec", check_direction)
+    result = system.BiCGSTABSolver(rhs=np.ones((size, 1)), tol=1e-14, maxiter=33)
+    assert result["iterations"] == 33
+    assert len(checked) == 2
+    np.testing.assert_allclose(
+        result["residual"], np.linalg.norm(csr_matrix(dense) @ result["x"].ravel() - 1), atol=1e-12
+    )
+
+
+@pytest.mark.parametrize(
+    "dimension,packed,matrix_symmetric",
+    [(1, False, False), (2, False, True), (2, True, True), (3, True, True), (3, False, False), (4, False, False)],
+)
+@pytest.mark.parametrize("device_reduction", [False, True])
+def test_row_matvec_matches_scatter_after_pattern_and_value_changes(
+    taichi_runtime,
+    dimension,
+    packed,
+    matrix_symmetric,
+    device_reduction,
+):
+    if not device_reduction and taichi_runtime.lang.impl.current_cfg().arch == taichi_runtime.cuda:
+        pytest.skip("host reduction is an explicit CPU/Metal oracle")
+    system = BuildTriplet(
+        dim=dimension,
+        max_pairs_num=64,
+        max_nonzeros=64,
+        max_active_nodes=8,
+        symmetric=packed,
+        matrix_symmetric=matrix_symmetric,
+        device_reduction=device_reduction,
+    )
+    rng = np.random.default_rng(71)
+    for shift in (1, 2, 2):
+        active = 6
+        diagonal = np.zeros((8, system.hessian_size))
+        diagonal[:] = rng.normal(size=diagonal.shape)
+        rows = np.arange(4, dtype=np.int32)
+        columns = (rows + shift).astype(np.int32)
+        values = rng.normal(size=(4, system.hessian_size))
+        system.diag.from_numpy(diagonal)
+        system._set_reduced_non_diag(rows, columns, values)
+        nnz = int(system.non_diag.element_pair_num[0])
+        system.x.from_numpy(rng.normal(size=(8, dimension)))
+        for active in (6, 4):
+            for transpose in (False, True):
+                operation = system.transpose_matvec if transpose else system.matvec
+                system.use_row_matvec = False
+                operation(active, nnz, system.x, system.Ax)
+                expected = system.Ax.to_numpy()[:active].copy()
+                system.use_row_matvec = True
+                operation(active, nnz, system.x, system.Ax)
+                np.testing.assert_allclose(system.Ax.to_numpy()[:active], expected, rtol=1e-13, atol=1e-13)
+                rebuilds = system.row_pattern_rebuilds
+                operation(active, nnz, system.x, system.Ax)
+                assert system.row_pattern_rebuilds == rebuilds
+
+
 @pytest.mark.parametrize("symmetric", [False, True])
 def test_fixed_slots_survive_dynamic_pattern_rebuilds(taichi_runtime, symmetric):
     import taichi as ti

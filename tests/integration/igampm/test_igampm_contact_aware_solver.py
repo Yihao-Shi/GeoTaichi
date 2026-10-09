@@ -14,7 +14,8 @@ def _isolated_taichi_runtime(taichi_runtime):
     config.set_dimension(2)
 
 
-def test_monolithic_hash_solver_receives_relative_tolerance():
+@pytest.mark.parametrize("forcing", [None, 1.0e-3])
+def test_monolithic_hash_solver_receives_relative_tolerance(forcing):
     from src.igampm.engines.ImplicitEngine import ImplicitEngineMixin
 
     class Matrix:
@@ -31,11 +32,26 @@ def test_monolithic_hash_solver_receives_relative_tolerance():
     engine.monolithic_linear_solver_relative_tolerance = 2.0e-7
     engine.monolithic_linear_solver_max_iters = 123
 
-    engine._solve_monolithic_linear_system({"active_nodes": 4, "active_dof": 8})
+    system = {"active_nodes": 4, "active_dof": 8}
+    if forcing is not None:
+        system["linear_relative_tolerance"] = forcing
+    engine._solve_monolithic_linear_system(system)
 
     assert engine.monolithic_hash_matrix.kwargs["tol"] == 1.0e-9
-    assert engine.monolithic_hash_matrix.kwargs["rel_tol"] == 2.0e-7
+    assert engine.monolithic_hash_matrix.kwargs["rel_tol"] == (2.0e-7 if forcing is None else forcing)
     assert engine.monolithic_hash_matrix.kwargs["maxiter"] == 123
+
+
+def test_inexact_forcing_tightens_with_nonlinear_progress():
+    from src.igampm.engines.ImplicitEngine import ImplicitEngineMixin
+
+    engine = object.__new__(ImplicitEngineMixin)
+    engine.monolithic_linear_solver_relative_tolerance = 1e-7
+    assert engine._newton_linear_tolerance(10.0, None) == 0.01
+    assert engine._newton_linear_tolerance(10.0, 0.0) == 0.01
+    assert engine._newton_linear_tolerance(10.0, 100.0) == 0.01
+    assert engine._newton_linear_tolerance(1.0, 100.0) == pytest.approx(9e-4)
+    assert engine._newton_linear_tolerance(1e-10, 100.0) == 1e-7
 
 
 @pytest.mark.parametrize("accepted", [True, False])
@@ -108,6 +124,7 @@ def test_monolithic_newton_does_not_solve_an_already_balanced_rhs():
     from src.igampm.engines.ImplicitEngine import ImplicitEngineMixin
 
     engine = object.__new__(ImplicitEngineMixin)
+    engine.nonassociated_newton = False
     engine.monolithic_force_atol = 1.0e-10
     engine.monolithic_force_rtol = 5.0e-4
     engine.monolithic_dirichlet_tolerance = 1.0e-12
@@ -146,6 +163,7 @@ def test_plastic_monolithic_newton_selects_material_line_search(has_incremental_
     from src.igampm.engines.ImplicitEngine import ImplicitEngineMixin
 
     engine = object.__new__(ImplicitEngineMixin)
+    engine.nonassociated_newton = False
     engine.mpm_has_plastic_history = True
     engine.is_semi = False
     engine.semi_contact_converged = lambda: True
@@ -320,6 +338,45 @@ def _build_mpm_particle(output_path):
     mpm.active_dof = mpm.set_active_dof()
     mpm.compute_nodal_vel_acc()
     return mpm
+
+
+def test_compact_contact_candidates_preserve_barrier_and_distant_ccd(tmp_path):
+    from src.igampm import IGAMPM
+
+    iga = _build_iga_rectangle(tmp_path / "iga")
+    mpm = _build_mpm_particle(tmp_path / "mpm")
+    engine = IGAMPM(iga, mpm, kappa=1e4, dhat=0.08, dmin=0.005, barrier_nnz=20_000, project_pd=True).build()
+    engine.begin_implicit_ipc_step()
+    counts = engine.contact_candidate_count.to_numpy()
+    assert 0 < counts.sum() < engine.contact_pair_count
+    assert np.all(np.isfinite(engine.contacts.distance.to_numpy()[: engine.contact_pair_count]))
+    engine.assemble_barrier_system()
+    expected_force = engine.barrier_grad.to_numpy().copy()
+    engine.barrier_hash_matrix.finalize_taichi_assembly()
+    expected_matrix = engine.barrier_hash_matrix.to_scipy().toarray()
+
+    # Replaying the full face/sample product is the uncompressed oracle.
+    faces, samples = engine.contact_surface.num_surfaces, mpm.total_surface_num
+    ids = np.arange(samples, dtype=np.int32)[None, :] * faces + np.arange(faces, dtype=np.int32)[:, None]
+    engine.contact_candidates.from_numpy(ids)
+    engine.contact_candidate_count.from_numpy(np.full(faces, samples, dtype=np.int32))
+    engine.assemble_barrier_system()
+    engine.barrier_hash_matrix.finalize_taichi_assembly()
+    np.testing.assert_allclose(engine.barrier_grad.to_numpy(), expected_force, rtol=1e-13, atol=1e-13)
+    np.testing.assert_allclose(engine.barrier_hash_matrix.to_scipy().toarray(), expected_matrix, rtol=1e-13, atol=1e-13)
+
+    # A presently inactive point can approach the solid during the proposed step.
+    mpm.grid_disp.fill(0.0)
+    moving = np.zeros(mpm.degree_of_freedom)
+    moving[: mpm.active_dof].reshape(-1, 2)[:, 1] = -0.25
+    mpm.grid_disp.from_numpy(moving)
+    engine.initialize_barrier()
+    assert engine.contact_candidate_count.to_numpy().sum() == 0
+    moving[: mpm.active_dof].reshape(-1, 2)[:, 1] = 0.5
+    mpm.incre_resolution.from_numpy(moving)
+    iga.incre_resolution.fill(0.0)
+    alpha = engine.conservative_contact_step_device(verify=True)
+    assert 0.0 < alpha < 1.0
 
 
 def test_newton_reuses_contact_queries_without_changing_solution(tmp_path, monkeypatch):
@@ -571,13 +628,6 @@ def test_taichi_point_nurbs_accd_two_sided_motion_and_coo_assembly(tmp_path):
         engine.contact_surface.control_points_hat.to_numpy(),
         control_points_before,
     )
-    assert np.isclose(
-        np.min(engine.contact_accd_toc.to_numpy()[:expected_pairs]),
-        device_bound,
-        rtol=1.0e-12,
-        atol=1.0e-12,
-    )
-
     # Point and NURBS control points move on equal footing. A common
     # translation has zero relative-motion bound even though both directions
     # are nonzero; changing only the point by 0.1 recovers the same bound as

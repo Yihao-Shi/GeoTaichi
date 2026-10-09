@@ -1753,8 +1753,11 @@ The [implicit block example](../../examples/mpm/direct/implicit_ulmpm_block2d.py
 
 The example-backed implicit ULMPM materials include Neo-Hookean elasticity, finite-strain Drucker–Prager, and von Mises plasticity. The [implicit elastic bar](../../examples/mpm/ElasticBar/ImplicitBar.py) uses linear elasticity. Cross-solver contact is documented under [FEM–MPM](../fempm/README.md), [IGA–MPM](../igampm/README.md), and [MPM–ABD](../mpdem/README.md).
 
-Direct nonassociated Drucker–Prager accepts independent `DilationAngle` and
-keeps symmetric PCG solves by freezing its flow correction in each inner
+Direct nonassociated Drucker–Prager accepts independent `DilationAngle`.
+FEM--MPM and IGA--MPM enable the physical nonsymmetric Newton map, including
+the trial plastic-volume derivative, with BiCGSTAB and residual Armijo; they
+do not use a material-consistency outer loop. Other Direct-MPM consumers
+retain their symmetric PCG contract by freezing the flow correction in each inner
 potential. The outer material convergence test compares physical and inner
 Kirchhoff stress, together with predicted plastic volume, rather than changes
 of the correction alone.

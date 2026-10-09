@@ -13,13 +13,14 @@ pytestmark = [pytest.mark.unit, pytest.mark.fem, pytest.mark.assembly]
 
 
 @pytest.mark.parametrize("element_type", ["TET4", "HEX8"])
-def test_fixed_scatter_matches_raw_for_deformed_solids(taichi_runtime, element_type):
+@pytest.mark.parametrize("matrix_symmetric", [False, True])
+def test_fixed_scatter_matches_raw_for_deformed_solids(taichi_runtime, element_type, matrix_symmetric):
     import taichi as ti
 
     mesh = FEMGenerateManager().create_box(size=(1.0, 1.0, 1.0), divisions=(1, 1, 1), element_type=element_type)
     material = FEMMaterialManager().material_handle("StVK", young_modulus=1e4, poisson_ratio=0.3, density=1.0)
     assembler = ClassicalAssembler(mesh, create_element(mesh), material, project_pd=False)
-    coordinates, slots = assembler.fixed_block_coordinates()
+    coordinates, slots = assembler.fixed_block_coordinates(upper_triangle=matrix_symmetric)
     slot_field = ti.field(ti.i32, shape=slots.shape)
     slot_field.from_numpy(slots)
     matrices = [
@@ -29,8 +30,8 @@ def test_fixed_scatter_matches_raw_for_deformed_solids(taichi_runtime, element_t
             max_nonzeros=assembler.stiffness_unique_block_pair_count,
             max_active_nodes=mesh.number_of_nodes,
             symmetric=False,
-            matrix_symmetric=True,
-            full_symmetric_input=True,
+            matrix_symmetric=matrix_symmetric,
+            full_symmetric_input=matrix_symmetric,
         )
         for _ in range(2)
     ]

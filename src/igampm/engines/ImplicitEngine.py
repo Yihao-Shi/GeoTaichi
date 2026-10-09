@@ -328,8 +328,8 @@ class ImplicitEngineMixin:
         if not hasattr(self.iga, "hash_matrix") or not hasattr(self.mpm, "hash_matrix"):
             return False
         assemble_type = getattr(self, "assemble_type", "HashTriplet")
-        expected_solver = "BiCGSTAB" if self.friction_mode == "fully_implicit" else "PCG"
-        expected_symmetric_storage = self.friction_mode != "fully_implicit"
+        expected_solver = self.monolithic_solver_name
+        expected_symmetric_storage = self.monolithic_matrix_symmetric
         if assemble_type == "HashTriplet":
             if self.monolithic_hash_matrix is None:
                 return False
@@ -591,6 +591,9 @@ class ImplicitEngineMixin:
         """
         assemble_type = getattr(self, "assemble_type", "HashTriplet")
         if linear_solve is None:
+            relative_tolerance = system.get(
+                "linear_relative_tolerance", self.monolithic_linear_solver_relative_tolerance
+            )
             if assemble_type == "COO":
                 self.monolithic_correction.fill(0.0)
                 converged = self.monolithic_coo_matrix.solve(
@@ -598,7 +601,7 @@ class ImplicitEngineMixin:
                     self.monolithic_correction,
                     self.monolithic_coo_diagonal,
                     tol=self.monolithic_linear_solver_tolerance,
-                    rel_tol=self.monolithic_linear_solver_relative_tolerance,
+                    rel_tol=relative_tolerance,
                     maxiter=self.monolithic_linear_solver_max_iters,
                 )
                 return {
@@ -606,14 +609,14 @@ class ImplicitEngineMixin:
                     "residual": float(self.monolithic_coo_matrix.linear_solver.last_residual),
                     "iterations": int(self.monolithic_coo_matrix.linear_solver.last_iterations),
                     "solution_inf_norm": float(self._monolithic_correction_inf_norm(int(system["active_dof"]))),
-                    "backend": ("taichi_coo_bicgstab" if self.friction_mode == "fully_implicit" else "taichi_coo_pcg"),
+                    "backend": f"taichi_coo_{self.monolithic_solver_name.lower()}",
                 }
             return self.monolithic_hash_matrix.solve_flat_system(
                 self.monolithic_rhs,
                 self.monolithic_correction,
                 active_nodes=system["active_nodes"],
                 tol=self.monolithic_linear_solver_tolerance,
-                rel_tol=self.monolithic_linear_solver_relative_tolerance,
+                rel_tol=relative_tolerance,
                 maxiter=self.monolithic_linear_solver_max_iters,
                 return_solution=False,
             )
@@ -750,7 +753,7 @@ class ImplicitEngineMixin:
         return bound
 
     @ti.kernel
-    def _prepare_point_nurbs_accd(self, expected_pairs: ti.i32, max_step: ti.f64):
+    def _prepare_point_nurbs_accd(self, max_step: ti.f64):
         self.contact_step_alpha[None] = max_step
         self.contact_query_status[None] = 0
         for sample in range(self.mpm.total_surface_num):
@@ -759,8 +762,6 @@ class ImplicitEngineMixin:
             for component in ti.static(range(config.DIM)):
                 if not ti.abs(direction[component]) < ti.math.inf:
                     ti.atomic_max(self.contact_query_status[None], 2)
-        for contact_id in range(expected_pairs):
-            self.contact_accd_toc[contact_id] = max_step
         for local_control_id in range(self.contact_surface.total_ctrlpts):
             weight = self.contact_surface.weights[local_control_id]
             if not (weight > 0.0 and weight < ti.math.inf):
@@ -780,47 +781,59 @@ class ImplicitEngineMixin:
         surface: ti.template(),
     ):
         self.contact_accd_active_count[None] = 0
-        sample_count = self.mpm.total_surface_num
-        for pair_offset in range((group_end - group_begin) * sample_count):
-            group_offset = pair_offset // sample_count
-            sample_id = pair_offset - group_offset * sample_count
-            surface_id = surface.accd_basis_group_surface_ids[group_begin + group_offset]
-            contact_id = sample_id * surface.num_surfaces + surface_id
-            contact = self.contacts[contact_id]
-            distance = contact.distance
-            pair_toc = 0.0
-            active = 0
-            motion_bound = 0.0
-            if (
-                contact.surface_id == surface_id
-                and 0 <= contact.particle_id < self.mpm.particleNum[0]
-                and clearance < distance < ti.math.inf
-            ):
-                point_direction = self.contact_point_direction[sample_id]
-                motion_bound = surface.relative_motion_upper_bound(surface_id, point_direction)
-                if max_step * motion_bound > safety * (distance - clearance):
-                    motion_bound = self._point_nurbs_motion_bound(
-                        point_direction,
-                        surface.prefix_num_ctrlpts_field[surface_id],
-                        surface.prefix_num_ctrlpts_field[surface_id + 1],
-                    )
-                pair_toc = max_step
-                if motion_bound > 0.0 and max_step * motion_bound > safety * (distance - clearance):
-                    pair_toc = 0.0
-                    active = 1
-                    ti.atomic_add(self.contact_accd_active_count[None], 1)
-            else:
-                ti.atomic_max(self.contact_query_status[None], 2)
-            self.contact_accd_toc[contact_id] = pair_toc
-            self.contact_accd_distance[contact_id] = distance
-            self.contact_accd_motion_bound[contact_id] = motion_bound
-            self.contact_accd_active[contact_id] = active
+        for sample_id in range(self.mpm.total_surface_num):
+            point = self.mpm.p_temp[sample_id]
+            point_direction = self.contact_point_direction[sample_id]
+            end_point = point + max_step * point_direction
+            point_lower, point_upper = ti.min(point, end_point), ti.max(point, end_point)
+            node = 0
+            while node < surface.surface_tree_count:
+                left, _, escape, surface_id = surface.surface_tree_nodes[node]
+                overlap = surface.swept_box_overlap(
+                    point_lower, point_upper, surface.swept_tree_lower[node], surface.swept_tree_upper[node], clearance
+                )
+                if not overlap:
+                    node = escape
+                elif surface_id < 0:
+                    node = left
+                else:
+                    node = escape
+                    order = surface.surface_group_order[surface_id]
+                    if group_begin <= order < group_end:
+                        if ti.static(config.DIM == 3):
+                            overlap = surface.swept_span_overlap(surface_id, point_lower, point_upper, clearance)
+                        if overlap:
+                            contact_id = sample_id * surface.num_surfaces + surface_id
+                            contact = self.contacts[contact_id]
+                            distance = contact.distance
+                            if (
+                                contact.surface_id == surface_id
+                                and 0 <= contact.particle_id < self.mpm.particleNum[0]
+                                and clearance < distance < ti.math.inf
+                            ):
+                                motion_bound = surface.relative_motion_upper_bound(surface_id, point_direction)
+                                if max_step * motion_bound > safety * (distance - clearance):
+                                    motion_bound = self._point_nurbs_motion_bound(
+                                        point_direction,
+                                        surface.prefix_num_ctrlpts_field[surface_id],
+                                        surface.prefix_num_ctrlpts_field[surface_id + 1],
+                                    )
+                                if motion_bound > 0.0 and max_step * motion_bound > safety * (distance - clearance):
+                                    slot = ti.atomic_add(self.contact_accd_active_count[None], 1)
+                                    self.contact_accd_candidates[slot] = contact_id
+                                    self.contact_accd_toc[contact_id] = 0.0
+                                    self.contact_accd_distance[contact_id] = distance
+                                    self.contact_accd_motion_bound[contact_id] = motion_bound
+                                    self.contact_accd_active[contact_id] = 1
+                            else:
+                                ti.atomic_max(self.contact_query_status[None], 2)
 
     @ti.kernel
     def _advance_point_nurbs_accd(
         self,
         group_begin: ti.i32,
         group_end: ti.i32,
+        candidate_count: ti.i32,
         max_step: ti.f64,
         safety: ti.f64,
         clearance: ti.f64,
@@ -835,12 +848,10 @@ class ImplicitEngineMixin:
         crosses to the host; pair state and all geometry remain on the device.
         """
         self.contact_accd_active_count[None] = 0
-        sample_count = self.mpm.total_surface_num
-        for pair_offset in range((group_end - group_begin) * sample_count):
-            group_offset = pair_offset // sample_count
-            sample_id = pair_offset - group_offset * sample_count
-            surface_id = surface.accd_basis_group_surface_ids[group_begin + group_offset]
-            contact_id = sample_id * surface.num_surfaces + surface_id
+        for candidate in range(candidate_count):
+            contact_id = self.contact_accd_candidates[candidate]
+            surface_id = contact_id % surface.num_surfaces
+            sample_id = contact_id // surface.num_surfaces
             if self.contact_accd_active[contact_id] != 0:
                 pair_toc = self.contact_accd_toc[contact_id]
                 remaining = max_step - pair_toc
@@ -902,10 +913,11 @@ class ImplicitEngineMixin:
                 ti.atomic_add(self.contact_accd_active_count[None], active)
 
     @ti.kernel
-    def _finish_point_nurbs_accd(self, expected_pairs: ti.i32):
+    def _finish_point_nurbs_accd(self, candidate_count: ti.i32):
         # Reduce only final TOCs: intermediate iterates are lower bounds that
         # would incorrectly keep the global step at the first accepted iterate.
-        for contact_id in range(expected_pairs):
+        for candidate in range(candidate_count):
+            contact_id = self.contact_accd_candidates[candidate]
             ti.atomic_min(self.contact_step_alpha[None], self.contact_accd_toc[contact_id])
 
     def assemble_monolithic_newton_system(
@@ -974,6 +986,8 @@ class ImplicitEngineMixin:
             self.apply_mpm_neumann()
         if need_matrix:
             material_options = {"reuse_response": True} if prepared_material else {}
+            if self.nonassociated_newton:
+                material_options["exact_plastic_tangent"] = True
             self.mpm.assemble_stiffness_matrix_hash(
                 active_mpm_dof,
                 self.mpm.grid_disp,
@@ -1062,15 +1076,19 @@ class ImplicitEngineMixin:
             "need_matrix": need_matrix,
             "assemble_type": self.assemble_type,
             "backend": (
-                "taichi_device_coo_exact_fi_bicgstab"
-                if self.assemble_type == "COO" and self.friction_mode == "fully_implicit"
+                f"taichi_device_{self.assemble_type.lower()}_nonassociated_bicgstab"
+                if self.nonassociated_newton
                 else (
-                    "taichi_device_coo_lagged_pcg"
-                    if self.assemble_type == "COO"
+                    "taichi_device_coo_exact_fi_bicgstab"
+                    if self.assemble_type == "COO" and not self.monolithic_matrix_symmetric
                     else (
-                        "taichi_device_hashtriplet_exact_fi_bicgstab"
-                        if self.friction_mode == "fully_implicit"
-                        else "taichi_device_hashtriplet_lagged_pcg"
+                        "taichi_device_coo_lagged_pcg"
+                        if self.assemble_type == "COO"
+                        else (
+                            "taichi_device_hashtriplet_exact_fi_bicgstab"
+                            if not self.monolithic_matrix_symmetric
+                            else "taichi_device_hashtriplet_lagged_pcg"
+                        )
                     )
                 )
             ),
@@ -1122,17 +1140,17 @@ class ImplicitEngineMixin:
         if prepare_contacts:
             self.initialize_barrier(self.mpm.grid_disp, self.iga.grid_disp)
         self.last_contact_ccd_min_distance = self.minimum_contact_distance()
-        sample_count = int(self.mpm.total_surface_num)
-        surface_count = int(self.contact_surface.num_surfaces)
-        expected_pairs = sample_count * surface_count
         clearance = 0.0 if self.is_semi else float(self.barrier.minimum_distance) + self.strict_feasibility_tolerance
         self.contact_surface.update_control_point_direction(self.iga.incre_resolution)
-        self._prepare_point_nurbs_accd(expected_pairs, max_step)
+        self._prepare_point_nurbs_accd(max_step)
         query_status = int(self.contact_query_status[None])
         if query_status == 1:
             raise RuntimeError(
                 "conservative point-NURBS contact stepping requires finite " "strictly positive NURBS weights"
             )
+        if query_status != 0:
+            raise RuntimeError("point-NURBS CCD requires finite motion directions")
+        self.contact_surface.update_swept_bounds(max_step)
 
         for basis_group, basis in enumerate(self.contact_surface.accd_basis):
             group_begin = int(self.contact_surface.accd_basis_group_offsets[basis_group])
@@ -1145,12 +1163,14 @@ class ImplicitEngineMixin:
                 clearance,
                 self.contact_surface,
             )
+            candidate_count = int(self.contact_accd_active_count[None])
             for _ in range(self.contact_ccd_max_iterations):
                 if self.contact_accd_active_count[None] == 0:
                     break
                 self._advance_point_nurbs_accd(
                     group_begin,
                     group_end,
+                    candidate_count,
                     max_step,
                     safety,
                     clearance,
@@ -1158,7 +1178,7 @@ class ImplicitEngineMixin:
                     self.contact_surface,
                     basis,
                 )
-        self._finish_point_nurbs_accd(expected_pairs)
+            self._finish_point_nurbs_accd(candidate_count)
 
         query_status = int(self.contact_query_status[None])
         if query_status != 0:
@@ -1294,6 +1314,14 @@ class ImplicitEngineMixin:
             "backend": "taichi_device",
         }
 
+    def _newton_linear_tolerance(self, force_residual, previous_force):
+        if previous_force is None or previous_force <= 0.0:
+            return 1.0e-2
+        return min(
+            1.0e-2,
+            max(self.monolithic_linear_solver_relative_tolerance, 0.9 * (force_residual / previous_force) ** 1.5),
+        )
+
     def _solve_monolithic_newton_device(
         self,
         *,
@@ -1311,16 +1339,20 @@ class ImplicitEngineMixin:
         last_system = None
         last_armijo = None
         initial_force_residual = None
+        previous_force_residual = None
+        inexact = bool(getattr(self, "monolithic_inexact_newton", False))
         force_tolerance = math.inf
         convergence_reason = None
         has_plastic_history = bool(getattr(self, "mpm_has_plastic_history", False))
         has_incremental_potential = has_plastic_history and bool(
             getattr(getattr(self.mpm, "material", None), "has_incremental_potential", False)
         )
+        if self.nonassociated_newton and energy_function is not None:
+            raise TypeError("nonassociated DP uses residual-norm Armijo, not an energy_function")
         semi_progress = 0.0
         contacts_prepared = False
         for iteration in range(max_iterations):
-            if self.is_semi and iteration > 1 and semi_progress > 0.999:
+            if self.is_semi and not inexact and iteration > 1 and semi_progress > 0.999:
                 self.last_monolithic_converged = True
                 convergence_reason = "semi_ipc_projection_progress"
                 break
@@ -1355,7 +1387,12 @@ class ImplicitEngineMixin:
                 prepare_contacts=False,
                 residual_prepared=True,
             )
+            if inexact:
+                last_system["linear_relative_tolerance"] = self._newton_linear_tolerance(
+                    force_residual, previous_force_residual
+                )
             solve_result = self._solve_monolithic_linear_system(last_system, linear_solve=linear_solve)
+            previous_force_residual = force_residual
             if not solve_result["converged"]:
                 raise RuntimeError(
                     f"IGA-MPM Taichi {self.monolithic_solver_name} did not "
@@ -1377,7 +1414,7 @@ class ImplicitEngineMixin:
             last_system["linear_solve"] = solve_result
             if not math.isfinite(residual):
                 raise RuntimeError(f"IGA-MPM Taichi {self.monolithic_solver_name} returned " "a non-finite correction")
-            if residual <= tolerance and self.semi_contact_converged():
+            if residual <= tolerance and not inexact and self.semi_contact_converged():
                 self.last_monolithic_converged = True
                 convergence_reason = "correction_velocity"
                 break
@@ -1433,7 +1470,9 @@ class ImplicitEngineMixin:
             "converged": self.last_monolithic_converged,
             "system": last_system,
             "line_search": last_armijo,
-            "backend": "taichi_device_lagged_pcg",
+            "backend": (
+                "taichi_device_nonassociated_bicgstab" if self.nonassociated_newton else "taichi_device_lagged_pcg"
+            ),
         }
 
     def solve_monolithic_newton(
@@ -1446,7 +1485,7 @@ class ImplicitEngineMixin:
         energy_function=None,
         verbose=False,
     ):
-        """Fully solve one conservative problem with lagged friction frozen."""
+        """Solve coupled equilibrium with lagged friction frozen."""
         del outer_iteration  # useful to callback callers, not needed internally
         if include_friction is None:
             include_friction = self.activate_fric
@@ -1707,6 +1746,7 @@ class ImplicitEngineMixin:
                 "constraint_violation": float(self.semi_constraint_violation[None]) if self.is_semi else 0.0,
             },
             "linear_solver": {
+                "name": self.monolithic_solver_name,
                 "iterations": int(self.last_monolithic_iterations),
                 "residual": float(self.last_monolithic_residual),
                 "force_residual": float(self.last_monolithic_force_residual),

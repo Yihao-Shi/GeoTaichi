@@ -4,11 +4,11 @@ import numpy as np
 import pytest
 import taichi as ti
 
-
 pytestmark = [pytest.mark.unit, pytest.mark.iga, pytest.mark.cpu]
 
 
-def test_igampm_coo_scatter_and_pcg_remain_on_device(taichi_runtime):
+@pytest.mark.parametrize("solver", ["PCG", "BiCGSTAB"])
+def test_igampm_coo_scatter_and_krylov_remain_on_device(taichi_runtime, solver):
     import src.igampm.config as config
     from src.igampm.engines import Engine
     from src.linear_solver.BuildTriplet import BuildTriplet
@@ -24,6 +24,8 @@ def test_igampm_coo_scatter_and_pcg_remain_on_device(taichi_runtime):
         ],
         dtype=np.float64,
     )
+    if solver == "BiCGSTAB":
+        dense[0, 2] = 0.7
     rows, columns = np.nonzero(dense)
     source = BuildTriplet(
         dim=2,
@@ -43,9 +45,8 @@ def test_igampm_coo_scatter_and_pcg_remain_on_device(taichi_runtime):
     engine = object.__new__(Engine)
     engine.assemble_type = "COO"
     engine.friction_mode = "lagged"
-    engine.monolithic_coo_matrix = CoordinateSparseMatrix(
-        128, 4, preconditioned=True, symmetry=True
-    )
+    engine.monolithic_solver_name = solver
+    engine.monolithic_coo_matrix = CoordinateSparseMatrix(128, 4, preconditioned=True, symmetry=solver == "PCG")
     engine.monolithic_coo_count = ti.field(ti.i32, shape=())
     engine.monolithic_coo_overflow = ti.field(ti.i32, shape=())
     engine.monolithic_coo_diagonal = ti.field(ti.f64, shape=4)
@@ -54,6 +55,7 @@ def test_igampm_coo_scatter_and_pcg_remain_on_device(taichi_runtime):
     engine.monolithic_fixed = ti.field(ti.i32, shape=4)
     engine.monolithic_fixed_correction = ti.field(ti.f64, shape=4)
     engine.monolithic_linear_solver_tolerance = 1.0e-12
+    engine.monolithic_linear_solver_relative_tolerance = 0.0
     engine.monolithic_linear_solver_max_iters = 200
 
     engine.monolithic_coo_matrix.reset()
@@ -89,15 +91,11 @@ def test_igampm_coo_scatter_and_pcg_remain_on_device(taichi_runtime):
         rtol=0.0,
         atol=1.0e-12,
     )
-    np.testing.assert_allclose(
-        engine.monolithic_rhs.to_numpy(), expected_rhs, rtol=0.0, atol=1.0e-12
-    )
+    np.testing.assert_allclose(engine.monolithic_rhs.to_numpy(), expected_rhs, rtol=0.0, atol=1.0e-12)
 
-    result = engine._solve_monolithic_linear_system(
-        {"active_dof": 4, "active_nodes": 2}
-    )
+    result = engine._solve_monolithic_linear_system({"active_dof": 4, "active_nodes": 2})
     assert result["converged"]
-    assert result["backend"] == "taichi_coo_pcg"
+    assert result["backend"] == f"taichi_coo_{solver.lower()}"
     np.testing.assert_allclose(
         engine.monolithic_correction.to_numpy(),
         np.linalg.solve(expected_matrix, expected_rhs),

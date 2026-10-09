@@ -258,12 +258,49 @@ def test_implicit_ipc_dp_keeps_ccd_and_armijo_pipeline(tmp_path, assembly, dilat
     result = coupling.run(steps=1, verbose=False)
 
     assert result["converged"]
-    assert not coupling.enginer.mpm_uses_residual_merit
+    assert coupling.enginer.mpm_uses_residual_merit == (dilation != 30.0)
+    assert coupling.enginer.linear_solver == ("PCG" if dilation == 30.0 else "BiCGSTAB")
+    if dilation != 30.0:
+        assert not coupling.mpm.enginer.has_lagged_material
+        assert result["history"][-1]["material_lagged_iterations"] == 0
     record = result["history"][-1]
     assert record["material"] == "FiniteStrainDruckerPragerModel"
     assert record["contact"]["active_contacts"] >= 1
     assert record["friction_iterations"][0]
     assert np.linalg.det(coupling.mpm.enginer.F0.to_numpy()[0]) > 0.0
+
+
+def test_nonassociated_ipc_physical_jacobian_by_fd(tmp_path):
+    coupling = _implicit_system(tmp_path, friction=0.0, mpm_material="DruckerPrager", dilation=0.0)
+    engine = coupling.enginer
+    mpm = engine.mpm
+    mpm.F0.from_numpy(np.array([np.diag([1.18, 0.82, 0.90])]))
+    system = engine.assemble_system(include_friction=False)
+    active_dof = system["active_dof"]
+    offset = 3 * engine.fem_nodes
+    free = np.flatnonzero(engine.fixed.to_numpy()[:active_dof] == 0)
+    base = np.linspace(-2e-5, 3e-5, mpm.active_dof)
+    displacement = mpm.grid_disp.to_numpy()
+
+    def evaluate(values, need_matrix=False):
+        displacement[: mpm.active_dof] = values
+        mpm.grid_disp.from_numpy(displacement)
+        assembled = engine.assemble_system(include_friction=False, need_matrix=need_matrix)
+        residual = -engine.physical_rhs.to_numpy()[free]
+        matrix = assembled["matrix"].to_scipy(assembled["active_nodes"]).toarray() if need_matrix else None
+        return residual, matrix
+
+    _, full = evaluate(base, True)
+    analytic = full[np.ix_(free, free)]
+    numerical = np.zeros_like(analytic)
+    step = 2e-6
+    for column, dof in enumerate(free):
+        delta = np.zeros(mpm.active_dof)
+        delta[dof - offset] = step
+        numerical[:, column] = (evaluate(base + delta)[0] - evaluate(base - delta)[0]) / (2 * step)
+    assert np.linalg.norm(analytic - numerical) / np.linalg.norm(analytic) < 1e-5
+    assert not engine.monolithic_hash.matrix_symmetric
+    assert not mpm.has_lagged_material
 
 
 def test_implicit_ipc_finite_strain_von_mises_pipeline(tmp_path):

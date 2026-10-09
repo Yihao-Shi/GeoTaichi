@@ -10,6 +10,7 @@ from src.contact_detection.continuous_contact_detection import (
     point_point_accd,
 )
 from src.mpm.engines.direct.ImplicitMPM import ImplicitMPM
+from src.physics_model.contact_model.ipc.ContactGeometry import aabb_overlap_with_clearance
 from src.mpm.generator.Ground import Ground
 from src.physics_model.contact_model.ipc.IPC import (
     Barrier,
@@ -4428,16 +4429,21 @@ class IPCMPM:
                 grid_id = self.mpm.LnID[j, k]
                 dofs = config.DIM * (self.mpm.node2dof[grid_id] - 1)
                 jdisp += self.mpm.shape[j, k] * ti.Vector([grid_disp[dofs + d] for d in ti.static(range(config.DIM))])
-            solution = point_point_accd(
-                ipos,
-                jpos,
-                idisp,
-                jdisp,
-                1.0 - slackness,
-                clearance,
-                100,
-            )
-            ti.atomic_min(toc, solution)
+            iend, jend = ipos + idisp, jpos + jdisp
+            if aabb_overlap_with_clearance(
+                ti.min(ipos, iend), ti.max(ipos, iend), ti.min(jpos, jend), ti.max(jpos, jend), clearance
+            ):
+                solution = point_point_accd(
+                    ipos,
+                    jpos,
+                    idisp,
+                    jdisp,
+                    1.0 - slackness,
+                    clearance,
+                    100,
+                )
+                ti.atomic_min(toc, solution)
+
         return toc
 
     @ti.kernel
@@ -4486,16 +4492,22 @@ class IPCMPM:
             if local_s < self.body_surface_count[body_i] and local_t < self.body_surface_count[body_j]:
                 s = self.body_surface_start[body_i] + local_s
                 t = self.body_surface_start[body_j] + local_t
-                solution = point_point_accd(
-                    self.mpm.p_temp[s],
-                    self.mpm.p_temp[t],
-                    self.surface_sweep_disp[s],
-                    self.surface_sweep_disp[t],
-                    1.0 - slackness,
-                    clearance,
-                    100,
-                )
-                ti.atomic_min(toc, solution)
+                p, q = self.mpm.p_temp[s], self.mpm.p_temp[t]
+                pend, qend = p + self.surface_sweep_disp[s], q + self.surface_sweep_disp[t]
+                if aabb_overlap_with_clearance(
+                    ti.min(p, pend), ti.max(p, pend), ti.min(q, qend), ti.max(q, qend), clearance
+                ):
+                    solution = point_point_accd(
+                        self.mpm.p_temp[s],
+                        self.mpm.p_temp[t],
+                        self.surface_sweep_disp[s],
+                        self.surface_sweep_disp[t],
+                        1.0 - slackness,
+                        clearance,
+                        100,
+                    )
+                    ti.atomic_min(toc, solution)
+
         return toc
 
     def particle_full_ccd(self, slackness, grid_disp):

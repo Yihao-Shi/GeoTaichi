@@ -32,7 +32,7 @@ def _normalize_solver(value):
         return "PCG"
     if key in ("scipy", "spsolve", "cpu", "direct"):
         return "Scipy"
-    raise ValueError("FEMPM lagged IPC linear_solver must be PCG or Scipy")
+    raise ValueError("FEMPM IPC linear_solver must be PCG or Scipy")
 
 
 @ti.data_oriented
@@ -54,6 +54,7 @@ class FEMPMImplicitEngine:
         self.mpm_wrapper = mpm
         self.fem = fem.engine
         self.mpm = mpm.enginer
+        self.nonassociated_newton = self.mpm.configure_nonassociated_newton()
         self.mpm_dimension = int(getattr(self.mpm, "dimension", 3))
         self.contact_model = contact_model
         self.dt = float(simulation.delta)
@@ -86,6 +87,8 @@ class FEMPMImplicitEngine:
             kwargs.get("assemble_type", kwargs.get("assembly", self.fem.assemble_type))
         )
         self.linear_solver = _normalize_solver(kwargs.get("linear_solver", self.fem.linear_solver))
+        if self.nonassociated_newton and self.linear_solver == "PCG":
+            self.linear_solver = "BiCGSTAB"
         self.linear_solver_tolerance = float(kwargs.get("linear_solver_tolerance", 1.0e-10))
         self.linear_solver_relative_tolerance = float(kwargs.get("linear_solver_relative_tolerance", 0.0))
         self.linear_solver_max_iters = int(
@@ -201,6 +204,8 @@ class FEMPMImplicitEngine:
         self.snapshot_grid_acceleration = ti.Vector.field(self.mpm_dimension, ti.f64, shape=grid_capacity)
 
         self.fem_hash = self._build_fem_source_matrix()
+        if self.nonassociated_newton and isinstance(self._fem_assembler(), ClassicalAssembler):
+            self._fem_assembler().project_pd = False
         self.mpm_embedded_hash = self._build_mpm_embedded_source_matrix()
         self.contact_hash = None
         self.monolithic_hash = None
@@ -403,14 +408,14 @@ class FEMPMImplicitEngine:
                 max_nonzeros=max(1, total_nonzeros),
                 max_active_nodes=self.node_capacity,
                 symmetric=False,
-                solver="PCG",
-                matrix_symmetric=True,
-                full_symmetric_input=True,
+                solver="BiCGSTAB" if self.nonassociated_newton else "PCG",
+                matrix_symmetric=not self.nonassociated_newton,
+                full_symmetric_input=not self.nonassociated_newton,
                 device_reduction=True,
             )
             assembler = self._fem_assembler()
             if isinstance(assembler, ClassicalAssembler):
-                coordinates, slots = assembler.fixed_block_coordinates()
+                coordinates, slots = assembler.fixed_block_coordinates(upper_triangle=not self.nonassociated_newton)
                 self.monolithic_hash.install_fixed_pattern(coordinates)
                 if self.fem_fixed_slots is None:
                     self.fem_fixed_slots = ti.field(ti.i32, shape=slots.shape)
@@ -429,7 +434,7 @@ class FEMPMImplicitEngine:
                 max(1, scalar_capacity),
                 self.dof_capacity,
                 preconditioned=True,
-                symmetry=True,
+                symmetry=not self.nonassociated_newton,
             )
 
     @ti.kernel
@@ -500,7 +505,8 @@ class FEMPMImplicitEngine:
             self.mpm.assemble_stiffness_matrix_hash(
                 active_dof,
                 self.mpm.grid_disp,
-                project_spd=True,
+                project_spd=not self.nonassociated_newton,
+                exact_plastic_tangent=self.nonassociated_newton,
                 reuse_response=True,
             )
             if mpm_config.DYNAMIC:
@@ -745,6 +751,7 @@ class FEMPMImplicitEngine:
             bool(need_matrix),
             bool(include_friction and self.contact.activate_friction),
             int(self.contact.friction_count),
+            project_pd=not self.nonassociated_newton,
         )
         self._copy_physical_rhs(active_dof)
 
@@ -761,7 +768,8 @@ class FEMPMImplicitEngine:
                     block_offset=self.fem_nodes,
                 )
                 matrix.append_reduced_from(self.contact_hash, active_nodes=active_nodes, block_offset=0)
-                matrix.canonicalize_full_symmetric_input()
+                if matrix.full_symmetric_input:
+                    matrix.canonicalize_full_symmetric_input()
             else:
                 matrix = self.monolithic_coo
                 matrix.reset()
@@ -835,7 +843,7 @@ class FEMPMImplicitEngine:
                 maxiter=self.linear_solver_max_iters,
                 return_solution=False,
             )
-            result["backend"] = "taichi_hash_pcg"
+            result["backend"] = f"taichi_hash_{self.monolithic_hash.solver.lower()}"
         else:
             converged = self.monolithic_coo.solve(
                 self.rhs,
@@ -849,7 +857,7 @@ class FEMPMImplicitEngine:
                 "converged": bool(converged),
                 "residual": float(self.monolithic_coo.linear_solver.last_residual),
                 "iterations": int(self.monolithic_coo.linear_solver.last_iterations),
-                "backend": "taichi_coo_pcg",
+                "backend": "taichi_coo_bicgstab" if self.nonassociated_newton else "taichi_coo_pcg",
             }
         if not result["converged"]:
             raise NewtonConvergenceError(

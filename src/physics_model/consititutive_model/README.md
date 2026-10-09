@@ -345,7 +345,26 @@ apex the returned trace is $`\theta_a=\tau_y/(3\alpha K)`$. For zero dilation,
 the apex acts as a tensile cap: $`\Delta\gamma=\rho^{tr}`$ and
 $`\Delta\epsilon_v^{pl}=\theta^{tr}-\theta_a`$. No dilation evolution is used.
 
-The physical tangent generally is nonsymmetric. PCG and energy Armijo instead
+The physical tangent generally is nonsymmetric. FEM--MPM and IGA--MPM use it
+directly with BiCGSTAB, residual Armijo, and contact/material CCD. There is no
+material-consistency outer loop on these coupled nonassociated routes.
+The physical trial volume and total stress are
+
+```math
+J_p(\boldsymbol F)=\frac{\det\boldsymbol F}{\det\boldsymbol F_e^{returned}},
+\qquad
+\boldsymbol P=J_p(\boldsymbol F)\boldsymbol P_e(\boldsymbol F_e^{tr})
+(\boldsymbol F_{p,n})^{-T}.
+```
+
+The complete total Jacobian includes
+$`\boldsymbol P\otimes\partial_{\boldsymbol F}\log J_p`$ in addition to the
+transformed local return tangent. This keeps trial stress equal to stress
+evaluated after committing the same deformation. Associated DP retains its
+PCG/frozen-volume solve and existing volume-consistency iteration.
+
+Other Direct-MPM consumers retain their existing frozen-potential contract.
+For those consumers, PCG and energy Armijo instead
 solve a symmetric associated inner potential with the isotropic strain shift
 $`\delta=\alpha\Delta\gamma-\Delta\epsilon_v^{pl}/3`$ frozen. For zero-dilation
 apex states use $`\delta=\alpha\rho^{tr}`$ to stay inside the flat apex branch.

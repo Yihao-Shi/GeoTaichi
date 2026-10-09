@@ -9,6 +9,7 @@ import taichi as ti
 from src.physics_model.consititutive_model.finite_strain.HenckyPlasticity import (
     HenckyAssociatedPlasticityModel,
 )
+from src.utils.MatrixFunction import flatten_matrix, unflatten_matrix
 
 
 @ti.data_oriented
@@ -44,6 +45,9 @@ class FiniteStrainDruckerPragerModel(HenckyAssociatedPlasticityModel):
         self.lagged_flow_shift = None
         self.lagged_predictor_residual = None
         self.lagged_predictor_relaxation = None
+        # Coupled FEM/IGA IPC enables the physical nonsymmetric Newton map.
+        # Other consumers retain their existing frozen-potential contract.
+        self.use_direct_nonassociated_solve = False
 
     def model_initialize(self, material):
         self.material = material
@@ -232,7 +236,7 @@ class FiniteStrainDruckerPragerModel(HenckyAssociatedPlasticityModel):
     def _potential_trial_state(self, particle_id, deformation_gradient):
         state = self._principal_trial_state(deformation_gradient)
         shift = 0.0
-        if ti.static(self.is_nonassociated):
+        if ti.static(self.is_nonassociated and not self.use_direct_nonassociated_solve):
             if self.lagged_plastic_volume_active[particle_id] != 0:
                 shift = self.lagged_flow_shift[particle_id]
         return state[0], state[1], state[2], state[3] + shift, state[4] + 3.0 * shift, state[5], state[6]
@@ -246,7 +250,7 @@ class FiniteStrainDruckerPragerModel(HenckyAssociatedPlasticityModel):
     @ti.func
     def _potential_flow_alpha(self, particle_id):
         flow_alpha = self.beta
-        if ti.static(self.is_nonassociated):
+        if ti.static(self.is_nonassociated and not self.use_direct_nonassociated_solve):
             if self.lagged_plastic_volume_active[particle_id] != 0:
                 flow_alpha = self.alpha
         return flow_alpha
@@ -254,7 +258,7 @@ class FiniteStrainDruckerPragerModel(HenckyAssociatedPlasticityModel):
     @ti.func
     def _potential_flow_parameter_partial(self, particle_id, parameter_id):
         derivative = self._flow_parameter_partial(particle_id, parameter_id)
-        if ti.static(self.is_nonassociated):
+        if ti.static(self.is_nonassociated and not self.use_direct_nonassociated_solve):
             if self.lagged_plastic_volume_active[particle_id] != 0:
                 derivative = self._material_parameter_partials(particle_id, parameter_id)[2]
         return derivative
@@ -272,6 +276,65 @@ class FiniteStrainDruckerPragerModel(HenckyAssociatedPlasticityModel):
                 self.lagged_plastic_volume_active[particle_id] != 0
             ), "Nonassociated DP energy requires a frozen inner potential"
         return HenckyAssociatedPlasticityModel.strain_energy_density_at(self, particle_id, deformation_gradient)
+
+    @ti.func
+    def _physical_plastic_jacobian_from_response(self, total_deformation_gradient, response):
+        projected_trace = response[7].sum()
+        return total_deformation_gradient.determinant() * ti.exp(-projected_trace)
+
+    @ti.func
+    def total_stress_from_response(self, particle_id, total_deformation_gradient, response):
+        stress = HenckyAssociatedPlasticityModel.total_stress_from_response(
+            self, particle_id, total_deformation_gradient, response
+        )
+        if ti.static(self.use_direct_nonassociated_solve):
+            stress *= self._physical_plastic_jacobian_from_response(
+                total_deformation_gradient, response
+            ) / self.incremental_reference_jacobian(particle_id)
+        return stress
+
+    @ti.func
+    def total_tangent_from_response(self, particle_id, total_deformation_gradient, response):
+        tangent = HenckyAssociatedPlasticityModel.total_tangent_from_response(
+            self, particle_id, total_deformation_gradient, response
+        )
+        if ti.static(self.use_direct_nonassociated_solve):
+            jacobian = self._physical_plastic_jacobian_from_response(total_deformation_gradient, response)
+            tangent *= jacobian / self.incremental_reference_jacobian(particle_id)
+            returned_jacobian = self._projected_strain_jacobian(
+                particle_id, response[3], response[4], response[5], response[6], response[8], response[9]
+            )
+            diagonal = ti.Matrix.zero(ti.f64, 3, 3)
+            for column in ti.static(range(3)):
+                trace_derivative = 0.0
+                for row in ti.static(range(3)):
+                    trace_derivative += returned_jacobian[row, column]
+                diagonal[column, column] = (1.0 - trace_derivative) / response[2][column]
+            # dP/dF includes dJp: P = Jp(F) Pe(Fe) Fp_n^{-T}.
+            log_jacobian_gradient = flatten_matrix(
+                response[0]
+                @ diagonal
+                @ response[1].transpose()
+                @ self.plastic_deformation_inverse[particle_id].transpose()
+            )
+            physical_stress = self.total_stress_from_response(particle_id, total_deformation_gradient, response)
+            tangent += physical_stress.outer_product(log_jacobian_gradient)
+        return tangent
+
+    @ti.func
+    def total_first_piola_stress_at(self, particle_id, total_deformation_gradient):
+        elastic = self.trial_elastic_deformation(particle_id, total_deformation_gradient)
+        response = self._principal_response(particle_id, elastic)
+        return unflatten_matrix(
+            self.total_stress_from_response(particle_id, total_deformation_gradient, response),
+            total_deformation_gradient,
+        )
+
+    @ti.func
+    def total_first_piola_tangent_at(self, particle_id, total_deformation_gradient):
+        elastic = self.trial_elastic_deformation(particle_id, total_deformation_gradient)
+        response = self._principal_response(particle_id, elastic)
+        return self.total_tangent_from_response(particle_id, total_deformation_gradient, response)
 
     @ti.func
     def _material_parameter_partials(self, particle_id, parameter_id):

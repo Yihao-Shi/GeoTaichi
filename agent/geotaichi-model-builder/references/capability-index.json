@@ -490,7 +490,7 @@
             },
             {
               "source": "src/mpm/Simulation.py",
-              "line": 638,
+              "line": 644,
               "reader": "GetAlternative"
             }
           ]
@@ -525,7 +525,7 @@
           "locations": [
             {
               "source": "src/mpm/Simulation.py",
-              "line": 890,
+              "line": 896,
               "reader": "GetAlternative"
             }
           ]
@@ -555,7 +555,7 @@
           "locations": [
             {
               "source": "src/mpm/Simulation.py",
-              "line": 646,
+              "line": 652,
               "reader": "GetAlternative"
             }
           ]
@@ -575,12 +575,12 @@
           "locations": [
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 241,
+              "line": 240,
               "reader": "GetEssential"
             },
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 324,
+              "line": 444,
               "reader": "GetEssential"
             },
             {
@@ -625,27 +625,27 @@
           "locations": [
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 1091,
+              "line": 1376,
               "reader": "GetEssential"
             },
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 1094,
+              "line": 1379,
               "reader": "GetEssential"
             },
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 1099,
+              "line": 1384,
               "reader": "GetEssential"
             },
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 1104,
+              "line": 1389,
               "reader": "GetEssential"
             },
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 1135,
+              "line": 1424,
               "reader": "GetEssential"
             }
           ]
@@ -655,17 +655,17 @@
           "locations": [
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 858,
+              "line": 1096,
               "reader": "GetAlternative"
             },
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 1136,
+              "line": 1425,
               "reader": "GetAlternative"
             },
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 1224,
+              "line": 1517,
               "reader": "GetAlternative"
             }
           ]
@@ -675,7 +675,7 @@
           "locations": [
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 854,
+              "line": 1092,
               "reader": "GetEssential"
             }
           ]
@@ -780,7 +780,7 @@
           "locations": [
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 856,
+              "line": 1094,
               "reader": "GetAlternative"
             }
           ]
@@ -820,7 +820,7 @@
           "locations": [
             {
               "source": "src/mpm/Simulation.py",
-              "line": 884,
+              "line": 890,
               "reader": "GetAlternative"
             }
           ]
@@ -830,7 +830,7 @@
           "locations": [
             {
               "source": "src/mpm/Simulation.py",
-              "line": 651,
+              "line": 657,
               "reader": "GetAlternative"
             }
           ]
@@ -865,12 +865,12 @@
           "locations": [
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 861,
+              "line": 1100,
               "reader": "GetAlternative"
             },
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 1279,
+              "line": 1571,
               "reader": "GetAlternative"
             }
           ]
@@ -905,7 +905,7 @@
           "locations": [
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 108,
+              "line": 89,
               "reader": "GetAlternative"
             },
             {
@@ -1060,12 +1060,12 @@
           "locations": [
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 246,
+              "line": 245,
               "reader": "GetAlternative"
             },
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 334,
+              "line": 454,
               "reader": "GetAlternative"
             },
             {
@@ -1525,7 +1525,7 @@
             },
             {
               "source": "src/mpm/Simulation.py",
-              "line": 633,
+              "line": 639,
               "reader": "GetAlternative"
             }
           ]
@@ -1545,7 +1545,7 @@
             },
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 32,
+              "line": 27,
               "reader": "GetEssential"
             }
           ]
@@ -1670,12 +1670,12 @@
           "locations": [
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 901,
+              "line": 1129,
               "reader": "GetAlternative"
             },
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 1275,
+              "line": 1566,
               "reader": "GetAlternative"
             }
           ]
@@ -1685,12 +1685,12 @@
           "locations": [
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 276,
+              "line": 279,
               "reader": "GetAlternative"
             },
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 364,
+              "line": 488,
               "reader": "GetAlternative"
             },
             {
@@ -1805,17 +1805,17 @@
           "locations": [
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 1164,
+              "line": 1453,
               "reader": "GetAlternative"
             },
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 1170,
+              "line": 1459,
               "reader": "GetAlternative"
             },
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 1223,
+              "line": 1516,
               "reader": "GetAlternative"
             }
           ]
@@ -1980,12 +1980,12 @@
           "locations": [
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 897,
+              "line": 1125,
               "reader": "GetEssential"
             },
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 1271,
+              "line": 1562,
               "reader": "GetEssential"
             }
           ]
@@ -2065,12 +2065,12 @@
           "locations": [
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 900,
+              "line": 1128,
               "reader": "GetAlternative"
             },
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 1274,
+              "line": 1565,
               "reader": "GetAlternative"
             }
           ]
@@ -2080,22 +2080,22 @@
           "locations": [
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 275,
+              "line": 276,
               "reader": "GetAlternative"
             },
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 363,
+              "line": 485,
               "reader": "GetAlternative"
             },
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 899,
+              "line": 1127,
               "reader": "GetAlternative"
             },
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 1273,
+              "line": 1564,
               "reader": "GetAlternative"
             },
             {
@@ -2310,7 +2310,7 @@
           "locations": [
             {
               "source": "src/mpm/Simulation.py",
-              "line": 885,
+              "line": 891,
               "reader": "GetAlternative"
             }
           ]
@@ -2320,7 +2320,7 @@
           "locations": [
             {
               "source": "src/mpm/Simulation.py",
-              "line": 886,
+              "line": 892,
               "reader": "GetAlternative"
             }
           ]
@@ -2455,22 +2455,22 @@
             },
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 250,
+              "line": 249,
               "reader": "GetEssential"
             },
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 338,
+              "line": 458,
               "reader": "GetEssential"
             },
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 898,
+              "line": 1126,
               "reader": "GetEssential"
             },
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 1272,
+              "line": 1563,
               "reader": "GetEssential"
             },
             {
@@ -2530,12 +2530,12 @@
           "locations": [
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 864,
+              "line": 1101,
               "reader": "GetAlternative"
             },
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 1282,
+              "line": 1572,
               "reader": "GetAlternative"
             }
           ]
@@ -2545,12 +2545,12 @@
           "locations": [
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 859,
+              "line": 1097,
               "reader": "GetAlternative"
             },
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 1277,
+              "line": 1568,
               "reader": "GetAlternative"
             }
           ]
@@ -2560,12 +2560,12 @@
           "locations": [
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 867,
+              "line": 1102,
               "reader": "GetAlternative"
             },
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 1285,
+              "line": 1573,
               "reader": "GetAlternative"
             }
           ]
@@ -2585,7 +2585,7 @@
           "locations": [
             {
               "source": "src/mpm/Simulation.py",
-              "line": 903,
+              "line": 909,
               "reader": "GetAlternative"
             }
           ]
@@ -2605,7 +2605,7 @@
           "locations": [
             {
               "source": "src/mpm/Simulation.py",
-              "line": 908,
+              "line": 914,
               "reader": "GetAlternative"
             }
           ]
@@ -2615,7 +2615,7 @@
           "locations": [
             {
               "source": "src/mpm/Simulation.py",
-              "line": 902,
+              "line": 908,
               "reader": "GetAlternative"
             }
           ]
@@ -2660,7 +2660,7 @@
           "locations": [
             {
               "source": "src/mpm/Simulation.py",
-              "line": 909,
+              "line": 915,
               "reader": "GetAlternative"
             }
           ]
@@ -2685,7 +2685,7 @@
           "locations": [
             {
               "source": "src/mpm/Simulation.py",
-              "line": 906,
+              "line": 912,
               "reader": "GetAlternative"
             }
           ]
@@ -2695,7 +2695,7 @@
           "locations": [
             {
               "source": "src/mpm/Simulation.py",
-              "line": 901,
+              "line": 907,
               "reader": "GetAlternative"
             }
           ]
@@ -2705,7 +2705,7 @@
           "locations": [
             {
               "source": "src/mpm/Simulation.py",
-              "line": 904,
+              "line": 910,
               "reader": "GetAlternative"
             }
           ]
@@ -2715,7 +2715,7 @@
           "locations": [
             {
               "source": "src/mpm/Simulation.py",
-              "line": 900,
+              "line": 906,
               "reader": "GetAlternative"
             }
           ]
@@ -2725,7 +2725,7 @@
           "locations": [
             {
               "source": "src/mpm/Simulation.py",
-              "line": 657,
+              "line": 663,
               "reader": "GetAlternative"
             }
           ]
@@ -2835,7 +2835,7 @@
           "locations": [
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 892,
+              "line": 1122,
               "reader": "GetAlternative"
             }
           ]
@@ -2845,12 +2845,12 @@
           "locations": [
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 880,
+              "line": 1112,
               "reader": "GetAlternative"
             },
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 1301,
+              "line": 1586,
               "reader": "GetAlternative"
             }
           ]
@@ -2860,12 +2860,12 @@
           "locations": [
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 870,
+              "line": 1103,
               "reader": "GetAlternative"
             },
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 1291,
+              "line": 1577,
               "reader": "GetAlternative"
             }
           ]
@@ -2910,7 +2910,7 @@
           "locations": [
             {
               "source": "src/mpm/Simulation.py",
-              "line": 895,
+              "line": 901,
               "reader": "GetAlternative"
             }
           ]
@@ -2980,22 +2980,22 @@
             },
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 852,
+              "line": 1090,
               "reader": "GetEssential"
             },
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 1139,
+              "line": 1428,
               "reader": "GetEssential"
             },
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 1226,
+              "line": 1519,
               "reader": "GetEssential"
             },
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 1289,
+              "line": 1575,
               "reader": "GetEssential"
             }
           ]
@@ -3100,17 +3100,17 @@
           "locations": [
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 204,
+              "line": 201,
               "reader": "GetAlternative"
             },
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 216,
+              "line": 215,
               "reader": "GetAlternative"
             },
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 326,
+              "line": 446,
               "reader": "GetAlternative"
             },
             {
@@ -3250,7 +3250,7 @@
           "locations": [
             {
               "source": "src/mpm/Simulation.py",
-              "line": 889,
+              "line": 895,
               "reader": "GetAlternative"
             }
           ]
@@ -3305,12 +3305,12 @@
           "locations": [
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 860,
+              "line": 1098,
               "reader": "GetAlternative"
             },
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 1278,
+              "line": 1569,
               "reader": "GetAlternative"
             }
           ]
@@ -3320,12 +3320,12 @@
           "locations": [
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 274,
+              "line": 275,
               "reader": "GetAlternative"
             },
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 362,
+              "line": 484,
               "reader": "GetAlternative"
             },
             {
@@ -3370,7 +3370,7 @@
           "locations": [
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 100,
+              "line": 81,
               "reader": "GetAlternative"
             },
             {
@@ -3395,12 +3395,12 @@
           "locations": [
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 265,
+              "line": 266,
               "reader": "GetEssential"
             },
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 353,
+              "line": 475,
               "reader": "GetEssential"
             }
           ]
@@ -3480,7 +3480,7 @@
           "locations": [
             {
               "source": "src/mpm/Simulation.py",
-              "line": 891,
+              "line": 897,
               "reader": "GetAlternative"
             }
           ]
@@ -3770,7 +3770,7 @@
           "locations": [
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 855,
+              "line": 1093,
               "reader": "GetAlternative"
             }
           ]
@@ -3810,12 +3810,12 @@
           "locations": [
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 887,
+              "line": 1117,
               "reader": "GetAlternative"
             },
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 1308,
+              "line": 1591,
               "reader": "GetAlternative"
             }
           ]
@@ -3840,17 +3840,17 @@
             },
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 203,
+              "line": 200,
               "reader": "GetEssential"
             },
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 215,
+              "line": 214,
               "reader": "GetEssential"
             },
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 325,
+              "line": 445,
               "reader": "GetEssential"
             }
           ]
@@ -4030,12 +4030,12 @@
           "locations": [
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 243,
+              "line": 242,
               "reader": "GetAlternative"
             },
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 331,
+              "line": 451,
               "reader": "GetAlternative"
             },
             {
@@ -4110,7 +4110,7 @@
           "locations": [
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 857,
+              "line": 1095,
               "reader": "GetAlternative"
             },
             {
@@ -4365,7 +4365,7 @@
             },
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 29,
+              "line": 26,
               "reader": "GetEssential"
             }
           ]
@@ -4575,7 +4575,7 @@
           "locations": [
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 107,
+              "line": 88,
               "reader": "GetEssential"
             },
             {
@@ -4720,12 +4720,12 @@
           "locations": [
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 306,
+              "line": 424,
               "reader": "GetAlternative"
             },
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 396,
+              "line": 635,
               "reader": "GetAlternative"
             },
             {
@@ -4805,7 +4805,7 @@
             },
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 40,
+              "line": 32,
               "reader": "GetAlternative"
             }
           ]
@@ -4950,7 +4950,7 @@
           "locations": [
             {
               "source": "src/mpm/Simulation.py",
-              "line": 894,
+              "line": 900,
               "reader": "GetAlternative"
             }
           ]
@@ -5000,7 +5000,7 @@
           "locations": [
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 106,
+              "line": 87,
               "reader": "GetAlternative"
             }
           ]
@@ -5030,7 +5030,7 @@
           "locations": [
             {
               "source": "src/mpm/Simulation.py",
-              "line": 662,
+              "line": 668,
               "reader": "GetAlternative"
             }
           ]
@@ -5040,7 +5040,7 @@
           "locations": [
             {
               "source": "src/mpm/Simulation.py",
-              "line": 882,
+              "line": 888,
               "reader": "GetAlternative"
             }
           ]
@@ -5095,7 +5095,7 @@
           "locations": [
             {
               "source": "src/mpm/Simulation.py",
-              "line": 883,
+              "line": 889,
               "reader": "GetAlternative"
             },
             {
@@ -5110,7 +5110,7 @@
           "locations": [
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 104,
+              "line": 85,
               "reader": "GetAlternative"
             }
           ]
@@ -5120,7 +5120,7 @@
           "locations": [
             {
               "source": "src/mpm/generator/BodyGenerator.py",
-              "line": 105,
+              "line": 86,
               "reader": "GetAlternative"
             }
           ]
@@ -15865,7 +15865,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 64,
+              "line": 66,
               "reader": "get"
             }
           ]
@@ -15875,7 +15875,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 85,
+              "line": 87,
               "reader": "get"
             }
           ]
@@ -15885,7 +15885,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 85,
+              "line": 87,
               "reader": "get"
             }
           ]
@@ -15935,7 +15935,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 132,
+              "line": 136,
               "reader": "get"
             }
           ]
@@ -15955,7 +15955,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 66,
+              "line": 68,
               "reader": "get"
             }
           ]
@@ -15985,7 +15985,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 79,
+              "line": 81,
               "reader": "get"
             },
             {
@@ -16025,7 +16025,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 77,
+              "line": 79,
               "reader": "get"
             }
           ]
@@ -16035,7 +16035,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 76,
+              "line": 78,
               "reader": "get"
             }
           ]
@@ -16045,7 +16045,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 74,
+              "line": 76,
               "reader": "get"
             }
           ]
@@ -16055,7 +16055,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 75,
+              "line": 77,
               "reader": "get"
             }
           ]
@@ -16065,7 +16065,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 72,
+              "line": 74,
               "reader": "get"
             }
           ]
@@ -16075,7 +16075,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 73,
+              "line": 75,
               "reader": "get"
             }
           ]
@@ -16085,7 +16085,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 87,
+              "line": 89,
               "reader": "get"
             }
           ]
@@ -16095,7 +16095,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 91,
+              "line": 95,
               "reader": "get"
             }
           ]
@@ -16105,7 +16105,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 89,
+              "line": 93,
               "reader": "get"
             }
           ]
@@ -16115,7 +16115,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 88,
+              "line": 92,
               "reader": "get"
             }
           ]
@@ -16145,7 +16145,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 62,
+              "line": 64,
               "reader": "get"
             }
           ]
@@ -16155,7 +16155,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 62,
+              "line": 64,
               "reader": "get"
             }
           ]
@@ -16225,7 +16225,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 68,
+              "line": 70,
               "reader": "get"
             }
           ]
@@ -16265,7 +16265,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 71,
+              "line": 73,
               "reader": "get"
             }
           ]
@@ -16285,7 +16285,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 63,
+              "line": 65,
               "reader": "get"
             }
           ]
@@ -16295,7 +16295,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 63,
+              "line": 65,
               "reader": "get"
             }
           ]
@@ -16365,7 +16365,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 80,
+              "line": 82,
               "reader": "get"
             },
             {
@@ -16380,7 +16380,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 82,
+              "line": 84,
               "reader": "get"
             },
             {
@@ -16395,7 +16395,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 81,
+              "line": 83,
               "reader": "get"
             },
             {
@@ -16840,7 +16840,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 64,
+              "line": 67,
               "reader": "get"
             }
           ]
@@ -16850,7 +16850,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 65,
+              "line": 68,
               "reader": "get"
             }
           ]
@@ -16860,7 +16860,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 344,
+              "line": 359,
               "reader": "get"
             }
           ]
@@ -16870,7 +16870,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 344,
+              "line": 359,
               "reader": "get"
             }
           ]
@@ -16880,7 +16880,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 270,
+              "line": 284,
               "reader": "get"
             }
           ]
@@ -16890,7 +16890,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 256,
+              "line": 270,
               "reader": "get"
             }
           ]
@@ -16900,7 +16900,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 197,
+              "line": 200,
               "reader": "get"
             }
           ]
@@ -16910,7 +16910,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 63,
+              "line": 66,
               "reader": "get"
             }
           ]
@@ -16920,7 +16920,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 62,
+              "line": 65,
               "reader": "get"
             }
           ]
@@ -16930,7 +16930,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 61,
+              "line": 64,
               "reader": "get"
             }
           ]
@@ -16940,7 +16940,7 @@
           "locations": [
             {
               "source": "src/igampm/contact/ContactSurface.py",
-              "line": 42,
+              "line": 68,
               "reader": "get"
             }
           ]
@@ -16950,7 +16950,7 @@
           "locations": [
             {
               "source": "src/igampm/contact/ContactSurface.py",
-              "line": 54,
+              "line": 80,
               "reader": "get"
             }
           ]
@@ -16960,7 +16960,7 @@
           "locations": [
             {
               "source": "src/igampm/contact/ContactSurface.py",
-              "line": 41,
+              "line": 67,
               "reader": "get"
             }
           ]
@@ -16970,7 +16970,7 @@
           "locations": [
             {
               "source": "src/igampm/contact/ContactSurface.py",
-              "line": 40,
+              "line": 66,
               "reader": "get"
             }
           ]
@@ -16995,7 +16995,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 90,
+              "line": 93,
               "reader": "get"
             },
             {
@@ -17020,7 +17020,7 @@
           "locations": [
             {
               "source": "src/igampm/contact/ContactSurface.py",
-              "line": 41,
+              "line": 67,
               "reader": "get"
             }
           ]
@@ -17080,7 +17080,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 271,
+              "line": 285,
               "reader": "get"
             }
           ]
@@ -17110,7 +17110,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 184,
+              "line": 187,
               "reader": "get"
             }
           ]
@@ -17120,7 +17120,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 183,
+              "line": 186,
               "reader": "get"
             }
           ]
@@ -17130,7 +17130,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 181,
+              "line": 184,
               "reader": "get"
             }
           ]
@@ -17140,7 +17140,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 182,
+              "line": 185,
               "reader": "get"
             }
           ]
@@ -17150,7 +17150,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 185,
+              "line": 188,
               "reader": "get"
             }
           ]
@@ -17160,7 +17160,7 @@
           "locations": [
             {
               "source": "src/igampm/contact/ContactSurface.py",
-              "line": 40,
+              "line": 66,
               "reader": "get"
             }
           ]
@@ -17170,7 +17170,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 67,
+              "line": 70,
               "reader": "get"
             }
           ]
@@ -17180,7 +17180,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 66,
+              "line": 69,
               "reader": "get"
             }
           ]
@@ -17190,7 +17190,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 88,
+              "line": 91,
               "reader": "get"
             }
           ]
@@ -17200,7 +17200,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 86,
+              "line": 89,
               "reader": "get"
             }
           ]
@@ -17210,7 +17210,17 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 87,
+              "line": 90,
+              "reader": "get"
+            }
+          ]
+        },
+        {
+          "name": "monolithic_inexact_newton",
+          "locations": [
+            {
+              "source": "src/igampm/engines/CoupledEngine.py",
+              "line": 397,
               "reader": "get"
             }
           ]
@@ -17220,7 +17230,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 379,
+              "line": 405,
               "reader": "get"
             }
           ]
@@ -17230,7 +17240,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 376,
+              "line": 395,
               "reader": "get"
             }
           ]
@@ -17240,7 +17250,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 374,
+              "line": 393,
               "reader": "get"
             }
           ]
@@ -17250,7 +17260,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 69,
+              "line": 72,
               "reader": "get"
             }
           ]
@@ -17260,7 +17270,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 78,
+              "line": 81,
               "reader": "get"
             }
           ]
@@ -17320,7 +17330,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 91,
+              "line": 94,
               "reader": "get"
             },
             {
@@ -17335,7 +17345,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 93,
+              "line": 96,
               "reader": "get"
             },
             {
@@ -17350,7 +17360,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 92,
+              "line": 95,
               "reader": "get"
             },
             {
@@ -17375,7 +17385,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 58,
+              "line": 61,
               "reader": "get"
             }
           ]
@@ -17385,7 +17395,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 102,
+              "line": 105,
               "reader": "get"
             },
             {
@@ -17415,7 +17425,7 @@
       ],
       "summary": {
         "method_count": 12,
-        "configuration_key_count": 55,
+        "configuration_key_count": 56,
         "example_count": 5
       }
     }
@@ -19243,6 +19253,9 @@
       ],
       "monolithic_force_rtol": [
         "igampm/keys/monolithic_force_rtol"
+      ],
+      "monolithic_inexact_newton": [
+        "igampm/keys/monolithic_inexact_newton"
       ],
       "monolithic_linear_solver_max_iters": [
         "igampm/keys/monolithic_linear_solver_max_iters"

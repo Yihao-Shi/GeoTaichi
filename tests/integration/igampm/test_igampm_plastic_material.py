@@ -350,8 +350,30 @@ def test_plastic_volume_fixed_point_preserves_assembled_force_at_commit(
     np.testing.assert_allclose(mpm.rhs.to_numpy(), before, rtol=1.0e-8, atol=1.0e-8)
 
 
+@pytest.mark.parametrize(
+    "dilation, options, message",
+    [
+        (15.0, {"monolithic_inexact_newton": "true"}, "must be boolean"),
+        (30.0, {"monolithic_inexact_newton": True}, "requires nonassociated DP"),
+        (
+            15.0,
+            {"monolithic_inexact_newton": True, "monolithic_linear_solver_relative_tolerance": 0.1},
+            "relative tolerance <= 0.01",
+        ),
+    ],
+)
+def test_inexact_newton_rejects_invalid_configuration(taichi_runtime, tmp_path, dilation, options, message):
+    from src.igampm import IGAMPM
+
+    iga = _build_iga_rectangle(tmp_path / "iga")
+    mpm = _build_plastic_mpm_particle(tmp_path / "mpm", "DruckerPrager", dilation=dilation)
+    with pytest.raises(ValueError, match=message):
+        IGAMPM(iga, mpm, kappa=1e4, dhat=0.08, **options).build()
+
+
 @pytest.mark.parametrize("axisymmetric", [False, True])
-def test_nonassociated_ipc_solves_with_pcg_and_physical_flow(taichi_runtime, tmp_path, axisymmetric):
+@pytest.mark.parametrize("inexact", [False, True])
+def test_nonassociated_ipc_solves_with_bicgstab_and_physical_flow(taichi_runtime, tmp_path, axisymmetric, inexact):
     from src.igampm import IGAMPM
 
     iga = _build_iga_rectangle(tmp_path / "iga", axisymmetric)
@@ -368,15 +390,19 @@ def test_nonassociated_ipc_solves_with_pcg_and_physical_flow(taichi_runtime, tmp
         axisymmetric=axisymmetric,
         axis_offset=0.0,
         monolithic_max_iterations=100,
+        monolithic_inexact_newton=inexact,
+        monolithic_linear_solver_relative_tolerance=1e-7,
         monolithic_tolerance=1e-8,
         monolithic_force_rtol=1e-8,
         monolithic_force_atol=1e-8,
     ).build()
-    assert engine.monolithic_hash_matrix.solver == "PCG"
+    assert engine.monolithic_hash_matrix.solver == "BiCGSTAB"
+    assert not engine.monolithic_hash_matrix.matrix_symmetric
+    assert not mpm.has_lagged_material
     assert mpm.hash_matrix.solver == "PCG"
     result = engine.implicit_ipc_substep(verbose=False)
     assert result["converged"]
-    assert mpm.last_material_lagged_error <= mpm.material_lagged_tolerance
+    assert mpm.last_material_lagged_iterations == 0
     assert engine.last_monolithic_force_residual <= 1e-6
     assert result["minimum_distance"] > engine.barrier.minimum_distance
     equivalent = mpm.material.equivalent_plastic_strain[0]
@@ -385,6 +411,53 @@ def test_nonassociated_ipc_solves_with_pcg_and_physical_flow(taichi_runtime, tmp
         3 * mpm.material.beta * equivalent / np.sqrt(2 / 3),
         abs=1e-9,
     )
+
+
+@pytest.mark.parametrize("axisymmetric", [False, True])
+def test_nonassociated_ipc_physical_jacobian_by_fd(taichi_runtime, tmp_path, monkeypatch, axisymmetric):
+    from src.igampm import IGAMPM
+    import src.physics_model.contact_model.ipc.NurbsContact as nurbs_contact
+
+    monkeypatch.setattr(nurbs_contact, "CLOSEST_POINT_STATIONARITY_TOL", 1e-13)
+    iga = _build_iga_rectangle(tmp_path / "iga", axisymmetric)
+    mpm = _build_plastic_mpm_particle(tmp_path / "mpm", "DruckerPrager", axisymmetric, dilation=0.0)
+    engine = IGAMPM(
+        iga,
+        mpm,
+        kappa=1e4,
+        dhat=0.08,
+        dmin=0.005,
+        barrier_nnz=20_000,
+        axisymmetric=axisymmetric,
+        axis_offset=0.0,
+    ).build()
+    engine.begin_implicit_ipc_step()
+    mpm.F0.from_numpy(np.array([np.diag([1.18, 0.82, 0.90])]))
+    system = engine.assemble_monolithic_newton_system(include_friction=False)
+    count = system["active_dof"]
+    base_mpm = mpm.grid_disp.to_numpy()
+    base = np.linspace(-2e-5, 3e-5, count)
+
+    def evaluate(values, need_matrix=False):
+        iga.grid_disp.from_numpy(values[: iga.degree_of_freedom])
+        displacement = base_mpm.copy()
+        displacement[: mpm.active_dof] = values[iga.degree_of_freedom :]
+        mpm.grid_disp.from_numpy(displacement)
+        assembled = engine.assemble_monolithic_newton_system(include_friction=False, need_matrix=need_matrix)
+        residual = -engine.monolithic_physical_rhs.to_numpy()[:count]
+        matrix = assembled["matrix"].to_scipy(assembled["active_nodes"]).toarray() if need_matrix else None
+        return residual.copy(), matrix
+
+    _, analytic = evaluate(base, True)
+    numerical = np.zeros_like(analytic)
+    step = 2e-6
+    for column in range(count):
+        delta = np.zeros(count)
+        delta[column] = step
+        numerical[:, column] = (evaluate(base + delta)[0] - evaluate(base - delta)[0]) / (2 * step)
+    assert np.linalg.norm(analytic - numerical) / np.linalg.norm(analytic) < 1e-5
+    assert not engine.monolithic_hash_matrix.matrix_symmetric
+    assert not mpm.has_lagged_material
 
 
 @pytest.mark.parametrize("axisymmetric", [False, True])

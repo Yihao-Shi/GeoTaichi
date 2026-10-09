@@ -6,7 +6,6 @@ import taichi as ti
 
 import src.igampm.config as config
 
-
 pytestmark = [pytest.mark.integration, pytest.mark.slow, pytest.mark.serial]
 
 
@@ -93,6 +92,25 @@ def _build_mpm_particle(output_path, points=None):
     mpm.compute_nodal_vel_acc()
     assert mpm.active_dof > 0
     return mpm
+
+
+@pytest.mark.isolated_dimension(3)
+def test_swept_nurbs_bvh_catches_surface_crossing_inactive_point(taichi_runtime, tmp_path):
+    from src.igampm import IGAMPM
+
+    iga = _build_iga_cube(tmp_path / "iga")
+    mpm = _build_mpm_particle(tmp_path / "mpm", [[0.5, 0.5, -0.081]])
+    engine = IGAMPM(iga, mpm, kappa=1.0e4, dhat=0.02, dmin=0.005).build()
+    engine.initialize_barrier()
+    assert engine.curr_barrier_contact_num == 0
+    direction = np.zeros(iga.degree_of_freedom)
+    direction.reshape((-1, 3))[:, 2] = -0.2
+    iga.incre_resolution.from_numpy(direction)
+    mpm.incre_resolution.fill(0.0)
+    alpha = engine.conservative_contact_step_device(safety=0.9)
+    # The bottom face translates through the stationary particle.
+    expected = 0.9 * (0.081 - 0.005 - engine.strict_feasibility_tolerance) / 0.2
+    assert alpha == pytest.approx(expected, rel=1.0e-8, abs=1.0e-10)
 
 
 @pytest.mark.isolated_dimension(3)

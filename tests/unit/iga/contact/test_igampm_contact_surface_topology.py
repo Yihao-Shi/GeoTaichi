@@ -61,6 +61,53 @@ def test_default_keeps_coincident_faces_from_distinct_bodies():
     )
 
 
+def test_swept_surface_and_span_bvh_cover_interior_motion_and_clearance():
+    config.set_dimension(3)
+    points = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [1.0, 1.0, 0.0]])
+    knots = np.array([0.0, 0.0, 1.0, 1.0])
+    primitive = SimpleNamespace(
+        num_ctrlpts_u=2,
+        num_ctrlpts_v=2,
+        control_points=points,
+        weights=np.ones(4),
+        gather_boundary_ctrlpts=lambda: ([4], np.arange(4), [(knots, knots)], [(1, 1)]),
+    )
+    owner = SimpleNamespace(
+        patch=SimpleNamespace(
+            primitive=SimpleNamespace(body={"plane": {"primitive": primitive}}), prefix_total_num_ctrlpts=[0]
+        )
+    )
+    surface = CouplingContactSurface(owner)
+    direction = ti.field(ti.f64, shape=12)
+    direction.from_numpy(np.tile([0.0, 0.0, 3.0], 4))
+    surface.update_control_point_direction(direction)
+    surface.update_swept_bounds(1.0)
+    hit = ti.field(ti.i32, shape=2)
+
+    @ti.kernel
+    def query(p: ti.types.vector(3, ti.f64), dp: ti.types.vector(3, ti.f64), clearance: ti.f64):
+        lower, upper = ti.min(p, p + dp), ti.max(p, p + dp)
+        hit[0] = surface.swept_box_overlap(
+            lower, upper, surface.swept_tree_lower[0], surface.swept_tree_upper[0], clearance
+        )
+        hit[1] = surface.swept_span_overlap(0, lower, upper, clearance)
+
+    query([0.5, 0.5, 2.0], [0.0, 0.0, 0.0], 0.0)
+    np.testing.assert_array_equal(hit.to_numpy(), [1, 1])
+    query([1.04, 0.5, 2.0], [0.0, 0.0, 0.0], 0.05)
+    np.testing.assert_array_equal(hit.to_numpy(), [1, 1])
+    query([1.04, 0.5, 2.0], [0.0, 0.0, 0.0], 0.0)
+    np.testing.assert_array_equal(hit.to_numpy(), [0, 0])
+    surface.update_swept_bounds(0.25)
+    query([0.5, 0.5, 2.0], [0.0, 0.0, 0.0], 0.0)
+    np.testing.assert_array_equal(hit.to_numpy(), [0, 0])
+    direction.fill(0.0)
+    surface.update_control_point_direction(direction)
+    surface.update_swept_bounds(1.0)
+    query([2.0, 0.5, 0.0], [-4.0, 0.0, 0.0], 0.0)
+    np.testing.assert_array_equal(hit.to_numpy(), [1, 1])
+
+
 def test_surface_direction_box_bounds_every_control_and_cancels_translation():
     surface = CouplingContactSurface(_two_coincident_patches())
     direction = ti.field(ti.f64, shape=16)

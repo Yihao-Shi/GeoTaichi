@@ -152,7 +152,7 @@ def main():
         ti.sync()
         durations = [[], []]
         for repeat in range(args.repeats):
-            for prune in ((False, True) if repeat % 2 == 0 else (True, False)):
+            for prune in (False, True) if repeat % 2 == 0 else (True, False):
                 start = time.perf_counter()
                 kernel(prune)
                 ti.sync()

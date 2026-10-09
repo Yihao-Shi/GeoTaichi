@@ -712,6 +712,9 @@ fem.add_mesh(mesh, rest_shape=rest)
   the shared hash sparse infrastructure.
 - `linear_solver="PCG"` requires `project_pd=True`.
 - `linear_solver="BiCGSTAB"` supports unprojected indefinite Newton tangents.
+- FEM--MPM with nonassociated DP automatically uses a nonsymmetric coupled
+  BiCGSTAB system; classical FEM fixed-slot assembly stores both block triangles
+  on that route. Standalone FEM defaults are unchanged.
 - `linear_solver="Scipy"` is the only supported host linear-solve boundary;
   it does not enable a NumPy FEM backend.
 

@@ -6,6 +6,7 @@ import math
 
 import numpy as np
 import taichi as ti
+from src.physics_model.contact_model.ipc.ContactGeometry import aabb_overlap_with_clearance
 
 from src.contact_detection.continuous_contact_detection import (
     ccd_mode_parameters,
@@ -3588,15 +3589,23 @@ class SoftAffineIPCOperator(object):
                         if int(self.scene.soft_point[q].active) == 1:
                             x_q = self.scene.soft_point[q].x + self._soft_point_disp(q)
                             dx_q = self._soft_point_direction(q)
-                            alpha = 1.0
-                            if ti.static(accd):
-                                alpha = point_point_accd(x_p, x_q, dx_p, dx_q, eta, thickness, max_iteration)
-                            else:
-                                alpha = point_point_ccd(x_p, x_q, dx_p, dx_q, eta, max_iteration)
-                            ti.atomic_min(
-                                self.ccd_alpha[None],
-                                ti.max(0.0, ti.min(1.0, alpha)),
-                            )
+                            p_end, q_end = x_p + dx_p, x_q + dx_q
+                            if aabb_overlap_with_clearance(
+                                ti.min(x_p, p_end),
+                                ti.max(x_p, p_end),
+                                ti.min(x_q, q_end),
+                                ti.max(x_q, q_end),
+                                thickness,
+                            ):
+                                alpha = 1.0
+                                if ti.static(accd):
+                                    alpha = point_point_accd(x_p, x_q, dx_p, dx_q, eta, thickness, max_iteration)
+                                else:
+                                    alpha = point_point_ccd(x_p, x_q, dx_p, dx_q, eta, max_iteration)
+                                ti.atomic_min(
+                                    self.ccd_alpha[None],
+                                    ti.max(0.0, ti.min(1.0, alpha)),
+                                )
 
     @ti.func
     def _point_triangle_tangent(self, p, t0, t1, t2, dtype):

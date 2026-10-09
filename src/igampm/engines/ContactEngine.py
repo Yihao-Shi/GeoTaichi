@@ -105,6 +105,8 @@ class ContactEngineMixin:
     @ti.kernel
     def load_contacts_from_buffer(self):
         self.contact_num[0] = 0
+        for surface_id in self.contact_candidate_count:
+            self.contact_candidate_count[surface_id] = 0
         for i in self.contacts:
             self.contacts[i].active = self.contact_active_buffer[i]
             self.contacts[i].surface_id = self.contact_surface_id_buffer[i]
@@ -114,6 +116,9 @@ class ContactEngineMixin:
             self.contacts[i].knot_value = self.contact_knot_value_buffer[i]
             if self.contacts[i].active:
                 self.contact_num[0] += 1
+                sid = self.contacts[i].surface_id
+                slot = ti.atomic_add(self.contact_candidate_count[sid], 1)
+                self.contact_candidates[sid, slot] = i
 
     @ti.kernel
     def count_contacts(self) -> ti.i32:
@@ -135,6 +140,37 @@ class ContactEngineMixin:
             self.mpm.p_temp[s] = self.mpm.particle[p].x + disp
 
     @ti.kernel
+    def prepare_contact_candidates(self):
+        """Retain conservative CCD bounds; compact only the projection work."""
+        for surface_id in self.contact_candidate_count:
+            self.contact_candidate_count[surface_id] = 0
+        for contact_id in range(self.contact_pair_count):
+            surface_id = contact_id % self.contact_surface.num_surfaces
+            sample = contact_id // self.contact_surface.num_surfaces
+            position = self.mpm.p_temp[sample]
+            distance = self.contact_surface.distance_lower_bound(surface_id, position)
+            threshold = ti.max(
+                self.barrier.activation_distance_term(), self.barrier.dmin[0] + self.strict_feasibility_tolerance
+            )
+            if ti.static(config.DIM == 3):
+                if 0.0 <= distance <= threshold:
+                    distance = ti.max(
+                        distance, self.contact_surface.span_distance_lower_bound(surface_id, position, threshold)
+                    )
+            self.contacts[contact_id].active = 0
+            self.contacts[contact_id].surface_id = surface_id
+            self.contacts[contact_id].sample_id = sample
+            self.contacts[contact_id].particle_id = self.mpm.surface_id[sample]
+            self.contacts[contact_id].distance = distance
+            self.contacts[contact_id].knot_value = ti.Vector.zero(ti.f64, 2)
+            candidate = 0.0 <= distance <= threshold
+            if ti.static(self.is_semi):
+                candidate = candidate or self.semi_multiplier[contact_id] > 0.0
+            if candidate:
+                slot = ti.atomic_add(self.contact_candidate_count[surface_id], 1)
+                self.contact_candidates[surface_id, slot] = contact_id
+
+    @ti.kernel
     def find_closest_surface_contacts(
         self,
         surface_id: ti.i32,
@@ -146,22 +182,14 @@ class ContactEngineMixin:
         surface: ti.template(),
         basis: ti.template(),
     ):
-        for s in range(self.mpm.total_surface_num):
-            contact_id = s * self.contact_surface.num_surfaces + surface_id
+        for candidate in range(self.contact_candidate_count[surface_id]):
+            contact_id = self.contact_candidates[surface_id, candidate]
+            s = contact_id // self.contact_surface.num_surfaces
             position = self.mpm.p_temp[s]
-            distance = surface.distance_lower_bound(surface_id, position)
+            distance = self.contacts[contact_id].distance
             uknot = 0.0
             vknot = 0.0
-            query_threshold = ti.max(
-                self.barrier.activation_distance_term(),
-                self.barrier.dmin[0] + self.strict_feasibility_tolerance,
-            )
-            if 0.0 <= distance <= query_threshold:
-                distance = ti.max(distance, surface.span_distance_lower_bound(surface_id, position, query_threshold))
-            needs_projection = distance >= 0.0 and distance <= query_threshold
-            if ti.static(self.is_semi):
-                needs_projection = distance >= 0.0 and (needs_projection or self.semi_multiplier[contact_id] > 0.0)
-            if needs_projection:
+            if distance >= 0.0:
                 uknot, vknot, distance, _ = get_distance_to_surface_fixed_dim(
                     prefix_num_knot_u,
                     prefix_num_knot_v,
@@ -201,19 +229,13 @@ class ContactEngineMixin:
         surface: ti.template(),
         basis: ti.template(),
     ):
-        for s in range(self.mpm.total_surface_num):
-            contact_id = s * self.contact_surface.num_surfaces + surface_id
+        for candidate in range(self.contact_candidate_count[surface_id]):
+            contact_id = self.contact_candidates[surface_id, candidate]
+            s = contact_id // self.contact_surface.num_surfaces
             position = self.mpm.p_temp[s]
-            distance = surface.distance_lower_bound(surface_id, position)
+            distance = self.contacts[contact_id].distance
             uknot = 0.0
-            query_threshold = ti.max(
-                self.barrier.activation_distance_term(),
-                self.barrier.dmin[0] + self.strict_feasibility_tolerance,
-            )
-            needs_projection = distance >= 0.0 and distance <= query_threshold
-            if ti.static(self.is_semi):
-                needs_projection = distance >= 0.0 and (needs_projection or self.semi_multiplier[contact_id] > 0.0)
-            if needs_projection:
+            if distance >= 0.0:
                 uknot, distance, _ = get_distance_to_curve_fixed_dim(
                     prefix_num_knot_u,
                     prefix_num_ctrlpts,
@@ -344,8 +366,9 @@ class ContactEngineMixin:
         basis: ti.template(),
     ):
         """GPU residual-only point--surface barrier assembly."""
-        for c in range(self.contacts.shape[0]):
-            if self.contacts[c].active and self.contacts[c].surface_id == surface_id:
+        for candidate in range(self.contact_candidate_count[surface_id]):
+            c = self.contact_candidates[surface_id, candidate]
+            if self.contacts[c].active:
                 sample_id = self.contacts[c].sample_id
                 particle_id = self.contacts[c].particle_id
                 position = self.mpm.p_temp[sample_id]
@@ -428,8 +451,9 @@ class ContactEngineMixin:
         basis: ti.template(),
     ):
         """GPU residual-only point--curve barrier assembly."""
-        for c in range(self.contacts.shape[0]):
-            if self.contacts[c].active and self.contacts[c].surface_id == surface_id:
+        for candidate in range(self.contact_candidate_count[surface_id]):
+            c = self.contact_candidates[surface_id, candidate]
+            if self.contacts[c].active:
                 sample_id = self.contacts[c].sample_id
                 particle_id = self.contacts[c].particle_id
                 position = self.mpm.p_temp[sample_id]
@@ -748,8 +772,9 @@ class ContactEngineMixin:
         surface: ti.template(),
         basis: ti.template(),
     ):
-        for c in range(self.contacts.shape[0]):
-            if self.contacts[c].active and self.contacts[c].surface_id == surface_id:
+        for candidate in range(self.contact_candidate_count[surface_id]):
+            c = self.contact_candidates[surface_id, candidate]
+            if self.contacts[c].active:
                 sample_id = self.contacts[c].sample_id
                 particle_id = self.contacts[c].particle_id
                 position = self.mpm.p_temp[sample_id]
@@ -1050,8 +1075,9 @@ class ContactEngineMixin:
         surface: ti.template(),
         basis: ti.template(),
     ):
-        for c in range(self.contacts.shape[0]):
-            if self.contacts[c].active and self.contacts[c].surface_id == surface_id:
+        for candidate in range(self.contact_candidate_count[surface_id]):
+            c = self.contact_candidates[surface_id, candidate]
+            if self.contacts[c].active:
                 sample_id = self.contacts[c].sample_id
                 particle_id = self.contacts[c].particle_id
                 position = self.mpm.p_temp[sample_id]
@@ -1289,7 +1315,7 @@ class ContactEngineMixin:
         if config.DIM == 3:
             self.contact_surface.update_span_bounds()
         self.update_particle_pos(grid_disp)
-        self.reset_contacts()
+        self.prepare_contact_candidates()
         for surface_id in range(self.contact_surface.num_surfaces):
             if config.DIM == 2:
                 self.find_closest_curve_contacts(

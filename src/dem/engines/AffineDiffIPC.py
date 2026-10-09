@@ -637,6 +637,8 @@ class TaichiAffineMeshDiffIPCProjector(TaichiAffineDiffIPCProjector):
         self._ccd_thickness = 1.0e-9
         self._ccd_maximum_iterations = 50
         self.last_untangle_result = None
+        self.ccd_positions = ti.Vector.field(3, float, shape=max(1, operator.vertex_num))
+        self.ccd_directions = ti.Vector.field(3, float, shape=max(1, operator.vertex_num))
 
     @ti.func
     def _mesh_pair_may_interact(
@@ -1435,12 +1437,24 @@ class TaichiAffineMeshDiffIPCProjector(TaichiAffineDiffIPCProjector):
                                 )
 
     @ti.kernel
+    def _prepare_mesh_sweep(self):
+        for vertex in range(self.operator.vertex_num):
+            self.ccd_positions[vertex] = self._surface_vertex(vertex, self.translation)
+            self.ccd_directions[vertex] = self.direction[self.operator.node2body[vertex]]
+
+    @ti.kernel
     def _compute_mesh_ccd_step(
         self,
         eta: float,
         thickness: float,
         maximum_iterations: ti.i32,
         accd: ti.template(),
+        point_count: ti.template(),
+        point_vertices: ti.template(),
+        point_faces: ti.template(),
+        edge_count: ti.template(),
+        edge_first: ti.template(),
+        edge_second: ti.template(),
     ):
         self.operator.ccd_alpha[None] = 1.0
         for body, component in ti.ndrange(self.body_num, 3):
@@ -1455,7 +1469,9 @@ class TaichiAffineMeshDiffIPCProjector(TaichiAffineDiffIPCProjector):
                 ti.max(0.0, ti.min(1.0, alpha)),
             )
 
-        for vertex_id, face_id in ti.ndrange(self.operator.vertex_num, self.operator.face_num):
+        for candidate in range(point_count[None]):
+            vertex_id = point_vertices[candidate]
+            face_id = point_faces[candidate]
             body_i = self.operator.node2body[vertex_id]
             body_j = self.operator.face2body[face_id]
             if self.operator._body_pair_allowed(body_i, body_j):
@@ -1495,7 +1511,9 @@ class TaichiAffineMeshDiffIPCProjector(TaichiAffineDiffIPCProjector):
                     ti.max(0.0, ti.min(1.0, alpha)),
                 )
 
-        for edge_i, edge_j in ti.ndrange(self.operator.edge_num, self.operator.edge_num):
+        for candidate in range(edge_count[None]):
+            edge_i = edge_first[candidate]
+            edge_j = edge_second[candidate]
             if edge_i < edge_j:
                 body_i = self.operator.edge2body[edge_i]
                 body_j = self.operator.edge2body[edge_j]
@@ -1540,11 +1558,29 @@ class TaichiAffineMeshDiffIPCProjector(TaichiAffineDiffIPCProjector):
     def _maximum_feasible_step(self):
         if self._ccd_mode in ("none", "off"):
             return 1.0
+        self._prepare_mesh_sweep()
+        self.operator.neighbor.update(
+            self.ccd_positions,
+            self.ccd_directions,
+            self.operator.faces,
+            self.operator.edges,
+            self.operator.node2body,
+            self.operator.face2body,
+            self.operator.edge2body,
+            self._ccd_thickness,
+            swept=True,
+        )
         self._compute_mesh_ccd_step(
             float(self._ccd_eta),
             float(self._ccd_thickness),
             int(self._ccd_maximum_iterations),
             self._ccd_mode == "accd",
+            self.operator.neighbor.candidate_count,
+            self.operator.neighbor.candidate_vertex,
+            self.operator.neighbor.candidate_face,
+            self.operator.neighbor.edge_candidate_count,
+            self.operator.neighbor.candidate_edge0,
+            self.operator.neighbor.candidate_edge1,
         )
         return float(self.operator.ccd_alpha[None])
 

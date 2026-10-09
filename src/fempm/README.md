@@ -299,9 +299,9 @@ potential is
 ```
 
 Here $`\boldsymbol{h}_n`$ is accepted MPM material history and the hat denotes
-the lagged friction frame. For every supported material, including a
-non-potential plastic update, the first variation is assembled as a residual
-and consistently linearized. The Newton equations are
+the lagged friction frame. Potential materials supply their first variation;
+non-potential plastic updates supply the physical force residual directly.
+Both are consistently linearized. The Newton equations are
 
 ```math
 \left(
@@ -337,12 +337,14 @@ mappings are defined in the
 Accepted plastic history is frozen while evaluating every Newton trial and is
 committed only after the complete FEM--MPM step converges.
 
-Nonassociated DP uses a frozen flow correction and plastic-volume predictor
-for symmetric PCG and energy Armijo. Its material outer loop checks the
-physical versus inner Kirchhoff stress and plastic-volume mismatch; a change
-of correction inside the flat tensile-apex branch alone is not a failure.
-Particle-local Aitken relaxation updates the predictors without relaxing the
-physical convergence test.
+Nonassociated DP recomputes its physical return and plastic volume at every
+Newton trial. The complete material Jacobian includes the plastic-volume
+derivative and is neither symmetrized nor PSD projected. FEM--MPM automatically
+switches the device solver from PCG to BiCGSTAB with full nonsymmetric storage
+and node-block Jacobi preconditioning (scalar Jacobi for COO). This route has
+no material-consistency outer loop. Associated DP retains PCG and its existing
+frozen-plastic-volume consistency iteration. The lagged-friction outer loop
+is independent of this choice.
 
 When the MPM material has no global incremental potential, line search uses
 the residual merit
@@ -614,7 +616,9 @@ The Cartesian/axisymmetric 2D branch pulls back the analytic point--edge
 6-by-6 Hessian, while the 3D branch pulls back the point--triangle analytic
 12-by-12 Hessian, to
 the MPM grid with the current particle shape weights. Both body tangents and
-the IPC Hessian are projected for PCG. Candidate lists are rebuilt on every
+the IPC Hessian are projected for PCG with associated materials.
+Nonassociated DP retains the exact unprojected Jacobian for BiCGSTAB.
+Candidate lists are rebuilt on every
 Newton/trial/CCD query without a Verlet multiplier.
 
 ## Broad phase and capacities
@@ -664,7 +668,8 @@ the FEDEM subtriangle-area distribution.
   uses the cone apex as a tensile cap, without a separate cutoff parameter.
   `dpType` selects
   `Circumscribed`, `MiddleCircumscribed`, or `Inscribed` Mohr--Coulomb cone
-  matching. Plastic MPM defaults to `project_pd=True`.
+  matching. Associated plastic MPM defaults to `project_pd=True`; the coupled
+  nonassociated DP route overrides material projection and selects BiCGSTAB.
 - Implicit friction is currently the symmetric lagged IPC potential. Fully
   implicit nonsymmetric friction remains available in IGAMPM but is not yet
   implemented for FEM triangle-to-MPM-grid pullback.

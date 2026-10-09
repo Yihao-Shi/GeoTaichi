@@ -31,6 +31,7 @@ class Engine(
     def __init__(self, iga: ImplicitIGA, mpm: ImplicitMPM, contactor: ContactManager = None, **kwargs):
         self.iga = iga
         self.mpm = mpm
+        self.nonassociated_newton = self.mpm.configure_nonassociated_newton()
         self.is_axisymmetric = bool(self.iga.is_axisymmetric)
         if self.is_axisymmetric != bool(self.mpm.is_axisymmetric):
             raise ValueError("IGA-MPM requires matching planar or axisymmetric child modes")
@@ -48,7 +49,9 @@ class Engine(
         self.friction_mode = self.contactor.friction_mode
         if self.is_semi and self.friction_mode != "lagged":
             raise ValueError("IGA-MPM SemiIPC currently requires friction_mode='lagged'")
-        self.project_lagged_hessians = self.friction_mode == "lagged" and not self.is_semi
+        self.project_lagged_hessians = (
+            self.friction_mode == "lagged" and not self.is_semi and not self.nonassociated_newton
+        )
         self.friction_iterations = self.contactor.friction_iterations
         self.friction_tolerance = self.contactor.friction_tolerance
         self.friction_max_iterations = self.contactor.friction_max_iterations
@@ -102,7 +105,7 @@ class Engine(
         self.track_energy = bool(kwargs.get("track_energy", False))
         self.add_implicit_energy_record = (
             self._add_implicit_energy_record
-            if self.track_energy and self.friction_mode != "fully_implicit"
+            if self.track_energy and self.friction_mode != "fully_implicit" and not self.nonassociated_newton
             else no_operation
         )
         if self.activate_fric and self.friction_mode == "fully_implicit":
@@ -221,6 +224,11 @@ class Engine(
             self.mpm.total_surface_num * max(1, self.contact_surface.num_surfaces),
         )
         self.contacts = contact_dtype.field(shape=self.contact_capacity)
+        self.contact_candidate_count = ti.field(ti.i32, shape=max(1, self.contact_surface.num_surfaces))
+        self.contact_candidates = ti.field(
+            ti.i32, shape=(max(1, self.contact_surface.num_surfaces), max(1, self.mpm.total_surface_num))
+        )
+        self.contact_accd_candidates = ti.field(ti.i32, shape=self.contact_capacity)
         self.contact_point_direction = ti.Vector.field(config.DIM, ti.f64, shape=max(1, self.mpm.total_surface_num))
         # Seeds are acceleration hints, not accepted contact state. Any finite
         # parameter remains valid after sample remapping or step rollback.
@@ -343,9 +351,10 @@ class Engine(
         # Official IPC lagged friction is a projected-Newton method: local
         # elastic, barrier, and frozen-friction Hessians are PSD before global
         # scattering, so the Newmark/Dirichlet-constrained system uses PCG.
-        # Fully implicit friction retains the exact generally nonsymmetric
-        # Jacobian and therefore uses BiCGSTAB without any PSD projection.
-        self.monolithic_solver_name = "BiCGSTAB" if self.friction_mode == "fully_implicit" else "PCG"
+        # Fully implicit friction or nonassociated DP retains its physical
+        # nonsymmetric Jacobian and uses BiCGSTAB without PSD projection.
+        self.monolithic_matrix_symmetric = self.friction_mode != "fully_implicit" and not self.nonassociated_newton
+        self.monolithic_solver_name = "PCG" if self.monolithic_matrix_symmetric else "BiCGSTAB"
         assembly_key = (
             str(kwargs.get("assemble_type", kwargs.get("assembly", "HashTriplet")))
             .strip()
@@ -385,6 +394,13 @@ class Engine(
         self.monolithic_linear_solver_relative_tolerance = float(
             kwargs.get("monolithic_linear_solver_relative_tolerance", 0.0)
         )
+        self.monolithic_inexact_newton = kwargs.get("monolithic_inexact_newton", False)
+        if not isinstance(self.monolithic_inexact_newton, (bool, np.bool_)):
+            raise ValueError("monolithic_inexact_newton must be boolean")
+        if self.monolithic_inexact_newton and not self.nonassociated_newton:
+            raise ValueError("monolithic_inexact_newton requires nonassociated DP Newton")
+        if self.monolithic_inexact_newton and self.monolithic_linear_solver_relative_tolerance > 1.0e-2:
+            raise ValueError("inexact Newton requires linear relative tolerance <= 0.01")
         self.monolithic_linear_solver_max_iters = int(
             kwargs.get(
                 "monolithic_linear_solver_max_iters",
@@ -415,7 +431,7 @@ class Engine(
             + int(self.barrier_hash_matrix.max_nonzeros)
             + (int(self.friction_hash_matrix.max_nonzeros) if device_friction_capacity else 0)
         )
-        lagged_symmetric_system = self.friction_mode != "fully_implicit"
+        lagged_symmetric_system = self.monolithic_matrix_symmetric
         if lagged_symmetric_system:
             active_nodes = max(1, total_dofs // config.DIM)
             coupled_nnz_capacity = min(

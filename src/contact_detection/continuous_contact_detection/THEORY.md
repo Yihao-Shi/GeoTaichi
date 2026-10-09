@@ -75,12 +75,32 @@ p(alpha)   = p0   + alpha dp,
 P_i(alpha) = P_i0 + alpha dP_i.
 ```
 
-One Taichi thread owns the complete bounded ACCD `while` for one contact pair,
-including the closest-point rebuild after every increment. Each thread writes
-its pair TOC, and an atomic minimum produces the global step. Python only
-dispatches one specialized kernel per NURBS degree signature because different
-boundary groups may own different basis templates; it does not accumulate
-ACCD increments.
+IGAMPM compacts swept-BVH candidates before ACCD. Each Taichi launch advances
+one iteration for unfinished candidate pairs and updates their TOCs on the
+device. Python dispatches degree groups and reads the unfinished count between
+launches. A final device minimum reduces the current group's candidate TOCs.
+This split avoids prohibitively expensive Taichi compilation of nested loops.
+
+## Swept broad phase
+
+For a proposed fraction `alpha_max`, a primitive's box encloses every endpoint
+`x_i` and `x_i + alpha_max * dx_i`. A point uses its own two endpoints. Expand
+overlap tests by the requested clearance and a rounding guard. Overlap only
+creates candidates; the actual CCD/ACCD still determines the safe fraction.
+Endpoint boxes cover linear trajectories even if both endpoints are separated
+and a collision occurs between them. Fixed positive NURBS weights make the
+swept control hull conservative for the moving rational curve/surface.
+
+- FEM, FEM--MPM and FEDEM use their swept BVH/linked-cell primitive builders.
+- DEM affine bodies and the mesh differentiable IPC projector use swept
+  neighbor candidates, followed by point--triangle and edge--edge CCD/ACCD.
+- IGA--MPM queries swept surface and (3D) knot-span BVHs per particle sample.
+- Direct MPM and soft--soft MPDEM first screen swept body boxes, then screen
+  each candidate point pair's swept boxes before point--point CCD/ACCD.
+- MPDEM soft--affine mesh contact uses the existing mixed swept BVH. Level-set
+  bodies retain their swept body boxes and level-set distance advancement.
+- Infinite planes retain exact linear-gap checks; material determinant bounds
+  remain separate from geometric collision detection.
 
 A general point--NURBS first-impact equation is not treated as one fixed
 low-degree polynomial: the surface is rational and the minimizing parameter

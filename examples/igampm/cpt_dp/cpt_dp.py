@@ -621,6 +621,7 @@ def parse_arguments():
     parser.add_argument(
         "--dilation-angle", type=float, help="IPC DP dilation angle in degrees; default equals friction"
     )
+    parser.add_argument("--inexact-newton", action="store_true", help="adapt linear tolerance for nonassociated IPC DP")
     parser.add_argument("--dt", type=float)
     parser.add_argument("--time", type=float)
     parser.add_argument("--save-interval", type=float)
@@ -633,6 +634,8 @@ def parse_arguments():
         parser.error("--resume requires --contact ipc")
     if arguments.dilation_angle is not None and not implicit:
         parser.error("--dilation-angle is supported by the IPC route")
+    if arguments.inexact_newton and not implicit:
+        parser.error("--inexact-newton requires --contact ipc")
     if arguments.dt is None:
         arguments.dt = 5.0e-4 if implicit else 1.0e-5
     if arguments.time is None:
@@ -700,12 +703,13 @@ def main():
             activate_friction=False,
             contact_all_mpm_particles=True,
             contact_surface_include=[(0, 0), (0, 1)],
-            # Allow slower projected-Newton steps without relaxing convergence.
+            # Bound Newton iterations for associated PCG or nonassociated BiCGSTAB.
             monolithic_max_iterations=100,
             monolithic_tolerance=5.0e-4,
             monolithic_linear_solver_tolerance=1.0e-8,
             monolithic_linear_solver_relative_tolerance=1.0e-7,
             monolithic_linear_solver_max_iters=30_000,
+            monolithic_inexact_newton=arguments.inexact_newton,
             project_pd=True,
             # kappa is a pressure in this case, as in FEM--MPM; normalize
             # the squared-distance barrier before multiplying by area.
@@ -889,6 +893,7 @@ def main():
         "particle_count": particle_count,
         "friction_angle_deg": math.degrees(engine.mpm.material.friction_angle),
         "dilation_angle_deg": math.degrees(engine.mpm.material.dilation_angle),
+        "inexact_newton": engine.monolithic_inexact_newton,
         "penetration_time": arguments.time,
         "target_penetration": 0.1 * arguments.time,
         "completed_time": float(engine.time),
