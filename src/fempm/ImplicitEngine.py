@@ -7,12 +7,15 @@ import numpy as np
 import taichi as ti
 
 import src.mpm.config as mpm_config
+from src.mpm.engines.direct.Convergence import particle_correction_measure
 from src.fem.engines.ImplicitFEM import NewtonConvergenceError
 from src.fem.engines.ClassicalAssembler import ClassicalAssembler
+from src.fem.cloth.ClothAssembler import ClothAssembler
 from src.fempm.contact.IPCAssembler import FEMPMIPCAssembler
 from src.linear_solver.BuildTriplet import BuildTriplet
 from src.linear_solver.CoordinateSparseMatrix import CoordinateSparseMatrix
 from src.utils.RuntimeHook import runtime_checkpoint
+from src.utils.SolverRuntime import inexact_newton_relative_tolerance
 from src.utils.StepRetry import StepRetryPolicy, nonlinear_failure_kind
 from src.utils.linalg import no_operation
 
@@ -91,6 +94,13 @@ class FEMPMImplicitEngine:
             self.linear_solver = "BiCGSTAB"
         self.linear_solver_tolerance = float(kwargs.get("linear_solver_tolerance", 1.0e-10))
         self.linear_solver_relative_tolerance = float(kwargs.get("linear_solver_relative_tolerance", 0.0))
+        self.inexact_newton = kwargs.get("inexact_newton", False)
+        if not isinstance(self.inexact_newton, (bool, np.bool_)):
+            raise ValueError("FEMPM inexact_newton must be boolean")
+        if self.inexact_newton and (not self.nonassociated_newton or self.linear_solver == "Scipy"):
+            raise ValueError("FEMPM inexact_newton requires nonassociated DP with a Taichi solver")
+        if self.inexact_newton and self.linear_solver_relative_tolerance > 1.0e-2:
+            raise ValueError("FEMPM inexact Newton requires linear relative tolerance <= 0.01")
         self.linear_solver_max_iters = int(
             kwargs.get(
                 "linear_solver_max_iters",
@@ -162,6 +172,7 @@ class FEMPMImplicitEngine:
         self.residual_squared = ti.field(dtype=ti.f64, shape=())
         self.directional_derivative = ti.field(dtype=ti.f64, shape=())
         self.correction_inf_norm = ti.field(dtype=ti.f64, shape=())
+        self.constraint_inf_norm = ti.field(dtype=ti.f64, shape=())
         self.history = []
         self.last_step_record = None
         self.record_history_step = True
@@ -204,8 +215,10 @@ class FEMPMImplicitEngine:
         self.snapshot_grid_acceleration = ti.Vector.field(self.mpm_dimension, ti.f64, shape=grid_capacity)
 
         self.fem_hash = self._build_fem_source_matrix()
-        if self.nonassociated_newton and isinstance(self._fem_assembler(), ClassicalAssembler):
+        if self.nonassociated_newton:
             self._fem_assembler().project_pd = False
+            if isinstance(self._fem_assembler(), ClothAssembler):
+                self._fem_assembler().project_bending_pd = False
         self.mpm_embedded_hash = self._build_mpm_embedded_source_matrix()
         self.contact_hash = None
         self.monolithic_hash = None
@@ -814,6 +827,7 @@ class FEMPMImplicitEngine:
     def _solve_linear_system(self, system):
         active_dof = int(system["active_dof"])
         active_nodes = int(system["active_nodes"])
+        relative_tolerance = system.get("linear_relative_tolerance", self.linear_solver_relative_tolerance)
         self.correction.fill(0.0)
         if self.linear_solver == "Scipy":
             if self.assemble_type == "HashTriplet":
@@ -839,7 +853,7 @@ class FEMPMImplicitEngine:
                 self.correction,
                 active_nodes=active_nodes,
                 tol=self.linear_solver_tolerance,
-                rel_tol=self.linear_solver_relative_tolerance,
+                rel_tol=relative_tolerance,
                 maxiter=self.linear_solver_max_iters,
                 return_solution=False,
             )
@@ -850,7 +864,7 @@ class FEMPMImplicitEngine:
                 self.correction,
                 self.coo_diagonal,
                 tol=self.linear_solver_tolerance,
-                rel_tol=self.linear_solver_relative_tolerance,
+                rel_tol=relative_tolerance,
                 maxiter=self.linear_solver_max_iters,
             )
             result = {
@@ -889,13 +903,29 @@ class FEMPMImplicitEngine:
         self.residual_squared[None] = 0.0
         self.directional_derivative[None] = 0.0
         self.correction_inf_norm[None] = 0.0
+        self.constraint_inf_norm[None] = 0.0
         for dof in range(active_dof):
-            ti.atomic_add(self.residual_squared[None], self.rhs[dof] ** 2)
+            if self.fixed[dof] == 0:
+                ti.atomic_add(self.residual_squared[None], self.rhs[dof] ** 2)
+            else:
+                ti.atomic_max(self.constraint_inf_norm[None], ti.abs(self.fixed_correction[dof]))
             ti.atomic_add(
                 self.directional_derivative[None],
                 -self.rhs[dof] * self.correction[dof],
             )
-            ti.atomic_max(self.correction_inf_norm[None], ti.abs(self.correction[dof]))
+            if dof < ti.static(3 * self.fem_nodes):
+                ti.atomic_max(self.correction_inf_norm[None], ti.abs(self.correction[dof]))
+        for particle_id in range(self.mpm.particleNum[0]):
+            measure = particle_correction_measure(
+                self.mpm,
+                self.correction,
+                particle_id,
+                (active_dof - 3 * self.fem_nodes) // 3 * self.mpm_dimension,
+                3 * self.fem_nodes,
+                3,
+                self.mpm_dimension,
+            )
+            ti.atomic_max(self.correction_inf_norm[None], measure)
 
     @ti.kernel
     def _accept_mpm_trial(self, active_mpm_dof: ti.i32):
@@ -1127,13 +1157,20 @@ class FEMPMImplicitEngine:
             self.fem.state.reaction[node][component] = value if self.fem.state.constrained[dof] != 0 else 0.0
 
     def _solve_newton(self, include_friction, verbose):
-        initial_norm = None
+        initial_norm = getattr(self, "_friction_force_reference", None)
+        previous_norm = None
         records = []
         converged = False
         last_system = None
         semi_progress = 0.0
         for iteration in range(self.max_iterations + 1):
-            if getattr(self.contact, "is_semi", False) and iteration > 1 and semi_progress > 0.999:
+            if (
+                not self.inexact_newton
+                and not self.nonassociated_newton
+                and getattr(self.contact, "is_semi", False)
+                and iteration > 1
+                and semi_progress > 0.999
+            ):
                 converged = True
                 break
             last_system = self.assemble_system(include_friction=include_friction, need_matrix=False)
@@ -1141,6 +1178,7 @@ class FEMPMImplicitEngine:
             residual_norm = math.sqrt(max(float(self.residual_squared[None]), 0.0))
             if initial_norm is None:
                 initial_norm = max(residual_norm, 1.0)
+                self._friction_force_reference = initial_norm
             record = {
                 "iteration": iteration,
                 "residual_norm": residual_norm,
@@ -1148,11 +1186,14 @@ class FEMPMImplicitEngine:
                 "residual_tolerance": (self.absolute_tolerance + self.residual_tolerance * initial_norm),
                 "convergence_reason": None,
                 "line_search_step": 0.0,
+                "constraint_residual": float(self.constraint_inf_norm[None]),
                 **self.contact.diagnostics(),
             }
             records.append(record)
             if (
                 residual_norm <= (self.absolute_tolerance + self.residual_tolerance * initial_norm)
+                and (not self.nonassociated_newton or (residual_norm == 0.0 and record["constraint_residual"] == 0.0))
+                and record["constraint_residual"] <= self.dt * self.correction_velocity_tolerance
                 and self.contact.contact_converged()
             ):
                 record["convergence_reason"] = "force_residual"
@@ -1165,17 +1206,42 @@ class FEMPMImplicitEngine:
                 need_matrix=True,
                 residual_prepared=True,
             )
+            if self.inexact_newton:
+                last_system["linear_relative_tolerance"] = inexact_newton_relative_tolerance(
+                    residual_norm, previous_norm, max(self.linear_solver_relative_tolerance, 1.0e-7)
+                )
             linear_solve = self._solve_linear_system(last_system)
+            previous_norm = residual_norm
             self._split_direction(int(last_system["active_mpm_dof"]))
             self._reduce_system_metrics(int(last_system["active_dof"]))
             correction_norm = float(self.correction_inf_norm[None])
             correction_velocity = correction_norm / self.dt
+            force_converged = residual_norm <= record["residual_tolerance"]
+            if (
+                self.inexact_newton
+                and force_converged
+                and correction_velocity <= self.correction_velocity_tolerance
+                and last_system["linear_relative_tolerance"] > self.linear_solver_relative_tolerance
+            ):
+                last_system["linear_relative_tolerance"] = self.linear_solver_relative_tolerance
+                linear_solve = self._solve_linear_system(last_system)
+                self._split_direction(int(last_system["active_mpm_dof"]))
+                self._reduce_system_metrics(int(last_system["active_dof"]))
+                correction_norm = float(self.correction_inf_norm[None])
+                correction_velocity = correction_norm / self.dt
             record["correction_inf_norm"] = correction_norm
             record["correction_velocity"] = correction_velocity
             record["correction_velocity_tolerance"] = self.correction_velocity_tolerance
             record["linear_solve"] = dict(linear_solve)
-            if correction_velocity <= self.correction_velocity_tolerance and self.contact.contact_converged():
-                record["convergence_reason"] = "physical_correction_velocity"
+            if (
+                correction_velocity <= self.correction_velocity_tolerance
+                and (not self.nonassociated_newton or force_converged)
+                and record["constraint_residual"] <= self.dt * self.correction_velocity_tolerance
+                and self.contact.contact_converged()
+            ):
+                record["convergence_reason"] = (
+                    "force_and_correction" if self.nonassociated_newton else "physical_correction_velocity"
+                )
                 converged = True
                 if verbose:
                     print(
@@ -1210,7 +1276,7 @@ class FEMPMImplicitEngine:
     def _updated_friction_residual(self, include_friction):
         system = self.assemble_system(include_friction=include_friction, need_matrix=False)
         self._reduce_system_metrics(int(system["active_dof"]))
-        if math.sqrt(max(float(self.residual_squared[None]), 0.0)) <= self.absolute_tolerance:
+        if float(self.residual_squared[None]) == 0.0 and float(self.constraint_inf_norm[None]) == 0.0:
             return 0.0
         system = self.assemble_system(include_friction=include_friction, need_matrix=True, residual_prepared=True)
         self._solve_linear_system(system)
@@ -1225,6 +1291,7 @@ class FEMPMImplicitEngine:
         outer_records = []
         converged = True
         last_system = None
+        self._friction_force_reference = None
         self.last_friction_iterations = 0
         self.last_friction_residual = 0.0 if not include_friction else math.inf
         self.last_friction_converged = not include_friction
@@ -1240,7 +1307,15 @@ class FEMPMImplicitEngine:
                 self.last_friction_residual = self._updated_friction_residual(include_friction=True)
                 if not math.isfinite(self.last_friction_residual):
                     raise NewtonConvergenceError("FEMPM lagged IPC friction residual is non-finite")
-                if self.last_friction_residual <= self.contact_model.friction_tolerance:
+                force_balanced = True
+                if self.nonassociated_newton:
+                    force_tolerance = self.absolute_tolerance + self.residual_tolerance * self._friction_force_reference
+                    force_balanced = (
+                        math.sqrt(max(float(self.residual_squared[None]), 0.0)) <= force_tolerance
+                        and float(self.constraint_inf_norm[None]) <= self.dt * self.correction_velocity_tolerance
+                        and self.contact.contact_converged()
+                    )
+                if self.last_friction_residual <= self.contact_model.friction_tolerance and force_balanced:
                     self.last_friction_converged = True
                     break
 

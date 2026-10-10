@@ -1,3 +1,5 @@
+import os
+
 import numpy as np
 import pytest
 
@@ -23,10 +25,11 @@ pytestmark = [
 def taichi_cpu_runtime():
     ti.reset()
     ti.init(
-        arch=ti.cpu,
+        arch=ti.cuda if os.environ.get("GEOTAICHI_TEST_ARCH") == "cuda" else ti.cpu,
         default_fp=ti.f64,
         cpu_max_num_threads=1,
         offline_cache=False,
+        device_memory_GB=0.25,
     )
     yield
     ti.reset()
@@ -41,6 +44,7 @@ def _implicit_system(
     mpm_material="NeoHookean",
     contact_model="BarrierIPC",
     dilation=30.0,
+    inexact=False,
 ):
     fem = FEM(log=False)
     fem.set_configuration(dimension=3, solver_type="Implicit")
@@ -103,7 +107,7 @@ def _implicit_system(
         "poisson_ratio": 0.3,
         "density": 1000.0,
     }
-    if mpm_material == "DruckerPrager":
+    if mpm_material in ("DruckerPrager", "StateDependentDruckerPrager"):
         material_parameters.update(
             {
                 "FrictionAngle": 30.0,
@@ -112,6 +116,8 @@ def _implicit_system(
                 "dpType": "Circumscribed",
             }
         )
+        if mpm_material == "StateDependentDruckerPrager":
+            material_parameters.update(e0=0.62, e_Tao=0.9, lambda_c=0.119, ksi=0.23, nd=1.7, nf=2.68, fai_c=30.0)
     elif mpm_material == "VonMises":
         material_parameters.update(
             {
@@ -148,6 +154,7 @@ def _implicit_system(
             "SavePath": str(tmp_path),
             "assemble_type": assembly,
             "linear_solver": "PCG",
+            "inexact_newton": inexact,
             "max_iterations": 12,
             "residual_tolerance": 1.0e-7,
             "scale": 0.25,
@@ -301,6 +308,85 @@ def test_nonassociated_ipc_physical_jacobian_by_fd(tmp_path):
     assert np.linalg.norm(analytic - numerical) / np.linalg.norm(analytic) < 1e-5
     assert not engine.monolithic_hash.matrix_symmetric
     assert not mpm.has_lagged_material
+
+
+@pytest.mark.parametrize("assembly", ["HashTriplet", "COO"])
+def test_inexact_nonassociated_dp_keeps_force_and_lagged_friction_convergence(tmp_path, assembly):
+    from time import perf_counter
+
+    coupling = _implicit_system(tmp_path, assembly=assembly, mpm_material="DruckerPrager", dilation=0.0, inexact=True)
+    engine = coupling.enginer
+    engine.contact_model.friction_iterations = -1
+    # Both policies must satisfy force balance and represented correction.
+    engine.mpm.F0.from_numpy(np.array([np.diag([1.04, 0.96, 0.98])]))
+    initial = engine.fem.state.position.to_numpy()
+    results = []
+    for inexact in [False, True]:
+        engine.inexact_newton = inexact
+        for repeat in range(5):
+            engine.fem.state.position.from_numpy(initial)
+            engine.mpm.grid_disp.fill(0.0)
+            engine.fem.state.build_newmark_prediction(engine.dt, engine.fem.beta)
+            engine.contact.begin_step(engine.fem.state.position, engine.mpm.grid_disp, engine.dt)
+            start = perf_counter()
+            converged, records, _ = engine.solve_lagged_friction_fixed_point(verbose=False)
+            elapsed = perf_counter() - start
+            assert converged and engine.last_friction_converged
+            assert records[-1][-1]["convergence_reason"] == "force_and_correction"
+            assert records[-1][-1]["correction_velocity"] <= engine.correction_velocity_tolerance
+            assert records[-1][-1]["residual_norm"] <= records[-1][-1]["residual_tolerance"]
+            if repeat:
+                linear_iterations = sum(
+                    r.get("linear_solve", {}).get("iterations", 0) for outer in records for r in outer
+                )
+                results.append((inexact, elapsed, linear_iterations, engine.mpm.grid_disp.to_numpy()))
+    for result in results[1:]:
+        np.testing.assert_allclose(results[0][3], result[3], rtol=1e-4, atol=1e-8)
+    print("strict/inexact warm FEMPM:", [(r[0], r[1], r[2]) for r in results])
+
+
+@pytest.mark.parametrize(
+    "dilation,inexact,message", [(30.0, True, "requires nonassociated DP"), (0.0, "true", "must be boolean")]
+)
+def test_inexact_newton_configuration_validation(tmp_path, dilation, inexact, message):
+    with pytest.raises(ValueError, match=message):
+        _implicit_system(tmp_path, mpm_material="DruckerPrager", dilation=dilation, inexact=inexact)
+
+
+def test_state_dependent_dp_lagged_friction_and_transactional_commit(tmp_path, monkeypatch):
+    coupling = _implicit_system(tmp_path, mpm_material="StateDependentDruckerPrager", inexact=True)
+    engine = coupling.enginer
+    engine.contact_model.friction_iterations = -1
+    engine.mpm.F0.from_numpy(np.array([np.diag([1.04, 0.96, 0.98])]))
+    assert engine.nonassociated_newton and engine.linear_solver == "BiCGSTAB"
+    assert engine.mpm.material.history_state_size == 14
+    result = coupling.run(steps=1, verbose=False)
+    assert result["converged"] and engine.last_friction_converged
+    assert engine.mpm.material.equivalent_plastic_strain[0] > 0
+    assert np.all(np.isfinite(engine.mpm.material.void_ratio.to_numpy()))
+    assert not engine.mpm.has_lagged_material
+    model = engine.mpm.material
+    fields = [
+        model.void_ratio,
+        model.committed_jacobian,
+        model.state_pressure,
+        model.plastic_deformation_inverse,
+        model.equivalent_plastic_strain,
+        model.volumetric_plastic_strain,
+        engine.mpm.F0,
+    ]
+    before = [field.to_numpy().copy() for field in fields]
+    commit = engine.mpm.advent_particles
+
+    def fail_after_commit(*args):
+        commit(*args)
+        raise RuntimeError("injected state-dependent post-commit failure")
+
+    monkeypatch.setattr(engine.mpm, "advent_particles", fail_after_commit)
+    with pytest.raises(RuntimeError, match="post-commit failure"):
+        engine.substep(verbose=False)
+    for field, expected in zip(fields, before):
+        np.testing.assert_array_equal(field.to_numpy(), expected)
 
 
 def test_implicit_ipc_finite_strain_von_mises_pipeline(tmp_path):

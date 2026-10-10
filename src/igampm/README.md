@@ -9,9 +9,31 @@ either explicit DEM-law contact or one fully coupled implicit IPC solve.
 
 - Explicit isogeometric analysis–material point method (IGA–MPM) contact: [3D DEM-law example](../../examples/igampm/iga_mpm_explicit_dem_contact/iga_mpm_explicit_dem_contact.py).
 - Fully coupled implicit IGA–MPM incremental potential contact (IPC): [3D deformable NURBS ramp and MPM block](../../examples/igampm/iga_mpm_barrier_contact/iga_mpm_barrier_contact.py), with Neo-Hookean, Drucker–Prager, or von Mises MPM material selection.
-- Axisymmetric IGA–MPM soil–structure interaction: [Drucker–Prager CPT](../../examples/igampm/cpt_dp/cpt_dp.py).
-- Three-dimensional solid structures with DP soil: [flexible barrier](../../examples/igampm/flexible_barrier/flexible_barrier.py), with lagged Coulomb friction, and [upper-clamped wavy plate](../../examples/igampm/wavy_plate_collapse/wavy_plate_collapse.py), with frictionless IPC.
+- Axisymmetric IGA–MPM soil–structure interaction: [Drucker–Prager CPT](../../examples/igampm/cpt_dp/cpt_dp.py), using QuadBSpline MPM on the implicit IPC route.
+- Solid IGA structures with DP soil: [flexible barrier](../../examples/igampm/flexible_barrier/flexible_barrier.py), defaulting to the unit-depth 2D plane-strain section with QuadBSpline MPM and lagged Coulomb friction (`--dimension 3` selects the thick 3D slab), and [3D upper-clamped wavy plate](../../examples/igampm/wavy_plate_collapse/wavy_plate_collapse.py), with frictionless IPC.
 - The ramp and CPT IPC examples disable coupled friction; the flexible-barrier example enables it.
+
+The 2D barrier uses coordinates `(x, z)` (stored in the two native coordinate
+slots), an 8 m by 4 m soil column and a 1 m by 5 m solid IGA plate.
+With the default 0.1 m MPM grid and two particles per axis per cell, it has
+12,800 material points. Mass and force are per unit out-of-plane depth.
+Ordinary nonassociated DP keeps friction 30 degrees and dilation zero;
+the barrier retains the lagged-friction fixed point. Its device linear solve
+uses absolute tolerance `1e-10` to resolve the Newton force tolerance floor.
+The CPT and barrier use the shared finite-grid QuadBSpline boundary polynomials
+for values, gradients, and IPC position Hessians. Changing a CPT run from
+Linear to QuadBSpline requires starting from frame zero; its restart guard
+rejects an old Linear checkpoint. The native explicit CPT route remains GIMP.
+
+The axisymmetric CPT run uses `--contact ipc --state-dependent --inexact-newton`.
+Its `StateDependentDruckerPrager` parameters match the native MPM SDMC CPT:
+`e0=0.62`, `e_Tao=0.90`, `lambda_c=0.119`, `ksi=0.23`, `nd=1.70`, `nf=2.68`,
+`fai_c=30`, and cohesion 3 kPa, with density 1600 kg/m³, Young's modulus
+60 MPa, and Poisson's ratio 0.30. Initial stress remains
+`(-75, -150, -75, 0, 0, 0)` kPa and top pressure remains 150 kPa.
+Dilation evolves with the state law; this route does not take `--dilation-angle`.
+The finite-strain DP model retains its own return mapping; matching SDMC's
+state parameters does not make the two constitutive integrations identical.
 
 The wavy-plate script saves complete physical-state checkpoints beside its
 VTUs. Its `--resume` option loads a saved output frame in `--output-dir`;
@@ -33,6 +55,8 @@ This avoids retaining an additional unconstrained raw IGA matrix.
 The CPT script also accepts `--resume path/to/latest_state.npz`. It initializes
 reference geometry before restoring physical fields, checks material/grid/output
 settings, and continues frame numbering in the checkpoint's output directory.
+IGA VTU numbering follows the restored solver output count, so resumed pile
+frames keep the same indices as their MPM particle frames.
 The CPT pile uses velocity constraints, so reduced timesteps also reduce the
 prescribed penetration increment. Resuming an older checkpoint preserves its
 existing penetration depth; it does not correct past boundary-motion errors.
@@ -519,6 +543,12 @@ The scalar $`C^1`$ function $`f_0`$ is the
 Freezing the contact frame makes $`D_f`$ a symmetric coupled potential with
 IGA--MPM mixed blocks.
 
+Lagged friction supports `assemble_friction_system(need_matrix=False)` in
+both 2D and 3D. It rebuilds the same friction residual from the frozen frame
+without evaluating/scattering Hessian blocks or resetting the existing matrix.
+Newton force checks and residual line search use this path; full assembly
+retains the same gradient and symmetric friction Hessian.
+
 #### Fully implicit friction
 
 Fully implicit friction instead recomputes the closest parameter, normal,
@@ -663,9 +693,34 @@ where `R` is the free-force residual norm. The configured linear relative
 tolerance is its floor and must not exceed `0.01`. Each friction outer solve
 and timestep retry starts a fresh sequence. Linear solves still verify their
 true residual; nonlinear acceptance requires the configured force and
-Dirichlet tolerances, even if the displacement correction is small. Contact
+Dirichlet tolerances and the physical correction criterion. A terminal
+inexact correction is rechecked at the configured linear accuracy. Contact
 CCD and residual Armijo remain active. This option does not alter DP parameters.
 The CPT example enables it with `--contact ipc --dilation-angle 0 --inexact-newton`.
+
+For nonassociated DP, the force reference `max(R_0, 1)` is captured in the
+first inner solve of an attempted step and retained across its lagged-friction
+iterations. A retry starts a new reference. Force convergence and correction
+convergence must both hold; passing the force criterion alone cannot leave
+the outer iteration repeatedly probing an unchanged displacement.
+
+The device correction norm has velocity units. It takes the maximum of IGA
+control displacement divided by its timestep, MPM particle-interpolated
+displacement divided by its timestep, and the MPM displacement-gradient
+components multiplied by the particle body's grid spacing and divided by
+the timestep. Axisymmetry also includes the radial-displacement/radius hoop
+increment with the same spacing/timestep scaling. This measures motion and
+strain represented by the particles instead of magnifying nearly empty
+support-edge grid modes. Inner Newton and the unapplied updated-friction
+probe share this norm. For nonassociated DP the refreshed friction residual
+must also pass the retained force criterion. CCD, line search, constitutive
+history, nodal mass, and the configured tolerances are preserved.
+
+The flexible-barrier example accepts `--resume latest_state.npz` in its
+existing output directory. It validates physical parameters, finite state,
+positive deformation determinants, and paired contiguous IGA/MPM VTK indices,
+then appends subsequent frames without rewriting frame zero. Resume validation
+errors do not replace the saved checkpoint.
 
 The IGA body remains elastic. For a ULMPM particle $`p`$, the current
 total deformation gradient is
@@ -908,6 +963,19 @@ preserved during `IGAMPM.build()`; only an all-zero field receives the default
 identity state. A partially initialized field, a non-finite entry, or any
 nonpositive determinant is rejected across the full material dimension
 (including the third plane-strain/axisymmetric component).
+
+`StateDependentDruckerPrager` optionally applies SDMC's void-ratio/critical-state
+angle evolution to the finite-strain DP MPM child. It uses the physical
+nonsymmetric residual/BiCGSTAB path, including angle and plastic-volume
+derivatives; lagged friction retains its own iteration. The previous Cauchy
+pressure stays fixed within the step, and the 14-entry history is committed or
+rolled back with `F0`. The axisymmetric CPT script accepts
+`--contact ipc --state-dependent --inexact-newton`; checkpoint files additionally
+save `void_ratio`, `committed_jacobian`, and `state_pressure`, and reject a
+material-mode mismatch on resume. Its default remains ordinary DP. See
+[parameters](../mpm/README.md#state-dependent-dp-in-coupled-implicit-ulmpm) and
+[theory](../physics_model/consititutive_model/README.md#state-dependent-finite-strain-drucker--prager).
+Parameter/history adjoints for the state-dependent law are unsupported.
 
 The implicit IPC coupling accepts a `coupling={...}` dictionary in
 `IGAMPM.set_solver()` with `enable_step_retry`,

@@ -1,4 +1,4 @@
-"""Section 5.2: LSDEM sphere impacting a saturated granular bed.
+"""Section 5.2 sphere impact, with an equal-volume Stanford bunny variant.
 
 The 0.2 m diameter vessel is represented by 32 tangent solid-cell planes.
 The air drop is replaced by the equivalent impact velocity sqrt(2 g h0), so
@@ -6,6 +6,7 @@ the simulation starts when the sphere first touches the free surface.
 """
 
 import argparse
+import json
 import math
 import os
 import sys
@@ -54,6 +55,7 @@ def parse_args():
     parser.add_argument("--save-interval", type=float, default=0.002)
     parser.add_argument("--drop-height", type=float, default=1.0)
     parser.add_argument("--ppc", type=int, default=2)
+    parser.add_argument("--impactor", choices=("sphere", "bunny"), default="sphere")
     parser.add_argument("--pressure-iterations", type=int, default=1000)
     parser.add_argument("--device-memory", type=float, default=4.0)
     parser.add_argument("--strict", action="store_true")
@@ -61,9 +63,12 @@ def parse_args():
     parser.add_argument(
         "--output",
         type=Path,
-        default=ROOT / "examples" / "mmpm" / "TwoPhaseLSDEMCoupling" / "OutputData" / "sphere_impact_section_5_2",
+        default=None,
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.output is None:
+        args.output = ROOT / "examples/mmpm/TwoPhaseLSDEMCoupling/OutputData" / f"{args.impactor}_impact_section_5_2"
+    return args
 
 
 def cylinder_region(name, wall, top):
@@ -213,7 +218,7 @@ def run(args):
             "max_material_number": 1,
             "max_rigid_body_number": 1,
             "max_rigid_template_number": 1,
-            "levelset_grid_number": 300000,
+            "levelset_grid_number": 450000 if args.impactor == "bunny" else 300000,
             "surface_node_number": 5000,
             "max_plane_number": 0,
             "body_coordination_number": 0,
@@ -245,27 +250,66 @@ def run(args):
             "TorqueLocalDamping": 0.0,
         },
     )
+    is_bunny = args.impactor == "bunny"
+    template_name = "teflon_bunny" if is_bunny else "teflon_sphere"
+    mesh_path = ROOT / ("assets/mesh/LSDEM/bunny_impact_watertight.ply" if is_bunny else "assets/mesh/LSDEM/sphere.stl")
+    impactor = polyhedron(file=str(mesh_path))
+    original_vertices = impactor.mesh.vertices.copy() - impactor.mesh.center_mass
     dempm.dem.add_template(
         {
-            "Name": "teflon_sphere",
-            "Object": polyhedron(file=str(ROOT / "assets" / "mesh" / "LSDEM" / "sphere.stl")).grids(
-                space=0.05, extent=10
-            ),
+            "Name": template_name,
+            "Object": impactor.grids(space=0.004 if is_bunny else 0.05, extent=16 if is_bunny else 10),
             "WriteFile": False,
         }
     )
+    radius = 0.5 * SPHERE_DIAMETER
+    orientation = "constant"
+    center_z = WATER_SURFACE + radius
+    if is_bunny:
+        from scipy.spatial.transform import Rotation
+
+        # Recover the mesh's upright y-axis after LSDEM principal-inertia alignment.
+        upright = original_vertices[:, [0, 2, 1]] * [1.0, -1.0, 1.0]
+        rotation, _ = Rotation.align_vectors(upright, impactor.mesh.vertices)
+        orientation = rotation.as_euler("xyz", degrees=True).tolist()
+        scale = radius / impactor.eqradius
+        world_local = rotation.apply(impactor.mesh.vertices) * scale
+        center_z = WATER_SURFACE - float(world_local[:, 2].min())
+        if center_z + float(world_local[:, 2].max()) >= DOMAIN[2]:
+            raise ValueError("bunny initial surface does not fit inside the vessel")
+        (output / "impactor_geometry.json").write_text(
+            json.dumps(
+                {
+                    "shape": "Stanford bunny",
+                    "mesh": str(mesh_path.relative_to(ROOT)),
+                    "equivalent_diameter_m": SPHERE_DIAMETER,
+                    "volume_m3": float(impactor.volume * scale**3),
+                    "density_kg_m3": 2200.0,
+                    "mass_kg": float(2200.0 * impactor.volume * scale**3),
+                    "surface_nodes": len(impactor.mesh.vertices),
+                    "surface_faces": len(impactor.mesh.faces),
+                    "initial_center_z_m": center_z,
+                    "orientation_degrees": orientation,
+                    "initial_bottom_z_m": center_z + float(world_local[:, 2].min()),
+                    "initial_top_z_m": center_z + float(world_local[:, 2].max()),
+                    "watertight": bool(impactor.mesh.is_watertight),
+                },
+                indent=2,
+            )
+            + "\n"
+        )
     dempm.dem.create_body(
         {
             "GenerateType": "Create",
             "BodyType": "RigidBody",
             "Template": [
                 {
-                    "Name": "teflon_sphere",
+                    "Name": template_name,
                     "GroupID": 0,
                     "MaterialID": 0,
-                    "BodyPoint": [0.10, 0.10, WATER_SURFACE + 0.5 * SPHERE_DIAMETER],
-                    "Radius": 0.5 * SPHERE_DIAMETER,
-                    "BodyOrientation": "constant",
+                    "BodyPoint": [0.10, 0.10, center_z],
+                    "Radius": radius,
+                    "BodyOrientation": orientation,
                     "InitialVelocity": [0.0, 0.0, -math.sqrt(2.0 * 9.81 * args.drop_height)],
                     "FixMotion": ["Free", "Free", "Free"],
                 }

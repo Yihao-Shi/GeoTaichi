@@ -1,11 +1,29 @@
 from types import SimpleNamespace
 
 from src.igampm.mainIGAMPM import IGAMPM
+from src.iga.engines.IGASolver import IGASolver
+from src.utils.TimeTicker import Timer
 
 
-def test_implicit_facade_records_initial_interval_and_final_frames(
-    tmp_path, capsys
-):
+def test_resumed_iga_output_uses_restored_frame_count(tmp_path):
+    patch = SimpleNamespace(current_print=0)
+
+    def visualize(path):
+        (tmp_path / "vtks" / f"NurbsVolumetest{patch.current_print:06d}.vtu").write_text("frame")
+        patch.current_print += 1
+
+    patch.visualize = visualize
+    engine = SimpleNamespace(path=str(tmp_path), patch=patch, output_count=15)
+    IGASolver.visualize(engine, log=False)
+    IGASolver.visualize(engine, log=False)
+    assert engine.output_count == patch.current_print == 17
+    assert sorted(p.name for p in (tmp_path / "vtks").glob("Nurbs*.vtu")) == [
+        "NurbsVolumetest000015.vtu",
+        "NurbsVolumetest000016.vtu",
+    ]
+
+
+def test_implicit_facade_records_initial_interval_and_final_frames(tmp_path, capsys):
     recorded_iga_steps = []
     recorded_mpm_steps = []
 
@@ -61,6 +79,7 @@ def test_implicit_facade_records_initial_interval_and_final_frames(
     coupling.log = False
     coupling.contactor = SimpleNamespace(contact_model="IPC")
     coupling.engine = engine
+    coupling.sims = SimpleNamespace(timer=Timer())
     coupling.iga_engine = iga_engine
     coupling.mpm_engine = mpm_engine
     coupling.mpm = SimpleNamespace(
@@ -73,9 +92,7 @@ def test_implicit_facade_records_initial_interval_and_final_frames(
         recorder=None,
         scene=None,
     )
-    coupling.iga = SimpleNamespace(
-        solver_kwargs={"path": str(tmp_path / "iga")}
-    )
+    coupling.iga = SimpleNamespace(solver_kwargs={"path": str(tmp_path / "iga")})
     coupling._last_implicit_recorded_step = None
     coupling.build = lambda: engine
 

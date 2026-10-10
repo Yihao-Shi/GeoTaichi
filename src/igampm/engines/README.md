@@ -39,6 +39,18 @@ history. Elastic MPM therefore allocates no plastic rollback field.
 An explicitly selected SciPy linear solve is the only permitted numerical
 host boundary; NumPy reference laws belong under `tests/helpers`.
 
+Both lagged and fully implicit friction accept residual-only assembly. For
+lagged friction, curve/surface kernels share the full assembly's force formula;
+a static `need_matrix` flag skips Hessian work and leaves sparse values intact.
+
+Newton and lagged-friction device probes share a represented-motion/strain
+norm: IGA control motion, MPM particle interpolation, grid-spacing-scaled
+displacement gradients, and the axisymmetric hoop increment, each divided
+by the corresponding timestep. Nonassociated DP requires force balance as
+well as this correction criterion, retaining the first force reference
+through the attempted step's friction loops and resetting it on retry.
+An inexact terminal correction is verified with the configured Krylov accuracy.
+
 The explicit, barrier, friction, and implicit capabilities are validated and
 bound when the coupled engine is built. Hot loops call the selected capability
 directly; they do not repeatedly probe mixins with `hasattr`. Contact rebuild,

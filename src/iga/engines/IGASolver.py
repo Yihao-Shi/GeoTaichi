@@ -453,6 +453,7 @@ class IGASolver:
         vtk_path = os.path.join(self.path, "vtks")
         if not os.path.exists(vtk_path):
             os.makedirs(vtk_path)
+        self.patch.current_print = self.output_count
         self.patch.visualize(vtk_path)
         if log:
             print_save_file_info(

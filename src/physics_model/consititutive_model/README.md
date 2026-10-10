@@ -345,7 +345,8 @@ apex the returned trace is $`\theta_a=\tau_y/(3\alpha K)`$. For zero dilation,
 the apex acts as a tensile cap: $`\Delta\gamma=\rho^{tr}`$ and
 $`\Delta\epsilon_v^{pl}=\theta^{tr}-\theta_a`$. No dilation evolution is used.
 
-The physical tangent generally is nonsymmetric. FEM--MPM and IGA--MPM use it
+The physical tangent generally is nonsymmetric. Standalone lagged MPM--IPC,
+FEM--MPM, IGA--MPM, and Direct MPM--ABD use it
 directly with BiCGSTAB, residual Armijo, and contact/material CCD. There is no
 material-consistency outer loop on these coupled nonassociated routes.
 The physical trial volume and total stress are
@@ -404,6 +405,72 @@ Degenerate secant differences retain the current relaxation. Convergence uses
 the unrelaxed stress and volume errors above, so damping cannot conceal a
 physical mismatch. This numerical iteration leaves the DP flow law and its
 constant dilation angle unchanged.
+
+### State-dependent finite-strain Drucker--Prager
+
+`finite_strain/StateDependentDruckerPrager.py` defines the independent
+`StateDependentDruckerPragerModel`. Selecting `StateDependentDruckerPrager`
+reuses the finite-strain DP return while replacing its constant friction and
+dilation with the law in `infinitesimal_strain/StateDependentMohrCoulomb.py`.
+Ordinary `DruckerPrager` retains its defaults and constant angles.
+
+With compression-positive **previous Cauchy pressure**, total volume ratio
+$`J=\det F`$, and accepted void ratio $`e_n`$, the step uses
+
+```math
+p_n=\max\left(-K\log J_{e,n}/J_{e,n},1000\,\mathrm{Pa}\right),\qquad
+e_c=e_{\mathrm{Tao}}-\lambda_c(p_n/101000\,\mathrm{Pa})^\xi,
+```
+
+```math
+e_{tr}=\operatorname{clip}_{[0.1,1.5]}\left((1+e_n)J_{tr}/J_n-1\right),\qquad
+S=e_{tr}-e_c,
+```
+
+```math
+\phi=\max\left(\phi_c,\arctan(\tan\phi_c\exp(-n_f S))\right),\qquad
+\psi=\max\left(0,\arctan(-n_d S)\right).
+```
+
+The volume formula is the finite-strain counterpart of SDMC's
+$`\Delta e=(1+e)\Delta\epsilon_v`$. Axisymmetric volume includes hoop stretch;
+Cartesian 2D remains plane strain. Pressure is frozen throughout Newton and
+lagged friction; trial void ratio and angles change with the trial deformation.
+Elastic moduli and cohesion remain constant. `dpType` defaults to
+`MiddleCircumscribed` (the $`3+\sin\phi`$ mapping used by SDMC); all three DP
+cone mappings remain available. This transfers SDMC's state law, retaining the
+finite-strain DP tensile apex rather than SDMC's independent tensile cutoff.
+
+On the smooth cone, let $`t=\operatorname{tr}\epsilon^{tr}`$,
+$`m=\operatorname{dev}\epsilon^{tr}/\rho`$, and
+$`D=2\mu+9K\alpha\beta`$. Including the evolving coefficients gives
+
+```math
+\partial_j\gamma=
+\frac{2\mu m_j+3K(\alpha+t\alpha')-\tau_y'-\gamma D'}{D},\qquad
+D'=9K(\alpha'\beta+\alpha\beta'),
+```
+
+```math
+\partial_j\epsilon_i^e=\delta_{ij}-(m_i+\beta)\partial_j\gamma
+-\gamma\beta'-\frac{\gamma}{\rho}
+(\delta_{ij}-1/3-m_i m_j).
+```
+
+Primes denote derivatives with respect to trial trace. At the apex,
+$`\partial_j\epsilon_i^e=\frac13\partial_t[\tau_y/(3K\alpha)]`$;
+its hydrostatic tangent therefore need not vanish. These derivatives and the
+plastic-volume derivative enter the analytic total PK1 Jacobian. The coupled
+IPC solver uses residual Newton/BiCGSTAB without symmetrization or an energy
+potential. Lagged friction retains its own outer iteration.
+
+The 14-entry history adds `void_ratio`, `committed_jacobian`, and
+`state_pressure` to the original 11 DP entries. Trials do not commit it;
+accepted steps commit void ratio and total volume, and failed steps restore
+all entries. Supported owners are Direct implicit ULMPM within FEM--MPM,
+IGA--MPM, and 3D MPM--ABD IPC. Standalone Direct stepping, Direct TLMPM,
+Native MPM, LSMPM soft materials, and parameter/history adjoints are not
+implemented for this new model. VTU output includes `void_ratio`.
 
 ### Stress, tangent, and state commit
 

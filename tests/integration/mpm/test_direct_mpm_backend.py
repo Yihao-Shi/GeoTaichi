@@ -404,5 +404,9 @@ def test_direct_affine_projection_transfers_an_affine_velocity(tmp_path):
     )
     np.testing.assert_allclose(mass.sum(), engine.particle.m.to_numpy().sum())
     engine.particle[0].x = [0.0015, 0.25]
+    engine.compute_shapefn()
+    np.testing.assert_allclose(engine.shape.to_numpy()[0].sum(), 1.0, atol=1e-14)
+    np.testing.assert_allclose(engine.dshape.to_numpy()[0].sum(axis=0), 0.0, atol=1e-13)
+    engine.particle[0].x = [-0.0015, 0.25]
     with pytest.raises(RuntimeError, match="outside its background grid"):
         engine.compute_shapefn()

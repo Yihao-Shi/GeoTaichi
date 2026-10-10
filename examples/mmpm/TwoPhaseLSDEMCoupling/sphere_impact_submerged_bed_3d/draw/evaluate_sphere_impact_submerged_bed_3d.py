@@ -43,11 +43,24 @@ def fluid_shell_coverage(fluid_position, center, particle_spacing):
     return len(np.unique(8 * polar + azimuth)) / 32.0
 
 
+def fluid_surface_coverage(fluid_position, vertices, particle_spacing):
+    """Fraction of the actual irregular surface with nearby fluid particles."""
+    from scipy.spatial import cKDTree
+
+    if len(fluid_position) == 0 or len(vertices) == 0:
+        return 0.0
+    distance, _ = cKDTree(fluid_position).query(vertices)
+    return float(np.mean(distance <= 3.0 * particle_spacing))
+
+
 def write_metrics(output, expected_fluid, expected_solid, args):
+    is_bunny = getattr(args, "impactor", "sphere") == "bunny"
     mpm_files = sorted((output / "particles").glob("MPMParticle*.npz"))
     rigid_files = sorted((output / "particles").glob("LSDEMRigid*.npz"))
     if len(mpm_files) < 2 or len(rigid_files) < 2:
         raise RuntimeError("sphere-impact run produced fewer than two MPM or LSDEM snapshots")
+    if is_bunny and len(mpm_files) != len(rigid_files):
+        raise RuntimeError("bunny MPM and rigid-body snapshot counts differ")
     mpm_rows = []
     finite = True
     angles = 2.0 * math.pi * np.arange(CYLINDER_SIDES) / CYLINDER_SIDES
@@ -96,20 +109,75 @@ def write_metrics(output, expected_fluid, expected_solid, args):
     mpm_rows = np.asarray(mpm_rows, dtype=np.float64)
     rigid_rows = np.asarray(rigid_rows, dtype=np.float64)
     submerged_coverage = []
+    surface_bounds = []
+    maximum_body_outside_domain = 0
+    maximum_body_outside_cylinder = 0
     for mpm_file, rigid_file in zip(mpm_files, rigid_files):
         with np.load(mpm_file) as particles, np.load(rigid_file) as rigid:
             center = rigid["mass_center"][0]
-            if center[2] + 0.5 * SPHERE_DIAMETER <= WATER_SURFACE + args.dx:
+            body_top = center[2] + 0.5 * SPHERE_DIAMETER
+            if is_bunny:
+                from tools.blender_cfdem_gif import grain_surface
+
+                if not math.isclose(float(particles["t_current"]), float(rigid["t_current"]), abs_tol=0.1 * args.dt):
+                    raise RuntimeError("bunny MPM and rigid-body snapshot times differ")
+                step = rigid_file.stem.removeprefix("LSDEMRigid")
+                with np.load(output / "particles" / f"LSDEMSurface{step}.npz") as surface:
+                    vertices, _ = grain_surface(surface, rigid)
+                    if not math.isclose(float(surface["t_current"]), float(rigid["t_current"]), abs_tol=0.1 * args.dt):
+                        raise RuntimeError("bunny surface and rigid-body snapshot times differ")
+                finite &= bool(
+                    np.isfinite(vertices).all()
+                    and np.isfinite(rigid["quanternion"]).all()
+                    and np.isfinite(rigid["omega"]).all()
+                    and np.isfinite(rigid["contact_torque"]).all()
+                )
+                surface_bounds.append([float(vertices[:, 2].min()), float(vertices[:, 2].max())])
+                maximum_body_outside_domain = max(
+                    maximum_body_outside_domain,
+                    int(
+                        np.count_nonzero(
+                            np.any(
+                                (vertices < -1.0e-10 * args.dx) | (vertices > np.asarray(DOMAIN) + 1.0e-10 * args.dx),
+                                axis=1,
+                            )
+                        )
+                    ),
+                )
+                maximum_body_outside_cylinder = max(
+                    maximum_body_outside_cylinder,
+                    int(
+                        np.count_nonzero(
+                            np.any(
+                                (vertices[:, :2] - 0.5 * np.asarray(DOMAIN[:2])) @ wall_normals.T
+                                > CONTAINER_RADIUS + 1.0e-10 * args.dx,
+                                axis=1,
+                            )
+                        )
+                    ),
+                )
+                body_top = surface_bounds[-1][1]
+            if body_top <= WATER_SURFACE + args.dx:
                 active_fluid = (particles["active"] > 0) & (particles["phase"] == 2)
                 submerged_coverage.append(
-                    fluid_shell_coverage(particles["position"][active_fluid], center, args.dx / args.ppc)
+                    fluid_surface_coverage(particles["position"][active_fluid], vertices, args.dx / args.ppc)
+                    if is_bunny
+                    else fluid_shell_coverage(particles["position"][active_fluid], center, args.dx / args.ppc)
                 )
     impact_speed = math.sqrt(2.0 * 9.81 * args.drop_height)
     radius = 0.5 * SPHERE_DIAMETER
-    initial_center_z = WATER_SURFACE + radius
+    initial_center_z = float(rigid_rows[0, 3]) if is_bunny else WATER_SURFACE + radius
     minimum_center_z = float(rigid_rows[:, 3].min())
+    minimum_surface_z = min(row[0] for row in surface_bounds) if is_bunny else minimum_center_z - radius
+    bed_penetration = max(0.0, BED_HEIGHT - minimum_surface_z)
     metrics = {
-        "case": "Section 5.2 LSDEM sphere impact into a saturated granular bed",
+        "case": (
+            "Stanford bunny LSDEM impact into a saturated granular bed (Section 5.2-derived)"
+            if is_bunny
+            else "Section 5.2 LSDEM sphere impact into a saturated granular bed"
+        ),
+        "impactor_shape": "bunny" if is_bunny else "sphere",
+        "fluid_coverage_geometry": "actual LSDEM surface vertices" if is_bunny else "spherical shell angular bins",
         "drop_height_m": args.drop_height,
         "equivalent_impact_speed_mps": impact_speed,
         "container_diameter_m": 2.0 * CONTAINER_RADIUS,
@@ -139,7 +207,7 @@ def write_metrics(output, expected_fluid, expected_solid, args):
         "maximum_solid_speed_mps": float(mpm_rows[:, 6].max()),
         "sphere_minimum_center_z_m": minimum_center_z,
         "sphere_water_entry_displacement_m": initial_center_z - minimum_center_z,
-        "sphere_maximum_bed_penetration_m": max(0.0, BED_HEIGHT - (minimum_center_z - radius)),
+        "sphere_maximum_bed_penetration_m": bed_penetration,
         "sphere_final_vertical_velocity_mps": float(rigid_rows[-1, 6]),
         "maximum_coupling_force_n": float(rigid_rows[:, 7].max()),
         "minimum_submerged_fluid_shell_coverage": float(min(submerged_coverage, default=0.0)),
@@ -152,13 +220,25 @@ def write_metrics(output, expected_fluid, expected_solid, args):
         and metrics["maximum_mpm_particles_outside_cylinder"] == 0
         and metrics["sphere_water_entry_displacement_m"] >= 0.02
         and metrics["sphere_maximum_bed_penetration_m"] >= 0.002
-        and metrics["sphere_minimum_center_z_m"] - radius >= 0.5 * args.dx
+        and minimum_surface_z >= 0.5 * args.dx
         and abs(metrics["sphere_final_vertical_velocity_mps"]) < 0.9 * impact_speed
         and metrics["maximum_coupling_force_n"] > 0.0
         and metrics["minimum_submerged_fluid_shell_coverage"] >= 0.75
+        and maximum_body_outside_domain == 0
+        and maximum_body_outside_cylinder == 0
     )
+    if is_bunny:
+        for key in tuple(metrics):
+            if key.startswith("sphere_"):
+                metrics[key.replace("sphere_", "impactor_", 1)] = metrics.pop(key)
+        metrics.update(
+            minimum_impactor_surface_z_m=minimum_surface_z,
+            maximum_impactor_vertices_outside_domain=maximum_body_outside_domain,
+            maximum_impactor_vertices_outside_cylinder=maximum_body_outside_cylinder,
+        )
+        metrics["minimum_submerged_fluid_surface_coverage"] = metrics.pop("minimum_submerged_fluid_shell_coverage")
     np.savetxt(
-        output / "sphere_impact_trajectory.csv",
+        output / ("bunny_impact_trajectory.csv" if is_bunny else "sphere_impact_trajectory.csv"),
         rigid_rows,
         delimiter=",",
         header="time_s,center_x_m,center_y_m,center_z_m,velocity_x_mps,velocity_y_mps,velocity_z_mps,coupling_force_n",
@@ -167,4 +247,4 @@ def write_metrics(output, expected_fluid, expected_solid, args):
     (output / "metrics.json").write_text(json.dumps(metrics, indent=2, sort_keys=True) + "\n")
     print(json.dumps(metrics, sort_keys=True))
     if args.strict and not metrics["passed"]:
-        raise RuntimeError("Section 5.2 sphere-impact validation failed; inspect metrics.json")
+        raise RuntimeError(f"{metrics['impactor_shape']} impact validation failed; inspect metrics.json")

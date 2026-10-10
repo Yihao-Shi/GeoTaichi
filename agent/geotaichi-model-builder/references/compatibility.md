@@ -68,6 +68,13 @@ Reject unsupported combinations before generating a long script.
 - Sparse background-grid support is limited to validated coupling branches.
 - LSMPM DEM-owned routing requires its specific scene state; routing queries do
   not enable the mode.
+- Ordinary continuum MPM--AffineBody IPC requires Direct implicit ULMPM in
+  3D. Nonassociated DP uses its physical nonsymmetric Jacobian with Taichi
+  BiCGSTAB and residual Armijo, without a material outer loop. Its public
+  solver defaults to `inexact_newton=True`; strict linear solves remain
+  available with `False`. ABD, MPM, and mixed-contact lagged friction retain
+  their independent fixed point. Associated materials retain PCG. LSMPM
+  soft--ABD remains hyperelastic; the native/common fluid--ABD route is IBM.
 - `FEDEM` accepts three scheme-specific routes. `DEM` and `LSDEM` require
   explicit FEM, use `Linear`/`HertzMindlin`, and do not combine with FEM
   IPC/AL. The FEM side remains a volume or membrane mesh with a TRI3 contact
@@ -85,7 +92,11 @@ Reject unsupported combinations before generating a long script.
   explicit FEM. `IPC` requires Direct implicit ULMPM plus implicit elastic FEM;
   the MPM material may be Neo-Hookean, finite-strain
   Drucker--Prager, or associated finite-strain von Mises. It uses monolithic
-  `COO` or `HashTriplet`, PSD projection, CCD, and line search. Both contact
+  `COO` or `HashTriplet`, CCD, and line search. Potential materials use
+  projected PCG; nonassociated DP uses the physical nonsymmetric Jacobian
+  with BiCGSTAB and residual Armijo, including for cloth FEM. Its optional
+  `inexact_newton` defaults to `False`; lagged friction still has its own
+  fixed point. Both contact
   branches support `LinkedCell` and `BVH`; coupled IPC does not combine with
   standalone FEM/MPM IPC or FEM elastoplasticity. Direct TLMPM finite-strain
   plasticity is not implemented. Its implicit IPC branch supports 3D,
@@ -95,6 +106,15 @@ Reject unsupported combinations before generating a long script.
   radii, `F_theta_theta=r/R`, and `2*pi*R` reference measures.
 
 ## 5. FEM
+
+`StateDependentDruckerPrager` is a separate finite-strain model for Direct
+implicit ULMPM inside FEM--MPM, IGA--MPM, or 3D MPM--ABD IPC. It transfers the
+small-strain SDMC state law using finite total volume (including hoop stretch)
+and previous Cauchy pressure, with physical residual/BiCGSTAB and independent
+lagged friction. Its 14-entry history must be committed/restored together.
+Ordinary DP is unchanged. Standalone Direct stepping, TLMPM, Native MPM,
+LSMPM soft materials, and parameter/history adjoints are unsupported. See
+`src/mpm/README.md` for parameters; IGA--MPM CPT accepts `--state-dependent`.
 
 - FEM requires initialized Taichi; Scipy is available only as an explicitly
   selected linear solver, not as a NumPy runtime backend.
@@ -142,10 +162,10 @@ Reject unsupported combinations before generating a long script.
   TLMPM. Accepted plastic history and `F0` share one device transaction.
   Cartesian 2D plasticity is a 3D plane-strain embedding, not an intrinsic-2D
   return mapping; axisymmetric plasticity uses the 3D no-swirl map.
-  Nonassociated DP accepts independent constant `DilationAngle`; it requires
-  a converged material outer loop around symmetric inner PCG/energy Armijo.
-  The material criterion checks actual stress and predicted plastic volume,
-  not correction changes in the flat tensile cap.
+  Nonassociated DP accepts independent constant `DilationAngle` and uses the
+  physical nonsymmetric Jacobian with BiCGSTAB/residual Armijo. It has no
+  material outer loop; lagged friction keeps its independent fixed point.
+  Optional `monolithic_inexact_newton` retains nonlinear force convergence.
 - Freeze contact configuration before build only after the intended mode is
   final.
 - Contact parameters and, for IPC, the COO/HashTriplet assembly choice are
@@ -157,6 +177,13 @@ Reject unsupported combinations before generating a long script.
   `2*pi*R`.
 
 ## 7. Backends and precision
+
+Direct-MPM `QuadBSpline` requires at least four grid nodes per axis and uses
+boundary-modified shape values, gradients and IPC Hessians. The implicit IGA
+CPT example uses this basis and rejects Linear checkpoints; restart at frame
+zero after changing interpolation. The IGA flexible barrier defaults to a
+unit-depth 2D plane-strain solid plate with QuadBSpline MPM and lagged friction;
+its optional 3D slab uses the same MPM basis.
 
 - Set `GEOTAICHI_REAL_DTYPE` before importing GeoTaichi and pass the matching
   `default_fp` to `init` where required by examples.

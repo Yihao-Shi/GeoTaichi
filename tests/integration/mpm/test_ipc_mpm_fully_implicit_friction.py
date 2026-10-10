@@ -128,7 +128,7 @@ def test_elastic_barrier_ipc_adjoint_matches_resolved_gravity_fd(tmp_path):
             rhs[config.DIM * block : config.DIM * (block + 1)] += weight * seed
         parameters = contact.differentiate_elastic_parameters(rhs)
         assert contact.last_adjoint_result["converged"]
-        assert contact.system_hash_matrix.solver == "BiCGSTAB"
+        assert contact.system_hash_matrix.solver == "PCG"
         return objective, parameters
 
     _, parameters = solve(-9.81, need_adjoint=True)
@@ -314,8 +314,8 @@ def test_plastic_equilibrium_adjoint_uses_exact_consistent_tangent(tmp_path, mat
     seed = np.linspace(-0.4, 0.6, mpm.active_dof)
     parameters = contact.differentiate_plastic_equilibrium_parameters(seed)
     adjoint = parameters["adjoint"].to_numpy()[: mpm.active_dof]
-    assert contact.system_hash_matrix.solver == "BiCGSTAB"
-    np.testing.assert_allclose(matrix @ adjoint, seed, rtol=2.0e-7, atol=1.0e-9)
+    assert contact.system_hash_matrix.solver == "PCG"
+    np.testing.assert_allclose(matrix.T @ adjoint, seed, rtol=2.0e-7, atol=1.0e-9)
 
     history_step = 2.0e-7
     numerical_inverse_vjp = np.zeros((3, 3), dtype=np.float64)
@@ -723,6 +723,42 @@ def test_lagged_material_tangent_is_projected_before_global_scatter(
     projected_scale = max(float(np.linalg.norm(projected, ord=2)), 1.0)
     assert float(np.linalg.eigvalsh(exact)[0]) < -1.0e-6 * exact_scale
     assert float(np.linalg.eigvalsh(projected)[0]) >= -1.0e-9 * projected_scale
+
+
+def test_nonassociated_lagged_mpm_uses_physical_jacobian_and_force_balance(tmp_path):
+    config, mpm, contact = _build_point_plane_contact(
+        tmp_path,
+        friction_mode="lagged",
+        material="DruckerPrager",
+        material_parameters={"Cohesion": 1.0, "FrictionAngle": 30.0, "DilationAngle": 0.0},
+    )
+    mpm.compute_mass_list(mpm.integration)
+    assert contact.nonassociated_newton
+    assert not mpm.has_lagged_material
+    assert contact._cuda_monolithic_krylov_solver() == "BiCGSTAB"
+    assert not contact.system_hash_matrix.matrix_symmetric
+    assert not contact.system_hash_matrix.full_symmetric_input
+    contact.friction_iterations = -1
+    contact.begin_friction_step(mpm.grid_disp)
+    displacement = _affine_nodal_state(config, mpm, np.diag([0.03, -0.02]))
+    mpm.grid_disp.from_numpy(displacement)
+    matrix = contact.assemble_current_system()
+    dense = matrix.to_scipy(mpm.active_dof // config.DIM).toarray()
+    direction = np.linspace(-0.1, 0.1, mpm.active_dof)
+    increment = np.zeros_like(displacement)
+    increment[: mpm.active_dof] = direction
+    step = 1e-7
+    forces = []
+    for sign in (1, -1):
+        mpm.grid_disp_temp.from_numpy(displacement + sign * step * increment)
+        contact.assemble_current_system(mpm.grid_disp_temp, need_matrix=False)
+        forces.append(mpm.rhs.to_numpy()[: mpm.active_dof].copy())
+    np.testing.assert_allclose(dense @ direction, -(forces[0] - forces[1]) / (2 * step), rtol=2e-5, atol=1e-5)
+    mpm.grid_disp.fill(0.0)
+    contact.solve_lagged_friction_fixed_point(verbose=False)
+    assert contact.last_inner_converged and contact.last_friction_converged
+    assert contact.last_newton_residual <= mpm.tol
+    assert contact.last_lagged_force_residual <= 1e-10 + 1e-8 * contact._friction_force_reference
 
 
 def test_cuda_lagged_monolithic_matrix_is_spd_and_uses_pcg(

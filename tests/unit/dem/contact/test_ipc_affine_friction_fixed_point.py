@@ -54,6 +54,7 @@ def test_affine_outer_iteration_rebuilds_only_after_complete_inner_solve():
     engine.state = _State()
     events = []
     engine.operator = SimpleNamespace(
+        contact_damping_stiffness=0.0,
         fully_implicit=False,
         initialize_contact_damping=lambda y, hat_y: events.append(
             ("refresh", float(np.asarray(y)[0]), hat_y is engine.state.hat_y)
@@ -103,7 +104,9 @@ def test_affine_default_is_one_lagged_solve_with_updated_system_probe():
     engine.state = _State()
     refreshes = []
     engine.operator = SimpleNamespace(
-        fully_implicit=False, initialize_contact_damping=lambda y, hat_y: refreshes.append(1)
+        contact_damping_stiffness=0.0,
+        fully_implicit=False,
+        initialize_contact_damping=lambda y, hat_y: refreshes.append(1),
     )
     assembled_gradients = iter([np.ones(12), np.zeros(12)])
     engine._assemble_system = lambda _sims, y, need_matrix=True: (
@@ -132,7 +135,9 @@ def test_affine_default_is_one_lagged_solve_with_updated_system_probe():
 def test_affine_unbounded_outer_mode_raises_at_safety_cap_without_accepting():
     engine = AffineBodyEngine()
     engine.state = _State()
-    engine.operator = SimpleNamespace(fully_implicit=False, initialize_contact_damping=lambda _y, _hat_y: None)
+    engine.operator = SimpleNamespace(
+        contact_damping_stiffness=0.0, fully_implicit=False, initialize_contact_damping=lambda _y, _hat_y: None
+    )
     engine._assemble_system = lambda _sims, _y, need_matrix=True: (
         1.0,
         np.ones(12),
@@ -322,6 +327,7 @@ def test_affine_configured_small_coo_system_uses_mass_whitened_eigensolve():
     rhs = np.asarray([1.0, -2.0], dtype=np.float64)
     engine = AffineBodyEngine()
     engine.operator = SimpleNamespace(
+        contact_damping_stiffness=0.0,
         fully_implicit=False,
         dof=2,
         control_mass_matrix_np=mass,
@@ -366,6 +372,7 @@ def test_affine_direct_solve_restores_erased_inertia_floor():
     rhs = np.asarray([1.0, 0.5], dtype=np.float64)
     engine = AffineBodyEngine()
     engine.operator = SimpleNamespace(
+        contact_damping_stiffness=0.0,
         fully_implicit=False,
         dof=2,
         control_mass_matrix_np=mass,
@@ -413,6 +420,7 @@ def test_affine_direct_solve_treats_both_ulp_signs_as_unresolved():
         )
         engine = AffineBodyEngine()
         engine.operator = SimpleNamespace(
+            contact_damping_stiffness=0.0,
             fully_implicit=False,
             dof=2,
             control_mass_matrix_np=mass,
@@ -576,6 +584,7 @@ def test_affine_device_hash_linear_solve_records_convergence_diagnostics():
     copied = []
     engine.operator = SimpleNamespace(
         control_num=1,
+        contact_damping_stiffness=0.0,
         fully_implicit=False,
         device_load_negative_gradient=lambda _rhs: None,
         device_copy_hash_solution_to_direction=lambda solution: copied.append(solution),

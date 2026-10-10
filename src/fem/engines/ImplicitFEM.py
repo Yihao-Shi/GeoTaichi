@@ -239,7 +239,7 @@ class ImplicitFEM(FEMSolver):
     def _solve_frozen_friction_newton_device(self, next_time):
         iteration_history = []
         converged = False
-        initial_norm = None
+        initial_norm = getattr(self, "_friction_force_reference", None)
         semi_progress = 0.0
         for iteration in range(self.max_iterations + 1):
             if (
@@ -264,6 +264,7 @@ class ImplicitFEM(FEMSolver):
             residual_norm = self.state.residual_norm()
             if initial_norm is None:
                 initial_norm = max(residual_norm, self.state.external_norm(), 1.0)
+                self._friction_force_reference = initial_norm
             iteration_record = {
                 "iteration": iteration,
                 "residual_norm": residual_norm,
@@ -346,7 +347,7 @@ class ImplicitFEM(FEMSolver):
             self.gamma,
             int(self.quasi_static),
         )
-        if self.state.residual_norm() <= self.absolute_tolerance:
+        if self.state.residual_norm() == 0.0:
             return 0.0
         self._solve_direction_device(self._current_stiffness)
         return float(self.state.direction_inf_norm()) / self.dt
@@ -362,6 +363,7 @@ class ImplicitFEM(FEMSolver):
         outer_limit = settings.friction_max_iterations if requested_outer == -1 else requested_outer
         outer_history = []
         converged = True
+        self._friction_force_reference = None
         self.last_friction_iterations = 0
         self.last_friction_residual = 0.0 if not friction_active else math.inf
         self.last_friction_converged = not friction_active

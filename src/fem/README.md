@@ -754,7 +754,10 @@ Positive `friction_iterations` retain fixed-count lagging.  Use `-1` when the
 step must be certified: after every complete Newton solve FEM refreshes the
 lagged frames and normal forces, solves the updated linear system once without
 applying that correction, and accepts only when its infinity norm divided by
-`dt` is below `friction_tolerance`.
+`dt` is below `friction_tolerance`. Inner Newton and outer probes both use
+physical nodal displacement, and the first force reference persists across the
+attempted step's friction refreshes. A small nonzero force does not bypass the
+updated correction probe.
 
 Contact candidates and their PT/EE Hessian blocks are allocated once when the
 assembler is created. By default their capacities are the triangle count

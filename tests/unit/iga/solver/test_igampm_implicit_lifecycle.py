@@ -66,6 +66,8 @@ def _mock_lifecycle_engine(total_lagrangian=False):
     engine._implicit_step_iga_displacement = None
     engine._implicit_step_mpm_displacement = None
     engine.activate_fric = False
+    engine.is_semi = False
+    engine.barrier = SimpleNamespace(model="BarrierIPC")
     engine.curr_friction_contact_num = 0
     engine.compile_seconds = 0.0
     engine.timer = SimpleNamespace(section=lambda _name: nullcontext())

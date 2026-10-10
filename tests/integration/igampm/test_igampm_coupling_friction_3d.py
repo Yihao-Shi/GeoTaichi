@@ -138,6 +138,17 @@ def test_igampm_coupling_friction_3d_opposes_tangential_motion(
 
     K = coupling.friction_matrix()
     grad = coupling.friction_grad.to_numpy()
+    raw_values = coupling.friction_hash_matrix.non_diag.blockH.to_numpy().copy()
+    diagonal = coupling.friction_hash_matrix.diag.to_numpy().copy()
+    raw_count = int(coupling.friction_hash_matrix.raw_non_diag_count[0])
+    full_nnz = int(coupling.friction_nnz_count[0])
+    coupling.friction_grad.fill(float("nan"))
+    coupling.assemble_friction_system(need_matrix=False)
+    np.testing.assert_allclose(coupling.friction_grad.to_numpy(), grad, rtol=1e-12, atol=1e-12)
+    np.testing.assert_array_equal(coupling.friction_hash_matrix.non_diag.blockH.to_numpy(), raw_values)
+    np.testing.assert_array_equal(coupling.friction_hash_matrix.diag.to_numpy(), diagonal)
+    assert int(coupling.friction_hash_matrix.raw_non_diag_count[0]) == raw_count
+    assert int(coupling.friction_nnz_count[0]) == 0
     forces = coupling.friction_contact_forces()
     sym_diff = (K - K.T).tocoo()
     max_sym = float(np.max(np.abs(sym_diff.data))) if sym_diff.nnz else 0.0
@@ -145,13 +156,13 @@ def test_igampm_coupling_friction_3d_opposes_tangential_motion(
     print(
         "3D IGA-MPM friction assembly:",
         f"contacts={coupling.curr_friction_contact_num}",
-        f"raw_triplets={int(coupling.friction_nnz_count[0])}",
+        f"raw_triplets={full_nnz}",
         f"reduced_nnz={K.nnz}",
         f"grad_norm={np.linalg.norm(grad):.3e}",
         f"sym_max={max_sym:.3e}",
         f"mpm_force_x={mpm_force_x:.3e}",
     )
-    assert int(coupling.friction_nnz_count[0]) > 0
+    assert full_nnz > 0
     assert K.nnz > 0
     assert np.all(np.isfinite(K.data))
     assert np.all(np.isfinite(grad))

@@ -18,7 +18,8 @@ def test_finite_strain_plastic_stiffness_projects_forward_but_not_exact_reverse(
     class Dummy:
         is_finite_strain_plastic = True
 
-        def _assemble_stiffness_matrix_hash(self, active_dof, grid_disp, project_spd):
+        def _assemble_stiffness_matrix_hash(self, active_dof, grid_disp, project_spd, reuse_response=False):
+            assert not reuse_response
             calls.append((active_dof, grid_disp, project_spd))
 
     for solver_class in (ImplicitULMPM, ImplicitTLMPM):

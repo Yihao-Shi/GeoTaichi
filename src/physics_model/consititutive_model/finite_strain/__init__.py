@@ -14,6 +14,9 @@ from src.physics_model.consititutive_model.finite_strain.NeoHookean import (
 from src.physics_model.consititutive_model.finite_strain.DruckerPrager import (
     FiniteStrainDruckerPragerModel,
 )
+from src.physics_model.consititutive_model.finite_strain.StateDependentDruckerPrager import (
+    StateDependentDruckerPragerModel,
+)
 from src.physics_model.consititutive_model.finite_strain.VonMises import (
     FiniteStrainVonMisesModel,
 )
@@ -25,13 +28,14 @@ from src.physics_model.consititutive_model.finite_strain.StVenantKirchhoff impor
 )
 
 __all__ = [
-    'ClothARAP',
-    'ClothNeoHookean',
-    'normalize_cloth_bending_model',
-    'InvertedElementError',
-    'FiniteStrainDruckerPragerModel',
-    'FiniteStrainVonMisesModel',
-    'FiniteStrainModifiedCamClayModel',
-    'NeoHookeanModel',
-    'StVenantKirchhoffModel',
+    "ClothARAP",
+    "ClothNeoHookean",
+    "normalize_cloth_bending_model",
+    "InvertedElementError",
+    "FiniteStrainDruckerPragerModel",
+    "StateDependentDruckerPragerModel",
+    "FiniteStrainVonMisesModel",
+    "FiniteStrainModifiedCamClayModel",
+    "NeoHookeanModel",
+    "StVenantKirchhoffModel",
 ]

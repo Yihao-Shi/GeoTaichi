@@ -77,7 +77,7 @@ Use the narrowest supported owner:
 - explicit DEM/LSDEM--deforming FEM surface coupling or elastic
   FEM--AffineBody IPC with pair-local lagged friction: `FEDEM(dem, fem)`;
 - explicit DEM-law or elastic-FEM monolithic IPC MPM point--deforming FEM
-  surface coupling, with supported elastic/associated-plastic Direct ULMPM:
+  surface coupling, with supported elastic/plastic Direct ULMPM:
   `FEMPM(fem, mpm)`;
 - NURBS analysis: `IGA()`;
 - IGA--MPM contact: `IGAMPM(iga, mpm)`.

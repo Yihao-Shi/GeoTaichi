@@ -9,6 +9,7 @@ from src.contact_detection.continuous_contact_detection import (
     linear_gap_accd,
     point_point_accd,
 )
+from src.mpm.engines.direct.Convergence import mpm_correction_measure
 from src.mpm.engines.direct.ImplicitMPM import ImplicitMPM
 from src.physics_model.contact_model.ipc.ContactGeometry import aabb_overlap_with_clearance
 from src.mpm.generator.Ground import Ground
@@ -201,6 +202,7 @@ class IPCMPM:
             ),
             "friction_residual",
         )
+        self.nonassociated_newton = self.friction_mode == "lagged" and self.mpm.configure_nonassociated_newton()
         self.last_newton_iterations = 0
         self.last_newton_residual = np.inf
         self.last_inner_converged = False
@@ -722,10 +724,11 @@ class IPCMPM:
         Official lagged IPC uses projected Newton: elasticity, barrier, and
         frozen-friction local Hessians are PSD-projected before symmetric
         assembly, while dynamic inertia supplies the positive mass diagonal.
-        Its CUDA solve therefore uses PCG.  Fully implicit friction retains
-        the exact, generally nonsymmetric Jacobian and must use BiCGSTAB.
+        Its CUDA solve therefore uses PCG. Nonassociated DP retains its
+        physical nonsymmetric material Jacobian and uses BiCGSTAB even with
+        lagged friction. Fully implicit friction also uses BiCGSTAB.
         """
-        if self.friction_mode == "lagged":
+        if self.friction_mode == "lagged" and not getattr(self, "nonassociated_newton", False):
             return "PCG"
         return "BiCGSTAB"
 
@@ -1730,6 +1733,9 @@ class IPCMPM:
         if project_spd is None:
             project_spd = self.friction_mode == "lagged"
         project_spd = bool(project_spd)
+        if getattr(self, "nonassociated_newton", False):
+            project_spd = False
+            exact_plastic_tangent = True
         active_dof = self.mpm.active_dof
         self.mpm.rhs.fill(0)
         if need_matrix:
@@ -1781,8 +1787,8 @@ class IPCMPM:
             if self.friction_mode == "fully_implicit":
                 self._assemble_ground_fully_implicit_friction_system(grid_disp, need_matrix)
             else:
-                self.assemble_ground_friction_matrix()
-                self.assemble_particle_friction_matrix()
+                self.assemble_ground_friction_matrix(need_matrix)
+                self.assemble_particle_friction_matrix(need_matrix)
             add_field(
                 active_dof,
                 self.mpm.rhs,
@@ -3251,6 +3257,10 @@ class IPCMPM:
 
     def _correction_inf_norm(self, correction, *, load_solution=False):
         if isinstance(correction, dict):
+            if self.friction_mode == "lagged":
+                return float(
+                    mpm_correction_measure(self.mpm, self.mpm.incre_resolution, self.mpm.active_dof, config.DIM)
+                )
             return float(correction["solution_inf_norm"])
         if load_solution:
             self.mpm.incre_resolution.from_numpy(correction)
@@ -3261,6 +3271,62 @@ class IPCMPM:
             return self.system_hash_matrix.flat_l2_norm(self.mpm.rhs, self.mpm.active_dof)
         raise RuntimeError("SoftParticle IPC residual norms require the device monolithic " "backend")
 
+    @ti.kernel
+    def _lagged_force_metrics(self, active_dof: ti.i32) -> ti.types.vector(2, ti.f64):
+        squared = 0.0
+        prescribed = 0.0
+        for dof in range(active_dof):
+            fixed = False
+            if ti.static(self.mpm.dirichlet.num > 0):
+                block = dof // config.DIM
+                component = dof % config.DIM
+                grid_dof = config.DIM * self.mpm.dof2node[block] + component
+                fixed = self.mpm.dirichlet.node[grid_dof] == 1
+                if fixed:
+                    ti.atomic_max(prescribed, ti.abs(self.mpm.dirichlet.value[grid_dof] - self.mpm.grid_disp[dof]))
+            if not fixed:
+                squared += self.system_physical_rhs[dof] ** 2
+        return ti.Vector([squared, prescribed])
+
+    def _lagged_force_converged(self):
+        metrics = self._lagged_force_metrics(int(self.mpm.active_dof))
+        force = math.sqrt(max(float(metrics[0]), 0.0))
+        if self._friction_force_reference is None:
+            self._friction_force_reference = max(force, 1.0)
+        self.last_lagged_force_residual = force
+        return (
+            force <= 1.0e-10 + 1.0e-8 * self._friction_force_reference
+            and float(metrics[1]) <= self.mpm.dt * self.mpm.tol
+        )
+
+    def _solve_nonassociated_frozen_friction_newton(self, verbose):
+        self.last_inner_converged = False
+        self.last_inner_failure_reason = "maximum_newton_iterations"
+        residual = math.inf
+        for iteration in range(self.mpm.max_iters):
+            self.solve_current_system()
+            force_balanced = self._lagged_force_converged()
+            residual = (
+                float(mpm_correction_measure(self.mpm, self.mpm.incre_resolution, self.mpm.active_dof, config.DIM))
+                / self.mpm.dt
+            )
+            if not math.isfinite(residual) or not math.isfinite(self.last_lagged_force_residual):
+                raise RuntimeError("nonassociated IPC-MPM Newton residual is non-finite")
+            if residual <= self.mpm.tol and force_balanced:
+                if not self.contact_converged():
+                    self.accept_update()
+                    continue
+                self.last_inner_converged = True
+                self.last_inner_failure_reason = ""
+                break
+            merit_residual = self._fully_implicit_cuda_residual_norm(self.system_physical_rhs, self.mpm.grid_disp)
+            slope = self._fully_implicit_cuda_merit_slope(self.mpm.active_dof)
+            if not self._fully_implicit_residual_line_search(merit_residual, slope, verbose):
+                self.last_inner_failure_reason = "residual_armijo_line_search"
+                break
+            self.accept_update()
+        return iteration, residual, iteration + 1
+
     def updated_friction_system_residual(self):
         """Probe convergence with the system assembled from the updated cache."""
         correction = self.solve_current_system()
@@ -3268,6 +3334,8 @@ class IPCMPM:
 
     def solve_frozen_friction_newton(self, verbose=True):
         """Run one complete inner Newton solve with friction data held fixed."""
+        if getattr(self, "nonassociated_newton", False):
+            return self._solve_nonassociated_frozen_friction_newton(verbose)
         iter_num = 0
         linear_solve_count = 0
         residual = np.inf
@@ -3649,12 +3717,13 @@ class IPCMPM:
     def solve_lagged_friction_fixed_point(self, verbose=True):
         """Solve a time step with outer updates of lagged IPC friction data.
 
-        Every outer iteration fully converges (or exhausts) the conservative
-        inner Newton problem.  Only then are the contact normal and
+        Every outer iteration converges the frozen-friction equilibrium;
+        a failed inner solve rejects the step. Only then are the contact normal and
         ``mu_lambda`` rebuilt.  The updated system is solved once as a residual
         probe, but that correction is not applied; this keeps the formulation
         lagged rather than turning it into a fully implicit friction Hessian.
         """
+        self._friction_force_reference = None
         self.last_newton_iterations = 0
         self.last_newton_residual = np.inf
         self.last_friction_iterations = 0
@@ -3701,7 +3770,12 @@ class IPCMPM:
                 self.last_friction_residual = self.updated_friction_system_residual()
                 if not np.isfinite(self.last_friction_residual):
                     raise RuntimeError("lagged IPC updated friction residual is non-finite")
-                if self.last_friction_residual <= self.friction_tolerance:
+                force_balanced = not getattr(self, "nonassociated_newton", False) or self._lagged_force_converged()
+                if (
+                    self.last_friction_residual <= self.friction_tolerance
+                    and force_balanced
+                    and self.contact_converged()
+                ):
                     self.last_friction_converged = True
                     break
 
@@ -4000,24 +4074,30 @@ class IPCMPM:
                         component = row * config.DIM + column
                         self.friction_hash_matrix.non_diag.blockH[slot][component] = block[row, column]
 
+    def assemble_ground_friction_matrix(self, need_matrix=True):
+        self._assemble_ground_friction_system(bool(need_matrix))
+
     @ti.kernel
-    def assemble_ground_friction_matrix(self):
+    def _assemble_ground_friction_system(self, need_matrix: ti.template()):
         support_capacity = ti.static(self.mpm.shape_func.max_node_per_particle)
         pair_capacity = ti.static(support_capacity * support_capacity)
-        raw_base = self.friction_hash_matrix.raw_non_diag_count[0]
-        raw_end = raw_base + self.gfrictionNum[0] * pair_capacity
-        stored_end = ti.min(
-            raw_end,
-            self.friction_hash_matrix.non_diag.blockI.shape[0],
-        )
-        self.friction_hash_matrix.raw_non_diag_count[0] = stored_end
-        if raw_end > self.friction_hash_matrix.non_diag.blockI.shape[0]:
-            self.friction_hash_matrix.overflow[0] = 1
-        for slot in range(raw_base, stored_end):
-            self.friction_hash_matrix.non_diag.blockI[slot] = -1
-            self.friction_hash_matrix.non_diag.blockJ[slot] = -1
-            for component in ti.static(range(config.DIM * config.DIM)):
-                self.friction_hash_matrix.non_diag.blockH[slot][component] = 0.0
+        raw_base = 0
+        stored_end = 0
+        if ti.static(need_matrix):
+            raw_base = self.friction_hash_matrix.raw_non_diag_count[0]
+            raw_end = raw_base + self.gfrictionNum[0] * pair_capacity
+            stored_end = ti.min(
+                raw_end,
+                self.friction_hash_matrix.non_diag.blockI.shape[0],
+            )
+            self.friction_hash_matrix.raw_non_diag_count[0] = stored_end
+            if raw_end > self.friction_hash_matrix.non_diag.blockI.shape[0]:
+                self.friction_hash_matrix.overflow[0] = 1
+            for slot in range(raw_base, stored_end):
+                self.friction_hash_matrix.non_diag.blockI[slot] = -1
+                self.friction_hash_matrix.non_diag.blockJ[slot] = -1
+                for component in ti.static(range(config.DIM * config.DIM)):
+                    self.friction_hash_matrix.non_diag.blockH[slot][component] = 0.0
 
         for c in range(self.gfrictionNum[0]):
             s = self.gfriction[c].surfaceID
@@ -4030,12 +4110,14 @@ class IPCMPM:
                 vbar = T.transpose() @ rel_disp / self.mpm.dt
                 vbarnorm = vbar.norm()
                 friction_gradient = self.friction.grad_term(vbarnorm)
-                friction_hessian = self.friction.hess_term(vbarnorm)
                 ddispbar_dpoint = mu_lambda * friction_gradient * T @ vbar
-                inner_term = friction_gradient * ti.Matrix.identity(ti.f64, config.DIM)
-                if vbarnorm != 0:
-                    inner_term += friction_hessian / vbarnorm * vbar.outer_product(vbar)
-                d2dispbar_d2point = mu_lambda * T @ psd_project_nd(inner_term) @ T.transpose() / self.mpm.dt
+                d2dispbar_d2point = ti.Matrix.zero(ti.f64, config.DIM, config.DIM)
+                if ti.static(need_matrix):
+                    friction_hessian = self.friction.hess_term(vbarnorm)
+                    inner_term = friction_gradient * ti.Matrix.identity(ti.f64, config.DIM)
+                    if vbarnorm != 0:
+                        inner_term += friction_hessian / vbarnorm * vbar.outer_product(vbar)
+                    d2dispbar_d2point = mu_lambda * T @ psd_project_nd(inner_term) @ T.transpose() / self.mpm.dt
 
                 for j in range(self.mpm.offset[i]):
                     base_jnode = self.mpm.LnID[i, j]
@@ -4045,19 +4127,20 @@ class IPCMPM:
                     dPsi_dx = ddispbar_dpoint @ dpoint_dx1
                     for d in ti.static(range(config.DIM)):
                         self.friction_grad[dofs + d] -= dPsi_dx[d]
-                    for k in range(self.mpm.offset[i]):
-                        base_knode = self.mpm.LnID[i, k]
-                        base_koffset = self.mpm.node2dof[base_knode] - 1
-                        dpoint_dx2 = self.mpm.shape[i, k] * ti.Matrix.identity(ti.f64, config.DIM)
-                        d2Psi_dx1dx2 = dpoint_dx1 @ d2dispbar_d2point @ dpoint_dx2.transpose()
-                        slot = raw_base + c * pair_capacity + j * support_capacity + k
-                        self._write_friction_block_fixed_slot(
-                            slot,
-                            stored_end,
-                            base_joffset,
-                            base_koffset,
-                            d2Psi_dx1dx2,
-                        )
+                    if ti.static(need_matrix):
+                        for k in range(self.mpm.offset[i]):
+                            base_knode = self.mpm.LnID[i, k]
+                            base_koffset = self.mpm.node2dof[base_knode] - 1
+                            dpoint_dx2 = self.mpm.shape[i, k] * ti.Matrix.identity(ti.f64, config.DIM)
+                            d2Psi_dx1dx2 = dpoint_dx1 @ d2dispbar_d2point @ dpoint_dx2.transpose()
+                            slot = raw_base + c * pair_capacity + j * support_capacity + k
+                            self._write_friction_block_fixed_slot(
+                                slot,
+                                stored_end,
+                                base_joffset,
+                                base_koffset,
+                                d2Psi_dx1dx2,
+                            )
 
     @ti.func
     def _surface_endpoint_velocity(self, particle_id, grid_disp: ti.template()):
@@ -4198,25 +4281,31 @@ class IPCMPM:
                                         shape_j * shape_k * point_jacobian[row, column]
                                     )
 
+    def assemble_particle_friction_matrix(self, need_matrix=True):
+        self._assemble_particle_friction_system(bool(need_matrix))
+
     @ti.kernel
-    def assemble_particle_friction_matrix(self):
+    def _assemble_particle_friction_system(self, need_matrix: ti.template()):
         support_capacity = ti.static(self.mpm.shape_func.max_node_per_particle)
         pair_capacity = ti.static(support_capacity * support_capacity)
         contact_pair_capacity = ti.static(4 * pair_capacity)
-        raw_base = self.friction_hash_matrix.raw_non_diag_count[0]
-        raw_end = raw_base + self.pfrictionNum[0] * contact_pair_capacity
-        stored_end = ti.min(
-            raw_end,
-            self.friction_hash_matrix.non_diag.blockI.shape[0],
-        )
-        self.friction_hash_matrix.raw_non_diag_count[0] = stored_end
-        if raw_end > self.friction_hash_matrix.non_diag.blockI.shape[0]:
-            self.friction_hash_matrix.overflow[0] = 1
-        for slot in range(raw_base, stored_end):
-            self.friction_hash_matrix.non_diag.blockI[slot] = -1
-            self.friction_hash_matrix.non_diag.blockJ[slot] = -1
-            for component in ti.static(range(config.DIM * config.DIM)):
-                self.friction_hash_matrix.non_diag.blockH[slot][component] = 0.0
+        raw_base = 0
+        stored_end = 0
+        if ti.static(need_matrix):
+            raw_base = self.friction_hash_matrix.raw_non_diag_count[0]
+            raw_end = raw_base + self.pfrictionNum[0] * contact_pair_capacity
+            stored_end = ti.min(
+                raw_end,
+                self.friction_hash_matrix.non_diag.blockI.shape[0],
+            )
+            self.friction_hash_matrix.raw_non_diag_count[0] = stored_end
+            if raw_end > self.friction_hash_matrix.non_diag.blockI.shape[0]:
+                self.friction_hash_matrix.overflow[0] = 1
+            for slot in range(raw_base, stored_end):
+                self.friction_hash_matrix.non_diag.blockI[slot] = -1
+                self.friction_hash_matrix.non_diag.blockJ[slot] = -1
+                for component in ti.static(range(config.DIM * config.DIM)):
+                    self.friction_hash_matrix.non_diag.blockH[slot][component] = 0.0
 
         for c in range(self.pfrictionNum[0]):
             sp = self.pfriction[c].masterID
@@ -4236,12 +4325,14 @@ class IPCMPM:
                 vbar = T.transpose() @ rel_disp / self.mpm.dt
                 vbarnorm = vbar.norm()
                 friction_gradient = self.friction.grad_term(vbarnorm)
-                friction_hessian = self.friction.hess_term(vbarnorm)
                 ddispbar_dpoint = mu_lambda * friction_gradient * T @ vbar
-                inner_term = friction_gradient * ti.Matrix.identity(ti.f64, config.DIM)
-                if vbarnorm != 0:
-                    inner_term += friction_hessian / vbarnorm * vbar.outer_product(vbar)
-                d2dispbar_d2point = mu_lambda * T @ psd_project_nd(inner_term) @ T.transpose() / self.mpm.dt
+                d2dispbar_d2point = ti.Matrix.zero(ti.f64, config.DIM, config.DIM)
+                if ti.static(need_matrix):
+                    friction_hessian = self.friction.hess_term(vbarnorm)
+                    inner_term = friction_gradient * ti.Matrix.identity(ti.f64, config.DIM)
+                    if vbarnorm != 0:
+                        inner_term += friction_hessian / vbarnorm * vbar.outer_product(vbar)
+                    d2dispbar_d2point = mu_lambda * T @ psd_project_nd(inner_term) @ T.transpose() / self.mpm.dt
 
                 # ----------------------
                 # i-i block
@@ -4254,21 +4345,22 @@ class IPCMPM:
                     dPsi_dx = ddispbar_dpoint @ dpoint_dx1
                     for d in ti.static(range(config.DIM)):
                         self.friction_grad[dofs + d] -= dPsi_dx[d]
-                    for k in range(self.mpm.offset[ip]):
-                        base_knode = self.mpm.LnID[ip, k]
-                        base_koffset = self.mpm.node2dof[base_knode] - 1
-                        dpoint_dx2 = self.mpm.shape[ip, k] * ti.Matrix.identity(ti.f64, config.DIM)
-                        d2Psi = (
-                            dpoint_dx1 @ d2dispbar_d2point @ dpoint_dx2.transpose()
-                        )  # + ddispbar_dpoint @ (ddist_dx1 @ d2_ipip @ ddist_dx2)
-                        slot = raw_base + c * contact_pair_capacity + j * support_capacity + k
-                        self._write_friction_block_fixed_slot(
-                            slot,
-                            stored_end,
-                            base_joffset,
-                            base_koffset,
-                            d2Psi,
-                        )
+                    if ti.static(need_matrix):
+                        for k in range(self.mpm.offset[ip]):
+                            base_knode = self.mpm.LnID[ip, k]
+                            base_koffset = self.mpm.node2dof[base_knode] - 1
+                            dpoint_dx2 = self.mpm.shape[ip, k] * ti.Matrix.identity(ti.f64, config.DIM)
+                            d2Psi = (
+                                dpoint_dx1 @ d2dispbar_d2point @ dpoint_dx2.transpose()
+                            )  # + ddispbar_dpoint @ (ddist_dx1 @ d2_ipip @ ddist_dx2)
+                            slot = raw_base + c * contact_pair_capacity + j * support_capacity + k
+                            self._write_friction_block_fixed_slot(
+                                slot,
+                                stored_end,
+                                base_joffset,
+                                base_koffset,
+                                d2Psi,
+                            )
 
                 # ----------------------
                 # j-j block
@@ -4283,65 +4375,68 @@ class IPCMPM:
                     for d in ti.static(range(config.DIM)):
                         self.friction_grad[config.DIM * base_joffset + d] += dPsi_dx1[d]
 
-                    for k in range(self.mpm.offset[jp]):
-                        base_knode = self.mpm.LnID[jp, k]
-                        base_koffset = self.mpm.node2dof[base_knode] - 1
-                        dpoint_dx2 = self.mpm.shape[jp, k] * ti.Matrix.identity(ti.f64, config.DIM)
-                        d2Psi = dpoint_dx1 @ d2dispbar_d2point @ dpoint_dx2.transpose()
-                        slot = raw_base + c * contact_pair_capacity + pair_capacity + j * support_capacity + k
-                        self._write_friction_block_fixed_slot(
-                            slot,
-                            stored_end,
-                            base_joffset,
-                            base_koffset,
-                            d2Psi,
-                        )
+                    if ti.static(need_matrix):
+                        for k in range(self.mpm.offset[jp]):
+                            base_knode = self.mpm.LnID[jp, k]
+                            base_koffset = self.mpm.node2dof[base_knode] - 1
+                            dpoint_dx2 = self.mpm.shape[jp, k] * ti.Matrix.identity(ti.f64, config.DIM)
+                            d2Psi = dpoint_dx1 @ d2dispbar_d2point @ dpoint_dx2.transpose()
+                            slot = raw_base + c * contact_pair_capacity + pair_capacity + j * support_capacity + k
+                            self._write_friction_block_fixed_slot(
+                                slot,
+                                stored_end,
+                                base_joffset,
+                                base_koffset,
+                                d2Psi,
+                            )
 
                 # ----------------------
                 # i-j block
                 # ----------------------
-                for j in range(self.mpm.offset[ip]):
-                    base_jnode = self.mpm.LnID[ip, j]
-                    base_joffset = self.mpm.node2dof[base_jnode] - 1
-                    dpoint_dx1 = self.mpm.shape[ip, j] * ti.Matrix.identity(ti.f64, config.DIM)
-                    # ddist_dx1 = ddist_ip @ dpoint_dx1
+                if ti.static(need_matrix):
+                    for j in range(self.mpm.offset[ip]):
+                        base_jnode = self.mpm.LnID[ip, j]
+                        base_joffset = self.mpm.node2dof[base_jnode] - 1
+                        dpoint_dx1 = self.mpm.shape[ip, j] * ti.Matrix.identity(ti.f64, config.DIM)
+                        # ddist_dx1 = ddist_ip @ dpoint_dx1
 
-                    for k in range(self.mpm.offset[jp]):
-                        base_knode = self.mpm.LnID[jp, k]
-                        base_koffset = self.mpm.node2dof[base_knode] - 1
-                        dpoint_dx2 = self.mpm.shape[jp, k] * ti.Matrix.identity(ti.f64, config.DIM)
-                        d2Psi = -(dpoint_dx1 @ d2dispbar_d2point @ dpoint_dx2.transpose())
-                        slot = raw_base + c * contact_pair_capacity + 2 * pair_capacity + j * support_capacity + k
-                        self._write_friction_block_fixed_slot(
-                            slot,
-                            stored_end,
-                            base_joffset,
-                            base_koffset,
-                            d2Psi,
-                        )
+                        for k in range(self.mpm.offset[jp]):
+                            base_knode = self.mpm.LnID[jp, k]
+                            base_koffset = self.mpm.node2dof[base_knode] - 1
+                            dpoint_dx2 = self.mpm.shape[jp, k] * ti.Matrix.identity(ti.f64, config.DIM)
+                            d2Psi = -(dpoint_dx1 @ d2dispbar_d2point @ dpoint_dx2.transpose())
+                            slot = raw_base + c * contact_pair_capacity + 2 * pair_capacity + j * support_capacity + k
+                            self._write_friction_block_fixed_slot(
+                                slot,
+                                stored_end,
+                                base_joffset,
+                                base_koffset,
+                                d2Psi,
+                            )
 
                 # ----------------------
                 # j-i block
                 # ----------------------
-                for j in range(self.mpm.offset[jp]):
-                    base_jnode = self.mpm.LnID[jp, j]
-                    base_joffset = self.mpm.node2dof[base_jnode] - 1
-                    dpoint_dx1 = self.mpm.shape[jp, j] * ti.Matrix.identity(ti.f64, config.DIM)
-                    # ddist_dx1 = ddist_jp @ dpoint_dx1
+                if ti.static(need_matrix):
+                    for j in range(self.mpm.offset[jp]):
+                        base_jnode = self.mpm.LnID[jp, j]
+                        base_joffset = self.mpm.node2dof[base_jnode] - 1
+                        dpoint_dx1 = self.mpm.shape[jp, j] * ti.Matrix.identity(ti.f64, config.DIM)
+                        # ddist_dx1 = ddist_jp @ dpoint_dx1
 
-                    for k in range(self.mpm.offset[ip]):
-                        base_knode = self.mpm.LnID[ip, k]
-                        base_koffset = self.mpm.node2dof[base_knode] - 1
-                        dpoint_dx2 = self.mpm.shape[ip, k] * ti.Matrix.identity(ti.f64, config.DIM)
-                        d2Psi = -(dpoint_dx1 @ d2dispbar_d2point @ dpoint_dx2.transpose())
-                        slot = raw_base + c * contact_pair_capacity + 3 * pair_capacity + j * support_capacity + k
-                        self._write_friction_block_fixed_slot(
-                            slot,
-                            stored_end,
-                            base_joffset,
-                            base_koffset,
-                            d2Psi,
-                        )
+                        for k in range(self.mpm.offset[ip]):
+                            base_knode = self.mpm.LnID[ip, k]
+                            base_koffset = self.mpm.node2dof[base_knode] - 1
+                            dpoint_dx2 = self.mpm.shape[ip, k] * ti.Matrix.identity(ti.f64, config.DIM)
+                            d2Psi = -(dpoint_dx1 @ d2dispbar_d2point @ dpoint_dx2.transpose())
+                            slot = raw_base + c * contact_pair_capacity + 3 * pair_capacity + j * support_capacity + k
+                            self._write_friction_block_fixed_slot(
+                                slot,
+                                stored_end,
+                                base_joffset,
+                                base_koffset,
+                                d2Psi,
+                            )
 
     @ti.kernel
     def compute_normal_contact_force(self):

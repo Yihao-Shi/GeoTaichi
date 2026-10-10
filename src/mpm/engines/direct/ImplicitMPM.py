@@ -8,6 +8,9 @@ from src.physics_model.consititutive_model.finite_strain.NeoHookean import NeoHo
 from src.physics_model.consititutive_model.finite_strain.DruckerPrager import (
     FiniteStrainDruckerPragerModel,
 )
+from src.physics_model.consititutive_model.finite_strain.StateDependentDruckerPrager import (
+    StateDependentDruckerPragerModel,
+)
 from src.physics_model.consititutive_model.finite_strain.VonMises import (
     FiniteStrainVonMisesModel,
 )
@@ -26,6 +29,8 @@ class ImplicitMPM(MPMSolver):
         material_key = str(material).replace("-", "").replace("_", "").replace(" ", "").lower()
         if material_key in ("neohookean", "neohookeanmodel", "neo"):
             self.material = NeoHookeanModel().initialize_from_kwargs(**kwargs)
+        elif material_key in ("statedependentdruckerprager", "statedependentdruckerpragermodel"):
+            self.material = StateDependentDruckerPragerModel().initialize_from_kwargs(**kwargs)
         elif material_key in (
             "druckerprager",
             "druckerpragermodel",
@@ -60,6 +65,8 @@ class ImplicitMPM(MPMSolver):
         else:
             raise ValueError(f"Unsupported direct implicit finite-strain material: {material}")
         super().__init__(bodies, dirichlet, neumann, **kwargs)
+        if getattr(self.material, "is_state_dependent", False) and self.configuration != "UL":
+            raise ValueError("StateDependentDruckerPrager currently requires Direct implicit ULMPM")
         self.assemble_neumann_step = self.apply_neumann if self.neumann.num > 0 else no_operation
         self.apply_dirichlet_step = self.apply_dirichlet_hash if self.dirichlet.num > 0 else no_operation
         self.add_neumann_energy_step = self.get_neumann_energy if self.neumann.num > 0 else no_operation

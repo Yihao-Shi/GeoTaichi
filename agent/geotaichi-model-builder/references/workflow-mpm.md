@@ -75,6 +75,14 @@ Verify:
 
 Do not use a tangent approximation to hide a constitutive derivative error.
 
+Direct `MPM.add_element({"ShapeFunction": "QuadBSpline", ...})` uses three
+nodes per axis, with the existing first/second/penultimate/last-node boundary
+polynomials. Each grid axis requires at least four nodes. Particles inside
+the grid keep partition of unity and linear reproduction near its boundary;
+particles outside still fail. Values, gradients and IPC shape Hessians must
+use the same boundary type. In axisymmetry, check an affine radial field
+against both radial and hoop stretches and retain the revolved measures.
+
 ## 5. Resolution and capacity
 
 Interpret `nParticlesPerCell` per coordinate axis. A value `q` creates up to
@@ -96,6 +104,16 @@ Size `max_particle_number` for initial generation plus adaptive splitting or
 insertion. Size constraint capacities for every boundary type used.
 
 ## 6. Validation
+
+The independent finite-strain `StateDependentDruckerPrager` model is supported
+only on a Direct implicit ULMPM child of FEM--MPM, IGA--MPM, or 3D MPM--ABD IPC.
+It requires the physical residual/BiCGSTAB path; do not select standalone
+Direct stepping, Native MPM, TLMPM, or LSMPM by analogy. See
+`src/mpm/README.md` for the SDMC evolution parameters. Ordinary DP is unchanged.
+Validation should check the evolving-angle Jacobian by finite differences,
+void ratio against total volume, all 14 history entries on rollback/restart,
+and independent lagged-friction convergence. Parameter/history adjoints for
+this model are unsupported.
 
 Check mass/volume, force balance, energy where applicable, boundary activation,
 finite state, pressure-domain connectivity for fluids, convergence histories

@@ -444,6 +444,10 @@ refreshed and the unapplied coupled correction is measured in velocity units:
 =\frac{\|\Delta\boldsymbol{q}_{unapplied}\|_{\infty}}{\Delta t}.
 ```
 
+Here the norm measures physical ABD surface and FEM nodal displacement, rather
+than affine-control coefficients. Inner Newton and the refreshed probe use this
+same norm, and the first force reference persists across the attempted step's
+friction refreshes. A small nonzero force does not bypass the updated probe.
 The outer fixed point is accepted only when
 $`\varepsilon_f\leq\varepsilon_{tol}`$. A failed Newton solve, line search,
 friction fixed point, or time step restores both children to their accepted

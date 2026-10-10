@@ -62,14 +62,14 @@
           "name": "add_engine",
           "signature": "add_engine(self)",
           "source": "src/mpm/mainMPM.py",
-          "line": 879,
+          "line": 883,
           "doc": ""
         },
         {
           "name": "add_essentials",
           "signature": "add_essentials(self, **kwargs)",
           "source": "src/mpm/mainMPM.py",
-          "line": 961,
+          "line": 965,
           "doc": ""
         },
         {
@@ -104,14 +104,14 @@
           "name": "add_postfunctions",
           "signature": "add_postfunctions(self, **functions)",
           "source": "src/mpm/mainMPM.py",
-          "line": 939,
+          "line": 943,
           "doc": ""
         },
         {
           "name": "add_recorder",
           "signature": "add_recorder(self)",
           "source": "src/mpm/mainMPM.py",
-          "line": 928,
+          "line": 932,
           "doc": ""
         },
         {
@@ -125,14 +125,14 @@
           "name": "add_solver",
           "signature": "add_solver(self, **kwargs)",
           "source": "src/mpm/mainMPM.py",
-          "line": 932,
+          "line": 936,
           "doc": ""
         },
         {
           "name": "add_spatial_grid",
           "signature": "add_spatial_grid(self)",
           "source": "src/mpm/mainMPM.py",
-          "line": 873,
+          "line": 877,
           "doc": ""
         },
         {
@@ -146,7 +146,7 @@
           "name": "check_critical_timestep",
           "signature": "check_critical_timestep(self)",
           "source": "src/mpm/mainMPM.py",
-          "line": 1031,
+          "line": 1035,
           "doc": ""
         },
         {
@@ -181,7 +181,7 @@
           "name": "delete_particles",
           "signature": "delete_particles(self, bodyID=None, region_name=None, function=None)",
           "source": "src/mpm/mainMPM.py",
-          "line": 1053,
+          "line": 1057,
           "doc": ""
         },
         {
@@ -195,7 +195,7 @@
           "name": "differentiable",
           "signature": "differentiable(self, steps=None)",
           "source": "src/mpm/mainMPM.py",
-          "line": 942,
+          "line": 946,
           "doc": "Create a fixed-step tape for Direct ULMPM BarrierIPC."
         },
         {
@@ -216,7 +216,7 @@
           "name": "postprocessing",
           "signature": "postprocessing(self, start_file=0, end_file=-1, read_path=None, write_path=None, **kwargs)",
           "source": "src/mpm/mainMPM.py",
-          "line": 1067,
+          "line": 1071,
           "doc": ""
         },
         {
@@ -265,14 +265,14 @@
           "name": "run",
           "signature": "run(self, visualize=False, **kwargs)",
           "source": "src/mpm/mainMPM.py",
-          "line": 1006,
+          "line": 1010,
           "doc": ""
         },
         {
           "name": "save_data",
           "signature": "save_data(self)",
           "source": "src/mpm/mainMPM.py",
-          "line": 1062,
+          "line": 1066,
           "doc": ""
         },
         {
@@ -321,14 +321,14 @@
           "name": "set_window",
           "signature": "set_window(self, window)",
           "source": "src/mpm/mainMPM.py",
-          "line": 958,
+          "line": 962,
           "doc": ""
         },
         {
           "name": "update_particle_properties",
           "signature": "update_particle_properties(self, property_name, value, override=True, bodyID=None, region_name=None, function=None)",
           "source": "src/mpm/mainMPM.py",
-          "line": 1040,
+          "line": 1044,
           "doc": ""
         },
         {
@@ -1030,7 +1030,7 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 972,
+              "line": 976,
               "reader": "GetAlternative"
             }
           ]
@@ -1405,7 +1405,7 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 745,
+              "line": 749,
               "reader": "GetOptional"
             }
           ]
@@ -1480,7 +1480,7 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 741,
+              "line": 745,
               "reader": "GetOptional"
             }
           ]
@@ -1735,7 +1735,7 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 969,
+              "line": 973,
               "reader": "GetAlternative"
             }
           ]
@@ -1865,7 +1865,7 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 937,
+              "line": 941,
               "reader": "GetAlternative"
             }
           ]
@@ -1960,7 +1960,7 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 965,
+              "line": 969,
               "reader": "GetAlternative"
             }
           ]
@@ -1970,7 +1970,7 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 743,
+              "line": 747,
               "reader": "GetOptional"
             }
           ]
@@ -2025,7 +2025,7 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 985,
+              "line": 989,
               "reader": "GetAlternative"
             }
           ]
@@ -2035,7 +2035,7 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 988,
+              "line": 992,
               "reader": "GetAlternative"
             }
           ]
@@ -2045,7 +2045,7 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 988,
+              "line": 992,
               "reader": "GetAlternative"
             }
           ]
@@ -2370,7 +2370,7 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 982,
+              "line": 986,
               "reader": "GetAlternative"
             }
           ]
@@ -3625,7 +3625,7 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 1012,
+              "line": 1016,
               "reader": "GetAlternative"
             }
           ]
@@ -3860,7 +3860,7 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 935,
+              "line": 939,
               "reader": "GetAlternative"
             }
           ]
@@ -4155,7 +4155,7 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 750,
+              "line": 754,
               "reader": "GetOptional"
             }
           ]
@@ -4280,7 +4280,7 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 973,
+              "line": 977,
               "reader": "GetAlternative"
             }
           ]
@@ -4920,7 +4920,7 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 1011,
+              "line": 1015,
               "reader": "GetAlternative"
             }
           ]
@@ -5020,7 +5020,7 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 1021,
+              "line": 1025,
               "reader": "GetAlternative"
             }
           ]
@@ -5100,7 +5100,7 @@
             },
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 1027,
+              "line": 1031,
               "reader": "GetAlternative"
             }
           ]
@@ -10753,7 +10753,7 @@
           "name": "check_critical_timestep",
           "signature": "check_critical_timestep(self)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 805,
+          "line": 811,
           "doc": ""
         },
         {
@@ -10774,7 +10774,7 @@
           "name": "get_critical_timestep",
           "signature": "get_critical_timestep(self)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 833,
+          "line": 839,
           "doc": ""
         },
         {
@@ -10823,7 +10823,7 @@
           "name": "postprocessing",
           "signature": "postprocessing(self, start_file=0, end_file=-1, read_path=None, write_path=None, scheme=None, **kwargs)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 843,
+          "line": 849,
           "doc": ""
         },
         {
@@ -10865,21 +10865,21 @@
           "name": "run",
           "signature": "run(self, **kwargs)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 793,
+          "line": 799,
           "doc": ""
         },
         {
           "name": "run_dem_lsm_pm_soft_rigid",
           "signature": "run_dem_lsm_pm_soft_rigid(self, **kwargs)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 746,
+          "line": 752,
           "doc": ""
         },
         {
           "name": "run_direct_mpm_affine_ipc",
           "signature": "run_direct_mpm_affine_ipc(self, **kwargs)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 674,
+          "line": 680,
           "doc": ""
         },
         {
@@ -10893,7 +10893,7 @@
           "name": "save_data",
           "signature": "save_data(self)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 838,
+          "line": 844,
           "doc": ""
         },
         {
@@ -10933,6 +10933,16 @@
         }
       ],
       "configuration_keys": [
+        {
+          "name": "absolute_tolerance",
+          "locations": [
+            {
+              "source": "src/mpdem/mainDEMPM.py",
+              "line": 674,
+              "reader": "get"
+            }
+          ]
+        },
         {
           "name": "AdaptiveStep",
           "locations": [
@@ -11249,6 +11259,16 @@
           ]
         },
         {
+          "name": "inexact_newton",
+          "locations": [
+            {
+              "source": "src/mpdem/mainDEMPM.py",
+              "line": 671,
+              "reader": "get"
+            }
+          ]
+        },
+        {
           "name": "max_particle_contact_pairs",
           "locations": [
             {
@@ -11388,7 +11408,7 @@
             },
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 680,
+              "line": 686,
               "reader": "GetAlternative"
             }
           ]
@@ -11418,7 +11438,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 697,
+              "line": 703,
               "reader": "GetAlternative"
             }
           ]
@@ -11430,6 +11450,16 @@
               "source": "src/mpdem/mainDEMPM.py",
               "line": 515,
               "reader": "GetAlternative"
+            }
+          ]
+        },
+        {
+          "name": "residual_tolerance",
+          "locations": [
+            {
+              "source": "src/mpdem/mainDEMPM.py",
+              "line": 675,
+              "reader": "get"
             }
           ]
         },
@@ -11593,7 +11623,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 748,
+              "line": 754,
               "reader": "GetAlternative"
             }
           ]
@@ -11673,7 +11703,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 707,
+              "line": 713,
               "reader": "GetAlternative"
             }
           ]
@@ -11693,7 +11723,7 @@
             },
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 747,
+              "line": 753,
               "reader": "GetAlternative"
             }
           ]
@@ -11806,7 +11836,7 @@
       ],
       "summary": {
         "method_count": 31,
-        "configuration_key_count": 62,
+        "configuration_key_count": 65,
         "example_count": 83
       }
     },
@@ -11860,7 +11890,7 @@
           "name": "check_critical_timestep",
           "signature": "check_critical_timestep(self)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 805,
+          "line": 811,
           "doc": ""
         },
         {
@@ -11881,7 +11911,7 @@
           "name": "get_critical_timestep",
           "signature": "get_critical_timestep(self)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 833,
+          "line": 839,
           "doc": ""
         },
         {
@@ -11930,7 +11960,7 @@
           "name": "postprocessing",
           "signature": "postprocessing(self, start_file=0, end_file=-1, read_path=None, write_path=None, scheme=None, **kwargs)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 843,
+          "line": 849,
           "doc": ""
         },
         {
@@ -11972,21 +12002,21 @@
           "name": "run",
           "signature": "run(self, **kwargs)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 793,
+          "line": 799,
           "doc": ""
         },
         {
           "name": "run_dem_lsm_pm_soft_rigid",
           "signature": "run_dem_lsm_pm_soft_rigid(self, **kwargs)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 746,
+          "line": 752,
           "doc": ""
         },
         {
           "name": "run_direct_mpm_affine_ipc",
           "signature": "run_direct_mpm_affine_ipc(self, **kwargs)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 674,
+          "line": 680,
           "doc": ""
         },
         {
@@ -12000,7 +12030,7 @@
           "name": "save_data",
           "signature": "save_data(self)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 838,
+          "line": 844,
           "doc": ""
         },
         {
@@ -12040,6 +12070,16 @@
         }
       ],
       "configuration_keys": [
+        {
+          "name": "absolute_tolerance",
+          "locations": [
+            {
+              "source": "src/mpdem/mainDEMPM.py",
+              "line": 674,
+              "reader": "get"
+            }
+          ]
+        },
         {
           "name": "AdaptiveStep",
           "locations": [
@@ -12321,6 +12361,16 @@
           ]
         },
         {
+          "name": "inexact_newton",
+          "locations": [
+            {
+              "source": "src/mpdem/mainDEMPM.py",
+              "line": 671,
+              "reader": "get"
+            }
+          ]
+        },
+        {
           "name": "max_particle_contact_pairs",
           "locations": [
             {
@@ -12390,7 +12440,7 @@
             },
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 680,
+              "line": 686,
               "reader": "GetAlternative"
             }
           ]
@@ -12420,7 +12470,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 697,
+              "line": 703,
               "reader": "GetAlternative"
             }
           ]
@@ -12432,6 +12482,16 @@
               "source": "src/mpdem/mainDEMPM.py",
               "line": 515,
               "reader": "GetAlternative"
+            }
+          ]
+        },
+        {
+          "name": "residual_tolerance",
+          "locations": [
+            {
+              "source": "src/mpdem/mainDEMPM.py",
+              "line": 675,
+              "reader": "get"
             }
           ]
         },
@@ -12545,7 +12605,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 748,
+              "line": 754,
               "reader": "GetAlternative"
             }
           ]
@@ -12595,7 +12655,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 707,
+              "line": 713,
               "reader": "GetAlternative"
             }
           ]
@@ -12615,7 +12675,7 @@
             },
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 747,
+              "line": 753,
               "reader": "GetAlternative"
             }
           ]
@@ -12679,7 +12739,7 @@
       ],
       "summary": {
         "method_count": 31,
-        "configuration_key_count": 50,
+        "configuration_key_count": 53,
         "example_count": 14
       }
     },
@@ -15865,7 +15925,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 66,
+              "line": 68,
               "reader": "get"
             }
           ]
@@ -15875,7 +15935,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 87,
+              "line": 89,
               "reader": "get"
             }
           ]
@@ -15885,7 +15945,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 87,
+              "line": 89,
               "reader": "get"
             }
           ]
@@ -15935,7 +15995,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 136,
+              "line": 145,
               "reader": "get"
             }
           ]
@@ -15955,7 +16015,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 68,
+              "line": 70,
               "reader": "get"
             }
           ]
@@ -15985,7 +16045,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 81,
+              "line": 83,
               "reader": "get"
             },
             {
@@ -16021,11 +16081,21 @@
           ]
         },
         {
+          "name": "inexact_newton",
+          "locations": [
+            {
+              "source": "src/fempm/ImplicitEngine.py",
+              "line": 96,
+              "reader": "get"
+            }
+          ]
+        },
+        {
           "name": "line_search_energy_atol",
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 79,
+              "line": 81,
               "reader": "get"
             }
           ]
@@ -16035,7 +16105,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 78,
+              "line": 80,
               "reader": "get"
             }
           ]
@@ -16045,7 +16115,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 76,
+              "line": 78,
               "reader": "get"
             }
           ]
@@ -16055,7 +16125,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 77,
+              "line": 79,
               "reader": "get"
             }
           ]
@@ -16065,7 +16135,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 74,
+              "line": 76,
               "reader": "get"
             }
           ]
@@ -16075,7 +16145,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 75,
+              "line": 77,
               "reader": "get"
             }
           ]
@@ -16085,7 +16155,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 89,
+              "line": 91,
               "reader": "get"
             }
           ]
@@ -16095,7 +16165,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 95,
+              "line": 104,
               "reader": "get"
             }
           ]
@@ -16105,7 +16175,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 93,
+              "line": 95,
               "reader": "get"
             }
           ]
@@ -16115,7 +16185,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 92,
+              "line": 94,
               "reader": "get"
             }
           ]
@@ -16145,7 +16215,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 64,
+              "line": 66,
               "reader": "get"
             }
           ]
@@ -16155,7 +16225,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 64,
+              "line": 66,
               "reader": "get"
             }
           ]
@@ -16225,7 +16295,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 70,
+              "line": 72,
               "reader": "get"
             }
           ]
@@ -16265,7 +16335,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 73,
+              "line": 75,
               "reader": "get"
             }
           ]
@@ -16285,7 +16355,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 65,
+              "line": 67,
               "reader": "get"
             }
           ]
@@ -16295,7 +16365,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 65,
+              "line": 67,
               "reader": "get"
             }
           ]
@@ -16365,7 +16435,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 82,
+              "line": 84,
               "reader": "get"
             },
             {
@@ -16380,7 +16450,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 84,
+              "line": 86,
               "reader": "get"
             },
             {
@@ -16395,7 +16465,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 83,
+              "line": 85,
               "reader": "get"
             },
             {
@@ -16471,7 +16541,7 @@
       ],
       "summary": {
         "method_count": 19,
-        "configuration_key_count": 56,
+        "configuration_key_count": 57,
         "example_count": 6
       }
     },
@@ -17894,6 +17964,8 @@
         "fem/keys/A0"
       ],
       "absolute_tolerance": [
+        "mpdem/keys/absolute_tolerance",
+        "cfdem/keys/absolute_tolerance",
         "fem/keys/absolute_tolerance",
         "fedem/keys/absolute_tolerance",
         "fempm/keys/absolute_tolerance"
@@ -18784,6 +18856,11 @@
       ],
       "InertiaMoment": [
         "dem/keys/InertiaMoment"
+      ],
+      "inexact_newton": [
+        "mpdem/keys/inexact_newton",
+        "cfdem/keys/inexact_newton",
+        "fempm/keys/inexact_newton"
       ],
       "initial_velocity": [
         "fem/keys/initial_velocity"
@@ -19686,6 +19763,8 @@
       ],
       "residual_tolerance": [
         "mpm/keys/residual_tolerance",
+        "mpdem/keys/residual_tolerance",
+        "cfdem/keys/residual_tolerance",
         "fem/keys/residual_tolerance",
         "fedem/keys/residual_tolerance",
         "fempm/keys/residual_tolerance"

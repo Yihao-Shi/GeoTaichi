@@ -41,9 +41,7 @@ def _mock_engine(iterations=3, tolerance=0.05, max_iterations=10):
         },
     )()
     engine.events = []
-    engine.refresh_lagged_friction_cache = lambda grid_disp: engine.events.append(
-        ("refresh", grid_disp)
-    )
+    engine.refresh_lagged_friction_cache = lambda grid_disp: engine.events.append(("refresh", grid_disp))
     engine.assemble_barrier_system = lambda: engine.events.append(("barrier",))
     engine.assemble_friction_system = lambda: engine.events.append(("friction",))
 
@@ -58,9 +56,7 @@ def _mock_engine(iterations=3, tolerance=0.05, max_iterations=10):
     engine._test_external_correction = np.empty(0, dtype=np.float64)
 
     def load_external_correction(correction):
-        engine._test_external_correction = np.asarray(
-            correction, dtype=np.float64
-        ).reshape(-1)
+        engine._test_external_correction = np.asarray(correction, dtype=np.float64).reshape(-1)
         return engine._test_external_correction
 
     engine._load_external_correction = load_external_correction
@@ -76,9 +72,7 @@ def test_iga_lagged_outer_refreshes_only_between_complete_inner_solves():
     inner_refresh_counts = []
 
     def inner_solve(current, outer_iteration):
-        inner_refresh_counts.append(
-            sum(event[0] == "refresh" for event in current.events)
-        )
+        inner_refresh_counts.append(sum(event[0] == "refresh" for event in current.events))
         current.events.append(("inner", outer_iteration))
         return {"outer": outer_iteration}
 
@@ -86,15 +80,17 @@ def test_iga_lagged_outer_refreshes_only_between_complete_inner_solves():
         current.events.append(("probe",))
         return {"correction": np.array([next(corrections), 0.0])}
 
-    result = engine.solve_lagged_friction_fixed_point(
-        inner_solve, updated_system
-    )
+    result = engine.solve_lagged_friction_fixed_point(inner_solve, updated_system)
 
     assert inner_refresh_counts == [1, 2]
     assert [event[0] for event in engine.events] == [
         "refresh",
-        "inner", "refresh", "probe",
-        "inner", "refresh", "probe",
+        "inner",
+        "refresh",
+        "probe",
+        "inner",
+        "refresh",
+        "probe",
     ]
     assert result["iterations"] == 2
     assert result["residual"] == 0.01
@@ -166,7 +162,7 @@ def test_iga_device_builtin_probe_keeps_full_correction_on_device():
 
     class DeviceCorrection:
         def __array__(self, *_args, **_kwargs):
-                raise AssertionError("device convergence probe copied correction to NumPy")
+            raise AssertionError("device convergence probe copied correction to NumPy")
 
     class DeviceMatrix:
         def solve_flat_system(self, rhs, correction, **kwargs):
@@ -185,14 +181,12 @@ def test_iga_device_builtin_probe_keeps_full_correction_on_device():
                 "solution_inf_norm": 0.01,
             }
 
-    engine.assemble_monolithic_newton_system = (
-        lambda include_friction: {
-            "matrix": DeviceMatrix(),
-            "rhs": "device_rhs",
-            "correction": DeviceCorrection(),
-            "active_nodes": 4,
-        }
-    )
+    engine.assemble_monolithic_newton_system = lambda include_friction: {
+        "matrix": DeviceMatrix(),
+        "rhs": "device_rhs",
+        "correction": DeviceCorrection(),
+        "active_nodes": 4,
+    }
     engine._solve_monolithic_linear_system = lambda system, linear_solve=None: (
         system["matrix"].solve_flat_system(
             system["rhs"],
@@ -208,6 +202,26 @@ def test_iga_device_builtin_probe_keeps_full_correction_on_device():
 
     assert result["converged"] is True
     assert result["residual"] == 0.01
+
+
+def test_nonassociated_friction_probe_requires_updated_force_balance():
+    engine = _mock_engine(iterations=1, tolerance=1e-7)
+    engine.activate_fric = True
+    engine.nonassociated_newton = True
+    engine.iga.dt = engine.mpm.dt = 0.001
+    engine._device_monolithic_available = lambda include_friction: True
+    engine._save_device_monolithic_entry_displacements = lambda: None
+    engine._restore_device_monolithic_entry_displacements = lambda: None
+    engine.solve_monolithic_newton = lambda **kwargs: {"converged": True, "force_tolerance": 1e-6}
+    engine.assemble_monolithic_newton_system = lambda **kwargs: {"active_dof": 6, "active_mpm_dof": 4}
+    engine._solve_monolithic_linear_system = lambda *args, **kwargs: {"converged": True}
+    engine._device_monolithic_correction_residual = lambda *args: 1e-9
+    engine._device_monolithic_free_rhs_norm = lambda n: 1e-3
+
+    result = engine.solve_lagged_friction_fixed_point()
+    assert result["residual"] < engine.friction_tolerance
+    assert result["force_residual"] == pytest.approx(1e-3)
+    assert not result["converged"]
 
 
 def test_iga_builtin_inner_failure_is_hard_error_and_rolls_back():

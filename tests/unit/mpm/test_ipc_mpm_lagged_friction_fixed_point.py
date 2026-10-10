@@ -114,6 +114,7 @@ def test_external_coupled_adjoint_reuses_device_plastic_pullback():
     ipc.mpm = SimpleNamespace(material=type("FiniteStrainVonMisesModel", (), {})())
     events = []
     ipc.gravity_vjp = object()
+    ipc.material_parameter_vjp = _FillField()
     ipc.friction_parameter_vjp = _FillField()
     ipc._differentiate_elastic_gravity = lambda: events.append("gravity")
     ipc._differentiate_plastic_input_history = lambda: events.append("history")
@@ -127,6 +128,7 @@ def test_external_coupled_adjoint_reuses_device_plastic_pullback():
 
 def test_external_coupled_adjoint_splits_particle_prepare_and_finish():
     ipc = object.__new__(IPCMPM)
+    ipc.material_parameter_vjp = _FillField()
     events = []
     ipc._validate_plastic_particle_adjoint_configuration = lambda: events.append("validate")
     ipc._differentiate_plastic_commit_state = lambda: events.append("commit")
@@ -137,7 +139,7 @@ def test_external_coupled_adjoint_splits_particle_prepare_and_finish():
     assert events == ["validate", "commit", "advection"]
 
     events.clear()
-    ipc.pullback_plastic_equilibrium_from_current_adjoint_device = lambda: events.append("equilibrium")
+    ipc.pullback_plastic_equilibrium_from_current_adjoint_device = lambda **kwargs: events.append("equilibrium")
     ipc._differentiate_inertia_input_state = lambda: events.append("inertia")
     ipc._differentiate_material_position = lambda: events.append("material")
     ipc.curr_barrier_contact_num = 1

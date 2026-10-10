@@ -812,7 +812,7 @@ class FEMAffineIPCEngine:
     def _updated_friction_residual(self):
         system = self.assemble_system(need_matrix=True)
         self._reduce_metrics()
-        if math.sqrt(max(float(self.residual_squared[None]), 0.0)) <= self.absolute_tolerance:
+        if float(self.residual_squared[None]) == 0.0:
             return 0.0
         self._solve_linear_system(system)
         self._split_direction()
@@ -1048,7 +1048,7 @@ class FEMAffineIPCEngine:
         record["kinetic_energy"] = float(self.fem.state.kinetic_energy[None])
 
     def _solve_frozen_friction_newton(self, verbose=False):
-        initial_norm = None
+        initial_norm = getattr(self, "_friction_force_reference", None)
         converged = False
         records = []
         semi_progress = 0.0
@@ -1062,6 +1062,7 @@ class FEMAffineIPCEngine:
             residual = math.sqrt(max(float(self.residual_squared[None]), 0.0))
             if initial_norm is None:
                 initial_norm = max(residual, 1.0)
+                self._friction_force_reference = initial_norm
             convergence_tolerance = self.absolute_tolerance + self.residual_tolerance * initial_norm
             records.append(
                 {
@@ -1123,6 +1124,7 @@ class FEMAffineIPCEngine:
         outer_records = []
         friction_residuals = []
         converged = True
+        self._friction_force_reference = None
         self.last_friction_iterations = 0
         self.last_friction_residual = 0.0 if not activate_friction else math.inf
         self.last_friction_converged = not activate_friction

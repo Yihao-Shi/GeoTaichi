@@ -194,18 +194,27 @@ finite-strain von Mises on the MPM side. Then call
 `choose_contact_model("IPC", dhat=..., kappa=...,
 friction_coefficient=..., friction_mode="lagged")`. The coupled solver owns a
 single FEM-node/active-MPM-grid Newton system, analytic PT Hessian pullback,
-PSD projection, CCD/ACCD and Armijo. `assemble_type` is `COO` or
+CCD/ACCD and Armijo. `assemble_type` is `COO` or
 `HashTriplet`; `linear_solver="PCG"` stays on the Taichi device and `Scipy` is
 the explicit host option. Current/swept candidates are rebuilt per query, so
 implicit IPC has no Verlet multiplier. FEM remains elastic. The DP path
 accepts independent constant `DilationAngle` (default `FrictionAngle`) and is
-perfect plastic. Nonassociated DP uses a converged material outer loop around
-symmetric PCG/energy-Armijo inner solves, checking actual stress and predicted
-plastic-volume mismatch. Equivalent shifts in its tensile cap are not errors.
-Particle-local Aitken relaxation damps predictor updates; the physical
-convergence criterion remains unrelaxed.
-Von Mises accepts optional `HardeningModulus`. Both plastic models require Direct ULMPM,
-default to PSD projection, and cannot be combined with standalone child IPC.
+perfect plastic. Nonassociated DP instead selects the physical nonsymmetric
+Jacobian and Taichi BiCGSTAB with residual Armijo, removing the material outer
+loop. The lagged-friction fixed point remains independent, including for
+cloth FEM. `set_solver({"inexact_newton": True, ...})` optionally adapts linear
+accuracy while preserving force convergence; its default is `False` because
+extra Newton assemblies can outweigh linear savings on small systems.
+`StateDependentDruckerPrager` optionally replaces constant angles with SDMC's
+void-ratio/previous-pressure law. Supply `fai_c` (degrees), `e0`, `e_Tao`,
+`lambda_c`, `ksi`, `nd`, and `nf`; its default cone is `MiddleCircumscribed`.
+It always follows physical residual/BiCGSTAB, has no constitutive outer loop,
+and keeps the lagged-friction iteration. All 14 history entries must participate
+in rollback/checkpoints. This law is also supported by standalone lagged MPM--IPC, IGA--MPM, and 3D
+Direct MPM--ABD IPC, with parameter/history adjoints unsupported.
+Von Mises accepts optional `HardeningModulus`. These plastic models require
+Direct ULMPM and cannot be combined with standalone child IPC; associated
+materials retain projected symmetric PCG.
 The FEM internal formulation remains Total Lagrangian with a fixed rest shape;
 Direct plastic MPM is Updated Lagrangian, and IPC contact is evaluated in the
 current spatial configuration.
@@ -223,7 +232,37 @@ and CCD/ACCD. Axisymmetric FEM/MPM material maps include
 `F_theta_theta=r/R`, and reference volume/contact measures include `2*pi*R`.
 The DEM-style explicit branch remains 3D only.
 
-## 9. Explicit IGA--MPM
+All lagged-friction routes retain frozen data through a complete inner solve,
+refresh once, and evaluate an unapplied, unclamped correction probe. Direct MPM
+uses the shared `src/mpm/engines/direct/Convergence.py` measure in native IPC,
+FEM--MPM, IGA--MPM, and MPM--ABD: particle motion, grid-spacing-scaled gradient,
+and axisymmetric hoop increment. FEM measures physical nodes; ABD measures
+physical surface vertices. SoftParticle--ABD also measures soft-point gradients
+with world-space template scaling. Force-based routes retain their first force
+reference across friction refreshes, resetting it per attempt. Nonassociated DP
+requires force, correction, prescribed motion, and contact convergence together,
+including after friction refresh; terminal inexact corrections need strict
+Krylov verification. Standalone lagged IPC uses physical DP, BiCGSTAB, and
+residual Armijo rather than a frozen material-consistency loop.
+
+## 9. IGA--MPM
+
+For implicit IPC with nonassociated DP, Newton must satisfy both the force
+criterion and the physical velocity-valued correction criterion. The force
+reference is retained across each attempted step's lagged-friction solves
+and reset on retry. Inner and updated-friction probes measure IGA control
+motion, MPM particle motion, grid-spacing-scaled displacement gradients,
+and the axisymmetric hoop increment. The refreshed friction force must also
+converge; do not accept a frozen inner solve alone. Terminal inexact
+corrections are rechecked with the configured Krylov accuracy. Keep physical
+parameters, tolerances, nodal masses, CCD, and line search unchanged when
+diagnosing weak grid-support modes.
+
+The flexible-barrier script can append its existing paired VTK sequence with
+`--resume latest_state.npz`; validate matching parameters/cadence, finite state,
+positive determinants, and contiguous matching frame indices first.
+
+### Explicit coupling
 
 Use `geotaichi.IGAMPM(iga, mpm, contact_model="Linear")` or
 `HertzMindlin` for MPM material points contacting deforming NURBS boundaries.

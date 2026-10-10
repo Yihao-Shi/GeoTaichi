@@ -6,7 +6,6 @@ import taichi as ti
 
 import src.igampm.config as config
 
-
 pytestmark = [pytest.mark.integration, pytest.mark.slow, pytest.mark.serial]
 
 
@@ -21,13 +20,9 @@ def _set_uniform_x_disp(node2dof: ti.template(), grid_disp: ti.template(), value
 
 
 def _set_coupled_displacement(iga, mpm, value):
-    iga.grid_disp.from_numpy(
-        np.ascontiguousarray(value[: iga.degree_of_freedom], dtype=np.float64)
-    )
+    iga.grid_disp.from_numpy(np.ascontiguousarray(value[: iga.degree_of_freedom], dtype=np.float64))
     mpm_value = np.zeros(mpm.degree_of_freedom, dtype=np.float64)
-    mpm_value[: mpm.active_dof] = value[
-        iga.degree_of_freedom : iga.degree_of_freedom + mpm.active_dof
-    ]
+    mpm_value[: mpm.active_dof] = value[iga.degree_of_freedom : iga.degree_of_freedom + mpm.active_dof]
     mpm.grid_disp.from_numpy(mpm_value)
 
 
@@ -48,8 +43,7 @@ def _fd_force_jacobian(force_function, displacement, step):
         perturbation = np.zeros_like(displacement)
         perturbation[column] = step
         jacobian[:, column] = (
-            force_function(displacement + perturbation)
-            - force_function(displacement - perturbation)
+            force_function(displacement + perturbation) - force_function(displacement - perturbation)
         ) / (2.0 * step)
     return jacobian
 
@@ -146,7 +140,9 @@ def test_igampm_friction_production_assembly(
 
     iga = _build_iga_rectangle(tmp_path / "iga")
     mpm = _build_mpm_particle(tmp_path / "mpm")
-    coupling = IGAMPM(iga, mpm, kappa=1.0e4, dhat=0.08, mu=0.5, epsv=1.0e-3, activate_friction=True, friction_nnz=20_000)
+    coupling = IGAMPM(
+        iga, mpm, kappa=1.0e4, dhat=0.08, mu=0.5, epsv=1.0e-3, activate_friction=True, friction_nnz=20_000
+    )
 
     coupling.initialize_friction()
     print(f"2D IGA-MPM friction contacts: {coupling.curr_friction_contact_num}")
@@ -166,6 +162,17 @@ def test_igampm_friction_production_assembly(
     ):
         displacement = amplitude * translation
         force, matrix = _evaluate_friction(coupling, iga, mpm, displacement)
+        gradient = coupling.friction_grad.to_numpy().copy()
+        raw_values = coupling.friction_hash_matrix.non_diag.blockH.to_numpy().copy()
+        diagonal = coupling.friction_hash_matrix.diag.to_numpy().copy()
+        raw_count = int(coupling.friction_hash_matrix.raw_non_diag_count[0])
+        coupling.friction_grad.fill(float("nan"))
+        coupling.assemble_friction_system(need_matrix=False)
+        np.testing.assert_allclose(coupling.friction_grad.to_numpy(), gradient, rtol=1e-12, atol=1e-12)
+        np.testing.assert_array_equal(coupling.friction_hash_matrix.non_diag.blockH.to_numpy(), raw_values)
+        np.testing.assert_array_equal(coupling.friction_hash_matrix.diag.to_numpy(), diagonal)
+        assert int(coupling.friction_hash_matrix.raw_non_diag_count[0]) == raw_count
+        assert int(coupling.friction_nnz_count[0]) == 0
         jacobian = _fd_force_jacobian(
             lambda value: _evaluate_friction(coupling, iga, mpm, value)[0],
             displacement,

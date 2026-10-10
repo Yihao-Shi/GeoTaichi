@@ -201,8 +201,17 @@ B_3(r)=\frac16(2-|r|)^3
 \quad \text{for } 1\le |r|<2,
 ```
 
-and is zero otherwise. Boundary-modified B-splines retain partition of unity
-and first-order consistency after their support is clipped by the domain.
+and is zero otherwise. Direct MPM `QuadBSpline` uses the existing modified
+polynomials at the first two and last two grid nodes, retaining partition of
+unity and first-order consistency on the finite grid. Its three-node stencil
+is shifted inside the grid near a boundary; it is not truncated or renormalized.
+Each grid axis needs at least four nodes. Particles outside the physical grid
+remain an error. Shape values, gradients, and the Hessians used by IPC share
+the same boundary polynomial, including its one-sided endpoint derivative.
+For axisymmetric MPM, linear radial displacement is therefore reproduced near
+the axis as well: `u_r = a r` gives radial and hoop stretches `1 + a`.
+The revolved reference-volume and pressure-area factors remain `2*pi*R`;
+they do not multiply the interpolation basis.
 
 Moving-least-squares transfer uses a polynomial vector
 $`\boldsymbol{p}(\boldsymbol{x})`$, normally
@@ -1650,7 +1659,12 @@ d_c(\alpha)>d_{min},
 
 Lagged friction freezes the active contact, tangent frame, and normal-force
 magnitude inside one inner Newton solve, then refreshes them in an outer
-fixed-point iteration.
+fixed-point iteration. Inner Newton and refreshed, unapplied probes use the same
+physical correction: particle displacement and grid-spacing-scaled displacement
+gradient, divided by `dt`. Axisymmetric particles also include the hoop increment
+`h * abs(delta_u_r) / r / dt`. Weak grid support is measured through the particles;
+nodal masses and transfers are unchanged. Nonassociated DP additionally requires
+the free-force and prescribed-motion bounds before either loop accepts.
 
 ### 18. Time-step limits
 
@@ -1754,9 +1768,13 @@ The [implicit block example](../../examples/mpm/direct/implicit_ulmpm_block2d.py
 The example-backed implicit ULMPM materials include Neo-Hookean elasticity, finite-strain Drucker–Prager, and von Mises plasticity. The [implicit elastic bar](../../examples/mpm/ElasticBar/ImplicitBar.py) uses linear elasticity. Cross-solver contact is documented under [FEM–MPM](../fempm/README.md), [IGA–MPM](../igampm/README.md), and [MPM–ABD](../mpdem/README.md).
 
 Direct nonassociated Drucker–Prager accepts independent `DilationAngle`.
-FEM--MPM and IGA--MPM enable the physical nonsymmetric Newton map, including
+Standalone lagged IPC, FEM--MPM, IGA--MPM, and Direct MPM--ABD enable the
+physical nonsymmetric Newton map, including
 the trial plastic-volume derivative, with BiCGSTAB and residual Armijo; they
-do not use a material-consistency outer loop. Other Direct-MPM consumers
+do not use a material-consistency outer loop. Standalone lagged IPC uses the
+free-force bound `1e-10 + 1e-8 * max(first_force_norm, 1)` in addition to its
+configured correction-velocity tolerance; the first force reference persists
+through all friction refreshes of the attempted step. Other Direct-MPM consumers
 retain their symmetric PCG contract by freezing the flow correction in each inner
 potential. The outer material convergence test compares physical and inner
 Kirchhoff stress, together with predicted plastic volume, rather than changes
@@ -1768,6 +1786,35 @@ checks their unrelaxed physical mismatch. See the
 The [axisymmetric annulus](../../examples/mpm/AxisyExample/axisymmetric_annulus.py) selects explicit or implicit time integration with `--solver explicit|implicit`. Its coordinates are `(r,z)` and require `radius > axis_offset`.
 
 The linked implicit IPC examples describe accepted-state rollback and bounded timestep retry controls. These are solver-specific runtime options, not additional MPM formulations.
+
+### State-dependent DP in coupled implicit ULMPM
+
+Select the independent finite-strain model on the Direct MPM child:
+
+```python
+mpm.add_material(
+    model="StateDependentDruckerPrager",
+    Density=1600.0, YoungModulus=60e6, PoissonRatio=0.3, Cohesion=3000.0,
+    fai_c=30.0, e0=0.62, e_Tao=0.9, lambda_c=0.119, ksi=0.23,
+    nd=1.7, nf=2.68, dpType="MiddleCircumscribed",
+)
+```
+
+`fai_c` is the critical friction angle in degrees (`FrictionAngle` is an
+alias). The other state-law parameters are dimensionless and each defaults
+to 0.3; specify calibrated values. `e0` must be in [0.1, 1.5], `e_Tao` and
+`ksi` positive, and `lambda_c`, `nd`, and `nf` nonnegative. Friction and
+dilation evolve from void ratio and previous pressure; a constant
+`DilationAngle` does not control this model. `MiddleCircumscribed` is its
+default cone, matching the state-dependent small-strain model.
+
+This model requires FEM--MPM, IGA--MPM, or 3D MPM--ABD IPC with Direct implicit
+ULMPM and the physical residual/BiCGSTAB route. Standalone stepping, TLMPM,
+Native MPM, LSMPM, and parameter/history adjoints are unsupported. Accepted
+history includes void ratio, total Jacobian, and frozen previous pressure;
+VTU files include `void_ratio`. See the
+[state law and consistent tangent](../physics_model/consititutive_model/README.md#state-dependent-finite-strain-drucker--prager).
+Ordinary `DruckerPrager` retains its current defaults.
 
 ## Sparse and adaptive grids
 

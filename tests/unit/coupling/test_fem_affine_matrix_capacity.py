@@ -343,6 +343,7 @@ def test_direct_mpm_affine_linearization_merges_each_raw_source_once():
     class Matrix:
         def __init__(self, name):
             self.name = name
+            self.matrix_symmetric = True
             self.events = []
 
         def reset_system(self):
@@ -358,6 +359,8 @@ def test_direct_mpm_affine_linearization_merges_each_raw_source_once():
             self.events.append(("finalize",))
 
     system = object.__new__(DirectAffineIPCSystem)
+    system.nonassociated_newton = False
+    system.inexact_newton = False
     system.affine_controls = 4
     system.affine_source = Matrix("affine")
     system.mixed_source = Matrix("mixed")
@@ -433,6 +436,8 @@ def test_direct_mpm_affine_adjoint_reassembles_exact_unshifted_jacobian():
             return {"converged": True, "residual": 0.0}
 
     system = object.__new__(DirectAffineIPCSystem)
+    system.nonassociated_newton = False
+    system.inexact_newton = False
     system.affine_controls = 4
     system.dof_capacity = 15
     system.rhs = Field()
@@ -466,6 +471,8 @@ def test_direct_mpm_affine_solution_scatter_stays_on_device(taichi_runtime):
     import taichi as ti
 
     system = object.__new__(DirectAffineIPCSystem)
+    system.nonassociated_newton = False
+    system.inexact_newton = False
     system.affine_controls = 4
     system.dof_capacity = 18
     system.correction = ti.field(ti.f64, shape=18)
@@ -533,6 +540,8 @@ def test_direct_mpm_affine_restores_accepted_mixed_friction_cache(
 
 def test_direct_mpm_affine_ccd_uses_all_three_contact_systems():
     system = object.__new__(DirectAffineIPCSystem)
+    system.nonassociated_newton = False
+    system.inexact_newton = False
     calls = []
     system.affine = SimpleNamespace(
         x="affine_position",
@@ -586,6 +595,8 @@ def test_direct_mpm_affine_energy_uses_abd_time_scale():
             self.value = value
 
     system = object.__new__(DirectAffineIPCSystem)
+    system.nonassociated_newton = False
+    system.inexact_newton = False
     system.affine = SimpleNamespace(
         x="affine_position",
         scale_device=Field(0.25),
@@ -613,6 +624,8 @@ def test_direct_mpm_affine_lagged_driver_reuses_device_primitives():
             raise AssertionError(f"unexpected rollback to {value}")
 
     system = object.__new__(DirectAffineIPCSystem)
+    system.nonassociated_newton = False
+    system.inexact_newton = False
     system.affine = SimpleNamespace(
         is_semi=False,
         device_restore_step_start=lambda: pytest.fail("unexpected rollback"),
@@ -667,6 +680,8 @@ def test_direct_mpm_affine_lagged_driver_reuses_device_primitives():
 
 def test_direct_mpm_affine_semi_convergence_requires_all_contacts():
     system = object.__new__(DirectAffineIPCSystem)
+    system.nonassociated_newton = False
+    system.inexact_newton = False
     system.affine = SimpleNamespace(semi_contact_converged=lambda: True)
     system.ipc = SimpleNamespace(contact_converged=lambda: False)
     system.mixed = SimpleNamespace(contact_converged=lambda: True)
@@ -745,6 +760,100 @@ def test_fempm_coo_capacity_counts_each_source_diagonal():
     raw_blocks = 1_234
     dofs = 3 * nodes
     assert FEMPMImplicitEngine._coo_scalar_capacity(nodes, raw_blocks, dofs) == 18 * nodes + 9 * raw_blocks + dofs
+
+
+def test_fempm_residual_metric_excludes_dirichlet_reactions(taichi_runtime):
+    import taichi as ti
+
+    engine = object.__new__(FEMPMImplicitEngine)
+    for name in ("rhs", "fixed_correction", "correction"):
+        setattr(engine, name, ti.field(ti.f64, shape=3))
+    engine.fixed = ti.field(ti.i32, shape=3)
+    for name in ("residual_squared", "directional_derivative", "correction_inf_norm", "constraint_inf_norm"):
+        setattr(engine, name, ti.field(ti.f64, shape=()))
+    engine.rhs.from_numpy(np.array([20.0, 3.0, 4.0]))
+    engine.fixed.from_numpy(np.array([1, 0, 0], dtype=np.int32))
+    engine.fixed_correction.from_numpy(np.array([0.1, 0.0, 0.0]))
+    engine._reduce_system_metrics(3)
+    assert engine.residual_squared[None] == 25.0
+    assert engine.constraint_inf_norm[None] == pytest.approx(0.1)
+
+
+def test_direct_affine_nonsymmetric_dirichlet_elimination(taichi_runtime):
+    import taichi as ti
+
+    system = object.__new__(DirectAffineIPCSystem)
+    system.affine_controls = 1
+    system.rhs = ti.field(ti.f64, shape=9)
+    system.mpm = SimpleNamespace(
+        dof2node=ti.field(ti.i32, shape=2),
+        grid_disp=ti.field(ti.f64, shape=6),
+        dirichlet=SimpleNamespace(num=1, node=ti.field(ti.i32, shape=6), value=ti.field(ti.f64, shape=6)),
+    )
+    system.mpm.dof2node.from_numpy(np.array([0, 1], dtype=np.int32))
+    system.mpm.dirichlet.node[0] = 1
+    system.mpm.dirichlet.value[0] = 0.25
+    pairs = [(i, j) for i in range(3) for j in range(3) if i != j]
+    system.matrix = SimpleNamespace(
+        matrix_symmetric=False,
+        diag=ti.Vector.field(9, ti.f64, shape=3),
+        raw_non_diag_count=ti.field(ti.i32, shape=1),
+        non_diag=SimpleNamespace(
+            blockI=ti.field(ti.i32, shape=6),
+            blockJ=ti.field(ti.i32, shape=6),
+            blockH=ti.Vector.field(9, ti.f64, shape=6),
+        ),
+    )
+    dense = np.arange(81, dtype=np.float64).reshape(9, 9) + np.eye(9)
+    rhs = np.arange(9, dtype=np.float64)
+    system.rhs.from_numpy(rhs)
+    system.matrix.diag.from_numpy(np.array([dense[3 * i : 3 * i + 3, 3 * i : 3 * i + 3].ravel() for i in range(3)]))
+    system.matrix.raw_non_diag_count[0] = 6
+    for k, (i, j) in enumerate(pairs):
+        system.matrix.non_diag.blockI[k], system.matrix.non_diag.blockJ[k] = i, j
+        system.matrix.non_diag.blockH[k] = dense[3 * i : 3 * i + 3, 3 * j : 3 * j + 3].ravel()
+    system._eliminate_mpm_dirichlet(3)
+    expected_rhs = rhs - dense[:, 3] * 0.25
+    expected_rhs[3] = 0.25
+    np.testing.assert_allclose(system.rhs.to_numpy(), expected_rhs)
+    actual = np.zeros((9, 9))
+    for i, block in enumerate(system.matrix.diag.to_numpy()):
+        actual[3 * i : 3 * i + 3, 3 * i : 3 * i + 3] = block.reshape(3, 3)
+    for (i, j), block in zip(pairs, system.matrix.non_diag.blockH.to_numpy()):
+        actual[3 * i : 3 * i + 3, 3 * j : 3 * j + 3] = block.reshape(3, 3)
+    dense[:, 3] = dense[3, :] = 0.0
+    dense[3, 3] = 1.0
+    np.testing.assert_allclose(actual, dense)
+
+
+@pytest.mark.parametrize("pending", ["dirichlet", "semi"])
+def test_direct_affine_force_convergence_still_finishes_constraints(pending):
+    system = object.__new__(DirectAffineIPCSystem)
+    system.mpm = SimpleNamespace(dt=0.001, active_dof=3)
+    system.force_atol, system.force_rtol = 1e-10, 1e-8
+    system.inexact_newton = False
+    state = {"done": False, "updates": []}
+    system.begin_step_device = lambda _dt: None
+    system.assemble_linearization_device = lambda **_kwargs: None
+    system.refresh_lagged_friction_device = lambda: None
+    system.residual_metrics_device = lambda _dof: (0.0, 0.001 if pending == "dirichlet" and not state["done"] else 0.0)
+    system.contact_converged = lambda: pending != "semi" or state["done"]
+    system.solve_direction_device = lambda *_args, **_kwargs: {"iterations": 1}
+    system.direction_inf_norm = lambda _dof: 0.001
+
+    def update(*_args, **kwargs):
+        state["done"] = True
+        state["updates"].append(kwargs)
+        return 0.0, 1.0
+
+    system._line_search_device = update
+    system.advance_semi_multipliers_device = update
+    sims = SimpleNamespace(affine_max_newton_iteration=3, affine_max_step=0.02, affine_friction_tolerance=1e-7)
+    result = system._solve_nonassociated_equilibrium_device(sims, max_outer=1, requested_outer=-1, record_adjoint=False)
+    assert result["friction_converged"] and state["done"]
+    assert len(state["updates"]) == 1
+    if pending == "dirichlet":
+        assert state["updates"][0]["merit_slope"] < 0.0
 
 
 def test_classical_fem_reduced_capacity_uses_unique_mesh_edges():

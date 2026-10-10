@@ -192,8 +192,17 @@ def dp_native_material():
     }
 
 
-def dp_direct_material(dilation_angle=None):
+def dp_direct_material(dilation_angle=None, state_dependent=False):
     material = COUPLED_DP_MATERIAL
+    if state_dependent:
+        return {
+            "model": "StateDependentDruckerPrager",
+            "density": material["density"],
+            "young_modulus": material["young_modulus"],
+            "poisson_ratio": material["poisson_ratio"],
+            **{key: SOIL_MATERIAL[key] for key in ("e0", "e_Tao", "lambda_c", "ksi", "nd", "nf", "fai_c", "Cohesion")},
+            "dpType": "MiddleCircumscribed",
+        }
     return {
         "model": "DruckerPrager",
         "density": material["density"],
@@ -395,8 +404,7 @@ def axisymmetric_initial_deformation_gradient(points=None):
 def _direct_axisymmetric_boundaries(grid_size):
     from src.mpm.boundaries.BoundaryCondition import DirichletBoundary
 
-    ratios = np.asarray(DOMAIN) / float(grid_size)
-    grid_num = np.floor(ratios + 8.0 * np.finfo(float).eps * np.maximum(1.0, np.abs(ratios))).astype(np.int32) + 1
+    grid_num = np.ceil(np.asarray(DOMAIN) / float(grid_size)).astype(np.int32) + 1
     nr, nz = map(int, grid_num)
     nodes = np.arange(nr * nz, dtype=np.int32).reshape(nz, nr)
     bottom = nodes[0, :]
@@ -418,6 +426,7 @@ def configure_direct_axisymmetric_mpm(
     save_interval,
     resolution_scale=1.0,
     dilation_angle=None,
+    state_dependent=False,
 ):
     """Configure the Direct implicit axisymmetric DP soil for IPC coupling."""
     validate_run_parameters(dt, simulation_time, save_interval, resolution_scale)
@@ -455,8 +464,8 @@ def configure_direct_axisymmetric_mpm(
     mpm.add_body(body)
     mpm.memory_allocate({"max_particle_number": particle_count}, log=False)
     mpm.add_boundary_condition(dirichlet=_direct_axisymmetric_boundaries(grid_size))
-    mpm.add_material(**dp_direct_material(dilation_angle))
-    mpm.add_element({"ElementSize": grid_size, "ShapeFunction": "Linear"})
+    mpm.add_material(**dp_direct_material(dilation_angle, state_dependent))
+    mpm.add_element({"ElementSize": grid_size, "ShapeFunction": "QuadBSpline"})
     step_count = int(math.ceil(simulation_time / dt))
     output_interval = max(1, int(round(save_interval / dt)))
     mpm.set_solver(
@@ -622,6 +631,9 @@ def parse_arguments():
         "--dilation-angle", type=float, help="IPC DP dilation angle in degrees; default equals friction"
     )
     parser.add_argument("--inexact-newton", action="store_true", help="adapt linear tolerance for nonassociated IPC DP")
+    parser.add_argument(
+        "--state-dependent", action="store_true", help="use finite-strain state-dependent DP for IPC soil"
+    )
     parser.add_argument("--dt", type=float)
     parser.add_argument("--time", type=float)
     parser.add_argument("--save-interval", type=float)
@@ -636,6 +648,8 @@ def parse_arguments():
         parser.error("--dilation-angle is supported by the IPC route")
     if arguments.inexact_newton and not implicit:
         parser.error("--inexact-newton requires --contact ipc")
+    if arguments.state_dependent and (not implicit or arguments.dilation_angle is not None):
+        parser.error("--state-dependent requires --contact ipc and evolves dilation without --dilation-angle")
     if arguments.dt is None:
         arguments.dt = 5.0e-4 if implicit else 1.0e-5
     if arguments.time is None:
@@ -670,8 +684,19 @@ def main():
         for key in ("contact", "default_fp", "dilation_angle", "resolution_scale", "save_interval"):
             if previous[key] != getattr(arguments, key):
                 raise ValueError(f"checkpoint configuration mismatch: {key}")
+        if previous.get("state_dependent", False) != arguments.state_dependent:
+            raise ValueError("checkpoint configuration mismatch: state_dependent")
+        if previous.get("shape_function", "Linear") != "QuadBSpline":
+            raise ValueError("checkpoint configuration mismatch: shape_function; restart QuadBSpline from frame 0")
     if not existing_run:
-        (output_path / "parameters.json").write_text(json.dumps(vars(arguments), default=str, indent=2) + "\n")
+        (output_path / "parameters.json").write_text(
+            json.dumps(
+                {**vars(arguments), "shape_function": "QuadBSpline" if implicit else SHAPE_FUNCTION},
+                default=str,
+                indent=2,
+            )
+            + "\n"
+        )
     step_count = int(math.ceil(arguments.time / arguments.dt))
     output_interval = max(1, int(round(arguments.save_interval / arguments.dt)))
     gt.init(
@@ -693,6 +718,7 @@ def main():
             arguments.save_interval,
             arguments.resolution_scale,
             dilation_angle=arguments.dilation_angle,
+            state_dependent=arguments.state_dependent,
         )
         contact_parameters = ipc_contact_parameters(grid_size)
         coupling = gt.IGAMPM(
@@ -703,6 +729,10 @@ def main():
             activate_friction=False,
             contact_all_mpm_particles=True,
             contact_surface_include=[(0, 0), (0, 1)],
+            compact_contact_slots=True,
+            # Retain all-particle broad phase, reserving blocks only for active contacts.
+            barrier_nnz=min(4096, 2 * particle_count) * (3 + 9) ** 2,
+            friction_nnz=1,
             # Bound Newton iterations for associated PCG or nonassociated BiCGSTAB.
             monolithic_max_iterations=100,
             monolithic_tolerance=5.0e-4,
@@ -789,6 +819,12 @@ def main():
         "pile_velocity": engine.iga.patch.velocitys,
         "pile_acceleration": engine.iga.patch.accelerations,
     }
+    if arguments.state_dependent:
+        state.update(
+            void_ratio=engine.mpm.material.void_ratio,
+            committed_jacobian=engine.mpm.material.committed_jacobian,
+            state_pressure=engine.mpm.material.state_pressure,
+        )
     engine._initialize_implicit_ipc_state()
     if arguments.resume is not None:
         with np.load(arguments.resume, allow_pickle=False) as saved:
@@ -803,6 +839,13 @@ def main():
             for name in ("deformation", "plastic_inverse"):
                 if np.any(np.linalg.det(saved[name]) <= 0.0):
                     raise ValueError(f"checkpoint requires positive determinants: {name}")
+            if arguments.state_dependent:
+                if (
+                    np.any(saved["committed_jacobian"] <= 0.0)
+                    or np.any(saved["state_pressure"] < 1000.0)
+                    or np.any((saved["void_ratio"] < 0.1) | (saved["void_ratio"] > 1.5))
+                ):
+                    raise ValueError("invalid state-dependent DP checkpoint history")
             for name, field in state.items():
                 field.from_numpy(saved[name])
             if "history" in saved:
@@ -889,6 +932,7 @@ def main():
         writer.writerows(history)
     summary = {
         "axisymmetric": True,
+        "shape_function": "QuadBSpline",
         "grid_size": grid_size,
         "particle_count": particle_count,
         "friction_angle_deg": math.degrees(engine.mpm.material.friction_angle),
@@ -904,6 +948,15 @@ def main():
         "history_start_time": history[0][0] if history else None,
         "converged": bool(result["converged"]),
     }
+    if arguments.state_dependent:
+        summary.pop("friction_angle_deg")
+        summary.pop("dilation_angle_deg")
+        void_ratio = engine.mpm.material.void_ratio.to_numpy()
+        summary.update(
+            soil_model="StateDependentDruckerPrager",
+            critical_friction_angle_deg=math.degrees(engine.mpm.material.friction_angle),
+            void_ratio_range=[float(void_ratio.min()), float(void_ratio.max())],
+        )
     (output_path / "cpt_summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
     if not math.isclose(engine.time, arguments.time, abs_tol=1e-10, rel_tol=0):
         raise RuntimeError("CPT did not reach the requested physical end time")

@@ -6,6 +6,13 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 
+def inexact_newton_relative_tolerance(residual, previous_residual, minimum=1.0e-7):
+    """Bound the adaptive Krylov forcing term without relaxing Newton convergence."""
+    if previous_residual is None or previous_residual <= 0.0:
+        return 1.0e-2
+    return min(1.0e-2, max(minimum, 0.9 * (residual / previous_residual) ** 1.5))
+
+
 def python_callback(function):
     """Mark a solver callback to run in Python instead of as a Taichi kernel."""
     if not callable(function):
@@ -31,9 +38,7 @@ def normalize_callbacks(functions, transform=None):
         raise TypeError("every solver callback must be callable")
     if transform is not None:
         selected = tuple(
-            function
-            if getattr(function, "__geotaichi_python_callback__", False)
-            else transform(function)
+            function if getattr(function, "__geotaichi_python_callback__", False) else transform(function)
             for function in selected
         )
     return selected
@@ -113,4 +118,4 @@ class StepSchedule:
             del history[: len(history) - self.max_history_entries]
 
 
-__all__ = ["StepSchedule", "normalize_callbacks", "python_callback"]
+__all__ = ["StepSchedule", "inexact_newton_relative_tolerance", "normalize_callbacks", "python_callback"]

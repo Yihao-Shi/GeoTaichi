@@ -98,6 +98,8 @@ class ImplicitULMPM(ImplicitMPM):
             self.material.begin_lagged_incremental_potential(particle_id)
 
     def begin_lagged_material_state(self):
+        if getattr(self.material, "is_state_dependent", False):
+            self.material.prepare_step_state(self.F0, int(self.particleNum[0]))
         if self.has_lagged_material:
             self._begin_lagged_material_state()
         self.last_material_lagged_error = 0.0
@@ -476,6 +478,8 @@ class ImplicitULMPM(ImplicitMPM):
         return {"iterations": int(iter_num), "residual": float(residual)}
 
     def substep(self, verbose=True):
+        if getattr(self.material, "is_state_dependent", False):
+            raise NotImplementedError("StateDependentDruckerPrager requires FEM-MPM, IGA-MPM or Direct MPM-ABD IPC")
         self.mass_vec.fill(0)
         self.grid_reset()
         self.compute_shapefn()

@@ -175,6 +175,15 @@ def test_ipc_soft_soft_friction_production_assembly(tmp_path):
     ):
         displacement = amplitude * translation
         energy, force, matrix = _evaluate(config, mpm, contact, displacement)
+        full_diagonal = contact.friction_hash_matrix.diag.to_numpy().copy()
+        full_blocks = contact.friction_hash_matrix.non_diag.blockH.to_numpy().copy()
+        full_count = int(contact.friction_hash_matrix.raw_non_diag_count[0])
+        contact.friction_grad.fill(0.0)
+        contact.assemble_particle_friction_matrix(False)
+        np.testing.assert_allclose(contact.friction_grad.to_numpy()[: mpm.active_dof], force, rtol=1e-12, atol=1e-10)
+        np.testing.assert_array_equal(contact.friction_hash_matrix.diag.to_numpy(), full_diagonal)
+        np.testing.assert_array_equal(contact.friction_hash_matrix.non_diag.blockH.to_numpy(), full_blocks)
+        assert int(contact.friction_hash_matrix.raw_non_diag_count[0]) == full_count
         energy_gradient = _fd_gradient(
             lambda value: _evaluate(config, mpm, contact, value)[0],
             displacement,
@@ -348,6 +357,16 @@ def test_soft_particle_contact_compaction_has_stable_device_raw_slots(
             assemble()
             matrix.finalize_taichi_assembly()
             raw = int(matrix.raw_non_diag_count[0])
+            if matrix is contact.friction_hash_matrix:
+                force = contact.friction_grad.to_numpy().copy()
+                diagonal = matrix.diag.to_numpy().copy()
+                blocks = matrix.non_diag.blockH.to_numpy().copy()
+                contact.friction_grad.fill(0.0)
+                assemble(False)
+                np.testing.assert_allclose(contact.friction_grad.to_numpy(), force, rtol=1e-12, atol=1e-10)
+                np.testing.assert_array_equal(matrix.diag.to_numpy(), diagonal)
+                np.testing.assert_array_equal(matrix.non_diag.blockH.to_numpy(), blocks)
+                assert int(matrix.raw_non_diag_count[0]) == raw
             snapshots.append(
                 (
                     matrix.non_diag.blockI.to_numpy()[:raw].copy(),

@@ -18,6 +18,10 @@ walls. The public facade is named `DEMPM` internally and is exposed as both
 
 ## MPM AffineBody route selection
 
+Continuum Direct-MPM children selecting `QuadBSpline` use the shared finite-grid
+boundary basis for values, gradients and IPC position Hessians; each grid axis
+requires at least four nodes. See [MPM interpolation](../mpm/README.md).
+
 MPM–ABD configurations are distinguished by their physical model and contact operator, not by the internal MPM implementation name.
 
 | Physical route | Coupling operator | Concrete example | Restrictions |
@@ -1495,7 +1499,12 @@ The Newton system is
 
 The nonzero off-diagonal blocks are the direct soft--affine coupling. Lagged
 friction freezes the closest coordinates, normal, and normal-force magnitude
-during each Newton solve. The accepted step satisfies
+during each Newton solve. Inner Newton and refreshed, unapplied probes measure
+ABD surface displacement and soft-particle displacement plus mechanical-grid
+spacing times the displacement gradient, all divided by `dt`. Template rotation
+and scale enter through the same physical support gradients as force assembly;
+affine controls and almost-empty grid modes are not measured as physical motion.
+The convergence probe is unclamped. The accepted step satisfies
 
 ```math
 \alpha_{max}
@@ -1591,6 +1600,48 @@ search trials. The return mapping supplies
 History is committed only after the entire MPM--AffineBody equilibrium and
 friction fixed point converge. The Drucker--Prager and von Mises updates are defined in the
 [shared constitutive theory](../physics_model/consititutive_model/README.md#finite-strain-multiplicative-plasticity).
+
+Direct MPM--AffineBody automatically uses the physical DP force and full
+nonsymmetric Jacobian with Taichi BiCGSTAB when dilation and friction angles
+differ. The return map is recomputed at every Newton trial with accepted
+history frozen; this route has no material-consistency outer loop. Residual
+Armijo and the common contact/material CCD bound govern each update.
+Associated materials retain the projected symmetric PCG route. ABD, MPM,
+and mixed-contact lagged friction caches are still refreshed in a separate
+fixed-point loop before accepted-state history is committed.
+Use `friction_iterations=-1` to iterate to convergence; positive counts keep
+the existing fixed-count mode and report whether it reached the criterion.
+
+Direct 3D MPM--ABD IPC additionally accepts `StateDependentDruckerPrager`.
+Its SDMC state law evolves friction/dilation from total volume and previous
+Cauchy pressure using the same physical residual/BiCGSTAB route. The step
+freezes pressure before the independent lagged-friction iteration and commits
+void ratio only on acceptance. All 14 history entries participate in rollback.
+See [parameters](../mpm/README.md#state-dependent-dp-in-coupled-implicit-ulmpm)
+and [theory](../physics_model/consititutive_model/README.md#state-dependent-finite-strain-drucker--prager).
+This is a continuum Direct-MPM material; LSMPM soft bodies and its
+parameter/history adjoints are unsupported.
+
+For nonassociated DP, `MPDEM.set_solver({"inexact_newton": True, ...})`
+optionally adapts the Krylov relative tolerance from 0.01 toward 1e-7,
+restarting its forcing history at every friction outer iteration. Its free
+force stopping criterion is `absolute_tolerance + residual_tolerance *
+max(initial_force_norm, 1)` (defaults 1e-10 and 1e-8). Inexact solves preserve
+this criterion, physical correction velocity, Dirichlet feasibility, and
+lagged-friction convergence. The first free-force reference persists throughout
+the attempted step's friction loops and resets on retry; Krylov forcing history
+still restarts each outer iteration. Terminal inexact corrections are checked at
+strict linear accuracy. The MPM norm is particle motion and `h` times the gradient;
+the ABD norm is physical surface motion.
+The public Direct MPM--ABD route enables it by default for nonassociated DP;
+set `inexact_newton=False` to use strict linear solves. Four warm replays of a
+small coupled CUDA case reduced median wall time from 6.40 s to 3.22 s with
+the same force criterion and friction convergence. Linear iterations ranged
+from 390--463 with strict solves and 129--157 with inexact solves; timing
+remains model dependent.
+The [solid-bed example](../../examples/mpdem/AffineBody/ABDImpactDP/direct_mpm_abd_impact.py)
+uses nonassociated DP with a zero dilation angle by default and accepts
+`--no-inexact-newton` and `--dilation-angle`. LSMPM soft--ABD remains hyperelastic.
 
 The common feasible line-search limit is
 

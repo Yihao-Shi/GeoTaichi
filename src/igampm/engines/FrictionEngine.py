@@ -306,6 +306,7 @@ class FrictionEngineMixin:
         num_ctrlpts_u: ti.i32,
         surface: ti.template(),
         basis: ti.template(),
+        need_matrix: ti.template(),
     ):
         for c in range(self.friction_contacts.shape[0]):
             if self.friction_contacts[c].active and self.friction_contacts[c].surface_id == surface_id:
@@ -351,12 +352,14 @@ class FrictionEngineMixin:
                 vbar = tangent.transpose() @ rel_disp / self.mpm.dt
                 vbarnorm = vbar.norm()
                 friction_gradient = self.friction.grad_term(vbarnorm)
-                friction_hessian = self.friction.hess_term(vbarnorm)
                 grad_rel = mu_lambda * friction_gradient * tangent @ vbar
-                inner_term = friction_gradient * ti.Matrix.identity(ti.f64, config.DIM)
-                if vbarnorm != 0.0:
-                    inner_term += friction_hessian / vbarnorm * vbar.outer_product(vbar)
-                hess_rel = mu_lambda * tangent @ psd_project_nd(inner_term) @ tangent.transpose() / self.mpm.dt
+                hess_rel = ti.Matrix.zero(ti.f64, config.DIM, config.DIM)
+                if ti.static(need_matrix):
+                    friction_hessian = self.friction.hess_term(vbarnorm)
+                    inner_term = friction_gradient * ti.Matrix.identity(ti.f64, config.DIM)
+                    if vbarnorm != 0.0:
+                        inner_term += friction_hessian / vbarnorm * vbar.outer_product(vbar)
+                    hess_rel = mu_lambda * tangent @ psd_project_nd(inner_term) @ tangent.transpose() / self.mpm.dt
 
                 for i in range(span_v - basis.basis_v.degree, span_v + 1):
                     for j in range(span_u - basis.basis_u.degree, span_u + 1):
@@ -369,23 +372,156 @@ class FrictionEngineMixin:
                         for d in ti.static(range(config.DIM)):
                             self.friction_grad[config.DIM * global_ctrlpt_id_1 + d] += shape_i * grad_rel[d]
 
-                        for m in range(span_v - basis.basis_v.degree, span_v + 1):
-                            for n in range(span_u - basis.basis_u.degree, span_u + 1):
-                                ctrlpt_offset_2 = (n - span_u + basis.basis_u.degree) + (
-                                    m - span_v + basis.basis_v.degree
-                                ) * (basis.basis_u.degree + 1)
-                                local_ctrlpt_id_2 = prefix_num_ctrlpts + n + m * num_ctrlpts_u
-                                global_ctrlpt_id_2 = surface.control_points_id[local_ctrlpt_id_2]
-                                shape_j = nshape[ctrlpt_offset_2]
-                                block = shape_i * shape_j * hess_rel
+                        if ti.static(need_matrix):
+                            for m in range(span_v - basis.basis_v.degree, span_v + 1):
+                                for n in range(span_u - basis.basis_u.degree, span_u + 1):
+                                    ctrlpt_offset_2 = (n - span_u + basis.basis_u.degree) + (
+                                        m - span_v + basis.basis_v.degree
+                                    ) * (basis.basis_u.degree + 1)
+                                    local_ctrlpt_id_2 = prefix_num_ctrlpts + n + m * num_ctrlpts_u
+                                    global_ctrlpt_id_2 = surface.control_points_id[local_ctrlpt_id_2]
+                                    shape_j = nshape[ctrlpt_offset_2]
+                                    block = shape_i * shape_j * hess_rel
+                                    self.add_friction_block(
+                                        c,
+                                        ctrlpt_offset_1,
+                                        ctrlpt_offset_2,
+                                        global_ctrlpt_id_1,
+                                        global_ctrlpt_id_2,
+                                        block,
+                                    )
+
+                            for k in range(self.mpm.offset[particle_id]):
+                                base_node = self.mpm.LnID[particle_id, k]
+                                mpm_offset = self.mpm.node2dof[base_node] - 1
+                                if mpm_offset < 0:
+                                    continue
+                                shape_m = self.mpm.shape[particle_id, k]
+                                block = -shape_i * shape_m * hess_rel
+                                coupled_mpm_block = self.iga.degree_of_freedom // config.DIM + mpm_offset
                                 self.add_friction_block(
                                     c,
                                     ctrlpt_offset_1,
-                                    ctrlpt_offset_2,
+                                    ti.static(self.contact_ctrlpts_capacity) + k,
                                     global_ctrlpt_id_1,
-                                    global_ctrlpt_id_2,
+                                    coupled_mpm_block,
                                     block,
                                 )
+                                self.add_friction_block(
+                                    c,
+                                    ti.static(self.contact_ctrlpts_capacity) + k,
+                                    ctrlpt_offset_1,
+                                    coupled_mpm_block,
+                                    global_ctrlpt_id_1,
+                                    block.transpose(),
+                                )
+
+                for j in range(self.mpm.offset[particle_id]):
+                    base_jnode = self.mpm.LnID[particle_id, j]
+                    mpm_offset_j = self.mpm.node2dof[base_jnode] - 1
+                    if mpm_offset_j < 0:
+                        continue
+                    shape_j = self.mpm.shape[particle_id, j]
+                    for d in ti.static(range(config.DIM)):
+                        self.friction_grad[self.iga.degree_of_freedom + config.DIM * mpm_offset_j + d] -= (
+                            shape_j * grad_rel[d]
+                        )
+                    if ti.static(need_matrix):
+                        for k in range(self.mpm.offset[particle_id]):
+                            base_knode = self.mpm.LnID[particle_id, k]
+                            mpm_offset_k = self.mpm.node2dof[base_knode] - 1
+                            if mpm_offset_k < 0:
+                                continue
+                            shape_k = self.mpm.shape[particle_id, k]
+                            block = shape_j * shape_k * hess_rel
+                            coupled_mpm_block_j = self.iga.degree_of_freedom // config.DIM + mpm_offset_j
+                            coupled_mpm_block_k = self.iga.degree_of_freedom // config.DIM + mpm_offset_k
+                            self.add_friction_block(
+                                c,
+                                ti.static(self.contact_ctrlpts_capacity) + j,
+                                ti.static(self.contact_ctrlpts_capacity) + k,
+                                coupled_mpm_block_j,
+                                coupled_mpm_block_k,
+                                block,
+                            )
+
+    @ti.kernel
+    def assemble_friction_matrix_for_curve(
+        self,
+        surface_id: ti.i32,
+        prefix_num_knot_u: ti.i32,
+        prefix_num_ctrlpts: ti.i32,
+        num_knot_u: ti.i32,
+        surface: ti.template(),
+        basis: ti.template(),
+        need_matrix: ti.template(),
+    ):
+        for c in range(self.friction_contacts.shape[0]):
+            if self.friction_contacts[c].active and self.friction_contacts[c].surface_id == surface_id:
+                sample_id = self.friction_contacts[c].sample_id
+                particle_id = self.friction_contacts[c].particle_id
+                uknot = self.friction_contacts[c].knot_value[0]
+                normal = self.friction_contacts[c].normal
+                mu_lambda = self.friction_contacts[c].mu_lambda
+
+                span_u, nshape, derivative_u, tangent_u, curvature_uu = basis.NurbsBasisHessian(
+                    prefix_num_knot_u,
+                    prefix_num_ctrlpts,
+                    num_knot_u,
+                    uknot,
+                    surface.knot_vector_u,
+                    surface.control_points_hat,
+                    surface.weights,
+                )
+
+                iga_disp = ti.Vector.zero(ti.f64, config.DIM)
+                for j in range(span_u - basis.basis_u.degree, span_u + 1):
+                    ctrlpt_offset = j - span_u + basis.basis_u.degree
+                    local_ctrlpt_id = prefix_num_ctrlpts + j
+                    global_ctrlpt_id = surface.control_points_id[local_ctrlpt_id]
+                    ctrl_disp = ti.Vector(
+                        [self.iga.grid_disp[config.DIM * global_ctrlpt_id + d] for d in ti.static(range(config.DIM))]
+                    )
+                    iga_disp += nshape[ctrlpt_offset] * ctrl_disp
+
+                mpm_disp = self.mpm.p_temp[sample_id] - self.mpm.particle[particle_id].x
+                tangent = ti.Matrix.identity(ti.f64, config.DIM) - normal.outer_product(normal)
+                rel_disp = mpm_disp - iga_disp
+                vbar = tangent.transpose() @ rel_disp / self.mpm.dt
+                vbarnorm = vbar.norm()
+                friction_gradient = self.friction.grad_term(vbarnorm)
+                grad_rel = mu_lambda * friction_gradient * tangent @ vbar
+                hess_rel = ti.Matrix.zero(ti.f64, config.DIM, config.DIM)
+                if ti.static(need_matrix):
+                    friction_hessian = self.friction.hess_term(vbarnorm)
+                    inner_term = friction_gradient * ti.Matrix.identity(ti.f64, config.DIM)
+                    if vbarnorm != 0.0:
+                        inner_term += friction_hessian / vbarnorm * vbar.outer_product(vbar)
+                    hess_rel = mu_lambda * tangent @ psd_project_nd(inner_term) @ tangent.transpose() / self.mpm.dt
+
+                for j in range(span_u - basis.basis_u.degree, span_u + 1):
+                    ctrlpt_offset_1 = j - span_u + basis.basis_u.degree
+                    local_ctrlpt_id_1 = prefix_num_ctrlpts + j
+                    global_ctrlpt_id_1 = surface.control_points_id[local_ctrlpt_id_1]
+                    shape_i = nshape[ctrlpt_offset_1]
+                    for d in ti.static(range(config.DIM)):
+                        self.friction_grad[config.DIM * global_ctrlpt_id_1 + d] += shape_i * grad_rel[d]
+
+                    if ti.static(need_matrix):
+                        for n in range(span_u - basis.basis_u.degree, span_u + 1):
+                            ctrlpt_offset_2 = n - span_u + basis.basis_u.degree
+                            local_ctrlpt_id_2 = prefix_num_ctrlpts + n
+                            global_ctrlpt_id_2 = surface.control_points_id[local_ctrlpt_id_2]
+                            shape_j = nshape[ctrlpt_offset_2]
+                            block = shape_i * shape_j * hess_rel
+                            self.add_friction_block(
+                                c,
+                                ctrlpt_offset_1,
+                                ctrlpt_offset_2,
+                                global_ctrlpt_id_1,
+                                global_ctrlpt_id_2,
+                                block,
+                            )
 
                         for k in range(self.mpm.offset[particle_id]):
                             base_node = self.mpm.LnID[particle_id, k]
@@ -422,150 +558,24 @@ class FrictionEngineMixin:
                         self.friction_grad[self.iga.degree_of_freedom + config.DIM * mpm_offset_j + d] -= (
                             shape_j * grad_rel[d]
                         )
-                    for k in range(self.mpm.offset[particle_id]):
-                        base_knode = self.mpm.LnID[particle_id, k]
-                        mpm_offset_k = self.mpm.node2dof[base_knode] - 1
-                        if mpm_offset_k < 0:
-                            continue
-                        shape_k = self.mpm.shape[particle_id, k]
-                        block = shape_j * shape_k * hess_rel
-                        coupled_mpm_block_j = self.iga.degree_of_freedom // config.DIM + mpm_offset_j
-                        coupled_mpm_block_k = self.iga.degree_of_freedom // config.DIM + mpm_offset_k
-                        self.add_friction_block(
-                            c,
-                            ti.static(self.contact_ctrlpts_capacity) + j,
-                            ti.static(self.contact_ctrlpts_capacity) + k,
-                            coupled_mpm_block_j,
-                            coupled_mpm_block_k,
-                            block,
-                        )
-
-    @ti.kernel
-    def assemble_friction_matrix_for_curve(
-        self,
-        surface_id: ti.i32,
-        prefix_num_knot_u: ti.i32,
-        prefix_num_ctrlpts: ti.i32,
-        num_knot_u: ti.i32,
-        surface: ti.template(),
-        basis: ti.template(),
-    ):
-        for c in range(self.friction_contacts.shape[0]):
-            if self.friction_contacts[c].active and self.friction_contacts[c].surface_id == surface_id:
-                sample_id = self.friction_contacts[c].sample_id
-                particle_id = self.friction_contacts[c].particle_id
-                uknot = self.friction_contacts[c].knot_value[0]
-                normal = self.friction_contacts[c].normal
-                mu_lambda = self.friction_contacts[c].mu_lambda
-
-                span_u, nshape, derivative_u, tangent_u, curvature_uu = basis.NurbsBasisHessian(
-                    prefix_num_knot_u,
-                    prefix_num_ctrlpts,
-                    num_knot_u,
-                    uknot,
-                    surface.knot_vector_u,
-                    surface.control_points_hat,
-                    surface.weights,
-                )
-
-                iga_disp = ti.Vector.zero(ti.f64, config.DIM)
-                for j in range(span_u - basis.basis_u.degree, span_u + 1):
-                    ctrlpt_offset = j - span_u + basis.basis_u.degree
-                    local_ctrlpt_id = prefix_num_ctrlpts + j
-                    global_ctrlpt_id = surface.control_points_id[local_ctrlpt_id]
-                    ctrl_disp = ti.Vector(
-                        [self.iga.grid_disp[config.DIM * global_ctrlpt_id + d] for d in ti.static(range(config.DIM))]
-                    )
-                    iga_disp += nshape[ctrlpt_offset] * ctrl_disp
-
-                mpm_disp = self.mpm.p_temp[sample_id] - self.mpm.particle[particle_id].x
-                tangent = ti.Matrix.identity(ti.f64, config.DIM) - normal.outer_product(normal)
-                rel_disp = mpm_disp - iga_disp
-                vbar = tangent.transpose() @ rel_disp / self.mpm.dt
-                vbarnorm = vbar.norm()
-                friction_gradient = self.friction.grad_term(vbarnorm)
-                friction_hessian = self.friction.hess_term(vbarnorm)
-                grad_rel = mu_lambda * friction_gradient * tangent @ vbar
-                inner_term = friction_gradient * ti.Matrix.identity(ti.f64, config.DIM)
-                if vbarnorm != 0.0:
-                    inner_term += friction_hessian / vbarnorm * vbar.outer_product(vbar)
-                hess_rel = mu_lambda * tangent @ psd_project_nd(inner_term) @ tangent.transpose() / self.mpm.dt
-
-                for j in range(span_u - basis.basis_u.degree, span_u + 1):
-                    ctrlpt_offset_1 = j - span_u + basis.basis_u.degree
-                    local_ctrlpt_id_1 = prefix_num_ctrlpts + j
-                    global_ctrlpt_id_1 = surface.control_points_id[local_ctrlpt_id_1]
-                    shape_i = nshape[ctrlpt_offset_1]
-                    for d in ti.static(range(config.DIM)):
-                        self.friction_grad[config.DIM * global_ctrlpt_id_1 + d] += shape_i * grad_rel[d]
-
-                    for n in range(span_u - basis.basis_u.degree, span_u + 1):
-                        ctrlpt_offset_2 = n - span_u + basis.basis_u.degree
-                        local_ctrlpt_id_2 = prefix_num_ctrlpts + n
-                        global_ctrlpt_id_2 = surface.control_points_id[local_ctrlpt_id_2]
-                        shape_j = nshape[ctrlpt_offset_2]
-                        block = shape_i * shape_j * hess_rel
-                        self.add_friction_block(
-                            c,
-                            ctrlpt_offset_1,
-                            ctrlpt_offset_2,
-                            global_ctrlpt_id_1,
-                            global_ctrlpt_id_2,
-                            block,
-                        )
-
-                    for k in range(self.mpm.offset[particle_id]):
-                        base_node = self.mpm.LnID[particle_id, k]
-                        mpm_offset = self.mpm.node2dof[base_node] - 1
-                        if mpm_offset < 0:
-                            continue
-                        shape_m = self.mpm.shape[particle_id, k]
-                        block = -shape_i * shape_m * hess_rel
-                        coupled_mpm_block = self.iga.degree_of_freedom // config.DIM + mpm_offset
-                        self.add_friction_block(
-                            c,
-                            ctrlpt_offset_1,
-                            ti.static(self.contact_ctrlpts_capacity) + k,
-                            global_ctrlpt_id_1,
-                            coupled_mpm_block,
-                            block,
-                        )
-                        self.add_friction_block(
-                            c,
-                            ti.static(self.contact_ctrlpts_capacity) + k,
-                            ctrlpt_offset_1,
-                            coupled_mpm_block,
-                            global_ctrlpt_id_1,
-                            block.transpose(),
-                        )
-
-                for j in range(self.mpm.offset[particle_id]):
-                    base_jnode = self.mpm.LnID[particle_id, j]
-                    mpm_offset_j = self.mpm.node2dof[base_jnode] - 1
-                    if mpm_offset_j < 0:
-                        continue
-                    shape_j = self.mpm.shape[particle_id, j]
-                    for d in ti.static(range(config.DIM)):
-                        self.friction_grad[self.iga.degree_of_freedom + config.DIM * mpm_offset_j + d] -= (
-                            shape_j * grad_rel[d]
-                        )
-                    for k in range(self.mpm.offset[particle_id]):
-                        base_knode = self.mpm.LnID[particle_id, k]
-                        mpm_offset_k = self.mpm.node2dof[base_knode] - 1
-                        if mpm_offset_k < 0:
-                            continue
-                        shape_k = self.mpm.shape[particle_id, k]
-                        block = shape_j * shape_k * hess_rel
-                        coupled_mpm_block_j = self.iga.degree_of_freedom // config.DIM + mpm_offset_j
-                        coupled_mpm_block_k = self.iga.degree_of_freedom // config.DIM + mpm_offset_k
-                        self.add_friction_block(
-                            c,
-                            ti.static(self.contact_ctrlpts_capacity) + j,
-                            ti.static(self.contact_ctrlpts_capacity) + k,
-                            coupled_mpm_block_j,
-                            coupled_mpm_block_k,
-                            block,
-                        )
+                    if ti.static(need_matrix):
+                        for k in range(self.mpm.offset[particle_id]):
+                            base_knode = self.mpm.LnID[particle_id, k]
+                            mpm_offset_k = self.mpm.node2dof[base_knode] - 1
+                            if mpm_offset_k < 0:
+                                continue
+                            shape_k = self.mpm.shape[particle_id, k]
+                            block = shape_j * shape_k * hess_rel
+                            coupled_mpm_block_j = self.iga.degree_of_freedom // config.DIM + mpm_offset_j
+                            coupled_mpm_block_k = self.iga.degree_of_freedom // config.DIM + mpm_offset_k
+                            self.add_friction_block(
+                                c,
+                                ti.static(self.contact_ctrlpts_capacity) + j,
+                                ti.static(self.contact_ctrlpts_capacity) + k,
+                                coupled_mpm_block_j,
+                                coupled_mpm_block_k,
+                                block,
+                            )
 
     @ti.kernel
     def assemble_fully_implicit_friction_for_curve(
@@ -2023,7 +2033,7 @@ class FrictionEngineMixin:
         returns either ``{"matrix", "rhs"}``, ``(matrix, rhs)``, or an
         already-computed ``{"correction"}``.  The resulting correction is a
         convergence probe only and is never applied to either subsystem.  Its
-        infinity norm is divided by the corresponding subsystem timestep, so
+        represented-motion/strain norm is divided by the subsystem timestep, so
         ``tolerance`` has velocity units just like the inner Newton tolerance.
 
         If both callbacks are omitted, the built-in monolithic Newton path
@@ -2089,6 +2099,7 @@ class FrictionEngineMixin:
         self.last_friction_residual = np.inf
         self.last_friction_converged = False
         last_inner_result = None
+        probe_force_residual = np.inf
         try:
             self.refresh_lagged_friction_cache(grid_disp)
 
@@ -2130,6 +2141,9 @@ class FrictionEngineMixin:
                                 float(self.mpm.dt),
                             )
                         )
+                        probe_force_residual = float(
+                            self._device_monolithic_free_rhs_norm(int(updated_system["active_dof"]))
+                        )
                     else:
                         # Lightweight orchestration tests/custom matrix
                         # adapters may expose only the aggregate norm.
@@ -2162,7 +2176,11 @@ class FrictionEngineMixin:
                         f"{self.last_friction_iterations}: "
                         f"probe={self.last_friction_residual:.6e}"
                     )
-                if self.last_friction_residual <= tolerance:
+                force_converged = (
+                    not (use_builtin and getattr(self, "nonassociated_newton", False))
+                    or probe_force_residual <= last_inner_result["force_tolerance"]
+                )
+                if self.last_friction_residual <= tolerance and force_converged:
                     self.last_friction_converged = True
                     break
 
@@ -2183,6 +2201,7 @@ class FrictionEngineMixin:
             "inner_result": last_inner_result,
             "iterations": self.last_friction_iterations,
             "residual": self.last_friction_residual,
+            "force_residual": probe_force_residual,
             "converged": self.last_friction_converged,
             "approximate": bool(self.friction_iterations > 0 and not self.last_friction_converged),
         }
@@ -2203,8 +2222,6 @@ class FrictionEngineMixin:
             self.friction_hash_matrix.reset_system()
             self.prepare_friction_matrix_slots()
         self.clear_friction_system()
-        if not need_matrix:
-            raise RuntimeError("residual-only friction assembly is supported only for " "fully implicit friction")
         if not self.activate_fric or self.curr_friction_contact_num == 0:
             return
         for surface_id in range(self.contact_surface.num_surfaces):
@@ -2216,6 +2233,7 @@ class FrictionEngineMixin:
                     int(self.contact_surface.num_knot_u[surface_id + 1]),
                     self.contact_surface,
                     self.contact_surface.basis[surface_id],
+                    need_matrix,
                 )
             else:
                 self.assemble_friction_matrix_for_surface(
@@ -2228,8 +2246,9 @@ class FrictionEngineMixin:
                     int(self.contact_surface.num_ctrlpts_u[surface_id + 1]),
                     self.contact_surface,
                     self.contact_surface.basis[surface_id],
+                    need_matrix,
                 )
-        if int(self.friction_nnz_overflow[0]) != 0 or int(self.friction_hash_matrix.overflow[0]) != 0:
+        if need_matrix and (int(self.friction_nnz_overflow[0]) != 0 or int(self.friction_hash_matrix.overflow[0]) != 0):
             raise RuntimeError(
                 f"IGA-MPM friction block buffer overflow: used {int(self.friction_nnz_count[0])}, "
                 f"capacity {self.friction_nnz_capacity}. Increase friction_nnz."

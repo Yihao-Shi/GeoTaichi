@@ -12,9 +12,10 @@ from src.physics_model.contact_model.ipc.NurbsContact import (
     get_distance_to_curve_moving_fixed_dim,
     get_distance_to_surface_moving_fixed_dim,
 )
+from src.mpm.engines.direct.Convergence import particle_correction_measure
 from src.utils.FieldIO import field_to_numpy_prefix
 from src.utils.RuntimeHook import runtime_checkpoint
-from src.utils.SolverRuntime import normalize_callbacks
+from src.utils.SolverRuntime import inexact_newton_relative_tolerance, normalize_callbacks
 from src.utils.StepRetry import (
     is_recoverable_nonlinear_failure,
     nonlinear_failure_kind,
@@ -705,11 +706,12 @@ class ImplicitEngineMixin:
                 result,
                 ti.abs(self.monolithic_correction[dof]) / iga_dt,
             )
-        for dof in range(active_mpm_dof):
-            ti.atomic_max(
-                result,
-                ti.abs(self.monolithic_correction[iga_dof + dof]) / mpm_dt,
+        # Measure the represented motion and strain, not almost-empty grid modes.
+        for particle_id in range(self.mpm.particleNum[0]):
+            measure = particle_correction_measure(
+                self.mpm, self.monolithic_correction, particle_id, active_mpm_dof, iga_dof, config.DIM, config.DIM
             )
+            ti.atomic_max(result, measure / mpm_dt)
         return result
 
     @ti.kernel
@@ -1315,11 +1317,8 @@ class ImplicitEngineMixin:
         }
 
     def _newton_linear_tolerance(self, force_residual, previous_force):
-        if previous_force is None or previous_force <= 0.0:
-            return 1.0e-2
-        return min(
-            1.0e-2,
-            max(self.monolithic_linear_solver_relative_tolerance, 0.9 * (force_residual / previous_force) ** 1.5),
+        return inexact_newton_relative_tolerance(
+            force_residual, previous_force, self.monolithic_linear_solver_relative_tolerance
         )
 
     def _solve_monolithic_newton_device(
@@ -1352,7 +1351,13 @@ class ImplicitEngineMixin:
         semi_progress = 0.0
         contacts_prepared = False
         for iteration in range(max_iterations):
-            if self.is_semi and not inexact and iteration > 1 and semi_progress > 0.999:
+            if (
+                self.is_semi
+                and not self.nonassociated_newton
+                and not inexact
+                and iteration > 1
+                and semi_progress > 0.999
+            ):
                 self.last_monolithic_converged = True
                 convergence_reason = "semi_ipc_projection_progress"
                 break
@@ -1371,9 +1376,13 @@ class ImplicitEngineMixin:
             self.last_monolithic_dirichlet_residual = dirichlet_residual
             if initial_force_residual is None:
                 initial_force_residual = max(force_residual, 1.0)
+                if getattr(self, "_monolithic_force_reference", None) is None:
+                    self._monolithic_force_reference = initial_force_residual
+                initial_force_residual = self._monolithic_force_reference
             force_tolerance = self.monolithic_force_atol + self.monolithic_force_rtol * initial_force_residual
             if (
                 force_residual <= force_tolerance
+                and (not self.nonassociated_newton or (force_residual == 0.0 and dirichlet_residual == 0.0))
                 and dirichlet_residual <= self.monolithic_dirichlet_tolerance
                 and self.semi_contact_converged()
             ):
@@ -1414,9 +1423,35 @@ class ImplicitEngineMixin:
             last_system["linear_solve"] = solve_result
             if not math.isfinite(residual):
                 raise RuntimeError(f"IGA-MPM Taichi {self.monolithic_solver_name} returned " "a non-finite correction")
-            if residual <= tolerance and not inexact and self.semi_contact_converged():
+            if (
+                inexact
+                and residual <= tolerance
+                and force_residual <= force_tolerance
+                and last_system["linear_relative_tolerance"] > self.monolithic_linear_solver_relative_tolerance
+            ):
+                # Verify a terminal correction with the configured Krylov accuracy.
+                last_system["linear_relative_tolerance"] = self.monolithic_linear_solver_relative_tolerance
+                solve_result = self._solve_monolithic_linear_system(last_system, linear_solve=linear_solve)
+                if not solve_result["converged"]:
+                    raise RuntimeError("IGA-MPM terminal Newton linear solve did not converge")
+                self._split_device_monolithic_correction(last_system["active_mpm_dof"])
+                residual = float(
+                    self._device_monolithic_correction_residual(
+                        last_system["active_mpm_dof"], float(self.iga.dt), float(self.mpm.dt)
+                    )
+                )
+                self.last_monolithic_residual = residual
+                last_system["linear_solve"] = solve_result
+                if not math.isfinite(residual):
+                    raise RuntimeError("IGA-MPM terminal Newton correction is non-finite")
+            if (
+                residual <= tolerance
+                and (not self.nonassociated_newton or force_residual <= force_tolerance)
+                and dirichlet_residual <= self.monolithic_dirichlet_tolerance
+                and self.semi_contact_converged()
+            ):
                 self.last_monolithic_converged = True
-                convergence_reason = "correction_velocity"
+                convergence_reason = "force_and_correction" if self.nonassociated_newton else "correction_velocity"
                 break
 
             initial_step = self._material_feasible_step_device()
@@ -1486,7 +1521,8 @@ class ImplicitEngineMixin:
         verbose=False,
     ):
         """Solve coupled equilibrium with lagged friction frozen."""
-        del outer_iteration  # useful to callback callers, not needed internally
+        if outer_iteration == 0:
+            self._monolithic_force_reference = None
         if include_friction is None:
             include_friction = self.activate_fric
         if bool(include_friction) and self.friction_mode == "fully_implicit":

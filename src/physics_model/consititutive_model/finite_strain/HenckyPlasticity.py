@@ -1044,7 +1044,7 @@ class HenckyAssociatedPlasticityModel(FiniteStrainModel):
         stress = matrix_u @ diagonal @ matrix_v.transpose()
         if ti.static(self.alpha > 1.0e-14):
             if response[9] == 2:
-                stress = self.bulk * self.trace_apex * deformation_gradient.inverse().transpose()
+                stress = self.bulk * response[7].sum() * deformation_gradient.inverse().transpose()
         return stress
 
     @ti.func
@@ -1143,10 +1143,20 @@ class HenckyAssociatedPlasticityModel(FiniteStrainModel):
                     column = 0
                     while column < 9:
                         tangent[row, column] = (
-                            -self.bulk * self.trace_apex * inverse[row // 3, column % 3] * inverse[column // 3, row % 3]
+                            -self.bulk
+                            * response[7].sum()
+                            * inverse[row // 3, column % 3]
+                            * inverse[column // 3, row % 3]
                         )
                         column += 1
                     row += 1
+                if ti.static(getattr(self, "is_state_dependent", False)):
+                    diagonal = ti.Matrix.zero(ti.f64, 3, 3)
+                    for j in ti.static(range(3)):
+                        for i in ti.static(range(3)):
+                            diagonal[j, j] += dprojected_dstrain[i, j] * inverse_stretch[j]
+                    trace_gradient = flatten_matrix(matrix_u @ diagonal @ matrix_v.transpose())
+                    tangent += self.bulk * flatten_matrix(inverse.transpose()).outer_product(trace_gradient)
         return tangent
 
     @ti.func

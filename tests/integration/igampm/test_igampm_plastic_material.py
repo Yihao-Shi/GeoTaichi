@@ -50,7 +50,9 @@ def _build_iga_rectangle(output_path, axisymmetric=False):
     )
 
 
-def _build_plastic_mpm_particle(output_path, material_name, axisymmetric=False, damping=0.0, dilation=30.0):
+def _build_plastic_mpm_particle(
+    output_path, material_name, axisymmetric=False, damping=0.0, dilation=30.0, shape_function="linear"
+):
     from src.mpm.engines.direct.ImplicitULMPM import ImplicitULMPM
     from src.mpm.generator.Body import Body
 
@@ -68,7 +70,7 @@ def _build_plastic_mpm_particle(output_path, material_name, axisymmetric=False, 
         "poisson_ratio": 0.3,
         "density": 1000.0,
     }
-    if material_name == "DruckerPrager":
+    if material_name in ("DruckerPrager", "StateDependentDruckerPrager"):
         material_parameters.update(
             {
                 "FrictionAngle": 30.0,
@@ -77,6 +79,8 @@ def _build_plastic_mpm_particle(output_path, material_name, axisymmetric=False, 
                 "dpType": "Circumscribed",
             }
         )
+        if material_name == "StateDependentDruckerPrager":
+            material_parameters.update(e0=0.62, e_Tao=0.9, lambda_c=0.119, ksi=0.23, nd=1.7, nf=2.68, fai_c=30.0)
     else:
         material_parameters.update({"YieldStress": 1.0, "HardeningModulus": 50.0})
     mpm = ImplicitULMPM(
@@ -91,7 +95,7 @@ def _build_plastic_mpm_particle(output_path, material_name, axisymmetric=False, 
         interval=1,
         step=1,
         scale=1.0,
-        shape_function="linear",
+        shape_function=shape_function,
         visualize=False,
         axisymmetric=axisymmetric,
         axis_offset=0.0,
@@ -413,14 +417,20 @@ def test_nonassociated_ipc_solves_with_bicgstab_and_physical_flow(taichi_runtime
     )
 
 
+@pytest.mark.parametrize("material_name", ["DruckerPrager", "StateDependentDruckerPrager"])
 @pytest.mark.parametrize("axisymmetric", [False, True])
-def test_nonassociated_ipc_physical_jacobian_by_fd(taichi_runtime, tmp_path, monkeypatch, axisymmetric):
+@pytest.mark.parametrize("shape_function", ["linear", "QuadBSpline"])
+def test_nonassociated_ipc_physical_jacobian_by_fd(
+    taichi_runtime, tmp_path, monkeypatch, axisymmetric, material_name, shape_function
+):
     from src.igampm import IGAMPM
     import src.physics_model.contact_model.ipc.NurbsContact as nurbs_contact
 
     monkeypatch.setattr(nurbs_contact, "CLOSEST_POINT_STATIONARITY_TOL", 1e-13)
     iga = _build_iga_rectangle(tmp_path / "iga", axisymmetric)
-    mpm = _build_plastic_mpm_particle(tmp_path / "mpm", "DruckerPrager", axisymmetric, dilation=0.0)
+    mpm = _build_plastic_mpm_particle(
+        tmp_path / "mpm", material_name, axisymmetric, dilation=0.0, shape_function=shape_function
+    )
     engine = IGAMPM(
         iga,
         mpm,
@@ -433,6 +443,7 @@ def test_nonassociated_ipc_physical_jacobian_by_fd(taichi_runtime, tmp_path, mon
     ).build()
     engine.begin_implicit_ipc_step()
     mpm.F0.from_numpy(np.array([np.diag([1.18, 0.82, 0.90])]))
+    mpm.begin_lagged_material_state()
     system = engine.assemble_monolithic_newton_system(include_friction=False)
     count = system["active_dof"]
     base_mpm = mpm.grid_disp.to_numpy()

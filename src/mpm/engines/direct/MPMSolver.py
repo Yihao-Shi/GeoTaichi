@@ -339,6 +339,8 @@ class MPMSolver:
             body["grid_num"] = (
                 np.ceil((np.array(body["xmax"]) - np.array(body["xmin"])) / body["grid_size"]).astype(int) + 1
             )
+            if self.shape_function_name == "bspline" and np.any(body["grid_num"] < 4):
+                raise ValueError(f"{name}: boundary-corrected QuadBSpline requires at least four grid nodes per axis")
             # goffset
             body["goffset"] = goffset
             body["total_grid_num"] = np.prod(body["grid_num"])
@@ -386,6 +388,8 @@ class MPMSolver:
                     self.material.volumetric_plastic_strain.to_numpy()[:particle_num]
                 ),
             )
+            if getattr(self.material, "is_state_dependent", False):
+                point_data["void_ratio"] = np.ascontiguousarray(self.material.void_ratio.to_numpy()[:particle_num])
         pointsToVTK(
             vtk_path + f"/GraphicMPMParticle{self.output_count:06d}",
             posx,
@@ -532,6 +536,19 @@ class MPMSolver:
         return offset
 
     @ti.func
+    def _bspline_boundary_type(self, node, node_count):
+        boundary = 0
+        if node == 0:
+            boundary = 1
+        elif node == 1:
+            boundary = 2
+        elif node == node_count - 1:
+            boundary = 4
+        elif node == node_count - 2:
+            boundary = 3
+        return boundary
+
+    @ti.func
     def shape_hessian(self, particle_id, local_id):
         """Return d(grad N)/dx without storing an O(particle*stencil) tape."""
         body_id = self.particle[particle_id].bodyID
@@ -551,9 +568,12 @@ class MPMSolver:
         curvature = ti.Vector.zero(ti.f64, config.DIM)
         for axis in ti.static(range(config.DIM)):
             grid_position = xmin[axis] + grid_coord[axis] * dx
-            shape[axis] = self.shape_func.shapefn(position[axis], grid_position, inv_dx, 0.0)
-            gradient[axis] = self.shape_func.dshapefn(position[axis], grid_position, inv_dx, 0.0)
-            curvature[axis] = self.shape_func.hshapefn(position[axis], grid_position, inv_dx, 0.0)
+            boundary = 0
+            if ti.static(self.shape_function_name == "bspline"):
+                boundary = self._bspline_boundary_type(grid_coord[axis], grid_num[axis])
+            shape[axis] = self.shape_func.shapefn(position[axis], grid_position, inv_dx, boundary)
+            gradient[axis] = self.shape_func.dshapefn(position[axis], grid_position, inv_dx, boundary)
+            curvature[axis] = self.shape_func.hshapefn(position[axis], grid_position, inv_dx, boundary)
         hessian = ti.Matrix.zero(ti.f64, config.DIM, config.DIM)
         if ti.static(config.DIM == 2):
             hessian[0, 0] = curvature[0] * shape[1]
@@ -589,6 +609,11 @@ class MPMSolver:
                 ti.i32,
             )
             valid_stencil = 1
+            if ti.static(self.shape_function_name == "bspline"):
+                for d in ti.static(range(config.DIM)):
+                    if pos[d] < xmin[d] or pos[d] > xmin[d] + (grid_num[d] - 1) * dx:
+                        valid_stencil = 0
+                    base[d] = ti.min(ti.max(base[d], 0), grid_num[d] - 3)
 
             for count in range(self.shape_func.max_node_per_particle):
                 offset = self.stencil_offset_from_flat(count, self.shape_func.max_node_per_particle_one_axis)
@@ -602,8 +627,11 @@ class MPMSolver:
                     shapefn_grad = ti.Vector.zero(ti.f64, config.DIM)
                     for d in ti.static(range(config.DIM)):
                         xg = xmin[d] + grid_id[d] * dx
-                        shape_fn = self.shape_func.shapefn(pos[d], xg, inv_dx, 0.0)
-                        shape_fn_grad = self.shape_func.dshapefn(pos[d], xg, inv_dx, 0.0)
+                        boundary = 0
+                        if ti.static(self.shape_function_name == "bspline"):
+                            boundary = self._bspline_boundary_type(grid_id[d], grid_num[d])
+                        shape_fn = self.shape_func.shapefn(pos[d], xg, inv_dx, boundary)
+                        shape_fn_grad = self.shape_func.dshapefn(pos[d], xg, inv_dx, boundary)
                         shapefn[d] = shape_fn
                         shapefn_grad[d] = shape_fn_grad
 

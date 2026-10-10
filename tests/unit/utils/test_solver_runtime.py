@@ -2,7 +2,19 @@ import importlib
 
 import pytest
 
-from src.utils.SolverRuntime import StepSchedule, normalize_callbacks, python_callback
+from src.utils.SolverRuntime import (
+    StepSchedule,
+    inexact_newton_relative_tolerance,
+    normalize_callbacks,
+    python_callback,
+)
+
+
+def test_inexact_newton_forcing_restarts_caps_and_tightens():
+    assert inexact_newton_relative_tolerance(1.0, None) == 0.01
+    assert inexact_newton_relative_tolerance(2.0, 1.0) == 0.01
+    assert inexact_newton_relative_tolerance(0.01, 1.0) == pytest.approx(0.0009)
+    assert inexact_newton_relative_tolerance(1e-12, 1.0) == 1e-7
 
 
 KERNEL_CALLBACK_SOLVERS = (

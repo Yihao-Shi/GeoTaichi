@@ -293,7 +293,7 @@ def ShapeBsplineQ(xp, xg, idx, btype):
             nx = (0.5 * d + 1.5) * d + 1.125
         elif d >= -0.5 and d < 0.5:
             nx = -d * d + 0.75
-        elif d >= 0.5 and d < 1.0:
+        elif d >= 0.5 and d <= 1.0:
             nx = 1.0 - d
     elif btype == 4:
         if d >= -1.5 and d < -0.5:
@@ -331,7 +331,7 @@ def GShapeBsplineQ(xp, xg, idx, btype):
             dnx = d + 1.5
         elif d >= -0.5 and d < 0.5:
             dnx = -2.0 * d
-        elif d >= 0.5 and d < 1.0:
+        elif d >= 0.5 and d <= 1.0:
             dnx = -1.0
     elif btype == 4:
         if d >= -1.5 and d < -0.5:

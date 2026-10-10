@@ -57,6 +57,10 @@ def test_independent_wave_geometry_mass_and_fixed_half():
     assert len(particle_ids) == len(radius)
     np.testing.assert_allclose(annular_area.sum(), np.pi * cpt.SOIL_SIZE[0] ** 2, rtol=1e-14)
     assert cpt.dp_direct_material(dilation_angle=0)["DilationAngle"] == 0
+    state_dependent = cpt.dp_direct_material(state_dependent=True)
+    assert state_dependent["model"] == "StateDependentDruckerPrager"
+    assert state_dependent["e0"] == cpt.SOIL_MATERIAL["e0"]
+    assert state_dependent["dpType"] == "MiddleCircumscribed"
     for left, right in zip(fem.soil_particles(fem_p), iga.soil_particles(iga_p)):
         np.testing.assert_array_equal(left, right)
     for left, right in zip(fem.plate_mesh(fem_p)[:2], iga.plate_mesh(iga_p)[:2]):

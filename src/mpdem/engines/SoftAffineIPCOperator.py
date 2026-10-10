@@ -2030,6 +2030,40 @@ class SoftAffineIPCOperator(object):
         self._combine_soft_plastic_step_vjp()
         self._carry_coupled_state_vjp()
 
+    @ti.kernel
+    def _soft_physical_correction_measure(self) -> float:
+        measure = 0.0
+        for point in range(self.soft_point_num):
+            if self.scene.soft_point[point].active == 1:
+                displacement = ti.Vector.zero(float, 3)
+                gradient = ti.Matrix.zero(float, 3, 3)
+                for local in range(self._soft_support_count(point)):
+                    node = self._soft_support_node(point, local)
+                    block = self._soft_block(node)
+                    if 0 <= block and 3 * (block + 1) <= self.total_dof - self.affine_dof:
+                        delta = ti.Vector([self.soft_direction[3 * block + d] for d in ti.static(range(3))])
+                        displacement += self._soft_support_shape(point, local) * delta
+                        gradient += delta.outer_product(self._soft_support_gradient(point, local))
+                sb = self._soft_support_body(point)
+                spacing = self.scene.soft[sb].gridSpace * self.scene.soft[sb].scale
+                for d in ti.static(range(3)):
+                    ti.atomic_max(measure, ti.abs(displacement[d]))
+                    for axis in ti.static(range(3)):
+                        ti.atomic_max(measure, spacing * ti.abs(gradient[d, axis]))
+        return measure
+
+    def physical_direction_inf_norm(self, affine_direction):
+        return max(
+            self.affine.surface_direction_inf_norm(affine_direction),
+            float(self._soft_physical_correction_measure()),
+        )
+
+    def physical_direction_inf_norm_device(self):
+        return max(
+            float(self.affine.device_surface_direction_inf_norm()),
+            float(self._soft_physical_correction_measure()),
+        )
+
     def solve_direction(self, sims, grad):
         self._reject_cuda_host_vector_path("solve_direction")
         tick = time.time()
@@ -2128,7 +2162,13 @@ class SoftAffineIPCOperator(object):
         if clamp_direction and max_step > 0.0 and direction_norm > max_step:
             scale = max_step / direction_norm
             direction_norm = max_step
-        self._scale_and_scatter_device_direction(int(self.total_dof), float(scale))
+        if not self.fully_implicit:
+            self._scale_and_scatter_device_direction(int(self.total_dof), 1.0)
+            physical_norm = self.physical_direction_inf_norm_device()
+            result["unclamped_physical_correction_norm"] = physical_norm
+            result["physical_correction_norm"] = scale * physical_norm
+        if self.fully_implicit or scale != 1.0:
+            self._scale_and_scatter_device_direction(int(self.total_dof), float(scale))
         if int(self.device_status[None]) != 0 or not math.isfinite(direction_norm):
             raise RuntimeError("SoftAffineIPC CUDA Newton correction is non-finite")
         result["unclamped_solution_inf_norm"] = float(unclamped_direction_norm)

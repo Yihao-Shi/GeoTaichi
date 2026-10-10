@@ -14,6 +14,7 @@ from src.mpdem.engines.SoftAffineIPCOperator import (
 )
 from src.dem.engines.AffineBodyOperator import TaichiAffineBodyOperator
 from src.dem.engines.AffineBodyState import AffineBodyState
+from src.fem.contact.BVHBroadPhase import DynamicBVHBroadPhase
 from src.linear_solver.BuildTriplet import BuildTriplet
 from src.physics_model.contact_model.ipc.ContactAssembly import pullback_dense
 from src.physics_model.contact_model.ipc.IPC import (
@@ -59,6 +60,60 @@ class _ScalarField:
 
     def __setitem__(self, _index, value):
         self.value = value
+
+
+@pytest.mark.parametrize("weak", [False, True])
+def test_soft_affine_physical_measure_includes_scaled_particle_gradient(taichi_runtime, weak):
+    operator = object.__new__(SoftAffineIPCOperator)
+    operator.soft_point_num = 1
+    operator.total_dof = 6
+    operator.affine_dof = 0
+    operator.soft_direction = ti.field(ti.f64, shape=6)
+    operator.soft_node2dof = ti.field(ti.i32, shape=2)
+    operator.soft_node2dof.from_numpy(np.array([1, 2], dtype=np.int32))
+    scene = SimpleNamespace(
+        soft_support_shared=True,
+        soft_point=ti.Struct.field({"active": ti.i32, "bodyID": ti.i32}, shape=1),
+        rigid=ti.Struct.field({"softID": ti.i32}, shape=1),
+        soft=ti.Struct.field(
+            {
+                "gridSpace": ti.f64,
+                "scale": ti.f64,
+                "referenceRotation": ti.types.matrix(3, 3, ti.f64),
+                "templatePointStart": ti.i32,
+                "startIndex": ti.i32,
+                "mpmGridStart": ti.i32,
+            },
+            shape=1,
+        ),
+        soft_shape_count=ti.field(ti.i32, shape=1),
+        soft_shape_node=ti.field(ti.i32, shape=(1, 2)),
+        soft_shape=ti.field(ti.f64, shape=(1, 2)),
+        soft_dshape=ti.Vector.field(3, ti.f64, shape=(1, 2)),
+    )
+    operator.scene = scene
+    scene.soft_point.active[0] = 1
+    scene.soft.gridSpace[0] = 0.1
+    scene.soft.scale[0] = 2.0
+    scene.soft.referenceRotation[0] = np.eye(3)
+    scene.soft_shape_count[0] = 2
+    scene.soft_shape_node.from_numpy(np.array([[0, 1]], dtype=np.int32))
+    if weak:
+        scene.soft_shape.from_numpy(np.array([[1.0 - 1e-8, 1e-8]]))
+        scene.soft_dshape.from_numpy(np.array([[[-1e-5, 0.0, 0.0], [1e-5, 0.0, 0.0]]]))
+        operator.soft_direction.from_numpy(np.array([0.0, 0.0, 0.0, 1e-8, 0.0, 0.0]))
+        expected = 1e-14
+    else:
+        scene.soft_shape.from_numpy(np.array([[0.5, 0.5]]))
+        scene.soft_dshape.from_numpy(np.array([[[-10.0, 0.0, 0.0], [10.0, 0.0, 0.0]]]))
+        operator.soft_direction.from_numpy(np.array([-1e-4, 0.0, 0.0, 1e-4, 0.0, 0.0]))
+        expected = 2e-4
+    operator.affine = SimpleNamespace(
+        surface_direction_inf_norm=lambda direction: float(np.max(np.abs(direction))),
+        device_surface_direction_inf_norm=lambda: 0.0,
+    )
+    assert operator.physical_direction_inf_norm_device() == pytest.approx(expected, rel=1e-6, abs=1e-20)
+    assert operator.physical_direction_inf_norm(np.array([0.0])) == pytest.approx(expected, rel=1e-6, abs=1e-20)
 
 
 def test_soft_grid_dof_scan_rejects_inactive_nodes():
@@ -127,6 +182,7 @@ def test_soft_affine_levelset_contact_uses_implicit_mixed_assembler():
 
 def test_soft_affine_empty_mixed_broadphase_skips_contact_kernels():
     operator = object.__new__(SoftAffineIPCOperator)
+    operator.fully_implicit = False
     operator.mixed_pair_num = _ScalarField(0)
     operator.affine = SimpleNamespace(levelset_contact=True)
     operator._assemble_mixed_levelset_contact = lambda _need_matrix: pytest.fail(
@@ -299,6 +355,7 @@ def test_soft_affine_residual_probe_does_not_reset_gpu_triplets():
     operator.energy = _ScalarField()
     operator._assemble_soft_energy_gradient = lambda _need_matrix, _project_spd: None
     operator._build_mixed_pairs = lambda _swept: None
+    operator.mixed_bvh = None
     operator._assemble_soft_soft_contact = lambda _need_matrix: None
     operator._assemble_mixed_contact = lambda _need_matrix: None
     operator.fully_implicit = True
@@ -856,6 +913,8 @@ def _toolkit_barrier_distance2_oracle(distance2, active_distance2, kappa):
 
 @ti.data_oriented
 class _MaterialTable:
+    surface_direction_inf_norm = TaichiAffineBodyOperator.surface_direction_inf_norm
+
     def __init__(self):
         self.levelset_contact = False
         self.pp_dhat = ti.field(float, shape=(1, 1))
@@ -873,10 +932,16 @@ class _MaterialTable:
         self.body_material = ti.field(ti.i32, shape=1)
         self.body_material[0] = 0
         self.face_num = 1
+        self.body_num = 1
+        self.control_num = 4
+        self.vertex_num = 3
+        self.dhat = 0.1
         self.face2body = ti.field(ti.i32, shape=1)
         self.node2body = ti.field(ti.i32, shape=3)
         self.faces = ti.Vector.field(3, ti.i32, shape=1)
         self.x = ti.Vector.field(3, float, shape=3)
+        self.dx = ti.Vector.field(3, float, shape=3)
+        self.y = ti.Vector.field(3, float, shape=4)
         self.hat_x = ti.Vector.field(3, float, shape=3)
         self.basis = ti.field(float, shape=(3, 4))
         self.face2body[0] = 0
@@ -893,6 +958,8 @@ class _MaterialTable:
         basis[1, 1] = 1.0
         basis[2, 2] = 1.0
         self.basis.from_numpy(basis)
+        self.basis_np = basis
+        self.node2body_np = np.zeros(3, dtype=np.int32)
 
     def set_timestep(self, _dt):
         pass
@@ -940,6 +1007,8 @@ def _make_bilateral_kernel_harness():
     soft_body_type = ti.types.struct(
         surfacePointStart=ti.i32,
         surfacePointEnd=ti.i32,
+        gridSpace=float,
+        scale=float,
     )
     soft_point_type = ti.types.struct(
         x=ti.types.vector(3, float),
@@ -958,6 +1027,7 @@ def _make_bilateral_kernel_harness():
         soft_shape_count=ti.field(ti.i32, shape=2),
         soft_shape_node=ti.field(ti.i32, shape=(2, 1)),
         soft_shape=ti.field(float, shape=(2, 1)),
+        soft_dshape=ti.Vector.field(3, float, shape=(2, 1)),
         soft_support_shared=False,
     )
     scene.soft[0].surfacePointStart = 0
@@ -977,6 +1047,8 @@ def _make_bilateral_kernel_harness():
         scene.soft_shape_count[point] = 1
         scene.soft_shape_node[point, 0] = point
         scene.soft_shape[point, 0] = 1.0
+        scene.soft[point].gridSpace = 1.0
+        scene.soft[point].scale = 1.0
 
     operator = object.__new__(SoftAffineIPCOperator)
     operator.friction_mode = "lagged"
@@ -990,6 +1062,7 @@ def _make_bilateral_kernel_harness():
     operator.fully_profile_id = 0
     operator.scene = scene
     operator.soft_num = 2
+    operator.soft_point_num = 2
     operator.soft_surface_point_num = 2
     operator.affine = _MaterialTable()
     operator.dt = 1.0e-2
@@ -1003,6 +1076,7 @@ def _make_bilateral_kernel_harness():
     operator.soft_node2dof = ti.field(ti.i32, shape=2)
     operator.soft_node2dof.from_numpy(np.array([1, 2], dtype=np.int32))
     operator.soft_disp = ti.field(float, shape=6)
+    operator.soft_direction = ti.field(float, shape=6)
     operator.soft_hat_x = ti.Vector.field(3, float, shape=2)
     operator.soft_hat_x.from_numpy(np.array([[0.0, 0.0, 0.0], [0.05, 0.0, 0.0]], dtype=np.float64))
     operator.mixed_levelset_frozen_point = ti.Vector.field(3, float, shape=2)
@@ -1041,11 +1115,32 @@ def _make_bilateral_kernel_harness():
     operator.mixed_pair_start.from_numpy(np.array([0, 1], dtype=np.int32))
     operator.mixed_pair_end.from_numpy(np.array([1, 1], dtype=np.int32))
     operator.mixed_contact_type_count = ti.field(ti.i32, shape=7)
+    operator.mixed_bvh_node_count = operator.soft_point_num + operator.affine.vertex_num
+    operator.mixed_bvh_position = ti.Vector.field(3, float, shape=operator.mixed_bvh_node_count)
+    operator.mixed_bvh_end_position = ti.Vector.field(3, float, shape=operator.mixed_bvh_node_count)
+    operator.mixed_candidate_capacity = 4
+    # The mixed-contact oracle involves point 0 only; point 1 belongs to the PP oracle.
+    operator.mixed_bvh = DynamicBVHBroadPhase(
+        np.array([[2, 3, 4]], dtype=np.int32),
+        np.empty((0, 2), dtype=np.int32),
+        np.array([0], dtype=np.int32),
+        np.zeros(operator.mixed_bvh_node_count),
+        np.zeros(0),
+        np.vstack((scene.soft_point.x.to_numpy(), operator.affine.x.to_numpy())),
+        max_point_triangle_pairs=operator.mixed_candidate_capacity,
+        max_edge_edge_pairs=1,
+    )
+    operator._update_mixed_mesh_candidates()
+    operator.soft_barrier_count = ti.field(ti.i32, shape=())
+    operator.soft_contact_capacity = 2
+    operator.mixed_contact_capacity = 2
+    _enable_stable_contact_compaction(operator)
     return operator
 
 
 def _make_levelset_mixed_kernel_harness():
     operator = _make_bilateral_kernel_harness()
+    operator.mixed_bvh = None
     radius = 0.3
     spacing = 0.05
     shape = np.array([17, 17, 17], dtype=np.int32)
@@ -1162,7 +1257,9 @@ def _enable_stable_contact_compaction(operator):
     operator.soft_pair_capacity = int(operator.soft_pair.shape[0])
     operator.mixed_pair_capacity = int(operator.mixed_pair.shape[0])
     operator.soft_contact_prefix_sum = PrefixSumExecutor(max(operator.soft_surface_point_num, 1))
-    operator.mixed_contact_prefix_sum = PrefixSumExecutor(max(operator.soft_surface_point_num, 1))
+    operator.mixed_contact_prefix_sum = PrefixSumExecutor(
+        max(operator.mixed_candidate_capacity, operator.soft_surface_point_num, 1)
+    )
     operator.soft_contact_prefix = ti.field(
         ti.i32,
         shape=max(
@@ -1175,6 +1272,7 @@ def _enable_stable_contact_compaction(operator):
         ti.i32,
         shape=max(
             operator.soft_surface_point_num,
+            operator.mixed_candidate_capacity,
             operator.mixed_contact_prefix_sum.get_length(),
             1,
         ),
@@ -1303,8 +1401,6 @@ def _make_swept_ccd_harness():
     operator.mixed_pair_start = ti.field(ti.i32, shape=2)
     operator.mixed_pair_end = ti.field(ti.i32, shape=2)
     operator.ccd_alpha = ti.field(float, shape=())
-    from src.fem.contact.BVHBroadPhase import DynamicBVHBroadPhase
-
     operator.mixed_bvh_node_count = 5
     operator.mixed_bvh_position = ti.Vector.field(3, float, shape=5)
     operator.mixed_bvh_end_position = ti.Vector.field(3, float, shape=5)
@@ -1372,7 +1468,6 @@ def _prepare_production_assembly_harness(operator, friction_mode):
 
     operator.max_dof = operator.total_dof
     operator.max_soft_dof = operator.total_dof - operator.affine_dof
-    operator.soft_direction = ti.field(float, shape=max(operator.max_soft_dof, 1))
     operator.soft_disp_base = ti.field(float, shape=max(operator.max_soft_dof, 1))
     operator.cuda_hot_loop = False
     operator.sims = SimpleNamespace(
@@ -1386,10 +1481,7 @@ def _prepare_production_assembly_harness(operator, friction_mode):
         np.zeros(operator.affine_dof, dtype=np.float64),
     )
     operator._assemble_soft_energy_gradient = lambda _need_matrix, _project_spd: None
-    # The fixture already contains the exact one soft-soft and one mixed body
-    # pair.  Bypassing only broad phase keeps this test small while every
-    # narrow-phase, constitutive, scatter, and mode-dispatch path remains the
-    # production implementation.
+    # Body pairs are fixed; the production BVH still rebuilds mesh candidates.
     operator._build_mixed_pairs = lambda _swept: None
     operator._raise_hash_triplet_overflow = lambda _stage: None
     return operator
@@ -1620,6 +1712,7 @@ def test_soft_affine_barrier_capacity_fails_before_scatter():
     operator.stable_lagged_contacts = True
     operator.affine = SimpleNamespace(levelset_contact=False)
     operator.mixed_pair_num = _ScalarField(1)
+    operator.mixed_bvh = SimpleNamespace(point_triangle_count=_ScalarField(1))
     operator.fully_implicit = False
     operator.mixed_contact_capacity = 4
     operator._count_mixed_contact_types = lambda: events.append("count")
@@ -1728,6 +1821,7 @@ def test_soft_affine_lagged_device_zero_correction_is_convergence():
         solve_direction_device=lambda _sims: {
             "solution_inf_norm": 0.0,
             "unclamped_solution_inf_norm": 0.0,
+            "unclamped_physical_correction_norm": 0.0,
         },
     )
     engine._line_search_device = lambda *_args: pytest.fail("a converged Newton probe must not be applied")
@@ -1749,10 +1843,12 @@ def test_soft_affine_lagged_device_applies_first_nonzero_small_correction():
             {
                 "solution_inf_norm": 5.0e-10,
                 "unclamped_solution_inf_norm": 5.0e-10,
+                "unclamped_physical_correction_norm": 5.0e-10,
             },
             {
                 "solution_inf_norm": 0.0,
                 "unclamped_solution_inf_norm": 0.0,
+                "unclamped_physical_correction_norm": 0.0,
             },
         )
     )
@@ -1799,6 +1895,10 @@ def test_soft_affine_lagged_cpu_uses_raw_correction_velocity_not_gradient():
         solve_direction=solve_direction,
     )
 
+    engine.operator.physical_direction_inf_norm = lambda affine: float(
+        np.max(np.abs(np.concatenate((affine, engine.operator.soft_direction.to_numpy()))))
+    )
+
     def line_search(_sims, _y, energy, gradient, affine_direction):
         applied_affine_directions.append(np.asarray(affine_direction).copy())
         full_direction = np.concatenate((affine_direction, engine.operator.soft_direction.to_numpy()))
@@ -1833,10 +1933,12 @@ def test_soft_affine_lagged_device_uses_raw_correction_velocity():
             {
                 "solution_inf_norm": 1.0e-10,
                 "unclamped_solution_inf_norm": 2.0e-9,
+                "unclamped_physical_correction_norm": 2.0e-9,
             },
             {
                 "solution_inf_norm": 5.0e-10,
                 "unclamped_solution_inf_norm": 5.0e-10,
+                "unclamped_physical_correction_norm": 5.0e-10,
             },
         )
     )
@@ -2361,6 +2463,9 @@ def test_soft_affine_coupled_lagged_friction_scale_vjp():
 def test_soft_affine_frozen_contact_compaction_is_stable_across_refreshes():
     operator = _make_bilateral_kernel_harness()
     _enable_stable_contact_compaction(operator)
+    assert operator.mixed_candidate_capacity > operator.soft_surface_point_num
+    assert operator.mixed_contact_prefix.shape[0] >= operator.mixed_candidate_capacity
+    np.testing.assert_array_equal(operator.mixed_bvh.point_triangle.to_numpy()[0], [0, 2, 3, 4])
     operator.soft_barrier_count = ti.field(ti.i32, shape=())
     operator.soft_contact_capacity = 2
     operator.mixed_contact_capacity = 2
@@ -2375,6 +2480,7 @@ def test_soft_affine_frozen_contact_compaction_is_stable_across_refreshes():
         operator._reset_lagged_friction_cache()
         operator._initialize_soft_lagged_friction()
         operator._initialize_mixed_lagged_friction()
+        np.testing.assert_array_equal(operator.mixed_contact_prefix.to_numpy()[: operator.mixed_candidate_capacity], 1)
         soft_count = int(operator.soft_friction_count[None])
         mixed_count = int(operator.mixed_friction_count[None])
         snapshots.append(
@@ -2887,6 +2993,7 @@ def test_soft_affine_outer_refresh_happens_only_between_complete_inner_solves():
 
     operator.assemble = assemble
     operator.solve_direction = solve_direction
+    operator.physical_direction_inf_norm = lambda direction: float(np.max(np.abs(direction)))
     engine.operator = operator
 
     def inner(_sims, y, energy, gradient):
@@ -2938,7 +3045,8 @@ def test_soft_affine_device_outer_probe_is_unclamped_unapplied_velocity():
         backup_lagged_friction_for_adjoint_device=lambda: events.append("backup"),
         assemble_device=lambda need_matrix=True: (events.append(("assemble", need_matrix)) or 2.0),
         solve_direction_device=lambda _sims, clamp_direction=True: (
-            events.append(("probe", clamp_direction)) or {"solution_inf_norm": 2.0e-9}
+            events.append(("probe", clamp_direction))
+            or {"solution_inf_norm": 2.0e-9, "physical_correction_norm": 2.0e-9}
         ),
         accept_step_device=lambda: events.append("accept"),
     )
@@ -2977,6 +3085,7 @@ def test_soft_affine_unbounded_outer_mode_raises_at_safety_cap_without_accepting
             -np.asarray(gradient),
         ),
     )
+    operator.physical_direction_inf_norm = lambda direction: float(np.max(np.abs(direction)))
     engine.operator = operator
     engine._solve_lagged_inner = lambda _sims, y, energy, gradient: (np.asarray(y) + 1.0, energy, gradient, 1)
     sims = SimpleNamespace(

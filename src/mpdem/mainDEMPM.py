@@ -663,10 +663,16 @@ class DEMPM(SolverDiagnosticsMixin):
             self.direct_affine_ipc_model,
             self.sims,
         )
+        solver = self.mpm.direct_solver
         self.enginer = DirectAffineIPCSystem(
             affine_engine.operator,
             direct_mpm.ipc,
             self.direct_affine_contact,
+            inexact_newton=solver.get(
+                "inexact_newton", bool(getattr(direct_mpm.mpm.material, "is_nonassociated", False))
+            ),
+            force_atol=solver.get("absolute_tolerance", 1.0e-10),
+            force_rtol=solver.get("residual_tolerance", 1.0e-8),
         )
         direct_mpm.mpm.time = float(self.sims.current_time)
         direct_mpm.mpm.step_count = int(self.sims.current_step)

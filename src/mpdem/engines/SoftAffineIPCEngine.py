@@ -245,13 +245,13 @@ class SoftAffineIPCEngine(object):
             # resulting correction is a convergence probe and is not applied.
             self.operator.refresh_lagged_friction(y_flat)
             energy, grad = self.operator.assemble(y_flat, need_matrix=True)
-            _, _, updated_direction = self.operator.solve_direction(sims, grad)
+            affine_direction, _, _ = self.operator.solve_direction(sims, grad)
             # The stopping residual is a velocity: the infinity
             # norm of the *unapplied, unclamped* Newton correction divided by
             # the time step.  Keeping the outer tolerance separately
             # configurable; its default equals the Newton tolerance.
             self.last_friction_residual = float(
-                np.linalg.norm(updated_direction, ord=np.inf) / self._lagged_time_step()
+                self.operator.physical_direction_inf_norm(affine_direction) / self._lagged_time_step()
             )
             if self.last_friction_residual < tolerance:
                 self.last_friction_converged = True
@@ -299,7 +299,7 @@ class SoftAffineIPCEngine(object):
             self.operator.refresh_lagged_friction_device()
             energy = self.operator.assemble_device(need_matrix=True)
             probe = self.operator.solve_direction_device(sims, clamp_direction=False)
-            self.last_friction_residual = float(probe["solution_inf_norm"]) / self._lagged_time_step()
+            self.last_friction_residual = float(probe["physical_correction_norm"]) / self._lagged_time_step()
             if self.last_friction_residual < tolerance:
                 self.last_friction_converged = True
                 break
@@ -473,12 +473,9 @@ class SoftAffineIPCEngine(object):
             if not math.isfinite(energy):
                 self.last_inner_failure_reason = "non_finite_energy"
                 raise RuntimeError("SoftAffineIPC lagged initial/current state has " "non-finite IPC energy")
-            # ``unclamped_solution_inf_norm`` is captured before max-step
-            # truncation.  This is the PN stopping criterion; a force/gradient
-            # norm has different units
-            # and changes with mass or stiffness scaling.
+            # Test represented motion/strain before max-step truncation.
             result = self.operator.solve_direction_device(sims)
-            correction_velocity = float(result["unclamped_solution_inf_norm"]) / dt
+            correction_velocity = float(result["unclamped_physical_correction_norm"]) / dt
             self.last_inner_correction_history.append(correction_velocity)
             # The ``k && gradVanish`` convergence guard evaluates
             # the correction from a completed Newton update.  A nonzero first
@@ -729,9 +726,8 @@ class SoftAffineIPCEngine(object):
             if not np.all(np.isfinite(direction)):
                 self.last_inner_failure_reason = "non_finite_direction"
                 raise RuntimeError("SoftAffineIPC lagged Newton correction is non-finite")
-            # Test the raw coupled correction before max-step truncation, just
-            # as the reference projected-Newton loop does.
-            correction_velocity = float(np.linalg.norm(direction, ord=np.inf)) / dt
+            # The host reference uses the same physical norm as the device loop.
+            correction_velocity = self.operator.physical_direction_inf_norm(affine_dir) / dt
             self.last_inner_correction_history.append(correction_velocity)
             if correction_velocity == 0.0 or (iteration > 0 and correction_velocity < tolerance):
                 if getattr(self.operator, "is_semi", False) and not self.operator.semi_contact_converged():

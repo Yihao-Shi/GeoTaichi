@@ -168,6 +168,10 @@ For nonassociated DP IPC, `monolithic_inexact_newton=True` optionally adapts the
 BiCGSTAB relative tolerance from `0.01` down to the configured
 `monolithic_linear_solver_relative_tolerance` floor (which must be at most
 `0.01`). It defaults to false. When enabled, acceptance requires the nonlinear
-force and Dirichlet criteria; a small correction alone is insufficient. CCD
+force, represented-motion/strain correction, and Dirichlet criteria; a small
+correction alone is insufficient. Inner and refreshed-friction probes share
+the particle/gradient/hoop measure, and the first force reference is retained
+through an attempted step's friction loops. Terminal inexact corrections are
+rechecked at the configured linear accuracy. CCD
 and residual Armijo remain active. Compare accepted states and residuals from
 the same checkpoint before interpreting short-run timing as an acceleration.

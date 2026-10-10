@@ -13,6 +13,68 @@ from src.fempm.contact.IPC import IPCModel
 pytestmark = [pytest.mark.unit, pytest.mark.ipc, pytest.mark.contact]
 
 
+@pytest.mark.parametrize("kind", ["fem", "fempm", "fedem"])
+def test_force_reference_survives_friction_refresh(kind):
+    engine, _, _ = _mock_outer_solver(kind, (0.0,))
+    engine.max_iterations = 0
+    engine.absolute_tolerance = 0.0
+    engine.residual_tolerance = 1e-4
+    engine.raise_on_nonconvergence = False
+    engine._friction_force_reference = None
+    force = [1000.0]
+    engine.dt = 0.001
+    if kind == "fem":
+        engine.contact_assembler = None
+        engine.damping, engine.beta, engine.gamma, engine.quasi_static = 0.0, 0.25, 0.5, False
+        engine._prepare_contact_iteration_device = lambda position: None
+        engine._assemble_internal_device = lambda **kwargs: None
+        engine._current_stiffness = None
+        engine.state.assemble_implicit_residual = lambda *args: None
+        engine.state.residual_norm = lambda: force[0]
+        engine.state.external_norm = lambda: 0.0
+        engine._contact_converged_device = lambda: True
+        solve = lambda: ImplicitFEM._solve_frozen_friction_newton_device(engine, 0.1)
+    else:
+        engine.residual_squared = {None: 0.0}
+        engine.contact.diagnostics = lambda: {}
+        engine.contact.contact_converged = lambda: True
+        engine.assemble_system = lambda **kwargs: {"active_dof": 3}
+        if kind == "fempm":
+            engine.inexact_newton = False
+            engine.correction_velocity_tolerance = 1e-7
+            engine.constraint_inf_norm = {None: 0.0}
+            engine._reduce_system_metrics = lambda dof: engine.residual_squared.update({None: force[0] ** 2})
+            solve = lambda: FEMPMImplicitEngine._solve_newton(engine, True, False)[:2]
+        else:
+            engine.simulation = SimpleNamespace(timer=SimpleNamespace(section=lambda name: nullcontext()))
+            engine._reduce_metrics = lambda: engine.residual_squared.update({None: force[0] ** 2})
+            solve = lambda: FEMAffineIPCEngine._solve_frozen_friction_newton(engine, False)
+    assert not solve()[0]
+    force[0] = 0.01
+    assert solve()[0]
+    assert engine._friction_force_reference == 1000.0
+
+
+def test_nonassociated_fempm_updated_probe_also_requires_force_balance():
+    engine, run, _ = _mock_outer_solver("fempm", (1e-12, 1e-12), maximum=2)
+    engine.nonassociated_newton = True
+    engine.absolute_tolerance, engine.residual_tolerance = 1e-10, 1e-8
+    engine.dt, engine.correction_velocity_tolerance = 0.001, 1e-7
+    engine.constraint_inf_norm = {None: 0.0}
+    engine.residual_squared = {None: 1.0}
+    engine.contact.contact_converged = lambda: True
+    inner = engine._solve_newton
+
+    def solve(include_friction, verbose):
+        engine._friction_force_reference = 1.0
+        return inner(include_friction, verbose)
+
+    engine._solve_newton = solve
+    with pytest.raises(NewtonConvergenceError, match="fixed point did not converge"):
+        run()
+    assert not engine.last_friction_converged
+
+
 @pytest.mark.parametrize("model_type", (IPCModel, AffineIPCModel))
 def test_coupled_ipc_accepts_strict_friction_fixed_point_settings(model_type):
     model = model_type(
@@ -94,9 +156,12 @@ def _mock_outer_solver(kind, residuals, *, iterations=-1, maximum=4, tolerance=0
         run = lambda: engine.solve_lagged_friction_fixed_point(0.1)
     elif kind == "fempm":
         engine = object.__new__(FEMPMImplicitEngine)
+        engine.nonassociated_newton = False
         engine.contact_model = settings
         engine.fem = SimpleNamespace(state=SimpleNamespace(position="fem_position"))
-        engine.mpm = SimpleNamespace(grid_disp="mpm_displacement")
+        engine.mpm = SimpleNamespace(
+            grid_disp="mpm_displacement", has_lagged_material=False, begin_lagged_material_state=lambda: None
+        )
         engine.contact = SimpleNamespace(
             activate_friction=True,
             refresh_friction=lambda fem, mpm: events.append(("refresh", (fem, mpm))),
@@ -115,10 +180,13 @@ def _mock_outer_solver(kind, residuals, *, iterations=-1, maximum=4, tolerance=0
         engine.contact_model = settings
         engine.raise_on_nonconvergence = True
         engine.fem_contact = None
-        engine.affine = SimpleNamespace(initialize_contact_damping_device=lambda: None)
+        engine.affine = SimpleNamespace(
+            initialize_contact_damping_device=lambda: None, device_backup_lagged_friction_for_adjoint=lambda: None
+        )
         engine.fem = SimpleNamespace(state=SimpleNamespace(position="fem_position"))
         engine.contact = SimpleNamespace(
             activate_friction=True,
+            backup_lagged_friction_for_adjoint_device=lambda: None,
             refresh_friction=lambda position: events.append(("refresh", position)),
         )
         engine._solve_frozen_friction_newton = lambda verbose: (
@@ -176,7 +244,7 @@ def test_fem_affine_newton_applies_first_nonzero_small_correction():
     engine.last_line_search_limits = None
     engine.residual_squared = {None: 1.0}
     engine.physical_correction_inf_norm = {None: 5.0e-6}
-    engine.contact = SimpleNamespace(diagnostics=lambda: {})
+    engine.contact = SimpleNamespace(diagnostics=lambda: {}, contact_converged=lambda: True)
     engine.simulation = SimpleNamespace(timer=SimpleNamespace(section=lambda _name: nullcontext()))
     engine.assemble_system = lambda need_matrix: {"energy": 1.0}
     engine._reduce_metrics = lambda: None

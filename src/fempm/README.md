@@ -18,6 +18,12 @@ synchronized time, and coupled output.
 
 ## Package layout
 
+Direct-MPM children selecting `ShapeFunction="QuadBSpline"` use the shared
+finite-grid boundary polynomials described in [MPM](../mpm/README.md).
+Values, gradients and IPC position Hessians use the same basis; each grid
+axis requires at least four nodes. This applies to Cartesian and axisymmetric
+FEM–MPM IPC without changing the material or contact measure.
+
 | Path | Responsibility |
 | --- | --- |
 | mainFEMPM.py | Public FEMPM facade and coupled lifecycle |
@@ -346,6 +352,27 @@ no material-consistency outer loop. Associated DP retains PCG and its existing
 frozen-plastic-volume consistency iteration. The lagged-friction outer loop
 is independent of this choice.
 
+The Direct ULMPM child also accepts `StateDependentDruckerPrager`, using
+SDMC's state-dependent friction/dilation with the finite-strain DP return.
+Its consistent nonsymmetric Jacobian follows the same residual/BiCGSTAB
+route, including for cloth contact. Lagged friction remains independent;
+all 14 history entries, including void ratio and previous-pressure cache,
+participate in accepted-step rollback. See
+[parameters](../mpm/README.md#state-dependent-dp-in-coupled-implicit-ulmpm) and
+[theory](../physics_model/consititutive_model/README.md#state-dependent-finite-strain-drucker--prager).
+Parameter/history adjoints for this law are unsupported.
+
+For nonassociated DP, `set_solver({"inexact_newton": True, ...})` optionally
+adapts the Taichi Krylov relative tolerance from 0.01 toward a floor of
+`max(linear_solver_relative_tolerance, 1e-7)` as Newton's free force residual
+decreases. The forcing history restarts at each friction outer iteration.
+Force balance, prescribed displacement, and physical correction velocity must
+converge together. The first force reference persists across the attempted step's
+friction refreshes and resets on retry. Terminal inexact corrections are re-solved
+at the configured Krylov accuracy. Fixed-node reaction forces are
+excluded from the free force norm. The default is `False`: small systems can
+spend more time on extra Newton assemblies than they save in linear solves.
+
 When the MPM material has no global incremental potential, line search uses
 the residual merit
 
@@ -374,11 +401,18 @@ the fixed-point residual is the unapplied correction velocity
 ```math
 \varepsilon_f
 =\frac{
-\|\Delta\boldsymbol{q}_{unapplied}\|_{\infty}
+\|\Delta\boldsymbol{q}_{unapplied}\|_{phys}
 }{
 \Delta t
 }.
 ```
+
+The physical norm combines FEM nodal displacement, interpolated MPM particle
+displacement, and `h` times the maximum displacement-gradient component. The
+axisymmetric MPM contribution also includes `h * abs(delta_u_r) / r`. Inner
+Newton and outer probes use this same norm; nonassociated DP also checks the
+refreshed free force and prescribed-motion bounds. The updated probe is unapplied
+and unclamped.
 
 The accepted line-search step is bounded by
 
@@ -670,6 +704,9 @@ the FEDEM subtriangle-area distribution.
   `Circumscribed`, `MiddleCircumscribed`, or `Inscribed` Mohr--Coulomb cone
   matching. Associated plastic MPM defaults to `project_pd=True`; the coupled
   nonassociated DP route overrides material projection and selects BiCGSTAB.
+  This route also applies to continuum-solid MPM coupled to cloth FEM. It
+  removes the material consistency outer loop while retaining the lagged
+  friction fixed point and contact/deformation CCD.
 - Implicit friction is currently the symmetric lagged IPC potential. Fully
   implicit nonsymmetric friction remains available in IGAMPM but is not yet
   implemented for FEM triangle-to-MPM-grid pullback.

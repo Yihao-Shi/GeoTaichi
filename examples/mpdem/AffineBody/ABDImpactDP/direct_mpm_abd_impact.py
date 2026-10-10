@@ -19,6 +19,8 @@ def main():
     parser.add_argument("--arch", choices=("cpu", "gpu"), default="gpu")
     parser.add_argument("--contact-model", choices=("BarrierIPC", "SemiIPC"), default="BarrierIPC")
     parser.add_argument("--material", choices=("NeoHookean", "DruckerPrager", "VonMises"), default="DruckerPrager")
+    parser.add_argument("--dilation-angle", type=float, default=0.0)
+    parser.add_argument("--inexact-newton", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--spacing", type=float, default=0.025)
     parser.add_argument("--ppc", type=int, default=1)
     parser.add_argument("--steps", type=int, default=200)
@@ -37,6 +39,12 @@ def main():
         or not 0.38 <= args.start_height < 0.9
     ):
         parser.error("spacing, ppc, steps, dt, impact speed, and output interval must be positive")
+    if not 0.0 <= args.dilation_angle <= 30.0:
+        parser.error("dilation-angle must be between 0 and 30 degrees")
+    if args.inexact_newton is None:
+        args.inexact_newton = args.material == "DruckerPrager" and args.dilation_angle != 30.0
+    if args.inexact_newton and (args.material != "DruckerPrager" or args.dilation_angle == 30.0):
+        parser.error("inexact-newton requires nonassociated DruckerPrager")
 
     import geotaichi as gt
 
@@ -73,7 +81,7 @@ def main():
         "poisson_ratio": 0.3,
     }
     if args.material == "DruckerPrager":
-        material.update(Cohesion=250.0, FrictionAngle=30.0, DilationAngle=30.0, dpType="Circumscribed")
+        material.update(Cohesion=250.0, FrictionAngle=30.0, DilationAngle=args.dilation_angle, dpType="Circumscribed")
     elif args.material == "VonMises":
         material.update(YieldStress=5.0e3, HardeningModulus=2.0e4)
     mpm.add_material(**material)
@@ -108,7 +116,7 @@ def main():
         mu=0.25,
         epsv=1.0e-3,
         friction_mode="lagged",
-        friction_iterations=1,
+        friction_iterations=-1,
         contact_search="LinkedCell",
     )
 
@@ -136,7 +144,7 @@ def main():
         dhat=0.6 * args.spacing,
         barrier_stiffness=3.0e5,
         friction_mode="lagged",
-        friction_iterations=1,
+        friction_iterations=-1,
         max_newton_iteration=100,
         newton_tolerance=1.0e-3,
         linear_tolerance=1.0e-8,
@@ -192,6 +200,7 @@ def main():
             "SimulationTime": args.steps * args.dt,
             "SaveInterval": args.output_interval * args.dt,
             "SavePath": args.output_dir,
+            "inexact_newton": args.inexact_newton,
             "enable_step_retry": args.contact_model == "BarrierIPC",
             "step_retry_max_retries": 3,
             "step_retry_reduction": 0.5,
@@ -215,7 +224,7 @@ def main():
         friction_coefficient=0.25,
         epsv=1.0e-3,
         friction_mode="lagged",
-        friction_iterations=1,
+        friction_iterations=-1,
         project_pd=True,
     )
     coupling.add_ipc_property(
@@ -246,6 +255,9 @@ def main():
         "case": "ordinary_direct_mpm_polyhedral_abd_ipc",
         "contact_model": args.contact_model,
         "material": args.material,
+        "dilation_angle": args.dilation_angle,
+        "inexact_newton": args.inexact_newton,
+        "linear_solver": coupling.enginer.matrix.solver,
         "mpm_particles": int(body.particle_counter),
         "affine_bodies": 1,
         "steps": int(result["step"]),
