@@ -74,8 +74,9 @@ def phase_geometry(
     porosity = particles["porosity"].reshape(-1)[solid]
     if not np.isfinite(porosity).all() or np.any((porosity < 0) | (porosity >= 1)):
         raise ValueError("Invalid solid porosity")
+    vertices = np.clip(vertices, 0, domain)
     return {
-        "water": np.clip(vertices, 0, domain) * scale,
+        "water": vertices * scale,
         "water_faces": faces,
         "solid_positions": positions[solid] * scale,
         "solid_radii": np.cbrt(3 * volumes[solid] * (1 - porosity) / (4 * np.pi)) * scale,

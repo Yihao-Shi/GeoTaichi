@@ -65,6 +65,7 @@ def evaluate_metrics(rows, expected_fluid, expected_solid, args):
     amplitude_error = abs(amplitude - expected_amplitude) / max(expected_amplitude, 1.0e-12)
     duration_complete = abs(float(rows[-1, 0]) - args.time) <= 0.1 * args.dt + 1.0e-12
     particle_conservation = bool(np.all(rows[:, 1] == expected_fluid) and np.all(rows[:, 2] == expected_solid))
+    fluidization_verified = bool(rows.shape[1] > 24 and np.all(rows[:, 24] <= 1.0e-8 * args.soil_young_modulus))
     metrics = {
         "case": "3D two-layer two-phase incompressible MPM wavemaker over a right trapezoidal slope",
         "reference": "Zhang et al. (2027), CMAME 463:119401, Section 6.2; scaled Lagrangian piston wave",
@@ -114,6 +115,9 @@ def evaluate_metrics(rows, expected_fluid, expected_solid, args):
         "maximum_incident_high_frequency_surface_roughness_m": float(incident_rows[:, 21].max()),
         "minimum_solid_porosity": float(np.min(rows[:, 17])),
         "maximum_solid_porosity": float(np.max(rows[:, 18])),
+        "solid_fluidization_porosity_threshold": args.maximum_porosity,
+        "fluidized_solid_stress_verified": fluidization_verified,
+        "maximum_fluidized_solid_effective_stress_pa": float(rows[:, 24].max()) if rows.shape[1] > 24 else None,
         "soil_young_modulus_pa": args.soil_young_modulus,
         "soil_cohesion_pa": args.soil_cohesion,
         "soil_friction_deg": args.soil_friction,
@@ -153,7 +157,8 @@ def evaluate_metrics(rows, expected_fluid, expected_solid, args):
         and metrics["maximum_fluid_particles_in_solid_cells"] == 0
         and metrics["maximum_fluid_particles_behind_piston"] == 0
         and 0.0 < metrics["minimum_solid_porosity"]
-        and metrics["maximum_solid_porosity"] <= args.maximum_porosity + 1.0e-10
+        and metrics["maximum_solid_porosity"] < 1.0
+        and (metrics["maximum_solid_porosity"] <= args.maximum_porosity + 1.0e-10 or fluidization_verified)
         and fit_samples >= 6
         and amplitude_error <= metrics["strict_tolerances"]["amplitude_relative_error"]
         and metrics["measured_wave_amplitude_cells"] >= 1.0
@@ -199,6 +204,8 @@ def write_metrics(output, expected_fluid, expected_solid, args):
             solid_velocity = data["solid_velocity"]
             pressure = data["pressure"]
             porosity = data["porosity"]
+            fluidized = solid & (porosity > args.maximum_porosity)
+            fluidized_stress = float(np.max(np.abs(data["stress"][fluidized]))) if np.any(fluidized) else 0.0
             if initial_solid_position is None:
                 initial_solid_position = position[solid].copy()
             solid_displacement = float(np.linalg.norm(position[solid] - initial_solid_position, axis=1).max())
@@ -262,6 +269,7 @@ def write_metrics(output, expected_fluid, expected_solid, args):
                     int(np.count_nonzero(position[fluid, 0] < piston_position - 1.0e-6 * args.dx)),
                     *surface_profile,
                     solid_displacement,
+                    fluidized_stress,
                 ]
             )
     rows = np.asarray(rows, dtype=np.float64)
@@ -277,7 +285,7 @@ def write_metrics(output, expected_fluid, expected_solid, args):
             "fluid_particles_in_deep_air_cells,global_mean_surface_m,"
             "fluid_particles_in_solid_cells,solid_porosity_min,solid_porosity_max,fluid_particles_behind_piston,"
             "cross_tank_surface_roughness_m,high_frequency_surface_roughness_m,instantaneous_wave_height_m,"
-            "solid_displacement_max_m"
+            "solid_displacement_max_m,fluidized_solid_effective_stress_max_pa"
         ),
         comments="",
     )

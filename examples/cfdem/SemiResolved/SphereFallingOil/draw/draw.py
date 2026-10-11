@@ -22,7 +22,10 @@ def load_velocity_experiment(path):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "output", type=Path, nargs="?", default=Path(__file__).parents[1] / "OutputData/semi_resolved_E4"
+        "output",
+        type=Path,
+        nargs="?",
+        default=Path(__file__).parents[1] / "OutputData/E4_CA2_wall_lubrication_formal_20260910",
     )
     parser.add_argument("--experiment", type=Path, default=(Path(__file__).parents[1] / "experiment.csv"))
     args = parser.parse_args()

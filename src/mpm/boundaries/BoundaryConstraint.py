@@ -25,6 +25,7 @@ class BoundaryConstraints(object):
         self.displacement_boundary = None
         self.particle_traction = None
         self.solid_cell_regions = []
+        self.solid_cell_node_planes = []
         self.solid_cell_plane_regions = []
 
         self.velocity_list = np.zeros(1, dtype=np.int32)
@@ -204,6 +205,21 @@ class BoundaryConstraints(object):
         ):
             raise RuntimeError(f"Solid-cell boundary [{start}, {end}] is out of domain {domain}")
         lower, upper = self._expand_solid_cell_region(sims, element, boundary, start_point, end_point)
+        normal = DictIO.GetAlternative(boundary, "Norm", None)
+        if normal is None:
+            flat_axes = np.flatnonzero(np.abs(end - start) <= tolerance)
+            if len(flat_axes) == 1:
+                axis = flat_axes[0]
+                if abs(start[axis]) <= tolerance or abs(start[axis] - domain[axis]) <= tolerance:
+                    normal = np.zeros(dim)
+                    normal[axis] = -1.0 if abs(start[axis]) <= tolerance else 1.0
+        if normal is not None:
+            normal = np.asarray(normal, dtype=np.float64)[:dim]
+            length = np.linalg.norm(normal)
+            if normal.shape != (dim,) or not np.isfinite(normal).all() or length <= 1.0e-14:
+                raise ValueError("SolidCell normal must be finite and nonzero")
+            # Keep cell classification unchanged; constrain the solid MPM grid as well as MAC faces.
+            self.solid_cell_node_planes.append((lower, upper, start.copy(), normal / length))
         self.solid_cell_regions.append((lower, upper))
 
         print("Boundary Type: Solid Cell")

@@ -165,7 +165,7 @@ def run(args):
         delayed_fluid_advection=True,
         particle_shifting=True,
         free_surface_detection=False,
-        visualize=True,
+        visualize=not args.no_post,
     )
     mpm.set_solver(
         {

@@ -36,6 +36,7 @@ from src.mpm.engines.TwoPhaseDoubleLayerKernel import (
     kernel_g2p_double_layer3d,
     kernel_enforce_double_layer_solid_cell_faces2d,
     kernel_enforce_double_layer_solid_cell_faces3d,
+    kernel_extrapolate_double_layer_ghost_faces,
     kernel_mac_p2g_double_layer2d,
     kernel_mac_p2g_double_layer3d,
     kernel_mark_double_layer_solid_cell_region2d,
@@ -516,9 +517,10 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
     def _apply_solid_plane_node_boundaries2d(self, scene: myScene):
         if scene.boundary is None:
             return
-        for start_point, end_point, plane_point, plane_normal in getattr(
-            scene.boundary, "solid_cell_plane_regions", []
-        ):
+        planes = getattr(scene.boundary, "solid_cell_plane_regions", []) + getattr(
+            scene.boundary, "solid_cell_node_planes", []
+        )
+        for start_point, end_point, plane_point, plane_normal in planes:
             kernel_enforce_double_layer_solid_plane_nodes2d(
                 scene.mass_cut_off,
                 scene.element.grid_size,
@@ -558,9 +560,10 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
     def _apply_solid_plane_node_boundaries3d(self, scene: myScene):
         if scene.boundary is None:
             return
-        for start_point, end_point, plane_point, plane_normal in getattr(
-            scene.boundary, "solid_cell_plane_regions", []
-        ):
+        planes = getattr(scene.boundary, "solid_cell_plane_regions", []) + getattr(
+            scene.boundary, "solid_cell_node_planes", []
+        )
+        for start_point, end_point, plane_point, plane_normal in planes:
             kernel_enforce_double_layer_solid_plane_nodes3d(
                 scene.mass_cut_off,
                 scene.element.grid_size,
@@ -1387,6 +1390,15 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
         self.enforce_solid_cell_faces(sims)
         self.apply_velocity_constraints(sims, scene)
         self._apply_solid_plane_node_boundaries2d(scene)
+        kernel_extrapolate_double_layer_ghost_faces(
+            self.cell_type,
+            (self.fluid_velocity_x, self.fluid_velocity_y),
+            (self.fluid_acceleration_x, self.fluid_acceleration_y),
+            (self.solid_velocity_x, self.solid_velocity_y),
+            (self.fluid_mass_x, self.fluid_mass_y),
+            scene.mass_cut_off,
+            mac_influenced_node - 1,
+        )
 
         for _, start_index, end_index, mat_prop in self._iter_twophase_materials(scene):
             kernel_g2p_double_layer2d(
@@ -1660,6 +1672,15 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
         self.enforce_solid_cell_faces(sims)
         self.apply_velocity_constraints(sims, scene)
         self._apply_solid_plane_node_boundaries3d(scene)
+        kernel_extrapolate_double_layer_ghost_faces(
+            self.cell_type,
+            (self.fluid_velocity_x, self.fluid_velocity_y, self.fluid_velocity_z),
+            (self.fluid_acceleration_x, self.fluid_acceleration_y, self.fluid_acceleration_z),
+            (self.solid_velocity_x, self.solid_velocity_y, self.solid_velocity_z),
+            (self.fluid_mass_x, self.fluid_mass_y, self.fluid_mass_z),
+            scene.mass_cut_off,
+            mac_influenced_node - 1,
+        )
 
         for _, start_index, end_index, mat_prop in self._iter_twophase_materials(scene):
             kernel_g2p_double_layer3d(

@@ -39,9 +39,11 @@ cache. CUDA assigns a warp to each block row, while CPU/Metal use one thread.
 The adjacency is allocated on the first matvec, so assembly-only matrices do
 not reserve it. This is independent of SciPy and does not change assembly.
 BiCGSTAB fuses direction/preconditioning and vector/dot-product updates,
-returning four scalar reductions per ordinary iteration. Every 32 iterations
-it replaces the residual with `b - A*x`, resets the shadow residual, and starts
-with `p = r`; it also verifies the true residual before reporting convergence.
+returning four scalar reductions per ordinary iteration. It preserves the
+shadow residual and recurrence until prospective convergence, then checks
+`b - A*x`. A failed check restarts with the true residual and `p = r`;
+termination also reports the true residual. Frequent periodic restarts can
+destabilize the recurrence of strongly scaled nonsymmetric IPC systems.
 
 ## Sparse block assembly
 

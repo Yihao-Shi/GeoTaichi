@@ -131,6 +131,13 @@ def test_two_phase_wavemaker_metrics_reject_loss_escape_and_missing_wave():
     rows[-1, 16] = 0
     rows[-1, 18] = 0.57
     assert not evaluate_metrics(rows, 1000, 200, args)["passed"]
+    fluidized_rows = np.column_stack((rows, np.zeros(len(rows))))
+    assert evaluate_metrics(fluidized_rows, 1000, 200, args)["passed"]
+    fluidized_rows[-1, 24] = args.soil_young_modulus
+    assert not evaluate_metrics(fluidized_rows, 1000, 200, args)["passed"]
+    fluidized_rows[-1, 24] = 0.0
+    fluidized_rows[-1, 18] = 1.01
+    assert not evaluate_metrics(fluidized_rows, 1000, 200, args)["passed"]
     rows[-1, 18] = 0.41
     rows[-1, 19] = 1
     assert not evaluate_metrics(rows, 1000, 200, args)["passed"]

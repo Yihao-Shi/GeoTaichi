@@ -56,7 +56,7 @@ SKIP_POSTPROCESS = os.environ.get(PREFIX + "SKIP_POSTPROCESS", "0") == "1"
 
 
 MAX_PARTICLES = EXPECTED_FLUID_PARTICLES + EXPECTED_SOLID_PARTICLES
-MAX_VELOCITY_CONSTRAINTS = 2 * (aligned_count(POROUS_SIZE[0], DX) + 1) * (aligned_count(POROUS_SIZE[1], DX) + 1)
+MAX_VELOCITY_CONSTRAINTS = 2 * (aligned_count(POROUS_SIZE[0], DX) + 3) * (aligned_count(POROUS_SIZE[1], DX) + 3)
 
 if min(DX, DT, SIMULATION_TIME, SAVE_INTERVAL, HYDRAULIC_CONDUCTIVITY) <= 0.0 or PPC <= 0:
     raise ValueError("spacing, time, conductivity, and particles per cell must be positive")
@@ -101,7 +101,7 @@ mpm.set_configuration(
     velocity_projection="Affine",
     delayed_fluid_advection=True,
     particle_shifting=True,
-    visualize=True,
+    visualize=not SKIP_POSTPROCESS,
 )
 mpm.set_solver(
     {
@@ -254,8 +254,9 @@ mpm.add_boundary_condition(
         {
             "BoundaryType": "VelocityConstraint",
             "Velocity": [0.0, 0.0],
-            "StartPoint": POROUS_ORIGIN,
-            "EndPoint": [2.0, 1.0],
+            # Include B-spline support nodes, not only the physical skeleton box.
+            "StartPoint": [POROUS_ORIGIN[0] - DX, 0.0],
+            "EndPoint": [POROUS_ORIGIN[0] + POROUS_SIZE[0] + DX, POROUS_SIZE[1] + DX],
         }
     ]
 )

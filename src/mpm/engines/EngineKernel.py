@@ -8044,21 +8044,26 @@ def kernel_find_fluid_domain_by_volume(
 @ti.kernel
 def kernel_fill_enclosed_fluid_cells(
     ghost_cell: int,
-    cnum: ti.types.vector(GlobalVariable.DIMENSION, int),
+    cnum: ti.template(),
     cell_type: ti.template(),
 ):
-    # ponytail: this repairs isolated one-cell holes; use connectivity/flood-fill if multi-cell voids appear.
+    # shortcut: repair only isolated one-cell holes; multi-cell voids need particle redistribution.
+    dimension = ti.static(len(cell_type.shape))
     active_cnum = cnum - 2 * ghost_cell
     for I in ti.grouped(cell_type):
         inside_active = True
-        for d in ti.static(range(GlobalVariable.DIMENSION)):
+        for d in ti.static(range(dimension)):
             inside_active = inside_active and I[d] >= 0 and I[d] < active_cnum[d]
         if inside_active and is_air(cell_type[I]):
             enclosed = True
-            for d in ti.static(range(GlobalVariable.DIMENSION)):
-                unit = ti.Vector.unit(GlobalVariable.DIMENSION, d)
-                enclosed = enclosed and is_fluid(cell_type[I - unit]) and is_fluid(cell_type[I + unit])
-            if enclosed:
+            fluid_neighbors = 0
+            for d in ti.static(range(dimension)):
+                unit = ti.Vector.unit(dimension, d)
+                for side in ti.static((-1, 1)):
+                    attr = cell_type[I + side * unit]
+                    enclosed = enclosed and (is_fluid(attr) or is_solid(attr))
+                    fluid_neighbors += int(is_fluid(attr))
+            if enclosed and fluid_neighbors >= dimension:
                 cell_type[I] = 3
 
     # Mark first so parallel scheduling cannot chain-fill adjacent air cells.

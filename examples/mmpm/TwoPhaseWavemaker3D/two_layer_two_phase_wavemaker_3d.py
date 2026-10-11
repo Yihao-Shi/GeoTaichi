@@ -234,7 +234,7 @@ def run(args):
         # DoubleLayer builds its own fluid SDF.  The generic density detector
         # assumes a single-phase velocity_gradient field.
         free_surface_detection=False,
-        visualize=True,
+        visualize=not args.no_post,
     )
     mpm.set_semi_implicit_solver_parameters(
         {

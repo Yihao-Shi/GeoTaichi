@@ -15,7 +15,7 @@ from src.fempm.contact.IPCAssembler import FEMPMIPCAssembler
 from src.linear_solver.BuildTriplet import BuildTriplet
 from src.linear_solver.CoordinateSparseMatrix import CoordinateSparseMatrix
 from src.utils.RuntimeHook import runtime_checkpoint
-from src.utils.SolverRuntime import inexact_newton_relative_tolerance
+from src.utils.SolverRuntime import inexact_newton_absolute_tolerance, inexact_newton_relative_tolerance
 from src.utils.StepRetry import StepRetryPolicy, nonlinear_failure_kind
 from src.utils.linalg import no_operation
 
@@ -828,6 +828,12 @@ class FEMPMImplicitEngine:
         active_dof = int(system["active_dof"])
         active_nodes = int(system["active_nodes"])
         relative_tolerance = system.get("linear_relative_tolerance", self.linear_solver_relative_tolerance)
+        absolute_tolerance = self.linear_solver_tolerance
+        if "linear_residual_reference" in system:
+            absolute_tolerance = inexact_newton_absolute_tolerance(
+                system["linear_residual_reference"], relative_tolerance, absolute_tolerance
+            )
+            relative_tolerance = 0.0
         self.correction.fill(0.0)
         if self.linear_solver == "Scipy":
             if self.assemble_type == "HashTriplet":
@@ -852,7 +858,7 @@ class FEMPMImplicitEngine:
                 self.rhs,
                 self.correction,
                 active_nodes=active_nodes,
-                tol=self.linear_solver_tolerance,
+                tol=absolute_tolerance,
                 rel_tol=relative_tolerance,
                 maxiter=self.linear_solver_max_iters,
                 return_solution=False,
@@ -863,7 +869,7 @@ class FEMPMImplicitEngine:
                 self.rhs,
                 self.correction,
                 self.coo_diagonal,
-                tol=self.linear_solver_tolerance,
+                tol=absolute_tolerance,
                 rel_tol=relative_tolerance,
                 maxiter=self.linear_solver_max_iters,
             )
@@ -1210,6 +1216,7 @@ class FEMPMImplicitEngine:
                 last_system["linear_relative_tolerance"] = inexact_newton_relative_tolerance(
                     residual_norm, previous_norm, max(self.linear_solver_relative_tolerance, 1.0e-7)
                 )
+                last_system["linear_residual_reference"] = residual_norm
             linear_solve = self._solve_linear_system(last_system)
             previous_norm = residual_norm
             self._split_direction(int(last_system["active_mpm_dof"]))
@@ -1224,6 +1231,7 @@ class FEMPMImplicitEngine:
                 and last_system["linear_relative_tolerance"] > self.linear_solver_relative_tolerance
             ):
                 last_system["linear_relative_tolerance"] = self.linear_solver_relative_tolerance
+                last_system.pop("linear_residual_reference", None)
                 linear_solve = self._solve_linear_system(last_system)
                 self._split_direction(int(last_system["active_mpm_dof"]))
                 self._reduce_system_metrics(int(last_system["active_dof"]))

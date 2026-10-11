@@ -4,6 +4,7 @@ import pytest
 
 from src.utils.SolverRuntime import (
     StepSchedule,
+    inexact_newton_absolute_tolerance,
     inexact_newton_relative_tolerance,
     normalize_callbacks,
     python_callback,
@@ -15,6 +16,18 @@ def test_inexact_newton_forcing_restarts_caps_and_tightens():
     assert inexact_newton_relative_tolerance(2.0, 1.0) == 0.01
     assert inexact_newton_relative_tolerance(0.01, 1.0) == pytest.approx(0.0009)
     assert inexact_newton_relative_tolerance(1e-12, 1.0) == 1e-7
+
+
+def test_inexact_linear_error_uses_physical_force_and_preserves_absolute_floor():
+    assert inexact_newton_absolute_tolerance(7.0, 0.01, 1e-8) == pytest.approx(0.07)
+    assert inexact_newton_absolute_tolerance(0.0, 0.01, 1e-8) == 1e-8
+    assert inexact_newton_absolute_tolerance(1e-9, 0.01, 1e-8) == 1e-8
+
+
+@pytest.mark.parametrize("residual", [-1.0, float("nan"), float("inf")])
+def test_inexact_linear_error_rejects_invalid_physical_force(residual):
+    with pytest.raises(ValueError, match="finite and nonnegative"):
+        inexact_newton_absolute_tolerance(residual, 0.01, 1e-8)
 
 
 KERNEL_CALLBACK_SOLVERS = (

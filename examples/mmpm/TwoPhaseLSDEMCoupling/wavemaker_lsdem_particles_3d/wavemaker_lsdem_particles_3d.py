@@ -47,6 +47,12 @@ SOIL_COHESION = 300.0
 SOIL_FRICTION = 26.0
 
 
+def embedded_trunk_shift(vertices, wall):
+    if len(vertices) == 0 or not np.isfinite(vertices).all() or wall >= SLOPE_HEIGHT:
+        raise ValueError("Trunk placement requires a finite surface and a resolved soil bed")
+    return 0.5 * (wall + SLOPE_HEIGHT) - float(np.min(vertices[:, 2]))
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="TwoPhaseDoubleLayer wavemaker with LSDEM particles")
     parser.add_argument("--arch", default=os.environ.get("GEOTAICHI_ARCH", "gpu"))
@@ -156,7 +162,7 @@ def run(args):
         particle_interaction=True,
         wall_interaction=False,
         gravity=[0.0, 0.0, -9.81],
-        visualize=True,
+        visualize=not args.no_post,
     )
     dempm.mpm.set_configuration(
         background_damping=0.03,
@@ -170,7 +176,7 @@ def run(args):
         delayed_fluid_advection=True,
         particle_shifting=True,
         free_surface_detection=False,
-        visualize=True,
+        visualize=not args.no_post,
     )
     dempm.mpm.set_semi_implicit_solver_parameters(
         {
@@ -190,7 +196,7 @@ def run(args):
         gravity=[0.0, 0.0, -9.81],
         engine="VelocityVerlet",
         search="LinkedCell",
-        visualize=True,
+        visualize=not args.no_post,
     )
     dempm.set_solver(
         {
@@ -209,9 +215,9 @@ def run(args):
             "max_rigid_template_number": 2,
             "levelset_grid_number": 800000,
             "surface_node_number": 24000,
-            "max_plane_number": 0,
+            "max_plane_number": 5,
             "body_coordination_number": 12,
-            "wall_coordination_number": 0,
+            "wall_coordination_number": 5,
             "verlet_distance_multiplier": [0.15, 0.10],
             "point_coordination_number": [6, 2],
             "compaction_ratio": [0.15, 0.15],
@@ -259,8 +265,9 @@ def run(args):
                     "Name": "tree_trunk",
                     "GroupID": 0,
                     "MaterialID": 0,
-                    "BodyPoint": [0.74, 0.12, 0.075],
-                    "Radius": 0.075,
+                    "BodyPoint": [0.74, 0.12, 0.18],
+                    # Radius is volume-equivalent, not the elongated body's bounding radius.
+                    "Radius": 0.040,
                     "BodyOrientation": [0.0, 75.0, 8.0],
                     "InitialVelocity": [0.0, 0.0, 0.0],
                     "FixMotion": ["Free", "Free", "Free"],
@@ -281,7 +288,19 @@ def run(args):
             ],
         }
     )
-    dempm.dem.choose_contact_model("Hertz Mindlin Model", None)
+    dempm.dem.scene.activate_surface_node_visualization(dempm.dem.sims, force=True)
+    body, vertices = dempm.dem.scene.visualize_surface(dempm.dem.sims)
+    vertices = vertices[: int(dempm.dem.scene.surfaceNum[0])]
+    trunk = body["bodyID"] == 0
+    vertical_shift = embedded_trunk_shift(vertices[trunk], wall)
+    for field in (dempm.dem.scene.rigid.mass_center, dempm.dem.scene.particle.x):
+        center = field[0]
+        center[2] += vertical_shift
+        field[0] = center
+    vertices[trunk, 2] += vertical_shift
+    if not np.isfinite(vertices).all() or np.any(vertices < wall) or np.any(vertices > np.asarray(TANK) - wall):
+        raise ValueError("Initial LSDEM surface penetrates a tank wall; check equivalent radius and placement")
+    dempm.dem.choose_contact_model("Hertz Mindlin Model", "Hertz Mindlin Model")
     dempm.dem.add_property(
         materialID1=0,
         materialID2=0,
@@ -320,8 +339,10 @@ def run(args):
             },
         ]
     )
-    dempm.mpm.add_body(
-        {
+    # Carve only the solid skeleton; IBM retains its fictitious fluid inside bodies.
+    dempm.add_body(
+        check_overlap=True,
+        mpm_body={
             "Template": [
                 {
                     "RegionName": "trapezoidal_bed",
@@ -332,6 +353,12 @@ def run(args):
                     "InitialVelocity": [0.0, 0.0, 0.0],
                     "FixVelocity": ["Free", "Free", "Free"],
                 },
+            ]
+        },
+    )
+    dempm.mpm.add_body(
+        {
+            "Template": [
                 {
                     "RegionName": "water",
                     "nParticlesPerCell": args.ppc,
@@ -360,6 +387,18 @@ def run(args):
             {"BoundaryType": "SolidCell", "StartPoint": a, "EndPoint": b, "Norm": n, "CellThickness": 1}
             for a, b, n in walls
         ]
+    )
+    for point, _, normal in walls:
+        dempm.dem.add_wall(
+            body={
+                "WallType": "Plane",
+                "MaterialID": 0,
+                "WallCenter": point,
+                "OuterNormal": (-np.asarray(normal)).tolist(),
+            }
+        )
+    dempm.dem.add_wall(
+        body={"WallType": "Plane", "MaterialID": 0, "WallCenter": [wall, wall, wall], "OuterNormal": [1, 0, 0]}
     )
 
     def update_wavemaker(sims, scene):

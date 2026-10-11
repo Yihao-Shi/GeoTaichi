@@ -134,7 +134,11 @@ def prepare(case, folder, preview=False):
                     if abs(frame["time"] - float(grid["t_current"])) > 1e-8:
                         raise ValueError(f"Fluid/grid time mismatch at {path}")
                     vertices, faces = water_surface(grid, particles, domain[1] if case == "dam_2d" else None)
-                    data = {"water": np.clip(vertices, 0, domain) * scale, "water_faces": faces}
+                    vertices = np.clip(vertices, 0, domain)
+                    data = {
+                        "water": vertices * scale,
+                        "water_faces": faces,
+                    }
                     peak_water_height = max(peak_water_height, float(data["water"][:, 2].max()))
                     if case == "dam_2d":
                         solid, triangles = polygon_prism_mesh(DAM_OBSTACLE_VERTICES, domain[1])

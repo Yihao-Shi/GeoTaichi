@@ -29,6 +29,9 @@ def write_metrics(output, expected_fluid, expected_solid, args):
         raise RuntimeError("Section 5.1 run produced fewer than two particle snapshots")
     rows = []
     finite = True
+    fluidized_stress_verified = True
+    maximum_fluidized_stress = 0.0
+    solid_volume_positive = True
     receiver_min = RECEIVER_ORIGIN
     receiver_max = RECEIVER_ORIGIN + RECEIVER_SIZE
     for file_name in files:
@@ -42,6 +45,18 @@ def write_metrics(output, expected_fluid, expected_solid, args):
             solid_velocity = data["solid_velocity"]
             pressure = data["pressure"]
             porosity = data["porosity"]
+            if "volume" in data:
+                solid_volume_positive &= bool(
+                    np.all(data["volume"][solid] > 0.0) and np.isfinite(data["volume"][solid]).all()
+                )
+            fluidized = solid & (porosity > 0.64)
+            if np.any(fluidized):
+                if "stress" not in data:
+                    fluidized_stress_verified = False
+                else:
+                    stress = data["stress"][fluidized]
+                    fluidized_stress_verified &= bool(np.isfinite(stress).all() and np.all(np.abs(stress) <= 1.0))
+                    maximum_fluidized_stress = max(maximum_fluidized_stress, float(np.max(np.abs(stress))))
             finite &= bool(
                 np.isfinite(position[active]).all()
                 and np.isfinite(fluid_velocity[fluid]).all()
@@ -99,6 +114,10 @@ def write_metrics(output, expected_fluid, expected_solid, args):
         "maximum_particles_outside_domain": int(rows[:, 10].max()),
         "minimum_solid_porosity": float(rows[:, 11].min()),
         "maximum_solid_porosity": float(rows[:, 12].max()),
+        "solid_fluidization_porosity_threshold": 0.64,
+        "fluidized_solid_stress_verified": fluidized_stress_verified,
+        "maximum_fluidized_solid_effective_stress_pa": maximum_fluidized_stress,
+        "solid_volume_positive": solid_volume_positive,
     }
     metrics["passed"] = bool(
         metrics["finite"]
@@ -110,7 +129,9 @@ def write_metrics(output, expected_fluid, expected_solid, args):
         and 0.01 <= metrics["maximum_fluid_speed_mps"] < 5.0
         and metrics["maximum_solid_speed_mps"] < 5.0
         and metrics["minimum_solid_porosity"] > 0.0
-        and metrics["maximum_solid_porosity"] <= 0.64 + 1.0e-8
+        and metrics["maximum_solid_porosity"] < 1.0
+        and metrics["fluidized_solid_stress_verified"]
+        and metrics["solid_volume_positive"]
     )
     np.savetxt(
         output / "leakage_diagnostics.csv",

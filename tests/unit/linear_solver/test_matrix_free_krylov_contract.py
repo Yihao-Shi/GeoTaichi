@@ -53,6 +53,13 @@ def _scalar_fields(rhs, initial=None):
     return b, x
 
 
+def _solve_triplet_device_fields(matrix, rhs, **options):
+    matrix.rhs.from_numpy(rhs)
+    result = matrix.solve(return_solution=False, **options)
+    result["x"] = matrix.x.to_numpy()
+    return result
+
+
 @pytest.mark.matrix_free
 def test_pcg_uses_true_residual_for_stiff_jacobi_system(taichi_runtime):
     matrix = np.asarray([[1.0e10, 2.0e8], [2.0e8, 2.0e10]], dtype=np.float64)
@@ -229,7 +236,6 @@ def test_hash_triplet_pcg_uses_same_true_residual_contract(
         symmetric=False,
         solver="PCG",
         matrix_symmetric=True,
-        device_reduction=False,
     )
     matrix.reset_system()
     matrix.assemble_scalar_triplets(
@@ -239,7 +245,8 @@ def test_hash_triplet_pcg_uses_same_true_residual_contract(
     )
     matrix.finalize_taichi_assembly()
 
-    result = matrix.solve(
+    result = _solve_triplet_device_fields(
+        matrix,
         rhs=rhs.reshape((2, 1)),
         active_nodes=2,
         tol=1.0e-9,
@@ -266,7 +273,6 @@ def test_hash_triplet_pcg_supports_scale_invariant_relative_tolerance(
         symmetric=False,
         solver="PCG",
         matrix_symmetric=True,
-        device_reduction=False,
     )
     matrix.reset_system()
     matrix.assemble_scalar_triplets(
@@ -276,13 +282,15 @@ def test_hash_triplet_pcg_supports_scale_invariant_relative_tolerance(
     )
     matrix.finalize_taichi_assembly()
 
-    absolute_only = matrix.solve(
+    absolute_only = _solve_triplet_device_fields(
+        matrix,
         rhs=rhs.reshape((2, 1)),
         active_nodes=2,
         tol=1.0e-12,
         maxiter=1,
     )
-    relative = matrix.solve(
+    relative = _solve_triplet_device_fields(
+        matrix,
         rhs=rhs.reshape((2, 1)),
         active_nodes=2,
         tol=1.0e-12,
@@ -311,7 +319,6 @@ def test_hash_triplet_pcg_curvature_check_is_scale_invariant(taichi_runtime):
         symmetric=False,
         solver="PCG",
         matrix_symmetric=True,
-        device_reduction=False,
     )
     matrix.reset_system()
     matrix.assemble_scalar_triplets(
@@ -321,7 +328,8 @@ def test_hash_triplet_pcg_curvature_check_is_scale_invariant(taichi_runtime):
     )
     matrix.finalize_taichi_assembly()
 
-    result = matrix.solve(
+    result = _solve_triplet_device_fields(
+        matrix,
         rhs=rhs.reshape((2, 1)),
         active_nodes=2,
         tol=0.0,
@@ -390,7 +398,6 @@ def test_hash_triplet_pcg_verifies_recursive_residual(
         symmetric=False,
         solver="PCG",
         matrix_symmetric=False,
-        device_reduction=False,
     )
     matrix.reset_system()
     matrix.assemble_scalar_triplets(
@@ -400,7 +407,8 @@ def test_hash_triplet_pcg_verifies_recursive_residual(
     )
     matrix.finalize_taichi_assembly()
 
-    result = matrix.solve(
+    result = _solve_triplet_device_fields(
+        matrix,
         rhs=rhs.reshape((5, 1)),
         active_nodes=5,
         tol=1.0e-9,
@@ -440,7 +448,6 @@ def test_hash_triplet_bicgstab_solves_transposed_block_system(
         symmetric=False,
         solver="BiCGSTAB",
         matrix_symmetric=False,
-        device_reduction=False,
     )
     matrix.reset_system()
     matrix.assemble_scalar_triplets(
@@ -450,7 +457,8 @@ def test_hash_triplet_bicgstab_solves_transposed_block_system(
     )
     matrix.finalize_taichi_assembly()
 
-    result = matrix.solve(
+    result = _solve_triplet_device_fields(
+        matrix,
         rhs=(dense.T @ expected).reshape((2, 2)),
         active_nodes=2,
         tol=1.0e-12,
@@ -477,7 +485,6 @@ def test_hash_triplet_bicgstab_rejects_false_recursive_convergence(
         symmetric=False,
         solver="BiCGSTAB",
         matrix_symmetric=False,
-        device_reduction=False,
     )
     matrix.reset_system()
     matrix.assemble_scalar_triplets(
@@ -487,7 +494,8 @@ def test_hash_triplet_bicgstab_rejects_false_recursive_convergence(
     )
     matrix.finalize_taichi_assembly()
 
-    result = matrix.solve(
+    result = _solve_triplet_device_fields(
+        matrix,
         rhs=rhs.reshape((2, 1)),
         active_nodes=2,
         tol=1.0e-12,
@@ -519,7 +527,6 @@ def test_hash_triplet_pcg_preserves_conjugacy_past_32_iterations(
         symmetric=False,
         solver="PCG",
         matrix_symmetric=True,
-        device_reduction=False,
     )
     matrix.reset_system()
     matrix.assemble_scalar_triplets(
@@ -529,7 +536,8 @@ def test_hash_triplet_pcg_preserves_conjugacy_past_32_iterations(
     )
     matrix.finalize_taichi_assembly()
 
-    result = matrix.solve(
+    result = _solve_triplet_device_fields(
+        matrix,
         rhs=np.ones((size, 1)),
         active_nodes=size,
         tol=1.0e-10,

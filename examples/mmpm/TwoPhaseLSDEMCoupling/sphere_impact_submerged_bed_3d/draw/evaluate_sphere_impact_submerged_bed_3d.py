@@ -53,6 +53,22 @@ def fluid_surface_coverage(fluid_position, vertices, particle_spacing):
     return float(np.mean(distance <= 3.0 * particle_spacing))
 
 
+def wet_surface_coverage(fluid_position, vertices, particle_spacing, cell_type, dx):
+    """Exclude the open water-entry cavity, but retain enclosed voids in the check."""
+    from scipy.ndimage import binary_fill_holes
+
+    types = np.asarray(cell_type).squeeze()
+    if types.ndim != 3 or not len(vertices):
+        raise ValueError("Wet-surface coverage requires a 3-D grid and nonempty surface")
+    cells = np.floor(vertices / dx).astype(np.int64)
+    inside = np.all((cells >= 0) & (cells < types.shape), axis=1)
+    dry = np.zeros(len(vertices), dtype=bool)
+    external_air = ~binary_fill_holes(types != 0)
+    dry[inside] = external_air[tuple(cells[inside].T)]
+    wet_coverage = fluid_surface_coverage(fluid_position, vertices[~dry], particle_spacing)
+    return wet_coverage, float(np.mean(dry))
+
+
 def write_metrics(output, expected_fluid, expected_solid, args):
     is_bunny = getattr(args, "impactor", "sphere") == "bunny"
     mpm_files = sorted((output / "particles").glob("MPMParticle*.npz"))
@@ -109,6 +125,9 @@ def write_metrics(output, expected_fluid, expected_solid, args):
     mpm_rows = np.asarray(mpm_rows, dtype=np.float64)
     rigid_rows = np.asarray(rigid_rows, dtype=np.float64)
     submerged_coverage = []
+    wet_coverage = []
+    dry_fraction = []
+    late_coverage = []
     surface_bounds = []
     maximum_body_outside_domain = 0
     maximum_body_outside_cylinder = 0
@@ -159,11 +178,27 @@ def write_metrics(output, expected_fluid, expected_solid, args):
                 body_top = surface_bounds[-1][1]
             if body_top <= WATER_SURFACE + args.dx:
                 active_fluid = (particles["active"] > 0) & (particles["phase"] == 2)
-                submerged_coverage.append(
+                coverage = (
                     fluid_surface_coverage(particles["position"][active_fluid], vertices, args.dx / args.ppc)
                     if is_bunny
                     else fluid_shell_coverage(particles["position"][active_fluid], center, args.dx / args.ppc)
                 )
+                submerged_coverage.append(coverage)
+                if is_bunny:
+                    with np.load(output / "grids" / f"MPMGrid{step}.npz") as grid:
+                        if not math.isclose(float(grid["t_current"]), float(rigid["t_current"]), abs_tol=0.1 * args.dt):
+                            raise RuntimeError("bunny grid and rigid-body snapshot times differ")
+                        wet, dry = wet_surface_coverage(
+                            particles["position"][active_fluid],
+                            vertices,
+                            args.dx / args.ppc,
+                            grid["cell_type"],
+                            args.dx,
+                        )
+                    wet_coverage.append(wet)
+                    dry_fraction.append(dry)
+                    if float(rigid["t_current"]) >= 0.75 * args.time:
+                        late_coverage.append(coverage)
     impact_speed = math.sqrt(2.0 * 9.81 * args.drop_height)
     radius = 0.5 * SPHERE_DIAMETER
     initial_center_z = float(rigid_rows[0, 3]) if is_bunny else WATER_SURFACE + radius
@@ -223,7 +258,11 @@ def write_metrics(output, expected_fluid, expected_solid, args):
         and minimum_surface_z >= 0.5 * args.dx
         and abs(metrics["sphere_final_vertical_velocity_mps"]) < 0.9 * impact_speed
         and metrics["maximum_coupling_force_n"] > 0.0
-        and metrics["minimum_submerged_fluid_shell_coverage"] >= 0.75
+        and (
+            min(wet_coverage, default=0.0) >= 0.75 and min(late_coverage, default=0.0) >= 0.75
+            if is_bunny
+            else metrics["minimum_submerged_fluid_shell_coverage"] >= 0.75
+        )
         and maximum_body_outside_domain == 0
         and maximum_body_outside_cylinder == 0
     )
@@ -235,6 +274,10 @@ def write_metrics(output, expected_fluid, expected_solid, args):
             minimum_impactor_surface_z_m=minimum_surface_z,
             maximum_impactor_vertices_outside_domain=maximum_body_outside_domain,
             maximum_impactor_vertices_outside_cylinder=maximum_body_outside_cylinder,
+            minimum_wet_fluid_surface_coverage=float(min(wet_coverage, default=0.0)),
+            minimum_late_submerged_fluid_surface_coverage=float(min(late_coverage, default=0.0)),
+            maximum_open_entry_cavity_surface_fraction=float(max(dry_fraction, default=0.0)),
+            fluid_surface_coverage_threshold=0.75,
         )
         metrics["minimum_submerged_fluid_surface_coverage"] = metrics.pop("minimum_submerged_fluid_shell_coverage")
     np.savetxt(

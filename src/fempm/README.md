@@ -372,6 +372,8 @@ For nonassociated DP, `set_solver({"inexact_newton": True, ...})` optionally
 adapts the Taichi Krylov relative tolerance from 0.01 toward a floor of
 `max(linear_solver_relative_tolerance, 1e-7)` as Newton's free force residual
 decreases. The forcing history restarts at each friction outer iteration.
+The true linear error is bounded by `max(linear_solver_tolerance, eta * R)`
+using the physical free-force norm before prescribed-displacement elimination.
 Force balance, prescribed displacement, and physical correction velocity must
 converge together. The first force reference persists across the attempted step's
 friction refreshes and resets on retry. Terminal inexact corrections are re-solved

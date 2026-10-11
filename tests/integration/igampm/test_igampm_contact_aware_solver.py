@@ -14,20 +14,31 @@ def _isolated_taichi_runtime(taichi_runtime):
     config.set_dimension(2)
 
 
-@pytest.mark.parametrize("forcing", [None, 1.0e-3])
-def test_monolithic_hash_solver_receives_relative_tolerance(forcing):
+@pytest.mark.parametrize("forcing,physical_reference", [(None, None), (1e-3, None), (0.01, 7.0), (0.01, 0.0)])
+@pytest.mark.parametrize("assembly", ["HashTriplet", "COO"])
+def test_monolithic_solver_receives_physical_forcing_tolerance(forcing, physical_reference, assembly):
     from src.igampm.engines.ImplicitEngine import ImplicitEngineMixin
 
     class Matrix:
+        linear_solver = SimpleNamespace(last_residual=0.0, last_iterations=1)
+
         def solve_flat_system(self, *args, **kwargs):
             self.kwargs = kwargs
             return {"converged": True}
 
+        def solve(self, *args, **kwargs):
+            self.kwargs = kwargs
+            return True
+
     engine = object.__new__(ImplicitEngineMixin)
-    engine.assemble_type = "HashTriplet"
-    engine.monolithic_hash_matrix = Matrix()
+    engine.assemble_type = assembly
+    matrix = Matrix()
+    engine.monolithic_hash_matrix = engine.monolithic_coo_matrix = matrix
+    engine.monolithic_coo_diagonal = object()
+    engine.monolithic_solver_name = "BiCGSTAB"
+    engine._monolithic_correction_inf_norm = lambda dof: 0.0
     engine.monolithic_rhs = object()
-    engine.monolithic_correction = object()
+    engine.monolithic_correction = SimpleNamespace(fill=lambda value: None)
     engine.monolithic_linear_solver_tolerance = 1.0e-9
     engine.monolithic_linear_solver_relative_tolerance = 2.0e-7
     engine.monolithic_linear_solver_max_iters = 123
@@ -35,11 +46,15 @@ def test_monolithic_hash_solver_receives_relative_tolerance(forcing):
     system = {"active_nodes": 4, "active_dof": 8}
     if forcing is not None:
         system["linear_relative_tolerance"] = forcing
+    if physical_reference is not None:
+        system["linear_residual_reference"] = physical_reference
     engine._solve_monolithic_linear_system(system)
 
-    assert engine.monolithic_hash_matrix.kwargs["tol"] == 1.0e-9
-    assert engine.monolithic_hash_matrix.kwargs["rel_tol"] == (2.0e-7 if forcing is None else forcing)
-    assert engine.monolithic_hash_matrix.kwargs["maxiter"] == 123
+    expected_absolute = 0.07 if physical_reference == 7.0 else 1e-9
+    expected_relative = 0.0 if physical_reference is not None else (2e-7 if forcing is None else forcing)
+    assert matrix.kwargs["tol"] == pytest.approx(expected_absolute)
+    assert matrix.kwargs["rel_tol"] == expected_relative
+    assert matrix.kwargs["maxiter"] == 123
 
 
 def test_inexact_forcing_tightens_with_nonlinear_progress():
@@ -224,6 +239,7 @@ def test_plastic_monolithic_newton_selects_material_line_search(has_incremental_
         assert calls[0][0] == pytest.approx(2.0)
         assert calls[0][1] == pytest.approx(-4.0)
         assert calls[0][2]["include_friction"] is False
+        assert calls[0][2]["dirichlet_merit"] == (2.0 if prescribed_motion else 0.0)
 
 
 @pytest.mark.parametrize(
@@ -281,6 +297,35 @@ def test_residual_merit_armijo_backtracks_a_failed_trial_query(
     assert result["step"] == pytest.approx(0.5 if accepted else 0.0)
     assert result["residual"] == pytest.approx(trial_residual)
     assert accd_calls == [((1.0, None, False), {"prepare_contacts": True})]
+
+
+@pytest.mark.parametrize("ccd_step", [0.5, 1.0])
+def test_residual_merit_can_load_a_balanced_nonlinear_dirichlet_problem(ccd_step):
+    from src.igampm.engines.FrictionEngine import FrictionEngineMixin
+
+    # R_f = x - c**2, prescribed c = 0.1. At x=c=0, Newton gives dx=0, dc=0.1.
+    engine = object.__new__(FrictionEngineMixin)
+    engine.armijo_c1 = 1e-4
+    engine.armijo_max_backtracks = 3
+    engine.contact_ccd_min_step = 1e-12
+    engine.fully_implicit_armijo_reduction = 0.5
+    engine._conservative_contact_step_device_impl = lambda *args, **kwargs: ccd_step
+    engine._sync_device_trial_displacements = lambda: None
+    engine._set_device_current_from_trial_base = lambda alpha: setattr(engine, "alpha", alpha)
+    engine.assemble_monolithic_newton_system = lambda **kwargs: {"active_dof": 1}
+    engine._device_physical_residual_squared = lambda active_dof: (0.1 * engine.alpha) ** 4
+    engine.minimum_contact_distance = lambda: 0.02
+    with pytest.raises(RuntimeError, match="not a descent direction"):
+        engine.fully_implicit_residual_armijo_device(0.0, 0.0)
+    # Weight 10 converts the prescribed residual into the same scale as force.
+    result = engine.fully_implicit_residual_armijo_device(0.0, 0.0, dirichlet_merit=0.5)
+    assert result["accepted"]
+    assert result["step"] == ccd_step
+    assert result["residual"] == pytest.approx((0.1 * ccd_step) ** 2)
+    assert result["merit_slope"] == -1.0
+    alpha = 1e-7
+    trial_merit = 0.5 * (0.1 * alpha) ** 4 + 0.5 * (1.0 - alpha) ** 2
+    assert (trial_merit - 0.5) / alpha == pytest.approx(result["merit_slope"], abs=1e-7)
 
 
 def _build_iga_rectangle(output_path):

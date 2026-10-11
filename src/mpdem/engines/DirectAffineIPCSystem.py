@@ -9,7 +9,7 @@ from src.mpm.engines.direct.Convergence import mpm_correction_measure
 
 from src.dem.engines.AffineBodyOperator import MATRIX_HASH_TRIPLET
 from src.linear_solver.BuildTriplet import BuildTriplet
-from src.utils.SolverRuntime import inexact_newton_relative_tolerance
+from src.utils.SolverRuntime import inexact_newton_absolute_tolerance, inexact_newton_relative_tolerance
 
 
 @ti.data_oriented
@@ -453,16 +453,22 @@ class DirectAffineIPCSystem:
             "contact_count": int(contact_count),
         }
 
-    def solve_direction_device(self, active_mpm_dof=None, *, relative_tolerance=0.0):
+    def solve_direction_device(self, active_mpm_dof=None, *, relative_tolerance=0.0, residual_reference=None):
         """Solve the assembled coupled system and scatter both directions."""
         active_mpm_dof = int(self.mpm.active_dof) if active_mpm_dof is None else int(active_mpm_dof)
         active_nodes = self.affine_controls + active_mpm_dof // 3
+        absolute_tolerance = self.mpm.linear_solver_tolerance
+        if residual_reference is not None:
+            absolute_tolerance = inexact_newton_absolute_tolerance(
+                residual_reference, relative_tolerance, absolute_tolerance
+            )
+            relative_tolerance = 0.0
         self.correction.fill(0.0)
         result = self.matrix.solve_flat_system(
             self.rhs,
             self.correction,
             active_nodes=active_nodes,
-            tol=self.mpm.linear_solver_tolerance,
+            tol=absolute_tolerance,
             rel_tol=relative_tolerance,
             maxiter=self.mpm.linear_solver_max_iters,
             return_solution=False,
@@ -701,7 +707,11 @@ class DirectAffineIPCSystem:
                     relative_tolerance = (
                         inexact_newton_relative_tolerance(residual, previous_residual) if self.inexact_newton else 0.0
                     )
-                    linear = self.solve_direction_device(active_mpm_dof, relative_tolerance=relative_tolerance)
+                    linear = self.solve_direction_device(
+                        active_mpm_dof,
+                        relative_tolerance=relative_tolerance,
+                        residual_reference=residual if self.inexact_newton else None,
+                    )
                     total_linear += linear["iterations"]
                     correction = self.direction_inf_norm(active_mpm_dof)
                     if not math.isfinite(correction):

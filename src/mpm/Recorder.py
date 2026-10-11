@@ -17,16 +17,43 @@ from third_party.pyevtk.hl import pointsToVTK, gridToVTK, unstructuredGridToVTK
 from third_party.pyevtk.vtk import VtkHexahedron, VtkQuad, VtkVertex
 
 
+def _has_resolved_air_reference(cell_type):
+    has_air_reference = bool(np.any(np.asarray(cell_type) == 0))
+    types = np.asarray(cell_type).squeeze()
+    if has_air_reference and types.ndim in (2, 3):
+        # Isolated wall voids are not a resolved atmospheric free surface.
+        indices = np.array(np.nonzero(types == 0))
+        isolated = np.ones(indices.shape[1], dtype=bool)
+        fluid_neighbors = np.zeros(indices.shape[1], dtype=int)
+        for axis, size in enumerate(types.shape):
+            isolated &= (indices[axis] > 0) & (indices[axis] < size - 1)
+            for direction in (-1, 1):
+                neighbor = indices.copy()
+                neighbor[axis] = np.clip(neighbor[axis] + direction, 0, size - 1)
+                values = types[tuple(neighbor)]
+                isolated &= (values == 1) | (values == 2)
+                fluid_neighbors += values == 1
+        has_air_reference = not bool(np.all(isolated & (fluid_neighbors >= types.ndim)))
+    return has_air_reference
+
+
+def _closed_domain_pressure_offset(pressure, cell_type):
+    pressure_flat = np.asarray(pressure).reshape(-1)
+    cell_type_flat = np.asarray(cell_type).reshape(-1)
+    if pressure_flat.size != cell_type_flat.size:
+        return 0.0
+    fluid = cell_type_flat == 1
+    if np.any(fluid) and not _has_resolved_air_reference(cell_type):
+        return float(np.mean(pressure_flat[fluid], dtype=np.float64))
+    return 0.0
+
+
 def _normalize_closed_domain_pressure(pressure, cell_type):
     """Use one zero-mean output gauge when no atmospheric cell fixes pressure."""
     normalized = np.array(pressure, copy=True)
-    pressure_flat = normalized.reshape(-1)
-    cell_type_flat = np.asarray(cell_type).reshape(-1)
-    if pressure_flat.size != cell_type_flat.size:
-        return normalized
-    fluid = cell_type_flat == 1
-    if np.any(fluid) and not np.any(cell_type_flat == 0):
-        pressure_flat[fluid] -= np.mean(pressure_flat[fluid], dtype=np.float64)
+    offset = _closed_domain_pressure_offset(pressure, cell_type)
+    if offset != 0.0:
+        normalized.reshape(-1)[np.asarray(cell_type).reshape(-1) == 1] -= offset
     return normalized
 
 

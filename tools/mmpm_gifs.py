@@ -96,8 +96,9 @@ def phase_geometry(particles, grid, domain, depth, scale):
         raise ValueError("Invalid solid porosity")
     # Cross-sectional bead area follows the saved solid fraction; no invented grains/layers.
     radii = np.sqrt(volume[solid] * (1 - porosity) / np.pi)
+    water = np.clip(water, 0, [domain[0], depth, domain[1]])
     return {
-        "water": np.clip(water, 0, [domain[0], depth, domain[1]]) * scale,
+        "water": water * scale,
         "water_faces": faces,
         "solid_positions": centers * scale,
         "solid_radii": radii * scale,

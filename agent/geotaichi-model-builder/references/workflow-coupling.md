@@ -205,6 +205,8 @@ loop. The lagged-friction fixed point remains independent, including for
 cloth FEM. `set_solver({"inexact_newton": True, ...})` optionally adapts linear
 accuracy while preserving force convergence; its default is `False` because
 extra Newton assemblies can outweigh linear savings on small systems.
+FEM--MPM and Direct MPM--ABD use `max(linear_atol, eta * R)` as the true
+linear error bound, with physical free-force norm `R` before Dirichlet elimination.
 `StateDependentDruckerPrager` optionally replaces constant angles with SDMC's
 void-ratio/previous-pressure law. Supply `fai_c` (degrees), `e0`, `e_Tao`,
 `lambda_c`, `ksi`, `nd`, and `nf`; its default cone is `MiddleCircumscribed`.

@@ -851,7 +851,6 @@ class BuildTriplet:
         iterations = 0
         rho_old = alpha = omega = 1.0
         fresh_direction = True
-        reliable_update_interval = 32
 
         for iteration in range(maxiter):
             if converged:
@@ -888,7 +887,8 @@ class BuildTriplet:
             residual_squared, next_rho = self._bicg_update_x_r(active_nodes, alpha, omega)
             residual = math.sqrt(max(float(residual_squared), 0.0))
             iterations = iteration + 1
-            verify_residual = residual <= convergence_tolerance or (iteration + 1) % reliable_update_interval == 0
+            # Preserve the BiCG recurrence; restart only after failed true-residual verification.
+            verify_residual = residual <= convergence_tolerance
             if verify_residual:
                 matvec(active_nodes, nnz, self.x, self.Ax)
                 rho = float(self._init_bicgstab(active_nodes))

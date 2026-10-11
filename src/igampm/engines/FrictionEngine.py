@@ -1675,6 +1675,7 @@ class FrictionEngineMixin:
         merit_slope,
         *,
         residual_tolerance=0.0,
+        dirichlet_merit=0.0,
         initial_step=1.0,
         include_friction=True,
         verbose=False,
@@ -1682,16 +1683,19 @@ class FrictionEngineMixin:
     ):
         """Device-resident residual-merit Armijo for a nonconservative system."""
         current_residual = float(current_residual)
-        merit_slope = float(merit_slope)
+        dirichlet_merit = float(dirichlet_merit)
+        merit_slope = float(merit_slope) - 2.0 * dirichlet_merit
         residual_tolerance = float(residual_tolerance)
         if not math.isfinite(current_residual) or current_residual < 0.0:
             raise ValueError("current residual norm must be finite and non-negative")
         if not math.isfinite(residual_tolerance) or residual_tolerance < 0.0:
             raise ValueError("residual tolerance must be finite and non-negative")
+        if not math.isfinite(dirichlet_merit) or dirichlet_merit < 0.0:
+            raise ValueError("Dirichlet merit must be finite and non-negative")
         if not math.isfinite(merit_slope) or merit_slope >= 0.0:
             raise RuntimeError("Newton correction is not a descent direction for 0.5 * ||R||^2")
 
-        current_merit = 0.5 * current_residual * current_residual
+        current_merit = 0.5 * current_residual * current_residual + dirichlet_merit
         # ACCD supplies the first conservative upper bound.  Trial-state
         # validation belongs to the Armijo loop below, where a failed closest
         # query or residual assembly can safely reduce alpha instead of
@@ -1727,7 +1731,8 @@ class FrictionEngineMixin:
                     candidate = None
                     trial_residual = math.inf
                     trial_failure = f"{type(exception).__name__}: {exception}"
-                trial_merit = 0.5 * trial_residual * trial_residual
+                # Fixed corrections are exact, so their remaining mismatch is (1-alpha) times the base.
+                trial_merit = 0.5 * trial_residual * trial_residual + (1.0 - alpha) ** 2 * dirichlet_merit
                 bound = current_merit + self.armijo_c1 * alpha * merit_slope
                 # Inside the force tolerance, finish motion convergence without
                 # demanding further force decrease below assembly precision.

@@ -88,7 +88,7 @@ def test_buildtriplet_bicgstab_matches_scipy(taichi_runtime, dimension):
     _assert_matches_scipy(system, result, reference, info, rhs)
 
 
-def test_bicgstab_restarts_from_preconditioned_true_residual(taichi_runtime, monkeypatch):
+def test_bicgstab_preserves_recurrence_and_checks_true_residual(taichi_runtime, monkeypatch):
     size = 128
     dense = 2 * np.eye(size) - 1.01 * np.eye(size, k=-1) - 0.99 * np.eye(size, k=1)
     system = BuildTriplet(
@@ -119,10 +119,13 @@ def test_bicgstab_restarts_from_preconditioned_true_residual(taichi_runtime, mon
     monkeypatch.setattr(system, "matvec", check_direction)
     result = system.BiCGSTABSolver(rhs=np.ones((size, 1)), tol=1e-14, maxiter=33)
     assert result["iterations"] == 33
-    assert len(checked) == 2
+    assert len(checked) == 1
     np.testing.assert_allclose(
         result["residual"], np.linalg.norm(csr_matrix(dense) @ result["x"].ravel() - 1), atol=1e-12
     )
+    result = system.BiCGSTABSolver(rhs=np.ones((size, 1)), tol=1e-8, maxiter=200)
+    assert result["converged"]
+    assert np.linalg.norm(csr_matrix(dense) @ result["x"].ravel() - 1) <= 1e-8
 
 
 @pytest.mark.parametrize(

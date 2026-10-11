@@ -15,7 +15,11 @@ from src.physics_model.contact_model.ipc.NurbsContact import (
 from src.mpm.engines.direct.Convergence import particle_correction_measure
 from src.utils.FieldIO import field_to_numpy_prefix
 from src.utils.RuntimeHook import runtime_checkpoint
-from src.utils.SolverRuntime import inexact_newton_relative_tolerance, normalize_callbacks
+from src.utils.SolverRuntime import (
+    inexact_newton_absolute_tolerance,
+    inexact_newton_relative_tolerance,
+    normalize_callbacks,
+)
 from src.utils.StepRetry import (
     is_recoverable_nonlinear_failure,
     nonlinear_failure_kind,
@@ -595,13 +599,19 @@ class ImplicitEngineMixin:
             relative_tolerance = system.get(
                 "linear_relative_tolerance", self.monolithic_linear_solver_relative_tolerance
             )
+            absolute_tolerance = self.monolithic_linear_solver_tolerance
+            if "linear_residual_reference" in system:
+                absolute_tolerance = inexact_newton_absolute_tolerance(
+                    system["linear_residual_reference"], relative_tolerance, absolute_tolerance
+                )
+                relative_tolerance = 0.0
             if assemble_type == "COO":
                 self.monolithic_correction.fill(0.0)
                 converged = self.monolithic_coo_matrix.solve(
                     self.monolithic_rhs,
                     self.monolithic_correction,
                     self.monolithic_coo_diagonal,
-                    tol=self.monolithic_linear_solver_tolerance,
+                    tol=absolute_tolerance,
                     rel_tol=relative_tolerance,
                     maxiter=self.monolithic_linear_solver_max_iters,
                 )
@@ -616,7 +626,7 @@ class ImplicitEngineMixin:
                 self.monolithic_rhs,
                 self.monolithic_correction,
                 active_nodes=system["active_nodes"],
-                tol=self.monolithic_linear_solver_tolerance,
+                tol=absolute_tolerance,
                 rel_tol=relative_tolerance,
                 maxiter=self.monolithic_linear_solver_max_iters,
                 return_solution=False,
@@ -1338,6 +1348,7 @@ class ImplicitEngineMixin:
         last_system = None
         last_armijo = None
         initial_force_residual = None
+        initial_dirichlet_residual = None
         previous_force_residual = None
         inexact = bool(getattr(self, "monolithic_inexact_newton", False))
         force_tolerance = math.inf
@@ -1375,6 +1386,7 @@ class ImplicitEngineMixin:
             self.last_monolithic_force_residual = force_residual
             self.last_monolithic_dirichlet_residual = dirichlet_residual
             if initial_force_residual is None:
+                initial_dirichlet_residual = dirichlet_residual
                 initial_force_residual = max(force_residual, 1.0)
                 if getattr(self, "_monolithic_force_reference", None) is None:
                     self._monolithic_force_reference = initial_force_residual
@@ -1400,6 +1412,7 @@ class ImplicitEngineMixin:
                 last_system["linear_relative_tolerance"] = self._newton_linear_tolerance(
                     force_residual, previous_force_residual
                 )
+                last_system["linear_residual_reference"] = force_residual
             solve_result = self._solve_monolithic_linear_system(last_system, linear_solve=linear_solve)
             previous_force_residual = force_residual
             if not solve_result["converged"]:
@@ -1431,6 +1444,7 @@ class ImplicitEngineMixin:
             ):
                 # Verify a terminal correction with the configured Krylov accuracy.
                 last_system["linear_relative_tolerance"] = self.monolithic_linear_solver_relative_tolerance
+                last_system.pop("linear_residual_reference", None)
                 solve_result = self._solve_monolithic_linear_system(last_system, linear_solve=linear_solve)
                 if not solve_result["converged"]:
                     raise RuntimeError("IGA-MPM terminal Newton linear solve did not converge")
@@ -1464,6 +1478,11 @@ class ImplicitEngineMixin:
                     force_residual,
                     merit_slope,
                     residual_tolerance=force_tolerance if self.nonassociated_newton else 0.0,
+                    dirichlet_merit=(
+                        0.5 * (initial_force_residual * dirichlet_residual / initial_dirichlet_residual) ** 2
+                        if initial_dirichlet_residual > self.monolithic_dirichlet_tolerance
+                        else 0.0
+                    ),
                     initial_step=initial_step,
                     include_friction=include_friction,
                     verbose=verbose,

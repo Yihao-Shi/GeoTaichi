@@ -146,7 +146,10 @@ def prepare(case, folder, preview):
                 raise ValueError(f"Mismatched fluid/solid times at {step}")
             vertices, faces = water_surface(grid, particles)
             vertices = np.clip(vertices, 0, domain)
-            data = {"water": vertices * scale, "water_faces": faces}
+            data = {
+                "water": vertices * scale,
+                "water_faces": faces,
+            }
             frame = {"time": time, "mesh": f"mesh_{index:06d}.npz"}
             if case == "dam":
                 with np.load(source / f"particles/LSDEMSurface{step}.npz") as surface:
@@ -185,6 +188,7 @@ def render(path, samples, device="auto", resume=False):
     bpy.ops.wm.read_factory_settings(use_empty=True)
     scene = bpy.context.scene
     scene.render.engine = "CYCLES"
+    scene.render.use_persistent_data = True
     scene.cycles.samples = samples
     scene.cycles.use_denoising = True
     scene.cycles.seed = 17
@@ -412,7 +416,8 @@ def render(path, samples, device="auto", resume=False):
         animated = []
         with np.load(folder / frame["mesh"]) as data:
             if "water" in data:
-                animated.append(mesh("Fluid", data["water"], data["water_faces"], water))
+                obj = mesh("Fluid", data["water"], data["water_faces"], water)
+                animated.append(obj)
             if "grains" in data:
                 animated.append(
                     mesh(

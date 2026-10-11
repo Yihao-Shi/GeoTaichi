@@ -167,7 +167,7 @@ def run(args):
         particle_interaction=True,
         wall_interaction=False,
         gravity=[0.0, 0.0, -9.81],
-        visualize=True,
+        visualize=not args.no_post,
     )
     dempm.mpm.set_configuration(
         background_damping=0.02,
@@ -181,7 +181,7 @@ def run(args):
         delayed_fluid_advection=True,
         particle_shifting=True,
         free_surface_detection=False,
-        visualize=True,
+        visualize=not args.no_post,
     )
     dempm.mpm.set_semi_implicit_solver_parameters(
         {
@@ -201,7 +201,7 @@ def run(args):
         gravity=[0.0, 0.0, -9.81],
         engine="VelocityVerlet",
         search="LinkedCell",
-        visualize=True,
+        visualize=not args.no_post,
     )
     dempm.set_solver(
         {

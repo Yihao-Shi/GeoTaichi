@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+import math
 
 
 def inexact_newton_relative_tolerance(residual, previous_residual, minimum=1.0e-7):
@@ -11,6 +12,13 @@ def inexact_newton_relative_tolerance(residual, previous_residual, minimum=1.0e-
     if previous_residual is None or previous_residual <= 0.0:
         return 1.0e-2
     return min(1.0e-2, max(minimum, 0.9 * (residual / previous_residual) ** 1.5))
+
+
+def inexact_newton_absolute_tolerance(residual, forcing, absolute_tolerance):
+    """Scale the linear error by physical force, before Dirichlet elimination."""
+    if not all(math.isfinite(value) and value >= 0.0 for value in (residual, forcing, absolute_tolerance)):
+        raise ValueError("Inexact Newton residual and tolerances must be finite and nonnegative")
+    return max(absolute_tolerance, forcing * residual)
 
 
 def python_callback(function):
@@ -118,4 +126,10 @@ class StepSchedule:
             del history[: len(history) - self.max_history_entries]
 
 
-__all__ = ["StepSchedule", "inexact_newton_relative_tolerance", "normalize_callbacks", "python_callback"]
+__all__ = [
+    "StepSchedule",
+    "inexact_newton_absolute_tolerance",
+    "inexact_newton_relative_tolerance",
+    "normalize_callbacks",
+    "python_callback",
+]

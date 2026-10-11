@@ -21,7 +21,8 @@ MAC_SHAPE_CUBIC_BSPLINE = 3
 
 @ti.func
 def _double_layer_shifting_is_interior2d(position, grid_size, cnum, cell_type):
-    cell = ti.floor(position / grid_size).cast(int)
+    # Snap only roundoff at exact cell boundaries before testing interface eligibility.
+    cell = ti.floor(position / grid_size + 1.0e-6).cast(int)
     active = 0 <= cell[0] < cnum[0] and 0 <= cell[1] < cnum[1]
     if active:
         active = cell_type[cell] == FLUID_CELL
@@ -35,7 +36,7 @@ def _double_layer_shifting_is_interior2d(position, grid_size, cnum, cell_type):
 
 @ti.func
 def _double_layer_shifting_is_interior3d(position, grid_size, cnum, cell_type):
-    cell = ti.floor(position / grid_size).cast(int)
+    cell = ti.floor(position / grid_size + 1.0e-6).cast(int)
     active = 0 <= cell[0] < cnum[0] and 0 <= cell[1] < cnum[1] and 0 <= cell[2] < cnum[2]
     if active:
         active = cell_type[cell] == FLUID_CELL
@@ -1380,6 +1381,104 @@ def kernel_enforce_double_layer_solid_cell_faces2d(
 
 
 @ti.kernel
+def kernel_extrapolate_double_layer_ghost_faces(
+    cell_type: ti.template(),
+    velocity: ti.template(),
+    acceleration: ti.template(),
+    solid_velocity: ti.template(),
+    fluid_mass: ti.template(),
+    cutoff: float,
+    depth: int,
+):
+    dimension = ti.static(len(cell_type.shape))
+    transverse_depth = depth
+    if ti.static(dimension == 2):
+        transverse_depth = 0
+    for axis in ti.static(range(dimension)):
+        for I in ti.grouped(velocity[axis]):
+            left = I - ti.Vector.unit(dimension, axis)
+            right = I
+            left_type = SOLID_CELL
+            right_type = SOLID_CELL
+            if I[axis] > 0:
+                left_type = cell_type[left]
+            if I[axis] < cell_type.shape[axis]:
+                right_type = cell_type[right]
+            air_ghost = left_type == AIR_CELL and right_type == AIR_CELL
+            solid_ghost = left_type != FLUID_CELL and right_type != FLUID_CELL and not air_ghost
+            if (air_ghost or solid_ghost) and fluid_mass[axis][I] > cutoff:
+                best_distance = 1 << 30
+                value = 0.0
+                delta = 0.0
+                count = 0
+                normal_depth = 0
+                if air_ghost:
+                    normal_depth = depth
+                # Only read active faces, so ghost writes cannot feed each other.
+                for a, b, c in ti.ndrange(
+                    (-depth, depth + 1), (-transverse_depth, transverse_depth + 1), (-normal_depth, normal_depth + 1)
+                ):
+                    candidate = I
+                    candidate[axis] += c
+                    if ti.static(dimension == 2):
+                        candidate[1 - axis] += a
+                    else:
+                        candidate[(axis + 1) % 3] += a
+                        candidate[(axis + 2) % 3] += b
+                    inside = True
+                    for d in ti.static(range(dimension)):
+                        inside = inside and 0 <= candidate[d] < velocity[axis].shape[d]
+                    distance = a * a + b * b + c * c
+                    if inside and distance > 0:
+                        source_left = candidate - ti.Vector.unit(dimension, axis)
+                        active = False
+                        if candidate[axis] > 0:
+                            active = active or cell_type[source_left] == FLUID_CELL
+                        if candidate[axis] < cell_type.shape[axis]:
+                            active = active or cell_type[candidate] == FLUID_CELL
+                        if active and distance <= best_distance:
+                            if distance < best_distance:
+                                best_distance = distance
+                                value = 0.0
+                                delta = 0.0
+                                count = 0
+                            value += velocity[axis][candidate]
+                            delta += acceleration[axis][candidate]
+                            count += 1
+                if solid_ghost:
+                    # Reflect normal velocity about the wall; zero ghosts truncate APIC gradients.
+                    for side in ti.static((-1, 1)):
+                        for layer in range(1, depth + 1):
+                            wall = I + side * layer * ti.Vector.unit(dimension, axis)
+                            reflected = I + 2 * side * layer * ti.Vector.unit(dimension, axis)
+                            if (
+                                0 < wall[axis] < cell_type.shape[axis]
+                                and 0 <= reflected[axis] < velocity[axis].shape[axis]
+                            ):
+                                wall_left = wall - ti.Vector.unit(dimension, axis)
+                                is_wall = (cell_type[wall_left] == FLUID_CELL and cell_type[wall] == SOLID_CELL) or (
+                                    cell_type[wall_left] == SOLID_CELL and cell_type[wall] == FLUID_CELL
+                                )
+                                reflected_active = False
+                                if reflected[axis] > 0:
+                                    reflected_active = (
+                                        cell_type[reflected - ti.Vector.unit(dimension, axis)] == FLUID_CELL
+                                    )
+                                if reflected[axis] < cell_type.shape[axis]:
+                                    reflected_active = reflected_active or cell_type[reflected] == FLUID_CELL
+                                if is_wall and reflected_active and layer * layer <= best_distance:
+                                    best_distance = layer * layer
+                                    value = 2.0 * velocity[axis][wall] - velocity[axis][reflected]
+                                    delta = 2.0 * acceleration[axis][wall] - acceleration[axis][reflected]
+                                    count = 1
+                velocity[axis][I] = solid_velocity[axis][I]
+                acceleration[axis][I] = 0.0
+                if count > 0:
+                    velocity[axis][I] = value / count
+                    acceleration[axis][I] = delta / count
+
+
+@ti.kernel
 def kernel_p2g_double_layer_mass2d(
     total_nodes: int,
     particleNum: int,
@@ -2487,6 +2586,9 @@ def kernel_g2p_double_layer2d(
                         gradv = Bp @ Dp.inverse()
                 flag_fix = ti.cast(particle[np].fix_v, float)
                 flag_free = vec2f(1.0, 1.0) - flag_fix
+                if particle[np].fix_v[0] != 0 and particle[np].fix_v[1] != 0:
+                    # A fixed skeleton must not scatter a moving APIC field next step.
+                    gradv = ZEROMAT2x2
                 v_flip = particle[np].vs + dt[None] * a_pic
                 new_v = (alpha * v_pic + (1.0 - alpha) * v_flip) * flag_free + particle[np].vs * flag_fix
                 particle[np].vs = new_v
@@ -4874,6 +4976,8 @@ def kernel_g2p_double_layer3d(
                         gradv = Bp @ Dp.inverse()
                 flag_fix = ti.cast(particle[np].fix_v, float)
                 flag_free = vec3f(1.0, 1.0, 1.0) - flag_fix
+                if particle[np].fix_v[0] != 0 and particle[np].fix_v[1] != 0 and particle[np].fix_v[2] != 0:
+                    gradv = ZEROMAT3x3
                 v_flip = particle[np].vs + dt[None] * a_pic
                 new_v = (alpha * v_pic + (1.0 - alpha) * v_flip) * flag_free + particle[np].vs * flag_fix
                 particle[np].vs = new_v

@@ -1,6 +1,8 @@
 """Run directly: python tests/unit/tools/test_blender_cfdem_gif.py."""
 
 from pathlib import Path
+import importlib.util
+import json
 import sys
 import tempfile
 import unittest
@@ -9,7 +11,12 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
-from tools.blender_cfdem_gif import close_enclosed_voids, grain_surface, water_surface
+from tools.blender_cfdem_gif import (
+    close_enclosed_voids,
+    grain_surface,
+    water_surface,
+)
+from tools.wavy_plate_gif import particle_displacement, render as render_iga_gallery
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "tools"))
 import incompressible_gifs
@@ -22,6 +29,89 @@ with patch.dict(sys.modules, {"paraview.simple": MagicMock()}):
 
 
 class GeometryCheck(unittest.TestCase):
+    def test_blender_fluid_preparation_needs_no_pressure_and_keeps_single_color(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "source"
+            (source / "particles").mkdir(parents=True)
+            (source / "grids").mkdir()
+            np.savez(source / "particles/MPMParticle000000.npz", t_current=0.0)
+            np.savez(source / "grids/MPMGrid000000.npz", t_current=0.0)
+            case = (source, "tank.gif", "blender", [1, 1, 1], "Tank")
+            vertices = np.array([[0.0, 0, 0], [1.0, 0, 0], [0.0, 0, 1.0]])
+            folder = Path(temporary) / "render"
+            with (
+                patch.dict(incompressible_gifs.CASES, {"large_tank": case}),
+                patch.object(incompressible_gifs, "water_surface", return_value=(vertices, np.array([[0, 1, 2]]))),
+            ):
+                _, config = incompressible_gifs.prepare("large_tank", folder, True)
+            self.assertNotIn("water_scalar", config)
+            self.assertEqual(config["water_color"], [0.06, 0.38, 0.66])
+            self.assertEqual(config["water_visibility"], 0.72)
+            self.assertEqual(config["water_transmission"], 0.55)
+            with np.load(folder / config["frames"][0]["mesh"]) as data:
+                self.assertNotIn("water_pressure", data)
+
+    @unittest.skipUnless(importlib.util.find_spec("vtk"), "VTK is not installed")
+    def test_axisymmetric_cpt_uses_displacement_and_independent_color_maps(self):
+        import vtk
+        from vtk.util.numpy_support import numpy_to_vtk
+
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "source"
+            (source / "vtks").mkdir(parents=True)
+            (source / "parameters.json").write_text(json.dumps({"save_interval": 0.2}))
+            (source / "cpt_summary.json").write_text(json.dumps({"axisymmetric": True}))
+            for step in range(2):
+                for name in ("NurbsVolumecpt_penetrator", "GraphicMPMParticle"):
+                    grid = vtk.vtkUnstructuredGrid()
+                    points = vtk.vtkPoints()
+                    points.SetData(
+                        numpy_to_vtk(np.array([[0.0, step * 0.1, 0.0], [1.0, 1.0 + step * 0.1, 0.0]]), deep=True)
+                    )
+                    grid.SetPoints(points)
+                    values = (
+                        np.tile([0.0, step * 0.2, 0.0], (2, 1)) if name.startswith("Nurbs") else np.zeros(2, dtype=int)
+                    )
+                    array = numpy_to_vtk(values, deep=True)
+                    array.SetName("displacement" if name.startswith("Nurbs") else "bodyID")
+                    grid.GetPointData().AddArray(array)
+                    writer = vtk.vtkXMLUnstructuredGridWriter()
+                    writer.SetFileName(str(source / "vtks" / f"{name}{step:06d}.vtu"))
+                    writer.SetInputData(grid)
+                    self.assertEqual(writer.Write(), 1)
+            pv = MagicMock()
+            pv.Show.side_effect = lambda *args, **kwargs: MagicMock()
+            pv.GetColorTransferFunction.side_effect = lambda *args, **kwargs: MagicMock()
+            folder = Path(temporary) / "render"
+            with patch.dict(sys.modules, {"paraview": MagicMock(simple=pv)}):
+                render_iga_gallery(source, folder, folder / "cpt.gif", 10, True)
+            config = json.loads((folder / "manifest.json").read_text())
+            self.assertTrue(config["axisymmetric"])
+            self.assertEqual(config["dimension"], 2)
+            self.assertEqual(config["camera_direction"], [0, 0, 1])
+            self.assertEqual(config["iga_scalar"], "displacement")
+            np.testing.assert_allclose(config["iga_color_range"], [0, 0.2])
+            np.testing.assert_allclose(config["mpm_displacement_range"], [0, 0.1])
+            self.assertEqual(pv.GetColorTransferFunction.call_count, 2)
+            for call in pv.GetColorTransferFunction.call_args_list:
+                self.assertEqual(call.args[0], "displacement")
+                self.assertTrue(call.kwargs["separate"])
+            self.assertIsNot(
+                pv.GetColorTransferFunction.call_args_list[0].args[1],
+                pv.GetColorTransferFunction.call_args_list[1].args[1],
+            )
+
+    def test_mpm_displacement_is_position_change_from_frame_zero(self):
+        initial = np.array([[0, 0, 0], [1, 2, 3]], dtype=float)
+        current = initial + [[0, 3, 4], [-1, 0, 0]]
+        ids = np.array([0, 1])
+        values = particle_displacement(current, initial, ids, ids)
+        np.testing.assert_allclose(np.linalg.norm(values, axis=1), [5, 1])
+        np.testing.assert_array_equal(particle_displacement(initial, initial, ids, ids), np.zeros((2, 3)))
+        for positions, body_ids in ((current[:1], ids[:1]), (current, ids[::-1])):
+            with self.assertRaises(ValueError):
+                particle_displacement(positions, initial, body_ids, ids)
+
     def test_particle_surface_void_closure_preserves_outer_air(self):
         sdf = np.ones((7, 7, 7), dtype=np.float32)
         sdf[1:6, 1:6, 1:6] = -1

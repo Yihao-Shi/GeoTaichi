@@ -16,7 +16,8 @@ def env_int(name: str, default: int) -> int:
 
 DX = env_float("DX", 0.05)
 
-DT = env_float("DT", 5.0e-3)
+# The split pressure/drag update oscillates at 5 ms in this fixed-bed case.
+DT = env_float("DT", 1.0e-3)
 
 SIMULATION_TIME = env_float("TIME", 100.0)
 

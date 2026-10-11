@@ -15,6 +15,10 @@ import numpy as np
 from examples.mpm.IncompressibleFluid.wavemaker_tank_3d.draw.evaluate_wavemaker_tank_3d import (
     linear_piston_wave,
     sdf_surface_gauge,
+    deep_air_particle_count,
+)
+from examples.mpm.IncompressibleFluid.large_tank_incompressible_3d.draw.validate_large_tank_incompressible_3d import (
+    enclosed_air_count,
 )
 
 from examples.mmpm.TwoPhaseLSDEMCoupling.wavemaker_lsdem_particles_3d.wavemaker_lsdem_particles_3d_parameters import (
@@ -48,6 +52,11 @@ def write_metrics(output, expected_fluid, expected_solid, args):
                 initial_solid_position = position[solid].copy()
             solid_displacement = float(np.linalg.norm(position[solid] - initial_solid_position, axis=1).max())
             time = float(data["t_current"])
+            if not math.isclose(time, float(grid["t_current"]), abs_tol=0.1 * args.dt):
+                raise RuntimeError(f"MPM/grid snapshot times differ at frame {frame}")
+            types = np.squeeze(grid["cell_type"])
+            fluid_cells = np.floor(position[fluid] / args.dx).astype(int)
+            fluid_cells = np.clip(fluid_cells, 0, np.asarray(types.shape) - 1)
             surface = (
                 WATER_DEPTH
                 if time == 0.0
@@ -72,6 +81,8 @@ def write_metrics(output, expected_fluid, expected_solid, args):
                     np.count_nonzero(outside),
                     surface,
                     solid_displacement,
+                    enclosed_air_count(types) if time > 0.0 else 0,
+                    deep_air_particle_count(types, fluid_cells) if time > 0.0 else 0,
                 ]
             )
 
@@ -81,15 +92,21 @@ def write_metrics(output, expected_fluid, expected_solid, args):
             centers = data["mass_center"]
             forces = data["contact_force"]
             finite &= bool(np.isfinite(centers).all() and np.isfinite(forces).all())
-            rigid_rows.append([float(data["t_current"]), float(np.linalg.norm(forces, axis=1).max()), len(centers)])
+            rigid_rows.append(
+                [float(data["t_current"]), float(np.linalg.norm(forces, axis=1).max(initial=0.0)), len(centers)]
+            )
     mpm_rows = np.asarray(mpm_rows, dtype=np.float64)
     rigid_rows = np.asarray(rigid_rows, dtype=np.float64)
     _, expected_amplitude, _ = linear_piston_wave(args.frequency, WATER_DEPTH, args.wave_velocity)
     with np.load(rigid_files[0]) as data:
         initial_centers = data["mass_center"].copy()
     maximum_rigid_displacement = 0.0
+    body_count_constant = True
     for file_name in rigid_files:
         with np.load(file_name) as data:
+            if data["mass_center"].shape != initial_centers.shape:
+                body_count_constant = False
+                continue
             maximum_rigid_displacement = max(
                 maximum_rigid_displacement,
                 float(np.linalg.norm(data["mass_center"] - initial_centers, axis=1).max()),
@@ -112,12 +129,19 @@ def write_metrics(output, expected_fluid, expected_solid, args):
         ),
         "maximum_mpm_particles_outside_domain": int(mpm_rows[:, 3].max()),
         "maximum_mpm_solid_displacement_m": float(mpm_rows[:, 5].max()),
+        "maximum_enclosed_air_cells": int(mpm_rows[:, 6].max()),
+        "maximum_fluid_particles_in_deep_air_cells": int(mpm_rows[:, 7].max()),
         "expected_linear_wave_amplitude_m": expected_amplitude,
         "surface_gauge_excursion_m": float(np.ptp(mpm_rows[:, 4])),
         "maximum_lsdem_displacement_m": maximum_rigid_displacement,
         "maximum_coupling_force_n": float(rigid_rows[:, 1].max()),
         "expected_lsdem_bodies": LSDEM_BODY_COUNT,
         "minimum_lsdem_bodies": int(rigid_rows[:, 2].min()),
+        "lsdem_body_count_constant": body_count_constant,
+        "snapshots_synchronized": bool(
+            len(mpm_rows) == len(rigid_rows)
+            and np.allclose(mpm_rows[:, 0], rigid_rows[:, 0], rtol=0.0, atol=0.1 * args.dt)
+        ),
         "soil_young_modulus_pa": args.soil_young_modulus,
         "soil_cohesion_pa": args.soil_cohesion,
         "soil_friction_deg": args.soil_friction,
@@ -127,7 +151,11 @@ def write_metrics(output, expected_fluid, expected_solid, args):
         and metrics["duration_complete"]
         and metrics["particle_conservation"]
         and metrics["maximum_mpm_particles_outside_domain"] == 0
+        and metrics["maximum_enclosed_air_cells"] == 0
+        and metrics["maximum_fluid_particles_in_deep_air_cells"] == 0
         and metrics["minimum_lsdem_bodies"] == metrics["expected_lsdem_bodies"]
+        and metrics["lsdem_body_count_constant"]
+        and metrics["snapshots_synchronized"]
         and metrics["surface_gauge_excursion_m"] >= max(0.75 * args.dx, expected_amplitude)
         and metrics["maximum_mpm_solid_displacement_m"] >= 0.05 * args.dx
         and metrics["maximum_lsdem_displacement_m"] > 1.0e-5
@@ -137,7 +165,7 @@ def write_metrics(output, expected_fluid, expected_solid, args):
         output / "coupled_wavemaker_diagnostics.csv",
         mpm_rows,
         delimiter=",",
-        header="time_s,fluid_particles,solid_particles,particles_outside_domain,surface_gauge_m,solid_displacement_max_m",
+        header="time_s,fluid_particles,solid_particles,particles_outside_domain,surface_gauge_m,solid_displacement_max_m,enclosed_air_cells,fluid_particles_in_deep_air_cells",
         comments="",
     )
     (output / "metrics.json").write_text(json.dumps(metrics, indent=2, sort_keys=True) + "\n")

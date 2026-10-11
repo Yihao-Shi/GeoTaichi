@@ -185,10 +185,10 @@ def test_inexact_terminal_correction_is_rechecked_with_configured_accuracy():
     solves = []
 
     def linear(system, **kwargs):
-        solves.append(system["linear_relative_tolerance"])
+        solves.append((system["linear_relative_tolerance"], system.get("linear_residual_reference")))
         return {"converged": True}
 
     engine._solve_monolithic_linear_system = linear
     result = _solve(engine)
-    assert solves == [0.01, 1e-7]
+    assert solves == [(0.01, 1e-9), (1e-7, None)]
     assert not result["converged"]

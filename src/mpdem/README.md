@@ -1624,7 +1624,9 @@ parameter/history adjoints are unsupported.
 
 For nonassociated DP, `MPDEM.set_solver({"inexact_newton": True, ...})`
 optionally adapts the Krylov relative tolerance from 0.01 toward 1e-7,
-restarting its forcing history at every friction outer iteration. Its free
+restarting its forcing history at every friction outer iteration. Its true
+linear error bound is `max(MPM_linear_atol, eta * R)`, referenced to physical
+free forces before prescribed-displacement elimination. Its nonlinear free
 force stopping criterion is `absolute_tolerance + residual_tolerance *
 max(initial_force_norm, 1)` (defaults 1e-10 and 1e-8). Inexact solves preserve
 this criterion, physical correction velocity, Dirichlet feasibility, and

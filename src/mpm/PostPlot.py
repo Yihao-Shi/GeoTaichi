@@ -3,6 +3,7 @@ import os
 import numpy as np
 
 from src.mpm.Simulation import Simulation
+from src.mpm.Recorder import _closed_domain_pressure_offset
 from src.mpm.SoftParticleOutput import (
     pk1_to_cauchy,
     stress_to_tensor3,
@@ -488,6 +489,13 @@ def write_vtk_file(sims: Simulation, start_file, end_file, read_path, write_path
 
         if "pressure" in particle_info and DictIO.GetAlternative(kwargs, "write_pressure", True):
             pressure = np.ascontiguousarray(DictIO.GetEssential(particle_info, "pressure"))
+            grid_file = read_path + f"/grids/MPMGrid{printNum:06d}.npz"
+            if sims.material_type == "Fluid" and "Implicit" in sims.solver_type and os.path.isfile(grid_file):
+                with np.load(grid_file) as grid_info:
+                    if "cell_pressure" in grid_info and "cell_type" in grid_info:
+                        pressure = pressure - _closed_domain_pressure_offset(
+                            grid_info["cell_pressure"], grid_info["cell_type"]
+                        )
             if smooth_setting:
                 pressure = smoother.run(position, weight, pressure)
             data.update({"pressure": pressure})

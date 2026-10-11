@@ -25,8 +25,17 @@ for values, gradients, and IPC position Hessians. Changing a CPT run from
 Linear to QuadBSpline requires starting from frame zero; its restart guard
 rejects an old Linear checkpoint. The native explicit CPT route remains GIMP.
 
-The axisymmetric CPT run uses `--contact ipc --state-dependent --inexact-newton`.
-Its `StateDependentDruckerPrager` parameters match the native MPM SDMC CPT:
+The axisymmetric CPT script defaults to ordinary `DruckerPrager`. Run the
+nonassociated IPC case with friction 30 degrees and dilation zero from the
+repository root:
+
+```bash
+python examples/igampm/cpt_dp/cpt_dp.py --contact ipc --dilation-angle 0 --inexact-newton
+```
+
+The optional state-dependent case uses
+`--contact ipc --state-dependent --inexact-newton` instead. Its
+`StateDependentDruckerPrager` parameters match the native MPM SDMC CPT:
 `e0=0.62`, `e_Tao=0.90`, `lambda_c=0.119`, `ksi=0.23`, `nd=1.70`, `nf=2.68`,
 `fai_c=30`, and cohesion 3 kPa, with density 1600 kg/m³, Young's modulus
 60 MPa, and Poisson's ratio 0.30. Initial stress remains
@@ -34,6 +43,8 @@ Its `StateDependentDruckerPrager` parameters match the native MPM SDMC CPT:
 Dilation evolves with the state law; this route does not take `--dilation-angle`.
 The finite-strain DP model retains its own return mapping; matching SDMC's
 state parameters does not make the two constitutive integrations identical.
+The nonsymmetric HashTriplet solve preserves the BiCGSTAB recurrence and
+verifies `b-A*x` before convergence, restarting only if that check fails.
 
 The wavy-plate script saves complete physical-state checkpoints beside its
 VTUs. Its `--resume` option loads a saved output frame in `--output-dir`;
@@ -705,12 +716,24 @@ The linear relative tolerance starts at `0.01`, then follows
 `min(0.01, max(configured_linear_rtol, 0.9 * (R_k/R_previous)**1.5))`,
 where `R` is the free-force residual norm. The configured linear relative
 tolerance is its floor and must not exceed `0.01`. Each friction outer solve
-and timestep retry starts a fresh sequence. Linear solves still verify their
+and timestep retry starts a fresh sequence. The forcing term bounds the true
+linear residual by `max(configured_linear_atol, eta * R)` using the physical
+free-force norm before Dirichlet elimination; the eliminated right-hand side
+can be much larger during prescribed loading and is not its reference.
+Linear solves still verify their
 true residual; nonlinear acceptance requires the configured force and
 Dirichlet tolerances and the physical correction criterion. A terminal
 inexact correction is rechecked at the configured linear accuracy. Contact
 CCD and residual Armijo remain active. This option does not alter DP parameters.
 The CPT example enables it with `--contact ipc --dilation-angle 0 --inexact-newton`.
+
+During prescribed loading, residual Armijo includes the squared Dirichlet
+mismatch, scaled by the attempted step's force reference divided by the
+initial mismatch. The weight is fixed within each Newton solve. Exact fixed
+corrections reduce the mismatch by `(1-alpha)`, so its merit and slope require
+no additional device reduction. Once the prescribed motion is reached, the
+merit reduces to the free-force norm. Force, motion, and boundary stopping
+criteria, the physical Jacobian, and contact/material CCD remain unchanged.
 
 For nonassociated DP, the force reference `max(R_0, 1)` is captured in the
 first inner solve of an attempted step and retained across its lagged-friction

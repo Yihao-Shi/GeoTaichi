@@ -12,6 +12,7 @@ if str(ROOT) not in sys.path:
 import glob
 import json
 import math
+import os
 from pathlib import Path
 import numpy as np
 
@@ -28,10 +29,28 @@ from examples.mmpm.UTubeFlow2D.u_tube_flow_2d_parameters import (
     POROSITY,
     POROUS_ORIGIN,
     POROUS_SIZE,
+    PREFIX,
     PPC,
     SIMULATION_TIME,
     WIDTH,
 )
+
+
+def hydrostatic_gradient_error(position, pressure):
+    errors = []
+    for lower, upper in ((0.0, POROUS_ORIGIN[0]), (POROUS_ORIGIN[0] + POROUS_SIZE[0], WIDTH)):
+        selected = (
+            (position[:, 0] > lower + 2 * DX)
+            & (position[:, 0] < upper - 2 * DX)
+            & (position[:, 1] > POROUS_SIZE[1] + 2 * DX)
+            & (position[:, 1] < np.quantile(position[:, 1], 0.95) - 2 * DX)
+        )
+        height = position[selected, 1]
+        if len(height) < 4 or np.ptp(height) <= DX:
+            return float("nan")
+        gradient = np.polyfit(height, pressure[selected], 1)[0]
+        errors.append(abs(gradient / (-1000.0 * 9.81) - 1.0))
+    return float(max(errors))
 
 
 def postprocess(output: Path):
@@ -43,6 +62,7 @@ def postprocess(output: Path):
     max_solid_displacement = 0.0
     max_cavity_particles = 0
     initial_solid_position = None
+    particle_conservation = True
     for file_name in files:
         data = np.load(file_name)
         active = data["active"] > 0
@@ -50,6 +70,9 @@ def postprocess(output: Path):
         position = data["position"]
         fluid = active & (phase == 2)
         solid = active & (phase == 1)
+        particle_conservation &= bool(
+            np.count_nonzero(fluid) == EXPECTED_FLUID_PARTICLES and np.count_nonzero(solid) == EXPECTED_SOLID_PARTICLES
+        )
         left = fluid & (position[:, 0] < POROUS_ORIGIN[0])
         right = fluid & (position[:, 0] > POROUS_ORIGIN[0] + POROUS_SIZE[0])
         cavity = (
@@ -84,6 +107,7 @@ def postprocess(output: Path):
                 float(np.quantile(speed, 0.99)),
                 float(np.min(data["pressure"][fluid])),
                 float(np.max(data["pressure"][fluid])),
+                hydrostatic_gradient_error(position[fluid], data["pressure"][fluid]),
             ]
         )
 
@@ -94,11 +118,15 @@ def postprocess(output: Path):
         delimiter=",",
         header=(
             "time_s,left_surface_m,right_surface_m,numerical_head_difference_m,"
-            "analytical_head_difference_m,error_m,fluid_speed_p99_mps,pressure_min_pa,pressure_max_pa"
+            "analytical_head_difference_m,error_m,fluid_speed_p99_mps,pressure_min_pa,pressure_max_pa,"
+            "column_hydrostatic_gradient_relative_error"
         ),
         comments="",
     )
     relative_l2 = float(np.linalg.norm(rows[:, 3] - rows[:, 4]) / max(np.linalg.norm(rows[:, 4]), 1.0e-12))
+    steady_requested = rows[-1, 4] <= DX
+    late = rows[:, 0] >= 0.8 * SIMULATION_TIME
+    speed_tolerance = max(2.0 * 9.81 * DT, HYDRAULIC_CONDUCTIVITY * DX / (POROSITY * POROUS_SIZE[0]))
     metrics = {
         "case": "Zhang et al. (2027), Section 4.2, two-dimensional U-tube flow",
         "doi": "10.1016/j.cma.2026.119401",
@@ -120,16 +148,34 @@ def postprocess(output: Path):
         "final_analytical_head_difference_m": float(rows[-1, 4]),
         "maximum_solid_displacement_m": max_solid_displacement,
         "maximum_fluid_particles_in_closed_cavity": max_cavity_particles,
+        "duration_complete": bool(math.isclose(rows[-1, 0], SIMULATION_TIME, abs_tol=0.1 * DT)),
+        "particle_conservation": particle_conservation,
+        "quasi_steady_requested": bool(steady_requested),
+        "late_fluid_speed_p99_max_mps": float(rows[late, 6].max()),
+        "quasi_steady_speed_tolerance_mps": speed_tolerance,
+        "late_hydrostatic_pressure_gradient_error_max": float(rows[late, 9].max()),
+        "hydrostatic_pressure_gradient_error_tolerance": 0.15,
         "finite": bool(np.isfinite(rows).all()),
     }
     metrics["passed"] = bool(
         metrics["finite"]
+        and metrics["duration_complete"]
+        and metrics["particle_conservation"]
         and max_solid_displacement <= 1.0e-10
         and max_cavity_particles == 0
         and abs(metrics["final_numerical_head_difference_m"]) <= DX
         and relative_l2 <= 0.35
+        and (
+            not steady_requested
+            or (
+                metrics["late_fluid_speed_p99_max_mps"] <= speed_tolerance
+                and metrics["late_hydrostatic_pressure_gradient_error_max"] <= 0.15
+            )
+        )
     )
     (output / "metrics.json").write_text(json.dumps(metrics, indent=2, sort_keys=True) + "\n")
+    if os.environ.get(PREFIX + "STRICT", "0") == "1" and not metrics["passed"]:
+        raise RuntimeError(f"U-tube strict validation failed: {json.dumps(metrics, sort_keys=True)}")
 
     try:
         import matplotlib.pyplot as plt
