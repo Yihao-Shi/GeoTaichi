@@ -1463,6 +1463,7 @@ class ImplicitEngineMixin:
                 last_armijo = self.fully_implicit_residual_armijo_device(
                     force_residual,
                     merit_slope,
+                    residual_tolerance=force_tolerance if self.nonassociated_newton else 0.0,
                     initial_step=initial_step,
                     include_friction=include_friction,
                     verbose=verbose,
@@ -1769,7 +1770,7 @@ class ImplicitEngineMixin:
         step_record["potential_energy"] = float(result["energy"])
 
     def diagnostics_snapshot(self):
-        return {
+        snapshot = {
             "schema_version": 1,
             "subsystem": "igampm_implicit_ipc",
             "time": float(self.time),
@@ -1791,6 +1792,10 @@ class ImplicitEngineMixin:
             "last_failure": self.last_failure,
             "last_step": self.last_step_record,
         }
+        small_mass = getattr(self.mpm, "last_small_mass_treatment", None)
+        if small_mass is not None:
+            snapshot["small_mass_treatment"] = small_mass
+        return snapshot
 
     def implicit_ipc_substep(
         self,

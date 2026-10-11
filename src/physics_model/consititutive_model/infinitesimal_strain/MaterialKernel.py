@@ -87,7 +87,10 @@ def Sigrot(stress, dw):
 
 @ti.func
 def SphericalTensor(tensor):
-    return (tensor[0] + tensor[1] + tensor[2]) / 3.0
+    if ti.static(len(tensor.get_shape()) == 1):
+        return (tensor[0] + tensor[1] + tensor[2]) / 3.0
+    else:
+        return (tensor[0, 0] + tensor[1, 1] + tensor[2, 2]) / 3.0
 
 
 @ti.func

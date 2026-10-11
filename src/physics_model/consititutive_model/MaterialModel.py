@@ -164,6 +164,10 @@ class Solid(MaterialModel):
             )
 
     def add_coupling_material(self, material):
+        if DictIO.GetAlternative(material, "RateDependent", False) and not getattr(
+            self, "rate_dependent_function", False
+        ):
+            raise ValueError(f"{type(self).__name__} does not implement mu(I) RateDependent")
         if self.material_type == "TwoPhaseSingleLayer" or self.material_type == "TwoPhaseDoubleLayer":
             solid_density = DictIO.GetAlternative(material, "SolidDensity", 2650)
             fluid_density = DictIO.GetAlternative(material, "FluidDensity", 1000)

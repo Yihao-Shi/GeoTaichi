@@ -14,6 +14,10 @@ Mises plasticity.
   `F_33=1`; axisymmetric 2D uses the no-swirl map with
   `F_theta_theta=r/R`. Intrinsic 2D DP/J2 invariants are rejected.
 - Elastic strain: principal Hencky strain from the SVD of `F_e,tr`.
+  The shared plastic basis refines the initial 3-by-3 SVD with two one-sided
+  Jacobi sweeps and rebuilds `U` and singular values from `F_e,tr V`.
+  Reconstruction, elastic stress and analytic-tangent regression checks cover
+  double-precision CPU/CUDA; this does not change the flow rule or global SVD.
 - Drucker--Prager: physical cohesion in stress units, classical
   Mohr--Coulomb-matched cone, independent constant `DilationAngle` (default
   `FrictionAngle`), perfect plasticity, and hydrostatic cone-apex return.

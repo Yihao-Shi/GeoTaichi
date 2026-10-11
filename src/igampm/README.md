@@ -52,6 +52,20 @@ correction $`p_c`$, recover free physical rows through
 $`(Kp)_f=(A_{\mathrm{DBC}}p)_f+b_f-b_{\mathrm{DBC},f}`$.
 This avoids retaining an additional unconstrained raw IGA matrix.
 
+For nonassociated DP, residual Armijo also accepts a feasible trial when both
+the base and trial force norms already satisfy the original force tolerance.
+Newton still requires the physical correction and prescribed-motion bounds,
+and lagged friction still requires its refreshed equilibrium probe. This avoids
+requiring further force decrease below assembly precision while finishing motion
+convergence. Finite-strain plasticity refines its SVD reconstruction before
+evaluating stress and tangent; the constitutive law and tolerances are unchanged.
+
+The CPT and barrier scripts expose `--small-mass-ratio` (default zero). It uses
+the shared [Direct ULMPM cutoff](../mpm/README.md), records discarded grid mass
+and momentum, and rejects a restart with a different ratio. A nonzero ratio
+changes particle support and is an optional approximation, not a force-tolerance
+relaxation.
+
 The CPT script also accepts `--resume path/to/latest_state.npz`. It initializes
 reference geometry before restoring physical fields, checks material/grid/output
 settings, and continues frame numbering in the checkpoint's output directory.

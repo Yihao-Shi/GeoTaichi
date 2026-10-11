@@ -18,6 +18,12 @@ time integration, then link here instead of duplicating material laws.
 
 ## Hyperelastic solid laws
 
+The shared finite-strain plastic Hencky basis uses two one-sided Jacobi sweeps
+to refine the initial 3×3 SVD. Singular values and left vectors are rebuilt from
+`F_e,tr @ V`, so the reconstructed trial and elastic stress agree at double
+precision even near repeated stretches. Stress, analytic tangent and history
+commit use the same refined basis; global Taichi SVD behavior is unchanged.
+
 For Young's modulus $`E`$ and Poisson ratio $`\nu`$, the three-dimensional Lame
 parameters are
 
@@ -736,7 +742,7 @@ $`\rho_s`$, and compression $`p>0`$, the inertial number is
 I=\dot\gamma_p d_g\sqrt{\frac{\rho_s}{p}}.
 ```
 
-A pressure- and rate-regularized friction coefficient is
+A rate-regularized friction coefficient, evaluated for $`p>0`$, is
 
 ```math
 \mu
@@ -753,6 +759,60 @@ modulus $`G`$, the plastic rate satisfies the scalar consistency equation
 \tau_{tr}-G\Delta t\,\dot\gamma_p
 -p\,\mu(\dot\gamma_p,p)=0.
 ```
+
+`GranularMaterial` solves this scalar equation with a bracketed bisection. An
+elastic trial below $`\mu_s p`$ is preserved, including when `eps=0`. At zero
+pressure the shear stress relaxes to zero; a tensile trial is cleared.
+
+For explicit infinitesimal-strain `DruckerPrager`, `MohrCoulomb`, and
+`ModifiedCamClay`, `RateDependent=True` enables an elastoplastic extension
+using the same $`\mu(I)`$ law. The plastic shear rate is
+
+```math
+\dot\gamma_p
+=\frac{\sqrt{2\,\operatorname{dev}(\Delta\boldsymbol\varepsilon^p)
+:\operatorname{dev}(\Delta\boldsymbol\varepsilon^p)}}{\Delta t},
+\qquad
+\operatorname{dev}(\Delta\boldsymbol\varepsilon^p)
+=\frac{\operatorname{dev}(\boldsymbol\sigma_{tr}-\boldsymbol\sigma_{n+1})}{2G}.
+```
+
+The rate increment $`\Delta\mu=\mu(p,\dot\gamma_p)-\mu_s`$ is added to the
+current static friction coefficient. Thus $`\phi=\arctan(\tan\phi_{static}
++\Delta\mu)`$, preserving the existing softening and random-field strength.
+DP retains its cohesion-shifted inertial pressure $`p+c`$; MC and MCC use
+the updated compressive mean stress $`p`$. DP and MC softening derivatives
+include the friction-angle mapping; DP also includes the cohesion contribution
+to its inertial pressure. MCC converts its current static
+stress ratio through $`\sin\phi_{static}=3M_{static}/(6+M_{static})`$ and uses
+$`M=6\sin\phi/(3-\sin\phi)`$, followed by its existing Lode-angle correction.
+This is a rate extension of the existing MCC model, not a calibrated viscous
+clay model. The stress-ratio mapping is the conventional triaxial-compression
+[MCC relation](https://docs.itascacg.com/itasca920/common/models/camclay/doc/modelcamclay.html).
+
+Each local return mapping freezes the rate-dependent strength; an outer
+consistency solve updates both the plastic shear rate and pressure. Failed
+trials restore the original history, so plastic strain, hardening and energy
+are accumulated once. Yield gradients are taken at the frozen local
+parameters; no incomplete pressure chain rule is added to them. The stored
+`strain_rate` is the plastic shear rate in inverse seconds, and `rate_pressure`
+is the converged compressive mean stress. Use `ComputeStress2D`/`ComputeStress`
+with the physical time step; calling a local `core` directly only evaluates
+a frozen-rate return mapping.
+
+`ReturnMapping` and `ImplicitIntegration` are both local constitutive choices
+under an explicit global solver. `SubStepping` with this rate extension uses
+a complete return mapping inside the consistency solve. MCC also supports
+its `ImplicitIntegrationAL` local solver. An implicit global solver is
+rejected because the coupled rate tangent has not been implemented.
+
+Angles are in degrees. `DynamicFriction` defaults to `StaticFriction` (or
+`Friction`), and must be at least the static angle and below 90 degrees.
+`AverageDiameter`, `InertialNumber` ($`I_0`$), and `GrainDensity` must be
+positive; `eps` may be zero. `GrainDensity` defaults to `Density`, then 2650.
+For MCC, omitted static friction is inferred from `StressRatio`, which must
+lie strictly between 0 and 3. Setting `RateDependent=True` on a solid without
+this extension raises an initialization error instead of ignoring the flag.
 
 ### SANISAND-MS model
 

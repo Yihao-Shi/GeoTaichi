@@ -75,6 +75,13 @@ Verify:
 
 Do not use a tangent approximation to hide a constitutive derivative error.
 
+Direct implicit ULMPM optionally accepts `MPM.set_solver.solver.small_mass_ratio`
+(finite `[0, 1)`, default zero). A positive value removes grid nodes below a
+fraction of the all-node mean mass and compacts every particle connection before
+assembly. Check reported discarded mass/momentum and compare thresholds; this
+changes interpolation and does not conserve transferred momentum exactly.
+Native, explicit and TLMPM paths do not implement this option.
+
 Direct `MPM.add_element({"ShapeFunction": "QuadBSpline", ...})` uses three
 nodes per axis, with the existing first/second/penultimate/last-node boundary
 polynomials. Each grid axis requires at least four nodes. Particles inside

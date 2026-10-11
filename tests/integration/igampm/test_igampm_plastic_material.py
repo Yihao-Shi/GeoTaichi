@@ -419,9 +419,11 @@ def test_nonassociated_ipc_solves_with_bicgstab_and_physical_flow(taichi_runtime
 
 @pytest.mark.parametrize("material_name", ["DruckerPrager", "StateDependentDruckerPrager"])
 @pytest.mark.parametrize("axisymmetric", [False, True])
-@pytest.mark.parametrize("shape_function", ["linear", "QuadBSpline"])
+@pytest.mark.parametrize(
+    "shape_function,small_mass_ratio", [("linear", 0.0), ("QuadBSpline", 0.0), ("QuadBSpline", 1e-5)]
+)
 def test_nonassociated_ipc_physical_jacobian_by_fd(
-    taichi_runtime, tmp_path, monkeypatch, axisymmetric, material_name, shape_function
+    taichi_runtime, tmp_path, monkeypatch, axisymmetric, material_name, shape_function, small_mass_ratio
 ):
     from src.igampm import IGAMPM
     import src.physics_model.contact_model.ipc.NurbsContact as nurbs_contact
@@ -431,6 +433,11 @@ def test_nonassociated_ipc_physical_jacobian_by_fd(
     mpm = _build_plastic_mpm_particle(
         tmp_path / "mpm", material_name, axisymmetric, dilation=0.0, shape_function=shape_function
     )
+    mpm.small_mass_ratio = small_mass_ratio
+    if small_mass_ratio:
+        position = mpm.particle.x.to_numpy()
+        position[0, 0] += 0.049999
+        mpm.particle.x.from_numpy(position)
     engine = IGAMPM(
         iga,
         mpm,
@@ -442,6 +449,9 @@ def test_nonassociated_ipc_physical_jacobian_by_fd(
         axis_offset=0.0,
     ).build()
     engine.begin_implicit_ipc_step()
+    if small_mass_ratio:
+        assert mpm.offset[0] < 9
+        assert mpm.last_small_mass_treatment["removed_mass_fraction"] > 0.0
     mpm.F0.from_numpy(np.array([np.diag([1.18, 0.82, 0.90])]))
     mpm.begin_lagged_material_state()
     system = engine.assemble_monolithic_newton_system(include_friction=False)

@@ -255,6 +255,16 @@ class MPM(SolverDiagnosticsMixin):
         self.sims.set_jacobian_clamp(DictIO.GetAlternative(kwargs, "jacobian_clamp", [0.1, 10]))
 
     def set_solver(self, solver, log=True):
+        if "small_mass_ratio" in solver:
+            ratio = float(solver["small_mass_ratio"])
+            if not np.isfinite(ratio) or not 0.0 <= ratio < 1.0:
+                raise ValueError("small_mass_ratio must be finite and in [0, 1)")
+            if ratio > 0.0 and not (
+                self.sims.is_direct_backend()
+                and self.sims.solver_type == "Implicit"
+                and self.sims.configuration == "ULMPM"
+            ):
+                raise ValueError("small_mass_ratio requires Direct implicit ULMPM")
         retry_policy = StepRetryPolicy(
             enabled=DictIO.GetAlternative(solver, "enable_step_retry", False),
             maximum_retries=DictIO.GetAlternative(solver, "step_retry_max_retries", 2),

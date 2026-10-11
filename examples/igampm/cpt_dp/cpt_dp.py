@@ -427,6 +427,7 @@ def configure_direct_axisymmetric_mpm(
     resolution_scale=1.0,
     dilation_angle=None,
     state_dependent=False,
+    small_mass_ratio=0.0,
 ):
     """Configure the Direct implicit axisymmetric DP soil for IPC coupling."""
     validate_run_parameters(dt, simulation_time, save_interval, resolution_scale)
@@ -480,6 +481,7 @@ def configure_direct_axisymmetric_mpm(
             "scale": 1.0,
             "ccd": True,
             "project_pd": True,
+            "small_mass_ratio": small_mass_ratio,
         }
     )
     mpm.add_engine()
@@ -632,6 +634,9 @@ def parse_arguments():
     )
     parser.add_argument("--inexact-newton", action="store_true", help="adapt linear tolerance for nonassociated IPC DP")
     parser.add_argument(
+        "--small-mass-ratio", type=float, default=0.0, help="IPC relative nodal-mass cutoff; 0 disables"
+    )
+    parser.add_argument(
         "--state-dependent", action="store_true", help="use finite-strain state-dependent DP for IPC soil"
     )
     parser.add_argument("--dt", type=float)
@@ -673,6 +678,10 @@ def main():
         arguments.save_interval,
         arguments.resolution_scale,
     )
+    if not math.isfinite(arguments.small_mass_ratio) or not 0 <= arguments.small_mass_ratio < 1:
+        parser.error("--small-mass-ratio must be finite and in [0, 1)")
+    if arguments.small_mass_ratio > 0 and arguments.contact != "ipc":
+        parser.error("--small-mass-ratio requires --contact ipc")
     implicit = arguments.contact == "ipc"
     output_path = Path(arguments.output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
@@ -688,6 +697,8 @@ def main():
             raise ValueError("checkpoint configuration mismatch: state_dependent")
         if previous.get("shape_function", "Linear") != "QuadBSpline":
             raise ValueError("checkpoint configuration mismatch: shape_function; restart QuadBSpline from frame 0")
+        if previous.get("small_mass_ratio", 0.0) != arguments.small_mass_ratio:
+            raise ValueError("checkpoint configuration mismatch: small_mass_ratio")
     if not existing_run:
         (output_path / "parameters.json").write_text(
             json.dumps(
@@ -719,6 +730,7 @@ def main():
             arguments.resolution_scale,
             dilation_angle=arguments.dilation_angle,
             state_dependent=arguments.state_dependent,
+            small_mass_ratio=arguments.small_mass_ratio,
         )
         contact_parameters = ipc_contact_parameters(grid_size)
         coupling = gt.IGAMPM(

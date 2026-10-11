@@ -32,6 +32,8 @@ def parameters(args):
         raise ValueError("use thickness > 0.1 m and positive particle/contact capacities")
     if not math.isfinite(args.dilation_angle) or not 0 <= args.dilation_angle <= 30:
         raise ValueError("dilation-angle must be finite and between 0 and 30 degrees")
+    if not math.isfinite(args.small_mass_ratio) or not 0 <= args.small_mass_ratio < 1:
+        raise ValueError("small-mass-ratio must be finite and in [0, 1)")
     dimensions = (
         (8.0, args.spacing),
         (4.0, args.spacing),
@@ -69,6 +71,7 @@ def parameters(args):
         original_dilation_angle=0.0,
         elastic_model="NeoHookean",
         shape_function="QuadBSpline",
+        small_mass_ratio=args.small_mass_ratio,
         gravity=[0.0] * (dimension - 1) + [-9.8],
         contact_model="IPC",
         contact_friction=0.577,
@@ -160,6 +163,7 @@ def configure_mpm(mpm, p, output):
             "newmark": [1.0, 0.5, 1.0],
             "project_pd": True,
             "scale": 1.0,
+            "small_mass_ratio": p["small_mass_ratio"],
         }
     )
 
@@ -335,6 +339,7 @@ def main():
     parser.add_argument("--elastic-spacing", type=float, default=0.25)
     parser.add_argument("--ppc", type=int, default=2)
     parser.add_argument("--dilation-angle", type=float, default=0.0)
+    parser.add_argument("--small-mass-ratio", type=float, default=0.0, help="relative nodal-mass cutoff; 0 disables")
     parser.add_argument("--dt", type=float, default=0.001)
     parser.add_argument("--time", type=float, default=3.0)
     parser.add_argument("--save-interval", type=float, default=0.1)
@@ -358,7 +363,7 @@ def main():
             raise ValueError("resume output must be the checkpoint's existing run directory")
         previous = json.loads((args.resume.parent / "parameters.json").read_text())
         for key, value in p.items():
-            if key != "target_time" and previous.get(key) != value:
+            if key != "target_time" and previous.get(key, 0.0 if key == "small_mass_ratio" else None) != value:
                 raise ValueError(f"checkpoint configuration mismatch: {key}")
     else:
         (output / "parameters.json").write_text(json.dumps(p, indent=2) + "\n")

@@ -226,7 +226,19 @@ def test_plastic_monolithic_newton_selects_material_line_search(has_incremental_
         assert calls[0][2]["include_friction"] is False
 
 
-def test_residual_merit_armijo_backtracks_a_failed_trial_query():
+@pytest.mark.parametrize(
+    "current_residual,trial_residual,residual_tolerance,accepted",
+    [
+        (1.0, 0.5, 0.0, True),
+        (1e-7, 2e-7, 1e-6, True),
+        (1e-7, 2e-6, 1e-6, False),
+        (1e-7, 2e-7, 0.0, False),
+        (2e-6, 3e-6, 1e-6, False),
+    ],
+)
+def test_residual_merit_armijo_backtracks_a_failed_trial_query(
+    current_residual, trial_residual, residual_tolerance, accepted
+):
     from src.igampm.engines.FrictionEngine import FrictionEngineMixin
 
     engine = object.__new__(FrictionEngineMixin)
@@ -244,7 +256,7 @@ def test_residual_merit_armijo_backtracks_a_failed_trial_query():
     engine._sync_device_trial_displacements = lambda: None
     engine._set_device_current_from_trial_base = lambda alpha: None
     engine._restore_device_current_from_trial_base = lambda: None
-    attempts = iter((RuntimeError("trial closest query failed"), {"active_dof": 1}))
+    attempts = iter((RuntimeError("trial closest query failed"), {"active_dof": 1}, {"active_dof": 1}))
 
     def assemble(**kwargs):
         result = next(attempts)
@@ -253,20 +265,21 @@ def test_residual_merit_armijo_backtracks_a_failed_trial_query():
         return result
 
     engine.assemble_monolithic_newton_system = assemble
-    engine._device_physical_residual_squared = lambda active_dof: 0.25
+    engine._device_physical_residual_squared = lambda active_dof: trial_residual**2
     engine.initialize_barrier = lambda *args: None
     engine.minimum_contact_distance = lambda: 0.02
 
     result = engine.fully_implicit_residual_armijo_device(
-        1.0,
-        -1.0,
+        current_residual,
+        -(current_residual**2),
+        residual_tolerance=residual_tolerance,
         initial_step=1.0,
         include_friction=False,
     )
 
-    assert result["accepted"] is True
-    assert result["step"] == pytest.approx(0.5)
-    assert result["residual"] == pytest.approx(0.5)
+    assert result["accepted"] is accepted
+    assert result["step"] == pytest.approx(0.5 if accepted else 0.0)
+    assert result["residual"] == pytest.approx(trial_residual)
     assert accd_calls == [((1.0, None, False), {"prepare_contacts": True})]
 
 

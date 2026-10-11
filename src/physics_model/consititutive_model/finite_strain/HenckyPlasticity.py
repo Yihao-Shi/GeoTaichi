@@ -243,6 +243,29 @@ class HenckyAssociatedPlasticityModel(FiniteStrainModel):
         ti.static_assert(deformation_gradient.n == 3 and deformation_gradient.m == 3)
         assert deformation_gradient.determinant() > 0.0, "finite-strain plasticity requires det(F_e,tr) > 0"
         matrix_u, singular_matrix, matrix_v = ti.svd(deformation_gradient)
+        # Polish the SVD basis: its reconstruction error otherwise sets a stress residual floor.
+        columns = deformation_gradient @ matrix_v
+        for sweep in ti.static(range(2)):
+            for j, k in ti.static([(0, 1), (0, 2), (1, 2)]):
+                left = ti.Vector([columns[row, j] for row in ti.static(range(3))])
+                right = ti.Vector([columns[row, k] for row in ti.static(range(3))])
+                cross = left.dot(right)
+                if ti.abs(cross) > 1e-16 * ti.sqrt(left.dot(left) * right.dot(right)):
+                    tau = (right.dot(right) - left.dot(left)) / (2.0 * cross)
+                    rotation = (1.0 if tau >= 0.0 else -1.0) / (ti.abs(tau) + ti.sqrt(1.0 + tau * tau))
+                    cosine = 1.0 / ti.sqrt(1.0 + rotation * rotation)
+                    sine = rotation * cosine
+                    basis_left = ti.Vector([matrix_v[row, j] for row in ti.static(range(3))])
+                    basis_right = ti.Vector([matrix_v[row, k] for row in ti.static(range(3))])
+                    for row in ti.static(range(3)):
+                        columns[row, j] = cosine * left[row] - sine * right[row]
+                        columns[row, k] = sine * left[row] + cosine * right[row]
+                        matrix_v[row, j] = cosine * basis_left[row] - sine * basis_right[row]
+                        matrix_v[row, k] = sine * basis_left[row] + cosine * basis_right[row]
+        for j in ti.static(range(3)):
+            singular_matrix[j, j] = ti.Vector([columns[row, j] for row in ti.static(range(3))]).norm()
+            for row in ti.static(range(3)):
+                matrix_u[row, j] = columns[row, j] / singular_matrix[j, j]
         dimension = ti.static(deformation_gradient.n)
         singular_values = ti.Vector.zero(float, dimension)
         strain = ti.Vector.zero(float, dimension)

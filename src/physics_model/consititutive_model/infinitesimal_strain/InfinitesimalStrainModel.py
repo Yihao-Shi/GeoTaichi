@@ -12,6 +12,8 @@ class InfinitesimalStrainModel(Solid):
 
     def get_state_vars(self):
         state_vars = self.define_state_vars()
+        if getattr(self, "is_rate_dependent", False):
+            state_vars.update({"strain_rate": float, "rate_pressure": float})
         if GlobalVariable.TRACKENERGY:
             state_vars.update({"plastic_energy": float})
         if self.is_elastic is False and self.solver_type == 1:
@@ -21,40 +23,38 @@ class InfinitesimalStrainModel(Solid):
             return state_vars
         elif "TL" in self.configuration:
             self._initialize_vars = self._initialize_vars_total_lagrangian
-            state_vars.update({'deformation_gradient': ti.types.matrix(GlobalVariable.DIMENSION, GlobalVariable.DIMENSION, float)})
+            state_vars.update(
+                {"deformation_gradient": ti.types.matrix(GlobalVariable.DIMENSION, GlobalVariable.DIMENSION, float)}
+            )
             return state_vars
 
     @ti.func
     def _initialize_vars_update_lagrangian(np, particle, stateVars):
         raise NotImplementedError
-    
+
     @ti.func
     def _initialize_vars_total_lagrangian(self, np, particle, stateVars):
         self._initialize_vars_update_lagrangian(np, particle, stateVars)
-        stateVars[np].deformation_gradient = ti.Matrix.identity(float, GlobalVariable.DIMENSION)    
+        stateVars[np].deformation_gradient = ti.Matrix.identity(float, GlobalVariable.DIMENSION)
 
     @ti.func
     def update_particle_volume(self, np, velocity_gradient, stateVars, dt):
         return (ti.Matrix.identity(float, 3) + velocity_gradient * dt[None]).determinant()
-    
+
     @ti.func
     def update_particle_volume_2D(self, np, velocity_gradient, stateVars, dt):
         return (ti.Matrix.identity(float, 2) + velocity_gradient * dt[None]).determinant()
-    
+
     @ti.func
     def update_particle_volume_bbar(self, np, strain_rate, stateVars, dt):
-        return 1. + dt[None] * (strain_rate[0] + strain_rate[1] + strain_rate[2])
+        return 1.0 + dt[None] * (strain_rate[0] + strain_rate[1] + strain_rate[2])
 
     @ti.func
-    def update_particle_volume_bbar_2D(
-        self, np, velocity_gradient, stateVars, dt
-    ):
-        return (
-            ti.Matrix.identity(float, 2) + velocity_gradient * dt[None]
-        ).determinant()
+    def update_particle_volume_bbar_2D(self, np, velocity_gradient, stateVars, dt):
+        return (ti.Matrix.identity(float, 2) + velocity_gradient * dt[None]).determinant()
 
     @ti.func
-    def ComputePKStress2D(self, np, previous_PKstress, velocity_gradient, stateVars, dt):  
+    def ComputePKStress2D(self, np, previous_PKstress, velocity_gradient, stateVars, dt):
         previous_cauchy_stress = self.PK2CauchyStress2D(np, previous_PKstress, stateVars)
         cauchy_stress = self.ComputeStress2D(np, previous_cauchy_stress, velocity_gradient, stateVars, dt)
         PKstress2D = self.Cauchy2PKStress2D(np, stateVars, cauchy_stress)
@@ -72,20 +72,26 @@ class InfinitesimalStrainModel(Solid):
             return PKstress2D
 
     @ti.func
-    def ComputePKStress(self, np, previous_PKstress, velocity_gradient, stateVars, dt):  
+    def ComputePKStress(self, np, previous_PKstress, velocity_gradient, stateVars, dt):
         previous_cauchy_stress = self.PK2CauchyStress(np, previous_PKstress, stateVars)
         cauchy_stress = self.ComputeStress(np, previous_cauchy_stress, velocity_gradient, stateVars, dt)
         PKstress = self.Cauchy2PKStress(np, stateVars, cauchy_stress)
         return PKstress
-    
-    @ti.func
-    def ComputeStress2D(self, np, previous_stress, velocity_gradient, stateVars, dt):  
-        de = calculate_strain_increment2D(velocity_gradient, dt)
-        dw = calculate_vorticity_increment2D(velocity_gradient, dt)
-        return self.core(np, previous_stress, de, dw, stateVars)
 
     @ti.func
-    def ComputeStress(self, np, previous_stress, velocity_gradient, stateVars, dt):  
+    def ComputeStress2D(self, np, previous_stress, velocity_gradient, stateVars, dt):
+        de = calculate_strain_increment2D(velocity_gradient, dt)
+        dw = calculate_vorticity_increment2D(velocity_gradient, dt)
+        if ti.static(getattr(self, "is_rate_dependent", False)):
+            return self.IntegrateRateDependent(np, previous_stress, de, dw, stateVars, dt)
+        else:
+            return self.core(np, previous_stress, de, dw, stateVars)
+
+    @ti.func
+    def ComputeStress(self, np, previous_stress, velocity_gradient, stateVars, dt):
         de = calculate_strain_increment(velocity_gradient, dt)
         dw = calculate_vorticity_increment(velocity_gradient, dt)
-        return self.core(np, previous_stress, de, dw, stateVars)
+        if ti.static(getattr(self, "is_rate_dependent", False)):
+            return self.IntegrateRateDependent(np, previous_stress, de, dw, stateVars, dt)
+        else:
+            return self.core(np, previous_stress, de, dw, stateVars)

@@ -1674,6 +1674,7 @@ class FrictionEngineMixin:
         current_residual,
         merit_slope,
         *,
+        residual_tolerance=0.0,
         initial_step=1.0,
         include_friction=True,
         verbose=False,
@@ -1682,8 +1683,11 @@ class FrictionEngineMixin:
         """Device-resident residual-merit Armijo for a nonconservative system."""
         current_residual = float(current_residual)
         merit_slope = float(merit_slope)
+        residual_tolerance = float(residual_tolerance)
         if not math.isfinite(current_residual) or current_residual < 0.0:
             raise ValueError("current residual norm must be finite and non-negative")
+        if not math.isfinite(residual_tolerance) or residual_tolerance < 0.0:
+            raise ValueError("residual tolerance must be finite and non-negative")
         if not math.isfinite(merit_slope) or merit_slope >= 0.0:
             raise RuntimeError("Newton correction is not a descent direction for 0.5 * ||R||^2")
 
@@ -1725,7 +1729,10 @@ class FrictionEngineMixin:
                     trial_failure = f"{type(exception).__name__}: {exception}"
                 trial_merit = 0.5 * trial_residual * trial_residual
                 bound = current_merit + self.armijo_c1 * alpha * merit_slope
-                if math.isfinite(trial_merit) and trial_merit <= bound:
+                # Inside the force tolerance, finish motion convergence without
+                # demanding further force decrease below assembly precision.
+                force_converged = current_residual <= residual_tolerance and trial_residual <= residual_tolerance
+                if math.isfinite(trial_merit) and (trial_merit <= bound or force_converged):
                     accepted = True
                     accepted_system = candidate
                     break

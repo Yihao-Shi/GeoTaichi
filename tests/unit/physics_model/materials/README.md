@@ -11,6 +11,7 @@ history, and tangent finite differences are separate test nodes.
 | Mooney-Rivlin, Gent, Hencky, Hydrogel | initialization, energy/PK1 consistency, analytic tangent against an FD oracle, repeated-stretch Hencky limit, invalid deformation/extensibility, sound speed | none exposed by this suite |
 | Newtonian, Bingham | state, pressure, viscosity/yield branches, mixed Voigt response, critical rate | Bingham pressure/history conventions need dedicated regression coverage |
 | Elastic-perfectly-plastic, Mohr-Coulomb, Drucker-Prager | parameters, state, zero/elastic/plastic branches, history, elastic tangent FD | strict `xfail` nodes record validation, EPP return mapping, and Drucker-Prager branch-state defects |
+| Explicit mu(I): Drucker-Prager, Mohr-Coulomb, Modified Cam-Clay, GranularMaterial | scalar pressure derivatives, invalid parameters, zero-pressure/zero-regularization branches, DP scalar consistency oracle, rate/pressure/yield consistency, softening chain derivatives, history, equal-friction static limit, 2-D/3-D DP updates, Direct explicit kernel | global implicit rate tangent and full MPM benchmarks are not covered |
 
 The following production models still need the same full contract and must not
 be considered unit-covered merely because an example script exists:
@@ -19,7 +20,6 @@ be considered unit-covered merely because an example script exists:
 - State-dependent Mohr-Coulomb
 - NorSand
 - SANISAND-MS
-- rate-dependent and granular wrappers
 - softening, random-field, and user-defined material adapters
 
 The Bingham shear law performs its final yield check using only the first

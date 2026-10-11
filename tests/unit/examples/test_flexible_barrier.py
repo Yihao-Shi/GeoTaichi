@@ -24,6 +24,7 @@ def test_barrier_particle_geometry_and_quadratic_basis(dimension, tmp_path):
             ppc=2,
             contact_capacity=256,
             dilation_angle=0.0,
+            small_mass_ratio=0.0,
             linear_solver="PCG",
         )
     )

@@ -27,161 +27,161 @@
           "name": "add_body",
           "signature": "add_body(self, body)",
           "source": "src/mpm/mainMPM.py",
-          "line": 497,
+          "line": 507,
           "doc": ""
         },
         {
           "name": "add_body_from_file",
           "signature": "add_body_from_file(self, body)",
           "source": "src/mpm/mainMPM.py",
-          "line": 523,
+          "line": 533,
           "doc": ""
         },
         {
           "name": "add_boundary_condition",
           "signature": "add_boundary_condition(self, boundary=None, dirichlet=None, neumann=None)",
           "source": "src/mpm/mainMPM.py",
-          "line": 541,
+          "line": 551,
           "doc": ""
         },
         {
           "name": "add_contact",
           "signature": "add_contact(self, contact_type, **contact_phys)",
           "source": "src/mpm/mainMPM.py",
-          "line": 462,
+          "line": 472,
           "doc": ""
         },
         {
           "name": "add_element",
           "signature": "add_element(self, element)",
           "source": "src/mpm/mainMPM.py",
-          "line": 483,
+          "line": 493,
           "doc": ""
         },
         {
           "name": "add_engine",
           "signature": "add_engine(self)",
           "source": "src/mpm/mainMPM.py",
-          "line": 883,
+          "line": 893,
           "doc": ""
         },
         {
           "name": "add_essentials",
           "signature": "add_essentials(self, **kwargs)",
           "source": "src/mpm/mainMPM.py",
-          "line": 965,
+          "line": 975,
           "doc": ""
         },
         {
           "name": "add_ground",
           "signature": "add_ground(self, ground)",
           "source": "src/mpm/mainMPM.py",
-          "line": 504,
+          "line": 514,
           "doc": ""
         },
         {
           "name": "add_material",
           "signature": "add_material(self, model=None, material=None, **kwargs)",
           "source": "src/mpm/mainMPM.py",
-          "line": 477,
+          "line": 487,
           "doc": ""
         },
         {
           "name": "add_particle_traction",
           "signature": "add_particle_traction(self, traction)",
           "source": "src/mpm/mainMPM.py",
-          "line": 556,
+          "line": 566,
           "doc": ""
         },
         {
           "name": "add_polygons",
           "signature": "add_polygons(self, body)",
           "source": "src/mpm/mainMPM.py",
-          "line": 527,
+          "line": 537,
           "doc": ""
         },
         {
           "name": "add_postfunctions",
           "signature": "add_postfunctions(self, **functions)",
           "source": "src/mpm/mainMPM.py",
-          "line": 943,
+          "line": 953,
           "doc": ""
         },
         {
           "name": "add_recorder",
           "signature": "add_recorder(self)",
           "source": "src/mpm/mainMPM.py",
-          "line": 932,
+          "line": 942,
           "doc": ""
         },
         {
           "name": "add_region",
           "signature": "add_region(self, region)",
           "source": "src/mpm/mainMPM.py",
-          "line": 490,
+          "line": 500,
           "doc": ""
         },
         {
           "name": "add_solver",
           "signature": "add_solver(self, **kwargs)",
           "source": "src/mpm/mainMPM.py",
-          "line": 936,
+          "line": 946,
           "doc": ""
         },
         {
           "name": "add_spatial_grid",
           "signature": "add_spatial_grid(self)",
           "source": "src/mpm/mainMPM.py",
-          "line": 877,
+          "line": 887,
           "doc": ""
         },
         {
           "name": "add_virtual_stress_field",
           "signature": "add_virtual_stress_field(self, field, region_name=None, function=None)",
           "source": "src/mpm/mainMPM.py",
-          "line": 561,
+          "line": 571,
           "doc": ""
         },
         {
           "name": "check_critical_timestep",
           "signature": "check_critical_timestep(self)",
           "source": "src/mpm/mainMPM.py",
-          "line": 1035,
+          "line": 1045,
           "doc": ""
         },
         {
           "name": "choose_coupling_region",
           "signature": "choose_coupling_region(self, region_name=None, function=None)",
           "source": "src/mpm/mainMPM.py",
-          "line": 584,
+          "line": 594,
           "doc": ""
         },
         {
           "name": "clean_boundary_condition",
           "signature": "clean_boundary_condition(self, boundary)",
           "source": "src/mpm/mainMPM.py",
-          "line": 572,
+          "line": 582,
           "doc": ""
         },
         {
           "name": "create_body",
           "signature": "create_body(self)",
           "source": "src/mpm/mainMPM.py",
-          "line": 509,
+          "line": 519,
           "doc": ""
         },
         {
           "name": "create_ground",
           "signature": "create_ground(self)",
           "source": "src/mpm/mainMPM.py",
-          "line": 516,
+          "line": 526,
           "doc": ""
         },
         {
           "name": "delete_particles",
           "signature": "delete_particles(self, bodyID=None, region_name=None, function=None)",
           "source": "src/mpm/mainMPM.py",
-          "line": 1057,
+          "line": 1067,
           "doc": ""
         },
         {
@@ -195,91 +195,91 @@
           "name": "differentiable",
           "signature": "differentiable(self, steps=None)",
           "source": "src/mpm/mainMPM.py",
-          "line": 946,
+          "line": 956,
           "doc": "Create a fixed-step tape for Direct ULMPM BarrierIPC."
         },
         {
           "name": "memory_allocate",
           "signature": "memory_allocate(self, memory, log=True)",
           "source": "src/mpm/mainMPM.py",
-          "line": 295,
+          "line": 305,
           "doc": ""
         },
         {
           "name": "modify_parameters",
           "signature": "modify_parameters(self, **kwargs)",
           "source": "src/mpm/mainMPM.py",
-          "line": 592,
+          "line": 602,
           "doc": ""
         },
         {
           "name": "postprocessing",
           "signature": "postprocessing(self, start_file=0, end_file=-1, read_path=None, write_path=None, **kwargs)",
           "source": "src/mpm/mainMPM.py",
-          "line": 1071,
+          "line": 1081,
           "doc": ""
         },
         {
           "name": "print_basic_simulation_info",
           "signature": "print_basic_simulation_info(self)",
           "source": "src/mpm/mainMPM.py",
-          "line": 321,
+          "line": 331,
           "doc": ""
         },
         {
           "name": "print_memory_info",
           "signature": "print_memory_info(self)",
           "source": "src/mpm/mainMPM.py",
-          "line": 401,
+          "line": 411,
           "doc": ""
         },
         {
           "name": "print_neighbor_search_info",
           "signature": "print_neighbor_search_info(self)",
           "source": "src/mpm/mainMPM.py",
-          "line": 425,
+          "line": 435,
           "doc": ""
         },
         {
           "name": "print_simulation_info",
           "signature": "print_simulation_info(self)",
           "source": "src/mpm/mainMPM.py",
-          "line": 335,
+          "line": 345,
           "doc": ""
         },
         {
           "name": "print_solver_info",
           "signature": "print_solver_info(self)",
           "source": "src/mpm/mainMPM.py",
-          "line": 376,
+          "line": 386,
           "doc": ""
         },
         {
           "name": "read_restart",
           "signature": "read_restart(self, file_number, file_path, is_continue=True)",
           "source": "src/mpm/mainMPM.py",
-          "line": 530,
+          "line": 540,
           "doc": ""
         },
         {
           "name": "run",
           "signature": "run(self, visualize=False, **kwargs)",
           "source": "src/mpm/mainMPM.py",
-          "line": 1010,
+          "line": 1020,
           "doc": ""
         },
         {
           "name": "save_data",
           "signature": "save_data(self)",
           "source": "src/mpm/mainMPM.py",
-          "line": 1066,
+          "line": 1076,
           "doc": ""
         },
         {
           "name": "select_save_data",
           "signature": "select_save_data(self, particle=True, grid=False, object=True)",
           "source": "src/mpm/mainMPM.py",
-          "line": 579,
+          "line": 589,
           "doc": ""
         },
         {
@@ -321,21 +321,21 @@
           "name": "set_window",
           "signature": "set_window(self, window)",
           "source": "src/mpm/mainMPM.py",
-          "line": 962,
+          "line": 972,
           "doc": ""
         },
         {
           "name": "update_particle_properties",
           "signature": "update_particle_properties(self, property_name, value, override=True, bodyID=None, region_name=None, function=None)",
           "source": "src/mpm/mainMPM.py",
-          "line": 1044,
+          "line": 1054,
           "doc": ""
         },
         {
           "name": "write_boundary_condition",
           "signature": "write_boundary_condition(self, output_path='OutputData')",
           "source": "src/mpm/mainMPM.py",
-          "line": 576,
+          "line": 586,
           "doc": ""
         }
       ],
@@ -375,12 +375,12 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 288,
+              "line": 298,
               "reader": "GetAlternative"
             },
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 600,
+              "line": 610,
               "reader": "GetEssential"
             }
           ]
@@ -390,7 +390,7 @@
           "locations": [
             {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/ElasPlasticity.py",
-              "line": 98,
+              "line": 100,
               "reader": "GetAlternative"
             }
           ]
@@ -405,7 +405,7 @@
             },
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 611,
+              "line": 621,
               "reader": "GetEssential"
             }
           ]
@@ -455,7 +455,7 @@
           "locations": [
             {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/RateDependent.py",
-              "line": 17,
+              "line": 22,
               "reader": "GetEssential"
             }
           ]
@@ -515,7 +515,7 @@
             },
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 609,
+              "line": 619,
               "reader": "GetEssential"
             }
           ]
@@ -535,7 +535,7 @@
           "locations": [
             {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/ElasPlasticity.py",
-              "line": 99,
+              "line": 101,
               "reader": "GetAlternative"
             },
             {
@@ -840,7 +840,7 @@
           "locations": [
             {
               "source": "src/physics_model/consititutive_model/MaterialModel.py",
-              "line": 182,
+              "line": 184,
               "reader": "GetAlternative"
             }
           ]
@@ -880,12 +880,12 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 287,
+              "line": 297,
               "reader": "GetAlternative"
             },
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 598,
+              "line": 608,
               "reader": "GetEssential"
             }
           ]
@@ -1030,7 +1030,7 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 976,
+              "line": 986,
               "reader": "GetAlternative"
             }
           ]
@@ -1155,8 +1155,8 @@
             },
             {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/RateDependent.py",
-              "line": 19,
-              "reader": "GetEssential"
+              "line": 24,
+              "reader": "GetAlternative"
             },
             {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/SanisandMS.py",
@@ -1320,7 +1320,7 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 314,
+              "line": 324,
               "reader": "GetAlternative"
             }
           ]
@@ -1340,7 +1340,7 @@
             },
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 620,
+              "line": 630,
               "reader": "GetOptional"
             }
           ]
@@ -1355,7 +1355,7 @@
             },
             {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/DruckerPrager.py",
-              "line": 140,
+              "line": 141,
               "reader": "GetAlternative"
             }
           ]
@@ -1365,7 +1365,7 @@
           "locations": [
             {
               "source": "src/physics_model/consititutive_model/MaterialModel.py",
-              "line": 180,
+              "line": 182,
               "reader": "GetAlternative"
             }
           ]
@@ -1375,7 +1375,7 @@
           "locations": [
             {
               "source": "src/physics_model/consititutive_model/MaterialModel.py",
-              "line": 180,
+              "line": 182,
               "reader": "GetAlternative"
             }
           ]
@@ -1395,7 +1395,7 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 628,
+              "line": 638,
               "reader": "GetOptional"
             }
           ]
@@ -1405,7 +1405,7 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 749,
+              "line": 759,
               "reader": "GetOptional"
             }
           ]
@@ -1480,7 +1480,7 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 745,
+              "line": 755,
               "reader": "GetOptional"
             }
           ]
@@ -1510,7 +1510,7 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 259,
+              "line": 269,
               "reader": "GetAlternative"
             }
           ]
@@ -1555,7 +1555,7 @@
           "locations": [
             {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/RateDependent.py",
-              "line": 20,
+              "line": 25,
               "reader": "GetAlternative"
             }
           ]
@@ -1735,7 +1735,7 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 973,
+              "line": 983,
               "reader": "GetAlternative"
             }
           ]
@@ -1755,7 +1755,7 @@
           "locations": [
             {
               "source": "src/physics_model/consititutive_model/MaterialModel.py",
-              "line": 171,
+              "line": 173,
               "reader": "GetEssential"
             }
           ]
@@ -1765,7 +1765,7 @@
           "locations": [
             {
               "source": "src/physics_model/consititutive_model/MaterialModel.py",
-              "line": 169,
+              "line": 171,
               "reader": "GetAlternative"
             }
           ]
@@ -1785,7 +1785,7 @@
           "locations": [
             {
               "source": "src/physics_model/consititutive_model/MaterialModel.py",
-              "line": 177,
+              "line": 179,
               "reader": "GetAlternative"
             }
           ]
@@ -1795,7 +1795,7 @@
           "locations": [
             {
               "source": "src/physics_model/consititutive_model/MaterialModel.py",
-              "line": 173,
+              "line": 175,
               "reader": "GetAlternative"
             }
           ]
@@ -1854,6 +1854,11 @@
               "reader": "GetEssential"
             },
             {
+              "source": "src/physics_model/consititutive_model/infinitesimal_strain/ModifiedCamClay.py",
+              "line": 74,
+              "reader": "GetAlternative"
+            },
+            {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/MohrCoulomb.py",
               "line": 33,
               "reader": "GetAlternative"
@@ -1865,7 +1870,7 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 941,
+              "line": 951,
               "reader": "GetAlternative"
             }
           ]
@@ -1910,7 +1915,7 @@
           "locations": [
             {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/RateDependent.py",
-              "line": 19,
+              "line": 24,
               "reader": "GetAlternative"
             }
           ]
@@ -1920,7 +1925,7 @@
           "locations": [
             {
               "source": "src/physics_model/consititutive_model/MaterialModel.py",
-              "line": 176,
+              "line": 178,
               "reader": "GetAlternative"
             }
           ]
@@ -1935,12 +1940,12 @@
             },
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 607,
+              "line": 617,
               "reader": "GetEssential"
             },
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 623,
+              "line": 633,
               "reader": "GetOptional"
             }
           ]
@@ -1950,7 +1955,7 @@
           "locations": [
             {
               "source": "src/physics_model/consititutive_model/MaterialModel.py",
-              "line": 178,
+              "line": 180,
               "reader": "GetAlternative"
             }
           ]
@@ -1960,7 +1965,7 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 969,
+              "line": 979,
               "reader": "GetAlternative"
             }
           ]
@@ -1970,7 +1975,7 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 747,
+              "line": 757,
               "reader": "GetOptional"
             }
           ]
@@ -2025,7 +2030,7 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 989,
+              "line": 999,
               "reader": "GetAlternative"
             }
           ]
@@ -2035,7 +2040,7 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 992,
+              "line": 1002,
               "reader": "GetAlternative"
             }
           ]
@@ -2045,7 +2050,7 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 992,
+              "line": 1002,
               "reader": "GetAlternative"
             }
           ]
@@ -2055,7 +2060,7 @@
           "locations": [
             {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/RateDependent.py",
-              "line": 18,
+              "line": 23,
               "reader": "GetEssential"
             }
           ]
@@ -2155,7 +2160,7 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 639,
+              "line": 649,
               "reader": "GetOptional"
             }
           ]
@@ -2215,7 +2220,7 @@
           "locations": [
             {
               "source": "src/physics_model/consititutive_model/MaterialModel.py",
-              "line": 218,
+              "line": 220,
               "reader": "GetEssential"
             }
           ]
@@ -2370,7 +2375,7 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 986,
+              "line": 996,
               "reader": "GetAlternative"
             }
           ]
@@ -2595,7 +2600,7 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 311,
+              "line": 321,
               "reader": "GetAlternative"
             }
           ]
@@ -2645,12 +2650,12 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 298,
+              "line": 308,
               "reader": "GetAlternative"
             },
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 309,
+              "line": 319,
               "reader": "GetAlternative"
             }
           ]
@@ -2670,12 +2675,12 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 301,
+              "line": 311,
               "reader": "GetAlternative"
             },
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 310,
+              "line": 320,
               "reader": "GetAlternative"
             }
           ]
@@ -2735,7 +2740,7 @@
           "locations": [
             {
               "source": "src/physics_model/consititutive_model/MaterialModel.py",
-              "line": 181,
+              "line": 183,
               "reader": "GetAlternative"
             }
           ]
@@ -3180,7 +3185,7 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 637,
+              "line": 647,
               "reader": "GetOptional"
             }
           ]
@@ -3350,7 +3355,7 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 649,
+              "line": 659,
               "reader": "GetOptional"
             }
           ]
@@ -3385,7 +3390,7 @@
           "locations": [
             {
               "source": "src/physics_model/consititutive_model/MaterialModel.py",
-              "line": 172,
+              "line": 174,
               "reader": "GetEssential"
             }
           ]
@@ -3410,7 +3415,7 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 615,
+              "line": 625,
               "reader": "GetOptional"
             }
           ]
@@ -3445,7 +3450,7 @@
             },
             {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/DruckerPrager.py",
-              "line": 138,
+              "line": 139,
               "reader": "GetAlternative"
             },
             {
@@ -3460,7 +3465,7 @@
             },
             {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/MohrCoulomb.py",
-              "line": 128,
+              "line": 132,
               "reader": "GetAlternative"
             }
           ]
@@ -3580,7 +3585,7 @@
           "locations": [
             {
               "source": "src/physics_model/consititutive_model/MaterialModel.py",
-              "line": 170,
+              "line": 172,
               "reader": "GetEssential"
             }
           ]
@@ -3625,7 +3630,7 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 1016,
+              "line": 1026,
               "reader": "GetAlternative"
             }
           ]
@@ -3799,8 +3804,18 @@
           "name": "RateDependent",
           "locations": [
             {
+              "source": "src/physics_model/consititutive_model/MaterialModel.py",
+              "line": 167,
+              "reader": "GetAlternative"
+            },
+            {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/ElasPlasticity.py",
-              "line": 106,
+              "line": 108,
+              "reader": "GetAlternative"
+            },
+            {
+              "source": "src/physics_model/consititutive_model/infinitesimal_strain/ModifiedCamClay.py",
+              "line": 69,
               "reader": "GetAlternative"
             }
           ]
@@ -3860,7 +3875,7 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 939,
+              "line": 949,
               "reader": "GetAlternative"
             }
           ]
@@ -3895,7 +3910,7 @@
             },
             {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/DruckerPrager.py",
-              "line": 135,
+              "line": 136,
               "reader": "GetAlternative"
             },
             {
@@ -3905,7 +3920,7 @@
             },
             {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/MohrCoulomb.py",
-              "line": 125,
+              "line": 129,
               "reader": "GetAlternative"
             }
           ]
@@ -3920,7 +3935,7 @@
             },
             {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/DruckerPrager.py",
-              "line": 137,
+              "line": 138,
               "reader": "GetAlternative"
             },
             {
@@ -3930,7 +3945,7 @@
             },
             {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/MohrCoulomb.py",
-              "line": 127,
+              "line": 131,
               "reader": "GetAlternative"
             }
           ]
@@ -3955,7 +3970,7 @@
             },
             {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/DruckerPrager.py",
-              "line": 136,
+              "line": 137,
               "reader": "GetAlternative"
             },
             {
@@ -3965,7 +3980,7 @@
             },
             {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/MohrCoulomb.py",
-              "line": 126,
+              "line": 130,
               "reader": "GetAlternative"
             }
           ]
@@ -3980,7 +3995,7 @@
             },
             {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/DruckerPrager.py",
-              "line": 139,
+              "line": 140,
               "reader": "GetAlternative"
             },
             {
@@ -3995,7 +4010,7 @@
             },
             {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/MohrCoulomb.py",
-              "line": 129,
+              "line": 133,
               "reader": "GetAlternative"
             }
           ]
@@ -4070,17 +4085,17 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 289,
+              "line": 299,
               "reader": "GetAlternative"
             },
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 602,
+              "line": 612,
               "reader": "GetEssential"
             },
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 642,
+              "line": 652,
               "reader": "GetOptional"
             }
           ]
@@ -4090,17 +4105,17 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 290,
+              "line": 300,
               "reader": "GetAlternative"
             },
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 604,
+              "line": 614,
               "reader": "GetEssential"
             },
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 647,
+              "line": 657,
               "reader": "GetOptional"
             }
           ]
@@ -4155,7 +4170,7 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 754,
+              "line": 764,
               "reader": "GetOptional"
             }
           ]
@@ -4180,17 +4195,17 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 286,
+              "line": 296,
               "reader": "GetEssential"
             },
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 594,
+              "line": 604,
               "reader": "GetEssential"
             },
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 631,
+              "line": 641,
               "reader": "GetOptional"
             }
           ]
@@ -4240,7 +4255,7 @@
           "locations": [
             {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/ElasPlasticity.py",
-              "line": 94,
+              "line": 96,
               "reader": "GetAlternative"
             }
           ]
@@ -4250,7 +4265,7 @@
           "locations": [
             {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/ElasPlasticity.py",
-              "line": 92,
+              "line": 94,
               "reader": "GetAlternative"
             }
           ]
@@ -4280,7 +4295,7 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 977,
+              "line": 987,
               "reader": "GetAlternative"
             }
           ]
@@ -4305,7 +4320,7 @@
           "locations": [
             {
               "source": "src/physics_model/consititutive_model/MaterialModel.py",
-              "line": 168,
+              "line": 170,
               "reader": "GetAlternative"
             }
           ]
@@ -4399,6 +4414,11 @@
           "name": "StaticFriction",
           "locations": [
             {
+              "source": "src/physics_model/consititutive_model/infinitesimal_strain/MohrCoulomb.py",
+              "line": 33,
+              "reader": "GetAlternative"
+            },
+            {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/RateDependent.py",
               "line": 13,
               "reader": "GetEssential"
@@ -4410,7 +4430,7 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 632,
+              "line": 642,
               "reader": "GetOptional"
             }
           ]
@@ -4420,7 +4440,7 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 260,
+              "line": 270,
               "reader": "GetAlternative"
             }
           ]
@@ -4430,7 +4450,7 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 262,
+              "line": 272,
               "reader": "GetAlternative"
             }
           ]
@@ -4440,7 +4460,7 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 261,
+              "line": 271,
               "reader": "GetAlternative"
             }
           ]
@@ -4690,17 +4710,17 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 285,
+              "line": 295,
               "reader": "GetEssential"
             },
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 596,
+              "line": 606,
               "reader": "GetEssential"
             },
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 626,
+              "line": 636,
               "reader": "GetOptional"
             }
           ]
@@ -4920,7 +4940,7 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 1015,
+              "line": 1025,
               "reader": "GetAlternative"
             }
           ]
@@ -4930,7 +4950,7 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 312,
+              "line": 322,
               "reader": "GetAlternative"
             }
           ]
@@ -4980,7 +5000,7 @@
           "locations": [
             {
               "source": "src/physics_model/consititutive_model/MaterialModel.py",
-              "line": 174,
+              "line": 176,
               "reader": "GetAlternative"
             },
             {
@@ -5020,7 +5040,7 @@
           "locations": [
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 1025,
+              "line": 1035,
               "reader": "GetAlternative"
             }
           ]
@@ -5100,7 +5120,7 @@
             },
             {
               "source": "src/mpm/mainMPM.py",
-              "line": 1031,
+              "line": 1041,
               "reader": "GetAlternative"
             }
           ]
@@ -12956,7 +12976,7 @@
           "locations": [
             {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/ElasPlasticity.py",
-              "line": 98,
+              "line": 100,
               "reader": "GetAlternative"
             }
           ]
@@ -12996,7 +13016,7 @@
           "locations": [
             {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/RateDependent.py",
-              "line": 17,
+              "line": 22,
               "reader": "GetEssential"
             }
           ]
@@ -13046,7 +13066,7 @@
           "locations": [
             {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/ElasPlasticity.py",
-              "line": 99,
+              "line": 101,
               "reader": "GetAlternative"
             },
             {
@@ -13311,8 +13331,8 @@
             },
             {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/RateDependent.py",
-              "line": 19,
-              "reader": "GetEssential"
+              "line": 24,
+              "reader": "GetAlternative"
             },
             {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/SanisandMS.py",
@@ -13361,7 +13381,7 @@
             },
             {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/DruckerPrager.py",
-              "line": 140,
+              "line": 141,
               "reader": "GetAlternative"
             }
           ]
@@ -13481,7 +13501,7 @@
           "locations": [
             {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/RateDependent.py",
-              "line": 20,
+              "line": 25,
               "reader": "GetAlternative"
             }
           ]
@@ -13503,6 +13523,11 @@
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/DruckerPrager.py",
               "line": 30,
               "reader": "GetEssential"
+            },
+            {
+              "source": "src/physics_model/consititutive_model/infinitesimal_strain/ModifiedCamClay.py",
+              "line": 74,
+              "reader": "GetAlternative"
             },
             {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/MohrCoulomb.py",
@@ -13531,7 +13556,7 @@
           "locations": [
             {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/RateDependent.py",
-              "line": 19,
+              "line": 24,
               "reader": "GetAlternative"
             }
           ]
@@ -13581,7 +13606,7 @@
           "locations": [
             {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/RateDependent.py",
-              "line": 18,
+              "line": 23,
               "reader": "GetEssential"
             }
           ]
@@ -14141,7 +14166,7 @@
             },
             {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/DruckerPrager.py",
-              "line": 138,
+              "line": 139,
               "reader": "GetAlternative"
             },
             {
@@ -14156,7 +14181,7 @@
             },
             {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/MohrCoulomb.py",
-              "line": 128,
+              "line": 132,
               "reader": "GetAlternative"
             }
           ]
@@ -14331,7 +14356,12 @@
           "locations": [
             {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/ElasPlasticity.py",
-              "line": 106,
+              "line": 108,
+              "reader": "GetAlternative"
+            },
+            {
+              "source": "src/physics_model/consititutive_model/infinitesimal_strain/ModifiedCamClay.py",
+              "line": 69,
               "reader": "GetAlternative"
             }
           ]
@@ -14366,7 +14396,7 @@
             },
             {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/DruckerPrager.py",
-              "line": 135,
+              "line": 136,
               "reader": "GetAlternative"
             },
             {
@@ -14376,7 +14406,7 @@
             },
             {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/MohrCoulomb.py",
-              "line": 125,
+              "line": 129,
               "reader": "GetAlternative"
             }
           ]
@@ -14391,7 +14421,7 @@
             },
             {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/DruckerPrager.py",
-              "line": 137,
+              "line": 138,
               "reader": "GetAlternative"
             },
             {
@@ -14401,7 +14431,7 @@
             },
             {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/MohrCoulomb.py",
-              "line": 127,
+              "line": 131,
               "reader": "GetAlternative"
             }
           ]
@@ -14416,7 +14446,7 @@
             },
             {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/DruckerPrager.py",
-              "line": 136,
+              "line": 137,
               "reader": "GetAlternative"
             },
             {
@@ -14426,7 +14456,7 @@
             },
             {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/MohrCoulomb.py",
-              "line": 126,
+              "line": 130,
               "reader": "GetAlternative"
             }
           ]
@@ -14441,7 +14471,7 @@
             },
             {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/DruckerPrager.py",
-              "line": 139,
+              "line": 140,
               "reader": "GetAlternative"
             },
             {
@@ -14456,7 +14486,7 @@
             },
             {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/MohrCoulomb.py",
-              "line": 129,
+              "line": 133,
               "reader": "GetAlternative"
             }
           ]
@@ -14526,7 +14556,7 @@
           "locations": [
             {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/ElasPlasticity.py",
-              "line": 94,
+              "line": 96,
               "reader": "GetAlternative"
             }
           ]
@@ -14536,7 +14566,7 @@
           "locations": [
             {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/ElasPlasticity.py",
-              "line": 92,
+              "line": 94,
               "reader": "GetAlternative"
             }
           ]
@@ -14554,6 +14584,11 @@
         {
           "name": "StaticFriction",
           "locations": [
+            {
+              "source": "src/physics_model/consititutive_model/infinitesimal_strain/MohrCoulomb.py",
+              "line": 33,
+              "reader": "GetAlternative"
+            },
             {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/RateDependent.py",
               "line": 13,
@@ -15925,7 +15960,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 68,
+              "line": 69,
               "reader": "get"
             }
           ]
@@ -15935,7 +15970,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 89,
+              "line": 90,
               "reader": "get"
             }
           ]
@@ -15945,7 +15980,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 89,
+              "line": 90,
               "reader": "get"
             }
           ]
@@ -15995,7 +16030,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 145,
+              "line": 146,
               "reader": "get"
             }
           ]
@@ -16015,7 +16050,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 70,
+              "line": 71,
               "reader": "get"
             }
           ]
@@ -16045,7 +16080,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 83,
+              "line": 84,
               "reader": "get"
             },
             {
@@ -16085,7 +16120,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 96,
+              "line": 97,
               "reader": "get"
             }
           ]
@@ -16095,7 +16130,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 81,
+              "line": 82,
               "reader": "get"
             }
           ]
@@ -16105,7 +16140,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 80,
+              "line": 81,
               "reader": "get"
             }
           ]
@@ -16115,7 +16150,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 78,
+              "line": 79,
               "reader": "get"
             }
           ]
@@ -16125,7 +16160,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 79,
+              "line": 80,
               "reader": "get"
             }
           ]
@@ -16135,7 +16170,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 76,
+              "line": 77,
               "reader": "get"
             }
           ]
@@ -16145,7 +16180,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 77,
+              "line": 78,
               "reader": "get"
             }
           ]
@@ -16155,7 +16190,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 91,
+              "line": 92,
               "reader": "get"
             }
           ]
@@ -16165,7 +16200,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 104,
+              "line": 105,
               "reader": "get"
             }
           ]
@@ -16175,7 +16210,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 95,
+              "line": 96,
               "reader": "get"
             }
           ]
@@ -16185,7 +16220,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 94,
+              "line": 95,
               "reader": "get"
             }
           ]
@@ -16215,7 +16250,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 66,
+              "line": 67,
               "reader": "get"
             }
           ]
@@ -16225,7 +16260,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 66,
+              "line": 67,
               "reader": "get"
             }
           ]
@@ -16295,7 +16330,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 72,
+              "line": 73,
               "reader": "get"
             }
           ]
@@ -16335,7 +16370,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 75,
+              "line": 76,
               "reader": "get"
             }
           ]
@@ -16355,7 +16390,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 67,
+              "line": 68,
               "reader": "get"
             }
           ]
@@ -16365,7 +16400,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 67,
+              "line": 68,
               "reader": "get"
             }
           ]
@@ -16435,7 +16470,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 84,
+              "line": 85,
               "reader": "get"
             },
             {
@@ -16450,7 +16485,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 86,
+              "line": 87,
               "reader": "get"
             },
             {
@@ -16465,7 +16500,7 @@
           "locations": [
             {
               "source": "src/fempm/ImplicitEngine.py",
-              "line": 85,
+              "line": 86,
               "reader": "get"
             },
             {

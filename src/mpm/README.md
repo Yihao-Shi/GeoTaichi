@@ -23,6 +23,16 @@ force and tangent. Reuse is limited to the same displacement and frozen material
 history/lagged flow state; each new trial or outer iteration prepares it again.
 Standalone assembly remains self-contained by default.
 
+Direct implicit ULMPM accepts `MPM.set_solver({"small_mass_ratio": alpha})`,
+default zero (disabled), with a finite `0 <= alpha < 1`. After P2G, it removes
+nodes at or below `max(1e-12, alpha * mean_grid_mass)`; the mean includes every
+background node. Particle support is compacted consistently for force, tangent,
+contact and G2P, and a particle losing all support is an error. Diagnostics
+report removed grid mass and momentum. Particle masses remain unchanged, but
+this optional cutoff loses transferred momentum and partition of unity; compare
+thresholds before using it. It applies to the shared Direct ULMPM child of
+FEM–MPM, IGA–MPM and Direct MPM–ABD, without changing Native or explicit MPM.
+
 ## Formulations and example selection
 
 MPM is organized here by physical model, Lagrangian configuration, time integration, and contact formulation—not by internal software backend. The implementations share the same MPM balance laws and interpolation principles; their input APIs and supported options differ for engineering reasons. Use the configuration in the linked example rather than treating an implementation name as a different numerical method.
@@ -1760,6 +1770,28 @@ mpm.run()
 
 The dictionary input format is retained for compatibility with existing
 GeoTaichi cases. The linked Python examples demonstrate the supported solver configurations; tests are separate verification and integration checks.
+
+Explicit infinitesimal-strain `DruckerPrager`, `MohrCoulomb`, and
+`ModifiedCamClay` accept `RateDependent=True` with the granular $`\mu(I)`$ law:
+
+```python
+material.update(
+    RateDependent=True,
+    StaticFriction=30.0,
+    DynamicFriction=45.0,
+    AverageDiameter=0.002,
+    GrainDensity=2650.0,
+    InertialNumber=0.03,
+    eps=0.0,
+)
+```
+
+The constitutive update solves for the plastic shear rate and updated pressure
+together. MCC applies the rate increment through its critical stress ratio;
+this extension requires calibration for the intended material. An implicit
+global solver and other solids without this extension reject the flag.
+See the [rate-dependent material contract](../physics_model/consititutive_model/README.md#regularized-granular-mui-rheology)
+for the equations, defaults, supported local integrators and state variables.
 
 ## Particle construction and implicit examples
 

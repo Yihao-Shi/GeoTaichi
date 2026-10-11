@@ -17,7 +17,11 @@ from src.physics_model.contact_model.ipc.ContactAssembly import psd_project_nd
 class ImplicitULMPM(ImplicitMPM):
     def __init__(self, bodies, dirichlet=None, neumann=None, **kwargs):
         self.configuration = "UL"
+        self.small_mass_ratio = float(kwargs.get("small_mass_ratio", 0.0))
+        if not math.isfinite(self.small_mass_ratio) or not 0.0 <= self.small_mass_ratio < 1.0:
+            raise ValueError("Direct ULMPM small_mass_ratio must be finite and in [0, 1)")
         super().__init__(bodies, dirichlet, neumann, **kwargs)
+        self.last_small_mass_treatment = None
         self.has_lagged_material = bool(getattr(self.material, "requires_lagged_incremental_potential", False))
         self.material_lagged_tolerance = float(getattr(self.material, "lagged_tolerance", 0.0))
         self.material_lagged_max_iterations = int(getattr(self.material, "lagged_max_iterations", 1))
@@ -142,8 +146,63 @@ class ImplicitULMPM(ImplicitMPM):
                 self.grid[i].v = ti.Vector.zero(ti.f64, config.DIM)
                 self.grid[i].a = ti.Vector.zero(ti.f64, config.DIM)
 
-    @ti.kernel
     def mass_vel_acc_p2g(self):
+        self._mass_vel_acc_p2g()
+        if self.small_mass_ratio > 0.0:
+            mean_mass = float(self._mean_grid_mass())
+            threshold = max(self.val_lim, self.small_mass_ratio * mean_mass)
+            self._remove_small_mass_support(threshold)
+            if int(self.invalid_stencil_particle[None]) != 0:
+                raise ValueError("small_mass_ratio removes every support node of a particle")
+            removed = self._remove_small_mass_nodes(threshold)
+            self.last_small_mass_treatment = {
+                "ratio": self.small_mass_ratio,
+                "threshold": threshold,
+                "removed_mass": float(removed[0]),
+                "removed_mass_fraction": float(removed[0]) / max(mean_mass * self.total_background_grid_num, 1e-30),
+                "removed_momentum": [float(removed[d + 1]) for d in range(config.DIM)],
+                "removed_nodes": int(removed[config.DIM + 1]),
+            }
+
+    @ti.kernel
+    def _mean_grid_mass(self) -> ti.f64:
+        mass = 0.0
+        for node in self.grid:
+            mass += self.grid[node].m
+        return mass / self.total_background_grid_num
+
+    @ti.kernel
+    def _remove_small_mass_support(self, threshold: ti.f64):
+        self.invalid_stencil_particle[None] = 0
+        for particle in range(self.particleNum[0]):
+            retained = 0
+            for local in range(self.offset[particle]):
+                node = self.LnID[particle, local]
+                if self.grid[node].m > threshold:
+                    self.LnID[particle, retained] = node
+                    self.shape[particle, retained] = self.shape[particle, local]
+                    self.dshape[particle, retained] = self.dshape[particle, local]
+                    retained += 1
+            self.offset[particle] = retained
+            if retained == 0:
+                ti.atomic_max(self.invalid_stencil_particle[None], particle + 1)
+
+    @ti.kernel
+    def _remove_small_mass_nodes(self, threshold: ti.f64) -> ti.types.vector(config.DIM + 2, ti.f64):
+        removed = ti.Vector.zero(ti.f64, config.DIM + 2)
+        for node in self.grid:
+            if self.grid[node].m <= threshold:
+                removed[0] += self.grid[node].m
+                for d in ti.static(range(config.DIM)):
+                    removed[d + 1] += self.grid[node].v[d]
+                removed[config.DIM + 1] += ti.cast(self.grid[node].m > 0.0, ti.f64)
+                self.grid[node].m = 0.0
+                self.grid[node].v = ti.Vector.zero(ti.f64, config.DIM)
+                self.grid[node].a = ti.Vector.zero(ti.f64, config.DIM)
+        return removed
+
+    @ti.kernel
+    def _mass_vel_acc_p2g(self):
         for i in range(self.particleNum[0]):
             bodyID = self.particle[i].bodyID
             goffset = self.body[bodyID].goffset

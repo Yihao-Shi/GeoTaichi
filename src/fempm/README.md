@@ -24,6 +24,12 @@ Values, gradients and IPC position Hessians use the same basis; each grid
 axis requires at least four nodes. This applies to Cartesian and axisymmetric
 FEM–MPM IPC without changing the material or contact measure.
 
+The Direct implicit ULMPM child also supports the optional
+`MPM.set_solver({"small_mass_ratio": alpha})` cutoff described in
+[MPM](../mpm/README.md). Its default is zero; enabling it discards weak grid
+nodes and their transferred momentum, and consistently removes their particle
+connections from material, contact and G2P operations.
+
 | Path | Responsibility |
 | --- | --- |
 | mainFEMPM.py | Public FEMPM facade and coupled lifecycle |
