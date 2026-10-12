@@ -85,6 +85,8 @@ class Solver(object):
         start_time = time.perf_counter()
         step_dt = self.sims.delta
         self.core(scene)
+        if getattr(self.sims, "scheme", None) == "AffineBody":
+            step_dt = self.sims.delta
         # JIT warm-up executes a complete physical step, so it must be counted.
         advance_time(self.sims, step_dt)
         self.sims.current_step += 1
@@ -182,16 +184,21 @@ class AffineBodySolver(Solver):
 
         start_time = time.time()
         target_time = float(self.sims.current_time + self.sims.time)
-        if self.sims.current_time < target_time - 1.0e-14:
+        nominal_timestep = float(self.sims.delta)
+        if has_remaining_time(self.sims.current_time, target_time, self.sims.delta):
+            self.sims.set_timestep(min(nominal_timestep, target_time - self.sims.current_time))
             self.compile(scene)
-        while self.sims.current_time < target_time - 1.0e-14:
+        while has_remaining_time(self.sims.current_time, target_time, self.sims.delta):
+            self.sims.set_timestep(min(self.sims.delta, target_time - self.sims.current_time))
             self.core(scene)
-            self.sims.current_time += self.sims.delta
+            advance_time(self.sims, self.sims.delta)
             self.sims.current_step += 1
             runtime_checkpoint()
 
             if self.sims.current_time - self.last_save_time >= self.sims.save_interval - 0.1 * self.sims.delta:
                 self.save_file(scene)
+        if abs(target_time - self.sims.current_time) <= time_tolerance(self.sims.delta):
+            self.sims.current_time = target_time
         end_time = time.time()
         self.physical_seconds = end_time - start_time
 

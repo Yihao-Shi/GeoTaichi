@@ -3235,11 +3235,15 @@ class IPCMPM:
             # not alter, mirror, or project any matrix block.
             krylov_solver = self._cuda_monolithic_krylov_solver()
             matrix.solver = krylov_solver
+            linear_tolerance = self.mpm.linear_solver_tolerance
+            if self.friction_mode == "fully_implicit":
+                residual = matrix.flat_l2_norm(self.mpm.rhs, active_dof)
+                linear_tolerance = min(linear_tolerance, 0.1 * residual)
             result = matrix.solve_flat_system(
                 self.mpm.rhs,
                 self.mpm.incre_resolution,
                 active_nodes=active_dof // config.DIM,
-                tol=self.mpm.linear_solver_tolerance,
+                tol=linear_tolerance,
                 maxiter=self.mpm.linear_solver_max_iters,
                 return_solution=False,
             )

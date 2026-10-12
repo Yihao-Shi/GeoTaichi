@@ -64,6 +64,47 @@ def cell_velocity_laplacian_3d(cell, active_cnum, grid_size, node: ti.template()
 
 
 @ti.func
+def cell_viscous_stress_3d(cell, active_cnum, grid_size, viscosity, node: ti.template()):
+    velocity_gradient = ti.Matrix.zero(float, 3, 3)
+    for d in ti.static(range(3)):
+        offset = ti.Vector.unit(3, d)
+        left = clamp_cell_index_3d(cell - offset, active_cnum)
+        right = clamp_cell_index_3d(cell + offset, active_cnum)
+        distance = (right[d] - left[d]) * grid_size[d]
+        if distance > Threshold:
+            derivative = (cell_center_velocity_3d(right, node) - cell_center_velocity_3d(left, node)) / distance
+            for component in ti.static(range(3)):
+                velocity_gradient[component, d] = derivative[component]
+    return viscosity * (velocity_gradient + velocity_gradient.transpose())
+
+
+@ti.func
+def cell_neighbor_pressure_gradient_3d(
+    cell,
+    neighbor,
+    direction,
+    grid_size,
+    atmospheric_pressure,
+    pressure: ti.template(),
+    surface_tension: ti.template(),
+    cell_type: ti.template(),
+    fluid_sdf: ti.template(),
+    use_free_surface_theta: ti.template(),
+):
+    value = 0.0
+    neighbor_type = int(cell_type[neighbor])
+    if int(cell_type[cell]) == 1 and neighbor[direction] != cell[direction]:
+        if neighbor_type == 1:
+            value = (pressure[neighbor] - pressure[cell]) / grid_size[direction]
+        elif neighbor_type == 0:
+            theta = 1.0
+            if ti.static(use_free_surface_theta):
+                theta = free_surface_theta(cell, neighbor, fluid_sdf)
+            value = (atmospheric_pressure + surface_tension[neighbor] - pressure[cell]) / (grid_size[direction] * theta)
+    return value
+
+
+@ti.func
 def cell_pressure_gradient_3d(
     cell,
     active_cnum,
@@ -77,35 +118,72 @@ def cell_pressure_gradient_3d(
 ):
     gradient = ti.Vector([0.0, 0.0, 0.0])
     if int(cell_type[cell]) == 1:
-        center_pressure = pressure[cell]
         for d in ti.static(range(3)):
-            offset = ti.Vector.unit(3, d)
-            left = clamp_cell_index_3d(cell - offset, active_cnum)
-            right = clamp_cell_index_3d(cell + offset, active_cnum)
-            left_pressure = center_pressure
-            right_pressure = center_pressure
-            left_distance = 0.0
-            right_distance = 0.0
-            if int(cell_type[left]) == 1:
-                left_pressure = pressure[left]
-                left_distance = (cell[d] - left[d]) * grid_size[d]
-            elif int(cell_type[left]) == 0:
-                left_pressure = atmospheric_pressure + surface_tension[left]
-                left_distance = grid_size[d]
-                if ti.static(use_free_surface_theta):
-                    left_distance *= free_surface_theta(cell, left, fluid_sdf)
-            if int(cell_type[right]) == 1:
-                right_pressure = pressure[right]
-                right_distance = (right[d] - cell[d]) * grid_size[d]
-            elif int(cell_type[right]) == 0:
-                right_pressure = atmospheric_pressure + surface_tension[right]
-                right_distance = grid_size[d]
-                if ti.static(use_free_surface_theta):
-                    right_distance *= free_surface_theta(cell, right, fluid_sdf)
-            distance = left_distance + right_distance
-            if distance > Threshold:
-                gradient[d] = (right_pressure - left_pressure) / distance
+            for side in ti.static((-1, 1)):
+                neighbor = clamp_cell_index_3d(cell + side * ti.Vector.unit(3, d), active_cnum)
+                gradient[d] += (
+                    0.5
+                    * side
+                    * cell_neighbor_pressure_gradient_3d(
+                        cell,
+                        neighbor,
+                        d,
+                        grid_size,
+                        atmospheric_pressure,
+                        pressure,
+                        surface_tension,
+                        cell_type,
+                        fluid_sdf,
+                        use_free_surface_theta,
+                    )
+                )
     return gradient
+
+
+@ti.func
+def cell_pressure_acceleration_3d(
+    cell,
+    active_cnum,
+    grid_size,
+    fluid_density,
+    atmospheric_pressure,
+    solid_fraction: ti.template(),
+    solid_density: ti.template(),
+    pressure: ti.template(),
+    surface_tension: ti.template(),
+    cell_type: ti.template(),
+    fluid_sdf: ti.template(),
+    use_free_surface_theta: ti.template(),
+):
+    acceleration = ti.Vector.zero(float, 3)
+    local_density = (1.0 - solid_fraction[cell]) * fluid_density + solid_fraction[cell] * solid_density[cell]
+    for d in ti.static(range(3)):
+        for side in ti.static((-1, 1)):
+            neighbor = clamp_cell_index_3d(cell + side * ti.Vector.unit(3, d), active_cnum)
+            face_density = local_density
+            if int(cell_type[neighbor]) == 1:
+                neighbor_density = (1.0 - solid_fraction[neighbor]) * fluid_density + solid_fraction[
+                    neighbor
+                ] * solid_density[neighbor]
+                face_density = 0.5 * (local_density + neighbor_density)
+            acceleration[d] -= (
+                0.5
+                * side
+                * cell_neighbor_pressure_gradient_3d(
+                    cell,
+                    neighbor,
+                    d,
+                    grid_size,
+                    atmospheric_pressure,
+                    pressure,
+                    surface_tension,
+                    cell_type,
+                    fluid_sdf,
+                    use_free_surface_theta,
+                )
+                / ti.max(face_density, Threshold)
+            )
+    return acceleration
 
 
 @ti.func

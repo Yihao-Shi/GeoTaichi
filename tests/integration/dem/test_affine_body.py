@@ -445,6 +445,71 @@ def test_affine_body_semi_ipc_device_contact(tmp_path):
     assert np.isfinite(dem.enginer.state.y).all()
 
 
+def test_world_hinge_supports_body_weight_without_free_momentum_correction(tmp_path):
+    _init_once()
+    from geotaichi import DEM, polyhedron
+
+    dem = DEM(log=False)
+    dem.set_configuration(
+        domain=[4.0, 2.0, 2.0],
+        scheme="AffineBody",
+        search="LinkedCell",
+        gravity=[0.0, 0.0, -1.0],
+        visualize=False,
+        log=False,
+    )
+    dem.set_affine_body_parameters(assemble_type="COO", young_modulus=1e5, local_damping=0.0)
+    dem.memory_allocate(
+        memory={
+            "max_material_number": 1,
+            "max_affine_body_number": 1,
+            "surface_node_number": 8,
+            "body_coordination_number": 2,
+            "wall_coordination_number": 0,
+            "compaction_ratio": [1.0, 1.0],
+        },
+        log=False,
+    )
+    dt, stiffness = 0.01, 1e6
+    dem.set_solver(
+        {"Timestep": dt, "SimulationTime": dt, "SaveInterval": dt, "SavePath": os.fspath(tmp_path / "world_hinge")},
+        log=False,
+    )
+    dem.add_attribute(materialID=0, attribute={"Density": 1.0})
+    dem.add_template(
+        {
+            "Name": "cube",
+            "TemplateType": "AffineBody",
+            "Object": polyhedron(file=os.path.join(ROOT, "tests/data/affine_cube.obj")),
+        }
+    )
+    dem.create_body(
+        {
+            "BodyType": "AffineBody",
+            "Template": {
+                "Name": "cube",
+                "GroupID": 0,
+                "MaterialID": 0,
+                "BodyPoint": [2.0, 1.0, 1.0],
+                "ScaleFactor": 1.0,
+            },
+        }
+    )
+    dem.add_joint(
+        {
+            "BodyID1": 0,
+            "WorldAnchor": [2.0, 1.0, 1.0],
+            "WorldAxis": [0.0, 0.0, 1.0],
+            "PositionStiffness": stiffness,
+            "AxisStiffness": stiffness,
+        }
+    )
+    dem.run()
+    assert not dem.enginer.enforce_free_translation
+    center = dem.enginer.operator.y.to_numpy().mean(axis=0)
+    np.testing.assert_allclose(center, [2.0, 1.0, 1.0 - dt**2 / (1.0 + dt**2 * stiffness)], atol=1e-10)
+
+
 def test_affine_revolute_joint_energy_motor_limits_damping_and_collision_filter(tmp_path):
     _init_once()
     from src.dem.engines.AffineBodyOperator import MATRIX_COO

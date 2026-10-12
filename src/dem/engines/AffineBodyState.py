@@ -2,8 +2,6 @@
 
 import numpy as np
 
-from src.physics_model.contact_model.ipc.ContactMeasure import lumped_vertex_measures
-
 from .AffineBodyOperator import _asarray3, _euler_to_matrix, _field_scalar
 
 
@@ -98,15 +96,22 @@ class AffineBodyState(object):
 
     @staticmethod
     def _mass_matrix(vertices, faces, basis, density, volume):
-        node_measure = lumped_vertex_measures(vertices, faces)
-        if np.sum(node_measure) <= 1.0e-30:
-            node_measure[:] = 1.0 / max(vertices.shape[0], 1)
-        else:
-            node_measure /= np.sum(node_measure)
-        total_mass = max(float(density) * abs(float(volume)), 1.0e-16)
-        nodal_mass = total_mass * node_measure
-        matrix = basis.T @ (nodal_mass[:, None] * basis)
-        matrix += np.eye(4) * (1.0e-12 * total_mass)
+        if not np.isfinite(density) or density <= 0.0 or not np.isfinite(volume) or volume <= 0.0:
+            raise ValueError("AffineBody density and volume must be finite and positive")
+        triangles = np.asarray(vertices, dtype=np.float64)[faces]
+        signed_volume = np.einsum("ij,ij->i", triangles[:, 0], np.cross(triangles[:, 1], triangles[:, 2])) / 6.0
+        mesh_volume = signed_volume.sum()
+        if not np.isfinite(mesh_volume) or not np.isclose(abs(mesh_volume), volume, rtol=1.0e-8, atol=0.0):
+            raise ValueError("AffineBody surface must enclose its stated volume")
+        # Signed tetrahedra integrate the affine basis product exactly, including concave bodies.
+        tetra_basis = np.concatenate(
+            (np.full((len(faces), 1, 4), 0.25), np.asarray(basis, dtype=np.float64)[faces]), axis=1
+        )
+        basis_sum = tetra_basis.sum(axis=1)
+        products = np.einsum("fi,fj->fij", basis_sum, basis_sum) + np.einsum("fki,fkj->fij", tetra_basis, tetra_basis)
+        matrix = density * np.einsum("f,fij->ij", signed_volume * np.sign(mesh_volume), products) / 20.0
+        if not np.all(np.isfinite(matrix)) or np.linalg.eigvalsh(matrix).min() <= 0.0:
+            raise ValueError("AffineBody volume mass matrix must be positive definite")
         return matrix
 
     def pack(self, y=None):

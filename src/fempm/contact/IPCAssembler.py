@@ -449,7 +449,7 @@ class FEMPMIPCAssembler:
                     normalized_kappa = self.pair_kappa[mpm_body, fem_body] / (active_gap2 * active_gap2)
                     _, first, _ = ipc_toolkit_barrier_distance2_offset_terms(distance2, dhat, dmin, normalized_kappa, 0)
                     scale = self.mpm.surface_measure[sample] * dhat
-                    normal_force = ti.max(0.0, -scale * first * 2.0 * ti.sqrt(shifted))
+                    normal_force = ti.max(0.0, -scale * first * 2.0 * distance)
             weights[contact_id] = weight
             normals[contact_id] = normal
             normal_forces[contact_id] = normal_force
@@ -522,7 +522,7 @@ class FEMPMIPCAssembler:
                     normalized_kappa = self.pair_kappa[mpm_body, fem_body] / (active_gap2 * active_gap2)
                     _, first, _ = ipc_toolkit_barrier_distance2_offset_terms(distance2, dhat, dmin, normalized_kappa, 0)
                     scale = self.mpm.surface_measure[sample] * dhat
-                    normal_force = ti.max(0.0, -scale * first * 2.0 * ti.sqrt(shifted))
+                    normal_force = ti.max(0.0, -scale * first * 2.0 * distance)
             weights[contact_id] = weight
             normals[contact_id] = normal3
             normal_forces[contact_id] = normal_force

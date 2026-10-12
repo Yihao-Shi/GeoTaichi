@@ -685,6 +685,47 @@ def test_fully_resolved_ibm_source_uses_light_solid_density(taichi_runtime):
     assert float(node.velocity[0][1, 0, 0]) == 0.0
 
 
+@pytest.mark.parametrize("rho_s", [0.5, 1.0, 3.0])
+@pytest.mark.parametrize("dimension", [2, 3])
+def test_mac_ibm_exchange_conserves_physical_fluid_and_solid_impulse(taichi_runtime, rho_s, dimension):
+    GlobalVariable.DIMENSION = dimension
+    shape, offset, center = (5,) * dimension, (-1,) * dimension, (1,) * dimension
+    node = StaggeredGrid(SimpleNamespace(dimension=dimension, coupling=False), list(shape), 1)
+    fraction = ti.field(float, shape=shape, offset=offset)
+    density = ti.field(float, shape=shape, offset=offset)
+    velocity = ti.Vector.field(dimension, float, shape=shape, offset=offset)
+    force = ti.Vector.field(dimension, float, shape=shape, offset=offset)
+    cell_type = ti.field(int, shape=shape, offset=offset)
+    cell_type.fill(1)
+    fraction[center] = 0.5
+    density[center] = rho_s
+    velocity[center] = [1.0, -2.0, 3.0][:dimension]
+    dt = ti.field(float, shape=())
+    dt[None] = 0.2
+    kernel_apply_incompressible_ibm_mac_source(
+        1,
+        ti.Vector(list(shape)),
+        dt,
+        FluidProperties(density=1.0),
+        cell_type,
+        fraction,
+        density,
+        velocity,
+        force,
+        node,
+    )
+    fluid_impulse = np.zeros(dimension)
+    for cell in np.ndindex((3,) * dimension):
+        for d in range(dimension):
+            right = list(cell)
+            right[d] += 1
+            centered = 0.5 * (node.velocity[d][cell] + node.velocity[d][tuple(right)])
+            fluid_impulse[d] += (1.0 - fraction[cell]) * centered
+    solid_weight = 0.5 * rho_s / (0.5 + 0.5 * rho_s)
+    body_impulse = -(1.0 - solid_weight) * force[center].to_numpy() * dt[None]
+    np.testing.assert_allclose(fluid_impulse + body_impulse, 0.0, atol=1e-12)
+
+
 def test_fully_resolved_viscosity_uses_mixed_density(taichi_runtime):
     GlobalVariable.DIMENSION = 3
     node = make_mac_grid([5, 3, 3], ghost_cell=1)
@@ -759,6 +800,10 @@ def test_fully_resolved_pressure_gradient_uses_level_set_surface_distance(taichi
     evaluate_free_surface_pressure_gradient(pressure, surface_tension, cell_type, fluid_sdf, result)
 
     np.testing.assert_allclose(result.to_numpy()[0], [-4.0, 0.0, 0.0], rtol=1.0e-12)
+    pressure[0, 1, 1] = 4.0
+    pressure[1, 1, 1] = 2.0
+    evaluate_free_surface_pressure_gradient(pressure, surface_tension, cell_type, fluid_sdf, result)
+    np.testing.assert_allclose(result.to_numpy()[0], [-5.0, 0.0, 0.0], rtol=1.0e-12)
 
 
 def test_sdf_fraction_and_eq28_resultant_converge_for_sphere(taichi_runtime):

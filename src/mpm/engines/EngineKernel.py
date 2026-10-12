@@ -7425,30 +7425,45 @@ def kernel_apply_incompressible_ibm_mac_source(
             for I in ti.grouped(ti.ndrange((0, face_count[0]), (0, face_count[1]))):
                 delta_velocity = 0.0
                 weight = 0.0
+                solid_delta = 0.0
+                solid_count = 0
                 for side in ti.static((0, 1)):
                     cell = I - side * ti.Vector.unit(GlobalVariable.DIMENSION, k)
                     if ibm_cell_is_active(cell, active_cnum):
                         phi_s = ti.min(1.0, ti.max(0.0, solid_fraction[cell]))
-                        if phi_s > Threshold and int(cell_type[cell]) == 1:
+                        if int(cell_type[cell]) == 1:
                             rho = ibm_mixed_density(phi_s, rho_f, solid_density[cell])
-                            delta_velocity += dt[None] * ibm_force_cell[cell][k] / ti.max(rho, Threshold)
-                            weight += 1
+                            acceleration = dt[None] * ibm_force_cell[cell][k] / ti.max(rho, Threshold)
+                            # The adjoint of cell-center velocity averaging uses physical fluid mass.
+                            delta_velocity += (1.0 - phi_s) * acceleration
+                            weight += 1.0 - phi_s
+                            solid_delta += acceleration
+                            solid_count += 1
                 if weight > 0:
                     node.velocity[k][I] += delta_velocity / weight
+                elif solid_count > 0:
+                    node.velocity[k][I] += solid_delta / solid_count
         elif ti.static(GlobalVariable.DIMENSION == 3):
             for I in ti.grouped(ti.ndrange((0, face_count[0]), (0, face_count[1]), (0, face_count[2]))):
                 delta_velocity = 0.0
                 weight = 0.0
+                solid_delta = 0.0
+                solid_count = 0
                 for side in ti.static((0, 1)):
                     cell = I - side * ti.Vector.unit(GlobalVariable.DIMENSION, k)
                     if ibm_cell_is_active(cell, active_cnum):
                         phi_s = ti.min(1.0, ti.max(0.0, solid_fraction[cell]))
-                        if phi_s > Threshold and int(cell_type[cell]) == 1:
+                        if int(cell_type[cell]) == 1:
                             rho = ibm_mixed_density(phi_s, rho_f, solid_density[cell])
-                            delta_velocity += dt[None] * ibm_force_cell[cell][k] / ti.max(rho, Threshold)
-                            weight += 1
+                            acceleration = dt[None] * ibm_force_cell[cell][k] / ti.max(rho, Threshold)
+                            delta_velocity += (1.0 - phi_s) * acceleration
+                            weight += 1.0 - phi_s
+                            solid_delta += acceleration
+                            solid_count += 1
                 if weight > 0:
                     node.velocity[k][I] += delta_velocity / weight
+                elif solid_count > 0:
+                    node.velocity[k][I] += solid_delta / solid_count
 
 
 @ti.func

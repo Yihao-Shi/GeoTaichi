@@ -1758,31 +1758,21 @@ class TaichiAffineBodyOperator(object):
             fdamp = self.force_damp[b]
             tdamp = self.torque_damp[b]
             if mass > 0.0 and (fdamp > 0.0 or tdamp > 0.0):
-                force_coeff = self.dt_device[None] * mass * fdamp
-                torque_coeff = 0.25 * self.dt_device[None] * mass * tdamp
-                for d in ti.static(range(3)):
-                    delta0 = self.y[b * 4 + 0][d] - self.hat_y[b * 4 + 0][d]
-                    delta1 = self.y[b * 4 + 1][d] - self.hat_y[b * 4 + 1][d]
-                    delta2 = self.y[b * 4 + 2][d] - self.hat_y[b * 4 + 2][d]
-                    delta3 = self.y[b * 4 + 3][d] - self.hat_y[b * 4 + 3][d]
-                    mean_delta = 0.25 * (delta0 + delta1 + delta2 + delta3)
-                    rel0 = delta0 - mean_delta
-                    rel1 = delta1 - mean_delta
-                    rel2 = delta2 - mean_delta
-                    rel3 = delta3 - mean_delta
-                    ti.atomic_add(self.energy[None], 0.5 * force_coeff * mean_delta * mean_delta)
-                    ti.atomic_add(
-                        self.energy[None],
-                        0.5 * torque_coeff * (rel0 * rel0 + rel1 * rel1 + rel2 * rel2 + rel3 * rel3),
+                for a, c in ti.ndrange(4, 4):
+                    row_mass, col_mass = 0.0, 0.0
+                    for k in range(4):
+                        row_mass += self.mass[b, a, k]
+                        col_mass += self.mass[b, c, k]
+                    # Split center-of-mass motion from relative motion in the physical mass metric.
+                    value = self.dt_device[None] * (
+                        tdamp * self.mass[b, a, c] + (fdamp - tdamp) * row_mass * col_mass / mass
                     )
-                    ti.atomic_add(self.grad[b * 4 + 0][d], 0.25 * force_coeff * mean_delta + torque_coeff * rel0)
-                    ti.atomic_add(self.grad[b * 4 + 1][d], 0.25 * force_coeff * mean_delta + torque_coeff * rel1)
-                    ti.atomic_add(self.grad[b * 4 + 2][d], 0.25 * force_coeff * mean_delta + torque_coeff * rel2)
-                    ti.atomic_add(self.grad[b * 4 + 3][d], 0.25 * force_coeff * mean_delta + torque_coeff * rel3)
-                if ti.static(need_matrix):
-                    for a, c in ti.ndrange(4, 4):
-                        projection = (1.0 if a == c else 0.0) - 0.25
-                        value = 0.0625 * force_coeff + torque_coeff * projection
+                    delta_row = self.y[b * 4 + a] - self.hat_y[b * 4 + a]
+                    delta_col = self.y[b * 4 + c] - self.hat_y[b * 4 + c]
+                    ti.atomic_add(self.energy[None], 0.5 * value * delta_row.dot(delta_col))
+                    for d in ti.static(range(3)):
+                        ti.atomic_add(self.grad[b * 4 + a][d], value * delta_col[d])
+                    if ti.static(need_matrix):
                         self._add_matrix_block(
                             b * 4 + a,
                             b * 4 + c,
@@ -6064,6 +6054,11 @@ class TaichiAffineBodyOperator(object):
             vector[control] = self.direction_y[control]
 
     @ti.kernel
+    def device_copy_direction_to_scalar_vector(self, vector: ti.template()):
+        for control, component in ti.ndrange(self.control_num, 3):
+            vector[3 * control + component] = self.direction_y[control][component]
+
+    @ti.kernel
     def device_scale_direction(self, scale: float):
         for control in range(self.control_num):
             self.direction_y[control] *= scale
@@ -6127,6 +6122,16 @@ class TaichiAffineBodyOperator(object):
         result = 0.0
         for control, component in ti.ndrange(self.control_num, 3):
             jp = matrix_direction[control][component] - jacobian_shift * self.direction_y[control][component]
+            result += self.grad[control][component] * jp
+        return result
+
+    @ti.kernel
+    def device_residual_scalar_jacobian_direction_dot(
+        self, matrix_direction: ti.template(), jacobian_shift: float
+    ) -> float:
+        result = 0.0
+        for control, component in ti.ndrange(self.control_num, 3):
+            jp = matrix_direction[3 * control + component] - jacobian_shift * self.direction_y[control][component]
             result += self.grad[control][component] * jp
         return result
 
@@ -6492,6 +6497,7 @@ class TaichiAffineBodyOperator(object):
                                 self.friction_scale[0]
                                 * mu
                                 * ti.max(-barrier_gradient, 0.0)
+                                * normal.norm()
                                 * 0.5
                                 * self.node_area[vertex_id]
                                 * self.scale_device[None]

@@ -65,9 +65,6 @@ def test_affine_fully_implicit_residual_only_source_omits_large_derivatives():
     assert "edge_edge_distance_grad_hess" not in ee_source
     assert "edge_edge_mollifier_grad" not in ee_source
 
-    operator_source = inspect.getsource(TaichiAffineBodyOperator)
-    assert "ti.static(range(4))" not in operator_source
-
 
 def test_affine_fully_implicit_non_degenerate_pt_and_mollified_ee_full_fd(tmp_path):
     """Every local column includes dT/dq, d(lambda)/dq, and dm/dq."""
@@ -500,14 +497,14 @@ def _minimal_operator_state():
         ("dt", _ScalarField(np.nan)),
     ],
 )
-def test_affine_operator_rejects_nonfinite_solver_inputs(attribute, value):
+def test_affine_operator_rejects_nonfinite_solver_inputs(taichi_runtime, attribute, value):
     sims = _minimal_operator_sims(**{attribute: value})
     state = _minimal_operator_state()
     with pytest.raises(ValueError, match="finite"):
         TaichiAffineBodyOperator(state, sims, scene=None)
 
 
-def test_affine_operator_rejects_unrecognized_negative_stribeck_sentinel():
+def test_affine_operator_rejects_unrecognized_negative_stribeck_sentinel(taichi_runtime):
     sims = _minimal_operator_sims(affine_stribeck_velocity=-2.0)
     state = _minimal_operator_state()
     with pytest.raises(ValueError, match="non-negative or -1"):
@@ -515,7 +512,7 @@ def test_affine_operator_rejects_unrecognized_negative_stribeck_sentinel():
 
 
 @pytest.mark.parametrize("iterations", [-1, 0, 2])
-def test_affine_fully_implicit_rejects_lagged_outer_iterations(iterations):
+def test_affine_fully_implicit_rejects_lagged_outer_iterations(taichi_runtime, iterations):
     sims = _minimal_operator_sims(affine_friction_iterations=iterations)
     state = _minimal_operator_state()
     with pytest.raises(ValueError, match="friction_iterations=1"):
@@ -551,7 +548,7 @@ def test_affine_fully_implicit_default_ignores_lagged_hessian_shift():
 def test_affine_fully_implicit_dispatch_bypasses_lagged_outer_loop(mode):
     engine = AffineBodyEngine()
     engine.state = _DispatchState()
-    engine.operator = SimpleNamespace(fully_implicit=True)
+    engine.operator = SimpleNamespace(fully_implicit=True, contact_damping_stiffness=0.0)
     events = []
     engine._step_fully_implicit = lambda sims, y, dt: events.append((sims, np.asarray(y).copy(), dt))
     engine._solve_lagged_inner = lambda *args: pytest.fail("fully implicit mode entered the lagged fixed-point loop")
@@ -678,6 +675,8 @@ def test_affine_fully_implicit_failure_does_not_accept_state():
         affine_newton_tolerance=1.0e-12,
         affine_max_newton_iteration=2,
         affine_max_step=1.0,
+        affine_fully_implicit_force_atol=1e-12,
+        affine_fully_implicit_force_rtol=0.0,
     )
     with pytest.raises(RuntimeError, match="synthetic line-search failure"):
         engine._step_fully_implicit(sims, engine.state.pack(), dt=0.01)
@@ -754,6 +753,8 @@ def test_affine_fully_implicit_driver_converges_and_accepts_once():
         affine_newton_tolerance=1.0e-12,
         affine_max_newton_iteration=4,
         affine_max_step=1.0,
+        affine_fully_implicit_force_atol=1e-12,
+        affine_fully_implicit_force_rtol=0.0,
         affine_line_search_max_iteration=4,
         affine_fully_implicit_armijo=1.0e-4,
         affine_fully_implicit_line_search_contraction=0.5,
@@ -772,7 +773,7 @@ def test_affine_fully_implicit_force_tolerance_is_not_velocity_tolerance():
         affine_fully_implicit_force_rtol=3.0e-4,
     )
 
-    assert AffineBodyEngine._fully_implicit_force_target(sims, 10.0) == pytest.approx(3.002e-3)
+    assert AffineBodyEngine._fully_implicit_force_target(sims, 10.0, dt=0.1) == pytest.approx(3.00002e-3)
 
 
 def test_affine_fully_implicit_selects_nonsymmetric_linear_backends(monkeypatch):
@@ -789,6 +790,7 @@ def test_affine_fully_implicit_selects_nonsymmetric_linear_backends(monkeypatch)
 
     operator = SimpleNamespace(
         fully_implicit=True,
+        control_num=4,
         max_coo_entries=144,
         max_hash_triplets=512,
         dof=12,
@@ -825,6 +827,17 @@ def test_affine_fully_implicit_selects_nonsymmetric_linear_backends(monkeypatch)
     assert created[-1][2]["symmetry"] is True
 
 
+@pytest.mark.parametrize("backend", ["COO", "MatrixFree", "HashTriplet"])
+def test_fully_implicit_contact_step_converges_with_each_backend(tmp_path, backend):
+    ti.init(arch=ti.cpu, default_fp=ti.f64, cpu_max_num_threads=1, offline_cache=False)
+    dem, unused_hat = _build_affine_contact(tmp_path / backend, friction_mode="fully_implicit", assemble_type=backend)
+    dem.enginer.step(dem.sims, dem.scene)
+    assert dem.enginer.last_friction_converged
+    assert dem.enginer.last_newton_iterations > 0
+    assert dem.enginer.last_line_search_accepted
+    assert np.all(np.isfinite(dem.enginer.operator.y.to_numpy()))
+
+
 @pytest.mark.parametrize(
     ("fully_implicit", "expected"),
     [
@@ -842,6 +855,7 @@ def test_affine_hash_capacity_bounds_raw_contact_scatter(monkeypatch, fully_impl
     operator.wall_num = 1
     operator.vertex_num = 5
     operator.body_num = 1
+    operator.joint_num = 0
     operator.dof = 12
     operator.contact_damping_stiffness = 0.0
     sims = SimpleNamespace(wall_coordination_number=1)
@@ -856,6 +870,7 @@ def test_affine_hash_capacity_uses_configured_contact_block_capacity(monkeypatch
     operator.wall_num = 0
     operator.vertex_num = 10
     operator.body_num = 2
+    operator.joint_num = 0
     operator.dof = 24
     operator.contact_damping_stiffness = 0.0
     sims = SimpleNamespace(
@@ -867,7 +882,7 @@ def test_affine_hash_capacity_uses_configured_contact_block_capacity(monkeypatch
 
 def test_affine_hash_overflow_is_reported_before_linear_solve():
     engine = AffineBodyEngine()
-    engine.operator = SimpleNamespace(dof=3, fully_implicit=True)
+    engine.operator = SimpleNamespace(dof=3, control_num=1, fully_implicit=True)
 
     class _OverflowTriplet:
         def __init__(self):

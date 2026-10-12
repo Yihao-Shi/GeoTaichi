@@ -12,6 +12,7 @@ from src.physics_model.contact_model.ipc.LevelSetAffine import (
     NonpenetrationResult,
 )
 from src.utils.RuntimeHook import runtime_checkpoint
+from src.utils.TimeTicker import advance_time, has_remaining_time, time_tolerance
 from src.utils.SolverConsole import print_save_file_info, print_simulation_start
 from src.utils.StepRetry import (
     StepRetryPolicy,
@@ -101,13 +102,19 @@ class AffineBodyEngine(object):
         self.evaluate_device_surface_direction_norm = self._reference_device_surface_direction_norm
 
     @staticmethod
-    def _fully_implicit_force_target(sims, initial_residual):
-        """Return a force-unit absolute/relative Newton tolerance."""
+    def _fully_implicit_force_target(sims, initial_residual, dt):
+        """Scale the force tolerance to the incremental residual's mass-length units."""
         absolute = float(sims.affine_fully_implicit_force_atol)
         relative = float(sims.affine_fully_implicit_force_rtol)
         if not np.isfinite(absolute) or absolute < 0.0 or not np.isfinite(relative) or relative < 0.0:
             raise RuntimeError("Affine fully implicit force tolerances must be finite and " "non-negative")
-        return absolute + relative * float(initial_residual)
+        return float(dt) ** 2 * absolute + relative * float(initial_residual)
+
+    def _linear_tolerance(self, sims, residual):
+        tolerance = float(sims.affine_linear_tolerance)
+        if self.operator.fully_implicit:
+            tolerance = min(tolerance, 0.1 * self._fully_implicit_force_target(sims, residual, self.operator.dt))
+        return tolerance
 
     def choose_engine(self, sims, scene):
         return
@@ -122,8 +129,10 @@ class AffineBodyEngine(object):
             self.device_nonlinear_path = self._select_device_nonlinear_path(sims)
             self.evaluate_surface_direction_norm = self.operator.surface_direction_inf_norm
             self.evaluate_device_surface_direction_norm = self._operator_device_surface_direction_norm
-            self.enforce_free_translation = self.operator.wall_num == 0 and all(
-                float(body.get("force_damping", 0.0)) == 0.0 for body in self.state.bodies
+            self.enforce_free_translation = (
+                self.operator.wall_num == 0
+                and all(float(body.get("force_damping", 0.0)) == 0.0 for body in self.state.bodies)
+                and not np.any(self.operator.joint_body_np[: self.operator.joint_num, 1] < 0)
             )
             if self.enforce_free_translation:
                 self._accept_device_state = self._accept_device_state_free_translation
@@ -417,14 +426,17 @@ class AffineBodyEngine(object):
         last_save_time = float(sims.current_time)
         target_time = float(sims.current_time + sims.time)
         print_simulation_start("DEM")
-        while sims.current_time < target_time - 1.0e-14:
+        while has_remaining_time(sims.current_time, target_time, sims.delta):
+            sims.set_timestep(min(sims.delta, target_time - sims.current_time))
             self.step(sims, scene)
-            sims.current_time += sims.delta
+            advance_time(sims, sims.delta)
             sims.current_step += 1
             runtime_checkpoint()
             if sims.current_time - last_save_time >= sims.save_interval - 0.1 * sims.delta:
                 self._save(sims, scene)
                 last_save_time = float(sims.current_time)
+        if abs(target_time - sims.current_time) <= time_tolerance(sims.delta):
+            sims.current_time = target_time
         if abs(sims.current_time - last_save_time) > 0.9 * sims.save_interval:
             self._save(sims, scene)
         print("#", " End Affine Body Simulation ".center(67, "="), "#", "\n")
@@ -691,7 +703,7 @@ class AffineBodyEngine(object):
         self.last_inner_residual = np.inf
         self.last_fully_implicit_merit_slope = np.nan
 
-        if self.last_device_nonlinear_path:
+        if self.device_nonlinear_path:
             self.last_device_nonlinear_path = True
             return self._step_fully_implicit_cuda(sims, previous_y, dt)
         self.last_device_nonlinear_path = False
@@ -720,7 +732,7 @@ class AffineBodyEngine(object):
             raise RuntimeError("Affine fully implicit residual is non-finite")
         iterations = 0
         initial_residual = float(np.linalg.norm(residual, ord=np.inf))
-        tolerance = self._fully_implicit_force_target(sims, initial_residual)
+        tolerance = self._fully_implicit_force_target(sims, initial_residual, dt)
         self.last_inner_failure_reason = "maximum_newton_iterations"
         for iteration in range(int(sims.affine_max_newton_iteration)):
             if not np.all(np.isfinite(residual)):
@@ -833,6 +845,9 @@ class AffineBodyEngine(object):
         self.last_linear_projection_correction = 0.0
         self.last_linear_spectral_resolution = np.nan
         self.last_linear_unresolved_modes = 0
+        linear_tolerance = float(sims.affine_linear_tolerance)
+        if self.operator.fully_implicit:
+            linear_tolerance = self._linear_tolerance(sims, float(self.operator.device_gradient_inf_norm()))
         if backend != "HashTriplet":
             self.last_linear_backend = backend
             self.operator.device_load_negative_gradient_scalar(self.operator.linear_rhs)
@@ -845,7 +860,7 @@ class AffineBodyEngine(object):
                     self.operator.linear_rhs,
                     self.operator.linear_x,
                     self.operator.linear_M,
-                    tol=sims.affine_linear_tolerance,
+                    tol=linear_tolerance,
                     maxiter=sims.affine_linear_max_iteration,
                 )
                 solver = self.coo_matrix.linear_solver
@@ -889,7 +904,7 @@ class AffineBodyEngine(object):
             try:
                 result = self.hash_triplet.solve(
                     active_nodes=active_nodes,
-                    tol=sims.affine_linear_tolerance,
+                    tol=linear_tolerance,
                     maxiter=sims.affine_linear_max_iteration,
                     return_solution=False,
                 )
@@ -1162,7 +1177,7 @@ class AffineBodyEngine(object):
         if not np.isfinite(initial_residual):
             self.last_inner_failure_reason = "non_finite_residual"
             raise RuntimeError("Affine fully implicit initial residual is non-finite")
-        tolerance = self._fully_implicit_force_target(sims, initial_residual)
+        tolerance = self._fully_implicit_force_target(sims, initial_residual, dt)
         self.last_inner_failure_reason = "maximum_newton_iterations"
         for iteration in range(int(sims.affine_max_newton_iteration)):
             if int(self.operator.device_gradient_has_nonfinite()) != 0:
@@ -1210,21 +1225,24 @@ class AffineBodyEngine(object):
         """Exact residual-merit Armijo search with device-resident vectors."""
         # The solve output may have been max-step clamped.  Put the exact
         # correction used by CCD/Armijo back in the Krylov vector before Jp.
-        self.operator.device_copy_direction_to_hash_vector(self.hash_triplet.x)
-        nnz = int(self.hash_triplet.non_diag.element_pair_num[0])
-        self.hash_triplet.matvec(
-            self.operator.control_num,
-            nnz,
-            self.hash_triplet.x,
-            self.hash_triplet.Ax,
-        )
-        base_merit = 0.5 * float(self.operator.device_gradient_squared_norm())
-        merit_slope = float(
-            self.operator.device_residual_jacobian_direction_dot(
-                self.hash_triplet.Ax,
-                float(self.operator._active_jacobian_shift()),
+        if self._matrix_mode(sims) == MATRIX_HASH_TRIPLET:
+            self.operator.device_copy_direction_to_hash_vector(self.hash_triplet.x)
+            nnz = int(self.hash_triplet.non_diag.element_pair_num[0])
+            self.hash_triplet.matvec(self.operator.control_num, nnz, self.hash_triplet.x, self.hash_triplet.Ax)
+            merit_slope = float(
+                self.operator.device_residual_jacobian_direction_dot(
+                    self.hash_triplet.Ax, float(self.operator._active_jacobian_shift())
+                )
             )
-        )
+        else:
+            self.operator.device_copy_direction_to_scalar_vector(self.operator.linear_x)
+            self.coo_matrix.linear_operator.matvec(self.operator.linear_x, self.operator.linear_rhs)
+            merit_slope = float(
+                self.operator.device_residual_scalar_jacobian_direction_dot(
+                    self.operator.linear_rhs, float(self.operator._active_jacobian_shift())
+                )
+            )
+        base_merit = 0.5 * float(self.operator.device_gradient_squared_norm())
         self.last_fully_implicit_merit_slope = merit_slope
         if not np.isfinite(base_merit) or not np.isfinite(merit_slope):
             self._record_line_search(False)
@@ -1773,7 +1791,7 @@ class AffineBodyEngine(object):
         result = self.hash_triplet.solve(
             rhs=rhs.reshape((active_nodes, 3)),
             active_nodes=active_nodes,
-            tol=sims.affine_linear_tolerance,
+            tol=self._linear_tolerance(sims, float(np.linalg.norm(rhs, ord=np.inf))),
             maxiter=sims.affine_linear_max_iteration,
             return_solution=True,
         )

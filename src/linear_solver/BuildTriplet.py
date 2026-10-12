@@ -855,14 +855,14 @@ class BuildTriplet:
         for iteration in range(maxiter):
             if converged:
                 break
-            if not math.isfinite(rho) or abs(rho) < 1.0e-30:
+            if not math.isfinite(rho) or rho == 0.0:
                 break
             beta = 0.0 if fresh_direction else (rho / rho_old) * (alpha / omega)
             self._bicg_update_p_precondition(active_nodes, beta, omega, fresh_direction, transpose)
             fresh_direction = False
             matvec(active_nodes, nnz, self.p_hat, self.v)
             denom = float(self._dot(active_nodes, self.r_hat, self.v))
-            if not math.isfinite(denom) or abs(denom) < 1.0e-30:
+            if not math.isfinite(denom) or denom == 0.0:
                 break
             alpha = rho / denom
             s_squared = float(self._bicg_update_s(active_nodes, alpha))
@@ -881,7 +881,7 @@ class BuildTriplet:
             apply_preconditioner(active_nodes, self.s, self.s_hat)
             matvec(active_nodes, nnz, self.s_hat, self.t)
             tt, ts = self._bicg_omega_products(active_nodes)
-            if not math.isfinite(tt) or not math.isfinite(ts) or abs(tt) < 1.0e-30:
+            if not math.isfinite(tt) or not math.isfinite(ts) or tt <= 0.0:
                 break
             omega = ts / tt
             residual_squared, next_rho = self._bicg_update_x_r(active_nodes, alpha, omega)
@@ -897,7 +897,7 @@ class BuildTriplet:
                 # A replaced shadow residual starts a new BiCG recurrence.
                 fresh_direction = True
                 continue
-            if not math.isfinite(omega) or abs(omega) < 1.0e-30:
+            if not math.isfinite(omega) or omega == 0.0:
                 break
             rho_old, rho = rho, float(next_rho)
 

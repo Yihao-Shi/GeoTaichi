@@ -18,7 +18,7 @@ pytestmark = [
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../.."))
 
 
-def _build_affine_contact(save_path, with_wall=False, friction_mode="lagged"):
+def _build_affine_contact(save_path, with_wall=False, friction_mode="lagged", assemble_type="COO"):
     from geotaichi import DEM, polyhedron
 
     dem = DEM(log=False)
@@ -31,7 +31,7 @@ def _build_affine_contact(save_path, with_wall=False, friction_mode="lagged"):
         log=False,
     )
     dem.set_affine_body_parameters(
-        assemble_type="COO",
+        assemble_type=assemble_type,
         young_modulus=2.0e4,
         friction_epsv=1.0e-3,
         local_damping=0.0,

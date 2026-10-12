@@ -45,6 +45,8 @@ class IncompressibleEngine(Engine):
         self.use_pressure_free_surface_theta = False
         self.update_external_cut_cell_boundary = no_operation
         self.update_external_ibm_fields = no_operation
+        self.accumulate_external_fluid_force = no_operation
+        self.capture_external_fluid_stress = no_operation
         self.update_external_fluid_level_set = no_operation
         self.run_external_fluid_particle_coupling = no_operation
         self.ensure_solid_cut_cell_fields_step = None
@@ -451,6 +453,7 @@ class IncompressibleEngine(Engine):
         solid_density = self.pressure_solid_density if self.pressure_coupling_mode else scene.element.cell.type
         if sims.fluid_wall_no_slip:
             self.enforce_mac_boundary_step(sims, scene)
+        self.capture_external_fluid_stress(sims, scene)
         kernel_compute_mac_viscous_delta(
             scene.mass_cut_off,
             scene.element.ghost_cell,
@@ -1983,6 +1986,7 @@ class IncompressibleEngine(Engine):
         sims.timer.begin("Boundary")
         self.enforce_mac_boundary_after_pressure_step(sims, scene)
         sims.timer.end("Boundary")
+        self.accumulate_external_fluid_force(sims, scene)
         sims.timer.begin("G2P")
         self.compute_particle_kinematics(sims, scene)
         sims.timer.end("G2P")
@@ -2027,6 +2031,7 @@ class IncompressibleEngine(Engine):
         sims.timer.begin("Boundary")
         self.enforce_mac_boundary_after_pressure_step(sims, scene)
         sims.timer.end("Boundary")
+        self.accumulate_external_fluid_force(sims, scene)
         sims.timer.begin("G2P")
         self.compute_particle_kinematics(sims, scene)
         sims.timer.end("G2P")

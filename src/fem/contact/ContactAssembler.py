@@ -479,7 +479,7 @@ class FEMContactAssembler:
                 if kind == "pt" or mollifier >= 1.0 - 1.0e-12:
                     forces[index] = max(
                         0.0,
-                        -measures[index] * derivative * 2.0 * np.sqrt(shifted_distance2),
+                        -measures[index] * derivative * 2.0 * distance,
                     )
         return forces
 
@@ -1562,7 +1562,7 @@ class FEMContactAssembler:
                     0,
                 )
                 scale = self.collision_culling.point_triangle_measure[contact_id] * self.dhat
-                normal_force = ti.max(0.0, -scale * first * 2.0 * ti.sqrt(shifted))
+                normal_force = ti.max(0.0, -scale * first * 2.0 * distance)
             self.friction_pt_normal_force[contact_id] = normal_force
 
     @ti.kernel
@@ -1618,7 +1618,7 @@ class FEMContactAssembler:
                         0,
                     )
                     scale = self.collision_culling.edge_edge_measure[contact_id] * self.dhat
-                    normal_force = ti.max(0.0, -scale * first * 2.0 * ti.sqrt(shifted))
+                    normal_force = ti.max(0.0, -scale * first * 2.0 * distance)
             self.friction_ee_normal_force[contact_id] = normal_force
 
     @ti.kernel

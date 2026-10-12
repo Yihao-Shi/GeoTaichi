@@ -1821,6 +1821,9 @@ class FrictionEngineMixin:
                     prepare_contacts=False,
                     residual_prepared=True,
                 )
+                linear_residual = float(self._device_monolithic_rhs_norm(last_system["active_dof"]))
+                last_system["linear_residual_reference"] = linear_residual
+                last_system["linear_absolute_tolerance"] = 0.1 * linear_residual
                 solve_result = self._solve_monolithic_linear_system(last_system, linear_solve=linear_solve)
                 if not solve_result["converged"]:
                     raise RuntimeError(

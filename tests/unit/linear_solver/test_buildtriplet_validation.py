@@ -88,6 +88,28 @@ def test_buildtriplet_bicgstab_matches_scipy(taichi_runtime, dimension):
     _assert_matches_scipy(system, result, reference, info, rhs)
 
 
+@pytest.mark.parametrize("rhs_scale", [1.0, 1.0e-10, 1.0e-20])
+def test_bicgstab_breakdown_checks_are_independent_of_rhs_scale(taichi_runtime, rhs_scale):
+    dense = np.array([[4.0, 1.0, 0.0], [0.0, 3.0, -1.0], [1.0, 0.0, 2.0]])
+    system = BuildTriplet(
+        dim=1,
+        max_pairs_num=9,
+        max_nonzeros=9,
+        max_active_nodes=3,
+        symmetric=False,
+        matrix_symmetric=False,
+        solver="BiCGSTAB",
+    )
+    system.load_from_scipy_blocks(csr_matrix(dense), active_nodes=3)
+    expected = rhs_scale * np.array([1.0, -2.0, 3.0])
+    rhs = dense @ expected
+    tolerance = 1.0e-12 * rhs_scale
+    result = system.solve(rhs=rhs.reshape(3, 1), active_nodes=3, tol=tolerance, maxiter=50)
+    assert result["converged"]
+    np.testing.assert_allclose(result["x"].ravel(), expected, rtol=1.0e-10, atol=tolerance)
+    assert np.linalg.norm(dense @ result["x"].ravel() - rhs) <= tolerance
+
+
 def test_bicgstab_preserves_recurrence_and_checks_true_residual(taichi_runtime, monkeypatch):
     size = 128
     dense = 2 * np.eye(size) - 1.01 * np.eye(size, k=-1) - 0.99 * np.eye(size, k=1)

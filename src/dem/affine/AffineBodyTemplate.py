@@ -103,6 +103,12 @@ class AffineBodyTemplate(object):
         mesh.remove_unreferenced_vertices()
         if mesh.vertices.shape[0] == 0 or mesh.faces.shape[0] == 0:
             raise RuntimeError("AffineBody template mesh is empty.")
+        if not mesh.is_watertight or not mesh.is_winding_consistent:
+            raise RuntimeError("AffineBody solid template needs a closed, consistently oriented surface")
+        if not np.all(np.isfinite(mesh.vertices)) or not np.isfinite(mesh.volume) or abs(mesh.volume) <= 0.0:
+            raise RuntimeError("AffineBody solid template needs finite vertices and positive enclosed volume")
+        if mesh.volume < 0.0:
+            mesh.invert()
 
         center = np.asarray(mesh.center_mass, dtype=np.float64)
         mesh.apply_translation(-center)

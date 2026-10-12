@@ -762,10 +762,22 @@ def test_fempm_coo_capacity_counts_each_source_diagonal():
     assert FEMPMImplicitEngine._coo_scalar_capacity(nodes, raw_blocks, dofs) == 18 * nodes + 9 * raw_blocks + dofs
 
 
-def test_fempm_residual_metric_excludes_dirichlet_reactions(taichi_runtime):
+def test_fempm_residual_metric_excludes_dirichlet_reactions(taichi_runtime, monkeypatch):
+    import importlib
     import taichi as ti
 
+    @ti.func
+    def no_particle_correction(
+        mpm: ti.template(), correction: ti.template(), particle_id, active_dof, base_dof, stride, dim: ti.template()
+    ):
+        return 0.0
+
+    monkeypatch.setattr(
+        importlib.import_module("src.fempm.ImplicitEngine"), "particle_correction_measure", no_particle_correction
+    )
     engine = object.__new__(FEMPMImplicitEngine)
+    engine.fem_nodes, engine.mpm_dimension = 1, 3
+    engine.mpm = SimpleNamespace(particleNum=ti.field(ti.i32, shape=1))
     for name in ("rhs", "fixed_correction", "correction"):
         setattr(engine, name, ti.field(ti.f64, shape=3))
     engine.fixed = ti.field(ti.i32, shape=3)
@@ -829,7 +841,7 @@ def test_direct_affine_nonsymmetric_dirichlet_elimination(taichi_runtime):
 @pytest.mark.parametrize("pending", ["dirichlet", "semi"])
 def test_direct_affine_force_convergence_still_finishes_constraints(pending):
     system = object.__new__(DirectAffineIPCSystem)
-    system.mpm = SimpleNamespace(dt=0.001, active_dof=3)
+    system.mpm = SimpleNamespace(dt=0.001, active_dof=3, begin_lagged_material_state=lambda: None)
     system.force_atol, system.force_rtol = 1e-10, 1e-8
     system.inexact_newton = False
     state = {"done": False, "updates": []}
@@ -848,7 +860,12 @@ def test_direct_affine_force_convergence_still_finishes_constraints(pending):
 
     system._line_search_device = update
     system.advance_semi_multipliers_device = update
-    sims = SimpleNamespace(affine_max_newton_iteration=3, affine_max_step=0.02, affine_friction_tolerance=1e-7)
+    sims = SimpleNamespace(
+        affine_max_newton_iteration=3,
+        affine_max_step=0.02,
+        affine_friction_tolerance=1e-7,
+        affine_newton_tolerance=1e-7,
+    )
     result = system._solve_nonassociated_equilibrium_device(sims, max_outer=1, requested_outer=-1, record_adjoint=False)
     assert result["friction_converged"] and state["done"]
     assert len(state["updates"]) == 1

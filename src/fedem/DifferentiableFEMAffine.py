@@ -252,10 +252,10 @@ class DifferentiableFEMAffine:
                         normalized_kappa,
                         0,
                     )
-                    base_force = -base_first * ti.sqrt(base_shifted)
+                    base_force = -base_first * ti.sqrt(base_distance2)
                 coefficient = 0.0
                 if base_force > 1.0e-30:
-                    coefficient = base_coefficient * (-first * ti.sqrt(shifted)) / base_force
+                    coefficient = base_coefficient * (-first * distance) / base_force
                 if coefficient > 0.0:
                     relative_increment = ti.Vector.zero(float, 3)
                     relative_adjoint = ti.Vector.zero(float, 3)

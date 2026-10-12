@@ -68,13 +68,10 @@ Implemented examples include [sphere–wall collision](examples/dem/AffineBody/s
 Implemented examples include an [implicit FEM cantilever](examples/fem/implicit_volume_cantilever/implicit_volume_cantilever.py), [cloth contact](examples/fem/implicit_cloth_contact/implicit_cloth_contact.py), an [IGA elastic beam](examples/iga/elastic_beam2d/elastic_beam2d.py).
 
 ### [FEM-MPM](src/fempm/README.md#fem--mpm-coupling-theory-log) / [IGA-MPM](src/igampm/README.md#iga--mpm-coupling-theory-log)
-#### Explicit soft constraint
-
-See the implemented [FEM–MPM contact](examples/fempm/explicit_point_membrane/explicit_point_membrane.py) and [IGA–MPM contact](examples/igampm/iga_mpm_explicit_dem_contact/iga_mpm_explicit_dem_contact.py) examples.
 
 #### Incremental potential contact
 
-| [Flexible barrier (FEM–MPM)](examples/fempm/flexible_barrier/flexible_barrier.py) / [Flexible barrier (IGA–MPM)](examples/igampm/flexible_barrier/flexible_barrier.py) | [Wavy plate collapse (FEM–MPM)](examples/fempm/wavy_plate_collapse/wavy_plate_collapse.py) / [Wavy plate collapse (IGA–MPM)](examples/igampm/wavy_plate_collapse/wavy_plate_collapse.py) | [Axisymmetric CPT (FEM–MPM)](examples/fempm/cpt_dp/cpt_dp.py) / [Axisymmetric CPT (IGA–MPM)](examples/igampm/cpt_dp/cpt_dp.py) |
+| Flexible barrier ([FEM–MPM](examples/fempm/flexible_barrier/flexible_barrier.py) / [IGA–MPM](examples/igampm/flexible_barrier/flexible_barrier.py)) | Wavy plate collapse ([FEM–MPM](examples/fempm/wavy_plate_collapse/wavy_plate_collapse.py) / [IGA–MPM](examples/igampm/wavy_plate_collapse/wavy_plate_collapse.py)) | Axisymmetric CPT ([FEM–MPM](examples/fempm/cpt_dp/cpt_dp.py) / [IGA–MPM](examples/igampm/cpt_dp/cpt_dp.py)) |
 | --- | --- | --- |
 | ![IGA–MPM flexible barrier](images/flexible_barrier.gif) | ![IGA–MPM wavy plate collapse](images/wavy_plate_collapse.gif) | ![IGA–MPM axisymmetric CPT](images/cpt_dp.gif) |
 
@@ -84,10 +81,6 @@ See the implemented [FEM–MPM contact](examples/fempm/explicit_point_membrane/e
 | [Hertz contact](examples/fedem/HertzContact/hertz_contact.py) | [Mixed funnel](examples/fedem/MixedFunnel/mixed_funnel.py) | [Isotropic compaction](examples/fedem/IsotropicCompaction/isotropic_compaction.py) |
 | --- | --- | --- |
 | ![Hertz contact](images/hertz_contact.png) | ![Mixed funnel](images/mixed_funnel.gif) | ![Isotropic compaction](images/isotropic_compaction_100.gif) |
-
-#### Incremental potential contact
-
-Fully coupled FEM–ABD IPC is implemented; see the [soft-particle example](examples/fedem/ImplicitAffineIPCSoftParticle/implicit_affine_ipc_soft_particle.py).
 
 ### [MPM-DEM](src/mpdem/README.md#mpdem-theory-log)
 #### Explicit MPM-DEM

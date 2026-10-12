@@ -596,7 +596,6 @@ class DEMPM(SolverDiagnosticsMixin):
                 child.set_timestep(step_dt)
 
             self.mpm.solver.core(self.mpm.scene, self.mpm.neighbor)
-            coupler.accumulate_pressure_force(self.mpm.sims, self.mpm.scene)
             affine_engine.step(self.dem.sims, self.dem.scene)
 
             self.sims.current_time += step_dt

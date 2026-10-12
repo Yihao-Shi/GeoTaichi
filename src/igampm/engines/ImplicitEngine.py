@@ -587,6 +587,13 @@ class ImplicitEngineMixin:
                 ti.atomic_add(squared, self.monolithic_rhs[dof] * self.monolithic_rhs[dof])
         return ti.sqrt(ti.max(squared, 0.0))
 
+    @ti.kernel
+    def _device_monolithic_rhs_norm(self, active_dof: ti.i32) -> ti.f64:
+        squared = 0.0
+        for dof in range(active_dof):
+            ti.atomic_add(squared, self.monolithic_rhs[dof] * self.monolithic_rhs[dof])
+        return ti.sqrt(ti.max(squared, 0.0))
+
     def _solve_monolithic_linear_system(self, system, linear_solve=None):
         """Solve one assembled device system.
 
@@ -604,6 +611,9 @@ class ImplicitEngineMixin:
                 absolute_tolerance = inexact_newton_absolute_tolerance(
                     system["linear_residual_reference"], relative_tolerance, absolute_tolerance
                 )
+                relative_tolerance = 0.0
+            if "linear_absolute_tolerance" in system:
+                absolute_tolerance = min(absolute_tolerance, system["linear_absolute_tolerance"])
                 relative_tolerance = 0.0
             if assemble_type == "COO":
                 self.monolithic_correction.fill(0.0)

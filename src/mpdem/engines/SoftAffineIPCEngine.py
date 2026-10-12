@@ -45,14 +45,15 @@ class SoftAffineIPCEngine(object):
         self.last_elastic_differentiation = None
 
     @staticmethod
-    def _fully_implicit_force_target(sims, initial_residual):
+    def _fully_implicit_force_target(sims, initial_residual, dt):
         """Keep nonconservative force convergence separate from PN velocity."""
-        legacy = float(sims.affine_newton_tolerance)
+        if not math.isfinite(dt) or dt <= 0.0:
+            raise RuntimeError("SoftAffineIPC fully implicit convergence requires a finite positive time step")
         absolute = float(sims.affine_fully_implicit_force_atol)
         relative = float(sims.affine_fully_implicit_force_rtol)
         if not math.isfinite(absolute) or absolute < 0.0 or not math.isfinite(relative) or relative < 0.0:
             raise RuntimeError("SoftAffineIPC fully implicit force tolerances must be " "finite and non-negative")
-        return absolute + relative * float(initial_residual)
+        return float(dt) ** 2 * absolute + relative * float(initial_residual)
 
     def choose_engine(self, sims, scene):
         return
@@ -367,11 +368,7 @@ class SoftAffineIPCEngine(object):
         self.last_inner_converged = False
         self.last_inner_failure_reason = "maximum_newton_iterations"
         residual_norm = self.operator.residual_inf_norm_device()
-        tolerance = self._fully_implicit_force_target(sims, residual_norm)
-        correction_velocity_tolerance = float(sims.affine_newton_tolerance)
-        dt = float(self.operator.dt)
-        if not math.isfinite(dt) or dt <= 0.0:
-            raise RuntimeError("SoftAffineIPC fully implicit convergence requires a finite " "positive time step")
+        tolerance = self._fully_implicit_force_target(sims, residual_norm, self.operator.dt)
         for iteration in range(int(sims.affine_max_newton_iteration)):
             if residual_norm <= tolerance:
                 self.last_inner_converged = True
@@ -379,7 +376,10 @@ class SoftAffineIPCEngine(object):
                 break
             result = self.operator.solve_direction_device(sims)
             direction_norm = float(result["solution_inf_norm"])
-            if direction_norm / dt <= correction_velocity_tolerance:
+            if not math.isfinite(direction_norm):
+                self.last_inner_failure_reason = "non_finite_direction"
+                raise RuntimeError("SoftAffineIPC fully implicit Newton correction is non-finite")
+            if direction_norm == 0.0:
                 self.last_inner_failure_reason = "newton_stagnation"
                 raise RuntimeError(
                     "SoftAffineIPC fully implicit Newton solve stagnated "
@@ -594,11 +594,7 @@ class SoftAffineIPCEngine(object):
         self.last_inner_converged = False
         self.last_inner_failure_reason = "maximum_newton_iterations"
         initial_residual = float(np.linalg.norm(residual, ord=np.inf))
-        tolerance = self._fully_implicit_force_target(sims, initial_residual)
-        correction_velocity_tolerance = float(sims.affine_newton_tolerance)
-        dt = float(self.operator.dt)
-        if not np.isfinite(dt) or dt <= 0.0:
-            raise RuntimeError("SoftAffineIPC fully implicit convergence requires a finite " "positive time step")
+        tolerance = self._fully_implicit_force_target(sims, initial_residual, self.operator.dt)
         for iteration in range(int(sims.affine_max_newton_iteration)):
             if not np.all(np.isfinite(residual)):
                 self.last_inner_failure_reason = "non_finite_residual"
@@ -613,7 +609,7 @@ class SoftAffineIPCEngine(object):
             if not np.all(np.isfinite(direction)):
                 self.last_inner_failure_reason = "non_finite_direction"
                 raise RuntimeError("SoftAffineIPC fully implicit Newton correction is non-finite")
-            if np.linalg.norm(direction, ord=np.inf) / dt <= correction_velocity_tolerance:
+            if np.linalg.norm(direction, ord=np.inf) == 0.0:
                 self.last_inner_failure_reason = "newton_stagnation"
                 raise RuntimeError(
                     "SoftAffineIPC fully implicit Newton solve stagnated "

@@ -2064,6 +2064,12 @@ class SoftAffineIPCOperator(object):
             float(self._soft_physical_correction_measure()),
         )
 
+    def _linear_tolerance(self, sims, residual):
+        tolerance = float(sims.affine_linear_tolerance)
+        if self.fully_implicit:
+            tolerance = min(tolerance, 0.1 * float(residual))
+        return tolerance
+
     def solve_direction(self, sims, grad):
         self._reject_cuda_host_vector_path("solve_direction")
         tick = time.time()
@@ -2074,7 +2080,7 @@ class SoftAffineIPCOperator(object):
         result = self.hash_triplet.solve(
             rhs=rhs,
             active_nodes=active_blocks,
-            tol=sims.affine_linear_tolerance,
+            tol=self._linear_tolerance(sims, np.linalg.norm(grad, ord=np.inf) if self.fully_implicit else 0.0),
             maxiter=sims.affine_linear_max_iteration,
             return_solution=True,
         )
@@ -2140,7 +2146,7 @@ class SoftAffineIPCOperator(object):
         self._load_device_newton_rhs(int(self.total_dof))
         result = self.hash_triplet.solve(
             active_nodes=int(self.total_dof // 3),
-            tol=sims.affine_linear_tolerance,
+            tol=self._linear_tolerance(sims, self.residual_inf_norm_device() if self.fully_implicit else 0.0),
             maxiter=sims.affine_linear_max_iteration,
             return_solution=False,
         )
@@ -4648,6 +4654,8 @@ class SoftAffineIPCOperator(object):
                         * mu
                         * ti.max(-barrier_gradient, 0.0)
                     )
+                    if ti.static(not self.is_semi):
+                        coefficient *= normal_norm
                     if normal_norm > 1.0e-14 and coefficient > 0.0:
                         self.mixed_levelset_friction_unit_normal[point_id] = normal / normal_norm
                         self.mixed_levelset_friction_coefficient[point_id] = coefficient

@@ -263,6 +263,31 @@ def test_soft_affine_timestep_update_reaches_compiled_contact_kernel():
     assert float(operator.affine.dt_device[None]) == pytest.approx(5.0e-3)
 
 
+@pytest.mark.parametrize("stretch", [(0.5, 0.5, 0.5), (1.0, 1.0, 1.0), (2.0, 2.0, 2.0), (1.7, 0.8, 1.2)])
+def test_soft_affine_levelset_friction_matches_normal_force_after_deformation(stretch):
+    operator, _levelset, controls = _make_levelset_mixed_kernel_harness()
+    controls = controls * np.asarray(stretch)
+    point = np.array([0.316, 0.011, 0.007]) * np.asarray(stretch)
+    operator.scene.soft_point[0].x = ti.Vector(point)
+    operator.affine.y.from_numpy(controls)
+    operator.affine.hat_y.from_numpy(controls)
+    operator.affine.pp_mu[0, 0] = 0.4
+    operator.affine._freeze_levelset_lagged_friction_geometry()
+    operator._freeze_mixed_levelset_friction_geometry()
+    operator._update_mixed_levelset_transforms()
+    _clear_coupled_contact_system(operator)
+    operator._assemble_mixed_levelset_contact(False)
+    normal_force = operator.global_grad.to_numpy()[12:15]
+    tangent = np.cross(normal_force, [0.0, 0.0, 1.0])
+    tangent /= np.linalg.norm(tangent)
+    operator.soft_hat_x.from_numpy(np.vstack((point - 0.01 * tangent, np.zeros(3))))
+    _clear_coupled_contact_system(operator)
+    operator._assemble_mixed_levelset_lagged_friction(False)
+    gradient = operator.global_grad.to_numpy()
+    assert np.linalg.norm(gradient[12:15]) == pytest.approx(0.4 * np.linalg.norm(normal_force), rel=1.0e-10)
+    np.testing.assert_allclose(gradient[:12].reshape(4, 3).sum(axis=0) + gradient[12:15], 0.0, atol=1.0e-12)
+
+
 def test_soft_affine_levelset_lagged_friction_matches_energy_derivatives():
     operator, _levelset, controls = _make_levelset_mixed_kernel_harness()
     # Avoid placing the query exactly on grid-cell faces; the production

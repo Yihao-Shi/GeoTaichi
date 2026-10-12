@@ -654,7 +654,7 @@ class FEMAffineIPCAssembler:
                         scale = self.culling.point_triangle_measure[contact] * dhat
                         normal_force = ti.max(
                             0.0,
-                            -scale * first * 2.0 * ti.sqrt(shifted),
+                            -scale * first * 2.0 * distance,
                         )
                         coefficient = self.pair_friction[affine_body, fem_body] * normal_force
                         if coefficient > 0.0:
@@ -717,7 +717,7 @@ class FEMAffineIPCAssembler:
                         scale = self.culling.edge_edge_measure[contact] * dhat
                         normal_force = ti.max(
                             0.0,
-                            -scale * first * 2.0 * ti.sqrt(shifted),
+                            -scale * first * 2.0 * distance,
                         )
                         coefficient = self.pair_friction[affine_body, fem_body] * normal_force
                         if coefficient > 0.0:

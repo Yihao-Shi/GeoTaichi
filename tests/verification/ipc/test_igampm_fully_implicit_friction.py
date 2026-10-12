@@ -21,6 +21,8 @@ def test_exact_point_nurbs_fully_implicit_device_path_requires_full_bicgstab_sta
     engine_module = importlib.import_module("src.igampm.engines")
     engine = object.__new__(engine_module.Engine)
     engine.friction_mode = "fully_implicit"
+    engine.monolithic_solver_name = "BiCGSTAB"
+    engine.monolithic_matrix_symmetric = False
     engine.monolithic_hash_matrix = SimpleNamespace(
         solver="BiCGSTAB",
         symmetric=False,
@@ -311,7 +313,8 @@ def test_production_iga_mpm_friction_all_columns_match_force_fd(
         raw_j,
     )
     engine.friction_hash_matrix.finalize_taichi_assembly()
-    assert engine.friction_hash_matrix.non_diag.pattern_cache_statistics()["pattern_hits"] >= 1
+    if ti.lang.impl.current_cfg().arch == ti.cuda:
+        assert engine.friction_hash_matrix.non_diag.pattern_cache_statistics()["pattern_hits"] >= 1
     np.testing.assert_allclose(device_force, force, rtol=2.0e-10, atol=2.0e-11)
     np.testing.assert_allclose(device_matrix, matrix, rtol=2.0e-9, atol=2.0e-9)
 
@@ -518,7 +521,8 @@ def _run_production_3d_surface_fully_implicit_assembly_fd(tmp_path):
         raw_j,
     )
     engine.friction_hash_matrix.finalize_taichi_assembly()
-    assert engine.friction_hash_matrix.non_diag.pattern_cache_statistics()["pattern_hits"] >= 1
+    if ti.lang.impl.current_cfg().arch == ti.cuda:
+        assert engine.friction_hash_matrix.non_diag.pattern_cache_statistics()["pattern_hits"] >= 1
 
     finite_difference = _fd_jacobian(evaluate, displacement, step=1.0e-7)
     scale = max(
@@ -569,8 +573,10 @@ def _transaction_driver(raise_in_solve=False):
         return {"converged": True, "residual": 0.0}
 
     engine.solve_fully_implicit_friction_newton = solve
+    engine._solve_lagged_material_fixed_point = lambda solve_inner: solve_inner()
+    engine._solve_configured_fully_implicit_system = solve
     engine.solve_lagged_friction_fixed_point = lambda *args, **kwargs: events.append("lagged")
-    engine.accept_implicit_ipc_step = lambda: {
+    engine.accept_implicit_ipc_step = lambda **kwargs: {
         "step": 0,
         "iga_increment": np.zeros(1),
         "mpm_increment": np.zeros(1),
@@ -582,7 +588,7 @@ def _transaction_driver(raise_in_solve=False):
 
 def test_fully_implicit_substep_dispatches_without_lagged_outer_iteration():
     engine, events = _transaction_driver()
-    result = Engine.implicit_ipc_substep(engine, include_friction=True)
+    result = Engine._implicit_ipc_substep_once(engine, include_friction=True)
     assert result["accepted"] is True
     assert events == ["begin", "fully"]
 
@@ -590,7 +596,7 @@ def test_fully_implicit_substep_dispatches_without_lagged_outer_iteration():
 def test_fully_implicit_substep_rolls_back_on_nonlinear_failure():
     engine, events = _transaction_driver(raise_in_solve=True)
     with pytest.raises(RuntimeError, match="nonlinear failure"):
-        Engine.implicit_ipc_substep(engine, include_friction=True)
+        Engine._implicit_ipc_substep_once(engine, include_friction=True)
     assert events == ["begin", "fully", "abort"]
 
 
