@@ -19,7 +19,7 @@ Developed by [Multiscale Geomechanics Lab](https://person.zju.edu.cn/en/nguo), Z
 
 GeoTaichi targets multiscale and multiphysics geomechanics: large-deformation and elastoplastic solids, arbitrarily shaped grains, free-surface flow, saturated porous media, and contact with deformable or nearly rigid structures. Solver modules can be used independently or combined through explicit contact exchange, immersed boundary methods (IBM), or fully coupled incremental potential contact (IPC).
 
-GeoTaichi is an actively developed research project released under GPL-3.0. Taichi provides parallel CPU and GPU execution on supported Windows, Linux, and macOS configurations. Backend, precision, dimensionality, and material support depend on the selected solver; the module READMEs document these restrictions. A feature available in one solver route should not be assumed to be available in every route.
+GeoTaichi is an actively developed research project released under GPL-3.0. Taichi provides parallel CPU and GPU execution on supported Windows, Linux, and macOS configurations. Backend, precision, dimensionality, and material support depend on the selected solver; the module READMEs document these restrictions.
 
 ## Examples
 
@@ -134,9 +134,9 @@ GeoTaichi introduces three new coupling formulations: MPM–ABD IPC, incompressi
 
 | Formulation | Method and scope | Theory |
 | --- | --- | --- |
-| Material point method–affine body dynamics coupling (MPM–ABD) | Fully coupled solid MPM–ABD IPC couples active MPM-grid displacements and affine-body controls, including supported finite-strain plasticity. This route is currently 3D with lagged friction. Hyperelastic soft-MPM–ABD IPC and incompressible fluid–ABD IBM are separate routes. | [MPM–ABD derivation](src/mpdem/README.md#15-solid-mpm--affinebody-ipc-and-plasticity) |
 | Incompressible material point method–level-set DEM coupling (MPM–LSDEM IBM) | Fully resolved 3D coupling uses rigid-body signed-distance geometry to estimate solid cell fractions, apply volume-fraction immersed-boundary forcing, and exchange hydrodynamic loads with LSDEM bodies. The fluid free surface and rigid-body SDF have distinct roles. | [Volume-fraction IBM derivation](src/mpdem/README.md#10-fully-resolved-lsdem-and-affinebody-volume-fraction-ibm) |
 | Isogeometric analysis–material point method coupling (IGA–MPM) | Independent deformable NURBS IGA structures and MPM continua interact through point–NURBS contact. The linked 3D examples demonstrate explicit DEM-law exchange and fully coupled implicit IPC with elastic or plastic MPM blocks. | [IGA–MPM theory log](src/igampm/README.md#iga--mpm-coupling-theory-log) |
+| Material point method–affine body dynamics coupling (MPM–ABD) | Fully coupled solid MPM–ABD IPC couples active MPM-grid displacements and affine-body controls, including supported finite-strain plasticity. This route is currently 3D with lagged friction. Hyperelastic soft-MPM–ABD IPC and incompressible fluid–ABD IBM are separate routes. | [MPM–ABD derivation](src/mpdem/README.md#15-solid-mpm--affinebody-ipc-and-plasticity) |
 
 ## Quick start
 
@@ -203,12 +203,6 @@ Documentation is maintained alongside the source. Module READMEs describe suppor
 - Usage and development: [Python examples](examples/), [Solver integration principles](docs/solver_integration_principles.md), [Blender add-on](blender/README.md), [Developer tools](tools/README.md), and [Tests and verification](tests/README.md).
 
 Start with the README for your solver and a matching Python example. Additional derivations and technical notes are available in [docs](docs/helper/geotaichi_user_theory_manual.pdf).
-
-LSMPM soft bodies now update their SDF by `ReferenceMap` reconstruction from
-the initial field and material-point deformation gradients. `SemiLagrangian`
-selects this route; `MacCormack` retains the former incremental transport and
-`WENO5` remains available. See the [soft-particle guide](src/mpm/README.md#15-soft-particle-lsmpm-and-level-set-transport)
-for configuration, metric correction, and accuracy limits.
 
 ## License
 This project is licensed under the GNU General Public License v3 - see the [LICENSE](https://www.gnu.org/licenses/) for details.
