@@ -27,6 +27,7 @@ Have an example to share? Submit a [PR](https://github.com/Yihao-Shi/GeoTaichi/p
 
 ### [Material point method (MPM)](src/mpm/README.md#mpm-theory-log)
 #### Explicit MPM
+
 | [Column collapse](examples/mpm/column_collapse/DPmaterial.py) | [Dam break](examples/mpm/column_collapse/NewtonianFluid.py) | [Strip footing](examples/mpm/Footing2D/FootingTrescaLargeBBar.py) | [Progressive failure process of sensitive clay](examples/mpm/column_collapse2D/SoftDP.py) |
 | --- | --- | --- | --- |
 | ![Column collapse](images/soil.gif) | ![Dam break](images/newtonian.gif) | ![Strip footing](images/footing.gif) | ![Clay](images/clay.gif) |
@@ -49,13 +50,15 @@ Have an example to share? Submit a [PR](https://github.com/Yihao-Shi/GeoTaichi/p
 
 ### [Discrete element method (DEM)](src/dem/README.md#dem-theory-log)
 #### Explicit soft constraint
+
 | [Granular packing](examples/dem/LevelSet/GranularAssemble/polydisperse/packing_generate.py) | [Screw and nut](examples/dem/LevelSet/ParticleParticle/screw_and_nut.py) | [Debris flow](examples/dem/LevelSet/DebrisFlow/) |
-| --- | --- | --- | 
-| ![Granular packing](images/lsdem.gif) | ![Screw and nut](images/screw_nut.gif) | ![Debris Flow](images/debris_flow.gif) | 
+| --- | --- | --- |
+| ![Granular packing](images/lsdem.gif) | ![Screw and nut](images/screw_nut.gif) | ![Debris Flow](images/debris_flow.gif) |
 
 | [Rotating drum](examples/dem/LevelSet/RotatingDrum/rotating_drum.py) | [Triaxial shear test](examples/dem/LevelSet/TriaxialShear/) |
-| --- | --- | 
+| --- | --- |
 | ![Rotating drum](images/drums.gif) | ![Triaxial shear test](images/force_chain.gif) |
+
 #### Implicit affine body dynamics (ABD)
 
 Implemented examples include [sphere–wall collision](examples/dem/AffineBody/sphere_wall_collision/sphere_wall_collision.py), [cube sliding](examples/dem/AffineBody/cube_incline_sliding/cube_incline_sliding.py), and a [multilink arm](examples/dem/AffineBody/robot_multilink_arm/robot_multilink_arm.py). 
@@ -70,29 +73,17 @@ Implemented examples include an [implicit FEM cantilever](examples/fem/implicit_
 See the implemented [FEM–MPM contact](examples/fempm/explicit_point_membrane/explicit_point_membrane.py) and [IGA–MPM contact](examples/igampm/iga_mpm_explicit_dem_contact/iga_mpm_explicit_dem_contact.py) examples.
 
 #### Incremental potential contact
-| Flexible barrier ([FEM–MPM](examples/fempm/flexible_barrier/flexible_barrier.py), [IGA–MPM](examples/igampm/flexible_barrier/flexible_barrier.py))| Wavy plate collapse ([FEM–MPM](examples/fempm/wavy_plate_collapse/wavy_plate_collapse.py), [IGA–MPM](examples/igampm/wavy_plate_collapse/wavy_plate_collapse.py)) | Axisymmetric CPT ([FEM–MPM](examples/fempm/cpt_dp/cpt_dp.py), [IGA–MPM](examples/igampm/cpt_dp/cpt_dp.py)) |
+
+| [Flexible barrier (FEM–MPM)](examples/fempm/flexible_barrier/flexible_barrier.py) / [Flexible barrier (IGA–MPM)](examples/igampm/flexible_barrier/flexible_barrier.py) | [Wavy plate collapse (FEM–MPM)](examples/fempm/wavy_plate_collapse/wavy_plate_collapse.py) / [Wavy plate collapse (IGA–MPM)](examples/igampm/wavy_plate_collapse/wavy_plate_collapse.py) | [Axisymmetric CPT (FEM–MPM)](examples/fempm/cpt_dp/cpt_dp.py) / [Axisymmetric CPT (IGA–MPM)](examples/igampm/cpt_dp/cpt_dp.py) |
 | --- | --- | --- |
-| <img src="images/flexible_barrier.gif" alt="IGA–MPM flexible barrier" width="300"> | <img src="images/wavy_plate_collapse.gif" alt="IGA–MPM wavy plate collapse" width="300"> | <img src="images/cpt_dp.gif" alt="IGA–MPM axisymmetric CPT" width="300"> |
+| ![IGA–MPM flexible barrier](images/flexible_barrier.gif) | ![IGA–MPM wavy plate collapse](images/wavy_plate_collapse.gif) | ![IGA–MPM axisymmetric CPT](images/cpt_dp.gif) |
 
 ### [FEM-DEM](src/fedem/README.md#fedem-coupling-theory-log)
 #### Explicit soft constraint
 
-<table width="100%">
-  <thead>
-    <tr>
-      <th width="33.33%" align="center"><a href="examples/fedem/HertzContact/hertz_contact.py">Hertz contact</a></th>
-      <th width="33.33%" align="center"><a href="examples/fedem/MixedFunnel/mixed_funnel.py">Mixed funnel</a></th>
-      <th width="33.33%" align="center"><a href="examples/fedem/IsotropicCompaction/isotropic_compaction.py">Isotropic compaction</a></th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td width="33.33%" align="center"><img src="images/hertz_contact.png" alt="Hertz contact" width="300"></td>
-      <td width="33.33%" align="center"><img src="images/mixed_funnel.gif" alt="Mixed funnel" width="300"></td>
-      <td width="33.33%" align="center"><img src="images/isotropic_compaction_100.gif" alt="Isotropic compaction" width="300"></td>
-    </tr>
-  </tbody>
-</table>
+| [Hertz contact](examples/fedem/HertzContact/hertz_contact.py) | [Mixed funnel](examples/fedem/MixedFunnel/mixed_funnel.py) | [Isotropic compaction](examples/fedem/IsotropicCompaction/isotropic_compaction.py) |
+| --- | --- | --- |
+| ![Hertz contact](images/hertz_contact.png) | ![Mixed funnel](images/mixed_funnel.gif) | ![Isotropic compaction](images/isotropic_compaction_100.gif) |
 
 #### Incremental potential contact
 
@@ -100,6 +91,7 @@ Fully coupled FEM–ABD IPC is implemented; see the [soft-particle example](exam
 
 ### [MPM-DEM](src/mpdem/README.md#mpdem-theory-log)
 #### Explicit MPM-DEM
+
 | [A sphere impacting granular bed](examples/mpdem/MultiSphere/SphereImpactToGranularBed/plane_strain.py) | [Granular column impacting cubic particles](examples/mpdem/MultiSphere/GranularImpact/granular_impact.py) | [Box sinking into water](examples/mpdem/LevelSet/WaterImpact/box.py) |
 | --- | --- | --- |
 | ![A sphere impacting granular bed](images/mpdem1.gif) | ![Granular column impacting cubic particles](images/mpdem2.gif) | ![Box sinking into water](images/box_sinking.gif) |
@@ -109,6 +101,7 @@ Fully coupled FEM–ABD IPC is implemented; see the [soft-particle example](exam
 | [Drafting, kissing and tumbling](examples/cfdem/FullyResolved/IBMDraftingKissingTumbling/drafting_kissing_tumbling.py) | [Sphere settling in oil](examples/cfdem/FullyResolved/IBMResolvedSphereSettling/sphere_settling.py) | [IBM dam break](examples/cfdem/FullyResolved/IBMLevelSetDamBreak3D/dam_break_levelset_ibm_3d.py) |
 | --- | --- | --- |
 | ![Drafting, kissing and tumbling](images/dkt.gif) | ![Sphere settling in oil](images/sphere_oil.gif) | ![IBM dam break](images/ibm_break.gif) |
+
 #### Incremental potential contact
 
 Implemented routes include [Solid MPM–ABD impact](examples/mpdem/AffineBody/ABDImpactDP/direct_mpm_abd_impact.py). 
