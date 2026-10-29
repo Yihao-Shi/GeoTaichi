@@ -665,7 +665,15 @@ def _sample_cell_pressure_gfm(position, grid_size, cell_type, cell_pressure, flu
 
 @ti.func
 def _sample_cell_pressure_gfm_shape2d(
-    position, psize, shape_type: ti.template(), influenced_node: int, grid_size, cell_type, cell_pressure, fluid_sdf
+    position,
+    psize,
+    shape_type: ti.template(),
+    influenced_node: int,
+    grid_size,
+    cell_type,
+    cell_pressure,
+    fluid_sdf,
+    air_ghost_pressure: ti.template() = True,
 ):
     base = vec2i(
         _mac_base_1d(position[0], 1.0 / grid_size[0], 0.5, psize[0], shape_type),
@@ -688,11 +696,15 @@ def _sample_cell_pressure_gfm_shape2d(
                     value += weight * cell_pressure[cell]
                     weight_sum += weight
                 else:
-                    ghost_pressure, ghost_weight = _ghost_air_pressure_weight2d(
-                        cell, cell_type, cell_pressure, fluid_sdf
-                    )
-                    if ghost_weight > 0.0:
-                        value += weight * ghost_pressure
+                    if ti.static(air_ghost_pressure):
+                        ghost_pressure, ghost_weight = _ghost_air_pressure_weight2d(
+                            cell, cell_type, cell_pressure, fluid_sdf
+                        )
+                        if ghost_weight > 0.0:
+                            value += weight * ghost_pressure
+                            weight_sum += weight
+                    else:
+                        # Atmospheric air contributes zero physical pressure to the solid force.
                         weight_sum += weight
     if weight_sum > Threshold:
         value /= weight_sum
@@ -2836,6 +2848,7 @@ def kernel_project_double_layer_pressure_to_solid_nodes2d(
                 cell_type,
                 cell_pressure,
                 fluid_sdf,
+                False,
             )
 
 
@@ -3348,7 +3361,15 @@ def _sample_cell_pressure_gfm3d(position, grid_size, cell_type, cell_pressure, f
 
 @ti.func
 def _sample_cell_pressure_gfm_shape3d(
-    position, psize, shape_type: ti.template(), influenced_node: int, grid_size, cell_type, cell_pressure, fluid_sdf
+    position,
+    psize,
+    shape_type: ti.template(),
+    influenced_node: int,
+    grid_size,
+    cell_type,
+    cell_pressure,
+    fluid_sdf,
+    air_ghost_pressure: ti.template() = True,
 ):
     base = vec3i(
         _mac_base_1d(position[0], 1.0 / grid_size[0], 0.5, psize[0], shape_type),
@@ -3372,11 +3393,15 @@ def _sample_cell_pressure_gfm_shape3d(
                     value += weight * cell_pressure[cell]
                     weight_sum += weight
                 else:
-                    ghost_pressure, ghost_weight = _ghost_air_pressure_weight3d(
-                        cell, cell_type, cell_pressure, fluid_sdf
-                    )
-                    if ghost_weight > 0.0:
-                        value += weight * ghost_pressure
+                    if ti.static(air_ghost_pressure):
+                        ghost_pressure, ghost_weight = _ghost_air_pressure_weight3d(
+                            cell, cell_type, cell_pressure, fluid_sdf
+                        )
+                        if ghost_weight > 0.0:
+                            value += weight * ghost_pressure
+                            weight_sum += weight
+                    else:
+                        # Atmospheric air contributes zero physical pressure to the solid force.
                         weight_sum += weight
     if weight_sum > Threshold:
         value /= weight_sum
@@ -5390,6 +5415,7 @@ def kernel_project_double_layer_pressure_to_solid_nodes3d(
                 cell_type,
                 cell_pressure,
                 fluid_sdf,
+                False,
             )
 
 

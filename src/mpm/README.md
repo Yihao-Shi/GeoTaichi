@@ -1208,6 +1208,16 @@ $`p_A=0`$. Fluid-particle volume remains consistent with mapped porosity through
 V_p^f=\frac{m_p^f}{\rho_fn_p}.
 ```
 
+The air-side Ghost-Fluid pressure is a mathematical extension for the fluid
+operator, not a physical pressure load on the solid skeleton. In 2D and 3D,
+solid nodal pressure interpolation uses zero atmospheric gauge pressure in AIR
+cells and retains their interpolation weights. Fluid and solid-wall cell
+pressures remain signed; fluid/particle GFM sampling and the coupled pressure
+iteration retain their existing behavior. This prevents a negative ghost
+extension from creating a spurious solid pressure gradient near the free
+surface. Positive and negative wet pressures with quadratic and cubic support
+are covered by `tests/verification/mpdem/test_double_layer_atmospheric_pressure.py`.
+
 At a static solid wall, cell-centered interpolation support is reflected
 across the blocking MAC face. For a wall coordinate $`x_d=a`$, an image point
 has $`\widetilde{x}_{p,d}=2a-x_{p,d}`$; corner images combine the reflections
