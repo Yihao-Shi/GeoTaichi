@@ -39,6 +39,8 @@ research/*.vtu
 *.jpeg
 *.pvsm
 !images/*.gif
+!/images/GeoTaichi.png
+!/images/hertz_contact.png
 *.ini
 research/
 !requirements.txt
