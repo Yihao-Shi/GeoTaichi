@@ -210,7 +210,7 @@ class ImplicitULMPM(ImplicitMPM):
             grid_size = self.body[bodyID].grid_size
             xmin = self.body[bodyID].xmin
 
-            p_pos = self.particle[i].x
+            p_pos = self.affine_transfer_position(i)
             p_mass = self.particle[i].m
             p_vel = self.particle[i].v
             p_acc = self.particle[i].a
@@ -385,7 +385,7 @@ class ImplicitULMPM(ImplicitMPM):
             grid_size = self.body[bodyID].grid_size
             xmin = self.body[bodyID].xmin
 
-            p_pos = self.particle[i].x
+            p_pos = self.affine_transfer_position(i)
             acc = ti.Vector.zero(ti.f64, config.DIM)
             vel = ti.Vector.zero(ti.f64, config.DIM)
             disp = ti.Vector.zero(ti.f64, config.DIM)
@@ -435,7 +435,7 @@ class ImplicitULMPM(ImplicitMPM):
             else:
                 self.F0[i] = trial_deformation_gradient
             if ti.static(self.velocity_proj):
-                self.gradv[i] = Bp @ Dp.inverse()
+                self.gradv[i] = self.affine_transfer_matrix(Bp, Dp, grid_size)
 
     @ti.kernel
     def material_ccd(self, slackness: ti.f64) -> ti.f64:

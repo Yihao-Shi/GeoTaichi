@@ -148,6 +148,8 @@ class FEDEM(SolverDiagnosticsMixin):
             step_retry_reduction=retry_policy.reduction,
             step_retry_minimum_timestep=retry_policy.minimum_timestep,
         )
+        if "linear_solver_tolerance" in parameters:
+            parameters.setdefault("linear_solver_relative_tolerance", 0.0)
         self.solver_parameters.update(parameters)
         timestep = DictIO.GetAlternative(parameters, "Timestep", DictIO.GetAlternative(parameters, "dt", None))
         simulation_time = DictIO.GetAlternative(
@@ -432,10 +434,7 @@ class FEDEM(SolverDiagnosticsMixin):
                 self.fem.build()
             fem_contact = getattr(self.fem.engine, "contact_assembler", None)
             if fem_contact is not None and not fem_contact.is_ipc:
-                raise RuntimeError(
-                    "FEM--AffineBody IPC can combine only FEM IPC contact; "
-                    "augmented-Lagrangian FEM contact has a different nonlinear update"
-                )
+                raise RuntimeError("FEM--AffineBody IPC can combine only FEM IPC contact")
             self.fem.engine.dt = self.sims.delta
             self.fem.engine.time = self.sims.current_time
             self.fem.engine.step_count = self.sims.current_step
@@ -610,6 +609,7 @@ class FEDEM(SolverDiagnosticsMixin):
             self.sims.path,
         )
         with self.sims.timer.section("Output"):
+            self.enginer.affine.sync_output_state()
             self.recorder.output()
         self.sims.timer.profile0()
         self.sims.current_print += 1

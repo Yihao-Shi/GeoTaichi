@@ -22,6 +22,9 @@ class MaterialModel:
         self.random_field_file = None
         self.material_type = material_type
         self.configuration = configuration
+        self.incompressible_fluid = solver_type == "SemiImplicit" or (
+            material_type == "Fluid" and solver_type == "Implicit"
+        )
         self.solver_type = {"Explicit": 0, "Implicit": 1}.get(solver_type)
         self.residual_frac = 1.0
         self.console_solver_name = None
@@ -36,6 +39,11 @@ class MaterialModel:
 
     def add_material(self, *args, **kwargs):
         raise NotImplementedError
+
+    @staticmethod
+    def validate_fluid_bulk_modulus(modulus, key):
+        if not np.isfinite(modulus) or modulus <= 0.0:
+            raise ValueError(f"{key} must be finite and positive for compressible fluid, got {modulus!r}")
 
     def print_message(self, materialID):
         self.print_console_header()
@@ -105,6 +113,8 @@ class MaterialModel:
 
 @ti.data_oriented
 class Solid(MaterialModel):
+    supports_rate_dependent = False
+
     def __init__(self, material_type, configuration, solver_type):
         super().__init__(material_type, configuration, solver_type)
         self.young = 0.0
@@ -152,7 +162,7 @@ class Solid(MaterialModel):
             self.members_update(
                 solid_density=0.0,
                 fluid_density=0.0,
-                fluid_bulk=0.0,
+                fluid_bulk=None if self.incompressible_fluid else 0.0,
                 porosity=0.0,
                 permeability=0.0,
                 fluid_viscosity=1.0e-3,
@@ -163,16 +173,34 @@ class Solid(MaterialModel):
                 cavitation_pressure=-1.0e30,
             )
 
+    def validate_rate_dependent(self, material):
+        enabled = DictIO.GetAlternative(material, "RateDependent", False)
+        if not isinstance(enabled, (bool, np.bool_)):
+            raise ValueError("RateDependent must be a boolean")
+        if enabled:
+            if self.solver_type != 0:
+                raise ValueError(
+                    "mu(I) RateDependent requires an Explicit solver; implicit MPM does not "
+                    "support RateDependent=True because a consistent rate-dependent tangent "
+                    "has not been implemented"
+                )
+            if not self.supports_rate_dependent:
+                raise ValueError(f"{type(self).__name__} does not implement mu(I) RateDependent")
+        return bool(enabled)
+
     def add_coupling_material(self, material):
-        if DictIO.GetAlternative(material, "RateDependent", False) and not getattr(
-            self, "rate_dependent_function", False
-        ):
+        enabled = self.validate_rate_dependent(material)
+        if enabled and not getattr(self, "rate_dependent_function", False):
             raise ValueError(f"{type(self).__name__} does not implement mu(I) RateDependent")
         if self.material_type == "TwoPhaseSingleLayer" or self.material_type == "TwoPhaseDoubleLayer":
             solid_density = DictIO.GetAlternative(material, "SolidDensity", 2650)
             fluid_density = DictIO.GetAlternative(material, "FluidDensity", 1000)
             porosity = DictIO.GetEssential(material, "Porosity")
-            fluid_bulk = DictIO.GetEssential(material, "FluidBulkModulus")
+            # Legacy inputs may retain this key; projection does not use an equation of state.
+            fluid_bulk = None
+            if not self.incompressible_fluid:
+                fluid_bulk = DictIO.GetEssential(material, "FluidBulkModulus")
+                self.validate_fluid_bulk_modulus(fluid_bulk, "FluidBulkModulus")
             permeability = DictIO.GetEssential(material, "Permeability")
             fluid_viscosity = DictIO.GetAlternative(
                 material, "FluidViscosity", DictIO.GetAlternative(material, "Viscosity", 1.0e-3)
@@ -376,7 +404,7 @@ class Fluid(MaterialModel):
         super().__init__(material_type, configuration, solver_type)
         self.atmospheric_pressure = 0.0
         self.surface_tension = 0.0
-        self.modulus = 0.0
+        self.modulus = None if self.incompressible_fluid else 0.0
         self.viscosity = 0.0
         self.element_length = 0.0
         self.cl = 0.0

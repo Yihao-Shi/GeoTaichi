@@ -17,7 +17,6 @@ save_path = os.environ.get("GT_LSDEM_SAVE_PATH", "lsdem_coupling_3d")
 
 from geotaichi import DEMPM, init, polyhedron
 
-
 init(
     dim=3,
     arch=arch,
@@ -51,7 +50,7 @@ dempm.mpm.set_configuration(
     shape_function="QuadBSpline",
     gravity=[1.0, 0.0, -9.8],
     material_type="Fluid",
-    velocity_projection="PIC",
+    velocity_projection=None,
     solver_type="Implicit",
     discretization="FDM",
     visualize=False,
@@ -147,7 +146,6 @@ dempm.mpm.add_material(
     material={
         "MaterialID": 1,
         "Density": 1000.0,
-        "Modulus": 2.0e6,
         "Viscosity": 1.0e-3,
         "ElementLength": 0.01,
         "cL": 1.5,

@@ -44,6 +44,14 @@ point coordination. For AffineBody, use its dedicated configuration, solver,
 contact, neighbor, output, and backend restrictions. Do not mix ordinary DEM
 contact assumptions into the IPC affine branch.
 
+`DEM.set_affine_body_parameters(newmark=[alpha, beta, gamma])` uses the same
+three-parameter convention as IGA and Direct MPM. The default `[1, 0.5, 1]`
+preserves backward Euler. `[0.5, 0.25, 0.5]` selects average acceleration in
+the same device operator, including damping, mesh IPC friction, wall motion
+and FEM/MPM coupling. Child integrators may have different triplets; coupled
+assembly uses physical force units consistently. ABD trajectory adjoints
+remain backward-Euler only.
+
 ## 4. LSMPM soft bodies
 
 Use `DEM.set_configuration(scheme="LSMPM")` for the current runnable route.

@@ -12,76 +12,267 @@ class ULExplicitTwoPhaseEngine(ULExplicitEngine):
     def __init__(self, sims) -> None:
         super().__init__(sims)
 
+    def manage_function(self, sims: Simulation):
+        super().manage_function(sims)
+        if sims.velocity_projection_scheme == "Affine":
+            self.compute_nodal_kinematic = self.compute_nodal_kinematics_affine
+            self.compute_affine_velocity_gradient = self.update_velocity_gradient_affine_2D
+
+    def compute_nodal_kinematics_affine(self, sims: Simulation, scene: myScene):
+        kernel_mass_momentum_p2g_twophase_APIC(
+            scene.element.grid_nodes,
+            int(scene.particleNum[0]),
+            scene.node,
+            scene.particle,
+            scene.element.LnID,
+            scene.element.shape_fn,
+            scene.element.node_size,
+            sims.current_step,
+            scene.is_rigid,
+            scene.element.grid_size,
+            scene.element.gnum,
+        )
+
+    def update_velocity_gradient_affine_2D(self, sims: Simulation, scene: myScene):
+        kernel_compute_affine_matrix_APIC_twophase2D(
+            scene.element.grid_nodes,
+            int(scene.particleNum[0]),
+            scene.node,
+            scene.particle,
+            scene.element.LnID,
+            scene.element.shape_fn,
+            scene.element.node_size,
+            scene.element.grid_size,
+            scene.element.gnum,
+            False,
+        )
+
     def compute_particle_kinematics(self, sims: Simulation, scene: myScene):
-        kernel_kinemaitc_g2p_twophase(scene.element.grid_nodes, sims.alphaPIC, sims.dt, int(scene.particleNum[0]), scene.node, scene.particle, scene.element.LnID, scene.element.shape_fn, scene.element.node_size)
+        kernel_kinemaitc_g2p_twophase(
+            scene.element.grid_nodes,
+            sims.alphaPIC,
+            sims.dt,
+            int(scene.particleNum[0]),
+            scene.node,
+            scene.particle,
+            scene.element.LnID,
+            scene.element.shape_fn,
+            scene.element.node_size,
+        )
 
     def compute_nodal_kinematics(self, sims: Simulation, scene: myScene):
-        kernel_mass_momentum_p2g_twophase(scene.element.grid_nodes, int(scene.particleNum[0]), scene.element.gnum, scene.node, scene.particle, scene.element.LnID, scene.element.shape_fn, scene.element.node_size)
+        kernel_mass_momentum_p2g_twophase(
+            scene.element.grid_nodes,
+            int(scene.particleNum[0]),
+            scene.element.gnum,
+            scene.node,
+            scene.particle,
+            scene.element.LnID,
+            scene.element.shape_fn,
+            scene.element.node_size,
+        )
 
     def compute_grid_velcity(self, sims: Simulation, scene: myScene):
         kernel_compute_grid_velocity_twophase(scene.mass_cut_off, scene.node)
 
     def apply_dirichlet_constraints(self, sims: Simulation, scene: myScene):
-        #self.apply_reflection_constraints(sims, scene)
+        # self.apply_reflection_constraints(sims, scene)
         self.apply_velocity_constraints(sims, scene)
-    
+
     def compute_stress_strain(self, sims: Simulation, scene: myScene):
         for materialID in range(scene.material.mapping.shape[0] - 1):
             start_index = scene.material.mapping[materialID]
             end_index = scene.material.mapping[materialID + 1]
-            kernel_compute_stress_strain_twophase(start_index, end_index, sims.dt, scene.particle, scene.material.materialID, scene.material.matProps[materialID + 1], scene.material.stateVars)
-        
+            kernel_compute_stress_strain_twophase(
+                start_index,
+                end_index,
+                sims.dt,
+                scene.particle,
+                scene.material.materialID,
+                scene.material.matProps[materialID + 1],
+                scene.material.stateVars,
+            )
+
     def compute_stress_strain_2D(self, sims: Simulation, scene: myScene):
         for materialID in range(scene.material.mapping.shape[0] - 1):
             start_index = scene.material.mapping[materialID]
             end_index = scene.material.mapping[materialID + 1]
-            kernel_compute_stress_strain_twophase2D(start_index, end_index, sims.dt, scene.particle, scene.material.materialID, scene.material.matProps[materialID + 1], scene.material.stateVars)
-        
+            kernel_compute_stress_strain_twophase2D(
+                start_index,
+                end_index,
+                sims.dt,
+                scene.particle,
+                scene.material.materialID,
+                scene.material.matProps[materialID + 1],
+                scene.material.stateVars,
+            )
+
     def update_velocity_gradient_2D(self, sims: Simulation, scene: myScene):
         for materialID in range(scene.material.mapping.shape[0] - 1):
             start_index = scene.material.mapping[materialID]
             end_index = scene.material.mapping[materialID + 1]
-            kernel_update_velocity_gradient_twophase_2D(scene.element.grid_nodes, start_index, end_index, sims.dt, scene.node, scene.particle, scene.material.materialID, scene.material.matProps[materialID + 1], scene.material.stateVars,
-                                                    scene.element.LnID, scene.element.dshape_fn, scene.element.node_size)
-        
+            kernel_update_velocity_gradient_twophase_2D(
+                scene.element.grid_nodes,
+                start_index,
+                end_index,
+                sims.dt,
+                scene.node,
+                scene.particle,
+                scene.material.materialID,
+                scene.material.matProps[materialID + 1],
+                scene.material.stateVars,
+                scene.element.LnID,
+                scene.element.dshape_fn,
+                scene.element.node_size,
+            )
+
     def update_velocity_gradient_bbar_2D(self, sims: Simulation, scene: myScene):
         for materialID in range(scene.material.mapping.shape[0] - 1):
             start_index = scene.material.mapping[materialID]
             end_index = scene.material.mapping[materialID + 1]
-            kernel_update_velocity_gradient_bbar_twophase_2D(scene.element.grid_nodes, start_index, end_index, sims.dt, scene.node, scene.particle, scene.material.materialID, scene.material.matProps[materialID + 1], scene.material.stateVars,
-                                                         scene.element.LnID, scene.element.dshape_fn, scene.element.dshape_fnc, scene.element.node_size)
-    
+            kernel_update_velocity_gradient_bbar_twophase_2D(
+                scene.element.grid_nodes,
+                start_index,
+                end_index,
+                sims.dt,
+                scene.node,
+                scene.particle,
+                scene.material.materialID,
+                scene.material.matProps[materialID + 1],
+                scene.material.stateVars,
+                scene.element.LnID,
+                scene.element.dshape_fn,
+                scene.element.dshape_fnc,
+                scene.element.node_size,
+            )
+
     def update_velocity_gradient(self, sims: Simulation, scene: myScene):
         for materialID in range(scene.material.mapping.shape[0] - 1):
             start_index = scene.material.mapping[materialID]
             end_index = scene.material.mapping[materialID + 1]
-            kernel_update_velocity_gradient_twophase(scene.element.grid_nodes, start_index, end_index, sims.dt, scene.node, scene.particle, scene.material.materialID, scene.material.matProps[materialID + 1], scene.material.stateVars,
-                                                 scene.element.LnID, scene.element.dshape_fn, scene.element.node_size)
-        
+            kernel_update_velocity_gradient_twophase(
+                scene.element.grid_nodes,
+                start_index,
+                end_index,
+                sims.dt,
+                scene.node,
+                scene.particle,
+                scene.material.materialID,
+                scene.material.matProps[materialID + 1],
+                scene.material.stateVars,
+                scene.element.LnID,
+                scene.element.dshape_fn,
+                scene.element.node_size,
+            )
+
     def compute_force(self, sims: Simulation, scene: myScene):
-        kernel_force_p2g_twophase(scene.element.grid_nodes, int(scene.particleNum[0]), scene.element.gnum, sims.gravity, scene.node, scene.particle, scene.element.LnID, scene.element.shape_fn, scene.element.dshape_fn, scene.element.node_size)
-        
+        kernel_force_p2g_twophase(
+            scene.element.grid_nodes,
+            int(scene.particleNum[0]),
+            scene.element.gnum,
+            sims.gravity,
+            scene.node,
+            scene.particle,
+            scene.element.LnID,
+            scene.element.shape_fn,
+            scene.element.dshape_fn,
+            scene.element.node_size,
+        )
+
     def compute_force_2D(self, sims: Simulation, scene: myScene):
-        kernel_force_p2g_twophase2D(scene.element.grid_nodes, int(scene.particleNum[0]), scene.element.gnum, sims.gravity, scene.node, scene.particle, scene.element.LnID, scene.element.shape_fn, scene.element.dshape_fn, scene.element.node_size)
+        kernel_force_p2g_twophase2D(
+            scene.element.grid_nodes,
+            int(scene.particleNum[0]),
+            scene.element.gnum,
+            sims.gravity,
+            scene.node,
+            scene.particle,
+            scene.element.LnID,
+            scene.element.shape_fn,
+            scene.element.dshape_fn,
+            scene.element.node_size,
+        )
 
     def compute_force_bbar_2D(self, sims: Simulation, scene: myScene):
-        kernel_force_bbar_p2g_twophase2D(scene.element.grid_nodes, int(scene.particleNum[0]), scene.element.gnum, sims.gravity, scene.node, scene.particle, scene.element.LnID, 
-                                         scene.element.shape_fn, scene.element.shape_fnc, scene.element.dshape_fnc, scene.element.node_size)
+        kernel_force_bbar_p2g_twophase2D(
+            scene.element.grid_nodes,
+            int(scene.particleNum[0]),
+            scene.element.gnum,
+            sims.gravity,
+            scene.node,
+            scene.particle,
+            scene.element.LnID,
+            scene.element.shape_fn,
+            scene.element.shape_fnc,
+            scene.element.dshape_fnc,
+            scene.element.node_size,
+        )
 
     def compute_force_2DAxisy(self, sims: Simulation, scene: myScene):
-        kernel_force_p2g_twophase_2DAxisy(scene.element.grid_nodes, int(scene.particleNum[0]), scene.element.gnum, sims.gravity, scene.node, scene.particle, scene.element.LnID, scene.element.shape_fn, scene.element.dshape_fn, scene.element.node_size)
+        kernel_force_p2g_twophase_2DAxisy(
+            scene.element.grid_nodes,
+            int(scene.particleNum[0]),
+            scene.element.gnum,
+            sims.gravity,
+            scene.node,
+            scene.particle,
+            scene.element.LnID,
+            scene.element.shape_fn,
+            scene.element.dshape_fn,
+            scene.element.node_size,
+        )
 
     def compute_force_bbar_2DAxisy(self, sims: Simulation, scene: myScene):
-        kernel_force_bbar_p2g_twophase_2DAxisy(scene.element.grid_nodes, int(scene.particleNum[0]), scene.element.gnum, sims.gravity, scene.node, scene.particle, scene.element.LnID, scene.element.shape_fn, scene.element.dshape_fn, scene.element.node_size)
-        
+        kernel_force_bbar_p2g_twophase_2DAxisy(
+            scene.element.grid_nodes,
+            int(scene.particleNum[0]),
+            scene.element.gnum,
+            sims.gravity,
+            scene.node,
+            scene.particle,
+            scene.element.LnID,
+            scene.element.shape_fn,
+            scene.element.dshape_fn,
+            scene.element.node_size,
+        )
+
     def compute_external_force(self, sims: Simulation, scene: myScene):
-        kernel_external_force_p2g_twophase(scene.element.grid_nodes, scene.element.gnum, sims.gravity, int(scene.particleNum[0]), scene.node, scene.particle, scene.element.LnID, scene.element.shape_fn, scene.element.node_size)
+        kernel_external_force_p2g_twophase(
+            scene.element.grid_nodes,
+            scene.element.gnum,
+            sims.gravity,
+            int(scene.particleNum[0]),
+            scene.node,
+            scene.particle,
+            scene.element.LnID,
+            scene.element.shape_fn,
+            scene.element.node_size,
+        )
 
     def compute_internal_force_2D(self, sims: Simulation, scene: myScene):
-        kernel_internal_force_p2g_twophase2D(scene.element.grid_nodes, int(scene.particleNum[0]), scene.element.gnum, scene.node, scene.particle, scene.element.LnID, scene.element.dshape_fn, scene.element.node_size)
+        kernel_internal_force_p2g_twophase2D(
+            scene.element.grid_nodes,
+            int(scene.particleNum[0]),
+            scene.element.gnum,
+            scene.node,
+            scene.particle,
+            scene.element.LnID,
+            scene.element.dshape_fn,
+            scene.element.node_size,
+        )
 
     def compute_internal_force_bbar_2D(self, sims: Simulation, scene: myScene):
-        kernel_internal_force_bbar_p2g_twophase2D(scene.element.grid_nodes, int(scene.particleNum[0]), scene.element.gnum, scene.node, scene.particle, scene.element.LnID, scene.element.dshape_fn, scene.element.dshape_fnc, scene.element.node_size)
+        kernel_internal_force_bbar_p2g_twophase2D(
+            scene.element.grid_nodes,
+            int(scene.particleNum[0]),
+            scene.element.gnum,
+            scene.node,
+            scene.particle,
+            scene.element.LnID,
+            scene.element.dshape_fn,
+            scene.element.dshape_fnc,
+            scene.element.node_size,
+        )
 
     def compute_grid_kinematic(self, sims: Simulation, scene: myScene):
         kernel_compute_grid_kinematic_fluid(scene.mass_cut_off, sims.background_damping, scene.node, sims.dt)
@@ -89,7 +280,16 @@ class ULExplicitTwoPhaseEngine(ULExplicitEngine):
 
     def postmapping_grid_velocity(self, sims: Simulation, scene: myScene):
         kernel_reset_grid_velocity_twophase2D(scene.node)
-        kernel_postmapping_kinemaitc_twophase2D(scene.element.grid_nodes, int(scene.particleNum[0]), scene.element.gnum, scene.node, scene.particle, scene.element.LnID, scene.element.shape_fn, scene.element.node_size)
+        kernel_postmapping_kinemaitc_twophase2D(
+            scene.element.grid_nodes,
+            int(scene.particleNum[0]),
+            scene.element.gnum,
+            scene.node,
+            scene.particle,
+            scene.element.LnID,
+            scene.element.shape_fn,
+            scene.element.node_size,
+        )
 
     def pre_calculation(self, sims: Simulation, scene: myScene, neighbor: SpatialHashGrid):
         scene.element.calculate_characteristic_length(sims, int(scene.particleNum[0]), scene.particle, scene.psize)

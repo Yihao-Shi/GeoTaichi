@@ -3,12 +3,17 @@ from math import isfinite, sqrt
 import taichi as ti
 
 from src.linear_solver.LinearOperator import LinearOperator
+from src.linear_solver.DeviceKrylov import DeviceKrylov, device_krylov_enabled
 
 from src.linear_solver.MatrixFreeKrylovKernel import (
     pcg_init as init,
     reduce_atomic,
     update_x_r_z,
     cg_update_p as update_p,
+    true_residual,
+    copy,
+    cg_update_x,
+    cg_update_r,
 )
 
 
@@ -22,6 +27,8 @@ class MatrixFreePCG(object):
         ti.root.dense(ti.i, int(length)).place(self.p, self.r, self.z, self.Ap, self.Ax)
         self.scalar_rest()
         self.reduce = reduce_atomic
+        self.device_execution = device_krylov_enabled()
+        self._device_solver = None
 
     def scalar_rest(self):
         self.alpha = 0.0
@@ -57,9 +64,24 @@ class MatrixFreePCG(object):
         if maxiter < 0:
             raise ValueError("PCG maxiter must be non-negative")
 
+        if self.device_execution:
+            if self._device_solver is None:
+                self._device_solver = DeviceKrylov(self)
+            return self._device_solver.solve(A, b, x, M, size, tol, maxiter, rel_tol)
+
+        external_preconditioner = isinstance(M, LinearOperator)
+
+        def initialize():
+            if external_preconditioner:
+                true_residual(size, b, self.r, self.Ax)
+                M.matvec(self.r, self.z)
+                copy(size, self.z, self.p)
+            else:
+                init(size, M, b, self.Ax, self.r, self.z, self.p)
+
         self.scalar_rest()
         A.matvec(x, self.Ax)
-        init(size, M, b, self.Ax, self.r, self.z, self.p)
+        initialize()
         initial_rTz = self.reduce(size, self.r, self.z)
         old_rTz = initial_rTz
         # ``r.T @ M^-1 @ r`` is the PCG recurrence scalar, not an
@@ -86,9 +108,9 @@ class MatrixFreePCG(object):
         # in finite precision.  This matters for IPC because a barrier Hessian
         # can be many orders of magnitude stiffer than inertia: the recurrence
         # may cancel to zero although the residual obtained from a fresh
-        # matrix-vector product is still nonzero.  Periodically replace the
-        # recurrence residual and always verify a prospective convergence.
-        reliable_update_interval = 32
+        # matrix-vector product is still nonzero.  Verify prospective
+        # convergence, but preserve conjugacy until a residual replacement
+        # is needed; fixed-interval restarts stall ill-conditioned Poisson solves.
         for iteration in range(maxiter):
             A.matvec(self.p, self.Ap)
             pAp = self.reduce(size, self.p, self.Ap)
@@ -99,7 +121,12 @@ class MatrixFreePCG(object):
             if not isfinite(self.alpha):
                 self.last_breakdown_reason = "non_finite_alpha"
                 break
-            update_x_r_z(size, x, self.p, self.r, self.Ap, self.z, M, self.alpha)
+            if external_preconditioner:
+                cg_update_x(size, x, self.p, self.alpha)
+                cg_update_r(size, self.r, self.Ap, self.alpha)
+                M.matvec(self.r, self.z)
+            else:
+                update_x_r_z(size, x, self.p, self.r, self.Ap, self.z, M, self.alpha)
             self.last_iterations = iteration + 1
             residual_squared = self.reduce(size, self.r, self.r)
             if not isfinite(residual_squared) or residual_squared < 0.0:
@@ -107,12 +134,12 @@ class MatrixFreePCG(object):
                 self.last_breakdown_reason = "non_finite_residual"
                 break
             self.last_residual = sqrt(residual_squared)
-            verify_residual = self.last_residual <= convergence_tol or (iteration + 1) % reliable_update_interval == 0
+            verify_residual = self.last_residual <= convergence_tol
             if verify_residual:
                 A.matvec(x, self.Ax)
                 # ``init`` recomputes r=b-Ax, applies M^-1, and restarts the
                 # Krylov direction with p=z.
-                init(size, M, b, self.Ax, self.r, self.z, self.p)
+                initialize()
                 verified_squared = self.reduce(size, self.r, self.r)
                 if not isfinite(verified_squared) or verified_squared < 0.0:
                     self.last_residual = float("inf")
@@ -143,7 +170,7 @@ class MatrixFreePCG(object):
             # Report and decide from the actual residual, never from the
             # recursively updated vector left by the last Krylov iteration.
             A.matvec(x, self.Ax)
-            init(size, M, b, self.Ax, self.r, self.z, self.p)
+            initialize()
             verified_squared = self.reduce(size, self.r, self.r)
             if isfinite(verified_squared) and verified_squared >= 0.0:
                 self.last_residual = sqrt(verified_squared)

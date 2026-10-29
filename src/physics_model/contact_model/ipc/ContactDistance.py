@@ -1667,7 +1667,7 @@ def point_edge_distance_grad_hess_2d(p, e0, e1):
         hessian3 = H_PE3D(p3, e03, e13)
         for site, component in ti.static(ti.ndrange(3, 2)):
             gradient[2 * site + component] = gradient3[3 * site + component]
-        for first, second in ti.static(ti.ndrange(3, 3)):
+        for first, second in ti.ndrange(3, 3):
             for row, column in ti.static(ti.ndrange(2, 2)):
                 hessian[2 * first + row, 2 * second + column] = hessian3[3 * first + row, 3 * second + column]
     return distance2, gradient, hessian, dtype

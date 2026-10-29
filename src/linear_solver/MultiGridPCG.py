@@ -1,3 +1,5 @@
+import os
+
 import taichi as ti
 from math import ceil, isfinite
 
@@ -66,6 +68,38 @@ class MGPCGPoissonSolver:
         self.sum = ti.field(dtype=float, shape=())  # storage for reductions
         self.alpha = ti.field(dtype=float, shape=())  # step size
         self.beta = ti.field(dtype=float, shape=())  # step size
+        self._init_graph_dispatch()
+
+    def _init_graph_dispatch(self, signed_products=False):
+        # Mixture pressure operators also use a negative-definite sign convention.
+        self._signed_cg_products = signed_products
+        self._cg_breakdown_epsilon = 0.0
+        self.cg_epsilon = ti.field(float, shape=())
+        self.graph_dispatch = (
+            ti.lang.impl.current_cfg().arch == ti.cuda and os.environ.get("GEOTAICHI_MGPCG_GRAPH", "1") != "0"
+        )
+        self._v_cycle_graphs = {}
+        self._cg_graphs = {}
+        # Residual, previous z.r, breakdown code and offending value travel together.
+        self.cg_state = ti.Vector.field(4, dtype=float, shape=())
+
+    def _invalid_cg_product(self, value, allow_zero=False):
+        if not isfinite(value):
+            return True
+        if self._signed_cg_products:
+            return abs(value) <= self._cg_breakdown_epsilon
+        return value < 0.0 if allow_zero else value <= 0.0
+
+    @ti.func
+    def _invalid_device_cg_product(self, value, allow_zero: ti.template()):
+        invalid = ti.math.isnan(value) or ti.math.isinf(value)
+        if ti.static(self._signed_cg_products):
+            invalid = invalid or ti.abs(value) <= self.cg_epsilon[None]
+        elif ti.static(allow_zero):
+            invalid = invalid or value < 0.0
+        else:
+            invalid = invalid or value <= 0.0
+        return invalid
 
     def get_valid_multigrid_levels(self, requested_levels):
         levels = 1
@@ -217,48 +251,81 @@ class MGPCGPoissonSolver:
         for I in ti.grouped(self.z[l]):
             self.z[l][I] += self.z[l + 1][I // 2]
 
+    @ti.kernel
+    def clear(self, field: ti.template()):
+        for I in ti.grouped(field):
+            field[I] = 0.0
+
+    def _v_cycle_operations(self, smoother):
+        yield self.clear, (self.z[0],)
+        for level in range(self.n_mg_levels - 1):
+            for _ in range(self.pre_and_post_smoothing):
+                if smoother == "jacobi":
+                    yield self.smooth_jacobi, (level,)
+                else:
+                    yield self.smooth, (level, 0)
+                    yield self.smooth, (level, 1)
+            yield self.clear, (self.r[level + 1],)
+            yield self.clear, (self.z[level + 1],)
+            if smoother == "jacobi":
+                yield self.restrict_full_weighting, (level,)
+            else:
+                yield self.restrict, (level,)
+
+        bottom = self.n_mg_levels - 1
+        if smoother == "jacobi":
+            for _ in range(self.bottom_smoothing):
+                yield self.smooth_jacobi, (bottom,)
+        else:
+            for first, second in ((0, 1), (1, 0)):
+                for _ in range(self.bottom_smoothing // 2):
+                    yield self.smooth, (bottom, first)
+                    yield self.smooth, (bottom, second)
+
+        for level in reversed(range(self.n_mg_levels - 1)):
+            yield self.prolongate, (level,)
+            for _ in range(self.pre_and_post_smoothing):
+                if smoother == "jacobi":
+                    yield self.smooth_jacobi, (level,)
+                else:
+                    yield self.smooth, (level, 1)
+                    yield self.smooth, (level, 0)
+
+    def _compile_graph(self, operations):
+        builder = ti.graph.GraphBuilder()
+        for function, arguments in operations:
+            # shortcut: Taichi 1.7's public graph binder cannot bind field templates.
+            kernel = function._primal
+            compiled_key = kernel.ensure_compiled(self, *arguments)
+            builder._graph_builder.dispatch(kernel.compiled_kernels[compiled_key], [])
+        return builder.compile()
+
+    def _run_v_cycle(self, smoother):
+        if not self.graph_dispatch:
+            for function, arguments in self._v_cycle_operations(smoother):
+                function(*arguments)
+            return
+        key = (smoother, self.pre_and_post_smoothing, self.bottom_smoothing)
+        if key not in self._v_cycle_graphs:
+            self._v_cycle_graphs[key] = self._compile_graph(self._v_cycle_operations(smoother))
+        self._v_cycle_graphs[key].run({})
+
+    def _run_cg_graph(self, precondition=False):
+        key = (precondition, self.smoother, self.pre_and_post_smoothing, self.bottom_smoothing)
+        if key not in self._cg_graphs:
+            if precondition:
+                operations = list(self._v_cycle_operations(self.smoother))
+                operations += [(self.reduce, (self.z[0], self.r[0])), (self.update_device_direction, ())]
+            else:
+                operations = [(self.compute_Ap_dot, ()), (self.update_device_alpha, ()), (self.update_xr_dot, ())]
+            self._cg_graphs[key] = self._compile_graph(operations)
+        self._cg_graphs[key].run({})
+
     def v_cycle(self):
-        self.z[0].fill(0.0)
-        for l in range(self.n_mg_levels - 1):
-            for i in range(self.pre_and_post_smoothing):
-                self.smooth(l, 0)
-                self.smooth(l, 1)
-
-            self.r[l + 1].fill(0.0)
-            self.z[l + 1].fill(0.0)
-            self.restrict(l)
-
-        # solve Az = r on the coarse grid
-        for i in range(self.bottom_smoothing // 2):
-            self.smooth(self.n_mg_levels - 1, 0)
-            self.smooth(self.n_mg_levels - 1, 1)
-        for i in range(self.bottom_smoothing // 2):
-            self.smooth(self.n_mg_levels - 1, 1)
-            self.smooth(self.n_mg_levels - 1, 0)
-
-        for l in reversed(range(self.n_mg_levels - 1)):
-            self.prolongate(l)
-            for i in range(self.pre_and_post_smoothing):
-                self.smooth(l, 1)
-                self.smooth(l, 0)
+        self._run_v_cycle("rbgs")
 
     def v_cycle_jacobi(self):
-        self.z[0].fill(0.0)
-        for l in range(self.n_mg_levels - 1):
-            for i in range(self.pre_and_post_smoothing):
-                self.smooth_jacobi(l)
-
-            self.r[l + 1].fill(0.0)
-            self.z[l + 1].fill(0.0)
-            self.restrict_full_weighting(l)
-
-        for i in range(self.bottom_smoothing):
-            self.smooth_jacobi(self.n_mg_levels - 1)
-
-        for l in reversed(range(self.n_mg_levels - 1)):
-            self.prolongate(l)
-            for i in range(self.pre_and_post_smoothing):
-                self.smooth_jacobi(l)
+        self._run_v_cycle("jacobi")
 
     def apply_v_cycle(self):
         if self.smoother == "jacobi":
@@ -273,6 +340,9 @@ class MGPCGPoissonSolver:
         return False
 
     def solve(self, max_iters=-1, rel_tol=1e-12, abs_tol=1e-14, eps=1e-12):
+        self._cg_breakdown_epsilon = eps
+        if self.graph_dispatch and self._signed_cg_products:
+            self.cg_epsilon[None] = eps
         self.compute_true_residual()
         self.reduce(self.r[0], self.r[0])
         initial_rTr = self.sum[None]
@@ -293,24 +363,34 @@ class MGPCGPoissonSolver:
 
         self.reduce(self.z[0], self.r[0])
         old_zTr = self.sum[None]
-        if not isfinite(old_zTr) or old_zTr <= 0.0:
+        if self._invalid_cg_product(old_zTr):
             return self.fail("initial_zTr", old_zTr)
+
+        if self.graph_dispatch:
+            self.cg_state[None] = ti.Vector([0.0, old_zTr, 0.0, 0.0])
 
         # Conjugate gradients. Recompute b-Ax before accepting convergence;
         # the recursively updated residual can lose accuracy for stiff systems.
         iter = 0
         reliable_update_interval = 32
         while max_iters == -1 or iter < max_iters:
-            self.compute_Ap()
-            self.reduce(self.p, self.Ap)
-            pAp = self.sum[None]
-            if not isfinite(pAp) or pAp <= 0.0:
-                return self.fail("pAp", pAp)
-            self.alpha[None] = old_zTr / pAp
-
-            self.update_xr()
-            self.reduce(self.r[0], self.r[0])
-            rTr = self.sum[None]
+            if self.graph_dispatch:
+                self._run_cg_graph()
+                state = self.read_cg_state()
+                if state[2] != 0:
+                    reason = {1: "pAp", 2: "new_zTr", 3: "old_zTr"}[int(state[2])]
+                    return self.fail(reason, state[3])
+                rTr = float(state[0])
+            else:
+                self.compute_Ap()
+                self.reduce(self.p, self.Ap)
+                pAp = self.sum[None]
+                if self._invalid_cg_product(pAp):
+                    return self.fail("pAp", pAp)
+                self.alpha[None] = old_zTr / pAp
+                self.update_xr()
+                self.reduce(self.r[0], self.r[0])
+                rTr = self.sum[None]
             self.final_residual = rTr
             iter += 1
             self.last_iterations = iter
@@ -331,21 +411,31 @@ class MGPCGPoissonSolver:
                 self.update_p()
                 self.reduce(self.z[0], self.r[0])
                 old_zTr = self.sum[None]
-                if not isfinite(old_zTr) or old_zTr <= 0.0:
+                if self._invalid_cg_product(old_zTr):
                     return self.fail("verified_zTr", old_zTr)
+                if self.graph_dispatch:
+                    self.cg_state[None] = ti.Vector([verified_rTr, old_zTr, 0.0, 0.0])
                 continue
 
+            if self.graph_dispatch:
+                self._run_cg_graph(precondition=True)
+                continue
             self.apply_v_cycle()
             self.reduce(self.z[0], self.r[0])
             new_zTr = self.sum[None]
-            if not isfinite(new_zTr) or new_zTr < 0.0:
+            if self._invalid_cg_product(new_zTr, allow_zero=True):
                 return self.fail("new_zTr", new_zTr)
-            if old_zTr <= 0.0:
+            if self._invalid_cg_product(old_zTr):
                 return self.fail("old_zTr", old_zTr)
             self.beta[None] = new_zTr / old_zTr
 
             self.update_p()
             old_zTr = new_zTr
+        if self.graph_dispatch:
+            state = self.read_cg_state()
+            if state[2] != 0:
+                reason = {1: "pAp", 2: "new_zTr", 3: "old_zTr"}[int(state[2])]
+                return self.fail(reason, state[3])
         self.compute_true_residual()
         self.reduce(self.r[0], self.r[0])
         self.final_residual = self.sum[None]
@@ -354,6 +444,57 @@ class MGPCGPoissonSolver:
         self.breakdown_reason = "max_iterations"
         self.breakdown_value = float(self.final_residual)
         return False
+
+    @ti.kernel
+    def compute_Ap_dot(self):
+        self.sum[None] = 0.0
+        for I in ti.grouped(self.Ap):
+            if self.grid_type[0][I] == self.FLUID:
+                value = self.Adiag[0][I] * self.p[I] + self.neighbor_sum(self.Ax[0], self.p, I)
+                self.Ap[I] = value
+                self.sum[None] += self.p[I] * value
+
+    @ti.kernel
+    def update_device_alpha(self):
+        if self.cg_state[None][2] == 0.0:
+            product = self.sum[None]
+            if self._invalid_device_cg_product(product, False):
+                self.cg_state[None][2] = 1.0
+                self.cg_state[None][3] = product
+            else:
+                self.alpha[None] = self.cg_state[None][1] / product
+
+    @ti.kernel
+    def update_xr_dot(self):
+        self.sum[None] = 0.0
+        for I in ti.grouped(self.p):
+            if self.cg_state[None][2] == 0.0 and self.grid_type[0][I] == self.FLUID:
+                self.x[I] += self.alpha[None] * self.p[I]
+                self.r[0][I] -= self.alpha[None] * self.Ap[I]
+                self.sum[None] += self.r[0][I] * self.r[0][I]
+        self.cg_state[None][0] = self.sum[None]
+
+    @ti.kernel
+    def read_cg_state(self) -> ti.types.vector(4, ti.f64):
+        return self.cg_state[None]
+
+    @ti.kernel
+    def update_device_direction(self):
+        product = self.sum[None]
+        previous = self.cg_state[None][1]
+        if self.cg_state[None][2] == 0.0:
+            if self._invalid_device_cg_product(product, True):
+                self.cg_state[None][2] = 2.0
+                self.cg_state[None][3] = product
+            elif self._invalid_device_cg_product(previous, False):
+                self.cg_state[None][2] = 3.0
+                self.cg_state[None][3] = previous
+            else:
+                self.beta[None] = product / previous
+                self.cg_state[None][1] = product
+        for I in ti.grouped(self.p):
+            if self.cg_state[None][2] == 0.0 and self.grid_type[0][I] == self.FLUID:
+                self.p[I] = self.z[0][I] + self.beta[None] * self.p[I]
 
     @ti.kernel
     def reduce(self, p: ti.template(), q: ti.template()):

@@ -12,12 +12,12 @@ if str(ROOT) not in sys.path:
 import json
 import math
 import numpy as np
-from examples.mpm.IncompressibleFluid.wavemaker_tank_3d.draw.evaluate_wavemaker_tank_3d import (
+from tools.postprocessing.mpm.fluid_metrics import (
     linear_piston_wave,
     sdf_surface_gauge,
     deep_air_particle_count,
 )
-from examples.mpm.IncompressibleFluid.large_tank_incompressible_3d.draw.validate_large_tank_incompressible_3d import (
+from tools.postprocessing.mpm.fluid_metrics import (
     enclosed_air_count,
 )
 

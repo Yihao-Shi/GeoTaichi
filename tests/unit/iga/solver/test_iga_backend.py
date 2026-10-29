@@ -5,7 +5,6 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-
 pytestmark = [pytest.mark.cpu, pytest.mark.serial]
 
 
@@ -72,6 +71,8 @@ def test_iga_backend_builds_implicit_solver(taichi_runtime, tmp_path):
         step=0,
         interval=1,
         residual=1.0e-4,
+        linear_solver_tolerance=0.0,
+        linear_solver_relative_tolerance=2.0e-9,
         path=str(tmp_path / "implicit"),
     )
     engine = iga.build()
@@ -79,6 +80,8 @@ def test_iga_backend_builds_implicit_solver(taichi_runtime, tmp_path):
     assert get_dimension() == 2
     assert isinstance(engine, ImplicitIGA)
     assert engine.degree_of_freedom == 18
+    assert engine.linear_solver_tolerance == 0.0
+    assert engine.linear_solver_relative_tolerance == 2.0e-9
 
 
 def test_explicit_iga_energy_is_sampled_only_when_enabled(taichi_runtime, tmp_path):
@@ -240,7 +243,7 @@ def test_iga_hash_bicgstab_stays_in_taichi_solver(taichi_runtime, tmp_path):
     engine.incre_resolution.fill(0)
     engine.reset_linear_system()
     engine.assemble_body_matrix()
-    expected_raw_pairs = engine.stiffness_nnz // (2 * 2) * engine.element.gauss_number
+    expected_raw_pairs = engine.stiffness_nnz // (2 * 2)
     assert int(engine.hash_matrix.raw_non_diag_count[0]) == expected_raw_pairs
     assert engine.hash_matrix.non_diag.max_pairs_num == expected_raw_pairs
     raw_i = engine.hash_matrix.non_diag.blockI.to_numpy()[:expected_raw_pairs]

@@ -23,7 +23,7 @@ from examples.mmpm.SubmarineLandslide.submarine_landslide_3d.draw.evaluate_subma
 
 
 from geotaichi import MPM, init
-from examples.mmpm.SubmarineLandslide.submarine_landslide_2d.submarine_landslide_2d import (
+from examples.mmpm.SubmarineLandslide.submarine_landslide_3d.submarine_landslide_3d_parameters import (
     FLUID_DENSITY,
     FRICTION_ANGLE,
     GRAVITY,
@@ -33,7 +33,7 @@ from examples.mmpm.SubmarineLandslide.submarine_landslide_2d.submarine_landslide
     SOLID_DENSITY,
     WATER_AREA,
 )
-from examples.mmpm.SubmarineLandslide.submarine_landslide_2d.submarine_landslide_2d_parameters import (
+from examples.mmpm.SubmarineLandslide.submarine_landslide_3d.submarine_landslide_3d_parameters import (
     MAXIMUM_POROSITY,
     REFERENCE_DOI,
     SAND_LEFT_X,
@@ -302,7 +302,6 @@ def run(args):
             "FluidDensity": FLUID_DENSITY,
             "Porosity": INITIAL_POROSITY,
             "MaximumPorosity": MAXIMUM_POROSITY,
-            "FluidBulkModulus": 2.2e8,
             "Permeability": 1.0e-3,
             "FluidViscosity": 1.0e-3,
             "GrainDiameter": 6.0e-3,

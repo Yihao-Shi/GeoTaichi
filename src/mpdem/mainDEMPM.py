@@ -464,9 +464,11 @@ class DEMPM(SolverDiagnosticsMixin):
 
         mpm_function = split_function(kwargs, "mpm_")
         dem_function = split_function(kwargs, "dem_")
-        dem_function.update(
-            {"max_bounding_radius": self.sims.max_bounding_rad, "min_bounding_radius": self.sims.min_bounding_rad}
-        )
+        # CFDEM skips coupling-contact search, leaving these bounds unset at zero.
+        if self.sims.min_bounding_rad > 0.0:
+            dem_function["min_bounding_radius"] = self.sims.min_bounding_rad
+        if self.sims.max_bounding_rad > 0.0:
+            dem_function["max_bounding_radius"] = self.sims.max_bounding_rad
         self.mpm.add_essentials(**mpm_function)
         self.dem.add_essentials(**dem_function)
 
@@ -626,7 +628,7 @@ class DEMPM(SolverDiagnosticsMixin):
         if not self.mpm.sims.ipc_contact:
             raise RuntimeError("Direct MPM--AffineBody coupling requires MPM IPC contact")
         if self.direct_affine_ipc_model is None:
-            raise RuntimeError("choose BarrierIPC or SemiIPC on MPDEM before run")
+            raise RuntimeError("choose BarrierIPC on MPDEM before run")
         self.sync_settings()
         self.sims.validate_coupling_configuration(self.mpm.sims, self.dem.sims)
         self.mpm.add_essentials(**{key[4:]: value for key, value in kwargs.items() if key.startswith("mpm_")})
@@ -650,8 +652,6 @@ class DEMPM(SolverDiagnosticsMixin):
                 "Direct MPM, AffineBody, and mixed contact must all select "
                 f"the same IPC model, got {mpm_model}, {affine_model}, {mixed_model}"
             )
-        if mixed_model == "SemiIPC" and self.sims.enable_step_retry:
-            raise ValueError("Direct MPM--AffineBody SemiIPC does not support step retry")
 
         from src.mpdem.engines.DirectAffineIPCAssembler import DirectAffineIPCAssembler
         from src.mpdem.engines.DirectAffineIPCSystem import DirectAffineIPCSystem
@@ -667,9 +667,7 @@ class DEMPM(SolverDiagnosticsMixin):
             affine_engine.operator,
             direct_mpm.ipc,
             self.direct_affine_contact,
-            inexact_newton=solver.get(
-                "inexact_newton", bool(getattr(direct_mpm.mpm.material, "is_nonassociated", False))
-            ),
+            inexact_newton=solver.get("inexact_newton", False),
             force_atol=solver.get("absolute_tolerance", 1.0e-10),
             force_rtol=solver.get("residual_tolerance", 1.0e-8),
         )

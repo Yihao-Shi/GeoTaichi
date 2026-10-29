@@ -25,11 +25,12 @@ def case_parameters(cells_per_diameter=None):
         "particle_density": 1120.0,
         "fluid_density": 962.0,
         "viscosity": 0.113,
+        "fluid_wall_no_slip": True,
         "centers": [[0.05, 0.05, 0.1275]],
         "reference_speed": 0.959 * 0.091,
         "unbounded_reference_speed": 0.091,
         "reference": "ten Cate et al. (2002), case E3 confined maximum speed",
-        "cells_per_diameter": cells_per_diameter or 10.0,
+        "cells_per_diameter": cells_per_diameter or 16.0,
         "dt": 0.00025,
         "time": 0.8,
         "maximum_speed_relative_tolerance": 0.05,
@@ -106,7 +107,7 @@ def run(config, args):
         shape_function="QuadBSpline",
         gravity=[0.0, 0.0, -9.81],
         material_type="Fluid",
-        velocity_projection="PIC/FLIP",
+        velocity_projection=None,
         solver_type="Implicit",
         discretization="FDM",
         fluid_level_set=False,
@@ -114,8 +115,8 @@ def run(config, args):
         particle_shifting=True,
         density_projection=True,
         density_projection_interior_only=True,
-        solid_sdf_cut_cell=False,
-        fluid_wall_no_slip=False,
+        solid_sdf_cut_cell=config["fluid_wall_no_slip"],
+        fluid_wall_no_slip=config["fluid_wall_no_slip"],
         visualize=args.write_vtu,
     )
     implicit = {"linear_solver": args.linear_solver, "max_iteration_number": 200, "residual_tolerance": 1e-08}
@@ -141,12 +142,22 @@ def run(config, args):
             "CFL": 0.5,
         }
     )
+    shape = polyhedron(file=str(ROOT / "assets/mesh/LSDEM/sphere.stl"))
+    sdf_spacing = 0.05
+    template_radius = (3.0 * shape.mesh.volume / (4.0 * math.pi)) ** (1.0 / 3.0)
+    rigid_scale = 0.5 * config["diameter"] / template_radius
+    # Every vertex of an intersected fluid cell must lie in the SDF grid,
+    # including after rigid rotation. One cell diagonal bounds that reach.
+    sdf_extent = max(3, math.ceil(math.sqrt(sum(h * h for h in spacing)) / (rigid_scale * sdf_spacing)) + 1)
+    template_bound = float(shape.mesh.bounding_sphere.primitive.radius)
+    sdf_grid_capacity = (2 * (math.ceil(template_bound / sdf_spacing) + sdf_extent) + 1) ** 3
+    shape.grids(space=sdf_spacing, extent=sdf_extent)
     dempm.dem.memory_allocate(
         memory={
             "max_material_number": 1,
             "max_rigid_body_number": body_count,
             "max_rigid_template_number": 1,
-            "levelset_grid_number": 250000,
+            "levelset_grid_number": sdf_grid_capacity,
             "surface_node_number": 20000,
             "max_plane_number": 0,
             "body_coordination_number": 4 if body_count > 1 else 0,
@@ -180,7 +191,6 @@ def run(config, args):
         materialID=0,
         attribute={"Density": config["particle_density"], "ForceLocalDamping": 0.0, "TorqueLocalDamping": 0.0},
     )
-    shape = polyhedron(file=str(ROOT / "assets/mesh/LSDEM/sphere.stl")).grids(space=0.05, extent=3)
     size = {"Radius": 0.5 * config["diameter"]}
     template = {"Name": "particle", "Object": shape, "WriteFile": False}
     dempm.dem.add_template(template=template)
@@ -205,7 +215,6 @@ def run(config, args):
         material={
             "MaterialID": 1,
             "Density": config["fluid_density"],
-            "Modulus": 2000000.0,
             "Viscosity": config["viscosity"],
             "ElementLength": min(spacing),
             "cL": 1.5,
@@ -301,6 +310,8 @@ def run(config, args):
     )
     metrics = evaluate(config, times, centers, velocities, solid_volume_error, ibm_l2_error)
     metrics.update(
+        sdf_grid_extent=int(dempm.dem.scene.box[0].extent),
+        sdf_physical_grid_spacing=float(dempm.dem.scene.box[0].grid_space),
         fluid_solver="semi-implicit-incompressible-fdm",
         cell_counts=actual_counts,
         element_size=actual_spacing,
@@ -320,11 +331,12 @@ def run(config, args):
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cells-per-diameter", type=float)
-    parser.add_argument("--arch", default=os.environ.get("GT_IBM_VALIDATION_ARCH", "gpu"))
+    parser.add_argument("--arch", default=os.environ.get("GT_IBM_VALIDATION_ARCH", "cpu"))
     parser.add_argument("--linear-solver", choices=("PCG", "MGPCG"), default="MGPCG")
     parser.add_argument("--output-dir", type=Path, default=Path(__file__).resolve().parent / "OutputData")
     parser.add_argument("--dt", type=float)
     parser.add_argument("--time", type=float)
+    # Match the adopted CPU/f64 fine-grid E3 run (effective d/dx=16.2).
     parser.add_argument("--alpha-pic", type=float, default=0.01)
     parser.add_argument("--save-interval", type=float)
     parser.add_argument("--sample-every", type=int, default=10)

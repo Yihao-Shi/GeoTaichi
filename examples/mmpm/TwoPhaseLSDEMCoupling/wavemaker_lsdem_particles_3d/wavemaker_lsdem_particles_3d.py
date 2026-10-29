@@ -16,6 +16,7 @@ import taichi as ti
 os.environ.setdefault("GEOTAICHI_REAL_DTYPE", "float64")
 
 ROOT = Path(__file__).resolve().parents[4]
+CASE_DIR = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
@@ -30,12 +31,6 @@ from examples.mmpm.TwoPhaseLSDEMCoupling.wavemaker_lsdem_particles_3d.draw.evalu
 
 
 from geotaichi import DEMPM, init, polyhedron
-from examples.mmpm.TwoPhaseWavemaker3D.two_layer_two_phase_wavemaker_3d import set_moving_piston_mac_boundary
-from examples.mpm.IncompressibleFluid.wavemaker_tank_3d.wavemaker_tank_3d import (
-    enforce_moving_piston_particles,
-    piston_velocity,
-)
-from examples.mpm.IncompressibleFluid.wavemaker_tank_3d.draw.evaluate_wavemaker_tank_3d import piston_displacement
 from src.utils.SolverRuntime import python_callback
 
 SLOPE_HEIGHT = WATER_DEPTH / 3.0
@@ -47,10 +42,99 @@ SOIL_COHESION = 300.0
 SOIL_FRICTION = 26.0
 
 
+@ti.kernel
+def enforce_moving_piston_particles(
+    particle_num: int,
+    wall_position: float,
+    wall_velocity: float,
+    dx: float,
+    particle: ti.template(),
+):
+    clearance = 1.0e-4 * dx
+    for p in range(particle_num):
+        if int(particle[p].active) == 1 and particle[p].x[0] < wall_position + clearance:
+            particle[p].x[0] = wall_position + clearance
+            if particle[p].v[0] < wall_velocity:
+                particle[p].v[0] = wall_velocity
+            # P2G reads the phase velocity, independently of the output velocity v.
+            if int(particle[p].phase) == 1 and particle[p].vs[0] < wall_velocity:
+                particle[p].vs[0] = wall_velocity
+            elif int(particle[p].phase) == 2 and particle[p].vf[0] < wall_velocity:
+                particle[p].vf[0] = wall_velocity
+
+
+def update_piston_shifting_reference(engine, scene, wall_position, tank, wall_thickness):
+    from src.mpm.engines.EngineKernel import kernel_fdm_box_shifting_reference_volume3d
+
+    element = scene.element
+    kernel_fdm_box_shifting_reference_volume3d(
+        element.gnum,
+        element.grid_size,
+        element.calLength,
+        element.boundary_type,
+        engine.shifting_reference_volume,
+        ti.Vector([wall_position, wall_thickness, wall_thickness]),
+        ti.Vector([tank[0] - wall_thickness, tank[1] - wall_thickness, tank[2]]),
+    )
+    engine.shifting_reference_ready = True
+
+
+def solid_cell_boundaries(wall):
+    # Include wall intersections so interpolation cannot create pressure cells at corners.
+    walls = [
+        ([0.0, wall, 0.0], [TANK[0], wall, TANK[2]], [0.0, -1.0, 0.0]),
+        ([0.0, TANK[1] - wall, 0.0], [TANK[0], TANK[1] - wall, TANK[2]], [0.0, 1.0, 0.0]),
+        ([0.0, 0.0, wall], [TANK[0], TANK[1], wall], [0.0, 0.0, -1.0]),
+        ([TANK[0] - wall, 0.0, 0.0], [TANK[0] - wall, TANK[1], TANK[2]], [1.0, 0.0, 0.0]),
+    ]
+    return [
+        {"BoundaryType": "SolidCell", "StartPoint": start, "EndPoint": end, "Norm": normal, "CellThickness": 1}
+        for start, end, normal in walls
+    ]
+
+
 def embedded_trunk_shift(vertices, wall):
     if len(vertices) == 0 or not np.isfinite(vertices).all() or wall >= SLOPE_HEIGHT:
         raise ValueError("Trunk placement requires a finite surface and a resolved soil bed")
     return 0.5 * (wall + SLOPE_HEIGHT) - float(np.min(vertices[:, 2]))
+
+
+@ti.kernel
+def set_moving_piston_mac_boundary(
+    velocity: float,
+    wall_position: float,
+    tank_width: float,
+    tank_height: float,
+    grid_size: ti.types.vector(3, float),
+    cell_type: ti.template(),
+    solid_velocity_x: ti.template(),
+):
+    for I in ti.grouped(cell_type):
+        if (I[0] + 0.5) * grid_size[0] <= wall_position:
+            cell_type[I] = 2
+    for I in ti.grouped(solid_velocity_x):
+        x = I[0] * grid_size[0]
+        y = (I[1] + 0.5) * grid_size[1]
+        z = (I[2] + 0.5) * grid_size[2]
+        if x <= wall_position + grid_size[0] and 0.0 < y < tank_width and 0.0 < z < tank_height:
+            solid_velocity_x[I] = velocity
+
+
+def piston_velocity(time, frequency, velocity_amplitude, ramp_time):
+    omega = 2.0 * math.pi * frequency
+    if time >= ramp_time:
+        return velocity_amplitude * math.cos(omega * time)
+    phase = math.pi * time / ramp_time
+    ramp = 0.5 * (1.0 - math.cos(phase))
+    ramp_rate = 0.5 * math.pi / ramp_time * math.sin(phase)
+    displacement_amplitude = velocity_amplitude / omega
+    return displacement_amplitude * (ramp_rate * math.sin(omega * time) + ramp * omega * math.cos(omega * time))
+
+
+def piston_displacement(time, frequency, velocity_amplitude, ramp_time):
+    omega = 2.0 * math.pi * frequency
+    ramp = 1.0 if time >= ramp_time else 0.5 * (1.0 - math.cos(math.pi * time / ramp_time))
+    return ramp * velocity_amplitude / omega * math.sin(omega * time)
 
 
 def parse_args():
@@ -75,7 +159,7 @@ def parse_args():
     parser.add_argument(
         "--output",
         type=Path,
-        default=ROOT / "examples" / "mmpm" / "TwoPhaseLSDEMCoupling" / "OutputData" / "wavemaker_lsdem_particles_3d",
+        default=CASE_DIR / "OutputData",
     )
     return parser.parse_args()
 
@@ -213,7 +297,8 @@ def run(args):
             "max_material_number": 1,
             "max_rigid_body_number": LSDEM_BODY_COUNT,
             "max_rigid_template_number": 2,
-            "levelset_grid_number": 800000,
+            # The branched trunk and its existing SDF halo need over one million nodes.
+            "levelset_grid_number": 1200000,
             "surface_node_number": 24000,
             "max_plane_number": 5,
             "body_coordination_number": 12,
@@ -268,7 +353,8 @@ def run(args):
                     "BodyPoint": [0.74, 0.12, 0.18],
                     # Radius is volume-equivalent, not the elongated body's bounding radius.
                     "Radius": 0.040,
-                    "BodyOrientation": [0.0, 75.0, 8.0],
+                    # Keep the fork plane along the tank so branches clear the side walls.
+                    "BodyOrientation": [90.0, 75.0, 8.0],
                     "InitialVelocity": [0.0, 0.0, 0.0],
                     "FixMotion": ["Free", "Free", "Free"],
                 },
@@ -315,7 +401,6 @@ def run(args):
             "FluidDensity": 1000.0,
             "Porosity": 0.40,
             "MaximumPorosity": 0.56,
-            "FluidBulkModulus": 2.2e9,
             "Permeability": 2.0e-4,
             "FluidViscosity": 1.0e-3,
             "GrainDiameter": 3.0e-3,
@@ -376,25 +461,15 @@ def run(args):
     expected_fluid = int(np.count_nonzero(initial_phase == 2))
     expected_solid = int(np.count_nonzero(initial_phase == 1))
 
-    walls = [
-        ([wall, wall, wall], [TANK[0] - wall, wall, TANK[2]], [0.0, -1.0, 0.0]),
-        ([wall, TANK[1] - wall, wall], [TANK[0] - wall, TANK[1] - wall, TANK[2]], [0.0, 1.0, 0.0]),
-        ([wall, wall, wall], [TANK[0] - wall, TANK[1] - wall, wall], [0.0, 0.0, -1.0]),
-        ([TANK[0] - wall, wall, wall], [TANK[0] - wall, TANK[1] - wall, TANK[2]], [1.0, 0.0, 0.0]),
-    ]
-    dempm.mpm.add_boundary_condition(
-        [
-            {"BoundaryType": "SolidCell", "StartPoint": a, "EndPoint": b, "Norm": n, "CellThickness": 1}
-            for a, b, n in walls
-        ]
-    )
-    for point, _, normal in walls:
+    walls = solid_cell_boundaries(wall)
+    dempm.mpm.add_boundary_condition(walls)
+    for boundary in walls:
         dempm.dem.add_wall(
             body={
                 "WallType": "Plane",
                 "MaterialID": 0,
-                "WallCenter": point,
-                "OuterNormal": (-np.asarray(normal)).tolist(),
+                "WallCenter": boundary["StartPoint"],
+                "OuterNormal": (-np.asarray(boundary["Norm"])).tolist(),
             }
         )
     dempm.dem.add_wall(
@@ -416,6 +491,7 @@ def run(args):
             dempm.mpm.enginer.cell_type,
             dempm.mpm.enginer.solid_velocity_x,
         )
+        update_piston_shifting_reference(dempm.mpm.enginer, scene, position, TANK, wall)
 
     @python_callback
     def constrain_piston_particles():

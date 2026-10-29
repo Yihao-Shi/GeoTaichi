@@ -17,13 +17,9 @@ pytestmark = [
 ]
 
 
-def setup_module():
-    ti.reset()
-    ti.init(arch=ti.cpu, default_fp=ti.f64, offline_cache=False)
-
-
-def teardown_module():
-    ti.reset()
+@pytest.fixture(autouse=True)
+def solver_runtime(taichi_runtime):
+    return taichi_runtime
 
 
 def _coarse_shape(shape):
@@ -137,8 +133,10 @@ def test_3d_restriction_prolongation_and_jacobi_match_numpy_reference():
     np.testing.assert_allclose(solver.z[0].to_numpy(), expected_smooth, rtol=0.0, atol=2.0e-14)
 
 
-def test_solver_reports_iteration_exhaustion():
+@pytest.mark.parametrize("graph_dispatch", [False, True])
+def test_solver_reports_iteration_exhaustion(graph_dispatch):
     solver = MGPCGPoissonSolver(2, (2, 2), n_mg_levels=1)
+    solver.graph_dispatch = graph_dispatch
     solver.grid_type[0].fill(solver.FLUID)
     solver.Adiag[0].fill(1.0)
     solver.Ax[0].fill(0.0)
@@ -148,8 +146,10 @@ def test_solver_reports_iteration_exhaustion():
     assert solver.breakdown_reason == "max_iterations"
 
 
-def test_solver_accepts_positive_small_scale_search_products():
+@pytest.mark.parametrize("graph_dispatch", [False, True])
+def test_solver_accepts_positive_small_scale_search_products(graph_dispatch):
     solver = MGPCGPoissonSolver(2, (2, 2), n_mg_levels=1, bottom_smoothing=2)
+    solver.graph_dispatch = graph_dispatch
     solver.grid_type[0].fill(solver.FLUID)
     solver.Adiag[0].fill(1.0)
     solver.Ax[0].fill(0.0)
@@ -160,8 +160,10 @@ def test_solver_accepts_positive_small_scale_search_products():
     assert solver.breakdown_reason == ""
 
 
-def test_solver_rejects_false_recursive_convergence():
+@pytest.mark.parametrize("graph_dispatch", [False, True])
+def test_solver_rejects_false_recursive_convergence(graph_dispatch):
     solver = MGPCGPoissonSolver(2, (2, 1), n_mg_levels=1, bottom_smoothing=2)
+    solver.graph_dispatch = graph_dispatch
     solver.grid_type[0].fill(solver.FLUID)
     solver.Adiag[0].fill(1.0)
     off_diagonal = np.zeros((2, 1, 2), dtype=np.float64)
@@ -175,3 +177,72 @@ def test_solver_rejects_false_recursive_convergence():
     assert actual_residual_squared > max(1.0e-14, 1.25e-10)
     assert solver.final_residual == pytest.approx(actual_residual_squared)
     assert solver.breakdown_reason == "max_iterations"
+
+
+@pytest.mark.parametrize("dimension", [2, 3])
+@pytest.mark.parametrize("smoother", ["rbgs", "jacobi"])
+def test_graph_dispatch_preserves_v_cycle_and_reuses_current_fields(dimension, smoother):
+    shape = (6,) * dimension
+    solver = MGPCGPoissonSolver(dimension, shape, n_mg_levels=2, bottom_smoothing=4, smoother=smoother)
+    rng = np.random.default_rng(42)
+    for level in range(solver.n_mg_levels):
+        solver.grid_type[level].fill(solver.FLUID)
+        solver.Adiag[level].fill(2.0 * dimension + 1.0)
+        solver.Ax[level].fill(-1.0)
+
+    for _ in range(2):
+        solver.r[0].from_numpy(rng.normal(size=shape))
+        solver.z[0].fill(3.0)
+        solver.graph_dispatch = False
+        solver.apply_v_cycle()
+        expected = {name: [field.to_numpy() for field in getattr(solver, name)] for name in ("r", "z")}
+        solver.z[0].fill(-4.0)
+        solver.graph_dispatch = True
+        solver.apply_v_cycle()
+        for name, arrays in expected.items():
+            for field, values in zip(getattr(solver, name), arrays):
+                np.testing.assert_allclose(field.to_numpy(), values, rtol=1.0e-12, atol=1.0e-12)
+    assert len(solver._v_cycle_graphs) == 1
+
+
+@pytest.mark.parametrize("graph_dispatch", [False, True])
+def test_solver_breakdown_clears_the_solution(graph_dispatch):
+    solver = MGPCGPoissonSolver(2, (2, 2), n_mg_levels=1, bottom_smoothing=2)
+    solver.graph_dispatch = graph_dispatch
+    solver.grid_type[0].fill(solver.FLUID)
+    solver.Adiag[0].fill(1.0)
+    solver.Ax[0].fill(0.0)
+    solver.b.fill(1.0)
+    precondition = solver.apply_v_cycle
+
+    def make_search_direction_indefinite():
+        precondition()
+        solver.Adiag[0].fill(-1.0)
+
+    solver.apply_v_cycle = make_search_direction_indefinite
+    assert not solver.solve(max_iters=2)
+    assert solver.breakdown_reason == "pAp"
+    assert solver.last_iterations == 0
+    np.testing.assert_array_equal(solver.x.to_numpy(), 0.0)
+
+
+@pytest.mark.parametrize("graph_dispatch", [False, True])
+def test_solver_checks_true_residual_through_reliable_updates(graph_dispatch):
+    shape = (32, 32)
+    solver = MGPCGPoissonSolver(2, shape, n_mg_levels=1, bottom_smoothing=2)
+    solver.graph_dispatch = graph_dispatch
+    solver.grid_type[0].fill(solver.FLUID)
+    solver.Adiag[0].fill(4.0)
+    solver.Ax[0].fill(-1.0)
+    rhs = np.random.default_rng(23).normal(size=shape)
+    solver.b.from_numpy(rhs)
+    assert solver.solve(max_iters=300, rel_tol=1e-14, abs_tol=1e-20)
+    solution = solver.x.to_numpy()
+    residual = rhs - 4.0 * solution
+    for axis in range(2):
+        left, right = [slice(None)] * 2, [slice(None)] * 2
+        left[axis], right[axis] = slice(1, None), slice(None, -1)
+        residual[tuple(left)] += solution[tuple(right)]
+        residual[tuple(right)] += solution[tuple(left)]
+    assert solver.last_iterations > 32
+    assert float(np.sum(residual**2)) < float(np.sum(rhs**2)) * 1e-14

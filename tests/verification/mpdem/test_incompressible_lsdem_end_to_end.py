@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[3]
 EXAMPLE = ROOT / "examples/mpm/IncompressibleFluid/lsdem_coupling_3d/lsdem_coupling_3d.py"
 
 
-def run_solver(tmp_path, solver):
+def run_solver(tmp_path, solver, save_interval="4e-4"):
     output = tmp_path / solver.lower()
     environment = os.environ.copy()
     environment.update(
@@ -29,7 +29,7 @@ def run_solver(tmp_path, solver):
             "GT_LSDEM_ARCH": "cpu",
             "GT_LSDEM_LINEAR_SOLVER": solver,
             "GT_LSDEM_SIMULATION_TIME": "4e-4",
-            "GT_LSDEM_SAVE_INTERVAL": "4e-4",
+            "GT_LSDEM_SAVE_INTERVAL": save_interval,
             "GT_LSDEM_SAVE_PATH": str(output),
             "GT_LSDEM_POSTPROCESS": "0",
             "MPLCONFIGDIR": str(tmp_path / "matplotlib"),
@@ -62,6 +62,7 @@ print("GT_SOLVER_EVIDENCE=" + json.dumps({{
     "mapped_solid_volume": mapped_solid_volume,
     "rigid_volume": rigid_volume,
     "solid_volume_relative_error": abs(mapped_solid_volume - rigid_volume) / rigid_volume,
+    "final_grid_velocity_norm": sum(float(np.linalg.norm(v.to_numpy())) for v in dempm.mpm.scene.node.velocity),
 }}))
 """
     completed = subprocess.run(
@@ -117,3 +118,9 @@ def test_fully_resolved_pcg_and_mgpcg_agree_end_to_end(tmp_path):
         assert np.isfinite(pcg[name]).all()
         assert np.isfinite(mgpcg[name]).all()
         assert relative_l2(pcg[name], mgpcg[name]) < 1.0e-4
+
+
+def test_final_ibm_diagnostics_keep_grid_velocity_after_extra_save(tmp_path):
+    result = run_solver(tmp_path, "PCG", save_interval="3e-4")
+    assert result["time"] == pytest.approx(4e-4)
+    assert result["solver"]["final_grid_velocity_norm"] > 0.0

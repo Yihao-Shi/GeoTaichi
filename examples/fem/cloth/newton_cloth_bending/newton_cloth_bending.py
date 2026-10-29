@@ -44,7 +44,7 @@ def main():
     parser.add_argument("--dt", type=float, default=1.0 / 60.0)
     parser.add_argument("--start-height", type=float, default=10.0)
     parser.add_argument("--self-contact", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--contact-model", choices=("BarrierIPC", "SemiIPC"), default="BarrierIPC")
+    parser.add_argument("--contact-model", choices=("BarrierIPC",), default="BarrierIPC")
     parser.add_argument("--max-iterations", type=int, default=250)
     parser.add_argument("--newton-velocity-tolerance", type=float, default=1.0e-2)
     parser.add_argument("--kappa", type=float, default=2.0e2)
@@ -78,7 +78,7 @@ def main():
         parser.error("invalid grid, timestep, iteration limit, Newton/contact, or linear tolerance")
 
     import geotaichi as gt
-    from src.fem import FEM
+    from geotaichi import FEM
     from src.fem.generator import FEMMesh
 
     gt.init(arch=args.arch, default_fp="float64", log=True)

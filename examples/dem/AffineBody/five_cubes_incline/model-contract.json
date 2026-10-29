@@ -1,0 +1,228 @@
+{
+  "schema_version": 1,
+  "title": "Five affine cubes: sliding and sticking on one incline",
+  "module": "dem",
+  "dimension": 3,
+  "coordinate_assumption": "3d",
+  "units": {
+    "length": "m",
+    "mass": "kg",
+    "time": "s"
+  },
+  "physics": {
+    "processes": [
+      "gravity",
+      "AffineBody inertia",
+      "IPC contact",
+      "converged lagged friction"
+    ],
+    "governing_assumptions": [
+      "Five free near-rigid cubes, no damping or imposed motion. Regularized Coulomb friction."
+    ]
+  },
+  "geometry": {
+    "description": "Five 0.25 m cubes in parallel lanes on a 30 degree plane",
+    "coordinate_frame": "Cartesian z up; downslope=(-cos(30deg),0,-sin(30deg))",
+    "dimensions": {
+      "edge_m": 0.25,
+      "incline_degrees": 30,
+      "lane_pitch_m": 0.5
+    }
+  },
+  "discretization": {
+    "particle_or_template_resolution": {
+      "bodies": 5,
+      "vertices": 40,
+      "triangles": 60
+    },
+    "refinement_plan": "Exact planar cube faces; no refinement needed."
+  },
+  "materials": [
+    {
+      "name": "cube",
+      "model": "AffineBody orthogonality penalty",
+      "parameters": {
+        "density_kg_m3": 1000,
+        "young_modulus_Pa": 2000000000000.0
+      },
+      "provenance": "Numerical near-rigid penalty; validate stretch."
+    }
+  ],
+  "initial_conditions": {
+    "gravity": [
+      0,
+      0,
+      -9.81
+    ],
+    "velocity": [
+      0,
+      0,
+      0
+    ],
+    "state_variables": "Undeformed rotated cubes; initial height and two small angles balance normal force and friction-induced torque. Initial translational and angular velocities are zero."
+  },
+  "boundary_conditions": [
+    {
+      "type": "Plane",
+      "materialID": 5,
+      "normal": [
+        -0.5,
+        0,
+        0.8660254037844386
+      ],
+      "point": [
+        0,
+        0,
+        0.1
+      ]
+    }
+  ],
+  "contact_or_coupling": {
+    "enabled": true,
+    "law": "IPC + lagged regularized Coulomb friction",
+    "active_pairs": [
+      "each cube / plane"
+    ],
+    "parameters": {
+      "friction": [
+        0.1,
+        0.3,
+        0.5,
+        0.7,
+        0.9
+      ],
+      "dhat_m": 0.003,
+      "barrier_stiffness": 800000000.0,
+      "friction_epsv_m_s": 0.0001,
+      "friction_iterations": -1,
+      "friction_max_iterations": 50,
+      "friction_tolerance_m_s": 1e-07
+    }
+  },
+  "time": {
+    "timestep": 0.001,
+    "duration": 1.2,
+    "save_interval": 0.01,
+    "stability_policy": "Fixed timestep; CCD, Newton and friction convergence mandatory."
+  },
+  "capacities": {
+    "safety_margin": 2,
+    "estimates": {
+      "bodies": 5,
+      "vertices": 40,
+      "planes": 1
+    },
+    "allocations": {
+      "max_affine_body_number": 5,
+      "surface_node_number": 80,
+      "max_plane_number": 1
+    }
+  },
+  "outputs": {
+    "path": "CLI output-dir",
+    "fields": [
+      "native triangle VTU",
+      "solver history",
+      "validation-evidence.json"
+    ],
+    "restart": false
+  },
+  "validation": {
+    "observable": "Maximum normalized sliding, sticking and principal-stretch error",
+    "expectation": 0,
+    "tolerance": 1.0,
+    "evidence": "Analytical inclined-plane balance and recorded accepted steps.",
+    "invariants": [
+      {
+        "kind": "contract_observable",
+        "expectation": 0,
+        "tolerance": 1.0,
+        "basis": "Maximum normalized error: sliding 1% or 2e-5 m; sticking 2e-4 m; stretch 1e-4."
+      },
+      {
+        "kind": "contact_gap",
+        "expectation": "positive",
+        "tolerance": 0,
+        "basis": "Strictly feasible IPC."
+      }
+    ],
+    "criteria_description": {
+      "expectation": "First three slide at g(sin(theta)-mu*cos(theta)); last two stay within 0.2 mm.",
+      "tolerance": "Sliding final displacement within 1% or 2e-5 m of BackwardEuler oracle; stretch deviation <1e-4."
+    },
+    "linear_accuracy": {
+      "absolute_residual_tolerance": 1e-13,
+      "minimum_mass_eigenvalue": 0.08138020833333265,
+      "surface_velocity_bound_factor": 2804.3394944264633,
+      "surface_velocity_error_bound_m_s": 2.804339494426463e-10,
+      "newton_tolerance_m_s": 1e-08,
+      "basis": "Projected A >= M, max surface |B A^-1 r| / dt <= sqrt(max(B M^-1 B^T)/lambda_min(M)) |r| / dt."
+    }
+  },
+  "assumptions": [
+    "The user requested three sliding cubes and two sticking cubes; coefficients bracket tan(30deg).",
+    "Static friction means negligible regularization creep, not constrained degrees of freedom.",
+    "Initial contact pose is equilibrated for each friction coefficient; no settling phase or imposed motion is hidden from the rendered trajectory."
+  ],
+  "unresolved": [],
+  "api": {
+    "facade": "dem",
+    "runtime": {
+      "dim": 3,
+      "arch": "cpu",
+      "default_fp": "float64"
+    },
+    "environment": {
+      "GEOTAICHI_REAL_DTYPE": "float64",
+      "GEOTAICHI_FORCE_CPU": "1"
+    },
+    "configuration": {
+      "scheme": "AffineBody",
+      "search": "BVH",
+      "gravity": [
+        0,
+        0,
+        -9.81
+      ]
+    },
+    "solver": {
+      "Timestep": 0.001,
+      "SimulationTime": 1.2,
+      "SaveInterval": 0.01
+    },
+    "memory": {
+      "max_affine_body_number": 5,
+      "surface_node_number": 80,
+      "max_plane_number": 1
+    },
+    "materials": [
+      {
+        "name": "cube",
+        "model": "AffineBody orthogonality penalty",
+        "parameters": {
+          "density_kg_m3": 1000,
+          "young_modulus_Pa": 2000000000000.0
+        },
+        "provenance": "Numerical near-rigid penalty; validate stretch."
+      }
+    ],
+    "bodies": [],
+    "boundaries": [
+      {
+        "type": "Plane",
+        "materialID": 5,
+        "normal": [
+          -0.5,
+          0,
+          0.8660254037844386
+        ],
+        "point": [
+          0,
+          0,
+          0.1
+        ]
+      }
+    ],
+    "run": {}
+  }
+}

@@ -8,7 +8,6 @@ from src.fem.mainFEM import FEM
 from src.fempm.mainFEMPM import FEMPM
 from src.mpm.mainMPM import MPM
 
-
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.fempm,
@@ -67,9 +66,7 @@ def _coupled_system(tmp_path, search, contact_model="Linear"):
             "PoissonRatio": 0.3,
         },
     )
-    mpm.add_element(
-        element={"ElementType": "R8N3D", "ElementSize": [0.1, 0.1, 0.1]}
-    )
+    mpm.add_element(element={"ElementType": "R8N3D", "ElementSize": [0.1, 0.1, 0.1]})
     mpm.add_region(
         region={
             "Name": "point",
@@ -138,11 +135,10 @@ def _coupled_system(tmp_path, search, contact_model="Linear"):
         },
         log=False,
     )
-    coupling.add_surface(
-        modifier={"Orientation": "Parallel", "Direction": [0, 0, 1]}
-    )
+    coupling.add_surface(modifier={"Orientation": "Parallel", "Direction": [0, 0, 1]})
     coupling.memory_allocate(
         {
+            "bvh_rebuild_interval": 2,
             "contact_coordination_number": 8,
             "max_contact_pairs": 16,
             "max_facet_cell_pairs": 128,
@@ -185,15 +181,20 @@ def test_explicit_fempm_search_force_balance_and_history(tmp_path, search):
     fem_force = coupling.fem.engine.state.external_force.to_numpy().sum(axis=0)
     assert normal_force[2] > 0.0
     assert np.linalg.norm(tangential_overlap) > 0.0
-    assert np.linalg.norm(mpm_force + fem_force) < 1.0e-8 * np.linalg.norm(
-        mpm_force
-    )
+    assert np.linalg.norm(mpm_force + fem_force) < 1.0e-8 * np.linalg.norm(mpm_force)
 
     coupling.contactor.rebuild(coupling.mpm.scene)
     assert coupling.contactor.neighbor.contact_count == 1
-    assert contacts.old_tangential_overlap.to_numpy()[0] == pytest.approx(
-        tangential_overlap
-    )
+    assert contacts.old_tangential_overlap.to_numpy()[0] == pytest.approx(tangential_overlap)
+    if search == "BVH":
+        tree = coupling.contactor.neighbor.bvh
+        assert tree._last_rebuild_step == 0
+        for step, rebuilt_at in ((1, 0), (3, 3), (3, 3)):
+            coupling.sims.current_step = step
+            coupling.contactor.rebuild(coupling.mpm.scene)
+            assert tree._last_rebuild_step == rebuilt_at
+            assert coupling.contactor.neighbor.contact_count == 1
+            np.testing.assert_allclose(contacts.old_tangential_overlap.to_numpy()[0], tangential_overlap)
 
     coupling.enginer.integration()
     assert coupling.enginer.minimum_jacobian == pytest.approx(1.0)

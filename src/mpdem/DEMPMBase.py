@@ -87,6 +87,8 @@ class Solver:
         advance_time(self.msims, step_dt)
         advance_time(self.dsims, step_dt)
         self.sims.current_step += 1
+        self.msims.current_step = self.sims.current_step
+        self.dsims.current_step = self.sims.current_step
         ti.sync()
         end_time = time.perf_counter()
         self.compile_seconds = end_time - start_time
@@ -110,6 +112,7 @@ class Solver:
             self.compile()
             if self.sims.current_time - self.last_save_time >= self.sims.save_interval - 0.1 * step_dt:
                 self.save_file(mscene, dscene)
+            runtime_checkpoint()
         self.in_loop_output_seconds = 0.0
         self.solver_compute_seconds = 0.0
         ti.sync()
@@ -126,6 +129,8 @@ class Solver:
             advance_time(self.msims, step_dt)
             advance_time(self.dsims, step_dt)
             self.sims.current_step += 1
+            self.msims.current_step = self.sims.current_step
+            self.dsims.current_step = self.sims.current_step
             if self.sims.current_time - self.last_save_time >= self.sims.save_interval - 0.1 * step_dt or new_body:
                 ti.sync()
                 output_start = time.perf_counter()
@@ -147,7 +152,6 @@ class Solver:
 
         if has_remaining_time(self.last_save_time, self.sims.current_time, self.sims.delta):
             self.save_file(mscene, dscene)
-            self.engine.reset_message()
 
         print("Simulation-loop time = ", self.physical_seconds)
         print("In-loop output time = ", self.in_loop_output_seconds)

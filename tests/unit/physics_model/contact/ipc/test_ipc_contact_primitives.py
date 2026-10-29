@@ -12,16 +12,12 @@ from src.physics_model.contact_model.ipc.ContactDistance import (
     edge_edge_distance_type,
     point_edge_distance_type,
 )
-from src.physics_model.contact_model.ipc.ContactGeometry import (
-    edge_edge_distance_type_ipc,
-    ipc_ee_type_to_legacy_py,
-    legacy_ee_type_to_ipc_py,
-)
+from src.physics_model.contact_model.ipc.ContactGeometry import edge_edge_distance_type_ipc
+from tests.helpers.ipc_geometry_reference import ipc_ee_type_to_legacy_py, legacy_ee_type_to_ipc_py
 from src.physics_model.contact_model.ipc.ContactMollifier import (
     edge_edge_mollifier,
     edge_edge_mollifier_grad_hess,
 )
-
 
 _positions = None
 _gradient = None

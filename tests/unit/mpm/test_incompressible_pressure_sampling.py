@@ -2,7 +2,9 @@
 
 import inspect
 
+from types import SimpleNamespace
 import numpy as np
+import pytest
 
 
 def test_closed_domain_pressure_output_uses_zero_mean_gauge():
@@ -136,3 +138,40 @@ def test_incompressible_pressure_sampling_normalizes_closed_domain_gauge():
     )
 
     np.testing.assert_allclose(sampled, [-100.0, 100.0])
+
+
+class _PressureOutputRegressionArray:
+    def __init__(self, value):
+        self.value = value
+
+    def to_numpy(self):
+        return self.value.copy()
+
+
+@pytest.mark.parametrize("dimension", [2, 3])
+def test_detached_pressure_output_does_not_inherit_a_former_fluid_cell(dimension):
+    from src.mpm.Recorder import WriteFile
+
+    pressure = np.zeros((7,) * dimension)
+    cell_type = np.full(pressure.shape, 2, dtype=np.int32)
+    cell_type[(slice(1, 6),) * dimension] = 0
+    cell_type[(1,) * dimension] = 1
+    pressure[(1,) * dimension] = 100.0
+    pressure[(5,) * dimension] = 956.596
+    cell = SimpleNamespace(
+        pressure=_PressureOutputRegressionArray(pressure),
+        type=_PressureOutputRegressionArray(cell_type),
+        surface_tension=_PressureOutputRegressionArray(np.zeros_like(pressure)),
+    )
+    scene = SimpleNamespace(
+        element=SimpleNamespace(
+            cell=cell, cnum=np.array(pressure.shape), ghost_cell=1, grid_size=np.full(dimension, 0.1)
+        ),
+        material=object(),
+    )
+    writer = WriteFile.__new__(WriteFile)
+    sampled = writer.sample_incompressible_cell_pressure(
+        SimpleNamespace(dimension=dimension), scene, np.array([[0.05] * dimension, [0.45] * dimension])
+    )
+    np.testing.assert_allclose(sampled, [100.0, 0.0])
+    np.testing.assert_array_equal(scene.element.cell.pressure.to_numpy(), pressure)

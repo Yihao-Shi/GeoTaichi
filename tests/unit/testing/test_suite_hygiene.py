@@ -6,7 +6,6 @@ import subprocess
 
 import pytest
 
-
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 pytestmark = pytest.mark.required
 COLLECTED_ROOTS = tuple(
@@ -461,16 +460,38 @@ def test_generated_artifact_classifier_covers_editor_recovery_files(
     assert _is_generated_artifact(Path(relative))
 
 
+def _exposes_pytest_node(tree):
+    return any(
+        (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test_"))
+        or (
+            isinstance(node, ast.ClassDef)
+            and (
+                node.name.startswith("Test") or any(_qualified_name(base) == "unittest.TestCase" for base in node.bases)
+            )
+        )
+        for node in tree.body
+    )
+
+
+@pytest.mark.parametrize(
+    "declaration,expected",
+    [
+        ("def test_example(): pass", True),
+        ("class TestExample:\n    def test_example(self): pass", True),
+        ("class GeometryCheck(unittest.TestCase):\n    def test_example(self): pass", True),
+        ("class GeometryCheck:\n    def test_example(self): pass", False),
+        ("def helper(): pass", False),
+    ],
+)
+def test_pytest_node_detection_accepts_unittest_classes(declaration, expected):
+    assert _exposes_pytest_node(ast.parse(declaration)) is expected
+
+
 def test_every_test_module_exposes_a_pytest_node():
     empty_modules = []
     for path in _test_modules():
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        has_node = any(
-            (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test_"))
-            or (isinstance(node, ast.ClassDef) and node.name.startswith("Test"))
-            for node in tree.body
-        )
-        if not has_node:
+        if not _exposes_pytest_node(tree):
             empty_modules.append(path.relative_to(REPOSITORY_ROOT).as_posix())
     assert empty_modules == []
 
@@ -566,6 +587,18 @@ def isolated_output_path(tmp_path):
     assert [node.lineno for node in _shared_tempdir_calls(tree)] == [3, 4]
 
 
+def _is_machine_specific_path(value):
+    # A bare detection prefix is not a path to a developer's files.
+    return value.startswith(MACHINE_PATH_PREFIXES) and value not in MACHINE_PATH_PREFIXES
+
+
+@pytest.mark.parametrize("prefix", MACHINE_PATH_PREFIXES)
+def test_machine_path_detection_distinguishes_prefixes_from_paths(prefix):
+    assert not _is_machine_specific_path(prefix)
+    assert _is_machine_specific_path(prefix + "developer/project/data.npz")
+    assert not _is_machine_specific_path("assets/data.npz")
+
+
 def test_test_modules_do_not_embed_machine_specific_paths():
     violations = []
     for path in _test_modules():
@@ -575,7 +608,7 @@ def test_test_modules_do_not_embed_machine_specific_paths():
         for node in ast.walk(tree):
             if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
                 continue
-            if node.value.startswith(MACHINE_PATH_PREFIXES):
+            if _is_machine_specific_path(node.value):
                 relative = path.relative_to(REPOSITORY_ROOT).as_posix()
                 violations.append(f"{relative}:{node.lineno}: {node.value!r}")
     assert violations == []

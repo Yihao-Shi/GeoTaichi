@@ -88,9 +88,12 @@ def test_up_usf_applies_velocity_boundary_before_stress():
         "apply_kinematic_constraints",
         "compute_Poisson_equation_implicit",
         "compute_correction_grid_kinematic",
+        "compute_affine_matrix",
         "compute_particle_kinematic",
     )
-    engine = SimpleNamespace(**{name: lambda *args, name=name: calls.append(name) for name in stages})
+    engine = object.__new__(ULSemiImplicitTwoPhaseEngine_u_p)
+    for name in stages:
+        setattr(engine, name, lambda *args, name=name: calls.append(name))
     ULSemiImplicitTwoPhaseEngine_u_p.usf_updating(engine, None, None, None)
     assert calls.index("compute_grid_velcity") < calls.index("apply_dirichlet_constraints")
     assert calls.index("apply_dirichlet_constraints") < calls.index("compute_stress_strains")
@@ -870,6 +873,7 @@ def test_mg_single_layer_requires_nonincremental_pressure_projection(taichi_runt
     sims.solver_type = "SemiImplicit"
     sims.material_type = "TwoPhaseSingleLayer"
     sims.mapping = "USL"
+    sims.set_velocity_projection_scheme(None)
     sims.pressure_solver = "MGPCG"
     sims.linear_solver = "MGPCG"
     sims.pressure_beta = 1.0

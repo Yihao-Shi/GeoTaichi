@@ -10,6 +10,7 @@ from src.linear_solver.BuildTriplet import BuildTriplet
 from src.utils.PrefixSum import PrefixSumExecutor
 from src.utils.SolverConsole import print_save_file_info
 from src.utils.linalg import no_operation
+from src.utils.TimeIntegration import newmark_acceleration, newmark_parameters, newmark_velocity
 from third_party.pyevtk.hl import pointsToVTK
 
 
@@ -80,13 +81,9 @@ class StaticTwoPhaseULMPM(MPMSolver):
         self.dp_shape_factor = kwargs.get("shape_factor", 0.0)
         self.dp_local_tol = kwargs.get("dp_local_tolerance", 1.0e-10)
         self.dp_local_max_iters = kwargs.get("dp_local_max_iters", 25)
-        newmark = kwargs.get("newmark", [0.5, 0.25, 0.5])
-        if len(newmark) < 3:
-            raise ValueError("newmark must provide at least three entries [alpha, beta, gamma].")
-        self.newmark_beta = float(newmark[1])
-        self.newmark_gamma = float(newmark[2])
-        if self.newmark_beta <= 0.0:
-            raise ValueError("Newmark beta must be positive.")
+        self.integration = newmark_parameters(kwargs.get("newmark", [0.5, 0.25, 0.5]))
+        self.newmark_alpha, self.newmark_beta, self.newmark_gamma = self.integration
+        self.newmark_scale = 2.0 * self.newmark_alpha * self.newmark_beta
 
         self.lambda_ = (
             self.young_modulus * self.poisson_ratio / ((1.0 + self.poisson_ratio) * (1.0 - 2.0 * self.poisson_ratio))
@@ -1279,7 +1276,7 @@ class StaticTwoPhaseULMPM(MPMSolver):
                         if ti.static(self.dynamic_formulation):
                             Kpp += (
                                 tau
-                                * (self.newmark_gamma / (self.newmark_beta * dt))
+                                * (self.newmark_gamma / (self.newmark_scale * dt))
                                 * (Na - Navg_a)
                                 * (Nb - Navg_b)
                                 * vol
@@ -1307,8 +1304,8 @@ class StaticTwoPhaseULMPM(MPMSolver):
                                 * Na
                                 * Nb
                                 * (
-                                    1.0 / (self.newmark_beta * dt * dt)
-                                    + self.damping * self.newmark_gamma / (self.newmark_beta * dt)
+                                    1.0 / (self.newmark_scale * dt * dt)
+                                    + self.damping * self.newmark_gamma / (self.newmark_scale * dt)
                                 )
                             )
                         for row_comp in ti.static(range(config.DIM)):
@@ -1435,33 +1432,23 @@ class StaticTwoPhaseULMPM(MPMSolver):
 
     @ti.func
     def newmark_acceleration_from_disp(self, disp, velocity_old, acceleration_old, dt):
-        beta = self.newmark_beta
-        return disp / (beta * dt * dt) - velocity_old / (beta * dt) - (0.5 / beta - 1.0) * acceleration_old
+        prediction = (
+            dt * velocity_old + self.newmark_alpha * (1.0 - 2.0 * self.newmark_beta) * dt * dt * acceleration_old
+        )
+        return newmark_acceleration(disp, prediction, dt, ti.Vector(self.integration))
 
     @ti.func
     def newmark_velocity_from_disp(self, disp, velocity_old, acceleration_old, dt):
-        beta = self.newmark_beta
-        gamma = self.newmark_gamma
-        return (
-            gamma / (beta * dt) * disp
-            - (gamma / beta - 1.0) * velocity_old
-            - dt * (gamma / (2.0 * beta) - 1.0) * acceleration_old
-        )
+        acceleration = self.newmark_acceleration_from_disp(disp, velocity_old, acceleration_old, dt)
+        return newmark_velocity(velocity_old, acceleration_old, acceleration, dt, ti.Vector(self.integration))
 
     @ti.func
     def newmark_pressure_rate(self, p_new, p_old, p_rate_old, p_acc_old, dt):
-        beta = self.newmark_beta
-        gamma = self.newmark_gamma
-        return (
-            gamma / (beta * dt) * (p_new - p_old)
-            + (1.0 - gamma / beta) * p_rate_old
-            - dt * (gamma / (2.0 * beta) - 1.0) * p_acc_old
-        )
+        return self.newmark_velocity_from_disp(p_new - p_old, p_rate_old, p_acc_old, dt)
 
     @ti.func
     def newmark_pressure_accel(self, p_new, p_old, p_rate_old, p_acc_old, dt):
-        beta = self.newmark_beta
-        return (p_new - p_old) / (beta * dt * dt) - p_rate_old / (beta * dt) - (0.5 / beta - 1.0) * p_acc_old
+        return self.newmark_acceleration_from_disp(p_new - p_old, p_rate_old, p_acc_old, dt)
 
     def apply_dirichlet(self):
         self.apply_dirichlet_hash()

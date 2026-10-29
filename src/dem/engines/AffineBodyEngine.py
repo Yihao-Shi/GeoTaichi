@@ -6,12 +6,15 @@ import numpy as np
 import taichi as ti
 from taichi.lang.impl import current_cfg
 
+from src.linear_solver.BlockJacobi import BlockJacobi, BlockJacobiError
+from src.linear_solver.LinearOperator import LinearOperator
 from src.linear_solver.BuildTriplet import BuildTriplet
 from src.linear_solver.CoordinateSparseMatrix import CoordinateSparseMatrix
 from src.physics_model.contact_model.ipc.LevelSetAffine import (
     NonpenetrationResult,
 )
 from src.utils.RuntimeHook import runtime_checkpoint
+from src.utils.SolverRuntime import accepts_monotone_energy, normalize_callbacks
 from src.utils.TimeTicker import advance_time, has_remaining_time, time_tolerance
 from src.utils.SolverConsole import print_save_file_info, print_simulation_start
 from src.utils.StepRetry import (
@@ -86,6 +89,7 @@ class AffineBodyEngine(object):
         self.last_candidate_pairs = 0
         self.last_device_nonlinear_path = False
         self.coo_matrix = None
+        self.coo_preconditioner = None
         self.hash_triplet = None
         self.adjoint_triplet = None
         self.last_adjoint_result = None
@@ -96,9 +100,12 @@ class AffineBodyEngine(object):
         self.step_retry = StepRetryPolicy()
         self.last_failure = None
         self.history = []
+        self.maximum_hash_triplets = 0
+        self.wall_boundary = None
+        self.servo_callbacks = ()
         self.device_nonlinear_path = False
+        self.newmark_initialized = False
         self.enforce_free_translation = False
-        self.evaluate_surface_direction_norm = lambda direction: float(np.linalg.norm(direction, ord=np.inf))
         self.evaluate_device_surface_direction_norm = self._reference_device_surface_direction_norm
 
     @staticmethod
@@ -108,7 +115,8 @@ class AffineBodyEngine(object):
         relative = float(sims.affine_fully_implicit_force_rtol)
         if not np.isfinite(absolute) or absolute < 0.0 or not np.isfinite(relative) or relative < 0.0:
             raise RuntimeError("Affine fully implicit force tolerances must be finite and " "non-negative")
-        return float(dt) ** 2 * absolute + relative * float(initial_residual)
+        alpha, beta, _ = getattr(sims, "affine_newmark", (1.0, 0.5, 1.0))
+        return 2.0 * alpha * beta * float(dt) ** 2 * absolute + relative * float(initial_residual)
 
     def _linear_tolerance(self, sims, residual):
         tolerance = float(sims.affine_linear_tolerance)
@@ -119,6 +127,9 @@ class AffineBodyEngine(object):
     def choose_engine(self, sims, scene):
         return
 
+    def set_servo_mechanism(self, sims, callback=None):
+        self.servo_callbacks = normalize_callbacks(callback, ti.kernel)
+
     def initialize(self, sims, scene):
         self.sims = sims
         if len(scene.affine_bodies) == 0:
@@ -127,10 +138,10 @@ class AffineBodyEngine(object):
             self.state = AffineBodyState.from_scene(scene, sims)
             self.operator = TaichiAffineBodyOperator(self.state, sims, scene)
             self.device_nonlinear_path = self._select_device_nonlinear_path(sims)
-            self.evaluate_surface_direction_norm = self.operator.surface_direction_inf_norm
             self.evaluate_device_surface_direction_norm = self._operator_device_surface_direction_norm
             self.enforce_free_translation = (
-                self.operator.wall_num == 0
+                not self.operator.use_newmark
+                and self.operator.wall_num == 0
                 and all(float(body.get("force_damping", 0.0)) == 0.0 for body in self.state.bodies)
                 and not np.any(self.operator.joint_body_np[: self.operator.joint_num, 1] < 0)
             )
@@ -138,6 +149,12 @@ class AffineBodyEngine(object):
                 self._accept_device_state = self._accept_device_state_free_translation
             if self.operator.levelset_contact and sims.affine_levelset_auto_initialize:
                 self.resolve_levelset_initial_overlaps(sims)
+        if sims.wall_type == 1 and int(scene.servoNum[0]) > 0:
+            from src.dem.engines.IPCWallBoundary import ipc_wall_boundary
+
+            self.wall_boundary = ipc_wall_boundary(scene, sims)
+            self.operator.bind_ipc_wall_boundary(self.wall_boundary)
+            self.wall_boundary.callbacks = self.servo_callbacks
         sims.freeze_affine_body_parameters()
         self.last_search_mode = sims.search
         self.step_retry = StepRetryPolicy(
@@ -146,11 +163,16 @@ class AffineBodyEngine(object):
             reduction=sims.step_retry_reduction,
             minimum_timestep=sims.step_retry_minimum_timestep,
         )
-        if getattr(self.operator, "is_semi", False) and self.step_retry.enabled:
-            raise ValueError(
-                "AffineBody step retry does not support SemiIPC because its "
-                "multipliers advance inside Newton iterations"
-            )
+        if self.operator.use_newmark and not self.newmark_initialized:
+            if not self.device_nonlinear_path:
+                raise ValueError("Non-BackwardEuler ABD integration requires the device nonlinear path")
+            self.operator.device_prepare_initial_acceleration()
+            self.operator.initialize_contact_damping_device()
+            energy = self._assemble_system_device(sims, need_matrix=False)
+            if not np.isfinite(energy) or self.operator.device_gradient_has_nonfinite():
+                raise RuntimeError("Cannot initialize Newmark acceleration from an invalid initial state")
+            self.operator.device_initialize_newmark_acceleration()
+            self.newmark_initialized = True
 
     def resolve_levelset_initial_overlaps(self, sims=None, **overrides):
         """Push overlapping level-set affine bodies to a strict IPC state."""
@@ -274,10 +296,12 @@ class AffineBodyEngine(object):
         return result.to_numpy().reshape(-1)
 
     def _validate_differentiable_configuration(self):
+        if self.wall_boundary is not None:
+            raise ValueError("AffineBody adjoint does not differentiate DEM wall servo feedback yet")
         if self.state is None or self.operator is None:
             raise RuntimeError("AffineBodyEngine must complete a forward step before solve_adjoint")
-        if self.operator.is_semi:
-            raise ValueError("AffineBody adjoint currently requires BarrierIPC")
+        if getattr(self.operator, "use_newmark", False):
+            raise ValueError("ABD adjoints currently require newmark=[1, 0.5, 1]")
         if self.operator.levelset_contact:
             raise ValueError(
                 "AffineBody adjoint currently supports triangle-mesh contact; level-set contact is not differentiable yet"
@@ -333,13 +357,17 @@ class AffineBodyEngine(object):
         self.adjoint_triplet.finalize_taichi_assembly()
         forward_residual = float(self.operator.device_gradient_inf_norm())
         forward_solver = self.adjoint_triplet.solver
+        forward_group_size = self.adjoint_triplet.preconditioner_group_size
         self.adjoint_triplet.solver = "PCG"
+        # The exact adjoint tangent can be indefinite; retain its BiCGSTAB fallback.
+        self.adjoint_triplet.preconditioner_group_size = 1
         try:
             result = self.adjoint_triplet.solve_flat_system(
                 self.operator.linear_rhs,
                 self.operator.linear_x,
                 active_nodes=self.operator.control_num,
                 tol=self.sims.affine_linear_tolerance,
+                rel_tol=self.sims.affine_linear_relative_tolerance,
                 maxiter=self.sims.affine_linear_max_iteration,
                 return_solution=False,
                 transpose=not self.adjoint_triplet.matrix_symmetric,
@@ -347,6 +375,7 @@ class AffineBodyEngine(object):
             )
         finally:
             self.adjoint_triplet.solver = forward_solver
+            self.adjoint_triplet.preconditioner_group_size = forward_group_size
         if not result["converged"]:
             raise RuntimeError(
                 "AffineBody adjoint device solve did not converge: "
@@ -456,11 +485,7 @@ class AffineBodyEngine(object):
                 ),
                 "ccd_step": float(self.last_ccd_step),
                 "candidate_pairs": int(self.last_candidate_pairs),
-                "constraint_violation": (
-                    float(self.operator.semi_constraint_violation[None])
-                    if self.operator is not None and getattr(self.operator, "is_semi", False)
-                    else 0.0
-                ),
+                "constraint_violation": (0.0),
             },
         }
 
@@ -474,11 +499,7 @@ class AffineBodyEngine(object):
                 ),
                 "ccd_step": float(self.last_ccd_step),
                 "candidate_pairs": int(self.last_candidate_pairs),
-                "constraint_violation": (
-                    float(self.operator.semi_constraint_violation[None])
-                    if self.operator is not None and getattr(self.operator, "is_semi", False)
-                    else 0.0
-                ),
+                "constraint_violation": (0.0),
                 "friction_iterations": int(self.last_friction_iterations),
                 "friction_residual": float(self.last_friction_residual),
                 "friction_converged": bool(self.last_friction_converged),
@@ -522,10 +543,16 @@ class AffineBodyEngine(object):
             if self.step_retry.enabled:
                 sims.set_timestep(attempt_timestep)
             getattr(self.operator, "set_timestep", lambda _dt: None)(attempt_timestep)
+            if self.wall_boundary is not None:
+                self.wall_boundary.begin_step_device(attempt_timestep)
+                self.operator.limit_servo_wall_motion_device(self.wall_boundary)
+                self.wall_boundary.apply_motion_device()
             try:
                 result = self._step_once(sims, scene)
-            except RuntimeError as exception:
-                if not is_recoverable_nonlinear_failure(exception):
+            except BaseException as exception:
+                if self.wall_boundary is not None:
+                    self.wall_boundary.rollback_device()
+                if not isinstance(exception, RuntimeError) or not is_recoverable_nonlinear_failure(exception):
                     raise
                 failure = self._failure_diagnostics(sims, exception, attempt, attempt_timestep)
                 attempts.append(failure)
@@ -543,6 +570,9 @@ class AffineBodyEngine(object):
                 attempt_timestep = next_timestep
                 continue
 
+            if self.wall_boundary is not None:
+                self.operator.measure_servo_wall_reactions_device(self.wall_boundary)
+                self.wall_boundary.commit_servo_step(attempt_timestep)
             retry_record = {
                 "enabled": bool(self.step_retry.enabled),
                 "original_timestep": original_timestep,
@@ -584,16 +614,9 @@ class AffineBodyEngine(object):
                 "AffineBody friction_mode cannot be changed after engine "
                 "initialization; configure it before add_essentials()"
             )
-        if getattr(self.operator, "is_semi", False):
-            self.operator.reset_semi_state()
-        device_path = self.device_nonlinear_path
-        if device_path:
-            self.operator.device_backup_step_start()
-            self.operator.device_begin_step(dt)
-            y_flat = None
-        else:
-            self.state.begin_step(dt)
-            y_flat = self.state.pack()
+        self.operator.device_backup_step_start()
+        self.operator.device_begin_step(dt)
+        y_flat = None
         if self.operator.contact_damping_stiffness > 0.0:
             self._ensure_linear_solver(sims)
         if mode == "fully_implicit":
@@ -617,57 +640,24 @@ class AffineBodyEngine(object):
         self.last_inner_failure_reason = ""
         self.last_inner_residual = np.inf
 
-        if device_path:
-            self.last_device_nonlinear_path = True
-            try:
-                return self._step_lagged_cuda(
-                    sims,
-                    dt,
-                    requested_outer=requested_outer,
-                    max_outer=max_outer,
-                    tolerance=tolerance,
-                )
-            except BaseException as exception:
-                try:
-                    self.operator.device_restore_step_start()
-                except BaseException as rollback_error:
-                    # Keep the solver failure visible; a CUDA rollback error
-                    # must not mask the contact/assembly exception that caused
-                    # the rejected step.
-                    raise exception from rollback_error
-                raise
-        self.last_device_nonlinear_path = False
-
-        self.operator.initialize_contact_damping(y_flat, self.state.hat_y)
-        energy, grad = self._assemble_system(sims, y_flat, need_matrix=True)
-        for outer_iteration in range(max_outer):
-            self.last_friction_outer_iteration = outer_iteration + 1
-            y_flat, energy, grad, inner_iterations = self._solve_lagged_inner(sims, y_flat, energy, grad)
-            self.last_newton_iterations += inner_iterations
-            self.last_friction_iterations = outer_iteration + 1
-
-            # Match reference IPC's fricIterAmt loop: after every complete
-            # frozen-friction solve (including fricIterAmt=1), rebuild the
-            # lagged contact data and solve the updated linear system once.
-            # This probe is used only for fixed-point convergence; it is not
-            # applied to the state.
-            self.operator.initialize_contact_damping(y_flat, self.state.hat_y)
-            energy, grad = self._assemble_system(sims, y_flat, need_matrix=True)
-            updated_direction = self._solve_direction(sims, grad)
-            self.last_friction_residual = float(self._surface_direction_inf_norm(updated_direction) / dt)
-            if self.last_friction_residual < tolerance:
-                self.last_friction_converged = True
-                break
-
-        self.last_friction_terminated_by_cap = not self.last_friction_converged
-        if requested_outer < 0 and not self.last_friction_converged:
-            raise RuntimeError(
-                "Affine lagged IPC friction fixed-point iteration did not "
-                f"converge within safety cap {max_outer} "
-                f"(residual={self.last_friction_residual:.6e})"
+        self.last_device_nonlinear_path = True
+        try:
+            return self._step_lagged_cuda(
+                sims,
+                dt,
+                requested_outer=requested_outer,
+                max_outer=max_outer,
+                tolerance=tolerance,
             )
-
-        self.state.accept_step(self.state.unpack(y_flat), dt)
+        except BaseException as exception:
+            try:
+                self.operator.device_restore_step_start()
+            except BaseException as rollback_error:
+                # Keep the solver failure visible; a CUDA rollback error
+                # must not mask the contact/assembly exception that caused
+                # the rejected step.
+                raise exception from rollback_error
+            raise
 
     def _step_fully_implicit(self, sims, previous_y, dt):
         """Run one transactional fully implicit step.
@@ -682,11 +672,8 @@ class AffineBodyEngine(object):
             return self._step_fully_implicit_impl(sims, previous_y, dt)
         except Exception as exception:
             try:
-                if self.last_device_nonlinear_path:
-                    self.operator.device_restore_step_start()
-                    self._assemble_system_device(sims, need_matrix=False)
-                else:
-                    self._assemble_system(sims, np.asarray(previous_y).copy(), need_matrix=False)
+                self.operator.device_restore_step_start()
+                self._assemble_system_device(sims, need_matrix=False)
             except Exception as rollback_error:
                 raise exception from rollback_error
             raise
@@ -703,78 +690,8 @@ class AffineBodyEngine(object):
         self.last_inner_residual = np.inf
         self.last_fully_implicit_merit_slope = np.nan
 
-        if self.device_nonlinear_path:
-            self.last_device_nonlinear_path = True
-            return self._step_fully_implicit_cuda(sims, previous_y, dt)
-        self.last_device_nonlinear_path = False
-
-        self.operator.initialize_contact_damping(previous_y, self.state.hat_y)
-
-        # Paper initial guess v_{n+1}^{(0)} = v_n.  In displacement form this
-        # is q^{(0)} = q_n + h v_n = tilde_q.  IPC CCD caps the predictor so
-        # the very first residual evaluation remains strictly feasible.
-        predictor = self.state.pack(self.state.tilde_y)
-        predictor_direction = predictor - previous_y
-        if np.linalg.norm(predictor_direction, ord=np.inf) > 0.0:
-            alpha = self._ccd_step_size(sims, previous_y, predictor_direction)
-            if not np.isfinite(alpha) or alpha <= 0.0:
-                raise RuntimeError("Affine fully implicit predictor CCD returned an " "invalid/non-positive step")
-            y_flat = previous_y + alpha * predictor_direction
-        else:
-            y_flat = previous_y.copy()
-
-        initial_energy, residual = self._assemble_system(sims, y_flat, need_matrix=True)
-        if not np.isfinite(initial_energy):
-            self.last_inner_failure_reason = "non_finite_energy"
-            raise RuntimeError("Affine fully implicit initial state has non-finite IPC " "energy")
-        if not np.all(np.isfinite(residual)):
-            self.last_inner_failure_reason = "non_finite_residual"
-            raise RuntimeError("Affine fully implicit residual is non-finite")
-        iterations = 0
-        initial_residual = float(np.linalg.norm(residual, ord=np.inf))
-        tolerance = self._fully_implicit_force_target(sims, initial_residual, dt)
-        self.last_inner_failure_reason = "maximum_newton_iterations"
-        for iteration in range(int(sims.affine_max_newton_iteration)):
-            if not np.all(np.isfinite(residual)):
-                self.last_inner_failure_reason = "non_finite_residual"
-                raise RuntimeError("Affine fully implicit residual is non-finite")
-            residual_norm = float(np.linalg.norm(residual, ord=np.inf))
-            if residual_norm <= tolerance:
-                self.last_inner_converged = True
-                self.last_inner_failure_reason = ""
-                break
-            direction = self._solve_direction(sims, residual)
-            direction = self._clamp_direction(direction, sims.affine_max_step)
-            if not np.all(np.isfinite(direction)):
-                self.last_inner_failure_reason = "non_finite_direction"
-                raise RuntimeError("Affine fully implicit Newton correction is non-finite")
-            if np.linalg.norm(direction, ord=np.inf) <= np.finfo(float).eps:
-                self.last_inner_failure_reason = "newton_stagnation"
-                raise RuntimeError("Affine fully implicit Newton stagnated before the " "residual tolerance was met")
-            jacobian_direction = self._fully_implicit_jacobian_direction(sims, direction)
-            alpha, new_residual = self._fully_implicit_line_search(
-                sims, y_flat, residual, direction, jacobian_direction
-            )
-            y_flat = y_flat + alpha * direction
-            residual = new_residual
-            iterations = iteration + 1
-            if np.linalg.norm(residual, ord=np.inf) <= tolerance:
-                self.last_inner_converged = True
-                self.last_inner_failure_reason = ""
-                break
-
-        self.last_newton_iterations = iterations
-        self.last_friction_residual = float(np.linalg.norm(residual, ord=np.inf))
-        self.last_friction_converged = self.last_inner_converged
-        if not self.last_inner_converged:
-            raise RuntimeError(
-                "Affine fully implicit Newton solve did not converge "
-                f"(reason={self.last_inner_failure_reason}, "
-                f"iterations={iterations}, "
-                f"residual={self.last_friction_residual:.6e}, "
-                f"tolerance={tolerance:.6e})"
-            )
-        self.state.accept_step(self.state.unpack(y_flat), dt)
+        self.last_device_nonlinear_path = True
+        return self._step_fully_implicit_cuda(sims, previous_y, dt)
 
     @staticmethod
     def _select_device_nonlinear_path(sims):
@@ -791,7 +708,7 @@ class AffineBodyEngine(object):
             "HashTriplet",
         )
 
-    def _assemble_system_device(self, sims, need_matrix=True):
+    def _assemble_system_device(self, sims, need_matrix=True, friction_majorizer=False, reuse_neighbor=False):
         """Assemble energy/residual/Jacobian without downloading residual."""
         self._ensure_linear_solver(sims)
         backend = _normalize_affine_assemble_type(sims.affine_assemble_type)
@@ -804,6 +721,8 @@ class AffineBodyEngine(object):
         energy = self.operator.assemble_device(
             need_matrix=bool(need_matrix),
             matrix_mode=matrix_mode,
+            friction_majorizer=bool(friction_majorizer),
+            reuse_neighbor=bool(reuse_neighbor),
         )
         self.last_candidate_pairs = self.operator.last_candidate_pairs
         return energy
@@ -846,37 +765,62 @@ class AffineBodyEngine(object):
         self.last_linear_spectral_resolution = np.nan
         self.last_linear_unresolved_modes = 0
         linear_tolerance = float(sims.affine_linear_tolerance)
+        linear_relative_tolerance = float(sims.affine_linear_relative_tolerance)
         if self.operator.fully_implicit:
-            linear_tolerance = self._linear_tolerance(sims, float(self.operator.device_gradient_inf_norm()))
+            force_residual = float(self.operator.device_gradient_inf_norm())
+            linear_tolerance = self._linear_tolerance(sims, force_residual)
+            if linear_relative_tolerance > 0.0:
+                initial_residual = float(self.operator.device_gradient_squared_norm()) ** 0.5
+                if initial_residual > 0.0:
+                    # The relative branch must also respect the physical Newton force target.
+                    force_limit = 0.1 * self._fully_implicit_force_target(sims, force_residual, self.operator.dt)
+                    linear_relative_tolerance = min(linear_relative_tolerance, force_limit / initial_residual)
         if backend != "HashTriplet":
             self.last_linear_backend = backend
             self.operator.device_load_negative_gradient_scalar(self.operator.linear_rhs)
             attempts = 1 if self.operator.fully_implicit else 6
             base_shift = max(float(sims.affine_hessian_shift), 1.0e-12)
+            preconditioner = LinearOperator(
+                lambda source, destination: self.coo_preconditioner.apply(active_nodes, source, destination, flat=True)
+            )
+            last_error = None
             for attempt in range(attempts):
                 self.operator.linear_x.fill(0.0)
-                self.operator._build_coo_preconditioner(base_shift)
-                succeeded = self.coo_matrix.solve(
-                    self.operator.linear_rhs,
-                    self.operator.linear_x,
-                    self.operator.linear_M,
-                    tol=linear_tolerance,
-                    maxiter=sims.affine_linear_max_iteration,
-                )
-                solver = self.coo_matrix.linear_solver
-                self.last_linear_converged = bool(succeeded)
-                self.last_linear_initial_residual = float(solver.last_initial_residual)
-                self.last_linear_residual = float(solver.last_residual)
-                self.last_linear_original_residual = self.last_linear_residual
-                self.last_linear_iterations = int(solver.last_iterations)
-                self.last_linear_failure_reason = str(solver.last_breakdown_reason)
-                if succeeded:
-                    self.operator.device_copy_scalar_solution_to_direction(self.operator.linear_x)
-                    return {
-                        "converged": True,
-                        "iterations": int(solver.last_iterations),
-                        "residual": float(solver.last_residual),
-                    }
+                try:
+                    self.coo_preconditioner.build_coo(
+                        self.coo_matrix, active_nodes, cholesky=not self.operator.fully_implicit
+                    )
+                    succeeded = self.coo_matrix.solve(
+                        self.operator.linear_rhs,
+                        self.operator.linear_x,
+                        preconditioner,
+                        tol=linear_tolerance,
+                        rel_tol=linear_relative_tolerance,
+                        maxiter=sims.affine_linear_max_iteration,
+                    )
+                except BlockJacobiError as error:
+                    last_error = error
+                    self.last_linear_converged = False
+                    self.last_linear_initial_residual = np.inf
+                    self.last_linear_residual = self.last_linear_original_residual = np.inf
+                    self.last_linear_iterations = 0
+                    self.last_linear_failure_reason = str(error)
+                else:
+                    last_error = None
+                    solver = self.coo_matrix.linear_solver
+                    self.last_linear_converged = bool(succeeded)
+                    self.last_linear_initial_residual = float(solver.last_initial_residual)
+                    self.last_linear_residual = float(solver.last_residual)
+                    self.last_linear_original_residual = self.last_linear_residual
+                    self.last_linear_iterations = int(solver.last_iterations)
+                    self.last_linear_failure_reason = str(solver.last_breakdown_reason)
+                    if succeeded:
+                        self.operator.device_copy_scalar_solution_to_direction(self.operator.linear_x)
+                        return {
+                            "converged": True,
+                            "iterations": int(solver.last_iterations),
+                            "residual": float(solver.last_residual),
+                        }
                 if self.operator.fully_implicit:
                     break
                 if attempt + 1 < attempts:
@@ -888,11 +832,12 @@ class AffineBodyEngine(object):
             method = "BiCGSTAB" if self.operator.fully_implicit else "PCG"
             raise RuntimeError(
                 f"Affine {backend} device {method} did not converge: "
-                f"residual={solver.last_residual:.6e}, "
-                f"iterations={solver.last_iterations}"
-            )
+                f"residual={self.last_linear_residual:.6e}, "
+                f"iterations={self.last_linear_iterations}"
+            ) from last_error
 
         self.last_linear_backend = "HashTriplet"
+        self.maximum_hash_triplets = max(self.maximum_hash_triplets, int(self.hash_triplet.raw_non_diag_count[0]))
         self.hash_triplet.finalize_taichi_assembly()
         self.operator.device_load_negative_gradient(self.hash_triplet.rhs)
 
@@ -905,6 +850,7 @@ class AffineBodyEngine(object):
                 result = self.hash_triplet.solve(
                     active_nodes=active_nodes,
                     tol=linear_tolerance,
+                    rel_tol=linear_relative_tolerance,
                     maxiter=sims.affine_linear_max_iteration,
                     return_solution=False,
                 )
@@ -945,9 +891,6 @@ class AffineBodyEngine(object):
             self.operator.device_scale_direction(float(max_step) / norm)
             return float(max_step)
         return norm
-
-    def _surface_direction_inf_norm(self, direction):
-        return float(self.evaluate_surface_direction_norm(direction))
 
     def _device_surface_direction_inf_norm(self, control_norm=None):
         return float(self.evaluate_device_surface_direction_norm(control_norm))
@@ -999,7 +942,10 @@ class AffineBodyEngine(object):
             self.operator.initialize_contact_damping_device()
             energy = self._assemble_system_device(sims, need_matrix=True)
             self._solve_hash_direction_device(sims)
-            self.last_friction_residual = float(self._device_surface_direction_inf_norm() / dt)
+            self.last_friction_residual = float(
+                self._device_surface_direction_inf_norm()
+                * getattr(self.operator, "correction_velocity_factor", 1.0 / dt)
+            )
             if self.last_friction_residual < tolerance:
                 self.last_friction_converged = True
                 break
@@ -1022,13 +968,8 @@ class AffineBodyEngine(object):
         self.last_inner_residual = np.inf
         self.last_inner_control_residual = np.inf
         self.last_inner_correction_history = []
-        semi_progress = 0.0
         maximum_updates = int(sims.affine_max_newton_iteration)
         for iteration in range(maximum_updates + 1):
-            if getattr(self.operator, "is_semi", False) and iteration > 1 and semi_progress > 0.999:
-                self.last_inner_converged = True
-                self.last_inner_failure_reason = ""
-                break
             if not np.isfinite(energy):
                 self.last_inner_failure_reason = "non_finite_energy"
                 raise RuntimeError(
@@ -1043,8 +984,9 @@ class AffineBodyEngine(object):
                 raise RuntimeError("Affine lagged Newton correction is non-finite")
             raw_direction_norm = float(self.operator.device_direction_inf_norm())
             surface_direction_norm = self._device_surface_direction_inf_norm(raw_direction_norm)
-            self.last_inner_control_residual = raw_direction_norm / self.operator.dt
-            self.last_inner_residual = surface_direction_norm / self.operator.dt
+            velocity_factor = getattr(self.operator, "correction_velocity_factor", 1.0 / self.operator.dt)
+            self.last_inner_control_residual = raw_direction_norm * velocity_factor
+            self.last_inner_residual = surface_direction_norm * velocity_factor
             self.last_inner_correction_history.append(self.last_inner_residual)
             # Reference IPC defines ``tol`` in m/s and stops on the full
             # (unclamped, unapplied) Newton correction from the *previous*
@@ -1056,10 +998,6 @@ class AffineBodyEngine(object):
             # An exactly zero initial correction is already stationary and
             # avoids sending a zero direction into CCD/line search.
             if self.last_inner_residual == 0.0 or (iteration > 0 and self.last_inner_residual < tolerance):
-                if getattr(self.operator, "is_semi", False) and not self.operator.semi_contact_converged():
-                    self.operator.accept_semi_update_device()
-                    energy = self._assemble_system_device(sims, need_matrix=True)
-                    continue
                 self.last_inner_converged = True
                 self.last_inner_failure_reason = ""
                 break
@@ -1070,9 +1008,6 @@ class AffineBodyEngine(object):
             if np.isfinite(slope) and slope > 0.0:
                 self.operator.device_scale_direction(-1.0)
             energy = self._line_search_cuda(sims, energy)
-            if getattr(self.operator, "is_semi", False):
-                alpha = float(self.last_line_search_alpha)
-                semi_progress += (1.0 - semi_progress) * alpha
             iterations = iteration + 1
         if not self.last_inner_converged:
             raise RuntimeError(
@@ -1100,7 +1035,8 @@ class AffineBodyEngine(object):
             )
         return energy, iterations
 
-    def _line_search_cuda(self, sims, energy):
+    def _line_search_cuda(self, sims, energy, _friction_majorized=False):
+        self.last_line_search_friction_majorizer = bool(_friction_majorized)
         slope = float(self.operator.device_gradient_direction_dot())
         if not np.isfinite(slope) or slope >= 0.0:
             self._record_line_search(False)
@@ -1116,21 +1052,29 @@ class AffineBodyEngine(object):
         self.last_line_search_base_energy = float(energy)
         self.last_line_search_trials = []
         self.operator.device_backup_line_search_base()
+        reuse_neighbor = self.operator.prepare_line_search_neighbors_device(alpha)
         for backtracks in range(int(sims.affine_line_search_max_iteration)):
             self.operator.device_set_line_search_trial(alpha)
-            trial_energy = self._assemble_system_device(sims, need_matrix=False)
+            trial_energy = self._assemble_system_device(sims, need_matrix=False, reuse_neighbor=reuse_neighbor)
             self.last_line_search_trials.append((float(alpha), float(trial_energy)))
             if (
                 np.isfinite(trial_energy)
                 and int(self.operator.device_gradient_has_nonfinite()) == 0
-                and trial_energy <= energy
+                and accepts_monotone_energy(energy, trial_energy, alpha, slope)
             ):
-                self._assemble_system_device(sims, need_matrix=True)
-                if getattr(self.operator, "is_semi", False):
-                    self.operator.accept_semi_update_device()
-                    trial_energy = self._assemble_system_device(sims, need_matrix=True)
+                # The accepted energy trial already prepared this exact geometry.
+                self._assemble_system_device(sims, need_matrix=True, reuse_neighbor=True)
                 self._record_line_search(True, alpha, backtracks)
                 return trial_energy
+            if backtracks == 1 and not _friction_majorized and self.operator.has_lagged_friction_contacts():
+                # Sliding friction has no radial Newton curvature; avoid cycling across zero slip.
+                self.operator.device_restore_line_search_base()
+                energy = self._assemble_system_device(sims, need_matrix=True, friction_majorizer=True)
+                self._solve_hash_direction_device(sims)
+                self._clamp_device_direction(sims.affine_max_step)
+                if float(self.operator.device_gradient_direction_dot()) > 0.0:
+                    self.operator.device_scale_direction(-1.0)
+                return AffineBodyEngine._line_search_cuda(self, sims, energy, _friction_majorized=True)
             alpha *= 0.5
         self.operator.device_restore_line_search_base()
         self._assemble_system_device(sims, need_matrix=True)
@@ -1266,14 +1210,15 @@ class AffineBodyEngine(object):
             raise ValueError("Affine fully implicit Armijo and contraction must lie " "in (0, 1)")
 
         self.operator.device_backup_line_search_base()
+        reuse_neighbor = self.operator.prepare_line_search_neighbors_device(alpha)
         for backtracks in range(int(sims.affine_line_search_max_iteration)):
             self.operator.device_set_line_search_trial(alpha)
-            trial_energy = self._assemble_system_device(sims, need_matrix=False)
+            trial_energy = self._assemble_system_device(sims, need_matrix=False, reuse_neighbor=reuse_neighbor)
             trial_merit = np.inf
             if np.isfinite(trial_energy) and int(self.operator.device_gradient_has_nonfinite()) == 0:
                 trial_merit = 0.5 * float(self.operator.device_gradient_squared_norm())
             if np.isfinite(trial_merit) and trial_merit <= base_merit + armijo * alpha * merit_slope:
-                accepted_energy = self._assemble_system_device(sims, need_matrix=True)
+                accepted_energy = self._assemble_system_device(sims, need_matrix=True, reuse_neighbor=True)
                 if not np.isfinite(accepted_energy):
                     self._record_line_search(False, backtracks=backtracks)
                     self.last_inner_failure_reason = "non_finite_energy"
@@ -1287,165 +1232,6 @@ class AffineBodyEngine(object):
         self._record_line_search(False, backtracks=int(sims.affine_line_search_max_iteration))
         self.last_inner_failure_reason = "residual_armijo_line_search"
         raise RuntimeError("Affine fully implicit residual Armijo line search failed")
-
-    def _fully_implicit_line_search(
-        self,
-        sims,
-        y_flat,
-        residual,
-        direction,
-        jacobian_direction,
-    ):
-        """Residual-merit Armijo globalization preceded by IPC CCD.
-
-        The merit is ``phi(q) = 0.5 * ||R(q)||^2`` and its exact directional
-        derivative is ``R^T (J p)``.  Computing that product from the
-        assembled Jacobian is essential after max-step clamping, an optional
-        Jacobian shift, or an inexact HashTriplet solve; in those cases one
-        cannot assume ``J p == -R``.
-        """
-        alpha = self._ccd_step_size(sims, y_flat, direction)
-        if not np.isfinite(alpha) or alpha <= 0.0:
-            self._record_line_search(False)
-            self.last_inner_failure_reason = "ccd_step_size"
-            raise RuntimeError("Affine fully implicit CCD produced no feasible step")
-        armijo = float(sims.affine_fully_implicit_armijo)
-        contraction = float(sims.affine_fully_implicit_line_search_contraction)
-        if not 0.0 < armijo < 1.0 or not 0.0 < contraction < 1.0:
-            raise ValueError("Affine fully implicit Armijo and contraction must lie " "in (0, 1)")
-        residual = np.asarray(residual, dtype=np.float64).reshape(-1)
-        jacobian_direction = np.asarray(jacobian_direction, dtype=np.float64).reshape(-1)
-        base_merit = 0.5 * float(np.dot(residual, residual))
-        merit_slope = float(np.dot(residual, jacobian_direction))
-        self.last_fully_implicit_merit_slope = merit_slope
-        if not np.isfinite(base_merit) or not np.isfinite(merit_slope):
-            self._record_line_search(False)
-            self.last_inner_failure_reason = "non_finite_residual_merit"
-            raise RuntimeError("Affine fully implicit residual merit or directional " "derivative is non-finite")
-        if merit_slope >= 0.0:
-            self._record_line_search(False)
-            self.last_inner_failure_reason = "non_descent_residual_merit_direction"
-            raise RuntimeError(
-                "Affine fully implicit Newton correction is not a descent " "direction for 0.5 * ||R||^2"
-            )
-        for backtracks in range(int(sims.affine_line_search_max_iteration)):
-            trial = y_flat + alpha * direction
-            trial_energy, trial_residual = self._assemble_system(sims, trial, need_matrix=False)
-            trial_residual = np.asarray(trial_residual, dtype=np.float64).reshape(-1)
-            trial_merit = 0.5 * float(np.dot(trial_residual, trial_residual))
-            if (
-                np.isfinite(trial_energy)
-                and np.isfinite(trial_merit)
-                and trial_merit <= base_merit + armijo * alpha * merit_slope
-            ):
-                accepted_energy, trial_residual = self._assemble_system(sims, trial, need_matrix=True)
-                if not np.isfinite(accepted_energy):
-                    self._record_line_search(False, backtracks=backtracks)
-                    self.last_inner_failure_reason = "non_finite_energy"
-                    raise RuntimeError("Affine fully implicit accepted state has " "non-finite IPC energy")
-                self._record_line_search(True, alpha, backtracks)
-                return alpha, trial_residual
-            alpha *= contraction
-        self._assemble_system(sims, y_flat, need_matrix=True)
-        self._record_line_search(False, backtracks=int(sims.affine_line_search_max_iteration))
-        self.last_inner_failure_reason = "residual_armijo_line_search"
-        raise RuntimeError("Affine fully implicit residual Armijo line search failed")
-
-    def _solve_lagged_inner(self, sims, y_flat, energy, grad):
-        """Solve one conservative IPC problem with frozen friction data.
-
-        Reference IPC's nonlinear tolerance has velocity units: convergence is
-        ``||delta_x||_inf / dt < tol`` for the raw Newton correction.  An
-        absolute gradient test is not equivalent because barrier stiffness and
-        quadrature weights arbitrarily scale that gradient.
-        """
-        direction = np.zeros_like(y_flat)
-        iterations = 0
-        self.last_inner_converged = False
-        self.last_inner_failure_reason = "maximum_newton_iterations"
-        self.last_inner_residual = np.inf
-        self.last_inner_control_residual = np.inf
-        self.last_inner_correction_history = []
-        semi_progress = 0.0
-        dt = float(self.operator.dt) if self.operator is not None else 1.0
-        maximum_updates = int(sims.affine_max_newton_iteration)
-        for iteration in range(maximum_updates + 1):
-            if getattr(self.operator, "is_semi", False) and iteration > 1 and semi_progress > 0.999:
-                self.last_inner_converged = True
-                self.last_inner_failure_reason = ""
-                break
-            if not np.isfinite(energy):
-                self.last_inner_failure_reason = "non_finite_energy"
-                raise RuntimeError(
-                    "Affine lagged IPC energy is non-finite; the current " "configuration is not strictly feasible"
-                )
-            if not np.all(np.isfinite(grad)):
-                self.last_inner_failure_reason = "non_finite_gradient"
-                raise RuntimeError("Affine lagged Newton residual is non-finite")
-            direction = self._solve_direction(sims, grad)
-            if not np.all(np.isfinite(direction)):
-                self.last_inner_failure_reason = "non_finite_direction"
-                raise RuntimeError("Affine lagged Newton correction is non-finite")
-            self.last_inner_residual = float(self._surface_direction_inf_norm(direction) / dt)
-            self.last_inner_control_residual = float(np.linalg.norm(direction, ord=np.inf) / dt)
-            self.last_inner_correction_history.append(self.last_inner_residual)
-            # Reference IPC evaluates convergence from the previous Newton
-            # correction and therefore never discards a nonzero first update
-            # (``k && gradVanish``).  Applying that first update is required
-            # to leave the mollified stick branch when ``tol > epsv``.
-            if self.last_inner_residual == 0.0 or (
-                iteration > 0 and self.last_inner_residual < sims.affine_newton_tolerance
-            ):
-                if getattr(self.operator, "is_semi", False) and not self.operator.semi_contact_converged():
-                    self.operator.accept_semi_update_device()
-                    energy, grad = self._assemble_system(sims, y_flat, need_matrix=True)
-                    continue
-                self.last_inner_converged = True
-                self.last_inner_failure_reason = ""
-                break
-            # ``maximum_updates`` counts accepted Newton updates. Probe the
-            # state produced by the last allowed update once more, but never
-            # apply an unbudgeted extra correction.
-            if iteration == maximum_updates:
-                break
-            direction = self._clamp_direction(direction, sims.affine_max_step)
-            # Keep the direction used by CCD/line search identical to the one
-            # committed below.  Reversing it only inside ``_line_search``
-            # would validate one trial and then apply the opposite update.
-            direction_slope = float(np.dot(grad, direction))
-            if np.isfinite(direction_slope) and direction_slope > 0.0:
-                direction = -direction
-            step_size, new_energy, new_grad = self._line_search(sims, y_flat, energy, grad, direction)
-            y_flat = y_flat + step_size * direction
-            energy, grad = new_energy, new_grad
-            if getattr(self.operator, "is_semi", False):
-                semi_progress += (1.0 - semi_progress) * step_size
-            iterations = iteration + 1
-        if not self.last_inner_converged:
-            raise RuntimeError(
-                "Affine IPC inner Newton solve did not converge "
-                f"(reason={self.last_inner_failure_reason}, "
-                f"time_step={sims.current_step}, "
-                f"outer_iteration={self.last_friction_outer_iteration}, "
-                f"iterations={iterations}, "
-                f"correction_velocity={self.last_inner_residual:.6e}, "
-                f"recent_corrections="
-                f"{self.last_inner_correction_history[-5:]}, "
-                f"linear_method={self.last_linear_method}, "
-                f"linear_residual={self.last_linear_residual:.6e}, "
-                f"original_linear_residual="
-                f"{self.last_linear_original_residual:.6e}, "
-                f"lambda_min={self.last_linear_min_eigenvalue:.6e}, "
-                f"relative_negative="
-                f"{self.last_linear_relative_negative_curvature:.6e}, "
-                f"spectral_resolution="
-                f"{self.last_linear_spectral_resolution:.6e}, "
-                f"unresolved_modes="
-                f"{self.last_linear_unresolved_modes}, "
-                f"projection_correction="
-                f"{self.last_linear_projection_correction:.6e})"
-            )
-        return y_flat, energy, grad, iterations
 
     def _matrix_mode(self, sims):
         backend = _normalize_affine_assemble_type(sims.affine_assemble_type)
@@ -1478,6 +1264,7 @@ class AffineBodyEngine(object):
                     solver=("BiCGSTAB" if self.operator.fully_implicit else "PCG"),
                     matrix_symmetric=not self.operator.fully_implicit,
                     device_reduction=True,
+                    preconditioner_group_size=1 if self.operator.fully_implicit else 4,
                 )
             self.operator.bind_hash_triplet(self.hash_triplet)
         else:
@@ -1491,399 +1278,8 @@ class AffineBodyEngine(object):
                     linear_solver=True,
                 )
             self.operator.bind_coo_matrix(self.coo_matrix)
-
-    def _assemble_system(self, sims, y_flat, need_matrix=True):
-        y = self.state.unpack(y_flat)
-        matrix_mode = self._matrix_mode(sims) if need_matrix else MATRIX_COO
-        direct_threshold = int(sims.affine_direct_hessian_dofs)
-        separate_inertia_matrix = bool(
-            need_matrix
-            and matrix_mode == MATRIX_COO
-            and not self.operator.fully_implicit
-            and direct_threshold > 0
-            and self.operator.dof <= direct_threshold
-        )
-        if need_matrix:
-            self._ensure_linear_solver(sims)
-            if matrix_mode == MATRIX_HASH_TRIPLET:
-                self.hash_triplet.reset_system()
-        energy, grad = self.operator.assemble(
-            y,
-            self.state.tilde_y,
-            self.state.hat_y,
-            need_matrix=need_matrix,
-            matrix_mode=matrix_mode,
-            include_inertia_matrix=not separate_inertia_matrix,
-        )
-        self.last_candidate_pairs = self.operator.last_candidate_pairs
-        return energy, grad
-
-    def _solve_direction(self, sims, grad):
-        backend_label = _normalize_affine_assemble_type(sims.affine_assemble_type)
-        backend = backend_label.upper()
-        self.last_linear_backend = backend_label
-        self.last_linear_method = None
-        self.last_linear_min_eigenvalue = np.nan
-        self.last_linear_relative_negative_curvature = np.nan
-        self.last_linear_projection_correction = 0.0
-        self.last_linear_spectral_resolution = np.nan
-        self.last_linear_unresolved_modes = 0
-        self.last_linear_original_residual = np.inf
-        matrix_mode = self._matrix_mode(sims)
-        rhs = -grad
-        if self.operator.fully_implicit:
-            self._ensure_linear_solver(sims)
-            if backend == "HASHTRIPLET":
-                return self._solve_hash_triplet(sims, rhs)
-            self.last_linear_method = "SparseDirect"
-            from scipy.sparse.linalg import spsolve
-
-            matrix = self.coo_matrix._to_scipy().tocsc()
-            direction = np.asarray(spsolve(matrix, rhs), dtype=np.float64).reshape(-1)
-            if not np.all(np.isfinite(direction)):
-                raise RuntimeError(
-                    "Affine fully implicit nonsymmetric direct solve " "returned a non-finite correction"
-                )
-            self.last_linear_converged = True
-            self.last_linear_initial_residual = float(np.linalg.norm(rhs))
-            self.last_linear_residual = float(np.linalg.norm(matrix @ direction - rhs))
-            self.last_linear_original_residual = self.last_linear_residual
-            self.last_linear_iterations = 1
-            self.last_linear_failure_reason = ""
-            return direction
-        base_shift = max(float(sims.affine_hessian_shift), 1.0e-12)
-        self._ensure_linear_solver(sims)
-        last_error = None
-        for attempt in range(6):
-            try:
-                if backend == "HASHTRIPLET":
-                    return self._solve_hash_triplet(sims, rhs)
-                direct_threshold = int(sims.affine_direct_hessian_dofs)
-                if direct_threshold > 0 and self.operator.dof <= direct_threshold:
-                    return self._solve_coo_direct(sims, rhs)
-                return self._solve_coo_pcg(sims, rhs, base_shift)
-            except AssertionError as exc:
-                last_error = exc
-            except RuntimeError as exc:
-                if "did not converge" not in str(exc):
-                    raise
-                last_error = exc
-            if attempt == 5:
-                break
-            self.operator._add_hessian_shift(matrix_mode, base_shift * (10.0**attempt))
-            if matrix_mode == MATRIX_COO:
-                self.operator.finalize_coo_assembly()
-        raise RuntimeError(
-            f"Affine {backend} linear solve did not converge after " "projected-Hessian regularization."
-        ) from last_error
-
-    def _fully_implicit_jacobian_direction(self, sims, direction):
-        """Return the exact residual-Jacobian product ``J @ direction``.
-
-        The matrix used by the linear solve may include the optional explicit
-        diagonal regularization.  Remove that contribution so the Armijo
-        slope remains the derivative of the actual residual merit.
-        """
-        backend = _normalize_affine_assemble_type(sims.affine_assemble_type)
-        direction = np.asarray(direction, dtype=np.float64).reshape(-1)
-        if backend == "HashTriplet":
-            # Keep the HashTriplet path on the Taichi device. Building a
-            # SciPy matrix here repeated block expansion and a device-to-host
-            # transfer solely for one Jp product in the residual merit slope.
-            self.hash_triplet.x.from_numpy(
-                self.hash_triplet._pad_vector_array(direction.reshape((self.operator.control_num, 3)))
-            )
-            nnz = int(self.hash_triplet.non_diag.element_pair_num[0])
-            self.hash_triplet.matvec(
-                self.operator.control_num,
-                nnz,
-                self.hash_triplet.x,
-                self.hash_triplet.Ax,
-            )
-            product = self.hash_triplet.Ax.to_numpy()[: self.operator.control_num].reshape(-1).copy()
-        else:
-            matrix = self.coo_matrix._to_scipy()
-            product = np.asarray(matrix @ direction, dtype=np.float64).reshape(-1)
-        shift = float(self.operator._active_jacobian_shift())
-        if shift != 0.0:
-            product -= shift * direction
-        if not np.all(np.isfinite(product)):
-            self.last_inner_failure_reason = "non_finite_jacobian_direction"
-            raise RuntimeError("Affine fully implicit residual Jacobian-vector product " "is non-finite")
-        return product
-
-    def _solve_coo_pcg(self, sims, rhs, min_preconditioner):
-        """CPU/Metal oracle for the same SPD lagged system used on CUDA."""
-        self.last_linear_method = "PCG"
-        self.operator.prepare_linear_fields(rhs, min_preconditioner)
-        succeeded = self.coo_matrix.solve(
-            self.operator.linear_rhs,
-            self.operator.linear_x,
-            self.operator.linear_M,
-            tol=sims.affine_linear_tolerance,
-            maxiter=sims.affine_linear_max_iteration,
-        )
-        solver = self.coo_matrix.linear_solver
-        self.last_linear_converged = bool(succeeded)
-        self.last_linear_initial_residual = float(solver.last_initial_residual)
-        self.last_linear_residual = float(solver.last_residual)
-        self.last_linear_original_residual = self.last_linear_residual
-        self.last_linear_iterations = int(solver.last_iterations)
-        self.last_linear_failure_reason = str(solver.last_breakdown_reason)
-        if not succeeded:
-            raise RuntimeError(
-                "Affine COO PCG did not converge: "
-                f"initial_residual={self.last_linear_initial_residual:.6e}, "
-                f"residual={self.last_linear_residual:.6e}, "
-                f"iterations={self.last_linear_iterations}, "
-                f"reason={self.last_linear_failure_reason or 'unknown'}"
-            )
-        return self.operator.coo_solution_numpy()
-
-    def _solve_coo_direct(self, sims, rhs):
-        """Solve a configured small lagged projected-Newton system.
-
-        ``direct_hessian_dofs`` has always been part of the public AffineBody
-        configuration, but historically it was ignored and every CPU/Metal
-        system went through scalar-Jacobi PCG. Near an IPC barrier the Hessian
-        can be so stiff that atomic COO matvec summation reaches its residual
-        floor before an absolute Krylov tolerance, even for a 12-DOF body.
-        A dense symmetric eigensolve is both faster and more accurate for the
-        explicitly configured small-system range.
-
-        Every non-inertial lagged block is projected to PSD before pullback.
-        The COO assembler therefore keeps that block separate from the exact
-        control-space mass matrix for this path. We whiten by the mass
-        Cholesky factor, project only round-off-level negative eigenvalues of
-        the non-inertial block, and add the identity in spectral coordinates.
-        This is algebraically the same ``M + K_psd`` Newton system, but it
-        cannot lose O(1) inertia modes when a barrier reaches O(1e17).
-        Material negative curvature is still rejected. CUDA production
-        systems remain on the device-resident HashTriplet PCG path.
-        """
-
-        self.last_linear_method = "DenseMassWhitenedProjectedEigen"
-        noninertial_matrix = np.asarray(self.coo_matrix._to_scipy().toarray(), dtype=np.float64)
-        mass_matrix = np.asarray(
-            self.operator.control_mass_matrix_np,
-            dtype=np.float64,
-        )
-        rhs = np.asarray(rhs, dtype=np.float64).reshape(-1)
-        if (
-            noninertial_matrix.shape != (self.operator.dof, self.operator.dof)
-            or mass_matrix.shape != (self.operator.dof, self.operator.dof)
-            or rhs.size != self.operator.dof
-            or not np.all(np.isfinite(noninertial_matrix))
-            or not np.all(np.isfinite(mass_matrix))
-            or not np.all(np.isfinite(rhs))
-        ):
-            raise RuntimeError("Affine COO direct solve did not converge: non-finite or " "inconsistent linear system")
-
-        matrix_norm = float(np.linalg.norm(noninertial_matrix, ord=np.inf))
-        skew_norm = float(
-            np.linalg.norm(
-                noninertial_matrix - noninertial_matrix.T,
-                ord=np.inf,
-            )
-        )
-        symmetry_scale = max(matrix_norm, np.finfo(np.float64).tiny)
-        symmetry_error = skew_norm / symmetry_scale
-        symmetry_tolerance = max(
-            100.0 * np.finfo(np.float64).eps * max(self.operator.dof, 1),
-            1.0e-12,
-        )
-        if symmetry_error > symmetry_tolerance:
-            raise RuntimeError(
-                "Affine lagged projected Hessian is not symmetric " f"(relative_skew={symmetry_error:.6e})"
-            )
-
-        symmetric_noninertial = 0.5 * (noninertial_matrix + noninertial_matrix.T)
-        try:
-            mass_cholesky = np.linalg.cholesky(0.5 * (mass_matrix + mass_matrix.T))
-            left_whitened = np.linalg.solve(mass_cholesky, symmetric_noninertial)
-            whitened_noninertial = np.linalg.solve(mass_cholesky, left_whitened.T).T
-            whitened_noninertial = 0.5 * (whitened_noninertial + whitened_noninertial.T)
-            eigenvalues, eigenvectors = np.linalg.eigh(whitened_noninertial)
-        except np.linalg.LinAlgError as exc:
-            raise RuntimeError(
-                "Affine COO direct solve did not converge: mass "
-                "factorization or projected-Hessian eigendecomposition "
-                "failed"
-            ) from exc
-
-        minimum_eigenvalue = float(eigenvalues.min())
-        spectral_scale = max(
-            float(np.max(np.abs(eigenvalues))),
-            np.finfo(np.float64).tiny,
-        )
-        relative_negative_curvature = max(-minimum_eigenvalue, 0.0) / spectral_scale
-        # A formed f64 matrix cannot resolve eigenvalues below the backward
-        # error of symmetric eigendecomposition/assembly. Treat both signs in
-        # this band as unresolved. Clamping only negative noise while keeping
-        # an equally plausible positive O(ulp) mode creates a false stiffness
-        # and can make the Newton correction spuriously vanish.
-        spectral_resolution = 8.0 * max(self.operator.dof, 1) * np.finfo(np.float64).eps * spectral_scale
-        self.last_linear_spectral_resolution = spectral_resolution
-        self.last_linear_min_eigenvalue = minimum_eigenvalue
-        self.last_linear_relative_negative_curvature = relative_negative_curvature
-        if minimum_eigenvalue < -spectral_resolution:
-            raise RuntimeError(
-                "Affine lagged projected Hessian contains material negative "
-                "curvature "
-                f"(lambda_min={minimum_eigenvalue:.6e}, "
-                f"spectral_resolution={spectral_resolution:.6e}, "
-                f"relative_negative={relative_negative_curvature:.6e})"
-            )
-
-        unresolved = np.abs(eigenvalues) <= spectral_resolution
-        corrected_eigenvalues = np.where(unresolved, 0.0, eigenvalues)
-        self.last_linear_unresolved_modes = int(np.count_nonzero(unresolved))
-        self.last_linear_projection_correction = float(np.max(np.abs(corrected_eigenvalues - eigenvalues)))
-        whitened_rhs = np.linalg.solve(mass_cholesky, rhs)
-        projected_rhs = eigenvectors.T @ whitened_rhs
-        whitened_direction = eigenvectors @ (projected_rhs / (1.0 + corrected_eigenvalues))
-        direction = np.linalg.solve(mass_cholesky.T, whitened_direction)
-
-        # Verify the mass-whitened system actually used for the projected
-        # Newton direction. The original residual is evaluated as two
-        # separate products so the diagnostic does not first erase M in a
-        # dense ``M + K`` addition.
-        projected_residual_whitened = (
-            eigenvectors @ ((1.0 + corrected_eigenvalues) * (eigenvectors.T @ whitened_direction)) - whitened_rhs
-        )
-        projected_residual_vector = mass_cholesky @ projected_residual_whitened
-        original_residual_vector = mass_matrix @ direction + symmetric_noninertial @ direction - rhs
-        residual = float(np.linalg.norm(projected_residual_vector))
-        self.last_linear_original_residual = float(np.linalg.norm(original_residual_vector))
-        denominator = (1.0 + float(np.max(corrected_eigenvalues))) * float(
-            np.linalg.norm(whitened_direction, ord=np.inf)
-        ) + float(np.linalg.norm(whitened_rhs, ord=np.inf))
-        backward_error = (
-            float(np.linalg.norm(projected_residual_whitened, ord=np.inf)) / denominator if denominator > 0.0 else 0.0
-        )
-        backward_tolerance = max(
-            float(sims.affine_linear_tolerance),
-            100.0 * np.finfo(np.float64).eps * max(self.operator.dof, 1),
-        )
-        self.last_linear_initial_residual = float(np.linalg.norm(rhs))
-        self.last_linear_residual = residual
-        self.last_linear_iterations = 1
-        self.last_linear_converged = bool(
-            np.all(np.isfinite(direction)) and np.isfinite(backward_error) and backward_error <= backward_tolerance
-        )
-        self.last_linear_failure_reason = "" if self.last_linear_converged else "backward_error"
-        if not self.last_linear_converged:
-            raise RuntimeError(
-                "Affine COO direct solve did not converge: "
-                f"residual={residual:.6e}, "
-                f"backward_error={backward_error:.6e}, "
-                f"tolerance={backward_tolerance:.6e}, "
-                f"lambda_min={minimum_eigenvalue:.6e}, "
-                f"projection_correction="
-                f"{self.last_linear_projection_correction:.6e}"
-            )
-        return direction
-
-    def _solve_hash_triplet(self, sims, rhs):
-        self.last_linear_method = "BiCGSTAB" if self.operator.fully_implicit else "PCG"
-        active_nodes = self.operator.control_num
-        self.hash_triplet.finalize_taichi_assembly()
-        result = self.hash_triplet.solve(
-            rhs=rhs.reshape((active_nodes, 3)),
-            active_nodes=active_nodes,
-            tol=self._linear_tolerance(sims, float(np.linalg.norm(rhs, ord=np.inf))),
-            maxiter=sims.affine_linear_max_iteration,
-            return_solution=True,
-        )
-        self.last_linear_converged = bool(result["converged"])
-        self.last_linear_initial_residual = float(np.linalg.norm(rhs))
-        self.last_linear_residual = float(result["residual"])
-        self.last_linear_original_residual = self.last_linear_residual
-        self.last_linear_iterations = int(result["iterations"])
-        self.last_linear_failure_reason = "" if result["converged"] else "maximum_iterations_or_breakdown"
-        if not result["converged"]:
-            method = "BiCGSTAB" if self.operator.fully_implicit else "PCG"
-            raise RuntimeError(
-                f"Affine HashTriplet {method} did not converge: "
-                f"residual={result['residual']:.6e}, "
-                f"iterations={result['iterations']}"
-            )
-        return result["x"].reshape(-1)
-
-    @staticmethod
-    def _clamp_direction(direction, max_step):
-        norm = np.linalg.norm(direction, ord=np.inf)
-        if max_step > 0.0 and norm > max_step:
-            return direction * (max_step / norm)
-        return direction
-
-    def _line_search(self, sims, y_flat, energy, grad, direction):
-        slope = float(np.dot(grad, direction))
-        if not np.isfinite(slope) or slope >= 0.0:
-            self._record_line_search(False)
-            self.last_inner_failure_reason = "non_descent_direction"
-            raise RuntimeError("Affine IPC line search requires a descent direction")
-        alpha = self._ccd_step_size(sims, y_flat, direction)
-        if not np.isfinite(alpha) or alpha <= 0.0:
-            self._record_line_search(False)
-            self.last_inner_failure_reason = "ccd_step_size"
-            raise RuntimeError("Affine lagged IPC CCD produced no strictly feasible step")
-        self.last_line_search_initial_alpha = float(alpha)
-        self.last_line_search_slope = slope
-        self.last_line_search_base_energy = float(energy)
-        self.last_line_search_trials = []
-        for backtracks in range(int(sims.affine_line_search_max_iteration)):
-            trial = y_flat + alpha * direction
-            trial_energy, trial_grad = self._assemble_system(sims, trial, need_matrix=False)
-            self.last_line_search_trials.append((float(alpha), float(trial_energy)))
-            # Use conservative-potential backtracking ``E(x+αp) <= E(x)``.
-            # Residual-merit Armijo is reserved for fully implicit friction.
-            if np.isfinite(trial_energy) and trial_energy <= energy:
-                self._assemble_system(sims, trial, need_matrix=True)
-                if getattr(self.operator, "is_semi", False):
-                    self.operator.accept_semi_update_device()
-                    trial_energy, trial_grad = self._assemble_system(sims, trial, need_matrix=True)
-                self._record_line_search(True, alpha, backtracks)
-                return alpha, trial_energy, trial_grad
-            alpha *= 0.5
-        # IPC relies on the line search to preserve strict feasibility and
-        # monotone potential decrease. Never accept alpha=0 or an
-        # energy-increasing fallback.
-        self._assemble_system(sims, y_flat, need_matrix=True)
-        self._record_line_search(False, backtracks=len(self.last_line_search_trials))
-        self.last_inner_failure_reason = "monotone_line_search"
-        raise RuntimeError(
-            "Affine lagged IPC monotone line search failed "
-            f"(base_energy={energy:.17e}, slope={slope:.17e}, "
-            f"initial_alpha={self.last_line_search_initial_alpha:.17e}, "
-            f"trials={self.last_line_search_trials[-8:]}, "
-            f"recent_corrections={self.last_inner_correction_history[-5:]}, "
-            f"linear_method={self.last_linear_method}, "
-            f"linear_residual={self.last_linear_residual:.6e}, "
-            f"original_linear_residual="
-            f"{self.last_linear_original_residual:.6e}, "
-            f"lambda_min={self.last_linear_min_eigenvalue:.6e}, "
-            f"relative_negative="
-            f"{self.last_linear_relative_negative_curvature:.6e}, "
-            f"projection_correction="
-            f"{self.last_linear_projection_correction:.6e})"
-        )
-
-    def _ccd_step_size(self, sims, y_flat, direction):
-        self.last_ccd_type = str(sims.affine_ccd_type)
-        if not sims.affine_ccd:
-            self.last_ccd_step = 1.0
-            return 1.0
-        alpha = self.operator.init_step_size(
-            y_flat,
-            direction,
-            ccd_type=sims.affine_ccd_type,
-            eta=sims.affine_ccd_eta,
-            accd_tolerance=sims.affine_accd_tolerance,
-            max_iteration=sims.affine_ccd_max_iteration,
-        )
-        self.last_ccd_step = alpha
-        return alpha
+            if self.coo_preconditioner is None:
+                self.coo_preconditioner = BlockJacobi(3, self.operator.control_num, 4)
 
     def _prepare_output(self, sims):
         if sims.path is None:
@@ -1894,7 +1290,7 @@ class AffineBodyEngine(object):
     def _save(self, sims, scene):
         if sims.path is None:
             return
-        if self.last_device_nonlinear_path:
+        if self.last_device_nonlinear_path or getattr(self.operator, "use_newmark", False):
             self.operator.sync_output_state()
         vertices, faces, body_ids, group_ids = self.state.surface_mesh()
         face_body_ids, face_group_ids, face_material_ids = self._surface_cell_data()
@@ -1917,6 +1313,11 @@ class AffineBodyEngine(object):
             ),
             torqueLocalDamping=np.asarray(
                 [body.get("torque_damping", 0.0) for body in self.state.bodies], dtype=np.float64
+            ),
+            **(
+                {"a_y": self.state.a_y, "newmark": np.asarray(self.operator.integration)}
+                if getattr(self.operator, "use_newmark", False)
+                else {}
             ),
         )
         self._save_vtk(sims, vertices, faces, body_ids, group_ids, face_body_ids, face_group_ids, face_material_ids)
@@ -1947,7 +1348,7 @@ class AffineBodyEngine(object):
     def output_snapshot(self):
         if self.state is None:
             raise RuntimeError("AffineBodyEngine has not been initialized.")
-        if self.last_device_nonlinear_path:
+        if self.last_device_nonlinear_path or getattr(self.operator, "use_newmark", False):
             # The accepted affine state stays device-resident throughout the
             # nonlinear loop.  Synchronize it once at the recorder/user
             # observation boundary; per-step host downloads would put output
@@ -1974,7 +1375,7 @@ class AffineBodyEngine(object):
         friction = np.asarray([body["mu"] for body in self.state.bodies], dtype=np.float64)
         force_damping = np.asarray([body.get("force_damping", 0.0) for body in self.state.bodies], dtype=np.float64)
         torque_damping = np.asarray([body.get("torque_damping", 0.0) for body in self.state.bodies], dtype=np.float64)
-        return {
+        snapshot = {
             "body_num": body_num,
             "vertices": vertices,
             "faces": faces,
@@ -1998,6 +1399,9 @@ class AffineBodyEngine(object):
             "bbox_max": bbox_max,
             "radius": radius,
         }
+        if getattr(self.operator, "use_newmark", False):
+            snapshot.update(a_y=self.state.a_y.copy(), newmark=np.asarray(self.operator.integration))
+        return snapshot
 
     def contact_snapshot(self):
         if self.operator is None:

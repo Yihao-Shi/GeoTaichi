@@ -30,8 +30,6 @@ class DifferentiableFEMAffine:
     def __init__(self, engine, steps):
         if not isinstance(engine, FEMAffineIPCEngine):
             raise ValueError("DifferentiableFEMAffine requires an initialized FEM--AffineBody IPC engine")
-        if engine.contact.is_semi:
-            raise ValueError("FEM--AffineBody differentiable simulation currently requires BarrierIPC")
         if engine.step_retry.enabled:
             raise ValueError("FEM--AffineBody differentiable simulation requires fixed steps without retry")
         if engine.fem_contact is not None:
@@ -442,7 +440,7 @@ class DifferentiableFEMAffine:
                 matrix.linear_operator,
                 self.engine.rhs,
                 self.engine.correction,
-                self.engine.coo_diagonal,
+                self.engine.coo_block_preconditioner(cholesky=False),
                 self.engine.dof_count,
                 tol=self.engine.linear_solver_tolerance,
                 rel_tol=self.engine.linear_solver_relative_tolerance,
@@ -504,8 +502,8 @@ class DifferentiableFEMAffine:
         self.fem_diff._clear_parameter_vjp()
         self._clear_affine_parameter_vjp()
 
-        acceleration_factor = 1.0 / (self.fem.beta * self.dt**2)
-        prediction_factor = self.dt**2 * (0.5 - self.fem.beta)
+        acceleration_factor = 1.0 / (2.0 * self.fem.alpha * self.fem.beta * self.dt**2)
+        prediction_factor = self.dt**2 * self.fem.alpha * (1.0 - 2.0 * self.fem.beta)
         dynamic = (1.0 + self.fem.damping * self.dt * self.fem.gamma) * acceleration_factor
         young = float(
             getattr(

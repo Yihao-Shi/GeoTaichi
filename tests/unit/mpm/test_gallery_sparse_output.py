@@ -100,6 +100,7 @@ def test_sparse_active_block_vtk_is_opt_in():
 class _SemiImplicitParameterStub:
     def __init__(self):
         self.solver_type = "SemiImplicit_u_p"
+        self.pressure_stabilize = None
         self.multilevel = 4
         self.pre_and_post_smoothing = 2
         self.bottom_smoothing = 10
@@ -123,6 +124,9 @@ class _SemiImplicitParameterStub:
 
     def set_pressure_solver(self, value):
         self.values["pressure_solver"] = value
+
+    def set_pressure_stabilize_technique(self, value):
+        self.values["pressure_stabilize"] = value
 
     def use_mgpcg_pressure_solver(self):
         return False
@@ -149,6 +153,7 @@ def test_semiimplicit_up_accepts_public_pressure_solver_parameters():
     assert mpm.sims.values == {
         "residual_tolerance": 2.0e-7,
         "pressure_beta": 0.8,
+        "pressure_stabilize": None,
         "max_iteration_number": 123,
         "linear_solver": "PCG",
         "assemble_type": "MatrixFree",

@@ -64,9 +64,10 @@ def test_affine_engine_initialization_freezes_operator_parameters():
     calls = []
     engine = AffineBodyEngine()
     engine.state = object()
-    engine.operator = object()
+    engine.operator = SimpleNamespace(use_newmark=False)
     sims = SimpleNamespace(
         search="LinkedCell",
+        wall_type=0,
         enable_step_retry=False,
         step_retry_max_retries=0,
         step_retry_reduction=0.5,

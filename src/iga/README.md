@@ -9,7 +9,8 @@ patch topology as the geometric representation.
 
 ## Example-backed capabilities
 
-- NURBS-based isogeometric analysis (IGA): [2D elastic beam](../../examples/iga/elastic_beam2d/elastic_beam2d.py) and [3D explicit cantilever](../../examples/iga/explicit_cantilever_3d/explicit_cantilever_3d.py).
+- NURBS-based isogeometric analysis (IGA): [2D elastic beam](../../examples/iga/elastic_beam2d/elastic_beam2d.py) and [3D cantilever](../../examples/iga/explicit_cantilever_3d/explicit_cantilever_3d.py) (explicit by default; `--solver implicit` selects implicit Newmark).
+- Prescribed finite rotation: [fixed-base square column with a rotating top](../../examples/iga/twisting_column_3d/README.md), including CPU run commands and problem size.
 - Axisymmetric NURBS solids: [annulus](../../examples/iga/axisymmetric_annulus/axisymmetric_annulus.py).
 - Independent IGA structures coupled to MPM continua: [implicit point–NURBS IPC](../../examples/igampm/iga_mpm_barrier_contact/iga_mpm_barrier_contact.py), [explicit DEM-law contact](../../examples/igampm/iga_mpm_explicit_dem_contact/iga_mpm_explicit_dem_contact.py), and [axisymmetric CPT](../../examples/igampm/cpt_dp/cpt_dp.py).
 
@@ -366,8 +367,10 @@ With lumped mass, a first-order velocity-decay explicit step can be written as
 
 For an implicit displacement increment
 $`\Delta\boldsymbol{d}=\boldsymbol{d}_{n+1}-\boldsymbol{d}_n`$, introduce
-parameters $`(\alpha_N,\beta,\gamma)`$. The acceleration and velocity updates
-are
+parameters $`(\alpha_N,\beta,\gamma)`$. The public
+`newmark=[alpha, beta, gamma]` key requires exactly three finite positive
+values; its default is `[0.5, 0.25, 0.5]`. The acceleration and velocity
+updates are
 
 ```math
 \boldsymbol{a}_{n+1}
@@ -493,6 +496,15 @@ before control-point state is advanced, so a reduced timestep can be retried
 transactionally. Explicit IGA rejects an enabled policy. Both engines expose
 accepted time/step history through the facade's `diagnostics_snapshot()`.
 
+`iga.set_solver(...)` accepts `linear_solver_tolerance` (absolute, default
+`1e-10`), `linear_solver_relative_tolerance` (default `0`), and
+`linear_solver_max_iters`. Hash PCG/BiCGSTAB and COO PCG use the fixed true-residual
+target `max(atol, rtol * initial_residual)`. Tolerances must be finite and
+non-negative, with at least one positive value. `residual` and `max_iters`
+continue to control the outer Newton solve independently.
+Setting only `linear_solver_tolerance` selects absolute-only stopping; supply
+both tolerance keys in the same call to use both branches.
+
 See `examples/iga/` for complete boundary selection and output setup.
 
 For axisymmetric analysis, configure `dimension=2`, `axisymmetric=True`, and
@@ -549,6 +561,15 @@ constant velocity. The solver converts it to `velocity * current_dt` whenever
 the timestep changes, including retries and shortened output steps. Ordinary
 `append` retains its prescribed-increment semantics. Explicit IGA rejects
 `append_velocity`.
+
+Standalone implicit steps initialize constrained displacement increments from
+the boundary values before Newton iteration. Line search then changes only
+free degrees of freedom; prescribed motion may do positive work without being
+rejected as an uphill unconstrained energy step. Explicit `append` values are
+total displacements from the initial control points. The
+[450-degree column example](../../examples/iga/twisting_column_3d/README.md)
+demonstrates both conventions and keeps saved-state evaluation in a separate
+`draw/evaluate_twisting_column_3d.py` script.
 
 ## Sparse systems and runtime boundary
 

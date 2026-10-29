@@ -14,7 +14,7 @@ import json
 import math
 from pathlib import Path
 import numpy as np
-from examples.mpm.IncompressibleFluid.wavemaker_tank_3d.draw.evaluate_wavemaker_tank_3d import (
+from tools.postprocessing.mpm.fluid_metrics import (
     deep_air_particle_count,
     harmonic_fit,
     linear_piston_wave,
@@ -23,7 +23,7 @@ from examples.mpm.IncompressibleFluid.wavemaker_tank_3d.draw.evaluate_wavemaker_
     sdf_surface_profile_metrics,
     sdf_surface_gauge,
 )
-from examples.mpm.IncompressibleFluid.large_tank_incompressible_3d.draw.validate_large_tank_incompressible_3d import (
+from tools.postprocessing.mpm.fluid_metrics import (
     enclosed_air_count,
 )
 

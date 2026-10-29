@@ -50,19 +50,23 @@ h0 = [0.05, 0.1, 0.2]
 def get_data(path):
     x = []
     y = []
+    missing = []
     for rho in rho0:
         for mu in mu0:
             for h in h0:
+                filename = path + f"Rho_{rho}_Mu_{mu}_H_{h}_0/particles/LSDEMRigid{1:06d}.npz"
                 try:
-                    data = np.load(path + f"Rho_{rho}_Mu_{mu}_H_{h}_0/particles/LSDEMRigid{1:06d}.npz")
-                except:
+                    data = np.load(filename)
+                except FileNotFoundError:
+                    missing.append(filename)
                     continue
                 zpos = data["mass_center"][0][2]
                 d = 0.06 - (zpos - 0.0125)
                 normalized_x = (rho / 1510) ** (0.5) * (2.0 * 0.0125) ** (2.0 / 3.0) * (h + d) ** (1.0 / 3.0)
                 x.append(normalized_x)
                 y.append(d)
-    print(x, y)
+    if missing:
+        print(f"Skipped {len(missing)} missing runs: " + ", ".join(missing))
     return x, y
 
 

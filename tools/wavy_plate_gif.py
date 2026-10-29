@@ -6,6 +6,7 @@ Color native IGA von Mises stress and MPM displacement from frame zero with fixe
 For flexible_barrier, also pass --output images/flexible_barrier.gif.
 For cpt_dp, also pass --output images/cpt_dp.gif; both bodies use displacement.
 """
+
 import argparse
 import json
 from pathlib import Path
@@ -15,7 +16,8 @@ import tempfile
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
+if not __package__:
+    sys.path.insert(0, str(ROOT))
 from tools.blender_cfdem_gif import export
 
 

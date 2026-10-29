@@ -27,7 +27,13 @@ from examples.mmpm.SubmarineLandslide.submarine_landslide_2d.submarine_landslide
 
 from examples.mmpm.SubmarineLandslide.submarine_landslide_2d.submarine_landslide_2d_parameters import (
     ELEMENT_SIZE,
+    FLUID_DENSITY,
+    FRICTION_ANGLE,
+    GRAVITY,
+    INITIAL_POROSITY,
+    K0,
     SAND_LEFT_X,
+    SAND_AREA,
     SAND_POLYGON,
     SAND_RIGHT_X,
     SAND_TOP,
@@ -38,7 +44,9 @@ from examples.mmpm.SubmarineLandslide.submarine_landslide_2d.submarine_landslide
     SLOPE_START_X,
     TANK_LENGTH,
     WATER_DEPTH,
+    WATER_AREA,
     WATER_POLYGON,
+    SOLID_DENSITY,
 )
 from examples.mmpm.SubmarineLandslide.submarine_landslide_2d.draw.evaluate_submarine_landslide_2d import (
     postprocess_landslide,
@@ -56,12 +64,6 @@ PAPER_SOLID_PARTICLES_PER_CELL = 400
 PAPER_FLUID_PARTICLES_PER_CELL = 64
 PAPER_SOLID_PARTICLE_COUNT = 13165
 PAPER_FLUID_PARTICLE_COUNT = 2413600
-INITIAL_POROSITY = 0.38
-SOLID_DENSITY = 2650.0
-FLUID_DENSITY = 1000.0
-GRAVITY = 9.8
-FRICTION_ANGLE = 10.0
-K0 = 1.0 - math.sin(math.radians(FRICTION_ANGLE))
 
 SOLID_PARTICLES_PER_CELL = int(os.environ.get("GEOTAICHI_RZADKIEWICZ_LANDSLIDE_SOLID_NPPC", "4"))
 FLUID_PARTICLES_PER_CELL = int(os.environ.get("GEOTAICHI_RZADKIEWICZ_LANDSLIDE_FLUID_NPPC", "8"))
@@ -79,8 +81,6 @@ SKIP_POSTPROCESS = os.environ.get("GEOTAICHI_SKIP_POSTPROCESS", "0") != "0"
 ARCH = os.environ.get("GEOTAICHI_RZADKIEWICZ_LANDSLIDE_ARCH", "cpu")
 
 
-WATER_AREA = WATER_DEPTH * SLOPE_START_X + 0.5 * WATER_DEPTH * WATER_DEPTH
-SAND_AREA = 0.5 * (SAND_RIGHT_X - SAND_LEFT_X) * (SAND_TOP - (SAND_LEFT_X - SLOPE_START_X))
 ESTIMATED_FLUID_PARTICLES = int(
     math.ceil(WATER_AREA * FLUID_PARTICLES_PER_CELL * FLUID_PARTICLES_PER_CELL / (ELEMENT_SIZE * ELEMENT_SIZE))
 )
@@ -229,7 +229,6 @@ def create_mpm():
             "FluidDensity": FLUID_DENSITY,
             "Porosity": INITIAL_POROSITY,
             "MaximumPorosity": MAXIMUM_POROSITY,
-            "FluidBulkModulus": 2.2e8,
             "Permeability": 1.0e-3,
             "FluidViscosity": 1.0e-3,
             "GrainDiameter": 6.0e-3,

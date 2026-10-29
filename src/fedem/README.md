@@ -29,9 +29,17 @@ edge--edge distances and therefore uses no SDF on either side.
 | FEDEM route | Required child solvers | Deformable discretization | Plasticity | Principal limitation |
 | --- | --- | --- | --- | --- |
 | Deformable--deformable soft particles | Explicit FEM; contact is owned by the FEM child | `TET4` or `HEX8` volume bodies with extracted boundary triangles | Elastic `TET4/HEX8` | This is an explicit contact route; it is not the implicit AffineBody IPC system. |
-| DEM sphere--FEM surface | Explicit FEM + `scheme="DEM"` | Volume, membrane, or cloth FEM surface | Elastic examples only | Uses the selected Linear/Hertz--Mindlin law; standalone FEM IPC/AL cannot be combined. |
+| DEM sphere--FEM surface | Explicit FEM + `scheme="DEM"` | Volume, membrane, or cloth FEM surface | Elastic examples only | Uses the selected Linear/Hertz--Mindlin law; standalone FEM IPC cannot be combined. |
 | LSDEM rigid SDF--FEM surface | Explicit FEM + `scheme="LSDEM"` | Current FEM boundary nodes against the rigid body's existing SDF | Elastic examples only | Only the rigid LSDEM body owns an SDF; the FEM body does not. |
-| AffineBody--FEM mesh IPC | Implicit FEM + `scheme="AffineBody"` | Elastic `TET4`, elastic `HEX8`, or cloth | No; FEM elastoplasticity is rejected | Fully coupled ordinary Barrier IPC with lagged friction. Existing standalone FEM contact, if present, must also be IPC rather than augmented Lagrangian. |
+| AffineBody--FEM mesh IPC | Implicit FEM + `scheme="AffineBody"` | Elastic `TET4`, elastic `HEX8`, or cloth | No; FEM elastoplasticity is rejected | Fully coupled ordinary Barrier IPC with lagged friction. Existing standalone FEM contact, if present, must also be IPC. |
+
+The monolithic FEM--ABD device solve uses mixed block Jacobi for both
+HashTriplet and COO: each affine body's four control points form one 12x12
+principal block; FEM nodes retain 3x3 blocks. The blocks include all assembled
+contact contributions and are extracted after constraints are eliminated.
+PCG uses device Cholesky, while exact-adjoint BiCGSTAB uses pivoted device LU.
+The complete mixed-contact matrix and the configured convergence tests remain
+unchanged; this preconditioner does not decouple the physical solve.
 
 Thus “soft particle” describes a contact role, not a new bulk element. Its
 bulk response is still determined by the FEM row selected above.
@@ -285,6 +293,18 @@ and frictional dissipation are added.
 
 ### 4. Fully coupled AffineBody--FEM Barrier IPC
 
+Configure each child with `newmark=[alpha, beta, gamma]`: FEM through
+`set_solver`, ABD through `set_affine_body_parameters`. Both retain their
+original device state and engine. The coupled system divides the ABD
+incremental residual and tangent by `2*alpha*beta*dt²`, putting them in
+physical force units alongside FEM and mixed IPC. Initial ABD acceleration
+includes the mixed contact force; accepted acceleration participates in rollback.
+Lagged friction is available with either integrator; the existing restriction
+to lagged friction in this coupled route remains. The energy line search
+uses the FEM Armijo policy with relative f64 reduction-roundoff handling
+only when the predicted decrease is also unresolved. Newton and linear
+convergence tolerances are unchanged by this roundoff allowance.
+
 The AffineBody child uses four vector controls per body. Its kinematics and
 incremental potential are defined in the
 [shared affine-body theory](../dem/README.md#5-affine-body-mechanics-and-ipc).
@@ -524,6 +544,7 @@ fem.add_material(
 fem.add_soft_particle_contact(
     "Linear",
     search="BVH",                 # or "LinkedCell"
+    bvh_rebuild_interval=100,      # explicit solver steps; default 1000
     ContactThickness=1.0e-2,
     NormalStiffness=1.0e7,
     TangentialStiffness=5.0e6,
@@ -539,6 +560,15 @@ Default law parameters apply to every distinct body pair. Use
 `add_soft_particle_property(body1, body2, ...)` to override one pair. The
 `HertzMindlin` law accepts `ShearModulus`, `Poisson`, `Restitution`,
 `Friction`, and `ContactThickness`.
+
+For BVH searches, `bvh_rebuild_interval` is a positive integer measured in
+solver steps. The first search builds; later searches refit until that many
+steps have elapsed since the last rebuild, then rebuild on the next query.
+This preserves the Verlet displacement trigger and contact-history transfer.
+For explicit FEM--DEM and FEM--LSDEM cross-contact, set the same keyword in
+`coupling.memory_allocate({...})`; its default is also `1000`. The DEM child's
+own contact tree uses its separate `dem.memory_allocate` setting. Implicit IPC
+continues to rebuild for every new candidate query.
 
 The broad phase rejects same-body topology and produces both directed
 point--triangle and unordered edge--edge candidates. The PT law uses the
@@ -687,7 +717,9 @@ blocks. `assemble_type` may be `"COO"` or `"HashTriplet"` and
 `"Scipy"` solve. Device PCG accepts an absolute
 `linear_solver_tolerance` and a scale-independent
 `linear_solver_relative_tolerance`; convergence uses the larger of the two
-thresholds. Current and swept contact candidates are rebuilt for every
+thresholds when both are explicitly supplied. Setting only the absolute keyword
+selects absolute-only stopping; no extra relative-zero keyword is required.
+Current and swept contact candidates are rebuilt for every
 Newton/CCD query, so this implicit route does not use a Verlet multiplier.
 
 The implicit branch also accepts `enable_step_retry` (default `False`),

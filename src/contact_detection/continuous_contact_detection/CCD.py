@@ -215,7 +215,29 @@ def point_triangle_ccd(
     initial_distance_squared = _point_triangle_distance_squared(point0, triangle00, triangle10, triangle20)
     toi = 1.0
     if initial_distance_squared <= geometric_tolerance * geometric_tolerance:
-        toi = 0.0
+        toi = point_triangle_accd(
+            point0,
+            triangle00,
+            triangle10,
+            triangle20,
+            point_displacement,
+            triangle0_displacement,
+            triangle1_displacement,
+            triangle2_displacement,
+            gap_fraction,
+            0.0,
+            max_iteration,
+        )
+        if toi == 0.0 and initial_distance_squared > 0.0:
+            # Positive separation admits a certified step even below ACCD's iteration cutoff.
+            motion_bound = ti.max(
+                (point_displacement - triangle0_displacement).norm(),
+                (point_displacement - triangle1_displacement).norm(),
+                (point_displacement - triangle2_displacement).norm(),
+            )
+            toi = 1.0
+            if motion_bound > 0.0:
+                toi = (1.0 - gap_fraction) * ti.sqrt(initial_distance_squared) / motion_bound
     else:
         origin0 = point0 - triangle00
         axis10 = triangle10 - triangle00
@@ -286,7 +308,29 @@ def edge_edge_ccd(
     initial_distance_squared = _edge_edge_distance_squared(edge_a00, edge_a10, edge_b00, edge_b10)
     toi = 1.0
     if initial_distance_squared <= geometric_tolerance * geometric_tolerance:
-        toi = 0.0
+        toi = edge_edge_accd(
+            edge_a00,
+            edge_a10,
+            edge_b00,
+            edge_b10,
+            edge_a0_displacement,
+            edge_a1_displacement,
+            edge_b0_displacement,
+            edge_b1_displacement,
+            gap_fraction,
+            0.0,
+            max_iteration,
+        )
+        if toi == 0.0 and initial_distance_squared > 0.0:
+            motion_bound = ti.max(
+                (edge_a0_displacement - edge_b0_displacement).norm(),
+                (edge_a0_displacement - edge_b1_displacement).norm(),
+                (edge_a1_displacement - edge_b0_displacement).norm(),
+                (edge_a1_displacement - edge_b1_displacement).norm(),
+            )
+            toi = 1.0
+            if motion_bound > 0.0:
+                toi = (1.0 - gap_fraction) * ti.sqrt(initial_distance_squared) / motion_bound
     else:
         origin0 = edge_b00 - edge_a00
         axis10 = edge_a10 - edge_a00

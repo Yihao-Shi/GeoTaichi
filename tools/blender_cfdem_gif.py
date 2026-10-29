@@ -23,13 +23,13 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 CASES = {
     "dkt": (
-        "IBMDraftingKissingTumbling/OutputData/ibm_dkt_strict_final_d8p35",
+        "IBMDraftingKissingTumbling/OutputData/remote_20261019/matching_and_sphere_queue_20261019__ibmdraftingkissingtumbling",
         "dkt.gif",
         "Drafting / kissing / tumbling",
         [0.01, 0.01, 0.04],
     ),
     "sphere": (
-        "IBMResolvedSphereSettling/OutputData/sphere_settling_strict_d10_t0p8_fixed",
+        "IBMResolvedSphereSettling/OutputData/remote_20261019/sphere_grid16_cpu_retry_20261019__resolved_sphere_grid16_cpu",
         "sphere_oil.gif",
         "Sphere settling in oil",
         [0.1, 0.1, 0.16],
@@ -55,39 +55,117 @@ def close_enclosed_voids(sdf, spacing):
     return sdf
 
 
-def water_surface(grid, particles, depth=None, close_particle_voids=False, occupancy_threshold=0.35):
-    from scipy.ndimage import gaussian_filter, zoom
+def close_surface_holes(vertices, faces):
+    """Restore missing triangle/quad facets; retain closed air pockets and self contacts."""
+    import trimesh
+
+    mesh = trimesh.Trimesh(vertices, faces, process=False)
+    counts = np.bincount(mesh.edges_unique_inverse)
+    changed = np.any(counts == 1)
+    if changed:
+        trimesh.repair.fill_holes(mesh)
+        if not np.array_equal(mesh.vertices, vertices) or not np.array_equal(mesh.faces[: len(faces)], faces):
+            raise ValueError("Surface repair must preserve saved vertices and existing faces")
+        counts = np.bincount(mesh.edges_unique_inverse)
+    balance = np.bincount(mesh.edges_unique_inverse, weights=np.sign(mesh.edges[:, 1] - mesh.edges[:, 0]))
+    if np.any(counts == 1) or np.any(balance != 0):
+        raise ValueError("Fluid surface has an unsupported open boundary")
+    return (np.asarray(mesh.vertices), np.asarray(mesh.faces)) if changed else (vertices, faces)
+
+
+def water_surface(grid, particles, depth=None, close_particle_voids=False, occupancy_threshold=0.5):
+    from scipy.ndimage import distance_transform_edt, gaussian_filter, zoom
     from skimage.measure import marching_cubes
 
     if not 0.0 < occupancy_threshold < 1.0:
         raise ValueError("occupancy threshold must lie in (0, 1)")
     dims = grid["dims"]
     dimension = len(dims)
+    planes = grid.get("solid_planes")
+    if planes is not None:
+        planes = np.asarray(planes, dtype=float)
+        if (
+            planes.ndim != 2
+            or planes.shape[1] != dimension + 1
+            or not np.isfinite(planes).all()
+            or np.any(np.linalg.norm(planes[:, :dimension], axis=1) == 0)
+        ):
+            raise ValueError("Solid planes must have finite normals and offsets")
     coords = grid["coords"].reshape(*dims, dimension)
     origin = coords[(0,) * dimension]
     spacing = np.array([coords[tuple(int(i == d) for i in range(dimension))][d] - origin[d] for d in range(dimension)])
     active = particles["active"].astype(bool)
-    # Deposit on cell centers continuously; histogram bins snap moving surfaces to cells.
-    position = (particles["position"][active] - origin) / spacing - 0.5
-    base = np.floor(position).astype(np.int64)
-    fraction = position - base
-    volume = particles["volume"][active] / np.prod(spacing)
-    occupancy = np.zeros(tuple(dims - 1))
-    for offset in np.ndindex(*([2] * dimension)):
-        indices = base + offset
-        inside = np.all((indices >= 0) & (indices < dims - 1), axis=1)
-        weights = np.prod(np.where(offset, fraction, 1 - fraction), axis=1)
-        np.add.at(occupancy, tuple(indices[inside].T), (volume * weights)[inside])
-    occupancy[grid["cell_type"][..., 0] == 2] = 0
-    # ponytail: sub-cell splashes are filtered at this grid resolution;
-    # use a finer reconstruction grid if individual droplets matter.
-    sdf = ((occupancy_threshold - gaussian_filter(np.minimum(occupancy, 1), 0.65)) * min(spacing)).astype(np.float32)
+    positions = particles["position"][active]
+    volumes = particles["volume"][active]
+    if not len(positions) or not np.isfinite(positions).all() or not np.isfinite(volumes).all() or np.any(volumes <= 0):
+        raise ValueError("Saved fluid positions and volumes must be finite and volumes positive")
+    solid = np.asarray(grid["cell_type"])[..., 0] == 2
+    solid_sdf = None
+    if "cell_solid_sdf" in grid:
+        solid_sdf = np.asarray(grid["cell_solid_sdf"]).reshape(solid.shape)
+    elif solid.any():
+        solid_sdf = distance_transform_edt(~solid, sampling=spacing) - distance_transform_edt(solid, sampling=spacing)
+    # Use particle-scale display cells; this never changes the simulation grid.
+    refinement = int(np.clip(np.rint(min(spacing) / np.quantile(volumes, 0.1) ** (1 / dimension)), 1, 2))
+    cell_shape = (dims - 1) * refinement
+    spacing = spacing / refinement
+    if planes is not None:
+        solid_sdf = np.full(tuple(cell_shape), np.inf)
+        for plane in planes:
+            distance = np.full(tuple(cell_shape), plane[-1])
+            for axis in range(dimension):
+                shape = [1] * dimension
+                shape[axis] = cell_shape[axis]
+                distance -= plane[axis] * (origin[axis] + (np.arange(cell_shape[axis]) + 0.5) * spacing[axis]).reshape(
+                    shape
+                )
+            solid_sdf = np.minimum(solid_sdf, distance)
+        valid = solid_sdf >= 0
+    elif solid_sdf is not None:
+        if not np.isfinite(solid_sdf).all():
+            raise ValueError("Solid boundary distances must be finite")
+        solid_sdf = zoom(solid_sdf, refinement, order=1, mode="nearest", grid_mode=True)
+        valid = solid_sdf >= 0
+    else:
+        valid = np.ones(tuple(cell_shape), dtype=bool)
+    # Each cloud is a bulk-volume quadrature; overlapping phases must not be summed.
+    sigma = 0.65 * refinement
+    support = gaussian_filter(valid.astype(float), sigma)
+
+    def smooth_support(sample_positions, sample_volumes):
+        position = (sample_positions - origin) / spacing - 0.5
+        base = np.floor(position).astype(np.int64)
+        fraction = position - base
+        volume = sample_volumes / np.prod(spacing)
+        supported_weight = np.zeros(len(position))
+        for offset in np.ndindex(*([2] * dimension)):
+            indices = base + offset
+            inside = np.all((indices >= 0) & (indices < cell_shape), axis=1)
+            inside[inside] &= valid[tuple(indices[inside].T)]
+            weights = np.prod(np.where(offset, fraction, 1 - fraction), axis=1)
+            supported_weight[inside] += weights[inside]
+        occupancy = np.zeros(tuple(cell_shape))
+        for offset in np.ndindex(*([2] * dimension)):
+            indices = base + offset
+            inside = np.all((indices >= 0) & (indices < cell_shape), axis=1)
+            inside[inside] &= valid[tuple(indices[inside].T)]
+            inside &= supported_weight > 0
+            weights = np.prod(np.where(offset, fraction, 1 - fraction), axis=1)
+            np.add.at(occupancy, tuple(indices[inside].T), (volume * weights)[inside] / supported_weight[inside])
+        return gaussian_filter(occupancy, sigma) / np.maximum(support, 1e-12)
+
+    # shortcut: sub-cell droplets are filtered; refine the reconstruction grid to resolve them.
+    smooth = smooth_support(positions, volumes)
+    if "wet_soil_position" in particles:
+        wet_position, wet_volume = particles["wet_soil_position"], particles["wet_soil_volume"]
+        if not np.isfinite(wet_position).all() or not np.isfinite(wet_volume).all() or np.any(wet_volume <= 0):
+            raise ValueError("Wet soil support must have finite positions and positive volumes")
+        smooth = np.maximum(smooth, smooth_support(wet_position, wet_volume))
+    sdf = ((occupancy_threshold - smooth) * min(spacing)).astype(np.float32)
     if close_particle_voids:
         sdf = close_enclosed_voids(sdf, min(spacing))
-    # Ghost/wall cells are outside the reconstructed fluid.
-    sdf[grid["cell_type"][..., 0] == 2] = min(spacing) / 2
-    if not np.isfinite(sdf).all() or not sdf.min() < 0 < sdf.max():
-        raise ValueError("Fluid SDF must be finite and bracket zero")
+    if not np.isfinite(sdf).all() or not sdf.min() < 0:
+        raise ValueError("Fluid SDF must be finite and contain fluid")
     # Cubic interpolation at half-cell spacing rounds grid-scale facets without extra blur.
     fine_shape = 2 * np.array(sdf.shape) - 1
     sdf = zoom(sdf, fine_shape / np.array(sdf.shape), order=3, mode="nearest")
@@ -95,6 +173,32 @@ def water_surface(grid, particles, depth=None, close_particle_voids=False, occup
     if close_particle_voids:
         # Cubic upsampling can reintroduce tiny sign islands through overshoot.
         sdf = close_enclosed_voids(sdf, min(surface_spacing))
+    if solid_sdf is not None and planes is None:
+        # Intersect with physical walls after smoothing, without moving particle positions.
+        sdf = np.maximum(sdf, -zoom(solid_sdf, fine_shape / np.array(solid_sdf.shape), order=1, mode="nearest"))
+    # Extend edge support, then cap at the physical domain instead of leaving open meshes.
+    sdf = np.pad(sdf, 2, mode="edge")
+    surface_origin = origin + spacing / 2 - 2 * surface_spacing
+    for axis in range(dimension):
+        coordinate = surface_origin[axis] + np.arange(sdf.shape[axis]) * surface_spacing[axis]
+        wall_distance = np.maximum(
+            origin[axis] - coordinate, coordinate - (origin[axis] + (dims[axis] - 1) * spacing[axis] * refinement)
+        )
+        shape = [1] * dimension
+        shape[axis] = len(coordinate)
+        sdf = np.maximum(sdf, wall_distance.reshape(shape))
+    if planes is not None:
+        for plane in planes:
+            distance = np.full(sdf.shape, -plane[-1])
+            for axis in range(dimension):
+                shape = [1] * dimension
+                shape[axis] = sdf.shape[axis]
+                distance += plane[axis] * (
+                    surface_origin[axis] + np.arange(sdf.shape[axis]) * surface_spacing[axis]
+                ).reshape(shape)
+            sdf = np.maximum(sdf, distance)
+    if not sdf.min() < 0 < sdf.max():
+        raise ValueError("Boundary-clipped fluid surface must bracket zero")
     if dimension == 2:
         if depth is None or depth <= 0:
             raise ValueError("2-D fluid needs a positive display extrusion depth")
@@ -103,14 +207,14 @@ def water_surface(grid, particles, depth=None, close_particle_voids=False, occup
         vertices, faces, _, _ = marching_cubes(
             sdf, 0, spacing=(*surface_spacing, depth / 3), gradient_direction="descent", allow_degenerate=False
         )
-        vertices += [*(origin + spacing / 2), -depth / 6]
+        vertices += [*surface_origin, -depth / 6]
         vertices[:, 2] = np.clip(vertices[:, 2], 0, depth)
-        return vertices[:, [0, 2, 1]], faces[:, ::-1]
+        return close_surface_holes(vertices[:, [0, 2, 1]], faces[:, ::-1])
     vertices, faces, _, _ = marching_cubes(
         sdf, 0, spacing=surface_spacing, gradient_direction="descent", allow_degenerate=False
     )
     # SDF values live at cell centers, not the grid vertices in coords.
-    return vertices + origin + spacing / 2, faces
+    return close_surface_holes(vertices + surface_origin, faces)
 
 
 def grain_surface(surface, rigid):
@@ -123,9 +227,9 @@ def grain_surface(surface, rigid):
     return rotated + rigid["mass_center"][master], surface["connectivity"]
 
 
-def prepare(case, folder, preview):
+def prepare(case, folder, preview, source=None):
     relative, filename, title, domain = CASES[case]
-    source = ROOT / "examples/cfdem/FullyResolved" / relative
+    source = Path(source).resolve() if source else ROOT / "examples/cfdem/FullyResolved" / relative
     output = ROOT / "images" / filename
     folder.mkdir(parents=True, exist_ok=True)
     scale = 3.6 / max(domain)
@@ -172,7 +276,7 @@ def prepare(case, folder, preview):
         "fps": 5,
         "fluid_surface_method": "particle_position_and_volume",
         "width": 720 if case == "dkt" else 960,
-        "height": 1080 if case == "dkt" else 800 if case == "sphere" else 640,
+        "height": 1080 if case == "dkt" else 800 if case == "sphere" else 720,
     }
     path = folder / "manifest.json"
     path.write_text(json.dumps(manifest, indent=2) + "\n")
@@ -225,7 +329,7 @@ def render(path, samples, device="auto", resume=False):
     water = material(
         "Oil" if case == "sphere" else "Water",
         config.get("water_color", (0.95, 0.86, 0.62) if case == "sphere" else (0.48, 0.86, 0.95)),
-        0.075,
+        0.18,
     )
     shader = water.node_tree.nodes.get("Principled BSDF")
     shader.inputs["Transmission Weight"].default_value = config.get("water_transmission", 1)
@@ -275,10 +379,15 @@ def render(path, samples, device="auto", resume=False):
         data.materials.append(mat)
         for polygon in data.polygons:
             polygon.use_smooth = True
+        if mat == water:
+            # Weight shading normals by area/angle without moving the saved surface.
+            normals = obj.modifiers.new("Water surface normals", "WEIGHTED_NORMAL")
+            normals.mode = "FACE_AREA_WITH_ANGLE"
+            normals.keep_sharp = True
         return obj
 
-    def solid_particles(positions, radii):
-        obj = mesh("Solid particles", positions, np.empty((0, 3), dtype=int), stone)
+    def particle_spheres(name, positions, radii, mat):
+        obj = mesh(name, positions, np.empty((0, 3), dtype=int), mat)
         attribute = obj.data.attributes.new("particle_radius", "FLOAT", "POINT")
         attribute.data.foreach_set("value", radii)
         nodes = bpy.data.node_groups.new("Particle spheres", "GeometryNodeTree")
@@ -290,7 +399,7 @@ def render(path, samples, device="auto", resume=False):
         sphere.inputs["Radius"].default_value = 1
         sphere.inputs["Subdivisions"].default_value = 2
         surface = nodes.nodes.new("GeometryNodeSetMaterial")
-        surface.inputs["Material"].default_value = stone
+        surface.inputs["Material"].default_value = mat
         radius = nodes.nodes.new("GeometryNodeInputNamedAttribute")
         radius.data_type = "FLOAT"
         radius.inputs["Name"].default_value = "particle_radius"
@@ -428,8 +537,12 @@ def render(path, samples, device="auto", resume=False):
                     )
                 )
             if "solid_positions" in data:
-                animated.append(solid_particles(data["solid_positions"], data["solid_radii"]))
-            for key, mat in (("soft", soft), ("rigid", blue), ("walls", wall_material)):
+                animated.append(
+                    particle_spheres("Solid particles", data["solid_positions"], data["solid_radii"], stone)
+                )
+            if "water_positions" in data and len(data["water_positions"]):
+                animated.append(particle_spheres("Fluid points", data["water_positions"], data["water_radii"], water))
+            for key, mat in (("soft", soft), ("soil", stone), ("rigid", blue), ("walls", wall_material)):
                 if key in data:
                     obj = mesh(key, data[key], data[f"{key}_faces"], mat)
                     if key == "walls" or (key == "rigid" and config.get("rigid_flat_shading")):
@@ -452,6 +565,7 @@ def main():
     parser.add_argument("--case", choices=[*CASES, "all"], default="all")
     parser.add_argument("--blender", default="/Applications/Blender.app/Contents/MacOS/Blender")
     parser.add_argument("--work-dir", type=Path)
+    parser.add_argument("--source", type=Path, help="Saved result directory for a single case")
     parser.add_argument("--samples", type=int, default=48)
     parser.add_argument("--device", choices=["auto", "CPU"], default="auto")
     parser.add_argument("--preview", action="store_true", help="Render only the first PNG; do not replace GIFs")
@@ -461,6 +575,8 @@ def main():
     args = parser.parse_args(sys.argv[sys.argv.index("--") + 1 :] if "--" in sys.argv else None)
     if args.samples < 1:
         parser.error("--samples must be positive")
+    if args.source and args.case == "all":
+        parser.error("--source requires a single --case")
     if args.render:
         render(args.render, args.samples, args.device, args.resume)
         return
@@ -468,7 +584,7 @@ def main():
     work.mkdir(parents=True, exist_ok=True)
     print(f"Render assets / PNGs / backups: {work}", flush=True)
     for case in CASES if args.case == "all" else [args.case]:
-        path, config = prepare(case, work / case, args.preview)
+        path, config = prepare(case, work / case, args.preview, args.source)
         if args.prepare_only:
             continue
         command = [
@@ -495,9 +611,15 @@ def main():
 
 
 def export(config, folder):
+    from PIL import Image
+
     output = Path(config["output"])
     if not all((folder / f"frame_{i:06d}.png").is_file() for i in range(len(config["frames"]))):
         raise ValueError("Render is incomplete; refusing to replace the GIF")
+    for i in range(len(config["frames"])):
+        with Image.open(folder / f"frame_{i:06d}.png") as frame:
+            if np.asarray(frame.convert("RGB").crop((0, 0, 8, 8))).mean() < 32:
+                raise ValueError(f"Black studio background in frame {i}; rerender before exporting")
     # Same palettegen/paletteuse pipeline as tools/vtu2gif.py.
     candidate = folder / output.name
     subprocess.run(
@@ -513,6 +635,8 @@ def export(config, folder):
             str(folder / "frame_%06d.png"),
             "-vf",
             "split[a][b];[a]palettegen=stats_mode=diff[p];" "[b][p]paletteuse=dither=sierra2_4a:diff_mode=rectangle",
+            "-frames:v",
+            str(len(config["frames"])),
             "-loop",
             "0",
             str(candidate),

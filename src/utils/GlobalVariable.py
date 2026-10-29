@@ -1,4 +1,3 @@
-
 USEGPU = False
 TRACKENERGY = False
 CONSTANTORQUEMODEL = False
@@ -10,8 +9,8 @@ RANDOMFIELD = False
 # lightweight MPM
 BBAR = False
 FBAR = False
-TPIC = False
-APIC = False
+Taylor = False
+Affine = False
 PARTICLESHIFTING = False
 SHAPEFUNCTION = 0
 INFLUENCENODE = 2
@@ -24,15 +23,15 @@ DRIFTCORRECT = True
 MPMXPBC = False
 MPMYPBC = False
 MPMZPBC = False
-MPMXSIZE = 0.
-MPMYSIZE = 0.
-MPMZSIZE = 0.
+MPMXSIZE = 0.0
+MPMYSIZE = 0.0
+MPMZSIZE = 0.0
 DEMXPBC = False
 DEMYPBC = False
 DEMZPBC = False
-DEMXSIZE = 0.
-DEMYSIZE = 0.
-DEMZSIZE = 0.
+DEMXSIZE = 0.0
+DEMYSIZE = 0.0
+DEMZSIZE = 0.0
 
 # Nurbs calculation
 max_degree = 2

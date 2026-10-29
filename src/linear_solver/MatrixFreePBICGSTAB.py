@@ -4,6 +4,7 @@ import taichi as ti
 from taichi.lang.impl import current_cfg
 
 from src.linear_solver.LinearOperator import LinearOperator
+from src.linear_solver.DeviceKrylov import DeviceKrylov, device_krylov_enabled
 
 from src.linear_solver.MatrixFreeKrylovKernel import (
     bicgstab_reset as reset,
@@ -38,6 +39,8 @@ class MatrixFreePBICGSTAB(object):
             self.p, self.r, self.r_tld, self.s, self.y, self.z, self.h, self.Ay, self.Ax, self.Az
         )
         self.scalar_rest()
+        self.device_execution = device_krylov_enabled()
+        self._device_solver = None
 
         if current_cfg().arch == ti.cuda:
             self.reduce = reduce_shared
@@ -82,6 +85,11 @@ class MatrixFreePBICGSTAB(object):
         if maxiter < 0:
             raise ValueError("BiCGSTAB maxiter must be non-negative")
 
+        if self.device_execution:
+            if self._device_solver is None:
+                self._device_solver = DeviceKrylov(self, bicgstab=True)
+            return self._device_solver.solve(A, b, x, M, size, tol, maxiter, rel_tol, reliable_interval=32)
+
         reset(size, self.p, self.r, self.r_tld, self.s, self.h, self.Ay, self.Ax, self.Az)
         self.scalar_rest()
         A.matvec(x, self.Ax)
@@ -103,7 +111,10 @@ class MatrixFreePBICGSTAB(object):
             if not isfinite(self.rho_1) or self.rho_1 == 0.0:
                 self.last_breakdown_reason = "zero_shadow_residual_product"
                 break
-            update_preconditioned(size, self.y, M, self.p)
+            if isinstance(M, LinearOperator):
+                M.matvec(self.p, self.y)
+            else:
+                update_preconditioned(size, self.y, M, self.p)
             A.matvec(self.y, self.Ay)
             alpha_lower = self.reduce(size, self.r_tld, self.Ay)
             if not isfinite(alpha_lower) or alpha_lower == 0.0:
@@ -142,7 +153,10 @@ class MatrixFreePBICGSTAB(object):
                 self.last_residual_restarts += 1
                 continue
 
-            update_preconditioned(size, self.z, M, self.s)
+            if isinstance(M, LinearOperator):
+                M.matvec(self.s, self.z)
+            else:
+                update_preconditioned(size, self.z, M, self.s)
             A.matvec(self.z, self.Az)
             omega_upper = self.reduce(size, self.Az, self.s)
             omega_lower = self.reduce(size, self.Az, self.Az)

@@ -25,8 +25,10 @@ class _ClothAssemblyMixin:
                 "ClothFEM PCG requires project_pd=True and project_bending_pd=True; "
                 "use BiCGSTAB for an unprojected tangent"
             )
-        self.linear_solver_tolerance = float(kwargs.get("linear_solver_tolerance", 1.0e-10))
-        self.linear_solver_relative_tolerance = float(kwargs.get("linear_solver_relative_tolerance", 0.0))
+        self.linear_solver_tolerance = float(kwargs.get("linear_solver_tolerance", 1.0e-12))
+        self.linear_solver_relative_tolerance = float(
+            kwargs.get("linear_solver_relative_tolerance", 0.0 if "linear_solver_tolerance" in kwargs else 1.0e-12)
+        )
         self.linear_solver_max_iters = int(kwargs.get("linear_solver_max_iters", max(100, 10 * self.degree_of_freedom)))
         self.cloth_assembler = ClothAssembler(
             self.mesh,
@@ -63,7 +65,8 @@ class _ClothAssemblyMixin:
         mechanical = self.cloth_assembler.assemble_system(positions, need_stiffness, need_stress)
         combine = getattr(self, "_combine_contact_assembly", None)
         if combine is not None:
-            return combine(mechanical, positions, need_stiffness)
+            source = positions if hasattr(positions, "to_numpy") else self.cloth_assembler.positions
+            return combine(mechanical, source, self.cloth_assembler.internal_force, need_stiffness)
         return mechanical
 
     def _assemble_output_diagnostics(self):

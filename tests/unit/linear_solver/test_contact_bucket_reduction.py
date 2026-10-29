@@ -1,3 +1,5 @@
+from tests.helpers.block_reduction_reference import reduce_triplets_reference, reduce_triplets_scipy
+
 """Contact buckets must preserve changing blocks and mixed body assembly."""
 
 import os
@@ -34,7 +36,7 @@ def test_contact_bucket_reduction_and_mixed_assembly():
             reduction.set_triplets_from_numpy(i, j, h)
             reduction.go(count)
             out_i, out_j, out_h = reduction.get_reduced_triplets_numpy()
-            ref_i, ref_j, ref_h = HashReduction.reduce_triplets_reference(i, j, h)
+            ref_i, ref_j, ref_h = reduce_triplets_reference(i, j, h)
             order = np.lexsort((out_j, out_i))
             np.testing.assert_array_equal(out_i[order], ref_i)
             np.testing.assert_array_equal(out_j[order], ref_j)

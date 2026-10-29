@@ -1,13 +1,13 @@
 import taichi as ti
 
 from src.utils.constants import ZEROVEC3f
-from src.utils.TypeDefination import mat3x3, vec3f, vec3i
+from src.utils.TypeDefination import mat3x3, real, vec3f, vec3i
 from src.utils.VectorFunction import vsign
 
 
 @ti.dataclass
 class DeformableGrid:
-    m: float
+    m: real
     f: vec3f
     v: vec3f
     contact_force: vec3f
@@ -69,7 +69,7 @@ class DeformableGrid:
 
 @ti.dataclass
 class TemplateSoftNode:
-    parameter: float
+    parameter: real
 
     @ti.func
     def _set_coefficient(self, coeff):
@@ -133,10 +133,10 @@ class SoftBody:
     templateSurfaceStart: int
     templateSdfStart: int
     gridType: ti.u8
-    scale: float
-    gridSpace: float
+    scale: real
+    gridSpace: real
     referenceRotation: mat3x3
-    m: float
+    m: real
     mass_center0: vec3f
     mass_center: vec3f
     previous_center: vec3f
@@ -144,8 +144,8 @@ class SoftBody:
     surface_inertia: mat3x3
     v: vec3f
     contact_force: vec3f
-    external_load_factor: float
-    damp_energy: float
+    external_load_factor: real
+    damp_energy: real
 
     @ti.func
     def _restart(self, bodyID, startIndex, endIndex, groupID, materialID):
@@ -259,12 +259,12 @@ class SoftMaterialPoint:
     v: vec3f
     contact_force: vec3f
     external_force: vec3f
-    m: float
-    vol0: float
-    surface_weight: float
+    m: real
+    vol0: real
+    surface_weight: real
     F: mat3x3
     stress: mat3x3
-    strain_energy: float
+    strain_energy: real
 
     @ti.func
     def _add_point(self, bodyID, materialID, groupID, x, x0, v, mass, volume):

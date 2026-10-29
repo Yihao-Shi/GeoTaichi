@@ -111,6 +111,7 @@ class Solver(object):
             self.compile(scene)
             if self.sims.current_time - self.last_save_time >= self.sims.save_interval - 0.1 * compile_step:
                 self.save_file(scene)
+            runtime_checkpoint()
         self.in_loop_output_seconds = 0.0
         self.solver_compute_seconds = 0.0
         ti.sync()
@@ -188,6 +189,8 @@ class AffineBodySolver(Solver):
         if has_remaining_time(self.sims.current_time, target_time, self.sims.delta):
             self.sims.set_timestep(min(nominal_timestep, target_time - self.sims.current_time))
             self.compile(scene)
+            if self.sims.current_time - self.last_save_time >= self.sims.save_interval - 0.1 * self.sims.delta:
+                self.save_file(scene)
         while has_remaining_time(self.sims.current_time, target_time, self.sims.delta):
             self.sims.set_timestep(min(self.sims.delta, target_time - self.sims.current_time))
             self.core(scene)

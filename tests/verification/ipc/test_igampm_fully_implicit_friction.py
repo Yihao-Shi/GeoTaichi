@@ -65,7 +65,7 @@ from src.nurbs.NurbsBasis import (
     NurbsBasisInterpolations2ndDers1d,
     NurbsBasisInterpolations2ndDers2d,
 )
-from src.physics_model.contact_model.ipc.NurbsContact import closest_curve_point_py
+from tests.helpers.ipc_nurbs_reference import closest_curve_point_py
 
 
 def _friction_parameters():

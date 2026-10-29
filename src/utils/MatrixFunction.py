@@ -1,41 +1,34 @@
 import taichi as ti
 
-from src.utils.constants import ZEROMAT3x3, ZEROVEC3f, SQRT3, PI, DBL_EPSILON
+from src.utils.constants import ZEROMAT3x3, ZEROVEC3f, SQRT3, PI, DBL_EPSILON, Threshold
 from src.utils.ScalarFunction import clamp
 from src.utils.TypeDefination import vec3f, mat3x3, mat4x4, mat2x2, mat3x4
 
 
 @ti.func
 def Diagonal(vec):
-    return mat3x3([[vec[0], 0, 0], 
-                   [0, vec[1], 0], 
-                   [0, 0, vec[2]]])
+    return mat3x3([[vec[0], 0, 0], [0, vec[1], 0], [0, 0, vec[2]]])
 
 
 @ti.func
 def matrix_form(tensor):
-    return mat3x3([[tensor[0], tensor[3], tensor[5]], 
-                   [tensor[3], tensor[1], tensor[4]], 
-                   [tensor[5], tensor[4], tensor[2]]])
+    return mat3x3(
+        [[tensor[0], tensor[3], tensor[5]], [tensor[3], tensor[1], tensor[4]], [tensor[5], tensor[4], tensor[2]]]
+    )
 
 
 @ti.func
 def matrix_form_2d(tensor):
-    return mat2x2([[tensor[0], tensor[3]],
-                   [tensor[3], tensor[1]]])
+    return mat2x2([[tensor[0], tensor[3]], [tensor[3], tensor[1]]])
 
 
 @ti.func
 def matrix_form_3d_from_stress(stress):
-    matrix = mat3x3([[0., 0., 0.],
-                     [0., 0., 0.],
-                     [0., 0., 0.]])
+    matrix = mat3x3([[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]])
     if ti.static(stress.n == 3):
         matrix = stress
     elif ti.static(stress.n == 2):
-        matrix = mat3x3([[stress[0, 0], stress[0, 1], 0.],
-                         [stress[1, 0], stress[1, 1], 0.],
-                         [0., 0., 0.]])
+        matrix = mat3x3([[stress[0, 0], stress[0, 1], 0.0], [stress[1, 0], stress[1, 1], 0.0], [0.0, 0.0, 0.0]])
     else:
         matrix = matrix_form(stress)
     return matrix
@@ -59,21 +52,21 @@ def Eig3Symmetric(stress):
     matrix[2, 1] = stress[4]
     matrix[2, 2] = stress[2]
 
-    directors[0, 0] = 1.
-    directors[1, 0] = 0.
-    directors[2, 0] = 0.
-    directors[0, 1] = 0.
-    directors[1, 1] = 1.
-    directors[2, 1] = 0.
-    directors[0, 2] = 0.
-    directors[1, 2] = 0.
-    directors[2, 2] = 1.
+    directors[0, 0] = 1.0
+    directors[1, 0] = 0.0
+    directors[2, 0] = 0.0
+    directors[0, 1] = 0.0
+    directors[1, 1] = 1.0
+    directors[2, 1] = 0.0
+    directors[0, 2] = 0.0
+    directors[1, 2] = 0.0
+    directors[2, 2] = 1.0
 
-    abs_max_s = 0.
+    abs_max_s = 0.0
     for i in ti.static(range(3)):
         for j in ti.static(range(3)):
             abs_max_s = max(abs_max_s, abs(matrix[i, j]))
-    tolerance = 1.e-20 * abs_max_s
+    tolerance = 1.0e-20 * abs_max_s
     iteration = 0
     max_iteration = 50
 
@@ -87,11 +80,11 @@ def Eig3Symmetric(stress):
                 ip, iq = 1, 2
             else:
                 ip, iq = 0, 2
-            if abs(matrix[ip, iq]) > 1.e-50:
-                tau = (matrix[iq, iq] - matrix[ip, ip]) / (2. * matrix[ip, iq])
-                sign_tau = 1. if tau >= 0. else -1.
+            if abs(matrix[ip, iq]) > 1.0e-50:
+                tau = (matrix[iq, iq] - matrix[ip, ip]) / (2.0 * matrix[ip, iq])
+                sign_tau = 1.0 if tau >= 0.0 else -1.0
                 tangent = sign_tau / (abs(tau) + ti.sqrt(1.0 + tau * tau))
-                cosine = 1. / ti.sqrt(1. + tangent * tangent)
+                cosine = 1.0 / ti.sqrt(1.0 + tangent * tangent)
                 sine = tangent * cosine
 
                 a1p = cosine * matrix[0, ip] - sine * matrix[0, iq]
@@ -127,8 +120,8 @@ def Eig3Symmetric(stress):
     s1 = matrix[0, 0]
     s2 = matrix[1, 1]
     s3 = matrix[2, 2]
-    mean_stress = (s1 + s2 + s3) / 3.
-    deviatoric_norm = ti.sqrt(((s1 - s2) ** 2 + (s2 - s3) ** 2 + (s3 - s1) ** 2) / 2.)
+    mean_stress = (s1 + s2 + s3) / 3.0
+    deviatoric_norm = ti.sqrt(((s1 - s2) ** 2 + (s2 - s3) ** 2 + (s3 - s1) ** 2) / 2.0)
 
     is1 = 0
     is2 = 1
@@ -169,27 +162,43 @@ def Eig_3(stress):
 @ti.func
 def inverse_matrix_2x2(matrix):
     det = matrix[0, 0] * matrix[1, 1] - matrix[1, 0] * matrix[0, 1]
-    return 1. / det * mat2x2([matrix[1, 1], -matrix[0, 1]], [-matrix[1, 0], matrix[0, 0]])
+    return 1.0 / det * mat2x2([matrix[1, 1], -matrix[0, 1]], [-matrix[1, 0], matrix[0, 0]])
 
 
 @ti.func
 def cwise_product(matrix1, matrix2):
-    return mat3x3(matrix1[0, 0] * matrix2[0, 0], matrix1[0, 1] * matrix2[0, 1], matrix1[0, 2] * matrix2[0, 2],
-                  matrix1[1, 0] * matrix2[1, 0], matrix1[1, 1] * matrix2[1, 1], matrix1[1, 2] * matrix2[1, 2],
-                  matrix1[2, 0] * matrix2[2, 0], matrix1[2, 1] * matrix2[2, 1], matrix1[2, 2] * matrix2[2, 2])
+    return mat3x3(
+        matrix1[0, 0] * matrix2[0, 0],
+        matrix1[0, 1] * matrix2[0, 1],
+        matrix1[0, 2] * matrix2[0, 2],
+        matrix1[1, 0] * matrix2[1, 0],
+        matrix1[1, 1] * matrix2[1, 1],
+        matrix1[1, 2] * matrix2[1, 2],
+        matrix1[2, 0] * matrix2[2, 0],
+        matrix1[2, 1] * matrix2[2, 1],
+        matrix1[2, 2] * matrix2[2, 2],
+    )
 
 
 @ti.func
 def sum_cwise_product(matrix1, matrix2):
-    return matrix1[0, 0] * matrix2[0, 0] + matrix1[0, 1] * matrix2[0, 1] + matrix1[0, 2] * matrix2[0, 2] + \
-           matrix1[1, 0] * matrix2[1, 0] + matrix1[1, 1] * matrix2[1, 1] + matrix1[1, 2] * matrix2[1, 2] + \
-           matrix1[2, 0] * matrix2[2, 0] + matrix1[2, 1] * matrix2[2, 1] + matrix1[2, 2] * matrix2[2, 2]
+    return (
+        matrix1[0, 0] * matrix2[0, 0]
+        + matrix1[0, 1] * matrix2[0, 1]
+        + matrix1[0, 2] * matrix2[0, 2]
+        + matrix1[1, 0] * matrix2[1, 0]
+        + matrix1[1, 1] * matrix2[1, 1]
+        + matrix1[1, 2] * matrix2[1, 2]
+        + matrix1[2, 0] * matrix2[2, 0]
+        + matrix1[2, 1] * matrix2[2, 1]
+        + matrix1[2, 2] * matrix2[2, 2]
+    )
 
 
 @ti.func
 def trace(matrix):
     ti.static_assert(matrix.n == matrix.m)
-    matrix_trace = 0.
+    matrix_trace = 0.0
     if ti.static(matrix.n == 2):
         matrix_trace = matrix[0, 0] + matrix[1, 1]
     elif ti.static(matrix.n == 3):
@@ -203,10 +212,14 @@ def principal_sym_tensor(matrix):
     dd = matrix[0, 1] * matrix[0, 1]
     ee = matrix[1, 2] * matrix[1, 2]
     ff = matrix[0, 2] * matrix[0, 2]
-    c1 = matrix[0, 0] * matrix[1, 1] + matrix[0, 0] * matrix[2, 2] + matrix[1, 1] * matrix[2, 2] - (dd + ee +
-                                                                      ff)
-    c0 = matrix[2, 2] * dd + matrix[0, 0] * ee + matrix[1, 1] * ff - matrix[0, 0] * matrix[1, 1] * matrix[
-        2, 2] - 2.0 * matrix[0, 2] * matrix[0, 1] * matrix[1, 2]
+    c1 = matrix[0, 0] * matrix[1, 1] + matrix[0, 0] * matrix[2, 2] + matrix[1, 1] * matrix[2, 2] - (dd + ee + ff)
+    c0 = (
+        matrix[2, 2] * dd
+        + matrix[0, 0] * ee
+        + matrix[1, 1] * ff
+        - matrix[0, 0] * matrix[1, 1] * matrix[2, 2]
+        - 2.0 * matrix[0, 2] * matrix[0, 1] * matrix[1, 2]
+    )
 
     p = m * m - 3.0 * c1
     q = m * (p - 1.5 * c1) - 13.5 * c0
@@ -232,12 +245,12 @@ def hessenberg(matrix):
     # 对列 0,1 做 Householder
     for col in ti.static(range(2)):
         v = ti.Vector.zero(float, matrix.n)
-        for i in ti.static(range(col+1, matrix.n)):
+        for i in ti.static(range(col + 1, matrix.n)):
             v[i] = matrix[i, col]
         alpha = ti.sqrt(v.dot(v))
-        if v[col+1] > 0:
+        if v[col + 1] > 0:
             alpha = -alpha
-        v[col+1] -= alpha
+        v[col + 1] -= alpha
         beta = 0.0
         for i in ti.static(range(3)):
             beta += v[i] * v[i]
@@ -328,15 +341,15 @@ def eigenvector(matrix, value):
         for i in ti.static(range(temp.n - 1)):
             coe = temp[i, i]
             for j in ti.static(range(i, temp.m)):
-                temp[i, j] /= coe if ti.abs(coe) > DBL_EPSILON else 0.
-            for m in ti.static(range(i+1, temp.n)):
+                temp[i, j] /= coe if ti.abs(coe) > DBL_EPSILON else 0.0
+            for m in ti.static(range(i + 1, temp.n)):
                 coe = temp[m, i]
                 for n in ti.static(range(i, temp.m)):
                     temp[m, n] -= coe * temp[i, n]
-        
-        sum1 = eigenVector[eigenVector.n - 1, count] = 1.
+
+        sum1 = eigenVector[eigenVector.n - 1, count] = 1.0
         for m in ti.static(range(temp.n - 2, -1, -1)):
-            sum2 = 0.
+            sum2 = 0.0
             for n in ti.static(range(m + 1, temp.m)):
                 sum2 += temp[m, n] * eigenVector[n, count]
             sum2 = -sum2 / temp[m, m]
@@ -393,21 +406,9 @@ def get_eigenvalue_3x3(matrix):
         p = ti.sqrt(p_squared)
         normalized = deviator / p
         determinant = (
-            normalized[0, 0]
-            * (
-                normalized[1, 1] * normalized[2, 2]
-                - normalized[1, 2] * normalized[2, 1]
-            )
-            - normalized[0, 1]
-            * (
-                normalized[1, 0] * normalized[2, 2]
-                - normalized[1, 2] * normalized[2, 0]
-            )
-            + normalized[0, 2]
-            * (
-                normalized[1, 0] * normalized[2, 1]
-                - normalized[1, 1] * normalized[2, 0]
-            )
+            normalized[0, 0] * (normalized[1, 1] * normalized[2, 2] - normalized[1, 2] * normalized[2, 1])
+            - normalized[0, 1] * (normalized[1, 0] * normalized[2, 2] - normalized[1, 2] * normalized[2, 0])
+            + normalized[0, 2] * (normalized[1, 0] * normalized[2, 1] - normalized[1, 1] * normalized[2, 0])
         )
         angle = ti.acos(clamp(-1.0, 1.0, 0.5 * determinant)) / 3.0
         value[2] = mean + 2.0 * p * ti.cos(angle)
@@ -419,10 +420,13 @@ def get_eigenvalue_3x3(matrix):
 @ti.func
 def principal_tensor(matrix):
     directors, values, _ = ti.svd(matrix)
-    return vec3f([values[2, 2], values[1, 1], values[0, 0]]), \
-           mat3x3([[directors[0, 2], directors[0, 1], directors[0, 0]],
-                   [directors[1, 2], directors[1, 1], directors[1, 0]],
-                   [directors[2, 2], directors[2, 1], directors[2, 0]]])
+    return vec3f([values[2, 2], values[1, 1], values[0, 0]]), mat3x3(
+        [
+            [directors[0, 2], directors[0, 1], directors[0, 0]],
+            [directors[1, 2], directors[1, 1], directors[1, 0]],
+            [directors[2, 2], directors[2, 1], directors[2, 0]],
+        ]
+    )
 
 
 @ti.func
@@ -442,8 +446,8 @@ def getDeterminant(matrix):
                 z = 0
                 for n in ti.static(range(ndim)):
                     if n != i:
-                        sub_vector[m-1, z] = matrix[m, n]
-                        z +=1
+                        sub_vector[m - 1, z] = matrix[m, n]
+                        z += 1
             value += sign * matrix[0, i] * getDeterminant(sub_vector)
             sign = -sign
     return value
@@ -460,12 +464,14 @@ def getCofactor(matrix):
         for j in ti.static(range(mdim)):
             p = 0
             for x in ti.static(range(ndim)):
-                if x == i: continue
+                if x == i:
+                    continue
                 q = 0
                 for y in ti.static(range(ndim)):
-                    if y == j: continue
+                    if y == j:
+                        continue
                     sub_vector[p, q] = matrix[x, y]
-                    q +=1
+                    q += 1
                 p += 1
             solution[i, j] = ti.pow(-1, i + j) * getDeterminant(sub_vector)
     return solution
@@ -511,10 +517,10 @@ def determinant2x2(mat):
 @ti.func
 def determinant3x3(mat):
     return (
-            mat[0, 0] * (mat[1, 1] * mat[2, 2] - mat[2, 1] * mat[1, 2])
-            - mat[1, 0] * (mat[0, 1] * mat[2, 2] - mat[2, 1] * mat[0, 2])
-            + mat[2, 0] * (mat[0, 1] * mat[1, 2] - mat[1, 1] * mat[0, 2])
-           )
+        mat[0, 0] * (mat[1, 1] * mat[2, 2] - mat[2, 1] * mat[1, 2])
+        - mat[1, 0] * (mat[0, 1] * mat[2, 2] - mat[2, 1] * mat[0, 2])
+        + mat[2, 0] * (mat[0, 1] * mat[1, 2] - mat[1, 1] * mat[0, 2])
+    )
 
 
 @ti.func
@@ -612,34 +618,33 @@ def get_determinant(mat):
         return determinant4x4(mat)
     if ti.static(shape == 5):
         return determinant5x5(mat)
-    
+
 
 @ti.func
 def get_jacobian_inverse1(mat):
     return ti.Matrix([[1.0 / mat[0, 0]]])
-    
+
 
 @ti.func
 def get_jacobian_inverse2(mat):
     shape = ti.static(mat.n)
     inv_determinant = 1.0 / determinant2x2(mat)
     return inv_determinant * mat2x2([mat[1, 1], -mat[0, 1]], [-mat[1, 0], mat[0, 0]])
-    
-    
+
+
 @ti.func
 def get_jacobian_inverse3(mat):
-    inv_determinant = 1.0 / determinant3x3(mat)    
+    inv_determinant = 1.0 / determinant3x3(mat)
     return inv_determinant * ti.Matrix(
         [
             [
-                E(mat, i + 1, j + 1, 3) * E(mat, i + 2, j + 2, 3)
-                - E(mat, i + 2, j + 1, 3) * E(mat, i + 1, j + 2, 3)
+                E(mat, i + 1, j + 1, 3) * E(mat, i + 2, j + 2, 3) - E(mat, i + 2, j + 1, 3) * E(mat, i + 1, j + 2, 3)
                 for i in ti.static(range(3))
             ]
             for j in ti.static(range(3))
         ]
     )
-    
+
 
 @ti.func
 def get_jacobian_inverse4(mat):
@@ -672,19 +677,13 @@ def get_jacobian_inverse4(mat):
             for j in ti.static(range(4))
         ]
     )
-    
+
 
 @ti.func
 def get_jacobian_inverse5(mat):
     inverse_determinant = 1.0 / determinant5x5(mat)
     return inverse_determinant * ti.Matrix(
-        [
-            [
-                cofactor5x5(mat, column, row)
-                for column in ti.static(range(5))
-            ]
-            for row in ti.static(range(5))
-        ]
+        [[cofactor5x5(mat, column, row) for column in ti.static(range(5))] for row in ti.static(range(5))]
     )
 
 
@@ -701,14 +700,14 @@ def get_jacobian_inverse(mat):
         return get_jacobian_inverse4(mat)
     if ti.static(shape == 5):
         return get_jacobian_inverse5(mat)
-    
+
 
 @ti.func
 def truncation(mat):
     for i in ti.static(range(mat.n)):
         for j in ti.static(range(mat.m)):
             if ti.abs(mat[i, j]) < DBL_EPSILON:
-                mat[i, j] = 0.
+                mat[i, j] = 0.0
     return mat
 
 
@@ -719,17 +718,21 @@ def LUinverse(mat):
     Uinv = ti.Matrix.zero(float, mat.n, mat.m)
     for j in ti.static(range(mat.n)):
         for i in ti.static(range(j, mat.m)):
-            if i == j: Linv[i, j] = 1. / L[i, j]
-            elif i < j: Linv[i, j] = 0.
+            if i == j:
+                Linv[i, j] = 1.0 / L[i, j]
+            elif i < j:
+                Linv[i, j] = 0.0
             else:
-                s = 0.
+                s = 0.0
                 for k in ti.static(range(j, i)):
                     s += L[i, k] * Linv[k, j]
                 Linv[i, j] = -Linv[j, j] * s
     for j in ti.static(range(mat.n)):
         for i in ti.static(range(j, -1, -1)):
-            if i == j: Uinv[i, j] = 1 / U[i, j]
-            elif i > j: Uinv[i, j] = 0
+            if i == j:
+                Uinv[i, j] = 1 / U[i, j]
+            elif i > j:
+                Uinv[i, j] = 0
             else:
                 s = 0.0
                 for k in ti.static(range(i + 1, j + 1)):
@@ -783,19 +786,19 @@ def polar_decomposition(mat):
     L = ti.Matrix.zero(float, mat.n, mat.m)
     U = ti.Matrix.zero(float, mat.n, mat.m)
     for i in ti.static(range(mat.n)):
-        L[i, i] = 1.
+        L[i, i] = 1.0
     for j in ti.static(range(mat.n)):
         U[0, j] = mat[0, j]
     for i in ti.static(range(1, mat.n)):
         L[i, 0] = mat[i, 0] / U[0, 0]
     for i in ti.static(range(mat.n)):
         for j in ti.static(range(i, mat.n)):
-            s = 0.
+            s = 0.0
             for k in ti.static(range(i)):
                 s += L[i, k] * U[k, j]
             U[i, j] = mat[i, j] - s
         for d in ti.static(range(i, mat.n)):
-            s = 0.
+            s = 0.0
             for k in ti.static(range(i)):
                 s += L[d, k] * U[k, i]
             L[d, i] = (mat[d, i] - s) / U[i, i]
@@ -834,7 +837,7 @@ def ti_polar_decomposition_stable(mat):
     assert R.determinant() > 0.0
 
     # scale S to avoid small principal strains
-    minval = 0.3                                   # 0.3^2 = 0.09, should suffice for most problems
+    minval = 0.3  # 0.3^2 = 0.09, should suffice for most problems
     maxval = 2.0
     for i in ti.static(range(dim)):
         S[i, i] = clamp(minval, maxval, S(i, i))
@@ -873,7 +876,7 @@ def unflatten_matrix(vec, matrix_like):
 
 @ti.func
 def contraction(mat1, mat2):
-    sum = 0.
+    sum = 0.0
     for n in ti.static(range(mat1.n)):
         for m in ti.static(range(mat1.m)):
             sum += mat1[n, m] * mat2[n, m]
@@ -898,6 +901,7 @@ def QRUnroll(matrix):
                 Q[k, j] = v[k] / R[j, j]
     return Q, R
 
+
 @ti.func
 def makePSD3x3(mat):
     S, V = ti.sym_eig(mat)
@@ -906,11 +910,12 @@ def makePSD3x3(mat):
         lam[i, i] = ti.max(0.0, S[i])
     return V @ lam @ V.transpose()
 
+
 @ti.func
 def shifted_qr(matrix):
     V = ti.Matrix.identity(float, matrix.n)
     for _ in range(100):
-        mu = matrix[matrix.n-1, matrix.m-1]
+        mu = matrix[matrix.n - 1, matrix.m - 1]
         B = matrix - mu * ti.Matrix.identity(float, matrix.n)
         Q, R = QRUnroll(B)
         matrix = R @ Q + mu * ti.Matrix.identity(float, matrix.n)
@@ -929,7 +934,7 @@ def makePSD(mat):
     lam, V = shifted_qr(mat)
     """ for i in range(lam.n):
         lam[i] = ti.max(0.0, lam[i]) """
-    return mat#reconstruct_matrix(V, lam, V)
+    return mat  # reconstruct_matrix(V, lam, V)
 
 
 @ti.func
@@ -944,10 +949,27 @@ def reconstruct_matrix(left_matrix, vector, right_matrix):
                 result[i, j] += coef * left_matrix[j, k]
     return result
 
+
 @ti.func
 def global2local_mat3x3(hess, scale, rotation_matrix):
     return rotation_matrix.transpose() @ hess @ rotation_matrix / (scale * scale)
 
+
 @ti.func
 def local2global_mat3x3(hess, scale, rotation_matrix):
     return rotation_matrix @ hess @ rotation_matrix.transpose() * (scale * scale)
+
+
+@ti.func
+def affine_velocity_matrix(Bp, Wp, grid_size):
+    scaled_Bp, scaled_Wp = Bp, Wp
+    for i, j in ti.static(ti.ndrange(Bp.n, Bp.m)):
+        scaled_Bp[i, j] /= grid_size[j]
+        scaled_Wp[i, j] /= grid_size[i] * grid_size[j]
+    result = Wp * 0.0
+    # Test rank in grid units so mesh refinement cannot silently disable APIC.
+    if ti.abs(scaled_Wp.determinant()) > Threshold:
+        result = scaled_Bp @ scaled_Wp.inverse()
+        for i, j in ti.static(ti.ndrange(Bp.n, Bp.m)):
+            result[i, j] /= grid_size[j]
+    return truncation(result)

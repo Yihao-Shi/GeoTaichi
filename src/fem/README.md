@@ -6,7 +6,7 @@ material, define boundary conditions, select solver options, and call `run()`.
 
 Repository-wide rules for
 device-resident numerical backends are documented in
-[DEVICE_BACKEND_AUDIT.md](../../agent/DEVICE_BACKEND_AUDIT.md).
+[the solver integration contract](../../agent/SOLVER_INTEGRATION_PRINCIPLES.md#5-architecture-scope).
 
 [Theory log and derivations](#fem-theory-log) | [Examples](../../examples/)
 
@@ -34,7 +34,7 @@ elastic volume FEM.
 
 | FEM formulation | Time integration | Constitutive support | Plasticity | Contact and coupling limits |
 | --- | --- | --- | --- | --- |
-| Elastic `TET4` volume | Explicit or implicit | St. Venant--Kirchhoff or compressible Neo-Hookean | No; the incremental plastic assembler does not accept `TET4` | Standalone IPC/augmented-Lagrangian contact is implicit. Cross-solver contact is documented under [FEDEM](../fedem/README.md). |
+| Elastic `TET4` volume | Explicit or implicit | St. Venant--Kirchhoff or compressible Neo-Hookean | No; the incremental plastic assembler does not accept `TET4` | Standalone IPC contact is implicit. Cross-solver contact is documented under [FEDEM](../fedem/README.md). |
 | Elastic `HEX8` volume | Explicit or implicit | St. Venant--Kirchhoff or compressible Neo-Hookean | No on this elastic route | Same contact split as elastic `TET4`. |
 | Embedded cloth surface | Explicit or implicit | Cloth ARAP or cloth Neo-Hookean, with optional bending/stitch/spring/SDF energies | No | Standalone IPC is implicit; explicit DEM contact and implicit AffineBody IPC are FEDEM routes. |
 
@@ -524,12 +524,19 @@ discrete frequency; a common linear estimate is
 \Delta t\lesssim\frac{2}{\omega_{\max}}.
 ```
 
-For implicit Newmark integration, define
+Implicit FEM accepts only `newmark=[alpha, beta, gamma]`, with the same
+convention as IGA and Direct MPM. The default `[0.5, 0.25, 0.5]` is average
+acceleration; `[1, 0.5, 1]` is backward Euler. Two-value lists are rejected.
+These parameters enter the existing `ImplicitFEM`/`FEMState` predictor,
+inertia, damping, accepted state and coupled FEM assemblers. IPC keeps its
+existing lagged displacement-friction potential. Dynamic Newton and friction
+correction tolerances use `dv/dx = gamma/(2*alpha*beta*dt)`.
+The parameter $`\alpha_N`$ below is unrelated to the line-search step. Define
 
 ```math
 \boldsymbol{x}_{pred}
 =\boldsymbol{x}_n+\Delta t\boldsymbol{v}_n
-+\Delta t^2\left(\frac{1}{2}-\beta\right)\boldsymbol{a}_n.
++\Delta t^2\alpha_N(1-2\beta)\boldsymbol{a}_n.
 ```
 
 For a trial $`\boldsymbol{x}_{n+1}`$,
@@ -537,7 +544,7 @@ For a trial $`\boldsymbol{x}_{n+1}`$,
 ```math
 \boldsymbol{a}_{n+1}
 =\frac{\boldsymbol{x}_{n+1}-\boldsymbol{x}_{pred}}
-{\beta\Delta t^2}.
+{2\alpha_N\beta\Delta t^2}.
 ```
 
 ```math
@@ -561,8 +568,8 @@ The nonlinear residual and effective tangent are
 \boldsymbol{K}_{eff}
 =\boldsymbol{K}
 +\left[
-\frac{1}{\beta\Delta t^2}
-+\frac{\zeta\gamma}{\beta\Delta t}
+\frac{1}{2\alpha_N\beta\Delta t^2}
++\frac{\zeta\gamma}{2\alpha_N\beta\Delta t}
 \right]\boldsymbol{M}.
 ```
 
@@ -794,8 +801,10 @@ AABBs on every CCD query. Conservative PT/EE CCD computes the admissible step
 and compacts only stencils that can limit it. No Verlet multiplier is used.
 The dynamic linked-cell backend performs count, prefix sum, and compact fill
 without fixed per-cell primitive capacities; its EE boxes split the pairwise
-search radius equally between the two edges. The BVH backend refits a reusable
-topology. Thus `broad_phase="LinkedCell"` and `"BVH"` select only the spatial
+search radius equally between the two edges. The BVH backend rebuilds its Morton-sorted topology on device through the shared
+LBVH for every current or swept candidate query, with synchronized depth layers
+for bounds reduction. This policy also applies to the coupled users of this
+backend. No CPU tree construction is used. Thus `broad_phase="LinkedCell"` and `"BVH"` select only the spatial
 backend; distance/CCD pruning and exclusions have identical semantics.
 
 ## Output and tests
@@ -804,3 +813,34 @@ Results can include displacement, velocity, acceleration, reactions, stress,
 strain energy, and contact history. The main examples are under
 `examples/fem/`. Unit and integration coverage is under `tests/unit/fem/` and
 `tests/integration/fem/`.
+
+### IPC against DEM Polygon/facet servo walls
+
+Configure the walls and `ServoWall` objects on a DEM instance, then bind that
+instance when configuring implicit FEM contact:
+
+```python
+fem.add_contact("BarrierIPC", dem_walls=dem, self_contact=False,
+                dhat=0.012, kappa=4e4, friction_coefficient=0.25)
+```
+
+The FEM nodes interact with the finite DEM triangles through device IPC force,
+Hessian, friction and ACCD assembly. `HashTriplet`/`PCG` keeps the solve on the
+device. FEM reactions feed the DEM wall servo, and failed step retries restore
+the wall geometry. Only ordinary BarrierIPC is supported; the former SemiIPC
+model and its penalty/multiplier parameters have been removed.
+
+For FEM--ABD coupling, existing DEM facet servos automatically add FEM--wall
+IPC using the coupling's default contact parameters. An explicit
+`fem.add_contact(..., dem_walls=dem)` sets the FEM--wall parameters separately.
+FEM and ABD reactions sum on the same wall boundary. ABD bodies receive no
+new servo mechanism. Host downloads of ABD state occur at output frames,
+rather than every coupled step.
+
+### Incremental-material linear softening
+
+The shared `LinearSoft()` law is controlled solely by peak/residual strengths
+and plastic-strain endpoints. `SoftenParameter` is no longer normalized or
+consumed. To preserve a previously clipped scale `eta >= 1`, replace the end
+strain with `start + (old_end - start) / eta`; see the
+[shared constitutive documentation](../physics_model/consititutive_model/README.md#bounded-linear-softening).

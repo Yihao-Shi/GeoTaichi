@@ -12,7 +12,7 @@ if str(ROOT) not in sys.path:
 import json
 import math
 import numpy as np
-from examples.mmpm.SubmarineLandslide.submarine_landslide_2d.submarine_landslide_2d_parameters import (
+from examples.mmpm.SubmarineLandslide.submarine_landslide_3d.submarine_landslide_3d_parameters import (
     MAXIMUM_POROSITY,
     REFERENCE_DOI,
     TANK_LENGTH,

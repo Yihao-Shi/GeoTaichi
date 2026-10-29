@@ -62,9 +62,10 @@ def _closest_segment_parameters(first0, first1, second0, second1):
     elif bb <= Threshold:
         first_ratio = ti.max(0.0, ti.min(1.0, -ao / ti.max(aa, Threshold)))
     else:
-        denominator = aa * bb - ab * ab
+        cross = first_direction.cross(second_direction)
+        denominator = cross.norm_sqr()
         if denominator > Threshold:
-            first_ratio = ti.max(0.0, ti.min(1.0, (ab * bo - bb * ao) / denominator))
+            first_ratio = ti.max(0.0, ti.min(1.0, second_direction.cross(offset).dot(cross) / denominator))
         projected = ab * first_ratio + bo
         if projected < 0.0:
             second_ratio = 0.0

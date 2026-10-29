@@ -5,6 +5,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../.."))
 if ROOT not in sys.path:
     sys.path.append(ROOT)
 
+os.environ.setdefault("GEOTAICHI_REAL_DTYPE", "float64")
 
 from geotaichi import *
 
@@ -34,8 +35,6 @@ dempm.mpm.set_configuration(
     particle_shifting=True,
     density_projection=True,
 )
-
-dempm.mpm.set_implicit_solver_parameters(linear_solver="PCG", max_iteration_number=200, residual_tolerance=1e-8)
 
 dempm.dem.set_configuration(
     scheme="DEM",
@@ -103,14 +102,13 @@ dempm.dem.create_body(
 dempm.dem.choose_contact_model(particle_particle_contact_model=None, particle_wall_contact_model=None)
 
 
-dempm.dem.select_save_data(surface=True)
+dempm.dem.select_save_data(sphere=True, surface=True)
 
 dempm.mpm.add_material(
     model="Newtonian",
     material={
         "MaterialID": 1,
         "Density": 1000.0,
-        "Modulus": 3.6e5,
         "Viscosity": 1e-3,
         "ElementLength": 0.0,
         "cL": 0.1,
@@ -124,6 +122,18 @@ dempm.mpm.add_element(
         "ElementSize": 1.0 / 6 * ti.Vector([0.0127, 0.0127, 0.0127]),
         "GhostCell": 1,
     }
+)
+
+
+# Select MGPCG after creating the prescribed grid so multigrid does not resize it.
+# Its relative tolerance applies to the squared residual norm.
+dempm.mpm.set_implicit_solver_parameters(
+    linear_solver="MGPCG",
+    multilevel=3,
+    pre_and_post_smoothing=2,
+    bottom_smoothing=20,
+    max_iteration_number=1000,
+    residual_tolerance=1e-22,
 )
 
 

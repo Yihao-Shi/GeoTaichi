@@ -91,7 +91,6 @@ class IPCModel:
             "dhat": self.contact.dhat,
             "dmin": self.contact.dmin,
             "kappa": self.contact.kappa,
-            "penalty": self.contact.penalty,
             "self_contact": False,
             "project_pd": self.contact.project_pd,
             "ccd_safety": self.contact.ccd_safety,
@@ -122,7 +121,6 @@ class IPCModel:
         dmin = np.full(shape, default_dmin, dtype=np.float64)
         friction = np.full(shape, self.contact.friction_coefficient, dtype=np.float64)
         epsv = np.full(shape, self.contact.epsv, dtype=np.float64)
-        penalty = np.full(shape, self.contact.penalty, dtype=np.float64)
         if self.properties:
             active.fill(0)
             for (mpm_body, fem_body), entry in self.properties.items():
@@ -138,7 +136,6 @@ class IPCModel:
                 dmin[mpm_body, fem_body] = default_dmin if entry.dmin is None else entry.dmin
                 friction[mpm_body, fem_body] = entry.friction_coefficient
                 epsv[mpm_body, fem_body] = entry.epsv
-                penalty[mpm_body, fem_body] = entry.penalty
         if not np.any(active):
             raise ValueError(f"{self.coupling_name} IPC has no active " f"{self.first_body_name}-body/FEM-body pair")
         for name, values in (("dhat", dhat), ("kappa", kappa), ("epsv", epsv)):
@@ -156,7 +153,6 @@ class IPCModel:
             "dmin": dmin,
             "friction": friction,
             "epsv": epsv,
-            "penalty": penalty,
             "search_distance": search_distance,
             "ccd_safety": min([self.contact.ccd_safety] + [entry.ccd_safety for entry in self.properties.values()]),
             "ccd_max_iterations": max(

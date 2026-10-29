@@ -10,7 +10,7 @@ import taichi as ti
 
 ti.init(arch=ti.cpu, default_fp=ti.f64, default_ip=ti.i32, debug=False)
 
-from src.mpm.mainMPM import MPM
+from geotaichi import MPM
 
 mpm = MPM()
 

@@ -4,6 +4,8 @@ import math
 from taichi.lang.impl import current_cfg
 
 from src.linear_solver.HashReduction import HashReduction
+from src.linear_solver.DeviceKrylov import DeviceKrylov, device_krylov_enabled
+from src.linear_solver.LinearOperator import LinearOperator
 from src.utils.FieldIO import field_to_numpy_prefix
 from src.utils.PrefixSum import PrefixSumExecutor
 from src.utils.WarpReduce import warp_reduce_sum_f32, warp_reduce_sum_f64
@@ -350,6 +352,8 @@ class BuildTriplet:
         device_reduction=None,
         raw_only=False,
         reduction="hash",
+        preconditioner_group_size=1,
+        preconditioner_group_nodes=None,
     ):
         if dim not in (1, 2, 3, 4):
             raise ValueError(
@@ -391,12 +395,42 @@ class BuildTriplet:
         self.max_active_nodes = max_active_nodes
         self.max_nonzeros = max_nonzeros
         self.solver = self._normalize_solver(solver or ("PCG" if self.symmetric else "BiCGSTAB"))
+        self.preconditioner_group_size = int(preconditioner_group_size)
+        if self.preconditioner_group_size < 1 or self.preconditioner_group_size != preconditioner_group_size:
+            raise ValueError("preconditioner_group_size must be a positive integer")
+        if preconditioner_group_nodes is not None:
+            nodes = int(preconditioner_group_nodes)
+            if nodes != preconditioner_group_nodes or not 0 <= nodes <= max_active_nodes:
+                raise ValueError("Grouped preconditioner prefix must be an integer within matrix capacity")
+            preconditioner_group_nodes = nodes
+        if self.preconditioner_group_size > 1:
+            if self.symmetric:
+                raise ValueError("Grouped preconditioning requires dense block storage")
+            if self.solver in ("CG", "PCG") and not self.matrix_symmetric:
+                raise ValueError("Grouped PCG requires a symmetric matrix")
+            grouped_nodes = max_active_nodes if preconditioner_group_nodes is None else preconditioner_group_nodes
+            if grouped_nodes % self.preconditioner_group_size:
+                raise ValueError("Grouped preconditioning requires complete groups of active blocks")
+        self.preconditioner_group_nodes = preconditioner_group_nodes
+        self.device_execution = device_krylov_enabled()
+        self._device_solvers = {}
 
         self.diag = ti.Vector.field(self.hessian_size, dtype=float, shape=max_active_nodes)
         # Dense inverse diagonal blocks are rebuilt once per linear solve and
         # reused by every Krylov iteration.  This avoids repeating small
         # determinant/inverse calculations in each preconditioner application.
         self.diag_inverse = ti.Vector.field(self.dim * self.dim, dtype=float, shape=max_active_nodes)
+        self.group_preconditioner = None
+        if self.preconditioner_group_size > 1:
+            from src.linear_solver.BlockJacobi import BlockJacobi
+
+            self.group_preconditioner = BlockJacobi(
+                dim,
+                max_active_nodes,
+                self.preconditioner_group_size,
+                preconditioner_group_nodes,
+                self.diag_inverse,
+            )
         if reduction not in ("hash", "bucket"):
             raise ValueError("reduction must be 'hash' or 'bucket'")
         if reduction == "bucket" and self.raw_only:
@@ -679,14 +713,32 @@ class BuildTriplet:
             if values.size < expected:
                 raise ValueError(f"flat rhs has {values.size} values, expected at least {expected}")
             self.rhs.from_numpy(self._pad_vector_array(values[:expected].reshape((active_nodes, self.dim))))
-        result = self.solve(
-            active_nodes=active_nodes,
-            tol=tol,
-            rel_tol=rel_tol,
-            maxiter=maxiter,
-            return_solution=False,
-            transpose=transpose,
-        )
+        from src.linear_solver.BlockJacobi import BlockJacobiError
+
+        try:
+            result = self.solve(
+                active_nodes=active_nodes,
+                tol=tol,
+                rel_tol=rel_tol,
+                maxiter=maxiter,
+                return_solution=False,
+                transpose=transpose,
+            )
+        except BlockJacobiError as error:
+            if not fallback_to_bicgstab or self.solver not in ("CG", "PCG"):
+                raise
+            self.matvec(active_nodes, int(self.non_diag.element_pair_num[0]), self.x, self.Ax)
+            residual = math.sqrt(max(float(self._init_bicgstab(active_nodes)), 0.0))
+            result = self._result(
+                active_nodes,
+                False,
+                0,
+                residual,
+                False,
+                initial_residual=residual,
+                convergence_tolerance=max(tol, rel_tol * residual),
+            )
+            result["preconditioner_failure"] = str(error)
         if fallback_to_bicgstab and not result["converged"] and self.solver in ("CG", "PCG"):
             primary_result = result
             primary_solver = self.solver
@@ -705,6 +757,8 @@ class BuildTriplet:
             result["fallback_from"] = primary_solver
             result["primary_iterations"] = int(primary_result["iterations"])
             result["primary_residual"] = float(primary_result["residual"])
+            if "preconditioner_failure" in primary_result:
+                result["primary_preconditioner_failure"] = primary_result["preconditioner_failure"]
         result["solution_inf_norm"] = float(self._solution_inf_norm(active_nodes))
         if solution is not None:
             if not isinstance(solution, ti.ScalarField):
@@ -749,9 +803,16 @@ class BuildTriplet:
         nnz = int(self.non_diag.element_pair_num[0])
 
         # Matvec and initialization overwrite every PCG workspace before use.
-        self._build_block_jacobi(active_nodes)
+        if self.preconditioner_group_size > 1:
+            self._build_group_jacobi(active_nodes, nnz)
+        else:
+            self._build_block_jacobi(active_nodes)
+        if self.device_execution:
+            return self._solve_device_krylov(active_nodes, nnz, tol, maxiter, rel_tol, return_solution)
+        initialize_pcg = self._init_grouped_pcg if self.preconditioner_group_size > 1 else self._init_pcg
+        update_pcg = self._update_grouped_pcg if self.preconditioner_group_size > 1 else self._pcg_update_and_reduce
         self.matvec(active_nodes, nnz, self.x, self.Ax)
-        rz_old, residual_squared = self._init_pcg(active_nodes)
+        rz_old, residual_squared = initialize_pcg(active_nodes)
         # ``tol`` is an absolute residual tolerance, so convergence must be
         # measured in the unpreconditioned Euclidean norm.  The PCG recurrence
         # still uses r^T M^-1 r below, but that quantity changes under a simple
@@ -773,7 +834,7 @@ class BuildTriplet:
             alpha = rz_old / denom
             if not math.isfinite(alpha):
                 break
-            rz_new, residual_squared = self._pcg_update_and_reduce(active_nodes, alpha)
+            rz_new, residual_squared = update_pcg(active_nodes, alpha)
             residual = math.sqrt(max(float(residual_squared), 0.0))
             iterations = iteration + 1
             verify_residual = residual <= convergence_tolerance
@@ -783,7 +844,7 @@ class BuildTriplet:
                 # p=M^-1r so a cancellation in ``r -= alpha Ap`` cannot report
                 # false convergence.
                 self.matvec(active_nodes, nnz, self.x, self.Ax)
-                rz_old, residual_squared = self._init_pcg(active_nodes)
+                rz_old, residual_squared = initialize_pcg(active_nodes)
                 residual = math.sqrt(max(float(residual_squared), 0.0))
                 converged = residual <= convergence_tolerance
                 if converged:
@@ -800,7 +861,7 @@ class BuildTriplet:
         recursive_residual = residual
         if not converged:
             self.matvec(active_nodes, nnz, self.x, self.Ax)
-            _, residual_squared = self._init_pcg(active_nodes)
+            _, residual_squared = initialize_pcg(active_nodes)
             residual = math.sqrt(max(float(residual_squared), 0.0))
             converged = residual <= convergence_tolerance
         result = self._result(
@@ -841,7 +902,14 @@ class BuildTriplet:
         matvec = self.transpose_matvec if transpose else self.matvec
         apply_preconditioner = self._apply_transpose_preconditioner if transpose else self._apply_preconditioner
 
-        self._build_block_jacobi(active_nodes)
+        if self.preconditioner_group_size > 1:
+            self.group_preconditioner.build_triplet(self, active_nodes, nnz, cholesky=False)
+        else:
+            self._build_block_jacobi(active_nodes)
+        if self.device_execution:
+            return self._solve_device_krylov(
+                active_nodes, nnz, tol, maxiter, rel_tol, return_solution, bicgstab=True, transpose=transpose
+            )
         matvec(active_nodes, nnz, self.x, self.Ax)
         rho = float(self._init_bicgstab(active_nodes))
         residual = math.sqrt(max(rho, 0.0))
@@ -858,7 +926,11 @@ class BuildTriplet:
             if not math.isfinite(rho) or rho == 0.0:
                 break
             beta = 0.0 if fresh_direction else (rho / rho_old) * (alpha / omega)
-            self._bicg_update_p_precondition(active_nodes, beta, omega, fresh_direction, transpose)
+            self._bicg_update_p_precondition(
+                active_nodes, beta, omega, fresh_direction, transpose, self.preconditioner_group_size > 1
+            )
+            if self.preconditioner_group_size > 1:
+                apply_preconditioner(active_nodes, self.p, self.p_hat)
             fresh_direction = False
             matvec(active_nodes, nnz, self.p_hat, self.v)
             denom = float(self._dot(active_nodes, self.r_hat, self.v))
@@ -916,6 +988,35 @@ class BuildTriplet:
             initial_residual=initial_residual,
             convergence_tolerance=convergence_tolerance,
         )
+
+    def _solve_device_krylov(
+        self, active_nodes, nnz, tol, maxiter, rel_tol, return_solution, bicgstab=False, transpose=False
+    ):
+        if bicgstab not in self._device_solvers:
+            self._device_solvers[bicgstab] = DeviceKrylov(self, bicgstab=bicgstab, block=True)
+        driver = self._device_solvers[bicgstab]
+        matvec = self.transpose_matvec if transpose else self.matvec
+        operator = LinearOperator(lambda src, dst: matvec(active_nodes, nnz, src, dst))
+        preconditioner = None
+        if self.preconditioner_group_size > 1:
+            preconditioner = LinearOperator(
+                lambda src, dst: self.group_preconditioner.apply(active_nodes, src, dst, transpose=transpose)
+            )
+        driver.solve(
+            operator, self.rhs, self.x, preconditioner, active_nodes, tol, maxiter, rel_tol, transpose=transpose
+        )
+        result = self._result(
+            active_nodes,
+            self.last_converged,
+            self.last_iterations,
+            self.last_residual,
+            return_solution,
+            initial_residual=self.last_initial_residual,
+            convergence_tolerance=max(tol, rel_tol * self.last_initial_residual),
+        )
+        if not bicgstab:
+            result["recursive_residual"] = driver.recursive_residual
+        return result
 
     @staticmethod
     def _normalize_solver(solver):
@@ -1340,58 +1441,6 @@ class BuildTriplet:
         self.non_diag.set_reduced_triplets_from_numpy(block_i, block_j, block_h)
         return pairs_num
 
-    def _make_symmetric_spd_case(self, rng, active_nodes, offdiag_pairs):
-        dense = np.zeros((active_nodes * self.dim, active_nodes * self.dim), dtype=np.float64)
-        block_i = rng.integers(0, active_nodes, size=offdiag_pairs, dtype=np.int32)
-        block_j = rng.integers(0, active_nodes, size=offdiag_pairs, dtype=np.int32)
-        mask = block_i != block_j
-        block_i = block_i[mask]
-        block_j = block_j[mask]
-        block_h = np.zeros((block_i.shape[0], 6), dtype=np.float64)
-        for k, (bi, bj) in enumerate(zip(block_i, block_j)):
-            a = rng.normal(scale=0.01, size=(self.dim, self.dim))
-            block = 0.5 * (a + a.T)
-            block_h[k] = self._pack_sym_block(block)
-            dense[bi * self.dim : (bi + 1) * self.dim, bj * self.dim : (bj + 1) * self.dim] += block
-        dense = 0.5 * (dense + dense.T)
-        dense += (2.0 + np.sum(np.abs(dense), axis=1).max()) * np.eye(dense.shape[0])
-        diag = np.zeros((self.max_active_nodes, 6), dtype=np.float64)
-        for i in range(active_nodes):
-            diag[i] = self._pack_sym_block(dense[i * self.dim : (i + 1) * self.dim, i * self.dim : (i + 1) * self.dim])
-        # Keep the off-diagonal input consistent with the final symmetric dense matrix.
-        off_i = []
-        off_j = []
-        off_h = []
-        for i in range(active_nodes):
-            for j in range(active_nodes):
-                if i == j:
-                    continue
-                block = dense[i * self.dim : (i + 1) * self.dim, j * self.dim : (j + 1) * self.dim]
-                if np.linalg.norm(block) > 0.0:
-                    off_i.append(i)
-                    off_j.append(j)
-                    off_h.append(self._pack_sym_block(block))
-        return (
-            diag,
-            np.asarray(off_i, dtype=np.int32),
-            np.asarray(off_j, dtype=np.int32),
-            np.asarray(off_h, dtype=np.float64),
-        )
-
-    def _make_nonsymmetric_case(self, rng, active_nodes, offdiag_pairs):
-        diag = np.zeros((self.max_active_nodes, self.hessian_size), dtype=np.float64)
-        for i in range(active_nodes):
-            block = rng.normal(scale=0.05, size=(self.dim, self.dim))
-            block += (2.0 + self.dim) * np.eye(self.dim)
-            diag[i] = block.reshape(-1)
-        block_i = rng.integers(0, active_nodes, size=offdiag_pairs, dtype=np.int32)
-        block_j = rng.integers(0, active_nodes, size=offdiag_pairs, dtype=np.int32)
-        keep = block_i != block_j
-        block_i = block_i[keep]
-        block_j = block_j[keep]
-        block_h = rng.normal(scale=0.02, size=(block_i.shape[0], self.hessian_size))
-        return diag, block_i, block_j, block_h
-
     @staticmethod
     def _pack_sym_block(mat):
         h = np.zeros(6, dtype=np.float64)
@@ -1755,15 +1804,64 @@ class BuildTriplet:
                 else:
                     Ax[j] += _dense_block_transpose_matvec(self.non_diag.tripletH[k], x[i], ti.static(self.dim))
 
-    @ti.kernel
-    def _apply_preconditioner(self, active_nodes: int, src: ti.template(), dst: ti.template()):
-        for i in range(active_nodes):
-            dst[i] = _dense_block_matvec(self.diag_inverse[i], src[i], ti.static(self.dim))
+    def _apply_preconditioner(self, active_nodes, src, dst):
+        if self.preconditioner_group_size > 1:
+            self.group_preconditioner.apply(active_nodes, src, dst)
+        else:
+            self._apply_block_preconditioner(active_nodes, src, dst, False)
+
+    def _apply_transpose_preconditioner(self, active_nodes, src, dst):
+        if self.preconditioner_group_size > 1:
+            self.group_preconditioner.apply(active_nodes, src, dst, transpose=True)
+        else:
+            self._apply_block_preconditioner(active_nodes, src, dst, True)
 
     @ti.kernel
-    def _apply_transpose_preconditioner(self, active_nodes: int, src: ti.template(), dst: ti.template()):
+    def _apply_block_preconditioner(
+        self, active_nodes: int, src: ti.template(), dst: ti.template(), transpose: ti.template()
+    ):
         for i in range(active_nodes):
-            dst[i] = _dense_block_transpose_matvec(self.diag_inverse[i], src[i], ti.static(self.dim))
+            if ti.static(transpose):
+                dst[i] = _dense_block_transpose_matvec(self.diag_inverse[i], src[i], ti.static(self.dim))
+            else:
+                dst[i] = _dense_block_matvec(self.diag_inverse[i], src[i], ti.static(self.dim))
+
+    def _init_grouped_pcg(self, active_nodes):
+        self._grouped_true_residual(active_nodes)
+        self._apply_group_jacobi(active_nodes, self.r, self.z)
+        return self._reduce_grouped_pcg(active_nodes, True)
+
+    def _update_grouped_pcg(self, active_nodes, alpha):
+        self._grouped_update_residual(active_nodes, alpha)
+        self._apply_group_jacobi(active_nodes, self.r, self.z)
+        return self._reduce_grouped_pcg(active_nodes, False)
+
+    @ti.kernel
+    def _grouped_true_residual(self, active_nodes: int):
+        for i in range(active_nodes):
+            self.r[i] = self.rhs[i] - self.Ax[i]
+
+    @ti.kernel
+    def _grouped_update_residual(self, active_nodes: int, alpha: float):
+        for i in range(active_nodes):
+            self.x[i] += alpha * self.p[i]
+            self.r[i] -= alpha * self.Ap[i]
+
+    @ti.kernel
+    def _reduce_grouped_pcg(self, active_nodes: int, restart: ti.template()) -> tuple[float, float]:
+        rz, rr = 0.0, 0.0
+        for i in range(active_nodes):
+            rz += self.r[i].dot(self.z[i])
+            rr += self.r[i].dot(self.r[i])
+            if ti.static(restart):
+                self.p[i] = self.z[i]
+        return rz, rr
+
+    def _build_group_jacobi(self, active_nodes, nnz):
+        self.group_preconditioner.build_triplet(self, active_nodes, nnz)
+
+    def _apply_group_jacobi(self, active_nodes, source, destination):
+        self.group_preconditioner.apply(active_nodes, source, destination)
 
     @ti.kernel
     def _build_block_jacobi(self, active_nodes: int):
@@ -1837,17 +1935,18 @@ class BuildTriplet:
 
     @ti.kernel
     def _bicg_update_p_precondition(
-        self, active_nodes: int, beta: float, omega: float, fresh: int, transpose: ti.template()
+        self, active_nodes: int, beta: float, omega: float, fresh: int, transpose: ti.template(), grouped: ti.template()
     ):
         for i in range(active_nodes):
             direction = self.r[i]
             if fresh == 0:
                 direction += beta * (self.p[i] - omega * self.v[i])
             self.p[i] = direction
-            if ti.static(transpose):
-                self.p_hat[i] = _dense_block_transpose_matvec(self.diag_inverse[i], direction, ti.static(self.dim))
-            else:
-                self.p_hat[i] = _dense_block_matvec(self.diag_inverse[i], direction, ti.static(self.dim))
+            if ti.static(not grouped):
+                if ti.static(transpose):
+                    self.p_hat[i] = _dense_block_transpose_matvec(self.diag_inverse[i], direction, ti.static(self.dim))
+                else:
+                    self.p_hat[i] = _dense_block_matvec(self.diag_inverse[i], direction, ti.static(self.dim))
 
     @ti.kernel
     def _bicg_update_s(self, active_nodes: int, alpha: float) -> float:

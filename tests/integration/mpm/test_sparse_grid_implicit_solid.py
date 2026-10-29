@@ -15,15 +15,19 @@ def _test_arch():
 
 
 def _skip_if_local_backend_cannot_allocate_sparse_grid():
-    if _test_arch() == "cpu" and platform.system() == "Darwin" and platform.machine() == "arm64":
+    if (
+        _test_arch() == "cpu"
+        and platform.system() == "Darwin"
+        and platform.machine() == "arm64"
+        and os.environ.get("GEOTAICHI_FORCE_CPU") != "1"
+    ):
         pytest.skip("BlockScan sparse_grid requires Taichi CPU or CUDA; GeoTaichi maps Apple Silicon cpu to Metal.")
 
 
 def _run_sparse_implicit_solid_case(assemble_type, output_root):
     from geotaichi import MPM
 
-    save_path = os.path.join(
-        os.fspath(output_root), f"sparse_grid_implicit_{assemble_type}")
+    save_path = os.path.join(os.fspath(output_root), f"sparse_grid_implicit_{assemble_type}")
 
     mpm = MPM(log=False)
     mpm.set_configuration(

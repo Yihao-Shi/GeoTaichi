@@ -143,8 +143,6 @@ def test_monolithic_newton_does_not_solve_an_already_balanced_rhs():
     engine.monolithic_force_atol = 1.0e-10
     engine.monolithic_force_rtol = 5.0e-4
     engine.monolithic_dirichlet_tolerance = 1.0e-12
-    engine.is_semi = False
-    engine.semi_contact_converged = lambda: True
 
     def residual_only(**kwargs):
         assert kwargs["need_matrix"] is False, "an equilibrated RHS must not assemble a Hessian"
@@ -180,8 +178,6 @@ def test_plastic_monolithic_newton_selects_material_line_search(has_incremental_
     engine = object.__new__(ImplicitEngineMixin)
     engine.nonassociated_newton = False
     engine.mpm_has_plastic_history = True
-    engine.is_semi = False
-    engine.semi_contact_converged = lambda: True
     engine.monolithic_force_atol = 1.0e-10
     engine.monolithic_force_rtol = 5.0e-4
     engine.monolithic_dirichlet_tolerance = 1.0e-12

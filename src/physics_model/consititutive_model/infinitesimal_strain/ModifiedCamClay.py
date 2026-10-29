@@ -13,6 +13,8 @@ import src.utils.GlobalVariable as GlobalVariable
 
 @ti.data_oriented
 class ModifiedCamClayModel(PlasticMaterial):
+    supports_rate_dependent = True
+
     def __init__(
         self, material_type="Solid", configuration="UL", solver_type="Explicit", stress_integration="ReturnMapping"
     ):
@@ -345,12 +347,12 @@ class ModifiedCamClayModel(PlasticMaterial):
         return self.ComputeBondingParameters(chi)
 
     @ti.func
-    def ComputeSubloadingParameter(self, pressure, pc, pcd, pcc, subloading_r, dpvstrain, dpdstrain):
+    def ComputeSubloadingParameter(self, pressure, pc, pcd, pcc, subloading_r, dpvstrain, dpdstrain, initialize=False):
         subloading = 1.0
         if ti.static(self.subloading):
             pc_safe = ti.max(pc, 100.0)
             surface_size = ti.max(pc + pcd + pcc, 100.0)
-            if ti.abs(subloading_r - 1.0) < Threshold:
+            if initialize and ti.abs(subloading_r - 1.0) < Threshold:
                 subloading = pressure / surface_size
             else:
                 r_safe = ti.max(subloading_r, 1.0e-12)
@@ -414,21 +416,19 @@ class ModifiedCamClayModel(PlasticMaterial):
         lambda_, kappa, void_ratio = material_params[1], material_params[2], material_params[4]
         pc, pcd, pcc, subloading_r = internal_vars[0], internal_vars[9], internal_vars[10], internal_vars[11]
         pressure, q, lode = self.ComputeStressInvariants(stress)
-        df_dp = 2.0 * pressure - pc - pcd
-        df_dpc = -(pressure + pcc)
+        dpv_dlambda = -ComputeStrainInvariantI1(dgdsigma)
+        dpd_dlambda = self.ComputeEquivalentPlasticStrainIncrement(1.0, dgdsigma)
+        df_dpc = -subloading_r * (pressure + pcc)
         upsilon = (1 + void_ratio) / (lambda_ - kappa)
-        hardening = upsilon * pc * df_dp * df_dpc
+        hardening = df_dpc * upsilon * (pc + pcd) * dpv_dlambda
         if ti.static(self.bonding):
-            df_dpcd = -pressure - pcc
-            df_dpcc = -2.0 * pcc - pc - pcd
-            df_dq = 2.0 * q / (self.ComputeMTheta(lode, material_params[3]) ** 2)
-            hardening += df_dpcd * (-self.m_degradation * self.mc_b * pcd) * df_dq
-            hardening += df_dpcc * (-self.m_degradation * self.mc_d * pcc) * df_dq
+            df_dpcd = -subloading_r * (pressure + pcc)
+            df_dpcc = (1.0 - subloading_r) * pressure - subloading_r * (pc + pcd + 2.0 * pcc)
+            hardening += df_dpcd * (-self.m_degradation * self.mc_b * pcd) * dpd_dlambda
+            hardening += df_dpcc * (-self.m_degradation * self.mc_d * pcc) * dpd_dlambda
         if ti.static(self.subloading):
             df_dr = -(pressure + pcc) * (pc + pcd + pcc)
-            plastic_increment = ti.sqrt(
-                state_vars.dpvstrain * state_vars.dpvstrain + state_vars.dpdstrain * state_vars.dpdstrain
-            )
+            plastic_increment = ti.sqrt(dpv_dlambda * dpv_dlambda + dpd_dlambda * dpd_dlambda)
             hardening += (
                 -df_dr
                 * self.subloading_u
@@ -772,7 +772,9 @@ class ModifiedCamClayModel(PlasticMaterial):
     ):
         m_theta_trial = self.ComputeMTheta(lode_trial, material_params[3])
         chi, pcd, pcc = self.ComputeBondingParameters(chi_n)
-        subloading_r = self.ComputeSubloadingParameter(pressure_trial, pc_trial, pcd, pcc, subloading_n, 0.0, 0.0)
+        subloading_r = self.ComputeSubloadingParameter(
+            pressure_trial, pc_trial, pcd, pcc, subloading_n, 0.0, 0.0, initialize=True
+        )
 
         pressure = ti.max(pressure_trial, 100.0)
         q = ti.max(q_trial, 0.0)
@@ -991,7 +993,14 @@ class ModifiedCamClayModel(PlasticMaterial):
         pressure_trial0, _, _ = self.ComputeStressInvariants(trial_stress)
         _, internal_vars[9], internal_vars[10] = self.ComputeBondingParameters(internal_vars[8])
         internal_vars[11] = self.ComputeSubloadingParameter(
-            pressure_trial0, internal_vars[0], internal_vars[9], internal_vars[10], internal_vars[11], 0.0, 0.0
+            pressure_trial0,
+            internal_vars[0],
+            internal_vars[9],
+            internal_vars[10],
+            internal_vars[11],
+            0.0,
+            0.0,
+            initialize=True,
         )
         material_params = self.UpdateMaterialParameter(previous_stress, internal_vars, state_vars, material_params)
         yield_state_trial, f_function_trial = self.ComputeYieldState(trial_stress, internal_vars, material_params)
@@ -1061,7 +1070,14 @@ class ModifiedCamClayModel(PlasticMaterial):
         pressure_trial0, _, _ = self.ComputeStressInvariants(trial_stress)
         _, internal_vars[9], internal_vars[10] = self.ComputeBondingParameters(internal_vars[8])
         internal_vars[11] = self.ComputeSubloadingParameter(
-            pressure_trial0, internal_vars[0], internal_vars[9], internal_vars[10], internal_vars[11], 0.0, 0.0
+            pressure_trial0,
+            internal_vars[0],
+            internal_vars[9],
+            internal_vars[10],
+            internal_vars[11],
+            0.0,
+            0.0,
+            initialize=True,
         )
         material_params = self.UpdateMaterialParameter(previous_stress, internal_vars, state_vars, material_params)
         yield_state_trial, f_function_trial = self.ComputeYieldState(trial_stress, internal_vars, material_params)

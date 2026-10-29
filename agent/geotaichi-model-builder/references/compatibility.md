@@ -48,6 +48,10 @@ Reject unsupported combinations before generating a long script.
 - WENO5 and Semi-Lagrangian are LSMPM level-set transport choices; generic
   level-set WENO order settings are a separate implementation.
 - Mixed soft--AffineBody IPC has dedicated implicit assembly/backend limits.
+- `newmark` requires exactly `[alpha, beta, gamma]` in FEM, IGA, Direct MPM
+  and ABD. ABD defaults to backward Euler `[1, 0.5, 1]`; Newmark uses the same
+  operator for damping, mesh IPC friction, walls and FEM/MPM coupling.
+  ABD trajectory adjoints remain backward-Euler only.
 - Contact property completeness and point coordination are mandatory; LSMPM
   capacity overflow must fail rather than drop contacts.
 - Energy-conserving contact requires `FreeParameter >= 2`.
@@ -71,13 +75,13 @@ Reject unsupported combinations before generating a long script.
 - Ordinary continuum MPM--AffineBody IPC requires Direct implicit ULMPM in
   3D. Nonassociated DP uses its physical nonsymmetric Jacobian with Taichi
   BiCGSTAB and residual Armijo, without a material outer loop. Its public
-  solver defaults to `inexact_newton=True`; strict linear solves remain
-  available with `False`. ABD, MPM, and mixed-contact lagged friction retain
+  solver defaults to `inexact_newton=False`; adaptive Krylov forcing requires
+  explicit `True`. ABD, MPM, and mixed-contact lagged friction retain
   their independent fixed point. Associated materials retain PCG. LSMPM
   soft--ABD remains hyperelastic; the native/common fluid--ABD route is IBM.
 - `FEDEM` accepts three scheme-specific routes. `DEM` and `LSDEM` require
   explicit FEM, use `Linear`/`HertzMindlin`, and do not combine with FEM
-  IPC/AL. The FEM side remains a volume or membrane mesh with a TRI3 contact
+  IPC. The FEM side remains a volume or membrane mesh with a TRI3 contact
   boundary; it does not acquire an SDF. LSDEM samples only the rigid child's
   existing SDF. `AffineBody` requires implicit elastic FEM and coupled IPC,
   with direct PT/EE geometry, analytic PSD-projected Hessians, CCD/ACCD,
@@ -130,7 +134,7 @@ LSMPM soft materials, and parameter/history adjoints are unsupported. See
 - FEM contact currently requires the implicit solver and line search.
 - HEX8 elastoplastic FEM uses shared incremental solid models, eight Gauss
   points, and explicit updated-Lagrangian state updates. It deliberately
-  rejects FEM IPC/AL.
+  rejects FEM IPC.
 - Pair-specific `add_contact_property` is IPC-only; once pair properties are
   present, unlisted body pairs are inactive.
 - PCG requires `project_pd=True`; use BiCGSTAB for an unprojected tangent.
@@ -138,7 +142,6 @@ LSMPM soft materials, and parameter/history adjoints are unsupported. See
   Both pass through common topology/stitch exclusion, exact-distance or swept
   CCD culling, prefix compaction, and contact assembly.
 - IPC rebuilds current and swept candidates without a Verlet multiplier.
-  Augmented Lagrangian contact permits trial penetration and is not CCD-clipped.
 - Rigid LSDEM--FEM contact belongs to explicit `FEDEM`: current FEM boundary
   nodes query only the rigid child's SDF and the list rebuilds every step.
   Elastic volume FEM--AffineBody contact belongs to implicit `FEDEM` IPC.

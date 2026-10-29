@@ -9,7 +9,11 @@ from src.mpm.engines.direct.Convergence import mpm_correction_measure
 
 from src.dem.engines.AffineBodyOperator import MATRIX_HASH_TRIPLET
 from src.linear_solver.BuildTriplet import BuildTriplet
-from src.utils.SolverRuntime import inexact_newton_absolute_tolerance, inexact_newton_relative_tolerance
+from src.utils.SolverRuntime import (
+    accepts_monotone_energy,
+    inexact_newton_absolute_tolerance,
+    inexact_newton_relative_tolerance,
+)
 
 
 @ti.data_oriented
@@ -18,6 +22,7 @@ class DirectAffineIPCSystem:
 
     def __init__(self, affine, ipc, mixed_contact, *, inexact_newton=False, force_atol=1.0e-10, force_rtol=1.0e-8):
         self.affine = affine
+        self.affine_acceleration_initialized = False
         self.ipc = ipc
         self.mpm = ipc.mpm
         self.mixed = mixed_contact
@@ -26,8 +31,6 @@ class DirectAffineIPCSystem:
         self.last_step_record = None
         if int(getattr(self.mpm, "dimension", 3)) != 3:
             raise ValueError("Direct MPM--ABD IPC currently requires 3D")
-        if not (bool(affine.is_semi) == bool(ipc.is_semi) == bool(mixed_contact.is_semi)):
-            raise ValueError("Direct MPM--ABD must use one common BarrierIPC/SemiIPC mode")
         if bool(getattr(affine, "fully_implicit", False)) or str(getattr(ipc, "friction_mode", "lagged")) != "lagged":
             raise ValueError(
                 "Direct MPM--ABD supports lagged friction only; fully " "implicit friction is not implemented"
@@ -97,18 +100,24 @@ class DirectAffineIPCSystem:
             matrix_symmetric=not self.nonassociated_newton,
             full_symmetric_input=not self.nonassociated_newton,
             device_reduction=True,
+            preconditioner_group_size=4,
+            preconditioner_group_nodes=self.affine_controls,
         )
 
     def begin_step_device(self, timestep):
         """Initialize one coupled step and freeze all three friction caches."""
         timestep = float(timestep)
         self.affine.set_timestep(timestep)
-        if self.affine.is_semi:
-            self.affine.reset_semi_state()
-            self.ipc.semi_state.fill(2)
-            self.ipc.semi_multiplier.fill(0.0)
-            self.ipc.semi_count[None] = 0
-            self.ipc.semi_overflow[None] = 0
+        if self.affine.use_newmark and not self.affine_acceleration_initialized:
+            self.affine.device_prepare_initial_acceleration()
+            self.mpm.grid_disp.fill(0.0)
+            self.affine.initialize_contact_damping_device()
+            self.ipc.begin_friction_step(self.mpm.grid_disp)
+            self.mixed.begin_step(self.affine.x, self.mpm.grid_disp, timestep)
+            self.assemble_linearization_device(need_matrix=False)
+            self.affine.device_load_initial_force(self.physical_rhs, 1.0 / self.affine.scale)
+            self.affine.device_initialize_newmark_acceleration()
+            self.affine_acceleration_initialized = True
         self.affine.device_backup_step_start()
         self.affine.device_begin_step(timestep)
         self.mpm.grid_disp.fill(0.0)
@@ -240,6 +249,7 @@ class DirectAffineIPCSystem:
                 self.correction,
                 active_nodes=active_nodes,
                 tol=self.mpm.linear_solver_tolerance,
+                rel_tol=self.mpm.linear_solver_relative_tolerance,
                 maxiter=self.mpm.linear_solver_max_iters,
                 return_solution=False,
                 transpose=not self.matrix.matrix_symmetric,
@@ -453,11 +463,13 @@ class DirectAffineIPCSystem:
             "contact_count": int(contact_count),
         }
 
-    def solve_direction_device(self, active_mpm_dof=None, *, relative_tolerance=0.0, residual_reference=None):
+    def solve_direction_device(self, active_mpm_dof=None, *, relative_tolerance=None, residual_reference=None):
         """Solve the assembled coupled system and scatter both directions."""
         active_mpm_dof = int(self.mpm.active_dof) if active_mpm_dof is None else int(active_mpm_dof)
         active_nodes = self.affine_controls + active_mpm_dof // 3
         absolute_tolerance = self.mpm.linear_solver_tolerance
+        if relative_tolerance is None:
+            relative_tolerance = self.mpm.linear_solver_relative_tolerance
         if residual_reference is not None:
             absolute_tolerance = inexact_newton_absolute_tolerance(
                 residual_reference, relative_tolerance, absolute_tolerance
@@ -499,11 +511,17 @@ class DirectAffineIPCSystem:
         values = self._residual_metrics(3 * self.affine_controls + int(active_mpm_dof))
         return math.sqrt(max(float(values[0]), 0.0)), float(values[1])
 
-    def direction_inf_norm(self, active_mpm_dof=None):
+    def direction_inf_norm(self, active_mpm_dof=None, velocity=False):
         active_mpm_dof = int(self.mpm.active_dof) if active_mpm_dof is None else int(active_mpm_dof)
         return max(
-            float(self.affine.device_surface_direction_inf_norm()),
-            float(mpm_correction_measure(self.mpm, self.mpm.incre_resolution, active_mpm_dof, 3)),
+            float(self.affine.device_surface_direction_inf_norm())
+            * (self.affine.correction_velocity_factor if velocity else 1.0),
+            float(mpm_correction_measure(self.mpm, self.mpm.incre_resolution, active_mpm_dof, 3))
+            * (
+                self.mpm.integration[2] / (2.0 * self.mpm.integration[0] * self.mpm.integration[1] * self.mpm.dt)
+                if velocity
+                else 1.0
+            ),
         )
 
     def gradient_direction_dot(self, active_mpm_dof=None):
@@ -559,20 +577,6 @@ class DirectAffineIPCSystem:
     def accept_line_search_trial_device(self, active_mpm_dof=None):
         active_mpm_dof = int(self.mpm.active_dof) if active_mpm_dof is None else int(active_mpm_dof)
         self._accept_mpm_trial(active_mpm_dof)
-        if self.affine.is_semi:
-            self.affine.accept_semi_update_device()
-            self.ipc.accept_update()
-            self.mixed.accept_update(self.affine.x, self.mpm.grid_disp)
-
-    def advance_semi_multipliers_device(self):
-        if not self.affine.is_semi:
-            return
-        self.affine.accept_semi_update_device()
-        self.ipc.accept_update()
-        self.mixed.accept_update(self.affine.x, self.mpm.grid_disp)
-
-    def contact_converged(self):
-        return self.affine.semi_contact_converged() and self.ipc.contact_converged() and self.mixed.contact_converged()
 
     def total_energy_device(self, mpm_displacement=None, include_mixed_friction=True):
         """Evaluate the coupled incremental potential at the current ABD state."""
@@ -626,12 +630,9 @@ class DirectAffineIPCSystem:
         for _ in range(int(sims.affine_line_search_max_iteration)):
             trial = self.set_line_search_trial_device(alpha, active_mpm_dof)
             trial_energy = self.total_energy_device(trial)
-            if math.isfinite(trial_energy) and trial_energy <= energy:
+            if accepts_monotone_energy(energy, trial_energy, alpha, slope):
                 self.assemble_linearization_device(mpm_displacement=trial)
                 self.accept_line_search_trial_device(active_mpm_dof)
-                if self.affine.is_semi:
-                    trial_energy = self.total_energy_device()
-                    self.assemble_linearization_device()
                 return trial_energy, alpha
             alpha *= 0.5
         self.restore_line_search_base_device()
@@ -662,9 +663,6 @@ class DirectAffineIPCSystem:
                 0.5 * residual**2 + 1.0e-4 * alpha * merit_slope
             ):
                 self.accept_line_search_trial_device(active_mpm_dof)
-                if self.affine.is_semi:
-                    self.assemble_linearization_device(need_matrix=False)
-                    trial_residual, _ = self.residual_metrics_device(active_mpm_dof)
                 return trial_residual, alpha
             alpha *= 0.5
         self.restore_line_search_base_device()
@@ -694,18 +692,15 @@ class DirectAffineIPCSystem:
                 for iteration in range(int(sims.affine_max_newton_iteration) + 1):
                     if not math.isfinite(residual):
                         raise RuntimeError("Direct MPM--ABD physical residual is non-finite")
-                    if residual == 0.0 and prescribed == 0.0 and self.contact_converged():
+                    if residual == 0.0 and prescribed == 0.0:
                         break
                     if iteration == int(sims.affine_max_newton_iteration):
                         raise RuntimeError("Direct MPM--ABD nonassociated Newton force residual did not converge")
-                    if residual <= target and prescribed <= 1.0e-10 and not self.contact_converged():
-                        self.advance_semi_multipliers_device()
-                        self.assemble_linearization_device(need_matrix=False)
-                        residual, prescribed = self.residual_metrics_device(active_mpm_dof)
-                        continue
                     self.assemble_linearization_device()
                     relative_tolerance = (
-                        inexact_newton_relative_tolerance(residual, previous_residual) if self.inexact_newton else 0.0
+                        inexact_newton_relative_tolerance(residual, previous_residual)
+                        if self.inexact_newton
+                        else self.mpm.linear_solver_relative_tolerance
                     )
                     linear = self.solve_direction_device(
                         active_mpm_dof,
@@ -731,7 +726,6 @@ class DirectAffineIPCSystem:
                         correction / self.mpm.dt <= float(sims.affine_newton_tolerance)
                         and residual <= target
                         and prescribed <= 1.0e-10
-                        and self.contact_converged()
                     ):
                         break
                     scale = 1.0
@@ -749,18 +743,17 @@ class DirectAffineIPCSystem:
                 self.refresh_lagged_friction_device()
                 self.assemble_linearization_device(need_matrix=False)
                 residual, prescribed = self.residual_metrics_device(active_mpm_dof)
-                if residual == 0.0 and prescribed == 0.0 and self.contact_converged():
+                if residual == 0.0 and prescribed == 0.0:
                     friction_residual = 0.0
                 else:
                     self.assemble_linearization_device()
                     linear = self.solve_direction_device(active_mpm_dof)
                     total_linear += linear["iterations"]
-                    friction_residual = self.direction_inf_norm(active_mpm_dof) / self.mpm.dt
+                    friction_residual = self.direction_inf_norm(active_mpm_dof, velocity=True)
                 if (
                     friction_residual <= float(sims.affine_friction_tolerance)
                     and residual <= target
                     and prescribed <= 1.0e-10
-                    and self.contact_converged()
                 ):
                     friction_converged = True
                     break
@@ -831,13 +824,8 @@ class DirectAffineIPCSystem:
                     correction = self.direction_inf_norm(active_mpm_dof)
                     if not math.isfinite(correction):
                         raise RuntimeError("Direct MPM--ABD Newton correction is non-finite")
-                    correction_velocity = correction / timestep
+                    correction_velocity = self.direction_inf_norm(active_mpm_dof, velocity=True)
                     if correction == 0.0 or (iteration > 0 and correction_velocity < tolerance):
-                        if self.affine.is_semi and not self.contact_converged():
-                            self.advance_semi_multipliers_device()
-                            energy = self.total_energy_device()
-                            self.assemble_linearization_device()
-                            continue
                         inner_converged = True
                         break
                     if iteration == int(sims.affine_max_newton_iteration):
@@ -854,7 +842,7 @@ class DirectAffineIPCSystem:
                 energy = self.total_energy_device()
                 self.assemble_linearization_device()
                 self.solve_direction_device(active_mpm_dof)
-                friction_residual = self.direction_inf_norm(active_mpm_dof) / timestep
+                friction_residual = self.direction_inf_norm(active_mpm_dof, velocity=True)
                 if friction_residual < friction_tolerance:
                     friction_converged = True
                     break

@@ -1,3 +1,5 @@
+#!/usr/bin/env bash
+cd "$(dirname "$0")"
 #python soil_rock_concave.py -n 0
 #python soil_rock_concave.py -n 180
 #python soil_rock_concave.py -n 360

@@ -11,7 +11,6 @@ from src.fem.soft_particle.ContactKernel import _contact_force
 from src.fem.soft_particle.ContactManager import FEMSoftParticleContactManager
 from src.fem.soft_particle.ContactModel import FEMSoftParticleProperty
 
-
 pytestmark = [
     pytest.mark.unit,
     pytest.mark.fem,
@@ -389,14 +388,16 @@ def test_bvh_verlet_list_retains_adjacent_point_triangle_features():
     assert np.max(candidate_counts) > 1
 
 
-def test_soft_particle_history_survives_verlet_rebuild():
+@pytest.mark.parametrize("search", ["LinkedCell", "BVH"])
+def test_soft_particle_history_survives_verlet_rebuild(search):
     mesh = _two_facing_tetrahedra()
     velocity = np.zeros_like(mesh.points)
     velocity[:4, 0] = 0.25
     state = FEMState(mesh.points, velocity, np.ones(mesh.number_of_nodes))
     model = FEMSoftParticleContactModel(
         "Linear",
-        search="LinkedCell",
+        search=search,
+        bvh_rebuild_interval=2,
         verlet_distance=0.02,
         ContactThickness=0.10,
         NormalStiffness=1.0e4,
@@ -413,9 +414,16 @@ def test_soft_particle_history_survives_verlet_rebuild():
     shifted[:4, 0] += 0.02
     state.position.from_numpy(shifted)
     assert manager.needs_rebuild(state.position)
-    manager.rebuild(state.position)
+    manager.resolve(1.0e-3, current_step=1, advance_history=False)
     rebuilt_history = manager.pt_tangential_overlap.to_numpy()[: manager.pt_count]
     assert np.max(np.linalg.norm(rebuilt_history, axis=1)) > 0.0
+    if search == "BVH":
+        assert manager.broad_phase.face_bvh._last_rebuild_step == 0
+        shifted[:4, 0] += 0.02
+        state.position.from_numpy(shifted)
+        manager.resolve(1.0e-3, current_step=3, advance_history=False)
+        assert manager.broad_phase.face_bvh._last_rebuild_step == 3
+        assert np.max(np.linalg.norm(manager.pt_tangential_overlap.to_numpy()[: manager.pt_count], axis=1)) > 0.0
 
 
 def test_soft_particle_rebuild_retains_penetrating_stencil_beyond_one_side_skin():

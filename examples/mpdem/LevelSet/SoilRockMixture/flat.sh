@@ -1,3 +1,5 @@
+#!/usr/bin/env bash
+cd "$(dirname "$0")"
 #python soil_rock_slope.py -n 0
 #python soil_rock_slope.py -n 108
 #python soil_rock_slope.py -n 216

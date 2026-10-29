@@ -59,6 +59,7 @@ class FEMSoftParticleContactManager:
             "cross_system_only": True,
         }
         if contact.search == "BVH":
+            broad_phase_options["bvh_rebuild_interval"] = contact.bvh_rebuild_interval
             # Keep every point--triangle stencil inside the Verlet radius.
             # Retaining only the face that is nearest at rebuild time is not
             # a valid Verlet list: the nearest face can change before the
@@ -674,12 +675,15 @@ class FEMSoftParticleContactManager:
         self,
         dt,
         *,
+        current_step=0,
         advance_history=True,
         check_rebuild=True,
     ):
         # Stored contact energy is instantaneous; dissipated work is
         # cumulative.  All three reductions stay device resident.
         self.elastic_energy.fill(0.0)
+        if self.contact.search == "BVH":
+            self.broad_phase.current_step = int(current_step)
         update_surface_pseudonormals(
             self.face_count,
             self.faces,

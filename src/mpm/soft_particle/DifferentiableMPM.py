@@ -27,8 +27,6 @@ class DifferentiableMPM:
         if mpm.shape_function_name == "gimp":
             raise ValueError("DifferentiableMPM supports linear or quadratic B-spline transfer")
         ipc = simulation.ipc
-        if ipc.is_semi:
-            raise ValueError("DifferentiableMPM currently requires BarrierIPC")
         ipc._validate_differentiable_friction()
         if ipc.ground.num and not np.allclose(np.asarray(ipc.ground.np_vel, dtype=np.float64), 0.0):
             raise ValueError("DifferentiableMPM requires stationary ground")

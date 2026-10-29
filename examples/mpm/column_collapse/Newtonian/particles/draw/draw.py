@@ -45,20 +45,20 @@ x3, y3 = [], []
 with open("Line1.txt") as file:
     data = file.readlines()
     for i in range(len(data)):
-        x1.append(eval(data[i][0:21]))
-        y1.append(eval(data[i][25:46]))
+        x1.append(float(data[i][0:21]))
+        y1.append(float(data[i][25:46]))
 
 with open("Line2.txt") as file:
     data = file.readlines()
     for i in range(len(data)):
-        x2.append(eval(data[i][0:21]))
-        y2.append(eval(data[i][25:46]))
+        x2.append(float(data[i][0:21]))
+        y2.append(float(data[i][25:46]))
 
 with open("Line3.txt") as file:
     data = file.readlines()
     for i in range(len(data)):
-        x3.append(eval(data[i][0:21]))
-        y3.append(eval(data[i][25:46]))
+        x3.append(float(data[i][0:21]))
+        y3.append(float(data[i][25:46]))
 
 plt.plot(x2, y2, color=color[0], linestyle="-", label="Experiment (Lobovsky $et\ al.$, 2014)")
 plt.plot(x3, y3, color=color[2], linestyle="-.", label="SPH (Zhang $et\ al.$, 2017)")

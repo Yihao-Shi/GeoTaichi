@@ -12,11 +12,10 @@ ROOT = Path(__file__).resolve().parents[5]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from examples.mpm.IncompressibleFluid.large_tank_incompressible_3d.draw.validate_large_tank_incompressible_3d import (
+from tools.postprocessing.mpm.fluid_metrics import (
     enclosed_air_count,
 )
 from examples.mpm.IncompressibleFluid.dam_break_visible_sdf_2d.obstacle import VERTICES as OBSTACLE_VERTICES
-
 
 DOMAIN = np.array([0.90, 0.45])
 
@@ -75,7 +74,7 @@ def validate(output, expected_final_time, stability_window, particle_spacing):
                     float(np.sqrt(speed2).max()),
                     int(np.count_nonzero(outside)),
                     float(polygon_penetration(position).max()),
-                    enclosed_air_count(cell_type[1:-1, 1:-1]),
+                    enclosed_air_count(cell_type[1:-1, 1:-1], np.squeeze(grid["cell_fluid_sdf"])[1:-1, 1:-1]),
                     float(position[:, 0].max()),
                 ]
             )

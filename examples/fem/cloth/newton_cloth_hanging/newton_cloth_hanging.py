@@ -39,7 +39,7 @@ def main():
     parser.add_argument("--dt", type=float, default=1.0 / 60.0)
     parser.add_argument("--start-height", type=float, default=4.0)
     parser.add_argument("--spacing", type=float, default=0.1)
-    parser.add_argument("--contact-model", choices=("BarrierIPC", "SemiIPC"), default="BarrierIPC")
+    parser.add_argument("--contact-model", choices=("BarrierIPC",), default="BarrierIPC")
     parser.add_argument("--max-iterations", type=int, default=250)
     parser.add_argument("--newton-velocity-tolerance", type=float, default=1.0e-2)
     parser.add_argument("--bending-stiffness", type=float, default=2.5e7)
@@ -74,7 +74,8 @@ def main():
         parser.error("nx, ny >= 3, steps > 0, dt > 0, max-iterations > 0, and Newton tolerance > 0 are required")
 
     import geotaichi as gt
-    from src.fem import DirichletBoundary, FEM
+    from geotaichi import FEM
+    from src.fem import DirichletBoundary
     from src.fem.generator import FEMMesh
 
     gt.init(arch=args.arch, default_fp="float64", log=True)

@@ -256,7 +256,7 @@ class ExplicitMPM(MPMSolver):
             grid_size = self.body[bodyID].grid_size
             xmin = self.body[bodyID].xmin
 
-            p_pos = self.particle[i].x
+            p_pos = self.affine_transfer_position(i)
             acc = ti.Vector.zero(ti.f64, config.DIM)
             vel = ti.Vector.zero(ti.f64, config.DIM)
             Bp = ti.Matrix.zero(ti.f64, config.DIM, config.DIM)
@@ -276,7 +276,7 @@ class ExplicitMPM(MPMSolver):
             self.particle[i].v = v1
             self.particle[i].x += vel * dt
             if ti.static(self.velocity_proj):
-                self.gradv[i] = Bp @ Dp.inverse()
+                self.gradv[i] = self.affine_transfer_matrix(Bp, Dp, grid_size)
 
     @ti.kernel
     def apply_dirichlet(self):

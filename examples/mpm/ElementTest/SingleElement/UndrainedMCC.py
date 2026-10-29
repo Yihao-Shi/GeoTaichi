@@ -1,4 +1,4 @@
-mode=1
+mode = 1
 
 import os
 import sys
@@ -10,77 +10,79 @@ if ROOT not in sys.path:
 
 from geotaichi import *
 
-init(arch='cpu')
+init(arch="cpu")
 
 mpm = MPM()
 
-mpm.set_configuration(domain=ti.Vector([3., 3., 3.]), 
-                      background_damping=0., 
-                      gravity=ti.Vector([0., 0., 0.]),
-                      alphaPIC=0.00, 
-                      mapping="USF", 
-                      shape_function="Linear",
-                      stress_integration="SubStepping",
-                      gauss_number=2)
+mpm.set_configuration(
+    domain=ti.Vector([3.0, 3.0, 3.0]),
+    background_damping=0.0,
+    gravity=ti.Vector([0.0, 0.0, 0.0]),
+    alphaPIC=0.00,
+    mapping="USF",
+    shape_function="Linear",
+    stress_integration="SubStepping",
+    gauss_number=2,
+)
 
-mpm.set_solver(solver={
-                           "Timestep":                   1e-4,
-                           "SimulationTime":             25,
-                           "SaveInterval":               0.25,
-                           "SavePath":                   "UndrainedMCC"
-                      })
+mpm.set_solver(solver={"Timestep": 1e-4, "SimulationTime": 25, "SaveInterval": 0.25, "SavePath": "UndrainedMCC"})
 
-mpm.memory_allocate(memory={
-                                "max_material_number":    1,
-                                "max_particle_number":    80,
-                                "max_constraint_number":  {
-                                                               "max_velocity_constraint":   8,
-                                                               "max_traction_constraint":   8
-                                                          }
-                            })
+mpm.memory_allocate(
+    memory={
+        "max_material_number": 1,
+        "max_particle_number": 80,
+        "max_constraint_number": {"max_velocity_constraint": 8, "max_traction_constraint": 8},
+    }
+)
 
-mpm.add_material(model="ModifiedCamClay",
-                 material={
-                               "MaterialID":                    1,
-                               "Density":                       1530,
-                               "PossionRatio":                  0.25,
-                               "StressRatio":                   1.02,
-                               "lambda":                        0.12,
-                               "kappa":                         0.023,
-                               "void_ratio_ref":                1.7,
-                               "beta":                          0.3,
-                               "OverConsolidationRatio":        110./98.,
-                 })
+mpm.add_material(
+    model="ModifiedCamClay",
+    material={
+        "MaterialID": 1,
+        "Density": 1530,
+        "PoissonRatio": 0.25,
+        "StressRatio": 1.02,
+        "lambda": 0.12,
+        "kappa": 0.023,
+        "void_ratio_ref": 1.7,
+        "beta": 0.3,
+        "OverConsolidationRatio": 110.0 / 98.0,
+    },
+)
 
-mpm.add_element(element={
-                             "ElementType":               "R8N3D",
-                             "ElementSize":               ti.Vector([1., 1., 1.])
-                        })
+mpm.add_element(element={"ElementType": "R8N3D", "ElementSize": ti.Vector([1.0, 1.0, 1.0])})
 
 
-mpm.add_region(region=[{
-                            "Name": "region1",
-                            "Type": "Rectangle",
-                            "BoundingBoxPoint": ti.Vector([1., 1., 1.]),
-                            "BoundingBoxSize": ti.Vector([1., 1., 1.]),
-                            "zdirection": ti.Vector([0., 0., 1.])
-                      }])
+mpm.add_region(
+    region=[
+        {
+            "Name": "region1",
+            "Type": "Rectangle",
+            "BoundingBoxPoint": ti.Vector([1.0, 1.0, 1.0]),
+            "BoundingBoxSize": ti.Vector([1.0, 1.0, 1.0]),
+            "zdirection": ti.Vector([0.0, 0.0, 1.0]),
+        }
+    ]
+)
 
-mpm.add_body(body={
-                       "Template": [{
-                                       "RegionName":         "region1",
-                                       "nParticlesPerCell":  2,
-                                       "BodyID":             0,
-                                       "MaterialID":         1,
-                                       "ParticleStress": {
-                                                              "GravityField":     False,
-                                                              "InternalStress":   ti.Vector([-98000, -98000, -98000, 0., 0., 0.])
-                                                         },
-                                       "InitialVelocity":ti.Vector([0, 0, 0]),
-                                       "FixVelocity":    ["Free", "Free", "Free"]    
-                                       
-                                   }]
-                   })
+mpm.add_body(
+    body={
+        "Template": [
+            {
+                "RegionName": "region1",
+                "nParticlesPerCell": 2,
+                "BodyID": 0,
+                "MaterialID": 1,
+                "ParticleStress": {
+                    "GravityField": False,
+                    "InternalStress": ti.Vector([-98000, -98000, -98000, 0.0, 0.0, 0.0]),
+                },
+                "InitialVelocity": ti.Vector([0, 0, 0]),
+                "FixVelocity": ["Free", "Free", "Free"],
+            }
+        ]
+    }
+)
 
 
 mpm.scene.boundary.velocity_boundary[0].node = 37
@@ -194,7 +196,7 @@ mpm.scene.boundary.velocity_boundary[23].velocity = 0.005
 mpm.scene.boundary.velocity_list[0] = 24
 
 
-p = 98000/4.
+p = 98000 / 4.0
 mpm.scene.boundary.traction_boundary[0].node = 37
 mpm.scene.boundary.traction_boundary[0].level = 0
 mpm.scene.boundary.traction_boundary[0].dirs = 0
@@ -303,4 +305,3 @@ mpm.scene.boundary.traction_list[0] = 24
 mpm.select_save_data()
 
 mpm.run()
-

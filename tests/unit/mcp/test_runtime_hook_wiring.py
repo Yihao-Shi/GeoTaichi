@@ -1,18 +1,17 @@
 from pathlib import Path
 
-
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 
 
 def test_every_supported_step_loop_has_a_cooperative_runtime_checkpoint():
     expected_calls = {
-        "src/dem/DEMBase.py": 2,
+        "src/dem/DEMBase.py": 3,
         "src/dem/engines/AffineBodyEngine.py": 1,
-        "src/mpm/MPMBase.py": 1,
+        "src/mpm/MPMBase.py": 2,
         "src/mpm/engines/direct/MPMSolver.py": 1,
         "src/mpm/soft_particle/IPCULMPM.py": 1,
         "src/mpm/soft_particle/IPCTLMPM.py": 1,
-        "src/mpdem/DEMPMBase.py": 1,
+        "src/mpdem/DEMPMBase.py": 2,
         "src/mpdem/engines/SoftAffineIPCBase.py": 1,
         "src/iga/engines/ExplicitIGA.py": 1,
         "src/iga/engines/ImplicitIGA.py": 1,

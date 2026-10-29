@@ -10,7 +10,7 @@ import taichi as ti
 
 ti.init(arch=ti.gpu, default_fp=ti.f64, default_ip=ti.i32, debug=False, device_memory_GB=2)
 
-from src.mpm.mainMPM import MPM
+from geotaichi import MPM
 
 mpm = MPM()
 

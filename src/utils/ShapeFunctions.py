@@ -266,9 +266,23 @@ def GShapeBernsteinQ(xp, xg, idx, btype):
 #           Quadratic B-spline shape function               #
 # ========================================================= #
 @ti.func
+def _quadratic_boundary_coordinate(d, btype):
+    edge = 0.0
+    if btype == 2:
+        edge = -1.0
+    elif btype == 3:
+        edge = 1.0
+    # Fused arithmetic can place an exact domain endpoint just outside its
+    # one-sided support. Keep both its value and derivative on the endpoint.
+    if btype != 0 and ti.abs(d - edge) < 1.0e-12:
+        d = edge
+    return d
+
+
+@ti.func
 def ShapeBsplineQ(xp, xg, idx, btype):
     nx = 0.0
-    d = (xp - xg) * idx
+    d = _quadratic_boundary_coordinate((xp - xg) * idx, btype)
     if btype == 0:
         if d >= 0.5 and d < 1.5:
             nx = (0.5 * d - 1.5) * d + 1.125
@@ -306,7 +320,7 @@ def ShapeBsplineQ(xp, xg, idx, btype):
 @ti.func
 def GShapeBsplineQ(xp, xg, idx, btype):
     dnx = 0.0
-    d = (xp - xg) * idx
+    d = _quadratic_boundary_coordinate((xp - xg) * idx, btype)
     if btype == 0:
         if d >= 0.5 and d < 1.5:
             dnx = d - 1.5

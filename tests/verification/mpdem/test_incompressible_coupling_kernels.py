@@ -385,6 +385,8 @@ def test_semi_resolved_drag_mapping_conserves_porosity_weighted_impulse(taichi_r
 
 def test_semi_resolved_drag_samples_centered_affine_mac_field(taichi_runtime):
     node = make_mac_grid([4, 4, 4])
+    for mass in node.m:
+        mass.fill(2.0)
     gradient = np.array([[1.0, 2.0, -1.0], [-2.0, 3.0, 1.0], [1.0, -1.0, -4.0]])
     center = np.full(3, 0.5)
     for d, field in enumerate(node.velocity):
@@ -399,10 +401,12 @@ def test_semi_resolved_drag_samples_centered_affine_mac_field(taichi_runtime):
     fraction.fill(0.2)
     force = ti.Vector.field(3, float, shape=(4, 4, 4))
     velocity = ti.Vector.field(3, float, shape=1)
+    velocity_weight = ti.Vector.field(3, float, shape=1)
     fluid_fraction = ti.field(float, shape=1)
     weights = ti.field(float, shape=1)
     kernel_compute_incompressible_sphere_drag(
         1,
+        1.0e-12,
         6,
         3,
         ti.Vector([4, 4, 4]),
@@ -415,6 +419,7 @@ def test_semi_resolved_drag_samples_centered_affine_mac_field(taichi_runtime):
         fraction,
         force,
         velocity,
+        velocity_weight,
         fluid_fraction,
         weights,
         DragForce({}),
@@ -647,6 +652,7 @@ def test_fully_resolved_ibm_source_uses_light_solid_density(taichi_runtime):
     solid_velocity[0, 0, 0] = [3.0, 0.0, 0.0]
     dt = ti.field(dtype=float, shape=())
     dt[None] = 0.1
+    pressure = offset_scalar_field((3, 3, 3))
 
     kernel_apply_incompressible_ibm_mac_source(
         1,
@@ -659,6 +665,11 @@ def test_fully_resolved_ibm_source_uses_light_solid_density(taichi_runtime):
         solid_velocity,
         ibm_force,
         node,
+        ti.Vector([1.0] * len(node.velocity)),
+        pressure,
+        pressure,
+        pressure,
+        False,
     )
 
     np.testing.assert_allclose(ibm_force[0, 0, 0], [7500.0, 0.0, 0.0], rtol=1.0e-12)
@@ -679,6 +690,11 @@ def test_fully_resolved_ibm_source_uses_light_solid_density(taichi_runtime):
         solid_velocity,
         ibm_force,
         node,
+        ti.Vector([1.0] * len(node.velocity)),
+        pressure,
+        pressure,
+        pressure,
+        False,
     )
     np.testing.assert_array_equal(ibm_force[0, 0, 0], [0.0, 0.0, 0.0])
     assert float(node.velocity[0][0, 0, 0]) == 0.0
@@ -702,6 +718,7 @@ def test_mac_ibm_exchange_conserves_physical_fluid_and_solid_impulse(taichi_runt
     velocity[center] = [1.0, -2.0, 3.0][:dimension]
     dt = ti.field(float, shape=())
     dt[None] = 0.2
+    pressure = ti.field(float, shape=shape, offset=offset)
     kernel_apply_incompressible_ibm_mac_source(
         1,
         ti.Vector(list(shape)),
@@ -713,6 +730,11 @@ def test_mac_ibm_exchange_conserves_physical_fluid_and_solid_impulse(taichi_runt
         velocity,
         force,
         node,
+        ti.Vector([1.0] * len(node.velocity)),
+        pressure,
+        pressure,
+        pressure,
+        False,
     )
     fluid_impulse = np.zeros(dimension)
     for cell in np.ndindex((3,) * dimension):

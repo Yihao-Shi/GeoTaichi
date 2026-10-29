@@ -431,6 +431,7 @@ class AffineBodyHierarchicalLinkedCell(HierarchicalLinkedCell, AffineBodyNeighbo
             return count
 
 
+@ti.data_oriented
 class AffineBodyBoundingVolumeHierarchy(BoundingVolumeHierarchy, AffineBodyNeighborBase):
     def __init__(self, sims, vertex_num, face_num, edge_num, dhat):
         AffineBodyNeighborBase.__init__(self, sims, vertex_num, face_num, edge_num, dhat)
@@ -444,6 +445,37 @@ class AffineBodyBoundingVolumeHierarchy(BoundingVolumeHierarchy, AffineBodyNeigh
         self.vertex_batch_id = 0
         self.face_batch_id = 1
         self.edge_batch_id = 2
+        self.node_owner = ti.field(ti.i32, shape=self.lbvh.nodes.shape)
+        self.node_escape = ti.field(ti.i32, shape=self.lbvh.nodes.shape)
+
+    @ti.kernel
+    def _initialize_leaf_owners(self, node2body: ti.template(), face2body: ti.template(), edge2body: ti.template()):
+        for leaf in range(self.lbvh.aabb.current_n_aabbs):
+            batch = self.lbvh.leaf2batch[leaf]
+            begin = self.lbvh.prefix_batch_size[batch]
+            size = self.lbvh.prefix_batch_size[batch + 1] - begin
+            primitive = self.lbvh.primitive_index(leaf)
+            owner = -1
+            if batch == self.vertex_batch_id:
+                owner = node2body[primitive]
+            elif batch == self.face_batch_id:
+                owner = face2body[primitive]
+            else:
+                owner = edge2body[primitive]
+            self.node_owner[2 * begin - batch + size - 1 + leaf - begin] = owner
+
+    @ti.kernel
+    def _initialize_internal_owners(self, depth: ti.i32):
+        for internal in range(self.lbvh.aabb.current_n_aabbs - self.lbvh.aabb.n_batches):
+            if self.lbvh.internal_node_depth[internal] == depth:
+                batch = self.lbvh.internal2batch[internal]
+                begin = self.lbvh.prefix_batch_size[batch]
+                root = 2 * begin - batch
+                index = root + internal - begin + batch
+                node = self.lbvh.nodes[index]
+                left = self.node_owner[root + node.left]
+                right = self.node_owner[root + node.right]
+                self.node_owner[index] = left if left == right else -1
 
     def update(self, x, dx, faces, edges, node2body, face2body, edge2body, margin, swept=False):
         self._prepare_bounds(x, dx, faces, edges, margin, swept)
@@ -465,7 +497,12 @@ class AffineBodyBoundingVolumeHierarchy(BoundingVolumeHierarchy, AffineBodyNeigh
             self.edge_max,
             self.lbvh.aabb.aabbs,
         )
-        self.lbvh.build(self.vertex_num + self.face_num + self.edge_num)
+        primitive_count = self.vertex_num + self.face_num + self.edge_num
+        self.lbvh.build(primitive_count)
+        self.lbvh.export_escape_links(self.node_escape)
+        self._initialize_leaf_owners(node2body, face2body, edge2body)
+        for depth in range(self.lbvh.maximum_depth, -1, -1):
+            self._initialize_internal_owners(depth)
         while True:
             board_search_affine_vertex_face_bvh_(
                 self.vertex_batch_id,
@@ -474,6 +511,8 @@ class AffineBodyBoundingVolumeHierarchy(BoundingVolumeHierarchy, AffineBodyNeigh
                 self.candidate_capacity,
                 self.lbvh.prefix_batch_size,
                 self.lbvh.nodes,
+                self.node_owner,
+                self.node_escape,
                 self.lbvh.morton_codes,
                 self.lbvh.primitive_ids,
                 self.lbvh.extended_morton,
@@ -491,6 +530,8 @@ class AffineBodyBoundingVolumeHierarchy(BoundingVolumeHierarchy, AffineBodyNeigh
                 self.edge_candidate_capacity,
                 self.lbvh.prefix_batch_size,
                 self.lbvh.nodes,
+                self.node_owner,
+                self.node_escape,
                 self.lbvh.morton_codes,
                 self.lbvh.primitive_ids,
                 self.lbvh.extended_morton,

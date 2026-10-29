@@ -5,6 +5,8 @@ import math
 import numpy as np
 import taichi as ti
 
+from src.utils.TimeIntegration import newmark_acceleration, newmark_prediction, newmark_velocity
+
 
 @ti.data_oriented
 class FEMState:
@@ -221,12 +223,10 @@ class FEMState:
                     self.reaction[node][component] = 0.0
 
     @ti.kernel
-    def build_newmark_prediction(self, dt: ti.f64, beta: ti.f64):
+    def build_newmark_prediction(self, dt: ti.f64, integration: ti.types.vector(3, ti.f64)):
         for node in range(self.node_count):
-            self.predicted_position[node] = (
-                self.old_position[node]
-                + dt * self.old_velocity[node]
-                + dt * dt * (0.5 - beta) * self.old_acceleration[node]
+            self.predicted_position[node] = newmark_prediction(
+                self.old_position[node], self.old_velocity[node], self.old_acceleration[node], dt, integration
             )
 
     def assemble_implicit_residual(
@@ -234,8 +234,7 @@ class FEMState:
         internal_force: ti.template(),
         damping: ti.f64,
         dt: ti.f64,
-        beta: ti.f64,
-        gamma: ti.f64,
+        integration,
         quasi_static: ti.i32,
     ):
         self.assemble_implicit_residual_at(
@@ -243,8 +242,7 @@ class FEMState:
             internal_force,
             damping,
             dt,
-            beta,
-            gamma,
+            integration,
             quasi_static,
         )
 
@@ -255,15 +253,13 @@ class FEMState:
         internal_force: ti.template(),
         damping: ti.f64,
         dt: ti.f64,
-        beta: ti.f64,
-        gamma: ti.f64,
+        integration: ti.types.vector(3, ti.f64),
         quasi_static: ti.i32,
     ):
-        acceleration_factor = 1.0 / (beta * dt * dt)
         for node in range(self.node_count):
-            acceleration = acceleration_factor * (positions[node] - self.predicted_position[node])
-            velocity = self.old_velocity[node] + dt * (
-                (1.0 - gamma) * self.old_acceleration[node] + gamma * acceleration
+            acceleration = newmark_acceleration(positions[node], self.predicted_position[node], dt, integration)
+            velocity = newmark_velocity(
+                self.old_velocity[node], self.old_acceleration[node], acceleration, dt, integration
             )
             for component in ti.static(range(3)):
                 value = internal_force[node][component] - self.external_force[node][component]
@@ -275,19 +271,17 @@ class FEMState:
     def finalize_newmark(
         self,
         dt: ti.f64,
-        beta: ti.f64,
-        gamma: ti.f64,
+        integration: ti.types.vector(3, ti.f64),
         quasi_static: ti.i32,
     ):
-        acceleration_factor = 1.0 / (beta * dt * dt)
         for node in range(self.node_count):
             if quasi_static != 0:
                 self.velocity[node] = ti.Vector.zero(self.real_type, 3)
                 self.acceleration[node] = ti.Vector.zero(self.real_type, 3)
             else:
-                acceleration = acceleration_factor * (self.position[node] - self.predicted_position[node])
-                velocity = self.old_velocity[node] + dt * (
-                    (1.0 - gamma) * self.old_acceleration[node] + gamma * acceleration
+                acceleration = newmark_acceleration(self.position[node], self.predicted_position[node], dt, integration)
+                velocity = newmark_velocity(
+                    self.old_velocity[node], self.old_acceleration[node], acceleration, dt, integration
                 )
                 for component in ti.static(range(3)):
                     if self.constrained[3 * node + component] != 0:
@@ -377,13 +371,12 @@ class FEMState:
         positions: ti.template(),
         damping: ti.f64,
         dt: ti.f64,
-        beta: ti.f64,
-        gamma: ti.f64,
+        integration: ti.types.vector(3, ti.f64),
         quasi_static: ti.i32,
     ):
         self.dynamic_potential[None] = 0.0
-        acceleration_factor = 1.0 / (beta * dt * dt)
-        velocity_factor = gamma / (beta * dt)
+        acceleration_factor = 1.0 / (2.0 * integration[0] * integration[1] * dt * dt)
+        velocity_factor = integration[2] * dt * acceleration_factor
         for node in range(self.node_count):
             value = -self.external_force[node].dot(positions[node])
             if quasi_static == 0:
@@ -391,7 +384,7 @@ class FEMState:
                 value += 0.5 * acceleration_factor * self.mass[node] * displacement.dot(displacement)
                 velocity_constant = (
                     self.old_velocity[node]
-                    + dt * (1.0 - gamma) * self.old_acceleration[node]
+                    + dt * (1.0 - integration[2]) * self.old_acceleration[node]
                     - velocity_factor * self.predicted_position[node]
                 )
                 value += 0.5 * damping * velocity_factor * self.mass[node] * positions[node].dot(positions[node])

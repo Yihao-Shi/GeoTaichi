@@ -122,7 +122,7 @@ class MPM(SolverDiagnosticsMixin):
         self.sims.set_fluid_domain_volume_fraction(
             DictIO.GetAlternative(kwargs, "fluid_domain_volume_fraction", self.sims.fluid_domain_volume_fraction)
         )
-        self.sims.set_velocity_projection_scheme(DictIO.GetAlternative(kwargs, "velocity_projection", "PIC/FLIP"))
+        self.sims.set_velocity_projection_scheme(DictIO.GetAlternative(kwargs, "velocity_projection", None))
         self.sims.set_moving_least_square(DictIO.GetAlternative(kwargs, "moving_least_square", False))
         self.sims.set_shape_function(DictIO.GetAlternative(kwargs, "shape_function", "Linear"))
         self.sims.set_solver_type(DictIO.GetAlternative(kwargs, "solver_type", "Explicit"))
@@ -168,12 +168,17 @@ class MPM(SolverDiagnosticsMixin):
         if self.sims.solver_type != "Implicit":
             raise RuntimeError("KeyError:: /solver_type/ should be set as Implicit")
 
+        implicit_parameters = {key.lower(): value for key, value in implicit_parameters.items()}
         linear_solver = DictIO.GetAlternative(implicit_parameters, "linear_solver", "PCG")
         self.sims.set_linear_solver_relative_tolerance(
             DictIO.GetAlternative(
                 implicit_parameters,
                 "linear_solver_relative_tolerance",
-                self.sims.linear_solver_relative_tolerance,
+                (
+                    0.0
+                    if "residual_tolerance" in implicit_parameters and not self.sims.is_direct_backend()
+                    else self.sims.linear_solver_relative_tolerance
+                ),
             )
         )
         if self.sims.material_type == "Solid":
@@ -210,6 +215,10 @@ class MPM(SolverDiagnosticsMixin):
             self.sims.set_max_iteration(
                 DictIO.GetAlternative(implicit_parameters, "max_iteration_number", self.sims.iter_max)
             )
+        if self.sims.is_direct_backend() and "residual_tolerance" in implicit_parameters:
+            self.direct_solver["residual"] = self.sims.residual_tolerance
+        if self.sims.is_direct_backend() and "linear_solver_relative_tolerance" in implicit_parameters:
+            self.direct_solver["linear_solver_relative_tolerance"] = self.sims.linear_solver_relative_tolerance
         self.sims.set_linear_solver(linear_solver)
         if self.sims.linear_solver == "MGPCG":
             self.sims.set_multigrid_paramter(
@@ -370,7 +379,7 @@ class MPM(SolverDiagnosticsMixin):
             )
         entries.extend(
             [
-                ("Mapping Scheme", self.sims.mapping),
+                ("Mapping Scheme", "Affine" if self.sims.velocity_projection_scheme == "Affine" else self.sims.mapping),
                 ("Shape Function", self.sims.shape_function),
                 ("Velocity Projection", self.sims.velocity_projection_scheme),
             ]
@@ -471,14 +480,16 @@ class MPM(SolverDiagnosticsMixin):
 
     def add_contact(self, contact_type, **contact_phys):
         contact_key = str(contact_type).strip().replace("_", "").replace("-", "").replace(" ", "").lower()
-        if contact_key in ("ipc", "ipccontact", "barrier", "barriercontact", "barrieripc", "semi", "semiipc"):
+        if contact_key in ("ipc", "ipccontact", "barrier", "barriercontact", "barrieripc"):
             if bool(contact_phys.pop("self_contact", False)):
                 raise NotImplementedError("ordinary Direct MPM self-contact IPC is intentionally unsupported")
             contact_phys.setdefault(
                 "ipc_model",
-                "SemiIPC" if contact_key in ("semi", "semiipc") else "BarrierIPC",
+                "BarrierIPC",
             )
             self.sims.set_ipc_contact(True, contact_phys)
+            if "linear_solver_tolerance" in contact_phys:
+                contact_phys.setdefault("linear_solver_relative_tolerance", 0.0)
             self.direct_solver.update(contact_phys)
             return
         self.sims.set_contact_detection(contact_type)
@@ -537,14 +548,23 @@ class MPM(SolverDiagnosticsMixin):
     def add_polygons(self, body):
         self.generator.add_polygons(body, self.sims, self.scene)
 
-    def read_restart(self, file_number, file_path, is_continue=True):
+    def read_restart(
+        self, file_number, file_path, is_continue=True, *, particle_size=None, current_step=None, **kwargs
+    ):
+        """Restore a snapshot; legacy two-phase files need original sizes and the saved step count."""
         self.sims.set_is_continue(is_continue)
         if self.sims.is_continue:
             self.sims.current_print = file_number
         self.add_body_from_file(
             body={
                 "FileType": "NPZ",
-                "Template": {"Restart": True, "File": file_path + f"/particles/MPMParticle{file_number:06d}.npz"},
+                "Template": {
+                    **kwargs,
+                    "Restart": True,
+                    "File": file_path + f"/particles/MPMParticle{file_number:06d}.npz",
+                    "ParticleSize": kwargs.get("ParticleSize", particle_size),
+                    "CurrentStep": kwargs.get("CurrentStep", current_step),
+                },
             }
         )
 
@@ -621,6 +641,9 @@ class MPM(SolverDiagnosticsMixin):
                 self.sims.set_alpha(DictIO.GetEssential(kwargs, "alphaPIC"))
 
     def _set_direct_solver(self, solver):
+        if "linear_solver_tolerance" in solver:
+            solver = dict(solver)
+            solver.setdefault("linear_solver_relative_tolerance", 0.0)
         self.direct_solver.update(solver)
         plane_strain = DictIO.GetOptional(solver, "plane_strain")
         if plane_strain is not None:
@@ -832,7 +855,7 @@ class MPM(SolverDiagnosticsMixin):
         kwargs.setdefault("alphaPIC", self.sims.alphaPIC)
         kwargs.setdefault("velocity_projection", self.sims.velocity_projection_scheme == "Affine")
         kwargs.setdefault("track_energy", self.sims.energy_tracking)
-        kwargs.setdefault("residual", self.sims.residual_tolerance)
+        kwargs.setdefault("residual", 1.0e-8 if self.sims.ipc_contact else self.sims.residual_tolerance)
         kwargs.setdefault("max_iters", self.sims.iter_max)
         kwargs.setdefault("newmark", [0.5, self.sims.newmark_beta, self.sims.newmark_gamma])
         kwargs.setdefault("is_2DAxisy", self.sims.is_2DAxisy)

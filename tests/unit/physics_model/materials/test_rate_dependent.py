@@ -7,9 +7,14 @@ import pytest
 import taichi as ti
 
 from src.physics_model.consititutive_model.infinitesimal_strain.DruckerPrager import DruckerPragerModel
+from src.physics_model.consititutive_model.infinitesimal_strain.ElasPlasticity import PlasticMaterial
+from src.physics_model.consititutive_model.infinitesimal_strain.ElasticPerfectlyPlastic import (
+    ElasticPerfectlyPlasticModel,
+)
 from src.physics_model.consititutive_model.infinitesimal_strain.GranularMaterial import GranularMaterial
 from src.physics_model.consititutive_model.infinitesimal_strain.MohrCoulomb import MohrCoulombModel
 from src.physics_model.consititutive_model.infinitesimal_strain.ModifiedCamClay import ModifiedCamClayModel
+from src.physics_model.consititutive_model.infinitesimal_strain.NorSandModel import NorSandModel
 from src.physics_model.consititutive_model.infinitesimal_strain.RateDependent import RateDependent
 
 pytestmark = [pytest.mark.materials, pytest.mark.cpu]
@@ -78,6 +83,18 @@ def _update(model, *, dt_value=0.01, shear_rate=10.0, mean=-1000.0, dimension=2)
 
     update()
     return stress.to_numpy(), state, elastic.to_numpy()
+
+
+@pytest.mark.parametrize("integration", ["ReturnMapping", "ImplicitIntegration", "SubStepping"])
+def test_dp_dispatch_separates_closed_form_from_rate_coupling(integration):
+    model = _model(DruckerPragerModel, integration, RateDependent=False)
+    static_core = model.ExplicitIntegration if integration == "SubStepping" else model.ClosedFormIntegration
+    assert model.core == static_core
+    model.set_rate_dependent_model(PARAMETERS)
+    assert model.core == model.ImplicitIntegration
+    assert DruckerPragerModel.ImplicitIntegration is PlasticMaterial.ImplicitIntegration
+    model.set_rate_dependent_model(dict(PARAMETERS, RateDependent=False))
+    assert model.core == static_core
 
 
 def test_default_dynamic_friction_and_grain_density():
@@ -185,6 +202,32 @@ def test_dp_rate_return_mapping_matches_scalar_oracle(taichi_material_cpu, integ
     assert state.epdstrain[0] == pytest.approx((tau_trial - expected) / shear / math.sqrt(3.0), rel=2.0e-8)
 
 
+@pytest.mark.parametrize("dimension", [2, 3])
+def test_dp_unified_rate_return_couples_pressure_and_dilation(taichi_material_cpu, dimension):
+    model = _model(DruckerPragerModel, Dilation=5.0)
+    stress, state, moduli = _update(model, dimension=dimension)
+    bulk, shear = moduli
+    _, _, q_psi, _ = model.choose_yield_surface_type(100.0, math.pi / 6.0, math.radians(5.0), 1.0e22)
+    lower, upper = 0.0, 0.1
+    for _ in range(80):
+        multiplier = 0.5 * (lower + upper)
+        pressure = 1000.0 + bulk * q_psi * multiplier
+        angle = math.atan(_mu(pressure + 100.0, multiplier / 0.01))
+        q, k, _, _ = model.choose_yield_surface_type(100.0, angle, math.radians(5.0), 1.0e22)
+        residual = shear * (0.1 - multiplier) - q * pressure - k
+        if residual > 0.0:
+            lower = multiplier
+        else:
+            upper = multiplier
+    multiplier = 0.5 * (lower + upper)
+    pressure = 1000.0 + bulk * q_psi * multiplier
+    np.testing.assert_allclose(stress[:3], -pressure, rtol=2.0e-8)
+    assert stress[3] == pytest.approx(shear * (0.1 - multiplier), rel=2.0e-8)
+    assert state.strain_rate[0] == pytest.approx(multiplier / 0.01, rel=2.0e-8)
+    assert state.rate_pressure[0] == pytest.approx(pressure, rel=2.0e-8)
+    assert state.epdstrain[0] == pytest.approx(multiplier * math.sqrt(1.0 / 3.0 + 2.0 * q_psi**2 / 9.0), rel=2.0e-8)
+
+
 @pytest.mark.parametrize("model_class", [DruckerPragerModel, MohrCoulombModel, ModifiedCamClayModel])
 def test_rate_strength_and_physical_time_step(taichi_material_cpu, model_class):
     model = _model(model_class)
@@ -287,8 +330,55 @@ def test_mcc_infers_static_friction_from_stress_ratio():
 @pytest.mark.parametrize("model_class", [DruckerPragerModel, MohrCoulombModel, ModifiedCamClayModel])
 def test_implicit_global_solver_rejects_unimplemented_rate_tangent(model_class):
     model = model_class(solver_type="Implicit")
-    with pytest.raises(ValueError, match="Explicit"):
+    with pytest.raises(ValueError, match="consistent rate-dependent tangent"):
         model.set_rate_dependent_model(PARAMETERS)
+    assert not model.is_rate_dependent
+
+
+@pytest.mark.parametrize(
+    "model_class,extra",
+    [
+        (ElasticPerfectlyPlasticModel, dict(YieldStress=100.0)),
+        (
+            NorSandModel,
+            dict(G0=100.0, kappa=0.01, **{"lambda": 0.05}, M=1.25, N=0.3, beta=3.5, vc0=1.9, v0=1.8, h=150.0),
+        ),
+    ],
+)
+@pytest.mark.parametrize("solver_type", ["Explicit", "Implicit"])
+def test_unsupported_rate_combinations_fail_during_material_initialization(model_class, extra, solver_type):
+    material = dict(PARAMETERS, **extra)
+    model = model_class(solver_type=solver_type)
+    expected = (
+        "does not implement mu\\(I\\) RateDependent"
+        if solver_type == "Explicit"
+        else "consistent rate-dependent tangent"
+    )
+    with pytest.raises(ValueError, match=expected):
+        model.model_initialize(material)
+
+
+@pytest.mark.parametrize("model_class", [DruckerPragerModel, MohrCoulombModel, ModifiedCamClayModel])
+def test_implicit_rate_rejection_happens_at_initialization(model_class):
+    material = dict(PARAMETERS)
+    if model_class is ModifiedCamClayModel:
+        material.update(StressRatio=1.2, **{"lambda": 0.1, "kappa": 0.03}, void_ratio_ref=0.7, pc=2000.0)
+    with pytest.raises(ValueError, match="consistent rate-dependent tangent"):
+        model_class(solver_type="Implicit").model_initialize(material)
+
+
+@pytest.mark.parametrize("name", ["DruckerPrager", "MohrCoulomb", "ModifiedCamClay"])
+def test_native_implicit_mpm_rejects_rate_material_before_running(taichi_material_cpu, name):
+    from src.mpm.mainMPM import MPM
+
+    mpm = MPM(log=False)
+    mpm.set_configuration(dimension=2, domain=[0.1, 0.1], solver_type="Implicit", log=False)
+    mpm.memory_allocate(memory={"max_material_number": 1, "max_particle_number": 1}, log=False)
+    material = dict(PARAMETERS, MaterialID=1)
+    if name == "ModifiedCamClay":
+        material.update(StressRatio=1.2, **{"lambda": 0.1, "kappa": 0.03}, void_ratio_ref=0.7, pc=2000.0)
+    with pytest.raises(ValueError, match="consistent rate-dependent tangent"):
+        mpm.add_material(model=name, material=material)
 
 
 @pytest.mark.parametrize("model_class", [DruckerPragerModel, MohrCoulombModel, ModifiedCamClayModel])
@@ -407,13 +497,15 @@ def test_softening_rate_chain_matches_history_finite_difference(taichi_material_
         internal = model.GetInternalVariables(state[0])
         modulus = model.ComputePlasticModulus(1, flow, value, internal, state[0], parameters)
         if ti.static(dp):
-            output[0] = -modulus
+            output[0] = modulus
         else:
             output[0] = modulus / voigt_tensor_dot(DeqepsilonqDepsilon(state[0].strain), flow)
         plus, minus = state[0], state[0]
         if ti.static(dp):
-            plus.epdstrain += 1.0e-6
-            minus.epdstrain -= 1.0e-6
+            # Differentiate along the plastic multiplier, including d(kappa)/d(lambda).
+            history_rate = model.ComputeInternalVariables(1, flow, internal, parameters)[0]
+            plus.epdstrain += 1.0e-6 * history_rate
+            minus.epdstrain -= 1.0e-6 * history_rate
         else:
             plus.strain *= 1.0 + 1.0e-5
             minus.strain *= 1.0 - 1.0e-5

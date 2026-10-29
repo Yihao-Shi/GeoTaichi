@@ -41,7 +41,8 @@ FLUID_DENSITY = 1000.0
 
 GRAVITY = 9.8
 
-DT = float(os.environ.get("GEOTAICHI_DOUBLE_POINT_CONSOLIDATION3D_DT", "1.0e-4"))
+# The solid skeleton remains explicit even when pressure is solved implicitly.
+DT = float(os.environ.get("GEOTAICHI_DOUBLE_POINT_CONSOLIDATION3D_DT", "1.0e-5"))
 
 SIMULATION_TIME = float(os.environ.get("GEOTAICHI_DOUBLE_POINT_CONSOLIDATION3D_TIME", "0.01456"))
 

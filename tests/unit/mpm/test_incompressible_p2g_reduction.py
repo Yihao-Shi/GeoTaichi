@@ -173,7 +173,8 @@ def test_weighted_cell_volume_keeps_support_on_both_sides_of_grid_crossing(taich
 
 
 @pytest.mark.cpu
-def test_volume_classification_keeps_particle_occupied_cell_fluid(taichi_runtime):
+@pytest.mark.parametrize("attached", [False, True])
+def test_volume_classification_requires_resolved_support_for_occupied_cell(taichi_runtime, attached):
     cnum = ti.Vector([6, 5])
     grid_size = ti.Vector([0.2, 0.25])
     particle = ParticleCloudIncompressible2D.field(shape=1)
@@ -182,6 +183,8 @@ def test_volume_classification_keeps_particle_occupied_cell_fluid(taichi_runtime
 
     seed_crossing_incompressible_particle(particle, grid_size)
     cell_volume_fraction.fill(0.0)
+    if attached:
+        cell_volume_fraction[0 + 6 * 1] = 0.5
     cell_type.fill(0)
     kernel_find_fluid_domain_by_volume(
         1,
@@ -194,7 +197,8 @@ def test_volume_classification_keeps_particle_occupied_cell_fluid(taichi_runtime
         particle,
     )
 
-    assert cell_type[1, 1] == 1
+    assert cell_type[1, 1] == int(attached)
+    assert particle.active[0] == 1
 
 
 @pytest.mark.cpu
@@ -206,6 +210,7 @@ def test_volume_classification_maps_closed_upper_boundary_to_last_cell(taichi_ru
     cell_type = ti.field(dtype=ti.i32, shape=(6, 5), offset=(-1, -1))
 
     seed_upper_boundary_particle(particle, ti.Vector([0.8, 0.75]))
+    cell_volume_fraction[2 + 6 * 1] = 0.5
     kernel_find_fluid_domain_by_volume(
         1,
         1,
@@ -373,8 +378,8 @@ def test_atomic_p2g_repeatable_and_conserves_mass_2d(taichi_runtime):
     """Small float64, single-thread 2D precision check for production P2G."""
     GlobalVariable.SHAPEFUNCTION = 2
     GlobalVariable.INFLUENCENODE = 3
-    GlobalVariable.APIC = True
-    GlobalVariable.TPIC = False
+    GlobalVariable.Affine = True
+    GlobalVariable.Taylor = False
 
     particles_per_axis = 5
     host_cell_count = 12

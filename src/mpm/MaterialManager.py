@@ -1,6 +1,7 @@
 import taichi as ti
 import numpy as np
 
+from src.mpm.BaseKernel import rebuild_material_mapping
 from src.mpm.Contact import ContactBase
 from src.mpm.Simulation import Simulation
 from src.physics_model.consititutive_model.ConstitutiveModelBase import ConstitutiveBase
@@ -192,8 +193,29 @@ class MaterialHandle(ConstitutiveBase):
         super().__init__()
         self.material_parameters = []
         self.mapping = None
-        self.materialID_numpy = None
+        self._materialID_numpy = None
+        self._material_id_particle = None
+        self._material_id_count = 0
         self.materialID = ti.field(int, shape=sims.max_particle_num)
+        self._mapping_capacity = max(1, getattr(sims, "max_material_num", 0))
+        self.material_counts = None
+        self.material_cursor = None
+        self.material_ends = None
+        self.material_block_counts = None
+        self.material_block_cursor = None
+        self.material_mapping_block_size = 256
+
+    @property
+    def materialID_numpy(self):
+        if self._materialID_numpy is None and self._material_id_particle is not None:
+            self._materialID_numpy = np.ascontiguousarray(
+                field_to_numpy_prefix(self._material_id_particle.materialID, self._material_id_count), dtype=np.int32
+            )
+        return self._materialID_numpy
+
+    @materialID_numpy.setter
+    def materialID_numpy(self, value):
+        self._materialID_numpy = value
 
     def initialize(self, parameter, sims: Simulation, material_model):
         materialID = DictIO.GetEssential(parameter, "MaterialID")
@@ -215,7 +237,11 @@ class MaterialHandle(ConstitutiveBase):
 
     def contact_parameter_initialize(self, parameter, contact: ContactBase):
         materialID = DictIO.GetEssential(parameter, "materialID")
-        self.matProps[materialID].members_update(**contact.get_parameters(parameter))
+        if materialID <= 0:
+            raise ValueError("DEMContact materialID must identify a deformable material")
+        # Materials may be registered in separate add_material calls.
+        if materialID < self.matProps.size():
+            self.matProps[materialID].members_update(**contact.get_parameters(parameter))
 
     def setup_contact(self, contact: ContactBase):
         if contact is not None and contact.name == "DEMContact":
@@ -439,6 +465,16 @@ class MaterialHandle(ConstitutiveBase):
             field_to_numpy_prefix(particle.materialID, particleNum), dtype=np.int32
         )
         material_count = np.bincount(self.materialID_numpy)
+        if self.material_counts is None or self.material_counts.shape[0] < material_count.size:
+            capacity = max(self._mapping_capacity, material_count.size)
+            self.material_counts = ti.field(int, shape=capacity)
+            self.material_cursor = ti.field(int, shape=capacity)
+            self.material_ends = ti.field(int, shape=capacity)
+            blocks = (
+                self.materialID.shape[0] + self.material_mapping_block_size - 1
+            ) // self.material_mapping_block_size
+            self.material_block_counts = ti.field(int, shape=(blocks, capacity))
+            self.material_block_cursor = ti.field(int, shape=(blocks, capacity))
         non_rigid_materials = np.flatnonzero(material_count[1:]) + 1
 
         if non_rigid_materials.size == 1:
@@ -463,6 +499,25 @@ class MaterialHandle(ConstitutiveBase):
             constant_values=0,
         )
         self.materialID.from_numpy(new_positions)
+
+    def update_material_mapping_device(self, particle, particleNum):
+        rebuild_material_mapping(
+            particleNum,
+            particle,
+            self.material_counts,
+            self.material_cursor,
+            self.material_ends,
+            self.materialID,
+            self.material_block_counts,
+            self.material_block_cursor,
+            self.material_mapping_block_size,
+        )
+        # Only the per-material launch bounds return to Python; particle IDs remain on device.
+        for material_id in range(self.mapping.shape[0]):
+            self.mapping[material_id] = self.material_ends[material_id]
+        self._material_id_particle = particle
+        self._material_id_count = particleNum
+        self._materialID_numpy = None
 
 
 class SoftParticleMaterialManager(object):

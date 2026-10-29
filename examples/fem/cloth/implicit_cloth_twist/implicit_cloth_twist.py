@@ -62,7 +62,7 @@ parser.add_argument(
     help="cloth bending model (default: Dihedral)",
 )
 parser.add_argument("--friction-coefficient", type=float, default=0.2)
-parser.add_argument("--contact-model", choices=("BarrierIPC", "SemiIPC"), default="BarrierIPC")
+parser.add_argument("--contact-model", choices=("BarrierIPC",), default="BarrierIPC")
 parser.add_argument(
     "--project-pd",
     action=argparse.BooleanOptionalAction,

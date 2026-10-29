@@ -5,6 +5,7 @@ import src.utils.GlobalVariable as GlobalVariable
 from src.utils.ObjectIO import DictIO
 from src.utils.TypeDefination import vec3i, vec3f
 from src.utils.TimeTicker import Timer
+from src.utils.TimeIntegration import newmark_parameters
 from src.utils.constants import Threshold
 
 
@@ -38,8 +39,6 @@ class Simulation(object):
         self.affine_young_modulus = 1.0e6
         self.affine_dhat = 1.0e-2
         self.affine_barrier_stiffness = 1.0e6
-        self.affine_penalty = None
-        self.affine_constraint_tolerance = 1.0e-6
         self.affine_contact_model = "BarrierIPC"
         self.affine_contact_damping_stiffness = 0.0
         self.affine_contact_block_capacity = 256
@@ -60,16 +59,18 @@ class Simulation(object):
         # greater than one enable the outer fixed-point update; ``-1`` means
         # iterate to tolerance, subject to the safety cap below.
         self.affine_friction_mode = "lagged"
+        self.affine_newmark = (1.0, 0.5, 1.0)
         self.affine_friction_iterations = 1
         # Lagged nonlinear tolerances have velocity units (m/s), matching
         # reference IPC's ``max(abs(newton_direction)) / dt`` criterion.
         # The separate outer tolerance is a GeoTaichi control extension; its
-        # default equals the reference solver's single ``tol`` value.
+        # default leaves one decade between inner and outer velocity tests.
         self.affine_friction_tolerance = 1.0e-7
         self.affine_friction_max_iterations = 50
         self.affine_max_newton_iteration = 8
-        self.affine_newton_tolerance = 1.0e-7
-        self.affine_linear_tolerance = 1.0e-9
+        self.affine_newton_tolerance = 1.0e-8
+        self.affine_linear_tolerance = 1.0e-14
+        self.affine_linear_relative_tolerance = 0.0
         self.affine_linear_max_iteration = 500
         # Reference lagged IPC backtracks until the conservative incremental
         # potential is non-increasing. Keep a generous finite safety cap;
@@ -83,8 +84,9 @@ class Simulation(object):
         self.affine_fully_implicit_jacobian_shift = 0.0
         # Fully implicit friction solves a nonconservative force residual.
         # Keep its force-unit stopping controls separate from the lagged
-        # correction-velocity tolerance above.
-        self.affine_fully_implicit_force_atol = 1.0e-12
+        # correction-velocity tolerance above. Piconewton targets can fall below
+        # f64 absolute-coordinate resolution at sub-millisecond time steps.
+        self.affine_fully_implicit_force_atol = 1.0e-9
         self.affine_fully_implicit_force_rtol = 1.0e-8
         self.affine_fully_implicit_armijo = 1.0e-4
         self.affine_fully_implicit_line_search_contraction = 0.5
@@ -225,7 +227,6 @@ class Simulation(object):
         self.potential_contact_points_wall = 0
         self.particle_contact_list_length = 0
         self.wall_contact_list_length = 0
-        self.refit_number = 1000
         self.particle_particle_contact_model = None
         self.particle_wall_contact_model = None
 
@@ -511,21 +512,21 @@ class Simulation(object):
             "implicit": "IPC",
             "implicitipc": "IPC",
             "barrieripc": "IPC",
-            "semi": "IPC",
-            "semiipc": "IPC",
         }
         if key not in aliases:
             raise RuntimeError("LSMPM soft-rigid contact must be one of ['DEM', 'IPC']")
         self.lsmpm_soft_rigid_contact = aliases[key]
-        if key in ("semi", "semiipc"):
-            self.affine_contact_model = "SemiIPC"
 
     def set_affine_body_parameters(self, **kwargs):
+        removed = {"penalty", "constraint_tolerance"}.intersection(kwargs)
+        if removed:
+            raise ValueError(f"removed SemiIPC parameters: {', '.join(sorted(removed))}")
         if getattr(self, "_affine_body_parameters_frozen", False):
             raise RuntimeError(
                 "AffineBody IPC parameters cannot be changed after engine "
                 "initialization; configure them before add_essentials()"
             )
+        self.affine_newmark = newmark_parameters(kwargs.get("newmark", self.affine_newmark))
         if "assemble_type" in kwargs:
             key = str(kwargs["assemble_type"]).replace("_", "").replace("-", "").lower()
             aliases = {
@@ -548,16 +549,6 @@ class Simulation(object):
             self.affine_dhat = float(kwargs["dhat"])
         if "barrier_stiffness" in kwargs:
             self.affine_barrier_stiffness = float(kwargs["barrier_stiffness"])
-        if "penalty" in kwargs:
-            penalty = float(kwargs["penalty"])
-            if not math.isfinite(penalty) or penalty <= 0.0:
-                raise RuntimeError("AffineBody penalty must be finite and positive")
-            self.affine_penalty = penalty
-        if "constraint_tolerance" in kwargs:
-            tolerance = float(kwargs["constraint_tolerance"])
-            if not math.isfinite(tolerance) or tolerance < 0.0:
-                raise RuntimeError("AffineBody constraint_tolerance must be finite and non-negative")
-            self.affine_constraint_tolerance = tolerance
         for key in ("contact_model", "ipc_model", "contact_form"):
             if key in kwargs:
                 from src.physics_model.contact_model.ipc.IPC import normalize_ipc_model
@@ -677,11 +668,21 @@ class Simulation(object):
             if not math.isfinite(tolerance) or tolerance <= 0.0:
                 raise RuntimeError("AffineBody newton_tolerance must be finite and positive " "(in m/s)")
             self.affine_newton_tolerance = tolerance
-        if "linear_tolerance" in kwargs:
-            tolerance = float(kwargs["linear_tolerance"])
-            if not math.isfinite(tolerance) or tolerance <= 0.0:
-                raise RuntimeError("AffineBody linear_tolerance must be finite and positive")
-            self.affine_linear_tolerance = tolerance
+        if "linear_tolerance" in kwargs or "linear_relative_tolerance" in kwargs:
+            absolute = float(kwargs.get("linear_tolerance", self.affine_linear_tolerance))
+            relative = float(
+                kwargs.get(
+                    "linear_relative_tolerance",
+                    0.0 if "linear_tolerance" in kwargs else self.affine_linear_relative_tolerance,
+                )
+            )
+            if not math.isfinite(absolute) or absolute < 0.0:
+                raise RuntimeError("AffineBody linear_tolerance must be finite and non-negative")
+            if not math.isfinite(relative) or relative < 0.0:
+                raise RuntimeError("AffineBody linear_relative_tolerance must be finite and non-negative")
+            if absolute + relative <= 0.0:
+                raise RuntimeError("AffineBody linear_tolerance and linear_relative_tolerance cannot both be zero")
+            self.affine_linear_tolerance, self.affine_linear_relative_tolerance = absolute, relative
         if "linear_max_iteration" in kwargs:
             try:
                 numeric_iterations = float(kwargs["linear_max_iteration"])
@@ -983,8 +984,9 @@ class Simulation(object):
 
     def set_rebuild_interval(self, rebuild_interval):
         if self.search == "BVH":
-            self.bvh_rebuild_interval = int(rebuild_interval)
-            self.refit_number = max(1, self.bvh_rebuild_interval)
+            from src.contact_detection.bounding_volume_hierarchy.MultiPatchLBVH import validate_bvh_rebuild_interval
+
+            self.bvh_rebuild_interval = validate_bvh_rebuild_interval(rebuild_interval)
 
     def set_hierarchical_size(self, hierarchical_size):
         self.hierarchical_size = list(hierarchical_size)

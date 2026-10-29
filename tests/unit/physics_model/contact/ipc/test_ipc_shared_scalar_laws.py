@@ -7,9 +7,6 @@ pytestmark = [pytest.mark.unit, pytest.mark.ipc, pytest.mark.contact]
 from src.physics_model.contact_model.ipc.IPC import (
     Barrier,
     Friction,
-    clamped_log_barrier_second_derivative,
-    initial_barrier_stiffness,
-    ipc_barrier_distance_terms_py,
     ipc_barrier_force_magnitude,
     ipc_barrier_force_magnitude_gradient,
     ipc_toolkit_barrier_distance2_terms,
@@ -23,15 +20,14 @@ from src.physics_model.contact_model.ipc.IPC import (
     ipc_friction_hessian_term,
     ipc_fully_implicit_point_plane_friction,
     ipc_fully_implicit_point_plane_stribeck_friction,
-    ipc_fully_implicit_scalar_law_py,
     ipc_stribeck_falloff,
     ipc_stribeck_falloff_derivative,
-    semi_ipc_find,
-    semi_ipc_find_or_insert,
-    semi_ipc_terms,
-    semi_ipc_terms_py,
-    semi_ipc_update_multiplier,
-    semi_ipc_update_multiplier_py,
+)
+from tests.helpers.ipc_scalar_reference import (
+    clamped_log_barrier_second_derivative,
+    initial_barrier_stiffness,
+    ipc_barrier_distance_terms_py,
+    ipc_fully_implicit_scalar_law_py,
     update_barrier_stiffness,
 )
 
@@ -110,41 +106,6 @@ def _eval_friction_terms(speed: ti.f64, epsv: ti.f64, timestep: ti.f64) -> ti.ty
             ipc_friction_hessian_term(speed, epsv),
         ]
     )
-
-
-@ti.kernel
-def _eval_semi_ipc_terms(gap: ti.f64, multiplier: ti.f64, penalty: ti.f64) -> ti.types.vector(4, ti.f64):
-    energy, gradient, hessian = semi_ipc_terms(gap, multiplier, penalty)
-    updated = semi_ipc_update_multiplier(gap, multiplier, penalty)
-    return ti.Vector([energy, gradient, hessian, updated])
-
-
-@ti.kernel
-def _insert_colliding_semi_ipc_keys(
-    states: ti.template(),
-    keys: ti.template(),
-    multipliers: ti.template(),
-    count: ti.template(),
-    slots: ti.template(),
-    key_count: ti.i32,
-    capacity: ti.i32,
-):
-    for index in range(key_count):
-        key = ti.Vector([index * capacity, 0, 0, 0])
-        slots[index] = semi_ipc_find_or_insert(states, keys, multipliers, count, key, capacity)
-
-
-@ti.kernel
-def _find_colliding_semi_ipc_keys(
-    states: ti.template(),
-    keys: ti.template(),
-    slots: ti.template(),
-    key_count: ti.i32,
-    capacity: ti.i32,
-):
-    for index in range(key_count):
-        key = ti.Vector([index * capacity, 0, 0, 0])
-        slots[index] = semi_ipc_find(states, keys, key, capacity)
 
 
 @ti.kernel
@@ -383,54 +344,6 @@ def test_host_barrier_terms_match_taichi_official_kernel(physical):
     invalid = ipc_barrier_distance_terms_py(0.2, 0.4, 0.2, 3.25, bool(physical))
     assert np.isinf(invalid[0])
     np.testing.assert_array_equal(invalid[1:], [0.0, 0.0])
-
-
-@pytest.mark.parametrize("gap", [-0.2, 0.1, 0.4])
-def test_semi_ipc_projected_augmented_lagrangian_matches_host_law(gap):
-    multiplier = 3.0
-    penalty = 10.0
-    expected = np.asarray(
-        [
-            *semi_ipc_terms_py(gap, multiplier, penalty),
-            semi_ipc_update_multiplier_py(gap, multiplier, penalty),
-        ]
-    )
-    actual = np.asarray(_eval_semi_ipc_terms(gap, multiplier, penalty))
-    np.testing.assert_allclose(actual, expected, rtol=2.0e-13, atol=1.0e-14)
-
-
-def test_semi_ipc_energy_derivatives_on_active_branch():
-    gap = -0.2
-    multiplier = 3.0
-    penalty = 10.0
-    step = 1.0e-5
-    energy = lambda value: semi_ipc_terms_py(value, multiplier, penalty)[0]
-    _, gradient, hessian = semi_ipc_terms_py(gap, multiplier, penalty)
-
-    assert gradient == pytest.approx(_central_first(energy, gap, step), rel=1.0e-9)
-    assert hessian == pytest.approx(_central_second(energy, gap, step), rel=1.0e-6)
-
-
-def test_semi_ipc_hash_resolves_many_concurrent_collisions():
-    capacity = 512
-    key_count = 256
-    states = ti.field(dtype=ti.i32, shape=capacity)
-    keys = ti.Vector.field(4, dtype=ti.i32, shape=capacity)
-    multipliers = ti.field(dtype=ti.f64, shape=capacity)
-    count = ti.field(dtype=ti.i32, shape=())
-    slots = ti.field(dtype=ti.i32, shape=key_count)
-    states.fill(2)
-    count[None] = 0
-
-    _insert_colliding_semi_ipc_keys(states, keys, multipliers, count, slots, key_count, capacity)
-    inserted_slots = slots.to_numpy()
-    assert int(count[None]) == key_count
-    assert np.all(inserted_slots >= 0)
-    assert np.unique(inserted_slots).size == key_count
-
-    slots.fill(-1)
-    _find_colliding_semi_ipc_keys(states, keys, slots, key_count, capacity)
-    assert np.all(slots.to_numpy() >= 0)
 
 
 def test_official_adaptive_barrier_stiffness_rules():
@@ -965,3 +878,24 @@ def test_host_fully_implicit_scalar_law_matches_taichi_and_fd(profile_id, speed)
         rel=2.0e-8,
         abs=2.0e-8,
     )
+
+
+@pytest.mark.parametrize("model", ["SemiIPC", "semi", "AL", "AugmentedLagrangian"])
+def test_removed_semi_ipc_model_is_rejected(model):
+    from src.physics_model.contact_model.ipc.IPC import normalize_ipc_model
+    from src.fem.contact.ContactModel import FEMContact
+
+    with pytest.raises(ValueError, match="BarrierIPC"):
+        normalize_ipc_model(model)
+    with pytest.raises(ValueError, match="BarrierIPC"):
+        FEMContact(model)
+
+
+def test_removed_semi_parameters_are_not_silently_ignored():
+    from src.physics_model.contact_model.ipc.IPC import Barrier
+    from src.dem.Simulation import Simulation
+
+    with pytest.raises(ValueError, match="removed SemiIPC parameters"):
+        Barrier(penalty=1e5)
+    with pytest.raises(ValueError, match="removed SemiIPC parameters"):
+        Simulation.set_affine_body_parameters(object(), constraint_tolerance=1e-6)

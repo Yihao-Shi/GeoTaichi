@@ -28,16 +28,7 @@ from examples.fedem.FEMAffineMixedTriaxial25.fem_affine_mixed_triaxial_25_parame
 )
 
 
-def plate_specs():
-    inner = LOWER + 0.008
-    return (
-        ("left", (LOWER - 0.020, inner, inner), (0.020, PLATE_SPAN, PLATE_SPAN)),
-        ("right", (UPPER, inner, inner), (0.020, PLATE_SPAN, PLATE_SPAN)),
-        ("front", (inner, LOWER - 0.020, inner), (PLATE_SPAN, 0.020, PLATE_SPAN)),
-        ("back", (inner, UPPER, inner), (PLATE_SPAN, 0.020, PLATE_SPAN)),
-        ("bottom", (inner, inner, LOWER - 0.020), (PLATE_SPAN, PLATE_SPAN, 0.020)),
-        ("top", (inner, inner, UPPER), (PLATE_SPAN, PLATE_SPAN, 0.020)),
-    )
+from examples.fedem.FEMAffineMixedTriaxial25.fem_affine_mixed_triaxial_25_parameters import plate_specs
 
 
 def write_results(output, parsed, soft_ids, rigid_ids, curve, result):

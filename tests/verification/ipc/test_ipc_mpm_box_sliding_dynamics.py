@@ -14,7 +14,6 @@ import pytest
 import taichi as ti
 from scipy.optimize import brentq
 
-
 GRAVITY = 9.81
 MASS = 1.0
 SURFACE_MEASURE = 1.0
@@ -103,7 +102,7 @@ def _friction_acceleration(speed):
 
 
 def _backward_euler_velocity(previous_velocity, load_ratio):
-    """Solve the paper's scalar BE momentum residual for positive motion."""
+    """Solve the paper's scalar BackwardEuler momentum residual for positive motion."""
     external_acceleration = load_ratio * MU_STATIC * GRAVITY
     free_velocity = previous_velocity + DT * external_acceleration
     if free_velocity <= 0.0:
@@ -252,7 +251,7 @@ def test_regularized_stick_to_dynamic_slip_on_one_production_instance(
 
 @pytest.mark.isolated_dimension(2)
 def test_dynamic_stopping_trajectory_matches_backward_euler_oracle(tmp_path):
-    """Kinetic, Stribeck, and regularized stopping all follow the BE residual."""
+    """Kinetic, Stribeck, and regularized stopping all follow the BackwardEuler residual."""
     initial_velocity = 0.6
     solver, equilibrium_gap = _build_box(
         initial_velocity=initial_velocity,
@@ -290,7 +289,7 @@ def test_dynamic_stopping_trajectory_matches_backward_euler_oracle(tmp_path):
         atol=4.0e-10,
     )
 
-    # Before reaching the Stribeck interval, BE with constant kinetic
+    # Before reaching the Stribeck interval, BackwardEuler with constant kinetic
     # friction has an exact arithmetic velocity sequence and an exact summed
     # displacement sequence.
     kinetic_steps = sum(velocity >= STRIBECK_VELOCITY for velocity in oracle_velocities)

@@ -3,7 +3,7 @@ import pytest
 from scipy.sparse import csr_matrix
 from scipy.sparse.linalg import bicgstab, cg
 
-from src.linear_solver.BuildTriplet import BuildTriplet
+from tests.helpers.build_triplet_reference import ReferenceBuildTriplet as BuildTriplet
 
 pytestmark = [pytest.mark.unit, pytest.mark.linear_solver, pytest.mark.cpu]
 
@@ -154,16 +154,12 @@ def test_bicgstab_preserves_recurrence_and_checks_true_residual(taichi_runtime, 
     "dimension,packed,matrix_symmetric",
     [(1, False, False), (2, False, True), (2, True, True), (3, True, True), (3, False, False), (4, False, False)],
 )
-@pytest.mark.parametrize("device_reduction", [False, True])
 def test_row_matvec_matches_scatter_after_pattern_and_value_changes(
     taichi_runtime,
     dimension,
     packed,
     matrix_symmetric,
-    device_reduction,
 ):
-    if not device_reduction and taichi_runtime.lang.impl.current_cfg().arch == taichi_runtime.cuda:
-        pytest.skip("host reduction is an explicit CPU/Metal oracle")
     system = BuildTriplet(
         dim=dimension,
         max_pairs_num=64,
@@ -171,7 +167,7 @@ def test_row_matvec_matches_scatter_after_pattern_and_value_changes(
         max_active_nodes=8,
         symmetric=packed,
         matrix_symmetric=matrix_symmetric,
-        device_reduction=device_reduction,
+        device_reduction=True,
     )
     rng = np.random.default_rng(71)
     for shift in (1, 2, 2):

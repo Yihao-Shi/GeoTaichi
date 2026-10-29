@@ -2,7 +2,6 @@
 
 import taichi as ti
 
-from src.mpdem.fluid_dynamics.IncompressibleCoupling import cell_center_velocity_3d
 from src.utils.ShapeFunctions import Guassian
 from src.utils.constants import PI, Threshold
 
@@ -165,6 +164,7 @@ def kernel_update_sphere_cell_solid_fraction(
 @ti.kernel
 def kernel_compute_incompressible_sphere_drag(
     sphereNum: int,
+    cutoff: float,
     dependent_domain: int,
     influence_domain: int,
     active_cnum: ti.types.vector(3, int),
@@ -177,12 +177,14 @@ def kernel_compute_incompressible_sphere_drag(
     cell_solid_fraction: ti.template(),
     cell_drag_force: ti.template(),
     fluid_velocity: ti.template(),
+    fluid_velocity_weight: ti.template(),
     fluid_fraction: ti.template(),
     fluid_volume: ti.template(),
     drag_coefficient_model: ti.template(),
 ):
     cell_drag_force.fill(0.0)
     fluid_velocity.fill(0.0)
+    fluid_velocity_weight.fill(0.0)
     fluid_fraction.fill(0.0)
     fluid_volume.fill(0.0)
     for nsphere in range(sphereNum):
@@ -193,23 +195,39 @@ def kernel_compute_incompressible_sphere_drag(
         for I in ti.grouped(ti.ndrange((lower[0], upper[0]), (lower[1], upper[1]), (lower[2], upper[2]))):
             center = cell_center_3d(I, grid_size)
             weight = expanded_domain_gaussian(radius, position - center, dependent_domain)
-            fluid_volume[nsphere] += weight
-            fluid_velocity[nsphere] += weight * cell_center_velocity_3d(I, node)
-            fluid_fraction[nsphere] += weight * (
-                1.0 - sample_cell_solid_fraction_3d(I, active_cnum, cell_solid_fraction)
-            )
+            wet_cell = False
+            for d in ti.static(range(3)):
+                velocity_sum, face_count = 0.0, 0
+                for side in ti.static((0, 1)):
+                    face = I + side * ti.Vector.unit(3, d)
+                    mass = node.m[d][face] * face_fluid_fraction_3d(face, d, active_cnum, cell_solid_fraction)
+                    if mass > cutoff:
+                        velocity_sum += node.velocity[d][face]
+                        face_count += 1
+                if face_count > 0:
+                    # Empty air has no water velocity; averaging its stored value
+                    # would create drag even for uniform water/body translation.
+                    fluid_velocity[nsphere][d] += weight * velocity_sum / face_count
+                    fluid_velocity_weight[nsphere][d] += weight
+                    wet_cell = True
+            if wet_cell:
+                fluid_volume[nsphere] += weight
+                fluid_fraction[nsphere] += weight * (
+                    1.0 - sample_cell_solid_fraction_3d(I, active_cnum, cell_solid_fraction)
+                )
 
     for nsphere in range(sphereNum):
         np = sphere[nsphere].sphereIndex
         weight_sum = ti.max(fluid_volume[nsphere], Threshold)
-        velocity_f = fluid_velocity[nsphere] / weight_sum
+        velocity_f = fluid_velocity[nsphere] / ti.max(fluid_velocity_weight[nsphere], Threshold)
         epsilon_f = ti.min(1.0, ti.max(0.05, fluid_fraction[nsphere] / weight_sum))
         relative_velocity = velocity_f - particle[np].v
+        for d in ti.static(range(3)):
+            if fluid_velocity_weight[nsphere][d] <= Threshold:
+                relative_velocity[d] = 0.0
         drag_force = drag_coefficient_model.drag_law(
             epsilon_f, matProps.density, matProps.viscosity, particle[np].rad, relative_velocity
         )
-        particle[np].contact_force += drag_force
-
         position = particle[np].x
         radius = particle[np].rad
         lower, upper = sphere_support_bounds(position, radius, influence_domain, active_cnum, igrid_size)
@@ -217,9 +235,21 @@ def kernel_compute_incompressible_sphere_drag(
         for I in ti.grouped(ti.ndrange((lower[0], upper[0]), (lower[1], upper[1]), (lower[2], upper[2]))):
             mapped_weight += Guassian(radius, position - cell_center_3d(I, grid_size), influence_domain)
         mapped_weight = ti.max(mapped_weight, Threshold)
+        exchanged_force = ti.Vector([0.0, 0.0, 0.0])
         for I in ti.grouped(ti.ndrange((lower[0], upper[0]), (lower[1], upper[1]), (lower[2], upper[2]))):
             weight = Guassian(radius, position - cell_center_3d(I, grid_size), influence_domain) / mapped_weight
-            ti.atomic_add(cell_drag_force[I], -weight * drag_force)
+            for d in ti.static(range(3)):
+                right_face = I + ti.Vector.unit(3, d)
+                left_mass = node.m[d][I] * face_fluid_fraction_3d(I, d, active_cnum, cell_solid_fraction)
+                right_mass = node.m[d][right_face] * face_fluid_fraction_3d(
+                    right_face, d, active_cnum, cell_solid_fraction
+                )
+                # A kernel share in empty air cannot exchange water momentum.
+                if left_mass > cutoff or right_mass > cutoff:
+                    share = weight * drag_force[d]
+                    ti.atomic_add(cell_drag_force[I][d], -share)
+                    exchanged_force[d] += share
+        particle[np].contact_force += exchanged_force
 
 
 @ti.kernel
@@ -252,6 +282,7 @@ def kernel_apply_cell_drag_force_to_mac_velocity(
 def kernel_accumulate_incompressible_sphere_pressure_force(
     sphereNum: int,
     dependent_domain: int,
+    influence_domain: int,
     active_cnum: ti.types.vector(3, int),
     grid_size: ti.types.vector(3, float),
     igrid_size: ti.types.vector(3, float),
@@ -281,8 +312,18 @@ def kernel_accumulate_incompressible_sphere_pressure_force(
                 )
                 weight_sum += weight
         pressure_gradient /= ti.max(weight_sum, Threshold)
+        # The wide background stencil can see water even when the sphere's
+        # volume kernel is dry. Do not extrapolate its load to the full sphere.
+        mapped_weight, wet_weight = 0.0, 0.0
+        lower, upper = sphere_support_bounds(position, radius, influence_domain, active_cnum, igrid_size)
+        for I in ti.grouped(ti.ndrange((lower[0], upper[0]), (lower[1], upper[1]), (lower[2], upper[2]))):
+            weight = Guassian(radius, position - cell_center_3d(I, grid_size), influence_domain)
+            mapped_weight += weight
+            if int(cell_type[I]) == 1:
+                wet_weight += weight
+        wet_fraction = wet_weight / ti.max(mapped_weight, Threshold)
         particle_volume = 4.0 / 3.0 * PI * radius * radius * radius
-        particle[np].contact_force += -particle_volume * pressure_gradient
+        particle[np].contact_force += -wet_fraction * particle_volume * pressure_gradient
 
 
 @ti.kernel

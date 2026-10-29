@@ -251,8 +251,8 @@ class DifferentiableFEM:
         self.ba.from_numpy(seed(acceleration_gradient))
         self._clear_parameter_vjp()
         solver = self.solver
-        acceleration_factor = 1.0 / (solver.beta * self.dt**2)
-        prediction_factor = self.dt**2 * (0.5 - solver.beta)
+        acceleration_factor = 1.0 / (2.0 * solver.alpha * solver.beta * self.dt**2)
+        prediction_factor = self.dt**2 * solver.alpha * (1.0 - 2.0 * solver.beta)
         dynamic = (1.0 + solver.damping * self.dt * solver.gamma) * acceleration_factor
         contact = solver.contact_assembler
         young = float(

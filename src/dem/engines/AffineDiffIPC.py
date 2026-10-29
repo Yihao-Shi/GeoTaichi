@@ -1392,7 +1392,7 @@ class TaichiAffineMeshDiffIPCProjector(TaichiAffineDiffIPCProjector):
                             gradient2[row] = distance_gradient[row] + distance_gradient[3 + row]
                             for column in ti.static(range(3)):
                                 value = 0.0
-                                for site_i, site_j in ti.static(ti.ndrange(2, 2)):
+                                for site_i, site_j in ti.ndrange(2, 2):
                                     value += distance_hessian[
                                         3 * site_i + row,
                                         3 * site_j + column,

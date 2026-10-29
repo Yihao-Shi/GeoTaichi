@@ -1,14 +1,14 @@
 import numpy as np
 import pytest
 
-from src.physics_model.contact_model.ipc.AffineDifferentiable import (
+from tests.helpers.affine_diffipc_reference import (
     AffineTriangleBody,
     AffineTriangleIPC,
     DiffIPCAffineEquilibrium,
     affine_edge_edge_gap,
     affine_point_triangle_gap,
 )
-from src.physics_model.contact_model.ipc.LevelSetAffine import affine_basis
+from tests.helpers.affine_levelset_reference import affine_basis
 
 pytestmark = [
     pytest.mark.unit,
@@ -202,3 +202,13 @@ def test_diffipc_affine_triangle_equilibrium_adjoint_matches_resolved_fd():
             losses.append(float(loss_gradient @ perturbed_result.controls.reshape(-1)))
         finite_difference = (losses[1] - losses[0]) / (2.0 * epsilon)
         assert adjoint[parameter] == pytest.approx(finite_difference, rel=8.0e-5, abs=2.0e-6)
+
+
+def test_near_parallel_affine_edge_gap_matches_normal_separation():
+    controls = _identity_controls([0.0, 0.0, 0.0])
+    edge0 = np.array([affine_basis([-1.0, 0.0, 0.0]), affine_basis([1.0, 0.0, 0.0])])
+    edge1 = np.array([affine_basis([-1.0, -2e-7, 1e-8]), affine_basis([1.0, 2e-7, 1e-8])])
+    gap = affine_edge_edge_gap(controls, controls, edge0, edge1)
+    assert gap.feature == "edge_edge"
+    assert gap.distance == pytest.approx(1e-8, rel=1e-12)
+    assert np.isfinite(gap.gradient).all() and np.isfinite(gap.hessian).all()

@@ -7,7 +7,6 @@ import taichi as ti
 
 from src.linear_solver.BuildTriplet import BuildTriplet
 
-
 _TRIPLETS = {}
 
 
@@ -46,28 +45,20 @@ def _cached_inverse(matrix, *, symmetric):
             max_nonzeros=1,
             max_active_nodes=1,
             symmetric=symmetric,
-            device_reduction=False,
+            device_reduction=True,
         )
     triplet = _TRIPLETS[key]
-    packed = (
-        _packed_symmetric(matrix)
-        if symmetric
-        else np.asarray(matrix, dtype=np.float64).reshape(-1)
-    )
+    packed = _packed_symmetric(matrix) if symmetric else np.asarray(matrix, dtype=np.float64).reshape(-1)
     triplet.diag.from_numpy(packed.reshape((1, -1)))
     triplet._build_block_jacobi(1)
-    return np.asarray(triplet.diag_inverse.to_numpy()[0]).reshape(
-        (dimension, dimension)
-    )
+    return np.asarray(triplet.diag_inverse.to_numpy()[0]).reshape((dimension, dimension))
 
 
 @pytest.mark.parametrize(
     "matrix",
     [
         np.asarray([[4.0, 0.4], [-0.2, 2.5]]),
-        np.asarray(
-            [[4.0, 0.4, -0.2], [-0.1, 3.0, 0.3], [0.2, -0.4, 2.0]]
-        ),
+        np.asarray([[4.0, 0.4, -0.2], [-0.1, 3.0, 0.3], [0.2, -0.4, 2.0]]),
         np.asarray(
             [
                 [4.0, 0.4, -0.2, 0.1],
@@ -84,18 +75,14 @@ def test_dense_block_jacobi_is_scale_invariant(matrix):
     for scale in (1.0e-12, 1.0, 1.0e12):
         inverse = _cached_inverse(scale * matrix, symmetric=False)
         assert np.isfinite(inverse).all()
-        assert np.allclose(
-            scale * inverse, expected, rtol=2.0e-12, atol=2.0e-12
-        )
+        assert np.allclose(scale * inverse, expected, rtol=2.0e-12, atol=2.0e-12)
 
 
 @pytest.mark.parametrize(
     "matrix",
     [
         np.asarray([[3.0, 0.35], [0.35, 1.75]]),
-        np.asarray(
-            [[3.0, 0.35, -0.15], [0.35, 2.25, 0.2], [-0.15, 0.2, 1.5]]
-        ),
+        np.asarray([[3.0, 0.35, -0.15], [0.35, 2.25, 0.2], [-0.15, 0.2, 1.5]]),
     ],
     ids=["symmetric2", "symmetric3"],
 )
@@ -104,9 +91,7 @@ def test_symmetric_block_jacobi_is_scale_invariant(matrix):
     for scale in (1.0e-12, 1.0, 1.0e12):
         inverse = _cached_inverse(scale * matrix, symmetric=True)
         assert np.isfinite(inverse).all()
-        assert np.allclose(
-            scale * inverse, expected, rtol=2.0e-12, atol=2.0e-12
-        )
+        assert np.allclose(scale * inverse, expected, rtol=2.0e-12, atol=2.0e-12)
         assert np.allclose(inverse, inverse.T, rtol=0.0, atol=0.0)
 
 
@@ -135,9 +120,7 @@ def test_dense_block_jacobi_pathological_fallback_is_finite(dimension, kind):
             if reference is None:
                 reference = scaled
             else:
-                assert np.allclose(
-                    scaled, reference, rtol=1.0e-12, atol=1.0e-12
-                )
+                assert np.allclose(scaled, reference, rtol=1.0e-12, atol=1.0e-12)
 
 
 @pytest.mark.parametrize("dimension", [2, 3])
@@ -154,9 +137,7 @@ def test_symmetric_block_jacobi_pathological_fallback_is_finite(dimension):
 def test_tiny_spd_block_pcg_does_not_false_converge():
     _ensure_taichi()
     scale = 1.0e-12
-    block = scale * np.asarray(
-        [[3.0, 0.25, -0.1], [0.25, 2.0, 0.15], [-0.1, 0.15, 1.5]]
-    )
+    block = scale * np.asarray([[3.0, 0.25, -0.1], [0.25, 2.0, 0.15], [-0.1, 0.15, 1.5]])
     expected = np.asarray([0.75, -1.25, 0.5])
     rhs = block @ expected
     triplet = BuildTriplet(
@@ -166,7 +147,7 @@ def test_tiny_spd_block_pcg_does_not_false_converge():
         max_active_nodes=1,
         symmetric=True,
         solver="PCG",
-        device_reduction=False,
+        device_reduction=True,
     )
     triplet.diag.from_numpy(_packed_symmetric(block).reshape((1, -1)))
     result = triplet.solve(

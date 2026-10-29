@@ -32,6 +32,7 @@ from src.mpm.engines.TwoPhaseDoubleLayerKernel import (
     kernel_delta_correct_double_layer_fluid2d,
     kernel_mark_double_layer_solid_cell_region2d,
     kernel_project_double_layer_pressure_to_solid_nodes2d,
+    kernel_extend_double_layer_wall_pressure,
     kernel_project_solid_grid_velocity_to_mac3d,
     kernel_sample_double_layer_solid_pressure_from_nodes2d,
     kernel_update_double_layer_solid_state2d,
@@ -390,7 +391,7 @@ def _fill_free_surface_solid_pressure_case(
 
 
 @ti.kernel
-def _sample_bottom_corner_pressure_case(
+def _setup_bottom_corner_pressure_case(
     cell_type: ti.template(),
     cell_pressure: ti.template(),
     fluid_sdf: ti.template(),
@@ -407,6 +408,11 @@ def _sample_bottom_corner_pressure_case(
         cell_pressure[I] = p0 if cell_type[I] == FLUID_CELL else 0.0
         fluid_sdf[I] = -0.5 * ti.min(DX, DY) if cell_type[I] == FLUID_CELL else 0.5 * ti.min(DX, DY)
 
+
+@ti.kernel
+def _sample_bottom_corner_pressure_case(
+    cell_type: ti.template(), cell_pressure: ti.template(), fluid_sdf: ti.template(), out: ti.template()
+):
     out[0] = _sample_cell_pressure_gfm_shape2d(
         ti.Vector([1.25 * DX, 1.25 * DY]),
         ti.Vector([DX, DY]),
@@ -679,6 +685,7 @@ def test_pressure_matrix_reduces_to_uniform_laplacian():
         fluid_sdf,
         adiag,
         ax,
+        None,
     )
 
     mobility = (1.0 - PHI) / RHO_S + PHI / RHO_F
@@ -718,7 +725,7 @@ def test_double_layer_fluid_volume_correction_preserves_mass_and_solid_position(
     _setup_double_layer_volume_correction(node, particle, material_mapping, lnid, shape_fn, dshape_fn, node_size)
 
     kernel_update_double_layer_fluid_volume2d(
-        1, 0, 2, 1, 1000.0, node, particle, material_mapping, lnid, shape_fn, node_size
+        1, 0, 2, 1, 1000.0, node, particle, material_mapping, lnid, shape_fn, node_size, None
     )
     initialized = particle.to_numpy()
     assert np.isclose(initialized["mf"][0], 10.0)
@@ -726,7 +733,7 @@ def test_double_layer_fluid_volume_correction_preserves_mass_and_solid_position(
 
     node[4, 0].porosity = 0.5
     kernel_update_double_layer_fluid_volume2d(
-        1, 0, 2, 0, 1000.0, node, particle, material_mapping, lnid, shape_fn, node_size
+        1, 0, 2, 0, 1000.0, node, particle, material_mapping, lnid, shape_fn, node_size, None
     )
     updated = particle.to_numpy()
     assert np.isclose(updated["mf"][0], 10.0)
@@ -734,14 +741,16 @@ def test_double_layer_fluid_volume_correction_preserves_mass_and_solid_position(
 
     node.vol.fill(0.0)
     kernel_volume_p2g_double_layer_fluid2d(1, 2, node, particle, lnid, shape_fn, node_size)
-    assert np.isclose(node.to_numpy()["vol"][4, 0], 0.02)
+    assert np.isclose(node.to_numpy()["vol"][4, 0], 0.01)
     before = particle.to_numpy()["x"].copy()
+    reference_volume = ti.field(float, shape=node.shape)
+    volume_error = ti.field(float, shape=node.shape)
+    reference_volume.fill(0.01)
     kernel_delta_correct_double_layer_fluid2d(
         1,
         2,
         ti.Vector([1.0, 1.0]),
         ti.Vector([0.1, 0.1]),
-        ti.Vector([3, 3]),
         ti.Vector([10, 10]),
         0.0,
         cell_type,
@@ -750,6 +759,8 @@ def test_double_layer_fluid_volume_correction_preserves_mass_and_solid_position(
         lnid,
         dshape_fn,
         node_size,
+        reference_volume,
+        volume_error,
     )
     assert np.allclose(particle.to_numpy()["x"], before)
     cell_type[5, 6] = AIR_CELL
@@ -758,7 +769,6 @@ def test_double_layer_fluid_volume_correction_preserves_mass_and_solid_position(
         2,
         ti.Vector([1.0, 1.0]),
         ti.Vector([0.1, 0.1]),
-        ti.Vector([3, 3]),
         ti.Vector([10, 10]),
         1.0,
         cell_type,
@@ -767,6 +777,8 @@ def test_double_layer_fluid_volume_correction_preserves_mass_and_solid_position(
         lnid,
         dshape_fn,
         node_size,
+        reference_volume,
+        volume_error,
     )
     assert np.allclose(particle.to_numpy()["x"], before)
     cell_type[5, 6] = FLUID_CELL
@@ -775,7 +787,6 @@ def test_double_layer_fluid_volume_correction_preserves_mass_and_solid_position(
         2,
         ti.Vector([1.0, 1.0]),
         ti.Vector([0.1, 0.1]),
-        ti.Vector([3, 3]),
         ti.Vector([10, 10]),
         1.0,
         cell_type,
@@ -784,10 +795,12 @@ def test_double_layer_fluid_volume_correction_preserves_mass_and_solid_position(
         lnid,
         dshape_fn,
         node_size,
+        reference_volume,
+        volume_error,
     )
     after = particle.to_numpy()["x"]
     assert after[0, 0] < before[0, 0]
-    assert np.isclose(particle.to_numpy()["v"][0, 0], after[0, 0] - before[0, 0])
+    assert np.isclose(particle.to_numpy()["v"][0, 0], 0.0)
     assert np.allclose(after[1], before[1])
 
 
@@ -1149,8 +1162,21 @@ def test_double_layer_volume_fraction_keeps_empty_vertical_gaps_as_air():
         cell_porosity,
         cell_type,
     )
-    assert cell_type[2, 1] == FLUID_CELL
+    assert cell_type[2, 1] == AIR_CELL
     assert cell_type[2, 2] == AIR_CELL
+
+    # Filling the gap brackets the deficit with resolved liquid on both sides.
+    cell_fluid_mass[2, 2] = 0.9 * RHO_F * cell_volume
+    kernel_classify_double_layer_fluid_cells2d(
+        0,
+        ti.Vector([DX, DY]),
+        particle,
+        cell_fluid_mass,
+        cell_fluid_density,
+        cell_porosity,
+        cell_type,
+    )
+    assert cell_type[2, 1] == FLUID_CELL
 
 
 def test_double_layer_multigrid_keeps_thin_fluid_support_on_coarse_level():
@@ -1260,6 +1286,7 @@ def test_pressure_matrix_uses_neumann_for_solid_walls_and_dirichlet_for_air():
         fluid_sdf,
         adiag,
         ax,
+        None,
     )
 
     mobility = (1.0 - PHI) / RHO_S + PHI / RHO_F
@@ -1308,6 +1335,7 @@ def test_coarse_pressure_matrix_uses_gfm_theta_for_free_surface():
         fluid_sdf,
         adiag,
         ax,
+        None,
     )
 
     mobility = (1.0 - PHI) / RHO_S + PHI / RHO_F
@@ -1428,10 +1456,12 @@ def test_solid_mac_projection_zeroes_static_wall_then_allows_moving_override():
     )
 
     velocity_x = solid_velocity_x.to_numpy()
-    assert np.all(velocity_x[1] == 0.0)
-    assert np.all(velocity_x[[0, 2]] == 7.0)
-    assert np.all(solid_velocity_y.to_numpy() == 7.0)
-    assert np.all(solid_velocity_z.to_numpy() == 7.0)
+    assert np.all(velocity_x == 0.0)
+    velocity_y, velocity_z = solid_velocity_y.to_numpy(), solid_velocity_z.to_numpy()
+    assert np.all(velocity_y[:, [0, 2], :] == 0.0)
+    assert np.all(velocity_z[:, :, [0, 2]] == 0.0)
+    assert np.all(velocity_y[:, 1, :] == 7.0)
+    assert np.all(velocity_z[:, :, 1] == 7.0)
 
     fluid_velocity_x = ti.field(float, shape=(3, 2, 2))
     fluid_velocity_y = ti.field(float, shape=(2, 3, 2))
@@ -1540,6 +1570,7 @@ def test_pressure_projection_reduces_weighted_divergence_with_code_sign_conventi
         fluid_sdf,
         adiag,
         ax,
+        None,
     )
     pressure = _solve_pressure_numpy(cell_type.to_numpy(), adiag.to_numpy(), ax.to_numpy(), b.to_numpy())
     cell_pressure.from_numpy(pressure)
@@ -1565,6 +1596,7 @@ def test_pressure_projection_reduces_weighted_divergence_with_code_sign_conventi
         fluid_acceleration_y,
         face_fluid_density_x,
         face_fluid_density_y,
+        None,
     )
     after = _weighted_divergence_norm(
         cell_type.to_numpy(),
@@ -1602,6 +1634,7 @@ def test_pressure_projection_reduces_weighted_divergence_with_code_sign_conventi
         fluid_acceleration_y,
         face_fluid_density_x,
         face_fluid_density_y,
+        None,
     )
     after_wrong_sign = _weighted_divergence_norm(
         cell_type.to_numpy(),
@@ -1665,6 +1698,7 @@ def test_pressure_gradient_correction_matches_linear_pressure():
         fluid_acceleration_y,
         face_fluid_density_x,
         face_fluid_density_y,
+        None,
     )
 
     vx = fluid_velocity_x.to_numpy()
@@ -1718,6 +1752,7 @@ def test_paper_solid_pressure_correction_matches_linear_pressure_gradient():
         shape_fn,
         dshape_fn,
         node_size,
+        None,
     )
 
     nodal = node.to_numpy()
@@ -1770,6 +1805,7 @@ def test_fluid_pressure_correction_uses_free_surface_dirichlet_gradient():
         fluid_acceleration_y,
         face_fluid_density_x,
         face_fluid_density_y,
+        None,
     )
 
     velocity = fluid_velocity_y.to_numpy()
@@ -1844,7 +1880,9 @@ def test_pressure_sampling_ignores_diagonal_air_at_solid_corner():
     out = ti.field(float, shape=1)
     p0 = 2468.0
 
-    _sample_bottom_corner_pressure_case(cell_type, cell_pressure, fluid_sdf, out, p0)
+    _setup_bottom_corner_pressure_case(cell_type, cell_pressure, fluid_sdf, out, p0)
+    kernel_extend_double_layer_wall_pressure(cell_type, cell_pressure, 2)
+    _sample_bottom_corner_pressure_case(cell_type, cell_pressure, fluid_sdf, out)
 
     assert np.isclose(out.to_numpy()[0], p0, rtol=1.0e-6, atol=1.0e-9)
 

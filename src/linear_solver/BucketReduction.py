@@ -10,7 +10,6 @@ import taichi as ti
 from taichi.lang.impl import current_cfg
 
 from src.linear_solver.HashReduction import HashReduction
-from src.linear_solver.BlockSparsityPattern import BlockSparsityPatternCache
 from src.utils.FieldIO import runtime_float_numpy_dtype
 from src.utils.PrefixSum import PrefixSumExecutor
 from src.utils.constants import WARP_SZ
@@ -36,7 +35,7 @@ class BucketReduction(HashReduction):
             raise ValueError("bucket capacities must be positive int32 values")
         if device_reduction is False:
             raise ValueError("bucket reduction requires Taichi device fields")
-        # Reuse upload/export/reference helpers without allocating the cached
+        # Reuse upload/export helpers without allocating the cached
         # hash table and raw-output mapping, which contact no longer uses.
         self.dim, self.hessian_size = dim, int(hessian_size)
         self.max_pairs_num = max_pairs_num
@@ -53,7 +52,6 @@ class BucketReduction(HashReduction):
         self.device_epoch = self.device_pattern_version = 0
         self.device_pattern_initialized = False
         self.device_pattern_enabled = False
-        self.pattern_cache = BlockSparsityPatternCache(max_nnz, enabled=False)
         self.cell_shift = 9
         self.cell_length = 1 << self.cell_shift
         self.cell_mask = self.cell_length - 1

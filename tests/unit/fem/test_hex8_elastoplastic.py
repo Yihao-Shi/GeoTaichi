@@ -5,7 +5,6 @@ ti = pytest.importorskip("taichi")
 
 from src.fem import FEM
 
-
 pytestmark = [
     pytest.mark.unit,
     pytest.mark.fem,
@@ -65,9 +64,7 @@ def _hex8_solver(model, **parameters):
         ),
     ],
 )
-def test_hex8_shared_elastoplastic_models_advance_eight_gauss_points(
-    model, parameters
-):
+def test_hex8_shared_elastoplastic_models_advance_eight_gauss_points(model, parameters):
     _, material, engine = _hex8_solver(model, **parameters)
 
     engine.substep()
@@ -75,16 +72,12 @@ def test_hex8_shared_elastoplastic_models_advance_eight_gauss_points(
     assembler = engine.classical_assembler
     assert material.is_fem_elastoplastic
     assert assembler.integration_point_count == 8
-    assert np.allclose(
-        assembler.deformation_gradient.to_numpy(), np.eye(3)[None, None]
-    )
+    assert np.allclose(assembler.deformation_gradient.to_numpy(), np.eye(3)[None, None])
     assert engine.history[-1]["minimum_jacobian"] == pytest.approx(1.0)
 
 
 def test_hex8_elastoplastic_rejects_implicit_and_ipc():
-    fem, _, _ = _hex8_solver(
-        "ElasticPerfectlyPlastic", yield_stress=1.0e3
-    )
+    fem, _, _ = _hex8_solver("ElasticPerfectlyPlastic", yield_stress=1.0e3)
     fem.set_configuration(dimension=3, solver_type="Implicit")
     with pytest.raises(ValueError, match="Explicit"):
         fem.build()
@@ -116,9 +109,7 @@ def test_hex8_elastoplastic_uses_rest_to_current_deformation_increment():
     fem.set_solver(dt=1.0e-5, steps=1)
     engine = fem.build()
 
-    preprocessed_deformation = (
-        engine.classical_assembler.deformation_gradient.to_numpy()
-    )
+    preprocessed_deformation = engine.classical_assembler.deformation_gradient.to_numpy()
     preprocessed_stress = engine.classical_assembler.cauchy_stress.to_numpy()
     assert np.allclose(preprocessed_deformation[:, :, 0, 0], 1.01)
     assert np.linalg.norm(preprocessed_stress) > 0.0
@@ -229,9 +220,7 @@ def test_state_dependent_hex8_requires_explicit_finite_timestep():
         ),
     ],
 )
-def test_hex8_advanced_elastoplastic_models_initialize_and_advance(
-    model, parameters
-):
+def test_hex8_advanced_elastoplastic_models_initialize_and_advance(model, parameters):
     _, material, engine = _hex8_solver(model, **parameters)
 
     engine.substep()
@@ -240,3 +229,43 @@ def test_hex8_advanced_elastoplastic_models_initialize_and_advance(
     assert material.is_fem_elastoplastic
     assert stress.shape == (8, 6)
     assert np.all(np.isfinite(stress))
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        "ElasticPerfectlyPlastic",
+        "MohrCoulomb",
+        "DruckerPrager",
+        "StateDependentMohrCoulomb",
+        "ModifiedCamClay",
+        "GranularMaterial",
+        "SanisandMS",
+        "NorSand",
+    ],
+)
+def test_all_hex8_materials_respond_to_affine_loading_and_balance_force(model):
+    from tests.helpers.material_cases import initial_stress, material_parameters
+
+    fem = FEM(log=False)
+    fem.set_configuration(dimension=3, solver_type="Explicit")
+    mesh = fem.create_mesh("box", size=(1.0, 1.0, 1.0), divisions=(1, 1, 1), element_type="HEX8")
+    fem.add_mesh(mesh)
+    material = fem.add_material(model, initial_stress=initial_stress(model), **material_parameters(model))
+    fem.set_solver(dt=1e-3, steps=0)
+    engine = fem.build()
+    assembler = engine.classical_assembler
+    original_stress = assembler.cauchy_stress.to_numpy().copy()
+    deformation = np.eye(3) * (1.0 - 1e-6)
+    deformation[0, 1] = 1e-5
+    engine.state.position.from_numpy(np.ascontiguousarray(mesh.points @ deformation.T))
+    assembler.advance_state(engine.state.position, engine.state.velocity, 1e-3)
+    force = assembler.assemble_force_device(engine.state.position).to_numpy()
+    stress = assembler.cauchy_stress.to_numpy()
+    assert material.is_fem_elastoplastic
+    assert np.isfinite(stress).all() and np.isfinite(force).all()
+    assert np.linalg.norm(stress - original_stress) > 1e-8
+    np.testing.assert_allclose(stress, np.tile(stress[0], (8, 1)), rtol=1e-8, atol=1e-5)
+    np.testing.assert_allclose(force.sum(axis=0), 0.0, atol=1e-8)
+    for values in assembler.state_variables.to_numpy().values():
+        assert np.isfinite(values).all()

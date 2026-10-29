@@ -79,7 +79,7 @@ class StateDependentDruckerPragerModel(FiniteStrainDruckerPragerModel):
     def get_history_state(self, particle_id):
         base = HenckyAssociatedPlasticityModel.get_history_state(self, particle_id)
         state = ti.Vector.zero(ti.f64, 14)
-        for i in ti.static(range(11)):
+        for i in range(11):
             state[i] = base[i]
         state[11] = self.void_ratio[particle_id]
         state[12] = self.committed_jacobian[particle_id]
@@ -89,7 +89,7 @@ class StateDependentDruckerPragerModel(FiniteStrainDruckerPragerModel):
     @ti.func
     def set_history_state(self, particle_id, state):
         base = ti.Vector.zero(ti.f64, 11)
-        for i in ti.static(range(11)):
+        for i in range(11):
             base[i] = state[i]
         HenckyAssociatedPlasticityModel.set_history_state(self, particle_id, base)
         self.void_ratio[particle_id] = state[11]

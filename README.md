@@ -28,28 +28,28 @@ Have an example to share? Submit a [PR](https://github.com/Yihao-Shi/GeoTaichi/p
 ### [Material point method (MPM)](src/mpm/README.md#mpm-theory-log)
 #### Explicit MPM
 
-| [Column collapse](examples/mpm/column_collapse/DPmaterial.py) | [Dam break](examples/mpm/column_collapse/NewtonianFluid.py) | [Strip footing](examples/mpm/Footing2D/FootingTrescaLargeBBar.py) | [Progressive failure process of sensitive clay](examples/mpm/column_collapse2D/SoftDP.py) |
+| [Column collapse](examples/mpm/column_collapse/DPmaterial.py) | [Dam break](examples/mpm/column_collapse/NewtonianFluid.py) | [Adaptive MPM strip footing](examples/mpm/Footing/strip_footing_adaptive/README.md) | [Progressive failure process of sensitive clay](examples/mpm/sensitive_clay/sensitive_clay.py)|
 | --- | --- | --- | --- |
-| ![Column collapse](images/soil.gif) | ![Dam break](images/newtonian.gif) | ![Strip footing](images/footing.gif) | ![Clay](images/clay.gif) |
+| ![Column collapse](images/soil.gif) | ![Dam break](images/newtonian.gif) | ![Adaptive MPM strip footing, L2 grid and particle refinement](images/footing.gif) | ![Clay](images/clay.gif) |
 
-#### Semi-implicit incompressible MPM
+#### Semi-implicit Incompressible MPM
 
 | [Flow around a cylinder](examples/cfdem/FullyResolved/IBMFixedCylinder2D/cylinder_flow_ibm_2d.py) | [Lid-driven cavity](examples/mpm/IncompressibleFluid/lid_driven_cavity_2d/lid_driven_cavity_2d.py) | [Taylor–Green vortex](examples/mpm/IncompressibleFluid/taylor_green_vortex_2d/taylor_green_vortex_2d.py) |
 | --- | --- | --- |
-| ![Flow around a cylinder](images/cylinder_fluid.gif) | ![Lid-driven cavity](images/lid_driven_cavity_n64.gif) | ![Taylor–Green vortex](images/taylor_green_vortex.gif) |
+| ![Flow around a cylinder vorticity](images/cylinder_vorticity.gif) | ![Lid-driven cavity pressure](images/lid_driven_cavity_n64.gif) | ![Taylor–Green vortex speed](images/taylor_green_vortex.gif) |
 
 | [Dam break around a five-point star](examples/mpm/IncompressibleFluid/dam_break_visible_sdf_2d/dam_break_visible_sdf_2d.py) | [3D large-tank dam break](examples/mpm/IncompressibleFluid/large_tank_incompressible_3d/large_tank_incompressible_3d.py) | [3D piston wavemaker](examples/mpm/IncompressibleFluid/wavemaker_tank_3d/wavemaker_tank_3d.py) |
 | --- | --- | --- |
 | ![Dam break around a five-point star](images/dam_break_star_obstacle_2d.gif) | ![3D large-tank dam break](images/large_tank_3d.gif) | ![3D piston wavemaker](images/wavemaker_3d.gif) |
 
-#### Two-phase semi-implicit MPM
+#### Two-phase Semi-implicit MPM
 
-| [Dam break through a porous column](examples/mmpm/DamBreakPorousElastic2D/double_point_dam_break_porous_elastic.py) | [Submarine granular landslide](examples/mmpm/SubmarineLandslide/submarine_landslide_2d/submarine_landslide_2d.py) | [U-tube flow through a porous bed](examples/mmpm/UTubeFlow2D/u_tube_flow_2d.py) | [3D two-phase wavemaker](examples/mmpm/TwoPhaseWavemaker3D/two_layer_two_phase_wavemaker_3d.py) |
+| [Dam break through a porous column](examples/mmpm/DamBreakPorousElastic2D/double_point_dam_break_porous_elastic.py) | [Submarine granular landslide](examples/mmpm/SubmarineLandslide/submarine_landslide_2d/submarine_landslide_2d.py) | [U-tube flow through a porous bed](examples/mmpm/UTubeFlow2D/u_tube_flow_2d.py) | [Granular-water leakage](examples/mmpm/GranularWaterLeakage3D/granular_water_leakage_3d.py) |
 | --- | --- | --- | --- |
-| ![Dam break through a porous column](images/dam_break_porous_elastic_2d.gif) | ![Submarine granular landslide](images/submarine_landslide.gif) | ![U-tube flow through a porous bed](images/u_tube_flow_2d.gif) | ![3D two-phase wavemaker over a saturated slope](images/two_phase_wavemaker.gif) |
+| ![Dam break through a porous column](images/dam_break_porous_elastic_2d.gif) | ![Submarine granular landslide](images/submarine_landslide.gif) | ![U-tube flow through a porous bed](images/u_tube_flow_2d.gif) | ![Granular-water leakage](images/granular_water_leakage_3d.gif) |
 
 ### [Discrete element method (DEM)](src/dem/README.md#dem-theory-log)
-#### Explicit soft constraint
+#### Explicit Soft Constraint
 
 | [Granular packing](examples/dem/LevelSet/GranularAssemble/polydisperse/packing_generate.py) | [Screw and nut](examples/dem/LevelSet/ParticleParticle/screw_and_nut.py) | [Debris flow](examples/dem/LevelSet/DebrisFlow/) |
 | --- | --- | --- |
@@ -59,24 +59,28 @@ Have an example to share? Submit a [PR](https://github.com/Yihao-Shi/GeoTaichi/p
 | --- | --- |
 | ![Rotating drum](images/drums.gif) | ![Triaxial shear test](images/force_chain.gif) |
 
-#### Implicit affine body dynamics (ABD)
+#### Implicit Affine Body Dynamics (ABD)
 
-Implemented examples include [sphere–wall collision](examples/dem/AffineBody/sphere_wall_collision/sphere_wall_collision.py), [cube sliding](examples/dem/AffineBody/cube_incline_sliding/cube_incline_sliding.py), and a [multilink arm](examples/dem/AffineBody/robot_multilink_arm/robot_multilink_arm.py). 
+| [Cubes on an incline](examples/dem/AffineBody/five_cubes_incline/five_cubes_incline.py) | [Cube impact](examples/dem/AffineBody/thousand_cubes_heavy_ball_impact/thousand_cubes_heavy_ball_impact.py) | [Newton's cradle](examples/dem/AffineBody/newtons_cradle/newtons_cradle.py) |
+| --- | --- | --- |
+| ![Five cubes on an incline: sliding and static friction](images/abd_incline.gif)| ![Cube impact](images/abd_cubes.gif)| ![Newton's cradle: first 5 impacts](images/abd_cradle.gif)|
 
 ### [FEM](src/fem/README.md#fem-theory-log) / [IGA](src/iga/README.md#iga-theory-log)
 
-Implemented examples include an [implicit FEM cantilever](examples/fem/implicit_volume_cantilever/implicit_volume_cantilever.py), [cloth contact](examples/fem/implicit_cloth_contact/implicit_cloth_contact.py), an [IGA elastic beam](examples/iga/elastic_beam2d/elastic_beam2d.py).
+| [IGA elastic bar](examples/iga/explicit_cantilever_3d/explicit_cantilever_3d.py) | [IGA twisting](examples/iga/twisting_column_3d/twisting_column_3d.py) | [Cloth twisting with self-contact](examples/fem/cloth/implicit_cloth_twist/implicit_cloth_twist.py) |
+| --- | --- | --- |
+| ![Implicit IGA elastic bar: von Mises stress](images/iga_elastic_bar.gif) | ![IGA twisting bar: von Mises stress](images/iga_twisting.gif) | ![FEM cloth twisting with self-contact](images/fem_cloth_twisting.gif) |
 
 ### [FEM-MPM](src/fempm/README.md#fem--mpm-coupling-theory-log) / [IGA-MPM](src/igampm/README.md#iga--mpm-coupling-theory-log)
 
-#### Incremental potential contact
+#### Implicit Incremental Potential Contact
 
 | Flexible barrier ([FEM–MPM](examples/fempm/flexible_barrier/flexible_barrier.py) / [IGA–MPM](examples/igampm/flexible_barrier/flexible_barrier.py)) | Wavy plate collapse ([FEM–MPM](examples/fempm/wavy_plate_collapse/wavy_plate_collapse.py) / [IGA–MPM](examples/igampm/wavy_plate_collapse/wavy_plate_collapse.py)) | Axisymmetric CPT ([FEM–MPM](examples/fempm/cpt_dp/cpt_dp.py) / [IGA–MPM](examples/igampm/cpt_dp/cpt_dp.py)) |
 | --- | --- | --- |
 | ![IGA–MPM flexible barrier](images/flexible_barrier.gif) | ![IGA–MPM wavy plate collapse](images/wavy_plate_collapse.gif) | ![IGA–MPM axisymmetric CPT](images/cpt_dp.gif) |
 
 ### [FEM-DEM](src/fedem/README.md#fedem-coupling-theory-log)
-#### Explicit soft constraint
+#### Explicit Soft Constraint
 
 | [Hertz contact](examples/fedem/HertzContact/hertz_contact.py) | [Mixed funnel](examples/fedem/MixedFunnel/mixed_funnel.py) | [Isotropic compaction](examples/fedem/IsotropicCompaction/isotropic_compaction.py) |
 | --- | --- | --- |
@@ -89,13 +93,13 @@ Implemented examples include an [implicit FEM cantilever](examples/fem/implicit_
 | --- | --- | --- |
 | ![A sphere impacting granular bed](images/mpdem1.gif) | ![Granular column impacting cubic particles](images/mpdem2.gif) | ![Box sinking into water](images/box_sinking.gif) |
 
-#### Semi-implicit MPM with Immersed boundary method
+#### Semi-implicit MPM with Immersed Boundary Method
 
-| [Drafting, kissing and tumbling](examples/cfdem/FullyResolved/IBMDraftingKissingTumbling/drafting_kissing_tumbling.py) | [Sphere settling in oil](examples/cfdem/FullyResolved/IBMResolvedSphereSettling/sphere_settling.py) | [IBM dam break](examples/cfdem/FullyResolved/IBMLevelSetDamBreak3D/dam_break_levelset_ibm_3d.py) |
-| --- | --- | --- |
-| ![Drafting, kissing and tumbling](images/dkt.gif) | ![Sphere settling in oil](images/sphere_oil.gif) | ![IBM dam break](images/ibm_break.gif) |
+| [Drafting, kissing and tumbling](examples/cfdem/FullyResolved/IBMDraftingKissingTumbling/drafting_kissing_tumbling.py) | [Bunny impacting a saturated granular bed](examples/mmpm/TwoPhaseLSDEMCoupling/sphere_impact_submerged_bed_3d/sphere_impact_submerged_bed_3d.py) | [IBM dam break](examples/cfdem/FullyResolved/IBMLevelSetDamBreak3D/dam_break_levelset_ibm_3d.py) | [Wavemaker with LSDEM grains and a branched trunk](examples/mmpm/TwoPhaseLSDEMCoupling/wavemaker_lsdem_particles_3d/wavemaker_lsdem_particles_3d.py) |
+| --- | --- | --- | --- |
+| ![Drafting, kissing and tumbling](images/dkt.gif) | ![Bunny impacting a saturated granular bed](images/bunny_impact_saturated_soil.gif) | ![IBM dam break](images/ibm_break.gif) | ![Two-phase wavemaker with LSDEM grains and a branched trunk](images/two_phase_lsdem_wavemaker.gif) |
 
-#### Incremental potential contact
+#### Implicit Incremental Potential Contact
 
 Implemented routes include [Solid MPM–ABD impact](examples/mpdem/AffineBody/ABDImpactDP/direct_mpm_abd_impact.py). 
 
@@ -106,9 +110,9 @@ Implemented routes include [Solid MPM–ABD impact](examples/mpdem/AffineBody/AB
 - [FEM](src/fem/README.md#fem-theory-log) and [IGA](src/iga/README.md#iga-theory-log): volume, membrane, and cloth FEM; NURBS-based IGA; explicit and implicit mechanics with formulation-specific material and contact support.
 - [MPM–DEM](src/mpdem/README.md#mpdem-theory-log): explicit continuum–grain contact and semi-resolved incompressible fluid–sphere coupling.
 - [MPM–LSDEM](src/mpdem/README.md#mpdem-theory-log): explicit level-set contact, fully resolved incompressible IBM, and hybrid two-phase solid–fluid–grain coupling.
-- [MPM–ABD](src/mpdem/README.md#mpm-affinebody-route-selection): solid and hyperelastic soft-particle IPC, plus incompressible fluid IBM.
-- [FEM–DEM](src/fedem/README.md#fedem-coupling-theory-log): explicit grain–deformable-surface contact, demonstrated by [sphere–membrane interaction](examples/fedem/ExplicitSphereMembrane/explicit_sphere_membrane.py). 
-- [FEM–LSDEM](src/fedem/README.md#3-fem--lsdem-signed-distance-coupling): deforming FEM boundaries interact with rigid-particle signed-distance geometry; see the [level-set/soft-particle example](examples/fedem/ExplicitLevelSetSoftParticle/explicit_levelset_soft_particle.py).
+- [MPM–ABD](src/mpdem/README.md#mpm-affinebody-route-selection): solid and hyperelastic soft-particle IPC.
+- [FEM–DEM](src/fedem/README.md#fedem-coupling-theory-log): explicit grain–deformable-surface contact. 
+- [FEM–LSDEM](src/fedem/README.md#3-fem--lsdem-signed-distance-coupling): deforming FEM boundaries interact with rigid-particle signed-distance geometry.
 - [FEM–ABD](src/fedem/README.md#4-fully-coupled-affinebody--fem-barrier-ipc): fully coupled IPC for volume, membrane, and cloth structures.
 - [FEM–MPM](src/fempm/README.md#fem--mpm-coupling-theory-log): explicit contact exchange and fully coupled implicit IPC with elastic or plastic MPM.
 - [IGA–MPM](src/igampm/README.md#iga--mpm-coupling-theory-log): independent NURBS structures and MPM continua coupled through explicit contact or implicit point–NURBS IPC.
@@ -116,11 +120,11 @@ Implemented routes include [Solid MPM–ABD impact](examples/mpdem/AffineBody/AB
 
 ## Novel coupling formulations
 
-GeoTaichi introduces three new coupling formulations: MPM–ABD IPC, incompressible MPM–LSDEM volume-fraction IBM, and IGA–MPM point–NURBS contact coupling. These contributions concern the coupling operators and formulations built on established MPM, ABD, LSDEM, IGA, IBM, and IPC methods. Their derivations, implementation details, and concrete examples are documented in the linked theory logs below.
+GeoTaichi introduces three new coupling formulations: MPM–ABD IPC, incompressible MPM–DEM coupling (fully resolved LSDEM volume-fraction IBM and semi-resolved sphere coupling), and IGA–MPM point–NURBS contact coupling. These contributions concern the coupling operators and formulations built on established MPM, ABD, DEM, LSDEM, IGA, IBM, and IPC methods. Their derivations, implementation details, and concrete examples are documented in the linked theory logs below.
 
 | Formulation | Method and scope | Theory |
 | --- | --- | --- |
-| Incompressible material point method–level-set DEM coupling (MPM–LSDEM IBM) | Fully resolved 3D coupling uses rigid-body signed-distance geometry to estimate solid cell fractions, apply volume-fraction immersed-boundary forcing, and exchange hydrodynamic loads with LSDEM bodies. The fluid free surface and rigid-body SDF have distinct roles. | [Volume-fraction IBM derivation](src/mpdem/README.md#10-fully-resolved-lsdem-and-affinebody-volume-fraction-ibm) |
+| Incompressible material point method–DEM coupling | Fully resolved 3D MPM–LSDEM uses rigid-body SDFs to estimate cell solid fractions and apply volume-fraction IBM forcing. Semi-resolved 3D MPM–sphere DEM uses normalized Gaussian volume mapping, porosity-aware pressure projection, and drag/pressure-force exchange. | [LSDEM volume-fraction IBM](src/mpdem/README.md#10-fully-resolved-lsdem-and-affinebody-volume-fraction-ibm); [Semi-resolved sphere coupling](src/mpdem/README.md#9-semi-resolved-incompressible-sphere-coupling) |
 | Isogeometric analysis–material point method coupling (IGA–MPM) | Independent deformable NURBS IGA structures and MPM continua interact through point–NURBS contact. The linked 3D examples demonstrate explicit DEM-law exchange and fully coupled implicit IPC with elastic or plastic MPM blocks. | [IGA–MPM theory log](src/igampm/README.md#iga--mpm-coupling-theory-log) |
 | Material point method–affine body dynamics coupling (MPM–ABD) | Fully coupled solid MPM–ABD IPC couples active MPM-grid displacements and affine-body controls, including supported finite-strain plasticity. This route is currently 3D with lagged friction. Hyperelastic soft-MPM–ABD IPC and incompressible fluid–ABD IBM are separate routes. | [MPM–ABD derivation](src/mpdem/README.md#15-solid-mpm--affinebody-ipc-and-plasticity) |
 
@@ -186,7 +190,7 @@ Documentation is maintained alongside the source. Module READMEs describe suppor
 - Core solvers: [MPM](src/mpm/README.md#mpm-theory-log), [DEM](src/dem/README.md#dem-theory-log), [FEM](src/fem/README.md#fem-theory-log), and [IGA](src/iga/README.md#iga-theory-log).
 - Coupled solvers: [MPM–DEM](src/mpdem/README.md#mpdem-theory-log), [FEM–DEM](src/fedem/README.md#fedem-coupling-theory-log), [FEM–MPM](src/fempm/README.md#fem--mpm-coupling-theory-log), and [IGA–MPM](src/igampm/README.md#iga--mpm-coupling-theory-log).
 - Shared models and numerics: [Constitutive models](src/physics_model/consititutive_model/README.md), [Contact models](src/physics_model/contact_model/README.md), [Contact detection](src/contact_detection/README.md), and [Linear solvers](src/linear_solver/README.md).
-- Usage and development: [Python examples](examples/), [Solver integration principles](docs/solver_integration_principles.md), [Blender add-on](blender/README.md), [Developer tools](tools/README.md), and [Tests and verification](tests/README.md).
+- Usage and development: [Python examples](examples/), [Solver integration principles](agent/SOLVER_INTEGRATION_PRINCIPLES.md), [Blender add-on](blender/README.md), [Developer tools](tools/README.md), and [Tests and verification](tests/README.md).
 
 Start with the README for your solver and a matching Python example. Additional derivations and technical notes are available in [docs](docs/helper/geotaichi_user_theory_manual.pdf).
 
@@ -252,6 +256,91 @@ V0.2 (July 1, 2024)
 
 - Fix some bugs in DEM and MPM modules, see [details](https://github.com/Yihao-Shi/GeoTaichi/releases/tag/GeoTaichi-v0.2)
 - Add some advanced constitutive model
+
+V0.1 (January 21, 2024)
+
+- First release GeoTaichi
+l
+
+V0.1 (January 21, 2024)
+
+- First release GeoTaichi
+l
+
+V0.1 (January 21, 2024)
+
+- First release GeoTaichi
+l
+
+V0.1 (January 21, 2024)
+
+- First release GeoTaichi
+l
+
+V0.1 (January 21, 2024)
+
+- First release GeoTaichi
+l
+
+V0.1 (January 21, 2024)
+
+- First release GeoTaichi
+l
+
+V0.1 (January 21, 2024)
+
+- First release GeoTaichi
+l
+
+V0.1 (January 21, 2024)
+
+- First release GeoTaichi
+l
+
+V0.1 (January 21, 2024)
+
+- First release GeoTaichi
+l
+
+V0.1 (January 21, 2024)
+
+- First release GeoTaichi
+l
+
+V0.1 (January 21, 2024)
+
+- First release GeoTaichi
+l
+
+V0.1 (January 21, 2024)
+
+- First release GeoTaichi
+l
+
+V0.1 (January 21, 2024)
+
+- First release GeoTaichi
+l
+
+V0.1 (January 21, 2024)
+
+- First release GeoTaichi
+l
+
+V0.1 (January 21, 2024)
+
+- First release GeoTaichi
+l
+
+V0.1 (January 21, 2024)
+
+- First release GeoTaichi
+l
+
+V0.1 (January 21, 2024)
+
+- First release GeoTaichi
+l
 
 V0.1 (January 21, 2024)
 

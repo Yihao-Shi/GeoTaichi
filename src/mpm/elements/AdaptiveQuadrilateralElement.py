@@ -4,17 +4,15 @@ import numpy as np
 import taichi as ti
 
 from src.mpm.Simulation import Simulation
-from src.mpm.elements.AdaptiveNodeMap import (
-    AdaptiveNodeMap,
-    build_bridging_node_weights,
-    build_hanging_constraint_table,
-)
+from src.mpm.elements.AdaptiveNodeMap import AdaptiveNodeMap
+from src.mpm.BaseKernel import refinement_metrics
 from src.mpm.elements.AdaptiveQuadrilateralKernel import (
     adaptive_bridging_global_update_2d,
     adaptive_coarse_global_update_bbar_2d,
     adaptive_coarse_global_update_2d,
     adaptive_global_update_bbar_2d,
     adaptive_global_update_2d,
+    balance_refined_cells_2d,
     apply_hanging_penalty_impulse_list_2d,
     apply_hanging_penalty_impulse_2d,
     apply_hanging_penalty_velocity_list_2d,
@@ -134,8 +132,6 @@ class AdaptiveQuadrilateralElement(QuadrilateralElement4Nodes):
         self.bridge_body_id = None
         self.hanging_node_count = None
         self.hanging_touched_node_count = None
-        self.hanging_node_count_host = 0
-        self.hanging_touched_node_count_host = 0
         self.hanging_node_id = None
         self.hanging_lookup = None
         self.hanging_master_id = None
@@ -201,6 +197,14 @@ class AdaptiveQuadrilateralElement(QuadrilateralElement4Nodes):
 
     def validate_solver(self, sims: Simulation):
         unsupported = []
+        if sims.material_type != "Solid":
+            unsupported.append("material_type='Solid'")
+        if sims.mode != "Normal":
+            unsupported.append("mode='Normal'")
+        if sims.mls:
+            unsupported.append("moving_least_square=False")
+        if sims.ptraction_method == "Virtual":
+            unsupported.append("Stable or Nanson particle traction")
         if sims.dimension != 2:
             unsupported.append("2-D")
         if sims.is_2DAxisy and sims.shape_function != "GIMP":
@@ -233,7 +237,10 @@ class AdaptiveQuadrilateralElement(QuadrilateralElement4Nodes):
         ):
             unsupported.append("Linear, GIMP, QuadBSpline, or CubicBSpline shape function")
         if sims.contact_detection:
-            unsupported.append("contact disabled")
+            if sims.solver_type != "Explicit":
+                unsupported.append("explicit solver for contact")
+            if not self.strong_hanging_constraint or self.bridging_domain:
+                unsupported.append("ShapeFunction hanging constraints without BridgingDomain for contact")
         if sims.stabilize is not None:
             if sims.stabilize == "B-Bar Method":
                 if sims.solver_type != "Explicit":
@@ -378,7 +385,11 @@ class AdaptiveQuadrilateralElement(QuadrilateralElement4Nodes):
             self.compact_to_logical,
             self.fine_logical_to_compact,
         )
-        self.penalty_impulse = ti.Vector.field(2, float, shape=(self.gridSum, self.grid_level))
+        self.penalty_impulse = (
+            ti.Vector.field(2, float, shape=(self.gridSum, self.grid_level))
+            if not self.strong_hanging_constraint
+            else None
+        )
         if self.bridging_domain:
             self.bridge_coarse_weight = ti.field(
                 float,
@@ -399,43 +410,31 @@ class AdaptiveQuadrilateralElement(QuadrilateralElement4Nodes):
             self.hanging_shape_overflow = ti.field(int, shape=())
         self.calculate = self.calc_shape_fn_adaptive
 
+    @property
+    def hanging_node_count_host(self):
+        return 0 if self.hanging_node_count is None else int(self.hanging_node_count[None])
+
+    @property
+    def hanging_touched_node_count_host(self):
+        return 0 if self.hanging_touched_node_count is None else int(self.hanging_touched_node_count[None])
+
     def _update_hanging_constraint_table(self, refined_cell):
         if self.bridging_domain:
             return
-        slave_ids, master_ids, master_weights, touched_ids = build_hanging_constraint_table(
+        if not hasattr(refined_cell, "snode"):
+            self.refined_cell.from_numpy(np.asarray(refined_cell, dtype=np.uint8).reshape(-1))
+            refined_cell = self.refined_cell
+        self.node_map.device.build_constraints(
             refined_cell,
-            self.coarse_cnum,
-            self.gnum,
-            self.node_map.logical_to_compact,
-            self.node_map.compact_to_logical,
-            self.node_map.next_compact_id,
-            self.refinement_ratio,
-            self.max_level,
+            self.logical_to_compact,
+            self.hanging_node_count,
+            self.hanging_node_id,
+            self.hanging_lookup,
+            self.hanging_master_id,
+            self.hanging_master_weight,
+            self.hanging_touched_node_count,
+            self.hanging_touched_node_id,
         )
-        assert slave_ids.size <= self.gridSum
-        assert touched_ids.size <= self.gridSum
-
-        self.hanging_node_count[None] = int(slave_ids.size)
-        self.hanging_touched_node_count[None] = int(touched_ids.size)
-        self.hanging_node_count_host = int(slave_ids.size)
-        self.hanging_touched_node_count_host = int(touched_ids.size)
-        lookup = np.full(self.gridSum, -1, dtype=np.int32)
-        if slave_ids.size > 0:
-            lookup[slave_ids] = np.arange(slave_ids.size, dtype=np.int32)
-        self.hanging_lookup.from_numpy(lookup)
-        if slave_ids.size > 0:
-            node_ids = np.zeros(self.gridSum, dtype=np.int32)
-            masters = np.zeros((self.gridSum, 4), dtype=np.int32)
-            weights = np.zeros((self.gridSum, 4), dtype=np.float64)
-            touched = np.zeros(self.gridSum, dtype=np.int32)
-            node_ids[: slave_ids.size] = slave_ids
-            masters[: slave_ids.size] = master_ids
-            weights[: slave_ids.size] = master_weights
-            touched[: touched_ids.size] = touched_ids
-            self.hanging_node_id.from_numpy(node_ids)
-            self.hanging_master_id.from_numpy(masters)
-            self.hanging_master_weight.from_numpy(weights)
-            self.hanging_touched_node_id.from_numpy(touched)
 
     def calc_shape_fn_adaptive(self, particleNum, particle):
         self.active_particle_num = int(particleNum[0])
@@ -674,28 +673,39 @@ class AdaptiveQuadrilateralElement(QuadrilateralElement4Nodes):
         )
         new_refined_cells_added = False
         if update_grid or follow_particles:
-            if scene.material.matProps.size() != 2:
-                raise RuntimeError("AdaptiveGrid currently supports one deformable material")
-
             self.refinement_seed.fill(0)
             if update_grid:
                 self.last_refine_step = sims.current_step
-                material = scene.material.matProps[1]
-                marker = self._select_refinement_marker(
-                    material,
-                    stress_as_matrix=sims.configuration == "TLMPM",
-                )
-                marker(
-                    self.refine_threshold,
-                    self.max_level,
-                    self.coarse_igrid_size,
-                    self.coarse_cnum,
-                    int(scene.particleNum[0]),
-                    scene.particle,
-                    scene.material.stateVars,
-                    self.refined_cell,
-                    self.refinement_seed,
-                )
+                for material_id in range(1, scene.material.matProps.size()):
+                    material = scene.material.matProps[material_id]
+                    marker = self._select_refinement_marker(
+                        material,
+                        stress_as_matrix=sims.configuration == "TLMPM",
+                    )
+                    marker(
+                        self.refine_threshold,
+                        self.max_level,
+                        self.coarse_igrid_size,
+                        self.coarse_cnum,
+                        int(scene.particleNum[0]),
+                        scene.particle,
+                        scene.material.stateVars,
+                        self.refined_cell,
+                        self.refinement_seed,
+                        material_id,
+                    )
+            if update_grid and self.buffer_cells > 0:
+                count_refined_cells_2d(self.refinement_seed, self.refinement_seed_count)
+                if int(self.refinement_seed_count[None]) > 0:
+                    for _ in range(self.buffer_cells):
+                        self.refined_cell_buffer.fill(0)
+                        dilate_refined_cells_2d(
+                            self.coarse_cnum,
+                            self.refinement_seed,
+                            self.refined_cell_buffer,
+                        )
+                        merge_refined_cells_2d(self.refinement_seed, self.refined_cell_buffer)
+            # Buffer physical indicators only; buffering migrants causes recursive refinement growth.
             if follow_particles:
                 mark_refined_cells_migrated_particles_2d(
                     self.coarse_igrid_size,
@@ -706,54 +716,46 @@ class AdaptiveQuadrilateralElement(QuadrilateralElement4Nodes):
                     self.particle_refined,
                     self.refinement_seed,
                 )
-            count_refined_cells_2d(self.refinement_seed, self.refinement_seed_count)
-            if int(self.refinement_seed_count[None]) > 0:
-                for _ in range(self.buffer_cells):
-                    self.refined_cell_buffer.fill(0)
-                    dilate_refined_cells_2d(
+            count_new_refined_cells_2d(
+                self.refined_cell,
+                self.refinement_seed,
+                self.new_refined_cell_count,
+            )
+            if int(self.new_refined_cell_count[None]) > 0:
+                merge_refined_cells_2d(self.refined_cell, self.refinement_seed)
+                source, target = self.refined_cell, self.refined_cell_buffer
+                for _ in range(self.max_level - 1):
+                    balance_refined_cells_2d(
                         self.coarse_cnum,
-                        self.refinement_seed,
-                        self.refined_cell_buffer,
+                        self.max_level,
+                        source,
+                        target,
                     )
-                    merge_refined_cells_2d(self.refinement_seed, self.refined_cell_buffer)
-                count_new_refined_cells_2d(
-                    self.refined_cell,
-                    self.refinement_seed,
-                    self.new_refined_cell_count,
-                )
-                if int(self.new_refined_cell_count[None]) > 0:
-                    refined_cell = np.maximum(
-                        self.refined_cell.to_numpy(),
-                        self.refinement_seed.to_numpy(),
-                    ).astype(np.uint8)
-                    refined_cell = self._balance_refined_cell_levels(refined_cell)
-                    refined_cells = int(np.count_nonzero(refined_cell))
-                    refined_ratio = refined_cells / self.cellSum
-                    refined_extra_cells = self._refined_extra_cell_count(refined_cell)
-                    if refined_extra_cells > self.max_refined_extra_cells:
-                        refined_extra_ratio = refined_extra_cells / (self.cellSum * self.refined_cell_expansion)
-                        raise RuntimeError(
-                            f"AdaptiveGrid refined coarse-cell ratio "
-                            f"{refined_ratio:.6f} "
-                            f"(extra fine-cell ratio {refined_extra_ratio:.6f}) "
-                            f"exceeds AdaptiveGrid/RefineRatio="
-                            f"{self.max_refined_ratio:.6f}. Increase RefineRatio "
-                            "or tighten the refinement criterion."
-                        )
-                    self.node_map.ensure_refined_cells(refined_cell, sims.shape_function)
-                    self.refined_cell.from_numpy(refined_cell)
-                    if self.bridging_domain:
-                        self.bridge_coarse_weight.from_numpy(
-                            build_bridging_node_weights(
-                                refined_cell,
-                                self.coarse_cnum,
-                                self.bridging_cells,
-                            )
-                        )
-                    else:
-                        self._update_hanging_constraint_table(refined_cell)
-                    self.last_reported_refined_cells = refined_cells
-                    new_refined_cells_added = True
+                    source, target = target, source
+                if source is not self.refined_cell:
+                    merge_refined_cells_2d(self.refined_cell, source)
+                metrics = refinement_metrics(self.refined_cell, 2)
+                refined_cells, refined_extra_cells = int(metrics[0]), int(metrics[1])
+                refined_ratio = refined_cells / self.cellSum
+                if refined_extra_cells > self.max_refined_extra_cells:
+                    refined_extra_ratio = refined_extra_cells / (self.cellSum * self.refined_cell_expansion)
+                    raise RuntimeError(
+                        f"AdaptiveGrid refined coarse-cell ratio "
+                        f"{refined_ratio:.6f} "
+                        f"(extra fine-cell ratio {refined_extra_ratio:.6f}) "
+                        f"exceeds AdaptiveGrid/RefineRatio="
+                        f"{self.max_refined_ratio:.6f}. Increase RefineRatio "
+                        "or tighten the refinement criterion."
+                    )
+                self.node_map.ensure_refined_cells_device(self.refined_cell, sims.shape_function)
+                if self.bridging_domain:
+                    self.node_map.device.build_bridge_weights(
+                        self.refined_cell, self.bridging_cells, self.bridge_coarse_weight
+                    )
+                else:
+                    self._update_hanging_constraint_table(self.refined_cell)
+                self.last_reported_refined_cells = refined_cells
+                new_refined_cells_added = True
 
         old_particle_num = int(scene.particleNum[0])
         if old_particle_num > self.last_observed_particle_num or new_refined_cells_added:
@@ -765,12 +767,7 @@ class AdaptiveQuadrilateralElement(QuadrilateralElement4Nodes):
             or sims.current_step % self.particle_split_interval == 0
         )
         split_parents = 0
-        if (
-            self.refine_particles
-            and self.last_reported_refined_cells > 0
-            and self.remaining_unrefined_particles != 0
-            and split_update
-        ):
+        if self.refine_particles and self.last_reported_refined_cells > 0 and split_update:
             split_parents = count_particles_to_split_2d(
                 self.coarse_igrid_size,
                 self.coarse_cnum,
@@ -778,6 +775,7 @@ class AdaptiveQuadrilateralElement(QuadrilateralElement4Nodes):
                 scene.particle,
                 self.refined_cell,
                 self.particle_refined,
+                self.particle_size,
                 self.unrefined_particle_count,
             )
             self.remaining_unrefined_particles = int(self.unrefined_particle_count[None]) - split_parents
@@ -813,6 +811,7 @@ class AdaptiveQuadrilateralElement(QuadrilateralElement4Nodes):
                     self.particle_traction_next,
                     self.refined_cell,
                     self.particle_refined,
+                    self.particle_size,
                 )
                 required_particle_traction_num = ptraction_count + 3 * split_traction_constraints
                 assert required_particle_traction_num <= sims.nptraction, (
@@ -831,11 +830,6 @@ class AdaptiveQuadrilateralElement(QuadrilateralElement4Nodes):
                     old_particle_num,
                     ptraction_count,
                     sims.is_2DAxisy,
-                    sims.material_type
-                    in (
-                        "TwoPhaseSingleLayer",
-                        "TwoPhaseDoubleLayer",
-                    ),
                     self.refined_cell,
                     scene.particle,
                     scene.material.stateVars,
@@ -866,7 +860,7 @@ class AdaptiveQuadrilateralElement(QuadrilateralElement4Nodes):
                     self.new_particle_num,
                 )
             scene.particleNum[0] = int(self.new_particle_num[None])
-            scene.material.update_material_mapping(
+            scene.material.update_material_mapping_device(
                 scene.particle,
                 int(scene.particleNum[0]),
             )
@@ -888,43 +882,8 @@ class AdaptiveQuadrilateralElement(QuadrilateralElement4Nodes):
         return (
             self.refine_particles
             and self.last_reported_refined_cells > 0
-            and self.remaining_unrefined_particles != 0
             and sims.current_step % self.particle_split_interval == 0
         )
-
-    def _refined_extra_cell_count(self, refined_cell):
-        levels = np.asarray(refined_cell, dtype=np.int32)
-        factors = np.power(self.refinement_ratio, 2 * levels, dtype=np.int64) - 1
-        return int(np.sum(factors))
-
-    def _balance_refined_cell_levels(self, refined_cell):
-        levels = (
-            np.asarray(refined_cell, dtype=np.uint8)
-            .reshape(
-                tuple(np.asarray(self.coarse_cnum)),
-                order="F",
-            )
-            .copy()
-        )
-        changed = True
-        while changed:
-            changed = False
-            for cell in np.ndindex(*levels.shape):
-                current = int(levels[cell])
-                for axis in range(2):
-                    for direction in (-1, 1):
-                        neighbor = list(cell)
-                        neighbor[axis] += direction
-                        if not 0 <= neighbor[axis] < levels.shape[axis]:
-                            continue
-                        neighbor = tuple(neighbor)
-                        target = max(current, int(levels[neighbor]) - 1)
-                        target = min(target, self.max_level)
-                        if target > current:
-                            levels[cell] = target
-                            current = target
-                            changed = True
-        return np.ascontiguousarray(levels.flatten(order="F"), dtype=np.uint8)
 
     def apply_hanging_constraints(self, mass_cutoff, dt, node, particle):
         if self.strong_hanging_constraint:
@@ -958,10 +917,8 @@ class AdaptiveQuadrilateralElement(QuadrilateralElement4Nodes):
                     self.penalty_impulse,
                 )
             else:
-                hanging_count = self.hanging_node_count_host
-                if hanging_count <= 0:
-                    return
-                touched_count = self.hanging_touched_node_count_host
+                hanging_count = self.hanging_node_count
+                touched_count = self.hanging_touched_node_count
                 assemble_hanging_penalty_impulse_list_2d(
                     mass_cutoff,
                     self.penalty,
@@ -1017,10 +974,8 @@ class AdaptiveQuadrilateralElement(QuadrilateralElement4Nodes):
                     self.penalty_impulse,
                 )
             else:
-                hanging_count = self.hanging_node_count_host
-                if hanging_count <= 0:
-                    return
-                touched_count = self.hanging_touched_node_count_host
+                hanging_count = self.hanging_node_count
+                touched_count = self.hanging_touched_node_count
                 assemble_hanging_penalty_impulse_list_2d(
                     mass_cutoff,
                     self.penalty,

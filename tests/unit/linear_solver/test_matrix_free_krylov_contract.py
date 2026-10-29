@@ -91,6 +91,24 @@ def test_pcg_uses_true_residual_for_stiff_jacobi_system(taichi_runtime):
 
 
 @pytest.mark.matrix_free
+@pytest.mark.parametrize("scale", [1.0, 1.0e8])
+def test_pcg_preserves_poisson_conjugacy_and_checks_scaled_residual(taichi_runtime, scale):
+    size = 96
+    matrix = scale * (2.0 * np.eye(size) - np.eye(size, k=1) - np.eye(size, k=-1))
+    rhs = scale * np.ones(size)
+    operator = _DenseOperator(matrix)
+    b, x = _scalar_fields(rhs)
+    diagonal = ti.field(dtype=ti.f64, shape=size)
+    diagonal.from_numpy(np.diag(matrix))
+    solver = MatrixFreePCG(size)
+
+    assert solver.solve(operator, b, x, diagonal, size, tol=1e-10, rel_tol=1e-11, maxiter=size)
+    assert 32 < solver.last_iterations <= size
+    assert np.linalg.norm(rhs - matrix @ x.to_numpy()) <= max(1e-10, 1e-11 * np.linalg.norm(rhs))
+    np.testing.assert_allclose(x.to_numpy(), np.linalg.solve(matrix, rhs), rtol=1e-11)
+
+
+@pytest.mark.matrix_free
 def test_pcg_verifies_recursive_residual_before_reporting_convergence(
     taichi_runtime,
 ):
@@ -189,14 +207,16 @@ def test_coordinate_sparse_propagates_pcg_failure_state(taichi_runtime):
 
 
 @pytest.mark.coo
-def test_coordinate_sparse_forwards_pcg_relative_tolerance(taichi_runtime):
+@pytest.mark.parametrize("preconditioned", [False, True])
+@pytest.mark.parametrize("symmetric", [False, True])
+def test_coordinate_sparse_forwards_relative_tolerance(taichi_runtime, preconditioned, symmetric):
     matrix = np.asarray([[4.0, 1.0], [1.0, 3.0]], dtype=np.float64)
     rows, columns = np.nonzero(matrix)
     sparse = CoordinateSparseMatrix(
         nonzeros=rows.size,
         degree_of_freedom=2,
-        preconditioned=True,
-        symmetry=True,
+        preconditioned=preconditioned,
+        symmetry=symmetric,
     )
     sparse.rows.from_numpy(rows.astype(np.int32))
     sparse.cols.from_numpy(columns.astype(np.int32))
@@ -209,7 +229,7 @@ def test_coordinate_sparse_forwards_pcg_relative_tolerance(taichi_runtime):
     succeeded = sparse.solve(
         b,
         x,
-        diagonal,
+        *([diagonal] if preconditioned else []),
         tol=1.0e-12,
         rel_tol=0.3,
         maxiter=1,
@@ -260,11 +280,13 @@ def test_hash_triplet_pcg_uses_same_true_residual_contract(
 
 
 @pytest.mark.hash_triplet
+@pytest.mark.parametrize("scale", [1.0e-12, 1.0, 1.0e12])
 def test_hash_triplet_pcg_supports_scale_invariant_relative_tolerance(
     taichi_runtime,
+    scale,
 ):
-    dense = np.asarray([[4.0, 1.0], [1.0, 3.0]], dtype=np.float64)
-    rhs = np.asarray([1.0, -2.0], dtype=np.float64)
+    dense = scale * np.asarray([[4.0, 1.0], [1.0, 3.0]], dtype=np.float64)
+    rhs = scale * np.asarray([1.0, -2.0], dtype=np.float64)
     matrix = BuildTriplet(
         dim=1,
         max_pairs_num=3,
@@ -278,7 +300,7 @@ def test_hash_triplet_pcg_supports_scale_invariant_relative_tolerance(
     matrix.assemble_scalar_triplets(
         np.asarray([0, 0, 1], dtype=np.int32),
         np.asarray([0, 1, 1], dtype=np.int32),
-        np.asarray([4.0, 1.0, 3.0], dtype=np.float64),
+        dense[[0, 0, 1], [0, 1, 1]],
     )
     matrix.finalize_taichi_assembly()
 
@@ -286,14 +308,14 @@ def test_hash_triplet_pcg_supports_scale_invariant_relative_tolerance(
         matrix,
         rhs=rhs.reshape((2, 1)),
         active_nodes=2,
-        tol=1.0e-12,
+        tol=scale * 1.0e-12,
         maxiter=1,
     )
     relative = _solve_triplet_device_fields(
         matrix,
         rhs=rhs.reshape((2, 1)),
         active_nodes=2,
-        tol=1.0e-12,
+        tol=0.0,
         rel_tol=0.3,
         maxiter=1,
     )
@@ -304,6 +326,9 @@ def test_hash_triplet_pcg_supports_scale_invariant_relative_tolerance(
     assert relative["initial_residual"] == pytest.approx(np.linalg.norm(rhs))
     assert relative["convergence_tolerance"] == pytest.approx(0.3 * np.linalg.norm(rhs))
     assert relative["residual"] <= relative["convergence_tolerance"]
+    direction = rhs / np.diag(dense)
+    expected = direction * (rhs @ direction) / (direction @ dense @ direction)
+    np.testing.assert_allclose(relative["x"].ravel(), expected, rtol=1.0e-12, atol=0.0)
 
 
 @pytest.mark.hash_triplet

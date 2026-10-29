@@ -5,7 +5,6 @@ import pytest
 
 import src.mpm.config as config
 
-
 pytestmark = [pytest.mark.integration, pytest.mark.slow, pytest.mark.serial]
 
 
@@ -22,6 +21,7 @@ def _run_ipc_contact_case(solver_cls, label, output_path):
     solver = solver_cls(
         domain=[0.25, 0.15],
         dx=0.05,
+        scale=1.0,
         dt=1.0e-4,
         bodies=body,
         ground=ground,
@@ -91,6 +91,7 @@ def _run_ipc_contact_case(solver_cls, label, output_path):
     assert sym_max <= 1.0e-8
 
 
+@pytest.mark.isolated_dimension(2)
 def test_igampm_ipc_hash_contact_is_symmetric_for_ul_and_tl(
     taichi_runtime,
     tmp_path,

@@ -390,7 +390,7 @@
           "locations": [
             {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/ElasPlasticity.py",
-              "line": 100,
+              "line": 105,
               "reader": "GetAlternative"
             }
           ]
@@ -535,7 +535,7 @@
           "locations": [
             {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/ElasPlasticity.py",
-              "line": 101,
+              "line": 106,
               "reader": "GetAlternative"
             },
             {
@@ -3809,11 +3809,6 @@
               "reader": "GetAlternative"
             },
             {
-              "source": "src/physics_model/consititutive_model/infinitesimal_strain/ElasPlasticity.py",
-              "line": 108,
-              "reader": "GetAlternative"
-            },
-            {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/ModifiedCamClay.py",
               "line": 81,
               "reader": "GetAlternative"
@@ -4251,21 +4246,11 @@
           ]
         },
         {
-          "name": "SoftenParameter",
-          "locations": [
-            {
-              "source": "src/physics_model/consititutive_model/infinitesimal_strain/ElasPlasticity.py",
-              "line": 96,
-              "reader": "GetAlternative"
-            }
-          ]
-        },
-        {
           "name": "SoftType",
           "locations": [
             {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/ElasPlasticity.py",
-              "line": 94,
+              "line": 100,
               "reader": "GetAlternative"
             }
           ]
@@ -5255,14 +5240,12 @@
         "examples/mpm/AxisyExample/ShapeTest.py",
         "examples/mpm/AxisyExample/TractionTest.py",
         "examples/mpm/AxisyExample/axisymmetric_annulus.py",
-        "examples/mpm/Contact/CPT2D/Pile2DAxisy.py",
-        "examples/mpm/Contact/CPT2D/Pile2DAxisyMCC.py",
-        "examples/mpm/Contact/CPT2D/Pile2DAxisyMCC1.py",
-        "examples/mpm/Contact/CPT2D/Pile2DAxisy_dem.py",
-        "examples/mpm/Contact/CPT2D/coupled_cpt.py",
-        "examples/mpm/Contact/CPT2D/cpt_reference.py",
+        "examples/mpm/CPT2D/Pile2DAxisy.py",
+        "examples/mpm/CPT2D/Pile2DAxisyMCC.py",
+        "examples/mpm/CPT2D/Pile2DAxisyMCC1.py",
+        "examples/mpm/CPT2D/Pile2DAxisy_dem.py",
+        "examples/mpm/CPT2D/cpt_reference.py",
         "examples/mpm/Contact/FlexibleBarrier/barrier.py",
-        "examples/mpm/Contact/FlexibleBarrier/coupled_barrier.py",
         "examples/mpm/Contact/Footing/FootingLargeStrain/MultiResolution/draw/draw.py",
         "examples/mpm/Contact/Footing/FootingLargeStrain/draw/draw.py",
         "examples/mpm/Contact/Footing/FootingSmallStrain/bbar/grids/draw/draw.py",
@@ -5430,12 +5413,15 @@
         "examples/mpm/direct/implicit_ulmpm_block2d.py",
         "examples/mpm/mpm2stl/test_MPMstl.py",
         "examples/mpm/random_field/RandomField.py",
-        "examples/mpm/random_field/flat_slope.py"
+        "examples/mpm/random_field/flat_slope.py",
+        "examples/mpm/sensitive_clay/draw/evaluate_sensitive_clay.py",
+        "examples/mpm/sensitive_clay/draw/render_paraview.py",
+        "examples/mpm/sensitive_clay/sensitive_clay.py"
       ],
       "summary": {
         "method_count": 45,
-        "configuration_key_count": 363,
-        "example_count": 184
+        "configuration_key_count": 362,
+        "example_count": 187
       }
     },
     "dem": {
@@ -7652,6 +7638,26 @@
           ]
         },
         {
+          "name": "linear_relative_tolerance",
+          "locations": [
+            {
+              "source": "src/dem/Simulation.py",
+              "line": 675,
+              "reader": "get"
+            }
+          ]
+        },
+        {
+          "name": "linear_tolerance",
+          "locations": [
+            {
+              "source": "src/dem/Simulation.py",
+              "line": 673,
+              "reader": "get"
+            }
+          ]
+        },
+        {
           "name": "LocalDamping",
           "locations": [
             {
@@ -8428,6 +8434,16 @@
               "source": "src/dem/generator/LoadFromFile.py",
               "line": 314,
               "reader": "GetEssential"
+            }
+          ]
+        },
+        {
+          "name": "newmark",
+          "locations": [
+            {
+              "source": "src/dem/Simulation.py",
+              "line": 528,
+              "reader": "get"
             }
           ]
         },
@@ -10503,6 +10519,7 @@
         "examples/dem/AffineBody/cube_plane_sliding/cube_plane_sliding.py",
         "examples/dem/AffineBody/diffsim_ball_abd/diffsim_ball_abd.py",
         "examples/dem/AffineBody/hundred_spheres_box/hundred_spheres_box.py",
+        "examples/dem/AffineBody/newtons_cradle/newtons_cradle.py",
         "examples/dem/AffineBody/robot_multilink_arm/robot_multilink_arm.py",
         "examples/dem/AffineBody/sphere_wall_collision/sphere_wall_collision.py",
         "examples/dem/AffineBody/thousand_cubes_heavy_ball_impact/thousand_cubes_heavy_ball_impact.py",
@@ -10719,8 +10736,8 @@
       ],
       "summary": {
         "method_count": 55,
-        "configuration_key_count": 290,
-        "example_count": 218
+        "configuration_key_count": 293,
+        "example_count": 219
       }
     },
     "mpdem": {
@@ -12793,7 +12810,7 @@
           "signature": "add_contact(self, model='IPC', **kwargs)",
           "source": "src/fem/mainFEM.py",
           "line": 317,
-          "doc": "Attach ``BarrierIPC`` or augmented-Lagrangian ``SemiIPC`` contact."
+          "doc": "Attach ``BarrierIPC`` contact."
         },
         {
           "name": "add_contact_property",
@@ -12976,7 +12993,7 @@
           "locations": [
             {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/ElasPlasticity.py",
-              "line": 100,
+              "line": 105,
               "reader": "GetAlternative"
             }
           ]
@@ -13066,7 +13083,7 @@
           "locations": [
             {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/ElasPlasticity.py",
-              "line": 101,
+              "line": 106,
               "reader": "GetAlternative"
             },
             {
@@ -14355,11 +14372,6 @@
           "name": "RateDependent",
           "locations": [
             {
-              "source": "src/physics_model/consititutive_model/infinitesimal_strain/ElasPlasticity.py",
-              "line": 108,
-              "reader": "GetAlternative"
-            },
-            {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/ModifiedCamClay.py",
               "line": 81,
               "reader": "GetAlternative"
@@ -14552,21 +14564,11 @@
           ]
         },
         {
-          "name": "SoftenParameter",
-          "locations": [
-            {
-              "source": "src/physics_model/consititutive_model/infinitesimal_strain/ElasPlasticity.py",
-              "line": 96,
-              "reader": "GetAlternative"
-            }
-          ]
-        },
-        {
           "name": "SoftType",
           "locations": [
             {
               "source": "src/physics_model/consititutive_model/infinitesimal_strain/ElasPlasticity.py",
-              "line": 94,
+              "line": 100,
               "reader": "GetAlternative"
             }
           ]
@@ -14971,7 +14973,7 @@
       ],
       "summary": {
         "method_count": 25,
-        "configuration_key_count": 151,
+        "configuration_key_count": 150,
         "example_count": 15
       }
     },
@@ -19012,6 +19014,9 @@
         "fedem/keys/line_search_sufficient_decrease",
         "fempm/keys/line_search_sufficient_decrease"
       ],
+      "linear_relative_tolerance": [
+        "dem/keys/linear_relative_tolerance"
+      ],
       "linear_solver": [
         "mpm/keys/linear_solver",
         "fem/keys/linear_solver",
@@ -19033,6 +19038,9 @@
         "fem/keys/linear_solver_tolerance",
         "fedem/keys/linear_solver_tolerance",
         "fempm/keys/linear_solver_tolerance"
+      ],
+      "linear_tolerance": [
+        "dem/keys/linear_tolerance"
       ],
       "LocalDamping": [
         "dem/keys/LocalDamping"
@@ -19430,6 +19438,7 @@
         "fem/keys/nd"
       ],
       "newmark": [
+        "dem/keys/newmark",
         "fem/keys/newmark"
       ],
       "newmark_parameter": [
@@ -20021,10 +20030,6 @@
       ],
       "SoftConstitutiveModel": [
         "mpm/keys/SoftConstitutiveModel"
-      ],
-      "SoftenParameter": [
-        "mpm/keys/SoftenParameter",
-        "fem/keys/SoftenParameter"
       ],
       "SoftType": [
         "mpm/keys/SoftType",

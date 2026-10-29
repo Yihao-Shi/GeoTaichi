@@ -138,6 +138,78 @@ def test_surface_direction_box_bounds_every_control_and_cancels_translation():
     np.testing.assert_array_equal(bounds.to_numpy(), np.zeros(surface.num_surfaces))
 
 
+def test_current_and_swept_bvh_rebuild_refreshes_stackless_primitive_mapping(monkeypatch):
+    from src.contact_detection.bounding_volume_hierarchy.MultiPatchLBVH import LBVH
+
+    config.set_dimension(3)
+    points = np.array([[u, v, 0.0] for v in (0.0, 1.0) for u in (0.0, 1.0, 2.0)])
+    knots_u, knots_v = np.array([0, 0, 0.5, 1, 1.0]), np.array([0, 0, 1, 1.0])
+    primitive = SimpleNamespace(
+        num_ctrlpts_u=3,
+        num_ctrlpts_v=2,
+        control_points=points,
+        weights=np.ones(6),
+        gather_boundary_ctrlpts=lambda: ([6], np.arange(6), [(knots_u, knots_v)], [(1, 1)]),
+    )
+    owner = SimpleNamespace(
+        patch=SimpleNamespace(
+            primitive=SimpleNamespace(body=OrderedDict(a={"primitive": primitive}, b={"primitive": primitive})),
+            prefix_total_num_ctrlpts=[0, 6, 12],
+        )
+    )
+    surface = CouplingContactSurface(owner)
+    original_build, builds = LBVH.build, []
+
+    def build(tree):
+        builds.append(tree)
+        original_build(tree)
+
+    monkeypatch.setattr(LBVH, "build", build)
+    direction = ti.field(ti.f64, shape=36)
+    direction.from_numpy(np.tile([0.0, 0.0, 0.4], 12))
+    surface.update_control_point_direction(direction)
+    orders = []
+    for sign in (1.0, -1.0, 1.0):
+        current = np.vstack([points, points + [5.0, 0.0, 0.0]]) * sign
+        surface.control_points_hat.from_numpy(current)
+        surface.update_span_bounds()
+        span_controls = [[0, 1, 3, 4], [1, 2, 4, 5], [6, 7, 9, 10], [7, 8, 10, 11]]
+        for swept in (False, True):
+            if swept:
+                surface.update_swept_bounds(1.0)
+            for kind in (("span", "surface") if swept else ("span",)):
+                ids = span_controls if kind == "span" else [list(range(6)), list(range(6, 12))]
+                lower = current[ids].min(axis=1)
+                upper = current[ids].max(axis=1) + ([0, 0, 0.4] if swept else 0)
+                nodes = getattr(surface, kind + "_tree_nodes").to_numpy()
+                prefix = getattr(surface, kind + "_tree_prefix").to_numpy()
+                bounds_name = "swept_span_tree" if kind == "span" else "swept_tree"
+                if not swept:
+                    bounds_name = "span_tree"
+                tree_lower = getattr(surface, bounds_name + "_lower").to_numpy()
+                tree_upper = getattr(surface, bounds_name + "_upper").to_numpy()
+                for query in (lower + upper) / 2:
+                    hits = []
+                    for start, stop in zip(prefix[:-1], prefix[1:]):
+                        cursor, visited = start, set()
+                        while cursor < stop:
+                            assert start <= cursor < stop and cursor not in visited
+                            visited.add(cursor)
+                            left, _, escape, primitive_id = nodes[cursor]
+                            overlap = np.all(tree_lower[cursor] <= query) and np.all(query <= tree_upper[cursor])
+                            if overlap and primitive_id < 0:
+                                cursor = left
+                            else:
+                                if overlap:
+                                    hits.append(primitive_id)
+                                cursor = escape
+                    expected = np.flatnonzero(np.all(lower <= query, axis=1) & np.all(query <= upper, axis=1))
+                    assert sorted(hits) == list(expected)
+        orders.append(tuple(surface.span_bvh.primitive_ids.to_numpy()[:4]))
+    assert builds == [surface.span_bvh, surface.surface_bvh, surface.span_bvh] * 3
+    assert len(set(orders)) > 1
+
+
 def test_explicit_duplicate_ownership_policies():
     canonical = CouplingContactSurface(
         _two_coincident_patches(),

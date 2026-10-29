@@ -11,7 +11,6 @@ from src.fem.generator import FEMMesh
 from src.fedem.mainFEDEM import FEDEM
 from src.sdf.BasicShape import polyhedron
 
-
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.fedem,
@@ -136,6 +135,7 @@ def _coupled_system(
     coupling.add_surface(modifier={"Orientation": "Parallel", "Direction": [0, 0, 1]})
     coupling.memory_allocate(
         {
+            "bvh_rebuild_interval": 2,
             "contact_coordination_number": 8,
             "max_contact_pairs": 8,
             "max_facet_cell_pairs": 128,
@@ -326,6 +326,14 @@ def test_explicit_fedem_preserves_source_contact_law_and_action_reaction(
 
     coupling.enginer.integration()
     assert coupling.enginer.minimum_jacobian == pytest.approx(1.0)
+    if search == "BVH":
+        tree = coupling.contactor.neighbor.bvh
+        assert tree._last_rebuild_step == 0
+        for step, rebuilt_at in ((1, 0), (3, 3), (3, 3)):
+            coupling.sims.current_step = step
+            coupling.contactor.rebuild(coupling.dem.scene, coupling.fem.engine)
+            assert tree._last_rebuild_step == rebuilt_at
+            assert coupling.contactor.neighbor.contact_count == 1
 
     coupling.sims.set_timestep(10.0)
     coupling.dem.get_critical_timestep = lambda: 4.0

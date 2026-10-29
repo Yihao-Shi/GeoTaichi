@@ -10,7 +10,6 @@ from src.mpm.generator.Body import Body
 from src.mpm.generator.Ground import Ground
 from src.mpm.soft_particle.IPCULMPM import IPCULMPM
 
-
 pytestmark = [
     pytest.mark.verification,
     pytest.mark.ipc,
@@ -77,6 +76,9 @@ def build_case(output_path):
         mu=0.0,
         epsv=0.001,
         residual=1.0e-6,
+        # At 1e12 Pa, f64 matvec rounding exceeds the absolute force target.
+        # Independent solves bound the resulting velocity error below 3.5e-13 m/s.
+        linear_solver_relative_tolerance=1.0e-8,
         friction_residual=1.0e-6,
         activate_friction=(fric != 0.0),
         gravity=gravity,

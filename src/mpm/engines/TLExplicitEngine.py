@@ -33,9 +33,6 @@ class TLExplicitEngine(ULExplicitEngine):
         if int(scene.boundary.absorbing_list[0]) > 0:
             self.apply_absorbing_constraints = self.absorbing_constraints
 
-    def valid_contact(self, sims, scene):
-        pass
-
     def reset_adaptive_grid_message(self, scene: myScene):
         grid_reset(scene.mass_cut_off, scene.node)
 
@@ -72,6 +69,13 @@ class TLExplicitEngine(ULExplicitEngine):
         self.compute_nodal_kinematic = (
             self.compute_adaptive_nodal_kinematics if adaptive else self.compute_nodal_kinematics
         )
+        if self.compute == self.affine_updating:
+            self.calculate_interpolation = self.update_adaptive_interpolation
+            self.compute_nodal_kinematic = (
+                self.compute_nodal_kinematics_taylor_sparse
+                if scene.sparse_grid is not None
+                else self.compute_nodal_kinematics_taylor
+            )
         selected_reset = self.reset_adaptive_grid_message if adaptive else self.reset_reference_grid_message
         self.reset_grid_message = selected_reset
         if scene.sparse_grid is None:
@@ -192,10 +196,10 @@ class TLExplicitEngine(ULExplicitEngine):
         self.compute_stress_strains(sims, scene)
         self.compute_affine_velocity_gradient(sims, scene)
         sims.timer.end("Stress update")
-        self.update_grid_refinement_profiled(sims, scene)
         sims.timer.begin("Misc")
         self.pressure_smoothing_(sims, scene)
         sims.timer.end("Misc")
+        self.update_grid_refinement_profiled(sims, scene)
 
     def usf_updating(self, sims: Simulation, scene: myScene, neighbor=None):
         sims.timer.begin("Shape function")
@@ -278,7 +282,7 @@ class TLExplicitEngine(ULExplicitEngine):
         self.compute_stress_strains(sims, scene)
         self.compute_affine_velocity_gradient(sims, scene)
         sims.timer.end("Stress update")
-        self.update_grid_refinement_profiled(sims, scene)
         sims.timer.begin("Misc")
         self.pressure_smoothing_(sims, scene)
         sims.timer.end("Misc")
+        self.update_grid_refinement_profiled(sims, scene)

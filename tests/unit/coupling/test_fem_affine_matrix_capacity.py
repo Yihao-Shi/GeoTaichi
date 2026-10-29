@@ -69,12 +69,21 @@ def test_fem_affine_coo_capacity_expands_only_dense_block_sources():
     assert capacity == 62_756_145
 
 
-def test_fem_affine_line_search_passes_accepted_step_to_fem_hook():
+@pytest.mark.parametrize(
+    "initial, trial, slope, accepted",
+    [
+        (1.0, 0.0, -1.0, True),
+        (79.79930609767126, 79.79930609767130, -2.2115873677234897e-14, True),
+        (79.79930609767126, 79.79930709767126, -2.2115873677234897e-14, False),
+        (79.79930609767126, 79.79930609767130, -1.0, False),
+    ],
+)
+def test_fem_affine_line_search_accepts_trial_without_multiplier_updates(initial, trial, slope, accepted):
     engine = object.__new__(FEMAffineIPCEngine)
     events = []
     engine._split_direction = lambda: None
     engine._reduce_metrics = lambda: None
-    engine.directional_derivative = {None: -1.0}
+    engine.directional_derivative = {None: slope}
     engine.affine = SimpleNamespace(
         init_step_size_device=lambda **_kwargs: 1.0,
         device_backup_line_search_base=lambda: None,
@@ -85,31 +94,32 @@ def test_fem_affine_line_search_passes_accepted_step_to_fem_hook():
         position=object(),
         direction=object(),
         set_trial_position=lambda alpha: None,
-        accept_trial_position=lambda: None,
+        accept_trial_position=lambda: events.append("accepted"),
     )
     engine.fem = SimpleNamespace(
         state=state,
         minimum_jacobian=0.0,
         _maximum_admissible_step_device=lambda: 1.0,
         _minimum_jacobian_ratio_device=lambda _position: 1.0,
-        _after_nonlinear_update_device=lambda alpha: events.append(("fem", alpha)),
     )
     engine.contact = SimpleNamespace(
         ccd_eta=0.2,
         ccd_max_iterations=20,
         maximum_step=lambda *_args: 1.0,
-        accept_update=lambda _position: events.append(("contact",)),
     )
-    engine._total_energy = lambda: 0.0
+    engine._total_energy = lambda: trial
     engine.line_search_max_backtracks = 2
     engine.line_search_minimum_step = 1.0e-8
     engine.line_search_c1 = 1.0e-4
     engine.line_search_reduction = 0.5
 
-    alpha, backtracks, energy = engine._line_search(1.0)
-
-    assert (alpha, backtracks, energy) == (1.0, 0, 0.0)
-    assert events == [("fem", 1.0), ("contact",)]
+    if not accepted:
+        with pytest.raises(RuntimeError, match="Armijo line search failed"):
+            engine._line_search(initial)
+        return
+    alpha, backtracks, energy = engine._line_search(initial)
+    assert (alpha, backtracks, energy) == (1.0, 0, trial)
+    assert events == ["accepted"]
 
 
 def test_affine_pressure_servo_moves_inward_when_pressure_is_low_and_reverses_when_high():
@@ -446,6 +456,7 @@ def test_direct_mpm_affine_adjoint_reassembles_exact_unshifted_jacobian():
     system.mpm = SimpleNamespace(
         active_dof=3,
         linear_solver_tolerance=1.0e-10,
+        linear_solver_relative_tolerance=0.0,
         linear_solver_max_iters=100,
     )
     events = []
@@ -627,7 +638,6 @@ def test_direct_mpm_affine_lagged_driver_reuses_device_primitives():
     system.nonassociated_newton = False
     system.inexact_newton = False
     system.affine = SimpleNamespace(
-        is_semi=False,
         device_restore_step_start=lambda: pytest.fail("unexpected rollback"),
     )
     system.mpm = SimpleNamespace(dt=1.0, grid_disp=Field())
@@ -639,8 +649,14 @@ def test_direct_mpm_affine_lagged_driver_reuses_device_primitives():
     system.assemble_linearization_device = lambda **kwargs: (
         events.append(("assemble", kwargs)) or {"active_mpm_dof": 3}
     )
-    system.solve_direction_device = lambda active: events.append(("solve", active))
-    system.direction_inf_norm = lambda active: next(directions)
+    direction_state = {}
+
+    def solve_direction(active):
+        events.append(("solve", active))
+        direction_state["value"] = next(directions)
+
+    system.solve_direction_device = solve_direction
+    system.direction_inf_norm = lambda active, velocity=False: direction_state["value"]
     system.scale_direction_device = lambda scale, active: events.append(("scale", scale, active))
     system.gradient_direction_dot = lambda active: -1.0
     system.maximum_step_device = lambda **kwargs: 0.75
@@ -678,17 +694,6 @@ def test_direct_mpm_affine_lagged_driver_reuses_device_primitives():
     assert events.count(("solve", 3)) == 3
 
 
-def test_direct_mpm_affine_semi_convergence_requires_all_contacts():
-    system = object.__new__(DirectAffineIPCSystem)
-    system.nonassociated_newton = False
-    system.inexact_newton = False
-    system.affine = SimpleNamespace(semi_contact_converged=lambda: True)
-    system.ipc = SimpleNamespace(contact_converged=lambda: False)
-    system.mixed = SimpleNamespace(contact_converged=lambda: True)
-
-    assert system.contact_converged() is False
-
-
 def test_fem_contact_capacity_uses_declared_pair_caps_and_friction():
     engine = object.__new__(FEMAffineIPCEngine)
     first = SimpleNamespace(
@@ -709,7 +714,6 @@ def test_fem_contact_capacity_uses_declared_pair_caps_and_friction():
 def test_fem_affine_matrix_dispatches_only_present_contact_types():
     assembler = object.__new__(FEMAffineIPCAssembler)
     events = []
-    assembler.is_semi = False
     assembler.activate_friction = False
     assembler._reset_contact_terms = lambda: None
     assembler._contact_feature_mask = lambda _pt, _ee: (1 << 2) | (1 << (7 + 8))
@@ -731,7 +735,6 @@ def test_fem_affine_matrix_dispatches_only_present_contact_types():
 
 def test_fem_affine_matrix_skips_empty_friction_kernels():
     assembler = object.__new__(FEMAffineIPCAssembler)
-    assembler.is_semi = False
     assembler.activate_friction = True
     assembler.friction_pt_count = 0
     assembler.friction_ee_count = 0
@@ -777,11 +780,20 @@ def test_fempm_residual_metric_excludes_dirichlet_reactions(taichi_runtime, monk
     )
     engine = object.__new__(FEMPMImplicitEngine)
     engine.fem_nodes, engine.mpm_dimension = 1, 3
-    engine.mpm = SimpleNamespace(particleNum=ti.field(ti.i32, shape=1))
+    engine.dt = 1.0
+    engine.fem = SimpleNamespace(quasi_static=False, alpha=0.5, beta=0.25, gamma=0.5)
+    engine.mpm = SimpleNamespace(particleNum=ti.field(ti.i32, shape=1), integration=(1.0, 0.5, 1.0))
     for name in ("rhs", "fixed_correction", "correction"):
         setattr(engine, name, ti.field(ti.f64, shape=3))
     engine.fixed = ti.field(ti.i32, shape=3)
-    for name in ("residual_squared", "directional_derivative", "correction_inf_norm", "constraint_inf_norm"):
+    for name in (
+        "residual_squared",
+        "directional_derivative",
+        "correction_inf_norm",
+        "constraint_inf_norm",
+        "correction_velocity_inf_norm",
+        "constraint_velocity_inf_norm",
+    ):
         setattr(engine, name, ti.field(ti.f64, shape=()))
     engine.rhs.from_numpy(np.array([20.0, 3.0, 4.0]))
     engine.fixed.from_numpy(np.array([1, 0, 0], dtype=np.int32))
@@ -789,6 +801,7 @@ def test_fempm_residual_metric_excludes_dirichlet_reactions(taichi_runtime, monk
     engine._reduce_system_metrics(3)
     assert engine.residual_squared[None] == 25.0
     assert engine.constraint_inf_norm[None] == pytest.approx(0.1)
+    assert engine.constraint_velocity_inf_norm[None] == pytest.approx(0.2)
 
 
 def test_direct_affine_nonsymmetric_dirichlet_elimination(taichi_runtime):
@@ -838,10 +851,12 @@ def test_direct_affine_nonsymmetric_dirichlet_elimination(taichi_runtime):
     np.testing.assert_allclose(actual, dense)
 
 
-@pytest.mark.parametrize("pending", ["dirichlet", "semi"])
+@pytest.mark.parametrize("pending", ["dirichlet"])
 def test_direct_affine_force_convergence_still_finishes_constraints(pending):
     system = object.__new__(DirectAffineIPCSystem)
-    system.mpm = SimpleNamespace(dt=0.001, active_dof=3, begin_lagged_material_state=lambda: None)
+    system.mpm = SimpleNamespace(
+        dt=0.001, active_dof=3, linear_solver_relative_tolerance=0.0, begin_lagged_material_state=lambda: None
+    )
     system.force_atol, system.force_rtol = 1e-10, 1e-8
     system.inexact_newton = False
     state = {"done": False, "updates": []}
@@ -849,9 +864,8 @@ def test_direct_affine_force_convergence_still_finishes_constraints(pending):
     system.assemble_linearization_device = lambda **_kwargs: None
     system.refresh_lagged_friction_device = lambda: None
     system.residual_metrics_device = lambda _dof: (0.0, 0.001 if pending == "dirichlet" and not state["done"] else 0.0)
-    system.contact_converged = lambda: pending != "semi" or state["done"]
     system.solve_direction_device = lambda *_args, **_kwargs: {"iterations": 1}
-    system.direction_inf_norm = lambda _dof: 0.001
+    system.direction_inf_norm = lambda _dof, velocity=False: 1.0 if velocity else 0.001
 
     def update(*_args, **kwargs):
         state["done"] = True
@@ -859,7 +873,6 @@ def test_direct_affine_force_convergence_still_finishes_constraints(pending):
         return 0.0, 1.0
 
     system._line_search_device = update
-    system.advance_semi_multipliers_device = update
     sims = SimpleNamespace(
         affine_max_newton_iteration=3,
         affine_max_step=0.02,

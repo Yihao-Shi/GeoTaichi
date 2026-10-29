@@ -75,13 +75,14 @@ def AssembleStress(sigma, deviatoric_stress):
 
 @ti.func
 def Sigrot(stress, dw):
+    # dw follows the native velocity-gradient convention; use W sigma - sigma W.
     sigrot = ZEROVEC6f
-    sigrot[0] = 2.0 * (-dw[2] * stress[5] + dw[0] * stress[3])
-    sigrot[1] = 2.0 * (-dw[0] * stress[3] + dw[1] * stress[4])
-    sigrot[2] = 2.0 * (-dw[1] * stress[4] + dw[2] * stress[5])
-    sigrot[3] = -dw[2] * stress[4] + dw[1] * stress[5] + dw[0] * (stress[1] - stress[0])
-    sigrot[4] = -dw[0] * stress[5] + dw[2] * stress[3] + dw[1] * (stress[2] - stress[1])
-    sigrot[5] = -dw[1] * stress[3] + dw[0] * stress[4] + dw[2] * (stress[0] - stress[2])
+    sigrot[0] = 2.0 * (dw[2] * stress[5] - dw[0] * stress[3])
+    sigrot[1] = 2.0 * (dw[0] * stress[3] - dw[1] * stress[4])
+    sigrot[2] = 2.0 * (dw[1] * stress[4] - dw[2] * stress[5])
+    sigrot[3] = dw[2] * stress[4] - dw[1] * stress[5] + dw[0] * (stress[0] - stress[1])
+    sigrot[4] = dw[0] * stress[5] - dw[2] * stress[3] + dw[1] * (stress[1] - stress[2])
+    sigrot[5] = dw[1] * stress[3] - dw[0] * stress[4] + dw[2] * (stress[2] - stress[0])
     return sigrot
 
 
@@ -406,7 +407,8 @@ def DeqepsilonqDepsilon(strain):
     seqv = EquivalentDeviatoricStrain(strain)
     iseqv = 1.0 / seqv if ti.abs(seqv) > Threshold else 0.0
     deviatoric_strain = DeviatoricTensor(strain)
-    factor = 2.0 / 3.0 * iseqv
+    # This helper's kappa = sqrt(dev:dev / 3); its tensor gradient is dev / (3*kappa).
+    factor = 1.0 / 3.0 * iseqv
     return factor * deviatoric_strain
 
 

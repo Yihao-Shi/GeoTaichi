@@ -4,7 +4,6 @@ from src.utils.linalg import make_list
 from src.utils.Quaternion import SetToRotate
 from src.utils.TypeDefination import vec3f, vec4f
 
-
 AABB_MIN_EXTENT = 1.0e-6
 
 
@@ -30,9 +29,10 @@ class AABB(object):
         aabb_manager = AABB(n_batches=4, n_aabbs=128)
     """
 
-    def __init__(self, n_aabbs, dimension=3, oriented=False):
+    def __init__(self, n_aabbs, dimension=3, oriented=False, dtype=None):
         self.first_run = True
         self.dimension = dimension
+        self.vector_type = vec3f if dtype is None else ti.types.vector(3, dtype)
         self.initilize(n_aabbs)
 
         if self.first_run:
@@ -42,8 +42,6 @@ class AABB(object):
         self.batch_size = [x for x in make_list(n_aabbs) if x != 0]
         self.n_aabbs = sum(self.batch_size)
         self.n_batches = len(self.batch_size)
-        if self.n_batches > 128:
-            raise RuntimeError("")
 
         self.prefix_batch_size = self.batch_size.copy()
         self.prefix_batch_size.insert(0, 0)
@@ -64,19 +62,21 @@ class AABB(object):
                 raise RuntimeError("Active AABB batch size exceeds allocated batch size")
         self.current_n_aabbs = sum(self.current_batch_size)
         self.current_n_batches = len(self.current_batch_size)
-        if self.current_n_batches > 128:
-            raise RuntimeError("")
 
         self.prefix_current_batch_size = self.current_batch_size.copy()
         self.prefix_current_batch_size.insert(0, 0)
         for i in range(1, len(self.prefix_current_batch_size)):
-            self.prefix_current_batch_size[i] = self.prefix_current_batch_size[i] + self.prefix_current_batch_size[i - 1]
+            self.prefix_current_batch_size[i] = (
+                self.prefix_current_batch_size[i] + self.prefix_current_batch_size[i - 1]
+            )
 
     def initial_fields(self, oriented=False):
+        vector_type = self.vector_type
+
         @ti.dataclass
         class ti_aabb:
-            min: vec3f
-            max: vec3f
+            min: vector_type
+            max: vector_type
 
             @ti.func
             def intersects(self, other, expand1, expand2) -> bool:
@@ -91,19 +91,20 @@ class AABB(object):
                     and (self.min[2] - expand1) <= (other.max[2] + expand2)
                     and (self.max[2] + expand1) >= (other.min[2] - expand2)
                 )
-            
+
             @ti.func
             def inside(self, point, search_rad) -> bool:
                 """
                 Check if the point is inside this AABB.
                 """
-                return ((self.min[0] - search_rad) <= point[0] <= (self.max[0] + search_rad)
-                        and (self.min[1] - search_rad) <= point[1] <= (self.max[1] + search_rad)
-                        and (self.min[2] - search_rad) <= point[2] <= (self.max[2] + search_rad)
+                return (
+                    (self.min[0] - search_rad) <= point[0] <= (self.max[0] + search_rad)
+                    and (self.min[1] - search_rad) <= point[1] <= (self.max[1] + search_rad)
+                    and (self.min[2] - search_rad) <= point[2] <= (self.max[2] + search_rad)
                 )
 
         self.ti_aabb = ti_aabb
-            
+
         if oriented:
             ti_aabb.members.update({"q": vec4f})  # Quaternion for orientation
 
@@ -115,34 +116,36 @@ class AABB(object):
         self.first_run = False
 
     @ti.kernel
-    def set_sphere_aabbs(self, particleNum: int, prefix_batch_size: int, verlet_distance: float, particle: ti.template()):
+    def set_sphere_aabbs(
+        self, particleNum: int, prefix_batch_size: int, verlet_distance: float, particle: ti.template()
+    ):
         for np in range(particleNum):
             position = particle[np].x
             radius = particle[np].rad
             self.update_sphere_aabb(np, position, radius, verlet_distance, batch=prefix_batch_size)
 
     @ti.kernel
-    def set_levelset_body_aabbs(self, particleNum: int, prefix_batch_size: int, verlet_distance: float, rigid: ti.template(), box: ti.template()):
+    def set_levelset_body_aabbs(
+        self, particleNum: int, prefix_batch_size: int, verlet_distance: float, rigid: ti.template(), box: ti.template()
+    ):
         for np in range(particleNum):
-            self.update_levelset_body_aabb(
-                np, rigid[np], box[np], verlet_distance,
-                batch=prefix_batch_size)
+            self.update_levelset_body_aabb(np, rigid[np], box[np], verlet_distance, batch=prefix_batch_size)
 
     @ti.kernel
-    def set_lsmpm_body_aabbs(self, particleNum: int,
-                              prefix_batch_size: int,
-                              verlet_distance: float,
-                              particle: ti.template(),
-                              rigid: ti.template(), box: ti.template()):
+    def set_lsmpm_body_aabbs(
+        self,
+        particleNum: int,
+        prefix_batch_size: int,
+        verlet_distance: float,
+        particle: ti.template(),
+        rigid: ti.template(),
+        box: ti.template(),
+    ):
         for np in range(particleNum):
             if int(rigid[np].is_soft) == 1:
-                self.update_lsmpm_soft_body_aabb(
-                    np, rigid[np], box[np], verlet_distance,
-                    batch=prefix_batch_size)
+                self.update_lsmpm_soft_body_aabb(np, rigid[np], box[np], verlet_distance, batch=prefix_batch_size)
             else:
-                self.update_levelset_body_aabb(
-                    np, rigid[np], box[np], verlet_distance,
-                    batch=prefix_batch_size)
+                self.update_levelset_body_aabb(np, rigid[np], box[np], verlet_distance, batch=prefix_batch_size)
 
     @ti.kernel
     def set_triangle_aabbs(self, triNum: int, prefix_batch_size: int, verlet_distance: float, triangle: ti.template()):
@@ -165,8 +168,7 @@ class AABB(object):
         self.aabbs.max[batch + index] = box_max
 
     @ti.func
-    def update_levelset_body_aabb(self, index, rigid, box,
-                                  verlet_distance, batch=0):
+    def update_levelset_body_aabb(self, index, rigid, box, verlet_distance, batch=0):
         rotate_matrix = SetToRotate(rigid.q)
         center = rigid.mass_center + rotate_matrix @ box._get_shape_center()
         half_extent = 0.5 * box._get_shape_dim()
@@ -177,16 +179,11 @@ class AABB(object):
                 + ti.abs(rotate_matrix[i, 1]) * half_extent[1]
                 + ti.abs(rotate_matrix[i, 2]) * half_extent[2]
             )
-        self.aabbs.min[batch + index] = (
-            center - world_half - verlet_distance
-        )
-        self.aabbs.max[batch + index] = (
-            center + world_half + verlet_distance
-        )
+        self.aabbs.min[batch + index] = center - world_half - verlet_distance
+        self.aabbs.max[batch + index] = center + world_half + verlet_distance
 
     @ti.func
-    def update_lsmpm_soft_body_aabb(self, index, rigid, box,
-                                    verlet_distance, batch=0):
+    def update_lsmpm_soft_body_aabb(self, index, rigid, box, verlet_distance, batch=0):
         rotate_matrix = SetToRotate(rigid.q)
         center = rigid.mass_center + rotate_matrix @ box._get_shape_center()
         half_extent = 0.5 * ti.max(box._get_shape_dim(), vec3f(0.0, 0.0, 0.0))
@@ -282,5 +279,5 @@ class AABB(object):
             for d in ti.static(range(self.dimension)):
                 local_coords[i, d] = local_coord[d]
 
-        box_min, box_max = self._update_patch_aabb(local_coords, 0.)
+        box_min, box_max = self._update_patch_aabb(local_coords, 0.0)
         return box_min, box_max, eigen_vector

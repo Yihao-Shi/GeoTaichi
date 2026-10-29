@@ -30,7 +30,6 @@ from src.fedem.neighbor.LevelSet import FEMLevelSetBroadPhase
 from src.fedem.structs import FEMFacetWallContact, FEMLevelSetContact
 from src.utils.ScalarFunction import linearize3D
 
-
 pytestmark = [
     pytest.mark.unit,
     pytest.mark.fedem,
@@ -95,6 +94,8 @@ def test_levelset_broadphase_maps_rigid_node_ids_and_keeps_history(search):
     )
     simulation = SimpleNamespace(
         search=search,
+        current_step=0,
+        bvh_rebuild_interval=1000,
         max_contact_pairs=8,
         max_levelset_cell_pairs=64,
         domain=np.array([2.0, 2.0, 2.0]),
@@ -191,6 +192,8 @@ def test_levelset_rebuild_uses_fem_translation_and_rotation_verlet_motion(search
     )
     simulation = SimpleNamespace(
         search=search,
+        current_step=0,
+        bvh_rebuild_interval=1000,
         max_contact_pairs=8,
         max_levelset_cell_pairs=64,
         domain=np.array([2.0, 2.0, 2.0]),

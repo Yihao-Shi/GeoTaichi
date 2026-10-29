@@ -982,32 +982,6 @@ def test_direct_mpm_dmin_activation_feasibility_and_ccd(tmp_path):
         contact.validate_strict_feasibility(mpm.grid_disp)
 
 
-def test_direct_mpm_semi_ipc_recovers_dmin_violation_but_keeps_ccd(tmp_path):
-    config, mpm, contact = _build_point_plane_contact(
-        tmp_path,
-        ipc_model="SemiIPC",
-        friction_mode="lagged",
-    )
-    contact.barrier.dmin[0] = 0.02
-    contact.barrier.dhat[0] = 0.02
-    current = _translation_state(config, mpm, 0.0, -0.021)
-    mpm.grid_disp.from_numpy(current)
-
-    assert contact.validate_strict_feasibility(mpm.grid_disp) == pytest.approx(0.019)
-    contact.point_ground_distance()
-    assert int(contact.gbarrierNum[0]) == 1
-    contact.assemble_current_system(mpm.grid_disp, need_matrix=True)
-    contact.accept_update()
-    assert np.isfinite(float(mpm.energy[None]))
-    assert np.max(contact.semi_multiplier.to_numpy()) > 0.0
-
-    correction = _translation_state(config, mpm, 0.0, -0.03)
-    mpm.incre_resolution.from_numpy(correction)
-    toc = float(contact.ground_ccd(0.9, mpm.incre_resolution))
-
-    assert toc == pytest.approx(0.9 * 0.019 / 0.03)
-
-
 def test_ul_material_ccd_uses_current_newton_state(tmp_path):
     """The feasibility cap is for u_k + alpha p, not p in isolation."""
     config, mpm, _ = _build_point_plane_contact(tmp_path)

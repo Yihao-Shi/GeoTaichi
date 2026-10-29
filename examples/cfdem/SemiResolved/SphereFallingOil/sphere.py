@@ -119,7 +119,7 @@ def run(config, args):
         shape_function="QuadBSpline",
         gravity=[0.0, 0.0, -9.81],
         material_type="Fluid",
-        velocity_projection="PIC",
+        velocity_projection=None,
         solver_type="Implicit",
         discretization="FDM",
         fluid_level_set=False,
@@ -241,7 +241,6 @@ def run(config, args):
         material={
             "MaterialID": 1,
             "Density": config["fluid_density"],
-            "Modulus": 2000000.0,
             "Viscosity": config["viscosity"],
             "ElementLength": min(spacing),
             "cL": 1.5,
@@ -296,11 +295,12 @@ def run(config, args):
 
     @python_callback
     def record_trajectory():
-        if int(dempm.sims.current_step) % args.sample_every:
+        sample_time = float(dempm.sims.current_time + dempm.sims.delta)
+        if int(dempm.sims.current_step) % args.sample_every and sample_time < simulation_time - 1.0e-12:
             return
         positions = dempm.dem.scene.particle.x.to_numpy()[:body_count]
         velocities = dempm.dem.scene.particle.v.to_numpy()[:body_count]
-        history_t.append(float(dempm.sims.current_time + dempm.sims.delta))
+        history_t.append(sample_time)
         history_x.append(positions.copy())
         history_v.append(velocities.copy())
 

@@ -18,10 +18,6 @@ from src.physics_model.contact_model.ipc.IPC import (
     Friction,
     ipc_fully_implicit_point_plane_stribeck_force,
     ipc_fully_implicit_point_plane_stribeck_friction,
-    semi_ipc_find,
-    semi_ipc_find_or_insert,
-    semi_ipc_terms,
-    semi_ipc_update_multiplier,
 )
 from src.physics_model.contact_model.ipc.ContactAssembly import (
     psd_project_nd,
@@ -122,20 +118,12 @@ class IPCInfeasibleContactState(RuntimeError):
 
 @ti.data_oriented
 class IPCMPM:
-    @property
-    def is_semi(self):
-        return getattr(self, "_is_semi", False)
-
-    @is_semi.setter
-    def is_semi(self, value):
-        self._is_semi = bool(value)
 
     def __init__(self, mpm: ImplicitMPM, ground: Ground = None, **kwargs):
         self.mpm = mpm
         self.ground = ground
         self.ground.finalize()
         self.barrier = Barrier(**kwargs)
-        self.is_semi = self.barrier.is_semi
         self.friction = Friction(**kwargs)
         self.pderivative = PointPointDerivative()
         self.gderivative = PointGroundDerivative(self.ground)
@@ -143,7 +131,7 @@ class IPCMPM:
         self.activate_fric = True
         self.mpm.build_surface_node()
         integration = np.asarray(self.mpm.integration, dtype=np.float64)
-        if integration.size < 3 or not np.all(np.isfinite(integration[:3])) or np.any(integration[:3] <= 0.0):
+        if integration.size != 3 or not np.all(np.isfinite(integration[:3])) or np.any(integration[:3] <= 0.0):
             raise ValueError("newmark must contain positive [alpha, beta, gamma]")
         damping = float(self.mpm.damping)
         if not np.isfinite(damping) or damping < 0.0:
@@ -180,8 +168,6 @@ class IPCMPM:
         self.line_search_last_accepted_energy = 0.0
         self.friction_reference_initialized = False
         self.friction_mode = _normalize_friction_mode(kwargs.get("friction_mode", "lagged"))
-        if self.is_semi and self.friction_mode != "lagged":
-            raise ValueError("MPM SemiIPC currently requires friction_mode='lagged'")
         self.friction_iterations = _normalize_friction_iterations(
             kwargs.get(
                 "friction_iterations",
@@ -197,7 +183,7 @@ class IPCMPM:
                 "friction_residual",
                 kwargs.get(
                     "friction_tolerance",
-                    kwargs.get("friction_fixed_point_tolerance", self.mpm.tol),
+                    kwargs.get("friction_fixed_point_tolerance", 1.0e-7),
                 ),
             ),
             "friction_residual",
@@ -240,8 +226,8 @@ class IPCMPM:
         )
         self.last_particle_search_backend = self.contact_search
 
-        ground_barrier_dtype = ti.types.struct(surfaceID=ti.i32, wallID=ti.i32, distance=ti.f64, semi_slot=ti.i32)
-        particle_barrier_dtype = ti.types.struct(masterID=ti.i32, slaveID=ti.i32, distance=ti.f64, semi_slot=ti.i32)
+        ground_barrier_dtype = ti.types.struct(surfaceID=ti.i32, wallID=ti.i32, distance=ti.f64)
+        particle_barrier_dtype = ti.types.struct(masterID=ti.i32, slaveID=ti.i32, distance=ti.f64)
         body_pair_dtype = ti.types.struct(master=ti.i32, slave=ti.i32)
         surface_body_contact_dtype = ti.types.struct(surfaceID=ti.i32, bodyID=ti.i32)
         ground_friction_dtype = ti.types.struct(surfaceID=ti.i32, wallID=ti.i32, mu_lambda=ti.f64)
@@ -353,16 +339,6 @@ class IPCMPM:
             self.pbarrier = particle_barrier_dtype.field(shape=barrier_set[0])
             self.pbarrierNum = ti.field(ti.i32, shape=1)
             self.pbarrier_overflow = ti.field(ti.i32, shape=1)
-            semi_capacity = 1 << (max(2 * (int(barrier_set[0]) + int(barrier_set[1])), 1) - 1).bit_length()
-            self.semi_capacity = semi_capacity
-            self.semi_state = ti.field(ti.i32, shape=semi_capacity)
-            self.semi_key = ti.Vector.field(4, ti.i32, shape=semi_capacity)
-            self.semi_multiplier = ti.field(ti.f64, shape=semi_capacity)
-            self.semi_normal = ti.Vector.field(config.DIM, ti.f64, shape=semi_capacity)
-            self.semi_count = ti.field(ti.i32, shape=())
-            self.semi_overflow = ti.field(ti.i32, shape=())
-            self.semi_constraint_violation = ti.field(ti.f64, shape=())
-            self.semi_state.fill(2)
         if self.activate_fric:
             ground_friction_capacity = max(1, int(friction_set[1]))
             self.gfriction = ground_friction_dtype.field(shape=ground_friction_capacity)
@@ -736,7 +712,7 @@ class IPCMPM:
         if not config.DYNAMIC:
             raise RuntimeError("fully implicit IPC friction currently requires dynamic MPM")
         integration = np.asarray(self.mpm.integration, dtype=np.float64)
-        if integration.size < 3 or not np.all(np.isfinite(integration[:3])) or np.any(integration[:3] <= 0.0):
+        if integration.size != 3 or not np.all(np.isfinite(integration[:3])) or np.any(integration[:3] <= 0.0):
             raise RuntimeError(
                 "fully implicit IPC friction requires finite positive " "Newmark [alpha, beta, gamma] parameters"
             )
@@ -818,23 +794,17 @@ class IPCMPM:
             )
 
     @ti.func
-    def _normal_terms(self, value, slot):
+    def _normal_terms(self, value):
         energy = 0.0
         gradient = 0.0
         hessian = 0.0
-        if ti.static(self.is_semi):
-            multiplier = 0.0
-            if slot >= 0:
-                multiplier = self.semi_multiplier[slot]
-            energy, gradient, hessian = semi_ipc_terms(value, multiplier, self.barrier.penalty[0])
-        else:
-            energy, gradient, hessian = self.barrier._terms(value)
+        energy, gradient, hessian = self.barrier._terms(value)
         return energy, gradient, hessian
 
     @ti.func
-    def compute_mu_lambda(self, value, measure, slot):
+    def compute_mu_lambda(self, value, measure):
         """Frozen Coulomb weight for one geometrically weighted constraint."""
-        _, gradient, _ = self._normal_terms(value, slot)
+        _, gradient, _ = self._normal_terms(value)
         return -point_contact_measure(measure) * self.friction.mu[0] * gradient
 
     @ti.func
@@ -984,7 +954,6 @@ class IPCMPM:
             self.pbarrier[cur_pos].masterID = s
             self.pbarrier[cur_pos].slaveID = t
             self.pbarrier[cur_pos].distance = dist
-            self.pbarrier[cur_pos].semi_slot = -1
         else:
             self.pbarrier_overflow[0] = 1
 
@@ -995,13 +964,8 @@ class IPCMPM:
             self.pfriction[cur_pos].masterID = s
             self.pfriction[cur_pos].slaveID = t
             measure = symmetric_contact_measure(self.mpm.surface_measure[s], self.mpm.surface_measure[t])
-            slot = -1
             value = dist
-            if ti.static(self.is_semi):
-                key = ti.Vector([s, t, 0, -1])
-                slot = semi_ipc_find(self.semi_state, self.semi_key, key, ti.static(self.semi_capacity))
-                value = normal.dot(self.mpm.p_temp[s] - self.mpm.p_temp[t]) - self.barrier.activation_distance_term()
-            self.pfriction[cur_pos].mu_lambda = self.compute_mu_lambda(value, measure, slot)
+            self.pfriction[cur_pos].mu_lambda = self.compute_mu_lambda(value, measure)
             self.pfriction[cur_pos].normal = normal
         else:
             self.pfriction_overflow[0] = 1
@@ -1031,8 +995,7 @@ class IPCMPM:
     @ti.kernel
     def _prepare_swept_body_bounds(self, grid_disp: ti.template()):
         clearance = 0.0
-        if ti.static(not self.is_semi):
-            clearance = self.barrier.dmin[0]
+        clearance = self.barrier.dmin[0]
         for body in range(self.mpm.n_body):
             for d in ti.static(range(config.DIM)):
                 self.body_min[body][d] = 1.0e30
@@ -1263,7 +1226,7 @@ class IPCMPM:
             self.build_surface_body_contact_table()
         self._compute_minimum_candidate_distance()
         minimum_distance = float(self.minimum_candidate_distance[0])
-        dmin = 0.0 if self.is_semi else float(self.barrier.dmin[0])
+        dmin = float(self.barrier.dmin[0])
         safe_floor = max(
             1.0e-12 * float(self.barrier.dhat[0]),
             1.0e-14,
@@ -1299,25 +1262,10 @@ class IPCMPM:
                         t = target_start + local_t
                         if s < t:
                             dist = (current_ipos - self.mpm.p_temp[t]).norm()
-                            if ti.static(self.is_semi):
-                                key = ti.Vector([s, t, 0, -1])
-                                slot = semi_ipc_find(
-                                    self.semi_state,
-                                    self.semi_key,
-                                    key,
-                                    ti.static(self.semi_capacity),
-                                )
-                                multiplier = 0.0
-                                if slot >= 0:
-                                    multiplier = self.semi_multiplier[slot]
-                                gap = dist - self.barrier.activation_distance_term()
-                                if multiplier - self.barrier.penalty[0] * gap >= 0.0:
-                                    count += 1
-                            else:
-                                if dist <= self.barrier.dmin[0]:
-                                    ti.atomic_max(self.barrier_infeasible[0], 1)
-                                elif dist < self.barrier.activation_distance_term():
-                                    count += 1
+                            if dist <= self.barrier.dmin[0]:
+                                ti.atomic_max(self.barrier_infeasible[0], 1)
+                            elif dist < self.barrier.activation_distance_term():
+                                count += 1
             self.contact_surface_prefix[s] = count
 
     @ti.kernel
@@ -1343,41 +1291,10 @@ class IPCMPM:
                             dist = delta.norm()
                             active = dist > self.barrier.dmin[0] and dist < self.barrier.activation_distance_term()
                             key = ti.Vector([s, t, 0, -1])
-                            if ti.static(self.is_semi):
-                                slot = semi_ipc_find(
-                                    self.semi_state,
-                                    self.semi_key,
-                                    key,
-                                    ti.static(self.semi_capacity),
-                                )
-                                multiplier = 0.0
-                                if slot >= 0:
-                                    multiplier = self.semi_multiplier[slot]
-                                gap = dist - self.barrier.activation_distance_term()
-                                active = multiplier - self.barrier.penalty[0] * gap >= 0.0
                             if active:
                                 self.pbarrier[output].masterID = s
                                 self.pbarrier[output].slaveID = t
                                 self.pbarrier[output].distance = dist
-                                self.pbarrier[output].semi_slot = -1
-                                if ti.static(self.is_semi):
-                                    slot = semi_ipc_find_or_insert(
-                                        self.semi_state,
-                                        self.semi_key,
-                                        self.semi_multiplier,
-                                        self.semi_count,
-                                        key,
-                                        ti.static(self.semi_capacity),
-                                    )
-                                    if slot >= 0:
-                                        normal = delta / ti.max(dist, 1.0e-15)
-                                        previous = self.semi_normal[slot]
-                                        if previous.norm_sqr() > 0.0 and previous.dot(normal) < 0.0:
-                                            normal = -normal
-                                        self.semi_normal[slot] = normal
-                                    else:
-                                        self.semi_overflow[None] = 1
-                                    self.pbarrier[output].semi_slot = slot
                                 output += 1
 
     def point_point_distance(self):
@@ -1404,20 +1321,10 @@ class IPCMPM:
             current_pos = self.mpm.p_temp[s]
             for wall in range(self.ground.num):
                 dist = self.ground.distance(wall, current_pos)
-                if ti.static(self.is_semi):
-                    key = ti.Vector([s, wall, 1, -1])
-                    slot = semi_ipc_find(self.semi_state, self.semi_key, key, ti.static(self.semi_capacity))
-                    multiplier = 0.0
-                    if slot >= 0:
-                        multiplier = self.semi_multiplier[slot]
-                    gap = dist - self.barrier.activation_distance_term()
-                    if multiplier - self.barrier.penalty[0] * gap >= 0.0:
-                        count += 1
-                else:
-                    if dist <= self.barrier.dmin[0]:
-                        ti.atomic_max(self.barrier_infeasible[0], 1)
-                    elif dist < self.barrier.activation_distance_term():
-                        count += 1
+                if dist <= self.barrier.dmin[0]:
+                    ti.atomic_max(self.barrier_infeasible[0], 1)
+                elif dist < self.barrier.activation_distance_term():
+                    count += 1
             self.contact_surface_prefix[s] = count
 
     @ti.kernel
@@ -1431,32 +1338,10 @@ class IPCMPM:
                 dist = self.ground.distance(wall, current_pos)
                 active = dist > self.barrier.dmin[0] and dist < self.barrier.activation_distance_term()
                 key = ti.Vector([s, wall, 1, -1])
-                if ti.static(self.is_semi):
-                    slot = semi_ipc_find(self.semi_state, self.semi_key, key, ti.static(self.semi_capacity))
-                    multiplier = 0.0
-                    if slot >= 0:
-                        multiplier = self.semi_multiplier[slot]
-                    gap = dist - self.barrier.activation_distance_term()
-                    active = multiplier - self.barrier.penalty[0] * gap >= 0.0
                 if active:
                     self.gbarrier[output].surfaceID = s
                     self.gbarrier[output].wallID = wall
                     self.gbarrier[output].distance = dist
-                    self.gbarrier[output].semi_slot = -1
-                    if ti.static(self.is_semi):
-                        slot = semi_ipc_find_or_insert(
-                            self.semi_state,
-                            self.semi_key,
-                            self.semi_multiplier,
-                            self.semi_count,
-                            key,
-                            ti.static(self.semi_capacity),
-                        )
-                        if slot >= 0:
-                            self.semi_normal[slot] = self.ground.norm[wall]
-                        else:
-                            self.semi_overflow[None] = 1
-                        self.gbarrier[output].semi_slot = slot
                     output += 1
 
     def point_ground_distance(self):
@@ -1479,43 +1364,9 @@ class IPCMPM:
         barrier potential.
         """
         self.barrier_infeasible[0] = 0
-        if self.is_semi:
-            self.semi_overflow[None] = 0
         self.point_ground_distance()
         self.point_point_distance()
-        if self.is_semi and int(self.semi_overflow[None]) != 0:
-            raise RuntimeError("MPM SemiIPC multiplier hash capacity is too small")
         return int(self.barrier_infeasible[0]) == 0
-
-    @ti.kernel
-    def _update_semi_multipliers(self):
-        self.semi_constraint_violation[None] = 0.0
-        for slot in range(self.semi_capacity):
-            if self.semi_state[slot] == 0:
-                key = self.semi_key[slot]
-                gap = 0.0
-                if key[2] == 0:
-                    gap = (
-                        self.mpm.p_temp[key[0]] - self.mpm.p_temp[key[1]]
-                    ).norm() - self.barrier.activation_distance_term()
-                else:
-                    gap = (
-                        self.ground.distance(key[1], self.mpm.p_temp[key[0]]) - self.barrier.activation_distance_term()
-                    )
-                self.semi_multiplier[slot] = semi_ipc_update_multiplier(
-                    gap, self.semi_multiplier[slot], self.barrier.penalty[0]
-                )
-                ti.atomic_max(self.semi_constraint_violation[None], ti.max(-gap, 0.0))
-
-    def accept_update(self):
-        if not self.is_semi:
-            return
-        self.update_particle_pos(self.mpm.grid_disp)
-        self.rebuild_barrier_contacts()
-        self._update_semi_multipliers()
-
-    def contact_converged(self):
-        return not self.is_semi or float(self.semi_constraint_violation[None]) <= self.barrier.constraint_tolerance
 
     @ti.kernel
     def _count_ground_friction_contacts_stable(self):
@@ -1525,14 +1376,6 @@ class IPCMPM:
             for wall in range(self.ground.num):
                 dist = self.ground.distance(wall, current_pos)
                 active = dist > self.barrier.dmin[0] and dist < self.barrier.activation_distance_term()
-                if ti.static(self.is_semi):
-                    key = ti.Vector([s, wall, 1, -1])
-                    slot = semi_ipc_find(self.semi_state, self.semi_key, key, ti.static(self.semi_capacity))
-                    multiplier = 0.0
-                    if slot >= 0:
-                        multiplier = self.semi_multiplier[slot]
-                    gap = dist - self.barrier.activation_distance_term()
-                    active = multiplier - self.barrier.penalty[0] * gap > 0.0
                 if active:
                     count += 1
             self.contact_surface_prefix[s] = count
@@ -1547,20 +1390,11 @@ class IPCMPM:
             for wall in range(self.ground.num):
                 dist = self.ground.distance(wall, current_pos)
                 active = dist > self.barrier.dmin[0] and dist < self.barrier.activation_distance_term()
-                slot = -1
                 value = dist
-                if ti.static(self.is_semi):
-                    key = ti.Vector([s, wall, 1, -1])
-                    slot = semi_ipc_find(self.semi_state, self.semi_key, key, ti.static(self.semi_capacity))
-                    value = dist - self.barrier.activation_distance_term()
-                    multiplier = 0.0
-                    if slot >= 0:
-                        multiplier = self.semi_multiplier[slot]
-                    active = multiplier - self.barrier.penalty[0] * value > 0.0
                 if active:
                     self.gfriction[output].surfaceID = s
                     self.gfriction[output].wallID = wall
-                    self.gfriction[output].mu_lambda = self.compute_mu_lambda(value, self.mpm.surface_measure[s], slot)
+                    self.gfriction[output].mu_lambda = self.compute_mu_lambda(value, self.mpm.surface_measure[s])
                     output += 1
 
     def ground_friction_initialize(self):
@@ -1595,25 +1429,6 @@ class IPCMPM:
                             delta = current_ipos - self.mpm.p_temp[t]
                             dist = delta.norm()
                             active = dist > self.barrier.dmin[0] and dist < self.barrier.activation_distance_term()
-                            if ti.static(self.is_semi):
-                                key = ti.Vector([s, t, 0, -1])
-                                slot = semi_ipc_find(
-                                    self.semi_state,
-                                    self.semi_key,
-                                    key,
-                                    ti.static(self.semi_capacity),
-                                )
-                                multiplier = 0.0
-                                if slot >= 0:
-                                    multiplier = self.semi_multiplier[slot]
-                                normal = delta / ti.max(dist, 1.0e-12)
-                                if slot >= 0:
-                                    normal = self.semi_normal[slot]
-                                gap = (
-                                    normal.dot(current_ipos - self.mpm.p_temp[t])
-                                    - self.barrier.activation_distance_term()
-                                )
-                                active = multiplier - self.barrier.penalty[0] * gap > 0.0
                             if active:
                                 count += 1
             self.contact_surface_prefix[s] = count
@@ -1640,23 +1455,8 @@ class IPCMPM:
                             delta = current_ipos - self.mpm.p_temp[t]
                             dist = delta.norm()
                             active = dist > self.barrier.dmin[0] and dist < self.barrier.activation_distance_term()
-                            slot = -1
                             normal = delta / ti.max(dist, 1.0e-12)
                             value = dist
-                            if ti.static(self.is_semi):
-                                key = ti.Vector([s, t, 0, -1])
-                                slot = semi_ipc_find(
-                                    self.semi_state,
-                                    self.semi_key,
-                                    key,
-                                    ti.static(self.semi_capacity),
-                                )
-                                multiplier = 0.0
-                                if slot >= 0:
-                                    multiplier = self.semi_multiplier[slot]
-                                    normal = self.semi_normal[slot]
-                                value = normal.dot(delta) - self.barrier.activation_distance_term()
-                                active = multiplier - self.barrier.penalty[0] * value > 0.0
                             if active:
                                 self.pfriction[output].masterID = s
                                 self.pfriction[output].slaveID = t
@@ -1664,7 +1464,7 @@ class IPCMPM:
                                     self.mpm.surface_measure[s],
                                     self.mpm.surface_measure[t],
                                 )
-                                self.pfriction[output].mu_lambda = self.compute_mu_lambda(value, measure, slot)
+                                self.pfriction[output].mu_lambda = self.compute_mu_lambda(value, measure)
                                 self.pfriction[output].normal = normal
                                 output += 1
 
@@ -1768,8 +1568,6 @@ class IPCMPM:
         self.update_particle_pos(grid_disp)
         if rebuild_contacts and not self.rebuild_barrier_contacts():
             raise IPCInfeasibleContactState("IPC trial crossed the configured minimum distance dmin")
-        if self.is_semi:
-            self.semi_constraint_violation[None] = 0.0
         self.curr_barrier_contact_num = self.pbarrierNum[0] + self.gbarrierNum[0]
         if self.curr_barrier_contact_num > 0:
             self._assemble_ground_barrier_system(need_matrix)
@@ -1801,8 +1599,6 @@ class IPCMPM:
         return active_dof
 
     def _solve_equilibrium_adjoint(self, loss_gradient, grid_disp, allow_plastic):
-        if self.is_semi:
-            raise ValueError("Direct IPC-MPM adjoint currently requires BarrierIPC")
         self._validate_differentiable_friction()
         is_plastic = bool(self.mpm.is_finite_strain_plastic)
         if is_plastic and not allow_plastic:
@@ -1843,6 +1639,7 @@ class IPCMPM:
             self.mpm.incre_resolution,
             active_nodes=self.mpm.active_dof // config.DIM,
             tol=self.mpm.linear_solver_tolerance,
+            rel_tol=self.mpm.linear_solver_relative_tolerance,
             maxiter=self.mpm.linear_solver_max_iters,
             return_solution=False,
             transpose=transpose,
@@ -2047,9 +1844,9 @@ class IPCMPM:
             inverse = plastic_inverse.inverse()
 
             history_vjp = ti.Matrix.zero(ti.f64, 3, 3)
-            for history_row, history_column in ti.static(ti.ndrange(3, 3)):
+            for history_row, history_column in ti.ndrange(3, 3):
                 elastic_stress_derivative = ti.Matrix.zero(ti.f64, 3, 3)
-                for stress_column, stress_row in ti.static(ti.ndrange(3, 3)):
+                for stress_column, stress_row in ti.ndrange(3, 3):
                     value = 0.0
                     for elastic_row in ti.static(range(3)):
                         value += (
@@ -2421,7 +2218,7 @@ class IPCMPM:
             wall = self.gbarrier[contact].wallID
             value = self.gbarrier[contact].distance
             measure = point_contact_measure(self.mpm.surface_measure[surface])
-            _, first, second = self._normal_terms(value, -1)
+            _, first, second = self._normal_terms(value)
             distance_gradient = self.gderivative.Ddistance_div_Dpoint(wall)
             energy_gradient = measure * first * distance_gradient
             point_adjoint = ti.Vector.zero(ti.f64, config.DIM)
@@ -2456,7 +2253,7 @@ class IPCMPM:
                 for column in ti.static(range(config.DIM)):
                     value_vjp -= adjoint_gradient[column * config.DIM + row] * energy_gradient[column]
                     hessian_adjoint = 0.0
-                    for axis in ti.static(range(config.DIM)):
+                    for axis in range(config.DIM):
                         hessian_adjoint += (
                             measure * second * distance_gradient[column] * distance_gradient[axis] * point_adjoint[axis]
                         )
@@ -2480,7 +2277,7 @@ class IPCMPM:
                 self.mpm.surface_measure[slave_surface],
             )
             distance_gradient, _ = self.pderivative.Ddistance_div_Dpoint(master_position, slave_position)
-            _, first, second = self._normal_terms(self.pbarrier[contact].distance, -1)
+            _, first, second = self._normal_terms(self.pbarrier[contact].distance)
             energy_gradient = measure * first * distance_gradient
             relative_position = master_position - slave_position
             inverse_distance = 1.0 / ti.max(relative_position.norm(), 1.0e-12)
@@ -2551,7 +2348,7 @@ class IPCMPM:
                     master_value -= master_adjoint_gradient[column * config.DIM + row] * energy_gradient[column]
                     slave_value += slave_adjoint_gradient[column * config.DIM + row] * energy_gradient[column]
                     hessian_adjoint = 0.0
-                    for axis in ti.static(range(config.DIM)):
+                    for axis in range(config.DIM):
                         hessian_adjoint += energy_hessian[axis * config.DIM + column] * relative_adjoint[axis]
                     master_value -= master_jacobian[column * config.DIM + row] * hessian_adjoint
                     slave_value += slave_jacobian[column * config.DIM + row] * hessian_adjoint
@@ -3236,14 +3033,17 @@ class IPCMPM:
             krylov_solver = self._cuda_monolithic_krylov_solver()
             matrix.solver = krylov_solver
             linear_tolerance = self.mpm.linear_solver_tolerance
+            linear_relative_tolerance = self.mpm.linear_solver_relative_tolerance
             if self.friction_mode == "fully_implicit":
                 residual = matrix.flat_l2_norm(self.mpm.rhs, active_dof)
                 linear_tolerance = min(linear_tolerance, 0.1 * residual)
+                linear_relative_tolerance = min(linear_relative_tolerance, 0.1)
             result = matrix.solve_flat_system(
                 self.mpm.rhs,
                 self.mpm.incre_resolution,
                 active_nodes=active_dof // config.DIM,
                 tol=linear_tolerance,
+                rel_tol=linear_relative_tolerance,
                 maxiter=self.mpm.linear_solver_max_iters,
                 return_solution=False,
             )
@@ -3260,15 +3060,9 @@ class IPCMPM:
         raise RuntimeError("SoftParticle IPC linear solves must use the device monolithic " "HashTriplet backend")
 
     def _correction_inf_norm(self, correction, *, load_solution=False):
-        if isinstance(correction, dict):
-            if self.friction_mode == "lagged":
-                return float(
-                    mpm_correction_measure(self.mpm, self.mpm.incre_resolution, self.mpm.active_dof, config.DIM)
-                )
-            return float(correction["solution_inf_norm"])
-        if load_solution:
-            self.mpm.incre_resolution.from_numpy(correction)
-        return float(np.linalg.norm(correction, np.inf))
+        if self.friction_mode == "lagged":
+            return float(mpm_correction_measure(self.mpm, self.mpm.incre_resolution, self.mpm.active_dof, config.DIM))
+        return float(correction["solution_inf_norm"])
 
     def _current_rhs_l2_norm(self):
         if self.cuda_monolithic_solver:
@@ -3317,9 +3111,6 @@ class IPCMPM:
             if not math.isfinite(residual) or not math.isfinite(self.last_lagged_force_residual):
                 raise RuntimeError("nonassociated IPC-MPM Newton residual is non-finite")
             if residual <= self.mpm.tol and force_balanced:
-                if not self.contact_converged():
-                    self.accept_update()
-                    continue
                 self.last_inner_converged = True
                 self.last_inner_failure_reason = ""
                 break
@@ -3328,7 +3119,6 @@ class IPCMPM:
             if not self._fully_implicit_residual_line_search(merit_residual, slope, verbose):
                 self.last_inner_failure_reason = "residual_armijo_line_search"
                 break
-            self.accept_update()
         return iteration, residual, iteration + 1
 
     def updated_friction_system_residual(self):
@@ -3343,14 +3133,9 @@ class IPCMPM:
         iter_num = 0
         linear_solve_count = 0
         residual = np.inf
-        semi_progress = 0.0
         self.last_inner_converged = False
         self.last_inner_failure_reason = "maximum_newton_iterations"
         while iter_num < self.mpm.max_iters:
-            if self.is_semi and iter_num > 1 and semi_progress > 0.999:
-                self.last_inner_converged = True
-                self.last_inner_failure_reason = ""
-                break
             self.mpm.incre_resolution.fill(0)
             result = self.solve_current_system()
             linear_solve_count += 1
@@ -3362,57 +3147,25 @@ class IPCMPM:
                     self.mpm.grid_disp,
                     self.mpm.grid_disp_temp,
                 )
-                self.accept_update()
-                if self.contact_converged():
-                    self.last_inner_converged = True
-                    self.last_inner_failure_reason = ""
-                    break
-                iter_num += 1
-                continue
+                self.last_inner_converged = True
+                self.last_inner_failure_reason = ""
+                break
 
             success = self.line_search(self.mpm.active_dof, verbose)
             if self.line_search_stop_iter or not success:
                 self.last_inner_failure_reason = self.line_search_stop_reason or "line_search_failed"
                 break
-            if self.is_semi:
-                semi_progress += (1.0 - semi_progress) * self.line_search_last_alpha
             iter_num += 1
         return iter_num, residual, linear_solve_count
 
     def _snapshot_grid_displacement(self):
-        """Best-effort snapshot used to make a failed time step transactional."""
-        device_snapshot = getattr(self, "device_grid_disp_snapshot", None)
-        if device_snapshot is not None:
-            copy_field(
-                self.mpm.degree_of_freedom,
-                device_snapshot,
-                self.mpm.grid_disp,
-            )
-            return device_snapshot
-        try:
-            return self.mpm.grid_disp.to_numpy().copy()
-        except (AttributeError, TypeError):
-            # Lightweight orchestration tests use opaque sentinels instead of
-            # Taichi fields; no mutation occurs in those test controllers.
-            return None
+        """Snapshot device state for transactional rollback of a failed step."""
+        copy_field(self.mpm.degree_of_freedom, self.device_grid_disp_snapshot, self.mpm.grid_disp)
+        return self.device_grid_disp_snapshot
 
     def _restore_grid_displacement(self, displacement):
-        if displacement is None:
-            return
-        if displacement is getattr(self, "device_grid_disp_snapshot", None):
-            copy_field(
-                self.mpm.degree_of_freedom,
-                self.mpm.grid_disp,
-                displacement,
-            )
-            copy_field(
-                self.mpm.degree_of_freedom,
-                self.mpm.grid_disp_temp,
-                displacement,
-            )
-            return
-        self.mpm.grid_disp.from_numpy(displacement)
-        self.mpm.grid_disp_temp.from_numpy(displacement)
+        copy_field(self.mpm.degree_of_freedom, self.mpm.grid_disp, displacement)
+        copy_field(self.mpm.degree_of_freedom, self.mpm.grid_disp_temp, displacement)
 
     @ti.kernel
     def _active_field_inf_norm(self, active_dof: ti.i32, values: ti.template()) -> ti.f64:
@@ -3514,10 +3267,7 @@ class IPCMPM:
                 trial_residual = float("inf")
                 trial_merit = float("inf")
             else:
-                if self.cuda_monolithic_solver:
-                    trial_residual = self._fully_implicit_cuda_residual_norm(self.mpm.rhs, self.mpm.grid_disp_temp)
-                else:
-                    trial_residual = self._current_rhs_l2_norm()
+                trial_residual = self._fully_implicit_cuda_residual_norm(self.mpm.rhs, self.mpm.grid_disp_temp)
                 trial_merit = 0.5 * trial_residual * trial_residual
             target = current_merit + self.fully_implicit_armijo * alpha * directional_derivative
             if np.isfinite(trial_merit) and trial_merit <= target:
@@ -3655,19 +3405,11 @@ class IPCMPM:
                 self.mpm.incre_resolution.fill(0)
                 correction = self.solve_current_system(self.mpm.grid_disp)
                 self.last_newton_iterations += 1
-                if self.cuda_monolithic_solver:
-                    current_residual = self._fully_implicit_cuda_residual_norm(
-                        self.system_physical_rhs,
-                        self.mpm.grid_disp,
-                    )
-                    merit_slope = self._fully_implicit_cuda_merit_slope(self.mpm.active_dof)
-                else:
-                    current_residual = self._current_rhs_l2_norm()
-                    # The CPU oracle uses a direct solve.  With its exact
-                    # Newton correction Kp=R, the residual-merit slope is
-                    # -R^T R.  The CUDA production route above evaluates Kp
-                    # explicitly so an inexact Krylov solve is also handled.
-                    merit_slope = -current_residual * current_residual
+                current_residual = self._fully_implicit_cuda_residual_norm(
+                    self.system_physical_rhs,
+                    self.mpm.grid_disp,
+                )
+                merit_slope = self._fully_implicit_cuda_merit_slope(self.mpm.active_dof)
                 correction_residual = self._correction_inf_norm(correction, load_solution=True) / self.mpm.dt
                 if not np.isfinite(current_residual) or not np.isfinite(correction_residual):
                     raise RuntimeError(
@@ -3708,11 +3450,6 @@ class IPCMPM:
         return iteration, correction_residual
 
     def solve_friction_step(self, verbose=True):
-        if self.is_semi:
-            self.semi_state.fill(2)
-            self.semi_multiplier.fill(0.0)
-            self.semi_count[None] = 0
-            self.semi_overflow[None] = 0
         self.validate_strict_feasibility(self.mpm.grid_disp)
         if self.friction_mode == "fully_implicit" and self.activate_fric:
             return self.solve_fully_implicit_friction_newton(verbose)
@@ -3775,11 +3512,7 @@ class IPCMPM:
                 if not np.isfinite(self.last_friction_residual):
                     raise RuntimeError("lagged IPC updated friction residual is non-finite")
                 force_balanced = not getattr(self, "nonassociated_newton", False) or self._lagged_force_converged()
-                if (
-                    self.last_friction_residual <= self.friction_tolerance
-                    and force_balanced
-                    and self.contact_converged()
-                ):
+                if self.last_friction_residual <= self.friction_tolerance and force_balanced:
                     self.last_friction_converged = True
                     break
 
@@ -3826,13 +3559,9 @@ class IPCMPM:
             i = self.mpm.surface_id[s]
             wallID = self.gbarrier[c].wallID
             dist = self.gbarrier[c].distance
-            slot = self.gbarrier[c].semi_slot
             value = dist
-            if ti.static(self.is_semi):
-                value -= self.barrier.activation_distance_term()
-                ti.atomic_max(self.semi_constraint_violation[None], ti.max(-value, 0.0))
             measure = point_contact_measure(self.mpm.surface_measure[s])
-            _, first, second = self._normal_terms(value, slot)
+            _, first, second = self._normal_terms(value)
             barrier_gradient = measure * first
             ddistance_dpoint = self.gderivative.Ddistance_div_Dpoint(wallID)
 
@@ -3937,28 +3666,21 @@ class IPCMPM:
             jpos = self.mpm.p_temp[tp]
 
             dist = self.pbarrier[c].distance
-            slot = self.pbarrier[c].semi_slot
             measure = symmetric_contact_measure(self.mpm.surface_measure[sp], self.mpm.surface_measure[tp])
             # 1st derivatives
             ddist_ip, ddist_jp = self.pderivative.Ddistance_div_Dpoint(ipos, jpos)
             value = dist
-            if ti.static(self.is_semi):
-                ddist_ip = self.semi_normal[slot]
-                ddist_jp = -ddist_ip
-                value = ddist_ip.dot(ipos - jpos) - self.barrier.activation_distance_term()
-                ti.atomic_max(self.semi_constraint_violation[None], ti.max(-value, 0.0))
-            _, first, second = self._normal_terms(value, slot)
+            _, first, second = self._normal_terms(value)
             barrier_grad = measure * first
             relative_hessian = ti.Matrix.zero(ti.f64, config.DIM, config.DIM)
             if ti.static(need_matrix):
                 barrier_hess = measure * second
                 relative_hessian = barrier_hess * ddist_ip.outer_product(ddist_ip)
-                if ti.static(not self.is_semi):
-                    d2dist = self.pderivative.D2distance_div_Dpoint2(ipos, jpos)
-                    # For a PP stencil H_local = [I,-I]^T H_relative [I,-I].
-                    relative_hessian += barrier_grad * d2dist
-                    if ti.static(project_spd):
-                        relative_hessian = psd_project_nd(relative_hessian)
+                d2dist = self.pderivative.D2distance_div_Dpoint2(ipos, jpos)
+                # For a PP stencil H_local = [I,-I]^T H_relative [I,-I].
+                relative_hessian += barrier_grad * d2dist
+                if ti.static(project_spd):
+                    relative_hessian = psd_project_nd(relative_hessian)
 
             # ----------------------
             # i-i block
@@ -4449,11 +4171,8 @@ class IPCMPM:
             i = self.mpm.surface_id[s]
             wid = self.gbarrier[c].wallID
             dist = self.gbarrier[c].distance
-            slot = self.gbarrier[c].semi_slot
             value = dist
-            if ti.static(self.is_semi):
-                value -= self.barrier.activation_distance_term()
-            _, first, _ = self._normal_terms(value, slot)
+            _, first, _ = self._normal_terms(value)
             barrier_gradient = point_contact_measure(self.mpm.surface_measure[s]) * first
             bodyID = self.mpm.particle[i].bodyID
             self.normal_force[bodyID] -= barrier_gradient * self.ground.norm[wid]
@@ -4479,8 +4198,7 @@ class IPCMPM:
     def ground_ccd(self, slackness: ti.f64, grid_disp: ti.template()) -> ti.f64:
         toc = 1.0
         clearance = 0.0
-        if ti.static(not self.is_semi):
-            clearance = self.barrier.dmin[0]
+        clearance = self.barrier.dmin[0]
         for c in range(self.gbarrierNum[0]):
             s = self.gbarrier[c].surfaceID
             i = self.mpm.surface_id[s]
@@ -4507,8 +4225,7 @@ class IPCMPM:
     def particle_ccd(self, slackness: float, grid_disp: ti.template()) -> ti.f64:
         toc = 1.0
         clearance = 0.0
-        if ti.static(not self.is_semi):
-            clearance = self.barrier.dmin[0]
+        clearance = self.barrier.dmin[0]
         if ti.static(not self.enable_particle_contact):
             return toc
         for contact_id in range(self.pbarrierNum[0]):
@@ -4549,8 +4266,7 @@ class IPCMPM:
     def ground_full_ccd(self, slackness: ti.f64, grid_disp: ti.template()) -> ti.f64:
         toc = 1.0
         clearance = 0.0
-        if ti.static(not self.is_semi):
-            clearance = self.barrier.dmin[0]
+        clearance = self.barrier.dmin[0]
         for s in range(self.mpm.total_surface_num):
             i = self.mpm.surface_id[s]
             current_pos = self.mpm.p_temp[s]
@@ -4579,8 +4295,7 @@ class IPCMPM:
     def _particle_swept_ccd(self, slackness: float) -> ti.f64:
         toc = 1.0
         clearance = 0.0
-        if ti.static(not self.is_semi):
-            clearance = self.barrier.dmin[0]
+        clearance = self.barrier.dmin[0]
         if ti.static(not self.enable_particle_contact):
             return toc
         for pair_id, local_s, local_t in ti.ndrange(
@@ -4629,22 +4344,14 @@ class IPCMPM:
             s = self.gbarrier[c].surfaceID
             dist = self.gbarrier[c].distance
             value = dist
-            if ti.static(self.is_semi):
-                value -= self.barrier.activation_distance_term()
-            energy, _, _ = self._normal_terms(value, self.gbarrier[c].semi_slot)
+            energy, _, _ = self._normal_terms(value)
             self.mpm.energy[None] += point_contact_measure(self.mpm.surface_measure[s]) * energy
         for c in range(self.pbarrierNum[0]):
             sp = self.pbarrier[c].masterID
             tp = self.pbarrier[c].slaveID
             dist = self.pbarrier[c].distance
             value = dist
-            if ti.static(self.is_semi):
-                slot = self.pbarrier[c].semi_slot
-                value = (
-                    self.semi_normal[slot].dot(self.mpm.p_temp[sp] - self.mpm.p_temp[tp])
-                    - self.barrier.activation_distance_term()
-                )
-            energy, _, _ = self._normal_terms(value, self.pbarrier[c].semi_slot)
+            energy, _, _ = self._normal_terms(value)
             self.mpm.energy[None] += (
                 symmetric_contact_measure(self.mpm.surface_measure[sp], self.mpm.surface_measure[tp]) * energy
             )
@@ -4789,7 +4496,6 @@ class IPCMPM:
                         self.line_search_last_alpha = float(alpha)
                         self.line_search_last_backtracks = int(backtracks)
                         self.line_search_last_accepted_energy = float(previous_energy)
-                        self.accept_update()
                         return True
                     self.line_search_failed = True
                     self.line_search_last_alpha0 = float(initial_alpha)
@@ -4822,7 +4528,6 @@ class IPCMPM:
         if accepted_energy is None:
             accepted_energy = self.total_energy(self.mpm.grid_disp_temp)
         copy_field(active_dof, self.mpm.grid_disp, self.mpm.grid_disp_temp)
-        self.accept_update()
         self.line_search_last_accepted_energy = float(accepted_energy)
         if self.mpm.do_line_search and alpha <= self.line_search_stagnation_alpha:
             self.line_search_stop_iter = True

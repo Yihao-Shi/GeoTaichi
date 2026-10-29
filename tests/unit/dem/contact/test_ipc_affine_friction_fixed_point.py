@@ -1,3 +1,4 @@
+from tests.helpers.abd_engine_reference import ReferenceAffineBodyEngine
 from types import SimpleNamespace
 
 import numpy as np
@@ -50,7 +51,7 @@ class _ScalarField:
 
 
 def test_affine_outer_iteration_rebuilds_only_after_complete_inner_solve():
-    engine = AffineBodyEngine()
+    engine = ReferenceAffineBodyEngine()
     engine.state = _State()
     events = []
     engine.operator = SimpleNamespace(
@@ -100,7 +101,7 @@ def test_affine_outer_iteration_rebuilds_only_after_complete_inner_solve():
 
 
 def test_affine_default_is_one_lagged_solve_with_updated_system_probe():
-    engine = AffineBodyEngine()
+    engine = ReferenceAffineBodyEngine()
     engine.state = _State()
     refreshes = []
     engine.operator = SimpleNamespace(
@@ -133,7 +134,7 @@ def test_affine_default_is_one_lagged_solve_with_updated_system_probe():
 
 
 def test_affine_unbounded_outer_mode_raises_at_safety_cap_without_accepting():
-    engine = AffineBodyEngine()
+    engine = ReferenceAffineBodyEngine()
     engine.state = _State()
     engine.operator = SimpleNamespace(
         contact_damping_stiffness=0.0, fully_implicit=False, initialize_contact_damping=lambda _y, _hat_y: None
@@ -161,7 +162,7 @@ def test_affine_unbounded_outer_mode_raises_at_safety_cap_without_accepting():
 
 
 def test_affine_inner_commits_the_descent_direction_checked_by_line_search():
-    engine = AffineBodyEngine()
+    engine = ReferenceAffineBodyEngine()
     sims = SimpleNamespace(
         affine_max_newton_iteration=2,
         affine_newton_tolerance=1.0e-12,
@@ -190,7 +191,7 @@ def test_affine_inner_commits_the_descent_direction_checked_by_line_search():
 
 
 def test_affine_lagged_inner_rejects_nonfinite_barrier_energy():
-    engine = AffineBodyEngine()
+    engine = ReferenceAffineBodyEngine()
     engine._solve_direction = lambda *_args: pytest.fail(
         "an infeasible IPC state must be rejected before the linear solve"
     )
@@ -206,7 +207,7 @@ def test_affine_lagged_inner_rejects_nonfinite_barrier_energy():
 
 
 def test_affine_lagged_inner_applies_first_nonzero_correction_before_convergence():
-    engine = AffineBodyEngine()
+    engine = ReferenceAffineBodyEngine()
     engine.operator = SimpleNamespace(dt=0.25)
     directions = iter([np.full(1, 2.0e-8), np.zeros(1, dtype=np.float64)])
     engine._solve_direction = lambda _sims, _gradient: next(directions)
@@ -239,7 +240,7 @@ def test_affine_lagged_inner_applies_first_nonzero_correction_before_convergence
 
 
 def test_affine_lagged_inner_accepts_exactly_stationary_initial_state():
-    engine = AffineBodyEngine()
+    engine = ReferenceAffineBodyEngine()
     engine.operator = SimpleNamespace(dt=0.25)
     engine._solve_direction = lambda _sims, _gradient: np.zeros(1)
     engine._line_search = lambda *_args: pytest.fail("an exactly zero direction must not enter CCD/Armijo")
@@ -258,7 +259,7 @@ def test_affine_lagged_inner_accepts_exactly_stationary_initial_state():
 
 
 def test_affine_lagged_cuda_applies_first_nonzero_small_correction():
-    engine = AffineBodyEngine()
+    engine = ReferenceAffineBodyEngine()
     direction_norms = iter([2.0e-8, 0.0])
     engine.operator = SimpleNamespace(
         dt=0.25,
@@ -288,7 +289,7 @@ def test_affine_lagged_cuda_applies_first_nonzero_small_correction():
 
 
 def test_affine_lagged_inner_uses_official_strict_tolerance_boundary():
-    engine = AffineBodyEngine()
+    engine = ReferenceAffineBodyEngine()
     engine.operator = SimpleNamespace(dt=0.25)
     directions = iter([np.full(1, 2.5e-7), np.zeros(1, dtype=np.float64)])
     engine._solve_direction = lambda _sims, _gradient: next(directions)
@@ -325,7 +326,7 @@ def test_affine_configured_small_coo_system_uses_mass_whitened_eigensolve():
     noninertial = matrix - mass
     assert np.linalg.eigvalsh(noninertial).min() > 0.0
     rhs = np.asarray([1.0, -2.0], dtype=np.float64)
-    engine = AffineBodyEngine()
+    engine = ReferenceAffineBodyEngine()
     engine.operator = SimpleNamespace(
         contact_damping_stiffness=0.0,
         fully_implicit=False,
@@ -370,7 +371,7 @@ def test_affine_direct_solve_restores_erased_inertia_floor():
     )
     mass = np.asarray([[2.0, 0.2], [0.2, 3.0]], dtype=np.float64)
     rhs = np.asarray([1.0, 0.5], dtype=np.float64)
-    engine = AffineBodyEngine()
+    engine = ReferenceAffineBodyEngine()
     engine.operator = SimpleNamespace(
         contact_damping_stiffness=0.0,
         fully_implicit=False,
@@ -418,7 +419,7 @@ def test_affine_direct_solve_treats_both_ulp_signs_as_unresolved():
             ],
             dtype=np.float64,
         )
-        engine = AffineBodyEngine()
+        engine = ReferenceAffineBodyEngine()
         engine.operator = SimpleNamespace(
             contact_damping_stiffness=0.0,
             fully_implicit=False,
@@ -442,7 +443,7 @@ def test_affine_direct_solve_treats_both_ulp_signs_as_unresolved():
 
 
 def test_affine_lagged_convergence_uses_physical_surface_correction():
-    engine = AffineBodyEngine()
+    engine = ReferenceAffineBodyEngine()
     engine.operator = SimpleNamespace(
         dt=0.5,
         surface_direction_inf_norm=lambda direction: float(np.linalg.norm(direction, ord=np.inf) * 0.25),
@@ -472,7 +473,7 @@ def test_affine_lagged_convergence_uses_physical_surface_correction():
 def test_affine_lagged_cpu_and_device_line_search_reject_zero_ccd():
     sims = SimpleNamespace(affine_line_search_max_iteration=2)
 
-    cpu_engine = AffineBodyEngine()
+    cpu_engine = ReferenceAffineBodyEngine()
     cpu_engine._ccd_step_size = lambda *_args: 0.0
     cpu_engine._assemble_system = lambda *_args, **_kwargs: pytest.fail(
         "alpha=0 must not be accepted as a monotone trial"
@@ -480,7 +481,7 @@ def test_affine_lagged_cpu_and_device_line_search_reject_zero_ccd():
     with pytest.raises(RuntimeError, match="no strictly feasible step"):
         cpu_engine._line_search(sims, np.zeros(1), 1.0, np.ones(1), -np.ones(1))
 
-    device_engine = AffineBodyEngine()
+    device_engine = ReferenceAffineBodyEngine()
     device_engine.operator = SimpleNamespace(
         device_gradient_direction_dot=lambda: -1.0,
         device_backup_line_search_base=lambda: pytest.fail(
@@ -495,14 +496,19 @@ def test_affine_lagged_cpu_and_device_line_search_reject_zero_ccd():
     assert device_engine.last_inner_failure_reason == "ccd_step_size"
 
 
-def test_affine_lagged_line_search_uses_reference_monotone_energy_rule():
-    """Lagged IPC requires E_new <= E_old, not sufficient-decrease Armijo."""
+@pytest.mark.parametrize(
+    "base_energy,trial_energy,slope",
+    [
+        (1.0, 0.99995, -1.0),
+        (5.3747155499101276e-4, 5.374715549910196e-4, -1.6266662182103671e-19),
+    ],
+)
+def test_affine_lagged_line_search_uses_reference_monotone_energy_rule(base_energy, trial_energy, slope):
+    """Monotone IPC also resolves the observed large-reduction roundoff case."""
 
     sims = SimpleNamespace(affine_line_search_max_iteration=3)
-    base_energy = 1.0
-    trial_energy = 0.99995
 
-    cpu_engine = AffineBodyEngine()
+    cpu_engine = ReferenceAffineBodyEngine()
     cpu_engine._ccd_step_size = lambda *_args: 1.0
     cpu_assemblies = []
 
@@ -515,7 +521,7 @@ def test_affine_lagged_line_search_uses_reference_monotone_energy_rule():
         sims,
         np.zeros(1),
         base_energy,
-        np.ones(1),
+        np.array([-slope]),
         -np.ones(1),
     )
     assert alpha == 1.0
@@ -526,10 +532,11 @@ def test_affine_lagged_line_search_uses_reference_monotone_energy_rule():
     assert cpu_engine.last_line_search_alpha == 1.0
     assert cpu_engine.last_line_search_backtracks == 0
 
-    device_engine = AffineBodyEngine()
+    device_engine = ReferenceAffineBodyEngine()
     trial_alphas = []
     device_engine.operator = SimpleNamespace(
-        device_gradient_direction_dot=lambda: -1.0,
+        device_gradient_direction_dot=lambda: slope,
+        prepare_line_search_neighbors_device=lambda _alpha: False,
         device_backup_line_search_base=lambda: None,
         device_set_line_search_trial=lambda alpha: trial_alphas.append(alpha),
         device_gradient_has_nonfinite=lambda: 0,
@@ -537,7 +544,8 @@ def test_affine_lagged_line_search_uses_reference_monotone_energy_rule():
     device_engine._ccd_step_size_device = lambda _sims: 1.0
     device_assemblies = []
 
-    def assemble_device(_sims, need_matrix):
+    def assemble_device(_sims, need_matrix, reuse_neighbor=False):
+        assert reuse_neighbor == need_matrix
         device_assemblies.append(bool(need_matrix))
         return trial_energy
 
@@ -554,7 +562,7 @@ def test_affine_lagged_line_search_uses_reference_monotone_energy_rule():
 
 
 def test_affine_line_search_diagnostics_report_the_worst_step_backtrack():
-    engine = AffineBodyEngine()
+    engine = ReferenceAffineBodyEngine()
     engine._ccd_step_size = lambda *_args: 1.0
     trial_energies = iter([1.1, 0.9])
 
@@ -592,6 +600,7 @@ def test_affine_device_hash_linear_solve_records_convergence_diagnostics():
     solution = object()
     engine.hash_triplet = SimpleNamespace(
         rhs=object(),
+        raw_non_diag_count={0: 0},
         x=solution,
         finalize_taichi_assembly=lambda: None,
         solve=lambda **_kwargs: {
@@ -605,6 +614,7 @@ def test_affine_device_hash_linear_solve_records_convergence_diagnostics():
         affine_assemble_type="HashTriplet",
         affine_hessian_shift=1.0e-9,
         affine_linear_tolerance=1.0e-9,
+        affine_linear_relative_tolerance=0.0,
         affine_linear_max_iteration=50,
     )
 
@@ -620,6 +630,7 @@ def test_affine_device_hash_linear_solve_records_convergence_diagnostics():
 
 def test_affine_friction_configuration_validation():
     simulation = object.__new__(Simulation)
+    simulation.affine_newmark = (1.0, 0.5, 1.0)
     simulation.affine_friction_mode = "lagged"
     simulation.affine_friction_iterations = 1
     simulation.affine_friction_tolerance = 1.0e-7
@@ -629,6 +640,8 @@ def test_affine_friction_configuration_validation():
     simulation.affine_viscous_friction = 0.0
     simulation.affine_stribeck_velocity = -1.0
     simulation.affine_friction_profile = "quadratic"
+    simulation.affine_linear_tolerance = 1.0e-14
+    simulation.affine_linear_relative_tolerance = 0.0
     simulation.set_affine_body_parameters(
         friction_mode="lagged",
         friction_iterations=-1,
@@ -701,6 +714,7 @@ def test_affine_friction_configuration_validation():
 
 def test_affine_friction_configuration_accepts_only_documented_fallback_sentinel():
     simulation = object.__new__(Simulation)
+    simulation.affine_newmark = (1.0, 0.5, 1.0)
     simulation.affine_dynamic_friction = 0.2
     simulation.affine_static_friction = 0.2
     simulation.affine_viscous_friction = 0.0

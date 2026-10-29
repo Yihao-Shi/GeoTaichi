@@ -31,7 +31,7 @@ def run_case(save_path):
         shape_function="Linear",
         material_type="TwoPhaseSingleLayer",
         solver_type="SemiImplicit",
-        velocity_projection="PIC/FLIP",
+        velocity_projection=None,
     )
     mpm.set_solver(
         solver={
@@ -68,7 +68,6 @@ def run_case(save_path):
             "SolidDensity": 2650.0,
             "FluidDensity": 1000.0,
             "Porosity": 0.4,
-            "FluidBulkModulus": 2.2e8,
             "Permeability": 1.0e-4,
             "FluidViscosity": 1.0e-3,
             "GrainDiameter": 1.0e-2,
@@ -101,11 +100,36 @@ def run_case(save_path):
     )
     mpm.add_boundary_condition(
         boundary=[
-            {"BoundaryType": "VelocityConstraint", "Velocity": [0.0, None, None], "StartPoint": [0.0, 0.0, 0.0], "EndPoint": [0.0, 0.3, 0.3]},
-            {"BoundaryType": "VelocityConstraint", "Velocity": [0.0, None, None], "StartPoint": [0.3, 0.0, 0.0], "EndPoint": [0.3, 0.3, 0.3]},
-            {"BoundaryType": "VelocityConstraint", "Velocity": [None, 0.0, None], "StartPoint": [0.0, 0.0, 0.0], "EndPoint": [0.3, 0.0, 0.3]},
-            {"BoundaryType": "VelocityConstraint", "Velocity": [None, None, 0.0], "StartPoint": [0.0, 0.0, 0.0], "EndPoint": [0.3, 0.3, 0.0]},
-            {"BoundaryType": "VelocityConstraint", "Velocity": [None, None, 0.0], "StartPoint": [0.0, 0.0, 0.3], "EndPoint": [0.3, 0.3, 0.3]},
+            {
+                "BoundaryType": "VelocityConstraint",
+                "Velocity": [0.0, None, None],
+                "StartPoint": [0.0, 0.0, 0.0],
+                "EndPoint": [0.0, 0.3, 0.3],
+            },
+            {
+                "BoundaryType": "VelocityConstraint",
+                "Velocity": [0.0, None, None],
+                "StartPoint": [0.3, 0.0, 0.0],
+                "EndPoint": [0.3, 0.3, 0.3],
+            },
+            {
+                "BoundaryType": "VelocityConstraint",
+                "Velocity": [None, 0.0, None],
+                "StartPoint": [0.0, 0.0, 0.0],
+                "EndPoint": [0.3, 0.0, 0.3],
+            },
+            {
+                "BoundaryType": "VelocityConstraint",
+                "Velocity": [None, None, 0.0],
+                "StartPoint": [0.0, 0.0, 0.0],
+                "EndPoint": [0.3, 0.3, 0.0],
+            },
+            {
+                "BoundaryType": "VelocityConstraint",
+                "Velocity": [None, None, 0.0],
+                "StartPoint": [0.0, 0.0, 0.3],
+                "EndPoint": [0.3, 0.3, 0.3],
+            },
         ]
     )
     mpm.select_save_data(particle=True, grid=False, object=False)
@@ -128,7 +152,5 @@ def test_single_layer_3d_mgpcg(tmp_path):
 
 
 if __name__ == "__main__":
-    with tempfile.TemporaryDirectory(
-        prefix="geotaichi-single-layer-3d-"
-    ) as temporary_directory:
+    with tempfile.TemporaryDirectory(prefix="geotaichi-single-layer-3d-") as temporary_directory:
         run_case(os.path.join(temporary_directory, "output"))

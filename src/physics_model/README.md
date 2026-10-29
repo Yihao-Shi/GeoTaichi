@@ -93,6 +93,11 @@ The NURBS geometry helpers also accept virtual linear control-point motion
 `P_i(alpha) = P_i0 + alpha*dP_i`; point--NURBS ACCD uses this path to rebuild
 closest points inside per-contact Taichi loops without mutating shared geometry.
 
+Near-parallel edge classification and closest coordinates use cross-product
+identities instead of subtracting nearly equal Gram products. This keeps finite
+segment gaps consistent across ABD, FEM, FEM--ABD, friction frames, and CCD/ACCD;
+an intersection of the supporting lines outside the segments is not contact.
+
 ## Runtime conventions
 
 Production stress updates and contact evaluations are `@ti.func` or

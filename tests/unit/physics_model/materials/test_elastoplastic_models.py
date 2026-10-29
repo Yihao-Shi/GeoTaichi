@@ -92,10 +92,10 @@ def _make_mohr_coulomb(*, cohesion: float = 100.0):
     return model
 
 
-def _make_drucker_prager(*, cohesion: float = 100.0):
+def _make_drucker_prager(*, cohesion: float = 100.0, solver_type="Implicit", **parameters):
     model = DruckerPragerModel(
         configuration="UL",
-        solver_type="Implicit",
+        solver_type=solver_type,
         stress_integration="ReturnMapping",
     )
     model.model_initialize(
@@ -108,6 +108,7 @@ def _make_drucker_prager(*, cohesion: float = 100.0):
             "Dilation": 5.0,
             "Tensile": cohesion,
             "dpType": "MiddleCircumscribed",
+            **parameters,
         }
     )
     return model
@@ -607,3 +608,66 @@ def test_drucker_prager_plastic_step_records_active_branch(
 
     assert result["history"][0] > 0.0
     assert result["trial_branch"][0] > 0
+
+
+@pytest.mark.parametrize("solver_type", ["Explicit", "Implicit"])
+@pytest.mark.parametrize("dilation", [0.0, 10.0, 30.0])
+@pytest.mark.parametrize("surface", ["Circumscribed", "MiddleCircumscribed", "Inscribed"])
+def test_drucker_prager_composite_return_satisfies_both_surfaces_and_flow(
+    taichi_material_cpu, solver_type, dilation, surface
+):
+    model = _make_drucker_prager(solver_type=solver_type, Dilation=dilation, Tensile=50.0, dpType=surface)
+    # Elastic, shear-only, tension-only, and both sides of the old diagonal selector.
+    means = np.array([-1000.0, -1000.0, 1000.0, 1000.0, 3000.0, 3000.0, 1000.0])
+    shears = np.array([0.0, 1000.0, 0.0, 100.0, 1000.0, -1000.0, 5000.0])
+    trial = np.column_stack((means, means, means, shears, np.zeros((len(means), 2))))
+    strains = np.linalg.solve(_elastic_stiffness(model.bulk, model.shear), trial.T).T
+    result = _evaluate("frictional", model, strains, initial_history=0.125)
+    stress = result["stress"]
+    mean = stress[:, :3].mean(axis=1)
+    dev = stress.copy()
+    dev[:, :3] -= mean[:, None]
+    tau = np.sqrt(0.5 * np.sum(dev[:, :3] ** 2, axis=1) + np.sum(dev[:, 3:] ** 2, axis=1))
+    shear_yield = tau + model.q_fai * mean - model.k_fai
+    tension_yield = mean - model.tensile
+    shear_multiplier = (np.abs(shears) - tau) / model.shear
+    plastic_volume = (means - mean) / model.bulk
+    tension_multiplier = plastic_volume - model.q_psi * shear_multiplier
+
+    assert np.isfinite(stress).all()
+    assert np.max(shear_yield) < 2.0e-4
+    assert np.max(tension_yield) < 2.0e-4
+    assert np.min(shear_multiplier) > -2.0e-8
+    assert np.min(tension_multiplier) > -2.0e-8
+    np.testing.assert_allclose(shear_multiplier * shear_yield, 0.0, atol=2.0e-5)
+    np.testing.assert_allclose(tension_multiplier * tension_yield, 0.0, atol=2.0e-5)
+    assert np.all(stress[:, 3] * shears >= 0.0)
+    np.testing.assert_allclose(
+        result["history"] - 0.125,
+        np.sqrt(shear_multiplier**2 / 3.0 + 2.0 * plastic_volume**2 / 9.0),
+        rtol=2.0e-5,
+        atol=2.0e-8,
+    )
+    if solver_type == "Implicit":
+        assert result["trial_branch"][2] == 2
+        assert result["tangent"][2, 3, 3] == pytest.approx(model.shear)
+        assert result["trial_branch"][4] == 3
+        corner_tangent = result["tangent"][4]
+        np.testing.assert_allclose(corner_tangent @ [1, 1, 1, 0, 0, 0], 0.0, atol=0.1)
+        np.testing.assert_allclose(corner_tangent @ [0, 0, 0, 1, 0, 0], 0.0, atol=0.1)
+
+
+@pytest.mark.parametrize("cohesion,tensile", [(100.0, 0.0), (100.0, 1.0e22), (0.0, 0.0)])
+def test_drucker_prager_zero_tension_and_apex_do_not_reverse_shear(taichi_material_cpu, cohesion, tensile):
+    model = _make_drucker_prager(cohesion=cohesion, Tensile=tensile, Dilation=0.0)
+    trial = np.array([[1000.0, 1000.0, 1000.0, shear, 0.0, 0.0] for shear in [0.0, 100.0, 1000.0]])
+    strains = np.linalg.solve(_elastic_stiffness(model.bulk, model.shear), trial.T).T
+    result = _evaluate("frictional", model, strains)
+    cutoff = min(tensile, model.k_fai / model.q_fai)
+    expected = trial.copy()
+    expected[:, :3] = cutoff
+    expected[:, 3] = np.minimum(trial[:, 3], max(0.0, model.k_fai - model.q_fai * cutoff))
+    np.testing.assert_allclose(result["stress"], expected, rtol=2.0e-6, atol=2.0e-4)
+    assert np.isfinite(result["tangent"]).all()
+    if expected[-1, 3] == 0.0:
+        np.testing.assert_allclose(result["tangent"][-1], 0.0, atol=0.1)

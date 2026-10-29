@@ -11,7 +11,6 @@ from src.utils.SolverConsole import (
     print_solver_section,
 )
 
-
 PUBLIC_SOLVER_FACADES = (
     ("src.mpm.mainMPM", "MPM"),
     ("src.dem.mainDEM", "DEM"),
@@ -219,7 +218,7 @@ def test_every_primary_solver_branch_reports_mpm_style_compile_timing():
 def test_solver_principles_document_the_cross_solver_contract():
     from pathlib import Path
 
-    document = Path("docs/solver_integration_principles.md").read_text(encoding="utf-8")
+    document = Path("agent/SOLVER_INTEGRATION_PRINCIPLES.md").read_text(encoding="utf-8")
 
     for solver_name in (
         "DEM",

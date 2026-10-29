@@ -1,10 +1,11 @@
 import taichi as ti
 from math import ceil, isfinite
 from src.linear_solver.CoordinateSparseMatrix import CoordinateSparseMatrix
+from src.linear_solver.MultiGridPCG import MGPCGPoissonSolver
 
 
 @ti.data_oriented
-class MGPCGMixPoissonSolver_Axi:
+class MGPCGMixPoissonSolver_Axi(MGPCGPoissonSolver):
     def __init__(
         self, dimension, gnum, dr, n_mg_levels=4, pre_and_post_smoothing=2, bottom_smoothing=50, axi_offset=0.0
     ):
@@ -64,6 +65,8 @@ class MGPCGMixPoissonSolver_Axi:
         self.final_residual = 0.0
         self.breakdown_reason = ""
         self.breakdown_value = 0.0
+        self.smoother = "rbgs"
+        self._init_graph_dispatch(signed_products=True)
 
         # direct solver matrix and vectors
         dofs = gnum[0] * gnum[1]
@@ -170,6 +173,8 @@ class MGPCGMixPoissonSolver_Axi:
             self.z[l][I] += self.z[l + 1][I // 2]
 
     def v_cycle(self):
+        if self.graph_dispatch:
+            return self._run_v_cycle("rbgs")
         self.z[0].fill(0.0)
         for l in range(self.n_mg_levels - 1):
             for i in range(self.pre_and_post_smoothing):
@@ -201,6 +206,8 @@ class MGPCGMixPoissonSolver_Axi:
         return False
 
     def solve(self, max_iters=-1, rel_tol=1e-3, abs_tol=1e-5, eps=1e-12):
+        if self.graph_dispatch:
+            return super().solve(max_iters, rel_tol, abs_tol, eps)
         self.compute_true_residual()
         self.reduce(self.r[0], self.r[0])
         initial_rTr = self.sum[None]
@@ -215,6 +222,7 @@ class MGPCGMixPoissonSolver_Axi:
         tol = max(abs_tol, initial_rTr * rel_tol)
         if initial_rTr < tol:
             return True
+        self.beta[None] = 0.0
         self.v_cycle()
         self.update_p()
 
@@ -295,6 +303,16 @@ class MGPCGMixPoissonSolver_Axi:
                 r = self.Adiag[0][I] * self.p[I]
                 r += self.neighbor_sum(self.Ax[0], self.Ax_neg[0], self.p, I)
                 self.Ap[I] = r
+
+    @ti.kernel
+    def compute_Ap_dot(self):
+        self.sum[None] = 0.0
+        for I in ti.grouped(self.Ap):
+            if self.grid_type[0][I] == self.FLUID:
+                value = self.Adiag[0][I] * self.p[I]
+                value += self.neighbor_sum(self.Ax[0], self.Ax_neg[0], self.p, I)
+                self.Ap[I] = value
+                self.sum[None] += self.p[I] * value
 
     @ti.kernel
     def compute_true_residual(self):

@@ -755,8 +755,7 @@ class DEM(SolverDiagnosticsMixin):
         self.enginer.choose_engine(self.sims, self.scene)
         if self.sims.scheme == "LSMPM" and len(self.scene.affine_bodies) > 0:
             self.sims.freeze_lsmpm_soft_rigid_contact()
-        if self.sims.scheme != "AffineBody":
-            self.enginer.set_servo_mechanism(self.sims, callback)
+        self.enginer.set_servo_mechanism(self.sims, callback)
 
     def add_recorder(self):
         if self.recorder is None:

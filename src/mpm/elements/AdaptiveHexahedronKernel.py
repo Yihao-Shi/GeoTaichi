@@ -1,8 +1,8 @@
 import taichi as ti
+from src.mpm.elements.AdaptiveTopologyKernel import adaptive_list_count
 from src.physics_model.consititutive_model.infinitesimal_strain.MaterialKernel import (
     EquivalentDeviatoricStrain,
     EquivalentDeviatoricStress,
-    EquivalentStrain,
 )
 from src.utils.constants import Threshold
 from src.utils.ScalarFunction import linearize, vectorize_id
@@ -13,7 +13,7 @@ from src.utils.TypeDefination import vec3f, vec3i
 def initialize_adaptive_particle_size(
     particleNum: int,
     characteristic_mode: int,
-    coarse_grid_size: ti.types.vector(3, float),
+    coarse_grid_size: vec3f,
     psize: ti.types.ndarray(),
     particle_size: ti.template(),
     calLength: ti.template(),
@@ -64,7 +64,7 @@ def append_adaptive_support_node(
     row_end: int,
     compact_id: int,
     shape_value: float,
-    dshape_value: ti.types.vector(3, float),
+    dshape_value: vec3f,
     LnID: ti.template(),
     shape_fn: ti.template(),
     dshape_fn: ti.template(),
@@ -84,7 +84,7 @@ def append_or_accumulate_adaptive_support_node(
     row_end: int,
     compact_id: int,
     shape_value: float,
-    dshape_value: ti.types.vector(3, float),
+    dshape_value: vec3f,
     support_overflow: ti.template(),
     LnID: ti.template(),
     shape_fn: ti.template(),
@@ -115,7 +115,7 @@ def append_projected_hanging_node(
     row_end: int,
     compact_id: int,
     shape_value: float,
-    dshape_value: ti.types.vector(3, float),
+    dshape_value: vec3f,
     strong_hanging: int,
     hanging_lookup: ti.template(),
     hanging_master_id: ti.template(),
@@ -179,11 +179,11 @@ def adaptive_global_update(
     refinement_ratio: int,
     max_refinement_level: int,
     finest_ratio: int,
-    coarse_grid_size: ti.types.vector(3, float),
-    coarse_igrid_size: ti.types.vector(3, float),
+    coarse_grid_size: vec3f,
+    coarse_igrid_size: vec3f,
     coarse_cnum: ti.types.vector(3, int),
-    fine_grid_size: ti.types.vector(3, float),
-    fine_igrid_size: ti.types.vector(3, float),
+    fine_grid_size: vec3f,
+    fine_igrid_size: vec3f,
     fine_gnum: ti.types.vector(3, int),
     particleNum: int,
     particle: ti.template(),
@@ -397,11 +397,11 @@ def adaptive_bridging_global_update(
     influenced_node: int,
     shape_mode: int,
     refinement_ratio: int,
-    coarse_grid_size: ti.types.vector(3, float),
-    coarse_igrid_size: ti.types.vector(3, float),
+    coarse_grid_size: vec3f,
+    coarse_igrid_size: vec3f,
     coarse_cnum: ti.types.vector(3, int),
-    fine_grid_size: ti.types.vector(3, float),
-    fine_igrid_size: ti.types.vector(3, float),
+    fine_grid_size: vec3f,
+    fine_igrid_size: vec3f,
     fine_gnum: ti.types.vector(3, int),
     particleNum: int,
     particle: ti.template(),
@@ -574,16 +574,17 @@ def assemble_bridging_penalty_impulse(
 def mark_refined_cells_epdstrain(
     threshold: float,
     max_refinement_level: int,
-    coarse_igrid_size: ti.types.vector(3, float),
+    coarse_igrid_size: vec3f,
     coarse_cnum: ti.types.vector(3, int),
     particleNum: int,
     particle: ti.template(),
     stateVars: ti.template(),
     current_refined_cell: ti.template(),
     refined_cell: ti.template(),
+    material_id: int,
 ):
     for np in range(particleNum):
-        if int(particle[np].active) == 1 and int(particle[np].materialID) > 0:
+        if int(particle[np].active) == 1 and int(particle[np].materialID) == material_id:
             cell = ti.floor(particle[np].x * coarse_igrid_size, int)
             cell = ti.min(ti.max(cell, 0), coarse_cnum - 1)
             cell_id = linearize(cell, coarse_cnum)
@@ -596,16 +597,17 @@ def mark_refined_cells_epdstrain(
 def mark_refined_cells_epstrain(
     threshold: float,
     max_refinement_level: int,
-    coarse_igrid_size: ti.types.vector(3, float),
+    coarse_igrid_size: vec3f,
     coarse_cnum: ti.types.vector(3, int),
     particleNum: int,
     particle: ti.template(),
     stateVars: ti.template(),
     current_refined_cell: ti.template(),
     refined_cell: ti.template(),
+    material_id: int,
 ):
     for np in range(particleNum):
-        if int(particle[np].active) == 1 and int(particle[np].materialID) > 0:
+        if int(particle[np].active) == 1 and int(particle[np].materialID) == material_id:
             cell = ti.floor(particle[np].x * coarse_igrid_size, int)
             cell = ti.min(ti.max(cell, 0), coarse_cnum - 1)
             cell_id = linearize(cell, coarse_cnum)
@@ -618,21 +620,22 @@ def mark_refined_cells_epstrain(
 def mark_refined_cells_strain(
     threshold: float,
     max_refinement_level: int,
-    coarse_igrid_size: ti.types.vector(3, float),
+    coarse_igrid_size: vec3f,
     coarse_cnum: ti.types.vector(3, int),
     particleNum: int,
     particle: ti.template(),
     stateVars: ti.template(),
     current_refined_cell: ti.template(),
     refined_cell: ti.template(),
+    material_id: int,
 ):
     for np in range(particleNum):
-        if int(particle[np].active) == 1 and int(particle[np].materialID) > 0:
+        if int(particle[np].active) == 1 and int(particle[np].materialID) == material_id:
             cell = ti.floor(particle[np].x * coarse_igrid_size, int)
             cell = ti.min(ti.max(cell, 0), coarse_cnum - 1)
             cell_id = linearize(cell, coarse_cnum)
             current = int(current_refined_cell[cell_id])
-            if current < max_refinement_level and EquivalentStrain(stateVars[np].strain) >= threshold:
+            if current < max_refinement_level and EquivalentDeviatoricStrain(stateVars[np].strain) >= threshold:
                 refined_cell[cell_id] = ti.cast(current + 1, ti.u8)
 
 
@@ -640,16 +643,17 @@ def mark_refined_cells_strain(
 def mark_refined_cells_deviatoric_strain(
     threshold: float,
     max_refinement_level: int,
-    coarse_igrid_size: ti.types.vector(3, float),
+    coarse_igrid_size: vec3f,
     coarse_cnum: ti.types.vector(3, int),
     particleNum: int,
     particle: ti.template(),
     stateVars: ti.template(),
     current_refined_cell: ti.template(),
     refined_cell: ti.template(),
+    material_id: int,
 ):
     for np in range(particleNum):
-        if int(particle[np].active) == 1 and int(particle[np].materialID) > 0:
+        if int(particle[np].active) == 1 and int(particle[np].materialID) == material_id:
             cell = ti.floor(particle[np].x * coarse_igrid_size, int)
             cell = ti.min(ti.max(cell, 0), coarse_cnum - 1)
             cell_id = linearize(cell, coarse_cnum)
@@ -662,16 +666,17 @@ def mark_refined_cells_deviatoric_strain(
 def mark_refined_cells_stress(
     threshold: float,
     max_refinement_level: int,
-    coarse_igrid_size: ti.types.vector(3, float),
+    coarse_igrid_size: vec3f,
     coarse_cnum: ti.types.vector(3, int),
     particleNum: int,
     particle: ti.template(),
     stateVars: ti.template(),
     current_refined_cell: ti.template(),
     refined_cell: ti.template(),
+    material_id: int,
 ):
     for np in range(particleNum):
-        if int(particle[np].active) == 1 and int(particle[np].materialID) > 0:
+        if int(particle[np].active) == 1 and int(particle[np].materialID) == material_id:
             cell = ti.floor(particle[np].x * coarse_igrid_size, int)
             cell = ti.min(ti.max(cell, 0), coarse_cnum - 1)
             cell_id = linearize(cell, coarse_cnum)
@@ -700,16 +705,17 @@ def matrix_equivalent_deviatoric_stress(stress):
 def mark_refined_cells_matrix_stress(
     threshold: float,
     max_refinement_level: int,
-    coarse_igrid_size: ti.types.vector(3, float),
+    coarse_igrid_size: vec3f,
     coarse_cnum: ti.types.vector(3, int),
     particleNum: int,
     particle: ti.template(),
     stateVars: ti.template(),
     current_refined_cell: ti.template(),
     refined_cell: ti.template(),
+    material_id: int,
 ):
     for np in range(particleNum):
-        if int(particle[np].active) == 1 and int(particle[np].materialID) > 0:
+        if int(particle[np].active) == 1 and int(particle[np].materialID) == material_id:
             cell = ti.floor(particle[np].x * coarse_igrid_size, int)
             cell = ti.min(ti.max(cell, 0), coarse_cnum - 1)
             cell_id = linearize(cell, coarse_cnum)
@@ -722,16 +728,17 @@ def mark_refined_cells_matrix_stress(
 def mark_refined_cells_softening(
     threshold: float,
     max_refinement_level: int,
-    coarse_igrid_size: ti.types.vector(3, float),
+    coarse_igrid_size: vec3f,
     coarse_cnum: ti.types.vector(3, int),
     particleNum: int,
     particle: ti.template(),
     stateVars: ti.template(),
     current_refined_cell: ti.template(),
     refined_cell: ti.template(),
+    material_id: int,
 ):
     for np in range(particleNum):
-        if int(particle[np].active) == 1 and int(particle[np].materialID) > 0:
+        if int(particle[np].active) == 1 and int(particle[np].materialID) == material_id:
             cell = ti.floor(particle[np].x * coarse_igrid_size, int)
             cell = ti.min(ti.max(cell, 0), coarse_cnum - 1)
             cell_id = linearize(cell, coarse_cnum)
@@ -742,7 +749,7 @@ def mark_refined_cells_softening(
 
 @ti.kernel
 def mark_refined_cells_migrated_particles(
-    coarse_igrid_size: ti.types.vector(3, float),
+    coarse_igrid_size: vec3f,
     coarse_cnum: ti.types.vector(3, int),
     particleNum: int,
     particle: ti.template(),
@@ -757,7 +764,7 @@ def mark_refined_cells_migrated_particles(
             cell_id = linearize(cell, coarse_cnum)
             target_level = ti.max(int(current_refined_cell[cell_id]), int(particle_refined[np]))
             if target_level > int(current_refined_cell[cell_id]):
-                refined_cell[cell_id] = ti.cast(target_level, ti.u8)
+                ti.atomic_max(refined_cell[cell_id], ti.cast(target_level, ti.u8))
 
 
 @ti.kernel
@@ -800,8 +807,28 @@ def count_new_refined_cells(
 
 
 @ti.kernel
+def balance_refined_cells(
+    coarse_cnum: ti.types.vector(3, int),
+    max_level: int,
+    refined_cell: ti.template(),
+    refined_cell_buffer: ti.template(),
+):
+    for cell_id in range(refined_cell.shape[0]):
+        cell = ti.Vector(vectorize_id(cell_id, coarse_cnum))
+        target = int(refined_cell[cell_id])
+        for axis in ti.static(range(3)):
+            for direction in ti.static((-1, 1)):
+                neighbor = cell
+                neighbor[axis] += direction
+                if 0 <= neighbor[axis] < coarse_cnum[axis]:
+                    neighbor_id = linearize(neighbor, coarse_cnum)
+                    target = ti.max(target, int(refined_cell[neighbor_id]) - 1)
+        refined_cell_buffer[cell_id] = ti.cast(ti.min(target, max_level), ti.u8)
+
+
+@ti.kernel
 def assign_particle_levels(
-    coarse_igrid_size: ti.types.vector(3, float),
+    coarse_igrid_size: vec3f,
     coarse_cnum: ti.types.vector(3, int),
     particleNum: int,
     particle: ti.template(),
@@ -816,7 +843,7 @@ def assign_particle_levels(
 
 @ti.kernel
 def accumulate_split_cell_volume(
-    coarse_igrid_size: ti.types.vector(3, float),
+    coarse_igrid_size: vec3f,
     coarse_cnum: ti.types.vector(3, int),
     particleNum: int,
     particle: ti.template(),
@@ -835,9 +862,24 @@ def accumulate_split_cell_volume(
             )
 
 
+@ti.func
+def split_children_fit_grid(coarse_igrid_size, coarse_cnum, position, particle_size, child_level, refined_cell):
+    offset = 0.999 * (0.5 * particle_size)
+    lower = ti.floor((position - offset) * coarse_igrid_size, int)
+    upper = ti.floor((position + offset) * coarse_igrid_size, int)
+    fits = all(lower >= 0) and all(upper < coarse_cnum)
+    # Birth must not place fine children in coarse cells and trigger refinement without advection.
+    if fits and any(lower != upper):
+        for corner in ti.static(ti.grouped(ti.ndrange(2, 2, 2))):
+            cell = lower + corner * (upper - lower)
+            if int(refined_cell[linearize(cell, coarse_cnum)]) < child_level:
+                fits = False
+    return fits
+
+
 @ti.kernel
 def collect_particles_to_split(
-    coarse_igrid_size: ti.types.vector(3, float),
+    coarse_igrid_size: vec3f,
     coarse_cnum: ti.types.vector(3, int),
     particleNum: int,
     max_split_parents: int,
@@ -846,6 +888,7 @@ def collect_particles_to_split(
     refined_cell: ti.template(),
     split_cell_volume: ti.template(),
     particle_refined: ti.template(),
+    particle_size: ti.template(),
     unrefined_particle_count: ti.template(),
     split_particle_count: ti.template(),
     split_parent_id: ti.template(),
@@ -860,9 +903,17 @@ def collect_particles_to_split(
             cell_id = linearize(cell, coarse_cnum)
             can_split_cell = min_split_cell_volume <= Threshold or split_cell_volume[cell_id] >= min_split_cell_volume
             if refined_cell[cell_id] > particle_refined[np] and can_split_cell:
-                split_id = ti.atomic_add(split_particle_count[None], 1)
-                if split_id < max_split_parents:
-                    split_parent_id[split_id] = np
+                if split_children_fit_grid(
+                    coarse_igrid_size,
+                    coarse_cnum,
+                    particle[np].x,
+                    particle_size[np],
+                    int(particle_refined[np]) + 1,
+                    refined_cell,
+                ):
+                    split_id = ti.atomic_add(split_particle_count[None], 1)
+                    if split_id < max_split_parents:
+                        split_parent_id[split_id] = np
 
 
 @ti.kernel
@@ -950,6 +1001,8 @@ def split_refined_particles(
         particle[target].particleID = target
         particle[target].m = child_mass[split_id]
         particle[target].vol = child_volume[split_id]
+        if ti.static(hasattr(particle, "vol0")):
+            particle[target].vol0 *= 0.125
         particle[target].x = parent_position[split_id] + child_offset
         particle[target].v = parent_velocity[split_id]
         particle[target].velocity_gradient = ti.Matrix.zero(float, 3, 3)
@@ -961,9 +1014,9 @@ def split_refined_particles(
 
 @ti.kernel
 def reset_hanging_penalty_impulse_list(
-    touched_count: int, touched_node_id: ti.template(), penalty_impulse: ti.template()
+    touched_count: ti.template(), touched_node_id: ti.template(), penalty_impulse: ti.template()
 ):
-    for touched_id, body_id in ti.ndrange(touched_count, penalty_impulse.shape[1]):
+    for touched_id, body_id in ti.ndrange(adaptive_list_count(touched_count), penalty_impulse.shape[1]):
         node_id = touched_node_id[touched_id]
         penalty_impulse[node_id, body_id] = vec3f(0.0, 0.0, 0.0)
 
@@ -1003,14 +1056,14 @@ def assemble_hanging_penalty_impulse_list(
     penalty_length: float,
     reference_volume: float,
     dt: ti.template(),
-    hanging_count: int,
+    hanging_count: ti.template(),
     hanging_node_id: ti.template(),
     hanging_master_id: ti.template(),
     hanging_master_weight: ti.template(),
     node: ti.template(),
     penalty_impulse: ti.template(),
 ):
-    for constraint_id, body_id in ti.ndrange(hanging_count, node.shape[1]):
+    for constraint_id, body_id in ti.ndrange(adaptive_list_count(hanging_count), node.shape[1]):
         node_id = hanging_node_id[constraint_id]
         slave_mass = node[node_id, body_id].m
         if slave_mass > cutoff:
@@ -1058,12 +1111,12 @@ def assemble_hanging_penalty_impulse_list(
 @ti.kernel
 def apply_hanging_penalty_velocity_list(
     cutoff: float,
-    touched_count: int,
+    touched_count: ti.template(),
     touched_node_id: ti.template(),
     node: ti.template(),
     penalty_impulse: ti.template(),
 ):
-    for touched_id, body_id in ti.ndrange(touched_count, node.shape[1]):
+    for touched_id, body_id in ti.ndrange(adaptive_list_count(touched_count), node.shape[1]):
         node_id = touched_node_id[touched_id]
         mass = node[node_id, body_id].m
         if mass > cutoff:
@@ -1075,12 +1128,12 @@ def apply_hanging_penalty_velocity_list(
 def apply_hanging_penalty_impulse_list(
     cutoff: float,
     dt: ti.template(),
-    touched_count: int,
+    touched_count: ti.template(),
     touched_node_id: ti.template(),
     node: ti.template(),
     penalty_impulse: ti.template(),
 ):
-    for touched_id, body_id in ti.ndrange(touched_count, node.shape[1]):
+    for touched_id, body_id in ti.ndrange(adaptive_list_count(touched_count), node.shape[1]):
         node_id = touched_node_id[touched_id]
         mass = node[node_id, body_id].m
         if mass > cutoff:

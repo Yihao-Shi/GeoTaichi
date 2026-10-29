@@ -31,6 +31,15 @@ or EE coplanarity polynomial vanishes identically, there is no isolated cubic
 event. The implementation uses the zero-clearance ACCD distance fallback for
 that all-coplanar trajectory.
 
+For PT and EE stencils, a positive separation below the root-validation
+tolerance uses zero-clearance ACCD rather than declaring initial intersection.
+If ACCD stops at its absolute iteration cutoff, the safe first advance is
+`(1-eta)*d(0)/L`, capped at one. For PT, `L=max_i ||dp-dt_i||`; for EE,
+`L=max_ij ||da_i-db_j||`. These bounds follow from the convex barycentric
+coordinates of the closest points and ensure `d(alpha)>=eta*d(0)`.
+Zero relative motion permits the full step; zero initial distance still returns
+zero. The root-validation tolerance is not a physical minimum clearance.
+
 ## Iterative additive CCD
 
 Let `d(t)` be the exact primitive distance, `d_min >= 0` the requested

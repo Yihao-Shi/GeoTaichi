@@ -237,7 +237,7 @@ def main():
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--newton-max-iterations", type=int, default=50)
     parser.add_argument("--step-retry-max-retries", type=int, default=5)
-    parser.add_argument("--contact-model", choices=("BarrierIPC", "SemiIPC"), default="BarrierIPC")
+    parser.add_argument("--contact-model", choices=("BarrierIPC",), default="BarrierIPC")
     parser.add_argument("--assemble-type", choices=("COO", "HashTriplet"), default="HashTriplet")
     parser.add_argument("--minimum-timestep-ratio", type=float, default=32.0)
     parser.add_argument("--linear-tolerance", type=float, default=1.0e-8)

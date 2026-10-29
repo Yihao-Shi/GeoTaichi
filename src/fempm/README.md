@@ -16,6 +16,9 @@ synchronized time, and coupled output.
 - Three-dimensional solid structures with DP soil: [flexible barrier](../../examples/fempm/flexible_barrier/flexible_barrier.py) and [upper-clamped wavy plate](../../examples/fempm/wavy_plate_collapse/wavy_plate_collapse.py).
 - The linked implicit examples use elastic FEM and ULMPM, with finite-radius barrier contact, coupled assembly, and lagged friction where enabled.
 
+The CPT and flexible-barrier scripts keep their model setup in their own case
+directories. Their default output directory is `<case>/OutputData`.
+
 ## Package layout
 
 Direct-MPM children selecting `ShapeFunction="QuadBSpline"` use the shared
@@ -669,8 +672,13 @@ Newton/trial/CCD query without a Verlet multiplier.
 runs a prefix sum, and fills compact cell memberships at every rebuild. It
 therefore does not assume a fixed number of triangles per cell.
 
-`BVH` rebuilds a Morton-code linear BVH over current primitive AABBs and queries
-it directly with each expanded material-point sphere. Both searches perform
+Explicit `BVH` searches maintain a Morton-code tree over current primitive
+AABBs and query it with each expanded material-point sphere. Set the positive
+integer `bvh_rebuild_interval` in `coupling.memory_allocate({...})` (default
+`1000`). The first query builds; later queries refit until the elapsed solver
+steps reach the interval, then rebuild at the next query. This also covers
+soft-particle FEM boundary surfaces. Implicit IPC rebuilds on every new query.
+Both searches perform
 the same exact point–edge (2D) or point–triangle (3D) distance cull and feed
 the same compact contact list and narrow phase. A rebuild occurs when either the material-point motion
 or FEM surface motion exceeds half the coupling skin. Capacity overflow raises

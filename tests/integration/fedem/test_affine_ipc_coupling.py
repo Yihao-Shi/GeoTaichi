@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 
 import numpy as np
 import pytest
@@ -9,6 +10,9 @@ from geotaichi import DEM, polyhedron
 from src.fem.generator import FEMMesh
 from src.fem.mainFEM import FEM
 from src.fedem.mainFEDEM import FEDEM
+from src.fedem.DifferentiableFEMAffine import DifferentiableFEMAffine
+from src.linear_solver.BuildTriplet import BuildTriplet
+from src.fem.contact.ContactAssembler import FEMContactAssembler
 
 pytestmark = [
     pytest.mark.integration,
@@ -24,7 +28,7 @@ pytestmark = [
 def taichi_cpu_runtime():
     ti.reset()
     ti.init(
-        arch=ti.cpu,
+        arch=ti.cuda if os.environ.get("GEOTAICHI_TEST_ARCH") == "cuda" else ti.cpu,
         default_fp=ti.f64,
         cpu_max_num_threads=1,
         offline_cache=False,
@@ -33,18 +37,30 @@ def taichi_cpu_runtime():
     ti.reset()
 
 
-@pytest.mark.parametrize("contact_model", ["BarrierIPC", "SemiIPC"])
-def test_affine_ipc_assembles_mixed_tet_soft_particle_control_system(tmp_path, contact_model):
+@pytest.mark.parametrize("contact_model", ["BarrierIPC"])
+@pytest.mark.parametrize("newmark", [(1.0, 0.5, 1.0), (0.5, 0.25, 0.5)])
+@pytest.mark.parametrize("assemble_type", ["HashTriplet", "COO"])
+@pytest.mark.parametrize("search", ["LinkedCell", "BVH"])
+def test_affine_ipc_assembles_mixed_tet_soft_particle_control_system(
+    tmp_path, contact_model, newmark, assemble_type, search, monkeypatch
+):
+    def reject_host_contact(*_args, **_kwargs):
+        raise AssertionError("FEM--ABD stepping must not call FEM host contact adapters")
+
+    for method in ("begin_step", "prepare_iteration", "assemble", "assemble_output", "maximum_admissible_step"):
+        monkeypatch.setattr(FEMContactAssembler, method, reject_host_contact, raising=False)
+
     dem = DEM(log=False)
     dem.set_configuration(
         domain=[2.0, 2.0, 2.0],
         scheme="AffineBody",
-        search="LinkedCell",
+        search=search,
         gravity=[0.0, 0.0, 0.0],
         visualize=False,
         log=False,
     )
     dem.set_affine_body_parameters(
+        newmark=newmark,
         assemble_type="HashTriplet",
         young_modulus=2.0e4,
         local_damping=0.0,
@@ -114,21 +130,21 @@ def test_affine_ipc_assembles_mixed_tet_soft_particle_control_system(tmp_path, c
     fem.add_boundary_condition(
         {
             "type": "Dirichlet",
-            "nodes": [0, 1, 2, 3],
+            "nodes": [1, 2, 3],
             "components": "all",
             "value": 0.0,
         }
     )
 
     coupling = FEDEM(dem, fem, log=False)
-    coupling.set_configuration(domain=[2.0, 2.0, 2.0], search="LinkedCell", log=False)
+    coupling.set_configuration(domain=[2.0, 2.0, 2.0], search=search, log=False)
     coupling.set_solver(
         {
             "Timestep": 1.0e-3,
             "SimulationTime": 1.0e-3,
             "SaveInterval": 1.0,
             "SavePath": str(tmp_path),
-            "assemble_type": "HashTriplet",
+            "assemble_type": assemble_type,
             "linear_solver": "PCG",
         },
         log=False,
@@ -195,6 +211,18 @@ def test_affine_ipc_assembles_mixed_tet_soft_particle_control_system(tmp_path, c
     # streams.  Exercise the same append-then-reduce path as production rather
     # than finalizing the raw-only contact source directly.
     contact_destination = engine.monolithic_hash
+    if contact_destination is None:
+        contact_destination = BuildTriplet(
+            3,
+            engine.contact_hash.non_diag.max_pairs_num,
+            engine.node_count**2,
+            engine.node_count,
+            symmetric=False,
+            matrix_symmetric=True,
+            full_symmetric_input=True,
+            solver="PCG",
+            device_reduction=True,
+        )
     contact_destination.reset_system()
     contact_destination.append_raw_from(
         engine.contact_hash,
@@ -222,7 +250,24 @@ def test_affine_ipc_assembles_mixed_tet_soft_particle_control_system(tmp_path, c
     assert result["converged"]
     assert result["step"] == 1
     assert result["time"] == pytest.approx(1.0e-3)
-    assert engine.last_linear_solve["backend"] == "taichi_hash_pcg"
+    assert engine.last_linear_solve["backend"] == (
+        "taichi_hash_pcg" if assemble_type == "HashTriplet" else "taichi_coo_pcg"
+    )
     assert len(result["history"][-1]["friction_iterations"]) == 2
     assert (tmp_path / "vtks" / "FEM000000.vtu").is_file()
     assert (tmp_path / "vtks" / "GraphicAffineBody000000.vtu").is_file()
+
+    exact = engine.assemble_system(project_spd=False, solver_shift=False)
+    matrix = (
+        exact["matrix"].to_scipy(engine.node_count) if assemble_type == "HashTriplet" else exact["matrix"]._to_scipy()
+    ).toarray()
+    seed = np.random.default_rng(716).normal(size=engine.dof_count)
+    engine.rhs.from_numpy(seed)
+    adjoint = object.__new__(DifferentiableFEMAffine)
+    adjoint.engine, adjoint.coo_adjoint_solver = engine, None
+    adjoint._solve_adjoint(exact)
+    actual = engine.correction.to_numpy()
+    expected = np.linalg.solve(matrix.T, seed)
+    np.testing.assert_allclose(actual, expected, rtol=1e-8, atol=1e-10)
+    tolerance = max(engine.linear_solver_tolerance, engine.linear_solver_relative_tolerance * np.linalg.norm(seed))
+    assert np.linalg.norm(matrix.T @ actual - seed) <= tolerance

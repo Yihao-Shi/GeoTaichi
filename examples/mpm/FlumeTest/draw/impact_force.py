@@ -231,7 +231,7 @@ dempm.mpm.add_material(
         "Density": 1379.0,
         "GrainDensity": 2650,
         "YoungModulus": 2778000,
-        "PossionRatio": 0.2,
+        "PoissonRatio": 0.2,
         "StaticFriction": 35,
         "DynamicFriction": 40,
         "Cohesion": 0.0,

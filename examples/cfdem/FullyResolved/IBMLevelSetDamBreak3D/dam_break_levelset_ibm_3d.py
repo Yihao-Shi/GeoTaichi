@@ -102,7 +102,12 @@ init(
 if not MESH_FILE.is_file():
     raise FileNotFoundError(MESH_FILE)
 body_shape = polyhedron(file=str(MESH_FILE))
-body_shape.grids(space=env_float("LEVELSET_GRID_SPACE_RATIO", 0.05) * body_shape.eqradius, extent=3)
+sdf_grid_space_ratio = env_float("LEVELSET_GRID_SPACE_RATIO", 0.05)
+if not math.isfinite(sdf_grid_space_ratio) or sdf_grid_space_ratio <= 0.0:
+    raise ValueError("LEVELSET_GRID_SPACE_RATIO must be finite and positive")
+# Include all corners of intersected fluid cells, also after rigid rotation.
+sdf_extent = max(3, math.ceil(math.sqrt(3.0) * DX / (sdf_grid_space_ratio * RADIUS)) + 1)
+body_shape.grids(space=sdf_grid_space_ratio * body_shape.eqradius, extent=sdf_extent)
 local_radius = float(np.max(np.linalg.norm(body_shape.mesh.vertices - body_shape.mesh.center_mass, axis=1)))
 grid_half_count = math.ceil(local_radius / body_shape.grid.grid_space) + body_shape.grid.extent
 # Principal-axis alignment can rotate the local box; the realized vertex radius
@@ -263,7 +268,6 @@ dempm.mpm.add_material(
     material={
         "MaterialID": 1,
         "Density": 1000.0,
-        "Modulus": 2.0e6,
         "Viscosity": 1.0e-3,
         "ElementLength": DX,
         "cL": 1.5,
@@ -406,6 +410,8 @@ metrics = {
     "computational_mpm_particles": int(dempm.mpm.scene.particleNum[0]),
     "fictitious_ibm_carriers_retained": True,
     "levelset_grid_capacity_per_template": LEVELSET_GRID_NUMBER,
+    "sdf_grid_extent": int(dempm.dem.scene.box[0].extent),
+    "sdf_physical_grid_spacing_m": float(dempm.dem.scene.box[0].grid_space),
     "surface_nodes_per_body": SURFACE_NODE_NUMBER,
     "body_coordination_number": BODY_COORDINATION,
     "wall_coordination_number": WALL_COORDINATION,

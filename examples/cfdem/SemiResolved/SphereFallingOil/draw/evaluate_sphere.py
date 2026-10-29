@@ -36,7 +36,7 @@ def evaluate(config, times, centers, velocities, solid_volume_error, ibm_l2_erro
         "ibm_velocity_l2_error": ibm_l2_error,
     }
     speed, deviation = terminal_speed(times, velocities)
-    duration_complete = float(times[-1]) >= 0.95 * config["time"]
+    duration_complete = abs(float(times[-1]) - config["time"]) <= 1.0e-12 * max(1.0, config["time"])
     metrics.update(terminal_speed=speed, terminal_speed_std=deviation, validation_duration_complete=duration_complete)
     comparison_speed = float(np.max(-velocities[:, 0, 2]))
     metrics["peak_speed"] = comparison_speed

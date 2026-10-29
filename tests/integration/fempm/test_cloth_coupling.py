@@ -8,7 +8,7 @@ from src.fem.mainFEM import FEM
 from src.fempm.mainFEMPM import FEMPM
 from src.mpm.mainMPM import MPM
 
-pytestmark = [pytest.mark.integration, pytest.mark.fempm, pytest.mark.coupling]
+pytestmark = [pytest.mark.integration, pytest.mark.fempm, pytest.mark.coupling, pytest.mark.isolated_dimension(3)]
 
 
 @pytest.fixture(autouse=True)

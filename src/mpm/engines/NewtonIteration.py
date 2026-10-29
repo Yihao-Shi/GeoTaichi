@@ -42,6 +42,7 @@ class MomentumConservation(object):
         self.local_stiffness = None
         self.sparse_matrix = None
         self.coo_base_nnz = 0
+        self.adaptive_coo_offsets = None
         self.reaction_rhs_vector = None
         self.reaction_vector = None
         self.hash_triplet_solver = "BiCGSTAB"
@@ -289,6 +290,12 @@ class MomentumConservation(object):
                 active_node_capacity = max(1, active_dofs // sims.dimension)
                 neighbor_nodes = self.hash_triplet_neighbor_nodes(sims, scene)
                 stiffness_triplets = active_node_capacity * neighbor_nodes * sims.dimension * sims.dimension
+                if getattr(scene.element, "adaptive", False):
+                    self.adaptive_coo_offsets = ti.field(int, shape=sims.max_particle_num)
+                    stiffness_triplets = active_dofs
+                    # Metal cannot destroy field trees when a COO buffer grows.
+                    if ti.lang.impl.current_cfg().arch == ti.metal:
+                        stiffness_triplets += sims.max_particle_num * scene.element.influenced_dofs**2
                 constraint_triplets = int(getattr(sims, "ndisplacement", 0))
                 self.sparse_matrix = CoordinateSparseMatrix(
                     stiffness_triplets + constraint_triplets,
@@ -523,6 +530,9 @@ class MomentumConservation(object):
         )
 
     def assemble_coo_matrix(self, sims: Simulation, scene: myScene):
+        if self.adaptive_coo_offsets is not None:
+            self.assemble_adaptive_coo_matrix(sims, scene)
+            return
         sims.timer.begin("COO reset")
         self.sparse_matrix.reset()
         sims.timer.end("COO reset")
@@ -584,6 +594,50 @@ class MomentumConservation(object):
             )
         sims.timer.end("COO assemble stiffness")
         nnz = active_nodes * neighbor_nodes * sims.dimension * sims.dimension
+        self.coo_base_nnz = nnz
+        self.sparse_matrix.linear_operator.update_active_dofs(active_dofs)
+        self.sparse_matrix.linear_operator.update_nnz(nnz)
+
+    def assemble_adaptive_coo_matrix(self, sims: Simulation, scene: myScene):
+        active_dofs = self.operator.active_dofs
+        particle_num = int(scene.particleNum[0])
+        sims.timer.begin("COO reset")
+        # Adaptive node pairs have no fixed Cartesian neighbor stencil.
+        counts = kernel_adaptive_coo_offsets(
+            active_dofs, particle_num, scene.particle, scene.element.node_size, self.adaptive_coo_offsets
+        )
+        if int(counts[1]) != 0:
+            raise RuntimeError("Adaptive COO scalar-triplet count exceeds the int32 capacity limit")
+        nnz = int(counts[0])
+        required = nnz + int(getattr(sims, "ndisplacement", 0))
+        if required > self.sparse_matrix.capacity:
+            self.sparse_matrix.clear()
+            self.sparse_matrix._field_build(required)
+        self.sparse_matrix.reset()
+        sims.timer.end("COO reset")
+        sims.timer.begin("COO assemble mass")
+        kernel_assemble_adaptive_coo_mass(
+            active_dofs, self.mass_matrix, self.sparse_matrix.rows, self.sparse_matrix.cols, self.sparse_matrix.data
+        )
+        sims.timer.end("COO assemble mass")
+        sims.timer.begin("COO assemble stiffness")
+        kernel_assemble_adaptive_coo_stiffness(
+            self.node_stride(scene),
+            scene.element.grid_nodes,
+            particle_num,
+            scene.particle,
+            scene.element.dshape_fn,
+            scene.element.node_size,
+            scene.element.LnID,
+            scene.element.flag,
+            scene.material.stiffness_matrix,
+            self.assemble_stiffness_matrix,
+            self.adaptive_coo_offsets,
+            self.sparse_matrix.rows,
+            self.sparse_matrix.cols,
+            self.sparse_matrix.data,
+        )
+        sims.timer.end("COO assemble stiffness")
         self.coo_base_nnz = nnz
         self.sparse_matrix.linear_operator.update_active_dofs(active_dofs)
         self.sparse_matrix.linear_operator.update_nnz(nnz)
@@ -915,6 +969,7 @@ class MomentumConservation(object):
             self.diag_A,
             maxiter=max(1, self.operator.active_dofs),
             tol=sims.residual_tolerance,
+            rel_tol=sims.linear_solver_relative_tolerance,
         )
         sims.timer.end("COO solve")
         if not result:

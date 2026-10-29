@@ -14,19 +14,26 @@ class NewtonianModel(Fluid):
 
     def model_initialize(self, material):
         self.material = material
-        density = DictIO.GetAlternative(material, 'Density', 1000)
-        modulus = DictIO.GetAlternative(material, 'Modulus', 3.6e5)
-        viscosity = DictIO.GetAlternative(material, 'Viscosity', 1e-3)
-        cl = DictIO.GetAlternative(material, 'cL', 1.)
-        cq = DictIO.GetAlternative(material, 'cQ', 2.)
-        element_length = DictIO.GetAlternative(material, 'ElementLength', 0.)
-        atmospheric_pressure = DictIO.GetAlternative(material, 'atmospheric_pressure', 0.)
-        surface_tension = DictIO.GetAlternative(material, 'SurfaceTension', DictIO.GetAlternative(material, 'surface_tension', 0.))
+        density = DictIO.GetAlternative(material, "Density", 1000)
+        modulus = None
+        if not self.incompressible_fluid:
+            modulus = DictIO.GetAlternative(material, "Modulus", 3.6e5)
+            self.validate_fluid_bulk_modulus(modulus, "Modulus")
+        viscosity = DictIO.GetAlternative(material, "Viscosity", 1e-3)
+        cl = DictIO.GetAlternative(material, "cL", 1.0)
+        cq = DictIO.GetAlternative(material, "cQ", 2.0)
+        element_length = DictIO.GetAlternative(material, "ElementLength", 0.0)
+        atmospheric_pressure = DictIO.GetAlternative(material, "atmospheric_pressure", 0.0)
+        surface_tension = DictIO.GetAlternative(
+            material, "SurfaceTension", DictIO.GetAlternative(material, "surface_tension", 0.0)
+        )
         self.add_material(density, modulus, viscosity, element_length, cl, cq, atmospheric_pressure, surface_tension)
 
-    def add_material(self, density, modulus, viscosity, element_length, cl, cq, atmospheric_pressure, surface_tension=0., gamma=1.):
+    def add_material(
+        self, density, modulus, viscosity, element_length, cl, cq, atmospheric_pressure, surface_tension=0.0, gamma=1.0
+    ):
         self.density = density
-        self.modulus = modulus
+        self.modulus = None if self.incompressible_fluid else modulus
         self.viscosity = viscosity
         self.element_length = element_length
         self.cl = cl
@@ -34,25 +41,28 @@ class NewtonianModel(Fluid):
         self.atmospheric_pressure = atmospheric_pressure
         self.surface_tension = surface_tension
         self.gamma = gamma
-        self.max_sound_speed = self.get_sound_speed(self.density, self.modulus)
+        self.max_sound_speed = 0.0 if self.incompressible_fluid else self.get_sound_speed(self.density, self.modulus)
 
     def print_message(self, materialID):
         self.print_console_header()
-        print('Constitutive model: Newtonian')
+        print("Constitutive model: Newtonian")
         print("Material ID: ", materialID)
-        print("Model density = ",  self.density)
-        print('Bulk Modulus = ', self.modulus)
-        print('Viscosity = ', self.viscosity)
-        print('Surface tension = ', self.surface_tension)
+        print("Model density = ", self.density)
+        if self.incompressible_fluid:
+            print("Fluid incompressibility = pressure projection")
+        else:
+            print("Bulk Modulus = ", self.modulus)
+        print("Viscosity = ", self.viscosity)
+        print("Surface tension = ", self.surface_tension)
         print("Characteristic Element Length = ", self.element_length)
-        print("Artifical Viscosity Parameter = ", self.cl, self.cq, '\n')
+        print("Artifical Viscosity Parameter = ", self.cl, self.cq, "\n")
 
     def define_state_vars(self):
         if self.solver_type == 0:
-            return {'pressure': float, 'rho': float}
+            return {"pressure": float, "rho": float}
         elif self.solver_type == 1:
             return {}
-    
+
     @ti.func
     def _initialize_vars_(self, np, particle, stateVars):
         if ti.static(self.solver_type == 0):
@@ -63,19 +73,19 @@ class NewtonianModel(Fluid):
     @ti.func
     def shear_stress(self, strain_rate):
         viscosity = self.viscosity
-        mean_volumetric_strain_rate = voigt_tensor_trace(strain_rate) / 3.
+        mean_volumetric_strain_rate = voigt_tensor_trace(strain_rate) / 3.0
 
         sstress = ZEROVEC6f
-        sstress[0] = 2. * viscosity * (strain_rate[0] - mean_volumetric_strain_rate)
-        sstress[1] = 2. * viscosity * (strain_rate[1] - mean_volumetric_strain_rate)
-        sstress[2] = 2. * viscosity * (strain_rate[2] - mean_volumetric_strain_rate)
-        sstress[3] = 2. * viscosity * strain_rate[3]
-        sstress[4] = 2. * viscosity * strain_rate[4]
-        sstress[5] = 2. * viscosity * strain_rate[5]
+        sstress[0] = 2.0 * viscosity * (strain_rate[0] - mean_volumetric_strain_rate)
+        sstress[1] = 2.0 * viscosity * (strain_rate[1] - mean_volumetric_strain_rate)
+        sstress[2] = 2.0 * viscosity * (strain_rate[2] - mean_volumetric_strain_rate)
+        sstress[3] = 2.0 * viscosity * strain_rate[3]
+        sstress[4] = 2.0 * viscosity * strain_rate[4]
+        sstress[5] = 2.0 * viscosity * strain_rate[5]
         return sstress
-    
+
     @ti.func
-    def core(self, np, strain_rate, stateVars, dt): 
+    def core(self, np, strain_rate, stateVars, dt):
         pressureAV = self.fluid_pressure(np, stateVars, strain_rate, dt)
         shear_stress = self.shear_stress(strain_rate)
         return -pressureAV * EYE + shear_stress

@@ -10,14 +10,13 @@ if ROOT not in sys.path:
 
 from geotaichi import *
 
-
 init(dim=3, arch="cpu", cpu_max_num_threads=4, device_memory_GB=2, debug=False, kernel_profiler=True)
 
 mpm = MPM()
 
 mpm.set_configuration(
     domain=[0.4, 0.2, 0.25],
-    dimension="3-Dimension",
+    dimension=3,
     background_damping=0.0,
     alphaPIC=0.5,
     mapping="USL",
@@ -51,7 +50,6 @@ mpm.add_material(
     material={
         "MaterialID": 1,
         "Density": 1000.0,
-        "Modulus": 2.0e6,
         "Viscosity": 1.0e-3,
         "ElementLength": 0.025,
         "cL": 1.5,
@@ -135,7 +133,6 @@ mpm.add_boundary_condition(
         },
         {
             "BoundaryType": "SolidCell",
-            "Norm": [0.0, 0.0, 0.0],
             "StartPoint": [0.22, 0.075, 0.025],
             "EndPoint": [0.27, 0.125, 0.17],
             "CellThickness": 1,

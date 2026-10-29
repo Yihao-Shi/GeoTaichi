@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import time
 from types import SimpleNamespace
 
 import numpy as np
@@ -215,4 +216,74 @@ def test_queue_runs_later_cases_after_bunny_failure(tmp_path):
     assert with_utube.returncode == 1
     added = calls.read_text().splitlines()[len(commands) :]
     assert len(added) == 5
-    assert added[-1] == "examples/mmpm/UTubeFlow2D/u_tube_flow_2d.py"
+    assert added[-2] == "examples/mmpm/UTubeFlow2D/u_tube_flow_2d.py"
+    assert "granular_water_leakage_3d.py" in added[-1]
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Running Bash input position is checked through /proc")
+def test_queue_pending_tail_can_be_reordered_without_restarting_running_case(tmp_path):
+    template = (ROOT / "research/remote_validation/run_semi_implicit_revision_queue_20261010.sh").read_text()
+    plate_start = template.index("\nrun_case section_5_1_no_plate")
+    utube_start = template.index('\nif [ "${GEOTAICHI_QUEUE_INCLUDE_UTUBE:-0}"')
+    end = template.index("\nrecord complete", max(plate_start, utube_start))
+    if plate_start < utube_start:
+        plate, utube = template[plate_start:utube_start], template[utube_start:end]
+    else:
+        utube, plate = template[utube_start:plate_start], template[plate_start:end]
+    prefix, suffix = template[: min(plate_start, utube_start)], template[end:]
+    original = prefix + plate + utube + suffix
+    reordered = prefix + utube + plate + suffix
+    assert len(original.encode()) == len(reordered.encode())
+    script = tmp_path / "queue.sh"
+    script.write_text(original)
+    inode = script.stat().st_ino
+    calls, child_file, release = (tmp_path / name for name in ("calls", "child_pid", "release"))
+    fake_python = tmp_path / "fake_python"
+    fake_python.write_text(
+        f'#!/bin/bash\nprintf "%s\\n" "$*" >> "{calls}"\n'
+        f'if [[ "$*" == *wavemaker_lsdem_particles_3d.py* ]]; then\n'
+        f'  printf "%s\\n" "$$" > "{child_file}"\n'
+        f'  while [ ! -e "{release}" ]; do sleep 0.02; done\nfi\nexit 0\n'
+    )
+    fake_python.chmod(0o755)
+    repo, logroot = tmp_path / "repo", tmp_path / "logs"
+    (repo / "research/remote_validation").mkdir(parents=True)
+    env = dict(
+        os.environ,
+        GEOTAICHI_QUEUE_REPO=str(repo),
+        GEOTAICHI_QUEUE_PYTHON=str(fake_python),
+        GEOTAICHI_QUEUE_LOGROOT=str(logroot),
+        GEOTAICHI_QUEUE_RESULT_SUFFIX="pending_tail",
+        GEOTAICHI_QUEUE_INCLUDE_UTUBE="1",
+    )
+    process = subprocess.Popen(
+        ["bash", str(script)], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+    )
+    try:
+        deadline = time.monotonic() + 10
+        while not child_file.exists() and process.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert child_file.exists(), process.poll()
+        child_pid = int(child_file.read_text())
+        info = Path(f"/proc/{process.pid}/fdinfo/255").read_text()
+        position = int(next(line.split()[1] for line in info.splitlines() if line.startswith("pos:")))
+        assert position <= len(prefix.encode())
+        with script.open("r+") as stream:
+            stream.write(reordered)
+            stream.truncate()
+        assert script.stat().st_ino == inode
+        os.kill(child_pid, 0)
+        assert process.poll() is None
+        release.touch()
+        stdout, stderr = process.communicate(timeout=10)
+        assert process.returncode == 0, (stdout, stderr)
+        commands = calls.read_text().splitlines()
+        assert len(commands) == 5
+        assert commands[-2] == "examples/mmpm/UTubeFlow2D/u_tube_flow_2d.py"
+        assert "granular_water_leakage_3d.py" in commands[-1]
+        assert "complete\tfailures=0" in (logroot / "queue.status").read_text()
+    finally:
+        release.touch()
+        if process.poll() is None:
+            process.terminate()
+        process.communicate(timeout=10)

@@ -13,7 +13,7 @@ from src.utils.constants import (
     DELTA,
     EYE,
 )
-from src.utils.MatrixFunction import truncation, trace
+from src.utils.MatrixFunction import affine_velocity_matrix, truncation, trace
 from src.utils.ScalarFunction import vectorize_id, linearize, sgn
 from src.utils.ShapeFunctions import (
     ShapeLinear,
@@ -119,28 +119,29 @@ def bbar_internal_force_2d(dshape_fn, dshape_fnc, internal_stress):
 @ti.kernel
 def tlgrid_reset(cutoff: float, node: ti.template()):
     for ng, nb in node:
-        if node[ng, nb].m > cutoff:
+        if node[ng, nb].m > 0.0:
             node[ng, nb]._tlgrid_reset()
 
 
 @ti.kernel
 def grid_reset(cutoff: float, node: ti.template()):
+    # The solve cutoff must not retain small P2G deposits across timesteps.
     for ng, nb in node:
-        if node[ng, nb].m > cutoff:
+        if node[ng, nb].m > 0.0:
             node[ng, nb]._grid_reset()
 
 
 @ti.kernel
 def grid_mass_reset(cutoff: float, node: ti.template()):
     for ng, nb in node:
-        if node[ng, nb].m > cutoff:
+        if node[ng, nb].m > 0.0:
             node[ng, nb].m = 0.0
 
 
 @ti.kernel
 def grid_internal_force_reset(cutoff: float, node: ti.template()):
     for ng, nb in node:
-        if node[ng, nb].m > cutoff:
+        if node[ng, nb].m > 0.0:
             node[ng, nb]._reset_internal_force()
 
 
@@ -260,7 +261,7 @@ def lightweight_p2g(
                 if ti.static(GlobalVariable.DIMENSION == 2):
                     weight_grad = ti.Vector([dshape_fn[0] * shape_fn[1], shape_fn[0] * dshape_fn[1]])
                     if ti.static(GlobalVariable.BBAR):
-                        weight_gradc = vec3f([dshape_fn[0] * shape_fnc[1], shape_fnc[0] * dshape_fn[1]])
+                        weight_gradc = vec2f([dshape_fn[0] * shape_fnc[1], shape_fnc[0] * dshape_fn[1]])
                         temp_dshape = 0.5 * (weight_gradc - weight_grad)
                         pforce += vec2f(
                             [
@@ -333,7 +334,7 @@ def lightweight_p2g(
                         )
                 nmass = weight * p_mass
                 momentum = nmass * velocity
-                if ti.static(GlobalVariable.APIC or GlobalVariable.TPIC):
+                if ti.static(GlobalVariable.Affine or GlobalVariable.Taylor):
                     momentum += nmass * velocity_gradient @ dpos
                 node[nodeID, bodyID].m += nmass
                 node[nodeID, bodyID].momentum += momentum
@@ -386,14 +387,14 @@ def lightweight_g2p(
                 if ti.static(GlobalVariable.SHAPEFUNCTION == 0):
                     for d in ti.static(range(GlobalVariable.DIMENSION)):
                         shape_fn[d] = ShapeLinear(position[d], grid_pos[d], igrid_size[d], 0)
-                        if ti.static(not GlobalVariable.APIC):
+                        if ti.static(not GlobalVariable.Affine or GlobalVariable.BBAR):
                             dshape_fn[d] = GShapeLinear(position[d], grid_pos[d], igrid_size[d], 0)
                         if ti.static(GlobalVariable.BBAR):
                             shape_fnc[d] = ShapeLinearCenter(position[d], grid_pos[d], igrid_size[d], 0)
                 elif ti.static(GlobalVariable.SHAPEFUNCTION == 1):
                     for d in ti.static(range(GlobalVariable.DIMENSION)):
                         shape_fn[d] = ShapeGIMP(position[d], grid_pos[d], igrid_size[d], psize[d])
-                        if ti.static(not GlobalVariable.APIC):
+                        if ti.static(not GlobalVariable.Affine or GlobalVariable.BBAR):
                             dshape_fn[d] = GShapeGIMP(position[d], grid_pos[d], igrid_size[d], psize[d])
                         if ti.static(GlobalVariable.BBAR):
                             shape_fnc[d] = ShapeGIMPCenter(position[d], grid_pos[d], igrid_size[d], psize[d])
@@ -402,14 +403,14 @@ def lightweight_g2p(
                     for d in ti.static(range(GlobalVariable.DIMENSION)):
                         btypes = int(boundary_type[d])
                         shape_fn[d] = ShapeBsplineQ(position[d], grid_pos[d], igrid_size[d], btypes)
-                        if ti.static(not GlobalVariable.APIC):
+                        if ti.static(not GlobalVariable.Affine or GlobalVariable.BBAR):
                             dshape_fn[d] = GShapeBsplineQ(position[d], grid_pos[d], igrid_size[d], btypes)
                 elif ti.static(GlobalVariable.SHAPEFUNCTION == 3):
                     boundary_type = boundary_types[nodeID, bodyID]
                     for d in ti.static(range(GlobalVariable.DIMENSION)):
                         btypes = int(boundary_type[d])
                         shape_fn[d] = ShapeBsplineC(position[d], grid_pos[d], igrid_size[d], btypes)
-                        if ti.static(not GlobalVariable.APIC):
+                        if ti.static(not GlobalVariable.Affine or GlobalVariable.BBAR):
                             dshape_fn[d] = GShapeBsplineC(position[d], grid_pos[d], igrid_size[d], btypes)
 
                 velocity = node[nodeID, bodyID].momentum
@@ -420,21 +421,32 @@ def lightweight_g2p(
                 vPIC += weight * velocity
                 vFLIP += weight * acceleration * dt[None]
 
-                if ti.static(GlobalVariable.APIC):
-                    dpos = position - grid_pos
+                if ti.static(GlobalVariable.Affine):
+                    dpos = grid_pos - position
                     if ti.static(GlobalVariable.DIMENSION == 2):
                         Wp += weight * outer_product2D(dpos, dpos)
                         velocity_gradient += weight * outer_product2D(velocity, dpos)
                     elif ti.static(GlobalVariable.DIMENSION == 3):
                         Wp += weight * outer_product(dpos, dpos)
                         velocity_gradient += weight * outer_product(velocity, dpos)
+                    if ti.static(GlobalVariable.BBAR):
+                        trace_correction = 0.0
+                        for i in ti.static(range(GlobalVariable.DIMENSION)):
+                            gradient, center_gradient = dshape_fn[i], dshape_fn[i]
+                            for j in ti.static(range(GlobalVariable.DIMENSION)):
+                                if ti.static(i != j):
+                                    gradient *= shape_fn[j]
+                                    center_gradient *= shape_fnc[j]
+                            trace_correction += velocity[i] * (center_gradient - gradient) / GlobalVariable.DIMENSION
+                        for i in ti.static(range(GlobalVariable.DIMENSION)):
+                            velocity_gradient_bar[i, i] += trace_correction
                 else:
                     if ti.static(GlobalVariable.DIMENSION == 2):
                         weight_grad = ti.Vector([dshape_fn[0] * shape_fn[1], shape_fn[0] * dshape_fn[1]])
                         velocity_gradient_increment = outer_product2D(velocity, weight_grad)
                         velocity_gradient += velocity_gradient_increment
                         if ti.static(GlobalVariable.BBAR):
-                            weight_gradc = vec3f([dshape_fn[0] * shape_fnc[1], shape_fnc[0] * dshape_fn[1]])
+                            weight_gradc = vec2f([dshape_fn[0] * shape_fnc[1], shape_fnc[0] * dshape_fn[1]])
                             temp_dshape = 0.5 * (weight_gradc - weight_grad)
                             average_bmatrix = temp_dshape[0] * velocity[0] + temp_dshape[1] * velocity[1]
                             velocity_gradient_bar += velocity_gradient_increment
@@ -469,15 +481,20 @@ def lightweight_g2p(
                             velocity_gradient_bar[1, 1] += average_bmatrix
                             velocity_gradient_bar[2, 2] += average_bmatrix
 
+        if ti.static(GlobalVariable.Affine):
+            velocity_gradient = affine_velocity_matrix(velocity_gradient, Wp, grid_size)
+
         if ti.static(not GlobalVariable.BBAR):
             velocity_gradient_bar = velocity_gradient
-
-        if ti.static(GlobalVariable.APIC):
-            velocity_gradient = Wp.inverse() @ velocity_gradient
+        elif ti.static(GlobalVariable.Affine):
+            velocity_gradient_bar += velocity_gradient
 
         particle[np].velocity_gradient = velocity_gradient_bar
+        if ti.static(GlobalVariable.Affine):
+            particle[np].velocity_gradient = velocity_gradient
         particle[np].v = alpha * vPIC + (1.0 - alpha) * vFLIP
-        particle[np].x += vPIC * dt[None]
+        if ti.static(not (GlobalVariable.Affine and GlobalVariable.FBAR)):
+            particle[np].x += vPIC * dt[None]
 
         if ti.static(not GlobalVariable.FBAR):
             previous_stress, volume = particle[np].stress, particle[np].vol
@@ -519,14 +536,14 @@ def lightweight_g2p(
                     if ti.static(GlobalVariable.SHAPEFUNCTION == 0):
                         for d in ti.static(range(GlobalVariable.DIMENSION)):
                             shape_fn[d] = ShapeLinear(position[d], grid_pos[d], igrid_size[d], 0)
-                            if ti.static(not GlobalVariable.APIC):
+                            if ti.static(not GlobalVariable.Affine or GlobalVariable.BBAR):
                                 dshape_fn[d] = GShapeLinear(position[d], grid_pos[d], igrid_size[d], 0)
                             if ti.static(GlobalVariable.BBAR):
                                 shape_fnc[d] = ShapeLinearCenter(position[d], grid_pos[d], igrid_size[d], 0)
                     elif ti.static(GlobalVariable.SHAPEFUNCTION == 1):
                         for d in ti.static(range(GlobalVariable.DIMENSION)):
                             shape_fn[d] = ShapeGIMP(position[d], grid_pos[d], igrid_size[d], psize[d])
-                            if ti.static(not GlobalVariable.APIC):
+                            if ti.static(not GlobalVariable.Affine or GlobalVariable.BBAR):
                                 dshape_fn[d] = GShapeGIMP(position[d], grid_pos[d], igrid_size[d], psize[d])
                             if ti.static(GlobalVariable.BBAR):
                                 shape_fnc[d] = ShapeGIMPCenter(position[d], grid_pos[d], igrid_size[d], psize[d])
@@ -535,14 +552,14 @@ def lightweight_g2p(
                         for d in ti.static(range(GlobalVariable.DIMENSION)):
                             btypes = int(boundary_type[d])
                             shape_fn[d] = ShapeBsplineQ(position[d], grid_pos[d], igrid_size[d], btypes)
-                            if ti.static(not GlobalVariable.APIC):
+                            if ti.static(not GlobalVariable.Affine or GlobalVariable.BBAR):
                                 dshape_fn[d] = GShapeBsplineQ(position[d], grid_pos[d], igrid_size[d], btypes)
                     elif ti.static(GlobalVariable.SHAPEFUNCTION == 3):
                         boundary_type = boundary_types[nodeID, bodyID]
                         for d in ti.static(range(GlobalVariable.DIMENSION)):
                             btypes = int(boundary_type[d])
                             shape_fn[d] = ShapeBsplineC(position[d], grid_pos[d], igrid_size[d], btypes)
-                            if ti.static(not GlobalVariable.APIC):
+                            if ti.static(not GlobalVariable.Affine or GlobalVariable.BBAR):
                                 dshape_fn[d] = GShapeBsplineC(position[d], grid_pos[d], igrid_size[d], btypes)
 
                     weight = 1.0
@@ -581,14 +598,14 @@ def lightweight_g2p(
                     if ti.static(GlobalVariable.SHAPEFUNCTION == 0):
                         for d in ti.static(range(GlobalVariable.DIMENSION)):
                             shape_fn[d] = ShapeLinear(position[d], grid_pos[d], igrid_size[d], 0)
-                            if ti.static(not GlobalVariable.APIC):
+                            if ti.static(not GlobalVariable.Affine or GlobalVariable.BBAR):
                                 dshape_fn[d] = GShapeLinear(position[d], grid_pos[d], igrid_size[d], 0)
                             if ti.static(GlobalVariable.BBAR):
                                 shape_fnc[d] = ShapeLinearCenter(position[d], grid_pos[d], igrid_size[d], 0)
                     elif ti.static(GlobalVariable.SHAPEFUNCTION == 1):
                         for d in ti.static(range(GlobalVariable.DIMENSION)):
                             shape_fn[d] = ShapeGIMP(position[d], grid_pos[d], igrid_size[d], psize[d])
-                            if ti.static(not GlobalVariable.APIC):
+                            if ti.static(not GlobalVariable.Affine or GlobalVariable.BBAR):
                                 dshape_fn[d] = GShapeGIMP(position[d], grid_pos[d], igrid_size[d], psize[d])
                             if ti.static(GlobalVariable.BBAR):
                                 shape_fnc[d] = ShapeGIMPCenter(position[d], grid_pos[d], igrid_size[d], psize[d])
@@ -597,21 +614,24 @@ def lightweight_g2p(
                         for d in ti.static(range(GlobalVariable.DIMENSION)):
                             btypes = int(boundary_type[d])
                             shape_fn[d] = ShapeBsplineQ(position[d], grid_pos[d], igrid_size[d], btypes)
-                            if ti.static(not GlobalVariable.APIC):
+                            if ti.static(not GlobalVariable.Affine or GlobalVariable.BBAR):
                                 dshape_fn[d] = GShapeBsplineQ(position[d], grid_pos[d], igrid_size[d], btypes)
                     elif ti.static(GlobalVariable.SHAPEFUNCTION == 3):
                         boundary_type = boundary_types[nodeID, bodyID]
                         for d in ti.static(range(GlobalVariable.DIMENSION)):
                             btypes = int(boundary_type[d])
                             shape_fn[d] = ShapeBsplineC(position[d], grid_pos[d], igrid_size[d], btypes)
-                            if ti.static(not GlobalVariable.APIC):
+                            if ti.static(not GlobalVariable.Affine or GlobalVariable.BBAR):
                                 dshape_fn[d] = GShapeBsplineC(position[d], grid_pos[d], igrid_size[d], btypes)
 
                     jacobian = node[nodeID, bodyID].jacobian
                     weight = 1.0
                     for d in ti.static(range(GlobalVariable.DIMENSION)):
                         weight *= shape_fn[d]
-                    djacobian_bar += jacobian
+                    if ti.static(GlobalVariable.Affine):
+                        djacobian_bar += weight * jacobian
+                    else:
+                        djacobian_bar += jacobian
 
             velocity_gradient = particle[np].velocity_gradient
             ddeformation_gradient = ti.Matrix.identity(float, GlobalVariable.DIMENSION) + dt[None] * velocity_gradient
@@ -623,7 +643,24 @@ def lightweight_g2p(
                 None
             ] + multiplier * velocity_gradient
 
-            particle[np].velocity_gradient = updated_velocity_gradient
+            if ti.static(GlobalVariable.Affine):
+                materialID = int(particle[np].materialID)
+                for matID in ti.static(range(1, matProps.shape[0])):
+                    if materialID == matID:
+                        if ti.static(GlobalVariable.DIMENSION == 2):
+                            particle[np].stress = matProps[matID].ComputeStress2D(
+                                np, particle[np].stress, updated_velocity_gradient, stateVars, dt
+                            )
+                        else:
+                            particle[np].stress = matProps[matID].ComputeStress(
+                                np, particle[np].stress, updated_velocity_gradient, stateVars, dt
+                            )
+                particle[np].vol *= (
+                    ti.Matrix.identity(float, GlobalVariable.DIMENSION) + dt[None] * updated_velocity_gradient
+                ).determinant()
+                particle[np].x += particle[np].v * dt[None]
+            else:
+                particle[np].velocity_gradient = updated_velocity_gradient
 
     if ti.static(GlobalVariable.PARTICLESHIFTING):
         pass
@@ -985,12 +1022,14 @@ def kernel_mass_momentum_taylor_p2g(
     total_nodes: int,
     particleNum: int,
     gnum: ti.types.vector(GlobalVariable.DIMENSION, int),
-    grid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
+    grid_size: ti.types.vector(GlobalVariable.DIMENSION, real),
     node: ti.template(),
     particle: ti.template(),
     LnID: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
+    reference: ti.template(),
+    update_mass: ti.template(),
 ):
     ti.block_local(node.m)
     for d in ti.static(range(GlobalVariable.DIMENSION)):
@@ -1000,6 +1039,14 @@ def kernel_mass_momentum_taylor_p2g(
             bodyID = int(particle[np].bodyID)
             offset = np * total_nodes
             xp = particle[np].x
+            if ti.static(reference):
+                xp = ti.Vector.zero(float, GlobalVariable.DIMENSION)
+                weight_sum = 0.0
+                for ln in range(offset, offset + int(node_size[np])):
+                    xp += shapefn[ln] * grid_size * ti.cast(ti.Vector(vectorize_id(LnID[ln], gnum)), float)
+                    weight_sum += shapefn[ln]
+                if weight_sum > 0.0:
+                    xp /= weight_sum
             mass = particle[np].m
             velocity = particle[np].v
             gradv = particle[np].velocity_gradient
@@ -1007,7 +1054,8 @@ def kernel_mass_momentum_taylor_p2g(
                 nodeID = LnID[ln]
                 nodal_coord = grid_size * ti.Vector(vectorize_id(nodeID, gnum))
                 nmass = shape_mapping(shapefn[ln], mass)
-                node[nodeID, bodyID]._update_nodal_mass(nmass)
+                if ti.static(update_mass):
+                    node[nodeID, bodyID]._update_nodal_mass(nmass)
                 node[nodeID, bodyID]._update_nodal_momentum(nmass * (velocity + gradv @ (nodal_coord - xp)))
                 if (
                     ti.static(GlobalVariable.MPMXPBC)
@@ -1045,7 +1093,7 @@ def kernel_mass_momentum_taylor_p2g(
 def kernel_mass_momentum_taylor_p2g_sparse(
     total_nodes: int,
     particleNum: int,
-    grid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
+    grid_size: ti.types.vector(GlobalVariable.DIMENSION, real),
     node: ti.template(),
     particle: ti.template(),
     LnID: ti.template(),
@@ -1055,6 +1103,8 @@ def kernel_mass_momentum_taylor_p2g_sparse(
     block_size: ti.template(),
     block_volume: ti.template(),
     active_block_ids: ti.template(),
+    reference: ti.template(),
+    update_mass: ti.template(),
 ):
     ti.block_local(node.m)
     for d in ti.static(range(GlobalVariable.DIMENSION)):
@@ -1064,6 +1114,25 @@ def kernel_mass_momentum_taylor_p2g_sparse(
             bodyID = int(particle[np].bodyID)
             offset = np * total_nodes
             xp = particle[np].x
+            if ti.static(reference):
+                xp = ti.Vector.zero(float, GlobalVariable.DIMENSION)
+                weight_sum = 0.0
+                for ln in range(offset, offset + int(node_size[np])):
+                    xp += (
+                        shapefn[ln]
+                        * grid_size
+                        * ti.cast(
+                            ti.Vector(
+                                compact_node_grid_coord(
+                                    LnID[ln], block_count, block_size, block_volume, active_block_ids
+                                )
+                            ),
+                            float,
+                        )
+                    )
+                    weight_sum += shapefn[ln]
+                if weight_sum > 0.0:
+                    xp /= weight_sum
             mass = particle[np].m
             velocity = particle[np].v
             gradv = particle[np].velocity_gradient
@@ -1073,7 +1142,8 @@ def kernel_mass_momentum_taylor_p2g_sparse(
                     compact_node_grid_coord(nodeID, block_count, block_size, block_volume, active_block_ids), float
                 )
                 nmass = shape_mapping(shapefn[ln], mass)
-                node[nodeID, bodyID]._update_nodal_mass(nmass)
+                if ti.static(update_mass):
+                    node[nodeID, bodyID]._update_nodal_mass(nmass)
                 node[nodeID, bodyID]._update_nodal_momentum(nmass * (velocity + gradv @ (nodal_coord - xp)))
 
 
@@ -3660,12 +3730,13 @@ def kernel_update_velocity_gradient_affine(
     total_nodes: int,
     particleNum: int,
     gnum: ti.types.vector(3, int),
-    grid_size: ti.types.vector(3, float),
+    grid_size: ti.types.vector(3, real),
     node: ti.template(),
     particle: ti.template(),
     LnID: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
+    reference: ti.template(),
 ):
     for np in range(particleNum):
         if int(particle[np].active) == 1:
@@ -3674,6 +3745,14 @@ def kernel_update_velocity_gradient_affine(
             Bp = ZEROMAT3x3
             offset = np * total_nodes
             position = particle[np].x
+            if ti.static(reference):
+                position = ti.Vector.zero(float, 3)
+                weight_sum = 0.0
+                for ln in range(offset, offset + int(node_size[np])):
+                    position += shapefn[ln] * grid_size * ti.cast(ti.Vector(vectorize_id(LnID[ln], gnum)), float)
+                    weight_sum += shapefn[ln]
+                if weight_sum > 0.0:
+                    position /= weight_sum
             for ln in range(offset, offset + int(node_size[np])):
                 nodeID = LnID[ln]
                 grid_coord = grid_size * vec3f(vectorize_id(nodeID, gnum))
@@ -3683,7 +3762,7 @@ def kernel_update_velocity_gradient_affine(
 
                 Wp += shape_fn * outer_product(pointer, pointer)
                 Bp += shape_fn * outer_product(gv, pointer)
-            velocity_gradient = truncation(Bp @ Wp.inverse()) if Wp.determinant() > Threshold else ZEROMAT3x3
+            velocity_gradient = affine_velocity_matrix(Bp, Wp, grid_size)
             particle[np].velocity_gradient = velocity_gradient
 
 
@@ -3691,7 +3770,7 @@ def kernel_update_velocity_gradient_affine(
 def kernel_update_velocity_gradient_affine_sparse(
     total_nodes: int,
     particleNum: int,
-    grid_size: ti.types.vector(3, float),
+    grid_size: ti.types.vector(3, real),
     node: ti.template(),
     particle: ti.template(),
     LnID: ti.template(),
@@ -3701,6 +3780,7 @@ def kernel_update_velocity_gradient_affine_sparse(
     block_size: ti.template(),
     block_volume: ti.template(),
     active_block_ids: ti.template(),
+    reference: ti.template(),
 ):
     for np in range(particleNum):
         if int(particle[np].active) == 1:
@@ -3709,6 +3789,25 @@ def kernel_update_velocity_gradient_affine_sparse(
             Bp = ZEROMAT3x3
             offset = np * total_nodes
             position = particle[np].x
+            if ti.static(reference):
+                position = ti.Vector.zero(float, 3)
+                weight_sum = 0.0
+                for ln in range(offset, offset + int(node_size[np])):
+                    position += (
+                        shapefn[ln]
+                        * grid_size
+                        * ti.cast(
+                            ti.Vector(
+                                compact_node_grid_coord(
+                                    LnID[ln], block_count, block_size, block_volume, active_block_ids
+                                )
+                            ),
+                            float,
+                        )
+                    )
+                    weight_sum += shapefn[ln]
+                if weight_sum > 0.0:
+                    position /= weight_sum
             for ln in range(offset, offset + int(node_size[np])):
                 nodeID = LnID[ln]
                 grid_coord = grid_size * vec3f(
@@ -3720,7 +3819,7 @@ def kernel_update_velocity_gradient_affine_sparse(
 
                 Wp += shape_fn * outer_product(pointer, pointer)
                 Bp += shape_fn * outer_product(gv, pointer)
-            velocity_gradient = truncation(Bp @ Wp.inverse()) if Wp.determinant() > Threshold else ZEROMAT3x3
+            velocity_gradient = affine_velocity_matrix(Bp, Wp, grid_size)
             particle[np].velocity_gradient = velocity_gradient
 
 
@@ -3802,12 +3901,13 @@ def kernel_update_velocity_gradient_affine_2D(
     total_nodes: int,
     particleNum: int,
     gnum: ti.types.vector(2, int),
-    grid_size: ti.types.vector(2, float),
+    grid_size: ti.types.vector(2, real),
     node: ti.template(),
     particle: ti.template(),
     LnID: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
+    reference: ti.template(),
 ):
     for np in range(particleNum):
         if int(particle[np].active) == 1:
@@ -3816,6 +3916,14 @@ def kernel_update_velocity_gradient_affine_2D(
             Bp = ZEROMAT2x2
             offset = np * total_nodes
             position = particle[np].x
+            if ti.static(reference):
+                position = ti.Vector.zero(float, 2)
+                weight_sum = 0.0
+                for ln in range(offset, offset + int(node_size[np])):
+                    position += shapefn[ln] * grid_size * ti.cast(ti.Vector(vectorize_id(LnID[ln], gnum)), float)
+                    weight_sum += shapefn[ln]
+                if weight_sum > 0.0:
+                    position /= weight_sum
             for ln in range(offset, offset + int(node_size[np])):
                 nodeID = LnID[ln]
                 grid_coord = grid_size * vec2f(vectorize_id(nodeID, gnum))
@@ -3824,7 +3932,7 @@ def kernel_update_velocity_gradient_affine_2D(
                 shape_fn = shapefn[ln]
                 Wp += shape_fn * outer_product2D(pointer, pointer)
                 Bp += shape_fn * outer_product2D(gv, pointer)
-            velocity_gradient = truncation(Bp @ Wp.inverse()) if Wp.determinant() > Threshold else ZEROMAT2x2
+            velocity_gradient = affine_velocity_matrix(Bp, Wp, grid_size)
             particle[np].velocity_gradient = velocity_gradient
 
 
@@ -3832,7 +3940,7 @@ def kernel_update_velocity_gradient_affine_2D(
 def kernel_update_velocity_gradient_affine_2D_sparse(
     total_nodes: int,
     particleNum: int,
-    grid_size: ti.types.vector(2, float),
+    grid_size: ti.types.vector(2, real),
     node: ti.template(),
     particle: ti.template(),
     LnID: ti.template(),
@@ -3842,6 +3950,7 @@ def kernel_update_velocity_gradient_affine_2D_sparse(
     block_size: ti.template(),
     block_volume: ti.template(),
     active_block_ids: ti.template(),
+    reference: ti.template(),
 ):
     for np in range(particleNum):
         if int(particle[np].active) == 1:
@@ -3850,6 +3959,25 @@ def kernel_update_velocity_gradient_affine_2D_sparse(
             Bp = ZEROMAT2x2
             offset = np * total_nodes
             position = particle[np].x
+            if ti.static(reference):
+                position = ti.Vector.zero(float, 2)
+                weight_sum = 0.0
+                for ln in range(offset, offset + int(node_size[np])):
+                    position += (
+                        shapefn[ln]
+                        * grid_size
+                        * ti.cast(
+                            ti.Vector(
+                                compact_node_grid_coord(
+                                    LnID[ln], block_count, block_size, block_volume, active_block_ids
+                                )
+                            ),
+                            float,
+                        )
+                    )
+                    weight_sum += shapefn[ln]
+                if weight_sum > 0.0:
+                    position /= weight_sum
             for ln in range(offset, offset + int(node_size[np])):
                 nodeID = LnID[ln]
                 grid_coord = grid_size * ti.cast(
@@ -3860,7 +3988,7 @@ def kernel_update_velocity_gradient_affine_2D_sparse(
                 shape_fn = shapefn[ln]
                 Wp += shape_fn * outer_product2D(pointer, pointer)
                 Bp += shape_fn * outer_product2D(gv, pointer)
-            velocity_gradient = truncation(Bp @ Wp.inverse()) if Wp.determinant() > Threshold else ZEROMAT2x2
+            velocity_gradient = affine_velocity_matrix(Bp, Wp, grid_size)
             particle[np].velocity_gradient = velocity_gradient
 
 
@@ -4607,11 +4735,13 @@ def kernel_calc_contact_displacement(
     LnID: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
+    element: ti.template(),
 ):
     for ng in range(node.shape[0]):
         for nb in range(node.shape[1]):
             if node[ng, nb].m > cutoff:
                 node[ng, nb].contact_pos.fill(0)
+                node[ng, nb].contact_length = 0.0
 
     for np in range(particleNum):
         if int(particle[np].active) == 1:
@@ -4621,6 +4751,9 @@ def kernel_calc_contact_displacement(
                 nodeID = LnID[ln]
                 contact_pos = shapefn[ln] * particle[np].x * particle[np].m
                 node[nodeID, bodyID].contact_pos += contact_pos
+                if ti.static(getattr(element, "adaptive", False)):
+                    length = MeanValue(element.coarse_grid_size) / (1 << int(element.particle_level[np]))
+                    node[nodeID, bodyID].contact_length += shapefn[ln] * particle[np].m * length
                 if (
                     ti.static(GlobalVariable.MPMXPBC)
                     or ti.static(GlobalVariable.MPMYPBC)
@@ -4674,7 +4807,7 @@ def kernel_calc_friction_contact(
     # ti.block_local(dt)
     for ng in range(node.shape[0]):
         for bodyID1 in range(node.shape[1] - 1):
-            for bodyID2 in range(bodyID1, node.shape[1]):
+            for bodyID2 in range(bodyID1 + 1, node.shape[1]):
                 m1, m2 = node[ng, bodyID1].m, node[ng, bodyID2].m
                 if m1 > cut_off and m2 > cut_off:
                     mv1, mv2 = m1 * node[ng, bodyID1].momentum, m2 * node[ng, bodyID2].momentum
@@ -4752,11 +4885,13 @@ def kernel_calc_geocontact(
     dt: ti.template(),
     is_rigid: ti.template(),
     node: ti.template(),
+    element: ti.template(),
+    sparse_grid: ti.template(),
 ):
     # ti.block_local(dt)
     for ng in range(node.shape[0]):
         for bodyID1 in range(node.shape[1] - 1):
-            for bodyID2 in range(bodyID1, node.shape[1]):
+            for bodyID2 in range(bodyID1 + 1, node.shape[1]):
                 m1, m2 = node[ng, bodyID1].m, node[ng, bodyID2].m
                 if m1 > cut_off and m2 > cut_off:
                     contact_pos1, contact_pos2 = node[ng, bodyID1].contact_pos / m1, node[ng, bodyID2].contact_pos / m2
@@ -4778,33 +4913,53 @@ def kernel_calc_geocontact(
                         xm = contact_pos2
 
                     is_penetrate = (mv1 * m2 - m1 * mv2).dot(norm)
-                    is_contact = (contact_pos2 - contact_pos1).dot(norm) < MeanValue(offset * grid_size)
+                    gsize = MeanValue(grid_size)
+                    rigid_size = gsize
+                    node_coord = grid_size * ti.Vector(vectorize_id(ng, gnum))
+                    if ti.static(getattr(element, "adaptive", False)):
+                        gsize = ti.min(node[ng, bodyID1].contact_length / m1, node[ng, bodyID2].contact_length / m2)
+                        # xm and the normal use the rigid body's stencil, which may mix refinement levels.
+                        if is_rigid[bodyID1] == 1:
+                            rigid_size = node[ng, bodyID1].contact_length / m1
+                        elif is_rigid[bodyID2] == 1:
+                            rigid_size = node[ng, bodyID2].contact_length / m2
+                        node_coord = element.fine_grid_size * ti.Vector(
+                            vectorize_id(element.compact_to_logical[ng], gnum)
+                        )
+                    elif ti.static(sparse_grid != None):
+                        node_coord = grid_size * compact_node_grid_coord(
+                            ng,
+                            sparse_grid.block_count,
+                            sparse_grid.block_size,
+                            sparse_grid.block_volume,
+                            sparse_grid.active_block_ids,
+                        )
+                    is_contact = (contact_pos2 - contact_pos1).dot(norm) < offset * gsize
                     if is_penetrate > Threshold and is_contact:
                         inv_gmass = 1.0 / g_mass
                         cforce = (mv1 * m2 - m1 * mv2) * inv_gmass
 
                         ############# Geo-contact #############
-                        gsize = MeanValue(grid_size)
-                        node_coord = grid_size * ti.Vector(vectorize_id(ng, gnum), dt=int)
                         dext = (xm - node_coord).dot(norm)
 
                         # Reference: Hammerquist, C. C., Nairn, J. A., 2018. Modeling nanoindentation using the material point method. J. Mater. Res. 33, 1369-1381
                         dist = 0.0
                         if dext <= 0:
-                            dist = ti.abs(1.0 - 2.0 * (-dext / (1.25 * gsize)) ** 0.58)
+                            dist = ti.abs(1.0 - 2.0 * (-dext / (1.25 * rigid_size)) ** 0.58)
                         elif dext > 0.0:
-                            dist = ti.abs(2.0 * (dext / (1.25 * gsize)) ** 0.58 - 1.0)
+                            dist = ti.abs(2.0 * (dext / (1.25 * rigid_size)) ** 0.58 - 1.0)
 
                         # Reference: Gao L., Guo N., Yang Z. X., Jardine R. J., MPM modeling of pile installation in sand: Contact improvement and quantitative analysis. Comput. Geotech.
                         factor = (1.0 - alpha * dist**beta) / (1.0 + alpha * dist**beta)
 
                         norm_force = factor * is_penetrate * inv_gmass
                         if mu > Threshold:
-                            trial_ft = cforce - norm_force * norm
+                            trial_ft = cforce - cforce.dot(norm) * norm
                             fstick = trial_ft.norm()
                             fslip = mu * ti.abs(norm_force)
-                            if fslip < fstick:
-                                cforce = norm_force * norm + fslip * (trial_ft / fstick)
+                            cforce = norm_force * norm
+                            if fstick > Threshold:
+                                cforce += ti.min(fslip, fstick) * (trial_ft / fstick)
                         else:
                             cforce = norm_force * norm
                         node[ng, bodyID1]._update_contact_force(-cforce)
@@ -4860,15 +5015,18 @@ def kernel_calc_demcontact_2D(
     shapefn: ti.template(),
     node_size: ti.template(),
     node: ti.template(),
+    element: ti.template(),
 ):
     # ti.block_local(dt)
     v1, v2 = velocity, ZEROVEC2f
     normal, tangential = ZEROVEC2f, ZEROVEC2f
 
-    circle_radius = MeanValue(grid_size) * 0.75
     for i in range(start_index, end_index):
         np = materialID[i]
         if int(particle[np].active) == 1:
+            circle_radius = MeanValue(grid_size) * 0.75
+            if ti.static(getattr(element, "adaptive", False)):
+                circle_radius = MeanValue(element.coarse_grid_size) * 0.75 / (1 << int(element.particle_refined[np]))
             circle_center = particle[np].x
             v2 = particle[np].v
             m2 = particle[np].m
@@ -4881,18 +5039,18 @@ def kernel_calc_demcontact_2D(
             else:
                 delta = circle_radius - distance
                 normal = Normalize(normal)
-                tangential = (v1 - v2) - (v1 - v2).dot(normal) * normal
-                tangential = Normalize(tangential)
-                # -- damping--
-                cforce = delta * k_normal * normal + 2.0 * ti.sqrt(m2 * k_normal) * (v1 - v2).dot(normal) * normal
+                relative_velocity = v1 - v2
+                normal_force = ti.max(
+                    0.0, delta * k_normal + 2.0 * ti.sqrt(m2 * k_normal) * relative_velocity.dot(normal)
+                )
+                cforce = normal_force * normal
                 if mu > Threshold:
-                    val_fslip = mu * delta * k_normal
-                    val_fstick = (
-                        ti.sqrt(dot2(particle[np].contact_traction))
-                        - (v1 - v2).dot(tangential) * k_tangential * dt[None]
-                    )
-                    val_fstick = ti.abs(val_fstick)
-                    cforce += ti.min(val_fslip, val_fstick) * tangential
+                    previous = particle[np].contact_traction
+                    tangential = previous - previous.dot(normal) * normal
+                    tangential += k_tangential * dt[None] * (relative_velocity - relative_velocity.dot(normal) * normal)
+                    trial = tangential.norm()
+                    if trial > Threshold:
+                        cforce += ti.min(mu * normal_force / trial, 1.0) * tangential
                 particle[np].contact_traction = cforce
 
                 bodyID = int(particle[np].bodyID)
@@ -4930,6 +5088,11 @@ def kernel_calc_demcontact_2D(
                                 tideID = linearize(temp_index, gnum)
                                 node[tideID, bodyID]._update_contact_force(extf)
 
+
+@ti.kernel
+def kernel_move_contact_polygon(
+    polygon_vertices: ti.template(), velocity: ti.types.vector(2, float), dt: ti.template()
+):
     for nver in range(polygon_vertices.shape[0]):
         polygon_vertices[nver] += velocity * dt[None]
 
@@ -5064,67 +5227,6 @@ def shift_incompressible_particle(np, shift, particle: ti.template()):
 
 
 @ti.kernel
-def kernel_particle_shifting_delta_correction_fdm_mac(
-    total_nodes: int,
-    particleNum: int,
-    ghost_cell: int,
-    cnum: ti.types.vector(GlobalVariable.DIMENSION, int),
-    grid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
-    max_shift_ratio: float,
-    node_volume: ti.template(),
-    reference_volume: ti.template(),
-    cell_type: ti.template(),
-    particle: ti.template(),
-    LnID: ti.template(),
-    dshapefn: ti.template(),
-    node_size: ti.template(),
-):
-    # FDM/MAC version of the explicit MPM particle shifting correction, using an auxiliary scalar volume field.
-    max_shift = max_shift_ratio * grid_size[0]
-    for d in ti.static(range(GlobalVariable.DIMENSION)):
-        max_shift = ti.min(max_shift, max_shift_ratio * grid_size[d])
-
-    E2 = 0.0
-    for ng in range(node_volume.shape[0]):
-        for nb in range(node_volume.shape[1]):
-            if node_volume[ng, nb] > Threshold:
-                EI = ti.max(0.0, -reference_volume[ng, nb] + node_volume[ng, nb])
-                E2 += EI * EI
-
-    den = 0.0
-    for np in range(particleNum):
-        if (
-            int(particle[np].materialID) > 0
-            and int(particle[np].active) == 1
-            and particle_shifting_is_active_fluid(particle[np].x, ghost_cell, cnum, grid_size, cell_type)
-        ):
-            bodyID = int(particle[np].bodyID)
-            offset = np * total_nodes
-            grad_E2 = ti.Vector.zero(float, GlobalVariable.DIMENSION)
-            for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
-                EI = ti.max(0.0, -reference_volume[nodeID, bodyID] + node_volume[nodeID, bodyID])
-                grad_E2 += dshapefn[ln] * EI
-            grad_E2 *= 2.0 * particle[np].vol
-            den += grad_E2.dot(grad_E2)
-            particle[np].grad_E2 = grad_E2
-
-    if den > 0.0:
-        step_scale = E2 / den
-        for np in range(particleNum):
-            if (
-                int(particle[np].materialID) > 0
-                and int(particle[np].active) == 1
-                and particle_shifting_is_active_fluid(particle[np].x, ghost_cell, cnum, grid_size, cell_type)
-            ):
-                shift = -step_scale * particle[np].grad_E2
-                shift_norm = shift.norm()
-                if shift_norm > max_shift:
-                    shift *= max_shift / shift_norm
-                shift_incompressible_particle(np, shift, particle)
-
-
-@ti.kernel
 def kernel_compute_particle_shifting_energy(node_volume: ti.template(), reference_volume: ti.template()) -> float:
     E2 = 0.0
     for ng in range(node_volume.shape[0]):
@@ -5133,6 +5235,41 @@ def kernel_compute_particle_shifting_energy(node_volume: ti.template(), referenc
                 EI = ti.max(0.0, -reference_volume[ng, nb] + node_volume[ng, nb])
                 E2 += EI * EI
     return E2
+
+
+@ti.func
+def particle_shifting_node_residual(
+    node_id,
+    body_id,
+    ghost_cell,
+    cnum,
+    cell_type: ti.template(),
+    node_volume: ti.template(),
+    reference_volume: ti.template(),
+):
+    index = ti.Vector(vectorize_id(node_id, cnum + 1)) - ghost_cell
+    active_cnum = cnum - 2 * ghost_cell
+    interior, fluid = True, False
+    for corner in range(1 << GlobalVariable.DIMENSION):
+        cell = index + ti.Vector.zero(int, GlobalVariable.DIMENSION)
+        inside = True
+        for axis in ti.static(range(GlobalVariable.DIMENSION)):
+            cell[axis] -= (corner >> axis) & 1
+            if ti.static(
+                (axis == 0 and GlobalVariable.MPMXPBC)
+                or (axis == 1 and GlobalVariable.MPMYPBC)
+                or (axis == 2 and GlobalVariable.MPMZPBC)
+            ):
+                cell[axis] %= active_cnum[axis]
+            inside = inside and 0 <= cell[axis] < active_cnum[axis]
+        if inside:
+            interior = interior and cell_type[cell] != 0
+            fluid = fluid or cell_type[cell] == 1
+    error = node_volume[node_id, body_id] - reference_volume[node_id, body_id]
+    # Interior deficits need correction; free surfaces must remain unfilled.
+    if not (interior and fluid):
+        error = ti.max(error, 0.0)
+    return error
 
 
 @ti.kernel
@@ -5149,7 +5286,15 @@ def kernel_compute_particle_shifting_gradient_fdm_mac(
     LnID: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
+    compute_curvature: ti.template(),
 ) -> float:
+    if ti.static(compute_curvature):
+        node_volume.fill(0.0)
+    else:
+        for node_id, body_id in node_volume:
+            node_volume[node_id, body_id] = particle_shifting_node_residual(
+                node_id, body_id, ghost_cell, cnum, cell_type, node_volume, reference_volume
+            )
     den = 0.0
     for np in range(particleNum):
         grad_E2 = ti.Vector.zero(float, GlobalVariable.DIMENSION)
@@ -5162,11 +5307,18 @@ def kernel_compute_particle_shifting_gradient_fdm_mac(
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
                 nodeID = LnID[ln]
-                EI = ti.max(0.0, -reference_volume[nodeID, bodyID] + node_volume[nodeID, bodyID])
-                grad_E2 += dshapefn[ln] * EI
-            grad_E2 *= 2.0 * particle[np].vol
-            den += grad_E2.dot(grad_E2)
-        particle[np].grad_E2 = grad_E2
+                if ti.static(compute_curvature):
+                    node_volume[nodeID, bodyID] += particle[np].vol * dshapefn[ln].dot(particle[np].grad_E2)
+                else:
+                    grad_E2 += dshapefn[ln] * node_volume[nodeID, bodyID]
+            if ti.static(not compute_curvature):
+                grad_E2 *= 2.0 * particle[np].vol
+                den += grad_E2.dot(grad_E2)
+        if ti.static(not compute_curvature):
+            particle[np].grad_E2 = grad_E2
+    if ti.static(compute_curvature):
+        for node_id, body_id in node_volume:
+            den += node_volume[node_id, body_id] ** 2
     return den
 
 
@@ -5266,20 +5418,21 @@ def fdm_regular_axis_basis_integral(lower, upper, half_length, btype):
 @ti.kernel
 def kernel_fdm_shifting_reference_volume(
     ghost_cell: int,
-    gnum: ti.types.vector(GlobalVariable.DIMENSION, int),
-    grid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
+    gnum: ti.template(),
+    grid_size: ti.template(),
     particle_lengths: ti.template(),
     boundtype: ti.template(),
     reference_volume: ti.template(),
+    solid_cell_type: ti.template(),
 ):
     # Integrate over the physical mesh, not its exterior ghost padding. This
     # is intrinsic nodal volume, independent of current particle clustering
     # or AIR labels; it cannot fill voids by redefining them as fluid.
     counts = gnum - 1 - 2 * ghost_cell
     for node_id, body_id in reference_volume:
-        index = vectorize_id(node_id, gnum)
+        index = ti.Vector(vectorize_id(node_id, gnum))
         volume = 1.0
-        for d in ti.static(range(GlobalVariable.DIMENSION)):
+        for d in ti.static(range(gnum.n)):
             raw = index[d] - ghost_cell
             fraction = 1.0
             if ti.static((GlobalVariable.MPMXPBC, GlobalVariable.MPMYPBC, GlobalVariable.MPMZPBC)[d]):
@@ -5294,7 +5447,50 @@ def kernel_fdm_shifting_reference_volume(
                     -raw, counts[d] - raw, particle_lengths[body_id][d] / grid_size[d], btype
                 )
             volume *= grid_size[d] * fraction
-        reference_volume[node_id, body_id] = volume
+        if ti.static(solid_cell_type != None):
+            for offset in ti.grouped(ti.ndrange(*(((-2, 2),) * gnum.n))):
+                cell = index - ghost_cell + offset
+                inside = True
+                for d in ti.static(range(gnum.n)):
+                    inside = inside and 0 <= cell[d] < solid_cell_type.shape[d]
+                if inside and solid_cell_type[cell] == 2:
+                    occupied = 1.0
+                    for d in ti.static(range(gnum.n)):
+                        btype = 0
+                        if ti.static(GlobalVariable.SHAPEFUNCTION == 2 or GlobalVariable.SHAPEFUNCTION == 3):
+                            btype = int(boundtype[node_id, body_id][d])
+                        occupied *= grid_size[d] * fdm_regular_axis_basis_integral(
+                            offset[d], offset[d] + 1, particle_lengths[body_id][d] / grid_size[d], btype
+                        )
+                    volume -= occupied
+        reference_volume[node_id, body_id] = ti.max(volume, 0.0)
+
+
+@ti.kernel
+def kernel_fdm_box_shifting_reference_volume3d(
+    gnum: ti.template(),
+    grid_size: ti.template(),
+    particle_lengths: ti.template(),
+    boundtype: ti.template(),
+    reference_volume: ti.template(),
+    lower: vec3f,
+    upper: vec3f,
+):
+    # Moving box faces clip the basis continuously, without whole-cell volume jumps.
+    for node_id, body_id in reference_volume:
+        index = ti.Vector(vectorize_id(node_id, gnum))
+        volume = 1.0
+        for d in ti.static(range(3)):
+            btype = 0
+            if ti.static(GlobalVariable.SHAPEFUNCTION == 2 or GlobalVariable.SHAPEFUNCTION == 3):
+                btype = int(boundtype[node_id, body_id][d])
+            volume *= grid_size[d] * fdm_regular_axis_basis_integral(
+                lower[d] / grid_size[d] - index[d],
+                upper[d] / grid_size[d] - index[d],
+                particle_lengths[body_id][d] / grid_size[d],
+                btype,
+            )
+        reference_volume[node_id, body_id] = ti.max(volume, 0.0)
 
 
 @ti.kernel
@@ -5311,7 +5507,15 @@ def kernel_compute_particle_shifting_gradient_fdm_on_the_fly_3d(
     cell_type: ti.template(),
     particle: ti.template(),
     particle_lengths: ti.template(),
+    compute_curvature: ti.template(),
 ) -> float:
+    if ti.static(compute_curvature):
+        node_volume.fill(0.0)
+    else:
+        for node_id, body_id in node_volume:
+            node_volume[node_id, body_id] = particle_shifting_node_residual(
+                node_id, body_id, ghost_cell, cnum, cell_type, node_volume, reference_volume
+            )
     den = 0.0
     for np in range(particleNum):
         grad_E2 = vec3f(0.0, 0.0, 0.0)
@@ -5395,20 +5599,23 @@ def kernel_compute_particle_shifting_gradient_fdm_on_the_fly_3d(
                             inside = inside and axis_valid[d, local_id] == 1
                 if inside:
                     nodeID = int(mapped_index[0] + mapped_index[1] * gnum[0] + mapped_index[2] * gnum[0] * gnum[1])
-                    EI = ti.max(0.0, -reference_volume[nodeID, bodyID] + node_volume[nodeID, bodyID])
-                    grad_E2 += (
-                        vec3f(
-                            [
-                                dshape[0] * shape[1] * shape[2],
-                                shape[0] * dshape[1] * shape[2],
-                                shape[0] * shape[1] * dshape[2],
-                            ]
-                        )
-                        * EI
+                    dshape_fn = vec3f(
+                        dshape[0] * shape[1] * shape[2],
+                        shape[0] * dshape[1] * shape[2],
+                        shape[0] * shape[1] * dshape[2],
                     )
-            grad_E2 *= 2.0 * particle[np].vol
-            den += grad_E2.dot(grad_E2)
-        particle[np].grad_E2 = grad_E2
+                    if ti.static(compute_curvature):
+                        node_volume[nodeID, bodyID] += particle[np].vol * dshape_fn.dot(particle[np].grad_E2)
+                    else:
+                        grad_E2 += dshape_fn * node_volume[nodeID, bodyID]
+            if ti.static(not compute_curvature):
+                grad_E2 *= 2.0 * particle[np].vol
+                den += grad_E2.dot(grad_E2)
+        if ti.static(not compute_curvature):
+            particle[np].grad_E2 = grad_E2
+    if ti.static(compute_curvature):
+        for node_id, body_id in node_volume:
+            den += node_volume[node_id, body_id] ** 2
     return den
 
 
@@ -5529,12 +5736,10 @@ def kernel_particle_shifting_delta_correction_fdm_on_the_fly_2d(
 ):
     max_shift = ti.min(max_shift_ratio * grid_size[0], max_shift_ratio * grid_size[1])
 
-    E2 = 0.0
-    for ng in range(node_volume.shape[0]):
-        for nb in range(node_volume.shape[1]):
-            if node_volume[ng, nb] > Threshold:
-                EI = ti.max(0.0, -reference_volume[ng, nb] + node_volume[ng, nb])
-                E2 += EI * EI
+    for node_id, body_id in node_volume:
+        node_volume[node_id, body_id] = particle_shifting_node_residual(
+            node_id, body_id, ghost_cell, cnum, cell_type, node_volume, reference_volume
+        )
 
     den = 0.0
     for np in range(particleNum):
@@ -5565,14 +5770,49 @@ def kernel_particle_shifting_delta_correction_fdm_on_the_fly_2d(
                         if ti.static(GlobalVariable.MPMYPBC):
                             btype[1] = 0
                     _, dshape_fn = fdm_regular_node_shape_grad_2d(position, node_coords, igrid_size, psize, btype)
-                    EI = ti.max(0.0, -reference_volume[nodeID, bodyID] + node_volume[nodeID, bodyID])
+                    EI = node_volume[nodeID, bodyID]
                     grad_E2 += dshape_fn * EI
             grad_E2 *= 2.0 * particle[np].vol
             den += grad_E2.dot(grad_E2)
             particle[np].grad_E2 = grad_E2
 
-    if den > 0.0:
-        step_scale = E2 / den
+    for ng, nb in node_volume:
+        node_volume[ng, nb] = 0.0
+    for np in range(particleNum):
+        if (
+            int(particle[np].materialID) > 0
+            and int(particle[np].active) == 1
+            and particle_shifting_is_active_fluid(particle[np].x, ghost_cell, cnum, grid_size, cell_type)
+        ):
+            bodyID = int(particle[np].bodyID)
+            position, psize = particle[np].x, particle_lengths[bodyID]
+            base_bound = ti.floor((position - psize) * igrid_size, int)
+            for j in range(base_bound[1], base_bound[1] + influenced_node):
+                jp, valid_j = fdm_regular_axis_mapped_index(j, gnum[1], ghost_cell, GlobalVariable.MPMYPBC)
+                if not valid_j:
+                    continue
+                for i in range(base_bound[0], base_bound[0] + influenced_node):
+                    ip, valid_i = fdm_regular_axis_mapped_index(i, gnum[0], ghost_cell, GlobalVariable.MPMXPBC)
+                    if not valid_i:
+                        continue
+                    nodeID = int(ip + jp * gnum[0])
+                    node_coords = vec2i(i, j) * grid_size
+                    btype = vec2i(0, 0)
+                    if ti.static(GlobalVariable.SHAPEFUNCTION == 2 or GlobalVariable.SHAPEFUNCTION == 3):
+                        btype = ti.cast(boundtype[nodeID, bodyID], ti.i32)
+                        if ti.static(GlobalVariable.MPMXPBC):
+                            btype[0] = 0
+                        if ti.static(GlobalVariable.MPMYPBC):
+                            btype[1] = 0
+                    _, dshape_fn = fdm_regular_node_shape_grad_2d(position, node_coords, igrid_size, psize, btype)
+                    node_volume[nodeID, bodyID] += particle[np].vol * dshape_fn.dot(particle[np].grad_E2)
+
+    curvature = 0.0
+    for ng, nb in node_volume:
+        curvature += node_volume[ng, nb] * node_volume[ng, nb]
+
+    if den > 0.0 and curvature > 0.0:
+        step_scale = den / (2.0 * curvature)
         for np in range(particleNum):
             if (
                 int(particle[np].materialID) > 0
@@ -5634,90 +5874,6 @@ def kernel_volume_p2g_fdm_shifting_on_the_fly_3d(
                             node_volume[nodeID, bodyID] += shape_mapping(weight, volume)
 
 
-@ti.kernel
-def kernel_particle_shifting_delta_correction_fdm_on_the_fly_3d(
-    influenced_node: int,
-    particleNum: int,
-    ghost_cell: int,
-    cnum: ti.types.vector(3, int),
-    grid_size: ti.types.vector(3, float),
-    igrid_size: ti.types.vector(3, float),
-    gnum: ti.types.vector(3, int),
-    max_shift_ratio: float,
-    node_volume: ti.template(),
-    reference_volume: ti.template(),
-    cell_type: ti.template(),
-    particle: ti.template(),
-    particle_lengths: ti.template(),
-    boundtype: ti.template(),
-):
-    max_shift = max_shift_ratio * grid_size[0]
-    for d in ti.static(range(3)):
-        max_shift = ti.min(max_shift, max_shift_ratio * grid_size[d])
-
-    E2 = 0.0
-    for ng in range(node_volume.shape[0]):
-        for nb in range(node_volume.shape[1]):
-            if node_volume[ng, nb] > Threshold:
-                EI = ti.max(0.0, -reference_volume[ng, nb] + node_volume[ng, nb])
-                E2 += EI * EI
-
-    den = 0.0
-    for np in range(particleNum):
-        if (
-            int(particle[np].materialID) > 0
-            and int(particle[np].active) == 1
-            and particle_shifting_is_active_fluid(particle[np].x, ghost_cell, cnum, grid_size, cell_type)
-        ):
-            bodyID = int(particle[np].bodyID)
-            position, psize = particle[np].x, particle_lengths[bodyID]
-            base_bound = ti.floor((position - psize) * igrid_size, int)
-            grad_E2 = vec3f(0.0, 0.0, 0.0)
-            for k in range(base_bound[2], base_bound[2] + influenced_node):
-                kp, valid_k = fdm_regular_axis_mapped_index(k, gnum[2], ghost_cell, GlobalVariable.MPMZPBC)
-                if not valid_k:
-                    continue
-                for j in range(base_bound[1], base_bound[1] + influenced_node):
-                    jp, valid_j = fdm_regular_axis_mapped_index(j, gnum[1], ghost_cell, GlobalVariable.MPMYPBC)
-                    if not valid_j:
-                        continue
-                    for i in range(base_bound[0], base_bound[0] + influenced_node):
-                        ip, valid_i = fdm_regular_axis_mapped_index(i, gnum[0], ghost_cell, GlobalVariable.MPMXPBC)
-                        if not valid_i:
-                            continue
-                        nodeID = int(ip + jp * gnum[0] + kp * gnum[0] * gnum[1])
-                        node_coords = vec3i(i, j, k) * grid_size
-                        btype = vec3i(0, 0, 0)
-                        if ti.static(GlobalVariable.SHAPEFUNCTION == 2 or GlobalVariable.SHAPEFUNCTION == 3):
-                            btype = ti.cast(boundtype[nodeID, bodyID], ti.i32)
-                            if ti.static(GlobalVariable.MPMXPBC):
-                                btype[0] = 0
-                            if ti.static(GlobalVariable.MPMYPBC):
-                                btype[1] = 0
-                            if ti.static(GlobalVariable.MPMZPBC):
-                                btype[2] = 0
-                        _, dshape_fn = fdm_regular_node_shape_grad_3d(position, node_coords, igrid_size, psize, btype)
-                        EI = ti.max(0.0, -reference_volume[nodeID, bodyID] + node_volume[nodeID, bodyID])
-                        grad_E2 += dshape_fn * EI
-            grad_E2 *= 2.0 * particle[np].vol
-            den += grad_E2.dot(grad_E2)
-            particle[np].grad_E2 = grad_E2
-
-    if den > 0.0:
-        step_scale = E2 / den
-        for np in range(particleNum):
-            if (
-                int(particle[np].materialID) > 0
-                and int(particle[np].active) == 1
-                and particle_shifting_is_active_fluid(particle[np].x, ghost_cell, cnum, grid_size, cell_type)
-            ):
-                shift = -step_scale * particle[np].grad_E2
-                shift_norm = shift.norm()
-                if shift_norm > max_shift:
-                    shift *= max_shift / shift_norm
-                shift_incompressible_particle(np, shift, particle)
-
-
 # ======================================== Implicit MPM ======================================== #
 # ========================================================= #
 #                    Preprocess dofs                        #
@@ -5759,12 +5915,15 @@ def set_active_dofs(gridSum: int, cutoff: float, node: ti.template(), flag: ti.t
 def kernel_mass_momentum_acceleration_force_ip2g(
     total_nodes: int,
     particleNum: int,
-    gravity: ti.types.vector(3, float),
+    gravity: ti.types.vector(3, real),
     node: ti.template(),
     particle: ti.template(),
     LnID: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
+    gnum: ti.types.vector(GlobalVariable.DIMENSION, int),
+    grid_size: ti.types.vector(GlobalVariable.DIMENSION, real),
+    sparse_grid: ti.template(),
 ):
     ti.block_local(node.m)
     for d in ti.static(range(GlobalVariable.DIMENSION)):
@@ -5785,7 +5944,22 @@ def kernel_mass_momentum_acceleration_force_ip2g(
                 nmass = shape_mapping(shape_fn, mass)
                 external_force = shape_mapping(shapefn[ln], fex)
                 node[nodeID, bodyID]._update_nodal_mass(nmass)
-                node[nodeID, bodyID]._update_nodal_momentum(nmass * velocity)
+                nodal_velocity = velocity
+                if ti.static(GlobalVariable.Affine):
+                    nodal_coord = grid_size * ti.Vector(vectorize_id(nodeID, gnum))
+                    if ti.static(hasattr(sparse_grid, "active_block_ids")):
+                        nodal_coord = grid_size * ti.cast(
+                            compact_node_grid_coord(
+                                nodeID,
+                                sparse_grid.block_count,
+                                sparse_grid.block_size,
+                                sparse_grid.block_volume,
+                                sparse_grid.active_block_ids,
+                            ),
+                            real,
+                        )
+                    nodal_velocity += particle[np].velocity_gradient @ (nodal_coord - particle[np].x)
+                node[nodeID, bodyID]._update_nodal_momentum(nmass * nodal_velocity)
                 node[nodeID, bodyID]._update_nodal_acceleration(nmass * acceleration)
                 node[nodeID, bodyID]._update_external_force(external_force)
 
@@ -6514,7 +6688,7 @@ def mac_face_mass_momentum(
         weight *= shape_fn[axis]
     nodal_mass = weight * p_mass
     nodal_momentum = nodal_mass * velocity[normal_dir]
-    if ti.static(GlobalVariable.APIC or GlobalVariable.TPIC):
+    if ti.static(GlobalVariable.Affine or GlobalVariable.Taylor):
         dpos = position - grid_pos
         affine_row = ti.Vector(
             [velocity_gradient[normal_dir, axis] for axis in ti.static(range(GlobalVariable.DIMENSION))]
@@ -6529,8 +6703,8 @@ def kernel_mass_momentum_mac_cell_p2g(
     particleNum: int,
     ghost_cell: int,
     cnum: ti.types.vector(GlobalVariable.DIMENSION, int),
-    grid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
-    igrid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
+    grid_size: ti.types.vector(GlobalVariable.DIMENSION, real),
+    igrid_size: ti.types.vector(GlobalVariable.DIMENSION, real),
     node: ti.template(),
     particle: ti.template(),
     particle_lengths: ti.template(),
@@ -6653,7 +6827,7 @@ def kernel_mass_momentum_mac_cell_p2g(
                                 pforce += weight_grad[2] * internal_force[2] + weight_grad[1] * internal_force[4] + weight_grad[0] * internal_force[5]"""
                         nmass = shape_mapping(weight, p_mass)
                         momentum = shape_mapping(nmass, velocity[d])
-                        if ti.static(GlobalVariable.APIC or GlobalVariable.TPIC):
+                        if ti.static(GlobalVariable.Affine or GlobalVariable.Taylor):
                             dpos = position - grid_pos
                             momentum -= nmass * ti.Vector(
                                 [velocity_gradient[d, k] for k in ti.static(range(GlobalVariable.DIMENSION))]
@@ -6668,8 +6842,8 @@ def kernel_mass_momentum_mac_cell_p2g_cell_reduced(
     particleNum: int,
     ghost_cell: int,
     cnum: ti.types.vector(GlobalVariable.DIMENSION, int),
-    grid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
-    igrid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
+    grid_size: ti.types.vector(GlobalVariable.DIMENSION, real),
+    igrid_size: ti.types.vector(GlobalVariable.DIMENSION, real),
     node: ti.template(),
     particle: ti.template(),
     particle_lengths: ti.template(),
@@ -6749,8 +6923,8 @@ def kernel_mass_momentum_mac_cell_p2g_shared(
     particleNum: int,
     ghost_cell: int,
     cnum: ti.types.vector(GlobalVariable.DIMENSION, int),
-    grid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
-    igrid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
+    grid_size: ti.types.vector(GlobalVariable.DIMENSION, real),
+    igrid_size: ti.types.vector(GlobalVariable.DIMENSION, real),
     node: ti.template(),
     particle: ti.template(),
     particle_lengths: ti.template(),
@@ -6849,6 +7023,8 @@ def interpolate_mac_particle_kinematics(position, psize, ghost_cell, cnum, grid_
     velocity_gradient = ti.Matrix.zero(float, GlobalVariable.DIMENSION, GlobalVariable.DIMENSION)
     vPIC, vFLIP = ti.Vector.zero(float, GlobalVariable.DIMENSION), ti.Vector.zero(float, GlobalVariable.DIMENSION)
     for d in ti.static(range(GlobalVariable.DIMENSION)):
+        Bp = ti.Matrix.zero(float, GlobalVariable.DIMENSION, GlobalVariable.DIMENSION)
+        Dp = ti.Matrix.zero(float, GlobalVariable.DIMENSION, GlobalVariable.DIMENSION)
         stagger = 0.5 * (1 - ti.Vector.unit(GlobalVariable.DIMENSION, d))
         face_count = active_cnum + ti.Vector.unit(GlobalVariable.DIMENSION, d)
         base = ti.floor((position - psize) * igrid_size - stagger).cast(int)
@@ -6907,7 +7083,13 @@ def interpolate_mac_particle_kinematics(position, psize, ghost_cell, cnum, grid_
                 vPIC[d] += shape_mapping(weight, velocity)
                 vFLIP[d] += shape_mapping(weight, accleration)
 
-                if ti.static(GlobalVariable.DIMENSION == 2):
+                if ti.static(GlobalVariable.Affine):
+                    # Each MAC component has its own staggered support and moment.
+                    pointer = grid_pos - position
+                    Dp += weight * pointer.outer_product(pointer)
+                    for k in ti.static(range(GlobalVariable.DIMENSION)):
+                        Bp[d, k] += weight * velocity * pointer[k]
+                elif ti.static(GlobalVariable.DIMENSION == 2):
                     weight_grad = ti.Vector([dshape_fn[0] * shape_fn[1], shape_fn[0] * dshape_fn[1]])
                     for k in ti.static(range(GlobalVariable.DIMENSION)):
                         velocity_gradient[d, k] += weight_grad[k] * velocity
@@ -6921,6 +7103,10 @@ def interpolate_mac_particle_kinematics(position, psize, ghost_cell, cnum, grid_
                     )
                     for k in ti.static(range(GlobalVariable.DIMENSION)):
                         velocity_gradient[d, k] += weight_grad[k] * velocity
+        if ti.static(GlobalVariable.Affine):
+            affine_matrix = affine_velocity_matrix(Bp, Dp, grid_size)
+            for k in ti.static(range(GlobalVariable.DIMENSION)):
+                velocity_gradient[d, k] = affine_matrix[d, k]
     return vPIC, vFLIP, velocity_gradient
 
 
@@ -6979,8 +7165,8 @@ def kernel_kinemaitc_mac_cell_g2p(
     particleNum: int,
     ghost_cell: int,
     cnum: ti.types.vector(GlobalVariable.DIMENSION, int),
-    grid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
-    igrid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
+    grid_size: ti.types.vector(GlobalVariable.DIMENSION, real),
+    igrid_size: ti.types.vector(GlobalVariable.DIMENSION, real),
     node: ti.template(),
     particle: ti.template(),
     particle_lengths: ti.template(),
@@ -7012,20 +7198,22 @@ def kernel_compute_mac_grid_velocity_gravity(
 ):
     for d in ti.static(range(GlobalVariable.DIMENSION)):
         for I in ti.grouped(node.m[d]):
-            if node.m[d][I] > cutoff:
+            if node.m[d][I] > 0.0:
                 mass = node.m[d][I]
                 force = node.force[d][I]
+                # Kinematic support includes small deposits; only force/mass uses the cutoff.
                 node.velocity[d][I] /= mass
                 node.force[d][I] = node.velocity[d][I]
-                acceleration = force / mass + gravity[d]
-                node.velocity[d][I] += acceleration * dt[None]
+                if mass > cutoff:
+                    acceleration = force / mass + gravity[d]
+                    node.velocity[d][I] += acceleration * dt[None]
 
 
 @ti.kernel
 def kernel_compute_mac_grid_velocity(cutoff: float, node: ti.template()):
     for d in ti.static(range(GlobalVariable.DIMENSION)):
         for I in ti.grouped(node.m[d]):
-            if node.m[d][I] > cutoff:
+            if node.m[d][I] > 0.0:
                 node.velocity[d][I] /= node.m[d][I]
                 node.force[d][I] = node.velocity[d][I]
 
@@ -7044,7 +7232,8 @@ def kernel_add_mac_grid_gravity(
 def kernel_compute_mac_grid_acceleration(cutoff: float, node: ti.template()):
     for d in ti.static(range(GlobalVariable.DIMENSION)):
         for I in ti.grouped(node.m[d]):
-            if node.m[d][I] > cutoff:
+            # Match normalization support: FLIP consumes velocity increments, not old velocities.
+            if node.m[d][I] > 0.0:
                 node.force[d][I] = node.velocity[d][I] - node.force[d][I]
 
 
@@ -7247,6 +7436,50 @@ def ibm_mixed_density(phi_s: float, rho_f: float, rho_s: float):
 
 
 @ti.func
+def ibm_cell_pressure_acceleration(
+    cell,
+    active_cnum,
+    grid_size,
+    fluid_density,
+    atmospheric_pressure,
+    solid_fraction: ti.template(),
+    solid_density: ti.template(),
+    pressure: ti.template(),
+    surface_tension: ti.template(),
+    cell_type: ti.template(),
+    fluid_sdf: ti.template(),
+    use_free_surface_theta: ti.template(),
+):
+    """Average the same face pressure accelerations used by the MAC projection."""
+    acceleration = ti.Vector.zero(float, GlobalVariable.DIMENSION)
+    local_density = (1.0 - solid_fraction[cell]) * fluid_density + solid_fraction[cell] * solid_density[cell]
+    for direction in ti.static(range(GlobalVariable.DIMENSION)):
+        for side in ti.static((-1, 1)):
+            neighbor = cell + side * ti.Vector.unit(GlobalVariable.DIMENSION, direction)
+            inside = True
+            for axis in ti.static(range(GlobalVariable.DIMENSION)):
+                inside = inside and 0 <= neighbor[axis] < active_cnum[axis]
+            if inside and int(cell_type[cell]) == 1:
+                density = local_density
+                jump = 0.0
+                theta = 1.0
+                if int(cell_type[neighbor]) == 1:
+                    neighbor_density = (1.0 - solid_fraction[neighbor]) * fluid_density + solid_fraction[
+                        neighbor
+                    ] * solid_density[neighbor]
+                    density = 0.5 * (local_density + neighbor_density)
+                    jump = pressure[neighbor] - pressure[cell]
+                elif int(cell_type[neighbor]) == 0:
+                    if ti.static(use_free_surface_theta):
+                        theta = free_surface_theta(cell, neighbor, fluid_sdf)
+                    jump = atmospheric_pressure + surface_tension[neighbor] - pressure[cell]
+                acceleration[direction] -= (
+                    0.5 * side * jump / (ti.max(density, Threshold) * grid_size[direction] * theta)
+                )
+    return acceleration
+
+
+@ti.func
 def ibm_cell_is_active(cell, active_cnum):
     inside = True
     for d in ti.static(range(GlobalVariable.DIMENSION)):
@@ -7376,6 +7609,25 @@ def kernel_apply_mac_viscous_delta(
 
 
 @ti.kernel
+def kernel_count_ibm_cut_cell_overlap(
+    ghost_cell: int,
+    cnum: ti.template(),
+    solid_fraction: ti.template(),
+    solid_sdf: ti.template(),
+) -> int:
+    count = 0
+    active_cnum = cnum - 2 * ghost_cell
+    for I in ti.grouped(solid_fraction):
+        inside = True
+        for d in ti.static(range(GlobalVariable.DIMENSION)):
+            inside = inside and 0 <= I[d] < active_cnum[d]
+        # Partial cell fractions can share a cell across distinct touching surfaces.
+        if inside and solid_fraction[I] >= 1.0 and solid_sdf[I] < 0.0:
+            count += 1
+    return count
+
+
+@ti.kernel
 def kernel_apply_incompressible_ibm_mac_source(
     ghost_cell: int,
     cnum: ti.template(),
@@ -7387,6 +7639,11 @@ def kernel_apply_incompressible_ibm_mac_source(
     solid_velocity_cell: ti.template(),
     ibm_force_cell: ti.template(),
     node: ti.template(),
+    grid_size: ti.template(),
+    pressure: ti.template(),
+    surface_tension: ti.template(),
+    fluid_sdf: ti.template(),
+    use_free_surface_theta: ti.template(),
 ):
     active_cnum = cnum - 2 * ghost_cell
     rho_f = matProps.density
@@ -7402,6 +7659,20 @@ def kernel_apply_incompressible_ibm_mac_source(
                     rho_s = rho_f
                 varphi_s = ti.min(1.0, ti.max(0.0, phi_s * rho_s / ti.max(rho, Threshold)))
                 fluid_velocity = mac_cell_center_velocity(I, node)
+                fluid_velocity += dt[None] * ibm_cell_pressure_acceleration(
+                    I,
+                    active_cnum,
+                    grid_size,
+                    rho_f,
+                    matProps.atmospheric_pressure,
+                    solid_fraction,
+                    solid_density,
+                    pressure,
+                    surface_tension,
+                    cell_type,
+                    fluid_sdf,
+                    use_free_surface_theta,
+                )
                 ibm_force_cell[I] = (
                     rho * varphi_s * (solid_velocity_cell[I] - fluid_velocity) / ti.max(dt[None], Threshold)
                 )
@@ -7415,6 +7686,20 @@ def kernel_apply_incompressible_ibm_mac_source(
                     rho_s = rho_f
                 varphi_s = ti.min(1.0, ti.max(0.0, phi_s * rho_s / ti.max(rho, Threshold)))
                 fluid_velocity = mac_cell_center_velocity(I, node)
+                fluid_velocity += dt[None] * ibm_cell_pressure_acceleration(
+                    I,
+                    active_cnum,
+                    grid_size,
+                    rho_f,
+                    matProps.atmospheric_pressure,
+                    solid_fraction,
+                    solid_density,
+                    pressure,
+                    surface_tension,
+                    cell_type,
+                    fluid_sdf,
+                    use_free_surface_theta,
+                )
                 ibm_force_cell[I] = (
                     rho * varphi_s * (solid_velocity_cell[I] - fluid_velocity) / ti.max(dt[None], Threshold)
                 )
@@ -7665,29 +7950,27 @@ def interpolate_solid_sdf(
 
 
 @ti.func
-def solid_sdf_position_normal(
+def solid_sdf_position_gradient(
     position,
     ghost_cell: int,
     cnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     grid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
     solid_sdf: ti.template(),
 ):
-    cell = ti.floor(position / grid_size - 0.5).cast(int)
-    normal = ti.Vector.zero(float, GlobalVariable.DIMENSION)
-    for d in ti.static(range(GlobalVariable.DIMENSION)):
-        direction = ti.Vector.unit(GlobalVariable.DIMENSION, d)
-        normal[d] = (
-            0.5
-            * (
-                sample_solid_sdf(cell + direction, ghost_cell, cnum, solid_sdf)
-                - sample_solid_sdf(cell - direction, ghost_cell, cnum, solid_sdf)
-            )
-            / grid_size[d]
-        )
-    norm = normal.norm()
-    if norm > Threshold:
-        normal /= norm
-    return normal
+    coord = position / grid_size - 0.5
+    base = ti.floor(coord).cast(int)
+    frac = coord - base.cast(float)
+    gradient = ti.Vector.zero(float, GlobalVariable.DIMENSION)
+    # Differentiate the same interpolant used for collision distance, including corners.
+    for offset in ti.static(ti.grouped(ti.ndrange(*((2,) * GlobalVariable.DIMENSION)))):
+        value = sample_solid_sdf(base + offset, ghost_cell, cnum, solid_sdf)
+        for d in ti.static(range(GlobalVariable.DIMENSION)):
+            weight = (1.0 if ti.static(offset[d] == 1) else -1.0) / grid_size[d]
+            for axis in ti.static(range(GlobalVariable.DIMENSION)):
+                if ti.static(axis != d):
+                    weight *= frac[axis] if ti.static(offset[axis] == 1) else 1.0 - frac[axis]
+            gradient[d] += weight * value
+    return gradient
 
 
 @ti.func
@@ -7745,24 +8028,16 @@ def mark_solid_cell_region(
     end_point: ti.types.vector(GlobalVariable.DIMENSION, float),
     cell_type: ti.template(),
 ):
-    if ti.static(GlobalVariable.DIMENSION == 2):
-        for I in ti.grouped(cell_type):
-            inside = True
-            for d in ti.static(range(GlobalVariable.DIMENSION)):
-                cell_lower = I[d] * grid_size[d]
-                cell_upper = (I[d] + 1) * grid_size[d]
-                inside = inside and cell_lower < end_point[d] - 1e-12 and cell_upper > start_point[d] + 1e-12
-            if inside:
-                cell_type[I] = 2
-    elif ti.static(GlobalVariable.DIMENSION == 3):
-        for I in ti.grouped(cell_type):
-            inside = True
-            for d in ti.static(range(GlobalVariable.DIMENSION)):
-                cell_lower = I[d] * grid_size[d]
-                cell_upper = (I[d] + 1) * grid_size[d]
-                inside = inside and cell_lower < end_point[d] - 1e-12 and cell_upper > start_point[d] + 1e-12
-            if inside:
-                cell_type[I] = 2
+    for I in ti.grouped(cell_type):
+        inside = True
+        for d in ti.static(range(GlobalVariable.DIMENSION)):
+            cell_lower = I[d] * grid_size[d]
+            cell_upper = (I[d] + 1) * grid_size[d]
+            # Domain/grid storage may be float32 even when boundary coordinates are float64.
+            eps = 1e-6 * ti.max(grid_size[d], ti.abs(start_point[d]), ti.abs(end_point[d]))
+            inside = inside and cell_lower < end_point[d] - eps and cell_upper > start_point[d] + eps
+        if inside:
+            cell_type[I] = 2
 
 
 @ti.kernel
@@ -8047,13 +8322,21 @@ def kernel_find_fluid_domain_by_volume(
             if cell_volumefrac[cell_id] > min_volume_fraction:
                 cell_type[I] = 1
 
-    # Volume support determines the free-surface shape, but a threshold must
-    # never turn a cell that actually contains fluid particles into AIR.
+    # Keep attached surface support; detached sub-cell spray stays pressure-free.
     for np in range(particleNum):
         if int(particle[np].active) == 1:
             idx, inside_active = particle_cell_in_closed_domain(particle[np].x, active_cnum, igrid_size)
             if inside_active and not is_solid(cell_type[idx]):
-                cell_type[idx] = 1
+                attached = False
+                for offset in ti.static(ti.grouped(ti.ndrange(*((3,) * GlobalVariable.DIMENSION)))):
+                    neighbor = idx + offset - 1
+                    inside_neighbor = True
+                    for d in ti.static(range(GlobalVariable.DIMENSION)):
+                        inside_neighbor = inside_neighbor and neighbor[d] >= 0 and neighbor[d] < active_cnum[d]
+                    if inside_neighbor and not is_solid(cell_type[neighbor]):
+                        attached = attached or cell_volumefrac[linearize(neighbor, cnum)] > min_volume_fraction
+                if attached:
+                    cell_type[idx] = 1
 
 
 @ti.kernel
@@ -10288,25 +10571,32 @@ def enforce_particle_solid_sdf_collision(
             for d in ti.static(range(GlobalVariable.DIMENSION)):
                 inside_domain = inside_domain and pos[d] >= 0.0 and pos[d] <= domain_upper[d]
             if inside_domain:
-                phi = interpolate_solid_sdf(pos, ghost_cell, cnum, grid_size, solid_sdf)
-                if phi < clearance:
-                    normal = solid_sdf_position_normal(pos, ghost_cell, cnum, grid_size, solid_sdf)
-                    if normal.norm() > Threshold:
-                        pos += (clearance - phi) * normal
-                        for d in ti.static(range(GlobalVariable.DIMENSION)):
-                            pos[d] = ti.min(ti.max(pos[d], 0.0), domain_upper[d])
-                        wall_velocity = nearest_solid_face_velocity(
-                            pos,
-                            ghost_cell,
-                            cnum,
-                            grid_size,
-                            solid_velocity0,
-                            solid_velocity1,
-                            solid_velocity2,
-                        )
-                        pv = resolve_solid_normal_velocity(pv, wall_velocity, normal)
-                        particle[np].x = pos
-                        particle[np].v = pv
+                # A sampled SDF is not an exact distance near corners; reproject its interpolant.
+                for iteration in range(8):
+                    phi = interpolate_solid_sdf(pos, ghost_cell, cnum, grid_size, solid_sdf)
+                    if phi >= clearance:
+                        break
+                    gradient = solid_sdf_position_gradient(pos, ghost_cell, cnum, grid_size, solid_sdf)
+                    gradient_norm = gradient.norm()
+                    if gradient_norm <= Threshold:
+                        break
+                    normal = gradient / gradient_norm
+                    distance = ti.min((clearance - phi) / gradient_norm, min_grid_spacing(grid_size))
+                    pos += distance * normal
+                    for d in ti.static(range(GlobalVariable.DIMENSION)):
+                        pos[d] = ti.min(ti.max(pos[d], 0.0), domain_upper[d])
+                    wall_velocity = nearest_solid_face_velocity(
+                        pos,
+                        ghost_cell,
+                        cnum,
+                        grid_size,
+                        solid_velocity0,
+                        solid_velocity1,
+                        solid_velocity2,
+                    )
+                    pv = resolve_solid_normal_velocity(pv, wall_velocity, normal)
+                particle[np].x = pos
+                particle[np].v = pv
 
 
 @ti.kernel
@@ -10422,7 +10712,7 @@ def kernel_mass_momentum_p2g_twophase_APIC(
     node_size: ti.template(),
     istep: int,
     is_rigid: ti.template(),
-    grid_size: ti.types.vector(2, float),
+    grid_size: ti.types.vector(2, real),
     gnum: ti.types.vector(2, int),
 ):
     for np in range(particleNum):
@@ -10451,12 +10741,16 @@ def kernel_mass_momentum_p2g_twophase_APIC(
                 nmass = shape_mapping(shapefn[ln], mass)
                 nmass_s = shape_mapping(shapefn[ln], mass_s)
                 nmass_f = shape_mapping(shapefn[ln], mass_f)
+                affine_s, affine_f = ZEROVEC2f, ZEROVEC2f
+                for i, j in ti.static(ti.ndrange(2, 2)):
+                    affine_s[i] += gradv[i, j] * xip[j]
+                    affine_f[i] += grdv_f[i, j] * xip[j]
                 node[nodeID, bodyID]._update_nodal_mass(nmass, nmass_s, nmass_f)
                 node[nodeID, bodyID]._update_nodal_pressure_(nmass_s * pressure)
                 node[nodeID, bodyID]._update_nodal_momentum(
-                    nmass * (velocity + gradv @ xip),
-                    nmass_s * (velocity_s + gradv @ xip),
-                    nmass_f * (velocity_f + grdv_f @ xip),
+                    nmass * (velocity + affine_s),
+                    nmass_s * (velocity_s + affine_s),
+                    nmass_f * (velocity_f + affine_f),
                 )
 
 
@@ -12196,7 +12490,7 @@ def kernel_pressure_g2p_twophase_2D(
 
 @ti.func
 def update_velocity_gradient_affine_twophase2D(
-    np, total_nodes, gnum, grid_size, node, particle, LnID, shapefn, node_size
+    np, total_nodes, gnum, grid_size, node, particle, LnID, shapefn, node_size, mixture: ti.template() = False
 ):
     Wp = ZEROMAT2x2
     Bps = ZEROMAT2x2
@@ -12210,12 +12504,15 @@ def update_velocity_gradient_affine_twophase2D(
         pointer = grid_coord - position
         gvs = node[nodeID, bodyID].momentums
         gvf = node[nodeID, bodyID].momentumf
+        if ti.static(mixture):
+            gvs = node[nodeID, bodyID].momentum
+            gvf = gvs
         shape_fn = shapefn[ln]
 
         Wp += shape_fn * outer_product2D(pointer, pointer)
-        Bps += shape_fn * outer_product2D(pointer, gvs)
-        Bpf += shape_fn * outer_product2D(pointer, gvf)
-    return truncation(Bps @ Wp.inverse()), truncation(Bpf @ Wp.inverse())
+        Bps += shape_fn * outer_product2D(gvs, pointer)
+        Bpf += shape_fn * outer_product2D(gvf, pointer)
+    return affine_velocity_matrix(Bps, Wp, grid_size), affine_velocity_matrix(Bpf, Wp, grid_size)
 
 
 @ti.func
@@ -12236,10 +12533,10 @@ def update_velocity_gradient_affine_twophase2DAxisy(
         shape_fn = shapefn[ln]
 
         Wp += shape_fn * outer_product2D(pointer, pointer)
-        Bps += shape_fn * outer_product2D(pointer, gvs)
-        Bpf += shape_fn * outer_product2D(pointer, gvf)
+        Bps += shape_fn * outer_product2D(gvs, pointer)
+        Bpf += shape_fn * outer_product2D(gvf, pointer)
         vr += shape_fn * gvs[0]
-    velocity_gradient0 = Bps @ Wp.inverse()
+    velocity_gradient0 = affine_velocity_matrix(Bps, Wp, grid_size)
     velocity_gradients = mat3x3(
         [
             [velocity_gradient0[0, 0], velocity_gradient0[0, 1], 0],
@@ -12247,7 +12544,7 @@ def update_velocity_gradient_affine_twophase2DAxisy(
             [0, 0, vr / (position[0] - axis_offset)],
         ]
     )
-    velocity_gradient0 = Bpf @ Wp.inverse()
+    velocity_gradient0 = affine_velocity_matrix(Bpf, Wp, grid_size)
     velocity_gradientf = mat3x3(
         [
             [velocity_gradient0[0, 0], velocity_gradient0[0, 1], 0],
@@ -12441,15 +12738,16 @@ def kernel_compute_affine_matrix_APIC_twophase2D(
     LnID: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
-    grid_size: ti.types.vector(2, float),
+    grid_size: ti.types.vector(2, real),
     gnum: ti.types.vector(2, int),
+    mixture: ti.template(),
 ):
     # ti.block_local(dt)
     for np in range(particleNum):
         materialID = int(particle[np].materialID)
         if materialID > 0 and int(particle[np].active) == 1:
             velocity_gradients, velocity_gradientf = update_velocity_gradient_affine_twophase2D(
-                np, total_nodes, gnum, grid_size, node, particle, LnID, shapefn, node_size
+                np, total_nodes, gnum, grid_size, node, particle, LnID, shapefn, node_size, mixture
             )
             particle[np].solid_velocity_gradient = velocity_gradients
             particle[np].fluid_velocity_gradient = velocity_gradientf

@@ -1,25 +1,12 @@
-import importlib.util
 from pathlib import Path
-import sys
-
 import numpy as np
 
 from src.mpm.generator.Body import sample_solid_hemisphere_halton
 
-SCRIPT_DIR = Path(__file__).resolve().parents[3] / "research" / "LSMPM" / "scripts"
-sys.path.insert(0, str(SCRIPT_DIR))
-SPEC = importlib.util.spec_from_file_location(
-    "run_v2_sphere_compression",
-    SCRIPT_DIR / "run_v2_sphere_compression.py",
-)
-MODULE = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(MODULE)
-ANALYSIS_SPEC = importlib.util.spec_from_file_location(
-    "analyze_v2_hertz_fem_reference",
-    SCRIPT_DIR / "analyze_v2_hertz_fem_reference.py",
-)
-ANALYZER = importlib.util.module_from_spec(ANALYSIS_SPEC)
-ANALYSIS_SPEC.loader.exec_module(ANALYZER)
+from research.LSMPM.scripts import run_v2_sphere_compression as MODULE
+from research.LSMPM.scripts import analyze_v2_hertz_fem_reference as ANALYZER
+
+SCRIPT_DIR = Path(MODULE.__file__).resolve().parent
 
 
 def test_lower_hemisphere_halton_points_use_mass_center_coordinates():

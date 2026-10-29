@@ -15,7 +15,6 @@ from src.linear_solver.BuildTriplet import BuildTriplet
 from src.linear_solver.CoordinateSparseMatrix import CoordinateSparseMatrix
 from src.linear_solver.MatrixFreePCG import MatrixFreePCG
 
-
 pytestmark = [
     pytest.mark.assembly,
     pytest.mark.linear_solver,
@@ -117,7 +116,7 @@ def _solve_hash_triplet(
         symmetric=False,
         solver="PCG",
         matrix_symmetric=False,
-        device_reduction=False,
+        device_reduction=True,
     )
     sparse.reset_system()
     sparse.assemble_scalar_triplets(rows, columns, values)
@@ -186,9 +185,7 @@ def test_hash_triplet_uses_full_node_block_jacobi(taichi_runtime):
     rhs = matrix @ np.asarray([0.4, -0.7, 1.1, 0.25])
     _, _, block_inverse, _ = _solve_hash_triplet(matrix, rhs)
 
-    expected = np.stack(
-        (np.linalg.inv(matrix[:2, :2]), np.linalg.inv(matrix[2:, 2:]))
-    )
+    expected = np.stack((np.linalg.inv(matrix[:2, :2]), np.linalg.inv(matrix[2:, 2:])))
     diagonal_only = np.stack(
         (
             np.diag(1.0 / np.diag(matrix[:2, :2])),
@@ -217,9 +214,7 @@ def test_hash_triplet_pcg_absolute_tolerance_uses_true_residual(
     rhs = 1.0e-5 * np.asarray([1.0, -2.0, 3.0, -4.0])
     expected_solution = rhs / diagonal
 
-    assembled, solution, _, diagnostics = _solve_hash_triplet(
-        matrix, rhs, tol=1.0e-9
-    )
+    assembled, solution, _, diagnostics = _solve_hash_triplet(matrix, rhs, tol=1.0e-9)
     solution = np.asarray(solution).reshape(-1)
     true_residual = np.linalg.norm(assembled @ solution - rhs)
 
@@ -232,9 +227,7 @@ def test_hash_triplet_pcg_absolute_tolerance_uses_true_residual(
     )
     assert diagnostics["converged"]
     assert diagnostics["iterations"] == 1
-    assert diagnostics["residual"] == pytest.approx(
-        true_residual, rel=1.0e-12, abs=1.0e-30
-    )
+    assert diagnostics["residual"] == pytest.approx(true_residual, rel=1.0e-12, abs=1.0e-30)
 
 
 @pytest.mark.coo

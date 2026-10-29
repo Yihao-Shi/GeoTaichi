@@ -32,6 +32,7 @@ class Simulation(object):
         self.block_size = [128, 4]
         self.background = 0.0
         self.alphaPIC = 0.0
+        self.velocity_projection_scheme = None
         self.shape_smooth = 0.0
         self.fbar_fraction = 0.99
         self.max_radius = 0.0
@@ -720,11 +721,10 @@ class Simulation(object):
 
     def set_moving_least_square(self, mls):
         self.mls = mls
-        if self.mapping == "G2P2G":
+        if self.mapping == "G2P2G" and self.velocity_projection_scheme != "Affine":
             self.mls = True
         if mls is True:
             self.set_velocity_projection_scheme("Affine")
-            self.alphaPIC = 1.0
 
     def set_mapping_scheme(self, mapping):
         typelist = ["USL", "USF", "MUSL", "G2P2G"]
@@ -864,25 +864,18 @@ class Simulation(object):
             )
         self.max_coupling_particle_num = coupling_particles
 
-    def set_velocity_projection_scheme(self, velocity_projection_scheme: str):
-        valid_type = ["PIC", "FLIP", "PIC/FLIP", "Affine", "Taylor"]
+    def set_velocity_projection_scheme(self, velocity_projection_scheme):
+        valid_type = [None, "Affine", "Taylor"]
         if velocity_projection_scheme not in valid_type:
-            raise RuntimeError(
-                f"Keyword:: /velocity_projection_scheme/ is error, followings are valid {valid_type}. Use velocity_projection='Affine' with alphaPIC=1.0 for affine PIC transfer."
-            )
+            raise RuntimeError(f"Keyword:: /velocity_projection_scheme/ is error, followings are valid {valid_type}.")
 
         self.velocity_projection_scheme = velocity_projection_scheme
-        if velocity_projection_scheme == "PIC":
-            self.alphaPIC = 1.0
-        elif velocity_projection_scheme == "FLIP":
-            self.alphaPIC = 0.0
-
-        GlobalVariable.APIC = False
-        GlobalVariable.TPIC = False
+        GlobalVariable.Affine = False
+        GlobalVariable.Taylor = False
         if self.velocity_projection_scheme == "Affine":
-            GlobalVariable.APIC = True
+            GlobalVariable.Affine = True
         elif self.velocity_projection_scheme == "Taylor":
-            GlobalVariable.TPIC = True
+            GlobalVariable.Taylor = True
 
     def set_window_parameters(self, windows):
         self.visualize_interval = DictIO.GetAlternative(windows, "VisualizeInterval", self.save_interval)
@@ -1203,7 +1196,7 @@ class Simulation(object):
                 self._raise_unsupported("Implicit BlockScan sparse_grid", ["material_type='Solid'"])
             if self.mode != "Normal":
                 self._raise_unsupported("BlockScan sparse_grid", ["mode='Normal'"])
-            if self.mapping == "G2P2G":
+            if self.mapping == "G2P2G" and self.velocity_projection_scheme != "Affine":
                 self._raise_unsupported("BlockScan sparse_grid", ["mapping='USL', 'USF', or 'MUSL'"])
             if self.coupling not in (False, "Lagrangian"):
                 self._raise_unsupported(
@@ -1218,10 +1211,7 @@ class Simulation(object):
                 self._raise_unsupported("BlockScan sparse_grid", ["stabilize=None, 'B-Bar Method', or 'F-Bar Method'"])
             if self.isTHB:
                 self._raise_unsupported("BlockScan sparse_grid", ["set_THB=False"])
-            if self.is_2DAxisy:
-                self._raise_unsupported("BlockScan sparse_grid", ["is_2DAxisy=False"])
-            if self.contact_detection:
-                self._raise_unsupported("BlockScan sparse_grid", ["contact_detection=None"])
+            # Contact and axisymmetry are checked when the adaptive/regular element is known.
             if self.xpbc or self.ypbc or self.zpbc:
                 self._raise_unsupported("BlockScan sparse_grid", ["non-periodic domain boundaries"])
             if self.nabsorbing > 0:
@@ -1252,7 +1242,7 @@ class Simulation(object):
                 if self.dimension == 3 and self.stabilize == "B-Bar Method":
                     self._raise_unsupported("3D Explicit TwoPhaseSingleLayer", ["stabilize=None"])
                 if self.dimension == 3 and self.velocity_projection_scheme in ("Affine", "Taylor"):
-                    self._raise_unsupported("3D Explicit TwoPhaseSingleLayer", ["PIC/FLIP velocity projection"])
+                    self._raise_unsupported("3D Explicit TwoPhaseSingleLayer", ["velocity_projection=None"])
                 if self.mls:
                     self._raise_unsupported("Explicit TwoPhaseSingleLayer", ["moving_least_square=False"])
                 if self.gauss_number > 0:
@@ -1289,7 +1279,7 @@ class Simulation(object):
             if self.discretization != "FEM":
                 self._raise_unsupported("SemiImplicit MPM", ["discretization='FEM'"])
             if self.material_type == "TwoPhaseSingleLayer":
-                if self.mapping not in ("USL", "USF"):
+                if self.velocity_projection_scheme != "Affine" and self.mapping not in ("USL", "USF"):
                     self._raise_unsupported("SemiImplicit TwoPhaseSingleLayer", ["USL or USF mapping"])
                 if require_solver_parameters and self.use_mgpcg_pressure_solver() and self.pressure_beta != 0.0:
                     self._raise_unsupported(
@@ -1301,7 +1291,7 @@ class Simulation(object):
                 if self.dimension == 3 and self.pressure_stabilize == "FIC":
                     self._raise_unsupported("3D SemiImplicit TwoPhaseSingleLayer", ["pressure_stabilize=None"])
                 if self.dimension == 3 and self.velocity_projection_scheme in ("Affine", "Taylor"):
-                    self._raise_unsupported("3D SemiImplicit TwoPhaseSingleLayer", ["PIC/FLIP velocity projection"])
+                    self._raise_unsupported("3D SemiImplicit TwoPhaseSingleLayer", ["velocity_projection=None"])
                 if self.is_2DAxisy and self.pressure_stabilize == "FIC":
                     self._raise_unsupported(
                         "Axisymmetric SemiImplicit TwoPhaseSingleLayer", ["pressure_stabilize=None"]
@@ -1309,7 +1299,7 @@ class Simulation(object):
             elif self.material_type == "TwoPhaseDoubleLayer":
                 if self.is_2DAxisy:
                     self._raise_unsupported("SemiImplicit TwoPhaseDoubleLayer", ["Cartesian coordinates"])
-                if self.mapping not in ("USL", "USF", "MUSL"):
+                if self.velocity_projection_scheme != "Affine" and self.mapping not in ("USL", "USF", "MUSL"):
                     self._raise_unsupported("SemiImplicit TwoPhaseDoubleLayer", ["USL, USF, or MUSL mapping"])
                 if require_solver_parameters and not self.use_mgpcg_pressure_solver():
                     self._raise_unsupported("SemiImplicit TwoPhaseDoubleLayer", ["pressure_solver='MGPCG'"])
@@ -1327,7 +1317,7 @@ class Simulation(object):
                 self._raise_unsupported("SemiImplicit_u_p MPM", ["material_type='TwoPhaseSingleLayer'"])
             if self.dimension != 2:
                 self._raise_unsupported("SemiImplicit_u_p MPM", ["dimension=2"])
-            if self.mapping != "USF":
+            if self.velocity_projection_scheme != "Affine" and self.mapping != "USF":
                 self._raise_unsupported("SemiImplicit_u_p MPM", ["USF mapping"])
             if self.use_mgpcg_pressure_solver():
                 self._raise_unsupported("SemiImplicit_u_p MPM", ["pressure_solver='PCG'", "linear_solver!='MGPCG'"])

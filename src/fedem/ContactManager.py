@@ -97,14 +97,14 @@ class ContactManager:
             self.model = HertzMindlinModel(self.simulation)
         elif normalized in ("barrier", "barriermodel"):
             self.model = BarrierModel(self.simulation)
-        elif normalized in ("ipc", "incrementalpotentialcontact", "barrieripc", "semi", "semiipc"):
+        elif normalized in ("ipc", "incrementalpotentialcontact", "barrieripc"):
             kwargs.setdefault(
                 "ipc_model",
-                "SemiIPC" if normalized in ("semi", "semiipc") else "BarrierIPC",
+                "BarrierIPC",
             )
             self.model = AffineIPCModel(self.simulation, **kwargs)
         else:
-            raise ValueError("FEDEM contact model must be Linear, HertzMindlin, Barrier, BarrierIPC, or SemiIPC")
+            raise ValueError("FEDEM contact model must be Linear, HertzMindlin, Barrier, BarrierIPC")
         return self.model
 
     def add_property(self, dem_material, fem_body, parameters):

@@ -26,6 +26,7 @@ def test_force_reference_survives_friction_refresh(kind):
     if kind == "fem":
         engine.contact_assembler = None
         engine.damping, engine.beta, engine.gamma, engine.quasi_static = 0.0, 0.25, 0.5, False
+        engine.alpha, engine.integration = 0.5, (0.5, 0.25, 0.5)
         engine._prepare_contact_iteration_device = lambda position: None
         engine._assemble_internal_device = lambda **kwargs: None
         engine._current_stiffness = None
@@ -42,7 +43,7 @@ def test_force_reference_survives_friction_refresh(kind):
         if kind == "fempm":
             engine.inexact_newton = False
             engine.correction_velocity_tolerance = 1e-7
-            engine.constraint_inf_norm = {None: 0.0}
+            engine.constraint_inf_norm = engine.constraint_velocity_inf_norm = {None: 0.0}
             engine._reduce_system_metrics = lambda dof: engine.residual_squared.update({None: force[0] ** 2})
             solve = lambda: FEMPMImplicitEngine._solve_newton(engine, True, False)[:2]
         else:
@@ -60,7 +61,7 @@ def test_nonassociated_fempm_updated_probe_also_requires_force_balance():
     engine.nonassociated_newton = True
     engine.absolute_tolerance, engine.residual_tolerance = 1e-10, 1e-8
     engine.dt, engine.correction_velocity_tolerance = 0.001, 1e-7
-    engine.constraint_inf_norm = {None: 0.0}
+    engine.constraint_inf_norm = engine.constraint_velocity_inf_norm = {None: 0.0}
     engine.residual_squared = {None: 1.0}
     engine.contact.contact_converged = lambda: True
     inner = engine._solve_newton
@@ -244,6 +245,7 @@ def test_fem_affine_newton_applies_first_nonzero_small_correction():
     engine.last_line_search_limits = None
     engine.residual_squared = {None: 1.0}
     engine.physical_correction_inf_norm = {None: 5.0e-6}
+    engine.physical_correction_velocity = {None: 5.0e-4}
     engine.contact = SimpleNamespace(diagnostics=lambda: {}, contact_converged=lambda: True)
     engine.simulation = SimpleNamespace(timer=SimpleNamespace(section=lambda _name: nullcontext()))
     engine.assemble_system = lambda need_matrix: {"energy": 1.0}
@@ -256,6 +258,7 @@ def test_fem_affine_newton_applies_first_nonzero_small_correction():
     def line_search(_energy):
         applied.append(True)
         engine.physical_correction_inf_norm[None] = 0.0
+        engine.physical_correction_velocity[None] = 0.0
         return 1.0, 0, 0.0
 
     engine._line_search = line_search

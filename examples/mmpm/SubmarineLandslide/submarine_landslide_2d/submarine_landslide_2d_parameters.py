@@ -1,6 +1,7 @@
 """Shared model parameters for submarine_landslide_2d."""
 
 import os
+import math
 import numpy as np
 
 SCRIPT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -52,3 +53,12 @@ FREE_SURFACE_BIN_COUNT = int(
 
 REFERENCE_DOI = "10.1016/j.cma.2024.117064"
 MAXIMUM_POROSITY = 0.50
+
+INITIAL_POROSITY = 0.38
+SOLID_DENSITY = 2650.0
+FLUID_DENSITY = 1000.0
+GRAVITY = 9.8
+FRICTION_ANGLE = 10.0
+K0 = 1.0 - math.sin(math.radians(FRICTION_ANGLE))
+WATER_AREA = WATER_DEPTH * SLOPE_START_X + 0.5 * WATER_DEPTH * WATER_DEPTH
+SAND_AREA = 0.5 * (SAND_RIGHT_X - SAND_LEFT_X) * (SAND_TOP - (SAND_LEFT_X - SLOPE_START_X))

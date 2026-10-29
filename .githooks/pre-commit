@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+PYTHON_EXECUTABLE="${GEOTAICHI_PYTHON:-$(git config --get geotaichi.python || command -v python)}"
+
 files=()
 while IFS= read -r -d '' file; do
     [[ "$file" == third_party/* ]] && continue
@@ -16,5 +18,13 @@ for file in "${files[@]}"; do
     fi
 done
 
-python -m black --quiet -- "${files[@]}"
+"$PYTHON_EXECUTABLE" -m black --quiet -- "${files[@]}"
 git add -- "${files[@]}"
+
+"$PYTHON_EXECUTABLE" - "${files[@]}" <<'PY'
+import subprocess
+import sys
+
+for path in sys.argv[1:]:
+    compile(subprocess.check_output(["git", "show", ":" + path]), path, "exec")
+PY

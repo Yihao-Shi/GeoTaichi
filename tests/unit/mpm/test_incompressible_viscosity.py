@@ -167,7 +167,7 @@ def test_fdm_shifting_volume_is_conservative_and_mirror_symmetric(
     boundary.from_numpy(np.where(side < 0, side + 3, np.where(side > 0, side + 2, 0)).astype(np.uint8)[:, None, :])
     reference = ti.field(float, shape=volume.shape)
     kernels.kernel_fdm_shifting_reference_volume(
-        ghost, ti.Vector([gnum] * dimension), ti.Vector([dx] * dimension), lengths, boundary, reference
+        ghost, ti.Vector([gnum] * dimension), ti.Vector([dx] * dimension), lengths, boundary, reference, None
     )
     reference_array = reference.to_numpy()[:, 0].reshape((gnum,) * dimension, order="F")
     assert reference_array.sum() == pytest.approx((count * dx) ** dimension, abs=1e-12)
@@ -226,15 +226,35 @@ def test_fdm_shifting_volume_is_conservative_and_mirror_symmetric(
         )
     else:
         kernels.kernel_compute_particle_shifting_gradient_fdm_on_the_fly_3d(
-            *arguments, reference, volume, types, particle, lengths
+            *arguments, reference, volume, types, particle, lengths, False
         )
     actual = particle.grad_E2.to_numpy()[0]
+    if dimension == 3:
+        curvature = kernels.kernel_compute_particle_shifting_gradient_fdm_on_the_fly_3d(
+            *arguments, reference, volume, types, particle, lengths, True
+        )
+        # Independently differentiate the deposited volumes along the descent direction.
+        step = (dx / 2**16) / np.linalg.norm(actual)
+        directional_derivative = (mapped_volume(position + step * actual) - mapped_volume(position - step * actual)) / (
+            2 * step
+        )
+        assert curvature == pytest.approx(np.sum(directional_derivative**2), rel=1e-6, abs=1e-12)
     expected = []
     epsilon = dx / 2**16
+    # Ghost basis nodes outside a closed box have no adjacent fluid cell;
+    # their deficits, like free-surface deficits, are not part of the objective.
+    interior = np.ones((gnum,) * dimension, dtype=bool)
+    if not periodic:
+        interior = np.all((index >= ghost) & (index <= ghost + count), axis=1).reshape((gnum,) * dimension, order="F")
+
+    def energy(position):
+        error = mapped_volume(position) - reference_array
+        return np.sum(np.where(interior, error, np.maximum(error, 0.0)) ** 2)
+
     for axis in range(dimension):
         offset = np.eye(dimension)[axis] * epsilon
-        high = np.sum(np.maximum(mapped_volume(position + offset) - reference_array, 0.0) ** 2)
-        low = np.sum(np.maximum(mapped_volume(position - offset) - reference_array, 0.0) ** 2)
+        high = energy(position + offset)
+        low = energy(position - offset)
         expected.append((high - low) / (2 * epsilon))
     np.testing.assert_allclose(actual, expected, atol=1e-9, rtol=1e-6)
 

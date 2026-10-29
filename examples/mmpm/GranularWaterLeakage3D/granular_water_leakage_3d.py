@@ -3,10 +3,12 @@
 Geometry and material data follow Zhang et al. (2027), CMAME 463:119401,
 Section 5.1 and Fig. 30.  The upper free surface is the zero-pressure boundary;
 the paper's particle-replenishing inlet is not available in the MPM solver.
+Use --crack-width for an independent discharge demonstration with a wider outlet.
 """
 
 import argparse
 import math
+import json
 import os
 import sys
 from pathlib import Path
@@ -25,6 +27,8 @@ from examples.mmpm.GranularWaterLeakage3D.granular_water_leakage_3d_parameters i
     RECEIVER_ORIGIN,
     RECEIVER_SIZE,
     UPPER_ORIGIN,
+    UPPER_SIZE,
+    represented_crack_bounds,
 )
 from examples.mmpm.GranularWaterLeakage3D.draw.evaluate_granular_water_leakage_3d import (
     write_metrics,
@@ -32,9 +36,9 @@ from examples.mmpm.GranularWaterLeakage3D.draw.evaluate_granular_water_leakage_3
 
 
 from geotaichi import MPM, init
+from src.utils.SolverRuntime import python_callback
 
 DX_DEFAULT = 0.005
-UPPER_SIZE = np.array((0.30, 0.06, 0.20))
 BED_HEIGHT = 0.06
 WATER_HEIGHT = 0.20
 POROSITY = 0.40
@@ -51,6 +55,13 @@ def parse_args():
     parser.add_argument("--ppc", type=int, default=2)
     parser.add_argument("--alpha-pic", type=float, default=1.0)
     parser.add_argument("--pressure-iterations", type=int, default=1000)
+    parser.add_argument("--crack-width", type=float, help="Custom outlet width in metres, aligned to the grid")
+    parser.add_argument(
+        "--minimum-solid-discharge",
+        type=float,
+        default=0.0,
+        help="Required final discharged fraction of initial solid mass",
+    )
     parser.add_argument(
         "--output",
         type=Path,
@@ -66,6 +77,9 @@ def validate(args):
         raise ValueError("dx, dt, time, save interval, ppc, and pressure iterations must be positive")
     if not 0.0 <= args.alpha_pic <= 1.0:
         raise ValueError("alpha-pic must lie in [0, 1]")
+    if not 0.0 <= args.minimum_solid_discharge <= 1.0:
+        raise ValueError("minimum solid discharge must lie in [0, 1]")
+    represented_crack_bounds(args.dx, args.crack_width)
     cells = np.asarray(DOMAIN) / args.dx
     if not np.allclose(cells, np.round(cells), atol=1.0e-12, rtol=0.0):
         raise ValueError(f"dx={args.dx:g} must divide domain {DOMAIN}")
@@ -84,6 +98,19 @@ def initialize_stress(particle_count: int, particle: ti.template()):
             particle[p].stress = ti.Vector([-K0 * vertical, -K0 * vertical, -vertical, 0.0, 0.0, 0.0])
 
 
+@ti.kernel
+def record_velocity_extrema(count: int, particle: ti.template(), extrema: ti.template()):
+    extrema[2] += 1
+    for p in range(count):
+        if int(particle[p].active) == 1:
+            phase = int(particle[p].phase)
+            speed2 = particle[p].vs.norm_sqr() if phase == 1 else particle[p].vf.norm_sqr()
+            if ti.math.isnan(speed2) or ti.math.isinf(speed2):
+                extrema[3] = 1
+            else:
+                ti.atomic_max(extrema[phase - 1], speed2)
+
+
 def solid_cell(start, end, normal):
     return {
         "BoundaryType": "SolidCell",
@@ -100,7 +127,7 @@ def solid_plane_cell(start, end, normal):
     return boundary
 
 
-def boundaries(dx):
+def boundaries(dx, crack_width=None):
     ux0, uy0, uz0 = UPPER_ORIGIN
     ux1, uy1, physical_top = UPPER_ORIGIN + UPPER_SIZE
     # The paper's upper boundary is an inlet/free-surface plane enclosed by
@@ -110,12 +137,10 @@ def boundaries(dx):
     numerical_top = DOMAIN[2]
     rx0, ry0, rz0 = RECEIVER_ORIGIN
     rx1, ry1, rz1 = RECEIVER_ORIGIN + RECEIVER_SIZE
-    # A 6 mm slit cannot be represented exactly on the 5 mm pressure grid.
-    # Leave one centered cell open (5 mm), rather than rounding it up to 10 mm.
-    crack_left = round(0.5 * (CRACK_LEFT + CRACK_RIGHT) / dx) * dx
-    crack_right = crack_left + dx
+    # Preserve the original one-cell slit unless a separate wider-outlet run is requested.
+    crack_left, crack_right = represented_crack_bounds(dx, crack_width)
     return [
-        # Upper tank: no-slip side walls and a split bottom leaving the 6 mm crack open.
+        # Upper tank: no-slip side walls and a split bottom leaving the outlet open.
         solid_cell((ux0, uy0, uz0), (ux0, uy1, physical_top), (-1.0, 0.0, 0.0)),
         solid_cell((ux1, uy0, uz0), (ux1, uy1, physical_top), (1.0, 0.0, 0.0)),
         solid_cell((ux0, uy0, uz0), (ux1, uy0, physical_top), (0.0, -1.0, 0.0)),
@@ -142,11 +167,12 @@ def run(args):
     validate(args)
     args.output = args.output.expanduser().resolve()
     args.output.mkdir(parents=True, exist_ok=True)
+    crack_left, crack_right = represented_crack_bounds(args.dx, args.crack_width)
     point_spacing = args.dx / args.ppc
     expected = math.ceil((np.prod(UPPER_SIZE) + UPPER_SIZE[0] * UPPER_SIZE[1] * BED_HEIGHT) / point_spacing**3)
     print(
-        f"# Section 5.1 leakage: spacing={point_spacing:g} m, physical crack=0.006 m, "
-        f"grid crack={args.dx:g} m, "
+        f"# Leakage: spacing={point_spacing:g} m, requested crack={args.crack_width or 0.006:g} m, "
+        f"grid crack={crack_right - crack_left:g} m, "
         f"fluid+solid capacity~{expected}, elastic plate omitted"
     )
 
@@ -202,7 +228,6 @@ def run(args):
             "FluidDensity": 1000.0,
             "Porosity": POROSITY,
             "MaximumPorosity": 0.64,
-            "FluidBulkModulus": 2.2e9,
             "Permeability": 1.0e-8,
             "FluidViscosity": 1.0e-3,
             "GrainDiameter": 3.0e-3,
@@ -263,10 +288,29 @@ def run(args):
     initial_phase = mpm.scene.particle.phase.to_numpy()[:particle_count]
     expected_fluid = int(np.count_nonzero(initial_phase == 2))
     expected_solid = int(np.count_nonzero(initial_phase == 1))
-    mpm.add_boundary_condition(boundaries(args.dx))
+    mpm.add_boundary_condition(boundaries(args.dx, args.crack_width))
     mpm.select_save_data(particle=True, grid=True, object=False)
 
-    mpm.run()
+    extrema = ti.field(ti.f64, shape=4)
+
+    @python_callback
+    def observe_velocity():
+        record_velocity_extrema(int(mpm.scene.particleNum[0]), mpm.scene.particle, extrema)
+
+    mpm.run(function=observe_velocity)
+    values = extrema.to_numpy()
+    (args.output / "velocity_extrema.json").write_text(
+        json.dumps(
+            {
+                "maximum_solid_speed_mps": float(math.sqrt(values[0])),
+                "maximum_fluid_speed_mps": float(math.sqrt(values[1])),
+                "steps": int(values[2]),
+                "finite": bool(values[3] == 0 and np.isfinite(values).all()),
+            },
+            indent=2,
+        )
+        + "\n"
+    )
     write_metrics(args.output, expected_fluid, expected_solid, args)
     if not args.no_post:
         mpm.postprocessing()

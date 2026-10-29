@@ -14,7 +14,6 @@ from pathlib import Path
 
 import numpy as np
 
-
 REPO_ROOT = Path(__file__).resolve().parents[4]
 CASE_DIR = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -203,6 +202,7 @@ fem.set_solver(
     assemble_type=arguments.assemble_type,
     linear_solver=arguments.linear_solver,
     linear_solver_tolerance=1.0e-8,
+    linear_solver_relative_tolerance=1.0e-12,
     linear_solver_max_iters=4000,
     output_interval=arguments.output_interval,
     path=arguments.output_dir,

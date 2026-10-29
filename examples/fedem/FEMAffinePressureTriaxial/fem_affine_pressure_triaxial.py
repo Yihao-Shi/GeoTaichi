@@ -59,13 +59,26 @@ def plate_specs():
     )
 
 
+def add_triaxial_fem(fem, divisions):
+    specimen = fem.add_soft_particle(
+        fem.create_mesh(
+            "box",
+            origin=[0.35, 0.35, 0.40],
+            size=[0.30, 0.30, 0.20],
+            divisions=[divisions, divisions, max(2, 2 * divisions // 3)],
+            element_type="TET4",
+        )
+    )
+    fem.add_material("NeoHookean", density=1200.0, young_modulus=2.0e4, poisson_ratio=0.30)
+    return specimen
+
+
 def main():
     args = arguments()
     os.environ["GEOTAICHI_REAL_DTYPE"] = "float64"
     if str(ROOT) not in sys.path:
         sys.path.insert(0, str(ROOT))
     import geotaichi as gt
-    from examples.fedem.FEMAffineTriaxial.fem_affine_triaxial import _add_triaxial_fem
 
     gt.init(arch=args.arch, default_fp="float64", log=True, offline_cache=False)
     dem = gt.DEM(log=True)
@@ -124,7 +137,7 @@ def main():
 
     fem = gt.FEM(log=True)
     fem.set_configuration(dimension=3, solver_type="Implicit")
-    _add_triaxial_fem(fem, args.fem_divisions)
+    add_triaxial_fem(fem, args.fem_divisions)
 
     coupling = gt.FEDEM(dem=dem, fem=fem, log=True)
     coupling.set_configuration(domain=[1.0, 1.0, 1.0], search="BVH", gravity=[0.0, 0.0, 0.0], log=True)

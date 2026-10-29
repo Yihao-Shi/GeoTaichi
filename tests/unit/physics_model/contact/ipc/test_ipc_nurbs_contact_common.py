@@ -10,13 +10,12 @@ from src.nurbs.core.NurbsGeometry import NurbsBasisFunction1d, NurbsBasisFunctio
 from src.physics_model.contact_model.ipc.ContactAssembly import psd_project_nd
 from src.physics_model.contact_model.ipc.NurbsContact import (
     PointNurbsDerivative,
-    closest_curve_point_py,
-    eval_curve_py,
     get_distance_to_curve_fixed_dim,
     get_distance_to_curve_moving_fixed_dim,
     get_distance_to_surface_fixed_dim,
     get_distance_to_surface_moving_fixed_dim,
 )
+from tests.helpers.ipc_nurbs_reference import closest_curve_point_py, eval_curve_py
 
 
 @ti.data_oriented

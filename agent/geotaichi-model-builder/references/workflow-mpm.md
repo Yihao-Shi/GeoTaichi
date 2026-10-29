@@ -40,6 +40,14 @@ Do not combine similarly named branches by analogy. Run
 `Simulation.validate_configuration` through facade construction before a long
 run.
 
+Native adaptive refinement uses device-resident level fields, incremental node
+allocation and interface constraints shared by 2D/3D in
+`src/mpm/elements/AdaptiveTopologyKernel.py`. Do not introduce NumPy topology or
+particle regrouping into runtime refinement. Host node-map array helpers are
+setup/reference/inspection interfaces; only scalar capacity/status counts and
+per-material launch bounds return during updates. Preserve stable compact IDs,
+independent hanging masters and particle history when optimizing this path.
+
 ## 3. Incompressible fluid
 
 The current incompressible FDM route uses implicit fluid configuration and a
@@ -125,3 +133,38 @@ this model are unsupported.
 Check mass/volume, force balance, energy where applicable, boundary activation,
 finite state, pressure-domain connectivity for fluids, convergence histories
 for implicit solves, and one analytical or benchmark observable.
+
+For adaptive contact comparisons, match the finest grid spacing, initial
+particle quadrature, material, contact law and loading before comparing force
+against measured settlement. Use a saved numerical history for historical
+controls, with explicit 3D thickness normalization when reducing to plane
+strain; a gallery GIF cannot establish force agreement. The maintained
+`examples/mpm/Footing/strip_footing_adaptive` workflow compares uniform/L1/L2 separately
+and reports a failed or missing historical control as a failed validation.
+Current levels share one refinement threshold: another qualifying check
+advances an original coarse cell again, rather than applying a separate
+second-level threshold.
+
+
+For the current sensitive-clay paper validation, use the fixed-grid DP case
+contract and README. Do not configure AdaptiveGrid while validating this
+baseline. Section 4.3 prescribes cohesion 20/4 kPa and slope -50 kPa; the
+zero-friction/dilation Inscribed DP control has sqrt(J2)=c and accumulated
+strain endpoint 0.32. This is a DP approximation to the paper's Tresca model.
+Do not carry the native MC tensor-history sqrt(2) conversion into DP. Keep
+elastic initial-stress relaxation and distinguish the fixed original base
+from the frictional runout ground. Boundary Norm points out of the domain.
+The same self-contained script supports `--material mc` for a fair uniform-grid
+control using the corrected MC implementation; use endpoint 0.32/sqrt(2) for
+its native tensor-history invariant. Judge approximate agreement by the major
+failure sequence, block positions, distances and friction trend, rather than
+pixel identity. Obsolete pre-fix MC/adaptive results are not current evidence.
+
+For small-strain softening checks, verify both the strength law and its local
+history update. Yield distances must remain signed inside the elastic domain;
+refresh local parameters before checking the returned residual. Compare the
+plastic modulus against a finite difference along the actual history rate per
+plastic multiplier. MC/Mises retain their native tensor-history normalization;
+do not silently replace it with DP's accumulated scalar convention. MCC bond
+and subloading checks use current flow rates. NorSand is excluded from this
+audit's changes at the user's request; retain its original implementation.

@@ -20,6 +20,7 @@ from src.physics_model.consititutive_model.finite_strain.ModifiedCamClay import 
 from src.linear_solver.BuildTriplet import BuildTriplet, solve_csr_system
 from src.utils.PrefixSum import PrefixSumExecutor
 from src.utils.linalg import no_operation
+from src.utils.TimeIntegration import newmark_parameters
 
 
 @ti.data_oriented
@@ -96,7 +97,7 @@ class ImplicitMPM(MPMSolver):
             self.material.allocate_state(self.n_particles)
 
         self.active_dof = 0
-        self.integration = kwargs.get("newmark", [0.5, 0.25, 0.5])  # [alpha, beta, gamma]
+        self.integration = newmark_parameters(kwargs.get("newmark", [0.5, 0.25, 0.5]))
         self.max_iters = int(kwargs.get("max_iters", 100))
         self.tol = float(kwargs.get("residual", 1e-2))
         self.do_line_search = kwargs.get("line_search", True)
@@ -105,14 +106,19 @@ class ImplicitMPM(MPMSolver):
 
         self.degree_of_freedom = self.get_degree_of_freedom(**kwargs)
         self.linear_solver_tolerance = float(kwargs.get("linear_solver_tolerance", 1.0e-10))
+        self.linear_solver_relative_tolerance = float(kwargs.get("linear_solver_relative_tolerance", 0.0))
         self.linear_solver_max_iters = int(
             kwargs.get(
                 "linear_solver_max_iters",
                 max(500, 5 * self.degree_of_freedom),
             )
         )
-        if not np.isfinite(self.linear_solver_tolerance) or self.linear_solver_tolerance <= 0.0:
-            raise ValueError("linear_solver_tolerance must be finite and positive")
+        if not np.isfinite(self.linear_solver_tolerance) or self.linear_solver_tolerance < 0.0:
+            raise ValueError("linear_solver_tolerance must be finite and non-negative")
+        if not np.isfinite(self.linear_solver_relative_tolerance) or self.linear_solver_relative_tolerance < 0.0:
+            raise ValueError("linear_solver_relative_tolerance must be finite and non-negative")
+        if self.linear_solver_tolerance + self.linear_solver_relative_tolerance <= 0.0:
+            raise ValueError("linear solver tolerances cannot both be zero")
         if self.max_iters <= 0:
             raise ValueError("Direct implicit MPM max_iters must be positive")
         if not np.isfinite(self.tol) or self.tol < 0.0:
@@ -606,6 +612,7 @@ class ImplicitMPM(MPMSolver):
             self.incre_resolution,
             active_nodes=active_nodes,
             tol=self.linear_solver_tolerance,
+            rel_tol=self.linear_solver_relative_tolerance,
             maxiter=self.linear_solver_max_iters,
             return_solution=False,
         )

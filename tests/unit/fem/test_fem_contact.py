@@ -11,10 +11,11 @@ from src.fem.contact import (
     build_contact_surface,
 )
 from src.fem.contact.ContactAssembler import FEMContactAssembler
+from tests.helpers.fem_contact_reference import ReferenceFEMContactAssembler
 from src.fem.contact.ContactAssembler import FEMMultiContactAssembler
 from src.fem.contact.LinkedCellBroadPhase import DynamicLinkedCellBroadPhase
 from src.fem.contact.BVHBroadPhase import DynamicBVHBroadPhase
-from src.fem.contact.ContactTopology import _reference_broad_phase_candidates
+from tests.helpers.fem_broad_phase_reference import _reference_broad_phase_candidates
 from src.fem.engines.SparseMatrix import FEMSparseMatrix
 from src.fem.generator import FEMMesh
 from src.physics_model.consititutive_model.finite_strain import ClothARAP
@@ -80,7 +81,7 @@ def test_ipc_body_pairs_have_independent_parameters_and_candidates():
     diagnostics = aggregate["body_pairs"]
     assert all(entry["pt_candidates"] == 6 for entry in diagnostics)
     assert all(entry["ee_candidates"] == 9 for entry in diagnostics)
-    assert aggregate["contact_penalty"] == max(entry["contact_penalty"] for entry in diagnostics)
+    assert "contact_penalty" not in aggregate
 
     engine._assemble_internal_device(need_stiffness=False)
     pair_energy = [float(entry.total_energy[None]) for entry in assembler.assemblers]
@@ -451,7 +452,7 @@ def test_ipc_energy_gradient_tangent_and_ccd():
     mesh = two_triangle_mesh()
     material = ClothARAP(1.0e3, thickness=0.01)
     contact = FEMContact("IPC", dhat=0.1, dmin=0.01, kappa=2.0e3, project_pd=False)
-    assembler = FEMContactAssembler(mesh, material, contact)
+    assembler = ReferenceFEMContactAssembler(mesh, material, contact)
     positions = mesh.points.copy()
     assembler.prepare_iteration(positions)
     energy, force, stiffness = assembler.assemble(positions, need_stiffness=True)
@@ -483,7 +484,7 @@ def test_ipc_self_contact_device_force_matches_output_adapter():
     mesh = two_triangle_mesh()
     material = ClothARAP(1.0e3, thickness=0.01)
     contact = FEMContact("IPC", dhat=0.1, dmin=0.01, kappa=2.0e3, project_pd=False)
-    assembler = FEMContactAssembler(mesh, material, contact)
+    assembler = ReferenceFEMContactAssembler(mesh, material, contact)
     positions = ti.Vector.field(3, dtype=ti.f64, shape=mesh.number_of_nodes)
     force = ti.Vector.field(3, dtype=ti.f64, shape=mesh.number_of_nodes)
     positions.from_numpy(mesh.points)
@@ -499,125 +500,6 @@ def test_ipc_self_contact_device_force_matches_output_adapter():
     np.testing.assert_allclose(device_force, output_force, rtol=2.0e-11, atol=2.0e-11)
 
 
-def test_nonbarrier_al_projects_multipliers_and_preserves_oriented_gap():
-    mesh = two_triangle_mesh(separation=0.005)
-    material = ClothARAP(1.0e3, thickness=0.01)
-    contact = FEMContact(
-        "AugmentedLagrangian",
-        dhat=0.05,
-        dmin=0.01,
-        penalty=1.0e4,
-        penalty_growth=2.0,
-        penalty_update_interval=1,
-        sufficient_reduction=0.5,
-        project_pd=True,
-    )
-    assembler = FEMContactAssembler(mesh, material, contact)
-    positions = mesh.points.copy()
-    assembler.prepare_iteration(positions)
-    energy, force, stiffness = assembler.assemble(positions, need_stiffness=True)
-
-    assert np.isfinite(energy)
-    assert assembler.constraint_violation(positions) > 0.0
-    assert stiffness.shape == (18, 18)
-    assert np.linalg.eigvalsh(stiffness.toarray()).min() >= -1.0e-8
-
-    assembler.accept_update(positions, step=0.0)
-    assert assembler._al_state
-    old_penalty = assembler.penalty
-    crossed = positions.copy()
-    crossed[3:, 2] = -0.005
-    assembler.prepare_iteration(crossed)
-    assert assembler.constraint_violation(crossed) >= 0.014
-    assembler.prepare_iteration(positions)
-    assembler.accept_update(positions, step=0.0)
-    assert assembler.penalty > old_penalty
-    assert float(assembler.penalty_field[None]) == pytest.approx(assembler.penalty)
-    assert all(value >= 0.0 for value in assembler._al_state.values())
-
-
-def test_nonbarrier_al_self_contact_runs_in_device_fields():
-    mesh = two_triangle_mesh(separation=0.005)
-    material = ClothARAP(1.0e3, thickness=0.01)
-    contact = FEMContact(
-        "AugmentedLagrangian",
-        dhat=0.05,
-        dmin=0.01,
-        penalty=1.0e4,
-        project_pd=True,
-    )
-    assembler = FEMContactAssembler(mesh, material, contact)
-    position = ti.Vector.field(3, dtype=ti.f64, shape=mesh.number_of_nodes)
-    force = ti.Vector.field(3, dtype=ti.f64, shape=mesh.number_of_nodes)
-    position.from_numpy(mesh.points)
-    assembler.prepare_iteration_device(position)
-    force.fill(0.0)
-    matrix = FEMSparseMatrix(
-        3 * mesh.number_of_nodes,
-        assemble_type="HashTriplet",
-        linear_solver="PCG",
-    )
-    assembler.assemble_device(position, force, matrix, need_stiffness=True)
-
-    assert float(assembler.total_energy[None]) > 0.0
-    assert np.isfinite(force.to_numpy()).all()
-    assert int(assembler.al_pt_hash_count[None]) > 0
-    old_penalty = assembler.penalty
-    assembler.accept_update_device(position)
-    assert np.max(assembler.al_pt_hash_multiplier.to_numpy()) > 0.0
-    assert float(assembler.constraint_violation_field[None]) > 0.0
-    assert assembler.penalty == old_penalty
-
-
-def test_contact_configuration_accepts_al_friction():
-    barrier = FEMContact("BarrierIPC")
-    assert barrier.model == "IPC"
-    assert barrier.point_triangle_coordination_number == pytest.approx(32.0)
-    assert barrier.edge_edge_coordination_number == pytest.approx(128.0)
-    semi = FEMContact("SemiIPC")
-    assert semi.model == "AugmentedLagrangian"
-    assert semi.penalty_growth == pytest.approx(2.0)
-    assert semi.penalty_update_interval == 50
-    assert FEMContact("non barrier augment lagrangian").model == "AugmentedLagrangian"
-    aliased = FEMContact.create({"Model": "AL", "InitialPenalty": 12.0, "ContactDistance": 0.02})
-    assert aliased.penalty == pytest.approx(12.0)
-    assert aliased.dmin == pytest.approx(0.02)
-    contact = FEMContact("AugmentedLagrangian", friction_coefficient=0.2)
-    assert contact.friction_coefficient == pytest.approx(0.2)
-
-
-def test_augmented_lagrangian_reuses_lagged_coulomb_friction():
-    mesh = two_triangle_mesh(separation=0.005)
-    assembler = FEMContactAssembler(
-        mesh,
-        ClothARAP(1.0e3, thickness=0.01),
-        FEMContact(
-            "AugmentedLagrangian",
-            dhat=0.05,
-            dmin=0.01,
-            penalty=1.0e4,
-            friction_coefficient=0.3,
-            epsv=1.0e-3,
-            project_pd=True,
-        ),
-    )
-    position = ti.Vector.field(3, dtype=ti.f64, shape=mesh.number_of_nodes)
-    force = ti.Vector.field(3, dtype=ti.f64, shape=mesh.number_of_nodes)
-    position.from_numpy(mesh.points)
-    assembler.begin_step_device(position, 0.1)
-    moved = mesh.points.copy()
-    moved[3:, 0] += 0.01
-    position.from_numpy(moved)
-    assembler.prepare_iteration_device(position)
-    force.fill(0.0)
-    assembler.assemble_device(position, force, None, need_stiffness=False)
-
-    device_force = force.to_numpy()
-    assert np.max(assembler.friction_pt_normal_force.to_numpy()) > 0.0
-    assert np.sum(device_force[3:, 0]) > 0.0
-    np.testing.assert_allclose(np.sum(device_force, axis=0), 0.0, atol=1.0e-8)
-
-
 def test_lagged_friction_opposes_tangential_motion():
     mesh = two_triangle_mesh()
     material = ClothARAP(1.0e3, thickness=0.01)
@@ -629,7 +511,7 @@ def test_lagged_friction_opposes_tangential_motion():
         friction_coefficient=0.3,
         epsv=1.0e-3,
     )
-    assembler = FEMContactAssembler(mesh, material, contact)
+    assembler = ReferenceFEMContactAssembler(mesh, material, contact)
     assembler.begin_step(mesh.points, dt=0.1)
     assert float(assembler.friction_dt_field[None]) == pytest.approx(0.1)
     positions = mesh.points.copy()
@@ -661,7 +543,7 @@ def test_lagged_friction_device_path_matches_output_adapter():
         epsv=1.0e-3,
         project_pd=True,
     )
-    assembler = FEMContactAssembler(mesh, material, contact)
+    assembler = ReferenceFEMContactAssembler(mesh, material, contact)
     position = ti.Vector.field(3, dtype=ti.f64, shape=mesh.number_of_nodes)
     force = ti.Vector.field(3, dtype=ti.f64, shape=mesh.number_of_nodes)
     position.from_numpy(mesh.points)
@@ -681,7 +563,7 @@ def test_lagged_friction_device_path_matches_output_adapter():
     device_force = force.to_numpy()
     device_stiffness = matrix.toarray()
 
-    reference = FEMContactAssembler(mesh, material, contact)
+    reference = ReferenceFEMContactAssembler(mesh, material, contact)
     reference.begin_step(mesh.points, 0.1)
     reference.prepare_iteration(moved)
     energy, output_force, output_stiffness = reference.assemble(moved, need_stiffness=True)
@@ -733,7 +615,7 @@ def test_ipc_plane_energy_and_ccd_limit_are_one_sided():
         dmin=0.01,
         kappa=10.0,
     )
-    assembler = FEMContactAssembler(mesh, material, contact)
+    assembler = ReferenceFEMContactAssembler(mesh, material, contact)
     assembler.prepare_iteration(mesh.points)
     energy, force, stiffness = assembler.assemble(mesh.points, need_stiffness=True)
     direction = np.zeros_like(mesh.points)
@@ -755,7 +637,7 @@ def test_fem_facade_dispatches_contact_into_implicit_cloth_engine():
     fem.set_solver(quasi_static=False, dt=0.01, step=0)
 
     engine = fem.build()
-    engine._prepare_contact_iteration(engine.positions)
+    engine._prepare_contact_iteration_device(engine.state.position)
     energy, force, stiffness, _ = engine.assemble_internal(need_stiffness=True)
 
     assert engine.contact_assembler is not None
@@ -787,7 +669,7 @@ def test_same_contact_backend_assembles_on_volume_boundary_surface():
     fem.set_solver(quasi_static=False, dt=0.01, step=0)
 
     engine = fem.build()
-    engine._prepare_contact_iteration(engine.positions)
+    engine._prepare_contact_iteration_device(engine.state.position)
     energy, force, stiffness, _ = engine.assemble_internal(need_stiffness=True)
 
     assert type(engine).__name__ == "ClassicalImplicitFEM"

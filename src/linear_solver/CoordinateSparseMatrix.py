@@ -233,7 +233,7 @@ class CoordinateSparseMatrix(object):
         x_full[non_zero_cols] = x_reduced
         return x_full
 
-    def solve1(self, b, x, tol=1e-6, maxiter=5000):
+    def solve1(self, b, x, tol=1e-6, maxiter=5000, rel_tol=0.0):
         # set_from_triplets(self.bsr_matrix, self.rows, self.cols, self.data)
         return self.linear_solver.solve(
             self.linear_operator,
@@ -242,6 +242,7 @@ class CoordinateSparseMatrix(object):
             self.linear_operator.active_dofs,
             tol,
             maxiter,
+            rel_tol=rel_tol,
         )
 
     def solve2(self, b, x, diagA, tol=1e-6, maxiter=5000, rel_tol=0.0):

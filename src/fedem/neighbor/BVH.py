@@ -92,7 +92,7 @@ class FEDEMBVH(FEDEMNeighborBase):
     def rebuild(self, particle_count, particles):
         particle_count = self._begin_rebuild(particle_count)
         self._update_face_aabbs()
-        self.bvh.build(self.patch.face_count)
+        self.bvh.update(self.simulation.current_step, self.simulation.bvh_rebuild_interval)
         self._search(particle_count, particles)
         return self._finish_rebuild(particle_count)
 

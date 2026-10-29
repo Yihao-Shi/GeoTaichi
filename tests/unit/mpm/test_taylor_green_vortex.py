@@ -54,6 +54,22 @@ def test_taylor_green_analytic_velocity_pressure_and_decay():
     assert np.exp(-2.0 * 0.05 * steady_time) == pytest.approx(0.01)
 
 
+def test_taylor_green_domain_contains_four_counter_rotating_centers():
+    centers = np.array([[x, y] for x in (0.5 * np.pi, 1.5 * np.pi) for y in (0.5 * np.pi, 1.5 * np.pi)])
+    assert np.all(centers > 0) and np.all(centers < MODULE.DOMAIN)
+    np.testing.assert_allclose(MODULE.analytical_velocity(centers, 0.0, 0.05), 0.0, atol=1e-15)
+    offset = np.array([1e-5, 0.0])
+    du_dy = (
+        MODULE.analytical_velocity(centers + offset[::-1], 0.0, 0.05)[:, 0]
+        - MODULE.analytical_velocity(centers - offset[::-1], 0.0, 0.05)[:, 0]
+    ) / (2 * offset[0])
+    dv_dx = (
+        MODULE.analytical_velocity(centers + offset, 0.0, 0.05)[:, 1]
+        - MODULE.analytical_velocity(centers - offset, 0.0, 0.05)[:, 1]
+    ) / (2 * offset[0])
+    np.testing.assert_allclose(dv_dx - du_dy, [2, -2, -2, 2], atol=1e-9)
+
+
 def test_linear_wavemaker_reference_and_harmonic_fit():
     np.testing.assert_array_equal(WATER_ORIGIN, [0.08, 0.0, 0.0])
     np.testing.assert_allclose(WATER_SIZE, [2.32, 0.32, 0.36])

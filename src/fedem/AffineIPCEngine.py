@@ -9,7 +9,10 @@ import taichi as ti
 from src.dem.engines.AffineBodyOperator import MATRIX_HASH_TRIPLET
 from src.fedem.contact.AffineIPCAssembler import FEMAffineIPCAssembler
 from src.fem.engines.ImplicitFEM import NewtonConvergenceError
+from src.fem.engines.LineSearch import ArmijoLineSearch
 from src.linear_solver.BuildTriplet import BuildTriplet
+from src.linear_solver.BlockJacobi import BlockJacobi
+from src.linear_solver.LinearOperator import LinearOperator
 from src.linear_solver.CoordinateSparseMatrix import CoordinateSparseMatrix
 from src.utils.RuntimeHook import runtime_checkpoint
 from src.utils.StepRetry import StepRetryPolicy, nonlinear_failure_kind
@@ -54,6 +57,8 @@ class FEMAffineIPCEngine:
         self.dem_engine = dem.enginer
         self.dem_engine.initialize(dem.sims, dem.scene)
         self.affine = self.dem_engine.operator
+        self.affine_acceleration_initialized = False
+        self.dem_engine.last_device_nonlinear_path = True
         if self.affine.fully_implicit:
             raise RuntimeError("FEM--AffineBody IPC currently requires AffineBody " "self-friction_mode='lagged'")
         requested_friction_iterations = int(getattr(dem.sims, "affine_friction_iterations", 1))
@@ -72,7 +77,7 @@ class FEMAffineIPCEngine:
                 "correction_velocity_tolerance",
                 kwargs.get(
                     "newton_velocity_tolerance",
-                    getattr(dem.sims, "affine_newton_tolerance", 1.0e-7),
+                    getattr(dem.sims, "affine_newton_tolerance", 1.0e-8),
                 ),
             )
         )
@@ -89,8 +94,10 @@ class FEMAffineIPCEngine:
         )
         self.assemble_type = _assembly_name(kwargs.get("assemble_type", self.fem.assemble_type))
         self.linear_solver = _solver_name(kwargs.get("linear_solver", self.fem.linear_solver))
-        self.linear_solver_tolerance = float(kwargs.get("linear_solver_tolerance", 1.0e-10))
-        self.linear_solver_relative_tolerance = float(kwargs.get("linear_solver_relative_tolerance", 0.0))
+        self.linear_solver_tolerance = float(kwargs.get("linear_solver_tolerance", 1.0e-12))
+        self.linear_solver_relative_tolerance = float(
+            kwargs.get("linear_solver_relative_tolerance", 0.0 if "linear_solver_tolerance" in kwargs else 1.0e-12)
+        )
         if not math.isfinite(self.linear_solver_relative_tolerance) or self.linear_solver_relative_tolerance < 0.0:
             raise ValueError("FEM--AffineBody linear_solver_relative_tolerance must be " "finite and non-negative")
         self.linear_solver_max_iters = int(
@@ -124,6 +131,7 @@ class FEMAffineIPCEngine:
         self.residual_squared = ti.field(dtype=ti.f64, shape=())
         self.directional_derivative = ti.field(dtype=ti.f64, shape=())
         self.correction_inf_norm = ti.field(dtype=ti.f64, shape=())
+        self.physical_correction_velocity = ti.field(ti.f64, shape=())
         self.physical_correction_inf_norm = ti.field(dtype=ti.f64, shape=())
         self.minimum_jacobian = 1.0
         self.history = []
@@ -151,10 +159,26 @@ class FEMAffineIPCEngine:
             simulation,
             fem_faces=fem_faces,
         )
-        if self.step_retry.enabled and self.contact.is_semi:
-            raise ValueError(
-                "FEM--AffineBody step retry does not support SemiIPC because its multipliers advance inside Newton iterations"
+        self.wall_boundary = self.dem_engine.wall_boundary
+        if self.wall_boundary is not None and self.fem.dem_wall_contact is None:
+            from dataclasses import replace
+            from src.fem.contact.DEMWallContact import DEMWallContactAssembler
+            from src.fem.contact.ContactAssembler import FEMMultiContactAssembler
+
+            settings = replace(contact_model.contact, self_contact=False, planes=(), pair_contacts=[], body_pair=None)
+            self.fem.dem_wall_contact = DEMWallContactAssembler(
+                self.fem.mesh, self.fem.material, settings, self.wall_boundary
             )
+            existing = self.fem.contact_assembler
+            children = list(getattr(existing, "assemblers", (existing,))) if existing is not None else []
+            children.append(self.fem.dem_wall_contact)
+            self.fem.contact_assembler = FEMMultiContactAssembler(settings, children)
+            if hasattr(self.fem, "classical_assembler"):
+                self.fem._bind_classical_assembly_functions()
+            else:
+                self.fem._bind_cloth_assembly_functions()
+        if self.wall_boundary is not None and self.fem.wall_boundary not in (None, self.wall_boundary):
+            raise ValueError("FEM and ABD must share the same DEM IPC wall boundary")
         self.fem_contact = getattr(self.fem, "contact_assembler", None)
         self.fem_hash = self._build_fem_source_matrix()
         self.affine_source_capacity = self._affine_source_raw_capacity()
@@ -183,10 +207,10 @@ class FEMAffineIPCEngine:
         self.contact_hash = None
         self.monolithic_hash = None
         self.monolithic_coo = None
+        self.coo_preconditioner = None
         self._contact_capacity = 0
         self.coo_count = ti.field(dtype=ti.i32, shape=())
         self.coo_overflow = ti.field(dtype=ti.i32, shape=())
-        self.coo_diagonal = ti.field(dtype=ti.f64, shape=self.dof_count)
         initial_pt, initial_ee = self.contact.prepare(self.fem.state.position)
         self._ensure_matrices(initial_pt, initial_ee)
 
@@ -389,6 +413,8 @@ class FEMAffineIPCEngine:
                 matrix_symmetric=True,
                 full_symmetric_input=True,
                 device_reduction=True,
+                preconditioner_group_size=4,
+                preconditioner_group_nodes=self.affine_controls,
             )
         else:
             scalar_capacity = self._coo_scalar_capacity(
@@ -406,6 +432,12 @@ class FEMAffineIPCEngine:
                 preconditioned=True,
                 symmetry=True,
             )
+            if self.linear_solver != "Scipy" and self.coo_preconditioner is None:
+                self.coo_preconditioner = BlockJacobi(3, self.node_count, 4, self.affine_controls)
+
+    def coo_block_preconditioner(self, cholesky=True):
+        self.coo_preconditioner.build_coo(self.monolithic_coo, self.node_count, cholesky=cholesky)
+        return LinearOperator(lambda src, dst: self.coo_preconditioner.apply(self.node_count, src, dst, flat=True))
 
     @ti.kernel
     def _add_fem_dynamic_diagonal(self, factor: ti.f64):
@@ -429,8 +461,7 @@ class FEMAffineIPCEngine:
             internal_force,
             self.fem.damping,
             self.dt,
-            self.fem.beta,
-            self.fem.gamma,
+            self.fem.integration,
             int(self.fem.quasi_static),
         )
         if need_matrix:
@@ -574,20 +605,6 @@ class FEMAffineIPCEngine:
             if self.fixed[dof] != 0:
                 self._append_coo_value(dof, dof, 1.0)
 
-    @ti.kernel
-    def _build_coo_diagonal(self):
-        for dof in range(self.dof_count):
-            self.coo_diagonal[dof] = 0.0
-        for entry in range(self.coo_count[None]):
-            if self.monolithic_coo.rows[entry] == self.monolithic_coo.cols[entry]:
-                ti.atomic_add(
-                    self.coo_diagonal[self.monolithic_coo.rows[entry]],
-                    self.monolithic_coo.data[entry],
-                )
-        for dof in range(self.dof_count):
-            if ti.abs(self.coo_diagonal[dof]) < 1.0e-14:
-                self.coo_diagonal[dof] = 1.0
-
     def assemble_system(
         self,
         need_matrix=True,
@@ -596,7 +613,7 @@ class FEMAffineIPCEngine:
         solver_shift=True,
         fem_assembler=None,
     ):
-        inverse_scale = 1.0 / (self.dt * self.dt)
+        inverse_scale = 1.0 / self.affine.scale
         if need_matrix:
             self.affine_hash.reset_system()
             self.affine.bind_hash_triplet(self.affine_hash, full_symmetric_input=True)
@@ -676,13 +693,11 @@ class FEMAffineIPCEngine:
                     raise RuntimeError("FEM--AffineBody COO capacity exceeded")
                 matrix.linear_operator.update_active_dofs(self.dof_count)
                 matrix.linear_operator.update_nnz(int(self.coo_count[None]))
-                self._build_coo_diagonal()
         self.fem.state.reduce_dynamic_potential(
             self.fem.state.position,
             self.fem.damping,
             self.dt,
-            self.fem.beta,
-            self.fem.gamma,
+            self.fem.integration,
             int(self.fem.quasi_static),
         )
         energy = (
@@ -736,7 +751,7 @@ class FEMAffineIPCEngine:
             converged = self.monolithic_coo.solve(
                 self.rhs,
                 self.correction,
-                self.coo_diagonal,
+                self.coo_block_preconditioner(),
                 tol=self.linear_solver_tolerance,
                 maxiter=self.linear_solver_max_iters,
                 rel_tol=self.linear_solver_relative_tolerance,
@@ -791,6 +806,7 @@ class FEMAffineIPCEngine:
         combined here with the maximum FEM nodal displacement.
         """
         self.physical_correction_inf_norm[None] = 0.0
+        self.physical_correction_velocity[None] = 0.0
         for vertex in range(self.affine.vertex_num):
             body = self.affine.node2body[vertex]
             direction = ti.Vector.zero(ti.f64, 3)
@@ -803,10 +819,21 @@ class FEMAffineIPCEngine:
                     self.physical_correction_inf_norm[None],
                     ti.abs(direction[component]),
                 )
+                ti.atomic_max(
+                    self.physical_correction_velocity[None],
+                    ti.abs(direction[component]) * self.affine.endpoint_velocity_factor(),
+                )
+        fem_factor = 1.0 / self.dt
+        if ti.static(not self.fem.quasi_static):
+            fem_factor = self.fem.gamma / (2.0 * self.fem.alpha * self.fem.beta * self.dt)
         for node, component in ti.ndrange(self.fem_nodes, 3):
             ti.atomic_max(
                 self.physical_correction_inf_norm[None],
                 ti.abs(self.fem.state.direction[node][component]),
+            )
+
+            ti.atomic_max(
+                self.physical_correction_velocity[None], ti.abs(self.fem.state.direction[node][component]) * fem_factor
             )
 
     def _updated_friction_residual(self):
@@ -817,11 +844,11 @@ class FEMAffineIPCEngine:
         self._solve_linear_system(system)
         self._split_direction()
         self._reduce_physical_correction()
-        return float(self.physical_correction_inf_norm[None]) / self.dt
+        return float(self.physical_correction_velocity[None])
 
     def _total_energy(self):
         self.energy_rhs.fill(0.0)
-        inverse_scale = 1.0 / (self.dt * self.dt)
+        inverse_scale = 1.0 / self.affine.scale
         affine_energy = self.affine.assemble_device(need_matrix=False, matrix_mode=MATRIX_HASH_TRIPLET)
         self.fem._prepare_contact_iteration_device(self.fem.state.position)
         self.fem._assemble_internal_device_at(self.fem.state.position, need_stiffness=False)
@@ -829,8 +856,7 @@ class FEMAffineIPCEngine:
             self.fem.state.position,
             self.fem.damping,
             self.dt,
-            self.fem.beta,
-            self.fem.gamma,
+            self.fem.integration,
             int(self.fem.quasi_static),
         )
         pt_count, ee_count = self.contact.prepare(self.fem.state.position)
@@ -849,6 +875,7 @@ class FEMAffineIPCEngine:
         )
 
     def _line_search(self, base_energy):
+        policy = ArmijoLineSearch(sufficient_decrease=self.line_search_c1)
         self._split_direction()
         self._reduce_metrics()
         slope = float(self.directional_derivative[None])
@@ -882,9 +909,8 @@ class FEMAffineIPCEngine:
                 trial = self._total_energy()
             armijo = base_energy + self.line_search_c1 * alpha * slope
             trials.append((float(alpha), float(trial), float(armijo)))
-            if math.isfinite(trial) and trial <= armijo:
-                self.fem._after_nonlinear_update_device(alpha)
-                self.contact.accept_update(self.fem.state.position)
+            roundoff = 1.0e-12 * max(abs(base_energy), abs(trial))
+            if policy.accepts(base_energy, trial, alpha, slope, roundoff):
                 return alpha, backtrack, trial
             # Restore FEM before constructing the next trial.  Affine trials
             # are always formed from the operator's saved base field.
@@ -1051,11 +1077,7 @@ class FEMAffineIPCEngine:
         initial_norm = getattr(self, "_friction_force_reference", None)
         converged = False
         records = []
-        semi_progress = 0.0
         for iteration in range(self.max_iterations + 1):
-            if getattr(self.contact, "is_semi", False) and iteration > 1 and semi_progress > 0.999:
-                converged = True
-                break
             with self.simulation.timer.section("System assembly"):
                 system = self.assemble_system(need_matrix=True)
                 self._reduce_metrics()
@@ -1073,7 +1095,7 @@ class FEMAffineIPCEngine:
                     **self.contact.diagnostics(),
                 }
             )
-            if residual <= convergence_tolerance and self.contact.contact_converged():
+            if residual <= convergence_tolerance:
                 records[-1]["convergence_reason"] = "force_residual"
                 converged = True
                 break
@@ -1084,13 +1106,12 @@ class FEMAffineIPCEngine:
             self._split_direction()
             self._reduce_physical_correction()
             correction_norm = float(self.physical_correction_inf_norm[None])
-            correction_velocity = correction_norm / self.dt
+            correction_velocity = float(self.physical_correction_velocity[None])
             records[-1]["correction_inf_norm"] = correction_norm
             records[-1]["correction_velocity"] = correction_velocity
             records[-1]["correction_velocity_tolerance"] = self.correction_velocity_tolerance
-            if self.contact.contact_converged() and (
-                correction_velocity == 0.0
-                or (iteration > 0 and correction_velocity <= self.correction_velocity_tolerance)
+            if correction_velocity == 0.0 or (
+                iteration > 0 and correction_velocity <= self.correction_velocity_tolerance
             ):
                 records[-1]["convergence_reason"] = "physical_correction_velocity"
                 converged = True
@@ -1107,8 +1128,6 @@ class FEMAffineIPCEngine:
             records[-1]["line_search_backtracks"] = backtracks
             records[-1]["line_search_limits"] = self.last_line_search_limits
             self.fem.apply_boundary_step(self.dt, 0)
-            if getattr(self.contact, "is_semi", False):
-                semi_progress += (1.0 - semi_progress) * alpha
             if verbose:
                 limiter = min(self.last_line_search_limits, key=self.last_line_search_limits.get)
                 print(
@@ -1175,19 +1194,33 @@ class FEMAffineIPCEngine:
         return converged, outer_records
 
     def _step_once(self, verbose=False):
+        if self.affine.use_newmark and not self.affine_acceleration_initialized:
+            self.affine.device_prepare_initial_acceleration()
+            self.affine.initialize_contact_damping_device()
+            if self.fem_contact is not None:
+                self.fem_contact.begin_step_device(self.fem.state.position, self.dt)
+            self.contact.begin_step(self.fem.state.position, self.fem.state.position, self.dt)
+            self.assemble_system(need_matrix=False)
+            self.affine.device_load_initial_force(self.physical_rhs, 1.0)
+            self.affine.device_initialize_newmark_acceleration()
+            self.affine_acceleration_initialized = True
         with self.simulation.timer.section("Step setup"):
             self.fem.state.save_step_state()
             self.affine.device_backup_step_start()
         next_time = self.time + self.dt
         try:
             with self.simulation.timer.section("Prediction and contact setup"):
+                if self.wall_boundary is not None:
+                    self.wall_boundary.begin_step_device(self.dt)
+                    self.affine.limit_servo_wall_motion_device(self.wall_boundary)
+                    self.fem.dem_wall_contact.limit_wall_motion_device(self.fem.state.old_position)
+                    self.wall_boundary.apply_motion_device()
                 if self.fem_contact is not None:
                     self.fem_contact.begin_step_device(self.fem.state.old_position, self.dt)
                 self.fem.set_boundary_data_step(next_time, self.step_count + 1)
                 self.fem.apply_boundary_step(self.dt, 0)
                 self.fem.update_external_force_step(next_time, self.step_count + 1)
-                self.fem.state.build_newmark_prediction(self.dt, self.fem.beta)
-                self.affine.reset_semi_state()
+                self.fem.state.build_newmark_prediction(self.dt, self.fem.integration)
                 self.affine.device_begin_step(self.dt)
                 self._apply_affine_velocity_boundaries()
                 self.affine.initialize_contact_damping_device()
@@ -1202,17 +1235,18 @@ class FEMAffineIPCEngine:
                 self._store_fem_equilibrium()
                 self.fem.state.finalize_newmark(
                     self.dt,
-                    self.fem.beta,
-                    self.fem.gamma,
+                    self.fem.integration,
                     int(self.fem.quasi_static),
                 )
                 if self.record_history_step:
                     self.sample_energy_step()
                 self.affine.device_accept_step(self.dt)
                 self._update_affine_pressure_servos()
-                self.affine.sync_output_state()
                 self.advance_constitutive_state()
                 self.minimum_jacobian = self.fem._minimum_jacobian_ratio_device(self.fem.state.position)
+            if self.wall_boundary is not None:
+                self.affine.measure_servo_wall_reactions_device(self.wall_boundary)
+                self.wall_boundary.commit_servo_step(self.dt)
             self.time = next_time
             self.step_count += 1
             self.simulation.current_time = self.time
@@ -1246,6 +1280,8 @@ class FEMAffineIPCEngine:
                 self.step_schedule.append_history(self.history, step_record)
             return converged
         except BaseException as exception:
+            if self.wall_boundary is not None:
+                self.wall_boundary.rollback_device()
             try:
                 self.affine.device_restore_step_start()
                 self._restore_fem_step()

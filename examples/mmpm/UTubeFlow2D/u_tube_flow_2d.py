@@ -137,7 +137,6 @@ mpm.add_material(
         "SolidDensity": 2650.0,
         "FluidDensity": 1000.0,
         "Porosity": POROSITY,
-        "FluidBulkModulus": 2.2e8,
         "Permeability": HYDRAULIC_CONDUCTIVITY,
         "FluidViscosity": 1.0e-3,
         "GrainDiameter": 3.0e-3,
@@ -155,7 +154,6 @@ mpm.add_material(
         # The constitutive input requires an open interval; 0.9999 is the
         # solver's own clear-fluid cap and is numerically equivalent to one.
         "Porosity": 0.9999,
-        "FluidBulkModulus": 2.2e8,
         "Permeability": HYDRAULIC_CONDUCTIVITY,
         "FluidViscosity": 1.0e-3,
         "GrainDiameter": 3.0e-3,
@@ -260,7 +258,7 @@ mpm.add_boundary_condition(
         }
     ]
 )
-mpm.select_save_data(particle=True, grid=False, object=False)
+mpm.select_save_data(particle=True, grid=True, object=False)
 mpm.run()
 
 if not SKIP_POSTPROCESS:

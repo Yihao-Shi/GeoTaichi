@@ -110,6 +110,8 @@ class IGAMPM(SolverDiagnosticsMixin):
                 "IGA-MPM contact_model cannot be changed after build(); "
                 "friction mode and all contact parameters are frozen"
             )
+        if "monolithic_linear_solver_tolerance" in kwargs:
+            kwargs.setdefault("monolithic_linear_solver_relative_tolerance", 0.0)
         updated_contact_kwargs = dict(self.contact_kwargs)
         updated_contact_kwargs.update(kwargs)
         candidate_kwargs = {key: value for key, value in updated_contact_kwargs.items() if key != "contact_model"}
@@ -179,6 +181,8 @@ class IGAMPM(SolverDiagnosticsMixin):
         if coupling_parameters:
             if self.engine is not None:
                 raise RuntimeError("IGA-MPM solver settings cannot change after build()")
+            if "monolithic_linear_solver_tolerance" in coupling_parameters:
+                coupling_parameters.setdefault("monolithic_linear_solver_relative_tolerance", 0.0)
             self.contact_kwargs.update(coupling_parameters)
         if log:
             self.print_solver_info()

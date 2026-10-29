@@ -105,6 +105,7 @@ def test_soft_particle_contact_is_bound_once_and_receives_step_policy():
 
     solver = object.__new__(ExplicitFEM)
     solver.dt = 0.125
+    solver.step_count = 7
     solver.track_energy = False
     solver.soft_particle_contact = _Contact()
     solver._advance_constitutive_state = lambda: None
@@ -118,7 +119,7 @@ def test_soft_particle_contact_is_bound_once_and_receives_step_policy():
     assert calls == [
         (
             0.125,
-            {"advance_history": False, "check_rebuild": False},
+            {"current_step": 7, "advance_history": False, "check_rebuild": False},
         )
     ]
     assert solver.assemble_explicit_internal_force() == "force"

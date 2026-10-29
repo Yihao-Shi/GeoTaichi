@@ -150,6 +150,8 @@ def test_dempm_compile_advances_every_coupled_clock(monkeypatch):
     assert solver.msims.current_time == pytest.approx(3.02)
     assert solver.dsims.current_time == pytest.approx(3.02)
     assert solver.sims.current_step == 22
+    assert solver.msims.current_step == 22
+    assert solver.dsims.current_step == 22
 
 
 @pytest.mark.coupling
@@ -204,8 +206,11 @@ def test_loops_skip_roundoff_but_integrate_real_fractional_steps(
         current_time=0.0,
         set_timestep=lambda value: setattr(solver.dsims, "delta", value),
     )
+    final_state = SimpleNamespace(velocity=0.0)
     solver.engine = SimpleNamespace(
-        pre_calculate=lambda: None, pre_calculation=lambda *args: None, reset_message=lambda: None
+        pre_calculate=lambda: None,
+        pre_calculation=lambda *args: None,
+        reset_message=lambda: setattr(final_state, "velocity", 0.0),
     )
     solver.contact = SimpleNamespace(neighbor=None)
     solver.generator = SimpleNamespace(regenerate=lambda *args: False)
@@ -218,9 +223,17 @@ def test_loops_skip_roundoff_but_integrate_real_fractional_steps(
 
     solver.save_file = save_file
     calls = []
-    solver.core = lambda *args: calls.append(solver.sims.delta)
+
+    def step(*args):
+        calls.append(solver.sims.delta)
+        final_state.velocity = float(len(calls))
+
+    solver.core = step
+    checkpoints = []
     monkeypatch.setattr(base.ti, "sync", lambda: None)
-    monkeypatch.setattr(base, "runtime_checkpoint", lambda: None)
+    monkeypatch.setattr(
+        base, "runtime_checkpoint", lambda: checkpoints.append((solver.sims.current_step, solver.sims.current_time))
+    )
     monkeypatch.setattr(base, "print_simulation_start", lambda name: None)
 
     if module_name == "src.mpdem.DEMPMBase":
@@ -233,7 +246,11 @@ def test_loops_skip_roundoff_but_integrate_real_fractional_steps(
         solver.Solver(None)
 
     assert len(calls) == count
+    assert len(checkpoints) == count
+    assert checkpoints[0] == (1, pytest.approx(dt))
+    assert checkpoints[-1] == (count, pytest.approx(target))
     assert min(calls) > 2.9e-6
     assert solver.sims.current_step == count
     assert abs(solver.sims.current_time - target) < 1.0e-14
     assert saved[0] == 0.0 and abs(saved[-1] - target) < 1.0e-14
+    assert final_state.velocity == count, "Final diagnostics must see the last computed state at either save cadence"

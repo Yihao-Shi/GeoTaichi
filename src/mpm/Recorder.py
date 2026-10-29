@@ -637,6 +637,10 @@ class WriteFile:
             self.visualizeParticle(sims, position, velocity, volume, vtk_state_vars)
         output = dict(
             t_current=sims.current_time,
+            current_step=sims.current_step,
+            material_type=sims.material_type,
+            dimension=sims.dimension,
+            two_phase_fluid_mass_initialized=scene.two_phase_fluid_mass_initialized,
             body_num=particle_num,
             particleID=particleID,
             bodyID=bodyID,
@@ -658,13 +662,29 @@ class WriteFile:
             pressure=pressure,
             permeability=permeability,
             porosity=porosity,
+            psize=np.asarray(scene.psize)[:particle_num],
         )
+        # Visualization converts some history tensors to invariants; restart needs their raw components.
+        output["constitutive_state"] = {
+            name: field_to_numpy_prefix(field, particle_num)
+            for name, field in (scene.material.stateVars.field_dict.items() if scene.material.stateVars else [])
+        }
+        traction_count = int(scene.boundary.ptraction_list[0])
+        output["particle_traction_state"] = {
+            name: field_to_numpy_prefix(field, traction_count)
+            for name, field in (scene.boundary.particle_traction.field_dict.items() if traction_count else [])
+        }
+        for name in ("pressure_gradient", "normal", "rad", "mass_density", "verletDisp", "external_force"):
+            if hasattr(scene.particle, name):
+                output[name] = field_to_numpy_prefix(getattr(scene.particle, name), particle_num)
         if phase is not None:
             output["phase"] = phase
         if coupling is not None:
             output["coupling"] = coupling
         if free_surface is not None:
             output["free_surface"] = free_surface
+        output["restart_format_version"] = 1
+        self._append_incompressible_restart_pressure(output, scene)
         np.savez(self.particle_path + f"/MPMParticle{sims.current_print:06d}", **output)
 
     def MonitorIncompressibleParticleCoupling(self, sims: Simulation, scene: myScene):
@@ -696,12 +716,13 @@ class WriteFile:
                     "zvelocity_gradient": zvelocity_gradient,
                 }
             )
-        elif hasattr(scene.particle, "velocity_gradient"):
+        if hasattr(scene.particle, "velocity_gradient"):
             output["velocity_gradient"] = field_to_numpy_prefix(scene.particle.velocity_gradient, particle_num)
         output["coupling"] = field_to_numpy_prefix(scene.particle.coupling, particle_num)
         state_vars = scene.material.get_state_vars_dict(start_index=0, end_index=scene.particleNum[0])
         state_vars.update({"pressure": pressure})
         output.update({"pressure": pressure})
+        self._append_incompressible_restart_pressure(output, scene)
 
         self.visualizeParticle(sims, output["position"], output["velocity"], output["volume"], state_vars)
         np.savez(self.particle_path + f"/MPMParticle{sims.current_print:06d}", **output)
@@ -756,8 +777,18 @@ class WriteFile:
                 "velocity_gradient": field_to_numpy_prefix(scene.particle.velocity_gradient, particle_num),
             }
         )
+        self._append_incompressible_restart_pressure(output, scene)
         self.visualizeParticle(sims, output["position"], output["velocity"], output["volume"], {"pressure": pressure})
         np.savez(self.particle_path + f"/MPMParticle{sims.current_print:06d}", **output)
+
+    def _append_incompressible_restart_pressure(self, output, scene):
+        element = getattr(scene, "element", None)
+        cell = getattr(element, "cell", None)
+        if cell is not None and getattr(cell, "pressure", None) is not None:
+            # IBM uses the previous grid pressure; particle interpolation is not reversible.
+            output["restart_cell_pressure"] = cell.pressure.to_numpy()
+            output["restart_grid_size"] = np.asarray(scene.element.grid_size, dtype=np.float64)
+            output["restart_ghost_cell"] = int(scene.element.ghost_cell)
 
     def sample_incompressible_cell_pressure(self, sims: Simulation, scene: myScene, position):
         particle_num = position.shape[0]
@@ -841,7 +872,14 @@ class WriteFile:
             nearest_cell = np.minimum(np.maximum(nearest_cell, 0), active_cnum - 1)
             nearest_storage = nearest_cell + ghost_cell
             nearest_tuple = tuple(nearest_storage[~sampled, d] for d in range(dim))
-            pressure[~sampled] = pressure_field[nearest_tuple].astype(np.float64)
+            # Classification may change after projection. A newly air-labelled
+            # cell can still hold its former fluid pressure; detached samples
+            # have no pressure support and must not inherit that stale value.
+            pressure[~sampled] = np.where(
+                cell_type_field[nearest_tuple] == 1,
+                pressure_field[nearest_tuple].astype(np.float64),
+                0.0,
+            )
         return pressure
 
     def get_incompressible_atmospheric_pressure(self, scene: myScene):

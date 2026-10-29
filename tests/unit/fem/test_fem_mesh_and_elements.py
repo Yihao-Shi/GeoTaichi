@@ -1,3 +1,9 @@
+from tests.helpers.fem_element_reference import (
+    compute_deformation_gradient,
+    compute_metric_tensor,
+    maximum_admissible_step,
+    minimum_jacobian_ratio,
+)
 from pathlib import Path
 
 import numpy as np
@@ -16,11 +22,12 @@ from src.fem.MaterialManager import FEMMaterialManager
 
 def create_material(model, **parameters):
     return FEMMaterialManager().material_handle(model, **parameters)
+
+
 from src.fem.engines.FEMSolver import FEMSolver
 from src.fem.engines.ClassicalAssembler import ClassicalAssembler
 from src.fem.cloth import create_cloth_element
 from src.fem import FEM
-
 
 pytestmark = [pytest.mark.unit, pytest.mark.fem, pytest.mark.geometry, pytest.mark.cpu]
 
@@ -67,9 +74,7 @@ def test_tet4_device_edge_matrix_gradient_matches_reference_operator():
     )
     assembler = ClassicalAssembler(mesh, element, material)
     assert not hasattr(assembler, "cell_hessian")
-    deformation = np.array(
-        [[1.1, 0.2, -0.1], [0.05, 0.9, 0.15], [0.0, -0.08, 1.2]]
-    )
+    deformation = np.array([[1.1, 0.2, -0.1], [0.05, 0.9, 0.15], [0.0, -0.08, 1.2]])
     current = mesh.points @ deformation.T + (0.4, -0.3, 0.7)
 
     device = assembler.deformation_gradients(current)
@@ -86,12 +91,8 @@ def test_tet4_device_edge_matrix_gradient_matches_reference_operator():
 
 def test_fem_rest_shape_precomputes_initial_deformation_gradient():
     fem = FEM(log=False)
-    fem.set_configuration(
-        dimension=3, solver_type="Explicit", backend="taichi"
-    )
-    current_mesh = fem.create_mesh(
-        "box", size=(1.0, 1.0, 1.0), element_type="HEX8"
-    )
+    fem.set_configuration(dimension=3, solver_type="Explicit", backend="taichi")
+    current_mesh = fem.create_mesh("box", size=(1.0, 1.0, 1.0), element_type="HEX8")
     current_shape = current_mesh.points.copy()
     rest_shape = current_shape.copy()
     rest_shape[:, 0] *= 0.5
@@ -112,9 +113,7 @@ def test_fem_rest_shape_precomputes_initial_deformation_gradient():
     np.testing.assert_allclose(engine.displacement, 0.0)
     np.testing.assert_allclose(
         engine.initial_deformation_gradients,
-        np.broadcast_to(
-            expected, engine.initial_deformation_gradients.shape
-        ),
+        np.broadcast_to(expected, engine.initial_deformation_gradients.shape),
         atol=2.0e-15,
     )
     assert np.sum(engine.element.reference_weights) == pytest.approx(0.5)
@@ -122,40 +121,26 @@ def test_fem_rest_shape_precomputes_initial_deformation_gradient():
 
 
 def test_fem_rest_shape_defaults_to_current_shape():
-    mesh = FEMGenerateManager().create_box(
-        size=(1.0, 2.0, 3.0), element_type="TET4"
-    )
-    material = create_material(
-        "StVK", young_modulus=1.0e4, poisson_ratio=0.3
-    )
+    mesh = FEMGenerateManager().create_box(size=(1.0, 2.0, 3.0), element_type="TET4")
+    material = create_material("StVK", young_modulus=1.0e4, poisson_ratio=0.3)
     solver = FEMSolver(mesh, material)
 
     np.testing.assert_allclose(mesh.rest_shape, mesh.points)
     np.testing.assert_allclose(
         solver.initial_deformation_gradients,
-        np.broadcast_to(
-            np.eye(3), solver.initial_deformation_gradients.shape
-        ),
+        np.broadcast_to(np.eye(3), solver.initial_deformation_gradients.shape),
         atol=2.0e-15,
     )
 
 
 def test_fem_rest_shape_drives_classical_and_cloth_membranes():
-    mesh = FEMGenerateManager().create_rectangle(
-        size=(2.0, 1.0), divisions=(1, 1)
-    )
+    mesh = FEMGenerateManager().create_rectangle(size=(2.0, 1.0), divisions=(1, 1))
     rest_shape = mesh.points.copy()
     rest_shape[:, 0] *= 0.5
-    mesh.set_rest_shape(
-        rest_shape, update_material_coordinates=True
-    )
+    mesh.set_rest_shape(rest_shape, update_material_coordinates=True)
 
-    classical = create_element(
-        mesh, thickness=0.1, formulation="classical"
-    )
-    cloth = create_cloth_element(
-        mesh, ClothARAP(10.0, thickness=0.1)
-    )
+    classical = create_element(mesh, thickness=0.1, formulation="classical")
+    cloth = create_cloth_element(mesh, ClothARAP(10.0, thickness=0.1))
 
     classical_stretches = np.linalg.svd(
         classical.deformation_gradients(mesh.points)[:, 0],
@@ -167,7 +152,7 @@ def test_fem_rest_shape_drives_classical_and_cloth_membranes():
         atol=2.0e-15,
     )
     cloth_stretches = np.linalg.svd(
-        cloth.compute_deformation_gradient(mesh.points),
+        compute_deformation_gradient(cloth, mesh.points),
         compute_uv=False,
     )
     np.testing.assert_allclose(
@@ -217,9 +202,7 @@ def test_axisymmetric_tri3_revolves_measure_and_uses_3d_no_swirl_map():
     expected_volume = np.pi * (1.5**2 - 0.5**2) * 0.2
     assert element.formulation == "axisymmetric_solid"
     assert element.constitutive_dimension == 3
-    assert np.sum(element.reference_weights) == pytest.approx(
-        expected_volume, rel=2.0e-15
-    )
+    assert np.sum(element.reference_weights) == pytest.approx(expected_volume, rel=2.0e-15)
     np.testing.assert_allclose(
         element.deformation_gradients(mesh.points),
         np.broadcast_to(
@@ -253,9 +236,7 @@ def test_axisymmetric_tri3_revolves_measure_and_uses_3d_no_swirl_map():
         assemble_type="HashTriplet",
         linear_solver="PCG",
     )
-    energy, force, stiffness, _ = assembler.assemble(
-        current, need_stiffness=True
-    )
+    energy, force, stiffness, _ = assembler.assemble(current, need_stiffness=True)
     matrix = stiffness.toarray()
     assert energy > 0.0
     assert np.all(np.isfinite(force))
@@ -269,29 +250,17 @@ def test_axisymmetric_tri3_revolves_measure_and_uses_3d_no_swirl_map():
         assemble_type="HashTriplet",
         linear_solver="PCG",
     )
-    exact_energy, exact_force, exact_stiffness, _ = exact_assembler.assemble(
-        current, need_stiffness=True
-    )
+    exact_energy, exact_force, exact_stiffness, _ = exact_assembler.assemble(current, need_stiffness=True)
     direction = np.zeros_like(current)
-    direction[:, :2] = np.array(
-        [[0.13, -0.09], [-0.04, 0.11], [0.07, 0.05], [-0.08, -0.03]]
-    )
+    direction[:, :2] = np.array([[0.13, -0.09], [-0.04, 0.11], [0.07, 0.05], [-0.08, -0.03]])
     epsilon = 1.0e-6
-    plus_energy, plus_force, _, _ = exact_assembler.assemble(
-        current + epsilon * direction, need_stiffness=False
-    )
-    minus_energy, minus_force, _, _ = exact_assembler.assemble(
-        current - epsilon * direction, need_stiffness=False
-    )
+    plus_energy, plus_force, _, _ = exact_assembler.assemble(current + epsilon * direction, need_stiffness=False)
+    minus_energy, minus_force, _, _ = exact_assembler.assemble(current - epsilon * direction, need_stiffness=False)
     finite_energy_derivative = (plus_energy - minus_energy) / (2.0 * epsilon)
     analytic_energy_derivative = np.sum(exact_force * direction)
-    assert analytic_energy_derivative == pytest.approx(
-        finite_energy_derivative, rel=2.0e-7, abs=2.0e-7
-    )
+    assert analytic_energy_derivative == pytest.approx(finite_energy_derivative, rel=2.0e-7, abs=2.0e-7)
     finite_force_derivative = (plus_force - minus_force) / (2.0 * epsilon)
-    analytic_force_derivative = (
-        exact_stiffness.toarray() @ direction.reshape(-1)
-    ).reshape(direction.shape)
+    analytic_force_derivative = (exact_stiffness.toarray() @ direction.reshape(-1)).reshape(direction.shape)
     np.testing.assert_allclose(
         analytic_force_derivative,
         finite_force_derivative,
@@ -304,17 +273,15 @@ def test_axisymmetric_tri3_revolves_measure_and_uses_3d_no_swirl_map():
     direction_values = np.zeros_like(current)
     direction_values[:, 0] = -2.0 * current[:, 0]
     collapse_direction.from_numpy(direction_values)
-    assert assembler.maximum_material_step_device(
-        assembler.positions, collapse_direction, safety=0.9
-    ) == pytest.approx((1.0 - np.sqrt(0.1)) / 2.0, abs=2.0e-12)
+    assert assembler.maximum_material_step_device(assembler.positions, collapse_direction, safety=0.9) == pytest.approx(
+        (1.0 - np.sqrt(0.1)) / 2.0, abs=2.0e-12
+    )
 
     traction = NeumannBoundary().add_traction(
         (0.0, 1.0, 0.0),
         selector=lambda centroid: np.isclose(centroid[:, 1], 0.2),
     )
-    boundary_force = traction.force(
-        mesh, axisymmetric=True, axis_offset=0.0
-    )
+    boundary_force = traction.force(mesh, axisymmetric=True, axis_offset=0.0)
     np.testing.assert_allclose(
         np.sum(boundary_force, axis=0),
         (0.0, np.pi * (1.5**2 - 0.5**2), 0.0),
@@ -377,9 +344,7 @@ def test_named_sets_and_boundary_traction_integrate_total_force():
 
 
 def test_transient_pressure_reuses_reference_boundary_geometry(monkeypatch):
-    mesh = FEMGenerateManager().create_box(
-        size=(2.0, 3.0, 4.0), element_type="HEX8"
-    )
+    mesh = FEMGenerateManager().create_box(size=(2.0, 3.0, 4.0), element_type="HEX8")
     boundary = NeumannBoundary().add_pressure(
         lambda time, coordinates: 2.0 * time,
         selector=lambda centroid: np.isclose(centroid[:, 0], 2.0),
@@ -414,8 +379,8 @@ def test_circle_and_cylinder_parameters_create_valid_meshes():
 
     assert circle.node_sets["rim"].size == 12
     assert cylinder.node_sets["top"].size == 9
-    assert create_element(circle).minimum_jacobian_ratio(circle.points) > 0.999999
-    assert create_element(cylinder).minimum_jacobian_ratio(cylinder.points) > 0.999999
+    assert minimum_jacobian_ratio(create_element(circle), circle.points) > 0.999999
+    assert minimum_jacobian_ratio(create_element(cylinder), cylinder.points) > 0.999999
 
 
 def test_obj_quad_is_imported_as_two_tri3_cells():
@@ -433,18 +398,18 @@ def test_membrane_step_limit_stops_before_zero_area_state():
     direction = np.zeros_like(mesh.points)
     direction[:, 0] = -2.0 * mesh.points[:, 0]
 
-    maximum_step = element.maximum_admissible_step(mesh.points, direction)
+    maximum_step = maximum_admissible_step(element, mesh.points, direction)
 
     assert 0.4 < maximum_step < 0.5
-    assert element.minimum_jacobian_ratio(mesh.points + maximum_step * direction) > 0.0
+    assert minimum_jacobian_ratio(element, mesh.points + maximum_step * direction) > 0.0
 
 
 def test_cloth_reference_operators_use_material_coordinates():
     mesh = FEMGenerateManager().create_rectangle(size=(2.0, 1.0), divisions=(1, 1))
     mesh.material_points[:, 0] *= 0.5
     element = create_cloth_element(mesh, ClothARAP(10.0, thickness=0.2))
-    deformation_gradient = element.compute_deformation_gradient(mesh.points)
-    deformation_metric = element.compute_metric_tensor(mesh.points)
+    deformation_gradient = compute_deformation_gradient(element, mesh.points)
+    deformation_metric = compute_metric_tensor(element, mesh.points)
 
     right_cauchy_green = np.einsum("eji,ejk->eik", deformation_gradient, deformation_gradient)
     # The convected metric A @ inv(A0) is generally non-symmetric, but is
@@ -465,9 +430,7 @@ def test_quadratic_bending_builds_one_psd_operator_for_two_triangles():
     assert element.bending_connectivity.shape == (1, 4)
     assert np.min(np.linalg.eigvalsh(element.bending_stiffness[0])) > -1.0e-14
     element_positions = mesh.points[element.bending_connectivity[0]]
-    np.testing.assert_allclose(
-        element.bending_stiffness[0] @ element_positions, 0.0, atol=1.0e-14
-    )
+    np.testing.assert_allclose(element.bending_stiffness[0] @ element_positions, 0.0, atol=1.0e-14)
 
 
 def test_obj_texture_coordinates_become_cloth_material_coordinates(tmp_path):

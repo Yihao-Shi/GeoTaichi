@@ -34,13 +34,14 @@ column_size = [
     float(os.environ.get("GT_COLUMN_HEIGHT", "1.0")),
 ]
 
-mpm.set_configuration(domain=domain,
-                      background_damping=0.00,
-                      gravity=[0., -9.8],
-                      alphaPIC=0.005,
-                      shape_function="QuadBSpline",
-                      solver_type="Implicit",
-                      )
+mpm.set_configuration(
+    domain=domain,
+    background_damping=0.00,
+    gravity=[0.0, -9.8],
+    alphaPIC=0.005,
+    shape_function="QuadBSpline",
+    solver_type="Implicit",
+)
 
 mpm.set_implicit_solver_parameters(
     quasi_static=False,
@@ -50,77 +51,83 @@ mpm.set_implicit_solver_parameters(
     residual_tolerance=float(os.environ.get("GT_RESIDUAL_TOL", "1e-10")),
 )
 
-mpm.set_solver(solver={
-                           "Timestep":                   float(os.environ.get("GT_TIMESTEP", "1e-4")),
-                           "SimulationTime":             float(os.environ.get("GT_SIMULATION_TIME", "5")),
-                           "SaveInterval":               float(os.environ.get("GT_SAVE_INTERVAL", "1e-1")),
-                           "SavePath":                   os.environ.get("GT_SAVE_PATH", "OutputData")
-                      })
+mpm.set_solver(
+    solver={
+        "Timestep": float(os.environ.get("GT_TIMESTEP", "1e-4")),
+        "SimulationTime": float(os.environ.get("GT_SIMULATION_TIME", "5")),
+        "SaveInterval": float(os.environ.get("GT_SAVE_INTERVAL", "1e-1")),
+        "SavePath": os.environ.get("GT_SAVE_PATH", "OutputData"),
+    }
+)
 
-mpm.memory_allocate(memory={
-                                "max_material_number":    1,
-                                "max_particle_number":    float(os.environ.get("GT_MAX_PARTICLES", "5.12e5")),
-                                "max_constraint_number":  {
-                                                               "max_displacement_constraint": int(os.environ.get("GT_MAX_DISPLACEMENT_CONSTRAINTS", "83000"))
-                                                          },
-                                "dof_multiplier":         int(os.environ.get("GT_DOF_MULTIPLIER", "2")),
-                            })
+mpm.memory_allocate(
+    memory={
+        "max_material_number": 1,
+        "max_particle_number": float(os.environ.get("GT_MAX_PARTICLES", "5.12e5")),
+        "max_constraint_number": {
+            "max_displacement_constraint": int(os.environ.get("GT_MAX_DISPLACEMENT_CONSTRAINTS", "83000"))
+        },
+        "dof_multiplier": int(os.environ.get("GT_DOF_MULTIPLIER", "2")),
+    }
+)
 
-mpm.add_material(model="DruckerPrager",
-                 material={
-                               "MaterialID":      1,
-                               "Density":         2500,
-                               "YoungModulus":    8.6e5,
-                               "PoissionRatio":   0.3,
-                               "Friction":        19,
-                               "Cohesion":        10,
-                               "Dilation":        0
-                 })
+mpm.add_material(
+    model="DruckerPrager",
+    material={
+        "MaterialID": 1,
+        "Density": 2500,
+        "YoungModulus": 8.6e5,
+        "PoissonRatio": 0.3,
+        "Friction": 19,
+        "Cohesion": 10,
+        "Dilation": 0,
+    },
+)
 
-mpm.add_element(element={
-                             "ElementType":               "Q4N2D",
-                             "ElementSize":               [element_size, element_size]
-                        })
+mpm.add_element(element={"ElementType": "Q4N2D", "ElementSize": [element_size, element_size]})
 
-mpm.add_region(region={
-                            "Name": "region1",
-                            "Type": "Rectangle2D",
-                            "BoundingBoxPoint": [0., 0.],
-                            "BoundingBoxSize": column_size,
-                            
-                      })
+mpm.add_region(
+    region={
+        "Name": "region1",
+        "Type": "Rectangle2D",
+        "BoundingBoxPoint": [0.0, 0.0],
+        "BoundingBoxSize": column_size,
+    }
+)
 
-mpm.add_body(body={
-                       "Template": {
-                                       "RegionName":         "region1",
-                                       "nParticlesPerCell":  2,
-                                       "BodyID":             0,
-                                       "MaterialID":         1,
-                                       "InitialVelocity":[0, 0],
-                                       "FixVelocity":    ["Free", "Free"]
-                                       
-                                   }
-                   })
+mpm.add_body(
+    body={
+        "Template": {
+            "RegionName": "region1",
+            "nParticlesPerCell": 2,
+            "BodyID": 0,
+            "MaterialID": 1,
+            "InitialVelocity": [0, 0],
+            "FixVelocity": ["Free", "Free"],
+        }
+    }
+)
 
-mpm.add_boundary_condition(boundary=[
-                                        {
-                                             "BoundaryType":   "DisplacementConstraint",
-                                             "Displacement":   [0., 0],
-                                             "StartPoint":     [0., 0.],
-                                             "EndPoint":       [domain[0], 0.]
-                                        },
-
-                                        {
-                                             "BoundaryType":   "DisplacementConstraint",
-                                             "Displacement":   [0., 0.],
-                                             "StartPoint":     [0., 0.],
-                                             "EndPoint":       [0., domain[1]]
-                                        },
-                                    ])
+mpm.add_boundary_condition(
+    boundary=[
+        {
+            "BoundaryType": "DisplacementConstraint",
+            "Displacement": [0.0, 0],
+            "StartPoint": [0.0, 0.0],
+            "EndPoint": [domain[0], 0.0],
+        },
+        {
+            "BoundaryType": "DisplacementConstraint",
+            "Displacement": [0.0, 0.0],
+            "StartPoint": [0.0, 0.0],
+            "EndPoint": [0.0, domain[1]],
+        },
+    ]
+)
 
 mpm.select_save_data()
 
-mpm.run(gravity_field=lambda points: column_size[1] - points[:,1])
+mpm.run(gravity_field=lambda points: column_size[1] - points[:, 1])
 
 if os.environ.get("GT_SKIP_POSTPROCESSING", "0") != "1":
     mpm.postprocessing()

@@ -3,7 +3,7 @@ import json
 import numpy as np
 import pytest
 
-from research.llm_assist.benchmarks import run_mixed_funnel as funnel
+from examples.fedem.MixedFunnel import mixed_funnel as funnel
 
 
 class _ArrayMember:
@@ -19,17 +19,12 @@ class _ArrayMember:
 
 class _StructField:
     def __init__(self, **members):
-        self._members = {
-            name: _ArrayMember(values) for name, values in members.items()
-        }
+        self._members = {name: _ArrayMember(values) for name, values in members.items()}
         for name, member in self._members.items():
             setattr(self, name, member)
 
     def to_numpy(self):
-        return {
-            name: member.to_numpy()
-            for name, member in self._members.items()
-        }
+        return {name: member.to_numpy() for name, member in self._members.items()}
 
 
 def test_restart_grid_mapping_removes_accumulated_time_drift():
@@ -81,9 +76,7 @@ def test_restart_restores_dissipative_parameters_without_rewriting_energy():
         "ndratio": np.asarray([0.0]),
     }
 
-    changed, energy_sensitive = funnel._restore_struct_parameters(
-        field, requested
-    )
+    changed, energy_sensitive = funnel._restore_struct_parameters(field, requested)
 
     assert changed is True
     assert energy_sensitive is False
@@ -120,9 +113,9 @@ def test_restart_native_frame_audit_counts_only_files_in_new_output(tmp_path):
         900_000,
         925_000,
     ]
-    assert funnel._existing_native_checkpoint_steps(
-        tmp_path / "separate_restart_output" / "native" / "checkpoints"
-    ) == []
+    assert (
+        funnel._existing_native_checkpoint_steps(tmp_path / "separate_restart_output" / "native" / "checkpoints") == []
+    )
 
 
 def test_funnel_has_four_slopes_chute_and_separate_closed_catcher():
@@ -165,29 +158,15 @@ def test_funnel_has_four_slopes_chute_and_separate_closed_catcher():
             assert float((interior - vertices[0]) @ normal) > 0.0
 
     upper_vertices = np.vstack(
-        [
-            np.asarray(vertices)
-            for name, vertices, _ in walls
-            if name.endswith("_hopper") or name.endswith("_chute")
-        ]
+        [np.asarray(vertices) for name, vertices, _ in walls if name.endswith("_hopper") or name.endswith("_chute")]
     )
-    catcher_vertices = np.vstack(
-        [
-            np.asarray(vertices)
-            for name, vertices, _ in walls
-            if name.startswith("catcher_")
-        ]
-    )
-    separation = np.linalg.norm(
-        upper_vertices[:, None, :] - catcher_vertices[None, :, :], axis=2
-    )
+    catcher_vertices = np.vstack([np.asarray(vertices) for name, vertices, _ in walls if name.startswith("catcher_")])
+    separation = np.linalg.norm(upper_vertices[:, None, :] - catcher_vertices[None, :, :], axis=2)
     assert float(np.min(separation)) > 0.0
 
 
 def test_funnel_800_particle_lattice_clears_all_four_slopes():
-    centers, radii = funnel._initial_packing(
-        np.random.default_rng(funnel.SEED)
-    )
+    centers, radii = funnel._initial_packing(np.random.default_rng(funnel.SEED))
     for name, vertices, normal in funnel._facet_wall_specs()[:4]:
         vertices = np.asarray(vertices, dtype=np.float64)
         normal = np.asarray(normal, dtype=np.float64)
@@ -200,9 +179,7 @@ def test_sparse_validation_column_interleaves_both_phases(monkeypatch):
     monkeypatch.setattr(funnel, "SOFT_COUNT", 4)
     monkeypatch.setattr(funnel, "RIGID_COUNT", 4)
 
-    centers, radii = funnel._initial_packing(
-        np.random.default_rng(funnel.SEED), packing="validation"
-    )
+    centers, radii = funnel._initial_packing(np.random.default_rng(funnel.SEED), packing="validation")
 
     assert centers.shape == (8, 3)
     assert radii.shape == (8,)
@@ -218,19 +195,14 @@ def test_sparse_validation_column_interleaves_both_phases(monkeypatch):
     assert np.all(centers[:, 0] + radii < 0.37)
     assert np.all(centers[:, 1] - radii > 0.12)
     assert np.all(centers[:, 1] + radii < 0.28)
-    pair_distance = np.linalg.norm(
-        centers[:, None, :] - centers[None, :, :], axis=2
-    )
+    pair_distance = np.linalg.norm(centers[:, None, :] - centers[None, :, :], axis=2)
     pair_clearance = pair_distance - radii[:, None] - radii[None, :]
     np.fill_diagonal(pair_clearance, np.inf)
     assert float(np.min(pair_clearance)) > funnel.SOFT_CONTACT_THICKNESS
 
 
 def test_funnel_outlet_and_catcher_elevations():
-    walls = {
-        name: np.asarray(vertices, dtype=np.float64)
-        for name, vertices, _ in funnel._facet_wall_specs()
-    }
+    walls = {name: np.asarray(vertices, dtype=np.float64) for name, vertices, _ in funnel._facet_wall_specs()}
     for name in ("left_chute", "right_chute", "front_chute", "back_chute"):
         assert float(np.min(walls[name][:, 2])) == funnel.CHUTE_BOTTOM_Z
         assert float(np.max(walls[name][:, 2])) == funnel.OUTLET_Z

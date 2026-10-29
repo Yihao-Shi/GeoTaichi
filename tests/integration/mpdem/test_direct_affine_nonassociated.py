@@ -31,7 +31,7 @@ def runtime():
     ti.reset()
 
 
-def _case(tmp_path, dilation=0.0, inexact=False, state_dependent=False):
+def _case(tmp_path, dilation=0.0, inexact=False, state_dependent=False, newmark=(1.0, 0.5, 1.0)):
     from geotaichi import MPDEM, polyhedron
 
     coupling = MPDEM(coupling=False, log=False)
@@ -95,6 +95,7 @@ def _case(tmp_path, dilation=0.0, inexact=False, state_dependent=False):
         log=False,
     )
     dem.set_affine_body_parameters(
+        newmark=newmark,
         contact_model="BarrierIPC",
         assemble_type="HashTriplet",
         young_modulus=2e4,
@@ -247,8 +248,9 @@ def test_nonassociated_strict_and_inexact_lagged_solve(tmp_path):
     print("strict/inexact warm solve:", [(r[0], r[1], r[2]) for r in results])
 
 
-def test_associated_route_keeps_symmetric_pcg(tmp_path):
-    coupling = _case(tmp_path, dilation=30.0, inexact=None)
+@pytest.mark.parametrize("newmark", [(1.0, 0.5, 1.0), (0.5, 0.25, 0.5)])
+def test_associated_route_keeps_symmetric_pcg(tmp_path, newmark):
+    coupling = _case(tmp_path, dilation=30.0, inexact=None, newmark=newmark)
     system = coupling.enginer
     assert system.matrix.solver == "PCG"
     assert system.matrix.matrix_symmetric
@@ -257,9 +259,19 @@ def test_associated_route_keeps_symmetric_pcg(tmp_path):
     assert result["friction_converged"]
 
 
+def test_public_nonassociated_default_keeps_fixed_linear_tolerances(tmp_path):
+    coupling = _case(tmp_path, inexact=None)
+    assert not coupling.enginer.inexact_newton
+    assert coupling.enginer.mpm.linear_solver_relative_tolerance == 0.0
+    result = coupling.run(verbose=False)
+    assert result["converged"] and result["step"] == 1
+    assert not result["last_step"]["inexact_newton"]
+    assert result["last_step"]["friction_converged"]
+
+
 @pytest.mark.parametrize("state_dependent", [False, True])
 def test_public_nonassociated_inexact_step_commits_history(tmp_path, state_dependent):
-    coupling = _case(tmp_path, inexact=None, state_dependent=state_dependent)
+    coupling = _case(tmp_path, inexact=True, state_dependent=state_dependent)
     assert coupling.enginer.inexact_newton
     assert coupling.run(verbose=False)["converged"]
     coupling.enginer.mpm.F0.from_numpy(np.array([np.diag([1.04, 0.96, 0.98])]))

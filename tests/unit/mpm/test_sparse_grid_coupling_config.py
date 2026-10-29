@@ -17,7 +17,7 @@ def _mpm_sparse_sim(coupling):
     sims.sparse_grid_backend = "BlockScan"
     sims.mapping = "USL"
     sims.coupling = coupling
-    sims.velocity_projection_scheme = "PIC/FLIP"
+    sims.velocity_projection_scheme = None
     return sims
 
 

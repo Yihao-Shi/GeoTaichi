@@ -91,6 +91,22 @@ class DirectAffineIPCAssembler(FEMPMIPCAssembler):
         return super().begin_step(fem_position, mpm_displacement, timestep)
 
     @ti.kernel
+    def copy_friction_hat(self):
+        for node in range(self.combined_node_count):
+            self.friction_hat[node] = self.positions[node]
+            if ti.static(self.affine.use_newmark):
+                if self.affine.initial_force_evaluation[None] != 0:
+                    if node < self.surface_count:
+                        particle = self.mpm.surface_id[node]
+                        velocity = ti.Vector.zero(self.real_type, 3)
+                        for local in range(self.mpm.offset[particle]):
+                            grid = self.mpm.LnID[particle, local]
+                            velocity += self.mpm.shape[particle, local] * self.mpm.grid[grid].v
+                        self.friction_hat[node] -= self.affine.dt_device[None] * velocity
+                    else:
+                        self.friction_hat[node] = self.affine.friction_reference_vertex(node - self.surface_count)
+
+    @ti.kernel
     def build_end_positions(
         self,
         affine_position: ti.template(),

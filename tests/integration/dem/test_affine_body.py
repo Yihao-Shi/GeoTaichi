@@ -160,9 +160,7 @@ def _build_two_body_case(
 def _equilibrium_barrier_gap(normal_load, collision_weight, dhat, kappa):
     """Solve the IPC point-plane barrier force balance."""
 
-    from src.physics_model.contact_model.ipc.IPC import (
-        ipc_barrier_distance_terms_py,
-    )
+    from tests.helpers.ipc_scalar_reference import ipc_barrier_distance_terms_py
 
     def weighted_normal_force(gap):
         _, gradient, _ = ipc_barrier_distance_terms_py(
@@ -433,18 +431,6 @@ def test_affine_body_wall_contact(tmp_path):
     assert os.path.exists(os.path.join(dem.sims.path, "walls", "DEMWall000001.npz"))
 
 
-def test_affine_body_semi_ipc_device_contact(tmp_path):
-    _init_once()
-    dem = _build_two_body_case(
-        assemble_type="HashTriplet",
-        contact_model="SemiIPC",
-        save_root=tmp_path,
-    )
-    diagnostics = dem.enginer.diagnostics_snapshot()["contact"]
-    assert diagnostics["model"] == "SemiIPC"
-    assert np.isfinite(dem.enginer.state.y).all()
-
-
 def test_world_hinge_supports_body_weight_without_free_momentum_correction(tmp_path):
     _init_once()
     from geotaichi import DEM, polyhedron
@@ -603,7 +589,7 @@ def test_affine_revolute_joint_energy_motor_limits_damping_and_collision_filter(
         MATRIX_COO,
     )
     operator.finalize_coo_assembly()
-    assert np.all(operator.body_pair_segment_base.to_numpy() == -1)
+    assert int(operator.active_body_pair_count[None]) == 0
     assert not np.any(operator.coo_matrix._to_numpy())
     operator._clear_system(False, MATRIX_COO)
     operator._assemble_wall_contacts(False, MATRIX_COO)
@@ -836,9 +822,10 @@ def test_affine_revolute_joint_barrieripc_adjoint(tmp_path):
     operator.joint_damping[0] = damping
 
 
-def test_differentiable_abd_two_step_lagged_friction(tmp_path):
+@pytest.mark.parametrize("assemble_type", ["COO", "HashTriplet"])
+def test_differentiable_abd_two_step_lagged_friction(tmp_path, assemble_type):
     _init_once()
-    dem = _build_two_body_case(assemble_type="COO", save_root=tmp_path)
+    dem = _build_two_body_case(assemble_type=assemble_type, save_root=tmp_path)
     dem.sims.affine_newton_tolerance = 1.0e-10
     dem.sims.affine_linear_tolerance = 1.0e-11
     engine = dem.enginer
@@ -992,7 +979,7 @@ def test_affine_cube_sliding_on_incline(tmp_path):
     assert dem_low_mu.enginer.last_inner_converged
     assert dem_low_mu.enginer.last_friction_converged
     assert abs(compensated_low_mu - expected_low_mu) / expected_low_mu < 0.01, (
-        f"sliding BE oracle mismatch: tangential={displacement_low_mu:.9e}, "
+        f"sliding BackwardEuler oracle mismatch: tangential={displacement_low_mu:.9e}, "
         f"normal={normal_displacement_low_mu:.9e}, "
         f"compensated={compensated_low_mu:.9e}, "
         f"expected={expected_low_mu:.9e}"
@@ -1008,3 +995,67 @@ if __name__ == "__main__":
     for backend in ("MatrixFree", "HashTriplet"):
         test_affine_body_contact_damping_energy_gradient_hessian(manual_root, backend)
     test_affine_cube_sliding_on_incline(manual_root)
+
+
+def test_affine_damping_history_pullback_matches_residual_difference(tmp_path, monkeypatch):
+    from src.dem.mainDEM import DEM
+    from src.dem.engines.AffineBodyOperator import MATRIX_COO
+
+    _init_once()
+
+    def initialize_only(dem):
+        dem.add_essentials()
+        dem.enginer.initialize(dem.sims, dem.scene)
+
+    monkeypatch.setattr(DEM, "run", initialize_only)
+    dem = _build_two_body_case(
+        assemble_type="COO",
+        dhat=0.01,
+        friction=0.0,
+        save_root=tmp_path,
+        joint={
+            "JointType": "Revolute",
+            "BodyID1": 0,
+            "BodyID2": 1,
+            "WorldAnchor": [2.0, 1.0, 1.0],
+            "WorldAxis": [0.0, 0.0, 1.0],
+            "PositionStiffness": 1e5,
+            "AxisStiffness": 1e5,
+            "MotorStiffness": 2e4,
+            "TargetAngle": 5.0,
+            "Damping": 20.0,
+        },
+    )
+    operator = dem.enginer.operator
+    rng = np.random.default_rng(71)
+    history = operator.y.to_numpy() + rng.normal(size=(operator.control_num, 3)) * 0.01
+    operator.y.from_numpy(history + rng.normal(size=history.shape) * 0.001)
+    adjoint = rng.normal(size=history.shape)
+    direction = rng.normal(size=history.shape)
+    operator.linear_x.from_numpy(adjoint.ravel())
+    mass = operator.mass.to_numpy()
+    inertia = np.concatenate([mass[body] @ adjoint[4 * body : 4 * body + 4] for body in range(operator.body_num)])
+
+    def objective(value):
+        operator.hat_y.from_numpy(value)
+        operator._clear_system(False, MATRIX_COO)
+        operator._assemble_local_damping(False, MATRIX_COO)
+        operator._assemble_joint_damping_compact(False, MATRIX_COO)
+        return np.sum(operator.grad.to_numpy() * adjoint)
+
+    for force_damping, torque_damping in [(0.0, 0.0), (0.7, 0.7), (0.3, 0.8)]:
+        operator.force_damp.fill(force_damping)
+        operator.torque_damp.fill(torque_damping)
+        operator.hat_y.from_numpy(history)
+        operator.state_y_vjp.fill(0.0)
+        operator.state_velocity_vjp.fill(0.0)
+        operator.device_propagate_step_state_adjoint()
+        predicted = np.sum((operator.state_y_vjp.to_numpy() - inertia) * direction)
+        for epsilon in [1e-5, 1e-6]:
+            expected = -(objective(history + epsilon * direction) - objective(history - epsilon * direction)) / (
+                2 * epsilon
+            )
+            np.testing.assert_allclose(predicted, expected, rtol=1e-6, atol=1e-8)
+        np.testing.assert_allclose(
+            operator.state_velocity_vjp.to_numpy(), operator.dt * inertia, rtol=1e-12, atol=1e-14
+        )

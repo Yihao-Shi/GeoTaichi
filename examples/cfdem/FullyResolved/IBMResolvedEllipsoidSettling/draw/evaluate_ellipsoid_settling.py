@@ -49,10 +49,10 @@ def evaluate(config, times, centers, velocities, solid_volume_error, ibm_l2_erro
         "ibm_velocity_l2_error": ibm_l2_error,
     }
     speed, deviation = terminal_speed(times, velocities)
-    duration_complete = float(times[-1]) >= 0.95 * config["time"]
+    duration_complete = abs(float(times[-1]) - config["time"]) <= 1.0e-12 * max(1.0, config["time"])
     metrics.update(terminal_speed=speed, terminal_speed_std=deviation, validation_duration_complete=duration_complete)
     metrics["flatness"] = config["flatness"]
-    passed = speed > 0.0 and deviation <= max(0.2 * speed, 1e-05)
+    passed = duration_complete and speed > 0.0 and deviation <= max(0.2 * speed, 1e-05)
     passed = passed and solid_volume_error <= 0.15
     passed = passed and ibm_l2_error <= max(0.3 * speed, 0.0001)
     metrics["passed"] = bool(passed)

@@ -1,3 +1,6 @@
+#!/usr/bin/env bash
+cd "$(dirname "$0")"
+
 python conso.py
-python drained2.py
-python drained1.py
+python drained.py
+python undrained.py

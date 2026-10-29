@@ -28,7 +28,7 @@ HEX8 additionally accepts the shared incremental solid models: von Mises
 elastic-perfectly-plastic, Mohr--Coulomb, Drucker--Prager, state-dependent
 Mohr--Coulomb, Modified Cam-Clay, GranularMaterial, SANISAND-MS, and NorSand.
 This route is updated-Lagrangian, explicit-only, uses eight Gauss-point stress
-and state histories, and rejects FEM IPC/AL. An optional six-component
+and state histories, and rejects FEM IPC. An optional six-component
 `initial_stress` initializes those histories. Models without one fixed
 preprocessing modulus, currently Modified Cam-Clay, require a user-specified
 finite `dt` instead of `dt="auto"`.
@@ -39,6 +39,10 @@ The runtime backend is Taichi. Choose `assemble_type="COO"` or
 `"HashTriplet"`. Choose device `PCG`/`BiCGSTAB`, or explicitly use Scipy only
 for the linear solve. PCG requires `project_pd=True`. Implicit FEM uses
 Newmark/Newton plus Armijo line search; explicit FEM uses lumped mass.
+The implicit `newmark` key requires exactly `[alpha, beta, gamma]`:
+`[0.5, 0.25, 0.5]` is average acceleration and `[1, 0.5, 1]` is backward Euler.
+There is no two-parameter input form. Alpha participates in prediction,
+acceleration, residual/tangent and endpoint recovery, including FEM coupling.
 
 ## 4. Cloth energies
 
@@ -67,7 +71,7 @@ Verlet multiplier.
 
 ## 6. Contact and collision culling
 
-IPC and augmented-Lagrangian contact require implicit FEM. `broad_phase`
+IPC contact requires implicit FEM. `broad_phase`
 selects LinkedCell or BVH only for conservative AABB overlaps. Common Taichi
 collision culling applies topology/stitch exclusions, exact current-distance
 or swept conservative-CCD pruning, prefix-sum compaction, and minimum-step

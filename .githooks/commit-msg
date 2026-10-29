@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PYTHON_EXECUTABLE="${GEOTAICHI_PYTHON:-$(git config --get geotaichi.python || command -v python)}"
+exec "$PYTHON_EXECUTABLE" tests/testing/run_commit_checks.py "$1"

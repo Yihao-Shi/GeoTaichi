@@ -1,16 +1,14 @@
-"""Run directly: python tests/unit/tools/test_mpm_cloth_gif.py."""
+"""Cloth gallery geometry and frame tests; run with pytest."""
 
 import importlib.util
 import json
 from pathlib import Path
-import sys
 import tempfile
 import unittest
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "tools"))
-from mpm_cloth_gif import prepare
+from tools.mpm_cloth_gif import prepare
 
 
 class ClothGalleryCheck(unittest.TestCase):

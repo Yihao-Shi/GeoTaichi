@@ -524,6 +524,16 @@ commits these quantities only after the global step is accepted.
 
 ## Incremental infinitesimal elastoplasticity
 
+The shared `Sigrot` uses the native single-phase MPM convention
+`L_ij = dv_i/dx_j`, with `W = (L - L.T)/2`. Its Cauchy-stress increment is
+`dt * (W @ sigma - sigma @ W)`, added to the constitutive increment. Under
+rigid rotation this is the first-order expansion of `R @ sigma @ R.T`;
+using the opposite sign rotates stress in the wrong direction. This shared
+correction also applies to NorSand; its yield, hardening and flow laws are
+unchanged. Finite-strain models computing stress from the deformation gradient
+do not use `Sigrot`. `test_small_strain_rotation.py` checks the 2D/3D spin
+components and the complete elastic material entry against rigid rotation.
+
 With tension-positive Cauchy stress, define compression-positive mean stress
 $`p`$, deviatoric stress, and equivalent shear stress by
 
@@ -801,10 +811,21 @@ with the physical time step; calling a local `core` directly only evaluates
 a frozen-rate return mapping.
 
 `ReturnMapping` and `ImplicitIntegration` are both local constitutive choices
-under an explicit global solver. `SubStepping` with this rate extension uses
-a complete return mapping inside the consistency solve. MCC also supports
-its `ImplicitIntegrationAL` local solver. An implicit global solver is
-rejected because the coupled rate tangent has not been implemented.
+under an explicit global solver. Without `RateDependent`, these choices use
+DP's dedicated `ClosedFormIntegration`; DP still uses the unified explicit
+integrator when `SubStepping` is requested. With `RateDependent=True`, DP uses
+the unified `PlasticMaterial.ImplicitIntegration` inside the rate/pressure
+consistency solve. `SubStepping` with this rate extension also uses a complete
+local return mapping. MCC retains its `ImplicitIntegrationAL` local solver.
+Models must explicitly declare and implement their mu(I) extension; entering
+the shared integration framework alone does not enable rate dependence.
+NorSand and ElasticPerfectlyPlastic reject `RateDependent=True`; the latter
+needs a separate rate-dependent yield-stress law rather than a friction-angle
+extension. Global implicit MPM rejects `RateDependent=True` during material
+initialization with an error identifying the missing consistent rate-dependent
+tangent. The shared rate solve remains a fixed-point iteration with frozen
+local parameters; this dispatch change does not introduce a coupled Newton
+Jacobian or an algorithmically consistent rate tangent.
 
 Angles are in degrees. `DynamicFriction` defaults to `StaticFriction` (or
 `Friction`), and must be at least the static angle and below 90 degrees.
@@ -933,3 +954,75 @@ G=G_0\sqrt{\frac{p}{p_{ref}}}.
 - [FEM--MPM plasticity inside IPC](../../fempm/README.md#4-fully-coupled-equilibrium-and-plasticity)
 - [IGA--MPM plasticity inside IPC](../../igampm/README.md#8-plastic-constitutive-models-inside-the-ipc-solve)
 - [Direct MPM--AffineBody plasticity inside IPC](../../mpdem/README.md#15-solid-mpm--affinebody-ipc-and-plasticity)
+
+## Bounded linear softening
+
+`SoftenModel.LinearSoft()` takes no scale parameter. Peak/residual strengths
+and `PlasticDevStrain`/`ResidualPlasticDevStrain` fully determine the line.
+Inside that interval the interpolation weight is
+`clip((strain - start) / (end - start), 0, 1)`. Before the start it returns
+peak strength; at/after the end it returns residual strength. The derivative
+is `(residual - peak) / (end - start)` in the ramp and zero on the plateaus
+and at the endpoints. Reversed strength endpoints are also bounded.
+
+`SoftenParameter` is no longer read by the shared material selector. Remove it
+from input dictionaries. To preserve a formerly clipped factor `eta >= 1`, set
+`new_end = start + (old_end - start) / eta`. For example, endpoints 0/0.02
+preserve a previous factor-5 curve over 0/0.1. The current paper-based
+sensitive-clay DP control instead uses 0/0.32 for cohesion 20/4 kPa and slope
+-50 kPa. This parameter removal applies to shared DP, MC and
+perfectly plastic material consumers, including incremental FEM materials.
+Exponential and hyperbolic-sine laws retain their own parameters.
+
+Tests in `tests/unit/physics_model/materials/test_linear_softening.py` cover
+endpoint bounds, plateaus, finite-difference tangents and parameter migration.
+See the [uniform-grid sensitive-clay DP example](../../../examples/mpm/sensitive_clay/README.md).
+
+
+### Small-strain DP softening consistency
+
+`infinitesimal_strain/DruckerPrager.py` permits exactly zero friction. With
+`dpType="Inscribed"` and zero friction/dilation, the surface is sqrt(J2)=c
+and the accumulated equivalent plastic strain reaches the sensitive-clay
+residual at 0.32 for cohesion 20→4 kPa and slope -50 kPa. Interior elastic
+states return a signed negative yield value, required by the elastic/plastic
+intersection search. The substepping material callback recomputes strength
+from the current local history without committing the global state early.
+The history rate uses the actual plastic-flow norm, including the distinct
+hydrostatic tensile rate `sqrt(2)/3`. When a tensile cap is limited by the
+softened apex `c*cot(phi)`, DP and MC include its derivative in the tensile
+plastic modulus. Random-field derivatives use the same particle strengths and
+residual fractions as the strength update.
+`test_dp_softening_consistency.py` checks that callback and the full analytical
+simple-shear curve through the residual plateau. The classical closed-form
+return retains its frozen-strength approximation; the paper validation uses
+SubStepping. The earlier MC tensor-invariant derivative audit is not a DP
+history convention and its sqrt(2) conversion must not be applied to DP.
+
+### Small-strain history consistency audit
+
+MC retains negative yield distances in the elastic interior, as do Mises,
+MCC and NorSand. Softening MC and Mises refresh strength from the current
+local tensor history without committing particle state early. Generic implicit
+and explicit returns refresh parameters before testing the updated residual.
+For their existing invariant `kappa=sqrt(dev:dev/3)`, the tensor derivative is
+`dev/(3*kappa)`; Voigt contraction doubles shear contributions. The persisted
+strain invariant and parameter endpoints are unchanged. Random-field strength
+and its derivative use the same particle peak and residual fraction.
+Mises random-field initialization reads both softening strain endpoints from
+the material dictionary, as the uniform-material initializer does.
+
+MCC's plastic modulus differentiates all current history rates: preconsolidation
+pressure, both bond shifts and the subloading ratio. It includes the ratio in
+the yield derivatives and uses current volumetric/equivalent flow rates instead
+of previous stored increments. Reinitializing a subloading ratio from pressure
+is separate from plastic evolution; a zero plastic increment preserves state.
+NorSand retains its existing implementation, including its frozen step
+parameters and modulus clipping.
+
+`test_small_strain_consistency.py` checks directional derivatives and analytical
+MC/Mises shear curves for return mapping and substepping through the residual
+plateau. It checks the MCC extensions. These checks do not establish complete
+MCC stress tangents or all loading paths. LinearElastic has no plastic-history chain;
+StateDependentMohrCoulomb, GranularMaterial and SanisandMS have separate update
+algorithms and do not use the affected yield-distance/material-refresh hooks.

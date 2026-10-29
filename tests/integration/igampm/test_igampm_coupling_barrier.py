@@ -172,41 +172,6 @@ def test_igampm_aabb_pruning_keeps_active_distances_and_safe_ccd(taichi_runtime,
 
 
 @pytest.mark.isolated_dimension(3)
-def test_igampm_semi_ipc_keeps_contact_ccd(taichi_runtime, tmp_path):
-    config.set_dimension(3)
-
-    from src.igampm import IGAMPM
-
-    iga = _build_iga_cube(tmp_path / "iga-semi")
-    mpm = _build_mpm_particle(tmp_path / "mpm-semi")
-    coupling = IGAMPM(
-        iga,
-        mpm,
-        contact_model="SemiIPC",
-        penalty=1.0e4,
-        dhat=0.08,
-        barrier_nnz=20_000,
-    )
-    coupling.initialize_barrier()
-    iga.incre_resolution.fill(0.0)
-    direction = np.zeros(mpm.degree_of_freedom, dtype=np.float64)
-    direction[: mpm.active_dof].reshape((-1, 3))[:, 2] = 0.1
-    mpm.incre_resolution.from_numpy(direction)
-
-    step = coupling.conservative_contact_step_device(
-        max_step=1.0,
-        safety=0.9,
-        verify=False,
-    )
-    coupling.assemble_barrier_system()
-
-    assert coupling.barrier.model == "SemiIPC"
-    assert 0.0 < step < 1.0
-    assert coupling.curr_barrier_contact_num > 0
-    assert np.isfinite(coupling.barrier_grad.to_numpy()).all()
-
-
-@pytest.mark.isolated_dimension(3)
 def test_igampm_coupling_barrier_3d_assembles_symmetric_system(
     taichi_runtime,
     tmp_path,
@@ -229,11 +194,11 @@ def test_igampm_coupling_barrier_3d_assembles_symmetric_system(
     mpm.incre_resolution.from_numpy(mpm_direction)
     control_points_before = coupling.contact_surface.control_points_hat.to_numpy().copy()
     contact_step = coupling.conservative_contact_step_device(max_step=1.0, safety=0.9)
-    expected_pairs = int(mpm.total_surface_num) * int(coupling.contact_surface.num_surfaces)
     assert 0.0 < contact_step < 1.0
+    # The particle starts 0.031 m below the flat face and moves 0.1 m towards it.
     assert np.isclose(
         contact_step,
-        np.min(coupling.contact_accd_toc.to_numpy()[:expected_pairs]),
+        0.9 * 0.031 / 0.1,
         rtol=1.0e-12,
         atol=1.0e-12,
     )

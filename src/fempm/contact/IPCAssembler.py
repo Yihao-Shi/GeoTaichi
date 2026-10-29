@@ -28,9 +28,6 @@ from src.physics_model.contact_model.ipc.IPC import (
     ipc_friction_f1_over_speed,
     ipc_friction_hessian_term,
     ipc_toolkit_barrier_distance2_offset_terms,
-    semi_ipc_find_or_insert,
-    semi_ipc_terms,
-    semi_ipc_update_multiplier,
 )
 
 
@@ -153,20 +150,16 @@ class FEMPMIPCAssembler:
         self.pair_dmin = ti.field(dtype=self.real_type, shape=pair_shape)
         self.pair_friction = ti.field(dtype=self.real_type, shape=pair_shape)
         self.pair_epsv = ti.field(dtype=self.real_type, shape=pair_shape)
-        self.pair_penalty = ti.field(dtype=self.real_type, shape=pair_shape)
         self.pair_active.from_numpy(parameters["active"])
         self.pair_kappa.from_numpy(parameters["kappa"])
         self.pair_dhat.from_numpy(parameters["dhat"])
         self.pair_dmin.from_numpy(parameters["dmin"])
         self.pair_friction.from_numpy(parameters["friction"])
         self.pair_epsv.from_numpy(parameters["epsv"])
-        self.pair_penalty.from_numpy(parameters["penalty"])
         self.search_distance = float(parameters["search_distance"])
         self.ccd_safety = float(parameters["ccd_safety"])
         self.ccd_max_iterations = int(parameters["ccd_max_iterations"])
         self.activate_friction = bool(model.activate_friction)
-        self.is_semi = model.contact.model == "AugmentedLagrangian"
-        self.constraint_tolerance = float(model.contact.constraint_tolerance)
 
         self.total_energy = ti.field(dtype=self.real_type, shape=())
         self.minimum_step = ti.field(dtype=self.real_type, shape=())
@@ -184,17 +177,6 @@ class FEMPMIPCAssembler:
         )
         self.friction_normal = ti.Vector.field(3, dtype=self.real_type, shape=self.friction_capacity)
         self.friction_normal_force = ti.field(dtype=self.real_type, shape=self.friction_capacity)
-        self.semi_capacity = 1 << (max(2 * self.friction_capacity, 1) - 1).bit_length()
-        self.semi_count = ti.field(dtype=ti.i32, shape=())
-        self.semi_state = ti.field(dtype=ti.i32, shape=self.semi_capacity)
-        self.semi_key = ti.Vector.field(4, dtype=ti.i32, shape=self.semi_capacity)
-        self.semi_weight = ti.Vector.field(4, dtype=self.real_type, shape=self.semi_capacity)
-        self.semi_normal = ti.Vector.field(3, dtype=self.real_type, shape=self.semi_capacity)
-        self.semi_multiplier = ti.field(dtype=self.real_type, shape=self.semi_capacity)
-        self.semi_slot = ti.field(dtype=ti.i32, shape=self.friction_capacity)
-        self.semi_overflow = ti.field(dtype=ti.i32, shape=())
-        self.constraint_violation = ti.field(dtype=self.real_type, shape=())
-        self.semi_state.fill(2)
         self.build_positions(fem.state.position, mpm.grid_disp)
         self.copy_friction_hat()
 
@@ -269,75 +251,7 @@ class FEMPMIPCAssembler:
         self.build_positions(fem_position, mpm_displacement)
         count, _ = self.culling.rebuild_proximity(self.positions, self.search_distance)
         count = int(count)
-        if self.is_semi:
-            self.semi_overflow[None] = 0
-            if self.dimension == 2:
-                self._prepare_semi_2d(count, self.candidate_field())
-            else:
-                self._prepare_semi_3d(count, self.candidate_field())
-            if int(self.semi_overflow[None]) != 0:
-                raise RuntimeError("FEMPM SemiIPC multiplier hash capacity is too small")
         return count
-
-    @ti.func
-    def _semi_frame(self, gradient, distance, dimensions: ti.template()):
-        normal = ti.Vector([1.0, 0.0, 0.0])
-        weight = ti.Vector.zero(self.real_type, 4)
-        if distance > 1.0e-15:
-            for component in ti.static(range(dimensions)):
-                normal[component] = gradient[component] / (2.0 * distance)
-            for site, component in ti.static(ti.ndrange(self.stencil_size, dimensions)):
-                weight[site] += gradient[dimensions * site + component] * normal[component] / (2.0 * distance)
-        return weight, normal
-
-    @ti.func
-    def _store_semi_frame(self, contact, key, weight, normal):
-        slot = semi_ipc_find_or_insert(
-            self.semi_state,
-            self.semi_key,
-            self.semi_multiplier,
-            self.semi_count,
-            key,
-            ti.static(self.semi_capacity),
-        )
-        if slot >= 0:
-            previous = self.semi_normal[slot]
-            if previous.norm_sqr() > 0.0 and previous.dot(normal) < 0.0:
-                normal = -normal
-            self.semi_weight[slot] = weight
-            self.semi_normal[slot] = normal
-        else:
-            self.semi_overflow[None] = 1
-        self.semi_slot[contact] = slot
-
-    @ti.kernel
-    def _prepare_semi_3d(self, count: ti.i32, candidates: ti.template()):
-        for contact in range(count):
-            stencil = candidates[contact]
-            distance2, gradient, _ = point_triangle_distance_grad(
-                self.positions[stencil[0]],
-                self.positions[stencil[1]],
-                self.positions[stencil[2]],
-                self.positions[stencil[3]],
-            )
-            weight, normal = self._semi_frame(gradient, ti.sqrt(ti.max(distance2, 0.0)), 3)
-            self._store_semi_frame(contact, stencil, weight, normal)
-
-    @ti.kernel
-    def _prepare_semi_2d(self, count: ti.i32, candidates: ti.template()):
-        for contact in range(count):
-            stencil = candidates[contact]
-            point = ti.Vector([self.positions[stencil[0]][0], self.positions[stencil[0]][1]])
-            first = ti.Vector([self.positions[stencil[1]][0], self.positions[stencil[1]][1]])
-            second = ti.Vector([self.positions[stencil[2]][0], self.positions[stencil[2]][1]])
-            distance2, gradient, _, _ = point_edge_distance_grad_hess_2d(point, first, second)
-            weight, normal = self._semi_frame(gradient, ti.sqrt(ti.max(distance2, 0.0)), 2)
-            self._store_semi_frame(
-                contact,
-                ti.Vector([stencil[0], stencil[1], stencil[2], -1]),
-                weight,
-                normal,
-            )
 
     @ti.kernel
     def copy_friction_hat(self):
@@ -353,10 +267,6 @@ class FEMPMIPCAssembler:
         # a Newton/search-dependent active count.
 
     def begin_step(self, fem_position, mpm_displacement, timestep):
-        if self.is_semi:
-            self.semi_state.fill(2)
-            self.semi_multiplier.fill(0.0)
-            self.semi_count[None] = 0
         count = self.prepare(fem_position, mpm_displacement)
         self.copy_friction_hat()
         self.friction_dt[None] = float(timestep)
@@ -433,19 +343,7 @@ class FEMPMIPCAssembler:
                 dhat = self.pair_dhat[mpm_body, fem_body]
                 shifted = distance2 - dmin * dmin
                 active_gap2 = (2.0 * dmin + dhat) * dhat
-                if ti.static(self.is_semi):
-                    slot = self.semi_slot[contact_id]
-                    if slot >= 0:
-                        weight = self.semi_weight[slot]
-                        normal = self.semi_normal[slot]
-                        gap = -(dmin + dhat)
-                        for site in ti.static(range(4)):
-                            gap += weight[site] * normal.dot(self.positions[stencil[site]])
-                        normal_force = self.mpm.surface_measure[sample] * ti.max(
-                            self.semi_multiplier[slot] - self.pair_penalty[mpm_body, fem_body] * gap,
-                            0.0,
-                        )
-                elif shifted > 0.0 and shifted < active_gap2:
+                if shifted > 0.0 and shifted < active_gap2:
                     normalized_kappa = self.pair_kappa[mpm_body, fem_body] / (active_gap2 * active_gap2)
                     _, first, _ = ipc_toolkit_barrier_distance2_offset_terms(distance2, dhat, dmin, normalized_kappa, 0)
                     scale = self.mpm.surface_measure[sample] * dhat
@@ -504,21 +402,7 @@ class FEMPMIPCAssembler:
                 dhat = self.pair_dhat[mpm_body, fem_body]
                 shifted = distance2 - dmin * dmin
                 active_gap2 = (2.0 * dmin + dhat) * dhat
-                if ti.static(self.is_semi):
-                    slot = self.semi_slot[contact_id]
-                    if slot >= 0:
-                        hash_weight = self.semi_weight[slot]
-                        normal3 = self.semi_normal[slot]
-                        for site in ti.static(range(3)):
-                            weight[site] = hash_weight[site]
-                        gap = -(dmin + dhat)
-                        for site in ti.static(range(3)):
-                            gap += weight[site] * normal3.dot(self.positions[stencil[site]])
-                        normal_force = self.mpm.surface_measure[sample] * ti.max(
-                            self.semi_multiplier[slot] - self.pair_penalty[mpm_body, fem_body] * gap,
-                            0.0,
-                        )
-                elif shifted > 0.0 and shifted < active_gap2:
+                if shifted > 0.0 and shifted < active_gap2:
                     normalized_kappa = self.pair_kappa[mpm_body, fem_body] / (active_gap2 * active_gap2)
                     _, first, _ = ipc_toolkit_barrier_distance2_offset_terms(distance2, dhat, dmin, normalized_kappa, 0)
                     scale = self.mpm.surface_measure[sample] * dhat
@@ -624,7 +508,6 @@ class FEMPMIPCAssembler:
         self.total_energy[None] = 0.0
         self.active_count[None] = 0
         self.minimum_distance[None] = 1.0e30
-        self.constraint_violation[None] = 0.0
         for contact_id in range(count):
             stencil = candidates[contact_id]
             sample, particle, mpm_body, fem_body = self._pair_indices(stencil)
@@ -652,41 +535,7 @@ class FEMPMIPCAssembler:
                 ti.atomic_min(self.minimum_distance[None], distance - dmin)
                 shifted = distance2 - dmin * dmin
                 active_gap2 = (2.0 * dmin + dhat) * dhat
-                if ti.static(self.is_semi):
-                    slot = self.semi_slot[contact_id]
-                    if slot >= 0:
-                        weight = self.semi_weight[slot]
-                        normal = self.semi_normal[slot]
-                        gap = -(dmin + dhat)
-                        for site in ti.static(range(4)):
-                            gap += weight[site] * normal.dot(self.positions[stencil[site]])
-                        ti.atomic_max(self.constraint_violation[None], ti.max(-gap, 0.0))
-                        value, first, second = semi_ipc_terms(
-                            gap,
-                            self.semi_multiplier[slot],
-                            self.pair_penalty[mpm_body, fem_body],
-                        )
-                        scale = self.mpm.surface_measure[sample]
-                        ti.atomic_add(self.total_energy[None], scale * value)
-                        if second > 0.0:
-                            ti.atomic_add(self.active_count[None], 1)
-                            gradient = ti.Vector.zero(self.real_type, 12)
-                            for site, component in ti.static(ti.ndrange(4, 3)):
-                                gradient[3 * site + component] = first * weight[site] * normal[component]
-                            self._scatter_gradient(stencil, particle, scale * gradient, rhs)
-                            if ti.static(need_matrix):
-                                for first_site, second_site in ti.ndrange(4, 4):
-                                    block = (
-                                        scale
-                                        * second
-                                        * weight[first_site]
-                                        * weight[second_site]
-                                        * normal.outer_product(normal)
-                                    )
-                                    self._scatter_hessian_block(
-                                        stencil, particle, first_site, second_site, block, matrix
-                                    )
-                elif shifted < active_gap2:
+                if shifted < active_gap2:
                     normalized_kappa = self.pair_kappa[mpm_body, fem_body] / (active_gap2 * active_gap2)
                     value, first, second = ipc_toolkit_barrier_distance2_offset_terms(
                         distance2, dhat, dmin, normalized_kappa, 0
@@ -794,7 +643,6 @@ class FEMPMIPCAssembler:
         self.total_energy[None] = 0.0
         self.active_count[None] = 0
         self.minimum_distance[None] = 1.0e30
-        self.constraint_violation[None] = 0.0
         for contact_id in range(count):
             stencil = candidates[contact_id]
             sample, particle, mpm_body, fem_body = self._pair_indices(stencil)
@@ -826,45 +674,7 @@ class FEMPMIPCAssembler:
                 ti.atomic_min(self.minimum_distance[None], distance - dmin)
                 shifted = distance2 - dmin * dmin
                 active_gap2 = (2.0 * dmin + dhat) * dhat
-                if ti.static(self.is_semi):
-                    slot = self.semi_slot[contact_id]
-                    if slot >= 0:
-                        hash_weight = self.semi_weight[slot]
-                        normal3 = self.semi_normal[slot]
-                        normal = ti.Vector([normal3[0], normal3[1]])
-                        gap = -(dmin + dhat)
-                        for site in ti.static(range(3)):
-                            gap += hash_weight[site] * normal3.dot(self.positions[stencil[site]])
-                        ti.atomic_max(self.constraint_violation[None], ti.max(-gap, 0.0))
-                        value, first, second = semi_ipc_terms(
-                            gap,
-                            self.semi_multiplier[slot],
-                            self.pair_penalty[mpm_body, fem_body],
-                        )
-                        scale = self.mpm.surface_measure[sample]
-                        ti.atomic_add(self.total_energy[None], scale * value)
-                        if second > 0.0:
-                            ti.atomic_add(self.active_count[None], 1)
-                            gradient = ti.Vector.zero(self.real_type, 6)
-                            for site, component in ti.static(ti.ndrange(3, 2)):
-                                gradient[2 * site + component] = first * hash_weight[site] * normal[component]
-                            self._scatter_gradient(stencil, particle, scale * gradient, rhs)
-                            if ti.static(need_matrix):
-                                for first_site, second_site in ti.ndrange(3, 3):
-                                    block = ti.Matrix.zero(self.real_type, 3, 3)
-                                    for row, column in ti.static(ti.ndrange(2, 2)):
-                                        block[row, column] = (
-                                            scale
-                                            * second
-                                            * hash_weight[first_site]
-                                            * hash_weight[second_site]
-                                            * normal[row]
-                                            * normal[column]
-                                        )
-                                    self._scatter_hessian_block(
-                                        stencil, particle, first_site, second_site, block, matrix
-                                    )
-                elif shifted < active_gap2:
+                if shifted < active_gap2:
                     normalized_kappa = self.pair_kappa[mpm_body, fem_body] / (active_gap2 * active_gap2)
                     value, first, second = ipc_toolkit_barrier_distance2_offset_terms(
                         distance2, dhat, dmin, normalized_kappa, 0
@@ -970,8 +780,6 @@ class FEMPMIPCAssembler:
             if self._pair_is_active(mpm_body, fem_body):
                 eta = 1.0 - ti.static(self.ccd_safety)
                 thickness = self.pair_dmin[mpm_body, fem_body]
-                if ti.static(self.is_semi):
-                    thickness = 0.0
                 toc = 1.0
                 if thickness > 0.0:
                     toc = point_triangle_accd(
@@ -1015,8 +823,6 @@ class FEMPMIPCAssembler:
             if self._pair_is_active(mpm_body, fem_body):
                 eta = 1.0 - ti.static(self.ccd_safety)
                 thickness = self.pair_dmin[mpm_body, fem_body]
-                if ti.static(self.is_semi):
-                    thickness = 0.0
                 point = ti.Vector(
                     [
                         self.positions[stencil[0]][0],
@@ -1104,33 +910,6 @@ class FEMPMIPCAssembler:
             self._compute_ccd_3d(raw_count, self.candidate_field())
         return max(0.0, min(1.0, float(self.minimum_step[None])))
 
-    @ti.kernel
-    def _update_semi_multipliers(self, count: ti.i32, candidates: ti.template()):
-        self.constraint_violation[None] = 0.0
-        for contact in range(count):
-            stencil = candidates[contact]
-            _, _, mpm_body, fem_body = self._pair_indices(stencil)
-            slot = self.semi_slot[contact]
-            if slot >= 0 and self._pair_is_active(mpm_body, fem_body):
-                gap = -(self.pair_dmin[mpm_body, fem_body] + self.pair_dhat[mpm_body, fem_body])
-                for site in ti.static(range(self.stencil_size)):
-                    gap += self.semi_weight[slot][site] * self.semi_normal[slot].dot(self.positions[stencil[site]])
-                self.semi_multiplier[slot] = semi_ipc_update_multiplier(
-                    gap,
-                    self.semi_multiplier[slot],
-                    self.pair_penalty[mpm_body, fem_body],
-                )
-                ti.atomic_max(self.constraint_violation[None], ti.max(-gap, 0.0))
-
-    def accept_update(self, fem_position, mpm_displacement):
-        if not self.is_semi:
-            return
-        count = self.prepare(fem_position, mpm_displacement)
-        self._update_semi_multipliers(count, self.candidate_field())
-
-    def contact_converged(self):
-        return not self.is_semi or float(self.constraint_violation[None]) <= self.constraint_tolerance
-
     def contact_block_capacity(self, candidate_count):
         support = int(self.mpm.shape_func.max_node_per_particle)
         contacts = int(candidate_count) + int(self.friction_count)
@@ -1151,7 +930,7 @@ class FEMPMIPCAssembler:
         if minimum > 0.5e30:
             minimum = np.inf
         return {
-            "model": "SemiIPC" if self.is_semi else "BarrierIPC",
+            "model": "BarrierIPC",
             "active_contacts": int(self.active_count[None]),
             "candidate_contacts": int(
                 self.culling.point_edge_count[None] if self.dimension == 2 else self.culling.point_triangle_count[None]
@@ -1160,7 +939,6 @@ class FEMPMIPCAssembler:
             "minimum_distance": minimum,
             "ccd_step": float(self.minimum_step[None]),
             "energy": float(self.total_energy[None]),
-            "constraint_violation": float(self.constraint_violation[None]) if self.is_semi else 0.0,
         }
 
 

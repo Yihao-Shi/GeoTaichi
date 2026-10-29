@@ -1,20 +1,13 @@
 from __future__ import annotations
 
-import sys
-from pathlib import Path
 
 import numpy as np
 
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-SCRIPT_ROOT = REPO_ROOT / "research" / "LSMPM" / "scripts"
-if str(SCRIPT_ROOT) not in sys.path:
-    sys.path.insert(0, str(SCRIPT_ROOT))
-
-from analyze_v1_deforming_levelset import (  # noqa: E402
+from research.LSMPM.scripts.analyze_v1_deforming_levelset import (
     affine_rounded_cube_signed_distance,
 )
-from run_v1_square_rotation import (  # noqa: E402
+from research.LSMPM.scripts.run_v1_square_rotation import (
     cube_signed_distance,
     rounded_cube_volume,
     rounded_square_contour,
@@ -60,9 +53,7 @@ def test_rounded_square_contour_is_closed_and_on_exact_zero_surface() -> None:
 
 def test_affine_support_distance_recovers_identity_rounded_cube() -> None:
     coordinates = np.linspace(-0.65, 0.65, 11)
-    zz, yy, xx = np.meshgrid(
-        coordinates, coordinates, coordinates, indexing="ij"
-    )
+    zz, yy, xx = np.meshgrid(coordinates, coordinates, coordinates, indexing="ij")
     points = np.column_stack((xx.ravel(), yy.ravel(), zz.ravel()))
     expected = cube_signed_distance(
         points[:, 0],

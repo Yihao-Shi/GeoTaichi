@@ -75,13 +75,14 @@ def _run_device_pattern_checks():
     second_h = 1.7 * block_h[permutation]
     second_i = block_i[permutation]
     second_j = block_j[permutation]
+    reduction.raw_output.fill(-1)
     reduction.set_triplets_from_numpy(second_i, second_j, second_h)
     reduction.go(pair_count)
     _assert_reduction_matches(reduction, second_i, second_j, second_h, block_count)
     second = reduction.pattern_cache_statistics()
     assert second["pattern_version"] == stable["pattern_version"]
     assert second["pattern_hits"] == stable["pattern_hits"] + 1
-    assert second["last_mapping_misses"] > 0
+    assert second["last_mapping_misses"] == 0
 
     # Removing most entries forces bounded-superset compaction. Old cached
     # blocks must not retain values from the previous Newton iteration.
@@ -645,9 +646,7 @@ def _run_invalid_fixed_slot_checks():
     block_h = np.arange(1.0, 1.0 + 8 * 4, dtype=np.float64).reshape(8, 4)
     valid = (block_i >= 0) & (block_j >= 0)
 
-    # CUDA is intentionally device-only: selecting host reduction there would
-    # download every raw block and upload every reduced block each Newton step.
-    reduction_modes = (True,) if ti.lang.impl.current_cfg().arch == ti.cuda else (False, True)
+    reduction_modes = (True,)
     for device_reduction in reduction_modes:
         reduction = HashReduction(
             max_pairs_num=block_i.size,
@@ -684,14 +683,7 @@ def _run_invalid_fixed_slot_checks():
             assert reduction.pattern_cache_statistics()["last_mapping_misses"] == 0
 
 
-def test_cuda_explicit_host_reduction_fails_fast(monkeypatch):
-    import src.linear_solver.HashReduction as reduction_module
-
-    monkeypatch.setattr(
-        reduction_module,
-        "current_cfg",
-        lambda: type("Cfg", (), {"arch": ti.cuda})(),
-    )
+def test_explicit_host_reduction_fails_fast():
     with pytest.raises(RuntimeError, match="device_reduction=False"):
         HashReduction(
             max_pairs_num=1,

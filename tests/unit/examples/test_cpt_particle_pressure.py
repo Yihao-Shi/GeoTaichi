@@ -10,8 +10,8 @@ pytestmark = [pytest.mark.unit, pytest.mark.cpu, pytest.mark.serial, pytest.mark
 
 @pytest.mark.parametrize("transfer", ["ulmpm", "fempm", "igampm", "ipc_mpm"])
 def test_cpt_particle_pressure_follows_material_points(taichi_runtime, tmp_path, monkeypatch, transfer):
-    from examples.mpm.Contact.CPT2D.coupled_cpt import configure_direct_axisymmetric_mpm
-    from examples.mpm.Contact.CPT2D.cpt_reference import SOIL_SIZE, SURFACE_PRESSURE
+    from examples.fempm.cpt_dp.cpt_dp import configure_direct_axisymmetric_mpm
+    from examples.mpm.CPT2D.cpt_reference import SOIL_SIZE, SURFACE_PRESSURE
     from src.fempm.ImplicitEngine import FEMPMImplicitEngine
     from src.igampm.engines.ImplicitEngine import ImplicitEngineMixin
     from src.mpm import MPM

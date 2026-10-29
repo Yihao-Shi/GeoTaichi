@@ -444,3 +444,55 @@ def kernel_tranverse_coupling_particle(particleNum: int, particle: ti.template()
         if int(particle[np].coupling) == 1:
             particle[traverse_offset], particle[np] = particle[np], particle[traverse_offset]
             traverse_offset += 1
+
+
+@ti.kernel
+def rebuild_material_mapping(
+    particle_num: int,
+    particle: ti.template(),
+    counts: ti.template(),
+    cursor: ti.template(),
+    ends: ti.template(),
+    particle_ids: ti.template(),
+    block_counts: ti.template(),
+    block_cursor: ti.template(),
+    block_size: ti.template(),
+):
+    for block, material_id in block_counts:
+        block_counts[block, material_id] = 0
+    for block in range((particle_num + block_size - 1) // block_size):
+        for particle_id in range(block * block_size, ti.min((block + 1) * block_size, particle_num)):
+            material_id = int(particle[particle_id].materialID)
+            block_counts[block, material_id] += 1
+    for material_id in range(counts.shape[0]):
+        total = 0
+        for block in range((particle_num + block_size - 1) // block_size):
+            total += block_counts[block, material_id]
+        counts[material_id] = total
+    offset = 0
+    ti.loop_config(serialize=True)
+    for material_id in range(counts.shape[0]):
+        cursor[material_id] = offset
+        offset += counts[material_id]
+        ends[material_id] = offset
+    for material_id in range(counts.shape[0]):
+        position = cursor[material_id]
+        for block in range((particle_num + block_size - 1) // block_size):
+            block_cursor[block, material_id] = position
+            position += block_counts[block, material_id]
+    for block in range((particle_num + block_size - 1) // block_size):
+        for particle_id in range(block * block_size, ti.min((block + 1) * block_size, particle_num)):
+            material_id = int(particle[particle_id].materialID)
+            position = block_cursor[block, material_id]
+            block_cursor[block, material_id] = position + 1
+            particle_ids[position] = particle_id
+
+
+@ti.kernel
+def refinement_metrics(refined_cell: ti.template(), dimension: ti.template()) -> ti.types.vector(2, int):
+    refined, extra = 0, 0
+    for cell_id in range(refined_cell.shape[0]):
+        level = int(refined_cell[cell_id])
+        refined += ti.cast(level > 0, int)
+        extra += (1 << (dimension * level)) - 1
+    return ti.Vector([refined, extra])

@@ -3,53 +3,23 @@
 import argparse
 import json
 import math
+import sys
 from pathlib import Path
 
 import numpy as np
 
+ROOT = Path(__file__).resolve().parents[5]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from tools.postprocessing.mpm.fluid_metrics import (
+    deep_air_particle_mask,
+    nonzero_spray_pressure_count,
+    saved_grid_spacing,
+    enclosed_air_count,
+)
 
 DOMAIN = np.array([6.0, 1.42, 6.0])
-
-
-def saved_grid_spacing(grid):
-    dims = tuple(np.asarray(grid["dims"], dtype=np.int64))
-    coords = np.asarray(grid["coords"])
-    if len(dims) != coords.shape[1] or math.prod(dims) != len(coords) or min(dims) < 2:
-        raise ValueError(f"invalid saved grid coordinates: dims={dims}, coords={coords.shape}")
-    lattice = coords.reshape(*dims, len(dims))
-    origin = lattice[(0,) * len(dims)]
-    spacing = []
-    for axis in range(len(dims)):
-        neighbor = [0] * len(dims)
-        neighbor[axis] = 1
-        spacing.append(abs(float(lattice[tuple(neighbor)][axis] - origin[axis])))
-    if min(spacing) <= 0.0:
-        raise ValueError(f"invalid saved grid spacing: {spacing}")
-    return np.asarray(spacing)
-
-
-def enclosed_air_count(cell_type):
-    air = cell_type == 0
-    exterior = np.zeros_like(air)
-    for axis in range(air.ndim):
-        for index in (0, -1):
-            face = [slice(None)] * air.ndim
-            face[axis] = index
-            exterior[tuple(face)] = air[tuple(face)]
-
-    while True:
-        connected = exterior.copy()
-        for axis in range(air.ndim):
-            lower = [slice(None)] * air.ndim
-            upper = [slice(None)] * air.ndim
-            lower[axis] = slice(1, None)
-            upper[axis] = slice(None, -1)
-            connected[tuple(lower)] |= exterior[tuple(upper)]
-            connected[tuple(upper)] |= exterior[tuple(lower)]
-        connected &= air
-        if np.array_equal(connected, exterior):
-            return int(np.count_nonzero(air & ~exterior))
-        exterior = connected
 
 
 def validate(
@@ -61,7 +31,11 @@ def validate(
     metrics_name="validation_metrics.json",
     allow_enclosed_air=False,
     maximum_particles_in_air_cells=0,
+    allow_detached_spray=False,
+    atmospheric_pressure=0.0,
 ):
+    if not math.isfinite(atmospheric_pressure):
+        raise ValueError("atmospheric pressure must be finite")
     domain = np.asarray(domain, dtype=float)
     particle_files = sorted((output / "particles").glob("MPMParticle*.npz"))
     grid_files = {path.stem.removeprefix("MPMGrid"): path for path in (output / "grids").glob("MPMGrid*.npz")}
@@ -70,6 +44,7 @@ def validate(
 
     snapshots = []
     expected_particles = None
+    initial_mass = initial_volume = None
     spacing = None
     for particle_path in particle_files:
         frame = particle_path.stem.removeprefix("MPMParticle")
@@ -81,6 +56,11 @@ def validate(
             position = particles["position"][active]
             velocity = particles["velocity"][active]
             pressure = particles["pressure"][active]
+            mass = particles["mass"][active]
+            volume = particles["volume"][active]
+            total_mass, total_volume = float(np.sum(mass, dtype=np.float64)), float(np.sum(volume, dtype=np.float64))
+            if initial_mass is None:
+                initial_mass, initial_volume = total_mass, total_volume
             active_particles = int(active.sum())
             if expected_particles is None:
                 expected_particles = active_particles
@@ -103,31 +83,55 @@ def validate(
             cell = np.floor(np.minimum(np.maximum(position, 0.0), np.nextafter(domain, 0.0)) / spacing).astype(np.int64)
             cell = np.minimum(cell, np.asarray(active_type.shape) - 1)
             occupied_type = cell_type[tuple((cell + ghost).T)]
+            spray = deep_air_particle_mask(active_type, cell)
+            unsupported_spray_pressure = nonzero_spray_pressure_count(pressure, spray, atmospheric_pressure)
             finite_particles = bool(
                 np.isfinite(position).all() and np.isfinite(velocity).all() and np.isfinite(pressure).all()
             )
             finite_pressure = bool(
                 np.isfinite(cell_pressure[ghost:-ghost, ghost:-ghost, ghost:-ghost][active_type == 1]).all()
             )
+            active_sdf = None
+            if "cell_fluid_sdf" in grid:
+                active_sdf = np.squeeze(grid["cell_fluid_sdf"])[ghost:-ghost, ghost:-ghost, ghost:-ghost]
             snapshot = {
                 "time_s": float(particles["t_current"]),
                 "active_particles": active_particles,
                 "fluid_cells": int(np.count_nonzero(active_type == 1)),
-                "strict_enclosed_air_cells": enclosed_air_count(active_type),
+                # Side and bottom walls are closed; a wall-touching pocket is
+                # exterior only if it also connects to the upper headspace.
+                "strict_enclosed_air_cells": enclosed_air_count(active_type, exterior_faces=[(2, -1)]),
+                "sdf_enclosed_air_cells": enclosed_air_count(active_type, active_sdf, exterior_faces=[(2, -1)]),
                 "particles_in_air_cells": int(np.count_nonzero(occupied_type == 0)),
+                "detached_spray_particles": int(np.count_nonzero(spray)),
+                "non_atmospheric_detached_spray_pressure_particles": unsupported_spray_pressure,
                 "particles_in_solid_cells": int(np.count_nonzero(occupied_type == 2)),
                 "particles_outside_domain": int(np.count_nonzero(~inside)),
                 "finite_particle_state": finite_particles,
                 "finite_fluid_pressure": finite_pressure,
+                "finite_positive_particle_mass_and_volume": bool(
+                    np.isfinite(mass).all() and np.isfinite(volume).all() and np.all(mass > 0) and np.all(volume > 0)
+                ),
+                "relative_mass_drift": abs(total_mass - initial_mass) / max(abs(initial_mass), 1e-30),
+                "relative_volume_drift": abs(total_volume - initial_volume) / max(abs(initial_volume), 1e-30),
             }
             snapshot["passed"] = bool(
                 active_particles == expected_particles
-                and (allow_enclosed_air or snapshot["strict_enclosed_air_cells"] == 0)
-                and snapshot["particles_in_air_cells"] <= maximum_particles_in_air_cells
+                and active_particles > 0
+                and snapshot["fluid_cells"] > 0
+                and (allow_enclosed_air or snapshot["sdf_enclosed_air_cells"] == 0)
+                and (
+                    unsupported_spray_pressure == 0
+                    if allow_detached_spray
+                    else snapshot["particles_in_air_cells"] <= maximum_particles_in_air_cells
+                )
                 and snapshot["particles_in_solid_cells"] == 0
                 and snapshot["particles_outside_domain"] == 0
                 and finite_particles
                 and finite_pressure
+                and snapshot["finite_positive_particle_mass_and_volume"]
+                and snapshot["relative_mass_drift"] <= 1e-12
+                and snapshot["relative_volume_drift"] <= 1e-12
             )
             snapshots.append(snapshot)
 
@@ -140,7 +144,13 @@ def validate(
         "grid_spacing_m": spacing.tolist(),
         "grid_coverage_m": (spacing * np.asarray(active_type.shape)).tolist(),
         "enclosed_air_allowed": allow_enclosed_air,
-        "maximum_particles_in_air_cells_allowed": maximum_particles_in_air_cells,
+        "ambient_boundary_faces": [[2, -1]],
+        "maximum_particles_in_air_cells_allowed": None if allow_detached_spray else maximum_particles_in_air_cells,
+        "particle_air_policy": (
+            "attached_interface_and_pressure_free_detached_spray" if allow_detached_spray else "strict_cell_membership"
+        ),
+        "atmospheric_pressure_pa": atmospheric_pressure,
+        "mass_and_volume_relative_tolerance": 1e-12,
         "snapshots": snapshots,
     }
     metrics["passed"] = bool(
@@ -162,6 +172,8 @@ def main():
     parser.add_argument("--metrics-name", default="validation_metrics.json")
     parser.add_argument("--allow-enclosed-air", action="store_true")
     parser.add_argument("--maximum-particles-in-air-cells", type=int, default=0)
+    parser.add_argument("--allow-detached-spray", action="store_true")
+    parser.add_argument("--atmospheric-pressure", type=float, default=0.0)
     parser.add_argument("--strict", action="store_true")
     args = parser.parse_args()
     if args.maximum_particles_in_air_cells < 0:
@@ -175,6 +187,8 @@ def main():
         args.metrics_name,
         args.allow_enclosed_air,
         args.maximum_particles_in_air_cells,
+        args.allow_detached_spray,
+        args.atmospheric_pressure,
     )
     print(json.dumps(metrics, sort_keys=True))
     if args.strict and not metrics["passed"]:

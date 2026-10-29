@@ -133,7 +133,7 @@ surface without center displacement. Affine IPC rebuilds current and swept
 candidates for Newton and CCD/ACCD queries and has no Verlet multiplier.
 
 The explicit routes require explicit FEM and must not simultaneously enable
-internal IPC/AL. Explicit HEX8 elastoplastic FEM is compatible because penalty
+internal IPC. Explicit HEX8 elastoplastic FEM is compatible because penalty
 contact is separate. Affine IPC requires elastic implicit FEM, uses analytic
 barrier Hessians with PSD projection and Armijo, and supports `COO` or
 `HashTriplet` with device `PCG` or explicit host `Scipy`. Mixed

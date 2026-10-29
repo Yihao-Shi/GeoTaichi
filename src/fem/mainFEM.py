@@ -93,6 +93,8 @@ class FEM(SolverDiagnosticsMixin):
 
     def set_configuration(self, dimension=3, solver_type="Explicit", log=True, **kwargs):
         self.sims.set_configuration(dimension, solver_type, **kwargs)
+        if "linear_solver_tolerance" in kwargs:
+            kwargs.setdefault("linear_solver_relative_tolerance", 0.0)
         self.solver_kwargs.update(kwargs)
         if log:
             self.print_basic_simulation_info()
@@ -315,7 +317,9 @@ class FEM(SolverDiagnosticsMixin):
         self.enginer = None
 
     def add_contact(self, model="IPC", **kwargs):
-        """Attach ``BarrierIPC`` or augmented-Lagrangian ``SemiIPC`` contact."""
+        """Attach ``BarrierIPC`` contact."""
+        dem_walls = kwargs.pop("dem_walls", None)
+        self.scene.ipc_dem_walls = dem_walls
         contact = FEMContact.create(model, **kwargs)
         self.scene.add_contact(contact)
         self.engine = None
@@ -424,6 +428,8 @@ class FEM(SolverDiagnosticsMixin):
 
                 if normalize_cell_type(requested) != self.scene.mesh.cell_type:
                     raise ValueError("requested FEM element does not match the current mesh cell type")
+        if "linear_solver_tolerance" in kwargs:
+            kwargs.setdefault("linear_solver_relative_tolerance", 0.0)
         self.solver_kwargs.update(kwargs)
 
     def set_solver(self, solver=None, log=True, **kwargs):
@@ -456,6 +462,8 @@ class FEM(SolverDiagnosticsMixin):
         )
         if retry_policy.enabled and self.sims.solver_type != "Implicit":
             raise ValueError("FEM step retry is available only for solver_type='Implicit'")
+        if "linear_solver_tolerance" in kwargs:
+            kwargs.setdefault("linear_solver_relative_tolerance", 0.0)
         self.solver_kwargs.update(kwargs)
         self.engine = None
         self.enginer = None
@@ -595,16 +603,7 @@ class FEM(SolverDiagnosticsMixin):
                 "garment stitch, SDF, and spring energies require a cloth " "constitutive model on a TRI3 surface mesh"
             )
         if self.scene.contact is not None and self.sims.solver_type != "Implicit":
-            raise ValueError("FEM IPC and augmented-Lagrangian contact currently require solver_type='Implicit'")
-        if (
-            kwargs.get("enable_step_retry", False)
-            and self.scene.contact is not None
-            and self.scene.contact.model == "AugmentedLagrangian"
-        ):
-            raise ValueError(
-                "FEM step retry does not support augmented-Lagrangian contact "
-                "because its multipliers advance inside Newton iterations"
-            )
+            raise ValueError("FEM IPC contact currently requires solver_type='Implicit'")
         engine_class = None
         if is_cloth:
             if requested_backend in ("cpu", "numpy", "scipy"):
@@ -624,6 +623,7 @@ class FEM(SolverDiagnosticsMixin):
             engine_class = ClassicalExplicitFEM if self.sims.solver_type == "Explicit" else ClassicalImplicitFEM
         if self.scene.contact is not None:
             kwargs["contact"] = self.scene.contact
+            kwargs["dem_walls"] = getattr(self.scene, "ipc_dem_walls", None)
         if self.scene.cloth_energies:
             kwargs["cloth_energies"] = list(self.scene.cloth_energies)
         self.engine = engine_class(

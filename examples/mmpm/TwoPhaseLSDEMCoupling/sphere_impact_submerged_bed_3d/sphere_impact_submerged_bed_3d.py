@@ -67,12 +67,23 @@ def parse_args():
     )
     args = parser.parse_args()
     if args.output is None:
-        args.output = ROOT / "examples/mmpm/TwoPhaseLSDEMCoupling/OutputData" / f"{args.impactor}_impact_section_5_2"
+        args.output = Path(__file__).resolve().parent / "OutputData" / f"{args.impactor}_impact_section_5_2"
     return args
 
 
+def impactor_grid_parameters(shape, dx, is_bunny):
+    spacing = 0.004 if is_bunny else 0.05
+    equivalent_radius = (3.0 * shape.mesh.volume / (4.0 * math.pi)) ** (1.0 / 3.0)
+    scale = 0.5 * SPHERE_DIAMETER / equivalent_radius
+    # A rotated fluid cell can extend one diagonal beyond an intersected surface.
+    extent = max(16 if is_bunny else 10, math.ceil(math.sqrt(3.0) * dx / (scale * spacing)) + 1)
+    bound = float(shape.mesh.bounding_sphere.primitive.radius)
+    capacity = (2 * (math.ceil(bound / spacing) + extent) + 1) ** 3
+    return spacing, extent, capacity
+
+
 def cylinder_region(name, wall, top):
-    radius = CONTAINER_RADIUS - wall
+    radius = CONTAINER_RADIUS
 
     def inside(position, particle_radius=0.0):
         radial_x = position[0] - 0.5 * DOMAIN[0]
@@ -82,8 +93,8 @@ def cylinder_region(name, wall, top):
     return {
         "Name": name,
         "Type": "UserDefined",
-        "BoundingBoxPoint": [wall, wall, wall],
-        "BoundingBoxSize": [DOMAIN[0] - 2.0 * wall, DOMAIN[1] - 2.0 * wall, top - wall],
+        "BoundingBoxPoint": [0.0, 0.0, wall],
+        "BoundingBoxSize": [DOMAIN[0], DOMAIN[1], top - wall],
         "RegionVolume": lambda: math.pi * radius * radius * (top - wall),
         "RegionFunction": inside,
     }
@@ -145,7 +156,7 @@ def run(args):
     output.mkdir(parents=True, exist_ok=True)
     wall = args.dx
     point_spacing = args.dx / args.ppc
-    cross_section = math.pi * (CONTAINER_RADIUS - wall) ** 2
+    cross_section = math.pi * CONTAINER_RADIUS**2
     fluid_count = math.ceil(cross_section * (WATER_SURFACE - wall) / point_spacing**3)
     solid_count = math.ceil(cross_section * (BED_HEIGHT - wall) / point_spacing**3)
     max_particles = math.ceil(1.1 * (fluid_count + solid_count))
@@ -213,12 +224,18 @@ def run(args):
             "CFL": 0.4,
         }
     )
+    is_bunny = args.impactor == "bunny"
+    template_name = "teflon_bunny" if is_bunny else "teflon_sphere"
+    mesh_path = ROOT / ("assets/mesh/LSDEM/bunny_impact_watertight.ply" if is_bunny else "assets/mesh/LSDEM/sphere.stl")
+    impactor = polyhedron(file=str(mesh_path))
+    original_vertices = impactor.mesh.vertices.copy() - impactor.mesh.center_mass
+    sdf_spacing, sdf_extent, sdf_capacity = impactor_grid_parameters(impactor, args.dx, is_bunny)
     dempm.dem.memory_allocate(
         {
             "max_material_number": 1,
             "max_rigid_body_number": 1,
             "max_rigid_template_number": 1,
-            "levelset_grid_number": 450000 if args.impactor == "bunny" else 300000,
+            "levelset_grid_number": sdf_capacity,
             "surface_node_number": 5000,
             "max_plane_number": 0,
             "body_coordination_number": 0,
@@ -250,15 +267,10 @@ def run(args):
             "TorqueLocalDamping": 0.0,
         },
     )
-    is_bunny = args.impactor == "bunny"
-    template_name = "teflon_bunny" if is_bunny else "teflon_sphere"
-    mesh_path = ROOT / ("assets/mesh/LSDEM/bunny_impact_watertight.ply" if is_bunny else "assets/mesh/LSDEM/sphere.stl")
-    impactor = polyhedron(file=str(mesh_path))
-    original_vertices = impactor.mesh.vertices.copy() - impactor.mesh.center_mass
     dempm.dem.add_template(
         {
             "Name": template_name,
-            "Object": impactor.grids(space=0.004 if is_bunny else 0.05, extent=16 if is_bunny else 10),
+            "Object": impactor.grids(space=sdf_spacing, extent=sdf_extent),
             "WriteFile": False,
         }
     )
@@ -326,7 +338,6 @@ def run(args):
             "FluidDensity": 1000.0,
             "Porosity": 0.36,
             "MaximumPorosity": 0.52,
-            "FluidBulkModulus": 2.2e9,
             "Permeability": 1.6e-10,
             "FluidViscosity": 1.0e-3,
             "GrainDiameter": 5.0e-4,

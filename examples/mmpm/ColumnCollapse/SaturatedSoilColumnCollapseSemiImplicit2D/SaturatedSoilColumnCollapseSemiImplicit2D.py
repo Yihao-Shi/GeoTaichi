@@ -167,7 +167,7 @@ def build_and_run():
             "FluidDensity": FLUID_DENSITY,
             "Porosity": POROSITY,
             "MaximumPorosity": MAXIMUM_POROSITY,
-            "FluidBulkModulus": 2.0e7,
+            **({"FluidBulkModulus": 2.0e7} if SOLVER_TYPE == "SemiImplicit_u_p" else {}),
             "CavitationPressure": CAVITATION_PRESSURE,
             "Permeability": HYDRAULIC_CONDUCTIVITY,
             "FluidViscosity": FLUID_VISCOSITY,

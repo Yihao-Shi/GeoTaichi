@@ -90,12 +90,83 @@ batch-kernel agreement. Contact tests separately cover primitives, barrier
 laws, PSD projection, friction gradients/Hessians, stick-slip transitions,
 assembly, line search, and end-to-end motion.
 
+See the [material coverage matrix](unit/physics_model/materials/README.md) for
+the supported FEM, IGA and MPM models, their solver-entry tests, and remaining
+constitutive branch coverage limits.
+
 Lagged IPC is a conservative projected-Newton solve and uses a
 monotone-potential backtracking rule. Fully implicit friction is
 nonconservative and instead uses residual-merit Armijo backtracking; tests
 keep these two globalization contracts separate.
 
 ## Markers and named partitions
+
+### Local commit checks
+
+Enable the versioned Git hooks once per checkout, using the Python environment
+that already has GeoTaichi's dependencies, pytest, and Black installed:
+
+```bash
+chmod +x .githooks/pre-commit .githooks/commit-msg
+git config --local core.hooksPath .githooks
+git config --local geotaichi.python "$(command -v python)"
+```
+
+Every commit formats staged Python files, checks their syntax, and tests an
+isolated copy of the staged content using CPU/f64. Partially staged Python files are rejected
+before formatting; unstaged work and the active environment are preserved.
+
+- Ordinary messages run the `pre-commit` partition: test-runner contracts,
+  analytical quadrature, ENO/WENO accuracy, and two CPU IPC barrier/friction
+  checks, plus small VTU write/read round trips. This gate has a 60-second
+  test timeout.
+- A message containing the exact text `[full test]` also runs the explicit
+  `commit-validation` partition: NURBS basis/refinement/projection checks,
+  and 4-by-4 linear-system assembly/solution checks. The two small partitions
+  each have a 60-second test timeout. Comment lines do not request the extended run.
+- For `[full test]`, the staged diff against `HEAD` also selects complete law
+  groups: `commit-materials` covers shared constitutive oracles, material VJPs,
+  and the solver material-entry checks; `commit-contact` covers shared IPC/DEM
+  laws, unit contact consumers, and the two listed IPC derivative/reference files.
+  These larger groups have no 60-second limit.
+  Their directories and globs are maintained in `test_partitions.json` and
+  include new tests placed in those locations automatically.
+
+Law groups are selected independently. Constitutive-law source
+and material-test changes trigger `commit-materials`; contact-law, contact
+detection, contact-test, and bundled IPC-fixture changes trigger `commit-contact`.
+Material managers, other `src/`, `geotaichi/`, test infrastructure, vendored
+code, and dependency/build configuration changes conservatively trigger both. Markdown/RST-only
+changes and unrelated tools do not trigger either law group. Renames are compared
+as deletion plus addition so both old and new owners are considered. Logs name
+every selected or skipped group. This is conservative path-based selection,
+not a complete dynamic import/dependency graph; update the selection rules when
+moving source ownership or adding another external dependency manifest.
+
+The gate validates the index relative to `HEAD`; if amending or rewriting an
+existing commit, run the required law groups explicitly for changes inherited
+from that commit as well. Available-device tests keep their capability skips;
+a CPU-only run does not establish GPU correctness.
+
+Any failed check blocks the commit. `GEOTAICHI_PYTHON` can override the locally
+configured interpreter. To run a suite manually:
+
+```bash
+python tests/testing/run_partition.py pre-commit -q --taichi-arch cpu
+python tests/testing/run_partition.py commit-validation -q --taichi-arch cpu
+python tests/testing/run_partition.py commit-materials -q --taichi-arch cpu
+python tests/testing/run_partition.py commit-contact -q --taichi-arch cpu
+git commit -m "Fix contact regression [full test]"
+```
+
+The commit hooks use local resources and do not configure CI/CD or install
+dependencies. Keep the ordinary gate small. Long simulations, benchmarks, and
+the full offline suite remain separate manual checks. Full box-sliding trajectories
+and solver line-search scenarios stay in the manual verification suite.
+Research-result audits
+that import ignored `research/` scripts, including `test_lsmpm_contact_work_audit.py`,
+remain manual as well; neither law group means
+running every test under `tests/`.
 
 Layer markers are inferred from the maintained directory. Stable domain and
 solver markers are inferred from paths and filenames. Backend markers are
@@ -177,18 +248,13 @@ describes the preconditioner, not a matrix containing only its diagonal.
 `BuildTriplet(dim=1)` naturally reduces block Jacobi to scalar Jacobi. IGA
 supports HashTriplet and COO but not MatrixFree. Affine's legacy
 `MatrixFree` selection currently routes through its COO implementation.
-For CPU/Metal Affine systems at or below `direct_hessian_dofs`, that assembled
-COO matrix is solved by a mass-whitened dense symmetric eigensolve with a
-normalized backward-error check. The exact control-space mass matrix is kept
-separate so it is not erased by O(1e17) contact entries. Both positive and
-negative eigenvalues inside the formed matrix's f64 spectral-resolution band
-are treated as unresolved in mass-normalized coordinates; material negative
-curvature outside that band is rejected. This is a stable modified-Newton
-solve of the rounded aggregate non-inertial matrix, not a replacement for a
-future local-factor QR/SVD representation. Diagnostics report the resolution
-band, unresolved-mode count, corrected-system residual, and original
-assembled-matrix residual. Larger systems use scalar-Jacobi PCG. Affine
-HashTriplet remains a device-resident CUDA PCG path.
+Affine production solves use Taichi fields on CPU, Metal, and CUDA. Lagged
+contact uses PCG; fully implicit friction uses nonsymmetric BiCGSTAB. The
+mass-whitened dense eigensolve is a test-only oracle in
+`tests/helpers/abd_engine_reference.py`, not a selectable production backend.
+Affine body principal blocks retain all 12 DOFs in the device preconditioner;
+coupled systems use those blocks for the affine prefix and node blocks for
+other unknowns. See `src/linear_solver/README.md` for the current solver contract.
 `tests/unit/linear_solver/test_assembly_backends.py` guards operator,
 solution, duplicate-reduction, and preconditioner equivalence.
 

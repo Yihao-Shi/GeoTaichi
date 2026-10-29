@@ -18,7 +18,15 @@ class ULSemiImplicitTwoPhaseEngine_u_p(ULSemiImplicitTwoPhaseEngine):
         super().__init__(sims)
 
     def choose_engine(self, sims: Simulation):
-        if sims.mapping == "USF":
+        self.compute_affine_matrix = no_operation
+        if sims.velocity_projection_scheme == "Affine":
+            if sims.is_2DAxisy:
+                raise RuntimeError("SemiImplicit_u_p Affine currently requires Cartesian 2D")
+            self.compute = self.affine_updating
+            self.compute_nodal_kinematics = self.compute_nodal_kinematics_APIC
+            self.compute_affine_matrix = self.compute_affine_matrix_u_p
+            self.map_tpic_pressure = no_operation
+        elif sims.mapping == "USF":
             self.compute = self.usf_updating
         else:
             raise ValueError(f"The mapping scheme {sims.mapping} is not supported yet")
@@ -312,7 +320,27 @@ class ULSemiImplicitTwoPhaseEngine_u_p(ULSemiImplicitTwoPhaseEngine):
         scene.element.calculate(scene.particleNum, scene.particle)
 
     # -------------------------------------------------------
+    def compute_affine_matrix_u_p(self, sims: Simulation, scene: myScene):
+        kernel_compute_affine_matrix_APIC_twophase2D(
+            scene.element.grid_nodes,
+            int(scene.particleNum[0]),
+            scene.node,
+            scene.particle,
+            scene.element.LnID,
+            scene.element.shape_fn,
+            scene.element.node_size,
+            scene.element.grid_size,
+            scene.element.gnum,
+            True,
+        )
+
+    def affine_updating(self, sims: Simulation, scene: myScene, neighbor=None):
+        self._u_p_updating(sims, scene, neighbor)
+
     def usf_updating(self, sims: Simulation, scene: myScene, neighbor: SpatialHashGrid):
+        self._u_p_updating(sims, scene, neighbor)
+
+    def _u_p_updating(self, sims: Simulation, scene: myScene, neighbor):
         self.calculate_interpolation(sims, scene)
         self.compute_nodal_kinematics(sims, scene)
         self.free_surface_detections(sims, scene, neighbor)
@@ -331,4 +359,5 @@ class ULSemiImplicitTwoPhaseEngine_u_p(ULSemiImplicitTwoPhaseEngine):
         self.compute_Poisson_equation_implicit(sims, scene)
         self.compute_correction_grid_kinematic(sims, scene)
         self.apply_kinematic_constraints(sims, scene)
+        self.compute_affine_matrix(sims, scene)
         self.compute_particle_kinematic(sims, scene)

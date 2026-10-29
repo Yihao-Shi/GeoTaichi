@@ -28,7 +28,7 @@ from src.physics_model.contact_model.ipc.NurbsContact import (
 
 class FrictionEngineMixin:
     def _validate_fully_implicit_time_integration(self):
-        """Require the BE/TR endpoint maps derived in the paper."""
+        """Require the BackwardEuler/TR endpoint maps derived in the paper."""
         if not self._is_paper_endpoint_scheme(self.iga.integration):
             raise ValueError(
                 "IGA fully implicit friction supports paper endpoint schemes "
@@ -237,9 +237,7 @@ class FrictionEngineMixin:
                     vknot,
                     basis,
                 )
-                if ti.static(self.is_semi) or (
-                    distance > self.barrier.dmin[0] + 1.0e-12 and distance < self.barrier.activation_distance_term()
-                ):
+                if distance > self.barrier.dmin[0] + 1.0e-12 and distance < self.barrier.activation_distance_term():
                     mu_lambda = (
                         -self.friction.mu[0] * self._normal_terms(c, distance)[1] * self.mpm.surface_measure[sample_id]
                     )
@@ -279,9 +277,7 @@ class FrictionEngineMixin:
                     uknot,
                     basis,
                 )
-                if ti.static(self.is_semi) or (
-                    distance > self.barrier.dmin[0] + 1.0e-12 and distance < self.barrier.activation_distance_term()
-                ):
+                if distance > self.barrier.dmin[0] + 1.0e-12 and distance < self.barrier.activation_distance_term():
                     mu_lambda = (
                         -self.friction.mu[0] * self._normal_terms(c, distance)[1] * self.mpm.surface_measure[sample_id]
                     )

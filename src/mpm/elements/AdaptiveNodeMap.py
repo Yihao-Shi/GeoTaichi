@@ -3,6 +3,9 @@ from itertools import product
 from math import ceil
 
 import numpy as np
+import taichi as ti
+
+from src.mpm.elements.AdaptiveTopologyKernel import AdaptiveTopology
 
 
 def build_bridging_node_weights(refined_cell, coarse_cnum, bridging_cells):
@@ -114,7 +117,6 @@ def build_hanging_constraint_table(
 
         master_divisions = refinement_ratio**master_level
         master_stride = finest_ratio // master_divisions
-        coarse_cell = np.minimum(fine_node // finest_ratio, coarse_cnum - 1)
         master_cell = np.minimum(fine_node // master_stride, coarse_cnum * master_divisions - 1)
         local_coord = (fine_node.astype(np.float64) - master_stride * master_cell.astype(np.float64)) / float(
             master_stride
@@ -146,6 +148,39 @@ def build_hanging_constraint_table(
         master_ids.append(ids)
         master_weights.append(weights)
         touched_nodes.add(node_id)
+
+    # A master on a coarse/fine edge can itself be constrained at another level.
+    constraints = {
+        slave: {int(master): float(weight) for master, weight in zip(ids, weights) if weight > 0.0}
+        for slave, ids, weights in zip(slave_ids, master_ids, master_weights)
+    }
+    resolved = {}
+    visiting = set()
+
+    def independent_masters(node_id):
+        if node_id not in constraints:
+            return {node_id: 1.0}
+        if node_id not in resolved:
+            if node_id in visiting:
+                raise RuntimeError("AdaptiveGrid hanging constraints contain a cycle")
+            visiting.add(node_id)
+            expanded = {}
+            for master, weight in constraints[node_id].items():
+                for independent, fraction in independent_masters(master).items():
+                    expanded[independent] = expanded.get(independent, 0.0) + weight * fraction
+            visiting.remove(node_id)
+            resolved[node_id] = expanded
+        return resolved[node_id]
+
+    for index, slave in enumerate(slave_ids):
+        expanded = independent_masters(slave)
+        if len(expanded) > corner_count:
+            raise RuntimeError("AdaptiveGrid expanded hanging constraint exceeds master capacity")
+        master_ids[index].fill(-1)
+        master_weights[index].fill(0.0)
+        for slot, (master, weight) in enumerate(sorted(expanded.items())):
+            master_ids[index][slot] = master
+            master_weights[index][slot] = weight
 
     return (
         np.ascontiguousarray(slave_ids, dtype=np.int32),
@@ -187,25 +222,57 @@ class AdaptiveNodeMap:
         requested_capacity = self.coarse_node_count + ceil(max_refined_ratio * refinable_node_count) + boundary_reserve
         self.capacity = int(min(maximum_node_count, requested_capacity))
 
-        self.logical_to_compact = np.full(
+        self._logical_to_compact = np.full(
             self.full_logical_node_count,
             -1,
             dtype=np.int32,
         )
-        self.fine_logical_to_compact = None
+        self._fine_logical_to_compact = None
         if self.bridging_domain:
-            self.fine_logical_to_compact = np.full(
+            self._fine_logical_to_compact = np.full(
                 self.full_logical_node_count,
                 -1,
                 dtype=np.int32,
             )
-        self.compact_to_logical = np.full(self.capacity, -1, dtype=np.int32)
-        self.next_compact_id = 0
+        self._compact_to_logical = np.full(self.capacity, -1, dtype=np.int32)
+        self._next_compact_id = 0
         self._initialize_coarse_nodes()
 
         self.logical_to_compact_field = None
         self.fine_logical_to_compact_field = None
         self.compact_to_logical_field = None
+        self.device = None
+        self._device_snapshot_current = True
+        self._host_refinement_input = None
+
+    def _sync_host_snapshot(self):
+        """Explicit inspection/setup only; numerical refinement keeps fields on device."""
+        if self.device is not None and not self._device_snapshot_current:
+            self._logical_to_compact = self.logical_to_compact_field.to_numpy()
+            if self.fine_logical_to_compact_field is not None:
+                self._fine_logical_to_compact = self.fine_logical_to_compact_field.to_numpy()
+            self._compact_to_logical = self.compact_to_logical_field.to_numpy()
+            self._next_compact_id = int(self.device.node_count[None])
+            self._device_snapshot_current = True
+
+    @property
+    def logical_to_compact(self):
+        self._sync_host_snapshot()
+        return self._logical_to_compact
+
+    @property
+    def fine_logical_to_compact(self):
+        self._sync_host_snapshot()
+        return self._fine_logical_to_compact
+
+    @property
+    def compact_to_logical(self):
+        self._sync_host_snapshot()
+        return self._compact_to_logical
+
+    @property
+    def next_compact_id(self):
+        return self._next_compact_id if self.device is None else int(self.device.node_count[None])
 
     def _physical_boundary_fine_node_count(self, ghost_cell):
         physical_cnum = np.maximum(self.coarse_cnum - 2 * ghost_cell, 0)
@@ -247,9 +314,9 @@ class AdaptiveNodeMap:
         for coarse_id in range(self.coarse_node_count):
             fine_index = self.finest_ratio * self._coarse_index(coarse_id)
             logical_id = self._logical_id(fine_index)
-            self.logical_to_compact[logical_id] = coarse_id
-            self.compact_to_logical[coarse_id] = logical_id
-        self.next_compact_id = self.coarse_node_count
+            self._logical_to_compact[logical_id] = coarse_id
+            self._compact_to_logical[coarse_id] = logical_id
+        self._next_compact_id = self.coarse_node_count
 
     def bind_fields(
         self,
@@ -257,44 +324,73 @@ class AdaptiveNodeMap:
         compact_to_logical_field,
         fine_logical_to_compact_field=None,
     ):
+        self._sync_host_snapshot()
         self.logical_to_compact_field = logical_to_compact_field
         self.fine_logical_to_compact_field = fine_logical_to_compact_field
         self.compact_to_logical_field = compact_to_logical_field
         self.sync_fields()
+        mapping = self.fine_logical_to_compact_field if self.bridging_domain else self.logical_to_compact_field
+        self.device = AdaptiveTopology(
+            self.coarse_cnum,
+            self.max_level,
+            self.capacity,
+            mapping,
+            self.compact_to_logical_field,
+            self._next_compact_id,
+            self.bridging_domain,
+        )
 
     def sync_fields(self):
+        self._sync_host_snapshot()
         if self.logical_to_compact_field is not None:
-            self.logical_to_compact_field.from_numpy(self.logical_to_compact)
+            self.logical_to_compact_field.from_numpy(self._logical_to_compact)
             if self.fine_logical_to_compact_field is not None:
-                self.fine_logical_to_compact_field.from_numpy(self.fine_logical_to_compact)
-            self.compact_to_logical_field.from_numpy(self.compact_to_logical)
+                self.fine_logical_to_compact_field.from_numpy(self._fine_logical_to_compact)
+            self.compact_to_logical_field.from_numpy(self._compact_to_logical)
+            if self.device is not None:
+                self.device.node_count[None] = self._next_compact_id
+            self._device_snapshot_current = True
 
     def _ensure_ids(self, logical_ids, mapping):
+        self._sync_host_snapshot()
         logical_ids = np.unique(np.asarray(logical_ids, dtype=np.int64))
         missing = logical_ids[mapping[logical_ids] < 0]
-        assert self.next_compact_id + missing.size <= self.capacity, (
+        assert self._next_compact_id + missing.size <= self.capacity, (
             f"AdaptiveGrid dense node capacity {self.capacity} exceeded: "
-            f"{self.next_compact_id + missing.size} nodes are required. "
+            f"{self._next_compact_id + missing.size} nodes are required. "
             "Increase AdaptiveGrid/RefineRatio."
         )
         for logical_id in missing:
-            compact_id = self.next_compact_id
+            compact_id = self._next_compact_id
             mapping[logical_id] = compact_id
-            self.compact_to_logical[compact_id] = logical_id
-            self.next_compact_id += 1
+            self._compact_to_logical[compact_id] = logical_id
+            self._next_compact_id += 1
         if missing.size > 0:
             self.sync_fields()
         return mapping[logical_ids]
 
     def ensure_logical_ids(self, logical_ids):
-        return self._ensure_ids(logical_ids, self.logical_to_compact)
+        self._sync_host_snapshot()
+        return self._ensure_ids(logical_ids, self._logical_to_compact)
 
     def ensure_fine_logical_ids(self, logical_ids):
+        self._sync_host_snapshot()
         if not self.bridging_domain:
             return self.ensure_logical_ids(logical_ids)
-        return self._ensure_ids(logical_ids, self.fine_logical_to_compact)
+        return self._ensure_ids(logical_ids, self._fine_logical_to_compact)
+
+    def ensure_refined_cells_device(self, refined_cell, shape_function):
+        self.device.ensure_refined_cells(refined_cell, shape_function)
+        self._device_snapshot_current = False
 
     def ensure_refined_cells(self, refined_cell, shape_function):
+        # Array input is retained for setup and reference tests, never for runtime updates.
+        if self.device is not None:
+            if self._host_refinement_input is None:
+                self._host_refinement_input = ti.field(ti.u8, shape=int(np.prod(self.coarse_cnum)))
+            self._host_refinement_input.from_numpy(np.asarray(refined_cell, dtype=np.uint8).reshape(-1))
+            self.ensure_refined_cells_device(self._host_refinement_input, shape_function)
+            return
         halo = 1 if shape_function in ("GIMP", "QuadBSpline", "CubicBSpline") else 0
         logical_ids = []
         refined_cell = np.asarray(refined_cell, dtype=np.uint8)

@@ -1,8 +1,10 @@
-"""Refitted Taichi BVH broad phase for deforming FEM contact surfaces."""
+"""Device-rebuilt BVH broad phase for deforming FEM contact surfaces."""
 
 import numpy as np
 import taichi as ti
 
+from src.contact_detection.bounding_volume_hierarchy.AABB import AABB
+from src.contact_detection.bounding_volume_hierarchy.MultiPatchLBVH import LBVH, validate_bvh_rebuild_interval
 from src.fem.contact.LinkedCellBroadPhase import _grown_capacity
 from src.physics_model.contact_model.ipc.ContactDistance import (
     edge_edge_distance2,
@@ -11,58 +13,9 @@ from src.physics_model.contact_model.ipc.ContactDistance import (
 from src.utils.PrefixSum import PrefixSumExecutor
 
 
-def _build_binary_topology(primitives, reference_positions):
-    """Build a balanced connectivity tree once; runtime AABBs are device-refit."""
-    primitive_count = int(primitives.shape[0])
-    if primitive_count == 0:
-        return (
-            np.full((1, 2), -1, dtype=np.int32),
-            np.full(1, -1, dtype=np.int32),
-            np.zeros(1, dtype=np.int32),
-            np.zeros(1, dtype=np.int32),
-            1,
-        )
-    centroids = np.mean(reference_positions[primitives], axis=1)
-    children = []
-    primitive = []
-    primitive_leaf = np.empty(primitive_count, dtype=np.int32)
-    postorder = []
-    maximum_depth = 1
-
-    def build(indices, depth):
-        nonlocal maximum_depth
-        node = len(children)
-        children.append([-1, -1])
-        primitive.append(-1)
-        maximum_depth = max(maximum_depth, depth)
-        if indices.size == 1:
-            primitive_id = int(indices[0])
-            primitive[node] = primitive_id
-            primitive_leaf[primitive_id] = node
-            return node
-        bounds = np.ptp(centroids[indices], axis=0)
-        axis = int(np.argmax(bounds))
-        ordered = indices[np.argsort(centroids[indices, axis], kind="stable")]
-        middle = ordered.size // 2
-        left = build(ordered[:middle], depth + 1)
-        right = build(ordered[middle:], depth + 1)
-        children[node] = [left, right]
-        postorder.append(node)
-        return node
-
-    build(np.arange(primitive_count, dtype=np.int32), 1)
-    return (
-        np.asarray(children, dtype=np.int32),
-        np.asarray(primitive, dtype=np.int32),
-        primitive_leaf,
-        np.asarray(postorder, dtype=np.int32),
-        maximum_depth + 1,
-    )
-
-
 @ti.data_oriented
 class DynamicBVHBroadPhase:
-    """Static balanced topology with current/swept AABBs refitted each query.
+    """Rebuild each IPC query, or periodically refit for explicit soft contact.
 
     Candidate output uses per-query count -> prefix sum -> fill, so neither
     leaves nor contact pairs have a user-chosen per-node capacity.
@@ -82,6 +35,7 @@ class DynamicBVHBroadPhase:
         node_system_ids=None,
         cross_system_only=False,
         exact_proximity=False,
+        bvh_rebuild_interval=None,
         **_,
     ):
         faces = np.ascontiguousarray(faces, dtype=np.int32)
@@ -95,6 +49,10 @@ class DynamicBVHBroadPhase:
         self.numpy_type = np.float64 if self.real_type == ti.f64 else np.float32
         self.cross_system_only = bool(cross_system_only)
         self.exact_proximity = bool(exact_proximity)
+        self.bvh_rebuild_interval = (
+            None if bvh_rebuild_interval is None else validate_bvh_rebuild_interval(bvh_rebuild_interval)
+        )
+        self.current_step = 0
         system_values = (
             np.zeros(reference_positions.shape[0], dtype=np.int32)
             if node_system_ids is None
@@ -139,42 +97,15 @@ class DynamicBVHBroadPhase:
         self.edge_area.from_numpy(edge_area_buffer)
         self.reference_position.from_numpy(np.ascontiguousarray(reference_positions, dtype=self.numpy_type))
 
-        face_topology = _build_binary_topology(faces, reference_positions)
-        edge_topology = _build_binary_topology(edges, reference_positions)
-        self.face_node_count = int(face_topology[0].shape[0])
-        self.edge_node_count = int(edge_topology[0].shape[0])
-        self.face_internal_count = int(face_topology[3].size)
-        self.edge_internal_count = int(edge_topology[3].size)
-        self.face_stack_depth = int(face_topology[4])
-        self.edge_stack_depth = int(edge_topology[4])
+        self.face_aabbs = AABB(max(self.face_count, 2), dtype=self.real_type)
+        self.edge_aabbs = AABB(max(self.edge_count, 2), dtype=self.real_type)
+        self.face_bvh = LBVH(aabb=self.face_aabbs, extended_morton=True)
+        self.edge_bvh = LBVH(aabb=self.edge_aabbs, extended_morton=True)
+        self.face_bvh.initialize(active_aabbs=[max(self.face_count, 1)])
+        self.edge_bvh.initialize(active_aabbs=[max(self.edge_count, 1)])
+        self.face_stack_depth = self.face_bvh.max_stack_depth
+        self.edge_stack_depth = self.edge_bvh.max_stack_depth
 
-        self.face_child = ti.Vector.field(2, dtype=ti.i32, shape=max(self.face_node_count, 1))
-        self.edge_child = ti.Vector.field(2, dtype=ti.i32, shape=max(self.edge_node_count, 1))
-        self.face_primitive = ti.field(dtype=ti.i32, shape=max(self.face_node_count, 1))
-        self.edge_primitive = ti.field(dtype=ti.i32, shape=max(self.edge_node_count, 1))
-        self.face_primitive_leaf = ti.field(dtype=ti.i32, shape=max(self.face_count, 1))
-        self.edge_primitive_leaf = ti.field(dtype=ti.i32, shape=max(self.edge_count, 1))
-        self.face_postorder = ti.field(dtype=ti.i32, shape=max(self.face_internal_count, 1))
-        self.edge_postorder = ti.field(dtype=ti.i32, shape=max(self.edge_internal_count, 1))
-        self._load_topology(
-            face_topology,
-            self.face_child,
-            self.face_primitive,
-            self.face_primitive_leaf,
-            self.face_postorder,
-        )
-        self._load_topology(
-            edge_topology,
-            self.edge_child,
-            self.edge_primitive,
-            self.edge_primitive_leaf,
-            self.edge_postorder,
-        )
-
-        self.face_lower = ti.Vector.field(3, dtype=self.real_type, shape=max(self.face_node_count, 1))
-        self.face_upper = ti.Vector.field(3, dtype=self.real_type, shape=max(self.face_node_count, 1))
-        self.edge_lower = ti.Vector.field(3, dtype=self.real_type, shape=max(self.edge_node_count, 1))
-        self.edge_upper = ti.Vector.field(3, dtype=self.real_type, shape=max(self.edge_node_count, 1))
         self.radius = ti.field(dtype=self.real_type, shape=())
         self.edge_radius = ti.field(dtype=self.real_type, shape=())
         self.supports_separate_proximity_radius = True
@@ -215,17 +146,6 @@ class DynamicBVHBroadPhase:
         self.point_triangle_count = ti.field(dtype=ti.i32, shape=())
         self.edge_edge_count = ti.field(dtype=ti.i32, shape=())
 
-    def _load_topology(self, topology, children, primitive, primitive_leaf, postorder):
-        child_values, primitive_values, leaves, internal, _ = topology
-        children.from_numpy(child_values)
-        primitive.from_numpy(primitive_values)
-        leaf_buffer = np.zeros(primitive_leaf.shape[0], dtype=np.int32)
-        leaf_buffer[: leaves.size] = leaves
-        primitive_leaf.from_numpy(leaf_buffer)
-        postorder_buffer = np.zeros(postorder.shape[0], dtype=np.int32)
-        postorder_buffer[: internal.size] = internal
-        postorder.from_numpy(postorder_buffer)
-
     @ti.func
     def _point_bounds(self, node, positions, end_positions, swept):
         lower = positions[node]
@@ -260,31 +180,21 @@ class DynamicBVHBroadPhase:
                 value_lower, value_upper = self._point_bounds(face[local], positions, end_positions, swept)
                 lower = ti.min(lower, value_lower)
                 upper = ti.max(upper, value_upper)
-            node = self.face_primitive_leaf[face_id]
-            self.face_lower[node] = lower
-            self.face_upper[node] = upper
+            self.face_aabbs.aabbs[face_id].min = lower
+            self.face_aabbs.aabbs[face_id].max = upper
         for edge_id in range(self.edge_count):
             edge = self.edges[edge_id]
             lower0, upper0 = self._point_bounds(edge[0], positions, end_positions, swept)
             lower1, upper1 = self._point_bounds(edge[1], positions, end_positions, swept)
-            node = self.edge_primitive_leaf[edge_id]
-            self.edge_lower[node] = ti.min(lower0, lower1)
-            self.edge_upper[node] = ti.max(upper0, upper1)
+            self.edge_aabbs.aabbs[edge_id].min = ti.min(lower0, lower1)
+            self.edge_aabbs.aabbs[edge_id].max = ti.max(upper0, upper1)
 
-    @ti.kernel
-    def _refit_internal_nodes(self):
-        ti.loop_config(serialize=True)
-        for order in range(self.face_internal_count):
-            node = self.face_postorder[order]
-            children = self.face_child[node]
-            self.face_lower[node] = ti.min(self.face_lower[children[0]], self.face_lower[children[1]])
-            self.face_upper[node] = ti.max(self.face_upper[children[0]], self.face_upper[children[1]])
-        ti.loop_config(serialize=True)
-        for order in range(self.edge_internal_count):
-            node = self.edge_postorder[order]
-            children = self.edge_child[node]
-            self.edge_lower[node] = ti.min(self.edge_lower[children[0]], self.edge_lower[children[1]])
-            self.edge_upper[node] = ti.max(self.edge_upper[children[0]], self.edge_upper[children[1]])
+    @ti.func
+    def _primitive(self, tree: ti.template(), node, count):
+        primitive = -1
+        if tree.nodes[node].left == -1:
+            primitive = tree.primitive_index(node - (count - 1))
+        return primitive
 
     @ti.func
     def _valid_pt(self, node, face_id):
@@ -377,7 +287,7 @@ class DynamicBVHBroadPhase:
                         self.pt_nearest_distance2[slot] = 1.0e30
             lower, upper = self._point_bounds(node, positions, end_positions, swept)
             count = 0
-            stack_size = 1
+            stack_size = int(self.face_count > 0)
             self.pt_stack[local_vertex, 0] = 0
             while stack_size > 0:
                 stack_size -= 1
@@ -385,11 +295,11 @@ class DynamicBVHBroadPhase:
                 if self._overlap(
                     lower,
                     upper,
-                    self.face_lower[tree_node],
-                    self.face_upper[tree_node],
+                    self.face_bvh.nodes[tree_node].bound.min,
+                    self.face_bvh.nodes[tree_node].bound.max,
                     self.radius[None],
                 ):
-                    primitive = self.face_primitive[tree_node]
+                    primitive = self._primitive(self.face_bvh, tree_node, self.face_count)
                     if primitive >= 0:
                         if ti.static(self.exact_proximity):
                             if swept == 0:
@@ -405,7 +315,9 @@ class DynamicBVHBroadPhase:
                         elif self._valid_pt(node, primitive):
                             count += 1
                     else:
-                        children = self.face_child[tree_node]
+                        children = ti.Vector(
+                            [self.face_bvh.nodes[tree_node].left, self.face_bvh.nodes[tree_node].right]
+                        )
                         self.pt_stack[local_vertex, stack_size] = children[0]
                         stack_size += 1
                         self.pt_stack[local_vertex, stack_size] = children[1]
@@ -418,9 +330,8 @@ class DynamicBVHBroadPhase:
                             count += 1
             self.pt_prefix[local_vertex + 1] = count
         for first_id in range(self.edge_count):
-            leaf = self.edge_primitive_leaf[first_id]
-            lower = self.edge_lower[leaf]
-            upper = self.edge_upper[leaf]
+            lower = self.edge_aabbs.aabbs[first_id].min
+            upper = self.edge_aabbs.aabbs[first_id].max
             count = 0
             stack_size = 1
             self.ee_stack[first_id, 0] = 0
@@ -430,11 +341,11 @@ class DynamicBVHBroadPhase:
                 if self._overlap(
                     lower,
                     upper,
-                    self.edge_lower[tree_node],
-                    self.edge_upper[tree_node],
+                    self.edge_bvh.nodes[tree_node].bound.min,
+                    self.edge_bvh.nodes[tree_node].bound.max,
                     self.edge_radius[None],
                 ):
-                    primitive = self.edge_primitive[tree_node]
+                    primitive = self._primitive(self.edge_bvh, tree_node, self.edge_count)
                     if primitive >= 0:
                         if self._valid_ee_proximity(
                             first_id,
@@ -444,7 +355,9 @@ class DynamicBVHBroadPhase:
                         ):
                             count += 1
                     else:
-                        children = self.edge_child[tree_node]
+                        children = ti.Vector(
+                            [self.edge_bvh.nodes[tree_node].left, self.edge_bvh.nodes[tree_node].right]
+                        )
                         self.ee_stack[first_id, stack_size] = children[0]
                         stack_size += 1
                         self.ee_stack[first_id, stack_size] = children[1]
@@ -504,7 +417,7 @@ class DynamicBVHBroadPhase:
                         point_triangle_measure[output] = 0.25 * self.node_area[node]
                         output += 1
             else:
-                stack_size = 1
+                stack_size = int(self.face_count > 0)
                 self.pt_stack[local_vertex, 0] = 0
                 while stack_size > 0:
                     stack_size -= 1
@@ -512,11 +425,11 @@ class DynamicBVHBroadPhase:
                     if self._overlap(
                         lower,
                         upper,
-                        self.face_lower[tree_node],
-                        self.face_upper[tree_node],
+                        self.face_bvh.nodes[tree_node].bound.min,
+                        self.face_bvh.nodes[tree_node].bound.max,
                         self.radius[None],
                     ):
-                        primitive = self.face_primitive[tree_node]
+                        primitive = self._primitive(self.face_bvh, tree_node, self.face_count)
                         if primitive >= 0:
                             if self._valid_pt(node, primitive):
                                 face = self.faces[primitive]
@@ -525,15 +438,16 @@ class DynamicBVHBroadPhase:
                                 point_triangle_measure[output] = 0.25 * self.node_area[node]
                                 output += 1
                         else:
-                            children = self.face_child[tree_node]
+                            children = ti.Vector(
+                                [self.face_bvh.nodes[tree_node].left, self.face_bvh.nodes[tree_node].right]
+                            )
                             self.pt_stack[local_vertex, stack_size] = children[0]
                             stack_size += 1
                             self.pt_stack[local_vertex, stack_size] = children[1]
                             stack_size += 1
         for first_id in range(self.edge_count):
-            leaf = self.edge_primitive_leaf[first_id]
-            lower = self.edge_lower[leaf]
-            upper = self.edge_upper[leaf]
+            lower = self.edge_aabbs.aabbs[first_id].min
+            upper = self.edge_aabbs.aabbs[first_id].max
             output = self.ee_prefix[first_id]
             stack_size = 1
             self.ee_stack[first_id, 0] = 0
@@ -543,11 +457,11 @@ class DynamicBVHBroadPhase:
                 if self._overlap(
                     lower,
                     upper,
-                    self.edge_lower[tree_node],
-                    self.edge_upper[tree_node],
+                    self.edge_bvh.nodes[tree_node].bound.min,
+                    self.edge_bvh.nodes[tree_node].bound.max,
                     self.edge_radius[None],
                 ):
-                    second_id = self.edge_primitive[tree_node]
+                    second_id = self._primitive(self.edge_bvh, tree_node, self.edge_count)
                     if second_id >= 0:
                         if self._valid_ee_proximity(
                             first_id,
@@ -561,7 +475,9 @@ class DynamicBVHBroadPhase:
                             edge_edge_measure[output] = 0.25 * (self.edge_area[first_id] + self.edge_area[second_id])
                             output += 1
                     else:
-                        children = self.edge_child[tree_node]
+                        children = ti.Vector(
+                            [self.edge_bvh.nodes[tree_node].left, self.edge_bvh.nodes[tree_node].right]
+                        )
                         self.ee_stack[first_id, stack_size] = children[0]
                         stack_size += 1
                         self.ee_stack[first_id, stack_size] = children[1]
@@ -584,7 +500,12 @@ class DynamicBVHBroadPhase:
         self.radius[None] = float(radius)
         self.edge_radius[None] = float(radius if edge_radius is None else edge_radius)
         self._refit_leaves(positions, end_positions, swept)
-        self._refit_internal_nodes()
+        for tree, count in ((self.face_bvh, self.face_count), (self.edge_bvh, self.edge_count)):
+            if count:
+                if self.bvh_rebuild_interval is None:
+                    tree.build()
+                else:
+                    tree.update(self.current_step, self.bvh_rebuild_interval)
         self._count_candidates(positions, end_positions, swept)
         self.pt_scan.run(self.pt_prefix)
         self.ee_scan.run(self.ee_prefix)

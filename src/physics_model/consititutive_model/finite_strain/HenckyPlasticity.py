@@ -434,7 +434,7 @@ class HenckyAssociatedPlasticityModel(FiniteStrainModel):
         plastic_multiplier = response[8]
         return_region = response[9]
         derivatives = ti.Matrix.zero(float, 9, 4)
-        for parameter_id in ti.static(range(4)):
+        for parameter_id in range(4):
             dprojected, _, _ = self._return_parameter_derivatives_from_response(
                 particle_id,
                 strain,
@@ -479,7 +479,7 @@ class HenckyAssociatedPlasticityModel(FiniteStrainModel):
         elastic_trial = total_deformation_gradient @ plastic_inverse
         reference_jacobian = self.incremental_reference_jacobian(particle_id)
         elastic_derivatives = self.first_piola_parameter_derivatives_at(particle_id, elastic_trial)
-        for parameter_id in ti.static(range(4)):
+        for parameter_id in range(4):
             elastic_derivative = ti.Matrix.zero(float, 3, 3)
             for column, row in ti.static(ti.ndrange(3, 3)):
                 elastic_derivative[row, column] = elastic_derivatives[3 * column + row, parameter_id]
@@ -514,7 +514,7 @@ class HenckyAssociatedPlasticityModel(FiniteStrainModel):
         plastic_multiplier = returned[1]
         return_region = returned[3]
         total_inverse = total_deformation_gradient.inverse()
-        for parameter_id in ti.static(range(4)):
+        for parameter_id in range(4):
             dprojected, dplastic_multiplier, dvolume_increment = self._return_parameter_derivatives_from_response(
                 particle_id,
                 principal[3],
@@ -527,7 +527,7 @@ class HenckyAssociatedPlasticityModel(FiniteStrainModel):
                 parameter_id,
             )
             dcommitted_elastic = ti.Matrix.zero(float, 3, 3)
-            for principal_id in ti.static(range(3)):
+            for principal_id in range(3):
                 value = ti.exp(projected[principal_id]) * dprojected[principal_id]
                 for row, column in ti.static(ti.ndrange(3, 3)):
                     dcommitted_elastic[row, column] += (
@@ -912,7 +912,7 @@ class HenckyAssociatedPlasticityModel(FiniteStrainModel):
             volume_strain_gradient = ti.Vector.one(float, dimension)
 
         multiplier_vjp = ti.sqrt(2.0 / 3.0) * equivalent_plastic_strain_output_vjp
-        for principal_id in ti.static(range(3)):
+        for principal_id in range(3):
             principal_seed = (
                 multiplier_vjp * multiplier_strain_gradient[principal_id]
                 + volumetric_plastic_strain_output_vjp * volume_strain_gradient[principal_id]
@@ -923,7 +923,7 @@ class HenckyAssociatedPlasticityModel(FiniteStrainModel):
                 )
 
         projected_equivalent_matrix = ti.Matrix.zero(float, 3, 3)
-        for principal_id in ti.static(range(3)):
+        for principal_id in range(3):
             for row, column in ti.static(ti.ndrange(3, 3)):
                 projected_equivalent_matrix[row, column] += (
                     ti.exp(projected[principal_id])

@@ -17,7 +17,7 @@ if str(ROOT) not in sys.path:
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--arch", choices=("cpu", "gpu"), default="gpu")
-    parser.add_argument("--contact-model", choices=("BarrierIPC", "SemiIPC"), default="BarrierIPC")
+    parser.add_argument("--contact-model", choices=("BarrierIPC",), default="BarrierIPC")
     parser.add_argument("--material", choices=("NeoHookean", "DruckerPrager", "VonMises"), default="DruckerPrager")
     parser.add_argument("--dilation-angle", type=float, default=0.0)
     parser.add_argument("--inexact-newton", action=argparse.BooleanOptionalAction, default=None)

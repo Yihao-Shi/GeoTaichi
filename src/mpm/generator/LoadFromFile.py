@@ -9,6 +9,7 @@ from src.mpm.Simulation import Simulation
 from src.utils.ObjectIO import DictIO
 from src.utils.RegionFunction import RegionFunction
 from src.utils.TypeDefination import vec2u8, vec3f
+from src.utils.FieldIO import field_from_numpy_prefix, validate_numpy_prefix
 import trimesh as tm
 
 
@@ -251,6 +252,222 @@ class BodyReader(Generator):
         scene.particleNum[0] += particle_num
         self.print_particle_info(bodyID, materialID, init_v, fix_v, particle_num)
 
+    def _read_incompressible_restart_pressure(self, scene, particle_file, particle_info):
+        grid_file = os.path.join(
+            os.path.dirname(os.path.dirname(particle_file)),
+            "grids",
+            os.path.basename(particle_file).replace("MPMParticle", "MPMGrid", 1),
+        )
+        if "restart_cell_pressure" not in particle_info.files and not os.path.isfile(grid_file):
+            return None
+        shape = tuple(int(n) for n in scene.element.cnum)
+        spacing = np.asarray(scene.element.grid_size, dtype=float)
+        ghost_cell = int(scene.element.ghost_cell)
+        pressure = None
+        if "restart_cell_pressure" in particle_info.files:
+            pressure = np.asarray(particle_info["restart_cell_pressure"], dtype=float)
+            if (
+                not np.allclose(particle_info["restart_grid_size"], spacing, rtol=1e-7, atol=1e-12)
+                or int(particle_info["restart_ghost_cell"]) != ghost_cell
+            ):
+                raise ValueError("Incompressible restart grid geometry does not match the configured grid")
+        else:
+            # Older particle files can recover the exact field from their matching grid output.
+            if os.path.isfile(grid_file):
+                with np.load(grid_file, allow_pickle=False) as grid_info:
+                    if "cell_pressure" in grid_info.files:
+                        if not np.isclose(grid_info["t_current"], particle_info["t_current"], rtol=1e-10, atol=1e-12):
+                            raise ValueError("Incompressible restart particle and grid times do not match")
+                        pressure = np.asarray(grid_info["cell_pressure"], dtype=float)
+                        if "coords" in grid_info.files:
+                            coords = grid_info["coords"]
+                            if not np.allclose(
+                                coords.min(axis=0), -ghost_cell * spacing, rtol=1e-7, atol=1e-12
+                            ) or not np.allclose(
+                                coords.max(axis=0), (np.asarray(shape) - ghost_cell) * spacing, rtol=1e-7, atol=1e-12
+                            ):
+                                raise ValueError(
+                                    "Incompressible restart grid geometry does not match the configured grid"
+                                )
+        if pressure is not None:
+            if pressure.shape == shape + (1,):
+                pressure = pressure[..., 0]
+            if pressure.shape != shape or not np.isfinite(pressure).all():
+                raise ValueError(
+                    "Incompressible restart cell pressure must be finite and match the configured grid shape"
+                )
+            pressure = np.ascontiguousarray(pressure)
+        return pressure
+
+    def _restore_two_phase(self, scene, data, template):
+        count, dim = int(data["body_num"]), self.sims.dimension
+        if count < 0 or count > self.sims.max_particle_num:
+            raise ValueError("Two-phase restart particle count exceeds the allocated capacity")
+        if "dimension" in data and int(data["dimension"]) != dim:
+            raise ValueError("Two-phase restart dimension does not match the configured model")
+        if "material_type" in data and str(data["material_type"]) != self.sims.material_type:
+            raise ValueError("Two-phase restart material type does not match the configured model")
+        if float(data["body_num"]) != count:
+            raise ValueError("Restart particle count must be an integer")
+        if "restart_format_version" in data and int(data["restart_format_version"]) != 1:
+            raise ValueError("Unsupported two-phase restart format version")
+        phase = np.asarray(data.get("phase", np.zeros(count, dtype=np.uint8)))
+        if self.sims.material_type == "TwoPhaseDoubleLayer" and np.any(~np.isin(phase, [1, 2])):
+            raise ValueError("Double-layer restart requires valid saved phase labels")
+        if self.sims.material_type == "TwoPhaseSingleLayer" and np.any(phase != 0):
+            raise ValueError("A double-layer phase checkpoint cannot restart a single-layer model")
+        sizes = data["psize"] if "psize" in data else template.get("ParticleSize")
+        if sizes is None:
+            raise ValueError("Legacy two-phase restart lacks psize; supply particle_size from the original generation")
+        sizes = np.asarray(sizes, dtype=float)
+        if sizes.shape == (dim,):
+            sizes = np.broadcast_to(sizes, (count, dim)).copy()
+        if sizes.shape != (count, dim) or not np.isfinite(sizes).all() or np.any(sizes <= 0):
+            raise ValueError("Restart particle_size must be positive with shape (dimension,) or (particles, dimension)")
+        saved_time = float(data["t_current"])
+        if not np.isfinite(saved_time) or saved_time < 0:
+            raise ValueError("Restart time must be finite and non-negative")
+        step = data["current_step"] if "current_step" in data else template.get("CurrentStep")
+        if self.sims.is_continue:
+            if step is None:
+                if saved_time == 0:
+                    step = 0
+                else:
+                    raise ValueError(
+                        "Legacy two-phase restart lacks current_step; supply the original saved step count"
+                    )
+            if not np.isfinite(step) or int(step) != step or int(step) < 0:
+                raise ValueError("Restart current_step must be a non-negative integer")
+
+        fields = {
+            "particleID": "particleID",
+            "bodyID": "bodyID",
+            "materialID": "materialID",
+            "active": "active",
+            "m": "mass",
+            "ms": "solid_mass",
+            "mf": "fluid_mass",
+            "vol": "volume",
+            "x": "position",
+            "v": "velocity",
+            "vs": "solid_velocity",
+            "vf": "fluid_velocity",
+            "stress": "stress",
+            "pressure": "pressure",
+            "porosity": "porosity",
+            "permeability": "permeability",
+            "solid_velocity_gradient": "solid_velocity_gradient",
+            "fluid_velocity_gradient": "fluid_velocity_gradient",
+            "fix_v": "fix_v",
+        }
+        restores = []
+
+        def prepare(field, value, name, entries=count):
+            value = validate_numpy_prefix(field, value)
+            if value.shape[0] != entries:
+                raise ValueError(f"Restart field {name} has the wrong particle count")
+            restores.append((field, value))
+
+        for field, key in fields.items():
+            if key not in data:
+                raise ValueError(f"Two-phase restart lacks {key}")
+            prepare(getattr(scene.particle, field), data[key], key)
+        if self.sims.material_type == "TwoPhaseDoubleLayer" and "phase" not in data:
+            raise ValueError("Double-layer restart requires each particle's phase")
+        for name in (
+            "phase",
+            "coupling",
+            "free_surface",
+            "pressure_gradient",
+            "normal",
+            "rad",
+            "mass_density",
+            "verletDisp",
+            "external_force",
+        ):
+            if hasattr(scene.particle, name):
+                field = getattr(scene.particle, name)
+                components = () if not hasattr(field, "n") else (field.n,)
+                value = data[name] if name in data else np.zeros((count, *components))
+                if name == "coupling" and name not in data and self.sims.coupling:
+                    value = np.asarray(phase == 1, dtype=np.uint8)
+                prepare(field, value, name)
+        if np.any(data["bodyID"] >= scene.is_rigid.shape[0]) or np.any(data["bodyID"] < 0):
+            raise ValueError("Restart body IDs exceed the allocated bodies")
+        if scene.material.stateVars is not None:
+            history_key = (
+                "constitutive_state"
+                if "constitutive_state" in data
+                else ("restart_state_vars" if "restart_state_vars" in data else "state_vars")
+            )
+            history = data[history_key].item() if history_key in data else {}
+            for name, field in scene.material.stateVars.field_dict.items():
+                if name not in history:
+                    raise ValueError(f"Two-phase restart lacks constitutive history {name}")
+                value = np.asarray(history[name])
+                # Older visualization snapshots expanded six-component symmetric tensors.
+                if getattr(field, "n", None) == 6 and getattr(field, "m", None) == 1 and value.shape == (count, 3, 3):
+                    value = value[:, [0, 1, 2, 0, 1, 0], [0, 1, 2, 1, 2, 2]]
+                prepare(field, value, "state_vars." + name)
+
+        for name in ("mass", "solid_mass", "fluid_mass"):
+            if np.any(data[name] < 0):
+                raise ValueError("Restart particle masses must be nonnegative")
+        if np.any(data["volume"] <= 0) or np.any((data["porosity"] < 0) | (data["porosity"] > 1)):
+            raise ValueError("Invalid restart particle volume or porosity")
+        if hasattr(scene.material, "matProps") and np.any(data["materialID"] >= scene.material.matProps.size()):
+            raise ValueError("Restart material IDs exceed the configured material table")
+        initialized = data.get(
+            "two_phase_fluid_mass_initialized",
+            data.get("fluid_mass_initialized", template.get("FluidMassInitialized", saved_time > 0)),
+        )
+        if initialized not in (False, True):
+            raise ValueError("Invalid fluid mass initialization flag")
+        traction_count = None
+        traction_key = "particle_traction_state" if "particle_traction_state" in data else "restart_particle_traction"
+        if traction_key in data:
+            if template.get("Traction"):
+                raise ValueError("Saved particle tractions cannot be combined with new restart tractions")
+            traction = data[traction_key].item()
+            traction_count = len(traction["pid"]) if traction else 0
+            if traction_count:
+                target = scene.boundary.particle_traction
+                if target is None or not hasattr(target, "field_dict"):
+                    raise ValueError("Restart requires allocated particle traction constraints")
+                if np.any(traction["pid"] < 0) or np.any(traction["pid"] >= count):
+                    raise ValueError("Restart traction IDs are out of range")
+                for name, field in target.field_dict.items():
+                    if name not in traction:
+                        raise ValueError(f"Restart lacks particle traction history {name}")
+                    prepare(field, traction[name], "particle_traction." + name, traction_count)
+        elif saved_time > 0 and scene.boundary.ptraction_list[0] > 0 and self.sims.particle_traction_update_area:
+            raise ValueError("Legacy restart lacks evolving particle traction areas; use a new checkpoint")
+
+        restart_pressure = self._read_incompressible_restart_pressure(scene, template["File"], data)
+        if saved_time == 0.0 and (step is None or step == 0):
+            # The initial output precedes projection; IBM must seed pressure
+            # from the restored particles, as in an uninterrupted fresh run.
+            restart_pressure = None
+
+        # Validate every required field before changing the live particle state or clock.
+        for field, value in restores:
+            field_from_numpy_prefix(field, value)
+        scene.is_rigid.fill(0)
+        for body in np.unique(data["bodyID"][data["materialID"] == 0]):
+            scene.is_rigid[int(body)] = 1
+        scene.psize = sizes.copy()
+        scene.particleNum[0] = count
+        if traction_count is not None:
+            scene.boundary.ptraction_list[0] = traction_count
+        scene.two_phase_fluid_mass_initialized = bool(initialized)
+        scene.restart_cell_pressure = restart_pressure
+        if self.sims.is_continue:
+            self.sims.current_time = saved_time
+            self.sims.CurrentTime[None] = saved_time
+            self.sims.current_step = int(step)
+        self.set_traction(count, DictIO.GetAlternative(template, "Traction", {}), scene)
+        print("Insert particle Number: ", count)
+
     def add_npz_body(self, scene: myScene, template):
         particle_file = DictIO.GetEssential(template, "File")
         if not os.path.exists(particle_file):
@@ -258,6 +475,16 @@ class BodyReader(Generator):
 
         if DictIO.GetAlternative(template, "Restart", False):
             particle_info = np.load(particle_file, allow_pickle=True)
+            if self.sims.material_type in ("TwoPhaseSingleLayer", "TwoPhaseDoubleLayer"):
+                try:
+                    self._restore_two_phase(scene, particle_info, template)
+                finally:
+                    particle_info.close()
+                return
+            is_incompressible = "pressure" in particle_info.files and "stress" not in particle_info.files
+            restart_pressure = None
+            if is_incompressible:
+                restart_pressure = self._read_incompressible_restart_pressure(scene, particle_file, particle_info)
             if self.sims.is_continue:
                 self.sims.current_time = DictIO.GetEssential(particle_info, "t_current")
                 self.sims.CurrentTime[None] = DictIO.GetEssential(particle_info, "t_current")
@@ -291,7 +518,7 @@ class BodyReader(Generator):
                         DictIO.GetEssential(particle_info, "position"),
                         DictIO.GetEssential(particle_info, "velocity"),
                         DictIO.GetEssential(particle_info, "volume"),
-                        DictIO.GetEssential(particle_info, "pressure"),
+                        -DictIO.GetEssential(particle_info, "pressure"),
                         velocity_gradient,
                         DictIO.GetEssential(particle_info, "fix_v"),
                     )
@@ -309,10 +536,11 @@ class BodyReader(Generator):
                         DictIO.GetEssential(particle_info, "position"),
                         DictIO.GetEssential(particle_info, "velocity"),
                         DictIO.GetEssential(particle_info, "volume"),
-                        DictIO.GetEssential(particle_info, "pressure"),
+                        -DictIO.GetEssential(particle_info, "pressure"),
                         velocity_gradient,
                         DictIO.GetEssential(particle_info, "fix_v"),
                     )
+                scene.restart_cell_pressure = restart_pressure
             else:
                 kernel_rebulid_particle(
                     particle_number,
@@ -511,8 +739,8 @@ class BodyReader(Generator):
             if not os.path.exists(vertices):
                 raise EOFError("Invaild path")
             vertice = np.loadtxt(vertices)[:, 0 : self.sims.dimension]
-        elif isinstance(vertice, (list, tuple, np.ndarray)):
-            vertice = np.array(vertice)
+        elif isinstance(vertices, (list, tuple, np.ndarray)):
+            vertice = np.array(vertices)
 
         velocity = DictIO.GetAlternative(body_dict, "InitialVelocity", [0.0, 0.0])
         contact.generate_vertice_field(self.sims.dimension, vertice.shape[0])

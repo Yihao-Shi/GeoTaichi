@@ -521,3 +521,12 @@ def test_upstream_edge_edge_mollifier_endpoint_derivatives(mollifier_harness):
     )
     assert np.allclose(result["rest_gradient"], fd_threshold_only, atol=2.0e-7, rtol=3.0e-6)
     assert eps_x == pytest.approx(1.0e-3)
+
+
+def test_near_parallel_edge_coordinates_do_not_lose_gram_determinant():
+    harness = _GeometryHarness()
+    points = np.array([[-1.0, 0.0, 0.0], [1.0, 0.0, 0.0], [-1.0, -2e-7, 1e-8], [1.0, 2e-7, 1e-8]])
+    harness.evaluate_ee(*points)
+    np.testing.assert_allclose(harness.ee_coordinates.to_numpy(), [0.5, 0.5], rtol=0, atol=2e-15)
+    for field in (harness.ee_jacobian, harness.ee_hessian0, harness.ee_hessian1):
+        assert np.isfinite(field.to_numpy()).all()

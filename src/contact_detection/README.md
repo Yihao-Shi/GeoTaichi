@@ -15,6 +15,45 @@ simulation facade.
 | `continuous_contact_detection/PolynomialCCD.py` | Polynomial point/point and material-determinant feasibility queries |
 | `continuous_contact_detection/THEORY.md` | Detailed CCD and ACCD mathematical derivation and robustness assumptions |
 
+The production `MultiPatchLBVH` is shared by ordinary DEM/LSDEM/LSMPM,
+AffineBody, FEDEM/FEMPM searches, FEM triangle contact and its coupled consumers,
+and IGA--MPM surface/span control hulls.
+Both build and refit, including particle-only prefix updates with fixed wall
+batches, initialize leaf bounds and reduce internal bounds by tree depth in
+device kernels. Each depth uses a separate kernel so all child bounds are
+published before the parent layer reads them; arrival flags alone do not
+establish that ordering. Python reads only the scalar maximum tree depth.
+FEM retains PT/EE filtering and compact output around the shared LBVH. NURBS
+and ABD queries use device-exported escape links for stackless traversal.
+IPC regenerates the LBVH topology on device whenever it generates a new
+current or swept candidate list. This applies to ABD, FEM triangle contact
+and its implicit coupled consumers (FEM--ABD, FEM--MPM, direct MPM--ABD and soft--ABD), and
+IGA--MPM surface/span queries. Each rebuild also refreshes topology-dependent
+escape links and ABD homogeneous-body exclusion labels. An already prepared
+swept candidate list may still serve backtracking along the direction it bounds;
+reusing that list does not perform another broad-phase query.
+Rebuilds follow candidate generation, including queries within a Newton
+iteration; they are not restricted to the beginning of a time step.
+The shared LBVH's explicit `refit` API remains available to non-IPC consumers.
+
+Explicit DEM/LSDEM/LSMPM, FEDEM, FEMPM and FEM soft-particle searches use
+`bvh_rebuild_interval` (a positive integer, default `1000`). The first query
+builds the tree. Subsequent queries refit until at least that many solver steps
+have elapsed since the last rebuild; the next query then rebuilds. Sparse
+Verlet queries therefore cannot miss a rebuild by skipping an exact step
+multiple. Reinitializing active primitive batches invalidates the tree schedule;
+DEM detects changed active particle/wall counts and rebuilds all batches.
+Static DEM wall batches remain fixed between such reinitializations.
+This policy changes tree maintenance, not the displacement criterion for
+updating Verlet candidates, and does not change IPC's per-query rebuild policy.
+
+AABB precision
+follows each consumer; no geometry sorting or tree construction runs on CPU.
+Morton radix passes use stable 256-item chunk histograms and bucket/chunk
+prefixes on device, avoiding a single thread walking every primitive. Sorting
+preserves full 64-bit keys, primitive IDs, active batch boundaries and fixed
+wall batches during prefix-only rebuilds.
+
 ## Broad-phase geometry and linear BVH theory
 
 For a primitive with vertices $`\boldsymbol{x}_a`$ and padding $`r\geq0`$, its
@@ -234,7 +273,7 @@ Several solver modules also contain specialized dynamic BVHs optimized for
 their contact stencil and capacity model. Reuse those adapters when possible
 instead of duplicating traversal logic.
 
-FEM wraps its selected dynamic linked-cell or refit-BVH backend in
+FEM wraps its selected dynamic linked-cell or rebuilt-BVH backend in
 `FEMCollisionCulling`. The backend returns conservative AABB overlaps; the
 wrapper applies stitch exclusions, exact current-distance pruning or swept
 conservative CCD, prefix-sum compaction, and minimum-step reduction. This
@@ -257,3 +296,24 @@ the raw AABB list as the assembled contact set.
 
 CCD and LBVH tests are under `tests/unit/contact_detection/`. Higher-level
 contact integration tests live with the FEM, DEM, MPM, and coupling modules.
+
+
+## IPC solver precision defaults
+
+Lagged IPC defaults separate the inner Newton correction from the outer
+friction correction: Newton uses `1e-8`, friction uses `1e-7`.
+ABD and FEM measure surface/nodal correction velocity in m/s; MPM and IGA-MPM
+retain their represented-motion/strain correction measures. These are not
+force residuals. The absolute linear residual default is `1e-14` for ABD
+(including the soft-affine path), and `1e-12` for FEM, FEM-ABD, FEM-MPM,
+IPC-MPM and IGA-MPM. FEM and its ABD/MPM couplings, and IGA-MPM,
+also default to a `1e-12` relative linear
+threshold, so a large initial residual does not demand unattainable absolute
+accuracy. FEM force checks retain their separate absolute/relative
+criteria. Fully implicit friction retains its force-based convergence policy.
+
+These are starting settings for float64 numerical work, not a scale-independent
+accuracy guarantee. Explicit solver parameters override the defaults; no new
+cross-parameter clipping is applied. Tune a case using its masses, time step,
+conditioning and measured convergence. Fixed-count lagged friction remains
+fixed-count; only convergence-driven mode requires the outer tolerance.

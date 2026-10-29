@@ -8,6 +8,7 @@ Both renderers preserve the native deformation and recorded wall motion.
 python tools/fedem_gifs.py --case funnel --renderer paraview --fem-color-max 10000
 python tools/fedem_gifs.py --case compaction --renderer paraview
 """
+
 import argparse
 import csv
 import json
@@ -18,8 +19,12 @@ import tempfile
 
 import numpy as np
 
-from blender_cfdem_gif import ROOT, export
-from incompressible_gifs import BLENDER, PVPYTHON, box_mesh
+if __package__:
+    from .blender_cfdem_gif import ROOT, export
+    from .incompressible_gifs import BLENDER, PVPYTHON, box_mesh
+else:
+    from blender_cfdem_gif import ROOT, export
+    from incompressible_gifs import BLENDER, PVPYTHON, box_mesh
 
 CASES = {
     "hertz": (

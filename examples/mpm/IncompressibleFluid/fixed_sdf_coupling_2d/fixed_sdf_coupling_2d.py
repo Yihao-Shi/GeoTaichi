@@ -8,7 +8,6 @@ if ROOT not in sys.path:
 
 from geotaichi import *
 
-
 ARCH = os.environ.get("GEOTAICHI_ARCH", "cpu")
 DT = float(os.environ.get("GEOTAICHI_INCOMP_SDF_2D_DT", "2.0e-4"))
 SIMULATION_TIME = float(os.environ.get("GEOTAICHI_INCOMP_SDF_2D_TIME", "2.0e-2"))
@@ -99,7 +98,6 @@ mpm.add_material(
     material={
         "MaterialID": 1,
         "Density": 1000.0,
-        "Modulus": 2.0e6,
         "Viscosity": 1.0e-3,
         "ElementLength": DX,
         "cL": 1.5,

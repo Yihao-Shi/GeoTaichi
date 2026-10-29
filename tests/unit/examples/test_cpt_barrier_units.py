@@ -38,6 +38,7 @@ def test_quad_cpt_rejects_linear_checkpoint_before_runtime_initialization(tmp_pa
         resolution_scale=25.0,
         dilation_angle=0.0,
         state_dependent=False,
+        small_mass_ratio=0.0,
         inexact_newton=True,
         resume=previous / "latest_state.npz",
         output_dir=str(tmp_path / "new_quad"),
@@ -58,7 +59,8 @@ def _terms(barrier: ti.template(), distance: ti.f64) -> ti.types.vector(3, ti.f6
 def test_iga_cpt_pressure_barrier_matches_fem_normalization(taichi_runtime, tmp_path, monkeypatch):
     import geotaichi as gt
     from examples.igampm.cpt_dp import cpt_dp
-    from src.physics_model.contact_model.ipc.IPC import Barrier, ipc_barrier_distance_terms_py
+    from src.physics_model.contact_model.ipc.IPC import Barrier
+    from tests.helpers.ipc_scalar_reference import ipc_barrier_distance_terms_py
 
     monkeypatch.setattr(gt, "init", lambda **kwargs: None)
     monkeypatch.setattr(
@@ -74,6 +76,7 @@ def test_iga_cpt_pressure_barrier_matches_fem_normalization(taichi_runtime, tmp_
             resolution_scale=25.0,
             dilation_angle=None,
             state_dependent=False,
+            small_mass_ratio=0.0,
             inexact_newton=False,
             resume=None,
             output_dir=str(tmp_path),
@@ -110,3 +113,18 @@ def test_iga_cpt_pressure_barrier_matches_fem_normalization(taichi_runtime, tmp_
             * dhat
         )
         np.testing.assert_allclose(np.asarray(_terms(barrier, distance)), expected, rtol=1.0e-12, atol=1.0e-12)
+
+
+@pytest.mark.parametrize("contact,ratio", [("ipc", "nan"), ("ipc", "-0.1"), ("ipc", "1"), ("explicit", "0.1")])
+def test_cpt_rejects_invalid_small_mass_cutoff_before_initialization(monkeypatch, tmp_path, contact, ratio):
+    import geotaichi as gt
+    from examples.igampm.cpt_dp import cpt_dp
+
+    monkeypatch.setattr(
+        "sys.argv",
+        ["cpt_dp.py", "--contact", contact, "--small-mass-ratio", ratio, "--output-dir", str(tmp_path / "invalid")],
+    )
+    monkeypatch.setattr(gt, "init", lambda **kwargs: pytest.fail("invalid cutoff reached runtime initialization"))
+    with pytest.raises(ValueError, match="small-mass-ratio"):
+        cpt_dp.main()
+    assert not (tmp_path / "invalid").exists()

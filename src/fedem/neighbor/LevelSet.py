@@ -272,7 +272,7 @@ class _LevelSetBVH(_LevelSetCandidateBase):
 
     def rebuild(self, fem_position, rigid, box, skin=0.0):
         self.aabbs.set_levelset_body_aabbs(self.rigid_count, 0, skin, rigid, box)
-        self.bvh.build(self.rigid_count)
+        self.bvh.update(self.simulation.current_step, self.simulation.bvh_rebuild_interval)
         self._count_candidates(fem_position)
         if int(self.overflow[None]) != 0:
             raise RuntimeError("FEM--LSDEM BVH traversal stack overflow")

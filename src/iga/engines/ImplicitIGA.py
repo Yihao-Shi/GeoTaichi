@@ -1,6 +1,7 @@
 import taichi as ti
 import numpy as np
 import time
+from src.utils.TimeIntegration import newmark_parameters
 from taichi.lang.impl import current_cfg
 
 import src.iga.config as config
@@ -44,10 +45,7 @@ class ImplicitIGA(IGASolver):
     def __init__(self, primitives, dirichlet=None, neumann=None, **kwargs):
         super().__init__(primitives, dirichlet, neumann, **kwargs)
         self.dirichlet.update_timestep(self.dt)
-        self.integration = kwargs.get("newmark", [0.5, 0.25, 0.5])  # [alpha, beta, gamma]
-        integration = np.asarray(self.integration, dtype=np.float64)
-        if integration.size < 3 or not np.all(np.isfinite(integration[:3])) or np.any(integration[:3] <= 0.0):
-            raise ValueError("newmark must contain finite positive [alpha, beta, gamma]")
+        self.integration = newmark_parameters(kwargs.get("newmark", [0.5, 0.25, 0.5]))
         if not np.isfinite(float(self.dt)) or float(self.dt) <= 0.0:
             raise ValueError("implicit IGA time step must be finite and positive")
         self.max_iters = int(kwargs.get("max_iters", 100))
@@ -72,12 +70,17 @@ class ImplicitIGA(IGASolver):
                 "use BiCGSTAB for the exact, potentially indefinite tangent"
             )
         self.linear_solver_tolerance = float(kwargs.get("linear_solver_tolerance", 1.0e-10))
+        self.linear_solver_relative_tolerance = float(kwargs.get("linear_solver_relative_tolerance", 0.0))
         if self.max_iters <= 0:
             raise ValueError("implicit IGA max_iters must be positive")
         if not np.isfinite(self.tol) or self.tol < 0.0:
             raise ValueError("implicit IGA residual/correction tolerance must be finite " "and non-negative")
         if not np.isfinite(self.linear_solver_tolerance) or self.linear_solver_tolerance < 0.0:
             raise ValueError("implicit IGA linear_solver_tolerance must be finite and " "non-negative")
+        if not np.isfinite(self.linear_solver_relative_tolerance) or self.linear_solver_relative_tolerance < 0.0:
+            raise ValueError("implicit IGA linear_solver_relative_tolerance must be finite and non-negative")
+        if self.linear_solver_tolerance + self.linear_solver_relative_tolerance <= 0.0:
+            raise ValueError("implicit IGA linear solver tolerances cannot both be zero")
         self.step_retry = StepRetryPolicy(
             enabled=kwargs.get("enable_step_retry", False),
             maximum_retries=kwargs.get("step_retry_max_retries", 2),
@@ -951,6 +954,7 @@ class ImplicitIGA(IGASolver):
                 self.incre_resolution,
                 active_nodes=active_nodes,
                 tol=self.linear_solver_tolerance,
+                rel_tol=self.linear_solver_relative_tolerance,
                 maxiter=self.linear_solver_max_iters,
                 return_solution=return_solution,
             )
@@ -995,6 +999,7 @@ class ImplicitIGA(IGASolver):
                 self.incre_resolution,
                 self.diag_A,
                 tol=self.linear_solver_tolerance,
+                rel_tol=self.linear_solver_relative_tolerance,
                 maxiter=self.linear_solver_max_iters,
             )
             diagnostics = {
@@ -1309,7 +1314,11 @@ class ImplicitIGA(IGASolver):
         self.visualize(log=log)
 
     def _substep_once(self, verbose=True):
-        self.grid_disp.fill(0)
+        # Start on the prescribed boundary so line search only minimizes over free DOFs.
+        if self.dirichlet.num > 0:
+            copy_group_field(self.grid_disp, self.dirichlet.value)
+        else:
+            self.grid_disp.fill(0)
         iter_num = 0
         residual = 1.0
         while iter_num < self.max_iters:

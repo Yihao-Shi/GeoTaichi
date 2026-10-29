@@ -1,6 +1,7 @@
 import taichi as ti
 
 from contextlib import contextmanager
+import os
 from time import perf_counter
 import src.utils.GlobalVariable as GlobalVariable
 from src.utils.constants import Threshold
@@ -48,8 +49,19 @@ class TimerRecord(object):
 
 
 class Timer(object):
-    def __init__(self):
+    """Collect stage timings, optionally without fencing asynchronous GPU work.
+
+    Set ``GEOTAICHI_SYNC_TIMERS=0`` for production throughput when precise
+    per-stage GPU timings are not required. The default preserves the existing
+    synchronized timing and CUDA error-reporting behavior.
+    """
+
+    def __init__(self, synchronize=None):
         self.records = {}
+        if synchronize is None:
+            value = os.environ.get("GEOTAICHI_SYNC_TIMERS", "1").strip().lower()
+            synchronize = value not in {"0", "false", "no", "off"}
+        self.synchronize = bool(synchronize)
 
     def begin(self, name):
         if name in self.records.keys():
@@ -59,7 +71,7 @@ class Timer(object):
             self.records[name].begin()
 
     def end(self, name):
-        if GlobalVariable.USEGPU:
+        if self.synchronize and GlobalVariable.USEGPU:
             ti.sync()
         if name not in self.records:
             self.begin(name)

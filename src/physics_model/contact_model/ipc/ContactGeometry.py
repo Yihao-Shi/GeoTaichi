@@ -90,24 +90,6 @@ def ipc_ee_type_to_legacy(feature_type):
     return legacy_type
 
 
-def legacy_ee_type_to_ipc_py(feature_type):
-    """Host equivalent of :func:`legacy_ee_type_to_ipc`."""
-    mapping = (0, 1, 6, 2, 3, 7, 4, 5, 8)
-    feature_type = int(feature_type)
-    if feature_type < 0 or feature_type >= len(mapping):
-        raise ValueError("legacy EE feature type must be in [0, 8]")
-    return mapping[feature_type]
-
-
-def ipc_ee_type_to_legacy_py(feature_type):
-    """Host equivalent of :func:`ipc_ee_type_to_legacy`."""
-    mapping = (0, 1, 3, 4, 6, 7, 2, 5, 8)
-    feature_type = int(feature_type)
-    if feature_type < 0 or feature_type >= len(mapping):
-        raise ValueError("IPC EE feature type must be in [0, 8]")
-    return mapping[feature_type]
-
-
 @ti.func
 def edge_edge_parallel_distance_type_ipc(a0, a1, b0, b1):
     """Classify non-degenerate parallel edges in IPC feature ordering."""
@@ -146,7 +128,8 @@ def edge_edge_distance_type_ipc(a0, a1, b0, b1):
     bb = edge_b.dot(edge_b)
     ao = edge_a.dot(offset)
     bo = edge_b.dot(offset)
-    denominator = aa * bb - ab * ab
+    cross = edge_a.cross(edge_b)
+    denominator = cross.norm_sqr()
     feature_type = IPC_EE_A_B
 
     if aa == 0.0 and bb == 0.0:
@@ -157,10 +140,11 @@ def edge_edge_distance_type_ipc(a0, a1, b0, b1):
         feature_type = IPC_EE_A_B0
     else:
         parallel_tolerance = 2.5e-16 * aa * bb
-        if edge_a.cross(edge_b).norm_sqr() < parallel_tolerance:
+        if denominator < parallel_tolerance:
             feature_type = edge_edge_parallel_distance_type_ipc(a0, a1, b0, b1)
         else:
-            parameter_a_numerator = ab * bo - bb * ao
+            # Cross products avoid cancellation of nearly parallel dot products.
+            parameter_a_numerator = edge_b.cross(offset).dot(cross)
             parameter_b_numerator = 0.0
             parameter_b_denominator = denominator
             if parameter_a_numerator <= 0.0:
@@ -172,7 +156,7 @@ def edge_edge_distance_type_ipc(a0, a1, b0, b1):
                 parameter_b_denominator = bb
                 feature_type = IPC_EE_A1_B
             else:
-                parameter_b_numerator = aa * bo - ab * ao
+                parameter_b_numerator = edge_a.cross(offset).dot(cross)
                 parameter_b_denominator = denominator
                 feature_type = IPC_EE_A_B
 
@@ -292,7 +276,8 @@ def closest_points_segments(endpoint_a0, endpoint_a1, endpoint_b0, endpoint_b1):
     bb = direction_b.dot(direction_b)
     ao = direction_a.dot(offset)
     bo = direction_b.dot(offset)
-    denominator = aa * bb - ab * ab
+    cross = direction_a.cross(direction_b)
+    denominator = cross.norm_sqr()
     parameter_a = 0.0
     parameter_b = 0.0
     epsilon = 1.0e-30
@@ -306,7 +291,7 @@ def closest_points_segments(endpoint_a0, endpoint_a1, endpoint_b0, endpoint_b1):
         parameter_a = _clamp_unit(-ao / ti.max(aa, epsilon))
     else:
         if denominator > epsilon:
-            parameter_a = _clamp_unit((ab * bo - bb * ao) / denominator)
+            parameter_a = _clamp_unit(direction_b.cross(offset).dot(cross) / denominator)
         projected_b = ab * parameter_a + bo
         if projected_b < 0.0:
             parameter_b = 0.0
@@ -385,13 +370,11 @@ def edge_edge_coordinates_from_type(endpoint_a0, endpoint_a1, endpoint_b0, endpo
         offset = endpoint_a0 - endpoint_b0
         edge_a = endpoint_a1 - endpoint_a0
         edge_b = endpoint_b1 - endpoint_b0
-        parameter_a, parameter_b = _solve_symmetric_2x2(
-            edge_a.dot(edge_a),
-            -edge_a.dot(edge_b),
-            edge_b.dot(edge_b),
-            -offset.dot(edge_a),
-            offset.dot(edge_b),
-        )
+        cross = edge_a.cross(edge_b)
+        denominator = cross.norm_sqr()
+        if denominator > 1.0e-30:
+            parameter_a = edge_b.cross(offset).dot(cross) / denominator
+            parameter_b = edge_a.cross(offset).dot(cross) / denominator
     return parameter_a, parameter_b
 
 
@@ -601,6 +584,8 @@ def point_edge_closest_point_hessian(point, endpoint0, endpoint1):
 
 @ti.func
 def _symmetric_2x2_solution_terms(
+    determinant,
+    coordinates,
     matrix00,
     matrix00_gradient,
     matrix00_hessian,
@@ -618,9 +603,7 @@ def _symmetric_2x2_solution_terms(
     rhs1_hessian,
 ):
     """Differentiate ``A(x) c(x) = b(x)`` through second order."""
-    determinant = matrix00 * matrix11 - matrix01 * matrix01
     inverse = ti.Matrix([[matrix11, -matrix01], [-matrix01, matrix00]]) / determinant
-    coordinates = inverse @ ti.Vector([rhs0, rhs1])
     jacobian = ti.Matrix.zero(float, 2, 12)
     hessian0 = ti.Matrix.zero(float, 12, 12)
     hessian1 = ti.Matrix.zero(float, 12, 12)
@@ -704,7 +687,11 @@ def point_triangle_closest_point_terms(point, vertex0, vertex1, vertex2):
     matrix11, matrix11_gradient, matrix11_hessian = _affine_dot_terms4(point, vertex0, vertex1, vertex2, edge02, edge02)
     rhs0, rhs0_gradient, rhs0_hessian = _affine_dot_terms4(point, vertex0, vertex1, vertex2, edge01, offset)
     rhs1, rhs1_gradient, rhs1_hessian = _affine_dot_terms4(point, vertex0, vertex1, vertex2, edge02, offset)
+    determinant = matrix00 * matrix11 - matrix01 * matrix01
+    coordinates = ti.Vector([matrix11 * rhs0 - matrix01 * rhs1, matrix00 * rhs1 - matrix01 * rhs0]) / determinant
     return _symmetric_2x2_solution_terms(
+        determinant,
+        coordinates,
         matrix00,
         matrix00_gradient,
         matrix00_hessian,
@@ -784,7 +771,15 @@ def edge_edge_closest_point_terms(endpoint_a0, endpoint_a1, endpoint_b0, endpoin
         offset,
         edge_b,
     )
+    direction_a = endpoint_a1 - endpoint_a0
+    direction_b = endpoint_b1 - endpoint_b0
+    delta = endpoint_a0 - endpoint_b0
+    cross = direction_a.cross(direction_b)
+    determinant = cross.norm_sqr()
+    coordinates = ti.Vector([direction_b.cross(delta).dot(cross), direction_a.cross(delta).dot(cross)]) / determinant
     return _symmetric_2x2_solution_terms(
+        determinant,
+        coordinates,
         matrix00,
         matrix00_gradient,
         matrix00_hessian,

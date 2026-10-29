@@ -62,22 +62,13 @@ def main():
     parser.add_argument("--steps", type=int, default=200)
     parser.add_argument("--dt", type=float, default=1.0e-3)
     parser.add_argument("--scene", choices=("pair", "hairpin"), default="pair")
-    parser.add_argument("--contact-model", choices=("BarrierIPC", "SemiIPC"), default="BarrierIPC")
+    parser.add_argument("--contact-model", choices=("BarrierIPC",), default="BarrierIPC")
     parser.add_argument("--assemble-type", choices=("COO", "HashTriplet"), default="HashTriplet")
     parser.add_argument("--friction-coefficient", type=float, default=0.2)
-    parser.add_argument("--penalty", type=float, default=1.0e5)
-    parser.add_argument("--max-penalty", type=float, default=1.0e12)
     parser.add_argument("--output-dir", default=str((Path(__file__).parents[1] / "OutputData") / "volume_self_contact"))
     args = parser.parse_args()
-    if (
-        args.divisions <= 0
-        or args.steps <= 0
-        or args.dt <= 0.0
-        or args.friction_coefficient < 0.0
-        or args.penalty <= 0.0
-        or args.max_penalty < args.penalty
-    ):
-        parser.error("invalid time, mesh, friction, or SemiIPC penalty parameter")
+    if args.divisions <= 0 or args.steps <= 0 or args.dt <= 0.0 or args.friction_coefficient < 0.0:
+        parser.error("invalid time, mesh, or friction parameter")
 
     import geotaichi as gt
     from src.fem import FEMMesh
@@ -113,8 +104,6 @@ def main():
         dhat=dhat,
         dmin=dmin,
         kappa=1.0e5,
-        penalty=args.penalty,
-        max_penalty=args.max_penalty,
         friction_coefficient=args.friction_coefficient,
         epsv=1.0e-3,
         project_pd=True,
@@ -141,7 +130,6 @@ def main():
 
     peak_contacts = [0]
     peak_violation = [0.0]
-    peak_penalty = [args.penalty]
     first_contact_step = [None]
 
     def sample_contact(engine):
@@ -149,7 +137,6 @@ def main():
         active_contacts = int(contact.get("active_contacts", 0))
         peak_contacts[0] = max(peak_contacts[0], active_contacts)
         peak_violation[0] = max(peak_violation[0], float(contact.get("contact_violation", 0.0)))
-        peak_penalty[0] = max(peak_penalty[0], float(contact.get("contact_penalty", args.penalty)))
         if active_contacts and first_contact_step[0] is None:
             first_contact_step[0] = engine.step_count
 
@@ -165,8 +152,6 @@ def main():
         "dhat": dhat,
         "dmin": dmin,
         "friction_coefficient": args.friction_coefficient,
-        "penalty": args.penalty,
-        "max_penalty": args.max_penalty,
         "final_time": float(result.time),
         "converged": bool(result.converged),
         "finite_positions": bool(np.isfinite(result.positions).all()),
@@ -174,7 +159,6 @@ def main():
         "first_active_contact_time": None if first_contact_step[0] is None else first_contact_step[0] * args.dt,
         "maximum_active_contacts": peak_contacts[0],
         "maximum_contact_violation": peak_violation[0],
-        "maximum_contact_penalty": peak_penalty[0],
     }
     output = Path(args.output_dir)
     (output / "validation_summary.json").write_text(json.dumps(summary, indent=2) + "\n")

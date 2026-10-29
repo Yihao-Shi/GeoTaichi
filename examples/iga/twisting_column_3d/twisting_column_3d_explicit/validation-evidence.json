@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "task_status": "completed",
+  "finite_state": true,
+  "capacity_overflow": false,
+  "solver_converged": "not_applicable",
+  "timestep_consistent": true,
+  "command": "/opt/anaconda3/envs/geotaichi/bin/python examples/iga/twisting_column_3d/twisting_column_3d.py",
+  "backend": "Arch.arm64",
+  "precision": "float64",
+  "production_parameters": true,
+  "checks": [
+    {
+      "name": "top rotation",
+      "kind": "contract_observable",
+      "observed": 449.99999999999994,
+      "expected": 450.0,
+      "tolerance": {
+        "absolute": 1e-08
+      },
+      "evidence": "rotation_history.csv"
+    },
+    {
+      "name": "prescribed boundary coordinates",
+      "kind": "analytical",
+      "observed": 4.440892098500626e-16,
+      "expected": 0,
+      "tolerance": {
+        "absolute": 1e-10
+      },
+      "evidence": "evaluation.json"
+    }
+  ]
+}

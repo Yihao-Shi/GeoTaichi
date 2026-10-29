@@ -88,7 +88,8 @@ line-length = 120
 
 [tool.pytest.ini_options]
 minversion = "7.0"
-pythonpath = ["agent/geotaichi-mcp/src"]
+# Legacy research scripts import sibling analysis modules by their script names.
+pythonpath = ["agent/geotaichi-mcp/src", "research/LSMPM/scripts"]
 testpaths = [
     "tests/unit",
     "tests/integration",

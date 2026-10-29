@@ -12,7 +12,6 @@ from pathlib import Path
 
 import numpy as np
 
-
 ROOT = Path(__file__).resolve().parents[3]
 CASE_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -69,7 +68,7 @@ def _explicit_solver_options():
 
 def _implicit_solver_options():
     return {
-        "newmark": (0.25, 0.5),
+        "newmark": (0.5, 0.25, 0.5),
         "max_iterations": 30,
         "residual_tolerance": 1.0e-7,
         "line_search": True,

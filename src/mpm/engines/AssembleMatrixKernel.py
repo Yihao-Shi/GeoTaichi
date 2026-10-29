@@ -287,6 +287,71 @@ def _coo_neighbor_slot(coord_i, coord_j, influenced_node: int):
 
 
 @ti.kernel
+def kernel_adaptive_coo_offsets(
+    active_dofs: int, particle_num: int, particle: ti.template(), node_size: ti.template(), offsets: ti.template()
+) -> ti.types.vector(2, int):
+    nnz = active_dofs
+    overflow = 0
+    for np in range(particle_num):
+        offsets[np] = -1
+        if int(particle[np].active) == 1:
+            dofs = int(node_size[np]) * GlobalVariable.DIMENSION
+            offset = ti.atomic_add(nnz, dofs * dofs)
+            offsets[np] = offset
+            if offset < 0 or offset > 2147483647 - dofs * dofs:
+                ti.atomic_max(overflow, 1)
+    return ti.Vector([nnz, overflow])
+
+
+@ti.kernel
+def kernel_assemble_adaptive_coo_mass(
+    active_dofs: int, mass_matrix: ti.template(), rows: ti.template(), cols: ti.template(), values: ti.template()
+):
+    for dof in range(active_dofs):
+        rows[dof] = dof
+        cols[dof] = dof
+        values[dof] = mass_matrix[dof]
+
+
+@ti.kernel
+def kernel_assemble_adaptive_coo_stiffness(
+    grid_sum: int,
+    total_nodes: int,
+    particle_num: int,
+    particle: ti.template(),
+    dshape_fn: ti.template(),
+    node_size: ti.template(),
+    lnid: ti.template(),
+    flag: ti.template(),
+    stiffness_matrix: ti.template(),
+    assemble_matrix: ti.template(),
+    offsets: ti.template(),
+    rows: ti.template(),
+    cols: ti.template(),
+    values: ti.template(),
+):
+    for np in range(particle_num):
+        if offsets[np] >= 0:
+            size = int(node_size[np])
+            offset = np * total_nodes
+            body_offset = int(particle[np].bodyID) * grid_sum
+            for i, j in ti.ndrange(size, size):
+                dofsi = flag[lnid[offset + i] + body_offset]
+                dofsj = flag[lnid[offset + j] + body_offset]
+                block = (
+                    assemble_matrix(
+                        dshape_fn[offset + i], dshape_fn[offset + j], stiffness_matrix[np], particle[np].stress
+                    )
+                    * particle[np].vol
+                )
+                for di, dj in ti.static(ti.ndrange(GlobalVariable.DIMENSION, GlobalVariable.DIMENSION)):
+                    idx = offsets[np] + ((i * size + j) * GlobalVariable.DIMENSION + di) * GlobalVariable.DIMENSION + dj
+                    rows[idx] = dofsi + di
+                    cols[idx] = dofsj + dj
+                    values[idx] = block[GlobalVariable.DIMENSION * di + dj]
+
+
+@ti.kernel
 def kernel_assemble_coo_mass(
     active_dofs: int,
     influenced_node: int,

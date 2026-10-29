@@ -1,4 +1,4 @@
-"""Taylor--Green vortex verification for 2-D incompressible MPM."""
+"""Four Taylor--Green vortices on [0, 2*pi]^2 with free-slip outer walls."""
 
 import argparse
 import math
@@ -28,7 +28,7 @@ from src.utils.SolverRuntime import python_callback  # noqa: E402
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--arch", default=os.environ.get("GEOTAICHI_ARCH", "gpu"))
-    parser.add_argument("--cells", type=int, default=64)
+    parser.add_argument("--cells", type=int, default=128)
     parser.add_argument("--ppc", type=int, default=4)
     parser.add_argument("--dt", type=float, default=5.0e-3)
     parser.add_argument("--time", type=float)
@@ -72,7 +72,7 @@ def initialize_velocity(particle_num: int, amplitude: float, particle: ti.templa
 def run(args):
     output = args.output.expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
-    dx = math.pi / args.cells
+    dx = DOMAIN[0] / args.cells
     expected_particles = args.cells**2 * args.ppc**2
     sample_steps = max(1, round(args.save_interval / args.dt))
 
@@ -96,7 +96,7 @@ def run(args):
         shape_function="QuadBSpline",
         gravity=[0.0, 0.0],
         material_type="Fluid",
-        velocity_projection="PIC/FLIP",
+        velocity_projection=None,
         solver_type="Implicit",
         discretization="FDM",
         fluid_level_set=True,
@@ -135,7 +135,6 @@ def run(args):
         material={
             "MaterialID": 1,
             "Density": 1.0,
-            "Modulus": 2.0e3,
             "Viscosity": args.viscosity,
             "ElementLength": dx,
             "cL": 1.5,

@@ -1,8 +1,10 @@
 import taichi as ti
 
-from src.levelset.FluidLevelSetKernel import free_surface_theta
+from src.levelset.FluidLevelSetKernel import free_surface_theta, free_surface_theta_from_phi_half_default
 from src.utils.Quaternion import SetToRotate
 from src.utils.constants import Threshold
+from src.utils.TypeDefination import vec3f
+from src.mpm.engines.EngineKernel import ibm_cell_pressure_acceleration as cell_pressure_acceleration_3d
 
 
 @ti.func
@@ -141,52 +143,6 @@ def cell_pressure_gradient_3d(
 
 
 @ti.func
-def cell_pressure_acceleration_3d(
-    cell,
-    active_cnum,
-    grid_size,
-    fluid_density,
-    atmospheric_pressure,
-    solid_fraction: ti.template(),
-    solid_density: ti.template(),
-    pressure: ti.template(),
-    surface_tension: ti.template(),
-    cell_type: ti.template(),
-    fluid_sdf: ti.template(),
-    use_free_surface_theta: ti.template(),
-):
-    acceleration = ti.Vector.zero(float, 3)
-    local_density = (1.0 - solid_fraction[cell]) * fluid_density + solid_fraction[cell] * solid_density[cell]
-    for d in ti.static(range(3)):
-        for side in ti.static((-1, 1)):
-            neighbor = clamp_cell_index_3d(cell + side * ti.Vector.unit(3, d), active_cnum)
-            face_density = local_density
-            if int(cell_type[neighbor]) == 1:
-                neighbor_density = (1.0 - solid_fraction[neighbor]) * fluid_density + solid_fraction[
-                    neighbor
-                ] * solid_density[neighbor]
-                face_density = 0.5 * (local_density + neighbor_density)
-            acceleration[d] -= (
-                0.5
-                * side
-                * cell_neighbor_pressure_gradient_3d(
-                    cell,
-                    neighbor,
-                    d,
-                    grid_size,
-                    atmospheric_pressure,
-                    pressure,
-                    surface_tension,
-                    cell_type,
-                    fluid_sdf,
-                    use_free_surface_theta,
-                )
-                / ti.max(face_density, Threshold)
-            )
-    return acceleration
-
-
-@ti.func
 def partitioned_body_share(body_fraction, body_fraction_sum):
     return ti.max(0.0, body_fraction) / ti.max(body_fraction_sum, Threshold)
 
@@ -230,8 +186,8 @@ def kernel_update_lsdem_cell_ibm_fields(
     rigid_num: int,
     ghost_cell: int,
     cnum: ti.types.vector(3, int),
-    grid_size: ti.types.vector(3, float),
-    igrid_size: ti.types.vector(3, float),
+    grid_size: vec3f,
+    igrid_size: vec3f,
     bounding_sphere: ti.template(),
     rigid: ti.template(),
     box: ti.template(),
@@ -300,13 +256,12 @@ def kernel_accumulate_lsdem_volume_fraction_ibm_force(
     rigid_num: int,
     ghost_cell: int,
     cnum: ti.types.vector(3, int),
-    grid_size: ti.types.vector(3, float),
-    igrid_size: ti.types.vector(3, float),
+    grid_size: vec3f,
+    igrid_size: vec3f,
     bounding_sphere: ti.template(),
     rigid: ti.template(),
     box: ti.template(),
     levelset_grid: ti.template(),
-    node: ti.template(),
     matProps: ti.template(),
     solid_fraction: ti.template(),
     solid_fraction_sum: ti.template(),
@@ -317,12 +272,15 @@ def kernel_accumulate_lsdem_volume_fraction_ibm_force(
     cell_type: ti.template(),
     fluid_sdf: ti.template(),
     use_free_surface_theta: ti.template(),
+    dt: float,
+    viscous_delta0: ti.template(),
+    viscous_delta1: ti.template(),
+    viscous_delta2: ti.template(),
 ):
     active_cnum = cnum - 2 * ghost_cell
     min_dx = min_grid_spacing_3d(grid_size)
     cell_volume = grid_size[0] * grid_size[1] * grid_size[2]
     fluid_density = matProps.density
-    viscosity = matProps.viscosity
     # The grid loop is the parallel dimension; rigid accumulation remains
     # atomic because many cell tasks contribute to the same body resultant.
     for I in ti.grouped(ti.ndrange(active_cnum[0], active_cnum[1], active_cnum[2])):
@@ -332,24 +290,38 @@ def kernel_accumulate_lsdem_volume_fraction_ibm_force(
             local_solid_density = solid_density[I]
             if local_solid_density <= Threshold:
                 local_solid_density = fluid_density
-            pressure_gradient = cell_pressure_gradient_3d(
+            acceleration = cell_pressure_acceleration_3d(
                 I,
                 active_cnum,
                 grid_size,
+                fluid_density,
                 matProps.atmospheric_pressure,
+                solid_fraction,
+                solid_density,
                 pressure,
                 surface_tension,
                 cell_type,
                 fluid_sdf,
                 use_free_surface_theta,
             )
-            viscous_stress_divergence = viscosity * cell_velocity_laplacian_3d(I, active_cnum, grid_size, node)
-            stress_divergence = -pressure_gradient + viscous_stress_divergence
+            # Use the same pressure mobility and pre-projection viscous increment as the MAC grid.
+            acceleration += (
+                0.5
+                / dt
+                * ti.Vector(
+                    [
+                        viscous_delta0[I] + viscous_delta0[I + ti.Vector([1, 0, 0])],
+                        viscous_delta1[I] + viscous_delta1[I + ti.Vector([0, 1, 0])],
+                        viscous_delta2[I] + viscous_delta2[I + ti.Vector([0, 0, 1])],
+                    ]
+                )
+            )
+            mixed_density = (1.0 - total_solid_fraction) * fluid_density + total_solid_fraction * local_solid_density
             force_density = lsdem_volume_fraction_ibm_force_density(
                 total_solid_fraction,
                 fluid_density,
                 local_solid_density,
-                stress_divergence,
+                mixed_density * acceleration,
                 ibm_force_cell[I],
             )
             for body in range(rigid_num):
@@ -387,46 +359,6 @@ def kernel_accumulate_lsdem_volume_fraction_ibm_force(
 
 
 @ti.func
-def double_layer_cell_velocity_3d(
-    cell, velocity_x: ti.template(), velocity_y: ti.template(), velocity_z: ti.template()
-):
-    return ti.Vector(
-        [
-            0.5 * (velocity_x[cell] + velocity_x[cell + ti.Vector([1, 0, 0])]),
-            0.5 * (velocity_y[cell] + velocity_y[cell + ti.Vector([0, 1, 0])]),
-            0.5 * (velocity_z[cell] + velocity_z[cell + ti.Vector([0, 0, 1])]),
-        ]
-    )
-
-
-@ti.func
-def sample_double_layer_cell_velocity_3d(
-    cell, active_cnum, velocity_x: ti.template(), velocity_y: ti.template(), velocity_z: ti.template()
-):
-    clamped = clamp_cell_index_3d(cell, active_cnum)
-    return double_layer_cell_velocity_3d(clamped, velocity_x, velocity_y, velocity_z)
-
-
-@ti.func
-def double_layer_velocity_laplacian_3d(
-    cell,
-    active_cnum,
-    grid_size,
-    velocity_x: ti.template(),
-    velocity_y: ti.template(),
-    velocity_z: ti.template(),
-):
-    center = sample_double_layer_cell_velocity_3d(cell, active_cnum, velocity_x, velocity_y, velocity_z)
-    laplacian = ti.Vector([0.0, 0.0, 0.0])
-    for d in ti.static(range(3)):
-        offset = ti.Vector.unit(3, d)
-        left = sample_double_layer_cell_velocity_3d(cell - offset, active_cnum, velocity_x, velocity_y, velocity_z)
-        right = sample_double_layer_cell_velocity_3d(cell + offset, active_cnum, velocity_x, velocity_y, velocity_z)
-        laplacian += (left - 2.0 * center + right) / (grid_size[d] * grid_size[d])
-    return laplacian
-
-
-@ti.func
 def apply_double_layer_ibm_face_3d(
     axis,
     face,
@@ -438,6 +370,7 @@ def apply_double_layer_ibm_face_3d(
     fluid_velocity: ti.template(),
     fluid_acceleration: ti.template(),
     reaction_cell: ti.template(),
+    pressure_acceleration=0.0,
 ):
     if fluid_mass[face] > cutoff:
         cell_shape = ti.Vector([solid_fraction.shape[0], solid_fraction.shape[1], solid_fraction.shape[2]])
@@ -458,7 +391,9 @@ def apply_double_layer_ibm_face_3d(
             face_fraction = ti.min(1.0, fraction_sum)
         if face_fraction > Threshold and fraction_sum > Threshold:
             target_velocity = target_numerator / fraction_sum
-            velocity_change = face_fraction * (target_velocity - fluid_velocity[face])
+            velocity_change = face_fraction * (
+                target_velocity - fluid_velocity[face] - dt[None] * pressure_acceleration
+            )
             fluid_velocity[face] += velocity_change
             fluid_acceleration[face] += velocity_change / dt[None]
             reaction = -fluid_mass[face] * velocity_change / dt[None]
@@ -527,59 +462,116 @@ def kernel_apply_double_layer_lsdem_ibm(
 
 
 @ti.kernel
+def kernel_initialize_double_layer_ibm_pressure(
+    particle_count: int,
+    grid_size: vec3f,
+    particle: ti.template(),
+    pressure: ti.template(),
+    weight: ti.template(),
+):
+    for I in ti.grouped(pressure):
+        pressure[I], weight[I] = 0.0, 0.0
+    for p in range(particle_count):
+        if int(particle[p].active) == 1 and int(particle[p].phase) == 2:
+            cell = ti.floor(particle[p].x / grid_size).cast(int)
+            inside = True
+            for d in ti.static(range(3)):
+                inside = inside and 0 <= cell[d] < pressure.shape[d]
+            if inside:
+                ti.atomic_add(pressure[cell], particle[p].vol * particle[p].pressure)
+                ti.atomic_add(weight[cell], particle[p].vol)
+    for I in ti.grouped(pressure):
+        if weight[I] > 0.0:
+            pressure[I] /= weight[I]
+
+
+@ti.kernel
+def kernel_apply_double_layer_lsdem_ibm_pressure_predictor(
+    cutoff: float,
+    dt: ti.template(),
+    grid_size: vec3f,
+    solid_fraction: ti.template(),
+    solid_velocity_cell: ti.template(),
+    fluid_mass: ti.template(),
+    fluid_velocity: ti.template(),
+    fluid_acceleration: ti.template(),
+    reaction_cell: ti.template(),
+    pressure: ti.template(),
+    cell_type: ti.template(),
+    fluid_sdf: ti.template(),
+    fluid_density: ti.template(),
+    pressure_mobility: ti.template(),
+):
+    for axis in ti.static(range(3)):
+        for I in ti.grouped(fluid_velocity[axis]):
+            acceleration = 0.0
+            if 0 < I[axis] < fluid_velocity[axis].shape[axis] - 1:
+                left = I - ti.Vector.unit(3, axis)
+                right = I
+                jump = 0.0
+                theta = 1.0
+                if cell_type[left] == 1 and cell_type[right] == 1:
+                    jump = pressure[right] - pressure[left]
+                elif cell_type[left] == 1 and cell_type[right] == 0:
+                    jump = -pressure[left]
+                    theta = free_surface_theta_from_phi_half_default(fluid_sdf[left], fluid_sdf[right])
+                elif cell_type[left] == 0 and cell_type[right] == 1:
+                    jump = pressure[right]
+                    theta = free_surface_theta_from_phi_half_default(fluid_sdf[right], fluid_sdf[left])
+                acceleration = -jump / (theta * grid_size[axis] * ti.max(fluid_density[axis][I], 1.0e-12))
+                if ti.static(pressure_mobility != None):
+                    acceleration = -jump * pressure_mobility[axis][I] / (theta * grid_size[axis])
+            apply_double_layer_ibm_face_3d(
+                axis,
+                I,
+                cutoff,
+                dt,
+                solid_fraction,
+                solid_velocity_cell,
+                fluid_mass[axis],
+                fluid_velocity[axis],
+                fluid_acceleration[axis],
+                reaction_cell,
+                acceleration,
+            )
+
+
+@ti.kernel
 def kernel_accumulate_double_layer_lsdem_ibm_force(
     rigid_num: int,
     cnum: ti.types.vector(3, int),
-    grid_size: ti.types.vector(3, float),
-    igrid_size: ti.types.vector(3, float),
+    grid_size: vec3f,
     bounding_sphere: ti.template(),
     rigid: ti.template(),
     box: ti.template(),
     levelset_grid: ti.template(),
     solid_fraction: ti.template(),
     solid_fraction_sum: ti.template(),
-    solid_density: ti.template(),
     reaction_cell: ti.template(),
-    pressure: ti.template(),
-    zero_surface_tension: ti.template(),
-    cell_type: ti.template(),
-    fluid_sdf: ti.template(),
-    cell_fluid_density: ti.template(),
-    cell_fluid_viscosity: ti.template(),
-    fluid_velocity_x: ti.template(),
-    fluid_velocity_y: ti.template(),
-    fluid_velocity_z: ti.template(),
+    cutoff: float,
+    gravity: vec3f,
+    fluid_mass: ti.template(),
+    fluid_acceleration: ti.template(),
 ):
     min_dx = min_grid_spacing_3d(grid_size)
-    cell_volume = grid_size[0] * grid_size[1] * grid_size[2]
     for I in ti.grouped(ti.ndrange(cnum[0], cnum[1], cnum[2])):
         total_fraction = ti.min(1.0, ti.max(0.0, solid_fraction[I]))
-        if total_fraction > Threshold and int(cell_type[I]) == 1:
-            fluid_density = ti.max(cell_fluid_density[I], Threshold)
-            local_solid_density = solid_density[I]
-            if local_solid_density <= Threshold:
-                local_solid_density = fluid_density
-            mixed_density = (1.0 - total_fraction) * fluid_density + total_fraction * local_solid_density
-            weighted_fraction = ti.min(
-                1.0,
-                ti.max(0.0, total_fraction * local_solid_density / ti.max(mixed_density, Threshold)),
-            )
-            pressure_gradient = cell_pressure_gradient_3d(
-                I,
-                cnum,
-                grid_size,
-                0.0,
-                pressure,
-                zero_surface_tension,
-                cell_type,
-                fluid_sdf,
-                True,
-            )
-            laplacian = double_layer_velocity_laplacian_3d(
-                I, cnum, grid_size, fluid_velocity_x, fluid_velocity_y, fluid_velocity_z
-            )
-            stress_divergence = -pressure_gradient + cell_fluid_viscosity[I] * laplacian
-            force = weighted_fraction * stress_divergence * cell_volume + (1.0 - weighted_fraction) * reaction_cell[I]
+        if total_fraction > Threshold:
+            # MAC reaction already includes actual fluid mass and both IBM passes.
+            # Air-cell shares still carry impulse from adjacent occupied faces.
+            force = reaction_cell[I]
+            # IBM also accelerates fictitious interior water. Remove its inertia
+            # and weight from the physical fluid/body momentum balance.
+            for d in ti.static(range(3)):
+                for side in ti.static((0, 1)):
+                    face = I + side * ti.Vector.unit(3, d)
+                    if fluid_mass[d][face] > cutoff:
+                        share = 0.5
+                        if face[d] == 0 or face[d] == cnum[d]:
+                            share = 1.0
+                        force[d] += (
+                            share * total_fraction * fluid_mass[d][face] * (fluid_acceleration[d][face] - gravity[d])
+                        )
             position = (I.cast(float) + 0.5) * grid_size
             for body in range(rigid_num):
                 if int(bounding_sphere[body].active) == 1:
@@ -599,7 +591,7 @@ def kernel_accumulate_double_layer_lsdem_ibm_force(
                             box,
                             levelset_grid,
                         )
-                        if body_fraction > 1e-6:
+                        if body_fraction > 1e-12:
                             body_force = partitioned_body_share(body_fraction, solid_fraction_sum[I]) * force
                             torque = (position - mass_center).cross(body_force)
                             for d in ti.static(range(3)):

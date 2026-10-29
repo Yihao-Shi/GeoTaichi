@@ -4,6 +4,7 @@ import taichi as ti
 from taichi.lang.impl import current_cfg
 
 from src.linear_solver.LinearOperator import LinearOperator
+from src.linear_solver.DeviceKrylov import DeviceKrylov, device_krylov_enabled
 
 from src.linear_solver.MatrixFreeKrylovKernel import (
     bicgstab_reset as reset,
@@ -33,6 +34,8 @@ class MatrixFreeBICGSTAB(object):
         self.As = ti.field(dtype=float)
         ti.root.dense(ti.i, int(length)).place(self.p, self.r, self.r_tld, self.s, self.h, self.Ap, self.Ax, self.As)
         self.scalar_rest()
+        self.device_execution = device_krylov_enabled()
+        self._device_solver = None
 
         if current_cfg().arch == ti.cuda:
             self.reduce = reduce_shared
@@ -87,6 +90,11 @@ class MatrixFreeBICGSTAB(object):
             raise ValueError("BiCGSTAB relative tolerance must be finite and non-negative")
         if maxiter < 0:
             raise ValueError("BiCGSTAB maxiter must be non-negative")
+
+        if self.device_execution:
+            if self._device_solver is None:
+                self._device_solver = DeviceKrylov(self, bicgstab=True)
+            return self._device_solver.solve(A, b, x, None, size, tol, maxiter, rel_tol, reliable_interval=32)
 
         reset(size, self.p, self.r, self.r_tld, self.s, self.h, self.Ap, self.Ax, self.As)
         self.scalar_rest()

@@ -24,6 +24,13 @@ the contract. The factory receives the full contract and returns
 those objects using the nearest maintained IGA example for the selected
 dimension and solver family.
 
+For moving Dirichlet boundaries, explicit values are total displacements from
+the initial control points; implicit values are increments from the last
+accepted position. Standalone implicit Newton starts with those constrained
+increments already applied and line-searches only free corrections. See
+`examples/iga/twisting_column_3d/` for a 450-degree square-column twist with
+separate simulation and saved-output evaluation scripts.
+
 ## 2. IGAMPM construction
 
 Configure ordinary `IGA` and `MPM` sub-solvers, then construct
@@ -99,14 +106,13 @@ and contact buffer/NNZ capacities. Do not assume matrix symmetry when friction
 or another nonsymmetric tangent is active.
 
 IPC control-hull AABB culling keeps every pair but stores a conservative
-distance lower bound for far inactive pairs. Active pairs and positive SemiIPC
-multipliers retain full projection geometry. A reported inactive minimum is
+distance lower bound for far inactive pairs. Active pairs retain full projection geometry. A reported inactive minimum is
 therefore a lower bound, not necessarily the exact closest distance. ACCD can
 skip a moving query only when its relative-motion bound certifies the complete
 segment; near/approaching pairs still use the accumulated closest-point loop.
 Three-dimensional IPC queries share refreshed knot-span hulls and fixed
-Greville coordinates across particles. A fixed-topology span BVH is refitted
-after deformation and used to prune span subtrees and locate the exact nearest
+Greville coordinates across particles. The span BVH and its stackless links are
+rebuilt on device per geometry query to prune span subtrees and locate the exact nearest
 control-point seed. Queries also reuse previous closest parameters
 as extra seeds. They retain span multistart and boundary searches; seed reuse
 does not certify a global minimum by itself. Moving ACCD queries do not reuse

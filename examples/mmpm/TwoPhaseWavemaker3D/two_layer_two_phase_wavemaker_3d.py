@@ -8,6 +8,7 @@ therefore remain on device.
 """
 
 import argparse
+import json
 import math
 import os
 import sys
@@ -35,11 +36,6 @@ from examples.mmpm.TwoPhaseWavemaker3D.draw.evaluate_two_layer_two_phase_wavemak
 
 
 from geotaichi import MPM, init
-from examples.mpm.IncompressibleFluid.wavemaker_tank_3d.draw.evaluate_wavemaker_tank_3d import piston_displacement
-from examples.mpm.IncompressibleFluid.wavemaker_tank_3d.wavemaker_tank_3d import (
-    enforce_moving_piston_particles,
-    piston_velocity,
-)
 from src.utils.SolverRuntime import python_callback
 
 DX_DEFAULT = 0.02
@@ -51,6 +47,44 @@ WAVE_RAMP = 1.2
 SOIL_YOUNG_MODULUS = 12.0e6
 SOIL_COHESION = 300.0
 SOIL_FRICTION = 26.0
+
+
+@ti.kernel
+def enforce_moving_piston_particles(
+    particle_num: int,
+    wall_position: float,
+    wall_velocity: float,
+    dx: float,
+    particle: ti.template(),
+):
+    clearance = 1.0e-4 * dx
+    for p in range(particle_num):
+        if int(particle[p].active) == 1 and particle[p].x[0] < wall_position + clearance:
+            particle[p].x[0] = wall_position + clearance
+            if particle[p].v[0] < wall_velocity:
+                particle[p].v[0] = wall_velocity
+            # P2G reads the phase velocity, independently of the output velocity v.
+            if int(particle[p].phase) == 1 and particle[p].vs[0] < wall_velocity:
+                particle[p].vs[0] = wall_velocity
+            elif int(particle[p].phase) == 2 and particle[p].vf[0] < wall_velocity:
+                particle[p].vf[0] = wall_velocity
+
+
+def piston_velocity(time, frequency, velocity_amplitude, ramp_time):
+    omega = 2.0 * math.pi * frequency
+    if time >= ramp_time:
+        return velocity_amplitude * math.cos(omega * time)
+    phase = math.pi * time / ramp_time
+    ramp = 0.5 * (1.0 - math.cos(phase))
+    ramp_rate = 0.5 * math.pi / ramp_time * math.sin(phase)
+    displacement_amplitude = velocity_amplitude / omega
+    return displacement_amplitude * (ramp_rate * math.sin(omega * time) + ramp * omega * math.cos(omega * time))
+
+
+def piston_displacement(time, frequency, velocity_amplitude, ramp_time):
+    omega = 2.0 * math.pi * frequency
+    ramp = 1.0 if time >= ramp_time else 0.5 * (1.0 - math.cos(math.pi * time / ramp_time))
+    return ramp * velocity_amplitude / omega * math.sin(omega * time)
 
 
 def parse_args():
@@ -82,16 +116,23 @@ def parse_args():
         default=Path(
             os.environ.get(
                 "GT_WAVEMAKER_OUTPUT",
-                ROOT / "examples" / "mmpm" / "TwoPhaseWavemaker3D" / "OutputData" / "two_layer_two_phase_wavemaker_3d",
+                Path(__file__).resolve().parent / "OutputData" / "two_layer_two_phase_wavemaker_3d",
             )
         ),
     )
     parser.add_argument("--strict", action="store_true")
     parser.add_argument("--no-post", action="store_true")
+    parser.add_argument("--restart-from", type=int, help="Saved frame to continue, preserving the original physics")
+    parser.add_argument(
+        "--restart-path", type=Path, help="Original result directory containing configuration and snapshots"
+    )
     return parser.parse_args()
 
 
 def validate_geometry(args):
+    restart_from, restart_path = getattr(args, "restart_from", None), getattr(args, "restart_path", None)
+    if (restart_from is None) != (restart_path is None) or (restart_from is not None and restart_from < 0):
+        raise ValueError("restart requires both a nonnegative --restart-from and --restart-path")
     if (
         min(args.dx, args.dt, args.time, args.save_interval, args.frequency, args.ramp_time, args.device_memory) <= 0.0
         or min(args.fluid_ppc, args.solid_ppc, args.pressure_iterations) <= 0
@@ -112,6 +153,27 @@ def validate_geometry(args):
         raise ValueError("dx must also divide WATER_DEPTH")
     if PISTON_MEAN_X - args.wave_velocity / (2.0 * math.pi * args.frequency) <= args.dx:
         raise ValueError("piston stroke leaves insufficient clearance from x=0")
+
+
+def physics_configuration(args):
+    return {
+        name: getattr(args, name)
+        for name in (
+            "dx",
+            "dt",
+            "fluid_ppc",
+            "solid_ppc",
+            "pressure_iterations",
+            "alpha_pic",
+            "wave_velocity",
+            "frequency",
+            "ramp_time",
+            "maximum_porosity",
+            "soil_young_modulus",
+            "soil_cohesion",
+            "soil_friction",
+        )
+    }
 
 
 def make_slope_region(wall):
@@ -161,6 +223,22 @@ def set_moving_piston_mac_boundary(
             solid_velocity_x[I] = velocity
 
 
+def update_piston_shifting_reference(engine, scene, wall_position, tank, wall_thickness):
+    from src.mpm.engines.EngineKernel import kernel_fdm_box_shifting_reference_volume3d
+
+    element = scene.element
+    kernel_fdm_box_shifting_reference_volume3d(
+        element.gnum,
+        element.grid_size,
+        element.calLength,
+        element.boundary_type,
+        engine.shifting_reference_volume,
+        ti.Vector([wall_position, wall_thickness, wall_thickness]),
+        ti.Vector([tank[0] - wall_thickness, tank[1] - wall_thickness, tank[2]]),
+    )
+    engine.shifting_reference_ready = True
+
+
 @ti.kernel
 def initialize_hydrostatic_state(
     particle_count: int, water_depth: float, friction_angle: float, particle: ti.template()
@@ -181,10 +259,38 @@ def initialize_hydrostatic_state(
             )
 
 
+def solid_cell_boundaries(wall):
+    # Tangential extents overlap at wall edges so pressure cells cannot occupy corners.
+    walls = [
+        ([0.0, wall, 0.0], [TANK[0], wall, TANK[2]], [0.0, -1.0, 0.0]),
+        ([0.0, TANK[1] - wall, 0.0], [TANK[0], TANK[1] - wall, TANK[2]], [0.0, 1.0, 0.0]),
+        ([0.0, 0.0, wall], [TANK[0], TANK[1], wall], [0.0, 0.0, -1.0]),
+        ([TANK[0] - wall, 0.0, 0.0], [TANK[0] - wall, TANK[1], TANK[2]], [1.0, 0.0, 0.0]),
+    ]
+    return [
+        {"BoundaryType": "SolidCell", "StartPoint": start, "EndPoint": end, "Norm": normal, "CellThickness": WALL_CELLS}
+        for start, end, normal in walls
+    ]
+
+
 def run(args):
     validate_geometry(args)
     output = args.output.expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
+    configuration = physics_configuration(args)
+    restart_from = getattr(args, "restart_from", None)
+    if restart_from is not None:
+        restart_path = args.restart_path.expanduser().resolve()
+        saved_configuration = json.loads((restart_path / "configuration.json").read_text())
+        if saved_configuration != configuration:
+            raise ValueError("wavemaker restart must preserve the saved physics and numerical configuration")
+        with np.load(restart_path / f"particles/MPMParticle{restart_from:06d}.npz") as checkpoint:
+            saved_time = float(checkpoint["t_current"])
+            if not 0 <= saved_time < args.time:
+                raise ValueError("restart frame must precede the requested final time")
+            if not math.isclose(saved_time, int(checkpoint["current_step"]) * args.dt, abs_tol=1e-10):
+                raise ValueError("saved step count is incompatible with the requested timestep")
+    (output / "configuration.json").write_text(json.dumps(configuration, indent=2) + "\n")
     wall = WALL_CELLS * args.dx
     tank_cells = np.round(np.asarray(TANK) / args.dx).astype(int)
     boundary_layers = WALL_CELLS + 1
@@ -266,7 +372,6 @@ def run(args):
             "FluidDensity": 1000.0,
             "Porosity": 0.40,
             "MaximumPorosity": args.maximum_porosity,
-            "FluidBulkModulus": 2.2e8,
             "Permeability": 2.0e-4,
             "FluidViscosity": 1.0e-3,
             "GrainDiameter": 3.0e-3,
@@ -294,53 +399,42 @@ def run(args):
             make_slope_region(wall),
         ]
     )
-    mpm.add_body(
-        {
-            "Template": [
-                {
-                    "RegionName": "water",
-                    "nParticlesPerCell": args.fluid_ppc,
-                    "BodyID": 0,
-                    "MaterialID": 1,
-                    "Phase": "Fluid",
-                    "InitialVelocity": [0.0, 0.0, 0.0],
-                    "FixVelocity": ["Free", "Free", "Free"],
-                },
-                {
-                    "RegionName": "right_trapezoidal_slope",
-                    "nParticlesPerCell": args.solid_ppc,
-                    "BodyID": 0,
-                    "MaterialID": 1,
-                    "Phase": "Solid",
-                    "InitialVelocity": [0.0, 0.0, 0.0],
-                    "FixVelocity": ["Free", "Free", "Free"],
-                },
-            ]
-        }
-    )
+    if restart_from is not None:
+        mpm.read_restart(restart_from, str(restart_path), is_continue=True)
+    else:
+        mpm.add_body(
+            {
+                "Template": [
+                    {
+                        "RegionName": "water",
+                        "nParticlesPerCell": args.fluid_ppc,
+                        "BodyID": 0,
+                        "MaterialID": 1,
+                        "Phase": "Fluid",
+                        "InitialVelocity": [0.0, 0.0, 0.0],
+                        "FixVelocity": ["Free", "Free", "Free"],
+                    },
+                    {
+                        "RegionName": "right_trapezoidal_slope",
+                        "nParticlesPerCell": args.solid_ppc,
+                        "BodyID": 0,
+                        "MaterialID": 1,
+                        "Phase": "Solid",
+                        "InitialVelocity": [0.0, 0.0, 0.0],
+                        "FixVelocity": ["Free", "Free", "Free"],
+                    },
+                ]
+            }
+        )
     particle_count = int(mpm.scene.particleNum[0])
     initial_phase = mpm.scene.particle.phase.to_numpy()[:particle_count]
     expected_fluid = int(np.count_nonzero(initial_phase == 2))
     expected_solid = int(np.count_nonzero(initial_phase == 1))
-    initialize_hydrostatic_state(particle_count, WATER_DEPTH, args.soil_friction, mpm.scene.particle)
+    if restart_from is None:
+        initialize_hydrostatic_state(particle_count, WATER_DEPTH, args.soil_friction, mpm.scene.particle)
 
-    walls = [
-        ([wall, wall, wall], [TANK[0] - wall, wall, TANK[2]], [0.0, -1.0, 0.0]),
-        ([wall, TANK[1] - wall, wall], [TANK[0] - wall, TANK[1] - wall, TANK[2]], [0.0, 1.0, 0.0]),
-        ([wall, wall, wall], [TANK[0] - wall, TANK[1] - wall, wall], [0.0, 0.0, -1.0]),
-        ([TANK[0] - wall, wall, wall], [TANK[0] - wall, TANK[1] - wall, TANK[2]], [1.0, 0.0, 0.0]),
-    ]
     mpm.add_boundary_condition(
-        [
-            {
-                "BoundaryType": "SolidCell",
-                "StartPoint": start,
-                "EndPoint": end,
-                "Norm": normal,
-                "CellThickness": WALL_CELLS,
-            }
-            for start, end, normal in walls
-        ]
+        solid_cell_boundaries(wall)
         + [
             {
                 "BoundaryType": "VelocityConstraint",
@@ -383,6 +477,7 @@ def run(args):
             mpm.enginer.cell_type,
             mpm.enginer.solid_velocity_x,
         )
+        update_piston_shifting_reference(mpm.enginer, scene, position, TANK, wall)
 
     @python_callback
     def enforce_wavemaker_particles():

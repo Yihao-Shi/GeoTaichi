@@ -12,23 +12,10 @@ from src.utils.constants import BLOCK_SZ
 @ti.kernel
 def reduce_shared(size: int, p: ti.template(), q: ti.template()) -> float:
     result = float(0.0)
+    # Taichi's reduction handles partial blocks without uninitialized shared slots.
     ti.loop_config(block_dim=BLOCK_SZ)
     for i in range(size):
-        thread_id = i % BLOCK_SZ
-        pad_vector = ti.simt.block.SharedArray((64,), ti.f64)
-
-        pad_vector[thread_id] = p[i] * q[i]
-        ti.simt.block.sync()
-
-        j = int(0.5 * BLOCK_SZ)
-        while j != 0:
-            if thread_id < j:
-                pad_vector[thread_id] += pad_vector[thread_id + j]
-            ti.simt.block.sync()
-            j >>= 1
-
-        if thread_id == 0:
-            result += pad_vector[thread_id]
+        result += p[i] * q[i]
     return result
 
 

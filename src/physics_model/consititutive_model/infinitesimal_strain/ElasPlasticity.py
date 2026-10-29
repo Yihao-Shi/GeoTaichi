@@ -74,27 +74,32 @@ class PlasticMaterial(ElasticMaterial):
     def __init__(self, material_type, configuration, solver_type="Explicit", stress_integration="ReturnMapping"):
         super().__init__(material_type, configuration, solver_type)
         self.stress_integration = stress_integration
-        if stress_integration in ("ReturnMapping", "ImplicitIntegration"):
-            self.core = self.ImplicitIntegration
-        elif stress_integration == "SubStepping":
-            self.core = self.ExplicitIntegration
-        elif stress_integration == "ImplicitIntegrationAL":
-            if not hasattr(self, "ImplicitIntegrationAL"):
-                raise RuntimeError(f"{type(self).__name__} does not support stress_integration='ImplicitIntegrationAL'")
-            self.core = self.ImplicitIntegrationAL
-        else:
-            raise RuntimeError(f"Unsupported stress_integration='{stress_integration}'")
         self.rate_dependent_function = False
         self.is_rate_dependent = False
+        self._select_stress_integration()
         self.soft_function = None
         self.is_soft = False
         self.cirtial_state_model = False
 
+    def _select_stress_integration(self):
+        if self.stress_integration in ("ReturnMapping", "ImplicitIntegration"):
+            self.core = self.ImplicitIntegration
+            if not self.is_rate_dependent:
+                self.core = getattr(self, "ClosedFormIntegration", self.ImplicitIntegration)
+        elif self.stress_integration == "SubStepping":
+            # The rate consistency loop requires a complete local return mapping.
+            self.core = self.ImplicitIntegration if self.is_rate_dependent else self.ExplicitIntegration
+        elif self.stress_integration == "ImplicitIntegrationAL":
+            if not hasattr(self, "ImplicitIntegrationAL"):
+                raise RuntimeError(f"{type(self).__name__} does not support stress_integration='ImplicitIntegrationAL'")
+            self.core = self.ImplicitIntegrationAL
+        else:
+            raise RuntimeError(f"Unsupported stress_integration='{self.stress_integration}'")
+
     def choose_soft_function(self, material):
         soft_type = DictIO.GetAlternative(material, "SoftType", None)
         if soft_type == "Linear":
-            params = DictIO.GetAlternative(material, "SoftenParameter", 1.0)
-            self.soft_function = LinearSoft(params)
+            self.soft_function = LinearSoft()
             self.is_soft = True
         elif soft_type == "Exponential":
             alpha = DictIO.GetAlternative(material, "alpha", 1.0)
@@ -105,19 +110,11 @@ class PlasticMaterial(ElasticMaterial):
             self.soft_function = None
 
     def set_rate_dependent_model(self, material):
-        rate_dependent = DictIO.GetAlternative(material, "RateDependent", False)
-        if not isinstance(rate_dependent, (bool, np.bool_)):
-            raise ValueError("RateDependent must be a boolean")
-        self.is_rate_dependent = bool(rate_dependent)
-        if self.is_rate_dependent:
-            if self.solver_type != 0:
-                raise ValueError("mu(I) RateDependent currently requires an Explicit solver")
-            self.rate_dependent_function = RateDependent(material)
-            # The coupled rate solve surrounds a complete local return mapping.
-            if self.stress_integration == "SubStepping":
-                self.core = self.ImplicitIntegration
-        else:
-            self.rate_dependent_function = False
+        enabled = self.validate_rate_dependent(material)
+        rate_model = RateDependent(material) if enabled else False
+        self.is_rate_dependent = enabled
+        self.rate_dependent_function = rate_model
+        self._select_stress_integration()
 
     @ti.func
     def IntegrateRateDependent(self, np, previous_stress, de, dw, stateVars, dt):
@@ -509,6 +506,7 @@ class PlasticMaterial(ElasticMaterial):
                 dT = dT * db
                 dm = dm * db
 
+            material_params = self.UpdateMaterialParameter(sig, internal_vars, state_vars, material_params)
             yield_state, f_function = self.ComputeYieldState(sig, internal_vars, material_params)
             if ti.abs(f_function) > FTOL:
                 sig, internal_vars = self.DriftCorrect(
@@ -571,6 +569,7 @@ class PlasticMaterial(ElasticMaterial):
 
             ############################## STEP13 ##############################
             if ti.static(GlobalVariable.DRIFTCORRECT):
+                material_params = self.UpdateMaterialParameter(sig, internal_vars, state_vars, material_params)
                 yield_state, f_function = self.ComputeYieldState(sig, internal_vars, material_params)
                 if ti.abs(f_function) > FTOL:
                     sig, internal_vars = self.DriftCorrect(
@@ -708,6 +707,7 @@ class PlasticMaterial(ElasticMaterial):
 
             ############################## STEP13 ##############################
             if ti.static(GlobalVariable.DRIFTCORRECT):
+                material_params = self.UpdateMaterialParameter(sig, internal_vars, state_vars, material_params)
                 yield_state, f_function = self.ComputeYieldState(sig, internal_vars, material_params)
                 if ti.abs(f_function) > FTOL:
                     sig, internal_vars = self.DriftCorrect(
@@ -753,6 +753,7 @@ class PlasticMaterial(ElasticMaterial):
             internal_vars += self.ComputeInternalVariables(
                 lambda_trial, dg_dsigma_trial, internal_vars, material_params
             )
+            material_params = self.UpdateMaterialParameter(update_stress, internal_vars, state_vars, material_params)
 
             if ti.static(GlobalVariable.DRIFTCORRECT):
                 yield_state, f_function = self.ComputeYieldState(update_stress, internal_vars, material_params)

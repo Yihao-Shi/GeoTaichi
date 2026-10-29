@@ -3,13 +3,26 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+import trimesh
 
 from examples.mmpm.TwoPhaseLSDEMCoupling.wavemaker_lsdem_particles_3d.wavemaker_lsdem_particles_3d import (
+    ROOT,
     embedded_trunk_shift,
 )
 from examples.mmpm.TwoPhaseLSDEMCoupling.wavemaker_lsdem_particles_3d.draw import (
     evaluate_wavemaker_lsdem_particles_3d as evaluator,
 )
+
+
+def test_tree_mesh_has_connected_branches_and_open_forks():
+    mesh = trimesh.load(ROOT / "assets/mesh/LSDEM/tree_trunk.obj", force="mesh")
+    assert mesh.is_watertight and mesh.is_winding_consistent and len(mesh.split()) == 1
+    assert np.isfinite(mesh.vertices).all() and mesh.volume == pytest.approx(0.167485, rel=1e-6)
+    scale = -mesh.bounds[0, 2]
+    branch_centers = np.array([[-0.61, 0.04, 0.55], [0.44, -0.05, 0.75], [0.04, 0.48, 0.12]]) * scale
+    fork_gaps = np.array([[-0.45, 0.02, 0.9], [0.4, -0.02, 1.1], [0.03, 0.48, 0.6]]) * scale
+    assert mesh.contains(branch_centers).all()
+    assert not mesh.contains(fork_gaps).any()
 
 
 def test_tree_is_embedded_using_actual_bounds_not_equivalent_sphere_radius():

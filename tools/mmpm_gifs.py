@@ -4,6 +4,7 @@
 python tools/mmpm_gifs.py --case all --work-dir /tmp/mmpm_gifs
 The thin extrusion is display geometry, not a simulated third dimension.
 """
+
 import argparse
 import json
 from pathlib import Path
@@ -12,15 +13,19 @@ import tempfile
 
 import numpy as np
 
-from blender_cfdem_gif import ROOT, export, water_surface
-from incompressible_gifs import BLENDER, box_mesh
+if __package__:
+    from .blender_cfdem_gif import ROOT, export, water_surface
+    from .incompressible_gifs import BLENDER, box_mesh
+else:
+    from blender_cfdem_gif import ROOT, export, water_surface
+    from incompressible_gifs import BLENDER, box_mesh
 
 CASES = {
     "porous_dam": (
-        "DamBreakPorousElastic2D/OutputData/paper_case1_beetstra_rigid_final",
+        "DamBreakPorousElastic2D/OutputData/paper_case1_beetstra_rigid_current_20261014",
         "dam_break_porous_elastic_2d.gif",
         "Dam break through a porous column",
-        [0.9, 0.38],
+        [0.892, 0.37],
         0.01,
         0.06,
     ),
@@ -33,10 +38,10 @@ CASES = {
         0.18,
     ),
     "utube": (
-        "UTubeFlow2D/OutputData/paper_section_4_2_2d",
+        "UTubeFlow2D/OutputData/u_tube_domain_wall_graph_ppc2_formal_20261014",
         "u_tube_flow_2d.gif",
         "U-tube flow through a porous bed",
-        [3.0, 3.4],
+        [3.0, 3.35],
         0.05,
         0.18,
     ),
@@ -50,14 +55,20 @@ def reconstruction_grid(case, domain, dx):
     centers = coords[:-1, :-1] + dx / 2
     x, z = centers[..., 0], centers[..., 1]
     outside = (x < 0) | (x > domain[0]) | (z < 0) | (z > domain[1])
+    solid_sdf = np.minimum.reduce([x, domain[0] - x, z, domain[1] - z])
     if case == "landslide":
         outside |= z < x - 2.4
+        solid_sdf = np.minimum(solid_sdf, (z - x + 2.4) / np.sqrt(2))
     elif case == "utube":
         outside |= (x >= 1) & (x <= 2) & (z >= 1)
+        distance = np.stack((np.abs(x - 1.5) - 0.5, np.abs(z - (1 + domain[1]) / 2) - (domain[1] - 1) / 2), axis=-1)
+        box_sdf = np.linalg.norm(np.maximum(distance, 0), axis=-1) + np.minimum(np.max(distance, axis=-1), 0)
+        solid_sdf = np.minimum(solid_sdf, box_sdf)
     return {
         "dims": np.array(coords.shape[:2]),
         "coords": coords.reshape(-1, 2),
         "cell_type": (outside.astype(np.uint8) * 2)[..., None],
+        "cell_solid_sdf": solid_sdf[..., None],
     }
 
 
@@ -105,10 +116,16 @@ def phase_geometry(particles, grid, domain, depth, scale):
     }
 
 
-def prepare(case, folder, preview=False):
+def prepare(case, folder, preview=False, source=None):
     relative, filename, title, domain, dx, depth = CASES[case]
-    source = ROOT / "examples/mmpm" / relative
+    source = Path(source).resolve() if source else ROOT / "examples/mmpm" / relative
+    if case == "utube":
+        metrics = json.loads((source / "metrics.json").read_text())
+        if not metrics.get("passed") or not metrics.get("duration_complete"):
+            raise ValueError("U-tube rendering requires a passed, completed validation interval")
     files = sorted((source / "particles").glob("MPMParticle[0-9]*.npz"))
+    if case == "porous_dam":
+        files = files[:100]
     if not files:
         raise FileNotFoundError(f"No saved particles in {source}")
     folder.mkdir(parents=True, exist_ok=True)
@@ -130,6 +147,9 @@ def prepare(case, folder, preview=False):
             {"time": time, "step": path.stem[-6:], "mesh": mesh, "solid_particle_count": len(data["solid_positions"])}
         )
         print(f"PREPARE {case}: {index + 1}/{1 if preview else len(files)}", flush=True)
+    if case == "utube" and not preview:
+        if not np.isclose(frames[0]["time"], 0) or not np.isclose(frames[-1]["time"], metrics["simulation_time_s"]):
+            raise ValueError("Saved U-tube frames must cover the validated interval")
     config = {
         "case": case,
         "source": str(source),
@@ -158,6 +178,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--case", choices=[*CASES, "all"], default="all")
     parser.add_argument("--work-dir", type=Path)
+    parser.add_argument("--source", type=Path, help="Saved result directory for a single case")
     parser.add_argument("--samples", type=int, default=32)
     parser.add_argument("--preview", action="store_true")
     parser.add_argument("--prepare-only", action="store_true")
@@ -165,10 +186,12 @@ def main():
     args = parser.parse_args()
     if args.samples <= 0:
         parser.error("--samples must be positive")
+    if args.source and args.case == "all":
+        parser.error("--source requires a single --case")
     work = (args.work_dir or Path(tempfile.mkdtemp(prefix="mmpm_blender_"))).resolve()
     print(f"Render assets / PNGs / backups: {work}", flush=True)
     for case in CASES if args.case == "all" else [args.case]:
-        manifest, config = prepare(case, work / case, args.preview)
+        manifest, config = prepare(case, work / case, args.preview, args.source)
         if args.prepare_only:
             continue
         command = [

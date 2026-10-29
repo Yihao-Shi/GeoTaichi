@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "title": "Fixed-base square column with a 450-degree rotating top",
+  "module": "iga",
+  "dimension": 3,
+  "coordinate_assumption": "3d",
+  "units": {"length": "m", "mass": "kg", "time": "s"},
+  "physics": {
+    "processes": ["finite-strain elastic dynamics", "prescribed torsion"],
+    "governing_assumptions": ["Neo-Hookean solid", "no contact", "fixed top height"]
+  },
+  "geometry": {
+    "description": "Square column centered on the z axis",
+    "coordinate_frame": "global Cartesian",
+    "dimensions": {"width_m": 0.6, "height_m": 3.0, "bottom_z_m": 0.0}
+  },
+  "discretization": {
+    "degree": [2, 2, 2], "control_points": [6, 6, 18],
+    "refinement_plan": "Compare smaller timesteps and refined meshes before quantitative stress claims."
+  },
+  "materials": [{
+    "name": "column", "model": "NeoHookean",
+    "parameters": {"young_modulus_Pa": 800000, "poisson_ratio": 0.3, "density_kg_m3": 1000},
+    "provenance": "Illustrative parameters; not calibrated to a particular physical material."
+  }],
+  "initial_conditions": {"gravity": [0, 0, 0], "stress_or_pressure": 0, "velocity": [0, 0, 0]},
+  "boundary_conditions": [
+    {"selection": "z=0", "displacement_m": [0, 0, 0]},
+    {"selection": "z=3", "rotation_axis": "z", "angle_degrees": 450,
+     "ramp": "theta(t)=450*(3*s^2-2*s^3), s=t/1.5", "axial_displacement_m": 0},
+    {"selection": "lateral surfaces", "traction_Pa": [0, 0, 0]}
+  ],
+  "contact_or_coupling": {"enabled": false, "law": null, "active_pairs": [], "parameters": {}},
+  "time": {
+    "timestep": 0.0001, "duration": 1.5, "save_interval": 0.05,
+    "implicit_timestep": 0.005,
+    "stability_policy": "Explicit fixed dt; implicit convergence failures stop the run; evaluate saved quadrature Jacobians."
+  },
+  "capacities": {
+    "safety_margin": 1.0,
+    "estimates": {"control_points": 648, "dofs": 1944, "elements": 256, "gauss_points": 6912},
+    "allocations": {"policy": "Exact static single-patch topology; no particle or contact capacity."}
+  },
+  "outputs": {
+    "path": "examples/iga/twisting_column_3d/twisting_column_3d_<solver>",
+    "fields": ["control_points", "deformation_gradient", "stress", "time", "step"], "restart": false
+  },
+  "validation": {
+    "observable": "Unwrapped top rotation across all saved frames",
+    "expectation": 450, "tolerance": {"absolute": 1e-8},
+    "evidence": "Independent saved-state evaluator and exact prescribed rigid rotation",
+    "invariants": [
+      {"kind": "contract_observable", "expectation": 450, "tolerance": {"absolute": 1e-8},
+       "basis": "Degree tolerance above float64 trigonometric and cumulative integration roundoff."},
+      {"kind": "analytical", "expectation": 0, "tolerance": {"absolute": 1e-10},
+       "basis": "Maximum fixed-base and rotating-top coordinate error in metres for exact Dirichlet data."}
+    ]
+  },
+  "assumptions": [
+    "Example geometry and material values are illustrative.",
+    "Explicit velocity damping and implicit Newmark numerical dissipation differ.",
+    "Validation covers prescribed kinematics and saved-state admissibility, not a static torque benchmark."
+  ],
+  "unresolved": [],
+  "api": {
+    "facade": "iga",
+    "runtime": {"dim": 3, "arch": "cpu", "default_fp": "float64", "log": false},
+    "configuration": {"dimension": 3, "solver_type": "Explicit"},
+    "solver": {"dt": 0.0001, "damping": 5.0, "gravity": [0, 0, 0]},
+    "materials": [{"young_modulus": 800000, "poisson_ratio": 0.3, "density": 1000}],
+    "elements": [{"degree": [2, 2, 2]}],
+    "run": {"description": "Custom step loop updates time-dependent boundary data before each substep."}
+  }
+}

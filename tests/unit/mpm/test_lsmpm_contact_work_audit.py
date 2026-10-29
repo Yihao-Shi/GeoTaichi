@@ -1,18 +1,11 @@
 from __future__ import annotations
 
-import sys
-from pathlib import Path
 
 import numpy as np
 import pytest
 
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-SCRIPT_ROOT = REPO_ROOT / "research" / "LSMPM" / "scripts"
-if str(SCRIPT_ROOT) not in sys.path:
-    sys.path.insert(0, str(SCRIPT_ROOT))
-
-from validation_common import contact_work_increment_audit  # noqa: E402
+from research.LSMPM.scripts.validation_common import contact_work_increment_audit
 
 
 def test_contact_work_audit_separates_transfer_and_storage() -> None:

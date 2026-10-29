@@ -12,6 +12,7 @@ from src.fem.engines.LineSearch import ArmijoLineSearch, LineSearchError
 from src.utils.RuntimeHook import runtime_checkpoint
 from src.utils.SolverRuntime import normalize_callbacks
 from src.utils.StepRetry import StepRetryPolicy, nonlinear_failure_kind
+from src.utils.TimeIntegration import newmark_parameters
 
 
 class NewtonConvergenceError(RuntimeError):
@@ -33,22 +34,15 @@ class ImplicitFEM(FEMSolver):
         if self.total_step < 0:
             raise ValueError("number of implicit FEM steps cannot be negative")
         self.quasi_static = bool(kwargs.get("quasi_static", kwargs.get("static", False)))
-        newmark = tuple(kwargs.get("newmark", (0.25, 0.5)))
-        if len(newmark) == 2:
-            self.beta, self.gamma = map(float, newmark)
-        elif len(newmark) >= 3:
-            self.beta, self.gamma = float(newmark[1]), float(newmark[2])
-        else:
-            raise ValueError("newmark must contain [beta, gamma] or [alpha, beta, gamma]")
-        if self.beta <= 0.0 or self.gamma <= 0.0:
-            raise ValueError("Newmark beta and gamma must be positive")
+        self.integration = newmark_parameters(kwargs.get("newmark", (0.5, 0.25, 0.5)))
+        self.alpha, self.beta, self.gamma = self.integration
         self.max_iterations = int(kwargs.get("max_iterations", kwargs.get("max_iters", 40)))
         self.residual_tolerance = float(kwargs.get("residual_tolerance", kwargs.get("residual", 1.0e-8)))
         self.absolute_tolerance = float(kwargs.get("absolute_tolerance", 1.0e-10))
         self.correction_velocity_tolerance = float(
             kwargs.get(
                 "correction_velocity_tolerance",
-                kwargs.get("newton_velocity_tolerance", 1.0e-7),
+                kwargs.get("newton_velocity_tolerance", 1.0e-8),
             )
         )
         self.raise_on_nonconvergence = bool(kwargs.get("raise_on_nonconvergence", True))
@@ -61,6 +55,8 @@ class ImplicitFEM(FEMSolver):
             minimum_step=kwargs.get("line_search_minimum_step", 1.0e-10),
         )
         self.contact_assembler = None
+        self.wall_boundary = None
+        self.dem_wall_contact = None
         self.step_retry = StepRetryPolicy(
             enabled=kwargs.get("enable_step_retry", False),
             maximum_retries=kwargs.get("step_retry_max_retries", 2),
@@ -93,15 +89,24 @@ class ImplicitFEM(FEMSolver):
 
             contacts = contact.contacts_for_mesh(self.mesh)
             assemblers = [FEMContactAssembler(self.mesh, self.material, entry) for entry in contacts]
+            dem_walls = kwargs.get("dem_walls")
+            if dem_walls is not None:
+                from dataclasses import replace
+                from src.dem.engines.IPCWallBoundary import ipc_wall_boundary
+                from src.fem.contact.DEMWallContact import DEMWallContactAssembler
+
+                self.wall_boundary = ipc_wall_boundary(dem_walls.scene, dem_walls.sims)
+                wall_settings = replace(contact, self_contact=False, planes=(), pair_contacts=[], body_pair=None)
+                self.dem_wall_contact = DEMWallContactAssembler(
+                    self.mesh, self.material, wall_settings, self.wall_boundary
+                )
+                assemblers.append(self.dem_wall_contact)
             self.contact_assembler = (
                 assemblers[0] if len(assemblers) == 1 else FEMMultiContactAssembler(contact, assemblers)
             )
-            if self.step_retry.enabled and self.contact_assembler.is_augmented_lagrangian:
-                raise ValueError(
-                    "FEM step retry does not support augmented-Lagrangian "
-                    "contact because its multipliers advance inside Newton "
-                    "iterations"
-                )
+
+    def _correction_velocity_factor(self):
+        return 1.0 / self.dt if self.quasi_static else self.gamma / (2.0 * self.alpha * self.beta * self.dt)
 
     def _validate_pcg_projection(self):
         if getattr(self, "linear_solver", None) != "PCG":
@@ -122,46 +127,45 @@ class ImplicitFEM(FEMSolver):
         ):
             raise ValueError("FEM PCG with IPC contact requires contact project_pd=True")
 
-    # Host-output compatibility path. Production Newton iterations call the
-    # device methods supplied by ClassicalFEM/ClothFEM mixins instead.
-    def _combine_contact_assembly(self, mechanical, positions, need_stiffness):
+    def _combine_contact_assembly(self, mechanical, positions, force, need_stiffness):
+        """Export contact results evaluated by the production device kernels."""
         if self.contact_assembler is None:
             return mechanical
-        return self.contact_assembler.assemble_output(positions, mechanical, need_stiffness=need_stiffness)
+        self.contact_assembler.prepare_iteration_device(positions)
+        force, stiffness = self.contact_assembler.assemble_device(
+            positions,
+            force,
+            mechanical[2],
+            need_stiffness=need_stiffness,
+        )
+        return (
+            mechanical[0] + float(self.contact_assembler.total_energy[None]),
+            force.to_numpy(),
+            stiffness,
+            mechanical[3],
+        )
 
     def _prepare_contact_iteration_device(self, positions, end_positions=None):
         if self.contact_assembler is not None:
             self.contact_assembler.prepare_iteration_device(positions, end_positions=end_positions)
-
-    def _prepare_contact_iteration(self, positions):
-        """Host diagnostic adapter retained for explicit user inspections."""
-        if self.contact_assembler is not None:
-            self.contact_assembler.prepare_iteration(positions)
 
     def _maximum_admissible_step_device(self):
         if self.contact_assembler is None:
             return 1.0
         return self.contact_assembler.maximum_admissible_step_device(self.state.position, self.state.direction)
 
-    def _after_nonlinear_update_device(self, step):
-        if self.contact_assembler is not None:
-            self.contact_assembler.accept_update_device(self.state.position, step)
-
-    def _contact_converged_device(self):
-        return self.contact_assembler is None or self.contact_assembler.prepared_converged_device()
-
     def _dynamic_diagonal_factor(self):
         if self.quasi_static:
             return 0.0
-        return 1.0 / (self.beta * self.dt**2) + (self.damping * self.gamma / (self.beta * self.dt))
+        scale = 2.0 * self.alpha * self.beta
+        return 1.0 / (scale * self.dt**2) + (self.damping * self.gamma / (scale * self.dt))
 
     def _current_potential(self, positions):
         self.state.reduce_dynamic_potential(
             positions,
             self.damping,
             self.dt,
-            self.beta,
-            self.gamma,
+            self.integration,
             int(self.quasi_static),
         )
         return self._internal_energy_device() + float(self.state.dynamic_potential[None])
@@ -170,11 +174,7 @@ class ImplicitFEM(FEMSolver):
         minimum = self._minimum_jacobian_ratio_device(self.state.trial_position)
         if minimum <= self.minimum_jacobian:
             return math.inf
-        freeze_al_self_contact = (
-            self.contact_assembler is not None
-            and self.contact_assembler.is_augmented_lagrangian
-            and self.contact_assembler.contact.self_contact
-        )
+        freeze_al_self_contact = False
         if not freeze_al_self_contact:
             self._prepare_contact_iteration_device(self.state.trial_position)
         self._assemble_internal_device_at(self.state.trial_position, need_stiffness=False)
@@ -240,16 +240,7 @@ class ImplicitFEM(FEMSolver):
         iteration_history = []
         converged = False
         initial_norm = getattr(self, "_friction_force_reference", None)
-        semi_progress = 0.0
         for iteration in range(self.max_iterations + 1):
-            if (
-                self.contact_assembler is not None
-                and self.contact_assembler.is_augmented_lagrangian
-                and iteration > 1
-                and semi_progress > 0.999
-            ):
-                converged = True
-                break
             self._prepare_contact_iteration_device(self.state.position)
             internal_force = self._assemble_internal_device(need_stiffness=True)
             stiffness = self._current_stiffness
@@ -257,8 +248,7 @@ class ImplicitFEM(FEMSolver):
                 internal_force,
                 self.damping,
                 self.dt,
-                self.beta,
-                self.gamma,
+                self.integration,
                 int(self.quasi_static),
             )
             residual_norm = self.state.residual_norm()
@@ -277,10 +267,7 @@ class ImplicitFEM(FEMSolver):
             if self.contact_assembler is not None:
                 iteration_record.update(self.contact_assembler.device_diagnostics())
             iteration_history.append(iteration_record)
-            if (
-                residual_norm <= self.absolute_tolerance + self.residual_tolerance * initial_norm
-                and self._contact_converged_device()
-            ):
+            if residual_norm <= self.absolute_tolerance + self.residual_tolerance * initial_norm:
                 iteration_record["convergence_reason"] = "force_residual"
                 converged = True
                 break
@@ -288,11 +275,11 @@ class ImplicitFEM(FEMSolver):
                 break
             self._solve_direction_device(stiffness)
             correction_norm = self.state.direction_inf_norm()
-            correction_velocity = correction_norm / self.dt
+            correction_velocity = correction_norm * self._correction_velocity_factor()
             iteration_record["correction_inf_norm"] = correction_norm
             iteration_record["correction_velocity"] = correction_velocity
             iteration_record["correction_velocity_tolerance"] = self.correction_velocity_tolerance
-            if correction_velocity <= self.correction_velocity_tolerance and self._contact_converged_device():
+            if correction_velocity <= self.correction_velocity_tolerance:
                 iteration_record["convergence_reason"] = "physical_correction_velocity"
                 converged = True
                 break
@@ -314,9 +301,6 @@ class ImplicitFEM(FEMSolver):
             iteration_record["line_search_step"] = step
             iteration_record["line_search_backtracks"] = backtracks
             self.state.apply_boundary(self.dt, 0)
-            self._after_nonlinear_update_device(step)
-            if self.contact_assembler is not None and self.contact_assembler.is_augmented_lagrangian:
-                semi_progress += (1.0 - semi_progress) * step
 
         if not converged and self.raise_on_nonconvergence:
             final_iteration = iteration_history[-1]
@@ -343,14 +327,13 @@ class ImplicitFEM(FEMSolver):
             internal_force,
             self.damping,
             self.dt,
-            self.beta,
-            self.gamma,
+            self.integration,
             int(self.quasi_static),
         )
         if self.state.residual_norm() == 0.0:
             return 0.0
         self._solve_direction_device(self._current_stiffness)
-        return float(self.state.direction_inf_norm()) / self.dt
+        return float(self.state.direction_inf_norm()) * self._correction_velocity_factor()
 
     def solve_lagged_friction_fixed_point(self, next_time):
         friction_active = (
@@ -394,13 +377,17 @@ class ImplicitFEM(FEMSolver):
     def _substep_once(self, record_history=True):
         self.state.save_step_state()
         try:
+            if self.wall_boundary is not None:
+                self.wall_boundary.begin_step_device(self.dt)
+                self.dem_wall_contact.limit_wall_motion_device(self.state.old_position)
+                self.wall_boundary.apply_motion_device()
             if self.contact_assembler is not None:
                 self.contact_assembler.begin_step_device(self.state.old_position, self.dt)
             next_time = self.time + self.dt
             self.set_boundary_data_step(next_time, self.step_count + 1)
             self.state.apply_boundary(self.dt, 0)
             self.update_external_force_step(next_time, self.step_count + 1)
-            self.state.build_newmark_prediction(self.dt, self.beta)
+            self.state.build_newmark_prediction(self.dt, self.integration)
 
             converged, outer_history = self.solve_lagged_friction_fixed_point(next_time)
             friction_active = (
@@ -413,8 +400,7 @@ class ImplicitFEM(FEMSolver):
             final_internal = self._assemble_internal_device(need_stiffness=False)
             self.state.finalize_newmark(
                 self.dt,
-                self.beta,
-                self.gamma,
+                self.integration,
                 int(self.quasi_static),
             )
             self.state.assemble_equilibrium(
@@ -423,6 +409,8 @@ class ImplicitFEM(FEMSolver):
                 int(not self.quasi_static),
             )
             minimum_jacobian = self._minimum_jacobian_ratio_device(self.state.position)
+            if self.wall_boundary is not None:
+                self.wall_boundary.commit_servo_step(self.dt)
             self.time = next_time
             self.step_count += 1
             record = {
@@ -442,6 +430,8 @@ class ImplicitFEM(FEMSolver):
                 self.step_schedule.append_history(self.history, record)
             return converged
         except BaseException:
+            if self.wall_boundary is not None:
+                self.wall_boundary.rollback_device()
             self.state.restore_step_state()
             raise
 

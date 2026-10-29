@@ -2,6 +2,7 @@ import json
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from examples.mmpm.SubmarineLandslide.submarine_landslide_3d.draw.evaluate_submarine_landslide_3d import write_metrics
 from examples.mmpm.GranularWaterLeakage3D.granular_water_leakage_3d_parameters import DOMAIN as LEAKAGE_DOMAIN
@@ -86,14 +87,21 @@ def test_sphere_impact_metrics_require_entry_deceleration_and_coupling_force(tmp
     assert json.loads((tmp_path / "metrics.json").read_text())["passed"]
 
 
-def test_leakage_metrics_require_water_to_reach_receiver(tmp_path):
+@pytest.mark.parametrize(
+    "dtype,outside,transient",
+    [(np.float64, False, False), (np.float32, False, False), (np.float32, True, False), (np.float64, False, True)],
+)
+def test_leakage_metrics_require_water_to_reach_receiver(tmp_path, dtype, outside, transient):
     particle_dir = tmp_path / "particles"
     particle_dir.mkdir()
     phase = np.array([2, 2, 1, 1], dtype=np.uint8)
     active = np.ones(4, dtype=np.uint8)
-    initial = np.array([[0.10, 0.08, 0.20], [0.20, 0.08, 0.20], [0.10, 0.08, 0.15], [0.20, 0.08, 0.15]])
+    initial = np.array([[0.10, 0.08, 0.20], [0.20, 0.08, 0.20], [0.10, 0.08, 0.15], [0.20, 0.08, 0.15]], dtype=dtype)
     final = initial.copy()
     final[0] = [0.18, 0.08, 0.06]
+    final[1, 0] = dtype(LEAKAGE_DOMAIN[0])
+    if outside:
+        final[1, 0] = np.nextafter(final[1, 0], dtype(np.inf))
     for frame, (time, position) in enumerate(((0.0, initial), (6.0, final))):
         fluid_velocity = np.zeros((4, 3))
         fluid_velocity[0, 2] = -0.2 if frame else 0.0
@@ -107,12 +115,30 @@ def test_leakage_metrics_require_water_to_reach_receiver(tmp_path):
             solid_velocity=np.zeros((4, 3)),
             pressure=np.zeros(4),
             porosity=np.full(4, 0.40),
+            solid_mass=np.array([0.0, 0.0, 1.0, 1.0]),
+            fluid_mass=np.array([1.0, 1.0, 0.0, 0.0]),
         )
 
-    args = SimpleNamespace(dx=0.005, dt=2.0e-5, time=6.0, strict=True)
+    if transient:
+        (tmp_path / "velocity_extrema.json").write_text(
+            json.dumps(
+                {
+                    "maximum_fluid_speed_mps": 6.0,
+                    "maximum_solid_speed_mps": 0.0,
+                    "finite": True,
+                    "steps": 300000,
+                }
+            )
+        )
+    args = SimpleNamespace(dx=0.005, dt=2.0e-5, time=6.0, strict=not (outside or transient))
     write_leakage_metrics(tmp_path, 2, 2, args)
 
-    assert json.loads((tmp_path / "metrics.json").read_text())["passed"]
+    metrics = json.loads((tmp_path / "metrics.json").read_text())
+    assert metrics["passed"] == (not (outside or transient))
+    assert metrics["maximum_particles_outside_domain"] == int(outside)
+    if transient:
+        assert metrics["maximum_fluid_speed_mps"] == 6.0
+        assert metrics["velocity_validation_scope"] == "every_step_end"
 
 
 def test_leakage_upper_tank_side_walls_cover_air_padding():

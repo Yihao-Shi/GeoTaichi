@@ -1,7 +1,7 @@
 import taichi as ti
 
 from src.utils.constants import ZEROVEC2f, ZEROVEC3f, ZEROVEC6f
-from src.utils.TypeDefination import vec2f, vec3f, vec2u8, vec3u8, vec6f, mat2x2, mat3x3
+from src.utils.TypeDefination import real, vec2f, vec3f, vec2u8, vec3u8, vec6f, mat2x2, mat3x3
 from src.utils.BitFunction import Zero2OneVector
 import src.utils.GlobalVariable as GlobalVariable
 
@@ -63,8 +63,8 @@ class ParticleCloud2D:  # memory usage: 108B
     bodyID: ti.u8
     materialID: ti.u8
     active: ti.u8
-    m: float
-    vol: float
+    m: real
+    vol: real
     x: vec2f
     v: vec2f
     stress: vec6f
@@ -164,11 +164,11 @@ class ParticleCloudIncompressible2D:  # memory usage: 108B
     materialID: ti.u8
     active: ti.u8
     coupling: ti.u8
-    m: float
-    vol: float
+    m: real
+    vol: real
     x: vec2f
     v: vec2f
-    pressure: float
+    pressure: real
     velocity_gradient: mat2x2
     fix_v: vec2u8
     xvelocity_gradient: vec2f
@@ -261,26 +261,26 @@ class ParticleCloudTwoPhase2D:  # memory usage: 108B
     materialID: ti.u8
     active: ti.u8
     phase: ti.u8
-    m: float
-    ms: float  # soild phase
-    mf: float  # fluid phase
-    vol: float
-    porosity: float
+    m: real
+    ms: real  # soild phase
+    mf: real  # fluid phase
+    vol: real
+    porosity: real
     x: vec2f
     v: vec2f
     vs: vec2f
     vf: vec2f
     stress: vec6f
-    pressure: float
+    pressure: real
     pressure_gradient: vec2f
-    permeability: float
+    permeability: real
     solid_velocity_gradient: mat2x2
     fluid_velocity_gradient: mat2x2
     fix_v: vec2u8
     # free surface
     free_surface: ti.u8
-    rad: float
-    mass_density: float
+    rad: real
+    mass_density: real
     normal: vec2f
     verletDisp: vec2f
 
@@ -498,24 +498,24 @@ class ParticleCloudTwoPhase:
     active: ti.u8
     coupling: ti.u8
     phase: ti.u8
-    m: float
-    ms: float
-    mf: float
-    vol: float
-    porosity: float
+    m: real
+    ms: real
+    mf: real
+    vol: real
+    porosity: real
     x: vec3f
     v: vec3f
     vs: vec3f
     vf: vec3f
     stress: vec6f
-    pressure: float
-    permeability: float
+    pressure: real
+    permeability: real
     solid_velocity_gradient: mat3x3
     fluid_velocity_gradient: mat3x3
     fix_v: vec3u8
     free_surface: ti.u8
-    rad: float
-    mass_density: float
+    rad: real
+    mass_density: real
     normal: vec3f
     verletDisp: vec3f
     external_force: vec3f
@@ -775,26 +775,26 @@ class ParticleCloudTwoPhase2DAxisy:
     bodyID: ti.u8
     materialID: ti.u8
     active: ti.u8
-    m: float
-    ms: float  # soild phase
-    mf: float  # fluid phase
-    vol: float
-    area: float
-    porosity: float
+    m: real
+    ms: real  # soild phase
+    mf: real  # fluid phase
+    vol: real
+    area: real
+    porosity: real
     x: vec2f
     v: vec2f
     vs: vec2f
     vf: vec2f
     stress: vec6f
-    pressure: float
-    permeability: float
+    pressure: real
+    permeability: real
     velocity_gradient: mat3x3
     velocity_gradientf: mat3x3
     fix_v: vec2u8
     # free surface
     free_surface: ti.u8
-    rad: float
-    mass_density: float
+    rad: real
+    mass_density: real
     normal: vec2f
     verletDisp: vec2f
 
@@ -961,8 +961,8 @@ class ParticleCloud2DAxisy:  # memory usage: 108B
     bodyID: ti.u8
     materialID: ti.u8
     active: ti.u8
-    m: float
-    vol: float
+    m: real
+    vol: real
     x: vec2f
     v: vec2f
     stress: vec6f
@@ -1052,7 +1052,7 @@ class ParticleCloud2DAxisy:  # memory usage: 108B
 @ti.dataclass
 class LargeScaleParticle:
     particleID: int
-    vol: float
+    vol: real
     x: vec3f
     v: vec3f
     stress: vec6f
@@ -1105,8 +1105,8 @@ class ParticleCloud:
     bodyID: ti.u8
     materialID: ti.u8
     active: ti.u8
-    m: float
-    vol: float
+    m: real
+    vol: real
     x: vec3f
     v: vec3f
     stress: vec6f
@@ -1202,9 +1202,9 @@ class ParticleCoupling:  # memory usage: 108B
     materialID: ti.u8
     active: ti.u8
     coupling: ti.u8
-    m: float
-    vol: float
-    rad: float
+    m: real
+    vol: real
+    rad: real
     x: vec3f
     verletDisp: vec3f
     v: vec3f
@@ -1346,16 +1346,16 @@ class ImplicitParticleCoupling:
     materialID: ti.u8
     active: ti.u8
     coupling: ti.u8
-    m: float
-    vol: float
-    rad: float
+    m: real
+    vol: real
+    rad: real
     x: vec3f
     a: vec3f
     verletDisp: vec3f
     v: vec3f
     external_force: vec3f
     stress: vec6f
-    pressure: float
+    pressure: real
     velocity_gradient: mat3x3
     fix_v: vec3u8
 
@@ -1514,9 +1514,9 @@ class ImplicitParticle:
     bodyID: ti.u8
     materialID: ti.u8
     active: ti.u8
-    m: float
-    vol: float
-    vol0: float
+    m: real
+    vol: real
+    vol0: real
     x: vec3f
     v: vec3f
     a: vec3f
@@ -1619,9 +1619,9 @@ class ImplicitParticle2D:
     bodyID: ti.u8
     materialID: ti.u8
     active: ti.u8
-    m: float
-    vol: float
-    vol0: float
+    m: real
+    vol: real
+    vol0: real
     x: vec2f
     v: vec2f
     a: vec2f
@@ -1743,11 +1743,11 @@ class ParticleCloudIncompressible3D:  # memory usage: 108B
     materialID: ti.u8
     active: ti.u8
     coupling: ti.u8
-    m: float
-    vol: float
+    m: real
+    vol: real
     x: vec3f
     v: vec3f
-    pressure: float
+    pressure: real
     velocity_gradient: mat3x3
     fix_v: vec3u8
 

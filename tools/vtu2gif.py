@@ -8,7 +8,7 @@
 1. 自动查找和配对 MPM、DEM 的 VTU 文件；
 2. MPM 按指定标量（默认 pressure）着色；
 3. 仅裁剪 MPM，DEM 保持完整；
-4. 默认固定颜色范围和相机，可选逐帧零点对称色标；
+4. 默认固定颜色范围和相机，可选逐帧零点对称或矢量模长色标；
 5. 输出 PNG 序列；
 6. 调用 FFmpeg 合成高质量 GIF。
 
@@ -164,9 +164,9 @@ def parse_arguments():
 
     parser.add_argument(
         "--color-range-mode",
-        choices=("fixed", "frame-symmetric"),
+        choices=("fixed", "frame-symmetric", "frame-magnitude"),
         default="fixed",
-        help="fixed 使用全局色标；frame-symmetric 每帧按最大绝对值设置零点对称色标。",
+        help="fixed 使用全局色标；frame-symmetric 每帧零点对称；frame-magnitude 每帧从零到矢量最大模长。",
     )
 
     parser.add_argument(
@@ -974,6 +974,13 @@ def symmetric_color_range(value_range, fallback):
     return -extent, extent
 
 
+def magnitude_color_range(value_range, fallback):
+    _, maximum = symmetric_color_range(value_range, fallback)
+    if min(value_range) < 0:
+        raise ValueError("Magnitude color range must be nonnegative")
+    return 0.0, maximum
+
+
 def get_time_values(number_of_pairs):
     """
     从 ParaView TimeKeeper 获取时间值。
@@ -1085,8 +1092,8 @@ def main():
     if args.frame_stride <= 0:
         raise RuntimeError("--frame-stride 必须大于 0。")
 
-    if args.log_color and args.color_range_mode == "frame-symmetric":
-        raise RuntimeError("零点对称逐帧色标不能使用 --log-color。")
+    if args.log_color and args.color_range_mode != "fixed":
+        raise RuntimeError("包含零点的逐帧色标不能使用 --log-color。")
 
     if not (0.0 <= args.dem_opacity <= 1.0):
         raise RuntimeError("--dem-opacity 必须位于 0～1。")
@@ -1378,6 +1385,8 @@ def main():
             array_info,
             args.scalar_mode,
         )
+        if args.color_range_mode == "frame-magnitude" and effective_scalar_mode != "magnitude":
+            raise RuntimeError("frame-magnitude 需要矢量模长着色。")
 
         print(
             "着色数组：{}，数据关联：{}，分量数：{}，着色模式：{}".format(
@@ -1419,7 +1428,7 @@ def main():
         if args.log_color and color_min <= 0:
             raise RuntimeError("使用 --log-color 时，颜色范围最小值必须大于 0，" "当前为 {}。".format(color_min))
 
-        range_title = "初始颜色范围（逐帧更新）" if args.color_range_mode == "frame-symmetric" else "固定颜色范围"
+        range_title = "初始颜色范围（逐帧更新）" if args.color_range_mode != "fixed" else "固定颜色范围"
         print("{}：[{:.8g}, {:.8g}]".format(range_title, color_min, color_max))
 
         # 扫描后回到第一帧
@@ -1621,7 +1630,7 @@ def main():
             set_property_if_exists(scalar_bar, "LabelColor", [0.0, 0.0, 0.0])
             set_property_if_exists(scalar_bar, "DrawTickMarks", 1)
             set_property_if_exists(scalar_bar, "DrawSubTickMarks", 1)
-            if args.color_range_mode == "frame-symmetric":
+            if args.color_range_mode != "fixed":
                 # Small late-time pressures otherwise push the title outside the image.
                 set_property_if_exists(scalar_bar, "AutomaticLabelFormat", 0)
                 set_property_if_exists(scalar_bar, "LabelFormat", "%.2e")
@@ -2074,8 +2083,9 @@ def main():
         if mpm_clip is not None:
             mpm_clip.UpdatePipeline(time_value)
 
-        if mpm_output is not None and args.color_range_mode == "frame-symmetric":
-            frame_min, frame_max = symmetric_color_range(
+        if mpm_output is not None and args.color_range_mode != "fixed":
+            frame_range = magnitude_color_range if args.color_range_mode == "frame-magnitude" else symmetric_color_range
+            frame_min, frame_max = frame_range(
                 get_array_range(mpm_output, association, args.scalar, effective_scalar_mode),
                 (color_min, color_max),
             )
@@ -2083,7 +2093,7 @@ def main():
             pressure_opacity.RescaleTransferFunction(frame_min, frame_max)
             if scalar_bar is not None:
                 set_property_if_exists(
-                    scalar_bar, "CustomLabels", [frame_min, frame_min / 2, 0, frame_max / 2, frame_max]
+                    scalar_bar, "CustomLabels", [frame_min + index * (frame_max - frame_min) / 4 for index in range(5)]
                 )
             print("\n当帧颜色范围：[{:.8g}, {:.8g}]".format(frame_min, frame_max))
 

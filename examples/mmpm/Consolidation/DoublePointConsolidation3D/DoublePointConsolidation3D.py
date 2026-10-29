@@ -131,7 +131,6 @@ def create_mpm():
             "SolidDensity": 2650.0,
             "FluidDensity": FLUID_DENSITY,
             "Porosity": POROSITY,
-            "FluidBulkModulus": 2.2e8,
             "Permeability": PERMEABILITY,
             "FluidViscosity": 1.0e-3,
             "GrainDiameter": 1.0e-2,

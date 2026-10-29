@@ -666,6 +666,28 @@ def parse_arguments():
     return arguments
 
 
+def restore_cpt_timestep_control(saved, maximum_timestep):
+    if saved is None:
+        return {"cap": maximum_timestep, "easy_steps": 0}
+    cap, easy_steps = float(saved["cap"]), saved["easy_steps"]
+    if not math.isfinite(cap) or cap <= 0 or type(easy_steps) is not int or not 0 <= easy_steps < 4:
+        raise ValueError("invalid CPT timestep controller checkpoint")
+    return {"cap": min(cap, maximum_timestep), "easy_steps": easy_steps if cap <= maximum_timestep else 0}
+
+
+def update_cpt_timestep_control(control, retry, newton_iterations, maximum_timestep):
+    accepted = retry["accepted_timestep"]
+    if retry["retry_count"]:
+        control.update(cap=accepted, easy_steps=0)
+    elif accepted >= control["cap"] * (1.0 - 1e-12):
+        # Output-time clipping must not shrink the next physical timestep.
+        easy_steps = control["easy_steps"] + 1 if newton_iterations <= 12 else 0
+        if easy_steps >= 4:
+            control.update(cap=min(maximum_timestep, 2.0 * control["cap"]), easy_steps=0)
+        else:
+            control["easy_steps"] = easy_steps
+
+
 def main():
     arguments = parse_arguments()
     os.environ["GEOTAICHI_REAL_DTYPE"] = arguments.default_fp
@@ -679,9 +701,9 @@ def main():
         arguments.resolution_scale,
     )
     if not math.isfinite(arguments.small_mass_ratio) or not 0 <= arguments.small_mass_ratio < 1:
-        parser.error("--small-mass-ratio must be finite and in [0, 1)")
+        raise ValueError("--small-mass-ratio must be finite and in [0, 1)")
     if arguments.small_mass_ratio > 0 and arguments.contact != "ipc":
-        parser.error("--small-mass-ratio requires --contact ipc")
+        raise ValueError("--small-mass-ratio requires --contact ipc")
     implicit = arguments.contact == "ipc"
     output_path = Path(arguments.output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
@@ -837,10 +859,13 @@ def main():
             committed_jacobian=engine.mpm.material.committed_jacobian,
             state_pressure=engine.mpm.material.state_pressure,
         )
+    timestep_control = restore_cpt_timestep_control(None, arguments.dt)
     engine._initialize_implicit_ipc_state()
     if arguments.resume is not None:
         with np.load(arguments.resume, allow_pickle=False) as saved:
             metadata = json.loads(str(saved["metadata"]))
+            if arguments.state_dependent:
+                timestep_control = restore_cpt_timestep_control(metadata.get("cpt_timestep_control"), arguments.dt)
             output_counts = saved["output_counts"].copy() if "output_counts" in saved else None
             if not 0 <= metadata["time"] < arguments.time:
                 raise ValueError("checkpoint time must precede the requested end time")
@@ -894,7 +919,10 @@ def main():
 
     def checkpoint():
         arrays = {name: field.to_numpy() for name, field in state.items()}
-        arrays["metadata"] = np.array(json.dumps(engine.diagnostics_snapshot()))
+        metadata = engine.diagnostics_snapshot()
+        if arguments.state_dependent:
+            metadata["cpt_timestep_control"] = timestep_control.copy()
+        arrays["metadata"] = np.array(json.dumps(metadata))
         arrays["history"] = np.asarray(history, dtype=np.float64).reshape(-1, 5)
         arrays["output_counts"] = np.array([engine.iga.output_count, engine.mpm.output_count], dtype=np.int64)
         temporary = output_path / "latest_state.tmp.npz"
@@ -904,6 +932,13 @@ def main():
     def sample_cpt(coupled_engine):
         if not coupled_engine.last_step_record.get("converged", False):
             raise RuntimeError("an unconverged CPT step was accepted")
+        if arguments.state_dependent:
+            update_cpt_timestep_control(
+                timestep_control,
+                coupled_engine.last_step_record["step_retry"],
+                coupled_engine.last_monolithic_iterations,
+                arguments.dt,
+            )
         control_points = coupled_engine.iga.patch.control_points.to_numpy()
         history.append(
             (
@@ -915,6 +950,8 @@ def main():
             )
         )
         snapshot = coupled_engine.diagnostics_snapshot()
+        if arguments.state_dependent:
+            snapshot["cpt_timestep_control"] = timestep_control.copy()
         snapshot["last_step"] = coupled_engine.last_step_record
         snapshot["elapsed_seconds"] = time.monotonic() - started
         with (output_path / "step_diagnostics.jsonl").open("a") as stream:
@@ -930,7 +967,8 @@ def main():
     if not existing_run:
         checkpoint()
     while engine.time < arguments.time - 1e-12:
-        engine._set_implicit_timestep(min(arguments.dt, arguments.time - engine.time, next_save[0] - engine.time))
+        step_cap = timestep_control["cap"] if arguments.state_dependent else arguments.dt
+        engine._set_implicit_timestep(min(step_cap, arguments.time - engine.time, next_save[0] - engine.time))
         result = coupling.run(steps=1, verbose=False, record=False, postprocessing=(sample_cpt,))
     if coupling._last_implicit_recorded_step != engine.implicit_step_index:
         coupling._record_implicit_frame(engine)

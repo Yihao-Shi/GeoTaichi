@@ -57,15 +57,23 @@ class Particle3:
 
 
 @ti.kernel
-def init2(node: ti.template(), particle: ti.template(), lnid: ti.template(),
-          shape: ti.template(), alpha: ti.template(), coarse_size: ti.template(),
-          body_id: ti.template(), node_size: ti.template(), dt: ti.template()):
+def init2(
+    node: ti.template(),
+    particle: ti.template(),
+    lnid: ti.template(),
+    shape: ti.template(),
+    alpha: ti.template(),
+    coarse_size: ti.template(),
+    body_id: ti.template(),
+    node_size: ti.template(),
+    dt: ti.template(),
+):
     for i in range(8):
-        node[i, 0].m = 1.
-        node[i, 0].momentum = vec2f(1. if i < 2 else 0., 0.)
-        node[i, 0].force = vec2f(0., 0.)
+        node[i, 0].m = 1.0
+        node[i, 0].momentum = vec2f(1.0 if i < 2 else 0.0, 0.0)
+        node[i, 0].force = vec2f(0.0, 0.0)
         lnid[i] = i
-        shape[i] = 0.5 if i < 4 else 0.
+        shape[i] = 0.5 if i < 4 else 0.0
     particle[0].vol = 0.01
     alpha[0] = 0.5
     coarse_size[0] = ti.cast(2, ti.u8)
@@ -75,13 +83,15 @@ def init2(node: ti.template(), particle: ti.template(), lnid: ti.template(),
 
 
 @ti.kernel
-def init_hanging2(hanging_node_id: ti.template(),
-                  hanging_master_id: ti.template(),
-                  hanging_master_weight: ti.template(),
-                  touched: ti.template()):
+def init_hanging2(
+    hanging_node_id: ti.template(),
+    hanging_master_id: ti.template(),
+    hanging_master_weight: ti.template(),
+    touched: ti.template(),
+):
     hanging_node_id[0] = 0
     hanging_master_id[0] = ti.Vector([1, 2, 3, 0])
-    hanging_master_weight[0] = ti.Vector([0.5, 0.5, 0., 0.])
+    hanging_master_weight[0] = ti.Vector([0.5, 0.5, 0.0, 0.0])
     touched[0] = 0
     touched[1] = 1
     touched[2] = 2
@@ -96,15 +106,22 @@ def init_marker2(particle: ti.template(), state: ti.template()):
 
 
 @ti.kernel
-def init3(node: ti.template(), particle: ti.template(), lnid: ti.template(),
-          shape: ti.template(), alpha: ti.template(), coarse_size: ti.template(),
-          body_id: ti.template(), node_size: ti.template()):
+def init3(
+    node: ti.template(),
+    particle: ti.template(),
+    lnid: ti.template(),
+    shape: ti.template(),
+    alpha: ti.template(),
+    coarse_size: ti.template(),
+    body_id: ti.template(),
+    node_size: ti.template(),
+):
     for i in range(16):
-        node[i, 0].m = 1.
-        node[i, 0].momentum = vec3f(1. if i < 4 else 0., 0., 0.)
-        node[i, 0].force = vec3f(0., 0., 0.)
+        node[i, 0].m = 1.0
+        node[i, 0].momentum = vec3f(1.0 if i < 4 else 0.0, 0.0, 0.0)
+        node[i, 0].force = vec3f(0.0, 0.0, 0.0)
         lnid[i] = i
-        shape[i] = 0.25 if i < 8 else 0.
+        shape[i] = 0.25 if i < 8 else 0.0
     particle[0].vol = 0.001
     alpha[0] = 0.5
     coarse_size[0] = ti.cast(4, ti.u8)
@@ -113,13 +130,15 @@ def init3(node: ti.template(), particle: ti.template(), lnid: ti.template(),
 
 
 @ti.kernel
-def init_hanging3(hanging_node_id: ti.template(),
-                  hanging_master_id: ti.template(),
-                  hanging_master_weight: ti.template(),
-                  touched: ti.template()):
+def init_hanging3(
+    hanging_node_id: ti.template(),
+    hanging_master_id: ti.template(),
+    hanging_master_weight: ti.template(),
+    touched: ti.template(),
+):
     hanging_node_id[0] = 0
     hanging_master_id[0] = ti.Vector([1, 2, 3, 4, 0, 0, 0, 0])
-    hanging_master_weight[0] = ti.Vector([0.25, 0.25, 0.25, 0.25, 0., 0., 0., 0.])
+    hanging_master_weight[0] = ti.Vector([0.25, 0.25, 0.25, 0.25, 0.0, 0.0, 0.0, 0.0])
     for i in range(5):
         touched[i] = i
 
@@ -144,11 +163,25 @@ def test_adaptive_penalty_and_refinement_2d(taichi_runtime):
     shape = ti.field(float, shape=8)
     dt = ti.field(float, shape=())
 
-    init2(node, particle, lnid, shape, bridge_alpha, bridge_coarse_size,
-          bridge_body_id, node_size, dt)
+    init2(node, particle, lnid, shape, bridge_alpha, bridge_coarse_size, bridge_body_id, node_size, dt)
     assemble_bridging_penalty_impulse_2d(
-        1e-12, 1., 1, 10., 1e5, dt, 8, 1, particle, bridge_alpha,
-        bridge_coarse_size, bridge_body_id, node_size, lnid, shape, node, penalty
+        1e-12,
+        1.0,
+        1,
+        10.0,
+        1e5,
+        dt,
+        8,
+        1,
+        particle,
+        bridge_alpha,
+        bridge_coarse_size,
+        bridge_body_id,
+        node_size,
+        lnid,
+        shape,
+        node,
+        penalty,
     )
     apply_hanging_penalty_impulse_2d(1e-12, dt, node, penalty)
 
@@ -158,8 +191,7 @@ def test_adaptive_penalty_and_refinement_2d(taichi_runtime):
     touched = ti.field(int, shape=3)
     init_hanging2(hanging_node_id, hanging_master_id, hanging_master_weight, touched)
     assemble_hanging_penalty_impulse_list_2d(
-        1e-12, 1., 1, 10., 1e5, 0.01, dt, 1, hanging_node_id,
-        hanging_master_id, hanging_master_weight, node, penalty
+        1e-12, 1.0, 1, 10.0, 1e5, 0.01, dt, 1, hanging_node_id, hanging_master_id, hanging_master_weight, node, penalty
     )
     apply_hanging_penalty_impulse_list_2d(1e-12, dt, 3, touched, node, penalty)
     penalty_values = penalty.to_numpy()
@@ -173,15 +205,31 @@ def test_adaptive_penalty_and_refinement_2d(taichi_runtime):
     refined = ti.field(ti.u8, shape=4)
     init_marker2(particle, state)
     mark_refined_cells_epdstrain_2d(
-        0.5, 2, vec2f(2., 2.), vec2i(2, 2), 1, particle, state,
-        current_refined, refined,
+        0.5,
+        2,
+        vec2f(2.0, 2.0),
+        vec2i(2, 2),
+        1,
+        particle,
+        state,
+        current_refined,
+        refined,
+        1,
     )
     assert refined.to_numpy()[0] == 1
     current_refined.from_numpy(refined.to_numpy())
     refined.fill(0)
     mark_refined_cells_softening_2d(
-        0.5, 2, vec2f(2., 2.), vec2i(2, 2), 1, particle, state,
-        current_refined, refined,
+        0.5,
+        2,
+        vec2f(2.0, 2.0),
+        vec2i(2, 2),
+        1,
+        particle,
+        state,
+        current_refined,
+        refined,
+        1,
     )
     assert refined.to_numpy()[0] == 2
 
@@ -199,11 +247,25 @@ def test_adaptive_penalty_and_refinement_3d(taichi_runtime):
     dt = ti.field(float, shape=())
     dt[None] = 1e-3
 
-    init3(node, particle, lnid, shape, bridge_alpha, bridge_coarse_size,
-          bridge_body_id, node_size)
+    init3(node, particle, lnid, shape, bridge_alpha, bridge_coarse_size, bridge_body_id, node_size)
     assemble_bridging_penalty_impulse(
-        1e-12, 1., 1, 10., 1e5, dt, 16, 1, particle, bridge_alpha,
-        bridge_coarse_size, bridge_body_id, node_size, lnid, shape, node, penalty
+        1e-12,
+        1.0,
+        1,
+        10.0,
+        1e5,
+        dt,
+        16,
+        1,
+        particle,
+        bridge_alpha,
+        bridge_coarse_size,
+        bridge_body_id,
+        node_size,
+        lnid,
+        shape,
+        node,
+        penalty,
     )
     apply_hanging_penalty_impulse(1e-12, dt, node, penalty)
 
@@ -213,8 +275,7 @@ def test_adaptive_penalty_and_refinement_3d(taichi_runtime):
     touched = ti.field(int, shape=5)
     init_hanging3(hanging_node_id, hanging_master_id, hanging_master_weight, touched)
     assemble_hanging_penalty_impulse_list(
-        1e-12, 1., 1, 10., 1e5, 0.001, dt, 1, hanging_node_id,
-        hanging_master_id, hanging_master_weight, node, penalty
+        1e-12, 1.0, 1, 10.0, 1e5, 0.001, dt, 1, hanging_node_id, hanging_master_id, hanging_master_weight, node, penalty
     )
     apply_hanging_penalty_impulse_list(1e-12, dt, 5, touched, node, penalty)
     penalty_values = penalty.to_numpy()
@@ -228,15 +289,31 @@ def test_adaptive_penalty_and_refinement_3d(taichi_runtime):
     refined = ti.field(ti.u8, shape=8)
     init_marker3(particle, state)
     mark_refined_cells_epdstrain(
-        0.5, 2, vec3f(2., 2., 2.), vec3i(2, 2, 2), 1, particle, state,
-        current_refined, refined,
+        0.5,
+        2,
+        vec3f(2.0, 2.0, 2.0),
+        vec3i(2, 2, 2),
+        1,
+        particle,
+        state,
+        current_refined,
+        refined,
+        1,
     )
     assert refined.to_numpy()[0] == 1
     current_refined.from_numpy(refined.to_numpy())
     refined.fill(0)
     mark_refined_cells_softening(
-        0.5, 2, vec3f(2., 2., 2.), vec3i(2, 2, 2), 1, particle, state,
-        current_refined, refined,
+        0.5,
+        2,
+        vec3f(2.0, 2.0, 2.0),
+        vec3i(2, 2, 2),
+        1,
+        particle,
+        state,
+        current_refined,
+        refined,
+        1,
     )
     assert refined.to_numpy()[0] == 2
 

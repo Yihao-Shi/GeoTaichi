@@ -158,6 +158,8 @@ class FEMPM(SolverDiagnosticsMixin):
             step_retry_reduction=retry_policy.reduction,
             step_retry_minimum_timestep=retry_policy.minimum_timestep,
         )
+        if "linear_solver_tolerance" in parameters:
+            parameters.setdefault("linear_solver_relative_tolerance", 0.0)
         self.solver_parameters.update(parameters)
         timestep = DictIO.GetAlternative(parameters, "Timestep", DictIO.GetAlternative(parameters, "dt", None))
         simulation_time = DictIO.GetAlternative(

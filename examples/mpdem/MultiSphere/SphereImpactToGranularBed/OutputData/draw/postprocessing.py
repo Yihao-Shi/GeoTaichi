@@ -6,11 +6,9 @@ if ROOT not in sys.path:
     sys.path.append(ROOT)
 
 
-from src import *
+from geotaichi import MPM, init
 
 init(arch="gpu", debug=False)
-
-from src.package import *
 
 mpm = MPM()
 

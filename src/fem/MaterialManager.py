@@ -45,7 +45,6 @@ def _incremental_material_parameters(parameters):
         "tensile": "Tensile",
         "dptype": "dpType",
         "softtype": "SoftType",
-        "softenparameter": "SoftenParameter",
         "ratedependent": "RateDependent",
         "stressratio": "StressRatio",
         "lambda": "lambda",

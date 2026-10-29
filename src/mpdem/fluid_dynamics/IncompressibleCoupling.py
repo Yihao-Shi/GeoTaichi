@@ -11,6 +11,8 @@ from src.mpdem.fluid_dynamics.IncompressibleCouplingKernel import (
     kernel_accumulate_double_layer_lsdem_ibm_force,
     kernel_accumulate_lsdem_volume_fraction_ibm_force,
     kernel_apply_double_layer_lsdem_ibm,
+    kernel_apply_double_layer_lsdem_ibm_pressure_predictor,
+    kernel_initialize_double_layer_ibm_pressure,
     kernel_update_lsdem_cell_ibm_fields,
     lsdem_volume_fraction_ibm_force_density,
     min_grid_spacing_3d,
@@ -126,7 +128,6 @@ class IncompressibleLSDEMCoupling:
             self.dscene.rigid,
             self.dscene.box,
             self.dscene.rigid_grid,
-            scene.node,
             mat_props,
             self.solid_fraction,
             self.solid_fraction_sum,
@@ -137,6 +138,10 @@ class IncompressibleLSDEMCoupling:
             scene.element.cell.type,
             scene.element.cell.fluid_sdf,
             self.mengine.use_pressure_free_surface_theta,
+            float(sims.dt[None]),
+            self.mengine.coupled_viscous_delta[0],
+            self.mengine.coupled_viscous_delta[1],
+            self.mengine.coupled_viscous_delta[2],
         )
 
 
@@ -158,7 +163,9 @@ class TwoPhaseDoubleLayerLSDEMCoupling:
         self.solid_density = ti.field(float, shape=shape)
         self.solid_velocity_cell = ti.Vector.field(3, float, shape=shape)
         self.ibm_reaction_cell = ti.Vector.field(3, float, shape=shape)
-        self.zero_surface_tension = ti.field(float, shape=shape)
+        self.previous_pressure = ti.field(float, shape=shape)
+        self.initial_pressure_weight = ti.field(float, shape=shape)
+        self.pressure_initialized = False
 
     def attach(self):
         self.mengine.update_external_mac_boundary = self.apply_before_pressure
@@ -191,12 +198,43 @@ class TwoPhaseDoubleLayerLSDEMCoupling:
         self.external_mac_boundary(sims, scene)
         if not self.update_solid_cells(scene):
             return
+        if not self.pressure_initialized:
+            if scene.restart_cell_pressure is not None:
+                self.previous_pressure.from_numpy(scene.restart_cell_pressure)
+                scene.restart_cell_pressure = None
+            else:
+                kernel_initialize_double_layer_ibm_pressure(
+                    int(scene.particleNum[0]),
+                    scene.element.grid_size,
+                    scene.particle,
+                    self.previous_pressure,
+                    self.initial_pressure_weight,
+                )
+            self.pressure_initialized = True
+        # Use the same current free-surface geometry as the pressure projection.
+        self.mengine._build_fluid_sdf3d(sims, scene)
         self.ibm_reaction_cell.fill(0.0)
-        self._apply_ibm(sims, scene)
+        kernel_apply_double_layer_lsdem_ibm_pressure_predictor(
+            scene.mass_cut_off,
+            sims.dt,
+            scene.element.grid_size,
+            self.solid_fraction,
+            self.solid_velocity_cell,
+            (self.mengine.fluid_mass_x, self.mengine.fluid_mass_y, self.mengine.fluid_mass_z),
+            (self.mengine.fluid_velocity_x, self.mengine.fluid_velocity_y, self.mengine.fluid_velocity_z),
+            (self.mengine.fluid_acceleration_x, self.mengine.fluid_acceleration_y, self.mengine.fluid_acceleration_z),
+            self.ibm_reaction_cell,
+            self.previous_pressure,
+            self.mengine.cell_type,
+            self.mengine.cell_fluid_sdf,
+            (self.mengine.face_fluid_density_x, self.mengine.face_fluid_density_y, self.mengine.face_fluid_density_z),
+            self.mengine.fluid_pressure_mobility,
+        )
 
     def apply_after_pressure(self, sims, scene):
         if int(self.dscene.rigidNum[0]) > 0:
             self._apply_ibm(sims, scene)
+            self.previous_pressure.copy_from(self.mengine.cell_pressure)
 
     def _apply_ibm(self, sims, scene):
         kernel_apply_double_layer_lsdem_ibm(
@@ -224,24 +262,17 @@ class TwoPhaseDoubleLayerLSDEMCoupling:
             rigid_num,
             scene.element.cnum,
             scene.element.grid_size,
-            scene.element.igrid_size,
             self.dscene.particle,
             self.dscene.rigid,
             self.dscene.box,
             self.dscene.rigid_grid,
             self.solid_fraction,
             self.solid_fraction_sum,
-            self.solid_density,
             self.ibm_reaction_cell,
-            self.mengine.cell_pressure,
-            self.zero_surface_tension,
-            self.mengine.cell_type,
-            self.mengine.cell_fluid_sdf,
-            self.mengine.cell_fluid_density,
-            self.mengine.cell_fluid_viscosity,
-            self.mengine.fluid_velocity_x,
-            self.mengine.fluid_velocity_y,
-            self.mengine.fluid_velocity_z,
+            scene.mass_cut_off,
+            sims.gravity,
+            (self.mengine.fluid_mass_x, self.mengine.fluid_mass_y, self.mengine.fluid_mass_z),
+            (self.mengine.fluid_acceleration_x, self.mengine.fluid_acceleration_y, self.mengine.fluid_acceleration_z),
         )
 
 

@@ -214,7 +214,7 @@ class ClothARAP:
         if ti.abs(gap) > 1.0e-12 * ti.max(eigenvalue0, 1.0):
             divided_difference = (response0 - response1) / gap
         tangent = ti.Matrix.zero(float, 6, 6)
-        for column in ti.static(range(6)):
+        for column in range(6):
             spatial_column = column % 3
             material_column = column // 3
             increment = ti.Matrix.zero(float, 3, 2)

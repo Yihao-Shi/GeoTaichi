@@ -1,11 +1,14 @@
+"""Elastic cantilever; use --solver implicit for the README's Newmark bar."""
+
 import argparse
+import json
 import os
 import platform
+import shlex
 import sys
 from pathlib import Path
 
 import numpy as np
-
 
 ROOT = Path(__file__).resolve().parents[3]
 CASE_DIR = Path(__file__).resolve().parents[1]
@@ -15,6 +18,7 @@ if str(ROOT) not in sys.path:
 
 from geotaichi import IGA, init
 from src.iga import Cube, DirichletBoundary, Primitives
+from src.utils.SolverConsole import runtime_architecture
 
 
 def _default_arch():
@@ -25,18 +29,21 @@ def _default_arch():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--solver", choices=("explicit", "implicit"), default="explicit")
     parser.add_argument("--arch", choices=("cpu", "gpu"), default=_default_arch())
     parser.add_argument("--default-fp", default="float64")
     parser.add_argument("--steps", type=int, default=48)
     parser.add_argument("--output-interval", type=int, default=100)
     parser.add_argument("--dt", type=float, default=5.0e-4)
-    parser.add_argument("--damping", type=float, default=0.12)
+    parser.add_argument("--damping", type=float, default=0.12, help="Explicit velocity damping only")
     parser.add_argument("--initial-velocity", type=float, default=-0.8)
     parser.add_argument(
         "--output-dir",
-        default=str(CASE_DIR / "OutputData" / "explicit_cantilever_3d"),
+        default=None,
     )
     arguments = parser.parse_args()
+    if arguments.output_dir is None:
+        arguments.output_dir = str(CASE_DIR / "OutputData" / f"{arguments.solver}_cantilever_3d")
     if arguments.steps <= 0 or arguments.output_interval <= 0:
         raise ValueError("--steps and --output-interval must be positive")
     if arguments.dt <= 0.0:
@@ -53,7 +60,7 @@ def main():
     )
 
     iga = IGA(log=True)
-    iga.set_configuration(dimension=3, solver_type="Explicit")
+    iga.set_configuration(dimension=3, solver_type=arguments.solver.capitalize())
 
     degree = [2, 2, 2]
     beam = Cube()
@@ -92,7 +99,33 @@ def main():
         step=arguments.steps,
         path=arguments.output_dir,
     )
+    if arguments.solver == "implicit":
+        iga.set_solver(
+            assemble_type="HashTriplet", linear_solver="PCG", residual=1.0e-6, max_iters=50, history_interval=1
+        )
+    # A failed rerun must not retain an old completion record.
+    (Path(arguments.output_dir) / "summary.json").unlink(missing_ok=True)
     iga.run(verbose=False)
+    engine = iga.engine
+    summary = dict(
+        command=shlex.join([sys.executable, *sys.argv]),
+        solver=arguments.solver,
+        backend=str(runtime_architecture()),
+        precision=arguments.default_fp,
+        dt=arguments.dt,
+        output_interval=arguments.output_interval,
+        steps=engine.step_count,
+        physical_seconds=engine.time,
+        frames=engine.output_count,
+    )
+    if arguments.solver == "implicit":
+        if len(engine.history) != engine.step_count or not all(record["converged"] for record in engine.history):
+            raise RuntimeError("Incomplete implicit convergence history")
+        summary.update(converged=True, maximum_correction_velocity=max(record["residual"] for record in engine.history))
+        (Path(arguments.output_dir) / "convergence_history.json").write_text(
+            json.dumps(engine.history, indent=2) + "\n"
+        )
+    (Path(arguments.output_dir) / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
 
 
 if __name__ == "__main__":

@@ -25,8 +25,6 @@ def normalize_contact_model(contact_model):
     aliases = {
         "IPC": "IPC",
         "BARRIERIPC": "IPC",
-        "SEMI": "IPC",
-        "SEMIIPC": "IPC",
         "LINEAR": "Linear",
         "LINEARMODEL": "Linear",
         "LINEARSPRING": "Linear",
@@ -35,5 +33,5 @@ def normalize_contact_model(contact_model):
         "HERTZMINDLINMODEL": "HertzMindlin",
     }
     if key not in aliases:
-        raise ValueError("IGA-MPM contact_model must be BarrierIPC, SemiIPC, Linear, or HertzMindlin")
+        raise ValueError("IGA-MPM contact_model must be BarrierIPC, Linear, or HertzMindlin")
     return aliases[key]

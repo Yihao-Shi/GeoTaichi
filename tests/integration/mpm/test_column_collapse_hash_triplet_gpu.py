@@ -17,7 +17,12 @@ def _test_arch():
 
 
 def _skip_if_local_backend_cannot_allocate_sparse_grid():
-    if _test_arch() == "cpu" and platform.system() == "Darwin" and platform.machine() == "arm64":
+    if (
+        _test_arch() == "cpu"
+        and platform.system() == "Darwin"
+        and platform.machine() == "arm64"
+        and os.environ.get("GEOTAICHI_FORCE_CPU") != "1"
+    ):
         pytest.skip("Column-collapse GPU regression is run on Taichi CPU/CUDA, not Apple Metal.")
 
 
@@ -65,11 +70,19 @@ def run_column_case(case_name):
     region_type = "Rectangle2D" if dim == 2 else "Rectangle"
     output_root = os.environ.get("GT_TEST_OUTPUT_ROOT")
     if not output_root:
-        raise RuntimeError(
-            "GT_TEST_OUTPUT_ROOT is required for isolated test output")
+        raise RuntimeError("GT_TEST_OUTPUT_ROOT is required for isolated test output")
     save_path = os.path.join(output_root, f"column_hash_{case_name}")
 
-    init(dim=dim, arch=arch, device_memory_GB=3, default_fp="float32", cpu_max_num_threads=2, offline_cache=False, log=False)
+    # Keep the implicit matrix and constitutive fields at the strict tests' f64 precision.
+    init(
+        dim=dim,
+        arch=arch,
+        device_memory_GB=3,
+        default_fp="float64",
+        cpu_max_num_threads=2,
+        offline_cache=False,
+        log=False,
+    )
 
     sparse_grid = None
     if sparse:

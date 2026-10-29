@@ -61,6 +61,7 @@ class IncompressibleDEMSphereCoupling:
         self.previous_cell_solid_fraction = None
         self.cell_drag_force = None
         self.fluid_velocity = None
+        self.fluid_velocity_weight = None
         self.fluid_fraction = None
         self.fluid_volume = None
 
@@ -71,6 +72,7 @@ class IncompressibleDEMSphereCoupling:
         self.previous_cell_solid_fraction = ti.field(dtype=float, shape=cell_shape, offset=cell_offset)
         self.cell_drag_force = ti.Vector.field(3, dtype=float, shape=cell_shape, offset=cell_offset)
         self.fluid_velocity = ti.Vector.field(3, dtype=float, shape=self.dsims.max_particle_num)
+        self.fluid_velocity_weight = ti.Vector.field(3, dtype=float, shape=self.dsims.max_particle_num)
         self.fluid_fraction = ti.field(dtype=float, shape=self.dsims.max_particle_num)
         self.fluid_volume = ti.field(dtype=float, shape=self.dsims.max_particle_num)
 
@@ -115,6 +117,7 @@ class IncompressibleDEMSphereCoupling:
         )
         kernel_compute_incompressible_sphere_drag(
             int(self.dscene.sphereNum[0]),
+            scene.mass_cut_off,
             self.sims.dependent_domain,
             self.sims.infludence_domain,
             active_cnum,
@@ -127,6 +130,7 @@ class IncompressibleDEMSphereCoupling:
             self.cell_solid_fraction,
             self.cell_drag_force,
             self.fluid_velocity,
+            self.fluid_velocity_weight,
             self.fluid_fraction,
             self.fluid_volume,
             self.drag_model,
@@ -145,6 +149,7 @@ class IncompressibleDEMSphereCoupling:
         kernel_accumulate_incompressible_sphere_pressure_force(
             int(self.dscene.sphereNum[0]),
             self.sims.dependent_domain,
+            self.sims.infludence_domain,
             active_cnum,
             scene.element.grid_size,
             scene.element.igrid_size,

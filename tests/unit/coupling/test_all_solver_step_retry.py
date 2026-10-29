@@ -133,7 +133,6 @@ def test_igampm_retry_uses_transactional_substep():
     engine.last_contact_ccd_step = 1.0
     engine.last_contact_ccd_min_distance = 1.0
     engine.barrier = type("Barrier", (), {"model": "BarrierIPC"})()
-    engine.is_semi = False
     calls = []
 
     def attempt(**kwargs):
@@ -152,7 +151,7 @@ def test_igampm_retry_uses_transactional_substep():
 
 @pytest.mark.parametrize("engine_type", [AffineBodyEngine, SoftAffineIPCEngine])
 def test_affine_retry_controllers_accept_reduced_timestep(engine_type):
-    engine = object.__new__(engine_type)
+    engine = engine_type()
     engine.step_retry = _retry_policy()
     engine.history = []
     engine.last_failure = None

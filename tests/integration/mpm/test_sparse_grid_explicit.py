@@ -17,7 +17,12 @@ def _test_arch():
 
 
 def _skip_if_local_backend_cannot_allocate_sparse_grid():
-    if _test_arch() == "cpu" and platform.system() == "Darwin" and platform.machine() == "arm64":
+    if (
+        _test_arch() == "cpu"
+        and platform.system() == "Darwin"
+        and platform.machine() == "arm64"
+        and os.environ.get("GEOTAICHI_FORCE_CPU") != "1"
+    ):
         pytest.skip("BlockScan sparse_grid requires Taichi CPU or CUDA; GeoTaichi maps Apple Silicon cpu to Metal.")
 
 

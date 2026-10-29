@@ -2,12 +2,29 @@ import taichi as ti
 
 from src.utils.constants import ZEROVEC2f, ZEROVEC3f
 from src.utils.ScalarFunction import sgn
-from src.utils.TypeDefination import vec2f, vec3f, mat3x2
+from src.utils.TypeDefination import vec2f, vec3f, real
+
+
+@ti.func
+def project_coulomb_wall(velocity, acceleration, mu, normal_axis, outward_sign, dt):
+    # Grid kinematics has already applied acceleration: project its trial velocity once.
+    corrected = velocity
+    normal_impulse = ti.max(velocity[normal_axis] * outward_sign, 0.0)
+    if normal_impulse > 0.0:
+        tangent = velocity
+        tangent[normal_axis] = 0.0
+        speed = tangent.norm()
+        scale = 0.0
+        if speed > 0.0:
+            scale = ti.max(0.0, 1.0 - mu * normal_impulse / speed)
+        corrected = scale * tangent
+        acceleration += (corrected - velocity) / dt
+    return corrected, acceleration
 
 
 @ti.dataclass
 class ContactNodes:
-    m: float
+    m: real
     force: vec3f
     momentum: vec3f
     contact_force: vec3f
@@ -122,41 +139,7 @@ class ContactNodes:
 
     @ti.func
     def friction_constraint(self, mu, dirs_n, signs, dt):
-        velocity = self.momentum
-        acceleration = self.force - velocity * dt[None]
-        dir = mat3x2([1, 2], [0, 2], [0, 1])
-        dir_t0 = dir[dirs_n, 0]
-        dir_t1 = dir[dirs_n, 1]
-
-        acc_n = acceleration[dirs_n]
-        acc_t = ti.sqrt(acceleration[dir_t0] * acceleration[dir_t0] + acceleration[dir_t1] * acceleration[dir_t1])
-        vel_t = ti.sqrt(velocity[dir_t0] * velocity[dir_t0] + velocity[dir_t1] * velocity[dir_t1])
-        if acc_n * signs > 0.0:  # dynamic friction
-            if vel_t != 0.0:
-                vel_net = vec2f(0.0, 0.0)
-                vel_net[0] = (
-                    velocity[dir_t0] + acceleration[dir_t0] * dt[None]
-                )  # friction is applied opposite to the vel_net
-                vel_net[1] = velocity[dir_t1] + acceleration[dir_t1] * dt[None]
-                vel_net_t = ti.sqrt(vel_net[0] * vel_net[0] + vel_net[1] * vel_net[1])
-                vel_fricion = mu * abs(acc_n) * dt[None]
-
-                if vel_net_t <= vel_fricion:
-                    acceleration[dir_t0] = -velocity[dir_t0] / dt[None]
-                    acceleration[dir_t1] = -velocity[dir_t1] / dt[None]
-                else:
-                    acceleration[dir_t0] -= mu * abs[acc_n] * (vel_net[0] / vel_net_t)
-                    acceleration[dir_t1] -= mu * abs[acc_n] * (vel_net[1] / vel_net_t)
-            else:  # static friction
-                if acc_t <= mu * abs(acc_n):  # since acc_t is positive
-                    acceleration[dir_t0] = 0
-                    acceleration[dir_t1] = 0
-                else:
-                    acc_t -= mu * abs(acc_n)
-                    acceleration[dir_t0] -= mu * abs(acc_n) * (acceleration[dir_t0] / acc_t)
-                    acceleration[dir_t1] -= mu * abs(acc_n) * (acceleration[dir_t1] / acc_t)
-            self.momentum += acceleration * dt[None]
-            self.force = acceleration
+        self.momentum, self.force = project_coulomb_wall(self.momentum, self.force, mu, dirs_n, signs, dt[None])
 
     @ti.func
     def rigid_friction_constraint(self, dirs, signs):
@@ -167,7 +150,7 @@ class ContactNodes:
 
 @ti.dataclass
 class ContactNodes2D:
-    m: float
+    m: real
     force: vec2f
     momentum: vec2f
     contact_force: vec2f
@@ -282,28 +265,7 @@ class ContactNodes2D:
 
     @ti.func
     def friction_constraint(self, mu, dirs_n, signs, dt):
-        velocity = self.momentum
-        acceleration = self.force - velocity * dt[None]
-        dir_t = 1 - dirs_n
-
-        acc_n = acceleration[dirs_n]
-        acc_t = acceleration[dir_t]
-        vel_t = velocity[dir_t]
-        if acc_n * signs > 0.0:  # dynamic friction
-            if vel_t != 0.0:
-                vel_net = velocity[dir_t] + acc_t * dt[None]  # friction is applied opposite to the vel_net
-                vel_frictional = dt[None] * mu * abs(acc_n)
-                if abs(vel_net) <= vel_frictional:
-                    acc_t = -vel_t / dt[None]
-                else:
-                    acc_t -= sgn(vel_net) * mu * abs(acc_n)
-            else:  # static friction
-                if abs(acc_t) <= mu * abs(acc_n):  # since acc_t is positive
-                    acc_t = 0.0
-                else:
-                    acc_t -= sgn(acc_t) * mu * abs(acc_n)
-            self.momentum += vec2f(acc_n, acc_t) * dt[None]
-            self.force[dir_t] = acc_t
+        self.momentum, self.force = project_coulomb_wall(self.momentum, self.force, mu, dirs_n, signs, dt[None])
 
     @ti.func
     def rigid_friction_constraint(self, dirs, signs):
@@ -315,9 +277,9 @@ class ContactNodes2D:
 @ti.dataclass
 class NodeTwoPhase:
     dof: int
-    m: float
-    ms: float
-    mf: float
+    m: real
+    ms: real
+    mf: real
     drag: vec3f
     force: vec3f
     forces: vec3f
@@ -325,11 +287,11 @@ class NodeTwoPhase:
     momentum: vec3f
     momentums: vec3f
     momentumf: vec3f
-    pressure: float
-    dpressure: float
-    dragval: float
-    porosity: float
-    weight: float
+    pressure: real
+    dpressure: real
+    dragval: real
+    porosity: real
+    weight: real
     contact_force_s: vec3f
     contact_force_f: vec3f
     extra_stabilize: vec3f
@@ -513,9 +475,9 @@ class NodeTwoPhase:
 @ti.dataclass
 class NodeTwoPhase2D:
     dof: int
-    m: float
-    ms: float
-    mf: float
+    m: real
+    ms: real
+    mf: real
     # x: vec2f
     drag: vec2f
     force: vec2f
@@ -524,11 +486,11 @@ class NodeTwoPhase2D:
     momentum: vec2f
     momentums: vec2f
     momentumf: vec2f
-    pressure: float  # semi_u_p
-    dpressure: float  # semi
-    dragval: float
-    porosity: float
-    weight: float
+    pressure: real  # semi_u_p
+    dpressure: real  # semi
+    dragval: real
+    porosity: real
+    weight: real
     contact_force_s: vec2f  # contact
     contact_force_f: vec2f
     extra_stabilize: vec2f  # semi_stabilization
@@ -771,7 +733,7 @@ class NodeTwoPhase2D:
 
 @ti.dataclass
 class ExtraNode:
-    vol: float
+    vol: real
 
     @ti.func
     def _grid_reset(self):
@@ -784,7 +746,7 @@ class ExtraNode:
 
 @ti.dataclass
 class Nodes:
-    m: float
+    m: real
     force: vec3f
     momentum: vec3f
 
@@ -869,41 +831,7 @@ class Nodes:
 
     @ti.func
     def friction_constraint(self, mu, dirs_n, signs, dt):
-        velocity = self.momentum
-        acceleration = self.force - velocity * dt[None]
-        dir = ti.Matrix([[1, 2], [0, 2], [0, 1]], dt=int)
-        dir_t0 = dir[dirs_n, 0]
-        dir_t1 = dir[dirs_n, 1]
-
-        acc_n = acceleration[dirs_n]
-        acc_t = ti.sqrt(acceleration[dir_t0] * acceleration[dir_t0] + acceleration[dir_t1] * acceleration[dir_t1])
-        vel_t = ti.sqrt(velocity[dir_t0] * velocity[dir_t0] + velocity[dir_t1] * velocity[dir_t1])
-        if acc_n * signs > 0.0:  # dynamic friction
-            if vel_t != 0.0:
-                vel_net = vec2f(0.0, 0.0)
-                vel_net[0] = (
-                    velocity[dir_t0] + acceleration[dir_t0] * dt[None]
-                )  # friction is applied opposite to the vel_net
-                vel_net[1] = velocity[dir_t1] + acceleration[dir_t1] * dt[None]
-                vel_net_t = ti.sqrt(vel_net[0] * vel_net[0] + vel_net[1] * vel_net[1])
-                vel_fricion = mu * abs(acc_n) * dt[None]
-
-                if vel_net_t <= vel_fricion:
-                    acceleration[dir_t0] = -velocity[dir_t0] / dt[None]
-                    acceleration[dir_t1] = -velocity[dir_t1] / dt[None]
-                else:
-                    acceleration[dir_t0] -= mu * abs(acc_n) * (vel_net[0] / vel_net_t)
-                    acceleration[dir_t1] -= mu * abs(acc_n) * (vel_net[1] / vel_net_t)
-            else:  # static friction
-                if acc_t <= mu * abs(acc_n):  # since acc_t is positive
-                    acceleration[dir_t0] = 0
-                    acceleration[dir_t1] = 0
-                else:
-                    acc_t -= mu * abs(acc_n)
-                    acceleration[dir_t0] -= mu * abs(acc_n) * (acceleration[dir_t0] / acc_t)
-                    acceleration[dir_t1] -= mu * abs(acc_n) * (acceleration[dir_t1] / acc_t)
-            self.momentum += acceleration * dt[None]
-            self.force = acceleration
+        self.momentum, self.force = project_coulomb_wall(self.momentum, self.force, mu, dirs_n, signs, dt[None])
 
     @ti.func
     def rigid_friction_constraint(self, dirs, signs):
@@ -912,7 +840,7 @@ class Nodes:
 
 @ti.dataclass
 class Nodes2D:
-    m: float
+    m: real
     force: vec2f
     momentum: vec2f
 
@@ -997,28 +925,7 @@ class Nodes2D:
 
     @ti.func
     def friction_constraint(self, mu, dirs_n, signs, dt):
-        velocity = self.momentum
-        acceleration = self.force - velocity * dt[None]
-        dir_t = 1 - dirs_n
-
-        acc_n = acceleration[dirs_n]
-        acc_t = acceleration[dir_t]
-        vel_t = velocity[dir_t]
-        if acc_n * signs > 0.0:  # dynamic friction
-            if vel_t != 0.0:
-                vel_net = velocity[dir_t] + acc_t * dt[None]  # friction is applied opposite to the vel_net
-                vel_frictional = dt[None] * mu * abs(acc_n)
-                if abs(vel_net) <= vel_frictional:
-                    acc_t = -vel_t / dt[None]
-                else:
-                    acc_t -= sgn(vel_net) * mu * abs(acc_n)
-            else:  # static friction
-                if abs(acc_t) <= mu * abs(acc_n):  # since acc_t is positive
-                    acc_t = 0.0
-                else:
-                    acc_t -= sgn(acc_t) * mu * abs(acc_n)
-            self.momentum += vec2f(acc_n, acc_t) * dt[None]
-            self.force[dir_t] = acc_t
+        self.momentum, self.force = project_coulomb_wall(self.momentum, self.force, mu, dirs_n, signs, dt[None])
 
     @ti.func
     def rigid_friction_constraint(self, dirs, signs):
@@ -1027,7 +934,7 @@ class Nodes2D:
 
 @ti.dataclass
 class IncompressibleNodes2D:
-    m: float
+    m: real
     force: vec2f
     momentum: vec2f
     vbar: vec2f
@@ -1080,7 +987,7 @@ class IncompressibleNodes2D:
 
 @ti.dataclass
 class IncompressibleNodes3D:
-    m: float
+    m: real
     force: vec3f
     momentum: vec3f
     vbar: vec3f
@@ -1133,7 +1040,7 @@ class IncompressibleNodes3D:
 
 @ti.dataclass
 class ImplicitNodes:
-    m: float
+    m: real
     inertia: vec3f
     ext_force: vec3f
     int_force: vec3f
@@ -1206,7 +1113,7 @@ class ImplicitNodes:
 
 @ti.dataclass
 class ImplicitNodes2D:
-    m: float
+    m: real
     inertia: vec2f
     ext_force: vec2f
     int_force: vec2f

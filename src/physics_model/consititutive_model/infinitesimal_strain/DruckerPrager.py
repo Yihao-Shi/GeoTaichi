@@ -10,6 +10,8 @@ import src.utils.GlobalVariable as GlobalVariable
 
 @ti.data_oriented
 class DruckerPragerModel(PlasticMaterial):
+    supports_rate_dependent = True
+
     def __init__(
         self, material_type="Solid", configuration="UL", solver_type="Explicit", stress_integration="ReturnMapping"
     ):
@@ -85,7 +87,6 @@ class DruckerPragerModel(PlasticMaterial):
         tensile,
         dpType="MiddleCircumscribed",
     ):
-        fai_peak = max(1e-6, fai_peak)
         self.density = density
         self.young = young
         self.poisson = poisson
@@ -121,7 +122,7 @@ class DruckerPragerModel(PlasticMaterial):
             q_psi = 3.0 * np.tan(psi) / np.sqrt(9.0 + 12 * np.tan(psi) ** 2)
         if fai > 0.0:
             tensile = np.where(tensile < k_fai / q_fai, tensile, k_fai / q_fai)
-        tensile = np.where(tensile > 1e-15, tensile, 1e-15)
+        tensile = np.maximum(tensile, 0.0)
         return q_fai, k_fai, q_psi, tensile
 
     def print_message(self, materialID):
@@ -279,7 +280,8 @@ class DruckerPragerModel(PlasticMaterial):
         if yield_tensile > -1e-1 and yield_shear < -1e-1:
             yield_state = 2
 
-        f_function = 0.0
+        # Elastic/plastic intersection searches need the signed interior distance.
+        f_function = ti.max(yield_shear, yield_tensile)
         if yield_state == 1:
             f_function = yield_shear
         elif yield_state == 2:
@@ -321,7 +323,7 @@ class DruckerPragerModel(PlasticMaterial):
     def ComputePlasticModulus(self, yield_state, dgdsigma, stress, internal_vars, state_vars, material_params):
         if ti.static(self.is_soft):
             plastic_modulus = 0.0
-            if yield_state == 1:
+            if yield_state == 1 or yield_state == 2:
                 fai, c = material_params[6], material_params[7]
                 pdstrain = internal_vars[0]
                 sigma = SphericalTensor(stress)
@@ -333,6 +335,9 @@ class DruckerPragerModel(PlasticMaterial):
                     self.pdstrain_peak,
                     self.pdstrain_residual,
                 )
+                if ti.static(GlobalVariable.RANDOMFIELD):
+                    fai_residual = self.residual_frac * fai_peak
+                    c_residual = self.residual_frac * c_peak
                 pdstrain_deriv = pdstrain
                 if pdstrain >= pdstrain_peak and pdstrain < pdstrain_residual:
                     pdstrain_deriv = ti.max(pdstrain, pdstrain_peak + Threshold)
@@ -356,7 +361,14 @@ class DruckerPragerModel(PlasticMaterial):
                 dfdpdstrain = (
                     df_dqfai * dqfaidfai + df_dqkai * dkfaidfai
                 ) * dfai_dpstrain + df_dqkai * dkfaidc * dc_dpstrain
-                plastic_modulus = -dfdpdstrain
+                if yield_state == 2:
+                    dfdpdstrain = 0.0
+                    apex = c / ti.max(ti.tan(fai), Threshold)
+                    if fai > 0.0 and tensile >= apex:
+                        dfdpdstrain = -dc_dpstrain / ti.tan(fai) + c * dfai_dpstrain / ti.sin(fai) ** 2
+                plastic_modulus = (
+                    dfdpdstrain * self.ComputeInternalVariables(1.0, dgdsigma, internal_vars, material_params)[0]
+                )
 
             return plastic_modulus
         else:
@@ -364,16 +376,26 @@ class DruckerPragerModel(PlasticMaterial):
 
     @ti.func
     def ComputeInternalVariables(self, dlambda, dgdsigma, internal_vars, material_params):
-        q_psi = material_params[4]
-        dpdstrain = dlambda * ti.sqrt(1.0 / 3.0 + (2.0 / 9.0) * q_psi**2)
+        # The actual flow gives both the shear rate and the distinct hydrostatic tensile rate.
+        dpdstrain = dlambda * ti.sqrt(2.0 / 3.0 * voigt_tensor_dot(dgdsigma, dgdsigma))
         return ti.Vector([dpdstrain])
 
     @ti.func
     def GetMaterialParameter(self, stress, state_vars):
+        return self._material_parameter_from_history(state_vars, state_vars.epdstrain)
+
+    @ti.func
+    def UpdateMaterialParameter(self, stress, internal_vars, state_vars, material_params):
+        if ti.static(self.is_soft):
+            return self._material_parameter_from_history(state_vars, internal_vars[0])
+        else:
+            return material_params
+
+    @ti.func
+    def _material_parameter_from_history(self, state_vars, pdstrain):
         bulk, shear, fai_peak, psi_peak, c_peak, tensile = self.get_current_material_parameter(state_vars)
         q_fai, k_fai, q_psi = self.q_fai, self.k_fai, self.q_psi
         if ti.static(self.is_soft):
-            pdstrain = state_vars.epdstrain
             fai_residual, psi_residual, c_residual, pdstrain_peak, pdstrain_residual = (
                 self.fai_residual,
                 self.psi_residual,
@@ -479,8 +501,9 @@ class DruckerPragerModel(PlasticMaterial):
     def get_strength_parameter(self, c, fai, psi, tensile):
         q_fai, k_fai, q_psi = self.get_strength_parameter0(c, fai, psi)
         if fai > 0.0:
-            tensile = tensile if tensile < k_fai / q_fai else k_fai / q_fai
-        tensile = ti.max(1e-15, tensile)
+            apex = k_fai / ti.select(q_fai > 0.0, q_fai, 1.0)
+            tensile = ti.min(tensile, apex)
+        tensile = ti.max(0.0, tensile)
         return q_fai, k_fai, q_psi, tensile
 
     @ti.func
@@ -535,7 +558,7 @@ class DruckerPragerModel(PlasticMaterial):
         return denominator
 
     @ti.func
-    def ImplicitIntegration(self, np, previous_stress, de, dw, stateVars):
+    def ClosedFormIntegration(self, np, previous_stress, de, dw, stateVars):
         state_vars = stateVars[np]
         internal_vars = self.GetInternalVariables(state_vars)
         material_params = self.GetMaterialParameter(previous_stress, state_vars)
@@ -549,57 +572,58 @@ class DruckerPragerModel(PlasticMaterial):
         dstress = ElasticTensorMultiplyVector(de, bulk_modulus, shear_modulus)
         trial_stress = stress + dstress
 
-        sigma = SphericalTensor(trial_stress)
+        trial_sigma = SphericalTensor(trial_stress)
+        sigma = trial_sigma
         sd = DeviatoricTensor(trial_stress)
         J2sqrt = ti.sqrt(ti.max(ComputeStressInvariantJ2(trial_stress), 0.0))
-        safe_J2sqrt = ti.max(J2sqrt, Threshold)
-
         dpFi = J2sqrt + q_fai * sigma - k_fai
-        dpsig = sigma - tensile
-        dpdstrain = 0.0
+        returned_J2sqrt = J2sqrt
+        shear_multiplier = 0.0
         updated_stress = trial_stress
         yield_state = 0
 
-        if dpsig < 0.0:
-            if dpFi > 0.0:
-                yield_state = 1
-                denominator = self.ComputeClosedFormShearDenominator(
-                    trial_stress, internal_vars, state_vars, material_params, bulk_modulus, shear_modulus, q_fai, q_psi
-                )
-                safe_den = denominator if ti.abs(denominator) > Threshold else Threshold
-                dlamd = dpFi / safe_den
-                sigma -= bulk_modulus * q_psi * dlamd
-                ratio = (k_fai - q_fai * sigma) / safe_J2sqrt
+        if dpFi > 0.0:
+            yield_state = 1
+            denominator = self.ComputeClosedFormShearDenominator(
+                trial_stress, internal_vars, state_vars, material_params, bulk_modulus, shear_modulus, q_fai, q_psi
+            )
+            safe_den = denominator if ti.abs(denominator) > Threshold else Threshold
+            shear_multiplier = dpFi / safe_den
+            sigma -= bulk_modulus * q_psi * shear_multiplier
+            returned_J2sqrt = ti.max(0.0, k_fai - q_fai * sigma)
 
-                sd *= ratio
-                updated_stress = AssembleStress(sigma, sd)
-                dpdstrain += dlamd * ti.sqrt(1.0 / 3.0 + (2.0 / 9.0) * q_psi**2)
-        else:
-            alphap = ti.sqrt(1 + q_fai**2) - q_fai
-            J2sqrtp = k_fai - q_fai * tensile
-            dp_hfai = J2sqrt - J2sqrtp - alphap * dpsig
+        if sigma > tensile:
+            # A shear return beyond the cap requires both plastic flow directions.
+            sigma = tensile
+            cap_J2sqrt = ti.max(0.0, k_fai - q_fai * tensile)
+            returned_J2sqrt = ti.min(J2sqrt, cap_J2sqrt)
+            shear_multiplier = (J2sqrt - returned_J2sqrt) / shear_modulus
+            yield_state = 2
+            if shear_multiplier > 0.0 or cap_J2sqrt <= Threshold:
+                yield_state = 3
 
-            if dp_hfai > 0.0:
-                yield_state = 1
-                denominator = self.ComputeClosedFormShearDenominator(
-                    trial_stress, internal_vars, state_vars, material_params, bulk_modulus, shear_modulus, q_fai, q_psi
-                )
-                safe_den = denominator if ti.abs(denominator) > Threshold else Threshold
-                dlamd = dpFi / safe_den
-                sigma -= bulk_modulus * q_psi * dlamd
-                ratio = (k_fai - q_fai * sigma) / safe_J2sqrt
-                sd *= ratio
-                updated_stress = AssembleStress(sigma, sd)
-                dpdstrain += dlamd * ti.sqrt(1.0 / 3.0 + (2.0 / 9.0) * q_psi**2)
-            else:
-                yield_state = 2
-                dlamd = (sigma - tensile) / bulk_modulus
-                sigma = tensile
-                updated_stress = AssembleStress(sigma, sd)
-                dpdstrain += dlamd * (1.0 / 3.0) * ti.sqrt(2)
-
-        internal_vars[0] += dpdstrain
+        if yield_state > 0:
+            sd *= returned_J2sqrt / ti.max(J2sqrt, Threshold)
+            updated_stress = AssembleStress(sigma, sd)
+            plastic_volume = (trial_sigma - sigma) / bulk_modulus
+            internal_vars[0] += ti.sqrt(shear_multiplier**2 / 3.0 + 2.0 * plastic_volume**2 / 9.0)
         if ti.static(self.solver_type == 1):
             stateVars[np].yield_state = ti.u8(yield_state)
         self.UpdateInternalVariables(np, internal_vars, stateVars)
         return updated_stress
+
+    @ti.func
+    def compute_stiffness_tensor(self, np, current_stress, stateVars):
+        stiffness = ti.Matrix.zero(float, 6, 6)
+        if int(stateVars[np].yield_state) == 3:
+            _, J2sqrt = self.ComputeStressInvariant(current_stress)
+            if J2sqrt > Threshold:
+                material_params = self.GetMaterialParameter(current_stress, stateVars[np])
+                _, shear_modulus = self.ComputeElasticModulus(current_stress, material_params)
+                direction = DeviatoricTensor(current_stress) / J2sqrt
+                # shortcut: corner tangent freezes strength; use a return Jacobian for implicit softening convergence.
+                stiffness = ComputeElasticStiffnessTensor(0.0, shear_modulus)
+                stiffness -= shear_modulus * direction.outer_product(direction)
+        else:
+            stiffness = PlasticMaterial.compute_stiffness_tensor(self, np, current_stress, stateVars)
+        return stiffness

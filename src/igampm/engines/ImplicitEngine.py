@@ -174,10 +174,6 @@ class ImplicitEngineMixin:
     def _prepare_implicit_ipc_step(self):
         self._initialize_implicit_ipc_state()
 
-        if self.is_semi:
-            self.semi_multiplier.fill(0.0)
-            self.semi_constraint_violation[None] = 0.0
-
         self.iga.grid_disp.fill(0.0)
         self.iga.grid_disp_temp.fill(0.0)
 
@@ -1162,7 +1158,7 @@ class ImplicitEngineMixin:
         if prepare_contacts:
             self.initialize_barrier(self.mpm.grid_disp, self.iga.grid_disp)
         self.last_contact_ccd_min_distance = self.minimum_contact_distance()
-        clearance = 0.0 if self.is_semi else float(self.barrier.minimum_distance) + self.strict_feasibility_tolerance
+        clearance = float(self.barrier.minimum_distance) + self.strict_feasibility_tolerance
         self.contact_surface.update_control_point_direction(self.iga.incre_resolution)
         self._prepare_point_nurbs_accd(max_step)
         query_status = int(self.contact_query_status[None])
@@ -1369,19 +1365,8 @@ class ImplicitEngineMixin:
         )
         if self.nonassociated_newton and energy_function is not None:
             raise TypeError("nonassociated DP uses residual-norm Armijo, not an energy_function")
-        semi_progress = 0.0
         contacts_prepared = False
         for iteration in range(max_iterations):
-            if (
-                self.is_semi
-                and not self.nonassociated_newton
-                and not inexact
-                and iteration > 1
-                and semi_progress > 0.999
-            ):
-                self.last_monolithic_converged = True
-                convergence_reason = "semi_ipc_projection_progress"
-                break
             last_system = self.assemble_monolithic_newton_system(
                 include_friction=include_friction, need_matrix=False, prepare_contacts=not contacts_prepared
             )
@@ -1406,7 +1391,6 @@ class ImplicitEngineMixin:
                 force_residual <= force_tolerance
                 and (not self.nonassociated_newton or (force_residual == 0.0 and dirichlet_residual == 0.0))
                 and dirichlet_residual <= self.monolithic_dirichlet_tolerance
-                and self.semi_contact_converged()
             ):
                 self.last_monolithic_residual = 0.0
                 self.last_monolithic_converged = True
@@ -1472,7 +1456,6 @@ class ImplicitEngineMixin:
                 residual <= tolerance
                 and (not self.nonassociated_newton or force_residual <= force_tolerance)
                 and dirichlet_residual <= self.monolithic_dirichlet_tolerance
-                and self.semi_contact_converged()
             ):
                 self.last_monolithic_converged = True
                 convergence_reason = "force_and_correction" if self.nonassociated_newton else "correction_velocity"
@@ -1514,12 +1497,8 @@ class ImplicitEngineMixin:
             if not last_armijo["accepted"]:
                 break
             # Successful Armijo trials own the accepted geometry's query.
-            # Semi-IPC changes activation through its multipliers; external
-            # callbacks retain the self-contained preparation path.
-            contacts_prepared = not self.is_semi and linear_solve is None and energy_function is None
-            if self.is_semi:
-                self._update_semi_multipliers(int(self.mpm.total_surface_num) * int(self.contact_surface.num_surfaces))
-                semi_progress += (1.0 - semi_progress) * float(last_armijo["step"])
+            # External callbacks retain the self-contained preparation path.
+            contacts_prepared = linear_solve is None and energy_function is None
             if verbose:
                 measure = f"residual={force_residual:.6e}" if use_residual_merit else f"correction={residual:.6e}"
                 print(
@@ -1790,7 +1769,7 @@ class ImplicitEngineMixin:
                 "model": self.barrier.model,
                 "ccd_step": float(self.last_contact_ccd_step),
                 "minimum_distance": float(self.last_contact_ccd_min_distance),
-                "constraint_violation": float(self.semi_constraint_violation[None]) if self.is_semi else 0.0,
+                "constraint_violation": 0.0,
             },
         }
 
@@ -1809,7 +1788,7 @@ class ImplicitEngineMixin:
                 "model": self.barrier.model,
                 "ccd_step": float(self.last_contact_ccd_step),
                 "minimum_distance": float(self.last_contact_ccd_min_distance),
-                "constraint_violation": float(self.semi_constraint_violation[None]) if self.is_semi else 0.0,
+                "constraint_violation": 0.0,
             },
             "linear_solver": {
                 "name": self.monolithic_solver_name,

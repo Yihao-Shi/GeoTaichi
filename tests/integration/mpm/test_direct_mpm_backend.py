@@ -40,6 +40,7 @@ def _configure_direct_mpm(output_path, volume=0.01):
             "step": 0,
             "interval": 1,
             "residual": 1.0e-4,
+            "linear_solver_relative_tolerance": 2.0e-9,
             "shape_function": "linear",
             "path": os.fspath(output_path),
         }
@@ -59,6 +60,7 @@ def test_direct_backend_builds_implicit_ulmpm_from_main_mpm_flow(tmp_path):
     assert mpm.enginer.n_particles == 4
     assert mpm.enginer.total_background_grid_num > 0
     assert mpm.enginer.coeffPIC == pytest.approx(0.125)
+    assert mpm.enginer.linear_solver_relative_tolerance == 2.0e-9
 
 
 def test_direct_backend_rejects_particles_outside_the_background_grid(tmp_path):
@@ -138,6 +140,7 @@ def test_direct_implicit_mpm_hash_solve_stays_in_taichi_fields():
     engine.rhs = object()
     engine.incre_resolution = object()
     engine.linear_solver_tolerance = 3.0e-11
+    engine.linear_solver_relative_tolerance = 2.0e-9
     engine.linear_solver_max_iters = 321
 
     result = engine.solve_hash_system(active_dof=6)
@@ -149,6 +152,7 @@ def test_direct_implicit_mpm_hash_solve_stays_in_taichi_fields():
     assert kwargs == {
         "active_nodes": 3,
         "tol": 3.0e-11,
+        "rel_tol": 2.0e-9,
         "maxiter": 321,
         "return_solution": False,
     }
@@ -189,6 +193,7 @@ def test_direct_implicit_mpm_has_no_non_cuda_scipy_fallback(monkeypatch):
     engine.rhs = object()
     engine.incre_resolution = object()
     engine.linear_solver_tolerance = 1.0e-10
+    engine.linear_solver_relative_tolerance = 0.0
     engine.linear_solver_max_iters = 100
     monkeypatch.setattr(
         implicit_mpm_module,
@@ -377,9 +382,13 @@ def test_direct_ul_active_dof_capacity_is_checked_before_compact_map_write(
         _prepare_direct_stiffness(undersized, updated_lagrangian=True)
 
 
-def test_direct_affine_projection_transfers_an_affine_velocity(tmp_path):
+@pytest.mark.parametrize("configuration", ["ULMPM", "TLMPM"])
+@pytest.mark.parametrize("solver_type", ["Explicit", "Implicit"])
+def test_direct_affine_projection_transfers_an_affine_velocity(tmp_path, configuration, solver_type):
     ti.init(arch=ti.cpu, default_fp=ti.f64, offline_cache=False)
     mpm = _configure_direct_mpm(tmp_path / "affine")
+    mpm.sims.set_configuration(configuration)
+    mpm.sims.set_solver_type(solver_type)
     mpm.sims.set_velocity_projection_scheme("Affine")
     mpm.direct_solver["shape_function"] = "bspline"
     mpm.add_engine()
@@ -392,17 +401,48 @@ def test_direct_affine_projection_transfers_an_affine_velocity(tmp_path):
     engine.gradv.from_numpy(np.tile(gradient, (4, 1, 1)))
     engine.compute_shapefn()
     engine.grid_reset()
-    engine.mass_vel_acc_p2g()
-    mass, momentum = engine.grid.m.to_numpy(), engine.grid.v.to_numpy()
+    if configuration == "TLMPM":
+        engine.grid.m.fill(0.0)
+        engine.mass_p2g()
+        transfer = engine.vel_p2g if solver_type == "Explicit" else engine.vel_acc_p2g
+        transfer()
+    else:
+        transfer = engine.mass_vel_p2g if solver_type == "Explicit" else engine.mass_vel_acc_p2g
+        transfer()
+    mass, velocity = engine.grid.m.to_numpy(), engine.grid.v.to_numpy()
     active = mass > engine.val_lim
     grid = engine.body[0]
     n = np.asarray(grid.grid_num)
     ids = np.arange(mass.size)[active] - int(grid.goffset)
     nodes = np.column_stack((ids % n[0], ids // n[0])) * float(grid.grid_size) + np.asarray(grid.xmin)
     np.testing.assert_allclose(
-        momentum[active] / mass[active, None], nodes @ gradient.T + intercept, rtol=1e-12, atol=1e-12
+        velocity[active] if solver_type == "Explicit" else velocity[active] / mass[active, None],
+        nodes @ gradient.T + intercept,
+        rtol=1e-12,
+        atol=1e-12,
     )
     np.testing.assert_allclose(mass.sum(), engine.particle.m.to_numpy().sum())
+    if configuration == "TLMPM":
+        engine.particle.x.from_numpy(positions + [0.02, -0.01])
+        engine.grid_reset()
+        transfer()
+        velocity = engine.grid.v.to_numpy()[active]
+        np.testing.assert_allclose(
+            velocity if solver_type == "Explicit" else velocity / mass[active, None],
+            nodes @ gradient.T + intercept,
+            rtol=1e-12,
+            atol=1e-12,
+        )
+    final_velocity = engine.grid.v.to_numpy()
+    final_velocity[active] = nodes @ gradient.T + intercept
+    engine.grid.v.from_numpy(final_velocity)
+    if solver_type == "Implicit":
+        engine.find_active_node()
+        engine.prefix_sum_executor.run(engine.node2dof)
+        engine.set_active_dof()
+        engine.grid_disp.fill(0.0)
+    engine.advent_particles(engine.coeffPIC)
+    np.testing.assert_allclose(engine.gradv.to_numpy(), np.tile(gradient, (4, 1, 1)), atol=1e-12)
     engine.particle[0].x = [0.0015, 0.25]
     engine.compute_shapefn()
     np.testing.assert_allclose(engine.shape.to_numpy()[0].sum(), 1.0, atol=1e-14)

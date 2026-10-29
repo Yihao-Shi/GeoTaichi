@@ -88,7 +88,6 @@ def test_raw_source_assembly_stops_before_matrix_finalize():
     ipc.activate_barrier = False
     ipc.activate_fric = False
     ipc.friction_mode = "lagged"
-    ipc.is_semi = False
     ipc.pbarrierNum = _ScalarField(0)
     ipc.gbarrierNum = _ScalarField(0)
     ipc.curr_friction_contact_num = 0
@@ -181,6 +180,8 @@ def _controller(iterations, residuals, tolerance=1.0e-3, safety_cap=50):
     ipc.friction_tolerance = tolerance
     ipc.pending_adjoint_seed = object()
     ipc.mpm = SimpleNamespace(grid_disp=object())
+    ipc._snapshot_grid_displacement = lambda: ipc.mpm.grid_disp
+    ipc._restore_grid_displacement = lambda snapshot: None
 
     events = []
     residuals = iter(residuals)
@@ -340,7 +341,8 @@ def test_nonconverged_inner_newton_fails_before_cache_refresh():
 def test_updated_residual_is_an_unapplied_newton_correction_norm():
     ipc = object.__new__(IPCMPM)
     ipc.mpm = SimpleNamespace(dt=0.25)
-    ipc.solve_current_system = lambda: np.asarray([-0.2, 0.1, 0.0])
+    ipc.friction_mode = "fully_implicit"
+    ipc.solve_current_system = lambda: {"solution_inf_norm": 0.2}
 
     assert ipc.updated_friction_system_residual() == pytest.approx(0.8)
 
@@ -378,10 +380,12 @@ def test_cuda_monolithic_krylov_routing_preserves_matrix_form(
         rhs=object(),
         incre_resolution=object(),
         linear_solver_tolerance=1.0e-11,
+        linear_solver_relative_tolerance=2.0e-9,
         linear_solver_max_iters=123,
     )
 
-    matrix = SimpleNamespace(solver="unset")
+    # A large RHS leaves the configured tolerance unchanged in this routing oracle.
+    matrix = SimpleNamespace(solver="unset", flat_l2_norm=lambda rhs, active_dof: 1.0)
 
     def solve_flat_system(rhs, solution, **kwargs):
         assert matrix.solver == expected_solver
@@ -390,6 +394,7 @@ def test_cuda_monolithic_krylov_routing_preserves_matrix_form(
         assert kwargs == {
             "active_nodes": 6 // config.DIM,
             "tol": 1.0e-11,
+            "rel_tol": 2.0e-9,
             "maxiter": 123,
             "return_solution": False,
         }

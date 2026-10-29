@@ -75,6 +75,7 @@ class Solver:
             self.compile(scene, neighbor)
             if self.sims.current_time - self.last_save_time >= self.sims.save_interval - 0.1 * compile_step:
                 self.save_file(scene)
+            runtime_checkpoint()
         start_time = time.time()
         while has_remaining_time(self.sims.current_time, self.sims.time, self.sims.delta):
             self.sims.set_timestep(min(self.sims.delta, self.sims.time - self.sims.current_time))

@@ -10,6 +10,8 @@ import src.utils.GlobalVariable as GlobalVariable
 
 @ti.data_oriented
 class GranularMaterial(InfinitesimalStrainModel):
+    supports_rate_dependent = True
+
     def __init__(
         self, material_type="Solid", configuration="UL", solver_type="Explicit", stress_integration="ReturnMapping"
     ):

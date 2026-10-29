@@ -4,11 +4,8 @@ import taichi as ti
 
 pytestmark = [pytest.mark.unit, pytest.mark.ipc, pytest.mark.contact]
 
-from src.physics_model.contact_model.ipc.ContactAssembly import (
-    project_to_psd_dense,
-    psd_project_gershgorin_nd,
-    psd_project_nd,
-)
+from tests.helpers.ipc_assembly_reference import project_to_psd_dense
+from src.physics_model.contact_model.ipc.ContactAssembly import psd_project_gershgorin_nd, psd_project_nd
 from src.physics_model.contact_model.ipc.ContactDistance import (
     point_triangle_distance_grad_hess,
 )

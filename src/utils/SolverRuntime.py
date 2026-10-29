@@ -7,6 +7,15 @@ from dataclasses import dataclass
 import math
 
 
+def accepts_monotone_energy(initial, trial, step, slope):
+    """Allow reduction roundoff only when the predicted decrease is also unresolved."""
+    if not all(math.isfinite(value) for value in (initial, trial, step, slope)) or step <= 0.0 or slope >= 0.0:
+        return False
+    # Match f64 IPC reduction accuracy without an absolute, unit-dependent energy floor.
+    roundoff = 1.0e-12 * max(abs(initial), abs(trial))
+    return trial <= initial or (-step * slope <= roundoff and trial - initial <= roundoff)
+
+
 def inexact_newton_relative_tolerance(residual, previous_residual, minimum=1.0e-7):
     """Bound the adaptive Krylov forcing term without relaxing Newton convergence."""
     if previous_residual is None or previous_residual <= 0.0:
@@ -127,6 +136,7 @@ class StepSchedule:
 
 
 __all__ = [
+    "accepts_monotone_energy",
     "StepSchedule",
     "inexact_newton_absolute_tolerance",
     "inexact_newton_relative_tolerance",

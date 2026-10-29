@@ -3,23 +3,16 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from examples.mpm.Contact.CPT2D import cpt_reference as reference
-from examples.mpm.Contact.CPT2D.coupled_cpt import (
-    axisymmetric_initial_deformation_gradient,
-    axisymmetric_penetrator_mesh,
-    axisymmetric_particle_count,
-    axisymmetric_surface_pressure_particles,
-    dp_direct_material,
-    dp_native_material,
-    explicit_contact_parameters,
-    ipc_contact_parameters,
-    native_particle_capacity,
-    penetrator_tetrahedra,
-    penetrator_vertices,
-    realized_grid_size,
-)
+from examples.fempm.cpt_dp import cpt_dp as fem_cpt
+from examples.igampm.cpt_dp import cpt_dp as iga_cpt
+from examples.mpm.CPT2D import cpt_reference as reference
 
 ROOT = Path(__file__).resolve().parents[3]
+
+
+@pytest.fixture(params=[fem_cpt, iga_cpt], ids=["fempm", "igampm"])
+def cpt(request):
+    return request.param
 
 
 def test_reference_profile_matches_standard_pile_file():
@@ -53,9 +46,9 @@ def test_reference_parameters_are_the_standard_axisymmetric_cpt_values():
     }
 
 
-def test_coupled_dp_changes_only_the_documented_constitutive_fields():
-    native = dp_native_material()
-    direct = dp_direct_material()
+def test_coupled_dp_changes_only_the_documented_constitutive_fields(cpt):
+    native = cpt.dp_native_material()
+    direct = cpt.dp_direct_material()
     for material in (native, direct):
         density = material.get("Density", material.get("density"))
         young = material.get("YoungModulus", material.get("young_modulus"))
@@ -72,9 +65,9 @@ def test_coupled_dp_changes_only_the_documented_constitutive_fields():
 
 
 def test_extruded_penetrator_is_a_positive_complete_tetrahedralization():
-    points = penetrator_vertices()
+    points = fem_cpt.penetrator_vertices()
     volumes = []
-    for a, b, c, d in penetrator_tetrahedra():
+    for a, b, c, d in fem_cpt.penetrator_tetrahedra():
         matrix = np.column_stack((points[b] - points[a], points[c] - points[a], points[d] - points[a]))
         volumes.append(np.linalg.det(matrix) / 6.0)
     assert np.all(np.asarray(volumes) > 0.0)
@@ -85,53 +78,53 @@ def test_extruded_penetrator_is_a_positive_complete_tetrahedralization():
     assert sum(volumes) == pytest.approx(polygon_area * reference.COUPLED_SLICE_THICKNESS)
 
 
-def test_solver_specific_contact_controls_are_separate_and_grid_scaled():
-    assert explicit_contact_parameters("fempm") == reference.FEMPM_EXPLICIT_CONTACT
-    assert explicit_contact_parameters("igampm") == reference.IGAMPM_EXPLICIT_CONTACT
-    grid_size = realized_grid_size(4.0)
-    ipc = ipc_contact_parameters(grid_size)
+def test_solver_specific_contact_controls_are_separate_and_grid_scaled(cpt):
+    assert cpt.explicit_contact_parameters("fempm") == reference.FEMPM_EXPLICIT_CONTACT
+    assert cpt.explicit_contact_parameters("igampm") == reference.IGAMPM_EXPLICIT_CONTACT
+    grid_size = cpt.realized_grid_size(4.0)
+    ipc = cpt.ipc_contact_parameters(grid_size)
     assert ipc["dhat"] + ipc["dmin"] == pytest.approx(0.5 * grid_size / reference.PARTICLES_PER_CELL)
     assert ipc["dmin"] == pytest.approx(0.1 * grid_size)
     assert ipc["kappa"] == reference.SOIL_MATERIAL["YoungModulus"]
     with pytest.raises(ValueError, match="family"):
-        explicit_contact_parameters("mpm")
+        cpt.explicit_contact_parameters("mpm")
 
 
-def test_ipc_barrier_does_not_preload_the_initially_separated_cpt_tip():
-    from src.physics_model.contact_model.ipc.IPC import ipc_barrier_distance_terms_py
+def test_ipc_barrier_does_not_preload_the_initially_separated_cpt_tip(cpt):
+    from tests.helpers.ipc_scalar_reference import ipc_barrier_distance_terms_py
 
     half_spacing = 0.5 * reference.GRID_SIZE / reference.PARTICLES_PER_CELL
     nearest_particle = np.array([half_spacing, reference.SOIL_SIZE[1] - half_spacing])
     tip = np.asarray(reference.PILE_PROFILE[0])
     distance = np.linalg.norm(nearest_particle - tip)
-    ipc = ipc_contact_parameters(reference.GRID_SIZE)
+    ipc = cpt.ipc_contact_parameters(reference.GRID_SIZE)
     assert ipc["dhat"] > 0.0
     assert distance > ipc["dmin"] + ipc["dhat"]
     assert ipc_barrier_distance_terms_py(distance, ipc["dhat"], ipc["dmin"], ipc["kappa"], True) == (0.0, 0.0, 0.0)
 
 
-def test_extruded_native_capacity_accounts_for_three_dimensional_ppc():
+def test_extruded_native_capacity_accounts_for_three_dimensional_ppc(cpt):
     # 100 x 8 x 250 cells, with 2^3 points per cell and 10% headroom.
-    assert native_particle_capacity(reference.GRID_SIZE) == 1_760_000
+    assert cpt.native_particle_capacity(reference.GRID_SIZE) == 1_760_000
 
 
-def test_axisymmetric_discretization_and_surface_pressure_are_physical():
+def test_axisymmetric_discretization_and_surface_pressure_are_physical(cpt):
     from src.mpm.generator.Body import Body
 
-    assert axisymmetric_particle_count(reference.GRID_SIZE) == 100_000
+    assert cpt.axisymmetric_particle_count(reference.GRID_SIZE) == 100_000
     body = Body()
     body.add_rectangle(
         reference.SOIL_ORIGIN, reference.SOIL_SIZE, reference.GRID_SIZE, reference.PARTICLES_PER_CELL, name="soil"
     )
     points = body.bodies["soil"]["points"]
-    particle_ids, area = axisymmetric_surface_pressure_particles(points, reference.GRID_SIZE)
+    particle_ids, area = cpt.axisymmetric_surface_pressure_particles(points, reference.GRID_SIZE)
     assert area.shape == (200,)
     assert np.all(points[particle_ids, 1] == np.max(points[:, 1]))
     assert np.sum(area) == pytest.approx(np.pi * reference.SOIL_SIZE[0] ** 2)
 
 
-def test_axisymmetric_direct_preload_reproduces_reference_hencky_stress():
-    deformation = axisymmetric_initial_deformation_gradient()
+def test_axisymmetric_direct_preload_reproduces_reference_hencky_stress(cpt):
+    deformation = cpt.axisymmetric_initial_deformation_gradient()
     log_stretch = np.log(np.diag(deformation))
     material = reference.COUPLED_DP_MATERIAL
     shear = material["young_modulus"] / (2.0 * (1.0 + material["poisson_ratio"]))
@@ -142,7 +135,7 @@ def test_axisymmetric_direct_preload_reproduces_reference_hencky_stress():
 
 
 def test_axisymmetric_fem_penetrator_mesh_is_refined_and_matches_profile():
-    points, cells = axisymmetric_penetrator_mesh()
+    points, cells = fem_cpt.axisymmetric_penetrator_mesh()
     assert points.shape == (4 * 34, 2)
     assert cells.shape == (2 * 3 * 33, 3)
     edge1 = points[cells[:, 1]] - points[cells[:, 0]]
@@ -159,9 +152,9 @@ def test_environment_override_rejects_nonfinite_or_nonpositive_values(value):
         reference.environment_float({"DT": value}, "DT", 1.0)
 
 
-def test_axisymmetric_preload_includes_geostatic_cauchy_stress():
+def test_axisymmetric_preload_includes_geostatic_cauchy_stress(cpt):
     points = np.array([[0.0015, 0.0015], [0.5985, 0.0015], [0.3, 1.4985]])
-    deformation = axisymmetric_initial_deformation_gradient(points)
+    deformation = cpt.axisymmetric_initial_deformation_gradient(points)
     material = reference.COUPLED_DP_MATERIAL
     young, nu = material["young_modulus"], material["poisson_ratio"]
     shear, bulk = young / (2 * (1 + nu)), young / (3 * (1 - 2 * nu))

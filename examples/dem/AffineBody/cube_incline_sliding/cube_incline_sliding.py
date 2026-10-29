@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import taichi as ti
 
 parser = argparse.ArgumentParser(description="AffineBody cube sliding on an IPC incline")
 parser.add_argument("--arch", default="cpu")
@@ -37,9 +38,8 @@ if ROOT not in sys.path:
 
 from geotaichi import DEM, init, polyhedron, python_callback
 from src.physics_model.contact_model.ipc.IPC import (
-    ipc_barrier_distance_terms_py,
+    ipc_toolkit_barrier_distance_terms,
 )
-
 
 mu = arguments.friction
 ccd_type = arguments.ccd_type
@@ -58,14 +58,15 @@ dhat = arguments.dhat
 barrier_stiffness = arguments.barrier_stiffness
 
 
+@ti.kernel
+def barrier_normal_force(gap: ti.f64) -> ti.f64:
+    _, gradient, _ = ipc_toolkit_barrier_distance_terms(gap, dhat, barrier_stiffness)
+    return ti.max(-gradient, 0.0)
+
+
 def equilibrium_barrier_gap(normal_load, collision_weight):
     def weighted_normal_force(gap):
-        _, gradient, _ = ipc_barrier_distance_terms_py(
-            gap,
-            dhat,
-            kappa=barrier_stiffness,
-        )
-        return collision_weight * max(-gradient, 0.0)
+        return collision_weight * barrier_normal_force(gap)
 
     lower = max(1.0e-12 * dhat, np.finfo(float).tiny)
     upper = dhat * (1.0 - 1.0e-12)

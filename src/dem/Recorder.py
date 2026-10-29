@@ -3,7 +3,7 @@ import os
 import numpy as np
 
 from src.dem.SceneManager import myScene
-from src.dem.contact.ContactModelBase import ContactModelBase 
+from src.dem.contact.ContactModelBase import ContactModelBase
 from src.dem.neighbor.NeighborBase import NeighborBase
 from src.dem.Simulation import Simulation
 from src.utils.linalg import no_operation
@@ -22,7 +22,7 @@ class WriteFile:
         self.pcontact = pcontact
         self.engine = engine
         self.vtk_path = None
-        self.particle_path  = None
+        self.particle_path = None
         self.wall_path = None
         self.contact_path = None
         self.output = None
@@ -41,22 +41,22 @@ class WriteFile:
         self.save_bounding = no_operation
         self.save_surface = no_operation
         self.save_soft_point = no_operation
-        
+
         self.mkdir(sims)
         self.manage_function(sims)
 
     def set_engine(self, engine):
         self.engine = engine
-    
+
     def mkdir(self, sims: Simulation):
         if not os.path.exists(sims.path):
             os.makedirs(sims.path)
 
-        self.vtk_path = sims.path + '/vtks'
-        self.particle_path = sims.path + '/particles'
-        self.wall_path = sims.path + '/walls'
-        self.contact_path = sims.path + '/contacts'
-        
+        self.vtk_path = sims.path + "/vtks"
+        self.particle_path = sims.path + "/particles"
+        self.wall_path = sims.path + "/walls"
+        self.contact_path = sims.path + "/contacts"
+
         if not os.path.exists(self.vtk_path):
             os.makedirs(self.vtk_path)
         if not os.path.exists(self.particle_path):
@@ -73,33 +73,35 @@ class WriteFile:
             if sims.visualize:
                 self.visualizeParticle = self.VisualizeDEM
             self.output = self.outputDEM
-            if sims.max_particle_num > 0 and 'particle' in monitor_type:
+            if sims.max_particle_num > 0 and "particle" in monitor_type:
                 self.save_particle = self.MonitorParticle
-            if sims.max_sphere_num > 0 and 'sphere' in monitor_type:
+            if sims.max_sphere_num > 0 and "sphere" in monitor_type:
                 self.save_sphere = self.MonitorSphere
-            if sims.max_clump_num > 0 and 'clump' in monitor_type:
+            if sims.max_clump_num > 0 and "clump" in monitor_type:
                 self.save_clump = self.MonitorClump
         elif sims.scheme == "LSDEM" or sims.scheme == "LSMPM":
             if sims.visualize:
                 self.visualizeParticle = self.VisualizeSurface
             self.output = self.outputLSDEM
-            if sims.max_particle_num > 0 and 'particle' in monitor_type:
+            if sims.max_particle_num > 0 and "particle" in monitor_type:
                 self.save_body = self.MonitorLSBody
-            if sims.max_level_grid_num > 0 and ('grid' in monitor_type or (sims.scheme == "LSMPM" and 'surface' in monitor_type)):
+            if sims.max_level_grid_num > 0 and (
+                "grid" in monitor_type or (sims.scheme == "LSMPM" and "surface" in monitor_type)
+            ):
                 self.save_grid = self.MonitorLSGrid
-            if sims.max_particle_num > 0 and 'bounding' in monitor_type:
+            if sims.max_particle_num > 0 and "bounding" in monitor_type:
                 self.save_bounding = self.MonitorLSBounding
-            if sims.max_particle_num > 0 and 'surface' in monitor_type:
+            if sims.max_particle_num > 0 and "surface" in monitor_type:
                 self.save_surface = self.MonitorLSSurface
         elif sims.scheme == "PolySuperEllipsoid" or sims.scheme == "PolySuperQuadrics":
             if sims.visualize:
                 self.visualizeParticle = self.VisualizeSurface
             self.output = self.outputImplicitSurface
-            if sims.max_rigid_body_num > 0 and 'particle' in monitor_type:
+            if sims.max_rigid_body_num > 0 and "particle" in monitor_type:
                 self.save_body = self.MonitorISBody
-            if sims.max_rigid_body_num > 0 and 'bounding' in monitor_type:
+            if sims.max_rigid_body_num > 0 and "bounding" in monitor_type:
                 self.save_bounding = self.MonitorBoundingSphere
-            if sims.max_particle_num > 0 and 'surface' in monitor_type:
+            if sims.max_particle_num > 0 and "surface" in monitor_type:
                 self.save_surface = self.MonitorImplicitSurface
         elif sims.scheme == "AffineBody":
             monitor_type = list(sims.monitor_type)
@@ -108,19 +110,19 @@ class WriteFile:
                 if sims.max_wall_num > 0:
                     monitor_type.append("wall")
             self.output = self.outputAffineBody
-            if sims.max_rigid_body_num > 0 and 'particle' in monitor_type:
+            if sims.max_rigid_body_num > 0 and "particle" in monitor_type:
                 self.save_body = self.MonitorAffineBody
-            if sims.max_rigid_body_num > 0 and 'bounding' in monitor_type:
+            if sims.max_rigid_body_num > 0 and "bounding" in monitor_type:
                 self.save_bounding = self.MonitorAffineBounding
-            if sims.max_surface_node_num > 0 and 'surface' in monitor_type:
+            if sims.max_surface_node_num > 0 and "surface" in monitor_type:
                 self.save_surface = self.MonitorAffineSurface
-            if sims.max_particle_num > 1 and 'ppcontact' in monitor_type:
+            if sims.max_particle_num > 1 and "ppcontact" in monitor_type:
                 self.save_ppcontact = self.MonitorAffinePPContact
-            if sims.max_particle_num > 0 and sims.max_wall_num > 0 and 'pwcontact' in monitor_type:
+            if sims.max_particle_num > 0 and sims.max_wall_num > 0 and "pwcontact" in monitor_type:
                 self.save_pwcontact = self.MonitorAffinePWContact
 
         self.visualizeWall = no_operation
-        if 'wall' in monitor_type:
+        if "wall" in monitor_type:
             if sims.wall_type == 0:
                 self.save_wall = self.MonitorPlane
             else:
@@ -133,11 +135,11 @@ class WriteFile:
                         self.save_servo = self.MonitorServo
                 elif sims.wall_type == 2:
                     self.save_wall = self.MonitorPatch
-        
+
         if sims.scheme != "AffineBody":
-            if sims.max_particle_num > 1. and 'ppcontact' in monitor_type:
+            if sims.max_particle_num > 1.0 and "ppcontact" in monitor_type:
                 self.save_ppcontact = self.MonitorPPContact
-            if sims.max_particle_num > 0. and sims.max_wall_num > 0. and 'pwcontact' in monitor_type:
+            if sims.max_particle_num > 0.0 and sims.max_wall_num > 0.0 and "pwcontact" in monitor_type:
                 self.save_pwcontact = self.MonitorPWContact
 
     def outputWall(self, sims: Simulation, scene: myScene):
@@ -184,15 +186,21 @@ class WriteFile:
         posx = np.ascontiguousarray(position[:, 0])
         posy = np.ascontiguousarray(position[:, 1])
         posz = np.ascontiguousarray(position[:, 2])
-        pointsToVTK(self.vtk_path+f'/GraphicDEMParticle{sims.current_print:06d}', posx, posy, posz, data={'bodyID': bodyID, 'group': groupID, "radius": rad})
+        pointsToVTK(
+            self.vtk_path + f"/GraphicDEMParticle{sims.current_print:06d}",
+            posx,
+            posy,
+            posz,
+            data={"bodyID": bodyID, "group": groupID, "radius": rad},
+        )
 
-    def VisualizePlane(self, sims: Simulation, scene: myScene):    
-        point = np.ascontiguousarray(scene.wall.point.to_numpy()[0:scene.wallNum[0]])
-        norm = np.ascontiguousarray(scene.wall.norm.to_numpy()[0:scene.wallNum[0]])
-        gridToVTK(self.vtk_path+f'/GraphicDEMWall{sims.current_print:06d}')
+    def VisualizePlane(self, sims: Simulation, scene: myScene):
+        point = np.ascontiguousarray(scene.wall.point.to_numpy()[0 : scene.wallNum[0]])
+        norm = np.ascontiguousarray(scene.wall.norm.to_numpy()[0 : scene.wallNum[0]])
+        gridToVTK(self.vtk_path + f"/GraphicDEMWall{sims.current_print:06d}")
 
-    def VisualizeTriangular(self, sims: Simulation, vertice1, vertice2, vertice3):   
-        ndim = 3 
+    def VisualizeTriangular(self, sims: Simulation, vertice1, vertice2, vertice3):
+        ndim = 3
         point1 = np.ascontiguousarray(vertice1)
         point2 = np.ascontiguousarray(vertice2)
         point3 = np.ascontiguousarray(vertice3)
@@ -203,11 +211,16 @@ class WriteFile:
         nface = faces.shape[0]
         offset = np.arange(ndim, ndim * nface + 1, ndim)
 
-        unstructuredGridToVTK(self.vtk_path+f"/TriangleWall{sims.current_print:06d}", np.ascontiguousarray(point[:, 0]), np.ascontiguousarray(point[:, 1]), np.ascontiguousarray(point[:, 2]), 
-                              connectivity=np.ascontiguousarray(faces.flatten()), 
-                              offsets=np.ascontiguousarray(offset), 
-                              cell_types=np.ascontiguousarray(np.repeat(VtkTriangle.tid, nface)))
-        
+        unstructuredGridToVTK(
+            self.vtk_path + f"/TriangleWall{sims.current_print:06d}",
+            np.ascontiguousarray(point[:, 0]),
+            np.ascontiguousarray(point[:, 1]),
+            np.ascontiguousarray(point[:, 2]),
+            connectivity=np.ascontiguousarray(faces.flatten()),
+            offsets=np.ascontiguousarray(offset),
+            cell_types=np.ascontiguousarray(np.repeat(VtkTriangle.tid, nface)),
+        )
+
     def VisualizeSurface(self, sims: Simulation, scene: myScene):
         connectivity, keep_node, master, _, _, _ = self._surface_output_view(sims, scene)
         if connectivity.shape[0] == 0 or master.shape[0] == 0:
@@ -216,28 +229,34 @@ class WriteFile:
         nface = int(connectivity.shape[0])
         npoints = int(master.shape[0])
         pointData, surface = scene.visualize_surface(sims)
-        surface = surface[0: int(scene.surfaceNum[0])]
+        surface = surface[0 : int(scene.surfaceNum[0])]
         if keep_node is not None:
             surface = surface[keep_node]
             pointData = {key: np.ascontiguousarray(value[keep_node]) for key, value in pointData.items()}
-        posx = np.ascontiguousarray(surface[0: npoints, 0])
-        posy = np.ascontiguousarray(surface[0: npoints, 1])
-        posz = np.ascontiguousarray(surface[0: npoints, 2])
-        unstructuredGridToVTK(self.vtk_path+f"/GraphicLSDEMSurface{sims.current_print:06d}", posx, posy, posz, 
-                              connectivity=np.ascontiguousarray(connectivity.flatten()), 
-                              offsets=np.ascontiguousarray(np.arange(ndim, ndim * nface + 1, ndim, dtype=np.int32)), 
-                              cell_types=np.repeat(VtkTriangle.tid, nface), pointData=pointData)
+        posx = np.ascontiguousarray(surface[0:npoints, 0])
+        posy = np.ascontiguousarray(surface[0:npoints, 1])
+        posz = np.ascontiguousarray(surface[0:npoints, 2])
+        unstructuredGridToVTK(
+            self.vtk_path + f"/GraphicLSDEMSurface{sims.current_print:06d}",
+            posx,
+            posy,
+            posz,
+            connectivity=np.ascontiguousarray(connectivity.flatten()),
+            offsets=np.ascontiguousarray(np.arange(ndim, ndim * nface + 1, ndim, dtype=np.int32)),
+            cell_types=np.repeat(VtkTriangle.tid, nface),
+            pointData=pointData,
+        )
 
     def _surface_output_view(self, sims: Simulation, scene: myScene):
         total_surface_num = int(scene.surfaceNum[0])
-        master = np.ascontiguousarray(scene.surface.to_numpy()[0: total_surface_num])
+        master = np.ascontiguousarray(scene.surface.to_numpy()[0:total_surface_num])
         connectivity = np.ascontiguousarray(scene.connectivity)
         keep_node = None
         start_node = None
         node_number = None
         if sims.scheme == "LSMPM" and total_surface_num > 0:
             body_num = int(scene.particleNum[0])
-            is_soft = np.ascontiguousarray(scene.rigid.is_soft.to_numpy()[0: body_num]).astype(bool)
+            is_soft = np.ascontiguousarray(scene.rigid.is_soft.to_numpy()[0:body_num]).astype(bool)
             keep_node = np.logical_not(is_soft[master])
             old_to_new = np.full(total_surface_num, -1, dtype=np.int32)
             old_to_new[keep_node] = np.arange(np.count_nonzero(keep_node), dtype=np.int32)
@@ -249,19 +268,35 @@ class WriteFile:
             start_node = np.zeros(body_num, dtype=np.int32)
             if body_num > 1:
                 start_node[1:] = np.cumsum(node_number[:-1])
-        return np.ascontiguousarray(connectivity.astype(np.int32)), keep_node, np.ascontiguousarray(master), start_node, node_number, total_surface_num
+        return (
+            np.ascontiguousarray(connectivity.astype(np.int32)),
+            keep_node,
+            np.ascontiguousarray(master),
+            start_node,
+            node_number,
+            total_surface_num,
+        )
 
-    def VisualizeBoundingBox(self, sims: Simulation, scene: myScene):  
+    def VisualizeBoundingBox(self, sims: Simulation, scene: myScene):
         body_num = scene.particleNum[0]
         xmin, xmax = scene.box.xmin.to_numpy(), scene.box.xmax.to_numpy()
-        x0, y0, z0 = np.ascontiguousarray(xmin[0:body_num, 0]), np.ascontiguousarray(xmin[0:body_num, 1]), np.ascontiguousarray(xmin[0:body_num, 2])
-        x1, y1, z1 = np.ascontiguousarray(xmax[0:body_num, 0]), np.ascontiguousarray(xmax[0:body_num, 1]), np.ascontiguousarray(xmax[0:body_num, 2])
+        x0, y0, z0 = (
+            np.ascontiguousarray(xmin[0:body_num, 0]),
+            np.ascontiguousarray(xmin[0:body_num, 1]),
+            np.ascontiguousarray(xmin[0:body_num, 2]),
+        )
+        x1, y1, z1 = (
+            np.ascontiguousarray(xmax[0:body_num, 0]),
+            np.ascontiguousarray(xmax[0:body_num, 1]),
+            np.ascontiguousarray(xmax[0:body_num, 2]),
+        )
         p1, p2, p3, p4 = np.array([x0, y0, z0]), np.array([x1, y0, z0]), np.array([x0, y1, z0]), np.array([x1, y1, z0])
         p5, p6, p7, p8 = np.array([x0, y0, z1]), np.array([x1, y0, z1]), np.array([x0, y1, z1]), np.array([x1, y1, z1])
         center = np.ascontiguousarray(scene.rigid.mass_center.to_numpy()[0:body_num, :])
         q = np.ascontiguousarray(scene.rigid.q.to_numpy()[0:body_num, :])
 
         from src.utils.linalg import matrix_from_quanternion
+
         rotation_matrix = matrix_from_quanternion(q)
         p1 = rotation_matrix @ p1 + center
         p2 = rotation_matrix @ p2 + center
@@ -286,7 +321,7 @@ class WriteFile:
         # Define connectivity or vertices that belongs to each element
         conn = np.zeros(24)
         conn[0], conn[1], conn[2], conn[3] = 0, 1, 3, 2  # rectangle
-        conn[4], conn[5], conn[6], conn[7] = 0, 1, 5, 4  
+        conn[4], conn[5], conn[6], conn[7] = 0, 1, 5, 4
         conn[8], conn[9], conn[10], conn[11] = 1, 3, 7, 5
         conn[12], conn[13], conn[14], conn[15] = 2, 3, 7, 6
         conn[16], conn[17], conn[18], conn[19] = 2, 0, 4, 6
@@ -299,8 +334,15 @@ class WriteFile:
         ctype = np.zeros(6)
         ctype[0], ctype[1], ctype[2] = VtkQuad.tid, VtkQuad.tid, VtkQuad.tid
         ctype[3], ctype[4], ctype[5] = VtkQuad.tid, VtkQuad.tid, VtkQuad.tid
-        unstructuredGridToVTK(self.vtk_path+f"/BoundingBox{sims.current_print:06d}", px, py, pz, 
-                                connectivity=conn, offsets=offset, cell_types=ctype)
+        unstructuredGridToVTK(
+            self.vtk_path + f"/BoundingBox{sims.current_print:06d}",
+            px,
+            py,
+            pz,
+            connectivity=conn,
+            offsets=offset,
+            cell_types=ctype,
+        )
 
     def _get_affine_snapshot(self, sims: Simulation):
         if self.engine is None:
@@ -317,7 +359,7 @@ class WriteFile:
             return
         nface = int(faces.shape[0])
         unstructuredGridToVTK(
-            self.vtk_path+f"/GraphicAffineBody{sims.current_print:06d}",
+            self.vtk_path + f"/GraphicAffineBody{sims.current_print:06d}",
             np.ascontiguousarray(vertices[:, 0]),
             np.ascontiguousarray(vertices[:, 1]),
             np.ascontiguousarray(vertices[:, 2]),
@@ -359,12 +401,14 @@ class WriteFile:
             "y": snapshot["y"],
             "v_y": snapshot["v_y"],
         }
-        np.savez(self.particle_path+f'/AffineBody{sims.current_print:06d}', **output)
+        if "a_y" in snapshot:
+            output.update(a_y=snapshot["a_y"], newmark=snapshot["newmark"])
+        np.savez(self.particle_path + f"/AffineBody{sims.current_print:06d}", **output)
 
     def MonitorAffineBounding(self, sims: Simulation, scene: myScene):
         snapshot = self._get_affine_snapshot(sims)
         np.savez(
-            self.particle_path+f'/AffineBounding{sims.current_print:06d}',
+            self.particle_path + f"/AffineBounding{sims.current_print:06d}",
             t_current=sims.current_time,
             body_num=snapshot["body_num"],
             center=snapshot["center"],
@@ -379,7 +423,7 @@ class WriteFile:
         snapshot = self._get_affine_snapshot(sims)
         self.VisualizeAffineSurface(sims, snapshot)
         np.savez(
-            self.particle_path+f'/AffineSurface{sims.current_print:06d}',
+            self.particle_path + f"/AffineSurface{sims.current_print:06d}",
             t_current=sims.current_time,
             total_surface_num=snapshot["vertices"].shape[0],
             total_face_num=snapshot["faces"].shape[0],
@@ -395,7 +439,7 @@ class WriteFile:
     def MonitorAffinePPContact(self, sims: Simulation, scene: myScene):
         contact = self.engine.contact_snapshot()
         np.savez(
-            self.contact_path+f'/AffineContactPP{sims.current_print:06d}',
+            self.contact_path + f"/AffineContactPP{sims.current_print:06d}",
             t_current=sims.current_time,
             search=contact["search"],
             vertex_face_contact_num=contact["vf_count"],
@@ -468,11 +512,13 @@ class WriteFile:
                 candidate_wall.extend([wall_id] * active.shape[0])
                 gaps.extend(distance[active].tolist())
             elif sims.wall_type in (1, 2):
-                tri = np.vstack((
-                    wall_raw["vertice1"][wall_id],
-                    wall_raw["vertice2"][wall_id],
-                    wall_raw["vertice3"][wall_id],
-                )).astype(np.float64)
+                tri = np.vstack(
+                    (
+                        wall_raw["vertice1"][wall_id],
+                        wall_raw["vertice2"][wall_id],
+                        wall_raw["vertice3"][wall_id],
+                    )
+                ).astype(np.float64)
                 for vertex_id, point in enumerate(vertices):
                     closest = self._closest_point_triangle(point, tri)
                     gap = float(np.linalg.norm(point - closest))
@@ -481,7 +527,7 @@ class WriteFile:
                         candidate_wall.append(wall_id)
                         gaps.append(gap)
         np.savez(
-            self.contact_path+f'/AffineContactPW{sims.current_print:06d}',
+            self.contact_path + f"/AffineContactPW{sims.current_print:06d}",
             t_current=sims.current_time,
             contact_num=len(candidate_vertex),
             vertexID=np.asarray(candidate_vertex, dtype=np.int32),
@@ -492,160 +538,262 @@ class WriteFile:
     def MonitorParticle(self, sims: Simulation, scene: myScene):
         particle_num = scene.particleNum[0]
 
-        active = np.ascontiguousarray(scene.particle.active.to_numpy()[0: particle_num])
-        Index = np.ascontiguousarray(scene.particle.multisphereIndex.to_numpy()[0: particle_num])
-        groupID = np.ascontiguousarray(scene.particle.groupID.to_numpy()[0: particle_num])
-        materialID = np.ascontiguousarray(scene.particle.materialID.to_numpy()[0: particle_num])
-        mass = np.ascontiguousarray(scene.particle.m.to_numpy()[0: particle_num])
-        radius = np.ascontiguousarray(scene.particle.rad.to_numpy()[0: particle_num])
-        position = np.ascontiguousarray(scene.particle.x.to_numpy()[0: particle_num])
-        velocity = np.ascontiguousarray(scene.particle.v.to_numpy()[0: particle_num])
-        omega = np.ascontiguousarray(scene.particle.w.to_numpy()[0: particle_num])
-        contact_force = np.ascontiguousarray(scene.particle.contact_force.to_numpy()[0: particle_num])
-        contact_torque = np.ascontiguousarray(scene.particle.contact_torque.to_numpy()[0: particle_num])
+        active = np.ascontiguousarray(scene.particle.active.to_numpy()[0:particle_num])
+        Index = np.ascontiguousarray(scene.particle.multisphereIndex.to_numpy()[0:particle_num])
+        groupID = np.ascontiguousarray(scene.particle.groupID.to_numpy()[0:particle_num])
+        materialID = np.ascontiguousarray(scene.particle.materialID.to_numpy()[0:particle_num])
+        mass = np.ascontiguousarray(scene.particle.m.to_numpy()[0:particle_num])
+        radius = np.ascontiguousarray(scene.particle.rad.to_numpy()[0:particle_num])
+        position = np.ascontiguousarray(scene.particle.x.to_numpy()[0:particle_num])
+        velocity = np.ascontiguousarray(scene.particle.v.to_numpy()[0:particle_num])
+        omega = np.ascontiguousarray(scene.particle.w.to_numpy()[0:particle_num])
+        contact_force = np.ascontiguousarray(scene.particle.contact_force.to_numpy()[0:particle_num])
+        contact_torque = np.ascontiguousarray(scene.particle.contact_torque.to_numpy()[0:particle_num])
         self.visualizeParticle(sims, position, Index, groupID, radius)
-        output = {'t_current': sims.current_time, 'body_num': particle_num, 'active': active,
-                  'Index': Index, 'groupID': groupID, 'materialID': materialID, 'mass': mass, 'radius': radius,
-                  'position': position, 'velocity': velocity, 'omega': omega, 'contact_force': contact_force, 'contact_torque': contact_torque}
+        output = {
+            "t_current": sims.current_time,
+            "body_num": particle_num,
+            "active": active,
+            "Index": Index,
+            "groupID": groupID,
+            "materialID": materialID,
+            "mass": mass,
+            "radius": radius,
+            "position": position,
+            "velocity": velocity,
+            "omega": omega,
+            "contact_force": contact_force,
+            "contact_torque": contact_torque,
+        }
         if sims.energy_tracking:
-            local_damping_energy = np.ascontiguousarray(scene.particle.damp_energy.to_numpy()[0: particle_num])
+            local_damping_energy = np.ascontiguousarray(scene.particle.damp_energy.to_numpy()[0:particle_num])
             output.update({"local_damping_energy": local_damping_energy})
-        np.savez(self.particle_path+f'/DEMParticle{sims.current_print:06d}', **output)
-    
-    def MonitorSphere(self, sims: Simulation, scene: myScene):    
+        np.savez(self.particle_path + f"/DEMParticle{sims.current_print:06d}", **output)
+
+    def MonitorSphere(self, sims: Simulation, scene: myScene):
         sphere_num = scene.sphereNum[0]
-        grainIndex = np.ascontiguousarray(scene.sphere.grainIndex.to_numpy()[0: sphere_num])
-        sphereIndex = np.ascontiguousarray(scene.sphere.sphereIndex.to_numpy()[0: sphere_num])
-        inverseInertia = np.ascontiguousarray(scene.sphere.inv_I.to_numpy()[0: sphere_num])
-        quanternion = np.ascontiguousarray(scene.sphere.q.to_numpy()[0: sphere_num])
-        a = np.ascontiguousarray(scene.sphere.a.to_numpy()[0: sphere_num])
-        angmoment = np.ascontiguousarray(scene.sphere.angmoment.to_numpy()[0: sphere_num])
-        fix_v = np.ascontiguousarray(scene.sphere.fix_v.to_numpy()[0: sphere_num])
-        fix_w = np.ascontiguousarray(scene.sphere.fix_w.to_numpy()[0: sphere_num])
-        np.savez(self.particle_path+f'/DEMSphere{sims.current_print:06d}', t_current=sims.current_time, body_num = sphere_num, 
-                                                                                grainIndex=grainIndex, sphereIndex=sphereIndex, inverseInertia=inverseInertia, quanternion=quanternion, 
-                                                                                acceleration=a, angular_moment=angmoment, fix_v=fix_v, fix_w=fix_w)
-        
-    def MonitorClump(self, sims: Simulation, scene: myScene):        
+        grainIndex = np.ascontiguousarray(scene.sphere.grainIndex.to_numpy()[0:sphere_num])
+        sphereIndex = np.ascontiguousarray(scene.sphere.sphereIndex.to_numpy()[0:sphere_num])
+        inverseInertia = np.ascontiguousarray(scene.sphere.inv_I.to_numpy()[0:sphere_num])
+        quanternion = np.ascontiguousarray(scene.sphere.q.to_numpy()[0:sphere_num])
+        a = np.ascontiguousarray(scene.sphere.a.to_numpy()[0:sphere_num])
+        angmoment = np.ascontiguousarray(scene.sphere.angmoment.to_numpy()[0:sphere_num])
+        fix_v = np.ascontiguousarray(scene.sphere.fix_v.to_numpy()[0:sphere_num])
+        fix_w = np.ascontiguousarray(scene.sphere.fix_w.to_numpy()[0:sphere_num])
+        np.savez(
+            self.particle_path + f"/DEMSphere{sims.current_print:06d}",
+            t_current=sims.current_time,
+            body_num=sphere_num,
+            grainIndex=grainIndex,
+            sphereIndex=sphereIndex,
+            inverseInertia=inverseInertia,
+            quanternion=quanternion,
+            acceleration=a,
+            angular_moment=angmoment,
+            fix_v=fix_v,
+            fix_w=fix_w,
+        )
+
+    def MonitorClump(self, sims: Simulation, scene: myScene):
         clump_num = scene.clumpNum[0]
-        
-        startIndex = np.ascontiguousarray(scene.clump.startIndex.to_numpy()[0: clump_num])
-        endIndex = np.ascontiguousarray(scene.clump.endIndex.to_numpy()[0: clump_num])
-        grainIndex = np.ascontiguousarray(scene.clump.grainIndex.to_numpy()[0: clump_num])
-        mass = np.ascontiguousarray(scene.clump.m.to_numpy()[0: clump_num])
-        equivalentRadius = np.ascontiguousarray(scene.clump.equi_r.to_numpy()[0: clump_num])
-        centerOfMass = np.ascontiguousarray(scene.clump.mass_center.to_numpy()[0: clump_num])
-        velocity = np.ascontiguousarray(scene.clump.v.to_numpy()[0: clump_num])
-        omega = np.ascontiguousarray(scene.clump.w.to_numpy()[0: clump_num])
-        acceleration = np.ascontiguousarray(scene.clump.a.to_numpy()[0: clump_num])
-        angular_moment = np.ascontiguousarray(scene.clump.angmoment.to_numpy()[0: clump_num])
-        quanternion = np.ascontiguousarray(scene.clump.q.to_numpy()[0: clump_num])
-        inverse_inertia = np.ascontiguousarray(scene.clump.inv_I.to_numpy()[0: clump_num])
-        np.savez(self.particle_path+f'/DEMClump{sims.current_print:06d}', t_current=sims.current_time, body_num = clump_num, 
-                                                                                grainIndex=grainIndex, startIndex=startIndex, endIndex=endIndex, mass=mass, equivalentRadius=equivalentRadius, centerOfMass=centerOfMass,
-                                                                                acceleration=acceleration, angular_moment=angular_moment, velocity=velocity, omega=omega, quanternion=quanternion, inverse_inertia=inverse_inertia)
+
+        startIndex = np.ascontiguousarray(scene.clump.startIndex.to_numpy()[0:clump_num])
+        endIndex = np.ascontiguousarray(scene.clump.endIndex.to_numpy()[0:clump_num])
+        grainIndex = np.ascontiguousarray(scene.clump.grainIndex.to_numpy()[0:clump_num])
+        mass = np.ascontiguousarray(scene.clump.m.to_numpy()[0:clump_num])
+        equivalentRadius = np.ascontiguousarray(scene.clump.equi_r.to_numpy()[0:clump_num])
+        centerOfMass = np.ascontiguousarray(scene.clump.mass_center.to_numpy()[0:clump_num])
+        velocity = np.ascontiguousarray(scene.clump.v.to_numpy()[0:clump_num])
+        omega = np.ascontiguousarray(scene.clump.w.to_numpy()[0:clump_num])
+        acceleration = np.ascontiguousarray(scene.clump.a.to_numpy()[0:clump_num])
+        angular_moment = np.ascontiguousarray(scene.clump.angmoment.to_numpy()[0:clump_num])
+        quanternion = np.ascontiguousarray(scene.clump.q.to_numpy()[0:clump_num])
+        inverse_inertia = np.ascontiguousarray(scene.clump.inv_I.to_numpy()[0:clump_num])
+        np.savez(
+            self.particle_path + f"/DEMClump{sims.current_print:06d}",
+            t_current=sims.current_time,
+            body_num=clump_num,
+            grainIndex=grainIndex,
+            startIndex=startIndex,
+            endIndex=endIndex,
+            mass=mass,
+            equivalentRadius=equivalentRadius,
+            centerOfMass=centerOfMass,
+            acceleration=acceleration,
+            angular_moment=angular_moment,
+            velocity=velocity,
+            omega=omega,
+            quanternion=quanternion,
+            inverse_inertia=inverse_inertia,
+        )
 
     def MonitorLSBody(self, sims: Simulation, scene: myScene):
         body_num = scene.particleNum[0]
-        groupID = np.ascontiguousarray(scene.rigid.groupID.to_numpy()[0: body_num])
-        materialID = np.ascontiguousarray(scene.rigid.materialID.to_numpy()[0: body_num])
-        startNode = np.ascontiguousarray(scene.rigid.startNode.to_numpy()[0: body_num])
-        endNode = np.ascontiguousarray(scene.rigid.endNode.to_numpy()[0: body_num])
-        localNode = np.ascontiguousarray(scene.rigid.localNode.to_numpy()[0: body_num])
-        mass = np.ascontiguousarray(scene.rigid.m.to_numpy()[0: body_num])
-        equivalentRadius = np.ascontiguousarray(scene.rigid.equi_r.to_numpy()[0: body_num])
-        mass_center = np.ascontiguousarray(scene.rigid.mass_center.to_numpy()[0: body_num])
-        acceleration = np.ascontiguousarray(scene.rigid.a.to_numpy()[0: body_num])
-        velocity = np.ascontiguousarray(scene.rigid.v.to_numpy()[0: body_num])
-        omega = np.ascontiguousarray(scene.rigid.w.to_numpy()[0: body_num])
-        angular_moment = np.ascontiguousarray(scene.rigid.angmoment.to_numpy()[0: body_num])
-        quanternion = np.ascontiguousarray(scene.rigid.q.to_numpy()[0: body_num])
-        inverse_inertia = np.ascontiguousarray(scene.rigid.inv_I.to_numpy()[0: body_num])
-        contact_force = np.ascontiguousarray(scene.rigid.contact_force.to_numpy()[0: body_num])
-        contact_torque = np.ascontiguousarray(scene.rigid.contact_torque.to_numpy()[0: body_num])
-        is_fix = np.ascontiguousarray(scene.rigid.is_fix.to_numpy()[0: body_num])
-        is_soft = np.ascontiguousarray(scene.rigid.is_soft.to_numpy()[0: body_num])
-        scale = np.ascontiguousarray(scene.box.scale.to_numpy()[0: body_num])
-        output = {'t_current': sims.current_time, 'body_num': body_num, 
-                  'groupID': groupID, 'materialID': materialID, 'startNode': startNode, 'endNode': endNode, 'localNode': localNode, 'scale': scale,
-                  'mass': mass, 'equivalentRadius': equivalentRadius, 'mass_center': mass_center, 'acceleration': acceleration, 'angular_moment': angular_moment, 
-                  'velocity': velocity, 'omega': omega, 'quanternion': quanternion, 'inverse_inertia': inverse_inertia, 'contact_force': contact_force, 'contact_torque': contact_torque, 'is_fix': is_fix, 'is_soft': is_soft}
+        groupID = np.ascontiguousarray(scene.rigid.groupID.to_numpy()[0:body_num])
+        materialID = np.ascontiguousarray(scene.rigid.materialID.to_numpy()[0:body_num])
+        startNode = np.ascontiguousarray(scene.rigid.startNode.to_numpy()[0:body_num])
+        endNode = np.ascontiguousarray(scene.rigid.endNode.to_numpy()[0:body_num])
+        localNode = np.ascontiguousarray(scene.rigid.localNode.to_numpy()[0:body_num])
+        mass = np.ascontiguousarray(scene.rigid.m.to_numpy()[0:body_num])
+        equivalentRadius = np.ascontiguousarray(scene.rigid.equi_r.to_numpy()[0:body_num])
+        mass_center = np.ascontiguousarray(scene.rigid.mass_center.to_numpy()[0:body_num])
+        acceleration = np.ascontiguousarray(scene.rigid.a.to_numpy()[0:body_num])
+        velocity = np.ascontiguousarray(scene.rigid.v.to_numpy()[0:body_num])
+        omega = np.ascontiguousarray(scene.rigid.w.to_numpy()[0:body_num])
+        angular_moment = np.ascontiguousarray(scene.rigid.angmoment.to_numpy()[0:body_num])
+        quanternion = np.ascontiguousarray(scene.rigid.q.to_numpy()[0:body_num])
+        inverse_inertia = np.ascontiguousarray(scene.rigid.inv_I.to_numpy()[0:body_num])
+        contact_force = np.ascontiguousarray(scene.rigid.contact_force.to_numpy()[0:body_num])
+        contact_torque = np.ascontiguousarray(scene.rigid.contact_torque.to_numpy()[0:body_num])
+        is_fix = np.ascontiguousarray(scene.rigid.is_fix.to_numpy()[0:body_num])
+        is_soft = np.ascontiguousarray(scene.rigid.is_soft.to_numpy()[0:body_num])
+        scale = np.ascontiguousarray(scene.box.scale.to_numpy()[0:body_num])
+        output = {
+            "t_current": sims.current_time,
+            "body_num": body_num,
+            "groupID": groupID,
+            "materialID": materialID,
+            "startNode": startNode,
+            "endNode": endNode,
+            "localNode": localNode,
+            "scale": scale,
+            "mass": mass,
+            "equivalentRadius": equivalentRadius,
+            "mass_center": mass_center,
+            "acceleration": acceleration,
+            "angular_moment": angular_moment,
+            "velocity": velocity,
+            "omega": omega,
+            "quanternion": quanternion,
+            "inverse_inertia": inverse_inertia,
+            "contact_force": contact_force,
+            "contact_torque": contact_torque,
+            "is_fix": is_fix,
+            "is_soft": is_soft,
+        }
         if sims.energy_tracking:
-            local_damping_energy = np.ascontiguousarray(scene.rigid.damp_energy.to_numpy()[0: body_num])
-            translational_kinetic_energy = 0.5 * mass * np.einsum(
-                "ij,ij->i", velocity, velocity
-            )
-            rotational_kinetic_energy = 0.5 * np.einsum(
-                "ij,ij->i", omega, angular_moment
-            )
+            local_damping_energy = np.ascontiguousarray(scene.rigid.damp_energy.to_numpy()[0:body_num])
+            translational_kinetic_energy = 0.5 * mass * np.einsum("ij,ij->i", velocity, velocity)
+            rotational_kinetic_energy = 0.5 * np.einsum("ij,ij->i", omega, angular_moment)
             gravity = np.asarray(sims.gravity, dtype=np.float64)
             gravitational_potential_energy = -mass * (mass_center @ gravity)
-            output.update({
-                "local_damping_energy": local_damping_energy,
-                "translational_kinetic_energy": translational_kinetic_energy,
-                "rotational_kinetic_energy": rotational_kinetic_energy,
-                "gravitational_potential_energy": gravitational_potential_energy,
-            })
-        np.savez(self.particle_path+f'/LSDEMRigid{sims.current_print:06d}', **output)
+            output.update(
+                {
+                    "local_damping_energy": local_damping_energy,
+                    "translational_kinetic_energy": translational_kinetic_energy,
+                    "rotational_kinetic_energy": rotational_kinetic_energy,
+                    "gravitational_potential_energy": gravitational_potential_energy,
+                }
+            )
+        np.savez(self.particle_path + f"/LSDEMRigid{sims.current_print:06d}", **output)
 
     def MonitorISBody(self, sims: Simulation, scene: myScene):
         body_num = scene.particleNum[0]
-        groupID = np.ascontiguousarray(scene.rigid.groupID.to_numpy()[0: body_num])
-        materialID = np.ascontiguousarray(scene.rigid.materialID.to_numpy()[0: body_num])
-        templateID = np.ascontiguousarray(scene.rigid.templateID.to_numpy()[0: body_num])
-        mass = np.ascontiguousarray(scene.rigid.m.to_numpy()[0: body_num])
-        equivalentRadius = np.ascontiguousarray(scene.rigid.equi_r.to_numpy()[0: body_num])
-        mass_center = np.ascontiguousarray(scene.rigid.mass_center.to_numpy()[0: body_num])
-        acceleration = np.ascontiguousarray(scene.rigid.a.to_numpy()[0: body_num])
-        velocity = np.ascontiguousarray(scene.rigid.v.to_numpy()[0: body_num])
-        omega = np.ascontiguousarray(scene.rigid.w.to_numpy()[0: body_num])
-        angular_moment = np.ascontiguousarray(scene.rigid.angmoment.to_numpy()[0: body_num])
-        quanternion = np.ascontiguousarray(scene.rigid.q.to_numpy()[0: body_num])
-        inverse_inertia = np.ascontiguousarray(scene.rigid.inv_I.to_numpy()[0: body_num])
-        contact_force = np.ascontiguousarray(scene.rigid.contact_force.to_numpy()[0: body_num])
-        contact_torque = np.ascontiguousarray(scene.rigid.contact_torque.to_numpy()[0: body_num])
-        scale = np.ascontiguousarray(scene.rigid.scale.to_numpy()[0: body_num])
-        is_fix = np.ascontiguousarray(scene.rigid.is_fix.to_numpy()[0: body_num])
-        output = {'t_current': sims.current_time, 'body_num': body_num, 
-                  'groupID': groupID, 'materialID': materialID, 'templateID': templateID, 'scale': scale,
-                  'mass': mass, 'equivalentRadius': equivalentRadius, 'mass_center': mass_center, 'acceleration': acceleration, 'angular_moment': angular_moment, 
-                  'velocity': velocity, 'omega': omega, 'quanternion': quanternion, 'inverse_inertia': inverse_inertia, 'contact_force': contact_force, 'contact_torque': contact_torque, 'is_fix': is_fix}
+        groupID = np.ascontiguousarray(scene.rigid.groupID.to_numpy()[0:body_num])
+        materialID = np.ascontiguousarray(scene.rigid.materialID.to_numpy()[0:body_num])
+        templateID = np.ascontiguousarray(scene.rigid.templateID.to_numpy()[0:body_num])
+        mass = np.ascontiguousarray(scene.rigid.m.to_numpy()[0:body_num])
+        equivalentRadius = np.ascontiguousarray(scene.rigid.equi_r.to_numpy()[0:body_num])
+        mass_center = np.ascontiguousarray(scene.rigid.mass_center.to_numpy()[0:body_num])
+        acceleration = np.ascontiguousarray(scene.rigid.a.to_numpy()[0:body_num])
+        velocity = np.ascontiguousarray(scene.rigid.v.to_numpy()[0:body_num])
+        omega = np.ascontiguousarray(scene.rigid.w.to_numpy()[0:body_num])
+        angular_moment = np.ascontiguousarray(scene.rigid.angmoment.to_numpy()[0:body_num])
+        quanternion = np.ascontiguousarray(scene.rigid.q.to_numpy()[0:body_num])
+        inverse_inertia = np.ascontiguousarray(scene.rigid.inv_I.to_numpy()[0:body_num])
+        contact_force = np.ascontiguousarray(scene.rigid.contact_force.to_numpy()[0:body_num])
+        contact_torque = np.ascontiguousarray(scene.rigid.contact_torque.to_numpy()[0:body_num])
+        scale = np.ascontiguousarray(scene.rigid.scale.to_numpy()[0:body_num])
+        is_fix = np.ascontiguousarray(scene.rigid.is_fix.to_numpy()[0:body_num])
+        output = {
+            "t_current": sims.current_time,
+            "body_num": body_num,
+            "groupID": groupID,
+            "materialID": materialID,
+            "templateID": templateID,
+            "scale": scale,
+            "mass": mass,
+            "equivalentRadius": equivalentRadius,
+            "mass_center": mass_center,
+            "acceleration": acceleration,
+            "angular_moment": angular_moment,
+            "velocity": velocity,
+            "omega": omega,
+            "quanternion": quanternion,
+            "inverse_inertia": inverse_inertia,
+            "contact_force": contact_force,
+            "contact_torque": contact_torque,
+            "is_fix": is_fix,
+        }
         if sims.energy_tracking:
-            local_damping_energy = np.ascontiguousarray(scene.rigid.damp_energy.to_numpy()[0: body_num])
+            local_damping_energy = np.ascontiguousarray(scene.rigid.damp_energy.to_numpy()[0:body_num])
             output.update({"local_damping_energy": local_damping_energy})
-        np.savez(self.particle_path+f'/ImplicitRigid{sims.current_print:06d}', **output)
+        np.savez(self.particle_path + f"/ImplicitRigid{sims.current_print:06d}", **output)
 
     def MonitorLSGrid(self, sims: Simulation, scene: myScene):
         total_grid_num = scene.gridNum[0]
-        distance_field = np.ascontiguousarray(scene.rigid_grid.distance_field.to_numpy()[0: total_grid_num])
-        np.savez(self.particle_path+f'/LSDEMGrid{sims.current_print:06d}', t_current=sims.current_time, total_grid_num=total_grid_num, grid_num=np.asarray(scene.gridID), distance_field=distance_field)
+        distance_field = np.ascontiguousarray(scene.rigid_grid.distance_field.to_numpy()[0:total_grid_num])
+        np.savez(
+            self.particle_path + f"/LSDEMGrid{sims.current_print:06d}",
+            t_current=sims.current_time,
+            total_grid_num=total_grid_num,
+            grid_num=np.asarray(scene.gridID),
+            distance_field=distance_field,
+        )
 
     def MonitorBoundingSphere(self, sims: Simulation, scene: myScene):
         body_num = scene.particleNum[0]
-        active = np.ascontiguousarray(scene.particle.active.to_numpy()[0: body_num])
-        radius = np.ascontiguousarray(scene.particle.rad.to_numpy()[0: body_num])
-        center = np.ascontiguousarray(scene.particle.x.to_numpy()[0: body_num])
-        np.savez(self.particle_path+f'/BoundingSphere{sims.current_print:06d}', t_current=sims.current_time, body_num=body_num, active=active, radius=radius, center=center)
+        active = np.ascontiguousarray(scene.particle.active.to_numpy()[0:body_num])
+        radius = np.ascontiguousarray(scene.particle.rad.to_numpy()[0:body_num])
+        center = np.ascontiguousarray(scene.particle.x.to_numpy()[0:body_num])
+        np.savez(
+            self.particle_path + f"/BoundingSphere{sims.current_print:06d}",
+            t_current=sims.current_time,
+            body_num=body_num,
+            active=active,
+            radius=radius,
+            center=center,
+        )
 
     def MonitorBoundingBox(self, sims: Simulation, scene: myScene):
         body_num = scene.particleNum[0]
-        min_box = np.ascontiguousarray(scene.box.xmin.to_numpy()[0: body_num])
-        max_box = np.ascontiguousarray(scene.box.xmax.to_numpy()[0: body_num])
-        shape_min = np.ascontiguousarray(scene.box.shape_min.to_numpy()[0: body_num])
-        shape_max = np.ascontiguousarray(scene.box.shape_max.to_numpy()[0: body_num])
-        startGrid = np.ascontiguousarray(scene.box.startGrid.to_numpy()[0: body_num])
-        grid_num = np.ascontiguousarray(scene.box.gnum.to_numpy()[0: body_num])
-        grid_space = np.ascontiguousarray(scene.box.grid_space.to_numpy()[0: body_num])
-        scale = np.ascontiguousarray(scene.box.scale.to_numpy()[0: body_num])
-        extent = np.ascontiguousarray(scene.box.extent.to_numpy()[0: body_num])
-        np.savez(self.particle_path+f'/BoundingBox{sims.current_print:06d}', t_current=sims.current_time, body_num=body_num, min_box=min_box, max_box=max_box, startGrid=startGrid, 
-                                                                                  grid_num=grid_num, grid_space=grid_space, scale=scale, extent=extent, shape_min=shape_min, shape_max=shape_max)
+        min_box = np.ascontiguousarray(scene.box.xmin.to_numpy()[0:body_num])
+        max_box = np.ascontiguousarray(scene.box.xmax.to_numpy()[0:body_num])
+        shape_min = np.ascontiguousarray(scene.box.shape_min.to_numpy()[0:body_num])
+        shape_max = np.ascontiguousarray(scene.box.shape_max.to_numpy()[0:body_num])
+        startGrid = np.ascontiguousarray(scene.box.startGrid.to_numpy()[0:body_num])
+        grid_num = np.ascontiguousarray(scene.box.gnum.to_numpy()[0:body_num])
+        grid_space = np.ascontiguousarray(scene.box.grid_space.to_numpy()[0:body_num])
+        scale = np.ascontiguousarray(scene.box.scale.to_numpy()[0:body_num])
+        extent = np.ascontiguousarray(scene.box.extent.to_numpy()[0:body_num])
+        np.savez(
+            self.particle_path + f"/BoundingBox{sims.current_print:06d}",
+            t_current=sims.current_time,
+            body_num=body_num,
+            min_box=min_box,
+            max_box=max_box,
+            startGrid=startGrid,
+            grid_num=grid_num,
+            grid_space=grid_space,
+            scale=scale,
+            extent=extent,
+            shape_min=shape_min,
+            shape_max=shape_max,
+        )
 
     def MonitorImplicitSurface(self, sims: Simulation, scene: myScene):
         total_surface_num = scene.surfaceNum[0]
         connectivity = np.ascontiguousarray(scene.connectivity)
         self.visualizeParticle(sims, scene)
-        np.savez(self.particle_path+f'/ImplicitSurface{sims.current_print:06d}', t_current=sims.current_time, total_surface_num=total_surface_num, surface_num=np.asarray(scene.verticeID), face_index=np.asarray(scene.face_index), vertice_index=np.asarray(scene.vertice_index),connectivity=connectivity)
+        np.savez(
+            self.particle_path + f"/ImplicitSurface{sims.current_print:06d}",
+            t_current=sims.current_time,
+            total_surface_num=total_surface_num,
+            surface_num=np.asarray(scene.verticeID),
+            face_index=np.asarray(scene.face_index),
+            vertice_index=np.asarray(scene.vertice_index),
+            connectivity=connectivity,
+        )
 
     def MonitorLSBounding(self, sims: Simulation, scene: myScene):
         self.MonitorBoundingSphere(sims, scene)
@@ -659,82 +807,156 @@ class WriteFile:
         node_num = int(scene.verticeID[-1])
         if sims.scheme == "LSMPM":
             node_num = int(scene.verticeID[-1] + scene.surfaceNum[0])
-        vertices = np.ascontiguousarray(scene.vertice.x.to_numpy()[0: node_num])
-        velocities = np.ascontiguousarray(scene.vertice.v.to_numpy()[0: node_num])
-        contact_force = np.ascontiguousarray(scene.vertice.contact_force.to_numpy()[0: node_num])
-        parameters = np.ascontiguousarray(scene.vertice.parameter.to_numpy()[0: node_num])
+        vertices = np.ascontiguousarray(scene.vertice.x.to_numpy()[0:node_num])
+        velocities = np.ascontiguousarray(scene.vertice.v.to_numpy()[0:node_num])
+        contact_force = np.ascontiguousarray(scene.vertice.contact_force.to_numpy()[0:node_num])
+        parameters = np.ascontiguousarray(scene.vertice.parameter.to_numpy()[0:node_num])
         self.visualizeParticle(sims, scene)
         world_vertices = None
         if sims.scheme == "LSMPM":
             _, surface = scene.visualize_surface(sims)
-            surface = np.ascontiguousarray(surface[0: int(scene.surfaceNum[0])])
-            world_vertices = np.ascontiguousarray(surface[keep_node]) if keep_node is not None else surface[0: total_surface_num]
-        output = dict(t_current=sims.current_time, total_surface_num=total_surface_num, surface_num=np.asarray(scene.verticeID), face_index=np.asarray(scene.face_index), 
-                      vertice_index=np.asarray(scene.vertice_index), master=master, vertices=vertices, velocity=velocities, contact_force=contact_force, parameters=parameters, connectivity=connectivity)
+            surface = np.ascontiguousarray(surface[0 : int(scene.surfaceNum[0])])
+            world_vertices = (
+                np.ascontiguousarray(surface[keep_node]) if keep_node is not None else surface[0:total_surface_num]
+            )
+        output = dict(
+            t_current=sims.current_time,
+            total_surface_num=total_surface_num,
+            surface_num=np.asarray(scene.verticeID),
+            face_index=np.asarray(scene.face_index),
+            vertice_index=np.asarray(scene.vertice_index),
+            master=master,
+            vertices=vertices,
+            velocity=velocities,
+            contact_force=contact_force,
+            parameters=parameters,
+            connectivity=connectivity,
+        )
         if sims.scheme == "LSMPM":
-            local_node = np.ascontiguousarray(scene.rigid.localNode.to_numpy()[0: scene.particleNum[0]])
+            local_node = np.ascontiguousarray(scene.rigid.localNode.to_numpy()[0 : scene.particleNum[0]])
             end_node = start_node + node_number
-            output.update(startNode=start_node, endNode=end_node, localNode=local_node, node_number=node_number, world_vertices=world_vertices)
-        np.savez(self.particle_path+f'/LSDEMSurface{sims.current_print:06d}', **output)
+            output.update(
+                startNode=start_node,
+                endNode=end_node,
+                localNode=local_node,
+                node_number=node_number,
+                world_vertices=world_vertices,
+            )
+        np.savez(self.particle_path + f"/LSDEMSurface{sims.current_print:06d}", **output)
 
-    def MonitorPlane(self, sims: Simulation, scene: myScene):  
-        active = np.ascontiguousarray(scene.wall.active.to_numpy()[0: scene.wallNum[0]])
-        wallID = np.ascontiguousarray(scene.wall.wallID.to_numpy()[0:scene.wallNum[0]])
-        materialID = np.ascontiguousarray(scene.wall.materialID.to_numpy()[0:scene.wallNum[0]])
-        point = np.ascontiguousarray(scene.wall.point.to_numpy()[0:scene.wallNum[0]])
-        norm = np.ascontiguousarray(scene.wall.norm.to_numpy()[0:scene.wallNum[0]])
-        np.savez(self.wall_path+f'/DEMWall{sims.current_print:06d}', t_current=sims.current_time, body_num=scene.wallNum[0], active=active,
-                                                                     wallID=wallID, materialID=materialID, point=point, norm=norm)
+    def MonitorPlane(self, sims: Simulation, scene: myScene):
+        active = np.ascontiguousarray(scene.wall.active.to_numpy()[0 : scene.wallNum[0]])
+        wallID = np.ascontiguousarray(scene.wall.wallID.to_numpy()[0 : scene.wallNum[0]])
+        materialID = np.ascontiguousarray(scene.wall.materialID.to_numpy()[0 : scene.wallNum[0]])
+        point = np.ascontiguousarray(scene.wall.point.to_numpy()[0 : scene.wallNum[0]])
+        norm = np.ascontiguousarray(scene.wall.norm.to_numpy()[0 : scene.wallNum[0]])
+        np.savez(
+            self.wall_path + f"/DEMWall{sims.current_print:06d}",
+            t_current=sims.current_time,
+            body_num=scene.wallNum[0],
+            active=active,
+            wallID=wallID,
+            materialID=materialID,
+            point=point,
+            norm=norm,
+        )
 
-    def MonitorServo(self, sims: Simulation, scene: myScene):  
-        active = np.ascontiguousarray(scene.wall.active.to_numpy()[0: scene.wallNum[0]])
-        startIndex = np.ascontiguousarray(scene.servo.startIndex.to_numpy()[0:scene.servoNum[0]])
-        endIndex = np.ascontiguousarray(scene.servo.endIndex.to_numpy()[0:scene.servoNum[0]])
-        alpha = np.ascontiguousarray(scene.servo.alpha.to_numpy()[0:scene.servoNum[0]])
-        target_stress = np.ascontiguousarray(scene.servo.target_stress.to_numpy()[0:scene.servoNum[0]])
-        max_velocity = np.ascontiguousarray(scene.servo.max_velocity.to_numpy()[0:scene.servoNum[0]])
-        gain = np.ascontiguousarray(scene.servo.gain.to_numpy()[0:scene.servoNum[0]])
-        np.savez(self.wall_path+f'/DEMServo{sims.current_print:06d}', t_current=sims.current_time, body_num=scene.servoNum[0], active=active,
-                                                                      startIndex=startIndex, endIndex=endIndex, alpha=alpha, target_stress=target_stress, max_velocity=max_velocity, gain=gain)    
+    def MonitorServo(self, sims: Simulation, scene: myScene):
+        active = np.ascontiguousarray(scene.wall.active.to_numpy()[0 : scene.wallNum[0]])
+        startIndex = np.ascontiguousarray(scene.servo.startIndex.to_numpy()[0 : scene.servoNum[0]])
+        endIndex = np.ascontiguousarray(scene.servo.endIndex.to_numpy()[0 : scene.servoNum[0]])
+        alpha = np.ascontiguousarray(scene.servo.alpha.to_numpy()[0 : scene.servoNum[0]])
+        target_stress = np.ascontiguousarray(scene.servo.target_stress.to_numpy()[0 : scene.servoNum[0]])
+        max_velocity = np.ascontiguousarray(scene.servo.max_velocity.to_numpy()[0 : scene.servoNum[0]])
+        gain = np.ascontiguousarray(scene.servo.gain.to_numpy()[0 : scene.servoNum[0]])
+        np.savez(
+            self.wall_path + f"/DEMServo{sims.current_print:06d}",
+            t_current=sims.current_time,
+            body_num=scene.servoNum[0],
+            active=active,
+            startIndex=startIndex,
+            endIndex=endIndex,
+            alpha=alpha,
+            target_stress=target_stress,
+            max_velocity=max_velocity,
+            gain=gain,
+        )
 
-    def MonitorFacet(self, sims: Simulation, scene: myScene):    
-        active = np.ascontiguousarray(scene.wall.active.to_numpy()[0: scene.wallNum[0]])
-        wallID = np.ascontiguousarray(scene.wall.wallID.to_numpy()[0: scene.wallNum[0]])
-        materialID = np.ascontiguousarray(scene.wall.materialID.to_numpy()[0: scene.wallNum[0]])
-        point1 = np.ascontiguousarray(scene.wall.vertice1.to_numpy()[0: scene.wallNum[0]])
-        point2 = np.ascontiguousarray(scene.wall.vertice2.to_numpy()[0: scene.wallNum[0]])
-        point3 = np.ascontiguousarray(scene.wall.vertice3.to_numpy()[0: scene.wallNum[0]])
-        norm = np.ascontiguousarray(scene.wall.norm.to_numpy()[0: scene.wallNum[0]])
-        velocity = np.ascontiguousarray(scene.wall.v.to_numpy()[0: scene.wallNum[0]])
-        contact_force = np.ascontiguousarray(scene.wall.contact_force.to_numpy()[0: scene.wallNum[0]])
+    def MonitorFacet(self, sims: Simulation, scene: myScene):
+        active = np.ascontiguousarray(scene.wall.active.to_numpy()[0 : scene.wallNum[0]])
+        wallID = np.ascontiguousarray(scene.wall.wallID.to_numpy()[0 : scene.wallNum[0]])
+        materialID = np.ascontiguousarray(scene.wall.materialID.to_numpy()[0 : scene.wallNum[0]])
+        point1 = np.ascontiguousarray(scene.wall.vertice1.to_numpy()[0 : scene.wallNum[0]])
+        point2 = np.ascontiguousarray(scene.wall.vertice2.to_numpy()[0 : scene.wallNum[0]])
+        point3 = np.ascontiguousarray(scene.wall.vertice3.to_numpy()[0 : scene.wallNum[0]])
+        norm = np.ascontiguousarray(scene.wall.norm.to_numpy()[0 : scene.wallNum[0]])
+        velocity = np.ascontiguousarray(scene.wall.v.to_numpy()[0 : scene.wallNum[0]])
+        contact_force = np.ascontiguousarray(scene.wall.contact_force.to_numpy()[0 : scene.wallNum[0]])
         self.visualizeWall(sims, point1, point2, point3)
-        np.savez(self.wall_path+f'/DEMWall{sims.current_print:06d}', t_current=sims.current_time, body_num=scene.wallNum[0], active=active,
-                                                                     wallID=wallID, materialID=materialID, point1=point1, point2=point2, point3=point3, 
-                                                                     norm=norm, velocity=velocity, contact_force=contact_force)
+        np.savez(
+            self.wall_path + f"/DEMWall{sims.current_print:06d}",
+            t_current=sims.current_time,
+            body_num=scene.wallNum[0],
+            active=active,
+            wallID=wallID,
+            materialID=materialID,
+            point1=point1,
+            point2=point2,
+            point3=point3,
+            norm=norm,
+            velocity=velocity,
+            contact_force=contact_force,
+        )
 
     def MonitorPatch(self, sims: Simulation, scene: myScene):
-        active = np.ascontiguousarray(scene.wall.active.to_numpy()[0: scene.wallNum[0]])  
-        wallID = np.ascontiguousarray(scene.wall.wallID.to_numpy()[0: scene.wallNum[0]])
-        materialID = np.ascontiguousarray(scene.wall.materialID.to_numpy()[0: scene.wallNum[0]])
-        shell_offset = np.ascontiguousarray(scene.wall.offset.to_numpy()[0: scene.wallNum[0]])
-        point1 = np.ascontiguousarray(scene.wall.vertice1.to_numpy()[0: scene.wallNum[0]])
-        point2 = np.ascontiguousarray(scene.wall.vertice2.to_numpy()[0: scene.wallNum[0]])
-        point3 = np.ascontiguousarray(scene.wall.vertice3.to_numpy()[0: scene.wallNum[0]])
-        norm = np.ascontiguousarray(scene.wall.norm.to_numpy()[0: scene.wallNum[0]])
+        active = np.ascontiguousarray(scene.wall.active.to_numpy()[0 : scene.wallNum[0]])
+        wallID = np.ascontiguousarray(scene.wall.wallID.to_numpy()[0 : scene.wallNum[0]])
+        materialID = np.ascontiguousarray(scene.wall.materialID.to_numpy()[0 : scene.wallNum[0]])
+        shell_offset = np.ascontiguousarray(scene.wall.offset.to_numpy()[0 : scene.wallNum[0]])
+        point1 = np.ascontiguousarray(scene.wall.vertice1.to_numpy()[0 : scene.wallNum[0]])
+        point2 = np.ascontiguousarray(scene.wall.vertice2.to_numpy()[0 : scene.wallNum[0]])
+        point3 = np.ascontiguousarray(scene.wall.vertice3.to_numpy()[0 : scene.wallNum[0]])
+        norm = np.ascontiguousarray(scene.wall.norm.to_numpy()[0 : scene.wallNum[0]])
         self.visualizeWall(sims, point1, point2, point3)
         if sims.enable_shell:
-            contact_force = np.ascontiguousarray(scene.wall.contact_force.to_numpy()[0: scene.wallNum[0]])
-            contact_torque = np.ascontiguousarray(scene.wall.contact_torque.to_numpy()[0: scene.wallNum[0]])
-            np.savez(self.wall_path+f'/DEMWall{sims.current_print:06d}', t_current=sims.current_time, body_num=scene.wallNum[0], active=active, shell_offset=shell_offset,
-                                                                     wallID=wallID, materialID=materialID, point1=point1, point2=point2, point3=point3, norm=norm,
-                                                                     contact_force=contact_force, contact_torque=contact_torque)
+            contact_force = np.ascontiguousarray(scene.wall.contact_force.to_numpy()[0 : scene.wallNum[0]])
+            contact_torque = np.ascontiguousarray(scene.wall.contact_torque.to_numpy()[0 : scene.wallNum[0]])
+            np.savez(
+                self.wall_path + f"/DEMWall{sims.current_print:06d}",
+                t_current=sims.current_time,
+                body_num=scene.wallNum[0],
+                active=active,
+                shell_offset=shell_offset,
+                wallID=wallID,
+                materialID=materialID,
+                point1=point1,
+                point2=point2,
+                point3=point3,
+                norm=norm,
+                contact_force=contact_force,
+                contact_torque=contact_torque,
+            )
         else:
-            np.savez(self.wall_path+f'/DEMWall{sims.current_print:06d}', t_current=sims.current_time, body_num=scene.wallNum[0], active=active, shell_offset=shell_offset,
-                                                                     wallID=wallID, materialID=materialID, point1=point1, point2=point2, point3=point3, norm=norm)
-    
-    def MonitorPPContact(self, sims: Simulation, scene: myScene): 
-        self.physpp.get_ppcontact_output(self.contact_path+'/DEMContactPP', sims.current_time, sims.current_print, scene, self.pcontact)
+            np.savez(
+                self.wall_path + f"/DEMWall{sims.current_print:06d}",
+                t_current=sims.current_time,
+                body_num=scene.wallNum[0],
+                active=active,
+                shell_offset=shell_offset,
+                wallID=wallID,
+                materialID=materialID,
+                point1=point1,
+                point2=point2,
+                point3=point3,
+                norm=norm,
+            )
 
-    def MonitorPWContact(self, sims: Simulation, scene: myScene): 
-        self.physpw.get_pwcontact_output(self.contact_path+'/DEMContactPW', sims.current_time, sims.current_print, scene, self.pcontact)
-    
+    def MonitorPPContact(self, sims: Simulation, scene: myScene):
+        self.physpp.get_ppcontact_output(
+            self.contact_path + "/DEMContactPP", sims.current_time, sims.current_print, scene, self.pcontact
+        )
+
+    def MonitorPWContact(self, sims: Simulation, scene: myScene):
+        self.physpw.get_pwcontact_output(
+            self.contact_path + "/DEMContactPW", sims.current_time, sims.current_print, scene, self.pcontact
+        )

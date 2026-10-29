@@ -32,7 +32,8 @@ POROSITY = 0.30
 INITIAL_PORE_PRESSURE = SURCHARGE
 FLUID_DENSITY = 1000.0
 GRAVITY = 9.8
-DT = 1.0e-4
+# The solid skeleton remains explicit even when pressure is solved implicitly.
+DT = 1.0e-5
 SIMULATION_TIME = 0.1456
 SAVE_INTERVAL = 0.01456
 MG_LEVELS = 3
@@ -107,7 +108,7 @@ def configure(arguments):
     PRESSURE_RESIDUAL_TOLERANCE = arguments.pressure_tolerance
     ALPHA_PIC = arguments.alpha_pic
     SHAPE_FUNCTION = arguments.shape_function
-    VELOCITY_PROJECTION = arguments.velocity_projection
+    VELOCITY_PROJECTION = None if arguments.velocity_projection == "None" else arguments.velocity_projection
     DELAYED_FLUID_ADVECTION = arguments.delayed_fluid_advection
     TOP_LOAD_THICKNESS = arguments.top_load_thickness if arguments.top_load_thickness is not None else CELL_SIZE
     TOP_LOAD_PARTICLE_LAYERS = arguments.top_load_layers
@@ -185,7 +186,6 @@ def create_mpm():
             "SolidDensity": 2650.0,
             "FluidDensity": FLUID_DENSITY,
             "Porosity": POROSITY,
-            "FluidBulkModulus": 2.2e8,
             "Permeability": PERMEABILITY,
             "FluidViscosity": 1.0e-3,
             "GrainDiameter": 1.0e-2,

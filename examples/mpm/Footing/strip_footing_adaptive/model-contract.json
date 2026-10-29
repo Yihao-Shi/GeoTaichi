@@ -1,0 +1,214 @@
+{
+  "schema_version": 1,
+  "title": "Strip footing: uniform grid and one/two adaptive refinements",
+  "module": "mpm",
+  "dimension": 2,
+  "coordinate_assumption": "plane_strain",
+  "units": {
+    "length": "m",
+    "mass": "kg",
+    "time": "s"
+  },
+  "physics": {
+    "processes": [
+      "prescribed rigid footing penetration",
+      "elastoplastic soil",
+      "nodal frictional contact"
+    ],
+    "governing_assumptions": [
+      "Unit out-of-plane thickness; half of a symmetric strip footing",
+      "Weightless soil",
+      "No softening",
+      "GIMP with B-Bar velocity gradients and particle integration; Gaussian integration omitted by user instruction"
+    ]
+  },
+  "geometry": {
+    "description": "Normal FootingLargeStrain plane-strain section, translated by -0.1 m: 10 by 10 soil and 1 by 2 rigid half-footing",
+    "coordinate_frame": "x horizontal, y upward; symmetry at x=0; unit thickness",
+    "dimensions": {
+      "domain": [
+        10,
+        12
+      ],
+      "soil": [
+        10,
+        10
+      ],
+      "half_footing": [
+        1,
+        2
+      ],
+      "full_footing_width": 2
+    }
+  },
+  "discretization": {
+    "grid_or_element_size": 0.1,
+    "particle_or_template_resolution": {
+      "soil_particles_per_initial_cell_axis": 4,
+      "initial_soil_spacing_by_level": [
+        0.025,
+        0.05,
+        0.1
+      ],
+      "rigid_spacing": 0.025
+    },
+    "refinement_plan": "Uniform h=0.1; L1 h=0.2/0.1; L2 h=0.4/0.2/0.1. Soil starts at four particles per initial cell direction and splits one-to-four at each refinement level. The rigid footing keeps the same 0.025 m sampling and never splits. Accumulated equivalent plastic deviatoric strain threshold 0.01 (dimensionless, native epdstrain), 100-step interval, 0.4 m buffer. The buffer applies only to material-indicator seeds; migrated split particles retain their level with 2:1 balancing without creating another buffer. Split parents are deferred at coarse/fine interfaces until every proposed child center lies in a cell at least as fine as the child; this prevents particle birth from propagating grid refinement without advection. RefineRatio=1.0 reserves all finest-grid nodes, including GIMP halos; it does not force refinement."
+  },
+  "materials": [
+    {
+      "name": "soil",
+      "model": "MohrCoulomb",
+      "parameters": {
+        "Density": 1000,
+        "YoungModulus": 100000,
+        "PoissonRatio": 0.49,
+        "Cohesion": 1000,
+        "Friction": 0,
+        "Dilation": 0
+      },
+      "provenance": "examples/mpm/Footing/StripFootingMC.py"
+    }
+  ],
+  "initial_conditions": {
+    "gravity": [
+      0,
+      0
+    ],
+    "stress_or_pressure": 0,
+    "velocity": "Soil stationary; footing initially -0.02 m/s as in the original, then original 5 s ramp to -0.1 m/s",
+    "state_variables": "zero plastic history"
+  },
+  "boundary_conditions": [
+    "bottom y=0 fixed",
+    "x=0 symmetry roller",
+    "x=10 horizontal roller",
+    "footing prescribed x/y velocity"
+  ],
+  "contact_or_coupling": {
+    "enabled": true,
+    "law": "GeoContact",
+    "active_pairs": [
+      [
+        0,
+        1
+      ]
+    ],
+    "parameters": {
+      "friction": 0.1,
+      "cut_off": 0.8,
+      "penalty": [
+        0.78,
+        2.5
+      ],
+      "rigid_density": 1500
+    }
+  },
+  "time": {
+    "timestep": 1e-05,
+    "duration": 17.5,
+    "save_interval": 1,
+    "stability_policy": "Reject a prescribed step above native CFL bound; never silently substitute a timestep"
+  },
+  "capacities": {
+    "safety_margin": 1.22,
+    "estimates": {
+      "particles": 163200,
+      "initial_soil_particles_by_level": [
+        160000,
+        40000,
+        10000
+      ]
+    },
+    "allocations": {
+      "max_particle_number": 200000,
+      "max_velocity_constraint": 10000,
+      "adaptive_node_capacity": 12221
+    }
+  },
+  "outputs": {
+    "path": "examples/mpm/Footing/strip_footing_adaptive/OutputData",
+    "fields": [
+      "particle snapshots",
+      "contact force versus measured settlement",
+      "refinement level counts",
+      "run metadata"
+    ],
+    "restart": false
+  },
+  "validation": {
+    "observable": "Maximum relative vertical contact action-reaction imbalance; comparison.json separately gates historical and adaptive force agreement",
+    "expectation": 0,
+    "tolerance": {
+      "absolute": 1e-08
+    },
+    "evidence": "Independent evaluation of saved curves and original particle/grid snapshots",
+    "invariants": [
+      {
+        "kind": "mass_balance",
+        "expectation": 0,
+        "tolerance": {
+          "absolute": 1e-10
+        },
+        "basis": "float64 reduction of total particle mass; splitting partitions parent mass and volume among its children"
+      }
+    ],
+    "comparisons": {
+      "observable": "Adaptive versus uniform contact force versus measured settlement; uniform versus normal FootingLargeStrain saved results over the common settlement range",
+      "expectation": "At most 10 percent pointwise RMS, sampled peak and tail mean force errors at historical saved times (~0.25 s). Report sampled oscillation amplitudes separately for review; unfiltered peaks are diagnostic only by user request.",
+      "tolerance": {
+        "relative": 0.1
+      },
+      "required": true,
+      "artifact": "comparison.json"
+    }
+  },
+  "assumptions": [
+    "2D section of the laterally constrained 3D thin layer, with coordinates translated by -0.1 m; ghost margins removed and physical boundary locations preserved",
+    "Soil starts with four particles per coarse-cell direction; adaptive refinement splits each soil parent into four children per level. Rigid particles are not split by the native algorithm and keep identical 0.025 m sampling in all three runs.",
+    "GeoContact uses canonical cut_off=0.8, restoring the explicit reference value formerly misspelled cutoff; retain friction 0.1 and penalty [0.78,2.5]. Historical force snapshots are closer to the older unscaled normal-impulse law; compare that contact difference separately.",
+    "A single refinement threshold is used at both levels; no coarsening",
+    "Original two run phases are represented by one device callback with the same 5 second ramp and held terminal velocity",
+    "Historical 3D forces divided by 0.1 m thickness; compare only common settlement range",
+    "10 percent pointwise RMS, sampled peak and tail mean at historical saved times are engineering acceptance targets, not proofs of convergence; full-run volume ratios must remain in [0.5,2] and particle speeds at most 1 m/s",
+    "Refinement is driven by accumulated plastic deformation, not the earlier 500 Pa equivalent-stress trigger. The 0.01 threshold is an initial validation choice; agreement and speed must be checked against the fixed fine grid.",
+    "Use original historical saved times (~0.25 s) for force comparison, without averaging or smoothing. Report complete-cycle sampled oscillation amplitudes separately. High-frequency contact spikes are retained as diagnostics rather than pass/fail gates, as requested by the user."
+  ],
+  "unresolved": [],
+  "api": {
+    "facade": "mpm",
+    "runtime": {
+      "dim": 2,
+      "arch": "gpu"
+    },
+    "environment": {
+      "GEOTAICHI_REAL_DTYPE": "float64"
+    },
+    "configuration": {
+      "mapping": "USL",
+      "shape_function": "GIMP",
+      "stabilize": "B-Bar Method",
+      "alphaPIC": 0.005,
+      "background_damping": 0,
+      "gauss_number": 0
+    },
+    "solver": {
+      "Timestep": 1e-05,
+      "SimulationTime": 17.5,
+      "SaveInterval": 1
+    },
+    "memory": {
+      "max_material_number": 1,
+      "max_particle_number": 200000
+    },
+    "materials": [],
+    "elements": [],
+    "regions": [],
+    "bodies": [],
+    "boundaries": [],
+    "save_data": {
+      "particle": true,
+      "grid": false
+    },
+    "run": {}
+  }
+}

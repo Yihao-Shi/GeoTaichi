@@ -18,9 +18,34 @@ walls. The public facade is named `DEMPM` internally and is exposed as both
 
 ## MPM AffineBody route selection
 
+ABD `newmark=[alpha, beta, gamma]` uses the original affine operator in both
+Direct MPM and soft-particle coupling. The shared incremental system uses
+`2*alpha*beta*dt²` as its force scale; each child retains its own inertia and
+velocity update. Direct MPM integration is configured separately, while the
+soft-particle child retains backward Euler. Lagged friction keeps its
+displacement-increment potential; supported fully implicit mixed friction
+uses each child's endpoint velocity derivative. ABD initial acceleration
+includes mixed-contact forces and stays on device through stepping and rollback.
+
 Continuum Direct-MPM children selecting `QuadBSpline` use the shared finite-grid
 boundary basis for values, gradients and IPC position Hessians; each grid axis
 requires at least four nodes. See [MPM interpolation](../mpm/README.md).
+
+Direct MPM--ABD and soft-particle MPM--ABD use mixed device block Jacobi:
+12x12 principal blocks for each ABD body and 3x3 blocks for active grid nodes.
+The affine prefix is fixed while the grid's active count can change. Blocks
+come from the final constrained coupled matrix, including mixed-contact
+stiffness. PCG uses scaled Cholesky; nonsymmetric BiCGSTAB and transposed
+adjoint applications use pivoted LU. Exact adjoints retain their explicit
+PCG-to-BiCGSTAB fallback when the unprojected tangent is not positive definite.
+No full matrix or preconditioned vector is transferred to the host.
+
+Soft--ABD fully implicit friction uses the original absolute-coordinate
+iterate and shares ABD's force defaults: `fully_implicit_force_atol=1e-9` N,
+`fully_implicit_force_rtol=1e-8`. The incremental residual threshold is
+`2*alpha*beta*dt²*atol + rtol*max(abs(R_initial))`; see the
+[ABD accuracy controls](../dem/README.md). Case-specific explicit values are
+used as configured. The lagged correction-velocity criterion is unchanged.
 
 MPM–ABD configurations are distinguished by their physical model and contact operator, not by the internal MPM implementation name.
 
@@ -1635,8 +1660,9 @@ the attempted step's friction loops and resets on retry; Krylov forcing history
 still restarts each outer iteration. Terminal inexact corrections are checked at
 strict linear accuracy. The MPM norm is particle motion and `h` times the gradient;
 the ABD norm is physical surface motion.
-The public Direct MPM--ABD route enables it by default for nonassociated DP;
-set `inexact_newton=False` to use strict linear solves. Four warm replays of a
+The public Direct MPM--ABD route defaults to `inexact_newton=False`, keeping
+the configured linear thresholds fixed. Set `inexact_newton=True` explicitly
+to select the adaptive forcing method. Four warm replays of a
 small coupled CUDA case reduced median wall time from 6.40 s to 3.22 s with
 the same force criterion and friction convergence. Linear iterations ranged
 from 390--463 with strict solves and 129--157 with inexact solves; timing
@@ -1757,6 +1783,14 @@ integration tests rather than duplicating those definitions here.
 
 ## Runtime and ownership
 
+Explicit DEM/LSDEM--MPM and LSMPM contacts share the DEM child's BVH. Configure
+`bvh_rebuild_interval` through `dem.memory_allocate({...})`, using a positive
+integer (default `1000`). On a required neighbor search the tree refits until
+that many solver steps have elapsed since its last rebuild, then rebuilds.
+The elapsed-step check also works when Verlet queries skip interval boundaries.
+MPM and DEM share the coupled step clock; this is not a count of BVH calls.
+IPC coupling retains its per-candidate-query rebuild policy.
+
 DEM and MPM keep their own state fields. `src/mpdem` owns coupling candidate
 lists, contact histories, and coupling forces. Search, contact assembly, and
 state exchange run in Taichi kernels. Python coordinates the two solvers,
@@ -1790,6 +1824,13 @@ The LSMPM Soft-Affine IPC route is split by responsibility:
 and `SoftAffineIPCEngine.py` owns the selected advance/retry lifecycle. Optional cross-contact
 and friction modes are bound when the engine is initialized; physical
 nonlinear convergence and retry acceptance remain runtime decisions.
+
+Both MPM--ABD IPC routes rebuild BVH topology on device whenever they generate
+a new current or swept candidate list. Soft-Affine mixed PT contact uses
+`DynamicBVHBroadPhase` directly; direct MPM--ABD uses the same backend through
+`DirectAffineIPCAssembler` / `FEMPMIPCAssembler`. ABD self-contact uses its
+own rebuilt LBVH, including refreshed body labels and stackless escape links.
+Prepared candidate reuse retains its existing geometry/direction boundary.
 
 Soft-particle/LSMPM paths are hyperelastic-only: finite-strain
 Drucker--Prager and von Mises are rejected at material setup and remain

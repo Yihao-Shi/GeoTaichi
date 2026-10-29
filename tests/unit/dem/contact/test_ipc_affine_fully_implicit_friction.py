@@ -1,3 +1,5 @@
+from tests.helpers.affine_contact_probe import AffineContactProbe
+from tests.helpers.abd_engine_reference import ReferenceAffineBodyEngine
 import os
 import importlib
 import inspect
@@ -16,13 +18,10 @@ pytestmark = [
     pytest.mark.serial,
 ]
 
-from test_ipc_affine_friction_assembly import _build_affine_contact
+from tests.unit.dem.contact.test_ipc_affine_friction_assembly import _build_affine_contact
 from src.dem.engines.AffineBodyEngine import AffineBodyEngine
 from src.dem.engines.AffineBodyOperator import MATRIX_COO, TaichiAffineBodyOperator
-from src.physics_model.contact_model.ipc.IPC import (
-    ipc_barrier_distance_terms_py,
-    ipc_fully_implicit_scalar_law_py,
-)
+from tests.helpers.ipc_scalar_reference import ipc_barrier_distance_terms_py, ipc_fully_implicit_scalar_law_py
 
 
 def _full_column_finite_difference(evaluate, positions, step):
@@ -56,11 +55,11 @@ def test_affine_fully_implicit_residual_only_source_omits_large_derivatives():
     ):
         assert forbidden not in residual_source
 
-    pt_source = inspect.getsource(TaichiAffineBodyOperator._evaluate_fully_implicit_pt_local_residual_kernel)
+    pt_source = inspect.getsource(AffineContactProbe._evaluate_fully_implicit_pt_local_residual_kernel)
     assert "point_triangle_distance_grad(" in pt_source
     assert "point_triangle_distance_grad_hess" not in pt_source
 
-    ee_source = inspect.getsource(TaichiAffineBodyOperator._evaluate_fully_implicit_ee_local_residual_kernel)
+    ee_source = inspect.getsource(AffineContactProbe._evaluate_fully_implicit_ee_local_residual_kernel)
     assert "edge_edge_distance_grad(" in ee_source
     assert "edge_edge_distance_grad_hess" not in ee_source
     assert "edge_edge_mollifier_grad" not in ee_source
@@ -75,6 +74,7 @@ def test_affine_fully_implicit_non_degenerate_pt_and_mollified_ee_full_fd(tmp_pa
         friction_mode="fully_implicit",
     )
     operator = dem.enginer.operator
+    probe = AffineContactProbe(operator)
 
     # Exercise the complete paper law, rather than the equal-mu compatibility
     # special case.  These are compile-time parameters of this operator and
@@ -102,7 +102,7 @@ def test_affine_fully_implicit_non_degenerate_pt_and_mollified_ee_full_fd(tmp_pa
     pt_hat = pt_hat.reshape(-1)
 
     def evaluate_pt(value, need_matrix=True):
-        return operator.evaluate_fully_implicit_contact_local(
+        return probe.evaluate_fully_implicit_contact_local(
             "pt",
             value,
             pt_hat,
@@ -139,7 +139,7 @@ def test_affine_fully_implicit_non_degenerate_pt_and_mollified_ee_full_fd(tmp_pa
     plane_hat = plane_position - np.array([1.3e-4, -0.8e-4, 0.2e-5], dtype=np.float64)
 
     def evaluate_plane(value):
-        return operator.evaluate_fully_implicit_plane_local(
+        return probe.evaluate_fully_implicit_plane_local(
             value,
             plane_hat,
             plane_point=np.zeros(3),
@@ -193,7 +193,7 @@ def test_affine_fully_implicit_non_degenerate_pt_and_mollified_ee_full_fd(tmp_pa
     def evaluate_facet_point(value, need_matrix=True):
         positions = facet_positions.copy()
         positions[0] = np.asarray(value, dtype=np.float64)
-        residual, jacobian = operator.evaluate_fully_implicit_contact_local(
+        residual, jacobian = probe.evaluate_fully_implicit_contact_local(
             "pt",
             positions.reshape(-1),
             facet_hats,
@@ -259,7 +259,7 @@ def test_affine_fully_implicit_non_degenerate_pt_and_mollified_ee_full_fd(tmp_pa
     ee_hat = ee_hat.reshape(-1)
 
     def evaluate_ee(value, need_matrix=True):
-        return operator.evaluate_fully_implicit_contact_local(
+        return probe.evaluate_fully_implicit_contact_local(
             "ee",
             value,
             ee_hat,
@@ -306,8 +306,11 @@ def test_affine_fully_implicit_global_residual_only_matches_matrix_assembly(tmp_
     displacement[1, :, 1] = -5.0e-5
     y = hat_y + displacement.reshape(-1)
 
-    matrix_energy, matrix_residual = engine._assemble_system(dem.sims, y, need_matrix=True)
-    residual_energy, residual_only = engine._assemble_system(dem.sims, y, need_matrix=False)
+    engine.operator.y.from_numpy(y.reshape((-1, 3)))
+    matrix_energy = engine._assemble_system_device(dem.sims, need_matrix=True)
+    matrix_residual = engine.operator.grad.to_numpy().copy()
+    residual_energy = engine._assemble_system_device(dem.sims, need_matrix=False)
+    residual_only = engine.operator.grad.to_numpy().copy()
 
     assert np.all(np.isfinite(matrix_residual))
     assert np.linalg.norm(matrix_residual) > 0.0
@@ -546,7 +549,7 @@ def test_affine_fully_implicit_default_ignores_lagged_hessian_shift():
 
 @pytest.mark.parametrize("mode", ["fully_implicit", "fullyimplicit", "fully-implicit"])
 def test_affine_fully_implicit_dispatch_bypasses_lagged_outer_loop(mode):
-    engine = AffineBodyEngine()
+    engine = ReferenceAffineBodyEngine()
     engine.state = _DispatchState()
     engine.operator = SimpleNamespace(fully_implicit=True, contact_damping_stiffness=0.0)
     events = []
@@ -565,7 +568,7 @@ def test_affine_fully_implicit_dispatch_bypasses_lagged_outer_loop(mode):
 
 
 def test_affine_fully_implicit_line_search_uses_residual_not_energy():
-    engine = AffineBodyEngine()
+    engine = ReferenceAffineBodyEngine()
     engine._ccd_step_size = lambda _sims, _y, _direction: 1.0
     calls = []
 
@@ -589,7 +592,7 @@ def test_affine_fully_implicit_line_search_uses_residual_not_energy():
 
 
 def test_affine_fully_implicit_armijo_uses_actual_jacobian_slope():
-    engine = AffineBodyEngine()
+    engine = ReferenceAffineBodyEngine()
     engine._ccd_step_size = lambda _sims, _y, _direction: 1.0
     calls = []
 
@@ -620,7 +623,7 @@ def test_affine_fully_implicit_armijo_uses_actual_jacobian_slope():
 
 
 def test_affine_fully_implicit_rejects_non_descent_merit_direction():
-    engine = AffineBodyEngine()
+    engine = ReferenceAffineBodyEngine()
     engine._ccd_step_size = lambda _sims, _y, _direction: 1.0
     engine._assemble_system = lambda *_args, **_kwargs: pytest.fail(
         "trial assembly ran for a non-descent merit direction"
@@ -642,7 +645,7 @@ def test_affine_fully_implicit_rejects_non_descent_merit_direction():
 
 
 def test_affine_merit_slope_removes_explicit_jacobian_shift():
-    engine = AffineBodyEngine()
+    engine = ReferenceAffineBodyEngine()
     engine.operator = SimpleNamespace(dof=2, _active_jacobian_shift=lambda: 2.0)
     engine.coo_matrix = SimpleNamespace(_to_scipy=lambda: 3.0 * np.eye(2))
     direction = np.array([0.4, -0.7])
@@ -652,7 +655,7 @@ def test_affine_merit_slope_removes_explicit_jacobian_shift():
 
 
 def test_affine_fully_implicit_failure_does_not_accept_state():
-    engine = AffineBodyEngine()
+    engine = ReferenceAffineBodyEngine()
     engine.state = _DispatchState()
     engine.operator = SimpleNamespace(initialize_contact_damping=lambda _y, _hat: None)
     assembled_configurations = []
@@ -686,7 +689,7 @@ def test_affine_fully_implicit_failure_does_not_accept_state():
 
 
 def test_affine_fully_implicit_predictor_rejects_zero_ccd_step():
-    engine = AffineBodyEngine()
+    engine = ReferenceAffineBodyEngine()
     engine.state = _DispatchState()
     engine.state.tilde_y.fill(1.0)
     engine.operator = SimpleNamespace(initialize_contact_damping=lambda _y, _hat: None)
@@ -703,7 +706,7 @@ def test_affine_fully_implicit_predictor_rejects_zero_ccd_step():
 
 
 def test_affine_cuda_failure_rollback_stays_on_device_path():
-    engine = AffineBodyEngine()
+    engine = ReferenceAffineBodyEngine()
     events = []
     engine.operator = SimpleNamespace(device_restore_step_start=lambda: events.append("restore-device"))
 
@@ -738,7 +741,7 @@ def test_affine_cuda_nonlinear_hot_loop_has_no_full_vector_numpy_roundtrip():
 
 
 def test_affine_fully_implicit_driver_converges_and_accepts_once():
-    engine = AffineBodyEngine()
+    engine = ReferenceAffineBodyEngine()
     engine.state = _DispatchState()
     engine.operator = SimpleNamespace(initialize_contact_damping=lambda _y, _hat: None)
     target = np.full(12, 0.125, dtype=np.float64)
@@ -779,6 +782,7 @@ def test_affine_fully_implicit_force_tolerance_is_not_velocity_tolerance():
 def test_affine_fully_implicit_selects_nonsymmetric_linear_backends(monkeypatch):
     module = importlib.import_module("src.dem.engines.AffineBodyEngine")
     created = []
+    preconditioners = []
 
     class _DummyMatrix:
         def __init__(self, *args, **kwargs):
@@ -799,6 +803,7 @@ def test_affine_fully_implicit_selects_nonsymmetric_linear_backends(monkeypatch)
     )
     monkeypatch.setattr(module, "CoordinateSparseMatrix", _DummyMatrix)
     monkeypatch.setattr(module, "BuildTriplet", _DummyTriplet)
+    monkeypatch.setattr(module, "BlockJacobi", lambda *args: preconditioners.append(args))
     monkeypatch.setattr(module, "current_cfg", lambda: SimpleNamespace(arch=ti.cuda))
 
     coo_engine = AffineBodyEngine()
@@ -825,6 +830,7 @@ def test_affine_fully_implicit_selects_nonsymmetric_linear_backends(monkeypatch)
     lagged_coo_engine.operator = operator
     lagged_coo_engine._ensure_linear_solver(SimpleNamespace(affine_assemble_type="COO"))
     assert created[-1][2]["symmetry"] is True
+    assert preconditioners == [(3, 4, 4), (3, 4, 4)]
 
 
 @pytest.mark.parametrize("backend", ["COO", "MatrixFree", "HashTriplet"])
@@ -881,12 +887,13 @@ def test_affine_hash_capacity_uses_configured_contact_block_capacity(monkeypatch
 
 
 def test_affine_hash_overflow_is_reported_before_linear_solve():
-    engine = AffineBodyEngine()
+    engine = ReferenceAffineBodyEngine()
     engine.operator = SimpleNamespace(dof=3, control_num=1, fully_implicit=True)
 
     class _OverflowTriplet:
         def __init__(self):
             self.solve_called = False
+            self.raw_non_diag_count = {0: 0}
 
         def finalize_taichi_assembly(self):
             raise RuntimeError("BuildTriplet buffer overflow")

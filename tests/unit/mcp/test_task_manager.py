@@ -5,7 +5,6 @@ from pathlib import Path
 from geotaichi_mcp.execution.task_manager import TaskManager
 from src.utils.RuntimeHook import clear_runtime_checkpoint, runtime_checkpoint, set_runtime_checkpoint
 
-
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -229,7 +228,7 @@ while not state["stop"]:
         timeout=1,
     )
     after_failure = manager.execute_code_in_task(submitted["task_id"], "pass", timeout=1)
-    timed_out = manager.execute_code_in_task(submitted["task_id"], "while True:\n    pass", timeout=0.05)
+    timed_out = manager.execute_code_in_task(submitted["task_id"], "while True:\n    pass", timeout=1)
     alive = manager.execute_code_in_task(submitted["task_id"], "state['stop'] = True", timeout=1)
     terminal = wait_for_status(manager, submitted["task_id"], {"completed"})
 

@@ -1,7 +1,9 @@
 # GeoTaichi Coding Guidelines
 
 This document defines how code is designed, implemented, tested, documented, and reviewed in GeoTaichi. It is the
-detailed companion to `agent/CLAUDE.md` and applies to contributors and coding agents.
+detailed companion to the repository-root `AGENTS.md` and applies to contributors
+and coding agents. Use the entry document to select the sections relevant to
+the task; module READMEs and maintained tests provide the local context.
 
 Three rules resolve most uncertainty:
 
@@ -140,6 +142,27 @@ owning subsystem's method rather than reconstructing derived state from several 
   move blocking job I/O off its main thread without accessing Blender data in
   the worker.
 
+### 2.5 Coordinated changes
+
+Follow the behavior through its consumers before editing. The following map
+identifies what must be checked together; it does not require changing every
+listed surface for every task.
+
+| Change | Trace and check together |
+| --- | --- |
+| Public option or default | Facade, configuration validator, actual consumer, invalid-input test, supported example, API documentation |
+| Constitutive law | Parameter initialization, state layout, stress/energy/tangent, branch and history tests, restart compatibility, material documentation |
+| Contact or coupling | Candidate generation, geometry/frame conventions, force/residual/tangent, feasibility and rollback, coupled invariant test |
+| Output or checkpoint | Recorder/writer, loader/restart path, visualization consumer, field names/shapes/dtypes, round-trip test |
+| Solver optimization | Callers across the complete step/iteration, workspace lifetime, transfers and synchronization, numerical equivalence, measured cost |
+| MCP or Blender boundary | Shared contract, staging, CLI/tool consumer, resources/packaging, lifecycle tests |
+
+Record a non-obvious design choice where the affected subsystem is documented:
+state the constraint, chosen approach, rejected alternative if it matters, and
+the supporting test or measurement. Update an existing README or audit before
+creating another document. Historical timings and proposals are not current
+capability guarantees.
+
 ## 3. Naming and formatting
 
 - Match naming in the owning subsystem. GeoTaichi has established CamelCase module/class names and snake_case methods;
@@ -264,8 +287,8 @@ schemas even when represented by plain Python dictionaries.
 - `geotaichi.init()` owns global Taichi initialization and GeoTaichi's dimension/backend configuration.
 - Initialize once per process. Tests that require different dimensions, backends, precision, or import-time settings
   should use separate subprocesses unless a proven fixture performs `ti.reset()` at a safe boundary.
-- Apple Silicon maps the facade's `arch="cpu"` request to Metal. Record the effective backend in test reports and do
-  not treat that path as CPU validation.
+- Verify the initialized backend instead of inferring it from a facade request, `ti.gpu`, or startup messages.
+  Record the effective backend in test reports; use [TAICHI_DEBUGGING.md](TAICHI_DEBUGGING.md) for runtime diagnosis.
 - Environment variables that alter imports, precision, or dispatch must be set before importing their owning module.
 - Do not delete global Taichi caches as a diagnostic. Disable caching for the one test process when necessary.
 
@@ -294,9 +317,8 @@ schemas even when represented by plain Python dictionaries.
   or make host decisions from particle/node/contact arrays.  Search, active-set
   marking and compaction, pair grouping, assembly, CCD, solve, and accepted-state
   updates must remain device-resident.
-- This IPC rule applies equally to BarrierIPC and SemiIPC in standalone and
-  coupled solvers; SemiIPC active-set projection and multiplier updates are not
-  preprocessing and therefore must never use a host deduplication/sort path.
+- IPC uses BarrierIPC in standalone and coupled solvers. BVH sorting, tree
+  construction and refitting are device work, including the initial build.
 - Match the subsystem's existing choice between free `@ti.kernel` functions and methods on `@ti.data_oriented`
   classes. Both patterns are established in GeoTaichi.
 - `@ti.func` and `@ti.kernel` bodies use Taichi-compatible data and control flow. Keep file I/O, NumPy operations,
@@ -317,6 +339,8 @@ schemas even when represented by plain Python dictionaries.
 
 ### 8.3 Performance
 
+- Follow [GPU_OPTIMIZATION.md](GPU_OPTIMIZATION.md) for Taichi profiling,
+  Nsight Systems/Compute, Metal tools, and reproducible before/after evidence.
 - Allocate field-owning sparse solvers and numerical workspaces once, then reset
   and reuse them across Newton iterations, time steps, and reverse replay.  Do
   not construct new Taichi fields in a production hot loop; template identity
@@ -335,6 +359,8 @@ schemas even when represented by plain Python dictionaries.
 
 ## 9. Numerical methods and physics
 
+- Use [NUMERICAL_VALIDATION.md](NUMERICAL_VALIDATION.md) to select derivative, assembly, VJP, and state-transition
+  evidence for the actual solver branch.
 - Start from the governing equation or discrete invariant. Derive the implementation-level residual, gradient,
   tangent/Hessian, update, or transfer before changing the kernel.
 - State coordinate frames, sign conventions, normalization, integration weights, and units at the ownership boundary.
@@ -412,6 +438,16 @@ python tests/testing/run_partition.py <component> -q
 Expand to a component or backend suite only when the environment supports it.
 All maintained test modules must remain safe to collect; benchmarks still
 require the explicit `--run-benchmarks` option.
+
+For local commits, use the versioned hooks described in `tests/README.md`.
+Ordinary messages select `pre-commit`, including VTU round trips. The exact
+marker `[full test]` additionally selects `commit-validation` for NURBS geometry,
+and small linear systems. Affected staged changes also select `commit-materials`
+and/or `commit-contact`; shared implementation or dependency changes select both.
+The JSON lists the complete law-test directories/globs, and unrelated changes
+skip those larger groups. None of these selections scans the entire test tree.
+Run the test that proves a specific fix separately when it is
+outside these selections, and report backend or constitutive branches not tested.
 
 If Black is installed:
 

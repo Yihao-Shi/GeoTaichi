@@ -30,6 +30,63 @@ of contact laws.
 Shared constitutive and contact formulas live in `src/physics_model`, while
 BVH and CCD primitives live in `src/contact_detection`.
 
+Local contact finite-difference probes and NumPy surface-correction measures
+live in `tests/helpers/affine_contact_probe.py`. Production stepping uses the
+device measures and body mass blocks; dense reference mass matrices are built
+only by the test helpers that consume them.
+
+AffineBody time integration is selected with
+`set_affine_body_parameters(newmark=[alpha, beta, gamma])`. Exactly three
+finite positive values are required, using the IGA/Direct MPM convention:
+`q_pred=q_n+h*v_n+alpha*(1-2*beta)*h²*a_n`,
+`a_next=(q_next-q_pred)/(2*alpha*beta*h²)` and
+`v_next=v_n+h*((1-gamma)*a_n+gamma*a_next)`.
+The default `[1, 0.5, 1]` is backward Euler;
+`[0.5, 0.25, 0.5]` is average acceleration.
+
+Fully implicit friction uses force tolerances
+`fully_implicit_force_atol=1e-9` N and `fully_implicit_force_rtol=1e-8`.
+For the incremental residual, convergence requires
+`max(abs(R)) <= 2*alpha*beta*h²*atol + rtol*max(abs(R_initial))`.
+The absolute default accounts for f64 rounding when metre-scale absolute
+coordinates are subtracted at sub-millisecond time steps. Other mass, length,
+or time scales require case-specific tolerances. Explicit settings remain
+authoritative; no hidden precision floor replaces them. Lagged friction keeps
+its separate correction-velocity criterion and defaults.
+
+The original ABD operator uses this integration for mesh IPC, local/contact/
+joint damping, wall motion and FEM/Direct-MPM/soft-particle coupling. Lagged
+friction keeps its existing displacement-increment potential; fully implicit
+friction and damping use the endpoint velocity and its Newmark derivative.
+Coupling scales the ABD residual by `2*alpha*beta*h²`. The existing restriction
+to lagged friction in FEM/Direct-MPM coupling is unchanged. ABD trajectory
+adjoints remain backward-Euler only.
+Initial acceleration comes from the device mass matrix and initial physical
+forces. Accepted acceleration and velocity stay on device and survive failed
+trial steps; saved Newmark frames include `a_y` and `newmark`.
+Output schedules include the first accepted step used for JIT warmup, also
+when continuing a saved run.
+The lagged COO, MatrixFree, and HashTriplet solves in `AffineBodyEngine` precondition each body's
+complete 12-DOF principal block with device Cholesky, retaining coupling between the four
+control points. This resolves stiff body modes that separate 3x3 control-point
+blocks can converge on very slowly; the configured PCG and Newton tolerances
+remain authoritative.
+After two rejected energy trials, lagged ABD retries the search once with a
+quadratic upper bound of the frozen Coulomb potential. Concavity of
+`f0(sqrt(t))` supplies the additional radial search curvature in sliding
+contacts. Energy and gradient are unchanged. The accepted iterate is assembled
+with the original Hessian again, so Newton stopping and the physical adjoint
+tangent retain their original definitions. This search safeguard changes no
+friction parameters or convergence thresholds.
+The [Newton cradle example](../../examples/dem/AffineBody/newtons_cradle/README.md)
+compares integration dissipation and checks time-step refinement before its
+queued formal run.
+Mesh IPC prepares a barrier-padded swept envelope for each CCD-clipped
+line-search segment. Backtracking trials and the accepted Hessian reuse its
+candidates, evaluating contact at the current trial position. A changed search
+direction, rollback or standalone CCD query prepares its own candidates;
+level-set contact keeps its existing body-pair refresh.
+
 ## DEM theory log
 
 ### 1. Rigid-particle balance laws
@@ -886,7 +943,7 @@ friction state.
 
 ### Choosing affine IPC parameters
 
-GeoTaichi's affine IPC inputs are absolute values. Let `L` be a characteristic
+GeoTaichi's affine IPC geometry inputs are absolute values. Let `L` be a characteristic
 contact length, usually a body or scene bounding-box diagonal:
 
 | Input | Units | Practical starting point |
@@ -894,7 +951,7 @@ contact length, usually a body or scene bounding-box diagonal:
 | `Dhat` | m | About `1e-3 L`; enlarge only when the surface resolution or intended contact gap requires it. |
 | `BarrierStiffness` | problem dependent | Tune with `Dhat` so the loaded equilibrium gap is positive, below `Dhat`, and comfortably above geometry/CCD round-off. |
 | `friction_epsv` | m/s | About `1e-3 L/s`; reduce by decades only while measured slip changes materially. |
-| `newton_tolerance` | m/s | Choose from the allowed per-step position error: `newton_tolerance * dt`. |
+| `newton_tolerance` | m/s | Controls the unapplied surface correction; check strain and energy when penalty stiffness is high. |
 | `friction_tolerance` | m/s | For verification, use `friction_iterations=-1` and tighten until force balance and slip stop changing. For production, one lagged solve is the reference default and 2--4 solves are usually enough. |
 
 Inside the quadratic static-friction branch, the maximum tangential curvature
@@ -902,12 +959,50 @@ is proportional to `1 / (friction_epsv * dt)`. A smaller `friction_epsv`
 therefore reduces regularized creep but makes the nonlinear system sharper;
 it is not an unconditional accuracy knob.
 
+The lagged defaults are `friction_tolerance=1e-7` m/s,
+`newton_tolerance=1e-8` m/s, `linear_tolerance=1e-14`
+(absolute assembled-system residual), and `linear_relative_tolerance=0`.
+Set these through `dem.set_affine_body_parameters(...)`. The fixed linear target
+is `max(linear_tolerance, linear_relative_tolerance * initial_residual)`;
+setting only `linear_tolerance` selects absolute-only stopping, including when
+replacing an earlier relative setting. Supply both keys to use both branches.
+Either tolerance may be zero, but not both. Both HashTriplet and COO, supported
+adjoints, and LSMPM soft--ABD consume these controls. Fully implicit force checks
+can require a tighter inner solve; failure never increases a threshold.
+Explicit values remain authoritative within that force safeguard.
+For BackwardEuler, `newton_tolerance * dt` bounds the unapplied Newton
+surface correction. It does not bound the accumulated trajectory error or
+the remaining penalty energy. In particular, the orthogonality energy
+`V * E / 8 * ||F^T F - I||^2` can be substantial even for a small residual
+affine stretch at large `E`. Validate a fixed case tolerance through both
+rotation and contact transients. Decreasing the incremental objective in
+line search alone does not certify non-increasing physical energy.
+
+Linear residual and correction velocity have different units: small masses,
+small time steps, or ill-conditioned affine coordinates can require a tighter
+linear solve. Validate case-specific settings by tightening the linear
+tolerance and checking the physical correction, rather than increasing only
+the Newton iteration cap. The [mass-norm bound](../linear_solver/README.md#matching-linear-and-newton-tolerances)
+relates a true linear residual to the surface correction for projected ABD.
+The [bunny](../../examples/dem/AffineBody/bunny_pile_wall_release/README.md)
+and [cube](../../examples/dem/AffineBody/thousand_cubes_heavy_ball_impact/README.md)
+examples document their explicit settings and validation scope. Short checkpoint
+evidence does not establish full wall-release or impact acceptance.
+
 Read convergence in layers. The linear solve must converge first; the lagged
-Newton test is `||delta_x_surface||_inf / dt < newton_tolerance`; the outer
-friction test applies the same correction-velocity measure after rebuilding
+Newton test is `c_v * ||delta_x_surface||_inf < newton_tolerance`, with
+`c_v = 1 / dt` for BackwardEuler and `gamma / (2 * alpha * beta * dt)` for
+the other integration triples. The outer friction test applies the same
+correction-velocity measure after rebuilding
 the frozen normal force and tangent basis. The line search starts from the CCD
 feasible step and halves it until the frozen incremental potential is
-non-increasing. A healthy step has a negative finite slope, positive accepted
+non-increasing. ABD, soft-affine and Direct MPM--ABD also accept f64 reduction
+roundoff only when both the predicted decrease and observed increase fit
+`1e-12 * max(abs(E_old), abs(E_trial))`. There is no absolute energy floor;
+Newton convergence remains mandatory. The outer friction threshold is mandatory
+in convergence mode (`friction_iterations=-1`); a finite lagged count records
+its residual and cap status even if the fixed point has not converged.
+A healthy step has a negative finite slope, positive accepted
 alpha, and modest backtracking. Repeated tiny alpha values indicate a scale,
 time-step, stiffness, or linear-solve problem; increasing only the backtracking
 cap does not fix it.
@@ -932,3 +1027,67 @@ scalar nonlinear control flow, and output callbacks.
 
 DEM geometry, neighbor, contact, IPC, affine-body, and LSMPM tests are under
 `tests/unit/dem/` and `tests/integration/dem/`.
+
+## DEM facet-wall servos with IPC
+
+For ABD--wall IPC, retain the ordinary DEM `Polygon` wall configuration:
+allocate `max_facet_number` and `max_servo_wall_number`, set each wall's
+`ControlType`, `TargetStress`, `LimitVelocity` and optional `Alpha`/`Gain`, then
+call `dem.servo_switch("StiffnessControl")` or `"GainControl"`. No servo is added
+to the ABD bodies.
+
+`IPCWallBoundary` keeps the facet geometry and motion in f64 device fields.
+After an accepted IPC step, the physical wall reactions and normal tangent
+stiffness feed the existing `ServoWall` force error, gain and velocity limit.
+The next wall motion is capped by point--triangle ACCD before the nonlinear
+solve. Rejected steps restore wall geometry and leave servo feedback unchanged.
+An externally supplied servo area is retained; otherwise the facet areas
+initialize it. The controller writes DEM wall forces, stiffness, velocity and
+servo pressure data on device, so ordinary wall/servo outputs remain usable.
+Host access occurs during setup and explicit diagnostics/output.
+
+These servo boundaries use Polygon/facet walls. Contact damping and trajectory
+adjoints through the controller are not supported. The boundary update is
+staggered between accepted IPC steps; it is not an additional Newton unknown.
+
+## Explicit BVH updates
+
+For DEM, LSDEM and LSMPM, set `bvh_rebuild_interval` in `memory_allocate`, for
+example `{"bvh_rebuild_interval": 100}` alongside the other memory settings.
+The value must be a positive integer; the default is `1000`, and `1` rebuilds
+at the next search in each new solver step. Within an interval the search refits
+current AABBs on device. It rebuilds when the elapsed step count reaches the
+interval, even if no neighbor search ran at the exact interval boundary.
+Repeated queries in one step refit. The initial search and changed active
+particle/wall counts rebuild; static wall batches can otherwise remain cached.
+Verlet displacement checks still decide when a new candidate list is needed.
+Explicit DEM/LSDEM--MPM and LSMPM coupling reuse the DEM child's tree and interval.
+
+## AffineBody BVH updates
+
+The IPC BVH neighbor rebuilds its topology on device for every new current or
+swept candidate query, including queries within a Newton iteration. Each build
+recomputes Morton codes, sorts primitives and reduces node bounds. A prepared
+swept candidate list can still be reused by line-search trials along the bounded
+direction. Candidate completeness and overflow checks are unchanged.
+Device-built subtree body labels skip entire branches belonging to the query
+body, preserving the existing same-body exclusion before reaching individual
+leaves. These labels and the stackless escape links are regenerated after each
+topology rebuild; each requires one integer per BVH node.
+
+## AffineBody friction storage
+
+CPU and CUDA keep lagged-friction records and their adjoint backup in device
+pages. Contact counts and page activation run on device before parallel writes;
+this prevents cold-page activation from losing records. The adjoint backup and
+restore also activate their destination pages before copying. The capacity bound
+and overflow checks are unchanged; unused vertex–wall combinations do not reserve record
+payloads. Other backends retain dense storage. Numerical assembly, frozen
+friction history and adjoint restore use the same fields and active counts.
+
+Triangle-mesh lagged friction condenses each contact's primitive weights onto
+the affine control points and accumulates its HashTriplet Hessian in one
+off-diagonal segment per body pair, including body--wall self-pairs. Repeated
+contacts reuse those slots without changing the energy, gradient or Hessian.
+COO and LevelSet assembly retain their stencil paths. Capacity overflow remains
+an error; this does not limit the number of physical contacts.

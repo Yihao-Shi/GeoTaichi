@@ -19,6 +19,8 @@ class ImplicitEngine(Engine):
 
     def manage_function(self, sims: Simulation):
         super().manage_function(sims)
+        if sims.velocity_projection_scheme == "Affine":
+            self.compute_nodal_kinematic = self.compute_nodal_kinematics
         if sims.dimension == 2:
             self.update_nodal_displacements = self.update_nodal_displacement_2D
             self.compute_internal_forces = self.compute_internal_force_2D
@@ -32,7 +34,9 @@ class ImplicitEngine(Engine):
 
     def choose_engine(self, sims: Simulation):
         if sims.integration_scheme == "Newmark":
-            self.compute = self.newmark_integrate
+            self.compute = (
+                self.affine_updating if sims.velocity_projection_scheme == "Affine" else self.newmark_integrate
+            )
         else:
             raise ValueError(f"The integration scheme {sims.integration_scheme} is not supported yet")
 
@@ -74,6 +78,9 @@ class ImplicitEngine(Engine):
             scene.element.LnID,
             scene.element.shape_fn,
             scene.element.node_size,
+            scene.element.gnum,
+            scene.element.grid_size,
+            scene.sparse_grid,
         )
 
     def compute_grid_velcity(self, sims: Simulation, scene: myScene):
@@ -221,34 +228,6 @@ class ImplicitEngine(Engine):
                 scene.element.dshape_fn,
                 scene.element.node_size,
             )
-
-    def update_velocity_gradient_affine_2D(self, sims: Simulation, scene: myScene):
-        kernel_update_displacement_gradient_affine_2D(
-            scene.element.grid_nodes,
-            int(scene.particleNum[0]),
-            scene.element.gnum,
-            scene.element.grid_size,
-            sims.dt,
-            scene.node,
-            scene.particle,
-            scene.element.LnID,
-            scene.element.shape_fn,
-            scene.element.node_size,
-        )
-
-    def update_velocity_gradient_affine(self, sims: Simulation, scene: myScene):
-        kernel_update_displacement_gradient_affine(
-            scene.element.grid_nodes,
-            int(scene.particleNum[0]),
-            scene.element.gnum,
-            scene.element.grid_size,
-            sims.dt,
-            scene.node,
-            scene.particle,
-            scene.element.LnID,
-            scene.element.shape_fn,
-            scene.element.node_size,
-        )
 
     def update_velocity_gradient_bbar_2D(self, sims: Simulation, scene: myScene):
         for materialID in range(scene.material.mapping.shape[0] - 1):
@@ -427,9 +406,13 @@ class ImplicitEngine(Engine):
         self.compute_nodal_kinematics_newmark(sims, scene)
         sims.timer.end("Time integration")
         sims.timer.begin("G2P")
+        self.compute_affine_velocity_gradient(sims, scene)
         self.compute_particle_kinematic(sims, scene)
         sims.timer.end("G2P")
         sims.timer.begin("Compute residual")
         self.iterator.calculate_reaction_force(scene)
         sims.timer.end("Compute residual")
         self.update_grid_refinement_profiled(sims, scene)
+
+    def affine_updating(self, sims: Simulation, scene: myScene, neighbor=None):
+        self.newmark_integrate(sims, scene, neighbor)

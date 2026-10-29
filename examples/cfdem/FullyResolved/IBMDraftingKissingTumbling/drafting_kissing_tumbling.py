@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[4]
+SPHERE_MESH = ROOT / "assets/mesh/LSDEM/dkt_sphere.ply"
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
@@ -19,7 +20,7 @@ from examples.cfdem.FullyResolved.IBMDraftingKissingTumbling.draw.evaluate_draft
 
 def case_parameters(cells_per_diameter=None):
     diameter = 0.00167
-    requested_resolution = cells_per_diameter or 8.35
+    requested_resolution = cells_per_diameter or 12.0
     if requested_resolution <= 0.0:
         raise ValueError("cells_per_diameter must be positive")
     transverse_cells = max(1, round(0.01 * requested_resolution / diameter))
@@ -144,7 +145,8 @@ def run(config, args):
         shape_function="QuadBSpline",
         gravity=[0.0, 0.0, -9.81],
         material_type="Fluid",
-        velocity_projection="Affine",
+        # Taylor retains the affine FDM reconstruction with the requested PIC/FLIP blend.
+        velocity_projection="Taylor",
         solver_type="Implicit",
         discretization="FDM",
         fluid_level_set=False,
@@ -181,12 +183,22 @@ def run(config, args):
             "CFL": 0.5,
         }
     )
+    shape = polyhedron(file=str(SPHERE_MESH))
+    sdf_spacing = 0.05
+    template_radius = (3.0 * shape.mesh.volume / (4.0 * math.pi)) ** (1.0 / 3.0)
+    rigid_scale = 0.5 * config["diameter"] / template_radius
+    # Every vertex of an intersected fluid cell must lie in the SDF grid,
+    # including after rigid rotation. One cell diagonal bounds that reach.
+    sdf_extent = max(3, math.ceil(math.sqrt(sum(h * h for h in spacing)) / (rigid_scale * sdf_spacing)) + 1)
+    template_bound = float(shape.mesh.bounding_sphere.primitive.radius)
+    sdf_grid_capacity = (2 * (math.ceil(template_bound / sdf_spacing) + sdf_extent) + 1) ** 3
+    shape.grids(space=sdf_spacing, extent=sdf_extent)
     dempm.dem.memory_allocate(
         memory={
             "max_material_number": 1,
             "max_rigid_body_number": body_count,
             "max_rigid_template_number": 1,
-            "levelset_grid_number": 250000,
+            "levelset_grid_number": sdf_grid_capacity,
             "surface_node_number": 20000,
             "max_plane_number": 0,
             "body_coordination_number": 4 if body_count > 1 else 0,
@@ -220,7 +232,6 @@ def run(config, args):
         materialID=0,
         attribute={"Density": config["particle_density"], "ForceLocalDamping": 0.0, "TorqueLocalDamping": 0.0},
     )
-    shape = polyhedron(file=str(ROOT / "assets/mesh/LSDEM/sphere.stl")).grids(space=0.05, extent=3)
     size = {"Radius": 0.5 * config["diameter"]}
     template = {"Name": "particle", "Object": shape, "WriteFile": False}
     dempm.dem.add_template(template=template)
@@ -268,7 +279,6 @@ def run(config, args):
         material={
             "MaterialID": 1,
             "Density": config["fluid_density"],
-            "Modulus": 2000000.0,
             "Viscosity": config["viscosity"],
             "ElementLength": min(spacing),
             "cL": 1.5,
@@ -351,6 +361,10 @@ def run(config, args):
         history_v.append(velocities.copy())
 
     run_options = {"mpm_gravity_field": True, "function": record_trajectory}
+    for body in range(body_count):
+        box = dempm.dem.scene.box[body]
+        if box.extent * box.grid_space < math.sqrt(sum(h * h for h in spacing)):
+            raise ValueError("DKT SDF grid halo is too narrow; use a checkpoint generated with sufficient SDF padding")
     try:
         dempm.run(**run_options)
     finally:
@@ -387,8 +401,11 @@ def run(config, args):
         cell_counts=actual_counts,
         element_size=actual_spacing,
         cells_per_diameter=config["diameter"] / min(actual_spacing),
+        sdf_grid_extent=int(dempm.dem.scene.box[0].extent),
+        sdf_physical_grid_spacing=float(dempm.dem.scene.box[0].grid_space),
         requested_timestep=dt,
-        alpha_pic=args.alpha_pic,
+        alpha_pic=dempm.mpm.sims.alphaPIC,
+        velocity_projection=dempm.mpm.sims.velocity_projection_scheme,
         timestep=float(np.median(np.diff(times)) / args.sample_every),
         dem_contact_timestep=dem_dt,
         adaptive_contact_subcycling=config["adaptive_contact_subcycling"],
@@ -413,7 +430,7 @@ def parse_args():
     parser.add_argument("--dt", type=float)
     parser.add_argument("--dem-dt", type=float)
     parser.add_argument("--time", type=float)
-    parser.add_argument("--alpha-pic", type=float, default=0.01)
+    parser.add_argument("--alpha-pic", type=float, default=0.0)
     parser.add_argument("--save-interval", type=float)
     parser.add_argument("--sample-every", type=int, default=10)
     parser.add_argument("--device-memory", type=float, default=8.0)

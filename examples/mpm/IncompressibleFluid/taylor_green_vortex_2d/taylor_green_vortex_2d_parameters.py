@@ -3,7 +3,7 @@
 import math
 import numpy as np
 
-DOMAIN = np.array([math.pi, math.pi])
+DOMAIN = np.array([2.0 * math.pi, 2.0 * math.pi])
 
 STRICT_TOLERANCES = {
     "velocity_relative_l2": 0.03,

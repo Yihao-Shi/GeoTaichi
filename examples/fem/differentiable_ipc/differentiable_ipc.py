@@ -11,7 +11,8 @@ from pathlib import Path
 import numpy as np
 import taichi as ti
 
-from src.fem import DifferentiableFEM, FEM
+from geotaichi import FEM
+from src.fem import DifferentiableFEM
 
 
 def build_problem(
@@ -23,6 +24,7 @@ def build_problem(
     steps=3,
     dt=0.01,
     newton_velocity_tolerance=1.0e-6,
+    newmark=(0.5, 0.25, 0.5),
 ):
     fem = FEM(log=False)
     fem.set_configuration(dimension=3, solver_type="Implicit")
@@ -44,6 +46,7 @@ def build_problem(
         friction_coefficient=0.0,
     )
     fem.set_solver(
+        newmark=newmark,
         dt=dt,
         step=steps,
         gravity=gravity,

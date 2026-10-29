@@ -75,6 +75,9 @@ def test_fempm_embedded_grid_uses_represented_correction(taichi_runtime):
     engine = object.__new__(FEMPMImplicitEngine)
     engine.mpm = kinematics.mpm
     engine.mpm.active_dof = 4
+    engine.mpm.integration = [1.0, 0.5, 1.0]
+    engine.dt = 0.001
+    engine.fem = SimpleNamespace(quasi_static=True)
     engine.mpm_dimension = 2
     engine.fem_nodes = 1
     engine.mpm.shape.from_numpy(np.array([[1.0 - 1e-8, 1e-8]]))
@@ -84,10 +87,18 @@ def test_fempm_embedded_grid_uses_represented_correction(taichi_runtime):
     engine.rhs = ti.field(ti.f64, shape=9)
     engine.fixed = ti.field(ti.i32, shape=9)
     engine.fixed_correction = ti.field(ti.f64, shape=9)
-    for name in ("residual_squared", "directional_derivative", "correction_inf_norm", "constraint_inf_norm"):
+    for name in (
+        "residual_squared",
+        "directional_derivative",
+        "correction_inf_norm",
+        "constraint_inf_norm",
+        "correction_velocity_inf_norm",
+        "constraint_velocity_inf_norm",
+    ):
         setattr(engine, name, ti.field(ti.f64, shape=()))
     engine._reduce_system_metrics(9)
     assert engine.correction_inf_norm[None] == pytest.approx(1e-14, abs=1e-20)
+    assert engine.correction_velocity_inf_norm[None] == pytest.approx(1e-11, abs=1e-17)
 
 
 @pytest.mark.parametrize("axisymmetric", [False, True])
@@ -136,8 +147,6 @@ def _newton_engine(forces, corrections, inexact=False):
     engine.monolithic_dirichlet_tolerance = 1e-12
     engine.monolithic_linear_solver_relative_tolerance = 1e-7
     engine.monolithic_solver_name = "BiCGSTAB"
-    engine.is_semi = False
-    engine.semi_contact_converged = lambda: True
     engine.mpm_has_plastic_history = True
     engine.iga = SimpleNamespace(dt=0.001)
     engine.mpm = SimpleNamespace(dt=0.001, material=SimpleNamespace(has_incremental_potential=False))

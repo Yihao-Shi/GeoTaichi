@@ -70,7 +70,7 @@ class FEMPMImplicitEngine:
         self.correction_velocity_tolerance = float(
             kwargs.get(
                 "correction_velocity_tolerance",
-                kwargs.get("newton_velocity_tolerance", 1.0e-7),
+                kwargs.get("newton_velocity_tolerance", 1.0e-8),
             )
         )
         self.raise_on_nonconvergence = bool(kwargs.get("raise_on_nonconvergence", True))
@@ -92,8 +92,10 @@ class FEMPMImplicitEngine:
         self.linear_solver = _normalize_solver(kwargs.get("linear_solver", self.fem.linear_solver))
         if self.nonassociated_newton and self.linear_solver == "PCG":
             self.linear_solver = "BiCGSTAB"
-        self.linear_solver_tolerance = float(kwargs.get("linear_solver_tolerance", 1.0e-10))
-        self.linear_solver_relative_tolerance = float(kwargs.get("linear_solver_relative_tolerance", 0.0))
+        self.linear_solver_tolerance = float(kwargs.get("linear_solver_tolerance", 1.0e-12))
+        self.linear_solver_relative_tolerance = float(
+            kwargs.get("linear_solver_relative_tolerance", 0.0 if "linear_solver_tolerance" in kwargs else 1.0e-12)
+        )
         self.inexact_newton = kwargs.get("inexact_newton", False)
         if not isinstance(self.inexact_newton, (bool, np.bool_)):
             raise ValueError("FEMPM inexact_newton must be boolean")
@@ -155,10 +157,6 @@ class FEMPMImplicitEngine:
             contact_model,
             simulation,
         )
-        if self.step_retry.enabled and self.contact.is_semi:
-            raise ValueError(
-                "FEMPM step retry does not support SemiIPC because its multipliers advance inside Newton iterations"
-            )
         self.fem_nodes = int(self.fem.mesh.number_of_nodes)
         self.mpm_node_capacity = int(self.mpm.degree_of_freedom // self.mpm_dimension)
         self.node_capacity = self.fem_nodes + self.mpm_node_capacity
@@ -172,6 +170,8 @@ class FEMPMImplicitEngine:
         self.residual_squared = ti.field(dtype=ti.f64, shape=())
         self.directional_derivative = ti.field(dtype=ti.f64, shape=())
         self.correction_inf_norm = ti.field(dtype=ti.f64, shape=())
+        self.correction_velocity_inf_norm = ti.field(dtype=ti.f64, shape=())
+        self.constraint_velocity_inf_norm = ti.field(dtype=ti.f64, shape=())
         self.constraint_inf_norm = ti.field(dtype=ti.f64, shape=())
         self.history = []
         self.last_step_record = None
@@ -468,8 +468,7 @@ class FEMPMImplicitEngine:
                 internal_force,
                 self.fem.damping,
                 self.dt,
-                self.fem.beta,
-                self.fem.gamma,
+                self.fem.integration,
                 int(self.fem.quasi_static),
             )
         else:
@@ -909,18 +908,27 @@ class FEMPMImplicitEngine:
         self.residual_squared[None] = 0.0
         self.directional_derivative[None] = 0.0
         self.correction_inf_norm[None] = 0.0
+        self.correction_velocity_inf_norm[None] = 0.0
+        self.constraint_velocity_inf_norm[None] = 0.0
+        fem_factor = 1.0 / self.dt
+        if ti.static(not self.fem.quasi_static):
+            fem_factor = self.fem.gamma / (2.0 * self.fem.alpha * self.fem.beta * self.dt)
+        mpm_factor = self.mpm.integration[2] / (2.0 * self.mpm.integration[0] * self.mpm.integration[1] * self.dt)
         self.constraint_inf_norm[None] = 0.0
         for dof in range(active_dof):
             if self.fixed[dof] == 0:
                 ti.atomic_add(self.residual_squared[None], self.rhs[dof] ** 2)
             else:
                 ti.atomic_max(self.constraint_inf_norm[None], ti.abs(self.fixed_correction[dof]))
+                factor = fem_factor if dof < 3 * self.fem_nodes else mpm_factor
+                ti.atomic_max(self.constraint_velocity_inf_norm[None], ti.abs(self.fixed_correction[dof]) * factor)
             ti.atomic_add(
                 self.directional_derivative[None],
                 -self.rhs[dof] * self.correction[dof],
             )
             if dof < ti.static(3 * self.fem_nodes):
                 ti.atomic_max(self.correction_inf_norm[None], ti.abs(self.correction[dof]))
+                ti.atomic_max(self.correction_velocity_inf_norm[None], ti.abs(self.correction[dof]) * fem_factor)
         for particle_id in range(self.mpm.particleNum[0]):
             measure = particle_correction_measure(
                 self.mpm,
@@ -932,6 +940,7 @@ class FEMPMImplicitEngine:
                 self.mpm_dimension,
             )
             ti.atomic_max(self.correction_inf_norm[None], measure)
+            ti.atomic_max(self.correction_velocity_inf_norm[None], measure * mpm_factor)
 
     @ti.kernel
     def _accept_mpm_trial(self, active_mpm_dof: ti.i32):
@@ -981,8 +990,7 @@ class FEMPMImplicitEngine:
             fem_positions,
             self.fem.damping,
             self.dt,
-            self.fem.beta,
-            self.fem.gamma,
+            self.fem.integration,
             int(self.fem.quasi_static),
         )
         fem_energy = self.fem._internal_energy_device() + float(self.fem.state.dynamic_potential[None])
@@ -1011,8 +1019,7 @@ class FEMPMImplicitEngine:
             internal_force,
             self.fem.damping,
             self.dt,
-            self.fem.beta,
-            self.fem.gamma,
+            self.fem.integration,
             int(self.fem.quasi_static),
         )
         active_mpm_dof = int(self.mpm.active_dof)
@@ -1093,7 +1100,6 @@ class FEMPMImplicitEngine:
             ):
                 self.fem.state.accept_trial_position()
                 self._accept_mpm_trial(active_mpm_dof)
-                self.contact.accept_update(self.fem.state.position, self.mpm.grid_disp)
                 return alpha, backtrack, trial_merit
             alpha *= self.line_search_reduction
         raise NewtonConvergenceError(
@@ -1147,7 +1153,6 @@ class FEMPMImplicitEngine:
             if math.isfinite(trial) and trial <= (previous + self.line_search_c1 * alpha * slope + energy_tolerance):
                 self.fem.state.accept_trial_position()
                 self._accept_mpm_trial(active_mpm_dof)
-                self.contact.accept_update(self.fem.state.position, self.mpm.grid_disp)
                 return alpha, backtrack, trial
             alpha *= self.line_search_reduction
         raise NewtonConvergenceError(
@@ -1168,17 +1173,7 @@ class FEMPMImplicitEngine:
         records = []
         converged = False
         last_system = None
-        semi_progress = 0.0
         for iteration in range(self.max_iterations + 1):
-            if (
-                not self.inexact_newton
-                and not self.nonassociated_newton
-                and getattr(self.contact, "is_semi", False)
-                and iteration > 1
-                and semi_progress > 0.999
-            ):
-                converged = True
-                break
             last_system = self.assemble_system(include_friction=include_friction, need_matrix=False)
             self._reduce_system_metrics(int(last_system["active_dof"]))
             residual_norm = math.sqrt(max(float(self.residual_squared[None]), 0.0))
@@ -1199,8 +1194,7 @@ class FEMPMImplicitEngine:
             if (
                 residual_norm <= (self.absolute_tolerance + self.residual_tolerance * initial_norm)
                 and (not self.nonassociated_newton or (residual_norm == 0.0 and record["constraint_residual"] == 0.0))
-                and record["constraint_residual"] <= self.dt * self.correction_velocity_tolerance
-                and self.contact.contact_converged()
+                and float(self.constraint_velocity_inf_norm[None]) <= self.correction_velocity_tolerance
             ):
                 record["convergence_reason"] = "force_residual"
                 converged = True
@@ -1222,7 +1216,7 @@ class FEMPMImplicitEngine:
             self._split_direction(int(last_system["active_mpm_dof"]))
             self._reduce_system_metrics(int(last_system["active_dof"]))
             correction_norm = float(self.correction_inf_norm[None])
-            correction_velocity = correction_norm / self.dt
+            correction_velocity = float(self.correction_velocity_inf_norm[None])
             force_converged = residual_norm <= record["residual_tolerance"]
             if (
                 self.inexact_newton
@@ -1236,7 +1230,7 @@ class FEMPMImplicitEngine:
                 self._split_direction(int(last_system["active_mpm_dof"]))
                 self._reduce_system_metrics(int(last_system["active_dof"]))
                 correction_norm = float(self.correction_inf_norm[None])
-                correction_velocity = correction_norm / self.dt
+                correction_velocity = float(self.correction_velocity_inf_norm[None])
             record["correction_inf_norm"] = correction_norm
             record["correction_velocity"] = correction_velocity
             record["correction_velocity_tolerance"] = self.correction_velocity_tolerance
@@ -1244,8 +1238,7 @@ class FEMPMImplicitEngine:
             if (
                 correction_velocity <= self.correction_velocity_tolerance
                 and (not self.nonassociated_newton or force_converged)
-                and record["constraint_residual"] <= self.dt * self.correction_velocity_tolerance
-                and self.contact.contact_converged()
+                and float(self.constraint_velocity_inf_norm[None]) <= self.correction_velocity_tolerance
             ):
                 record["convergence_reason"] = (
                     "force_and_correction" if self.nonassociated_newton else "physical_correction_velocity"
@@ -1267,8 +1260,6 @@ class FEMPMImplicitEngine:
             record["line_search_step"] = alpha
             record["line_search_backtracks"] = backtracks
             self.fem.apply_boundary_step(self.dt, 0)
-            if getattr(self.contact, "is_semi", False):
-                semi_progress += (1.0 - semi_progress) * alpha
             if verbose:
                 print(f"FEMPM implicit Newton {iteration + 1}: " f"residual={residual_norm:.4e}, alpha={alpha:.4e}")
         if not converged and self.raise_on_nonconvergence:
@@ -1290,7 +1281,7 @@ class FEMPMImplicitEngine:
         self._solve_linear_system(system)
         self._split_direction(int(system["active_mpm_dof"]))
         self._reduce_system_metrics(int(system["active_dof"]))
-        return float(self.correction_inf_norm[None]) / self.dt
+        return float(self.correction_velocity_inf_norm[None])
 
     def _solve_lagged_friction_fixed_point(self, verbose=True):
         include_friction = self.contact.activate_friction
@@ -1320,8 +1311,7 @@ class FEMPMImplicitEngine:
                     force_tolerance = self.absolute_tolerance + self.residual_tolerance * self._friction_force_reference
                     force_balanced = (
                         math.sqrt(max(float(self.residual_squared[None]), 0.0)) <= force_tolerance
-                        and float(self.constraint_inf_norm[None]) <= self.dt * self.correction_velocity_tolerance
-                        and self.contact.contact_converged()
+                        and float(self.constraint_velocity_inf_norm[None]) <= self.correction_velocity_tolerance
                     )
                 if self.last_friction_residual <= self.contact_model.friction_tolerance and force_balanced:
                     self.last_friction_converged = True
@@ -1360,7 +1350,7 @@ class FEMPMImplicitEngine:
         self.fem.set_boundary_data_step(next_time, self.step_count + 1)
         self.fem.apply_boundary_step(self.dt, 0)
         self.fem.update_external_force_step(next_time, self.step_count + 1)
-        self.fem.state.build_newmark_prediction(self.dt, self.fem.beta)
+        self.fem.state.build_newmark_prediction(self.dt, self.fem.integration)
         self.contact.begin_step(self.fem.state.position, self.mpm.grid_disp, self.dt)
 
         converged, outer_records, last_system = self.solve_lagged_friction_fixed_point(verbose)
@@ -1371,8 +1361,7 @@ class FEMPMImplicitEngine:
         self._store_fem_equilibrium()
         self.fem.state.finalize_newmark(
             self.dt,
-            self.fem.beta,
-            self.fem.gamma,
+            self.fem.integration,
             int(self.fem.quasi_static),
         )
         self.mpm.update_nodal_acc(self.mpm.integration)

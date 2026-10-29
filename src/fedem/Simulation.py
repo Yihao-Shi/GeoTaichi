@@ -9,12 +9,14 @@ import taichi as ti
 
 from src.utils.TimeTicker import Timer
 from src.utils.SolverRuntime import StepSchedule
+from src.contact_detection.bounding_volume_hierarchy.MultiPatchLBVH import validate_bvh_rebuild_interval
 
 
 class FEDEMSimulation:
     def __init__(self):
         self.domain = np.zeros(3, dtype=np.float64)
         self.search = "LinkedCell"
+        self.bvh_rebuild_interval = 1000
         self.dt = ti.field(dtype=float, shape=())
         self.delta = 0.0
         self.current_time = 0.0
@@ -88,6 +90,9 @@ class FEDEMSimulation:
         self.step_schedule = StepSchedule.from_options(options, output_interval=output_interval)
 
     def configure_memory(self, memory, dem_sims, face_count, body_count):
+        self.bvh_rebuild_interval = validate_bvh_rebuild_interval(
+            memory.get("bvh_rebuild_interval", self.bvh_rebuild_interval)
+        )
         self.max_particle_num = int(memory.get("max_particle_number", dem_sims.max_particle_num))
         self.max_surface_facet_num = int(
             memory.get("max_surface_facet_number", memory.get("max_patch_number", face_count))

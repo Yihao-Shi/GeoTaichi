@@ -177,7 +177,7 @@ def test_lsmpm_soft_engine_capability_is_bound_before_explicit_steps():
     assert "_soft_particle_backend" not in dem_step
     assert "soft_particle_backend" in dem_step
     assert "bind_explicit_engine" in inspect.getsource(DEMExplicitEngine.choose_engine)
-    assert soft_step.index("if int(scene.softNum[0]) <= 0") < soft_step.index("if self.soft_particle_material is None")
+    assert soft_step.index("if soft_num <= 0") < soft_step.index("if self.soft_particle_material is None")
     assert "soft_levelset_advection_scheme" not in soft_step
     assert "advance_soft_levelset_transport" in soft_step
 
@@ -189,6 +189,7 @@ def test_tlmpm_adaptive_transfer_is_bound_before_the_hot_loop():
     engine = object.__new__(TLExplicitEngine)
     interpolation = lambda *_args: None
     engine.calculate_interpolation = interpolation
+    engine.compute = None
     adaptive_scene = SimpleNamespace(element=SimpleNamespace(adaptive=True), sparse_grid=None)
     engine._bind_adaptive_runtime_functions(adaptive_scene)
     assert engine.update_adaptive_interpolation is interpolation
@@ -287,17 +288,16 @@ def test_mpm_dense_and_sparse_taylor_p2g_are_separate_bound_paths():
 
 
 def test_igampm_mpm_mode_is_bound_before_the_implicit_hot_path():
-    assert "hasattr" not in inspect.getsource(IGAMPMEngine._material_feasible_step_cuda)
+    assert "hasattr" not in inspect.getsource(IGAMPMEngine._material_feasible_step_device)
     assert "total_lagrangian_mpm" not in inspect.getsource(IGAMPMEngine._prepare_implicit_ipc_step)
     assert "prepare_mpm_step" in inspect.getsource(IGAMPMEngine._prepare_implicit_ipc_step)
     assert "solve_configured_implicit_system" in inspect.getsource(IGAMPMEngine._implicit_ipc_substep_once)
     assert "solve_configured_implicit_system" in inspect.getsource(IGAMPMEngine.__init__)
     assert "track_energy and" not in inspect.getsource(IGAMPMEngine.implicit_ipc_substep)
-    explicit_force = inspect.getsource(IGAMPMEngine._assemble_explicit_mpm_forces)
-    assert "hasattr" not in explicit_force
-    assert "explicit_mpm_velocity_p2g" in explicit_force
-    assert "if self.mpm.compute_traction" not in explicit_force
-    assert "compute_mpm_traction" in explicit_force
+    explicit_step = inspect.getsource(ExplicitIGAMPMEngine.step)
+    assert "hasattr" not in explicit_step
+    assert "self.mpm.compute(" in explicit_step
+    assert "self.mpm.system_resolve(" in inspect.getsource(ExplicitIGAMPMEngine._prepare_mpm_step)
 
 
 def test_explicit_igampm_energy_sampling_does_not_replay_contact():

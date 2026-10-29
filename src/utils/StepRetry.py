@@ -61,11 +61,11 @@ class StepRetryPolicy:
 
 def nonlinear_failure_kind(exception: BaseException) -> str:
     """Map implicit solver messages onto stable diagnostic categories."""
-    message = str(exception).lower()
-    if "linear solve" in message or "pcg" in message or "bicg" in message:
-        return "linear_solver_nonconvergence"
+    message = str(exception).lower().split(" (", 1)[0]
     if "line search" in message or "no strictly feasible step" in message:
         return "line_search_failure"
+    if "linear solve" in message or "pcg" in message or "bicg" in message:
+        return "linear_solver_nonconvergence"
     if "descent" in message or "descending" in message:
         return "non_descent_direction"
     if "did not converge" in message or "failed to converge" in message:

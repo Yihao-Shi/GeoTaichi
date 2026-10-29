@@ -256,12 +256,12 @@ def test_armijo_policy_is_scalar_only_for_device_line_search():
     assert not hasattr(search, "search")
 
 
-def test_implicit_final_reaction_reuses_last_newton_force():
+def test_implicit_final_reaction_uses_force_before_velocity_finalization():
     from src.fem.engines.ImplicitFEM import ImplicitFEM
 
     source = inspect.getsource(ImplicitFEM._substep_once)
     finalization = source.split("self.state.finalize_newmark", 1)[1]
 
-    assert "final_internal = internal_force" in finalization
+    assert source.index("final_internal =") < source.index("self.state.finalize_newmark")
     assert "_assemble_internal_device" not in finalization
-    assert "prepared_converged_device" in inspect.getsource(ImplicitFEM._contact_converged_device)
+    assert "self.state.assemble_equilibrium" in finalization

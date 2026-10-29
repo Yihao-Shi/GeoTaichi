@@ -3,7 +3,9 @@
 `src/linear_solver` provides the sparse-matrix and Krylov infrastructure
 shared by FEM, IGA, MPM, DEM affine bodies, and coupled IPC systems. The
 default production paths operate on Taichi fields across CPU, Metal, and CUDA
-backends.
+backends. `device_reduction=False` is rejected on every architecture; NumPy/SciPy
+reduction references and validation-matrix generators live in `tests/helpers/`.
+
 
 `BuildTriplet.install_fixed_pattern()` reserves permanent reduced off-diagonal
 slots for immutable topology. Device scatter adds directly to those slots;
@@ -22,7 +24,6 @@ device hash reduction; dynamic contact can still use bucket reduction upstream.
 | `CompressedSparseRow` | CSR storage and row-oriented operators |
 | `BuildTriplet` | Device block-triplet assembly, hash reduction, block Jacobi, and Krylov solve |
 | `HashReduction` | Duplicate block reduction and reusable sparsity patterns |
-| `BlockSparsityPatternCache` | Persistent block topology across nonlinear iterations |
 | `MatrixFreeCG`, `MatrixFreePCG` | Symmetric matrix-free Krylov methods |
 | `MatrixFreeBICG`, `MatrixFreeBICGSTAB`, `MatrixFreePBICGSTAB` | Nonsymmetric matrix-free methods |
 | `MultiGridPCG*` | Geometric multigrid pressure/Poisson solvers |
@@ -38,12 +39,79 @@ blocks; pattern version, active prefix, and transpose mode invalidate the
 cache. CUDA assigns a warp to each block row, while CPU/Metal use one thread.
 The adjacency is allocated on the first matvec, so assembly-only matrices do
 not reserve it. This is independent of SciPy and does not change assembly.
-BiCGSTAB fuses direction/preconditioning and vector/dot-product updates,
-returning four scalar reductions per ordinary iteration. It preserves the
-shadow residual and recurrence until prospective convergence, then checks
+BiCGSTAB fuses direction/preconditioning and vector/dot-product updates.
+Its reference path returns four scalar reductions per ordinary iteration. It
+preserves the shadow residual and recurrence until prospective convergence, then checks
 `b - A*x`. A failed check restarts with the true residual and `p = r`;
 termination also reports the true residual. Frequent periodic restarts can
 destabilize the recurrence of strongly scaled nonsymmetric IPC systems.
+
+Lagged forward solves in `AffineBodyEngine` retain all 12 degrees of freedom
+of each body's four control points in its principal block: HashTriplet uses
+`preconditioner_group_size=4`, and COO (including the legacy MatrixFree selection)
+uses the same device `BlockJacobi` factorization. FEM--ABD (HashTriplet and COO), Direct MPM--ABD and soft-MPM--ABD
+use the same device `BlockJacobi`: the affine-control prefix has complete
+12-DOF body blocks and the remaining grid nodes have 3-DOF blocks.
+`preconditioner_group_nodes` marks that prefix in block rows; omitting it
+groups the entire active matrix. Blocks are extracted after all contact terms,
+constraint elimination and sparse reduction, so mixed-contact stiffness is
+included while the complete coupled matrix remains the Krylov operator.
+Other matrices retain their default single-block preconditioner.
+
+Reordered raw contact stencils probe the existing device hash table in parallel
+before inserting new coordinates. `last_mapping_misses` counts raw entries
+forwarded to the serial insertion pass. Stable raw slots retain their direct
+mapping; eviction, duplicate reduction and overflow checks keep the same rules.
+
+PCG uses scaled Cholesky with positive finite pivot checks. BiCGSTAB uses
+scaled LU with partial row pivoting, including the transposed preconditioner
+for nonsymmetric adjoints. `DeviceKrylov` applies these factors through the
+existing `LinearOperator` interface; scalar COO PCG/BiCGSTAB also accept that
+interface on device and reference dispatch paths. Invalid/singular factors
+are failures. An exact adjoint explicitly requesting PCG-to-BiCGSTAB fallback
+also takes that fallback if its principal blocks are not positive definite;
+LU still uses the unchanged exact tangent. The requested true-residual test
+is preserved. Standalone exact ABD adjoints retain their previous
+single-block preconditioner and BiCGSTAB fallback.
+
+CUDA CG/PCG and (preconditioned) BiCGSTAB use `DeviceKrylov`: inner products,
+alpha/beta/omega and breakdown guards stay on device. Ordinary CG/PCG iterations
+read one small status vector; BiCGSTAB reads two to retain its early alpha-step
+convergence check. True-residual checks and final diagnostics add boundary reads.
+Status vectors explicitly use FP64. CPU/Metal keep the reference paths;
+`GEOTAICHI_KRYLOV_DEVICE=0` selects those paths on CUDA for comparison.
+Reduction loops use a power-of-two bound above the active prefix, with inactive
+entries excluded. This limits empty CUDA blocks without specializing a kernel
+for every active-node count; recurrence equations and true-residual tests stay
+the same.
+Both mixture MGPCG variants reuse the graph dispatch while retaining their
+own stencils, signed pressure operators and breakdown thresholds.
+
+## Matching linear and Newton tolerances
+
+A fixed absolute residual tolerance has units and must match the nonlinear
+motion criterion. For BackwardEuler projected ABD with assembled matrix
+`A = M + K`, positive-definite inertial mass `M` and `K >= 0`, the remaining
+linear error satisfies
+
+```text
+max_i |b_i A^-1 r| / dt
+    <= sqrt(max_i(b_i M^-1 b_i^T) / lambda_min(M)) * ||r||_2 / dt.
+```
+
+Here `b_i` maps affine controls to one surface coordinate and `r = rhs - A*x`
+is the true, unpreconditioned residual. The immutable mass and basis, together
+with the minimum allowed timestep, give a case-specific fixed linear tolerance
+below a chosen fraction of the Newton velocity tolerance. This does not adapt
+or relax a tolerance during a solve. The cube example explicitly uses Newton
+`0.05 m/s` with PCG absolute `1e-10`, giving a minimum-step linear velocity
+bound of `1.2e-3 m/s`. The bunny example uses Newton `1e-5 m/s` with PCG
+absolute `1e-12`, giving a bound of `9.9e-7 m/s`. Its strong orthogonality
+penalty requires tighter rotation corrections; the complete 4 s CUDA trajectory
+is still under validation in the owning example.
+Static systems and nonsymmetric or unprojected tangents need a different error
+bound; this argument is not a universal absolute tolerance for every solver.
+Other time integrators use their actual `dv/dq` factor in place of `1/dt`.
 
 ## Sparse block assembly
 
@@ -144,6 +212,70 @@ Periodic residual replacement recomputes
 $`\boldsymbol{r}=\boldsymbol{b}-\boldsymbol{A}\boldsymbol{x}`$ to prevent
 finite-precision drift in stiff systems.
 
+### Choosing fixed tolerances
+
+An absolute residual threshold has the units and scale of the assembled right-hand
+side. Multiplying both $`A`$ and $`b`$ by a positive constant leaves the solution
+unchanged but scales that residual. The relative term above preserves this
+uniform-scaling invariance when it controls the threshold. Both tolerance
+parameters are fixed before the solve; iteration exhaustion does not relax them.
+The public controls reach both the forward and supported adjoint device solves:
+
+| Solver entry | Absolute residual keyword | Relative residual keyword |
+| --- | --- | --- |
+| ABD / LSMPM soft--ABD | `linear_tolerance` | `linear_relative_tolerance` |
+| FEM, IGA, Direct MPM, FEM--ABD, FEM--MPM | `linear_solver_tolerance` | `linear_solver_relative_tolerance` |
+| Direct IPC-MPM / Direct MPM--ABD | MPM child's `linear_solver_tolerance` | MPM child's `linear_solver_relative_tolerance` |
+| Native MPM `set_implicit_solver_parameters` | `residual_tolerance` | `linear_solver_relative_tolerance` |
+| Monolithic IGA--MPM | `monolithic_linear_solver_tolerance` | `monolithic_linear_solver_relative_tolerance` |
+
+Zero relative tolerance selects absolute-only stopping; zero absolute tolerance
+selects relative-only stopping when the relative value is positive. Both must be
+finite and non-negative. Newly exposed relative controls default to zero pending
+representative physical calibration; existing FEM/coupling defaults are retained.
+Monolithic IGA--MPM still requires a positive absolute tolerance because some
+of its nonlinear safeguards request an absolute-only inner solve.
+Fully implicit friction can tighten both branches to its existing force-residual
+bound, so a loose linear setting cannot bypass that nonlinear safeguard. This
+does not change the stored user parameters. Pressure solvers retain their own
+pressure-equation controls; nonlinear force, velocity, divergence and friction
+tests are separate from this linear criterion. Direct SciPy factorization has no
+Krylov stopping tolerance.
+
+An explicitly supplied absolute linear threshold selects absolute-only stopping
+unless the same configuration call also supplies a relative threshold. This
+applies to the public entries above, including repeated setter calls: setting
+only an absolute value replaces an earlier relative setting with zero. Supplying
+both values explicitly selects the combined `max(atol, rtol * initial_residual)`
+criterion. Omitted absolute values use the path's existing defaults/settings.
+Native MPM's `residual_tolerance` is a linear threshold; the same keyword on
+Direct MPM controls the outer nonlinear iteration and does not reset its linear
+relative setting.
+
+For a previously validated example, explicitly retain the threshold(s) used by
+that run, along with its outer Newton/friction tolerances, iteration limits,
+time step and integration parameters. A formerly absolute-only example needs
+only its original absolute keyword, not an extra relative-zero keyword. Use the
+run's effective configuration, not today's defaults, as the source. This
+preserves the requested stopping policy; it does not guarantee bitwise
+reproduction across solver or backend changes. A run that failed at its former
+threshold is not a validated reference for that threshold.
+
+A criterion $`|r_k^T M^{-1}r_k| \leq \eta |r_0^T M^{-1}r_0|`$ measures a squared
+preconditioned-norm ratio. For example, $`\eta=10^{-3}`$ corresponds to a norm
+ratio of about 0.0316 for an SPD preconditioner. This differs from GeoTaichi's
+Euclidean relative residual criterion, so these numerical thresholds cannot
+be substituted directly.
+
+Neither relative residual nor a floating-point backward-error bound alone
+certifies the physical correction: $`e=A^{-1}r`$ also depends on conditioning.
+Choose an inner tolerance using representative systems and check the resulting
+surface/node velocity error against the outer Newton target; retain independent
+friction convergence checks where applicable. A tolerance supported by one
+captured contact matrix is case-specific evidence, not a general default for
+ABD, FEM, and their coupling. A stalled solve remains a failure; do not increase
+its threshold until it passes.
+
 ## BiCGSTAB for nonsymmetric systems
 
 Choose a fixed shadow residual $`\widehat{\boldsymbol{r}}=\boldsymbol{r}_0`$.
@@ -222,6 +354,13 @@ and
 (\boldsymbol{b}-\boldsymbol{A}\boldsymbol{x}^{(m)}),
 \qquad \omega=\frac23.
 ```
+
+On CUDA, `MGPCGPoissonSolver` batches its V-cycle and CG updates with Taichi
+graphs. CG coefficients remain on the device; each iteration returns one
+residual/breakdown record. Convergence still requires a fresh `b - A*x`.
+Set `GEOTAICHI_MGPCG_GRAPH=0` to compare with the Python dispatch path.
+`GEOTAICHI_SYNC_TIMERS=0` also removes GPU fences used only for stage timing;
+stage timings then measure submission time rather than GPU execution time.
 
 ## HashTriplet example
 

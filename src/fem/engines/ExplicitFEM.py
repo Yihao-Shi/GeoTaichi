@@ -110,6 +110,7 @@ class ExplicitFEM(FEMSolver):
     ):
         self.soft_particle_contact.resolve(
             self.dt,
+            current_step=self.step_count,
             advance_history=advance_history,
             check_rebuild=check_rebuild,
         )

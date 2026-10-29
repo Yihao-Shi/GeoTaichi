@@ -127,7 +127,7 @@ dempm.mpm.add_material(
         "MaterialID": 1,
         "Density": 2650,
         "YoungModulus": 1e5,
-        "PoissionRatio": 0.3,
+        "PoissonRatio": 0.3,
         "Friction": 22,
         "Dilation": 0.0,
         "Cohesion": 0.0,

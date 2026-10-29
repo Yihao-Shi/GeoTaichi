@@ -134,19 +134,13 @@ def alpha_shape(pos, alpha=2.0, jitter=0.0):
 
 
 def get_side_view(path, curr=20):
-    try:
-        data = np.load(path + "/particles/MPMParticle{0:06d}.npz".format(curr), allow_pickle=True)
-    except:
-        data = np.load(path + "/particles/MPMParticle{0:06d}.npz".format(1), allow_pickle=True)
+    data = np.load(path + "/particles/MPMParticle{0:06d}.npz".format(curr), allow_pickle=True)
     pos = data["position"][:, [0, 2]]
     return boundary_from_raster(pos)
 
 
 def get_top_view(path, curr=20):
-    try:
-        data = np.load(path + "/particles/MPMParticle{0:06d}.npz".format(curr), allow_pickle=True)
-    except:
-        data = np.load(path + "/particles/MPMParticle{0:06d}.npz".format(1), allow_pickle=True)
+    data = np.load(path + "/particles/MPMParticle{0:06d}.npz".format(curr), allow_pickle=True)
     pos = data["position"]
     pos = pos[pos[:, 2] > 6.0][:, [0, 1]]
     return boundary_from_raster(pos)
@@ -160,10 +154,7 @@ def get_influence_view(path, curr=20, top_filter=15.6):
         pos_filter = pos_filter[:, [0, 1]]
         return boundary_from_raster(pos_filter)
     else:
-        try:
-            data = np.load(path + "/particles/MPMParticle{0:06d}.npz".format(curr), allow_pickle=True)
-        except:
-            data = np.load(path + "/particles/MPMParticle{0:06d}.npz".format(1), allow_pickle=True)
+        data = np.load(path + "/particles/MPMParticle{0:06d}.npz".format(curr), allow_pickle=True)
         pos0 = data0["position"]
         pos = data["position"]
         pos_filter = pos[pos0[:, 2] > 15.5]
@@ -172,14 +163,11 @@ def get_influence_view(path, curr=20, top_filter=15.6):
 
 
 def max_z(path, curr=20, nx=300, ny=300, xlim=(0.0, 50.0), ylim=(0.0, 50.0), smooth_sigma=5.0):
-    try:
-        data = np.load(f"{path}/particles/MPMParticle{curr:06d}.npz", allow_pickle=True)
-    except:
-        data = np.load(f"{path}/particles/MPMParticle{1:06d}.npz", allow_pickle=True)
+    data = np.load(f"{path}/particles/MPMParticle{curr:06d}.npz", allow_pickle=True)
     points = data["position"]
 
-    mask = np.isfinite(points).all(axis=1)
-    points = points[mask]
+    if not np.isfinite(points).all():
+        raise ValueError(f"Snapshot contains non-finite particle positions: {path}, frame {curr}")
 
     x_min, x_max = xlim
     y_min, y_max = ylim

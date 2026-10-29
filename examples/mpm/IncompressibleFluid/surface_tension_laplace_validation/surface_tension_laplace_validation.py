@@ -135,7 +135,7 @@ def run_example(args):
         shape_function="QuadBSpline",
         gravity=[0.0 for _ in range(dim)],
         material_type="Fluid",
-        velocity_projection="PIC",
+        velocity_projection=None,
         solver_type="Implicit",
         discretization="FDM",
         fluid_level_set=True,
@@ -170,7 +170,6 @@ def run_example(args):
         material={
             "MaterialID": 1,
             "Density": 1000.0,
-            "Modulus": 2.0e6,
             "Viscosity": 1.0e-3,
             "ElementLength": min(element_size),
             "cL": 1.5,

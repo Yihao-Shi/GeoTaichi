@@ -4,6 +4,7 @@ import taichi as ti
 from taichi.lang.impl import current_cfg
 
 from src.linear_solver.LinearOperator import LinearOperator
+from src.linear_solver.DeviceKrylov import DeviceKrylov, device_krylov_enabled
 
 from src.linear_solver.MatrixFreeKrylovKernel import (
     cg_reset as reset,
@@ -23,6 +24,8 @@ class MatrixFreeCG(object):
         self.Ax = ti.field(dtype=float)
         ti.root.dense(ti.i, int(length)).place(self.p, self.r, self.Ap, self.Ax)
         self.scalar_rest()
+        self.device_execution = device_krylov_enabled()
+        self._device_solver = None
 
         if current_cfg().arch == ti.cuda:
             self.reduce = reduce_atomic
@@ -64,6 +67,11 @@ class MatrixFreeCG(object):
             raise ValueError("CG relative tolerance must be finite and non-negative")
         if maxiter < 0:
             raise ValueError("CG maxiter must be non-negative")
+
+        if self.device_execution:
+            if self._device_solver is None:
+                self._device_solver = DeviceKrylov(self)
+            return self._device_solver.solve(A, b, x, None, size, tol, maxiter, rel_tol, reliable_interval=32)
 
         reset(size, self.p, self.r, self.Ap, self.Ax)
         self.scalar_rest()

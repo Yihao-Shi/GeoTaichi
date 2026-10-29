@@ -1,3 +1,4 @@
+from tests.helpers.affine_contact_probe import surface_direction_inf_norm
 import inspect
 from types import SimpleNamespace
 
@@ -5,28 +6,25 @@ import numpy as np
 import pytest
 import taichi as ti
 
-from src.mpdem.engines.SoftAffineIPCEngine import SoftAffineIPCEngine
+from tests.helpers.soft_affine_reference import ReferenceSoftAffineIPCEngine as SoftAffineIPCEngine
+from tests.helpers.soft_affine_reference import ReferenceSoftAffineIPCOperator as SoftAffineIPCOperator
+from src.mpdem.engines.SoftAffineIPCOperator import SoftAffineIPCOperator as ProductionSoftAffineIPCOperator
 from src.mpm.MaterialManager import SoftParticleMaterialManager
 from src.mpdem.engines.SoftAffineIPCOperator import (
-    SoftAffineIPCOperator,
     _validate_soft_affine_lagged_friction_configuration,
     soft_affine_friction_capabilities,
 )
 from src.dem.engines.AffineBodyOperator import TaichiAffineBodyOperator
-from src.dem.engines.AffineBodyState import AffineBodyState
+from tests.helpers.affine_state_reference import ReferenceAffineBodyState as AffineBodyState
 from src.fem.contact.BVHBroadPhase import DynamicBVHBroadPhase
 from src.linear_solver.BuildTriplet import BuildTriplet
-from src.physics_model.contact_model.ipc.ContactAssembly import pullback_dense
+from tests.helpers.ipc_assembly_reference import pullback_dense
+from tests.helpers.ipc_scalar_reference import ipc_barrier_distance_terms_py
 from src.physics_model.contact_model.ipc.IPC import (
-    ipc_barrier_distance_terms_py,
     ipc_toolkit_barrier_distance2_terms,
     ipc_toolkit_barrier_distance_terms,
 )
-from src.physics_model.contact_model.ipc.LevelSetAffine import (
-    TrilinearLevelSet,
-    affine_basis,
-    point_affine_levelset_gap,
-)
+from tests.helpers.affine_levelset_reference import TrilinearLevelSet, affine_basis, point_affine_levelset_gap
 from src.utils.PrefixSum import PrefixSumExecutor
 
 
@@ -109,11 +107,13 @@ def test_soft_affine_physical_measure_includes_scaled_particle_gradient(taichi_r
         operator.soft_direction.from_numpy(np.array([-1e-4, 0.0, 0.0, 1e-4, 0.0, 0.0]))
         expected = 2e-4
     operator.affine = SimpleNamespace(
-        surface_direction_inf_norm=lambda direction: float(np.max(np.abs(direction))),
+        body_num=1,
+        basis_np=np.eye(4),
+        node2body_np=np.zeros(4, dtype=np.int32),
         device_surface_direction_inf_norm=lambda: 0.0,
     )
     assert operator.physical_direction_inf_norm_device() == pytest.approx(expected, rel=1e-6, abs=1e-20)
-    assert operator.physical_direction_inf_norm(np.array([0.0])) == pytest.approx(expected, rel=1e-6, abs=1e-20)
+    assert operator.physical_direction_inf_norm(np.zeros(12)) == pytest.approx(expected, rel=1e-6, abs=1e-20)
 
 
 def test_soft_grid_dof_scan_rejects_inactive_nodes():
@@ -232,20 +232,6 @@ def test_soft_affine_levelset_mixed_kernel_matches_reference_gradient():
     assert np.isfinite(matrix).all()
     np.testing.assert_allclose(matrix, matrix.T, atol=1.0e-14)
     assert np.linalg.eigvalsh(matrix).min() >= -1.0e-9
-
-
-def test_soft_affine_levelset_semi_ipc_assembles_and_updates_multiplier():
-    operator, _levelset, _controls = _make_levelset_mixed_kernel_harness()
-    _enable_semi_ipc(operator)
-    _clear_coupled_contact_system(operator)
-
-    operator._assemble_mixed_contact(need_matrix=True)
-    operator.accept_semi_update_device()
-
-    assert np.isfinite(float(operator.energy[None]))
-    assert int(operator.mixed_levelset_contact_count[None]) == 1
-    assert int(operator.semi_count[None]) == 1
-    assert np.max(operator.semi_multiplier.to_numpy()) > 0.0
 
 
 def test_soft_affine_timestep_update_reaches_compiled_contact_kernel():
@@ -401,7 +387,6 @@ def test_soft_affine_residual_probe_does_not_reset_gpu_triplets():
 @pytest.mark.parametrize("joint_num", (0, 1))
 def test_soft_affine_adjoint_requests_the_physical_lagged_tangent(plastic, joint_num):
     operator = object.__new__(SoftAffineIPCOperator)
-    operator.is_semi = False
     operator.fully_implicit = False
     operator.total_dof = 6
     operator.max_dof = 9
@@ -424,6 +409,7 @@ def test_soft_affine_adjoint_requests_the_physical_lagged_tangent(plastic, joint
     operator.adjoint_solution = _ArrayField(np.zeros(9))
     operator.sims = SimpleNamespace(
         affine_linear_tolerance=1.0e-10,
+        affine_linear_relative_tolerance=0.0,
         affine_linear_max_iteration=50,
     )
     calls = []
@@ -463,7 +449,6 @@ def test_soft_affine_adjoint_requests_the_physical_lagged_tangent(plastic, joint
 
 def test_soft_affine_differentiation_rejects_fully_implicit_friction():
     operator = object.__new__(SoftAffineIPCOperator)
-    operator.is_semi = False
     operator.fully_implicit = True
     operator.affine = SimpleNamespace(levelset_contact=False)
     with pytest.raises(ValueError, match="fully implicit friction"):
@@ -873,7 +858,6 @@ def test_differentiable_soft_affine_rejects_fully_implicit_friction():
     engine.operator = SimpleNamespace(
         soft_material=SimpleNamespace(matProps=SimpleNamespace(model=type("FiniteStrainVonMisesModel", (), {})())),
         affine=SimpleNamespace(levelset_contact=False),
-        is_semi=False,
         fully_implicit=True,
     )
 
@@ -938,10 +922,17 @@ def _toolkit_barrier_distance2_oracle(distance2, active_distance2, kappa):
 
 @ti.data_oriented
 class _MaterialTable:
-    surface_direction_inf_norm = TaichiAffineBodyOperator.surface_direction_inf_norm
+    use_newmark = False
+    friction_reference_vertex = TaichiAffineBodyOperator.friction_reference_vertex
+    endpoint_vertex_origin = TaichiAffineBodyOperator.endpoint_vertex_origin
+    endpoint_velocity_factor = TaichiAffineBodyOperator.endpoint_velocity_factor
+    surface_direction_inf_norm = surface_direction_inf_norm
 
     def __init__(self):
         self.levelset_contact = False
+        self.dt_device = ti.field(float, shape=())
+        self.dt_device[None] = 0.01
+        self.scale = 0.0001
         self.pp_dhat = ti.field(float, shape=(1, 1))
         self.pp_kappa = ti.field(float, shape=(1, 1))
         self.pp_mu = ti.field(float, shape=(1, 1))
@@ -987,7 +978,8 @@ class _MaterialTable:
         self.node2body_np = np.zeros(3, dtype=np.int32)
 
     def set_timestep(self, _dt):
-        pass
+        self.dt_device[None] = _dt
+        self.scale = _dt * _dt
 
     @ti.func
     def _material_id(self, material):
@@ -1470,19 +1462,6 @@ def _clear_coupled_contact_system(operator):
     operator.hash_triplet.values.fill(0.0)
 
 
-def _enable_semi_ipc(operator, capacity=16):
-    operator.is_semi = True
-    operator.affine.is_semi = True
-    operator.semi_capacity = capacity
-    operator.semi_state = ti.field(ti.i32, shape=capacity)
-    operator.semi_key = ti.Vector.field(4, ti.i32, shape=capacity)
-    operator.semi_multiplier = ti.field(float, shape=capacity)
-    operator.semi_count = ti.field(ti.i32, shape=())
-    operator.semi_overflow = ti.field(ti.i32, shape=())
-    operator.semi_constraint_violation = ti.field(float, shape=())
-    operator.semi_state.fill(2)
-
-
 def _prepare_production_assembly_harness(operator, friction_mode):
     """Keep only non-contact subsystems synthetic around production contact."""
     if friction_mode == "fully_implicit":
@@ -1788,15 +1767,9 @@ def test_soft_affine_lagged_requires_official_projected_spd_pcg():
         operator._assert_cuda_device_residency()
 
 
-def test_soft_affine_cuda_rejects_cpu_full_vector_entry_points():
-    operator = object.__new__(SoftAffineIPCOperator)
-    operator.cuda_hot_loop = True
-    with pytest.raises(RuntimeError, match="CPU reference path"):
-        operator.assemble(np.zeros(1), need_matrix=False)
-    with pytest.raises(RuntimeError, match="CPU reference path"):
-        operator.solve_direction(SimpleNamespace(), np.zeros(1))
-    with pytest.raises(RuntimeError, match="CPU reference path"):
-        operator.apply_jacobian(np.zeros(1))
+def test_soft_affine_production_has_no_cpu_full_vector_entry_points():
+    for method in ("assemble", "solve_direction", "apply_jacobian", "begin_step", "accept_step", "init_step_size"):
+        assert not hasattr(ProductionSoftAffineIPCOperator, method)
 
 
 def test_soft_affine_cuda_hot_loop_has_no_nonlinear_vector_numpy_roundtrip():
@@ -1847,6 +1820,7 @@ def test_soft_affine_lagged_device_zero_correction_is_convergence():
             "solution_inf_norm": 0.0,
             "unclamped_solution_inf_norm": 0.0,
             "unclamped_physical_correction_norm": 0.0,
+            "unclamped_correction_velocity": 0.0 / 0.01,
         },
     )
     engine._line_search_device = lambda *_args: pytest.fail("a converged Newton probe must not be applied")
@@ -1869,11 +1843,13 @@ def test_soft_affine_lagged_device_applies_first_nonzero_small_correction():
                 "solution_inf_norm": 5.0e-10,
                 "unclamped_solution_inf_norm": 5.0e-10,
                 "unclamped_physical_correction_norm": 5.0e-10,
+                "unclamped_correction_velocity": 5.0e-10 / 0.01,
             },
             {
                 "solution_inf_norm": 0.0,
                 "unclamped_solution_inf_norm": 0.0,
                 "unclamped_physical_correction_norm": 0.0,
+                "unclamped_correction_velocity": 0.0 / 0.01,
             },
         )
     )
@@ -1959,11 +1935,13 @@ def test_soft_affine_lagged_device_uses_raw_correction_velocity():
                 "solution_inf_norm": 1.0e-10,
                 "unclamped_solution_inf_norm": 2.0e-9,
                 "unclamped_physical_correction_norm": 2.0e-9,
+                "unclamped_correction_velocity": 2.0e-9 / 0.01,
             },
             {
                 "solution_inf_norm": 5.0e-10,
                 "unclamped_solution_inf_norm": 5.0e-10,
                 "unclamped_physical_correction_norm": 5.0e-10,
+                "unclamped_correction_velocity": 5.0e-10 / 0.01,
             },
         )
     )
@@ -2058,6 +2036,7 @@ def test_soft_affine_device_dispatch_masks_and_rollback_stay_in_fields():
         control_num=2,
         edge_type_count=edge_type_count,
         edge_mollifier_type_count=edge_mollifier_type_count,
+        device_restore_step_start=lambda: None,
         y=ti.Vector.field(3, float, shape=2),
     )
     operator.mixed_contact_type_count = ti.field(ti.i32, shape=7)
@@ -2201,6 +2180,7 @@ def test_soft_affine_device_newton_vectors_and_jp_stay_in_taichi_fields():
     operator.sims = SimpleNamespace(affine_fully_implicit_jacobian_shift=shift)
     sims = SimpleNamespace(
         affine_linear_tolerance=1.0e-13,
+        affine_linear_relative_tolerance=0.0,
         affine_linear_max_iteration=50,
         affine_max_step=0.0,
     )
@@ -2717,8 +2697,18 @@ def test_soft_soft_fully_implicit_friction_full_jacobian_matches_fd():
     np.testing.assert_allclose(jacobian, finite_difference, rtol=2.0e-5, atol=2.0e-6)
 
 
-def test_mixed_fully_implicit_pt_scattered_full_jacobian_matches_fd():
+@pytest.mark.parametrize("newmark", [False, True])
+def test_mixed_fully_implicit_pt_scattered_full_jacobian_matches_fd(newmark):
     operator = _make_bilateral_kernel_harness()
+    if newmark:
+        affine = operator.affine
+        affine.use_newmark = True
+        affine.integration = (0.5, 0.25, 0.5)
+        affine.scale_device = ti.field(float, shape=())
+        affine.scale_device[None] = 0.25 * operator.dt**2
+        affine.initial_force_evaluation = ti.field(ti.i32, shape=())
+        operator.scene.soft_grid = ti.types.struct(v=ti.types.vector(3, float)).field(shape=2)
+        affine.velocity_origin_y = ti.Vector.field(3, float, shape=4)
     _enable_fully_implicit_friction(operator)
     operator.fully_stribeck_velocity = 5.0
     operator.affine.pp_kappa[0, 0] = 80.0
@@ -2767,6 +2757,8 @@ def test_mixed_fully_implicit_pt_scattered_full_jacobian_matches_fd():
         soft_disp[:3] = point_delta
         operator.affine.x.from_numpy(triangle)
         operator.affine.hat_x.from_numpy(triangle - affine_delta)
+        if newmark:
+            operator.affine.velocity_origin_y.from_numpy(np.vstack([triangle - affine_delta, np.zeros(3)]))
         operator.scene.soft_point[0].x = ti.Vector(point - point_delta)
         operator.soft_disp.from_numpy(soft_disp)
         soft_hats = operator.soft_hat_x.to_numpy()
@@ -3071,7 +3063,11 @@ def test_soft_affine_device_outer_probe_is_unclamped_unapplied_velocity():
         assemble_device=lambda need_matrix=True: (events.append(("assemble", need_matrix)) or 2.0),
         solve_direction_device=lambda _sims, clamp_direction=True: (
             events.append(("probe", clamp_direction))
-            or {"solution_inf_norm": 2.0e-9, "physical_correction_norm": 2.0e-9}
+            or {
+                "solution_inf_norm": 2.0e-9,
+                "physical_correction_norm": 2.0e-9,
+                "unclamped_correction_velocity": 2.0e-7,
+            }
         ),
         accept_step_device=lambda: events.append("accept"),
     )

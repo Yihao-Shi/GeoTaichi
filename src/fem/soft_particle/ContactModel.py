@@ -3,6 +3,7 @@
 import math
 
 import taichi as ti
+from src.contact_detection.bounding_volume_hierarchy.MultiPatchLBVH import validate_bvh_rebuild_interval
 
 
 def property_value(mapping, name, *aliases, default=None, required=False):
@@ -73,6 +74,7 @@ class FEMSoftParticleContactModel:
             "Barrier": 2,
         }[self.model_name]
         self.search = _search_name(kwargs.pop("search", kwargs.pop("broad_phase", "LinkedCell")))
+        self.bvh_rebuild_interval = validate_bvh_rebuild_interval(kwargs.pop("bvh_rebuild_interval", 1000))
         self.verlet_distance = kwargs.pop("verlet_distance", None)
         self.verlet_distance_multiplier = float(kwargs.pop("verlet_distance_multiplier", 0.1))
         self.maximum_penetration_fraction = float(

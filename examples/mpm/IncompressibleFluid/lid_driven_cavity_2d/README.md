@@ -6,7 +6,7 @@ The unit-square fluid domain has a lid speed of 1, density 1 and dynamic viscosi
 GEOTAICHI_ARCH=gpu GEOTAICHI_LID_2D_DT=0.004 GEOTAICHI_LID_2D_TIME=30 \
   python examples/mpm/IncompressibleFluid/lid_driven_cavity_2d/lid_driven_cavity_2d.py
 python examples/mpm/IncompressibleFluid/lid_driven_cavity_2d/draw/compare_lid_driven_cavity_2d.py \
-  examples/mpm/IncompressibleFluid/OutputData/lid_driven_cavity_2d
+  examples/mpm/IncompressibleFluid/lid_driven_cavity_2d/OutputData/lid_driven_cavity_2d
 ```
 
 Default spacing is 1/64 and PPC is 3 per direction. The example selects float64 before importing the particle structs. `GEOTAICHI_LID_2D_DX`, `GEOTAICHI_LID_2D_DT`, `GEOTAICHI_LID_2D_TIME`, `GEOTAICHI_LID_2D_SAVE_INTERVAL` and `GEOTAICHI_LID_2D_SAVE_PATH` configure refinement studies. For explicit diffusion use νΔt(1/Δx²+1/Δy²)≤1/2, in addition to the advective CFL restriction.

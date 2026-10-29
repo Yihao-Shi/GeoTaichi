@@ -41,17 +41,12 @@ class Engine(
         if self.contactor.contact_model != "IPC":
             raise ValueError("IGA-MPM Engine supports only implicit IPC contact")
         self.barrier = self.contactor.barrier
-        self.is_semi = self.barrier.is_semi
         self.friction = self.contactor.friction
         self.derivative = PointNurbsDerivative()
         self.activate_barrier = self.contactor.activate_barrier
         self.activate_fric = self.contactor.activate_friction
         self.friction_mode = self.contactor.friction_mode
-        if self.is_semi and self.friction_mode != "lagged":
-            raise ValueError("IGA-MPM SemiIPC currently requires friction_mode='lagged'")
-        self.project_lagged_hessians = (
-            self.friction_mode == "lagged" and not self.is_semi and not self.nonassociated_newton
-        )
+        self.project_lagged_hessians = self.friction_mode == "lagged" and not self.nonassociated_newton
         self.friction_iterations = self.contactor.friction_iterations
         self.friction_tolerance = self.contactor.friction_tolerance
         self.friction_max_iterations = self.contactor.friction_max_iterations
@@ -77,15 +72,7 @@ class Engine(
                 ),
             )
         )
-        self.monolithic_tolerance = float(
-            kwargs.get(
-                "monolithic_tolerance",
-                min(
-                    float(self.iga.tol),
-                    float(self.mpm.tol),
-                ),
-            )
-        )
+        self.monolithic_tolerance = float(kwargs.get("monolithic_tolerance", 1.0e-8))
         self.monolithic_force_atol = float(kwargs.get("monolithic_force_atol", 1.0e-10))
         self.monolithic_force_rtol = float(kwargs.get("monolithic_force_rtol", 5.0e-4))
         self.monolithic_dirichlet_tolerance = float(kwargs.get("monolithic_dirichlet_tolerance", 1.0e-12))
@@ -95,10 +82,6 @@ class Engine(
             reduction=kwargs.get("step_retry_reduction", 0.5),
             minimum_timestep=kwargs.get("step_retry_minimum_timestep", 0.0),
         )
-        if self.is_semi and self.step_retry.enabled:
-            raise ValueError(
-                "IGA-MPM step retry does not support SemiIPC because its multipliers advance inside Newton iterations"
-            )
         self.time = 0.0
         self.history = []
         self.last_step_record = None
@@ -235,8 +218,6 @@ class Engine(
         self.contact_projection_seed = (
             ti.Vector.field(2, ti.f64, shape=self.contact_capacity) if config.DIM == 3 else None
         )
-        self.semi_multiplier = ti.field(ti.f64, shape=self.contact_capacity)
-        self.semi_constraint_violation = ti.field(ti.f64, shape=())
         self.friction_contacts = friction_contact_dtype.field(shape=self.contact_capacity)
         self.contact_active_buffer = ti.field(ti.i32, shape=self.contact_capacity)
         self.contact_surface_id_buffer = ti.field(ti.i32, shape=self.contact_capacity)
@@ -390,9 +371,12 @@ class Engine(
         self.contact_accd_motion_bound = ti.field(ti.f64, shape=self.contact_capacity)
         self.contact_accd_active = ti.field(ti.i32, shape=self.contact_capacity)
         self.contact_accd_active_count = ti.field(ti.i32, shape=())
-        self.monolithic_linear_solver_tolerance = float(kwargs.get("monolithic_linear_solver_tolerance", 1.0e-10))
+        self.monolithic_linear_solver_tolerance = float(kwargs.get("monolithic_linear_solver_tolerance", 1.0e-12))
         self.monolithic_linear_solver_relative_tolerance = float(
-            kwargs.get("monolithic_linear_solver_relative_tolerance", 0.0)
+            kwargs.get(
+                "monolithic_linear_solver_relative_tolerance",
+                0.0 if "monolithic_linear_solver_tolerance" in kwargs else 1.0e-12,
+            )
         )
         self.monolithic_inexact_newton = kwargs.get("monolithic_inexact_newton", False)
         if not isinstance(self.monolithic_inexact_newton, (bool, np.bool_)):

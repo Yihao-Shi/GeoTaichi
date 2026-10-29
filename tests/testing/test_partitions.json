@@ -1,6 +1,67 @@
 {
   "version": 2,
   "partitions": {
+    "pre-commit": {
+      "description": "Small CPU numerical and test-runner contracts for local commits (under 60 seconds).",
+      "paths": [
+        "tests/unit/testing/test_partition_runner.py",
+        "tests/unit/testing/test_test_taxonomy.py",
+        "tests/unit/testing/test_commit_checks.py",
+        ".githooks/test_pre_commit.py",
+        "tests/unit/mesh/test_gauss_points.py",
+        "tests/unit/levelset/test_weno.py",
+        "tests/unit/physics_model/contact/ipc/test_ipc_shared_scalar_laws.py",
+        "tests/unit/iga/io/test_patch_vtu_output.py"
+      ],
+      "markers": "required or geometry or io"
+    },
+    "commit-validation": {
+      "description": "Additional basic validation for [full test] commits; only the listed small CPU tests.",
+      "paths": [
+        "tests/unit/linear_solver/test_assembly_backends.py",
+        "tests/unit/iga/geometry/test_nurbs_basis_and_refinement.py"
+      ]
+    },
+    "commit-materials": {
+      "description": "All shared material-law oracles and solver material-entry checks, selected for affected [full test] commits.",
+      "paths": [
+        "tests/unit/physics_model/materials",
+        "tests/unit/fem/test_hex8_elastoplastic.py",
+        "tests/unit/mpm/test_bbar_2d_consistency.py",
+        "tests/unit/mpm/test_soft_particle_dp_adapter.py",
+        "tests/unit/mpm/test_static_twophase_jacobian_reference.py"
+      ],
+      "globs": [
+        "tests/unit/physics_model/test_*.py",
+        "tests/unit/**/test_*material*.py",
+        "tests/integration/materials/test_*.py"
+      ]
+    },
+    "commit-contact": {
+      "description": "All shared IPC/DEM contact-law tests and unit contact consumers, selected for affected [full test] commits.",
+      "paths": [
+        "tests/unit/physics_model/contact",
+        "tests/unit/dem/contact",
+        "tests/unit/iga/contact",
+        "tests/unit/dem/neighbor/test_lsdem_facet_point_candidates.py",
+        "tests/unit/fedem/test_levelset_broadphase.py",
+        "tests/unit/fem/test_fem_soft_particle.py",
+        "tests/verification/ipc/test_point_nurbs_barrier_projected_newton.py",
+        "tests/verification/ipc/test_igampm_fully_implicit_friction.py"
+      ],
+      "globs": [
+        "tests/unit/**/test_*ipc*.py",
+        "tests/unit/fem/test_*contact*.py",
+        "tests/unit/fedem/test_*contact*.py",
+        "tests/unit/coupling/test_*contact*.py",
+        "tests/unit/coupling/test_*friction*.py",
+        "tests/unit/dem/test_*contact*.py",
+        "tests/unit/mpm/test_*friction*.py",
+        "tests/unit/mpm/test_*contact.py",
+        "tests/unit/linear_solver/test_contact*.py",
+        "tests/unit/contact_detection/test_*.py"
+      ]
+    },
     "all": {
       "description": "All correctness tests; scalability benchmarks are separate.",
       "paths": [

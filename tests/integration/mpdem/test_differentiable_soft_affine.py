@@ -16,16 +16,21 @@ pytestmark = [
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
 
 
-def _build_case(tmp_path):
+def _build_case(tmp_path, material="DruckerPrager", newmark=(1.0, 0.5, 1.0), friction_mode="lagged"):
     from geotaichi import MPDEM, init, polyhedron
 
+    requested_arch = os.environ.get("GEOTAICHI_TEST_ARCH", "cpu")
     init(
-        arch=os.environ.get("GEOTAICHI_TEST_ARCH", "cpu"),
+        arch="gpu" if requested_arch == "cuda" else requested_arch,
         cpu_max_num_threads=2,
         default_fp="float64",
         offline_cache=False,
         log=False,
     )
+    if requested_arch == "cuda":
+        import taichi as ti
+
+        assert ti.lang.impl.current_cfg().arch == ti.cuda, "CUDA preflight must not fall back to another backend"
     coupling = MPDEM(log=False)
     coupling.set_configuration(
         domain=[1.0, 1.0, 1.0],
@@ -51,12 +56,13 @@ def _build_case(tmp_path):
         log=False,
     )
     dem.set_affine_body_parameters(
+        newmark=newmark,
         contact_model="BarrierIPC",
         assemble_type="HashTriplet",
         dhat=0.03,
         barrier_stiffness=2.0e4,
         friction_epsv=1.0e-3,
-        friction_mode="lagged",
+        friction_mode=friction_mode,
         friction_iterations=1,
         max_newton_iteration=40,
         newton_tolerance=1.0e-7,
@@ -100,7 +106,7 @@ def _build_case(tmp_path):
         materialID=0,
         attribute={
             "Density": 1200.0,
-            "ConstitutiveModel": "DruckerPrager",
+            "ConstitutiveModel": material,
             "YoungModulus": 5.0e3,
             "PoissonRatio": 0.3,
             "FrictionAngle": 20.0,
@@ -289,3 +295,98 @@ def test_soft_affine_rejects_plastic_material(tmp_path):
     # fixed-cache scale derivative has its own finite-difference unit test.
     assert np.isfinite(gradient["friction_scale"])
     assert abs(gradient["friction_scale"]) > 1.0e-12
+
+
+def test_soft_affine_newmark_uses_original_coupled_device_step(tmp_path):
+    dem = _build_case(tmp_path, material="NeoHookean", newmark=(0.5, 0.25, 0.5))
+    operator = dem.enginer.operator
+    affine = operator.affine
+    initial_y = affine.y.to_numpy().copy()
+    initial_v = affine.velocity_y.to_numpy().copy()
+    operator.begin_step_device()
+    initial_a = affine.acceleration_y.to_numpy().copy()
+    assert np.linalg.norm(initial_a) > 0
+    assert operator.scale == pytest.approx(0.25 * operator.dt**2)
+    # The production engine performs the same begin/solve/accept lifecycle.
+    dem.enginer.step(dem.sims, dem.scene)
+    accepted_y = affine.y.to_numpy()
+    accepted_a = affine.acceleration_y.to_numpy()
+    expected_y = initial_y + operator.dt * initial_v + 0.25 * operator.dt**2 * (initial_a + accepted_a)
+    expected_v = initial_v + 0.5 * operator.dt * (initial_a + accepted_a)
+    np.testing.assert_allclose(accepted_y, expected_y, atol=1e-12)
+    np.testing.assert_allclose(affine.velocity_y.to_numpy(), expected_v, atol=1e-11)
+    snapshot = dem.enginer.output_snapshot()
+    np.testing.assert_allclose(snapshot["a_y"].reshape(-1, 3), accepted_a)
+    np.testing.assert_allclose(snapshot["newmark"], [0.5, 0.25, 0.5])
+
+
+@pytest.mark.parametrize("newmark", [(1.0, 0.5, 1.0), (0.5, 0.25, 0.5)])
+def test_soft_affine_fully_implicit_mixed_lu_step_converges(tmp_path, newmark):
+    dem = _build_case(tmp_path, material="NeoHookean", newmark=newmark, friction_mode="fully_implicit")
+    engine, operator = dem.enginer, dem.enginer.operator
+    original_norm = operator.residual_inf_norm_device
+    residuals = []
+    remaining_velocity = []
+
+    def observe_residual():
+        value = original_norm()
+        residuals.append(value)
+        return value
+
+    operator.residual_inf_norm_device = observe_residual
+    before_commit = engine._differentiate_before_commit
+
+    def check_remaining_correction():
+        operator.solve_direction_device(dem.sims, clamp_direction=False)
+        remaining_velocity.append(operator.physical_direction_inf_norm_device(velocity=True))
+        before_commit()
+
+    engine._differentiate_before_commit = check_remaining_correction
+    for _ in range(3):
+        residuals.clear()
+        engine.step(dem.sims, dem.scene)
+        target = engine._fully_implicit_force_target(dem.sims, residuals[0], operator.dt)
+        assert engine.last_inner_converged
+        assert residuals[-1] <= target
+        # Independently check physical accuracy after satisfying the force criterion.
+        assert remaining_velocity[-1] < 1e-8
+        assert operator.hash_triplet.solver == "BiCGSTAB"
+        assert not operator.hash_triplet.group_preconditioner.cholesky
+        assert np.isfinite(operator.affine.y.to_numpy()).all()
+        assert np.isfinite(operator.affine.velocity_y.to_numpy()).all()
+        assert np.isfinite(dem.scene.soft_point.x.to_numpy()).all()
+        dem.sims.current_time += operator.dt
+        dem.sims.current_step += 1
+
+
+@pytest.mark.parametrize("newmark", [(1.0, 0.5, 1.0), (0.5, 0.25, 0.5)])
+def test_soft_affine_fully_implicit_mixed_lu_solves_full_jacobian_and_rolls_back(tmp_path, newmark):
+    dem = _build_case(tmp_path, material="NeoHookean", newmark=newmark, friction_mode="fully_implicit")
+    engine, operator = dem.enginer, dem.enginer.operator
+    initial_y = operator.affine.y.to_numpy().copy()
+    initial_v = operator.affine.velocity_y.to_numpy().copy()
+    initial_points = dem.scene.soft_point.x.to_numpy().copy()
+    operator.begin_step_device()
+    operator.initialize_fully_implicit_velocity_predictor_device(dem.sims)
+    operator.assemble_device(need_matrix=True)
+    residual = operator.global_grad.to_numpy()[: operator.total_dof].copy()
+    result = operator.solve_direction_device(dem.sims, clamp_direction=False)
+    assert result["converged"], result
+    matrix = operator.hash_triplet.to_scipy(operator.total_dof // 3).toarray()
+    direction = operator.hash_triplet.x.to_numpy().ravel()[: operator.total_dof]
+    assert np.linalg.norm(matrix @ direction + residual) <= result["convergence_tolerance"]
+    assert operator.hash_triplet.solver == "BiCGSTAB"
+    assert not operator.hash_triplet.group_preconditioner.cholesky
+    operator.rollback_step_device()
+    np.testing.assert_array_equal(operator.affine.y.to_numpy(), initial_y)
+    np.testing.assert_array_equal(operator.affine.velocity_y.to_numpy(), initial_v)
+    initial_acceleration = operator.affine.acceleration_y.to_numpy().copy()
+    # Exhaust Newton deliberately without changing its requested force accuracy.
+    dem.sims.affine_max_newton_iteration = 1
+    with pytest.raises(RuntimeError, match="Newton solve did not converge"):
+        engine.step(dem.sims, dem.scene)
+    assert not engine.last_inner_converged
+    np.testing.assert_array_equal(operator.affine.y.to_numpy(), initial_y)
+    np.testing.assert_array_equal(operator.affine.velocity_y.to_numpy(), initial_v)
+    np.testing.assert_array_equal(operator.affine.acceleration_y.to_numpy(), initial_acceleration)
+    np.testing.assert_array_equal(dem.scene.soft_point.x.to_numpy(), initial_points)

@@ -12,10 +12,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from src.physics_model.contact_model.ipc import (
-    ipc_barrier_distance_terms_py,
-    ipc_fully_implicit_scalar_law_py,
-)
+from tests.helpers.ipc_scalar_reference import ipc_barrier_distance_terms_py, ipc_fully_implicit_scalar_law_py
 
 
 def newmark_endpoint_velocity_coefficients(integration, timestep):
@@ -31,8 +28,7 @@ def newmark_endpoint_velocity_coefficients(integration, timestep):
         or timestep <= 0.0
     ):
         raise ValueError(
-            "fully implicit friction requires positive finite Newmark "
-            "[alpha, beta, gamma] and timestep"
+            "fully implicit friction requires positive finite Newmark " "[alpha, beta, gamma] and timestep"
         )
     alpha, beta, gamma = integration[:3]
     displacement = 0.5 * gamma / (alpha * beta * timestep)
@@ -60,15 +56,12 @@ def _parameter_derivative(
     hessian = tangents.T @ tangents
     for first in range(parameter_count):
         for second in range(parameter_count):
-            hessian[first, second] += float(
-                np.dot(residual, curvatures[first, second])
-            )
+            hessian[first, second] += float(np.dot(residual, curvatures[first, second]))
 
     right_hand_side = np.empty((parameter_count, dof_count), dtype=np.float64)
     for parameter in range(parameter_count):
         right_hand_side[parameter] = (
-            tangents[:, parameter] @ direct_residual_jacobian
-            + residual @ direct_tangent_jacobians[parameter]
+            tangents[:, parameter] @ direct_residual_jacobian + residual @ direct_tangent_jacobians[parameter]
         )
 
     reduced = hessian[np.ix_(free, free)]
@@ -81,9 +74,7 @@ def _parameter_derivative(
             "NURBS closest-point stationarity Hessian is singular; the "
             "fully implicit geometry derivative is not uniquely defined"
         )
-    result[free] = np.linalg.solve(
-        reduced, -right_hand_side[free]
-    )
+    result[free] = np.linalg.solve(reduced, -right_hand_side[free])
     return result
 
 
@@ -122,19 +113,13 @@ def point_nurbs_friction_residual_jacobian(
     control_positions = np.asarray(control_positions, dtype=np.float64)
     point_position = np.asarray(point_position, dtype=np.float64).reshape(-1)
     shape_values = np.asarray(shape_values, dtype=np.float64).reshape(-1)
-    shape_first_derivatives = np.asarray(
-        shape_first_derivatives, dtype=np.float64
-    )
-    shape_second_derivatives = np.asarray(
-        shape_second_derivatives, dtype=np.float64
-    )
+    shape_first_derivatives = np.asarray(shape_first_derivatives, dtype=np.float64)
+    shape_second_derivatives = np.asarray(shape_second_derivatives, dtype=np.float64)
     control_dofs = np.asarray(control_dofs, dtype=np.int64)
     point_dofs = np.asarray(point_dofs, dtype=np.int64)
     point_weights = np.asarray(point_weights, dtype=np.float64).reshape(-1)
     endpoint_velocity = np.asarray(endpoint_velocity, dtype=np.float64).reshape(-1)
-    velocity_scale = np.asarray(
-        endpoint_velocity_displacement_scale, dtype=np.float64
-    ).reshape(-1)
+    velocity_scale = np.asarray(endpoint_velocity_displacement_scale, dtype=np.float64).reshape(-1)
 
     dimension = point_position.size
     support_size = shape_values.size
@@ -172,18 +157,14 @@ def point_nurbs_friction_residual_jacobian(
     residual = surface_position - point_position
     distance = float(np.linalg.norm(residual))
     if not np.isfinite(distance) or distance <= float(dmin):
-        raise RuntimeError(
-            "fully implicit NURBS friction requires distance strictly above dmin"
-        )
+        raise RuntimeError("fully implicit NURBS friction requires distance strictly above dmin")
     normal = residual / distance
 
     # B maps generalized endpoint velocities to point-minus-surface velocity.
     relative_map = np.zeros((dimension, dof_count), dtype=np.float64)
     for support in range(support_size):
         for component in range(dimension):
-            relative_map[component, control_dofs[support, component]] -= (
-                shape_values[support]
-            )
+            relative_map[component, control_dofs[support, component]] -= shape_values[support]
     for point_node, weight in enumerate(point_weights):
         for component in range(dimension):
             relative_map[component, point_dofs[point_node, component]] += weight
@@ -224,36 +205,30 @@ def point_nurbs_friction_residual_jacobian(
         resistance = radial_factor * tangential_velocity
         force_residual = -np.einsum("ji,j->i", relative_map, resistance)
         if not np.all(np.isfinite(force_residual)):
-            raise RuntimeError(
-                "fully implicit NURBS friction produced non-finite values"
-            )
-        return force_residual, None, {
-            "distance": distance,
-            "normal_force": normal_force,
-            "speed": speed,
-        }
+            raise RuntimeError("fully implicit NURBS friction produced non-finite values")
+        return (
+            force_residual,
+            None,
+            {
+                "distance": distance,
+                "normal_force": normal_force,
+                "speed": speed,
+            },
+        )
 
     direct_residual_jacobian = -relative_map
     tangents = control_positions.T @ shape_first_derivatives
-    curvatures = np.empty(
-        (parameter_count, parameter_count, dimension), dtype=np.float64
-    )
+    curvatures = np.empty((parameter_count, parameter_count, dimension), dtype=np.float64)
     for first in range(parameter_count):
         for second in range(parameter_count):
-            curvatures[first, second] = (
-                shape_second_derivatives[:, first, second] @ control_positions
-            )
+            curvatures[first, second] = shape_second_derivatives[:, first, second] @ control_positions
 
-    direct_tangent_jacobians = np.zeros(
-        (parameter_count, dimension, dof_count), dtype=np.float64
-    )
+    direct_tangent_jacobians = np.zeros((parameter_count, dimension, dof_count), dtype=np.float64)
     for parameter in range(parameter_count):
         for support in range(support_size):
             derivative = shape_first_derivatives[support, parameter]
             for component in range(dimension):
-                direct_tangent_jacobians[
-                    parameter, component, control_dofs[support, component]
-                ] += derivative
+                direct_tangent_jacobians[parameter, component, control_dofs[support, component]] += derivative
 
     parameter_jacobian = _parameter_derivative(
         residual,
@@ -263,44 +238,29 @@ def point_nurbs_friction_residual_jacobian(
         direct_tangent_jacobians,
         free_parameters,
     )
-    residual_jacobian = (
-        direct_residual_jacobian + tangents @ parameter_jacobian
-    )
+    residual_jacobian = direct_residual_jacobian + tangents @ parameter_jacobian
     distance_jacobian = normal @ residual_jacobian
     tangent_projector = np.eye(dimension) - np.outer(normal, normal)
     normal_jacobian = tangent_projector @ residual_jacobian / distance
 
     shape_jacobian = shape_first_derivatives @ parameter_jacobian
-    relative_map_jacobian = np.zeros(
-        (dimension, dof_count, dof_count), dtype=np.float64
-    )
+    relative_map_jacobian = np.zeros((dimension, dof_count, dof_count), dtype=np.float64)
     for support in range(support_size):
         for component in range(dimension):
-            relative_map_jacobian[
-                component, control_dofs[support, component], :
-            ] -= shape_jacobian[support]
+            relative_map_jacobian[component, control_dofs[support, component], :] -= shape_jacobian[support]
 
     relative_velocity = relative_map @ endpoint_velocity
-    relative_velocity_jacobian = (
-        relative_map * velocity_scale[np.newaxis, :]
-        + np.einsum(
-            "ijk,j->ik", relative_map_jacobian, endpoint_velocity
-        )
+    relative_velocity_jacobian = relative_map * velocity_scale[np.newaxis, :] + np.einsum(
+        "ijk,j->ik", relative_map_jacobian, endpoint_velocity
     )
 
-    projector_jacobian = np.empty(
-        (dimension, dimension, dof_count), dtype=np.float64
-    )
+    projector_jacobian = np.empty((dimension, dimension, dof_count), dtype=np.float64)
     for column in range(dof_count):
         dn = normal_jacobian[:, column]
-        projector_jacobian[:, :, column] = -(
-            np.outer(dn, normal) + np.outer(normal, dn)
-        )
+        projector_jacobian[:, :, column] = -(np.outer(dn, normal) + np.outer(normal, dn))
     tangential_velocity = tangent_projector @ relative_velocity
     tangential_velocity_jacobian = tangent_projector @ relative_velocity_jacobian
-    tangential_velocity_jacobian += np.einsum(
-        "ijk,j->ik", projector_jacobian, relative_velocity
-    )
+    tangential_velocity_jacobian += np.einsum("ijk,j->ik", projector_jacobian, relative_velocity)
     speed = float(np.linalg.norm(tangential_velocity))
 
     _, barrier_gradient, barrier_hessian = ipc_barrier_distance_terms_py(
@@ -317,27 +277,21 @@ def point_nurbs_friction_residual_jacobian(
             np.zeros((dof_count, dof_count), dtype=np.float64),
             {"distance": distance, "normal_force": 0.0, "speed": speed},
         )
-    normal_force_jacobian = (
-        -float(area) * barrier_hessian * distance_jacobian
-    )
+    normal_force_jacobian = -float(area) * barrier_hessian * distance_jacobian
 
-    radial_factor, radial_speed_derivative, factor_per_normal_force = (
-        ipc_fully_implicit_scalar_law_py(
-            speed,
-            normal_force,
-            mu_dynamic,
-            mu_static,
-            mu_viscous,
-            stribeck_velocity,
-            epsv,
-            friction_profile,
-        )
+    radial_factor, radial_speed_derivative, factor_per_normal_force = ipc_fully_implicit_scalar_law_py(
+        speed,
+        normal_force,
+        mu_dynamic,
+        mu_static,
+        mu_viscous,
+        stribeck_velocity,
+        epsv,
+        friction_profile,
     )
     velocity_jacobian = radial_factor * np.eye(dimension)
     if speed > 0.0:
-        velocity_jacobian += (
-            radial_speed_derivative / speed
-        ) * np.outer(tangential_velocity, tangential_velocity)
+        velocity_jacobian += (radial_speed_derivative / speed) * np.outer(tangential_velocity, tangential_velocity)
     resistance = radial_factor * tangential_velocity
     resistance_jacobian = velocity_jacobian @ tangential_velocity_jacobian
     resistance_jacobian += np.outer(
@@ -346,9 +300,7 @@ def point_nurbs_friction_residual_jacobian(
     )
 
     force_residual = -np.einsum("ji,j->i", relative_map, resistance)
-    negative_force_jacobian = np.einsum(
-        "ji,jk->ik", relative_map, resistance_jacobian
-    )
+    negative_force_jacobian = np.einsum("ji,jk->ik", relative_map, resistance_jacobian)
     for column in range(dof_count):
         negative_force_jacobian[:, column] += np.einsum(
             "ji,j->i",
@@ -356,18 +308,19 @@ def point_nurbs_friction_residual_jacobian(
             resistance,
         )
 
-    if not (
-        np.all(np.isfinite(force_residual))
-        and np.all(np.isfinite(negative_force_jacobian))
-    ):
+    if not (np.all(np.isfinite(force_residual)) and np.all(np.isfinite(negative_force_jacobian))):
         raise RuntimeError("fully implicit NURBS friction produced non-finite values")
-    return force_residual, negative_force_jacobian, {
-        "distance": distance,
-        "normal_force": normal_force,
-        "speed": speed,
-        "parameter_jacobian": parameter_jacobian,
-        "normal_jacobian": normal_jacobian,
-    }
+    return (
+        force_residual,
+        negative_force_jacobian,
+        {
+            "distance": distance,
+            "normal_force": normal_force,
+            "speed": speed,
+            "parameter_jacobian": parameter_jacobian,
+            "normal_jacobian": normal_jacobian,
+        },
+    )
 
 
 __all__ = [

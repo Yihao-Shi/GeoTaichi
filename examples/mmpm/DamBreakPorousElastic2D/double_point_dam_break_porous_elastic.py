@@ -109,7 +109,7 @@ mpm.set_configuration(
     delayed_fluid_advection=True,
     particle_shifting=PARTICLE_SHIFTING,
     particle_shifting_scale=1.0,
-    visualize=True,
+    visualize=not SKIP_POSTPROCESS,
 )
 mpm.set_solver(
     {
@@ -145,7 +145,6 @@ mpm.add_material(
         "SolidDensity": 2650.0,
         "FluidDensity": 1000.0,
         "Porosity": POROSITY,
-        "FluidBulkModulus": 2.2e8,
         "Permeability": PERMEABILITY,
         "FluidViscosity": 1.0e-3,
         "GrainDiameter": GRAIN_DIAMETER,
@@ -238,7 +237,7 @@ mpm.add_boundary_condition(
         }
     ]
 )
-mpm.select_save_data(particle=True, grid=False, object=False)
+mpm.select_save_data(particle=True, grid=True, object=False)
 if PARTICLE_SHIFTING and 0.0 < PARTICLE_SHIFTING_END_TIME < SIMULATION_TIME:
     mpm.modify_parameters(SimulationTime=PARTICLE_SHIFTING_END_TIME)
     mpm.run()

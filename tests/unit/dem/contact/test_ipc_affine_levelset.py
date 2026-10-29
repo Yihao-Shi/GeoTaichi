@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from src.physics_model.contact_model.ipc.LevelSetAffine import (
+from tests.helpers.affine_levelset_reference import (
     AdjointIPCNonpenetration,
     AffineLevelSetBody,
     AffineLevelSetIPC,
@@ -11,10 +11,7 @@ from src.physics_model.contact_model.ipc.LevelSetAffine import (
     continued_ipc_barrier_distance_terms,
     point_affine_levelset_gap,
 )
-from src.physics_model.contact_model.ipc.IPC import (
-    ipc_barrier_distance_terms_py,
-)
-
+from tests.helpers.ipc_scalar_reference import ipc_barrier_distance_terms_py
 
 pytestmark = [
     pytest.mark.unit,
@@ -26,10 +23,7 @@ pytestmark = [
 
 
 def _grid_values(shape, origin, spacing, function):
-    axes = [
-        origin[d] + spacing * np.arange(shape[d], dtype=np.float64)
-        for d in range(3)
-    ]
+    axes = [origin[d] + spacing * np.arange(shape[d], dtype=np.float64) for d in range(3)]
     x, y, z = np.meshgrid(*axes, indexing="ij")
     # GeoTaichi's level-set grids use x-fast linearization.
     return function(x, y, z).flatten(order="F")
@@ -112,16 +106,7 @@ def test_trilinear_levelset_value_gradient_hessian_are_exact():
 
     def polynomial(x, y, z):
         a, bx, by, bz, bxy, bxz, byz, bxyz = coefficients
-        return (
-            a
-            + bx * x
-            + by * y
-            + bz * z
-            + bxy * x * y
-            + bxz * x * z
-            + byz * y * z
-            + bxyz * x * y * z
-        )
+        return a + bx * x + by * y + bz * z + bxy * x * y + bxz * x * z + byz * y * z + bxyz * x * y * z
 
     grid = TrilinearLevelSet(
         origin,
@@ -158,9 +143,7 @@ def test_affine_levelset_gap_gradient_and_hessian_match_finite_difference():
     source = _identity_controls([0.553, 0.023, 0.017])
     target = _identity_controls([0.0, 0.0, 0.0])
     basis = affine_basis([-0.347, 0.031, 0.019])
-    reference = affine_levelset_gap(
-        source, target, basis, 1.0, grid
-    )
+    reference = affine_levelset_gap(source, target, basis, 1.0, grid)
     packed = np.concatenate((source.reshape(-1), target.reshape(-1)))
     eye = np.eye(packed.size)
     epsilon = 2.0e-6
@@ -176,34 +159,21 @@ def test_affine_levelset_gap_gradient_and_hessian_match_finite_difference():
 
     fd_gradient = np.array(
         [
-            (
-                evaluate(packed + epsilon * direction).gap
-                - evaluate(packed - epsilon * direction).gap
-            )
-            / (2.0 * epsilon)
+            (evaluate(packed + epsilon * direction).gap - evaluate(packed - epsilon * direction).gap) / (2.0 * epsilon)
             for direction in eye
         ]
     )
     fd_hessian = np.column_stack(
         [
-            (
-                evaluate(packed + epsilon * direction).gradient
-                - evaluate(packed - epsilon * direction).gradient
-            )
+            (evaluate(packed + epsilon * direction).gradient - evaluate(packed - epsilon * direction).gradient)
             / (2.0 * epsilon)
             for direction in eye
         ]
     )
 
-    np.testing.assert_allclose(
-        reference.gradient, fd_gradient, rtol=2.0e-7, atol=2.0e-9
-    )
-    np.testing.assert_allclose(
-        reference.hessian, fd_hessian, rtol=2.0e-6, atol=3.0e-8
-    )
-    np.testing.assert_allclose(
-        reference.hessian, reference.hessian.T, atol=1.0e-13
-    )
+    np.testing.assert_allclose(reference.gradient, fd_gradient, rtol=2.0e-7, atol=2.0e-9)
+    np.testing.assert_allclose(reference.hessian, fd_hessian, rtol=2.0e-6, atol=3.0e-8)
+    np.testing.assert_allclose(reference.hessian, reference.hessian.T, atol=1.0e-13)
 
 
 def test_point_affine_levelset_gap_derivatives_match_finite_difference():
@@ -211,9 +181,7 @@ def test_point_affine_levelset_gap_derivatives_match_finite_difference():
     point = np.array([0.316, -0.071, 0.039])
     target = _identity_controls([0.0, 0.0, 0.0])
     packed = np.concatenate((point, target.reshape(-1)))
-    reference = point_affine_levelset_gap(
-        point, target, 1.0, grid
-    )
+    reference = point_affine_levelset_gap(point, target, 1.0, grid)
     epsilon = 2.0e-6
     eye = np.eye(packed.size)
 
@@ -227,31 +195,20 @@ def test_point_affine_levelset_gap_derivatives_match_finite_difference():
 
     fd_gradient = np.array(
         [
-            (
-                evaluate(packed + epsilon * direction).gap
-                - evaluate(packed - epsilon * direction).gap
-            )
-            / (2.0 * epsilon)
+            (evaluate(packed + epsilon * direction).gap - evaluate(packed - epsilon * direction).gap) / (2.0 * epsilon)
             for direction in eye
         ]
     )
     fd_hessian = np.column_stack(
         [
-            (
-                evaluate(packed + epsilon * direction).gradient
-                - evaluate(packed - epsilon * direction).gradient
-            )
+            (evaluate(packed + epsilon * direction).gradient - evaluate(packed - epsilon * direction).gradient)
             / (2.0 * epsilon)
             for direction in eye
         ]
     )
 
-    np.testing.assert_allclose(
-        reference.gradient, fd_gradient, rtol=2.0e-7, atol=2.0e-9
-    )
-    np.testing.assert_allclose(
-        reference.hessian, fd_hessian, rtol=2.0e-6, atol=3.0e-8
-    )
+    np.testing.assert_allclose(reference.gradient, fd_gradient, rtol=2.0e-7, atol=2.0e-9)
+    np.testing.assert_allclose(reference.hessian, fd_hessian, rtol=2.0e-6, atol=3.0e-8)
 
 
 def test_levelset_ipc_energy_derivatives_match_finite_difference():
@@ -267,12 +224,8 @@ def test_levelset_ipc_energy_derivatives_match_finite_difference():
     fd_gradient = np.array(
         [
             (
-                contact.assemble(
-                    packed + epsilon * direction, need_hessian=False
-                ).energy
-                - contact.assemble(
-                    packed - epsilon * direction, need_hessian=False
-                ).energy
+                contact.assemble(packed + epsilon * direction, need_hessian=False).energy
+                - contact.assemble(packed - epsilon * direction, need_hessian=False).energy
             )
             / (2.0 * epsilon)
             for direction in eye
@@ -281,24 +234,16 @@ def test_levelset_ipc_energy_derivatives_match_finite_difference():
     fd_hessian = np.column_stack(
         [
             (
-                contact.assemble(
-                    packed + epsilon * direction, need_hessian=False
-                ).gradient
-                - contact.assemble(
-                    packed - epsilon * direction, need_hessian=False
-                ).gradient
+                contact.assemble(packed + epsilon * direction, need_hessian=False).gradient
+                - contact.assemble(packed - epsilon * direction, need_hessian=False).gradient
             )
             / (2.0 * epsilon)
             for direction in eye
         ]
     )
 
-    np.testing.assert_allclose(
-        reference.gradient, fd_gradient, rtol=2.0e-6, atol=2.0e-8
-    )
-    np.testing.assert_allclose(
-        reference.hessian, fd_hessian, rtol=2.0e-5, atol=2.0e-6
-    )
+    np.testing.assert_allclose(reference.gradient, fd_gradient, rtol=2.0e-6, atol=2.0e-8)
+    np.testing.assert_allclose(reference.hessian, fd_hessian, rtol=2.0e-5, atol=2.0e-6)
 
 
 def test_continued_ipc_is_c2_and_finite_for_overlap():
@@ -357,13 +302,7 @@ def test_adjoint_initializer_pushes_overlap_to_strict_feasibility():
         for sign in (-1.0, 1.0):
             anchor = np.zeros(6)
             anchor[anchor_dof] = sign * epsilon
-            perturbed = initializer.solve(
-                anchor=anchor, maximum_iterations=300
-            )
-            losses.append(
-                0.5 * float(np.sum(perturbed.translations**2))
-            )
+            perturbed = initializer.solve(anchor=anchor, maximum_iterations=300)
+            losses.append(0.5 * float(np.sum(perturbed.translations**2)))
         finite_difference = (losses[1] - losses[0]) / (2.0 * epsilon)
-        assert adjoint_gradient[anchor_dof] == pytest.approx(
-            finite_difference, rel=2.0e-5, abs=2.0e-7
-        )
+        assert adjoint_gradient[anchor_dof] == pytest.approx(finite_difference, rel=2.0e-5, abs=2.0e-7)

@@ -195,26 +195,11 @@ def test_implicit_ipc_builds_dynamic_candidates_and_cross_hessian(tmp_path, sear
         assert result["converged"]
         assert result["time"] == pytest.approx(1.0e-3)
         assert (tmp_path / "vtks" / "FEM000000.vtu").is_file()
-
-
-def test_implicit_semi_ipc_assembles_cross_hessian(tmp_path):
-    coupling = _implicit_system(
-        tmp_path,
-        search="LinkedCell",
-        friction=0.2,
-        contact_model="SemiIPC",
-    )
     engine = coupling.enginer
-    engine.contact.begin_step(
-        engine.fem.state.position,
-        engine.mpm.grid_disp,
-        engine.dt,
-    )
-    system = engine.assemble_system(include_friction=True)
-
-    assert system["contact_count"] >= 1
-    assert engine.contact.friction_count >= 1
-    assert engine.contact.diagnostics()["model"] == "SemiIPC"
+    engine.correction.fill(0.0)
+    engine.correction[0] = 1e-6
+    engine._reduce_system_metrics(int(system["active_dof"]))
+    assert engine.correction_velocity_inf_norm[None] == pytest.approx(2e-6 / engine.dt)
 
 
 def test_implicit_ipc_rejects_elastoplastic_fem_before_coupled_solve(tmp_path):
@@ -326,7 +311,7 @@ def test_inexact_nonassociated_dp_keeps_force_and_lagged_friction_convergence(tm
         for repeat in range(5):
             engine.fem.state.position.from_numpy(initial)
             engine.mpm.grid_disp.fill(0.0)
-            engine.fem.state.build_newmark_prediction(engine.dt, engine.fem.beta)
+            engine.fem.state.build_newmark_prediction(engine.dt, engine.fem.integration)
             engine.contact.begin_step(engine.fem.state.position, engine.mpm.grid_disp, engine.dt)
             start = perf_counter()
             converged, records, _ = engine.solve_lagged_friction_fixed_point(verbose=False)

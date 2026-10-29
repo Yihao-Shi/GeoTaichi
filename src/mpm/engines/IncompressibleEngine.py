@@ -63,6 +63,14 @@ class IncompressibleEngine(Engine):
                 self.compute = self.fdm_discretization_mgpcg
         elif sims.discretization == "FEM":
             self.compute = self.fem_discretization
+        if sims.velocity_projection_scheme == "Affine":
+            self.compute = self.affine_updating
+
+    def affine_updating(self, sims: Simulation, scene: myScene, neighbor=None):
+        if sims.linear_solver == "MGPCG":
+            self.fdm_discretization_mgpcg(sims, scene, neighbor)
+        else:
+            self.fdm_discretization_pcg(sims, scene, neighbor)
 
     def manage_function(self, sims: Simulation):
         self.is_verlet_update = self.is_need_update_verlet_table
@@ -262,6 +270,22 @@ class IncompressibleEngine(Engine):
             offset = 0 * scene.element.cnum - scene.element.ghost_cell
             self.ibm_force_cell = ti.Vector.field(self.dimension, dtype=float, shape=scene.element.cnum, offset=offset)
 
+    def validate_ibm_cut_cell_geometry(self, sims: Simulation, scene: myScene):
+        if not sims.solid_sdf_cut_cell or not self.has_ibm_source():
+            return
+        overlap = kernel_count_ibm_cut_cell_overlap(
+            scene.element.ghost_cell,
+            scene.element.cnum,
+            self.ibm_solid_fraction,
+            scene.element.cell.solid_sdf,
+        )
+        if overlap:
+            raise RuntimeError(
+                f"IBM and cut-cell geometry overlap in {overlap} fully occupied body cells. "
+                "IBM bodies retain fictitious fluid; use separate geometry for "
+                "cut_cell_function and ibm_field_function."
+            )
+
     def apply_ibm_source(self, sims: Simulation, scene: myScene):
         if not self.has_ibm_source():
             return
@@ -277,6 +301,13 @@ class IncompressibleEngine(Engine):
             self.ibm_solid_velocity_cell,
             self.ibm_force_cell,
             scene.node,
+            # Balance the predictor with the previous pressure when computing
+            # slip. The grid still receives the new absolute pressure once.
+            scene.element.grid_size,
+            scene.element.cell.pressure,
+            scene.element.cell.surface_tension,
+            scene.element.cell.fluid_sdf,
+            self.use_pressure_free_surface_theta,
         )
 
     def add_grid_gravity(self, sims: Simulation, scene: myScene):
@@ -736,6 +767,10 @@ class IncompressibleEngine(Engine):
             )
 
     def initialize_cell_pressure_from_particles(self, scene: myScene):
+        if getattr(scene, "restart_cell_pressure", None) is not None:
+            scene.element.cell.pressure.from_numpy(scene.restart_cell_pressure)
+            scene.restart_cell_pressure = None
+            return
         if self.initial_pressure_weight is None:
             self.initial_pressure_weight = ti.field(
                 dtype=float, shape=scene.element.cnum, offset=0 * scene.element.cnum - scene.element.ghost_cell
@@ -789,6 +824,7 @@ class IncompressibleEngine(Engine):
                 scene.element.calLength,
                 scene.element.boundary_type,
                 self.shifting_reference_volume,
+                None,
             )
             self.shifting_reference_ready = True
         if scene.element.LnID is not None:
@@ -803,7 +839,6 @@ class IncompressibleEngine(Engine):
                 scene.element.node_size,
             )
             reference_volume = self.shifting_reference_volume
-            E2 = kernel_compute_particle_shifting_energy(self.shifting_node_volume, reference_volume)
             den = kernel_compute_particle_shifting_gradient_fdm_mac(
                 scene.element.grid_nodes,
                 int(scene.particleNum[0]),
@@ -817,15 +852,31 @@ class IncompressibleEngine(Engine):
                 scene.element.LnID,
                 scene.element.dshape_fn,
                 scene.element.node_size,
+                False,
             )
-            if den > 0.0:
+            curvature = kernel_compute_particle_shifting_gradient_fdm_mac(
+                scene.element.grid_nodes,
+                int(scene.particleNum[0]),
+                scene.element.ghost_cell,
+                scene.element.cnum,
+                scene.element.grid_size,
+                reference_volume,
+                self.shifting_node_volume,
+                scene.element.cell.type,
+                scene.particle,
+                scene.element.LnID,
+                scene.element.dshape_fn,
+                scene.element.node_size,
+                True,
+            )
+            if den > 0.0 and curvature > 0.0:
                 kernel_apply_particle_shifting_gradient(
                     int(scene.particleNum[0]),
                     scene.element.ghost_cell,
                     scene.element.cnum,
                     scene.element.grid_size,
                     0.05,
-                    E2 / den,
+                    den / (2.0 * curvature),
                     scene.element.cell.type,
                     scene.particle,
                 )
@@ -872,7 +923,6 @@ class IncompressibleEngine(Engine):
                 scene.element.boundary_type,
             )
             reference_volume = self.shifting_reference_volume
-            E2 = kernel_compute_particle_shifting_energy(self.shifting_node_volume, reference_volume)
             den = kernel_compute_particle_shifting_gradient_fdm_on_the_fly_3d(
                 scene.element.influenced_node,
                 int(scene.particleNum[0]),
@@ -886,15 +936,31 @@ class IncompressibleEngine(Engine):
                 scene.element.cell.type,
                 scene.particle,
                 scene.element.calLength,
+                False,
             )
-            if den > 0.0:
+            curvature = kernel_compute_particle_shifting_gradient_fdm_on_the_fly_3d(
+                scene.element.influenced_node,
+                int(scene.particleNum[0]),
+                scene.element.ghost_cell,
+                scene.element.cnum,
+                scene.element.grid_size,
+                scene.element.igrid_size,
+                scene.element.gnum,
+                reference_volume,
+                self.shifting_node_volume,
+                scene.element.cell.type,
+                scene.particle,
+                scene.element.calLength,
+                True,
+            )
+            if den > 0.0 and curvature > 0.0:
                 kernel_apply_particle_shifting_gradient(
                     int(scene.particleNum[0]),
                     scene.element.ghost_cell,
                     scene.element.cnum,
                     scene.element.grid_size,
                     0.05,
-                    E2 / den,
+                    den / (2.0 * curvature),
                     scene.element.cell.type,
                     scene.particle,
                 )
@@ -1217,16 +1283,23 @@ class IncompressibleEngine(Engine):
         total_dofs = self.find_density_projection_active_nodes(sims, scene)
         self.prepare_density_projection_equations_step(sims, scene)
         self.operator.use_free_surface_theta = self.needs_density_projection_fluid_level_set(sims, scene)
-        solved = self.poisson_solver.solve(
-            self.operator,
-            self.right_hand_vector,
-            self.unknow_vector,
-            self.diag_A,
-            total_dofs,
-            maxiter=total_dofs,
-            tol=sims.residual_tolerance,
-            rel_tol=sims.linear_solver_relative_tolerance,
-        )
+        # Density correction uses the geometric Laplacian, not the mobility
+        # coefficients of the coupled physical pressure equation.
+        pressure_coupling_mode = self.operator.coupling_mode
+        self.operator.coupling_mode = 0
+        try:
+            solved = self.poisson_solver.solve(
+                self.operator,
+                self.right_hand_vector,
+                self.unknow_vector,
+                self.diag_A,
+                total_dofs,
+                maxiter=sims.iter_max,
+                tol=sims.residual_tolerance,
+                rel_tol=sims.linear_solver_relative_tolerance,
+            )
+        finally:
+            self.operator.coupling_mode = pressure_coupling_mode
         self.require_pressure_solver_success(solved, "density-projection PCG")
         kernel_update_cell_pressure(
             scene.element.ghost_cell,
@@ -1906,6 +1979,7 @@ class IncompressibleEngine(Engine):
             self.reset_solid_face_velocity_step(sims, scene)
             self.update_external_cut_cell_boundary(sims, scene)
             self.update_external_ibm_fields(sims, scene)
+            self.validate_ibm_cut_cell_geometry(sims, scene)
             self.update_solid_cut_cell_step(sims, scene)
             self.remove_particles_inside_solid_cells(scene)
             sims.timer.end("Solid boundary")
@@ -1944,6 +2018,7 @@ class IncompressibleEngine(Engine):
         self.reset_solid_face_velocity_step(sims, scene)
         self.update_external_cut_cell_boundary(sims, scene)
         self.update_external_ibm_fields(sims, scene)
+        self.validate_ibm_cut_cell_geometry(sims, scene)
         sims.timer.end("Solid boundary")
         sims.timer.begin("P2G and fluid domain")
         self.compute_nodal_kinematics(sims, scene)
@@ -1974,7 +2049,7 @@ class IncompressibleEngine(Engine):
             self.unknow_vector,
             self.diag_A,
             total_dofs,
-            maxiter=total_dofs,
+            maxiter=sims.iter_max,
             tol=sims.residual_tolerance,
             rel_tol=sims.linear_solver_relative_tolerance,
         )
@@ -2001,6 +2076,7 @@ class IncompressibleEngine(Engine):
         self.reset_solid_face_velocity_step(sims, scene)
         self.update_external_cut_cell_boundary(sims, scene)
         self.update_external_ibm_fields(sims, scene)
+        self.validate_ibm_cut_cell_geometry(sims, scene)
         sims.timer.end("Solid boundary")
         sims.timer.begin("P2G and fluid domain")
         self.compute_nodal_kinematics(sims, scene)

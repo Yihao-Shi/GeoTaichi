@@ -21,9 +21,9 @@ def run_case(case_name, save_path):
 
     save_path = os.fspath(save_path)
     multi_material = case_name == "pcg_multi"
-    affine_projection = case_name == "affine"
+    affine_projection = case_name in ("affine", "up_affine", "explicit_affine")
     loaded_pcg = case_name == "loaded_pcg"
-    up_formulation = case_name.removesuffix("_gimp") in ("up", "hydrostatic_up")
+    up_formulation = case_name.removesuffix("_gimp") in ("up", "up_affine", "hydrostatic_up")
     hydrostatic = case_name.startswith("hydrostatic_")
     hydrostatic_mgpcg = case_name == "hydrostatic_mgpcg"
     fic = "fic" in case_name
@@ -92,12 +92,14 @@ def run_case(case_name, save_path):
         background_damping=0.0,
         gravity=[0.0, -9.8] if up_formulation or hydrostatic else [0.0, 0.0],
         alphaPIC=1.0 if affine_projection else 0.5,
-        mapping="USF" if loaded_pcg or up_formulation else "USL",
+        mapping="MUSL" if affine_projection else ("USF" if loaded_pcg or up_formulation else "USL"),
         shape_function="GIMP" if case_name.endswith("_gimp") else "Linear",
         material_type="TwoPhaseSingleLayer",
         free_surface_detection=loaded_pcg or hydrostatic,
-        solver_type="SemiImplicit_u_p" if up_formulation else "SemiImplicit",
-        velocity_projection="Affine" if affine_projection else "PIC/FLIP",
+        solver_type=(
+            "Explicit" if case_name == "explicit_affine" else ("SemiImplicit_u_p" if up_formulation else "SemiImplicit")
+        ),
+        velocity_projection="Affine" if affine_projection else None,
     )
     mpm.set_solver(
         solver={
@@ -108,7 +110,8 @@ def run_case(case_name, save_path):
         },
         log=False,
     )
-    mpm.set_semi_implicit_solver_parameters(semi_parameters)
+    if case_name != "explicit_affine":
+        mpm.set_semi_implicit_solver_parameters(semi_parameters)
     mpm.memory_allocate(
         memory={
             "max_material_number": 2 if multi_material else 1,
@@ -252,6 +255,10 @@ def run_case(case_name, save_path):
     particle_num = int(mpm.scene.particleNum[0])
     initial_solid_mass = mpm.scene.particle.ms.to_numpy()[:particle_num].copy()
     mpm.run()
+    if affine_projection:
+        assert mpm.enginer.compute == mpm.enginer.affine_updating
+        assert np.isfinite(mpm.scene.particle.solid_velocity_gradient.to_numpy()[:particle_num]).all()
+        assert np.isfinite(mpm.scene.particle.fluid_velocity_gradient.to_numpy()[:particle_num]).all()
     if up_formulation:
         assert mpm.sims.dof_multiplier == 1
     np.testing.assert_allclose(
@@ -364,8 +371,9 @@ def test_single_layer_matrixfree_mgpcg(tmp_path):
     _run_subprocess("mgpcg", tmp_path / "mgpcg")
 
 
-def test_single_layer_affine_projection(tmp_path):
-    _run_subprocess("affine", tmp_path / "affine")
+@pytest.mark.parametrize("case", ["affine", "up_affine", "explicit_affine"])
+def test_single_layer_affine_projection(tmp_path, case):
+    _run_subprocess(case, tmp_path / case)
 
 
 def test_single_layer_loaded_pcg_free_surface(tmp_path):
@@ -448,6 +456,8 @@ if __name__ == "__main__":
             "pcg_multi",
             "mgpcg",
             "affine",
+            "up_affine",
+            "explicit_affine",
             "loaded_pcg",
             "up",
             "hydrostatic_up",

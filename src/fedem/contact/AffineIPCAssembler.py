@@ -43,9 +43,6 @@ from src.physics_model.contact_model.ipc.IPC import (
     ipc_friction_f0,
     ipc_friction_f1_over_speed,
     ipc_toolkit_barrier_distance2_offset_terms,
-    semi_ipc_find_or_insert,
-    semi_ipc_terms,
-    semi_ipc_update_multiplier,
 )
 
 
@@ -184,14 +181,12 @@ class FEMAffineIPCAssembler:
         self.pair_dmin = ti.field(dtype=self.real_type, shape=pair_shape)
         self.pair_friction = ti.field(dtype=self.real_type, shape=pair_shape)
         self.pair_epsv = ti.field(dtype=self.real_type, shape=pair_shape)
-        self.pair_penalty = ti.field(dtype=self.real_type, shape=pair_shape)
         self.pair_active.from_numpy(parameters["active"])
         self.pair_kappa.from_numpy(parameters["kappa"])
         self.pair_dhat.from_numpy(parameters["dhat"])
         self.pair_dmin.from_numpy(parameters["dmin"])
         self.pair_friction.from_numpy(parameters["friction"])
         self.pair_epsv.from_numpy(parameters["epsv"])
-        self.pair_penalty.from_numpy(parameters["penalty"])
         self.search_distance = float(parameters["search_distance"])
         self.maximum_dmin = float(np.max(parameters["dmin"][parameters["active"] != 0]))
         self.ccd_eta = 1.0 - float(parameters["ccd_safety"])
@@ -205,8 +200,6 @@ class FEMAffineIPCAssembler:
         self.friction_active_count = ti.field(dtype=ti.i32, shape=())
         self.friction_dt = ti.field(dtype=self.real_type, shape=())
         self.activate_friction = bool(model.activate_friction)
-        self.is_semi = model.contact.model == "AugmentedLagrangian"
-        self.constraint_tolerance = float(model.contact.constraint_tolerance)
         self.friction_hat = ti.Vector.field(3, dtype=self.real_type, shape=self.combined_node_count)
         self.friction_pt_count = 0
         self.friction_ee_count = 0
@@ -217,29 +210,6 @@ class FEMAffineIPCAssembler:
         self.pt_capacity = self.max_point_triangle_pairs
         self.ee_capacity = self.max_edge_edge_pairs
         self._allocate_local_terms(self.pt_capacity, self.ee_capacity)
-        self._allocate_semi_state()
-
-    def _allocate_semi_state(self):
-        capacity = 1 << (max(2 * max(self.pt_capacity, self.ee_capacity), 1) - 1).bit_length()
-        self.semi_capacity = capacity
-        self.semi_overflow = ti.field(dtype=ti.i32, shape=())
-        self.constraint_violation = ti.field(dtype=self.real_type, shape=())
-        self.semi_pt_count = ti.field(dtype=ti.i32, shape=())
-        self.semi_ee_count = ti.field(dtype=ti.i32, shape=())
-        self.semi_pt_state = ti.field(dtype=ti.i32, shape=capacity)
-        self.semi_ee_state = ti.field(dtype=ti.i32, shape=capacity)
-        self.semi_pt_key = ti.Vector.field(4, dtype=ti.i32, shape=capacity)
-        self.semi_ee_key = ti.Vector.field(4, dtype=ti.i32, shape=capacity)
-        self.semi_pt_weight = ti.Vector.field(4, dtype=self.real_type, shape=capacity)
-        self.semi_ee_weight = ti.Vector.field(4, dtype=self.real_type, shape=capacity)
-        self.semi_pt_normal = ti.Vector.field(3, dtype=self.real_type, shape=capacity)
-        self.semi_ee_normal = ti.Vector.field(3, dtype=self.real_type, shape=capacity)
-        self.semi_pt_multiplier = ti.field(dtype=self.real_type, shape=capacity)
-        self.semi_ee_multiplier = ti.field(dtype=self.real_type, shape=capacity)
-        self.semi_pt_slot = ti.field(dtype=ti.i32, shape=self.pt_capacity)
-        self.semi_ee_slot = ti.field(dtype=ti.i32, shape=self.ee_capacity)
-        self.semi_pt_state.fill(2)
-        self.semi_ee_state.fill(2)
 
     def _allocate_friction_terms(self, pt_capacity, ee_capacity):
         self.friction_pt_capacity = int(pt_capacity)
@@ -419,11 +389,18 @@ class FEMAffineIPCAssembler:
     def _copy_friction_hat(self, fem_hat_position: ti.template()):
         for node in range(self.fem_node_count):
             self.friction_hat[node] = fem_hat_position[node]
+            if ti.static(self.affine.use_newmark):
+                if self.affine.initial_force_evaluation[None] != 0:
+                    self.friction_hat[node] = (
+                        self.fem.state.position[node] - self.friction_dt[None] * self.fem.state.velocity[node]
+                    )
         for vertex in range(self.affine_vertex_count):
             body = self.affine.node2body[vertex]
             value = ti.Vector.zero(self.real_type, 3)
             for local_control in ti.static(range(4)):
-                value += self.affine.basis[vertex, local_control] * self.affine.hat_y[body * 4 + local_control]
+                value += self.affine.basis[vertex, local_control] * self.affine.friction_reference_control(
+                    body * 4 + local_control
+                )
             self.friction_hat[self.fem_node_count + vertex] = value
 
     @ti.func
@@ -500,109 +477,7 @@ class FEMAffineIPCAssembler:
         self.build_positions(fem_position)
         counts = self.culling.rebuild_proximity(self.position, self.search_distance)
         self._ensure_local_terms(*counts)
-        if self.is_semi:
-            self.semi_overflow[None] = 0
-            self._prepare_semi_pt(int(counts[0]))
-            self._prepare_semi_ee(int(counts[1]))
-            if int(self.semi_overflow[None]) != 0:
-                raise RuntimeError("FEM--AffineBody SemiIPC multiplier hash capacity is too small")
         return counts
-
-    @ti.func
-    def _semi_frame(self, gradient, distance, edge_edge):
-        relative = ti.Vector([gradient[0], gradient[1], gradient[2]])
-        if edge_edge != 0:
-            for component in ti.static(range(3)):
-                relative[component] += gradient[3 + component]
-        normal = ti.Vector([1.0, 0.0, 0.0])
-        weight = ti.Vector.zero(self.real_type, 4)
-        if distance > 1.0e-15 and relative.norm_sqr() > 1.0e-30:
-            normal = relative.normalized()
-            for site, component in ti.static(ti.ndrange(4, 3)):
-                weight[site] += gradient[3 * site + component] * normal[component] / (2.0 * distance)
-        return weight, normal
-
-    @ti.func
-    def _store_semi_frame(
-        self,
-        contact,
-        key,
-        weight,
-        normal,
-        states: ti.template(),
-        keys: ti.template(),
-        multipliers: ti.template(),
-        count: ti.template(),
-        hash_weight: ti.template(),
-        hash_normal: ti.template(),
-        contact_slot: ti.template(),
-    ):
-        slot = semi_ipc_find_or_insert(states, keys, multipliers, count, key, ti.static(self.semi_capacity))
-        if slot >= 0:
-            previous = hash_normal[slot]
-            if previous.norm_sqr() > 0.0 and previous.dot(normal) < 0.0:
-                normal = -normal
-            hash_weight[slot] = weight
-            hash_normal[slot] = normal
-        else:
-            self.semi_overflow[None] = 1
-        contact_slot[contact] = slot
-
-    @ti.kernel
-    def _prepare_semi_pt(self, count: ti.i32):
-        for contact in range(count):
-            stencil = self.culling.point_triangle[contact]
-            affine_body, fem_body = self._pair_indices(stencil)
-            self.semi_pt_slot[contact] = -1
-            if self._pair_is_active(affine_body, fem_body):
-                distance2, gradient, _ = point_triangle_distance_grad(
-                    self.position[stencil[0]],
-                    self.position[stencil[1]],
-                    self.position[stencil[2]],
-                    self.position[stencil[3]],
-                )
-                weight, normal = self._semi_frame(gradient, ti.sqrt(ti.max(distance2, 0.0)), 0)
-                self._store_semi_frame(
-                    contact,
-                    stencil,
-                    weight,
-                    normal,
-                    self.semi_pt_state,
-                    self.semi_pt_key,
-                    self.semi_pt_multiplier,
-                    self.semi_pt_count,
-                    self.semi_pt_weight,
-                    self.semi_pt_normal,
-                    self.semi_pt_slot,
-                )
-
-    @ti.kernel
-    def _prepare_semi_ee(self, count: ti.i32):
-        for contact in range(count):
-            stencil = self.culling.edge_edge[contact]
-            affine_body, fem_body = self._edge_pair_indices(stencil)
-            self.semi_ee_slot[contact] = -1
-            if self._pair_is_active(affine_body, fem_body):
-                distance2, gradient, _ = edge_edge_distance_grad(
-                    self.position[stencil[0]],
-                    self.position[stencil[1]],
-                    self.position[stencil[2]],
-                    self.position[stencil[3]],
-                )
-                weight, normal = self._semi_frame(gradient, ti.sqrt(ti.max(distance2, 0.0)), 1)
-                self._store_semi_frame(
-                    contact,
-                    stencil,
-                    weight,
-                    normal,
-                    self.semi_ee_state,
-                    self.semi_ee_key,
-                    self.semi_ee_multiplier,
-                    self.semi_ee_count,
-                    self.semi_ee_weight,
-                    self.semi_ee_normal,
-                    self.semi_ee_slot,
-                )
 
     def _prepare_distance_terms(self, pt_count, ee_count):
         self._classify_contact_features(int(pt_count), int(ee_count))
@@ -727,72 +602,10 @@ class FEMAffineIPCAssembler:
                             self.friction_ee_epsv[contact] = self.pair_epsv[affine_body, fem_body]
                             ti.atomic_add(self.friction_active_count[None], 1)
 
-    @ti.kernel
-    def _freeze_semi_friction(self, count: ti.i32, contact_kind: ti.template()):
-        for contact in range(count):
-            stencil = self.culling.point_triangle[contact]
-            slot = self.semi_pt_slot[contact]
-            affine_body, fem_body = self._pair_indices(stencil)
-            measure = self.culling.point_triangle_measure[contact]
-            if ti.static(contact_kind == 0):
-                self.friction_pt_candidate[contact] = stencil
-                self.friction_pt_weight[contact] = ti.Vector([1.0, 0.0, 0.0, 0.0])
-                self.friction_pt_normal[contact] = ti.Vector([1.0, 0.0, 0.0])
-                self.friction_pt_coefficient[contact] = 0.0
-                self.friction_pt_epsv[contact] = 1.0
-            else:
-                stencil = self.culling.edge_edge[contact]
-                slot = self.semi_ee_slot[contact]
-                affine_body, fem_body = self._edge_pair_indices(stencil)
-                measure = self.culling.edge_edge_measure[contact]
-                self.friction_ee_candidate[contact] = stencil
-                self.friction_ee_weight[contact] = ti.Vector([1.0, 0.0, 0.0, 0.0])
-                self.friction_ee_normal[contact] = ti.Vector([1.0, 0.0, 0.0])
-                self.friction_ee_coefficient[contact] = 0.0
-                self.friction_ee_epsv[contact] = 1.0
-            if slot >= 0 and self._pair_is_active(affine_body, fem_body):
-                weight = self.semi_pt_weight[slot]
-                normal = self.semi_pt_normal[slot]
-                multiplier = self.semi_pt_multiplier[slot]
-                if ti.static(contact_kind == 1):
-                    weight = self.semi_ee_weight[slot]
-                    normal = self.semi_ee_normal[slot]
-                    multiplier = self.semi_ee_multiplier[slot]
-                gap = -(self.pair_dmin[affine_body, fem_body] + self.pair_dhat[affine_body, fem_body])
-                for site in ti.static(range(4)):
-                    gap += weight[site] * normal.dot(self.position[stencil[site]])
-                coefficient = (
-                    self.pair_friction[affine_body, fem_body]
-                    * measure
-                    * ti.max(
-                        multiplier - self.pair_penalty[affine_body, fem_body] * gap,
-                        0.0,
-                    )
-                )
-                if coefficient > 0.0:
-                    if ti.static(contact_kind == 0):
-                        self.friction_pt_weight[contact] = weight
-                        self.friction_pt_normal[contact] = normal
-                        self.friction_pt_coefficient[contact] = coefficient
-                        self.friction_pt_epsv[contact] = self.pair_epsv[affine_body, fem_body]
-                    else:
-                        self.friction_ee_weight[contact] = weight
-                        self.friction_ee_normal[contact] = normal
-                        self.friction_ee_coefficient[contact] = coefficient
-                        self.friction_ee_epsv[contact] = self.pair_epsv[affine_body, fem_body]
-                    ti.atomic_add(self.friction_active_count[None], 1)
-
     def begin_step(self, fem_position, fem_hat_position, timestep):
         timestep = float(timestep)
         if not np.isfinite(timestep) or timestep <= 0.0:
             raise ValueError("FEM--AffineBody friction timestep must be finite and positive")
-        if self.is_semi:
-            self.semi_pt_state.fill(2)
-            self.semi_ee_state.fill(2)
-            self.semi_pt_multiplier.fill(0.0)
-            self.semi_ee_multiplier.fill(0.0)
-            self.semi_pt_count[None] = 0
-            self.semi_ee_count[None] = 0
         self.friction_dt[None] = timestep
         pt_count, ee_count = self.prepare(fem_position)
         self._copy_friction_hat(fem_hat_position)
@@ -810,13 +623,9 @@ class FEMAffineIPCAssembler:
             self.friction_ee_count = 0
             return 0, 0
         self._ensure_friction_terms(pt_count, ee_count)
-        if self.is_semi:
-            self._freeze_semi_friction(int(pt_count), 0)
-            self._freeze_semi_friction(int(ee_count), 1)
-        else:
-            self._prepare_distance_terms(pt_count, ee_count)
-            self._freeze_point_triangle_friction(int(pt_count))
-            self._freeze_edge_edge_friction(int(ee_count))
+        self._prepare_distance_terms(pt_count, ee_count)
+        self._freeze_point_triangle_friction(int(pt_count))
+        self._freeze_edge_edge_friction(int(ee_count))
         self.friction_pt_count = int(pt_count)
         self.friction_ee_count = int(ee_count)
         return self.friction_pt_count, self.friction_ee_count
@@ -1302,71 +1111,12 @@ class FEMAffineIPCAssembler:
                                         block[row, column] = local_hessian[3 * local_i + row, 3 * local_j + column]
                                     self._scatter_hessian_block(stencil, local_i, local_j, block, matrix)
 
-    @ti.kernel
-    def _assemble_semi_contacts(
-        self,
-        count: ti.i32,
-        contact_kind: ti.template(),
-        matrix: ti.template(),
-        rhs: ti.template(),
-        need_matrix: ti.template(),
-    ):
-        for contact in range(count):
-            stencil = self.culling.point_triangle[contact]
-            slot = self.semi_pt_slot[contact]
-            affine_body, fem_body = self._pair_indices(stencil)
-            weight = ti.Vector.zero(self.real_type, 4)
-            normal = ti.Vector([1.0, 0.0, 0.0])
-            multiplier = 0.0
-            measure = self.culling.point_triangle_measure[contact]
-            if slot >= 0:
-                weight = self.semi_pt_weight[slot]
-                normal = self.semi_pt_normal[slot]
-                multiplier = self.semi_pt_multiplier[slot]
-            if ti.static(contact_kind == 1):
-                stencil = self.culling.edge_edge[contact]
-                slot = self.semi_ee_slot[contact]
-                affine_body, fem_body = self._edge_pair_indices(stencil)
-                measure = self.culling.edge_edge_measure[contact]
-                if slot >= 0:
-                    weight = self.semi_ee_weight[slot]
-                    normal = self.semi_ee_normal[slot]
-                    multiplier = self.semi_ee_multiplier[slot]
-            if slot >= 0 and self._pair_is_active(affine_body, fem_body):
-                gap = -(self.pair_dmin[affine_body, fem_body] + self.pair_dhat[affine_body, fem_body])
-                for site in ti.static(range(4)):
-                    gap += weight[site] * normal.dot(self.position[stencil[site]])
-                value, first, second = semi_ipc_terms(gap, multiplier, self.pair_penalty[affine_body, fem_body])
-                ti.atomic_add(self.total_energy[None], measure * value)
-                ti.atomic_max(self.constraint_violation[None], ti.max(-gap, 0.0))
-                ti.atomic_min(self.minimum_distance[None], gap)
-                if second > 0.0:
-                    ti.atomic_add(self.active_count[None], 1)
-                    gradient = ti.Vector.zero(self.real_type, 12)
-                    for site, component in ti.static(ti.ndrange(4, 3)):
-                        gradient[3 * site + component] = first * weight[site] * normal[component]
-                    self._scatter_gradient(stencil, measure * gradient, rhs)
-                    if ti.static(need_matrix):
-                        for first_site, second_site in ti.static(ti.ndrange(4, 4)):
-                            block = (
-                                measure
-                                * second
-                                * weight[first_site]
-                                * weight[second_site]
-                                * normal.outer_product(normal)
-                            )
-                            self._scatter_hessian_block(stencil, first_site, second_site, block, matrix)
-
     def assemble(self, pt_count, ee_count, matrix, rhs, need_matrix, project_spd=True):
         self._reset_contact_terms()
         pt_count = int(pt_count)
         ee_count = int(ee_count)
         need_matrix = bool(need_matrix)
-        if self.is_semi:
-            self.constraint_violation[None] = 0.0
-            self._assemble_semi_contacts(pt_count, 0, matrix, rhs, need_matrix)
-            self._assemble_semi_contacts(ee_count, 1, matrix, rhs, need_matrix)
-        elif need_matrix:
+        if need_matrix:
             # Keep each CUDA module below the driver/compiler failure seen for
             # the branch-complete PT/EE Hessian kernels, and do not compile
             # feature types absent from this active set.
@@ -1433,8 +1183,6 @@ class FEMAffineIPCAssembler:
             affine_body, fem_body = self._pair_indices(stencil)
             if self._pair_is_active(affine_body, fem_body):
                 thickness = self.pair_dmin[affine_body, fem_body]
-                if ti.static(self.is_semi):
-                    thickness = 0.0
                 toc = 1.0
                 if thickness > 0.0:
                     toc = point_triangle_accd(
@@ -1469,8 +1217,6 @@ class FEMAffineIPCAssembler:
             affine_body, fem_body = self._edge_pair_indices(stencil)
             if self._pair_is_active(affine_body, fem_body):
                 thickness = self.pair_dmin[affine_body, fem_body]
-                if ti.static(self.is_semi):
-                    thickness = 0.0
                 toc = 1.0
                 if thickness > 0.0:
                     toc = edge_edge_accd(
@@ -1511,44 +1257,6 @@ class FEMAffineIPCAssembler:
         self._compute_pair_ccd(pt_count, ee_count)
         return max(0.0, min(1.0, float(self.minimum_step[None])))
 
-    @ti.kernel
-    def _update_semi_contact_multipliers(self, count: ti.i32, contact_kind: ti.template()):
-        for contact in range(count):
-            stencil = self.culling.point_triangle[contact]
-            slot = self.semi_pt_slot[contact]
-            affine_body, fem_body = self._pair_indices(stencil)
-            if ti.static(contact_kind == 1):
-                stencil = self.culling.edge_edge[contact]
-                slot = self.semi_ee_slot[contact]
-                affine_body, fem_body = self._edge_pair_indices(stencil)
-            if slot >= 0 and self._pair_is_active(affine_body, fem_body):
-                weight = self.semi_pt_weight[slot]
-                normal = self.semi_pt_normal[slot]
-                multiplier = self.semi_pt_multiplier[slot]
-                if ti.static(contact_kind == 1):
-                    weight = self.semi_ee_weight[slot]
-                    normal = self.semi_ee_normal[slot]
-                    multiplier = self.semi_ee_multiplier[slot]
-                gap = -(self.pair_dmin[affine_body, fem_body] + self.pair_dhat[affine_body, fem_body])
-                for site in ti.static(range(4)):
-                    gap += weight[site] * normal.dot(self.position[stencil[site]])
-                updated = semi_ipc_update_multiplier(gap, multiplier, self.pair_penalty[affine_body, fem_body])
-                if ti.static(contact_kind == 0):
-                    self.semi_pt_multiplier[slot] = updated
-                else:
-                    self.semi_ee_multiplier[slot] = updated
-
-    def accept_update(self, fem_position):
-        if not self.is_semi:
-            return
-        pt_count, ee_count = self.prepare(fem_position)
-        self.constraint_violation[None] = 0.0
-        self._update_semi_contact_multipliers(int(pt_count), 0)
-        self._update_semi_contact_multipliers(int(ee_count), 1)
-
-    def contact_converged(self):
-        return not self.is_semi or float(self.constraint_violation[None]) <= self.constraint_tolerance
-
     def contact_block_capacity(self, pt_count, ee_count):
         # A PT stencil pulls back to at most 13 global blocks (one FEM point
         # against three affine vertices), hence 13^2=169 block scatters.  An
@@ -1567,14 +1275,14 @@ class FEMAffineIPCAssembler:
             minimum = np.inf
         values = self.culling.diagnostics()
         values.update(
-            model="SemiIPC" if self.is_semi else "BarrierIPC",
+            model="BarrierIPC",
             active_contacts=int(self.active_count[None]),
             friction_contacts=int(self.friction_active_count[None]),
             minimum_distance=minimum,
             ccd_step=float(self.minimum_step[None]),
             energy=float(self.total_energy[None]),
             friction_energy=float(self.friction_energy[None]),
-            constraint_violation=float(self.constraint_violation[None]) if self.is_semi else 0.0,
+            constraint_violation=0.0,
         )
         return values
 

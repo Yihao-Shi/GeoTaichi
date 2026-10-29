@@ -12,6 +12,8 @@ from src.utils.SolverRuntime import normalize_callbacks
 @ti.data_oriented
 class IPCULMPM:
     def __init__(self, bodies, ground: Ground = None, dirichlet=None, neumann=None, **kwargs):
+        kwargs.setdefault("residual", 1.0e-8)
+        kwargs.setdefault("linear_solver_tolerance", 1.0e-12)
         self.mpm = ImplicitULMPM(bodies, dirichlet, neumann, **kwargs)
         self.ipc = IPCMPM(self.mpm, ground, **kwargs)
 
@@ -88,7 +90,7 @@ class IPCULMPM:
         snapshot["subsystem"] = "mpm_direct_ipc"
         snapshot["contact"] = {
             "model": self.ipc.barrier.model,
-            "constraint_violation": float(self.ipc.semi_constraint_violation[None]) if self.ipc.is_semi else 0.0,
+            "constraint_violation": 0.0,
             "newton_iterations": int(self.ipc.last_newton_iterations),
             "newton_residual": float(self.ipc.last_newton_residual),
             "friction_iterations": int(self.ipc.last_friction_iterations),

@@ -79,8 +79,10 @@ class myScene(object):
         self.parent = None
         self.child = None
         self.psize = np.array([], dtype=np.int32)
+        self.restart_cell_pressure = None
 
         self.particleNum = np.zeros(1, dtype=np.int32)
+        self.two_phase_fluid_mass_initialized = False
         self.couplingNum = np.zeros(1, dtype=np.int32)
         self.free_particleNum = np.zeros(1, dtype=np.int32)
         self.free_particle_list = None
@@ -236,6 +238,20 @@ class myScene(object):
             return adaptive_grid
 
         adaptive_grid = dict(adaptive_grid)
+        if sims.solver_type == "Explicit" and sims.contact_detection:
+            mode = str(adaptive_grid.get("HangingConstraintMode", "Auto"))
+            mode = mode.lower().replace("_", "").replace("-", "").replace(" ", "")
+            if mode not in ("auto", "shape", "shapefunction") or adaptive_grid.get("BridgingDomain", False):
+                raise RuntimeError(
+                    "AdaptiveGrid contact requires HangingConstraintMode=ShapeFunction and BridgingDomain=False"
+                )
+            adaptive_grid["HangingConstraintMode"] = "ShapeFunction"
+            minimum = 4 if sims.dimension == 2 else 8
+            adaptive_grid["HangingShapeCapacityFactor"] = max(
+                minimum, int(adaptive_grid.get("HangingShapeCapacityFactor", minimum))
+            )
+            return adaptive_grid
+
         if sims.solver_type != "Implicit" or sims.material_type != "Solid":
             return adaptive_grid
 
@@ -287,6 +303,20 @@ class myScene(object):
         return adaptive_grid
 
     def activate_element(self, sims: Simulation, element):
+        if sims.sparse_grid and sims.contact_detection and not element.get("AdaptiveGrid"):
+            if sims.solver_type != "Explicit" or sims.material_type != "Solid":
+                raise RuntimeError(
+                    "Ordinary BlockScan contact requires solver_type='Explicit' and material_type='Solid'"
+                )
+        if sims.sparse_grid and sims.is_2DAxisy and not element.get("AdaptiveGrid"):
+            if (
+                sims.solver_type != "Explicit"
+                or sims.shape_function != "GIMP"
+                or sims.stabilize not in (None, "B-Bar Method")
+            ):
+                raise RuntimeError(
+                    "Axisymmetric BlockScan requires Explicit GIMP with stabilization disabled or B-Bar Method"
+                )
         self.element_type = DictIO.GetAlternative(element, "ElementType", "R8N3D")
         if sims.max_particle_num > 0:
             grid_level = self.find_grid_level(sims)
@@ -386,7 +416,9 @@ class myScene(object):
                 elif sims.dimension == 3:
                     gtemp = ContactNodes
                 if sims.contact_detection == "GeoContact":
-                    gtemp.members.update({"contact_pos": ti.types.vector(sims.dimension, float)})
+                    gtemp.members.update(
+                        {"contact_pos": ti.types.vector(sims.dimension, float), "contact_length": float}
+                    )
             elif (
                 sims.solver_type == "SemiImplicit" or sims.solver_type == "SemiImplicit_u_p"
             ) and sims.material_type == "TwoPhaseSingleLayer":
@@ -513,7 +545,7 @@ class myScene(object):
                 self.free_particle_list = ti.field(dtype=int)
                 ti.root.dense(ti.i, int(sims.max_particle_num)).place(self.free_particle_list)
 
-            if sims.mapping == "G2P2G":
+            if sims.mapping == "G2P2G" and sims.velocity_projection_scheme != "Affine":
                 self.grandparent = [self.grandparent]
                 self.parent = [self.parent]
                 self.child = [self.child]

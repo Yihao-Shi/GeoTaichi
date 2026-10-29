@@ -12,7 +12,7 @@ from geotaichi import MPM, init
 pytestmark = [pytest.mark.integration, pytest.mark.slow, pytest.mark.serial]
 
 
-def run_case(save_path):
+def run_case(save_path, affine=False):
     save_path = os.fspath(save_path)
     init(dim=2, arch="cpu", cpu_max_num_threads=2, offline_cache=False, log=False)
 
@@ -22,8 +22,9 @@ def run_case(save_path):
         background_damping=0.0,
         gravity=[0.0, -9.8],
         alphaPIC=1.0,
-        mapping="USL",
-        shape_function="Linear",
+        mapping="G2P2G" if affine else "USL",
+        shape_function="QuadBSpline" if affine else "Linear",
+        velocity_projection="Affine" if affine else None,
         material_type="TwoPhaseDoubleLayer",
         solver_type="SemiImplicit",
     )
@@ -167,6 +168,11 @@ def run_case(save_path):
 
     mpm.select_save_data(particle=True, grid=True, object=False)
     mpm.run(mac_boundary_function=update_mac_boundary)
+    if affine:
+        assert mpm.enginer.compute == mpm.enginer.affine_updating
+        assert mpm.enginer.use_affine_projection == 1
+        assert np.isfinite(mpm.scene.particle.solid_velocity_gradient.to_numpy()).all()
+        assert np.isfinite(mpm.scene.particle.fluid_velocity_gradient.to_numpy()).all()
 
     particle_num = int(mpm.scene.particleNum[0])
     position = mpm.scene.particle.x.to_numpy()[:particle_num]
@@ -206,8 +212,10 @@ def run_case(save_path):
         assert b"cell_type" in file.read()
 
 
-def test_twophase_double_layer_one_step_and_output_round_trip(tmp_path):
-    run_case(tmp_path / "double-layer")
+@pytest.mark.isolated_dimension(2)
+@pytest.mark.parametrize("affine", [False, True])
+def test_twophase_double_layer_one_step_and_output_round_trip(tmp_path, affine):
+    run_case(tmp_path / "double-layer", affine=affine)
 
 
 if __name__ == "__main__":

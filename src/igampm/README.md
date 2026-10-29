@@ -41,6 +41,12 @@ The optional state-dependent case uses
 60 MPa, and Poisson's ratio 0.30. Initial stress remains
 `(-75, -150, -75, 0, 0, 0)` kPa and top pressure remains 150 kPa.
 Dilation evolves with the state law; this route does not take `--dilation-angle`.
+For this state-dependent CPT, `--dt` is the maximum timestep. After a failed
+attempt, the driver retains the accepted cutback until four consecutive steps
+converge within 12 Newton iterations, then doubles it up to that maximum.
+Output-time clipping does not reduce this cap. The cap and consecutive-step
+count are checkpointed; older checkpoints start with the requested maximum.
+The constitutive law and force, motion, and contact convergence checks are unchanged.
 The finite-strain DP model retains its own return mapping; matching SDMC's
 state parameters does not make the two constitutive integrations identical.
 The nonsymmetric HashTriplet solve preserves the BiCGSTAB recurrence and
@@ -172,14 +178,15 @@ IPC updates each boundary's control-hull AABB at every query. With finite
 positive rational weights, the point--AABB distance is a conservative lower
 bound on the point--NURBS distance. Pairs with a lower bound outside the barrier
 activation distance retain that bound for ACCD and skip closest-point
-projection. Near pairs and SemiIPC pairs with a positive multiplier use the
-full span-multistart projection. Thus inactive entries in `contacts.distance`
+projection. Near pairs use the full span-multistart projection. Thus inactive entries in `contacts.distance`
 and an inactive global minimum may be lower bounds; active contact geometry,
 energy, force, and Hessian retain their full projection values.
 
 For 3D surfaces, knot-span control-hull boxes are refreshed once per geometry
-query and shared by all particles. A balanced span BVH is built once from the
-reference control hulls and refitted after deformation. Stackless traversal
+query and shared by all particles. The shared LBVH is rebuilt on device from
+the current control hulls for each geometry query; moving ACCD queries rebuild
+both the surface and span trees from swept hulls. Each rebuild regenerates
+the escape links used for stackless traversal. Stackless traversal
 prunes span subtrees and finds the exact nearest control point, preserving the
 smallest control ID on distance ties. Greville coordinates are precomputed from
 the fixed knots. Each point--surface pair reuses its previous `(u, v)` as an
@@ -192,8 +199,7 @@ stationary caches are never used along an unrefreshed trajectory.
 Before a full 3D projection, the same tree can certify that every span is
 outside the activation/strict-feasibility threshold. The minimum bound over
 the pruned subtrees then replaces the full closest distance for that inactive
-pair. Encountering any potentially near leaf retains full projection, as do
-positive SemiIPC multipliers.
+pair. Encountering any potentially near leaf retains full projection.
 After an Armijo trial is accepted, its contact table and hulls already match the
 accepted displacement, so only trial vectors are synchronized. Rejected or
 failed searches rebuild contact geometry from the accepted displacement.
@@ -201,7 +207,7 @@ Built-in Newton iterations also reuse this accepted query in the next
 assembly and reuse the assembly query at the Armijo base. Internal callers
 pass `prepare_contacts=False` only while they own that exact geometry;
 standalone calls and external solver/energy callbacks retain preparation.
-SemiIPC multiplier updates require a fresh activation query. Lagged friction
+Lagged friction
 evaluates its normal at the already computed closest parameters.
 
 For a motion bound $`L`$ and clearance $`d_{min}`$, a pair can accept a whole trial
@@ -710,6 +716,11 @@ and material feasibility bounds, and has no material-consistency outer loop.
 Associated DP retains the symmetric PCG/frozen-volume path; its existing
 plastic-volume consistency iteration remains. Lagged friction retains its
 own independent outer iteration. History is committed only after acceptance.
+
+The coupled correction default is `monolithic_tolerance=1e-8`, independent
+of the subsystem tolerances; the outer friction default is `1e-7` and
+`monolithic_linear_solver_tolerance=1e-12`. Set the coupled keys explicitly
+for a case that needs different precision.
 
 Nonassociated DP can enable `monolithic_inexact_newton=True` (default false).
 The linear relative tolerance starts at `0.01`, then follows

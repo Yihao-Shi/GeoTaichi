@@ -20,6 +20,7 @@ from examples.mmpm.GranularWaterLeakage3D.granular_water_leakage_3d_parameters i
     RECEIVER_ORIGIN,
     RECEIVER_SIZE,
     UPPER_ORIGIN,
+    represented_crack_bounds,
 )
 
 
@@ -28,6 +29,7 @@ def write_metrics(output, expected_fluid, expected_solid, args):
     if len(files) < 2:
         raise RuntimeError("Section 5.1 run produced fewer than two particle snapshots")
     rows = []
+    discharge = []
     finite = True
     fluidized_stress_verified = True
     maximum_fluidized_stress = 0.0
@@ -64,7 +66,8 @@ def write_metrics(output, expected_fluid, expected_solid, args):
                 and np.isfinite(pressure[active]).all()
             )
             outside = np.any(
-                (position[active] < -1.0e-10 * args.dx) | (position[active] > np.asarray(DOMAIN) + 1.0e-10 * args.dx),
+                (position[active] < -1.0e-10 * args.dx)
+                | (position[active] > np.asarray(DOMAIN, dtype=position.dtype) + 1.0e-10 * args.dx),
                 axis=1,
             )
             fluid_position = position[fluid]
@@ -72,6 +75,25 @@ def write_metrics(output, expected_fluid, expected_solid, args):
             fluid_captured = np.all(
                 (fluid_position >= receiver_min - 0.5 * args.dx) & (fluid_position <= receiver_max + 0.5 * args.dx),
                 axis=1,
+            )
+            solid_captured = np.all(
+                (solid_position >= receiver_min - 0.5 * args.dx) & (solid_position <= receiver_max + 0.5 * args.dx),
+                axis=1,
+            )
+            solid_mass = data["solid_mass"][solid].astype(np.float64)
+            fluid_mass = data["fluid_mass"][fluid].astype(np.float64)
+            if np.any(solid_mass <= 0) or np.any(fluid_mass <= 0):
+                raise ValueError("Saved active phase masses must be positive")
+            discharge.append(
+                [
+                    float(data["t_current"]),
+                    float(solid_mass.sum()),
+                    float(solid_mass[solid_position[:, 2] < UPPER_ORIGIN[2] - 0.5 * args.dx].sum()),
+                    float(solid_mass[solid_captured].sum()),
+                    float(fluid_mass.sum()),
+                    float(fluid_mass[fluid_position[:, 2] < UPPER_ORIGIN[2] - 0.5 * args.dx].sum()),
+                    float(fluid_mass[fluid_captured].sum()),
+                ]
             )
             rows.append(
                 [
@@ -91,12 +113,30 @@ def write_metrics(output, expected_fluid, expected_solid, args):
                 ]
             )
     rows = np.asarray(rows, dtype=np.float64)
+    discharge = np.asarray(discharge, dtype=np.float64)
+    if not np.isfinite(discharge).all() or np.any(discharge[:, 1] <= 0):
+        raise ValueError("Saved phase masses must be finite and total solid mass positive")
+    crack_width = getattr(args, "crack_width", None)
+    crack_left, crack_right = represented_crack_bounds(args.dx, crack_width)
     metrics = {
-        "case": "Section 5.1 3D granular-water leakage without elastic plate",
+        "case": (
+            "Section 5.1 3D granular-water leakage without elastic plate"
+            if crack_width is None
+            else "3D granular-water discharge with a custom outlet"
+        ),
         "velocity_projection": "Affine",
         "alpha_pic": getattr(args, "alpha_pic", 1.0),
-        "physical_crack_width_m": CRACK_RIGHT - CRACK_LEFT,
-        "represented_crack_width_m": args.dx,
+        "physical_crack_width_m": CRACK_RIGHT - CRACK_LEFT if crack_width is None else crack_width,
+        "represented_crack_width_m": crack_right - crack_left,
+        "grid_spacing_m": args.dx,
+        "outlet_width_override_m": crack_width,
+        "minimum_solid_discharge_fraction": getattr(args, "minimum_solid_discharge", 0.0),
+        "initial_solid_mass_kg": float(discharge[0, 1]),
+        "solid_mass_conserved": bool(np.allclose(discharge[:, 1], discharge[0, 1], rtol=1e-6, atol=1e-10)),
+        "final_discharged_solid_mass_fraction": float(discharge[-1, 2] / discharge[0, 1]),
+        "final_captured_solid_mass_fraction": float(discharge[-1, 3] / discharge[0, 1]),
+        "final_discharged_water_mass_kg": float(discharge[-1, 5]),
+        "final_captured_water_mass_kg": float(discharge[-1, 6]),
         "snapshots": len(rows),
         "final_time_s": float(rows[-1, 0]),
         "duration_complete": math.isclose(float(rows[-1, 0]), args.time, abs_tol=0.1 * args.dt),
@@ -119,6 +159,27 @@ def write_metrics(output, expected_fluid, expected_solid, args):
         "maximum_fluidized_solid_effective_stress_pa": maximum_fluidized_stress,
         "solid_volume_positive": solid_volume_positive,
     }
+    extrema_path = output / "velocity_extrema.json"
+    metrics["velocity_validation_scope"] = "saved_snapshots"
+    if extrema_path.exists():
+        extrema = json.loads(extrema_path.read_text())
+        if extrema["steps"] < 1 or min(extrema["maximum_fluid_speed_mps"], extrema["maximum_solid_speed_mps"]) < 0:
+            raise ValueError("Invalid per-step velocity extrema")
+        metrics["velocity_validation_scope"] = "every_step_end"
+        metrics["velocity_samples"] = extrema["steps"]
+        metrics["finite"] &= bool(
+            extrema["finite"]
+            and np.isfinite(
+                [
+                    extrema["maximum_fluid_speed_mps"],
+                    extrema["maximum_solid_speed_mps"],
+                    extrema["steps"],
+                ]
+            ).all()
+        )
+        for phase in ("fluid", "solid"):
+            key = f"maximum_{phase}_speed_mps"
+            metrics[key] = max(metrics[key], extrema[key])
     metrics["passed"] = bool(
         metrics["finite"]
         and metrics["duration_complete"]
@@ -132,6 +193,15 @@ def write_metrics(output, expected_fluid, expected_solid, args):
         and metrics["maximum_solid_porosity"] < 1.0
         and metrics["fluidized_solid_stress_verified"]
         and metrics["solid_volume_positive"]
+        and metrics["solid_mass_conserved"]
+        and metrics["final_discharged_solid_mass_fraction"] >= metrics["minimum_solid_discharge_fraction"]
+    )
+    np.savetxt(
+        output / "discharge_diagnostics.csv",
+        discharge,
+        delimiter=",",
+        header="time_s,total_solid_mass_kg,discharged_solid_mass_kg,captured_solid_mass_kg,total_water_mass_kg,discharged_water_mass_kg,captured_water_mass_kg",
+        comments="",
     )
     np.savetxt(
         output / "leakage_diagnostics.csv",

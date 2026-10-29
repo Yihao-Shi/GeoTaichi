@@ -44,7 +44,9 @@ class Engine(object):
 
     def choose_engine(self, sims: Simulation):
         if sims.mode == "Normal":
-            if sims.mapping == "USL":
+            if sims.velocity_projection_scheme == "Affine":
+                self.compute = self.affine_updating
+            elif sims.mapping == "USL":
                 self.compute = self.usl_updating
             elif sims.mapping == "USF":
                 self.compute = self.usf_updating
@@ -55,13 +57,13 @@ class Engine(object):
             else:
                 raise ValueError(f"The mapping scheme {sims.mapping} is not supported yet")
 
-            if sims.stabilize == "Displacement F-Bar Method":
+            if sims.stabilize == "Displacement F-Bar Method" and sims.velocity_projection_scheme != "Affine":
                 if sims.mapping != "USL" and sims.mapping != "MUSL":
                     raise RuntimeError("Displacement F-Bar Method only supports USL or MUSL scheme")
             if sims.TESTMODE:
                 self.compute = self.test
         elif sims.mode == "Lightweight":
-            self.compute = self.lightweight
+            self.compute = self.affine_updating if sims.velocity_projection_scheme == "Affine" else self.lightweight
 
     def choose_boundary_constraints(self, sims: Simulation, scene: myScene):
         self.apply_traction_constraints = no_operation
@@ -277,7 +279,7 @@ class Engine(object):
 
     def valid_contact(self, sims: Simulation, scene: myScene):
         if sims.contact_detection == "GeoContact":
-            if scene.is_rigid[0] == 0 and scene.is_rigid[1] == 0:
+            if not np.any(scene.is_rigid.to_numpy()):
                 raise RuntimeError("GeoContact is only suitable for soil-structure interaction")
 
     def calculate_interpolations(self, sims: Simulation, scene: myScene):
@@ -338,6 +340,8 @@ class Engine(object):
             scene.element.LnID,
             scene.element.shape_fn,
             scene.element.node_size,
+            sims.configuration == "TLMPM",
+            sims.configuration != "TLMPM" or getattr(scene.element, "adaptive", False),
         )
 
     def compute_nodal_kinematics_taylor_sparse(self, sims: Simulation, scene: myScene):
@@ -354,6 +358,8 @@ class Engine(object):
             scene.sparse_grid.block_size,
             scene.sparse_grid.block_volume,
             scene.sparse_grid.active_block_ids,
+            sims.configuration == "TLMPM",
+            sims.configuration != "TLMPM" or getattr(scene.element, "adaptive", False),
         )
 
     def compute_nodal_kinematics_taylor_2DAxisy(self, sims: Simulation, scene: myScene):
@@ -497,10 +503,66 @@ class Engine(object):
         raise NotImplementedError
 
     def update_velocity_gradient_affine_2D(self, sims: Simulation, scene: myScene):
-        raise NotImplementedError
+        if scene.sparse_grid is not None:
+            kernel_update_velocity_gradient_affine_2D_sparse(
+                scene.element.grid_nodes,
+                int(scene.particleNum[0]),
+                scene.element.grid_size,
+                scene.node,
+                scene.particle,
+                scene.element.LnID,
+                scene.element.shape_fn,
+                scene.element.node_size,
+                scene.sparse_grid.block_count,
+                scene.sparse_grid.block_size,
+                scene.sparse_grid.block_volume,
+                scene.sparse_grid.active_block_ids,
+                sims.configuration == "TLMPM",
+            )
+        else:
+            kernel_update_velocity_gradient_affine_2D(
+                scene.element.grid_nodes,
+                int(scene.particleNum[0]),
+                scene.element.gnum,
+                scene.element.grid_size,
+                scene.node,
+                scene.particle,
+                scene.element.LnID,
+                scene.element.shape_fn,
+                scene.element.node_size,
+                sims.configuration == "TLMPM",
+            )
 
     def update_velocity_gradient_affine(self, sims: Simulation, scene: myScene):
-        raise NotImplementedError
+        if scene.sparse_grid is not None:
+            kernel_update_velocity_gradient_affine_sparse(
+                scene.element.grid_nodes,
+                int(scene.particleNum[0]),
+                scene.element.grid_size,
+                scene.node,
+                scene.particle,
+                scene.element.LnID,
+                scene.element.shape_fn,
+                scene.element.node_size,
+                scene.sparse_grid.block_count,
+                scene.sparse_grid.block_size,
+                scene.sparse_grid.block_volume,
+                scene.sparse_grid.active_block_ids,
+                sims.configuration == "TLMPM",
+            )
+        else:
+            kernel_update_velocity_gradient_affine(
+                scene.element.grid_nodes,
+                int(scene.particleNum[0]),
+                scene.element.gnum,
+                scene.element.grid_size,
+                scene.node,
+                scene.particle,
+                scene.element.LnID,
+                scene.element.shape_fn,
+                scene.element.node_size,
+                sims.configuration == "TLMPM",
+            )
 
     def update_velocity_gradient_bbar_2D(self, sims: Simulation, scene: myScene):
         raise NotImplementedError
@@ -727,6 +789,9 @@ class Engine(object):
         raise NotImplementedError
 
     def musl_updating(self, sims, scene):
+        raise NotImplementedError
+
+    def affine_updating(self, sims, scene, neighbor=None):
         raise NotImplementedError
 
     def g2p2g(self, sims, scene):

@@ -181,7 +181,7 @@ class Element:
         reference_radius,
     ):
         gradient = ti.Vector.zero(ti.f64, 2)
-        for component in ti.static(range(2)):
+        for component in range(2):
             derivative = self.axisymmetric_local_derivative(
                 local_offset,
                 component,

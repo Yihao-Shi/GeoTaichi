@@ -6,10 +6,6 @@ import numpy as np
 import taichi as ti
 
 import src.igampm.config as config
-from src.physics_model.contact_model.ipc.IPC import (
-    semi_ipc_terms,
-    semi_ipc_update_multiplier,
-)
 from src.physics_model.contact_model.ipc.NurbsContact import (
     curve_barrier_projected_metric,
     curve_control_reduced_jacobian,
@@ -30,14 +26,7 @@ class ContactEngineMixin:
         value = 0.0
         first = 0.0
         second = 0.0
-        if ti.static(self.is_semi):
-            value, first, second = semi_ipc_terms(
-                distance - self.barrier.activation_distance_term(),
-                self.semi_multiplier[contact_id],
-                self.barrier.penalty[0],
-            )
-        else:
-            value, first, second = self.barrier._terms(distance)
+        value, first, second = self.barrier._terms(distance)
         return value, first, second
 
     @ti.func
@@ -58,11 +47,10 @@ class ContactEngineMixin:
         _, first, second = self._normal_terms(contact_id, distance)
         inverse = 1.0 / ti.max(distance, 1.0e-15)
         hessian = 0.25 * second * inverse * inverse * ddistance2_first.outer_product(ddistance2_second)
-        if ti.static(not self.is_semi):
-            hessian += (
-                0.5 * first * inverse * d2distance2
-                - 0.25 * first * inverse * inverse * inverse * ddistance2_first.outer_product(ddistance2_second)
-            )
+        hessian += (
+            0.5 * first * inverse * d2distance2
+            - 0.25 * first * inverse * inverse * inverse * ddistance2_first.outer_product(ddistance2_second)
+        )
         return measure * hessian
 
     @ti.func
@@ -164,8 +152,6 @@ class ContactEngineMixin:
             self.contacts[contact_id].distance = distance
             self.contacts[contact_id].knot_value = ti.Vector.zero(ti.f64, 2)
             candidate = 0.0 <= distance <= threshold
-            if ti.static(self.is_semi):
-                candidate = candidate or self.semi_multiplier[contact_id] > 0.0
             if candidate:
                 slot = ti.atomic_add(self.contact_candidate_count[surface_id], 1)
                 self.contact_candidates[surface_id, slot] = contact_id
@@ -214,9 +200,7 @@ class ContactEngineMixin:
             self.contacts[contact_id].particle_id = self.mpm.surface_id[s]
             self.contacts[contact_id].distance = distance
             self.contacts[contact_id].knot_value = ti.Vector([uknot, vknot])
-            if distance < self.barrier.activation_distance_term() or (
-                ti.static(self.is_semi) and self.semi_multiplier[contact_id] > 0.0
-            ):
+            if distance < self.barrier.activation_distance_term():
                 self.contacts[contact_id].active = 1
 
     @ti.kernel
@@ -251,27 +235,8 @@ class ContactEngineMixin:
             self.contacts[contact_id].particle_id = self.mpm.surface_id[s]
             self.contacts[contact_id].distance = distance
             self.contacts[contact_id].knot_value = ti.Vector([uknot, 0.0])
-            if distance < self.barrier.activation_distance_term() or (
-                ti.static(self.is_semi) and self.semi_multiplier[contact_id] > 0.0
-            ):
+            if distance < self.barrier.activation_distance_term():
                 self.contacts[contact_id].active = 1
-
-    @ti.kernel
-    def _measure_semi_constraint_violation(self, expected_pairs: ti.i32):
-        self.semi_constraint_violation[None] = 0.0
-        for contact_id in range(expected_pairs):
-            gap = self.contacts[contact_id].distance - self.barrier.activation_distance_term()
-            ti.atomic_max(self.semi_constraint_violation[None], ti.max(-gap, 0.0))
-
-    @ti.kernel
-    def _update_semi_multipliers(self, expected_pairs: ti.i32):
-        self.semi_constraint_violation[None] = 0.0
-        for contact_id in range(expected_pairs):
-            gap = self.contacts[contact_id].distance - self.barrier.activation_distance_term()
-            self.semi_multiplier[contact_id] = semi_ipc_update_multiplier(
-                gap, self.semi_multiplier[contact_id], self.barrier.penalty[0]
-            )
-            ti.atomic_max(self.semi_constraint_violation[None], ti.max(-gap, 0.0))
 
     @ti.kernel
     def clear_barrier_system(self):
@@ -390,7 +355,7 @@ class ContactEngineMixin:
                     vknot,
                     basis,
                 )
-                if ti.static(not self.is_semi) and distance >= self.barrier.activation_distance_term():
+                if distance >= self.barrier.activation_distance_term():
                     continue
                 num_ctrlpts_v = num_knot_v - basis.basis_v.degree - 1
                 span_u = basis.basis_u.FindSpan(
@@ -470,7 +435,7 @@ class ContactEngineMixin:
                     uknot,
                     basis,
                 )
-                if ti.static(not self.is_semi) and distance >= self.barrier.activation_distance_term():
+                if distance >= self.barrier.activation_distance_term():
                     continue
                 num_ctrlpts = num_knot_u - basis.basis_u.degree - 1
                 span_u = basis.basis_u.FindSpan(
@@ -545,7 +510,7 @@ class ContactEngineMixin:
                         vknot,
                         basis,
                     )
-                    if distance < self.barrier.activation_distance_term() or ti.static(self.is_semi):
+                    if distance < self.barrier.activation_distance_term():
                         (
                             span_u,
                             span_v,
@@ -797,7 +762,7 @@ class ContactEngineMixin:
                     vknot,
                     basis,
                 )
-                if ti.static(not self.is_semi) and distance >= self.barrier.activation_distance_term():
+                if distance >= self.barrier.activation_distance_term():
                     continue
 
                 (
@@ -1095,7 +1060,7 @@ class ContactEngineMixin:
                     uknot,
                     basis,
                 )
-                if ti.static(not self.is_semi) and distance >= self.barrier.activation_distance_term():
+                if distance >= self.barrier.activation_distance_term():
                     continue
 
                 span_u, nshape, derivative_u, tangent_u, curvature_uu = basis.NurbsBasisHessian(
@@ -1344,10 +1309,8 @@ class ContactEngineMixin:
         # the finite-distance validation below, matching initialize_barrier().
         if expected_pairs > 0:
             minimum = self.minimum_contact_distance()
-            if self.is_semi:
-                self._measure_semi_constraint_violation(expected_pairs)
             required = float(self.barrier.minimum_distance) + self.strict_feasibility_tolerance
-            if not self.is_semi and (not math.isfinite(minimum) or minimum <= required):
+            if not math.isfinite(minimum) or minimum <= required:
                 raise RuntimeError(
                     "IGA-MPM IPC requires a strictly feasible positive contact "
                     f"distance (minimum={minimum:.6e}, "
@@ -1355,9 +1318,6 @@ class ContactEngineMixin:
                     f"tolerance={self.strict_feasibility_tolerance:.6e}); "
                     "use contact-aware CCD/line search to preserve feasibility."
                 )
-
-    def semi_contact_converged(self):
-        return not self.is_semi or float(self.semi_constraint_violation[None]) <= self.barrier.constraint_tolerance
 
     def assemble_barrier_system(self, need_matrix=True):
         need_matrix = bool(need_matrix)

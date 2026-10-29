@@ -20,25 +20,6 @@ class ClothElement:
     bending_height: np.ndarray
     bending_rest_angle: np.ndarray
 
-    def compute_deformation_gradient(self, positions):
-        positions = np.asarray(positions, dtype=np.float64)
-        triangles = positions[self.connectivity]
-        current_jacobian = np.stack(
-            (triangles[:, 1] - triangles[:, 0], triangles[:, 2] - triangles[:, 0]),
-            axis=2,
-        )
-        return np.einsum("eij,ejk->eik", current_jacobian, self.inverse_reference_jacobian)
-
-    def compute_metric_tensor(self, positions):
-        positions = np.asarray(positions, dtype=np.float64)
-        triangles = positions[self.connectivity]
-        current_jacobian = np.stack(
-            (triangles[:, 1] - triangles[:, 0], triangles[:, 2] - triangles[:, 0]),
-            axis=2,
-        )
-        current_metric = np.einsum("eki,ekj->eij", current_jacobian, current_jacobian)
-        return np.einsum("eij,ejk->eik", current_metric, self.inverse_reference_metric)
-
 
 def _compute_cotangent(first, second):
     sine = np.linalg.norm(np.cross(first, second))

@@ -32,7 +32,7 @@ class DifferentiableSoftAffine:
                 "DifferentiableSoftAffine multi-step replay has no supported "
                 "hyperelastic state tape yet; use differentiate_elastic_step()"
             )
-        if operator.is_semi or operator.affine.levelset_contact:
+        if operator.affine.levelset_contact:
             raise ValueError("DifferentiableSoftAffine currently requires mesh BarrierIPC")
         if operator.fully_implicit:
             raise ValueError(

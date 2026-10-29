@@ -11,6 +11,8 @@ import src.utils.GlobalVariable as GlobalVariable
 
 @ti.data_oriented
 class MohrCoulombModel(PlasticMaterial):
+    supports_rate_dependent = True
+
     def __init__(
         self, material_type="Solid", configuration="UL", solver_type="Explicit", stress_integration="ReturnMapping"
     ):
@@ -261,11 +263,6 @@ class MohrCoulombModel(PlasticMaterial):
         epsilon, sqrt2J2, lode = self.ComputeStressInvariant(stress)
         yield_shear, yield_tensile = self.ComputeYieldFunction(stress, internal_vars, material_params)
         yield_state = 0
-        """f_function = 0.
-        if yield_shear > 1e-8:
-            yield_state = 1
-            f_function = yield_shear
-        """
         if yield_tensile > Tolerance and yield_shear > Tolerance:
             n_fai = (1.0 + sin_fai) / (1.0 - sin_fai)
             sigma_p = tensile * n_fai - 2.0 * cohesion * ti.sqrt(n_fai)
@@ -282,7 +279,8 @@ class MohrCoulombModel(PlasticMaterial):
         if yield_tensile > Tolerance and yield_shear < Tolerance:
             yield_state = 2
 
-        f_function = 0.0
+        # Preserve the signed interior distance for elastic/plastic intersection searches.
+        f_function = ti.max(yield_shear, yield_tensile)
         if yield_state == 1:
             f_function = yield_shear
         elif yield_state == 2:
@@ -391,7 +389,7 @@ class MohrCoulombModel(PlasticMaterial):
     def ComputePlasticModulus(self, yield_state, dgdsigma, stress, internal_vars, state_vars, material_params):
         if ti.static(self.is_soft):
             plastic_modulus = 0.0
-            if yield_state == 1:
+            if yield_state == 1 or yield_state == 2:
                 fai = material_params[2]
                 strain = vec6f(
                     internal_vars[0],
@@ -413,6 +411,9 @@ class MohrCoulombModel(PlasticMaterial):
                     self.pdstrain_peak,
                     self.pdstrain_residual,
                 )
+                if ti.static(GlobalVariable.RANDOMFIELD):
+                    fai_residual = self.residual_frac * fai_peak
+                    c_residual = self.residual_frac * c_peak
                 dfai_dpstrain = self.soft_function.soft_deriv(
                     fai_peak, fai_residual, pdstrain_peak, pdstrain_residual, pdstrain
                 )
@@ -430,6 +431,12 @@ class MohrCoulombModel(PlasticMaterial):
                 ) + SphericalTensor(stress) / (cos_fai * cos_fai)
                 df_dc = -1
                 dfdpdstrain = df_dfai * dfai_dpstrain + df_dc * dc_dpstrain
+                if yield_state == 2:
+                    dfdpdstrain = 0.0
+                    c = material_params[4]
+                    apex = c / ti.max(ti.tan(fai), Threshold)
+                    if fai > 0.0 and tensile >= apex and apex > Threshold:
+                        dfdpdstrain = -dc_dpstrain / ti.tan(fai) + c * dfai_dpstrain / ti.sin(fai) ** 2
                 r_func = voigt_tensor_dot(DeqepsilonqDepsilon(strain), dgdsigma)
                 plastic_modulus = dfdpdstrain * r_func
             return plastic_modulus
@@ -446,9 +453,23 @@ class MohrCoulombModel(PlasticMaterial):
 
     @ti.func
     def GetMaterialParameter(self, stress, state_vars):
+        strain = ZEROVEC6f
+        if ti.static(self.is_soft):
+            strain = state_vars.strain
+        return self._material_parameter_from_history(state_vars, strain)
+
+    @ti.func
+    def UpdateMaterialParameter(self, stress, internal_vars, state_vars, material_params):
+        if ti.static(self.is_soft):
+            return self._material_parameter_from_history(state_vars, internal_vars)
+        else:
+            return material_params
+
+    @ti.func
+    def _material_parameter_from_history(self, state_vars, strain):
         bulk, shear, fai_peak, psi_peak, c_peak, tensile = self.get_current_material_parameter(state_vars)
         if ti.static(self.is_soft):
-            pdstrain = EquivalentDeviatoricStrain(state_vars.strain)
+            pdstrain = EquivalentDeviatoricStrain(strain)
             fai_residual, psi_residual, c_residual, pdstrain_peak, pdstrain_residual = (
                 self.fai_residual,
                 self.psi_residual,

@@ -53,7 +53,6 @@ def kernel_update_circular_ibm_sdf(
     radius: float,
     solid_density_value: float,
     grid_size: ti.types.vector(2, float),
-    solid_sdf: ti.template(),
     solid_fraction: ti.template(),
     solid_density: ti.template(),
     solid_velocity_cell: ti.template(),
@@ -62,7 +61,6 @@ def kernel_update_circular_ibm_sdf(
     for I in ti.grouped(solid_fraction):
         position = (I.cast(float) + 0.5) * grid_size
         phi = (position - center).norm() - radius
-        ti.atomic_min(solid_sdf[I], phi)
         solid_fraction[I] = ti.min(1.0, ti.max(0.0, 0.5 - 0.5 * phi / band))
         solid_density[I] = solid_density_value
         solid_velocity_cell[I] = ti.Vector([0.0, 0.0])
@@ -76,7 +74,6 @@ def update_cylinder_geometry(sims, scene):
         CYLINDER_RADIUS,
         IBM_SOLID_DENSITY,
         scene.element.grid_size,
-        scene.element.cell.solid_sdf,
         mpm.enginer.ibm_solid_fraction,
         mpm.enginer.ibm_solid_density,
         mpm.enginer.ibm_solid_velocity_cell,
@@ -97,7 +94,7 @@ mpm = MPM()
 print("# 2D incompressible MPM: cylinder flow with a fixed SDF cut-cell boundary")
 print(f"# cylinder IBM: center = {CYLINDER_CENTER}, radius = {CYLINDER_RADIUS}")
 print(f"# nominal Reynolds number = {2.0 * CYLINDER_RADIUS * INFLOW_VELOCITY / DYNAMIC_VISCOSITY}")
-print("# boundary model: SDF cut-cell impermeability plus IBM no-slip forcing")
+print("# boundary model: volume-fraction IBM with fictitious fluid inside the cylinder")
 print(f"# x particle boundary: {'periodic' if PERIODIC_X else 'destroy'}")
 
 mpm.set_configuration(
@@ -149,7 +146,6 @@ mpm.add_material(
     material={
         "MaterialID": 1,
         "Density": 1.0,
-        "Modulus": 2.0e3,
         "Viscosity": DYNAMIC_VISCOSITY,
         "ElementLength": DX,
         "cL": 1.5,
@@ -212,7 +208,8 @@ mpm.add_boundary_condition(
 
 mpm.select_save_data(particle=True, grid=True)
 
-mpm.run(gravity_field=False, cut_cell_function=update_cylinder_geometry, ibm_field_function=update_cylinder_geometry)
+# The cylinder is an IBM body; cut-cell SDFs describe only the channel walls.
+mpm.run(gravity_field=False, ibm_field_function=update_cylinder_geometry)
 
 if VALIDATE:
     from src.mpm.engines.EngineKernel import interpolate_solid_sdf, mac_cell_center_velocity
@@ -294,7 +291,7 @@ if VALIDATE:
         "particles_inside_sdf": particles_inside_sdf,
         "particles_inside_analytic_geometry": particles_inside_analytic_geometry,
         "minimum_analytic_particle_sdf": float(np.min(particle_sdf)),
-        "maximum_analytic_penetration_tolerance": 0.1 * min(actual_grid_size),
+        "fictitious_fluid_inside_cylinder": True,
         "active_fluid_cells": active_fluid_cells,
         "expected_fluid_cells": expected_fluid_cells,
         "pressure_iterations": int(getattr(pressure_solver, "last_iterations", -1)),
@@ -304,13 +301,12 @@ if VALIDATE:
         "pressure_final_residual": float(
             getattr(pressure_solver, "final_residual", getattr(pressure_solver, "last_residual", math.nan))
         ),
-        "passed": (
+        "passed": bool(
             area_error <= 0.05
             and velocity_error <= 0.1 * abs(INFLOW_VELOCITY)
             and np.isfinite(active_sdf).all()
-            and np.any(active_sdf < 0.0)
+            and np.any(solid_sdf < 0.0)
             and particles_inside_sdf == 0
-            and np.min(particle_sdf) >= -0.1 * min(actual_grid_size)
             and finite_state
             and position_in_domain
             and max_particle_speed <= 2.0 * abs(INFLOW_VELOCITY)

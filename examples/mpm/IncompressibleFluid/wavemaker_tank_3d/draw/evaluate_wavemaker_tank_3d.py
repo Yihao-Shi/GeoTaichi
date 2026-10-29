@@ -12,7 +12,16 @@ if str(ROOT) not in sys.path:
 import json
 import math
 import numpy as np
-from examples.mpm.IncompressibleFluid.large_tank_incompressible_3d.draw.validate_large_tank_incompressible_3d import (
+from tools.postprocessing.mpm.fluid_metrics import (
+    linear_piston_wave,
+    piston_displacement,
+    harmonic_fit,
+    deep_air_particle_count,
+    sdf_surface_gauge,
+    sdf_mean_surface,
+    sdf_surface_profile_metrics,
+    deep_air_particle_mask,
+    nonzero_spray_pressure_count,
     enclosed_air_count,
 )
 
@@ -22,44 +31,6 @@ from examples.mpm.IncompressibleFluid.wavemaker_tank_3d.wavemaker_tank_3d_parame
     TANK,
     WATER_DEPTH,
 )
-
-
-def linear_piston_wave(frequency, depth, velocity_amplitude, gravity=9.81):
-    omega = 2.0 * math.pi * frequency
-    wavenumber = omega * omega / gravity
-    for _ in range(20):
-        kh = wavenumber * depth
-        residual = gravity * wavenumber * math.tanh(kh) - omega * omega
-        derivative = gravity * (math.tanh(kh) + kh / math.cosh(kh) ** 2)
-        correction = residual / derivative
-        wavenumber -= correction
-        if abs(correction) <= 1.0e-14 * max(1.0, wavenumber):
-            break
-    kh = wavenumber * depth
-    transfer = 4.0 * math.sinh(kh) ** 2 / (math.sinh(2.0 * kh) + 2.0 * kh)
-    phase_speed = omega / wavenumber
-    group_speed = 0.5 * phase_speed * (1.0 + 2.0 * kh / math.sinh(2.0 * kh))
-    return wavenumber, transfer * velocity_amplitude / omega, group_speed
-
-
-def piston_displacement(time, frequency, velocity_amplitude, ramp_time):
-    omega = 2.0 * math.pi * frequency
-    ramp = 1.0 if time >= ramp_time else 0.5 * (1.0 - math.cos(math.pi * time / ramp_time))
-    return ramp * velocity_amplitude / omega * math.sin(omega * time)
-
-
-def harmonic_fit(time, values, frequency):
-    omega_time = 2.0 * math.pi * frequency * time
-    design = np.column_stack((np.sin(omega_time), np.cos(omega_time), np.ones_like(time)))
-    coefficients = np.linalg.lstsq(design, values, rcond=None)[0]
-    fitted = design @ coefficients
-    residual = float(np.sum((values - fitted) ** 2))
-    total = float(np.sum((values - np.mean(values)) ** 2))
-    return (
-        float(np.hypot(coefficients[0], coefficients[1])),
-        float(coefficients[2]),
-        1.0 - residual / max(total, 1.0e-30),
-    )
 
 
 def piston_penetration(position, piston_position, dx):
@@ -74,80 +45,6 @@ def active_grid_field(values, active_shape):
         raise ValueError(f"grid shape {values.shape} is incompatible with active shape {tuple(active_shape)}")
     ghost = padding // 2
     return values[tuple(slice(int(width), int(width + count)) for width, count in zip(ghost, active_shape))]
-
-
-def deep_air_particle_count(cell_type, particle_cell):
-    occupied_type = cell_type[tuple(particle_cell.T)]
-    air_cell = particle_cell[occupied_type == 0]
-    if len(air_cell) == 0:
-        return 0
-    adjacent_fluid = np.zeros(len(air_cell), dtype=bool)
-    upper = np.asarray(cell_type.shape) - 1
-    for offset in np.ndindex(3, 3, 3):
-        neighbor = np.minimum(np.maximum(air_cell + np.asarray(offset) - 1, 0), upper)
-        adjacent_fluid |= cell_type[tuple(neighbor.T)] == 1
-    return int(np.count_nonzero(~adjacent_fluid))
-
-
-def sdf_surface_gauge(cell_type, fluid_sdf, dx, gauge_x, half_width=None):
-    cell_type, fluid_sdf = np.squeeze(cell_type), np.squeeze(fluid_sdf)
-    x_cells = np.flatnonzero(np.abs((np.arange(cell_type.shape[0]) + 0.5) * dx - gauge_x) <= (half_width or dx))
-    surfaces = []
-    for i in x_cells:
-        for j in range(1, cell_type.shape[1] - 1):
-            crossings = np.flatnonzero((cell_type[i, j, :-1] == 1) & (cell_type[i, j, 1:] == 0))
-            if crossings.size:
-                k = int(crossings[-1])
-                phi_fluid, phi_air = float(fluid_sdf[i, j, k]), float(fluid_sdf[i, j, k + 1])
-                theta = (
-                    float(np.clip(phi_fluid / (phi_fluid - phi_air), 0.01, 1.0)) if phi_fluid < 0.0 < phi_air else 0.5
-                )
-                surfaces.append((k + 0.5 + theta) * dx)
-    return float(np.median(surfaces)) if surfaces else float("nan")
-
-
-def sdf_mean_surface(cell_type, fluid_sdf, dx):
-    cell_type, fluid_sdf = np.squeeze(cell_type), np.squeeze(fluid_sdf)
-    surfaces = []
-    for i in range(1, cell_type.shape[0] - 1):
-        for j in range(1, cell_type.shape[1] - 1):
-            crossings = np.flatnonzero((cell_type[i, j, :-1] == 1) & (cell_type[i, j, 1:] == 0))
-            if crossings.size:
-                k = int(crossings[-1])
-                phi_fluid, phi_air = float(fluid_sdf[i, j, k]), float(fluid_sdf[i, j, k + 1])
-                theta = (
-                    float(np.clip(phi_fluid / (phi_fluid - phi_air), 0.01, 1.0)) if phi_fluid < 0.0 < phi_air else 0.5
-                )
-                surfaces.append((k + 0.5 + theta) * dx)
-    return float(np.mean(surfaces)) if surfaces else float("nan")
-
-
-def sdf_surface_profile_metrics(cell_type, fluid_sdf, dx):
-    cell_type, fluid_sdf = np.squeeze(cell_type), np.squeeze(fluid_sdf)
-    surface = np.full(cell_type.shape[:2], np.nan)
-    for i in range(1, cell_type.shape[0] - 1):
-        for j in range(1, cell_type.shape[1] - 1):
-            crossings = np.flatnonzero((cell_type[i, j, :-1] == 1) & (cell_type[i, j, 1:] == 0))
-            if crossings.size:
-                k = int(crossings[-1])
-                phi_fluid, phi_air = float(fluid_sdf[i, j, k]), float(fluid_sdf[i, j, k + 1])
-                theta = (
-                    float(np.clip(phi_fluid / (phi_fluid - phi_air), 0.01, 1.0)) if phi_fluid < 0.0 < phi_air else 0.5
-                )
-                surface[i, j] = (k + 0.5 + theta) * dx
-    x_margin = 2 if surface.shape[0] > 6 else 1
-    y_margin = 2 if surface.shape[1] > 6 else 1
-    interior = surface[x_margin:-x_margin, y_margin:-y_margin]
-    if not np.isfinite(interior).any():
-        return float("nan"), float("nan"), float("nan")
-    interior = interior[np.any(np.isfinite(interior), axis=1)]
-    centerline = np.nanmedian(interior, axis=1)
-    cross_rms = float(np.sqrt(np.nanmean((interior - centerline[:, None]) ** 2)))
-    centerline = centerline[np.isfinite(centerline)]
-    longitudinal_rms = (
-        float(np.sqrt(np.mean(np.diff(centerline, n=2) ** 2) / 6.0)) if len(centerline) >= 3 else float("nan")
-    )
-    return cross_rms, longitudinal_rms, float(np.ptp(centerline))
 
 
 def write_metrics(output, expected_particles, requested_velocities, requested_positions, args):
@@ -170,19 +67,25 @@ def write_metrics(output, expected_particles, requested_velocities, requested_po
             surfaces = [sdf_surface_gauge(cell_type, fluid_sdf, args.dx, gauge_x) for gauge_x in GAUGE_X]
             outside = max(outside, int(np.count_nonzero(np.any((position < 0.0) | (position > TANK), axis=1))))
             particles_in_air = particles_in_deep_air = particles_in_solid = enclosed_air = 0
+            nonzero_spray_pressure = 0
+            spray_volume_fraction = 0.0
             if float(data["t_current"]) > 0.0:
                 particle_cell = np.floor(position / args.dx).astype(np.int64)
                 particle_cell = np.minimum(np.maximum(particle_cell, 0), active_shape - 1)
                 occupied_type = cell_type[tuple(particle_cell.T)]
                 particles_in_air = int(np.count_nonzero(occupied_type == 0))
-                particles_in_deep_air = deep_air_particle_count(cell_type, particle_cell)
+                spray = deep_air_particle_mask(cell_type, particle_cell)
+                particles_in_deep_air = int(np.count_nonzero(spray))
+                nonzero_spray_pressure = nonzero_spray_pressure_count(pressure, spray)
+                volume = data["volume"][active]
+                spray_volume_fraction = float(volume[spray].sum() / volume.sum())
                 particles_in_solid = int(np.count_nonzero(occupied_type == 2))
                 enclosed_air = enclosed_air_count(cell_type)
             piston_position = PISTON_MEAN_X + piston_displacement(
                 float(data["t_current"]), args.frequency, args.velocity_amplitude, args.ramp_time
             )
             piston_penetration_count, piston_penetration_depth = piston_penetration(position, piston_position, args.dx)
-            surface_profile = sdf_surface_profile_metrics(cell_type, fluid_sdf, args.dx)
+            surface_profile = sdf_surface_profile_metrics(cell_type, fluid_sdf, args.dx, piston_position)
             rows.append(
                 [
                     float(data["t_current"]),
@@ -191,7 +94,7 @@ def write_metrics(output, expected_particles, requested_velocities, requested_po
                     float(pressure.min()),
                     float(pressure.max()),
                     *surfaces,
-                    sdf_mean_surface(cell_type, fluid_sdf, args.dx),
+                    sdf_mean_surface(cell_type, fluid_sdf, args.dx, piston_position),
                     enclosed_air,
                     particles_in_air,
                     particles_in_deep_air,
@@ -199,6 +102,8 @@ def write_metrics(output, expected_particles, requested_velocities, requested_po
                     piston_penetration_count,
                     piston_penetration_depth,
                     *surface_profile,
+                    nonzero_spray_pressure,
+                    spray_volume_fraction,
                 ]
             )
     rows = np.asarray(rows)
@@ -279,6 +184,8 @@ def write_metrics(output, expected_particles, requested_velocities, requested_po
         "maximum_enclosed_air_cells": int(rows[:, 9].max()),
         "maximum_particles_in_air_cells": int(rows[:, 10].max()),
         "maximum_particles_in_deep_air_cells": int(rows[:, 11].max()),
+        "maximum_nonzero_pressure_spray_particles": int(rows[:, 18].max()),
+        "maximum_detached_spray_volume_fraction": float(rows[:, 19].max()),
         "maximum_particles_in_solid_cells": int(rows[:, 12].max()),
         "maximum_particles_behind_piston": int(rows[:, 13].max()),
         "maximum_piston_penetration_m": float(rows[:, 14].max()),
@@ -299,7 +206,7 @@ def write_metrics(output, expected_particles, requested_velocities, requested_po
         and metrics["minimum_particles"] == expected_particles
         and metrics["maximum_particles_outside_tank"] == 0
         and metrics["maximum_enclosed_air_cells"] <= 2
-        and metrics["maximum_particles_in_deep_air_cells"] == 0
+        and metrics["maximum_nonzero_pressure_spray_particles"] == 0
         and metrics["maximum_particles_in_solid_cells"] == 0
         and metrics["maximum_particles_behind_piston"] == 0
         and metrics["maximum_piston_penetration_m"] <= metrics["piston_penetration_tolerance_m"]
@@ -329,7 +236,8 @@ def write_metrics(output, expected_particles, requested_velocities, requested_po
             "enclosed_air_cells,particles_in_air_cells,particles_in_deep_air_cells,"
             "particles_in_solid_cells,particles_behind_piston,"
             "piston_penetration_m,cross_tank_surface_roughness_m,"
-            "high_frequency_surface_roughness_m,instantaneous_wave_height_m"
+            "high_frequency_surface_roughness_m,instantaneous_wave_height_m,"
+            "nonzero_pressure_spray_particles,detached_spray_volume_fraction"
         ),
         comments="",
     )

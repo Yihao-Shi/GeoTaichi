@@ -1,3 +1,5 @@
+#!/usr/bin/env bash
+cd "$(dirname "$0")"
 python packing_generate2.py
 python packing_generate3.py
 python packing_generate4.py

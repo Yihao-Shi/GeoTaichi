@@ -71,7 +71,8 @@ def main():
         parser.error("nu >= 4, nv >= 3, steps > 0, and dt > 0 are required")
 
     import geotaichi as gt
-    from src.fem import DirichletBoundary, FEM
+    from geotaichi import FEM
+    from src.fem import DirichletBoundary
     from src.fem.generator import FEMMesh
 
     gt.init(arch=args.arch, default_fp="float64", log=True)

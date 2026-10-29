@@ -1,8 +1,6 @@
 import taichi as ti
 import numpy as np
-from taichi.lang.impl import current_cfg
 
-from src.linear_solver.BlockSparsityPattern import BlockSparsityPatternCache
 from src.utils.FieldIO import field_to_numpy_prefix, runtime_float_numpy_dtype
 
 
@@ -35,18 +33,9 @@ class HashReduction:
         self.dim = dim
         self.hessian_size = int(hessian_size)
         self.max_pairs_num = max_pairs_num
-        runtime_arch = current_cfg().arch
-        if device_reduction is None:
-            # Runtime assembly is device-resident on every Taichi backend.
-            # ``False`` remains an explicit test/reference oracle on CPU and
-            # Metal, but is never selected by a production assembler.
-            device_reduction = True
-        elif runtime_arch == ti.cuda and not bool(device_reduction):
-            raise RuntimeError(
-                "device_reduction=False is not supported on CUDA: sparse "
-                "block reduction must remain in Taichi device fields"
-            )
-        self.device_reduction = bool(device_reduction)
+        if device_reduction is not None and not bool(device_reduction):
+            raise RuntimeError("device_reduction=False is not supported: sparse reduction requires Taichi fields")
+        self.device_reduction = True
         self.numpy_float_dtype = runtime_float_numpy_dtype()
         hash_capacity = 1
         requested_hash_capacity = max(2, 2 * max_nnz) if self.device_reduction else 1
@@ -74,12 +63,6 @@ class HashReduction:
         self.tripletI = ti.field(dtype=ti.i32, shape=max_nnz)
         self.tripletJ = ti.field(dtype=ti.i32, shape=max_nnz)
         self.tripletH = ti.Vector.field(self.hessian_size, dtype=float, shape=max_nnz)
-        self.pattern_cache = BlockSparsityPatternCache(
-            max_nnz,
-            enabled=pattern_cache,
-            extra_fraction=pattern_cache_extra_fraction,
-            max_age=pattern_cache_max_age,
-        )
 
         # Device-resident open-addressing table used by every Taichi backend. It
         # stores only coordinates and a block-output slot, while all changing
@@ -105,10 +88,7 @@ class HashReduction:
         self.device_pattern_extra_fraction = float(pattern_cache_extra_fraction)
         self.device_pattern_max_age = int(pattern_cache_max_age)
 
-        # Production uses Taichi fields for pattern lookup, reduction, and
-        # Krylov matvec on every architecture.  The host path is an explicit
-        # numerical oracle only.
-        self.go = self.go_with_device_reduction if self.device_reduction else self.go_with_host_reduction
+        self.go = self.go_with_device_reduction
 
     def install_fixed_pattern(self, coordinates):
         """Reserve permanent reduced slots before the first assembly."""
@@ -145,12 +125,6 @@ class HashReduction:
     def _reset_fixed_values(self):
         for i in range(self.fixed_count):
             self.tripletH[i] = ti.Vector.zero(float, self.hessian_size)
-
-    def go_with_cpu(self, pairs_num):
-        self.go_with_host_reduction(pairs_num)
-
-    def go_with_gpu(self, pairs_num):
-        self.go_with_device_reduction(pairs_num)
 
     def go_with_device_reduction(self, pairs_num):
         """Reduce blocks entirely in Taichi fields on the active backend.
@@ -260,56 +234,7 @@ class HashReduction:
         else:
             self.device_pattern_hits += 1
 
-    def go_with_host_reduction(self, pairs_num):
-        pairs_num = int(pairs_num)
-        if pairs_num < 0 or pairs_num > self.max_pairs_num:
-            raise ValueError(f"pairs_num={pairs_num} is outside [0, {self.max_pairs_num}]")
-        if pairs_num == 0:
-            self.element_pair_num[0] = 0
-            return
-
-        block_i = np.ascontiguousarray(
-            field_to_numpy_prefix(self.blockI, pairs_num),
-            dtype=np.int32,
-        )
-        block_j = np.ascontiguousarray(
-            field_to_numpy_prefix(self.blockJ, pairs_num),
-            dtype=np.int32,
-        )
-        block_h = np.ascontiguousarray(
-            field_to_numpy_prefix(self.blockH, pairs_num),
-            dtype=np.float64,
-        )
-        # Fixed FEM/MPM stencils reserve one raw slot for every possible
-        # local node pair. Diagonal and unused slots carry a negative block
-        # coordinate, so they must never enter the sparsity pattern.
-        valid = (block_i >= 0) & (block_j >= 0)
-        block_i = np.ascontiguousarray(block_i[valid], dtype=np.int32)
-        block_j = np.ascontiguousarray(block_j[valid], dtype=np.int32)
-        block_h = np.ascontiguousarray(block_h[valid], dtype=np.float64)
-        triplet_i, triplet_j, triplet_h = self.pattern_cache.reduce(
-            block_i,
-            block_j,
-            block_h,
-        )
-        nnz = int(triplet_i.shape[0])
-        if nnz > self.tripletI.shape[0]:
-            raise RuntimeError(f"HashReduction reduced nonzeros {nnz} exceed max_nnz={self.tripletI.shape[0]}")
-        self._upload_reduced_triplets(
-            np.ascontiguousarray(triplet_i, dtype=np.int32),
-            np.ascontiguousarray(triplet_j, dtype=np.int32),
-            np.ascontiguousarray(triplet_h, dtype=self.numpy_float_dtype),
-            nnz,
-        )
-        self.element_pair_num[0] = nnz
-        self.device_pattern_version += 1
-
     def configure_pattern_cache(self, *, enabled=None, extra_fraction=None, max_age=None):
-        self.pattern_cache.configure(
-            enabled=enabled,
-            extra_fraction=extra_fraction,
-            max_age=max_age,
-        )
         if enabled is not None:
             self.device_pattern_enabled = bool(enabled)
         if extra_fraction is not None:
@@ -324,8 +249,6 @@ class HashReduction:
             self.device_pattern_max_age = max_age
 
     def pattern_cache_statistics(self):
-        if not self.device_reduction:
-            return self.pattern_cache.statistics()
         return {
             "enabled": self.device_pattern_enabled,
             "backend": "taichi_device",
@@ -399,15 +322,34 @@ class HashReduction:
                 output = -1
                 if reuse_raw_mapping != 0:
                     mapped = self.raw_output[raw]
-                    if (
-                        0 <= mapped
-                        and mapped < cached_pattern_nnz
-                        and self.tripletI[mapped] == block_i
-                        and self.tripletJ[mapped] == block_j
-                    ):
-                        output = mapped
+                    if 0 <= mapped and mapped < cached_pattern_nnz:
+                        if self.tripletI[mapped] == block_i and self.tripletJ[mapped] == block_j:
+                            output = mapped
+                    if output < 0:
+                        # The table is immutable until this kernel completes, even if raw stencils reorder.
+                        slot = self._device_hash(block_i, block_j)
+                        attempts = 0
+                        searching = True
+                        while searching and attempts < self.device_hash_capacity:
+                            mapped = self.device_hash_output[slot]
+                            if mapped == -1:
+                                searching = False
+                            elif 0 <= mapped and mapped < cached_pattern_nnz:
+                                if self.tripletI[mapped] == block_i and self.tripletJ[mapped] == block_j:
+                                    output = mapped
+                                    searching = False
+                                else:
+                                    slot = (slot + 1) & self.device_hash_mask
+                                    attempts += 1
+                            else:
+                                self.device_overflow[0] = 1
+                                output = -2
+                                searching = False
+                        if attempts >= self.device_hash_capacity:
+                            self.device_overflow[0] = 1
+                            output = -2
 
-                if output < 0:
+                if output == -1:
                     miss = ti.atomic_add(self.device_mapping_misses[0], 1)
                     self.device_miss_raw[miss] = raw
 
@@ -505,29 +447,10 @@ class HashReduction:
         return pairs_num
 
     def set_reduced_triplets_from_numpy(self, block_i, block_j, block_h):
-        """Reduce host blocks and load them without full-capacity padding."""
-        block_i = np.asarray(block_i, dtype=np.int32)
-        block_j = np.asarray(block_j, dtype=np.int32)
-        block_h = np.asarray(block_h, dtype=np.float64)
-        valid = (block_i >= 0) & (block_j >= 0)
-        block_i = block_i[valid]
-        block_j = block_j[valid]
-        block_h = block_h[valid]
-        triplet_i, triplet_j, triplet_h = self.pattern_cache.reduce(block_i, block_j, block_h)
-        nnz = int(triplet_i.size)
-        if nnz > self.tripletI.shape[0]:
-            raise RuntimeError(f"HashReduction reduced nonzeros {nnz} exceed max_nnz={self.tripletI.shape[0]}")
-        self._upload_reduced_triplets(
-            np.ascontiguousarray(triplet_i, dtype=np.int32),
-            np.ascontiguousarray(triplet_j, dtype=np.int32),
-            np.ascontiguousarray(triplet_h, dtype=self.numpy_float_dtype),
-            nnz,
-        )
-        self.element_pair_num[0] = nnz
-        self.device_pattern_version += 1
-        if self.device_reduction:
-            self.device_pattern_initialized = False
-        return nnz
+        """Upload externally supplied blocks and reduce them on device."""
+        pairs_num = self.set_triplets_from_numpy(block_i, block_j, block_h)
+        self.go(pairs_num)
+        return int(self.element_pair_num[0])
 
     def get_reduced_triplets_numpy(self):
         nnz = int(self.element_pair_num[0])
@@ -564,56 +487,3 @@ class HashReduction:
             self.tripletJ[index] = triplet_j[index]
             for component in range(self.hessian_size):
                 self.tripletH[index][component] = triplet_h[index, component]
-
-    @staticmethod
-    def reduce_triplets_reference(block_i, block_j, block_h):
-        block_i = np.asarray(block_i, dtype=np.int32)
-        block_j = np.asarray(block_j, dtype=np.int32)
-        block_h = np.asarray(block_h, dtype=np.float64)
-        valid = (block_i >= 0) & (block_j >= 0)
-        block_i = block_i[valid]
-        block_j = block_j[valid]
-        block_h = block_h[valid]
-        order = np.lexsort((block_j, block_i))
-        block_i = block_i[order]
-        block_j = block_j[order]
-        block_h = block_h[order]
-
-        out_i = []
-        out_j = []
-        out_h = []
-        for idx in range(block_i.shape[0]):
-            if idx == 0 or block_i[idx] != out_i[-1] or block_j[idx] != out_j[-1]:
-                out_i.append(int(block_i[idx]))
-                out_j.append(int(block_j[idx]))
-                out_h.append(block_h[idx].copy())
-            else:
-                out_h[-1] += block_h[idx]
-        reduced_h = np.asarray(out_h, dtype=np.float64) if out_h else np.zeros((0, block_h.shape[1]), dtype=np.float64)
-        return (
-            np.asarray(out_i, dtype=np.int32),
-            np.asarray(out_j, dtype=np.int32),
-            reduced_h,
-        )
-
-    @staticmethod
-    def reduce_triplets_scipy(block_i, block_j, block_h, shape=None):
-        from scipy.sparse import coo_matrix
-
-        block_i = np.asarray(block_i, dtype=np.int32)
-        block_j = np.asarray(block_j, dtype=np.int32)
-        block_h = np.asarray(block_h, dtype=np.float64)
-        valid = (block_i >= 0) & (block_j >= 0)
-        block_i = block_i[valid]
-        block_j = block_j[valid]
-        block_h = block_h[valid]
-        if shape is None:
-            n = int(max(block_i.max(initial=0), block_j.max(initial=0)) + 1)
-            shape = (n, n)
-        pattern = coo_matrix((np.ones(block_i.shape[0]), (block_i, block_j)), shape=shape).tocsr().tocoo()
-        hessian_size = block_h.shape[1]
-        reduced_h = np.zeros((pattern.nnz, hessian_size), dtype=np.float64)
-        for comp in range(hessian_size):
-            reduced = coo_matrix((block_h[:, comp], (block_i, block_j)), shape=shape).tocsr()
-            reduced_h[:, comp] = np.asarray(reduced[pattern.row, pattern.col]).reshape(-1)
-        return pattern.row.astype(np.int32), pattern.col.astype(np.int32), reduced_h

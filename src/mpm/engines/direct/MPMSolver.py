@@ -4,6 +4,7 @@ import math
 import time
 
 import src.mpm.config as config
+from src.mpm.utils import vectorize_id
 from src.mpm.generator.Body import Body
 from src.mpm.boundaries.BoundaryCondition import DirichletBoundary, NeumannBoundary
 from src.utils.ShapeFunctions import (
@@ -24,6 +25,7 @@ from src.utils.SolverRuntime import StepSchedule, normalize_callbacks
 from src.utils.SolverConsole import print_save_file_info
 from src.utils.TimeTicker import Timer
 from src.utils.linalg import no_operation
+from src.utils.MatrixFunction import affine_velocity_matrix
 from src.utils.StepRetry import (
     StepRetryPolicy,
     is_recoverable_nonlinear_failure,
@@ -470,6 +472,23 @@ class MPMSolver:
             self.traction[start + i].particleID = ids[i]
             self.traction[start + i].pressure = pressure
             self.traction[start + i].surface_area = area[i]
+
+    @ti.func
+    def affine_transfer_position(self, i):
+        position = self.particle[i].x
+        if ti.static(self.configuration == "TL" and self.velocity_proj):
+            body = self.body[self.particle[i].bodyID]
+            position = ti.Vector.zero(ti.f64, config.DIM)
+            for j in range(self.offset[i]):
+                node_position = body.xmin + body.grid_size * ti.Vector(
+                    vectorize_id(self.LnID[i, j] - body.goffset, body.grid_num)
+                )
+                position += self.shape[i, j] * node_position
+        return position
+
+    @ti.func
+    def affine_transfer_matrix(self, Bp, Dp, grid_size):
+        return affine_velocity_matrix(Bp, Dp, ti.Vector([grid_size] * config.DIM))
 
     @ti.func
     def particle_traction_force(self, traction_id):

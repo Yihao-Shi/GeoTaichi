@@ -208,7 +208,6 @@ mpm.add_material(
     material={
         "MaterialID": 1,
         "Density": 1000.0,
-        "Modulus": 2.0e6,
         "Viscosity": 1.0e-3,
         "ElementLength": DX,
         "cL": 1.5,

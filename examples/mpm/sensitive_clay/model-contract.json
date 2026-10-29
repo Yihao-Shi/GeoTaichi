@@ -1,0 +1,219 @@
+{
+  "schema_version": 1,
+  "title": "Zhang et al. (2021) section 4.3 parameters: uniform 2D Drucker-Prager validation",
+  "module": "mpm",
+  "dimension": 2,
+  "coordinate_assumption": "plane_strain",
+  "units": {
+    "length": "m",
+    "mass": "kg",
+    "time": "s"
+  },
+  "physics": {
+    "processes": [
+      "gravity collapse",
+      "strain softening"
+    ],
+    "governing_assumptions": [
+      "total-stress undrained single-phase approximation",
+      "pressure-independent associated Drucker-Prager with Inscribed mapping and zero friction/dilation",
+      "unit out-of-plane thickness",
+      "same pure-shear peak/residual strength as the paper Tresca model; the general stress-space yield surfaces differ"
+    ]
+  },
+  "geometry": {
+    "description": "5 m high plateau to x=20 m and 45 degree slope to x=25 m",
+    "coordinate_frame": "global Cartesian",
+    "dimensions": {
+      "domain_m": [
+        70,
+        12
+      ],
+      "area_m2": 112.5
+    }
+  },
+  "discretization": {
+    "grid_or_element_size": [
+      0.2,
+      0.2
+    ],
+    "particle_or_template_resolution": 2,
+    "refinement_plan": "Original coarse uniform 0.2 m grid only. AdaptiveGrid is not configured in validation."
+  },
+  "materials": [
+    {
+      "name": "sensitive clay",
+      "model": "DruckerPrager",
+      "parameters": {
+        "Density": 2000,
+        "YoungModulus": 1000000.0,
+        "PoissonRatio": 0.33,
+        "Cohesion": 20000,
+        "ResidualCohesion": 4000,
+        "Friction": 0,
+        "ResidualFriction": 0,
+        "Dilation": 0,
+        "ResidualDilation": 0,
+        "SoftType": "Linear",
+        "PlasticDevStrain": 0,
+        "ResidualPlasticDevStrain": 0.32,
+        "dpType": "Inscribed"
+      },
+      "provenance": "Paper section 4.3: cp/cr=20/4 kPa, H=-50 kPa => standard accumulated DP equivalent strain endpoint 0.32. At zero friction Inscribed DP has sqrt(J2)=c, preserving the prescribed pure-shear strength."
+    }
+  ],
+  "initial_conditions": {
+    "gravity": [
+      0,
+      -9.81
+    ],
+    "stress_or_pressure": "Elastic dynamic relaxation with identical E, nu, density and boundaries, before enabling plasticity; relaxed geometry and stress transferred on device; velocity reset to zero. Relaxation uses alphaPIC=1 and local damping 0.7; maximum particle speed <0.002 m/s within 10 s.",
+    "velocity": [
+      0,
+      0
+    ]
+  },
+  "boundary_conditions": [
+    {
+      "selection": "y=0, 0<=x<=25",
+      "velocity": [
+        0,
+        0
+      ],
+      "provenance": "Fixed original bottom, Fig. 15"
+    },
+    {
+      "selection": "x=0, 0<=y<=12",
+      "velocity": [
+        0,
+        null
+      ]
+    },
+    {
+      "selection": "y=0, 25<x<=70",
+      "law": "Coulomb ground contact",
+      "friction_coefficient": 0.3,
+      "provenance": "Section 4.3 pp.11-12, main case mu=0.3; secondary case mu=0.1"
+    }
+  ],
+  "contact_or_coupling": {
+    "enabled": true,
+    "law": "Coulomb nodal ground friction",
+    "active_pairs": [
+      "clay / ground beyond initial toe"
+    ],
+    "parameters": {
+      "mu": 0.3
+    }
+  },
+  "time": {
+    "timestep": 0.0002,
+    "duration": 10,
+    "save_interval": 0.01,
+    "stability_policy": "Conservative fixed MPM dt checked by native CFL at finest grid; paper uses adaptive SPFEM CFL factor 0.9, not transferred as an MPM timestep."
+  },
+  "capacities": {
+    "safety_margin": 1.7,
+    "estimates": {
+      "initial_particles_upper_bound": 11250
+    },
+    "allocations": {
+      "max_particle_number": 20000,
+      "max_velocity_constraint": 4000,
+      "max_friction_constraint": 2000
+    }
+  },
+  "outputs": {
+    "path": "examples/mpm/sensitive_clay/OutputData/paper_4_3_dp_uniform_h02_consistent_mu03",
+    "fields": [
+      "position",
+      "velocity",
+      "stress",
+      "mass",
+      "volume",
+      "epdstrain"
+    ],
+    "restart": false
+  },
+  "validation": {
+    "observable": "Maximum relative mass drift on the uniform grid",
+    "expectation": 0,
+    "tolerance": {
+      "absolute": 1e-08
+    },
+    "evidence": "Independent NPZ evaluator",
+    "invariants": [
+      {
+        "kind": "mass_balance",
+        "expectation": 0,
+        "tolerance": {
+          "absolute": 1e-08
+        },
+        "basis": "Float64 particle mass on a uniform grid without particle splitting."
+      }
+    ],
+    "paper_comparison": {
+      "source": "Zhang et al., Computers and Geotechnics 129 (2021) 103856, section 4.3, Figs.15-18",
+      "times_s": [
+        0.94,
+        2.36,
+        3.76,
+        5.88,
+        7.31,
+        10
+      ],
+      "mu03": {
+        "runout_m": 12,
+        "retrogression_m": 13.6
+      },
+      "mu01": {
+        "runout_m": 21,
+        "retrogression_m": 18.4
+      },
+      "measurement": "Runout = current rightmost particle edge minus original toe x=25 m. Retrogression = original crest x=20 m minus current head-scarp top; report threshold sensitivity.",
+      "acceptance": "Report relative deviations; no preset claim of agreement for mesh-dependent local softening with different spatial methods."
+    }
+  },
+  "assumptions": [
+    "Paper 3D width is omitted; x-z section maps to computational x-y, strict plane strain and unit thickness.",
+    "Gravity magnitude is not stated in section 4.3; use standard g=9.81 m/s^2.",
+    "Paper does not give a 2D mesh spacing, relaxation damping/tolerance or plastic potential. Use documented MPM discretization and the zero-angle DP associated shear potential; do not tune physical parameters to match the result.",
+    "Paper has no regularisation; local strain softening remains mesh dependent.",
+    "Original basal nodes fixed as in Fig.15; Coulomb ground contact outside the original toe.",
+    "DP epdstrain accumulates the standard equivalent plastic-strain increment; for zero dilation its endpoint is 0.32, with no MC sqrt(2) conversion.",
+    "The paper uses Tresca; this requested DP comparison preserves the pure-shear strength and softening slope, not the entire Tresca surface.",
+    "Native DP history includes the full plastic-flow norm, including volumetric tensile-cap flow; equality with the paper deviatoric invariant holds for zero-dilation shear, not every loading branch."
+  ],
+  "unresolved": [],
+  "api": {
+    "facade": "mpm",
+    "runtime": {
+      "dim": 2,
+      "arch": "cpu",
+      "default_fp": "float64"
+    },
+    "environment": {
+      "GEOTAICHI_REAL_DTYPE": "float64"
+    },
+    "configuration": {
+      "solver_type": "Explicit",
+      "mapping": "USL",
+      "shape_function": "GIMP",
+      "stress_integration": "SubStepping"
+    },
+    "solver": {
+      "Timestep": 0.0002,
+      "SimulationTime": 10,
+      "SaveInterval": 0.01
+    },
+    "elements": [
+      {
+        "ElementType": "Q4N2D",
+        "ElementSize": [
+          0.2,
+          0.2
+        ]
+      }
+    ]
+  }
+}

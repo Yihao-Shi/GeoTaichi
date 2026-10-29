@@ -16,13 +16,13 @@ class InvertedElementError(RuntimeError):
 class FiniteStrainModel(Solid):
     def __init__(self, material_type, configuration, solver_type="Explicit"):
         super().__init__(material_type, configuration, solver_type)
-        self.young = 0.
-        self.shear = 0.
-        self.bulk = 0.
-        self.young_modulus = 0.
-        self.poisson_ratio = 0.
-        self.mu_ = 0.
-        self.lambda_ = 0.
+        self.young = 0.0
+        self.shear = 0.0
+        self.bulk = 0.0
+        self.young_modulus = 0.0
+        self.poisson_ratio = 0.0
+        self.mu_ = 0.0
+        self.lambda_ = 0.0
 
     def initialize_from_kwargs(self, **kwargs):
         material = self._material_dict_from_kwargs(kwargs)
@@ -57,18 +57,18 @@ class FiniteStrainModel(Solid):
 
     @property
     def lame_lambda(self):
-        return 3. * self.bulk * self.poisson / (1. + self.poisson) if (1. + self.poisson) != 0. else 0.
+        return 3.0 * self.bulk * self.poisson / (1.0 + self.poisson) if (1.0 + self.poisson) != 0.0 else 0.0
 
     def get_state_vars(self):
         self._initialize_vars = self._initialize_vars_
         return self.define_state_vars()
 
     def define_soft_particle_state_vars(self):
-        return {'estress': float}
-    
+        return {"estress": float}
+
     @ti.func
     def _initialize_vars_(self, np, particle, stateVars):
-        raise NotImplementedError   
+        raise NotImplementedError
 
     @ti.func
     def strain_energy_density(self, deformation_gradient):
@@ -115,20 +115,26 @@ class FiniteStrainModel(Solid):
     def von_mises_from_pk1(self, deformation_gradient, pk1_stress):
         jacobian = ti.max(deformation_gradient.determinant(), Threshold)
         cauchy_stress = pk1_stress @ deformation_gradient.transpose() / jacobian
-        von_mises = 0.
+        von_mises = 0.0
         if ti.static(deformation_gradient.n == 3):
-            von_mises = ti.sqrt(ti.max(0.5 * ((cauchy_stress[0, 0] - cauchy_stress[1, 1]) ** 2 +
-                                              (cauchy_stress[1, 1] - cauchy_stress[2, 2]) ** 2 +
-                                              (cauchy_stress[0, 0] - cauchy_stress[2, 2]) ** 2) +
-                                       3. * (cauchy_stress[0, 1] ** 2 +
-                                             cauchy_stress[1, 2] ** 2 +
-                                             cauchy_stress[0, 2] ** 2), 0.))
+            von_mises = ti.sqrt(
+                ti.max(
+                    0.5
+                    * (
+                        (cauchy_stress[0, 0] - cauchy_stress[1, 1]) ** 2
+                        + (cauchy_stress[1, 1] - cauchy_stress[2, 2]) ** 2
+                        + (cauchy_stress[0, 0] - cauchy_stress[2, 2]) ** 2
+                    )
+                    + 3.0 * (cauchy_stress[0, 1] ** 2 + cauchy_stress[1, 2] ** 2 + cauchy_stress[0, 2] ** 2),
+                    0.0,
+                )
+            )
         else:
             mean_stress = 0.5 * (cauchy_stress[0, 0] + cauchy_stress[1, 1])
             s00 = cauchy_stress[0, 0] - mean_stress
             s11 = cauchy_stress[1, 1] - mean_stress
             s01 = cauchy_stress[0, 1]
-            von_mises = ti.sqrt(ti.max(1.5 * (s00 * s00 + s11 * s11 + 2. * s01 * s01), 0.))
+            von_mises = ti.sqrt(ti.max(1.5 * (s00 * s00 + s11 * s11 + 2.0 * s01 * s01), 0.0))
         return von_mises
 
     @ti.func
@@ -138,50 +144,49 @@ class FiniteStrainModel(Solid):
     @ti.func
     def update_soft_particle_state(self, np, deformation_gradient, pk1_stress, stateVars):
         stateVars[np].estress = self.soft_particle_von_mises(deformation_gradient, pk1_stress)
-    
+
     @ti.func
     def update_particle_volume(self, np, velocity_gradient, stateVars, dt):
         deformation_gradient_rate = DELTA + velocity_gradient * dt[None]
         stateVars[np].deformation_gradient = deformation_gradient_rate @ stateVars[np].deformation_gradient
         return deformation_gradient_rate.determinant()
-    
+
     @ti.func
     def update_particle_volume_2D(self, np, velocity_gradient, stateVars, dt):
         deformation_gradient_rate = DELTA2D + velocity_gradient * dt[None]
         stateVars[np].deformation_gradient = deformation_gradient_rate @ stateVars[np].deformation_gradient
         return deformation_gradient_rate.determinant()
-    
+
     @ti.func
-    def ComputeStress2D(self, np, previous_cauchy_stress, velocity_gradient, stateVars, dt):  
-        previous_PKstress = self.Cauchy2PKStress2D(np, stateVars, previous_cauchy_stress)
-        PKstress = self.ComputePKStress2D(np, previous_PKstress, velocity_gradient, stateVars, dt)
+    def ComputeStress2D(self, np, previous_cauchy_stress, velocity_gradient, stateVars, dt):
+        # Keep the out-of-plane stress in the plane-strain Cauchy response.
+        PKstress = self.corePK(np, stateVars)
         return self.PK2CauchyStress2D(np, PKstress, stateVars)
 
     @ti.func
-    def ComputeStress(self, np, previous_cauchy_stress, velocity_gradient, stateVars, dt):  
+    def ComputeStress(self, np, previous_cauchy_stress, velocity_gradient, stateVars, dt):
         previous_PKstress = self.Cauchy2PKStress(np, stateVars, previous_cauchy_stress)
         PKstress = self.ComputePKStress(np, previous_PKstress, velocity_gradient, stateVars, dt)
         return self.PK2CauchyStress(np, PKstress, stateVars)
 
     @ti.func
-    def ComputePKStress2D(self, np, presvious_stress, velocity_gradient, stateVars, dt):  
+    def ComputePKStress2D(self, np, presvious_stress, velocity_gradient, stateVars, dt):
         PKstress = self.corePK(np, stateVars)
-        return mat2x2([[PKstress[0, 0], PKstress[0, 1]],
-                       [PKstress[1, 0], PKstress[1, 1]]])
+        return mat2x2([[PKstress[0, 0], PKstress[0, 1]], [PKstress[1, 0], PKstress[1, 1]]])
 
     @ti.func
-    def ComputePKStress(self, np, presvious_stress, velocity_gradient, stateVars, dt):  
+    def ComputePKStress(self, np, presvious_stress, velocity_gradient, stateVars, dt):
         PKstress = self.corePK(np, stateVars)
         return PKstress
-    
+
     @ti.func
-    def corePK(self, np, stateVars):  
-        return stateVars[np].stress0 + F3d(self.first_piola_stress(stateVars[np].deformation_gradient))
-    
+    def corePK(self, np, stateVars):
+        return stateVars[np].stress0 + self.first_piola_stress(F3d(stateVars[np].deformation_gradient))
+
     @ti.func
     def compute_elastic_tensor(self, np, current_stress, stateVars):
         lambda_ = self.lame_lambda
-        factor = lambda_ + 2. * self.shear
+        factor = lambda_ + 2.0 * self.shear
         stiffness = ti.Matrix.zero(float, 6, 6)
         stiffness[0, 0] = stiffness[1, 1] = stiffness[2, 2] = factor
         stiffness[0, 1] = stiffness[0, 2] = stiffness[1, 2] = lambda_
@@ -209,13 +214,35 @@ class PlasticModel(ElasticModel):
     def core(self, np, stateVars):
         trial_deformation_gradient = stateVars[np].deformation_gradient
         matrixU, sigma, matrixVT = ti.svd(trial_deformation_gradient)
-        hencky_strain = ti.log(vec3f(ti.max(1e-4, ti.abs(sigma[0])), ti.max(1e-4, ti.abs(sigma[1])), ti.max(1e-4, ti.abs(sigma[2]))))
+        hencky_strain = ti.log(
+            vec3f(ti.max(1e-4, ti.abs(sigma[0])), ti.max(1e-4, ti.abs(sigma[1])), ti.max(1e-4, ti.abs(sigma[2])))
+        )
         hencky_trace_trace = hencky_strain[0] + hencky_strain[1] + hencky_strain[2]
-        hencky_deviatoric = hencky_strain - (hencky_trace_trace / GlobalVariable.DIMENSION) * ti.Vector.one(float, GlobalVariable.DIMENSION)
+        hencky_deviatoric = hencky_strain - (hencky_trace_trace / GlobalVariable.DIMENSION) * ti.Vector.one(
+            float, GlobalVariable.DIMENSION
+        )
         hencky_deviatoric_norm = hencky_deviatoric.norm()
-        if hencky_deviatoric_norm > 0.: hencky_deviatoric /= hencky_deviatoric_norm
-        return self.plastic_process(matrixU, matrixVT, hencky_strain, hencky_trace_trace, hencky_deviatoric, hencky_deviatoric_norm, stateVars[np])
+        if hencky_deviatoric_norm > 0.0:
+            hencky_deviatoric /= hencky_deviatoric_norm
+        return self.plastic_process(
+            matrixU,
+            matrixVT,
+            hencky_strain,
+            hencky_trace_trace,
+            hencky_deviatoric,
+            hencky_deviatoric_norm,
+            stateVars[np],
+        )
 
     @ti.func
-    def plastic_process(self, matrixU, matrixVT, hencky_strain, hencky_trace_trace, hencky_deviatoric, hencky_deviatoric_norm, state_vars):
+    def plastic_process(
+        self,
+        matrixU,
+        matrixVT,
+        hencky_strain,
+        hencky_trace_trace,
+        hencky_deviatoric,
+        hencky_deviatoric_norm,
+        state_vars,
+    ):
         raise NotImplementedError

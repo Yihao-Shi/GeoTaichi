@@ -397,6 +397,9 @@ class SanisandMSModel(InfinitesimalStrainModel):
         NextAlphaM = ZEROVEC6f
         NextMM_plus = 0.0
         NextMM_minus = 0.0
+        runge_kutta = False
+        rk_stress = CurStress
+        rk_strain = dStrain
 
         # if VoigtTensorNorm(dStrain) >= small:
         #     return
@@ -413,45 +416,15 @@ class SanisandMSModel(InfinitesimalStrainModel):
             fn = self.GetF(CurStress, CurAlpha)
             pn = ComputeStressInvariantI1(CurStress) / 3.0
             if fn > mTolF:  # This is an illegal stress state! This shouldn't happen
-                (
-                    NextStress,
-                    NextAlpha,
-                    NextAlphaM,
-                    NextMM_plus,
-                    NextMM_minus,
-                    NextVoidRatio,
-                ) = self.RungeKutta4(
-                    CurStress,
-                    dStrain,
-                    CurVoidRatio,
-                    CurAlpha,
-                    CurAlphaM,
-                    CurMM_plus,
-                    CurMM_minus,
-                    Curalpha_in,
-                )
+                runge_kutta = True
 
             elif fn < -mTolF:  # This is a transition from elastic to plastic
                 elasticRatio = self.IntersectionFactor(CurStress, dStrain, CurVoidRatio, CurAlpha, 0.0, 1.0)
                 dSigma = aC @ (elasticRatio * dStrain)
                 # dSigma = ElasticTensorMultiplyVector(elasticRatio * (NextStrain - CurStrain), K, G)
-                (
-                    NextStress,
-                    NextAlpha,
-                    NextAlphaM,
-                    NextMM_plus,
-                    NextMM_minus,
-                    NextVoidRatio,
-                ) = self.RungeKutta4(
-                    CurStress + dSigma,
-                    (1.0 - elasticRatio) * dStrain,
-                    CurVoidRatio,
-                    CurAlpha,
-                    CurAlphaM,
-                    CurMM_plus,
-                    CurMM_minus,
-                    Curalpha_in,
-                )
+                rk_stress = CurStress + dSigma
+                rk_strain = (1.0 - elasticRatio) * dStrain
+                runge_kutta = True
 
             elif abs(fn) < mTolF:
                 denom = VoigtTensorNorm(dSigma)
@@ -460,45 +433,35 @@ class SanisandMSModel(InfinitesimalStrainModel):
                 ratio = voigt_tensor_dot(self.GetNormalToYield(CurStress, CurAlpha), dSigma) / denom
                 if ratio > -ti.sqrt(mTolF):
                     # This is a pure plastic step
-                    (
-                        NextStress,
-                        NextAlpha,
-                        NextAlphaM,
-                        NextMM_plus,
-                        NextMM_minus,
-                        NextVoidRatio,
-                    ) = self.RungeKutta4(
-                        CurStress,
-                        dStrain,
-                        CurVoidRatio,
-                        CurAlpha,
-                        CurAlphaM,
-                        CurMM_plus,
-                        CurMM_minus,
-                        Curalpha_in,
-                    )
+                    runge_kutta = True
                 else:
                     # This is an elastic unloding followed by plastic loading
                     elasticRatio = self.IntersectionFactor_Unloading(CurStress, dStrain, CurVoidRatio, CurAlpha)
                     dSigma = aC @ (elasticRatio * dStrain)
                     # dSigma = ElasticTensorMultiplyVector(elasticRatio * (NextStrain - CurStrain), K, G)
-                    (
-                        NextStress,
-                        NextAlpha,
-                        NextAlphaM,
-                        NextMM_plus,
-                        NextMM_minus,
-                        NextVoidRatio,
-                    ) = self.RungeKutta4(
-                        CurStress + dSigma,
-                        (1.0 - elasticRatio) * dStrain,
-                        CurVoidRatio,
-                        CurAlpha,
-                        CurAlphaM,
-                        CurMM_plus,
-                        CurMM_minus,
-                        Curalpha_in,
-                    )
+                    rk_stress = CurStress + dSigma
+                    rk_strain = (1.0 - elasticRatio) * dStrain
+                    runge_kutta = True
+
+        # One call site avoids inlining the complete adaptive RK integrator four times.
+        if runge_kutta:
+            (
+                NextStress,
+                NextAlpha,
+                NextAlphaM,
+                NextMM_plus,
+                NextMM_minus,
+                NextVoidRatio,
+            ) = self.RungeKutta4(
+                rk_stress,
+                rk_strain,
+                CurVoidRatio,
+                CurAlpha,
+                CurAlphaM,
+                CurMM_plus,
+                CurMM_minus,
+                Curalpha_in,
+            )
         return NextStress, NextAlpha, NextAlphaM, NextMM_plus, NextMM_minus
 
     @ti.func

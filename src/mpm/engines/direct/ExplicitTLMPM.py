@@ -36,7 +36,7 @@ class ExplicitTLMPM(ExplicitMPM):
             grid_size = self.body[bodyID].grid_size
             xmin = self.body[bodyID].xmin
 
-            p_pos = self.particle[i].x
+            p_pos = self.affine_transfer_position(i)
             p_mass = self.particle[i].m
             p_vel = self.particle[i].v
             for j in range(self.offset[i]):

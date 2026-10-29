@@ -19,7 +19,6 @@ from examples.mpm.IncompressibleFluid.wavemaker_tank_3d.wavemaker_tank_3d_parame
     WATER_DEPTH,
 )
 from examples.mpm.IncompressibleFluid.wavemaker_tank_3d.draw.evaluate_wavemaker_tank_3d import (
-    piston_displacement,
     write_metrics,
 )
 
@@ -119,6 +118,12 @@ def piston_velocity(time, frequency, velocity_amplitude, ramp_time):
     return displacement_amplitude * (ramp_rate * math.sin(omega * time) + ramp * omega * math.cos(omega * time))
 
 
+def piston_displacement(time, frequency, velocity_amplitude, ramp_time):
+    omega = 2.0 * math.pi * frequency
+    ramp = 1.0 if time >= ramp_time else 0.5 * (1.0 - math.cos(math.pi * time / ramp_time))
+    return ramp * velocity_amplitude / omega * math.sin(omega * time)
+
+
 def run(args):
     output = args.output.expanduser().resolve()
     fluid_cells = np.round(WATER_SIZE / args.dx).astype(int)
@@ -189,7 +194,6 @@ def run(args):
         material={
             "MaterialID": 1,
             "Density": 1000.0,
-            "Modulus": 2.0e6,
             "Viscosity": 1.0e-3,
             "ElementLength": args.dx,
             "cL": 1.5,

@@ -46,6 +46,8 @@ class IGA(SolverDiagnosticsMixin):
         self.sims.set_configuration(dimension=dimension, solver_type=solver_type, **kwargs)
         kwargs.setdefault("axisymmetric", self.sims.is_axisymmetric)
         kwargs.setdefault("axis_offset", self.sims.axis_offset)
+        if "linear_solver_tolerance" in kwargs:
+            kwargs.setdefault("linear_solver_relative_tolerance", 0.0)
         self.solver_kwargs.update(kwargs)
         if log:
             self.print_basic_simulation_info()
@@ -101,6 +103,8 @@ class IGA(SolverDiagnosticsMixin):
             step_retry_reduction=retry_policy.reduction,
             step_retry_minimum_timestep=retry_policy.minimum_timestep,
         )
+        if "linear_solver_tolerance" in kwargs:
+            kwargs.setdefault("linear_solver_relative_tolerance", 0.0)
         self.solver_kwargs.update(kwargs)
         if log:
             self.print_solver_info()

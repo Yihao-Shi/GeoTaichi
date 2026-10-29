@@ -3,7 +3,7 @@
 These 3D examples couple a saturated MPM bed, free-surface fluid, and rigid LSDEM grains. Fluid points use volume-fraction immersed boundary forcing (IBM); solid points use level-set contact. See the [MPM–LSDEM IBM theory log](../../../src/mpdem/README.md#10-fully-resolved-lsdem-and-affinebody-volume-fraction-ibm) for geometry, load exchange, and the hybrid two-phase formulation.
 
 - `wavemaker_lsdem_particles_3d/wavemaker_lsdem_particles_3d.py`: piston wavemaker,
-  saturated trapezoidal MPM bed, an irregular trunk embedded in the bed and
+  saturated trapezoidal MPM bed, a branched trunk embedded in the bed and
   four irregular LSDEM grains on top.
 - `sphere_impact_submerged_bed_3d.py`: Section 5.2 of
   `1-s2.0-S0045782526006742-main.pdf`; 0.10 m saturated bed, 0.05 m overlying
@@ -26,6 +26,13 @@ and the default spherical example are unchanged.
 
 Both examples insert the solid MPM template first because only the leading
 solid-point prefix enters ordinary LSDEM contact.  Fluid points use IBM.
+
+The trunk mesh has three tapered side branches and two secondary forks joined
+into one watertight LSDEM body. Its equivalent radius remains 0.040 m; the
+collision SDF and saved render surface both use `assets/mesh/LSDEM/tree_trunk.obj`.
+The fork plane is oriented along the tank to keep the branches clear of its walls.
+Existing trajectories retain their original geometry and need a fresh run to
+show the branched trunk.
 
 ```bash
 python examples/mmpm/TwoPhaseLSDEMCoupling/wavemaker_lsdem_particles_3d/wavemaker_lsdem_particles_3d.py --strict

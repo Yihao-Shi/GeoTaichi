@@ -10,7 +10,6 @@ if ROOT not in sys.path:
 
 from geotaichi import MPM, init
 
-
 SCRIPT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DT = float(os.environ.get("GEOTAICHI_DOUBLE_POINT_LANDSLIDE_DT", "5.0e-5"))
 SIMULATION_TIME = float(os.environ.get("GEOTAICHI_DOUBLE_POINT_LANDSLIDE_TIME", "0.25"))
@@ -84,7 +83,6 @@ mpm.add_material(
         "SolidDensity": 2650.0,
         "FluidDensity": 1000.0,
         "Porosity": 0.42,
-        "FluidBulkModulus": 2.2e8,
         "Permeability": 5.0e-4,
         "FluidViscosity": 1.0e-3,
         "GrainDiameter": 2.0e-2,

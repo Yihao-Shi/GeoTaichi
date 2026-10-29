@@ -10,6 +10,43 @@ from examples.igampm.flexible_barrier import flexible_barrier as case
 from src.mpm.generator.Body import Body
 
 
+def test_fem_barrier_keeps_its_own_three_dimensional_soil_setup(tmp_path):
+    from examples.fempm.flexible_barrier import flexible_barrier as fem_case
+
+    p = fem_case.parameters(
+        SimpleNamespace(
+            method="fempm",
+            thickness=1.0,
+            spacing=0.5,
+            elastic_spacing=0.5,
+            dt=0.001,
+            time=0.002,
+            save_interval=0.001,
+            ppc=2,
+            contact_capacity=256,
+            linear_solver="PCG",
+        )
+    )
+    body = Body()
+    configured = {}
+    mpm = SimpleNamespace(
+        create_body=lambda: body,
+        set_configuration=lambda **values: configured.update(values),
+        add_body=lambda value: None,
+        add_material=lambda **values: configured.update(material=values),
+        add_element=lambda values: configured.update(element=values),
+        add_boundary_condition=lambda **values: None,
+        set_solver=lambda values: None,
+    )
+    fem_case.configure_mpm(mpm, p, tmp_path)
+    soil = body.bodies["dp_soil"]
+    assert configured["dimension"] == 3
+    assert soil["points"].shape == (2048, 3)
+    assert configured["element"]["ShapeFunction"] == "Linear"
+    assert configured["material"]["FrictionAngle"] == configured["material"]["DilationAngle"] == 30.0
+    assert len(soil["points"]) * soil["volume"] * p["density"] == pytest.approx(80_000.0)
+
+
 @pytest.mark.parametrize("dimension", [2, 3])
 def test_barrier_particle_geometry_and_quadratic_basis(dimension, tmp_path):
     p = case.parameters(

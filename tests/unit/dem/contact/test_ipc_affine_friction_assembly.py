@@ -5,6 +5,9 @@ import numpy as np
 import pytest
 import taichi as ti
 
+from tests.helpers.affine_state_reference import ReferenceAffineBodyState
+from tests.helpers.abd_engine_reference import ReferenceAffineBodyEngine
+
 pytestmark = [
     pytest.mark.unit,
     pytest.mark.dem,
@@ -125,7 +128,7 @@ def _build_affine_contact(save_path, with_wall=False, friction_mode="lagged", as
     dem.add_essentials()
     dem.enginer.initialize(dem.sims, dem.scene)
     state = dem.enginer.state
-    state.begin_step(float(dem.sims.dt[None]))
+    ReferenceAffineBodyState.begin_step(state, float(dem.sims.dt[None]))
     dem.enginer.operator.initialize_contact_damping(state.pack(), state.hat_y)
     if friction_mode == "lagged":
         assert int(dem.enginer.operator.friction_contact_count[0]) > 0
@@ -281,11 +284,11 @@ def _evaluate_friction(dem, hat_y, displacement):
     y = hat_y + displacement
 
     operator.friction_scale[0] = 1.0
-    energy_with, grad_with = engine._assemble_system(dem.sims, y, need_matrix=True)
+    energy_with, grad_with = ReferenceAffineBodyEngine._assemble_system(engine, dem.sims, y, need_matrix=True)
     matrix_with = engine.coo_matrix._to_numpy().copy()
 
     operator.friction_scale[0] = 0.0
-    energy_without, grad_without = engine._assemble_system(dem.sims, y, need_matrix=True)
+    energy_without, grad_without = ReferenceAffineBodyEngine._assemble_system(engine, dem.sims, y, need_matrix=True)
     matrix_without = engine.coo_matrix._to_numpy().copy()
     operator.friction_scale[0] = 1.0
 
@@ -418,7 +421,7 @@ def test_ipc_affine_wall_collision_weight_has_no_extra_dhat(tmp_path):
 
 def test_soft_affine_step_initializes_friction_when_damping_is_disabled():
     os.environ.setdefault("GEOTAICHI_REAL_DTYPE", "float64")
-    from src.mpdem.engines.SoftAffineIPCOperator import SoftAffineIPCOperator
+    from tests.helpers.soft_affine_reference import ReferenceSoftAffineIPCOperator as SoftAffineIPCOperator
 
     events = []
     state = SimpleNamespace(
@@ -456,3 +459,72 @@ def test_soft_affine_step_initializes_friction_when_damping_is_disabled():
 if __name__ == "__main__":
     test_ipc_affine_affine_friction_production_assembly()
     test_ipc_affine_wall_collision_weight_has_no_extra_dhat()
+
+
+@pytest.mark.parametrize("count", [300, 100000])
+def test_lagged_friction_pages_preserve_adjoint_and_overflow(taichi_runtime, count):
+    from src.dem.engines.AffineBodyOperator import TaichiAffineBodyOperator
+    from src.utils.FieldIO import field_to_numpy_prefix
+
+    operator = object.__new__(TaichiAffineBodyOperator)
+    operator.friction_contact_capacity = max(10000, count)
+    operator.friction_contact_count = ti.field(ti.i32, shape=1)
+    operator.friction_contact_overflow = ti.field(ti.i32, shape=1)
+    operator.adjoint_friction_contact_count = ti.field(ti.i32, shape=())
+    operator._allocate_friction_contact_fields("friction_contact")
+    operator._allocate_friction_contact_fields("adjoint_friction_contact")
+
+    @ti.kernel
+    def store(count: int):
+        operator.friction_contact_count[0] = 0
+        operator.friction_contact_overflow[0] = 0
+        for i in range(count):
+            operator._store_lagged_friction_contact(
+                ti.Vector([i, 1, 2, 3]),
+                ti.Vector([4, 5, 6, 7]),
+                ti.Vector([1.0, -0.2, -0.3, -0.5]),
+                ti.Vector([0.0, 0.0, 1.0]),
+                ti.Vector([0.1, 0.2, 0.3]),
+                i + 0.5,
+                False,
+            )
+
+    sparse = ti.lang.impl.current_cfg().arch in (ti.cpu, ti.cuda)
+    pages = operator.friction_contact_coeff.snode.parent().parent()
+    if sparse:
+        assert pages._num_dynamically_allocated == 0
+    operator.friction_contact_count[0] = count
+    operator.device_reserve_lagged_friction_pages()
+    store(count)
+    np.testing.assert_array_equal(
+        np.sort(field_to_numpy_prefix(operator.friction_contact_coeff, count)), np.arange(count) + 0.5
+    )
+    for name, expected in (
+        ("vertices", [4, 5, 6, 7]),
+        ("weights", [1.0, -0.2, -0.3, -0.5]),
+        ("normal", [0.0, 0.0, 1.0]),
+        ("hat_rel", [0.1, 0.2, 0.3]),
+    ):
+        values = field_to_numpy_prefix(getattr(operator, "friction_contact_" + name), count)
+        np.testing.assert_array_equal(values, np.broadcast_to(expected, values.shape))
+    operator.device_backup_lagged_friction_for_adjoint()
+    np.testing.assert_array_equal(
+        np.sort(field_to_numpy_prefix(operator.adjoint_friction_contact_coeff, count)), np.arange(count) + 0.5
+    )
+    if sparse:
+        assert pages._num_dynamically_allocated == (count + 255) // 256
+    store(0)
+    operator.friction_contact_coeff[299] = -1.0
+    operator.friction_contact_weights[299] = [0.0, 0.0, 0.0, 0.0]
+    operator.device_restore_lagged_friction_for_adjoint()
+    assert operator.friction_contact_count[0] == count
+    coefficients = field_to_numpy_prefix(operator.friction_contact_coeff, count)
+    np.testing.assert_array_equal(np.sort(coefficients), np.arange(count) + 0.5)
+    bodies = field_to_numpy_prefix(operator.friction_contact_bodies, count)
+    np.testing.assert_array_equal(coefficients, bodies[:, 0] + 0.5)
+    np.testing.assert_array_equal(operator.friction_contact_weights[299], [1.0, -0.2, -0.3, -0.5])
+    operator.friction_contact_count[0] = operator.friction_contact_capacity
+    operator.device_reserve_lagged_friction_pages()
+    store(operator.friction_contact_capacity + 1)
+    assert operator.friction_contact_count[0] == operator.friction_contact_capacity + 1
+    assert operator.friction_contact_overflow[0] == 1

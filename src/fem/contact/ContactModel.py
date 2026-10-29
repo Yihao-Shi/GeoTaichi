@@ -47,7 +47,7 @@ def _normalize_plane(entry):
 
 @dataclass
 class FEMContact:
-    """Validated FEM contact settings shared by IPC and augmented Lagrangian."""
+    """Validated FEM IPC contact settings."""
 
     model: str = "IPC"
     broad_phase: str = "LinkedCell"
@@ -64,12 +64,6 @@ class FEMContact:
     friction_iterations: int = 1
     friction_max_iterations: int = 50
     friction_tolerance: float = 1.0e-7
-    penalty: float = 1.0e5
-    max_penalty: float = 1.0e12
-    penalty_growth: float = 2.0
-    penalty_update_interval: int = 50
-    sufficient_reduction: float = 0.75
-    constraint_tolerance: float = 1.0e-6
     point_triangle_coordination_number: float = 32.0
     edge_edge_coordination_number: float = 128.0
     max_point_triangle_pairs: int | None = None
@@ -84,17 +78,9 @@ class FEMContact:
             "barrier": "IPC",
             "barrieripc": "IPC",
             "incrementalpotentialcontact": "IPC",
-            "al": "AugmentedLagrangian",
-            "semi": "AugmentedLagrangian",
-            "semiipc": "AugmentedLagrangian",
-            "augmentlagrangian": "AugmentedLagrangian",
-            "augmentedlagrangian": "AugmentedLagrangian",
-            "nonbarrier": "AugmentedLagrangian",
-            "nonbarrieraugmentlagrangian": "AugmentedLagrangian",
-            "nonbarrieraugmentedlagrangian": "AugmentedLagrangian",
         }
         if key not in aliases:
-            raise ValueError("FEM contact model must be 'BarrierIPC' or 'SemiIPC'")
+            raise ValueError("FEM contact model must be 'BarrierIPC'")
         self.model = aliases[key]
         broad_phase_key = str(self.broad_phase).strip().replace("_", "").replace("-", "").replace(" ", "").lower()
         broad_phase_aliases = {
@@ -112,17 +98,6 @@ class FEMContact:
         if self.dmin is not None:
             self.dmin = _positive("dmin", self.dmin, allow_zero=True)
         self.kappa = _positive("kappa", self.kappa)
-        self.penalty = _positive("penalty", self.penalty)
-        self.max_penalty = _positive("max_penalty", self.max_penalty)
-        if self.max_penalty < self.penalty:
-            raise ValueError("max_penalty must be at least penalty")
-        self.penalty_growth = _positive("penalty_growth", self.penalty_growth)
-        if self.penalty_growth <= 1.0:
-            raise ValueError("penalty_growth must be greater than one")
-        self.sufficient_reduction = _positive("sufficient_reduction", self.sufficient_reduction)
-        if self.sufficient_reduction >= 1.0:
-            raise ValueError("sufficient_reduction must be less than one")
-        self.constraint_tolerance = _positive("constraint_tolerance", self.constraint_tolerance, allow_zero=True)
         self.point_triangle_coordination_number = _positive(
             "point_triangle_coordination_number",
             self.point_triangle_coordination_number,
@@ -151,8 +126,7 @@ class FEMContact:
         if self.ccd_safety > 1.0:
             raise ValueError("ccd_safety must not exceed one")
         self.ccd_max_iterations = int(self.ccd_max_iterations)
-        self.penalty_update_interval = int(self.penalty_update_interval)
-        if self.ccd_max_iterations <= 0 or self.penalty_update_interval <= 0:
+        if self.ccd_max_iterations <= 0:
             raise ValueError("contact iteration counts must be positive")
         self.planes = tuple(_normalize_plane(entry) for entry in (self.planes or ()))
         if self.body_pair is not None:
@@ -162,7 +136,7 @@ class FEMContact:
             if first < 0 or second < 0:
                 raise ValueError("FEM contact body IDs must be non-negative")
             self.body_pair = tuple(sorted((first, second)))
-        if self.model not in ("IPC", "AugmentedLagrangian") and self.pair_contacts:
+        if self.model not in ("IPC",) and self.pair_contacts:
             raise ValueError("per-body contact parameters require FEM IPC contact")
 
     @classmethod
@@ -195,11 +169,6 @@ class FEMContact:
             "frictioniterations": "friction_iterations",
             "frictionmaxiterations": "friction_max_iterations",
             "frictiontolerance": "friction_tolerance",
-            "initialpenalty": "penalty",
-            "maxpenalty": "max_penalty",
-            "penaltygrowth": "penalty_growth",
-            "penaltyupdateinterval": "penalty_update_interval",
-            "constrainttolerance": "constraint_tolerance",
             "selfcontact": "self_contact",
             "ccdsafety": "ccd_safety",
             "ccdmaxiterations": "ccd_max_iterations",
@@ -219,7 +188,7 @@ class FEMContact:
 
     def add_property(self, body_id1, body_id2, property=None, **kwargs):
         """Add one IPC parameter set for an unordered FEM body pair."""
-        if self.model not in ("IPC", "AugmentedLagrangian"):
+        if self.model not in ("IPC",):
             raise ValueError("per-body contact parameters require FEM IPC contact")
         parameters = dict(property or {})
         parameters.update(kwargs)
@@ -237,12 +206,6 @@ class FEMContact:
             "friction_iterations": self.friction_iterations,
             "friction_max_iterations": self.friction_max_iterations,
             "friction_tolerance": self.friction_tolerance,
-            "penalty": self.penalty,
-            "max_penalty": self.max_penalty,
-            "penalty_growth": self.penalty_growth,
-            "penalty_update_interval": self.penalty_update_interval,
-            "sufficient_reduction": self.sufficient_reduction,
-            "constraint_tolerance": self.constraint_tolerance,
             "point_triangle_coordination_number": self.point_triangle_coordination_number,
             "edge_edge_coordination_number": self.edge_edge_coordination_number,
             "max_point_triangle_pairs": self.max_point_triangle_pairs,

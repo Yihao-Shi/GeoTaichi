@@ -23,7 +23,7 @@ Explicit contact rebuilds NURBS bounds, projects points, updates history, and
 scatters DEM-law forces through device kernels.
 
 For CCD, bounds enclose both current control points and their proposed
-endpoints. Each swept particle box queries a refitted global surface BVH;
+endpoints. Each swept-query preparation rebuilds the global surface BVH on device;
 3D candidates also traverse the surface's swept knot-span BVH. Clearance and
 a floating-point guard expand overlap tests. Remaining pairs pass through the
 relative-motion certificate and then the existing moving NURBS ACCD query.

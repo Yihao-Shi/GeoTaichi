@@ -8,6 +8,7 @@ import src.utils.TimeTicker as time_ticker
 
 def test_gpu_timer_end_always_synchronizes(monkeypatch):
     calls = []
+    monkeypatch.delenv("GEOTAICHI_SYNC_TIMERS", raising=False)
     monkeypatch.setattr(GlobalVariable, "USEGPU", True)
     monkeypatch.setattr(time_ticker.ti, "sync", lambda: calls.append("sync"))
 
@@ -17,7 +18,31 @@ def test_gpu_timer_end_always_synchronizes(monkeypatch):
     assert calls == ["sync"]
 
 
+def test_gpu_timer_can_skip_stage_synchronization(monkeypatch):
+    calls = []
+    monkeypatch.setattr(GlobalVariable, "USEGPU", True)
+    monkeypatch.setattr(time_ticker.ti, "sync", lambda: calls.append("sync"))
+
+    timer = Timer(synchronize=False)
+    timer.begin("asynchronous")
+    timer.end("asynchronous")
+    assert calls == []
+
+
+def test_gpu_timer_stage_synchronization_can_be_disabled_by_environment(monkeypatch):
+    calls = []
+    monkeypatch.setenv("GEOTAICHI_SYNC_TIMERS", "0")
+    monkeypatch.setattr(GlobalVariable, "USEGPU", True)
+    monkeypatch.setattr(time_ticker.ti, "sync", lambda: calls.append("sync"))
+
+    timer = Timer()
+    timer.begin("asynchronous")
+    timer.end("asynchronous")
+    assert calls == []
+
+
 def test_gpu_timer_section_preserves_body_error_when_sync_also_fails(monkeypatch):
+    monkeypatch.delenv("GEOTAICHI_SYNC_TIMERS", raising=False)
     monkeypatch.setattr(GlobalVariable, "USEGPU", True)
     monkeypatch.setattr(
         time_ticker.ti,

@@ -7,13 +7,19 @@ import pytest
 
 pytestmark = [pytest.mark.slow, pytest.mark.serial]
 
+
 def _test_arch():
     arch = os.environ.get("GEOTAICHI_TEST_ARCH", "cpu").lower()
     return "gpu" if arch == "cuda" else arch
 
 
 def _skip_if_local_backend_cannot_allocate_sparse_grid():
-    if _test_arch() == "cpu" and platform.system() == "Darwin" and platform.machine() == "arm64":
+    if (
+        _test_arch() == "cpu"
+        and platform.system() == "Darwin"
+        and platform.machine() == "arm64"
+        and os.environ.get("GEOTAICHI_FORCE_CPU") != "1"
+    ):
         pytest.skip("BlockScan sparse_grid requires Taichi CPU or CUDA; GeoTaichi maps Apple Silicon cpu to Metal.")
 
 
@@ -34,8 +40,10 @@ def run_case(save_path, sparse_grid=False):
         shape_function="Linear",
         material_type="TwoPhaseSingleLayer",
         solver_type="Explicit",
-        velocity_projection="PIC/FLIP",
-        sparse_grid={"Enabled": True, "Backend": "BlockScan", "BlockSize": 2, "MaxActiveBlocks": 8} if sparse_grid else None,
+        velocity_projection=None,
+        sparse_grid=(
+            {"Enabled": True, "Backend": "BlockScan", "BlockSize": 2, "MaxActiveBlocks": 8} if sparse_grid else None
+        ),
     )
     mpm.set_solver(
         solver={
@@ -94,11 +102,36 @@ def run_case(save_path, sparse_grid=False):
     )
     mpm.add_boundary_condition(
         boundary=[
-            {"BoundaryType": "VelocityConstraint", "Velocity": [0.0, None, None], "StartPoint": [0.0, 0.0, 0.0], "EndPoint": [0.0, 0.3, 0.3]},
-            {"BoundaryType": "VelocityConstraint", "Velocity": [0.0, None, None], "StartPoint": [0.3, 0.0, 0.0], "EndPoint": [0.3, 0.3, 0.3]},
-            {"BoundaryType": "VelocityConstraint", "Velocity": [None, 0.0, None], "StartPoint": [0.0, 0.0, 0.0], "EndPoint": [0.3, 0.0, 0.3]},
-            {"BoundaryType": "VelocityConstraint", "Velocity": [None, None, 0.0], "StartPoint": [0.0, 0.0, 0.0], "EndPoint": [0.3, 0.3, 0.0]},
-            {"BoundaryType": "VelocityConstraint", "Velocity": [None, None, 0.0], "StartPoint": [0.0, 0.0, 0.3], "EndPoint": [0.3, 0.3, 0.3]},
+            {
+                "BoundaryType": "VelocityConstraint",
+                "Velocity": [0.0, None, None],
+                "StartPoint": [0.0, 0.0, 0.0],
+                "EndPoint": [0.0, 0.3, 0.3],
+            },
+            {
+                "BoundaryType": "VelocityConstraint",
+                "Velocity": [0.0, None, None],
+                "StartPoint": [0.3, 0.0, 0.0],
+                "EndPoint": [0.3, 0.3, 0.3],
+            },
+            {
+                "BoundaryType": "VelocityConstraint",
+                "Velocity": [None, 0.0, None],
+                "StartPoint": [0.0, 0.0, 0.0],
+                "EndPoint": [0.3, 0.0, 0.3],
+            },
+            {
+                "BoundaryType": "VelocityConstraint",
+                "Velocity": [None, None, 0.0],
+                "StartPoint": [0.0, 0.0, 0.0],
+                "EndPoint": [0.3, 0.3, 0.0],
+            },
+            {
+                "BoundaryType": "VelocityConstraint",
+                "Velocity": [None, None, 0.0],
+                "StartPoint": [0.0, 0.0, 0.3],
+                "EndPoint": [0.3, 0.3, 0.3],
+            },
         ]
     )
     mpm.select_save_data(particle=True, grid=False, object=False)
@@ -135,7 +168,5 @@ def test_single_layer_explicit_3d_musl_sparse_grid(tmp_path):
 
 
 if __name__ == "__main__":
-    with tempfile.TemporaryDirectory(
-        prefix="geotaichi-single-layer-explicit-3d-"
-    ) as temporary_directory:
+    with tempfile.TemporaryDirectory(prefix="geotaichi-single-layer-explicit-3d-") as temporary_directory:
         run_case(os.path.join(temporary_directory, "output"))

@@ -277,6 +277,53 @@ def test_accd_mode_applies_tolerance_and_eta_cap():
     )
 
 
+@ti.kernel
+def _evaluate_small_positive_gap(gap: ti.f64, displacement: ti.f64) -> ti.types.vector(2, ti.f64):
+    zero = ti.Vector.zero(ti.f64, 3)
+    move = ti.Vector([0.0, 0.0, displacement])
+    return ti.Vector(
+        [
+            point_triangle_ccd(
+                ti.Vector([0.0, 0.0, gap]),
+                ti.Vector([-1.0, -1.0, 0.0]),
+                ti.Vector([1.0, -1.0, 0.0]),
+                ti.Vector([0.0, 1.0, 0.0]),
+                move,
+                zero,
+                zero,
+                zero,
+                0.2,
+                100,
+            ),
+            edge_edge_ccd(
+                ti.Vector([-1.0, 0.0, gap]),
+                ti.Vector([1.0, 0.0, gap]),
+                ti.Vector([0.0, -1.0, 0.0]),
+                ti.Vector([0.0, 1.0, 0.0]),
+                move,
+                move,
+                zero,
+                zero,
+                0.2,
+                100,
+            ),
+        ]
+    )
+
+
+def test_zero_thickness_ccd_keeps_small_positive_gaps_feasible(taichi_runtime):
+    # The failed bunny replay has a positive PT gap of about 5.9e-12 m.
+    for gap in (5.9e-12, 1e-13):
+        closing = np.asarray(_evaluate_small_positive_gap(gap, -2.0 * gap))
+        assert np.isfinite(closing).all()
+        assert ((closing > 0.0) & (closing < 0.5)).all()
+        assert (gap - 2.0 * gap * closing > 0.0).all()
+        np.testing.assert_array_equal(_evaluate_small_positive_gap(gap, 0.0), [1.0, 1.0])
+        opening = np.asarray(_evaluate_small_positive_gap(gap, gap))
+        assert ((opening > 0.0) & (opening <= 1.0)).all()
+    np.testing.assert_array_equal(_evaluate_small_positive_gap(0.0, -1.0), [0.0, 0.0])
+
+
 def test_geometric_ccd_primitives_return_safeguarded_toi(taichi_runtime):
     values = np.asarray(_evaluate_geometric_ccd(), dtype=np.float64)
 

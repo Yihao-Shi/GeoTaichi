@@ -3,6 +3,7 @@
 
 python tools/mpm_cloth_gif.py --work-dir /tmp/mpm_cloth_gallery
 """
+
 import argparse
 import json
 from pathlib import Path
@@ -11,9 +12,14 @@ import tempfile
 
 import numpy as np
 
-from blender_cfdem_gif import ROOT, export
-from fedem_gifs import read_surface
-from incompressible_gifs import BLENDER
+if __package__:
+    from .blender_cfdem_gif import ROOT, export
+    from .fedem_gifs import read_surface
+    from .incompressible_gifs import BLENDER
+else:
+    from blender_cfdem_gif import ROOT, export
+    from fedem_gifs import read_surface
+    from incompressible_gifs import BLENDER
 
 SOURCE = (
     ROOT / "examples/fempm/implicit_ipc_elastic_contact/OutputData/fem_mpm_cloth_dp_spread_t060_gridpad_v2_20260917"

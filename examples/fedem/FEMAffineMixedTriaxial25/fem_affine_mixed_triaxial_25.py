@@ -19,11 +19,11 @@ from examples.fedem.FEMAffineMixedTriaxial25.fem_affine_mixed_triaxial_25_parame
     LOWER,
     PARTICLE_COUNT,
     PLATE_SPAN,
+    plate_specs,
     SOFT_PERCENT,
     UPPER,
 )
 from examples.fedem.FEMAffineMixedTriaxial25.draw.evaluate_fem_affine_mixed_triaxial_25 import (
-    plate_specs,
     write_results,
 )
 

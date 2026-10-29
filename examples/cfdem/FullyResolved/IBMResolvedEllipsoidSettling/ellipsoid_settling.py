@@ -37,7 +37,7 @@ def case_parameters(flatness=0.4, cells_per_diameter=None):
         "semi_axes": [major_radius, major_radius, flatness * major_radius],
         "reference": "Fan et al. (2022); Lai et al. (2023)",
         "cells_per_diameter": cells_per_diameter or 10.0,
-        "dt": 0.00025,
+        "dt": 0.001,
         "time": 0.5,
     }
 
@@ -68,7 +68,14 @@ def run(config, args):
     counts, spacing = grid_parameters(config)
     dt = args.dt or config["dt"]
     simulation_time = args.time or config["time"]
-    config = {**config, "time": simulation_time, "dt": dt}
+    alpha_pic = args.alpha_pic
+    config = {
+        **config,
+        "time": simulation_time,
+        "dt": dt,
+        "velocity_projection": args.velocity_projection,
+        "alpha_pic": alpha_pic,
+    }
     write_json(output / "configuration.json", config)
     body_count = len(config["centers"])
     init(
@@ -96,12 +103,13 @@ def run(config, args):
     dempm.mpm.set_configuration(
         dimension=3,
         background_damping=0.0,
-        alphaPIC=args.alpha_pic,
+        alphaPIC=alpha_pic,
         mapping="USL",
         shape_function="QuadBSpline",
         gravity=[0.0, 0.0, -9.81],
         material_type="Fluid",
-        velocity_projection="PIC/FLIP",
+        # Retain a local affine velocity field during P2G to limit transfer diffusion.
+        velocity_projection=args.velocity_projection,
         solver_type="Implicit",
         discretization="FDM",
         fluid_level_set=False,
@@ -113,6 +121,7 @@ def run(config, args):
         fluid_wall_no_slip=False,
         visualize=args.write_vtu,
     )
+    assert dempm.mpm.sims.alphaPIC == alpha_pic
     implicit = {"linear_solver": args.linear_solver, "max_iteration_number": 200, "residual_tolerance": 1e-08}
     if args.linear_solver == "MGPCG":
         multilevel = 3
@@ -136,12 +145,20 @@ def run(config, args):
             "CFL": 0.5,
         }
     )
+    a, b, c = config["semi_axes"]
+    sdf_spacing = min(a, b, c) / 5.0
+    # ScaleFactor is one; a fluid-cell diagonal covers every queried corner.
+    sdf_extent = max(3, math.ceil(math.sqrt(sum(h * h for h in spacing)) / sdf_spacing) + 1)
+    sdf_grid_capacity = (2 * (math.ceil(max(a, b, c) / sdf_spacing) + sdf_extent) + 1) ** 3
+    shape = polysuperellipsoid(
+        xrad1=a, yrad1=b, zrad1=c, xrad2=a, yrad2=b, zrad2=c, epsilon_e=1.0, epsilon_n=1.0
+    ).grids(space=sdf_spacing, extent=sdf_extent)
     dempm.dem.memory_allocate(
         memory={
             "max_material_number": 1,
             "max_rigid_body_number": body_count,
             "max_rigid_template_number": 1,
-            "levelset_grid_number": 250000,
+            "levelset_grid_number": sdf_grid_capacity,
             "surface_node_number": 20000,
             "max_plane_number": 0,
             "body_coordination_number": 4 if body_count > 1 else 0,
@@ -175,13 +192,10 @@ def run(config, args):
         materialID=0,
         attribute={"Density": config["particle_density"], "ForceLocalDamping": 0.0, "TorqueLocalDamping": 0.0},
     )
-    a, b, c = config["semi_axes"]
-    shape = polysuperellipsoid(
-        xrad1=a, yrad1=b, zrad1=c, xrad2=a, yrad2=b, zrad2=c, epsilon_e=1.0, epsilon_n=1.0
-    ).grids(space=min(a, b, c) / 5.0, extent=3)
     size = {"ScaleFactor": 1.0}
     template = {"Name": "particle", "Object": shape, "WriteFile": False}
-    template["SurfaceNodeNumber"] = 256
+    # The flatness-0.2 surface has holes at 256 nodes; 2048 also resolves its volume within 1%.
+    template["SurfaceNodeNumber"] = 2048
     dempm.dem.add_template(template=template)
     templates = []
     for center in config["centers"]:
@@ -204,7 +218,6 @@ def run(config, args):
         material={
             "MaterialID": 1,
             "Density": config["fluid_density"],
-            "Modulus": 2000000.0,
             "Viscosity": config["viscosity"],
             "ElementLength": min(spacing),
             "cL": 1.5,
@@ -259,11 +272,12 @@ def run(config, args):
 
     @python_callback
     def record_trajectory():
-        if int(dempm.sims.current_step) % args.sample_every:
+        sample_time = float(dempm.sims.current_time + dempm.sims.delta)
+        if int(dempm.sims.current_step) % args.sample_every and sample_time < simulation_time - 1.0e-12:
             return
         positions = dempm.dem.scene.rigid.mass_center.to_numpy()[:body_count]
         velocities = dempm.dem.scene.rigid.v.to_numpy()[:body_count]
-        history_t.append(float(dempm.sims.current_time + dempm.sims.delta))
+        history_t.append(sample_time)
         history_x.append(positions.copy())
         history_v.append(velocities.copy())
 
@@ -300,12 +314,15 @@ def run(config, args):
     )
     metrics = evaluate(config, times, centers, velocities, solid_volume_error, ibm_l2_error)
     metrics.update(
+        sdf_grid_extent=int(dempm.dem.scene.box[0].extent),
+        sdf_physical_grid_spacing=float(dempm.dem.scene.box[0].grid_space),
         fluid_solver="semi-implicit-incompressible-fdm",
         cell_counts=actual_counts,
         element_size=actual_spacing,
         cells_per_diameter=config["diameter"] / min(actual_spacing),
         requested_timestep=dt,
-        alpha_pic=args.alpha_pic,
+        alpha_pic=alpha_pic,
+        velocity_projection=args.velocity_projection,
         timestep=float(np.median(np.diff(times)) / args.sample_every),
     )
     write_json(output / "metrics.json", metrics)
@@ -325,7 +342,14 @@ def parse_args():
     parser.add_argument("--output-dir", type=Path, default=Path(__file__).resolve().parent / "OutputData")
     parser.add_argument("--dt", type=float)
     parser.add_argument("--time", type=float)
-    parser.add_argument("--alpha-pic", type=float, default=0.01)
+    parser.add_argument("--alpha-pic", type=float, default=1.0)
+    parser.add_argument(
+        "--velocity-projection",
+        type=lambda value: None if value == "None" else value,
+        choices=(None, "Taylor", "Affine"),
+        default="Affine",
+        help="Affine uses B/D moments; Taylor uses velocity gradients; --alpha-pic independently controls PIC/FLIP blending",
+    )
     parser.add_argument("--save-interval", type=float)
     parser.add_argument("--sample-every", type=int, default=10)
     parser.add_argument("--device-memory", type=float, default=8.0)

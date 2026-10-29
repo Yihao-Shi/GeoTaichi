@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 import taichi as ti
 
-from src.fem import FEM
+from geotaichi import FEM
 
 
 def build_problem(

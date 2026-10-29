@@ -75,7 +75,9 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
         )
 
     def choose_engine(self, sims: Simulation):
-        if sims.mapping == "USL":
+        if sims.velocity_projection_scheme == "Affine":
+            self.compute = self.affine_updating
+        elif sims.mapping == "USL":
             self.compute = self.usl_updating
         elif sims.mapping == "USF":
             self.compute = self.usf_updating
@@ -408,6 +410,7 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
             scene.element.node_size,
             scene.element.grid_size,
             scene.element.gnum,
+            False,
         )
 
     def compute_affine_matrix_APIC_2DAxisy(self, sims: Simulation, scene: myScene):
@@ -1230,6 +1233,28 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
         )
 
     # -------------------------------------------------------
+    def affine_updating(self, sims: Simulation, scene: myScene, neighbor=None):
+        self.calculate_interpolation(sims, scene)
+        self.compute_nodal_kinematics(sims, scene)
+        self.free_surface_detections(sims, scene, neighbor)
+        self.compute_grid_velcity(sims, scene)
+        self.apply_dirichlet_constraints(sims, scene)
+        self.compute_forces(sims, scene)
+        self.apply_particle_traction_constraints(sims, scene)
+        self.apply_traction_constraints(sims, scene)
+        self.apply_absorbing_constraints(sims, scene)
+        self.compute_prediction_grid_kinematic(sims, scene)
+        self.apply_kinematic_constraints(sims, scene)
+        self.pre_contact_calculate(sims, scene)
+        self.compute_contact_force_prediction(sims, scene)
+        self.compute_Poisson_equation_implicit(sims, scene)
+        self.compute_correction_grid_kinematics(sims, scene)
+        self.apply_kinematic_constraints(sims, scene)
+        self.compute_contact_force_correction(sims, scene)
+        self.compute_affine_matrix(sims, scene)
+        self.compute_stress_strains(sims, scene)
+        self.compute_particle_kinematic(sims, scene)
+
     def usl_updating(self, sims: Simulation, scene: myScene, neighbor: SpatialHashGrid):
         self.calculate_interpolation(sims, scene)
         self.compute_nodal_kinematics(sims, scene)

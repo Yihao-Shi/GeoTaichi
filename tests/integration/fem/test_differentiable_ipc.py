@@ -9,10 +9,11 @@ from examples.fem.differentiable_ipc.differentiable_ipc import build_problem
 pytestmark = [pytest.mark.integration, pytest.mark.fem, pytest.mark.ipc, pytest.mark.cpu, pytest.mark.serial]
 
 
-def test_plane_elastic_trajectory_adjoint():
+@pytest.mark.parametrize("newmark", [(0.5, 0.25, 0.5), (0.8, 0.3, 0.6)])
+def test_plane_elastic_trajectory_adjoint(newmark):
     ti.init(arch=ti.cpu, default_fp=ti.f64, cpu_max_num_threads=1)
     try:
-        simulation = build_problem()
+        simulation = build_problem(newmark=newmark)
         for _ in range(3):
             simulation.step()
         positions = simulation.solver.positions
@@ -23,7 +24,7 @@ def test_plane_elastic_trajectory_adjoint():
         gradient = simulation.backward(seed, velocity_seed, acceleration_seed)
 
         def objective(**kwargs):
-            perturbed = build_problem(**kwargs)
+            perturbed = build_problem(newmark=newmark, **kwargs)
             for _ in range(3):
                 perturbed.step()
             final = perturbed.solver.positions

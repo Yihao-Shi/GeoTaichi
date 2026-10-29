@@ -37,8 +37,10 @@ class _ClassicalAssemblyMixin:
         )
         if self.linear_solver == "PCG" and not self.project_pd:
             raise ValueError("classical FEM PCG requires project_pd=True; use BiCGSTAB for an unprojected tangent")
-        self.linear_solver_tolerance = float(kwargs.get("linear_solver_tolerance", 1.0e-10))
-        self.linear_solver_relative_tolerance = float(kwargs.get("linear_solver_relative_tolerance", 0.0))
+        self.linear_solver_tolerance = float(kwargs.get("linear_solver_tolerance", 1.0e-12))
+        self.linear_solver_relative_tolerance = float(
+            kwargs.get("linear_solver_relative_tolerance", 0.0 if "linear_solver_tolerance" in kwargs else 1.0e-12)
+        )
         self.linear_solver_max_iters = int(kwargs.get("linear_solver_max_iters", max(100, 10 * self.degree_of_freedom)))
         self.classical_assembler = ClassicalAssembler(
             self.mesh,
@@ -78,7 +80,8 @@ class _ClassicalAssemblyMixin:
         mechanical = self.classical_assembler.assemble(positions, need_stiffness, need_stress)
         combine = getattr(self, "_combine_contact_assembly", None)
         if combine is not None:
-            return combine(mechanical, positions, need_stiffness)
+            source = positions if hasattr(positions, "to_numpy") else self.classical_assembler.positions
+            return combine(mechanical, source, self.classical_assembler.internal_force, need_stiffness)
         return mechanical
 
     def _assemble_output_diagnostics(self):

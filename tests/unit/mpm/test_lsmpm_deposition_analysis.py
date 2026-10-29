@@ -1,17 +1,9 @@
-import importlib.util
 from pathlib import Path
-import sys
-
 import numpy as np
 
-SCRIPT_DIR = Path(__file__).resolve().parents[3] / "research" / "LSMPM" / "scripts"
-sys.path.insert(0, str(SCRIPT_DIR))
-SPEC = importlib.util.spec_from_file_location(
-    "analyze_v4_deposition_matrix",
-    SCRIPT_DIR / "analyze_v4_deposition_matrix.py",
-)
-MODULE = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(MODULE)
+from research.LSMPM.scripts import analyze_v4_deposition_matrix as MODULE
+
+SCRIPT_DIR = Path(MODULE.__file__).resolve().parent
 
 
 def test_retry16_deposition_modulus_matrix_and_case_names():
