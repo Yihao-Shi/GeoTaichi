@@ -80,6 +80,21 @@ and the completed duration in `validation_summary.json`.
 This directory contains explicit developer workflows that are useful but are
 not correctness tests and are never run during pytest collection.
 
+`stone_column_render.py` renders the archived TSC9d, c = 20 kPa, E = 4 MPa
+terminal state to `images/stone_column_9d.png`. MPM soil uses smoothed stress zz
+in kPa (compression negative), half-clipped at y = 0.4 m in the central
+r ≤ 0.12 m window; the complete DEM column uses grey spheres with saved radii.
+The MPM NPZ and DEM VTU both come from frame 56. The archive has no full MPM
+time series, so this gallery entry is a static image. It reuses
+`src/mpm/PostPlot.py::SmoothVar` with the research postprocessor's 0.016 m
+smoothing grid and original bounds: mass-weighted quadratic B-spline P2G/G2P,
+on CPU/float64. Run in GeoTaichi's Python environment with PyVista/VTK and a
+graphics context:
+
+```sh
+python tools/stone_column_render.py
+```
+
 - `diagnostics/`: targeted numerical probes and viewers. A diagnostic must
   expose a callable entry point, use deterministic inputs where possible, and
   perform work only under `if __name__ == "__main__"`.
