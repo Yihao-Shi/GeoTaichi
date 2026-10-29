@@ -30,46 +30,46 @@ Have an example to share? Submit a [PR](https://github.com/Yihao-Shi/GeoTaichi/p
 
 | [Column collapse](examples/mpm/column_collapse/DPmaterial.py) | [Dam break](examples/mpm/column_collapse/NewtonianFluid.py) | [Adaptive MPM strip footing](examples/mpm/Footing/strip_footing_adaptive/README.md) | [Progressive failure process of sensitive clay](examples/mpm/sensitive_clay/sensitive_clay.py)|
 | --- | --- | --- | --- |
-| ![Column collapse](images/soil.gif) | ![Dam break](images/newtonian.gif) | ![Adaptive MPM strip footing, L2 grid and particle refinement](images/footing.gif) | ![Clay](images/clay.gif) |
+| <img src="images/soil.gif" alt="Column collapse" width="200" height="125" /> | <img src="images/newtonian.gif" alt="Dam break" width="200" height="132" /> | <img src="images/footing.gif" alt="Adaptive MPM strip footing, L2 grid and particle refinement" width="125" height="140" /> | <img src="images/clay.gif" alt="Clay" width="200" height="75" /> |
 
 #### Semi-implicit Incompressible MPM
 
 | [Flow around a cylinder](examples/cfdem/FullyResolved/IBMFixedCylinder2D/cylinder_flow_ibm_2d.py) | [Lid-driven cavity](examples/mpm/IncompressibleFluid/lid_driven_cavity_2d/lid_driven_cavity_2d.py) | [Taylor–Green vortex](examples/mpm/IncompressibleFluid/taylor_green_vortex_2d/taylor_green_vortex_2d.py) |
 | --- | --- | --- |
-| ![Flow around a cylinder vorticity](images/cylinder_vorticity.gif) | ![Lid-driven cavity pressure](images/lid_driven_cavity_n64.gif) | ![Taylor–Green vortex speed](images/taylor_green_vortex.gif) |
+| <img src="images/cylinder_vorticity.gif" alt="Flow around a cylinder vorticity" width="182" height="85" /> | <img src="images/lid_driven_cavity_n64.gif" alt="Lid-driven cavity pressure" width="187" height="140" /> | <img src="images/taylor_green_vortex.gif" alt="Taylor–Green vortex speed" width="186" height="140" /> |
 
 | [Dam break around a five-point star](examples/mpm/IncompressibleFluid/dam_break_visible_sdf_2d/dam_break_visible_sdf_2d.py) | [3D large-tank dam break](examples/mpm/IncompressibleFluid/large_tank_incompressible_3d/large_tank_incompressible_3d.py) | [3D piston wavemaker](examples/mpm/IncompressibleFluid/wavemaker_tank_3d/wavemaker_tank_3d.py) |
 | --- | --- | --- |
-| ![Dam break around a five-point star](images/dam_break_star_obstacle_2d.gif) | ![3D large-tank dam break](images/large_tank_3d.gif) | ![3D piston wavemaker](images/wavemaker_3d.gif) |
+| <img src="images/dam_break_star_obstacle_2d.gif" alt="Dam break around a five-point star" width="187" height="140" /> | <img src="images/large_tank_3d.gif" alt="3D large-tank dam break" width="186" height="140" /> | <img src="images/wavemaker_3d.gif" alt="3D piston wavemaker" width="186" height="140" /> |
 
 #### Two-phase Semi-implicit MPM
 
 | [Dam break through a porous column](examples/mmpm/DamBreakPorousElastic2D/double_point_dam_break_porous_elastic.py) | [Submarine granular landslide](examples/mmpm/SubmarineLandslide/submarine_landslide_2d/submarine_landslide_2d.py) | [U-tube flow through a porous bed](examples/mmpm/UTubeFlow2D/u_tube_flow_2d.py) | [Granular-water leakage](examples/mmpm/GranularWaterLeakage3D/granular_water_leakage_3d.py) |
 | --- | --- | --- | --- |
-| ![Dam break through a porous column](images/dam_break_porous_elastic_2d.gif) | ![Submarine granular landslide](images/submarine_landslide.gif) | ![U-tube flow through a porous bed](images/u_tube_flow_2d.gif) | ![Granular-water leakage](images/granular_water_leakage_3d.gif) |
+| <img src="images/dam_break_porous_elastic_2d.gif" alt="Dam break through a porous column" width="200" height="133" /> | <img src="images/submarine_landslide.gif" alt="Submarine granular landslide" width="200" height="133" /> | <img src="images/u_tube_flow_2d.gif" alt="U-tube flow through a porous bed" width="153" height="140" /> | <img src="images/granular_water_leakage_3d.gif" alt="Granular-water leakage" width="187" height="140" /> |
 
 ### [Discrete element method (DEM)](src/dem/README.md#dem-theory-log)
 #### Explicit Soft Constraint
 
 | [Granular packing](examples/dem/LevelSet/GranularAssemble/polydisperse/packing_generate.py) | [Screw and nut](examples/dem/LevelSet/ParticleParticle/screw_and_nut.py) | [Debris flow](examples/dem/LevelSet/DebrisFlow/) |
 | --- | --- | --- |
-| ![Granular packing](images/lsdem.gif) | ![Screw and nut](images/screw_nut.gif) | ![Debris Flow](images/debris_flow.gif) |
+| <img src="images/lsdem.gif" alt="Granular packing" width="200" height="116" /> | <img src="images/screw_nut.gif" alt="Screw and nut" width="200" height="99" /> | <img src="images/debris_flow.gif" alt="Debris Flow" width="200" height="119" /> |
 
 | [Rotating drum](examples/dem/LevelSet/RotatingDrum/rotating_drum.py) | [Triaxial shear test](examples/dem/LevelSet/TriaxialShear/) |
 | --- | --- |
-| ![Rotating drum](images/drums.gif) | ![Triaxial shear test](images/force_chain.gif) |
+| <img src="images/drums.gif" alt="Rotating drum" width="200" height="103" /> | <img src="images/force_chain.gif" alt="Triaxial shear test" width="200" height="125" /> |
 
 #### Implicit Affine Body Dynamics (ABD)
 
 | [Cubes on an incline](examples/dem/AffineBody/five_cubes_incline/five_cubes_incline.py) | [Cube impact](examples/dem/AffineBody/thousand_cubes_heavy_ball_impact/thousand_cubes_heavy_ball_impact.py) | [Newton's cradle](examples/dem/AffineBody/newtons_cradle/newtons_cradle.py) |
 | --- | --- | --- |
-| ![Five cubes on an incline: sliding and static friction](images/abd_incline.gif)| ![Cube impact](images/abd_cubes.gif)| ![Newton's cradle: first 5 impacts](images/abd_cradle.gif)|
+| <img src="images/abd_incline.gif" alt="Five cubes on an incline: sliding and static friction" width="187" height="140" />| <img src="images/abd_cubes.gif" alt="Cube impact" width="191" height="140" />| <img src="images/abd_cradle.gif" alt="Newton&#x27;s cradle: first 5 impacts" width="191" height="140" />|
 
 ### [FEM](src/fem/README.md#fem-theory-log) / [IGA](src/iga/README.md#iga-theory-log)
 
 | [IGA elastic bar](examples/iga/explicit_cantilever_3d/explicit_cantilever_3d.py) | [IGA twisting](examples/iga/twisting_column_3d/twisting_column_3d.py) | [Cloth twisting with self-contact](examples/fem/cloth/implicit_cloth_twist/implicit_cloth_twist.py) |
 | --- | --- | --- |
-| ![Implicit IGA elastic bar: von Mises stress](images/iga_elastic_bar.gif) | ![IGA twisting bar: von Mises stress](images/iga_twisting.gif) | ![FEM cloth twisting with self-contact](images/fem_cloth_twisting.gif) |
+| <img src="images/iga_elastic_bar.gif" alt="Implicit IGA elastic bar: von Mises stress" width="200" height="133" /> | <img src="images/iga_twisting.gif" alt="IGA twisting bar: von Mises stress" width="200" height="133" /> | <img src="images/fem_cloth_twisting.gif" alt="FEM cloth twisting with self-contact" width="200" height="133" /> |
 
 ### [FEM-MPM](src/fempm/README.md#fem--mpm-coupling-theory-log) / [IGA-MPM](src/igampm/README.md#iga--mpm-coupling-theory-log)
 
@@ -77,27 +77,27 @@ Have an example to share? Submit a [PR](https://github.com/Yihao-Shi/GeoTaichi/p
 
 | Flexible barrier ([FEM–MPM](examples/fempm/flexible_barrier/flexible_barrier.py) / [IGA–MPM](examples/igampm/flexible_barrier/flexible_barrier.py)) | Wavy plate collapse ([FEM–MPM](examples/fempm/wavy_plate_collapse/wavy_plate_collapse.py) / [IGA–MPM](examples/igampm/wavy_plate_collapse/wavy_plate_collapse.py)) | Axisymmetric CPT ([FEM–MPM](examples/fempm/cpt_dp/cpt_dp.py) / [IGA–MPM](examples/igampm/cpt_dp/cpt_dp.py)) |
 | --- | --- | --- |
-| ![IGA–MPM flexible barrier](images/flexible_barrier.gif) | ![IGA–MPM wavy plate collapse](images/wavy_plate_collapse.gif) | ![IGA–MPM axisymmetric CPT](images/cpt_dp.gif) |
+| <img src="images/flexible_barrier.gif" alt="IGA–MPM flexible barrier" width="200" height="134" /> | <img src="images/wavy_plate_collapse.gif" alt="IGA–MPM wavy plate collapse" width="168" height="140" /> | <img src="images/cpt_dp.gif" alt="IGA–MPM axisymmetric CPT" width="93" height="140" /> |
 
 ### [FEM-DEM](src/fedem/README.md#fedem-coupling-theory-log)
 #### Explicit Soft Constraint
 
 | [Hertz contact](examples/fedem/HertzContact/hertz_contact.py) | [Mixed funnel](examples/fedem/MixedFunnel/mixed_funnel.py) | [Isotropic compaction](examples/fedem/IsotropicCompaction/isotropic_compaction.py) |
 | --- | --- | --- |
-| ![Hertz contact](images/hertz_contact.png) | ![Mixed funnel](images/mixed_funnel.gif) | ![Isotropic compaction](images/isotropic_compaction_100.gif) |
+| <img src="images/hertz_contact.png" alt="Hertz contact" width="200" height="116" /> | <img src="images/mixed_funnel.gif" alt="Mixed funnel" width="153" height="140" /> | <img src="images/isotropic_compaction_100.gif" alt="Isotropic compaction" width="187" height="140" /> |
 
 ### [MPM-DEM](src/mpdem/README.md#mpdem-theory-log)
 #### Explicit MPM-DEM
 
 | [A sphere impacting granular bed](examples/mpdem/MultiSphere/SphereImpactToGranularBed/plane_strain.py) | [Granular column impacting cubic particles](examples/mpdem/MultiSphere/GranularImpact/granular_impact.py) | [Box sinking into water](examples/mpdem/LevelSet/WaterImpact/box.py) |
 | --- | --- | --- |
-| ![A sphere impacting granular bed](images/mpdem1.gif) | ![Granular column impacting cubic particles](images/mpdem2.gif) | ![Box sinking into water](images/box_sinking.gif) |
+| <img src="images/mpdem1.gif" alt="A sphere impacting granular bed" width="200" height="132" /> | <img src="images/mpdem2.gif" alt="Granular column impacting cubic particles" width="200" height="132" /> | <img src="images/box_sinking.gif" alt="Box sinking into water" width="200" height="137" /> |
 
 #### Semi-implicit MPM with Immersed Boundary Method
 
 | [Drafting, kissing and tumbling](examples/cfdem/FullyResolved/IBMDraftingKissingTumbling/drafting_kissing_tumbling.py) | [Bunny impacting a saturated granular bed](examples/mmpm/TwoPhaseLSDEMCoupling/sphere_impact_submerged_bed_3d/sphere_impact_submerged_bed_3d.py) | [IBM dam break](examples/cfdem/FullyResolved/IBMLevelSetDamBreak3D/dam_break_levelset_ibm_3d.py) | [Wavemaker with LSDEM grains and a branched trunk](examples/mmpm/TwoPhaseLSDEMCoupling/wavemaker_lsdem_particles_3d/wavemaker_lsdem_particles_3d.py) |
 | --- | --- | --- | --- |
-| ![Drafting, kissing and tumbling](images/dkt.gif) | ![Bunny impacting a saturated granular bed](images/bunny_impact_saturated_soil.gif) | ![IBM dam break](images/ibm_break.gif) | ![Two-phase wavemaker with LSDEM grains and a branched trunk](images/two_phase_lsdem_wavemaker.gif) |
+| <img src="images/dkt.gif" alt="Drafting, kissing and tumbling" width="93" height="140" /> | <img src="images/bunny_impact_saturated_soil.gif" alt="Bunny impacting a saturated granular bed" width="187" height="140" /> | <img src="images/ibm_break.gif" alt="IBM dam break" width="186" height="140" /> | <img src="images/two_phase_lsdem_wavemaker.gif" alt="Two-phase wavemaker with LSDEM grains and a branched trunk" width="186" height="140" /> |
 
 #### Implicit Incremental Potential Contact
 
