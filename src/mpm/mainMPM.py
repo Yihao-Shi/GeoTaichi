@@ -1070,7 +1070,7 @@ class MPM(SolverDiagnosticsMixin):
             print("#", " Check Timestep ... ...".ljust(67))
             critical_timestep = self.scene.get_critical_timestep()
             if self.sims.CFL * critical_timestep < self.sims.dt[None]:
-                self.sims.update_critical_timestep(self.sims.CFL * critical_timestep)
+                self.sims.update_critical_timestep(critical_timestep)
             else:
                 print("The prescribed time step is sufficiently small\n")
 

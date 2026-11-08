@@ -28,7 +28,7 @@ Have an example to share? Submit a [PR](https://github.com/Yihao-Shi/GeoTaichi/p
 ### [Material point method (MPM)](src/mpm/README.md#mpm-theory-log)
 #### Explicit MPM
 
-| [Column collapse](examples/mpm/column_collapse/DPmaterial.py) | [Dam break](examples/mpm/column_collapse/NewtonianFluid.py) | [Adaptive MPM strip footing](examples/mpm/Footing/strip_footing_adaptive/README.md) | [Progressive failure process of sensitive clay](examples/mpm/sensitive_clay/sensitive_clay.py)|
+| [Column collapse](examples/mpm/column_collapse/DPmaterial.py) | [Dam break](examples/mpm/column_collapse/NewtonianFluid.py) | [Adaptive MPM strip footing](examples/mpm/Footing/strip_footing_adaptive/strip_footing.py) | [Progressive failure process of sensitive clay](examples/mpm/sensitive_clay/sensitive_clay.py)|
 | --- | --- | --- | --- |
 | <img src="images/soil.gif" alt="Column collapse" width="200" height="125" /> | <img src="images/newtonian.gif" alt="Dam break" width="200" height="132" /> | <img src="images/footing.gif" alt="Adaptive MPM strip footing, L2 grid and particle refinement" width="125" height="140" /> | <img src="images/clay.gif" alt="Clay" width="200" height="75" /> |
 
@@ -51,11 +51,11 @@ Have an example to share? Submit a [PR](https://github.com/Yihao-Shi/GeoTaichi/p
 ### [Discrete element method (DEM)](src/dem/README.md#dem-theory-log)
 #### Explicit Soft Constraint
 
-| [Granular packing](examples/dem/LevelSet/GranularAssemble/polydisperse/packing_generate.py) | [Screw and nut](examples/dem/LevelSet/ParticleParticle/screw_and_nut.py) | [Debris flow](examples/dem/LevelSet/DebrisFlow/) |
+| [Granular packing](examples/dem/LevelSet/GranularAssemble/polydisperse/packing_generate.py) | [Screw and nut](examples/dem/LevelSet/ParticleParticle/screw_and_nut.py) | [Debris flow](examples/dem/MultiSphere/DebrisFlow/debris_flow.py) |
 | --- | --- | --- |
 | <img src="images/lsdem.gif" alt="Granular packing" width="200" height="116" /> | <img src="images/screw_nut.gif" alt="Screw and nut" width="200" height="99" /> | <img src="images/debris_flow.gif" alt="Debris Flow" width="200" height="119" /> |
 
-| [Rotating drum](examples/dem/LevelSet/RotatingDrum/rotating_drum.py) | [Triaxial shear test](examples/dem/LevelSet/TriaxialShear/) |
+| [Rotating drum](examples/dem/LevelSet/RotatingDrum/rotating_drum.py) | [Triaxial shear test](examples/dem/MultiSphere/TriaxialShear/) |
 | --- | --- |
 | <img src="images/drums.gif" alt="Rotating drum" width="200" height="103" /> | <img src="images/force_chain.gif" alt="Triaxial shear test" width="200" height="125" /> |
 
