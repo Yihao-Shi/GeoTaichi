@@ -89,7 +89,7 @@ Have an example to share? Submit a [PR](https://github.com/Yihao-Shi/GeoTaichi/p
 ### [MPM-DEM](src/mpdem/README.md#mpdem-theory-log)
 #### Explicit MPM-DEM
 
-| [A sphere impacting granular bed](examples/mpdem/MultiSphere/SphereImpactToGranularBed/plane_strain.py) | [Granular column impacting cubic particles](examples/mpdem/MultiSphere/GranularImpact/granular_impact.py) | [Box sinking into water](examples/mpdem/LevelSet/WaterImpact/box.py) | [Stone column axial loading](examples/mpdem/MultiSphere/StoneColumn/stone_column.py) |
+| [A sphere impacting granular bed](examples/mpdem/MultiSphere/SphereImpactToGranularBed/plane_strain.py) | [Granular column impacting cubic particles](examples/mpdem/MultiSphere/GranularImpact/granular_impact.py) | [Box sinking into water](examples/mpdem/LevelSet/WaterImpact/box.py) | [Stone column](examples/mpdem/MultiSphere/StoneColumn/stone_column.py) |
 | --- | --- | --- | --- |
 | <img src="images/mpdem1.gif" alt="A sphere impacting granular bed" width="200" height="132" /> | <img src="images/mpdem2.gif" alt="Granular column impacting cubic particles" width="200" height="132" /> | <img src="images/box_sinking.gif" alt="Box sinking into water" width="200" height="137" /> | <img src="images/stone_column_9d.png" alt="9D stone column: half-clipped MPM soil colored by smoothed stress zz, complete grey DEM column; c=20 kPa, E=4 MPa" width="200" height="229" /> |
 

@@ -31,7 +31,7 @@ from src.nurbs.Geometry import (
 from src.nurbs.OptimizerVisualize import plot_nd_slice
 from src.nurbs.NurbsBasis import *
 from src.nurbs.Operations import *
-from scipy.sparse import lil_matrix
+from scipy.sparse import csr_matrix, lil_matrix
 from scipy.sparse.linalg import lsqr, cg
 from scipy.spatial import Delaunay
 from scipy.spatial import ConvexHull
@@ -1800,15 +1800,78 @@ def subdivide_quadrilateral(quad, resolution):
     return vertices, quads
 
 
-def get_boundary_categories(surface: SplineSurface, boundary_points, corner_index=[], visualize=False):
+def select_boundary_corners(boundary_points):
+    """Pick four corners on an ordered planar boundary; the first pick defines A."""
+    points = _prepare_planar_boundary(boundary_points)
+    if plt.get_backend().lower() in {"agg", "pdf", "ps", "svg", "cairo", "template"}:
+        raise RuntimeError("Corner picking requires an interactive Matplotlib backend; pass corner_points instead")
+    figure, axes = plt.subplots()
+    closed = np.vstack((points, points[0]))
+    axes.plot(closed[:, 0], closed[:, 1], "k.-")
+    axes.set_aspect("equal")
+    axes.set_title("Pick four corners (first = A). Left: add; right: undo; middle: finish")
+    try:
+        selected = plt.ginput(4, timeout=0)
+    finally:
+        plt.close(figure)
+    if len(selected) != 4:
+        raise ValueError("Four corners are required; surface fitting was cancelled")
+    selected = np.asarray(selected)
+    indices = np.argmin(np.linalg.norm(points[:, None] - selected[None, :], axis=2), axis=0)
+    if len(np.unique(indices)) != 4:
+        raise ValueError("Select four distinct boundary corners")
+    return points[indices].copy()
+
+
+def _prepare_planar_boundary(boundary_points):
+    points = np.asarray(boundary_points, dtype=float)
+    if points.ndim != 2 or points.shape[1] != 2 or len(points) < 4 or not np.isfinite(points).all():
+        raise ValueError("Boundary must contain at least four finite, ordered 2D points")
+    if np.array_equal(points[0], points[-1]):
+        points = points[:-1]
+    if len(points) < 4 or np.any(np.linalg.norm(np.roll(points, -1, axis=0) - points, axis=1) == 0.0):
+        raise ValueError("Boundary contains repeated consecutive points")
+    relative = points - points[0]
+    area = np.sum(relative[:, 0] * np.roll(relative[:, 1], -1) - relative[:, 1] * np.roll(relative[:, 0], -1))
+    if area == 0.0:
+        raise ValueError("Boundary has zero signed area")
+    for index in range(len(points) - 2):
+        first, last = points[index], points[index + 1]
+        starts = points[index + 2 :]
+        ends = np.roll(points, -1, axis=0)[index + 2 :]
+        if index == 0:
+            starts, ends = starts[:-1], ends[:-1]
+        direction = last - first
+        others = ends - starts
+        cross_a = direction[0] * (starts[:, 1] - first[1]) - direction[1] * (starts[:, 0] - first[0])
+        cross_b = direction[0] * (ends[:, 1] - first[1]) - direction[1] * (ends[:, 0] - first[0])
+        cross_c = others[:, 0] * (first[1] - starts[:, 1]) - others[:, 1] * (first[0] - starts[:, 0])
+        cross_d = others[:, 0] * (last[1] - starts[:, 1]) - others[:, 1] * (last[0] - starts[:, 0])
+        overlap = np.all(
+            np.maximum(np.minimum(first, last), np.minimum(starts, ends))
+            <= np.minimum(np.maximum(first, last), np.maximum(starts, ends)),
+            axis=1,
+        )
+        if np.any((cross_a * cross_b <= 0.0) & (cross_c * cross_d <= 0.0) & overlap):
+            raise ValueError("Boundary must be a single non-self-intersecting loop")
+    return points if area > 0.0 else points[::-1]
+
+
+def get_boundary_categories(
+    surface: SplineSurface, boundary_points, corner_index=None, visualize=False, corner_points=None
+):
     from src.nurbs.SplineSurface import SplineSurface
     from src.nurbs.CurvePoints import CurvePoints
 
-    if len(corner_index) == 0:
-        pass
-    if len(corner_index) != 4:
-        raise ValueError("The dimension of corner_index should be 4")
-    corner_points = boundary_points[corner_index]
+    if corner_points is not None and corner_index is not None and len(corner_index):
+        raise ValueError("Pass corner_points or corner_index, not both")
+    if corner_points is None:
+        if corner_index is not None and len(corner_index):
+            if len(corner_index) != 4:
+                raise ValueError("The dimension of corner_index should be 4")
+            corner_points = np.asarray(boundary_points)[corner_index]
+        else:
+            corner_points = select_boundary_corners(boundary_points)
     boundary_categories = split_boundary_points(surface, boundary_points, corner_points, visualize=visualize)
     fittings = [CurvePoints(), CurvePoints(), CurvePoints(), CurvePoints()]
     fittings[0].setup(boundary_categories["Category 1 (A->B)"])
@@ -1816,6 +1879,61 @@ def get_boundary_categories(surface: SplineSurface, boundary_points, corner_inde
     fittings[2].setup(boundary_categories["Category 3 (C->D)"])
     fittings[3].setup(boundary_categories["Category 4 (D->A)"])
     return fittings
+
+
+def fit_surface_from_boundary(boundary_points, corner_points=None, degree=(2, 2), num_ctrlpts=(4, 4)):
+    """Fit four boundary curves and a planar Coons patch; pick corners only when omitted."""
+    from src.nurbs.NurbsVolume import NurbsVolume
+    from src.nurbs.element.NurbsSurfaceElement import NurbsSurfaceElement
+
+    points = _prepare_planar_boundary(boundary_points)
+    if corner_points is None:
+        corner_points = select_boundary_corners(points)
+    categories = list(split_boundary_points(None, points, corner_points).values())
+    degree = np.asarray(degree)
+    num_ctrlpts = np.asarray(num_ctrlpts)
+    if (
+        degree.shape != (2,)
+        or num_ctrlpts.shape != (2,)
+        or not np.issubdtype(degree.dtype, np.integer)
+        or not np.issubdtype(num_ctrlpts.dtype, np.integer)
+    ):
+        raise ValueError("degree and num_ctrlpts must each contain two integers")
+    if np.any(degree < 1) or np.any(num_ctrlpts <= degree):
+        raise ValueError("Each control-point count must exceed its positive degree")
+    degree = tuple(int(value) for value in degree)
+    knots = [generate_uniform(int(p), int(n)) for p, n in zip(degree, num_ctrlpts)]
+    curves = []
+    for edge_id, edge in enumerate(categories):
+        axis = edge_id % 2
+        if edge_id >= 2:
+            edge = edge[::-1]
+        parameters = compute_params_curve(edge)
+        samples = np.unique(np.r_[parameters, np.linspace(0.0, 1.0, 2 * num_ctrlpts[axis])])
+        samples_points = np.column_stack([np.interp(samples, parameters, edge[:, component]) for component in range(2)])
+        fixed = np.zeros(len(samples), dtype=bool)
+        fixed[[0, -1]] = True
+        curves.append(
+            constraint_curve_fitting(num_ctrlpts[axis], degree[axis], knots[axis], samples, samples_points, fixed)
+        )
+    greville = [
+        np.array([np.mean(knot[i + 1 : i + p + 1]) for i in range(n)]) for knot, p, n in zip(knots, degree, num_ctrlpts)
+    ]
+    u, v = np.meshgrid(*greville)
+    u, v = u[..., None], v[..., None]
+    bottom, right, top, left = curves
+    corner_a, corner_b, corner_c, corner_d = bottom[0], bottom[-1], top[-1], top[0]
+    bilinear = (1 - u) * (1 - v) * corner_a + u * (1 - v) * corner_b + u * v * corner_c + (1 - u) * v * corner_d
+    control_points = (
+        (1 - v) * bottom[None, :, :]
+        + v * top[None, :, :]
+        + (1 - u) * left[:, None, :]
+        + u * right[:, None, :]
+        - bilinear
+    )
+    surface = NurbsVolume.nurbs_surface(*degree, *knots, control_points.reshape(-1, 2))
+    NurbsSurfaceElement(surface)
+    return surface
 
 
 def get_margin_curves(surface: SplineSurface, fittings):
@@ -3006,19 +3124,13 @@ def bspline_surface_fitting_gauss_newton2d(
     fitting: SurfacePoints, surface: SplineSurface, tol=2e-2, rho=0.5, iteration=100, method="pdm", verbose=False
 ):
     from src.nurbs.SplineSurface import SplineSurface
-    from src.nurbs.element.LinearQuadrilateralElement import LinearQuadrilateralElement
+    from src.nurbs.element.NurbsSurfaceElement import NurbsSurfaceElement
     from src.nurbs.SurfacePoints import SurfacePoints
 
     energy = MIPS()
-    xcoord, ycoord = np.meshgrid(
-        np.linspace(1 - surface.num_ctrlpts_u, surface.num_ctrlpts_u - 1, surface.num_ctrlpts_u),
-        np.linspace(1 - surface.num_ctrlpts_v, surface.num_ctrlpts_v - 1, surface.num_ctrlpts_v),
-        indexing="xy",
-    )
-    reference_points = np.column_stack((xcoord.ravel(), ycoord.ravel()))
-    element = LinearQuadrilateralElement(
-        surface.control_points, reference_points, surface.connectivity, energy=energy, gauss_point_number=2
-    )
+    surface.activate_boundary()
+    surface.update_boundary()
+    element = NurbsSurfaceElement(surface, energy=energy)
 
     assemble = choose_surface_assemble_method(method)
     boundary_parameterize_data, boundary_diff = np.array([]), np.array([])
@@ -3036,8 +3148,8 @@ def bspline_surface_fitting_gauss_newton2d(
         dp_boundary, _ = assemble(
             fitting.boundary_weight, fitting.boundary, boundary_parameterize_data, surface, is_boundary=True
         )
-        coeff_boundary = np.concatenate([dp_boundary])
-        hess = lil_matrix(coeff_boundary.T @ coeff_boundary)
+        coeff_boundary = csr_matrix(dp_boundary)
+        hess = (coeff_boundary.T @ coeff_boundary).tolil()
         grad = coeff_boundary.T @ boundary_diff
 
         deformation_gradient = element.compute_deformation_gradient(element.vertice)
@@ -3057,25 +3169,39 @@ def bspline_surface_fitting_gauss_newton2d(
             alpha = alpha * rho
 
         init_ctrlpts = element.vertice.copy()
-        while alpha > tol:
-            disp = alpha * delta
-            curr_ctrlpts = init_ctrlpts + disp
-            element.vertice = curr_ctrlpts.copy()
-            surface.control_points = curr_ctrlpts.copy()
+        try:
+            while alpha > tol:
+                disp = alpha * delta
+                curr_ctrlpts = init_ctrlpts + disp
+                try:
+                    element.validate(curr_ctrlpts)
+                except ValueError:
+                    alpha *= 0.5
+                    continue
+                element.vertice = curr_ctrlpts.copy()
+                surface.control_points = curr_ctrlpts.copy()
+                surface.update_boundary()
 
-            deformation_gradient = element.compute_deformation_gradient(element.vertice)
-            energy = element.surface_energy(deformation_gradient)
-            boundary_parameterize_data, _ = surface.boundary_inversion(fitting.boundary)
-            boundary_diff = (
-                np.array([surface.single_point(*para) for para in boundary_parameterize_data]) - fitting.boundary
-            ).reshape(-1, 1)
+                deformation_gradient = element.compute_deformation_gradient(element.vertice)
+                energy = element.surface_energy(deformation_gradient)
+                boundary_parameterize_data, _ = surface.boundary_inversion(fitting.boundary)
+                boundary_diff = (
+                    np.array([surface.single_point(*para) for para in boundary_parameterize_data]) - fitting.boundary
+                ).reshape(-1, 1)
 
-            err_update = np.sum(np.sqrt(boundary_diff * boundary_diff)) + fitting.penalty * energy
-            if verbose:
-                print(f"New error is {err_update} and old error is {err}")
-            if err_update <= err:
-                break
-            alpha *= 0.5
+                err_update = np.sum(np.sqrt(boundary_diff * boundary_diff)) + fitting.penalty * energy
+                if verbose:
+                    print(f"New error is {err_update} and old error is {err}")
+                if err_update <= err:
+                    break
+                alpha *= 0.5
+            else:
+                raise NonlinearSolveError("Surface fitting found no valid descent step")
+        except Exception:
+            element.vertice = init_ctrlpts.copy()
+            surface.control_points = init_ctrlpts.copy()
+            surface.update_boundary()
+            raise
 
         err, err_update = err_update, err
         updating = np.sum(np.sqrt(delta * delta))
@@ -3095,6 +3221,7 @@ def bspline_surface_fitting_gauss_newton2d(
 
         if iter == iteration:
             raise NonlinearSolveError(f"Convergence failed, the residual error is {err}")
+    validate_spline_jacobian(surface)
     return surface
 
 
@@ -3163,19 +3290,13 @@ def bspline_surface_fitting_newton_raphson2d(
     fitting: SurfacePoints, surface: SplineSurface, tol=2e-2, rho=0.5, iteration=100, verbose=False
 ):
     from src.nurbs.SplineSurface import SplineSurface
-    from src.nurbs.element.LinearQuadrilateralElement import LinearQuadrilateralElement
+    from src.nurbs.element.NurbsSurfaceElement import NurbsSurfaceElement
     from src.nurbs.SurfacePoints import SurfacePoints
 
     energy = MIPS()
-    xcoord, ycoord = np.meshgrid(
-        np.linspace(1 - surface.num_ctrlpts_u, surface.num_ctrlpts_u - 1, surface.num_ctrlpts_u),
-        np.linspace(1 - surface.num_ctrlpts_v, surface.num_ctrlpts_v - 1, surface.num_ctrlpts_v),
-        indexing="xy",
-    )
-    reference_points = np.column_stack((xcoord.ravel(), ycoord.ravel()))
-    element = LinearQuadrilateralElement(
-        surface.control_points, reference_points, surface.connectivity, energy=energy, gauss_point_number=2
-    )
+    surface.activate_boundary()
+    surface.update_boundary()
+    element = NurbsSurfaceElement(surface, energy=energy)
 
     boundary_parameterize_data, _ = surface.boundary_inversion(fitting.boundary)
     boundary_diff = (
@@ -3210,25 +3331,39 @@ def bspline_surface_fitting_newton_raphson2d(
             alpha = alpha * rho
 
         init_ctrlpts = element.vertice.copy()
-        while alpha > tol:
-            disp = alpha * delta
-            curr_ctrlpts = init_ctrlpts + disp
-            element.vertice = curr_ctrlpts.copy()
-            surface.control_points = curr_ctrlpts.copy()
+        try:
+            while alpha > tol:
+                disp = alpha * delta
+                curr_ctrlpts = init_ctrlpts + disp
+                try:
+                    element.validate(curr_ctrlpts)
+                except ValueError:
+                    alpha *= 0.5
+                    continue
+                element.vertice = curr_ctrlpts.copy()
+                surface.control_points = curr_ctrlpts.copy()
+                surface.update_boundary()
 
-            deformation_gradient = element.compute_deformation_gradient(element.vertice)
-            energy = element.surface_energy(deformation_gradient)
-            boundary_parameterize_data, _ = surface.boundary_inversion(fitting.boundary)
-            boundary_diff = (
-                np.array([surface.single_point(*para) for para in boundary_parameterize_data]) - fitting.boundary
-            ).reshape(-1)
+                deformation_gradient = element.compute_deformation_gradient(element.vertice)
+                energy = element.surface_energy(deformation_gradient)
+                boundary_parameterize_data, _ = surface.boundary_inversion(fitting.boundary)
+                boundary_diff = (
+                    np.array([surface.single_point(*para) for para in boundary_parameterize_data]) - fitting.boundary
+                ).reshape(-1)
 
-            err_update = np.sum(np.sqrt(boundary_diff * boundary_diff)) + fitting.penalty * energy
-            if verbose:
-                print(f"New error is {err_update} and old error is {err}")
-            if err_update <= err:
-                break
-            alpha *= 0.5
+                err_update = np.sum(np.sqrt(boundary_diff * boundary_diff)) + fitting.penalty * energy
+                if verbose:
+                    print(f"New error is {err_update} and old error is {err}")
+                if err_update <= err:
+                    break
+                alpha *= 0.5
+            else:
+                raise NonlinearSolveError("Surface fitting found no valid descent step")
+        except Exception:
+            element.vertice = init_ctrlpts.copy()
+            surface.control_points = init_ctrlpts.copy()
+            surface.update_boundary()
+            raise
 
         err, err_update = err_update, err
         updating = np.sum(np.sqrt(delta * delta))
@@ -3249,6 +3384,7 @@ def bspline_surface_fitting_newton_raphson2d(
         if iter == iteration:
             surface.visualize(datapts=fitting.boundary)
             raise NonlinearSolveError(f"Convergence failed, the residual error is {err}")
+    validate_spline_jacobian(surface)
     return surface
 
 
@@ -3278,20 +3414,21 @@ def reorder_by_main_axis(surface: SplineSurface, category_1, category_2, categor
 
 
 def split_boundary_points(surface, boundary_points, corner_points, visualize=False):
-    ref_indices = []
-    boundary_array = np.array(boundary_points)
-
-    for ref in corner_points:
-        distances = np.linalg.norm(boundary_array - np.array(ref), axis=1)
-        ref_indices.append(np.argmin(distances))
-    ref_indices.sort()
-
-    A_idx, B_idx, C_idx, D_idx = ref_indices
-    category_1 = boundary_points[A_idx : B_idx + 1]
-    category_2 = boundary_points[B_idx : C_idx + 1]
-    category_3 = boundary_points[C_idx : D_idx + 1]
-    category_4 = np.concatenate((boundary_points[D_idx:], boundary_points[: A_idx + 1]))
-    # category_1, category_2, category_3, category_4 = reorder_by_main_axis(surface, category_1, category_2, category_3, category_4)
+    boundary_points = _prepare_planar_boundary(boundary_points)
+    corner_points = np.asarray(corner_points, dtype=float)
+    if corner_points.shape != (4, 2) or not np.isfinite(corner_points).all():
+        raise ValueError("corner_points must contain four finite 2D coordinates")
+    indices = np.argmin(np.linalg.norm(boundary_points[:, None] - corner_points[None, :], axis=2), axis=0)
+    if len(np.unique(indices)) != 4:
+        raise ValueError("Four distinct boundary corners are required")
+    start = indices[0]
+    offsets = np.sort((indices - start) % len(boundary_points))
+    ordered = np.roll(boundary_points, -start, axis=0)
+    ordered = np.vstack((ordered, ordered[0]))
+    ends = np.r_[offsets[1:], len(boundary_points)]
+    category_1, category_2, category_3, category_4 = [
+        ordered[first : last + 1].copy() for first, last in zip(offsets, ends)
+    ]
     categories = {
         "Category 1 (A->B)": category_1,
         "Category 2 (B->C)": category_2,
@@ -3369,19 +3506,13 @@ def bspline_surface_fitting_newton_raphson_four_points2d(
     fitting: SurfacePoints, surface: SplineSurface, boundary_categories, tol=2e-2, rho=0.5, iteration=100, verbose=False
 ):
     from src.nurbs.SplineSurface import SplineSurface
-    from src.nurbs.element.LinearQuadrilateralElement import LinearQuadrilateralElement
+    from src.nurbs.element.NurbsSurfaceElement import NurbsSurfaceElement
     from src.nurbs.SurfacePoints import SurfacePoints
 
     energy = MIPS()
-    xcoord, ycoord = np.meshgrid(
-        np.linspace(1 - surface.num_ctrlpts_u, surface.num_ctrlpts_u - 1, surface.num_ctrlpts_u),
-        np.linspace(1 - surface.num_ctrlpts_v, surface.num_ctrlpts_v - 1, surface.num_ctrlpts_v),
-        indexing="xy",
-    )
-    reference_points = np.column_stack((xcoord.ravel(), ycoord.ravel()))
-    element = LinearQuadrilateralElement(
-        surface.control_points, reference_points, surface.connectivity, energy=energy, gauss_point_number=2
-    )
+    surface.activate_boundary()
+    surface.update_boundary()
+    element = NurbsSurfaceElement(surface, energy=energy)
 
     boundaries_parameterize_data, boundaries_diff, corners_parameterize_data, corners_diff = point_parameterize(
         fitting, surface, boundary_categories
@@ -3436,28 +3567,42 @@ def bspline_surface_fitting_newton_raphson_four_points2d(
             alpha = alpha * rho
 
         init_ctrlpts = element.vertice.copy()
-        while alpha > tol:
-            disp = alpha * delta
-            curr_ctrlpts = init_ctrlpts + disp
-            element.vertice = curr_ctrlpts.copy()
-            surface.control_points = curr_ctrlpts.copy()
+        try:
+            while alpha > tol:
+                disp = alpha * delta
+                curr_ctrlpts = init_ctrlpts + disp
+                try:
+                    element.validate(curr_ctrlpts)
+                except ValueError:
+                    alpha *= 0.5
+                    continue
+                element.vertice = curr_ctrlpts.copy()
+                surface.control_points = curr_ctrlpts.copy()
+                surface.update_boundary()
 
-            deformation_gradient = element.compute_deformation_gradient(element.vertice)
-            energy = element.surface_energy(deformation_gradient)
-            boundaries_parameterize_data, boundaries_diff, corners_parameterize_data, corners_diff = point_parameterize(
-                fitting, surface, boundary_categories
-            )
+                deformation_gradient = element.compute_deformation_gradient(element.vertice)
+                energy = element.surface_energy(deformation_gradient)
+                boundaries_parameterize_data, boundaries_diff, corners_parameterize_data, corners_diff = (
+                    point_parameterize(fitting, surface, boundary_categories)
+                )
 
-            err_update = (
-                fitting.boundary_weight * np.sum(np.sqrt(boundaries_diff * boundaries_diff))
-                + fitting.corner_weight * np.sum(np.sqrt(corners_diff * corners_diff))
-                + fitting.penalty * energy
-            )
-            if verbose:
-                print(f"New error is {err_update} and old error is {err}")
-            if err_update <= err:
-                break
-            alpha *= 0.5
+                err_update = (
+                    fitting.boundary_weight * np.sum(np.sqrt(boundaries_diff * boundaries_diff))
+                    + fitting.corner_weight * np.sum(np.sqrt(corners_diff * corners_diff))
+                    + fitting.penalty * energy
+                )
+                if verbose:
+                    print(f"New error is {err_update} and old error is {err}")
+                if err_update <= err:
+                    break
+                alpha *= 0.5
+            else:
+                raise NonlinearSolveError("Surface fitting found no valid descent step")
+        except Exception:
+            element.vertice = init_ctrlpts.copy()
+            surface.control_points = init_ctrlpts.copy()
+            surface.update_boundary()
+            raise
 
         err, err_update = err_update, err
         updating = np.sum(np.sqrt(delta * delta))
@@ -3474,6 +3619,7 @@ def bspline_surface_fitting_newton_raphson_four_points2d(
 
         if alpha <= tol or abs(energy) < tol:
             break
+    validate_spline_jacobian(surface)
     return surface
 
 
@@ -3495,6 +3641,74 @@ def nurbs_volume(
     volume.weights = weight
     volume.closed = closed
     volume.activate_boundary()
+    return volume
+
+
+def validate_spline_jacobian(primitive):
+    """Return the minimum sampled signed IGA Jacobian for a planar patch or solid."""
+    from itertools import product
+    from src.nurbs.element.NurbsSurfaceElement import NurbsSurfaceElement
+
+    if len(primitive.degree) == 2:
+        element = NurbsSurfaceElement(primitive)
+        return float(np.min(element.jacobian_determinants(primitive.control_points)))
+    if len(primitive.degree) != 3 or primitive.dimension != 3:
+        raise ValueError("Signed Jacobians require a planar 2D patch or a 3D volume")
+    points = primitive.control_points
+    weights = getattr(primitive, "weights", None)
+    if not np.isfinite(points).all() or (
+        weights is not None and (not np.isfinite(weights).all() or np.any(weights <= 0.0))
+    ):
+        raise ValueError("Control points must be finite and NURBS weights finite and positive")
+    minimum = np.inf
+    samples = [
+        np.unique(np.r_[np.linspace(0.0, 1.0, 2 * p + 1), 0.5 * (np.polynomial.legendre.leggauss(p + 1)[0] + 1.0)])
+        for p in primitive.degree
+    ]
+    for element_id, spans in enumerate(product(primitive.element_u, primitive.element_v, primitive.element_w)):
+        lower = np.asarray(spans)[:, 0]
+        upper = np.asarray(spans)[:, 1]
+        for parameter in product(*samples):
+            knots = lower + np.asarray(parameter) * (upper - lower)
+            knots = np.clip(knots, np.nextafter(lower, upper), np.nextafter(upper, lower))
+            determinant = np.linalg.det(np.column_stack(primitive.derivative(*knots)))
+            if not np.isfinite(determinant) or determinant <= 0.0:
+                raise ValueError(
+                    f"Inverted or degenerate IGA Jacobian in element {element_id} at {knots}: {determinant}"
+                )
+            minimum = min(minimum, determinant)
+    return float(minimum)
+
+
+def extrude_surface(surface, vector, degree=1):
+    """Create an exact straight NURBS volume, preserving the source patch at w=0."""
+    from src.nurbs.SplineSurface import SplineSurface
+
+    if not isinstance(surface, SplineSurface) or surface.dimension not in (2, 3):
+        raise ValueError("Extrusion requires a 2D or 3D spline surface")
+    vector = np.asarray(vector, dtype=float)
+    if vector.shape != (3,) or not np.isfinite(vector).all() or np.linalg.norm(vector) == 0.0:
+        raise ValueError("Extrusion vector must contain three finite components and be nonzero")
+    if isinstance(degree, bool) or not isinstance(degree, (int, np.integer)) or degree < 1:
+        raise ValueError("Extrusion degree must be a positive integer")
+    degree = int(degree)
+    points = np.pad(surface.control_points, ((0, 0), (0, 3 - surface.dimension)))
+    layers = np.linspace(0.0, 1.0, degree + 1)
+    control_points = (points[None, :, :] + layers[:, None, None] * vector).reshape(-1, 3)
+    weights = getattr(surface, "weights", None)
+    if weights is None:
+        weights = np.ones(surface.num_ctrlpts)
+    volume = nurbs_volume(
+        surface.degree_u,
+        surface.degree_v,
+        degree,
+        surface.knot_vector_u.copy(),
+        surface.knot_vector_v.copy(),
+        generate_uniform(degree, degree + 1),
+        control_points,
+        weight=np.tile(weights, degree + 1),
+    )
+    validate_spline_jacobian(volume)
     return volume
 
 

@@ -258,7 +258,8 @@ spectral projection may replace the raw Hessian in a descent solve.
 | `Operations.py` | Knot insertion, refinement, and geometry operations |
 | `CurvePoints.py`, `SurfacePoints.py`, `Utilities.py` | Curve, surface, and point-cloud fitting workflows |
 | `Energy.py`, `ASAP.py`, `MIPS.py`, `Optimization.py` | Geometry energies and optimization drivers |
-| `cnurbs/`, `core/`, `element/` | Specialized and experimental geometry kernels |
+| `element/` | IGA fitting quadrature, orientation constraints, and linear-element geometry helpers |
+| `cnurbs/`, `core/` | Specialized and experimental geometry kernels |
 
 ## Primitive example
 
@@ -292,6 +293,81 @@ not a simulation stepping backend.
 
 Point inversion and projection can be expensive on large point clouds. Cache
 parametric coordinates when the geometry does not change.
+
+### Four-corner planar fitting
+
+`fit_surface_from_boundary` accepts one ordered, non-self-intersecting 2D
+boundary loop. The last point may repeat the first. Supply four corner
+coordinates with `corner_points`; each is snapped to the nearest boundary
+sample. The first corner defines `(u, v) = (0, 0)`, and the remaining corners
+are ordered counterclockwise along the loop. Clockwise input loops are
+reoriented automatically. Four distinct corner samples are required.
+
+```python
+import numpy as np
+from src.nurbs.Utilities import fit_surface_from_boundary, extrude_surface
+
+boundary_points = np.array([
+    [0.0, 0.0], [1.0, 0.0], [2.0, 0.0], [2.0, 0.5],
+    [2.0, 1.0], [1.0, 1.2], [0.0, 1.0], [0.0, 0.5],
+])
+corners = boundary_points[[0, 2, 4, 6]]
+surface = fit_surface_from_boundary(
+    boundary_points, corner_points=corners,
+    degree=(2, 2), num_ctrlpts=(4, 4),
+)
+volume = extrude_surface(surface, vector=[0.0, 0.0, 0.2], degree=2)
+```
+
+Omitting `corner_points` opens a Matplotlib window for four corner picks.
+Left click adds a point, right click undoes a pick, and middle click finishes.
+Fewer than four picks cancel the operation. An interactive Matplotlib backend
+is required; headless scripts should supply coordinates explicitly.
+`get_boundary_categories` also accepts `corner_points`, while retaining its
+existing `corner_index` argument.
+
+Each edge is fitted by constrained least squares with fixed endpoints and
+chord-length parameters. Opposite edges share degree and knots, and a Coons
+blend fills the interior control net. The result is a `NurbsSurface` with
+unit weights. This constructor rejects folded control cells or invalid
+sampled spline Jacobians; it does not repair them or change the boundary
+topology. Strongly concave domains may require another corner partition,
+different resolution, or multiple patches.
+
+### Orientation and iterative fitting
+
+The three planar iterative fitters use `element/NurbsSurfaceElement.py` for
+MIPS energy, gradients and Hessians over actual knot spans. Geometry
+derivatives come from the spline's polynomial or rational basis, rather than
+a bilinear approximation of its control points.
+
+Along a control-point update, each sampled Jacobian is affine in the step
+length, so its determinant is quadratic. The first positive zero limits the
+step. This check includes both the real spline Jacobians and all four corner
+orientations of every control quadrilateral. A step cannot pass through a
+zero determinant even if its final determinant would be positive. Rejected
+steps and projection failures restore the accepted control points and boundary
+curves. The final spline is checked again before returning.
+
+`validate_spline_jacobian(primitive)` returns the minimum sampled signed
+Jacobian, raising `ValueError` for a nonpositive or nonfinite value. It supports
+planar 2D patches and 3D volumes. Surface validation also requires an unfolded
+control net. Each knot span is checked at Gauss points and a grid including
+one-sided span endpoints. These finite samples are an IGA geometry check,
+not a proof of positivity everywhere between samples.
+
+### Extruded volumes
+
+`extrude_surface(surface, vector, degree=1)` constructs the exact straight
+sweep `V(u, v, w) = S(u, v) + w * vector`. A 2D source is embedded at `z=0`.
+The source knots and rational weights are preserved, with `degree + 1`
+control layers in the extrusion direction. The output is a `NurbsVolume`
+that can be appended to a 3D IGA `Primitives` collection.
+
+The vector must give positive signed volume Jacobians; in-plane, zero or
+oppositely oriented extrusions raise `ValueError`. Extrusion validates the
+volume before returning and leaves the source unchanged. Arbitrary fitting
+of a solid from six boundary faces is not implemented by this workflow.
 
 ## Conventions and compatibility
 
