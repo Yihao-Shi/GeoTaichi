@@ -1,0 +1,516 @@
+! -*- f90 -*-
+
+python module igalib
+usercode '''
+static int CountSpans(int n, int p, double *U)
+{
+  int i, spans=0;
+  for (i=p; i<=n; i++) {
+    while (i<=n && U[i]==U[i+1]) i++;
+    spans++;
+  }
+  return spans;
+}
+'''
+interface
+
+     !
+
+   module bsp
+
+     subroutine FindSpan(p,m,U,u,span)
+       integer(kind=4), intent(in),   check(p>=1)     :: p
+       integer(kind=4), intent(hide), check(m>=2*p+1) :: m
+       real   (kind=8), intent(in)  :: U(0:m)
+       real   (kind=8), intent(in)  :: u
+       integer(kind=4), intent(out) :: span
+     end subroutine FindSpan
+
+     subroutine FindMult(p,m,U,u,span,mult)
+       integer(kind=4), intent(in),   check(p>=1)     :: p
+       integer(kind=4), intent(hide), check(m>=2*p+1) :: m
+       real   (kind=8), intent(in)  :: U(0:m)
+       real   (kind=8), intent(in)  :: u
+       integer(kind=4), optional    :: span = -1
+       integer(kind=4), intent(out) :: mult
+     end subroutine FindMult
+
+     subroutine FindSpanMult(p,m,U,u,span,mult)
+       integer(kind=4), intent(in),   check(p>=1)     :: p
+       integer(kind=4), intent(hide), check(m>=2*p+1) :: m
+       real   (kind=8), intent(in)  :: U(0:m)
+       real   (kind=8), intent(in)  :: u
+       integer(kind=4), intent(out) :: span
+       integer(kind=4), intent(out) :: mult
+     end subroutine FindSpanMult
+
+     subroutine EvalBasisFuns(p,m,U,u,span,N)
+       integer(kind=4), intent(in),   check(p>=1)     :: p
+       integer(kind=4), intent(hide), check(m>=2*p+1) :: m
+       real   (kind=8), intent(in)  :: U(0:m)
+       real   (kind=8), intent(in)  :: u
+       integer(kind=4), optional    :: span = -1
+       real   (kind=8), intent(out) :: N(0:p)
+     end subroutine EvalBasisFuns
+
+     subroutine EvalBasisFunsDers(p,m,U,u,d,span,dN)
+       integer(kind=4), intent(in),   check(p>=1)     :: p
+       integer(kind=4), intent(hide), check(m>=2*p+1) :: m
+       real   (kind=8), intent(in,c)  :: U(0:m)
+       real   (kind=8), intent(in)    :: u
+       integer(kind=4), optional,     &
+                  & check(d>=0&&d<=p) :: d = p
+       integer(kind=4), optional      :: span = -1
+       real   (kind=8), intent(out,c) :: dN(0:d,0:p)
+     end subroutine EvalBasisFunsDers
+
+     subroutine SpanIndex(p,m,U,r,ID)
+       integer(kind=4), intent(in),   check(p>=1)     :: p
+       integer(kind=4), intent(hide), check(m>=2*p+1) :: m
+       real   (kind=8), intent(in)  :: U(0:m)
+       integer(kind=4), intent(hide):: r=CountSpans(m-p-1,p,U)
+       integer(kind=4), intent(out) :: ID(r)
+     end subroutine SpanIndex
+
+     subroutine Greville(p,m,U,X)
+       integer(kind=4), intent(in),   check(p>=1)     :: p
+       integer(kind=4), intent(hide), check(m>=2*p+1) :: m
+       real   (kind=8), intent(in)  :: U(0:m)
+       real   (kind=8), intent(out) :: X(0:m-(p+1))
+     end subroutine Greville
+
+     subroutine InsertKnot(d,n,p,U,Pw,u,r,V,Qw)
+       !f2py threadsafe
+       integer(kind=4), intent(hide), check(d>=1) :: d
+       integer(kind=4), intent(hide), check(n>=1) :: n
+       integer(kind=4), intent(in),   check(p>=1) :: p
+       real   (kind=8), intent(c,in)  :: U(0:n+p+1)
+       real   (kind=8), intent(c,in)  :: Pw(0:n,d)
+       real   (kind=8), intent(in),   :: u
+       integer(kind=4), optional      :: r = 1
+       real   (kind=8), intent(c,out) :: V(0:n+p+1+r)
+       real   (kind=8), intent(c,out) :: Qw(0:n+r,d)
+       !f2py real(8),    depend(U), check(u>=U[p]&&u<=U[n+1]) :: u
+       !f2py integer(4), depend(p), check(r>=0&&r<=p) :: r
+     end subroutine InsertKnot
+
+     subroutine RemoveKnot(d,n,p,U,Pw,u,r,t,V,Qw,TOL)
+       !f2py threadsafe
+       integer(kind=4), intent(hide), check(d>=1) :: d
+       integer(kind=4), intent(hide), check(n>=1) :: n
+       integer(kind=4), intent(in),   check(p>=1) :: p
+       real   (kind=8), intent(c,in)  :: U(0:n+p+1)
+       real   (kind=8), intent(c,in)  :: Pw(0:n,d)
+       real   (kind=8), intent(in)    :: u
+       real   (kind=8), intent(in)    :: TOL
+       integer(kind=4), optional,     :: r = 1
+       integer(kind=4), intent(out)   :: t
+       real   (kind=8), intent(c,out) :: V(0:n+p+1)
+       real   (kind=8), intent(c,out) :: Qw(0:n,d)
+       !f2py real(8),    depend(U), check(u>=U[p]&&u<=U[n+1]) :: u
+       !f2py integer(4), depend(p), check(r>=0&&r<=p) :: r
+     end subroutine RemoveKnot
+
+     subroutine Clamp(d,n,p,U,Pw,l,r,V,Qw)
+       !f2py threadsafe
+       integer(kind=4), intent(hide), check(d>=1) :: d
+       integer(kind=4), intent(hide), check(n>=1) :: n
+       integer(kind=4), intent(in),   check(p>=1) :: p
+       real   (kind=8), intent(c,in)  :: U(0:n+p+1)
+       real   (kind=8), intent(c,in)  :: Pw(0:n,d)
+       logical(kind=4), optional      :: l = 1
+       logical(kind=4), optional      :: r = 1
+       real   (kind=8), intent(c,out) :: V(0:n+p+1)
+       real   (kind=8), intent(c,out) :: Qw(0:n,d)
+     end subroutine Unclamp
+
+     subroutine Unclamp(d,n,p,U,Pw,C,l,r,V,Qw)
+       !f2py threadsafe
+       integer(kind=4), intent(hide), check(d>=1) :: d
+       integer(kind=4), intent(hide), check(n>=1) :: n
+       integer(kind=4), intent(in),   check(p>=1) :: p
+       real   (kind=8), intent(c,in)  :: U(0:n+p+1)
+       real   (kind=8), intent(c,in)  :: Pw(0:n,d)
+       integer(kind=4), optional,     :: C = p - 1
+       logical(kind=4), optional      :: l = 1
+       logical(kind=4), optional      :: r = 1
+       real   (kind=8), intent(c,out) :: V(0:n+p+1)
+       real   (kind=8), intent(c,out) :: Qw(0:n,d)
+     end subroutine Unclamp
+
+     subroutine RefineKnotVector(d,n,p,U,Pw,r,X,V,Qw)
+       !f2py threadsafe
+       integer(kind=4), intent(hide), check(d>=1) :: d
+       integer(kind=4), intent(hide), check(n>=1) :: n
+       integer(kind=4), intent(in),   check(p>=1) :: p
+       integer(kind=4), intent(hide), check(r>-2) :: r
+       real   (kind=8), intent(c,in)  :: U(0:n+p+1)
+       real   (kind=8), intent(c,in)  :: Pw(0:n,d)
+       real   (kind=8), intent(c,in)  :: X(0:r)
+       real   (kind=8), intent(c,out) :: V(0:n+r+1+p+1)
+       real   (kind=8), intent(c,out) :: Qw(0:n+r+1,d)
+     end subroutine RefineKnotVector
+
+     subroutine DegreeElevate(d,n,p,U,Pw,t,o,V,Qw)
+       !f2py threadsafe
+       integer(kind=4), intent(hide), check(d>=1) :: d
+       integer(kind=4), intent(hide), check(n>=1) :: n
+       integer(kind=4), intent(in),   check(p>=1) :: p
+       integer(kind=4), intent(in),   check(t>=0) :: t
+       real   (kind=8), intent(c,in)  :: U(0:n+p+1)
+       real   (kind=8), intent(c,in)  :: Pw(0:n,d)
+       integer(kind=4), intent(hide)  :: o=n+t*CountSpans(n,p,U)
+       real   (kind=8), intent(c,out) :: V(0:o+p+t+1)
+       real   (kind=8), intent(c,out) :: Qw(0:o,d)
+     end subroutine DegreeElevate
+
+     subroutine Extract(d,n,p,U,Pw,uu,Cw)
+       !f2py threadsafe
+       integer(kind=4), intent(hide), check(d>=1) :: d
+       integer(kind=4), intent(hide), check(n>=1) :: n
+       integer(kind=4), intent(in),   check(p>=1) :: p
+       real   (kind=8), intent(c,in)  :: U(0:n+p+1)
+       real   (kind=8), intent(c,in)  :: Pw(0:n,d)
+       real   (kind=8), intent(in)    :: uu
+       real   (kind=8), intent(c,out) :: Cw(d)
+     end subroutine Extract
+
+     subroutine Evaluate0(d,Pw,Cw)
+       !f2py threadsafe
+       integer(kind=4), intent(hide), check(d>=1) :: d
+       real   (kind=8), intent(in)  :: Pw(d)
+       real   (kind=8), intent(out) :: Cw(d)
+     end subroutine Evaluate0
+
+     subroutine Evaluate1(d,n,p,U,Pw,r,X,Cw)
+       !f2py threadsafe
+       integer(kind=4), intent(hide), check(d>=1) :: d
+       integer(kind=4), intent(hide), check(n>=1) :: n
+       integer(kind=4), intent(in),   check(p>=1) :: p
+       integer(kind=4), intent(hide), check(r>=0) :: r
+       real   (kind=8), intent(c,in)  :: U(0:n+p+1)
+       real   (kind=8), intent(c,in)  :: Pw(0:n,d)
+       real   (kind=8), intent(c,in)  :: X(0:r)
+       real   (kind=8), intent(c,out) :: Cw(0:r,d)
+     end subroutine Evaluate1
+
+     subroutine Evaluate2(d,nx,px,Ux,ny,py,Uy,Pw,rx,X,ry,Y,Cw)
+       !f2py threadsafe
+       integer(kind=4), intent(hide), check(d>=1)  :: d
+       integer(kind=4), intent(hide), check(nx>=1) :: nx
+       integer(kind=4), intent(hide), check(ny>=1) :: ny
+       integer(kind=4), intent(in),   check(px>=1) :: px
+       integer(kind=4), intent(in),   check(py>=1) :: py
+       integer(kind=4), intent(hide), check(rx>=0) :: rx
+       integer(kind=4), intent(hide), check(ry>=0) :: ry
+       real   (kind=8), intent(c,in)  :: Ux(0:nx+px+1)
+       real   (kind=8), intent(c,in)  :: Uy(0:ny+py+1)
+       real   (kind=8), intent(c,in)  :: Pw(0:nx,0:ny,d)
+       real   (kind=8), intent(c,in)  :: X(0:rx), Y(0:ry)
+       real   (kind=8), intent(c,out) :: Cw(0:rx,0:ry,d)
+     end subroutine Evaluate2
+
+     subroutine Evaluate3(d,nx,px,Ux,ny,py,Uy,nz,pz,Uz,Pw,rx,X,ry,Y,rz,Z,Cw)
+       !f2py threadsafe
+       integer(kind=4), intent(hide), check(d>=1)  :: d
+       integer(kind=4), intent(hide), check(nx>=1) :: nx
+       integer(kind=4), intent(hide), check(ny>=1) :: ny
+       integer(kind=4), intent(hide), check(nz>=1) :: nz
+       integer(kind=4), intent(in),   check(px>=1) :: px
+       integer(kind=4), intent(in),   check(py>=1) :: py
+       integer(kind=4), intent(in),   check(pz>=1) :: pz
+       integer(kind=4), intent(hide), check(rx>=0) :: rx
+       integer(kind=4), intent(hide), check(ry>=0) :: ry
+       integer(kind=4), intent(hide), check(rz>=0) :: rz
+       real   (kind=8), intent(c,in)  :: Ux(0:nx+px+1)
+       real   (kind=8), intent(c,in)  :: Uy(0:ny+py+1)
+       real   (kind=8), intent(c,in)  :: Uz(0:nz+pz+1)
+       real   (kind=8), intent(c,in)  :: Pw(0:nx,0:ny,0:nz,d)
+       real   (kind=8), intent(c,in)  :: X(0:rx), Y(0:ry), Z(0:rz)
+       real   (kind=8), intent(c,out) :: Cw(0:rx,0:ry,0:rz,d)
+     end subroutine Evaluate3
+
+     subroutine Gradient1(map,d,nx,px,Ux,Pw,F,rx,X,G)
+       !f2py threadsafe
+       integer(kind=4), intent(hide), check(d>=1)  :: d
+       integer(kind=4), intent(hide), check(nx>=1) :: nx
+       integer(kind=4), intent(in),   check(px>=1) :: px
+       integer(kind=4), intent(hide), check(rx>=0) :: rx
+       real   (kind=8), intent(c,in)  :: Ux(0:nx+px+1)
+       real   (kind=8), intent(c,in)  :: Pw(0:nx,4)
+       integer(kind=4), intent(in)    :: map
+       real   (kind=8), intent(c,in)  :: F(0:nx,d)
+       real   (kind=8), intent(c,in)  :: X(0:rx)
+       real   (kind=8), intent(c,out) :: G(0:rx,d,1)
+     end subroutine Gradient1
+
+     subroutine Gradient2(map,d,nx,px,Ux,ny,py,Uy,Pw,F,rx,X,ry,Y,G)
+       !f2py threadsafe
+       integer(kind=4), intent(hide), check(d>=1)  :: d
+       integer(kind=4), intent(hide), check(nx>=1) :: nx
+       integer(kind=4), intent(hide), check(ny>=1) :: ny
+       integer(kind=4), intent(in),   check(px>=1) :: px
+       integer(kind=4), intent(in),   check(py>=1) :: py
+       integer(kind=4), intent(hide), check(rx>=0) :: rx
+       integer(kind=4), intent(hide), check(ry>=0) :: ry
+       real   (kind=8), intent(c,in)  :: Ux(0:nx+px+1)
+       real   (kind=8), intent(c,in)  :: Uy(0:ny+py+1)
+       real   (kind=8), intent(c,in)  :: Pw(0:nx,0:ny,4)
+       integer(kind=4), intent(in)    :: map
+       real   (kind=8), intent(c,in)  :: F(0:nx,0:ny,d)
+       real   (kind=8), intent(c,in)  :: X(0:rx), Y(0:ry)
+       real   (kind=8), intent(c,out) :: G(0:rx,0:ry,d,2)
+     end subroutine Gradient2
+
+     subroutine Gradient3(map,d,nx,px,Ux,ny,py,Uy,nz,pz,Uz,Pw,F,rx,X,ry,Y,rz,Z,G)
+       !f2py threadsafe
+       integer(kind=4), intent(hide), check(d>=1)  :: d
+       integer(kind=4), intent(hide), check(nx>=1) :: nx
+       integer(kind=4), intent(hide), check(ny>=1) :: ny
+       integer(kind=4), intent(hide), check(nz>=1) :: nz
+       integer(kind=4), intent(in),   check(px>=1) :: px
+       integer(kind=4), intent(in),   check(py>=1) :: py
+       integer(kind=4), intent(in),   check(pz>=1) :: pz
+       integer(kind=4), intent(hide), check(rx>=0) :: rx
+       integer(kind=4), intent(hide), check(ry>=0) :: ry
+       integer(kind=4), intent(hide), check(rz>=0) :: rz
+       real   (kind=8), intent(c,in)  :: Ux(0:nx+px+1)
+       real   (kind=8), intent(c,in)  :: Uy(0:ny+py+1)
+       real   (kind=8), intent(c,in)  :: Uz(0:nz+pz+1)
+       real   (kind=8), intent(c,in)  :: Pw(0:nx,0:ny,0:nz,4)
+       integer(kind=4), intent(in)    :: map
+       real   (kind=8), intent(c,in)  :: F(0:nx,0:ny,0:nz,d)
+       real   (kind=8), intent(c,in)  :: X(0:rx), Y(0:ry), Z(0:rz)
+       real   (kind=8), intent(c,out) :: G(0:rx,0:ry,0:rz,d,3)
+     end subroutine Gradient3
+
+     subroutine Hessian1(map,d,nx,px,Ux,Pw,F,rx,X,H)
+       !f2py threadsafe
+       integer(kind=4), intent(hide), check(d>=1)  :: d
+       integer(kind=4), intent(hide), check(nx>=1) :: nx
+       integer(kind=4), intent(in),   check(px>=1) :: px
+       integer(kind=4), intent(hide), check(rx>=0) :: rx
+       real   (kind=8), intent(c,in)  :: Ux(0:nx+px+1)
+       real   (kind=8), intent(c,in)  :: Pw(0:nx,4)
+       integer(kind=4), intent(in)    :: map
+       real   (kind=8), intent(c,in)  :: F(0:nx,d)
+       real   (kind=8), intent(c,in)  :: X(0:rx)
+       real   (kind=8), intent(c,out) :: H(0:rx,d,1,1)
+     end subroutine Hessian1
+
+     subroutine Hessian2(map,d,nx,px,Ux,ny,py,Uy,Pw,F,rx,X,ry,Y,H)
+       !f2py threadsafe
+       integer(kind=4), intent(hide), check(d>=1)  :: d
+       integer(kind=4), intent(hide), check(nx>=1) :: nx
+       integer(kind=4), intent(hide), check(ny>=1) :: ny
+       integer(kind=4), intent(in),   check(px>=1) :: px
+       integer(kind=4), intent(in),   check(py>=1) :: py
+       integer(kind=4), intent(hide), check(rx>=0) :: rx
+       integer(kind=4), intent(hide), check(ry>=0) :: ry
+       real   (kind=8), intent(c,in)  :: Ux(0:nx+px+1)
+       real   (kind=8), intent(c,in)  :: Uy(0:ny+py+1)
+       real   (kind=8), intent(c,in)  :: Pw(0:nx,0:ny,4)
+       integer(kind=4), intent(in)    :: map
+       real   (kind=8), intent(c,in)  :: F(0:nx,0:ny,d)
+       real   (kind=8), intent(c,in)  :: X(0:rx), Y(0:ry)
+       real   (kind=8), intent(c,out) :: H(0:rx,0:ry,d,2,2)
+     end subroutine Hessian2
+
+     subroutine Hessian3(map,d,nx,px,Ux,ny,py,Uy,nz,pz,Uz,Pw,F,rx,X,ry,Y,rz,Z,H)
+       !f2py threadsafe
+       integer(kind=4), intent(hide), check(d>=1)  :: d
+       integer(kind=4), intent(hide), check(nx>=1) :: nx
+       integer(kind=4), intent(hide), check(ny>=1) :: ny
+       integer(kind=4), intent(hide), check(nz>=1) :: nz
+       integer(kind=4), intent(in),   check(px>=1) :: px
+       integer(kind=4), intent(in),   check(py>=1) :: py
+       integer(kind=4), intent(in),   check(pz>=1) :: pz
+       integer(kind=4), intent(hide), check(rx>=0) :: rx
+       integer(kind=4), intent(hide), check(ry>=0) :: ry
+       integer(kind=4), intent(hide), check(rz>=0) :: rz
+       real   (kind=8), intent(c,in)  :: Ux(0:nx+px+1)
+       real   (kind=8), intent(c,in)  :: Uy(0:ny+py+1)
+       real   (kind=8), intent(c,in)  :: Uz(0:nz+pz+1)
+       real   (kind=8), intent(c,in)  :: Pw(0:nx,0:ny,0:nz,4)
+       integer(kind=4), intent(in)    :: map
+       real   (kind=8), intent(c,in)  :: F(0:nx,0:ny,0:nz,d)
+       real   (kind=8), intent(c,in)  :: X(0:rx), Y(0:ry), Z(0:rz)
+       real   (kind=8), intent(c,out) :: H(0:rx,0:ry,0:rz,d,3,3)
+     end subroutine Hessian3
+
+     subroutine ThirdDer1(map,d,nx,px,Ux,Pw,F,rx,X,D3)
+       !f2py threadsafe
+       integer(kind=4), intent(hide), check(d>=1)  :: d
+       integer(kind=4), intent(hide), check(nx>=1) :: nx
+       integer(kind=4), intent(in),   check(px>=1) :: px
+       integer(kind=4), intent(hide), check(rx>=0) :: rx
+       real   (kind=8), intent(c,in)  :: Ux(0:nx+px+1)
+       real   (kind=8), intent(c,in)  :: Pw(0:nx,4)
+       integer(kind=4), intent(in)    :: map
+       real   (kind=8), intent(c,in)  :: F(0:nx,d)
+       real   (kind=8), intent(c,in)  :: X(0:rx)
+       real   (kind=8), intent(c,out) :: D3(0:rx,d,1,1,1)
+     end subroutine ThirdDer1
+
+     subroutine ThirdDer2(map,d,nx,px,Ux,ny,py,Uy,Pw,F,rx,X,ry,Y,D3)
+       !f2py threadsafe
+       integer(kind=4), intent(hide), check(d>=1)  :: d
+       integer(kind=4), intent(hide), check(nx>=1) :: nx
+       integer(kind=4), intent(hide), check(ny>=1) :: ny
+       integer(kind=4), intent(in),   check(px>=1) :: px
+       integer(kind=4), intent(in),   check(py>=1) :: py
+       integer(kind=4), intent(hide), check(rx>=0) :: rx
+       integer(kind=4), intent(hide), check(ry>=0) :: ry
+       real   (kind=8), intent(c,in)  :: Ux(0:nx+px+1)
+       real   (kind=8), intent(c,in)  :: Uy(0:ny+py+1)
+       real   (kind=8), intent(c,in)  :: Pw(0:nx,0:ny,4)
+       integer(kind=4), intent(in)    :: map
+       real   (kind=8), intent(c,in)  :: F(0:nx,0:ny,d)
+       real   (kind=8), intent(c,in)  :: X(0:rx), Y(0:ry)
+       real   (kind=8), intent(c,out) :: D3(0:rx,0:ry,d,2,2,2)
+     end subroutine ThirdDer2
+
+     subroutine ThirdDer3(map,d,nx,px,Ux,ny,py,Uy,nz,pz,Uz,Pw,F,rx,X,ry,Y,rz,Z,D3)
+       !f2py threadsafe
+       integer(kind=4), intent(hide), check(d>=1)  :: d
+       integer(kind=4), intent(hide), check(nx>=1) :: nx
+       integer(kind=4), intent(hide), check(ny>=1) :: ny
+       integer(kind=4), intent(hide), check(nz>=1) :: nz
+       integer(kind=4), intent(in),   check(px>=1) :: px
+       integer(kind=4), intent(in),   check(py>=1) :: py
+       integer(kind=4), intent(in),   check(pz>=1) :: pz
+       integer(kind=4), intent(hide), check(rx>=0) :: rx
+       integer(kind=4), intent(hide), check(ry>=0) :: ry
+       integer(kind=4), intent(hide), check(rz>=0) :: rz
+       real   (kind=8), intent(c,in)  :: Ux(0:nx+px+1)
+       real   (kind=8), intent(c,in)  :: Uy(0:ny+py+1)
+       real   (kind=8), intent(c,in)  :: Uz(0:nz+pz+1)
+       real   (kind=8), intent(c,in)  :: Pw(0:nx,0:ny,0:nz,4)
+       integer(kind=4), intent(in)    :: map
+       real   (kind=8), intent(c,in)  :: F(0:nx,0:ny,0:nz,d)
+       real   (kind=8), intent(c,in)  :: X(0:rx), Y(0:ry), Z(0:rz)
+       real   (kind=8), intent(c,out) :: D3(0:rx,0:ry,0:rz,d,3,3,3)
+     end subroutine ThirdDer3
+
+     subroutine FourthDer1(map,d,nx,px,Ux,Pw,F,rx,X,D4)
+       !f2py threadsafe
+       integer(kind=4), intent(hide), check(d>=1)  :: d
+       integer(kind=4), intent(hide), check(nx>=1) :: nx
+       integer(kind=4), intent(in),   check(px>=1) :: px
+       integer(kind=4), intent(hide), check(rx>=0) :: rx
+       real   (kind=8), intent(c,in)  :: Ux(0:nx+px+1)
+       real   (kind=8), intent(c,in)  :: Pw(0:nx,4)
+       integer(kind=4), intent(in)    :: map
+       real   (kind=8), intent(c,in)  :: F(0:nx,d)
+       real   (kind=8), intent(c,in)  :: X(0:rx)
+       real   (kind=8), intent(c,out) :: D4(0:rx,d,1,1,1,1)
+     end subroutine FourthDer1
+
+     subroutine FourthDer2(map,d,nx,px,Ux,ny,py,Uy,Pw,F,rx,X,ry,Y,D4)
+       !f2py threadsafe
+       integer(kind=4), intent(hide), check(d>=1)  :: d
+       integer(kind=4), intent(hide), check(nx>=1) :: nx
+       integer(kind=4), intent(hide), check(ny>=1) :: ny
+       integer(kind=4), intent(in),   check(px>=1) :: px
+       integer(kind=4), intent(in),   check(py>=1) :: py
+       integer(kind=4), intent(hide), check(rx>=0) :: rx
+       integer(kind=4), intent(hide), check(ry>=0) :: ry
+       real   (kind=8), intent(c,in)  :: Ux(0:nx+px+1)
+       real   (kind=8), intent(c,in)  :: Uy(0:ny+py+1)
+       real   (kind=8), intent(c,in)  :: Pw(0:nx,0:ny,4)
+       integer(kind=4), intent(in)    :: map
+       real   (kind=8), intent(c,in)  :: F(0:nx,0:ny,d)
+       real   (kind=8), intent(c,in)  :: X(0:rx), Y(0:ry)
+       real   (kind=8), intent(c,out) :: D4(0:rx,0:ry,d,2,2,2,2)
+     end subroutine FourthDer2
+
+     subroutine FourthDer3(map,d,nx,px,Ux,ny,py,Uy,nz,pz,Uz,Pw,F,rx,X,ry,Y,rz,Z,D4)
+       !f2py threadsafe
+       integer(kind=4), intent(hide), check(d>=1)  :: d
+       integer(kind=4), intent(hide), check(nx>=1) :: nx
+       integer(kind=4), intent(hide), check(ny>=1) :: ny
+       integer(kind=4), intent(hide), check(nz>=1) :: nz
+       integer(kind=4), intent(in),   check(px>=1) :: px
+       integer(kind=4), intent(in),   check(py>=1) :: py
+       integer(kind=4), intent(in),   check(pz>=1) :: pz
+       integer(kind=4), intent(hide), check(rx>=0) :: rx
+       integer(kind=4), intent(hide), check(ry>=0) :: ry
+       integer(kind=4), intent(hide), check(rz>=0) :: rz
+       real   (kind=8), intent(c,in)  :: Ux(0:nx+px+1)
+       real   (kind=8), intent(c,in)  :: Uy(0:ny+py+1)
+       real   (kind=8), intent(c,in)  :: Uz(0:nz+pz+1)
+       real   (kind=8), intent(c,in)  :: Pw(0:nx,0:ny,0:nz,4)
+       integer(kind=4), intent(in)    :: map
+       real   (kind=8), intent(c,in)  :: F(0:nx,0:ny,0:nz,d)
+       real   (kind=8), intent(c,in)  :: X(0:rx), Y(0:ry), Z(0:rz)
+       real   (kind=8), intent(c,out) :: D4(0:rx,0:ry,0:rz,d,3,3,3,3)
+     end subroutine FourthDer3
+
+   end module bsp
+
+     !
+
+   module iga
+
+     subroutine KnotVector(E,p,C,Ui,Uf,wrap,m,U)
+       implicit none
+       integer(kind=4), intent(in), check(E>=1)      :: E
+       integer(kind=4), intent(in), check(p>=1)      :: p
+       integer(kind=4), intent(in), check(C>=0&&C<p) :: C = p-1
+       real   (kind=8), intent(in)   :: Ui = 0.0
+       real   (kind=8), intent(in)   :: Uf = 1.0
+       logical(kind=4), intent(in)   :: wrap = 0
+       integer(kind=4), intent(hide) :: m = 2*(p+1)+(E-1)*(p-C)-1
+       real   (kind=8), intent(out)  :: U(0:m)
+     end subroutine KnotVector
+
+     subroutine GaussLegendreRule(q,X,W)
+       integer(kind=4), intent(in), check(q>=1&&q<=10) :: q
+       real   (kind=8), intent(out) :: X(q)
+       real   (kind=8), intent(out) :: W(q)
+     end subroutine GaussLegendreRule
+
+     subroutine GaussLobattoRule(q,X,W)
+       integer(kind=4), intent(in), check(q>=2&&q<=10) :: q
+       real   (kind=8), intent(out) :: X(q)
+       real   (kind=8), intent(out) :: W(q)
+     end subroutine GaussLegendreRule
+
+     subroutine BasisData(p,m,U,d,q,r,O,J,W,X,N)
+       integer(kind=4), intent(in),   check(p>=1)     :: p
+       integer(kind=4), intent(hide), check(m>=2*p+1) :: m
+       real   (kind=8), intent(in,c)                  :: U(0:m)
+       integer(kind=4), optional, check(d>=0&&d<=p)   :: d = p
+       integer(kind=4), optional, check(q>=1&&q<=10)  :: q = p+1
+       integer(kind=4), intent(hide)  :: r=CountSpans(m-p-1,p,U)
+       integer(kind=4), intent(out,c) :: O(r)
+       real   (kind=8), intent(out,c) :: J(r)
+       real   (kind=8), intent(out,c) :: W(q)
+       real   (kind=8), intent(out,c) :: X(r,q)
+       real   (kind=8), intent(out,c) :: N(r,q,0:p,0:d)
+     end subroutine BasisData
+
+     subroutine Greville(p,m,U,X)
+       integer(kind=4), intent(in),   check(p>=1)     :: p
+       integer(kind=4), intent(hide), check(m>=2*p+1) :: m
+       real   (kind=8), intent(in)  :: U(0:m)
+       real   (kind=8), intent(out) :: X(0:m-(p+1))
+     end subroutine Greville
+
+     subroutine BasisDataCol(p,m,U,r,X,d,O,N)
+       integer(kind=4), intent(in),   check(p>=1)     :: p
+       integer(kind=4), intent(hide), check(m>=2*p+1) :: m
+       real   (kind=8), intent(in,c)                  :: U(0:m)
+       integer(kind=4), intent(hide), check(r>=1)     :: r
+       real   (kind=8), intent(in,c)                  :: X(r)
+       integer(kind=4), optional, check(d>=0&&d<=p)   :: d = p
+       integer(kind=4), intent(out,c) :: O(r)
+       real   (kind=8), intent(out,c) :: N(r,0:p,0:d)
+     end subroutine BasisDataCol
+
+   end module iga
+
+     !
+
+end interface
+end module igalib

@@ -1,0 +1,229 @@
+{
+  "schema_version": 1,
+  "title": "1000 cubes and resolved heavy sphere",
+  "module": "dem",
+  "dimension": 3,
+  "coordinate_assumption": "3d",
+  "units": {
+    "length": "m",
+    "mass": "kg",
+    "time": "s"
+  },
+  "physics": {
+    "processes": [
+      "gravity",
+      "AffineBody inertia",
+      "IPC collision",
+      "lagged friction",
+      "local damping"
+    ],
+    "governing_assumptions": [
+      "Same pure ABD solver and device block preconditioner as current runs."
+    ]
+  },
+  "geometry": {
+    "description": "Exactly 1000 cubes in 10x10x10 grid and one 2562-vertex, 5120-triangle icosphere",
+    "coordinate_frame": "global Cartesian, z up",
+    "dimensions": {
+      "count": 1000,
+      "pitch_m": 0.051,
+      "sphere_circumradius_m": 0.19972186842199163
+    }
+  },
+  "discretization": {
+    "grid_or_element_size": null,
+    "particle_or_template_resolution": {
+      "cube_vertices": 8,
+      "cube_triangles": 12,
+      "sphere_vertices": 2562,
+      "sphere_triangles": 5120
+    },
+    "refinement_plan": "Full-size CUDA capacity gate before production; no silent coarsening."
+  },
+  "materials": [
+    {
+      "name": "cube",
+      "model": "AffineBody orthogonality penalty",
+      "parameters": {
+        "density_kg_m3": 900,
+        "young_modulus_Pa": 2000000000000.0,
+        "local_damping": 0.03
+      },
+      "provenance": "Numerical orthogonality penalty for near-rigid impact; validated on CUDA/f64 through the requested0.25s endpoint."
+    },
+    {
+      "name": "heavy_ball",
+      "model": "AffineBody orthogonality penalty",
+      "parameters": {
+        "density_kg_m3": 30000,
+        "young_modulus_Pa": 2000000000000.0,
+        "local_damping": 0
+      },
+      "provenance": "Numerical orthogonality penalty for near-rigid impact; validated on CUDA/f64 through the requested0.25s endpoint."
+    }
+  ],
+  "initial_conditions": {
+    "gravity": [
+      0,
+      0,
+      -9.81
+    ],
+    "stress_or_pressure": null,
+    "velocity": "cubes zero, ball [3.2,0,0] m/s",
+    "state_variables": "Identity affine transforms."
+  },
+  "boundary_conditions": [
+    {
+      "type": "Plane",
+      "description": "bottom and y side walls as existing case"
+    }
+  ],
+  "contact_or_coupling": {
+    "enabled": true,
+    "law": "IPC + lagged friction",
+    "active_pairs": [
+      "body/body",
+      "body/wall"
+    ],
+    "parameters": {
+      "dhat_m": 0.004,
+      "barrier_stiffness": 1000000000000.0,
+      "friction": [
+        0.4,
+        0.25
+      ]
+    }
+  },
+  "time": {
+    "timestep": 0.001,
+    "duration": 0.25,
+    "save_interval": 0.01,
+    "stability_policy": "Nominal1e-3s; recoverable failures roll back and halve dt, at most2retries per step, global minimum nominal/4; accepted increments sum from the recorded start_time to the target time. All convergence thresholds remain authoritative."
+  },
+  "capacities": {
+    "safety_margin": 2,
+    "estimates": {
+      "bodies": 1001,
+      "surface_vertices": 10562,
+      "candidate_counts": "Initial separated grid is small; settled/colliding counts must be measured by full-size CUDA gate and production overflow checks."
+    },
+    "allocations": {
+      "max_point_triangle_pairs": 600000,
+      "max_edge_edge_pairs": 1500000,
+      "max_hash_triplets": 8000000
+    },
+    "policy": "Stop and retain failure on overflow/OOM; never drop contacts or change mesh to fit."
+  },
+  "outputs": {
+    "path": "CLI output-dir",
+    "fields": [
+      "native triangle VTU",
+      "CSV",
+      "validation_summary.json"
+    ],
+    "restart": true,
+    "download_policy": "VTU/CSV/log/scalar JSON only; exclude checkpoints"
+  },
+  "validation": {
+    "observable": "ball and cube displacement",
+    "expectation": "Exactly1000cubes+one sphere;finite and feasible;ball x displacement>0.05m;>10cubes move>0.01m;near-rigid principal stretches within1%.",
+    "tolerance": "target time1e-8s; fixed Newton velocity0.05m/s; case-specific PCG absolute1e-10, checked against independent surface-velocity error",
+    "evidence": "Completed CUDA/f64 trajectory:250accepted1ms steps,zero retries,1000cubes moved>0.01m,ball x displacement0.663510546m,maximum principal-stretch deviation3.872070917e-5,minimum affine volume ratio0.9999633605. Positive PT/EE and wall gaps and initial mechanical-proxy budget checked at every accepted step.",
+    "invariants": [
+      {
+        "kind": "finite_state",
+        "expectation": true,
+        "tolerance": 0,
+        "basis": "non-finite state is invalid"
+      },
+      {
+        "kind": "contact_gap",
+        "expectation": "positive",
+        "tolerance": 0,
+        "basis": "strictly feasible IPC"
+      }
+    ],
+    "linear_accuracy": {
+      "absolute_pcg_tolerance": 1e-10,
+      "captured_absolute_pcg_tolerance": 1e-13,
+      "minimum_timestep_linear_velocity_error_bound": 0.0011872933895691088,
+      "newton_velocity_tolerance": 0.05,
+      "captured_newton_velocity_tolerance": 1e-07,
+      "captured_cuda_surface_velocity_error": 1.2332920708985067e-10,
+      "evidence": "research/remote_validation/abd_1000_rerun_20261025/cube_pcg_floor_20261026/accuracy_audit.json"
+    },
+    "timestep_policy": "Nominal1e-3s; recoverable failures roll back and halve dt, at most2retries per step, global minimum nominal/4; accepted increments sum from the recorded start_time to the target time. All convergence thresholds remain authoritative."
+  },
+  "assumptions": [
+    "SI units; preserve material/contact laws and f64 precision. Fixed Newton0.05m/s and PCG absolute1e-10; the mass-norm bound at minimum dt limits linear surface-velocity error to1.2e-3m/s. Historical captured-matrix evidence used Newton1e-7 and PCG1e-13.",
+    "Sphere keeps old circumscribed radius and density; mesh refinement changes faceted volume and mass.",
+    "User-requested endpoint0.25s. Validated nominal1e-3s without retries; bounded recorded timestep reduction remains available for numerical failures. E2TPa is a numerical orthogonality penalty, distinct from fixed contact kappa1e12.",
+    "The initial-budget proxy is kinetic+orthogonality+floor-relative gravity and omits nonnegative IPC barrier energy; it is not a complete energy-conservation certificate."
+  ],
+  "unresolved": [],
+  "api": {
+    "facade": "dem",
+    "runtime": {
+      "dim": 3,
+      "arch": "gpu",
+      "default_fp": "float64"
+    },
+    "environment": {
+      "GEOTAICHI_REAL_DTYPE": "float64",
+      "GT_AFFINE_MAX_HASH_TRIPLETS": "8000000"
+    },
+    "configuration": {
+      "scheme": "AffineBody",
+      "search": "LinkedCell",
+      "gravity": [
+        0,
+        0,
+        -9.81
+      ]
+    },
+    "solver": {
+      "Timestep": 0.001,
+      "enable_step_retry": true,
+      "step_retry_max_retries": 2,
+      "step_retry_reduction": 0.5,
+      "step_retry_minimum_timestep": 0.00025,
+      "SimulationTime": 0.25,
+      "SaveInterval": 0.01
+    },
+    "memory": {
+      "max_point_triangle_pairs": 600000,
+      "max_edge_edge_pairs": 1500000,
+      "max_hash_triplets": 8000000
+    },
+    "materials": [
+      {
+        "name": "cube",
+        "model": "AffineBody orthogonality penalty",
+        "parameters": {
+          "density_kg_m3": 900,
+          "young_modulus_Pa": 2000000000000.0,
+          "local_damping": 0.03
+        },
+        "provenance": "Numerical orthogonality penalty for near-rigid impact; validated on CUDA/f64 through the requested0.25s endpoint."
+      },
+      {
+        "name": "heavy_ball",
+        "model": "AffineBody orthogonality penalty",
+        "parameters": {
+          "density_kg_m3": 30000,
+          "young_modulus_Pa": 2000000000000.0,
+          "local_damping": 0
+        },
+        "provenance": "Numerical orthogonality penalty for near-rigid impact; validated on CUDA/f64 through the requested0.25s endpoint."
+      }
+    ],
+    "bodies": [],
+    "boundaries": [
+      {
+        "type": "Plane",
+        "description": "bottom and y side walls as existing case"
+      }
+    ],
+    "run": {}
+  }
+}

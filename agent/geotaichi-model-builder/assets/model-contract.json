@@ -1,0 +1,100 @@
+{
+  "schema_version": 1,
+  "title": "Replace with a descriptive model title",
+  "module": "mpm",
+  "dimension": 2,
+  "coordinate_assumption": "plane_strain",
+  "units": {
+    "length": "m",
+    "mass": "kg",
+    "time": "s"
+  },
+  "physics": {
+    "processes": ["replace-me"],
+    "governing_assumptions": ["replace-me"]
+  },
+  "geometry": {
+    "description": "replace-me",
+    "coordinate_frame": "global Cartesian",
+    "dimensions": {}
+  },
+  "discretization": {
+    "grid_or_element_size": null,
+    "particle_or_template_resolution": null,
+    "refinement_plan": "replace-me"
+  },
+  "materials": [
+    {
+      "name": "replace-me",
+      "model": "replace-with-source-backed-model",
+      "parameters": {},
+      "provenance": "user, benchmark, or calibrated source"
+    }
+  ],
+  "initial_conditions": {
+    "gravity": null,
+    "stress_or_pressure": null,
+    "velocity": null,
+    "state_variables": null
+  },
+  "boundary_conditions": [],
+  "contact_or_coupling": {
+    "enabled": false,
+    "law": null,
+    "active_pairs": [],
+    "parameters": {}
+  },
+  "time": {
+    "timestep": "adaptive",
+    "duration": 1.0,
+    "save_interval": 0.1,
+    "stability_policy": "source-backed critical-step check"
+  },
+  "capacities": {
+    "safety_margin": 1.2,
+    "estimates": {},
+    "allocations": {}
+  },
+  "outputs": {
+    "path": "OutputData",
+    "fields": [],
+    "restart": false
+  },
+  "validation": {
+    "observable": "replace-me",
+    "expectation": "replace-me",
+    "tolerance": "replace-me",
+    "evidence": "analytical, benchmark, conservation law, or convergence trend",
+    "invariants": [
+      {
+        "kind": "replace-with-a-rubric-check-kind",
+        "expectation": "replace-me",
+        "tolerance": "replace-me",
+        "basis": "precision, scale, discretization, or solver criterion"
+      }
+    ]
+  },
+  "assumptions": [],
+  "unresolved": [
+    "Remove this entry only after all physical choices are resolved"
+  ],
+  "api": {
+    "facade": "mpm",
+    "runtime": {
+      "dim": 2,
+      "arch": "cpu",
+      "debug": false
+    },
+    "environment": {},
+    "configuration": {},
+    "solver": {},
+    "memory": {},
+    "materials": [],
+    "elements": [],
+    "regions": [],
+    "bodies": [],
+    "boundaries": [],
+    "save_data": {},
+    "run": {}
+  }
+}

@@ -1,0 +1,477 @@
+from src.dem.structs.GeometryDeviceState import GeometryDeviceState
+
+import taichi as ti
+import numpy as np
+from src.utils.linalg import square_norm
+from src.utils.ObjectIO import DictIO
+
+
+@ti.data_oriented
+class Geometry:
+    def __init__(self):
+        self.num = 0
+
+        self.start_index = []
+        self.end_index = []
+
+        # kinematic setting
+        self.rotate_center = []
+        self.velocity = []
+        self.angular_velocity = []
+        self.translate = []
+        self.rotate = []
+
+        # rigid-body setting
+        self.rigid = []
+        self.density = []
+        self.mass = []
+
+        # body-frame inertia tensor
+        self.inertia_body = []
+        self.inertia_body_inv = []
+
+        # world-frame state
+        self.mass_center = []
+        self.orientation = []
+
+        # local geometry relative to mass center
+        self.local_vertice1 = []
+        self.local_vertice2 = []
+        self.local_vertice3 = []
+        self.local_norm = []
+
+        # external loads
+        self.external_force = []
+        self.external_torque = []
+        self.applied_point = []
+        self.device_state = []
+
+    # ----------------------------------------------------------------------
+    # public API
+    # ----------------------------------------------------------------------
+
+    def append(self, start_index, end_index, wall_dict, wall):
+        self.start_index.append(start_index)
+        self.end_index.append(end_index)
+
+        self.settings(self.num, wall_dict, wall)
+        self.num += 1
+
+    def modify(self, geometryID, wall_dict=None, wall=None, **kwargs):
+        """Modify geometry configuration without creating a host backend.
+
+        A complete dictionary keeps the historical reinitialization API.
+        The keyword form used by ``SceneManager`` updates only kinematics and
+        writes the new values directly into the persistent Taichi state.
+        """
+        if wall_dict is not None:
+            self.settings(geometryID, wall_dict, wall)
+            return
+        if wall is None:
+            raise ValueError("Geometry.modify requires the patch wall field")
+        state = self.device_state[geometryID]
+        if "velocity" in kwargs:
+            velocity = np.asarray(kwargs["velocity"], dtype=float)
+            self.velocity[geometryID] = velocity
+            self.translate[geometryID] = int(square_norm(velocity) > 0.0)
+            state.velocity[None] = velocity
+        if "rotate_center" in kwargs:
+            rotate_center = np.asarray(kwargs["rotate_center"], dtype=float)
+            self.rotate_center[geometryID] = rotate_center
+            state.rotate_center[None] = rotate_center
+        if "angular_velocity" in kwargs:
+            angular_velocity = np.asarray(kwargs["angular_velocity"], dtype=float)
+            self.angular_velocity[geometryID] = angular_velocity
+            self.rotate[geometryID] = int(square_norm(angular_velocity) > 0.0)
+            state.angular_velocity[None] = angular_velocity
+        if not self.rigid[geometryID]:
+            start_index = self.start_index[geometryID]
+            end_index = self.end_index[geometryID]
+            self.reset(start_index, end_index, wall)
+            if self.translate[geometryID]:
+                self.translate_initialize(
+                    start_index,
+                    end_index,
+                    state.velocity[None],
+                    wall,
+                )
+            if self.rotate[geometryID]:
+                self.rotate_initialize(
+                    start_index,
+                    end_index,
+                    state.rotate_center[None],
+                    state.angular_velocity[None],
+                    wall,
+                )
+
+    def reload(self, geometry_dict: dict, wall):
+        for geometry_id, geometry_info in geometry_dict.items():
+            self.append(geometry_info["start_index"], geometry_info["end_index"], geometry_info, wall)
+
+    def write(self):
+        for geometry_id in range(self.num):
+            self._sync_device_state(geometry_id)
+        return {
+            "geometry_num": self.num,
+            "start_index": self.start_index,
+            "end_index": self.end_index,
+            "rotate_center": self.rotate_center,
+            "velocity": self.velocity,
+            "angular_velocity": self.angular_velocity,
+            "translate": self.translate,
+            "rotate": self.rotate,
+            "rigid": self.rigid,
+            "density": self.density,
+            "mass": self.mass,
+            "inertia_body": self.inertia_body,
+            "mass_center": self.mass_center,
+            "orientation": self.orientation,
+            "external_force": self.external_force,
+            "external_torque": self.external_torque,
+            "applied_point": self.applied_point,
+        }
+
+    def print(self, geometryID=None):
+        if geometryID is None:
+            geometryID = self.num - 1
+        self._sync_device_state(geometryID)
+
+        print(f"Geometry {geometryID}:")
+        print(f"  Start Index: {self.start_index[geometryID]}")
+        print(f"  End Index: {self.end_index[geometryID]}")
+        print(f"  Rotate Center: {self.rotate_center[geometryID]}")
+        print(f"  Velocity: {self.velocity[geometryID]}")
+        print(f"  Angular Velocity: {self.angular_velocity[geometryID]}")
+        print(f"  Translate: {self.translate[geometryID]}")
+        print(f"  Rotate: {self.rotate[geometryID]}")
+        print(f"  Rigid: {self.rigid[geometryID]}")
+        print(f"  Density: {self.density[geometryID]}")
+        print(f"  Mass: {self.mass[geometryID]}")
+        print(f"  Inertia Body: {self.inertia_body[geometryID]}")
+        print(f"  Mass Center: {self.mass_center[geometryID]}")
+        print(f"  Orientation: {self.orientation[geometryID]}")
+        print(f"  External Force: {self.external_force[geometryID]}")
+        print(f"  External Torque: {self.external_torque[geometryID]}")
+        print(f"  Applied Point: {self.applied_point[geometryID]}")
+
+    def move(self, geometryID, disp, wall):
+        start_index = self.start_index[geometryID]
+        end_index = self.end_index[geometryID]
+
+        disp = np.asarray(disp, dtype=float)
+
+        self.kernel_move_patch_wall(start_index, end_index, disp, wall)
+
+        self.device_state[geometryID].move_center(disp)
+        self.mass_center[geometryID] = np.asarray(self.mass_center[geometryID], dtype=float) + disp
+        self.rotate_center[geometryID] = np.asarray(self.rotate_center[geometryID], dtype=float) + disp
+
+    def _sync_device_state(self, geometry_id):
+        """Explicit recorder/restart boundary for one geometry."""
+        if geometry_id < 0 or geometry_id >= len(self.device_state):
+            return
+        state = self.device_state[geometry_id]
+        self.mass[geometry_id] = float(state.mass[None])
+        self.mass_center[geometry_id] = np.asarray(state.mass_center[None], dtype=float)
+        self.rotate_center[geometry_id] = np.asarray(state.rotate_center[None], dtype=float)
+        self.orientation[geometry_id] = np.asarray(state.orientation[None], dtype=float)
+        self.velocity[geometry_id] = np.asarray(state.velocity[None], dtype=float)
+        self.angular_velocity[geometry_id] = np.asarray(state.angular_velocity[None], dtype=float)
+
+    def delete(self, geometryID):
+        raise NotImplementedError("Geometry.delete() is not implemented yet.")
+
+    # ----------------------------------------------------------------------
+    # setting and initialization
+    # ----------------------------------------------------------------------
+
+    def settings(self, index, wall_dict, wall):
+        rotate_center = DictIO.get_alternative(wall_dict, "RotateCenter", [0.0, 0.0, 0.0])
+        velocity = DictIO.get_alternative(wall_dict, "Velocity", [0.0, 0.0, 0.0])
+        angular_velocity = DictIO.get_alternative(wall_dict, "AngularVelocity", [0.0, 0.0, 0.0])
+
+        rotate_center = np.asarray(rotate_center, dtype=float)
+        velocity = np.asarray(velocity, dtype=float)
+        angular_velocity = np.asarray(angular_velocity, dtype=float)
+
+        is_translate = 1 if square_norm(velocity) > 0.0 else 0
+        is_rotate = 1 if square_norm(angular_velocity) > 0.0 else 0
+
+        density = DictIO.get_alternative(wall_dict, "Density", 0.0)
+        density = float(density)
+        is_rigid = 1 if density > 0.0 else 0
+
+        start_index = self.start_index[index]
+        end_index = self.end_index[index]
+
+        volume, inertia_body, mass_center, local_data = self.rigid_init(start_index, end_index, density, wall)
+
+        mass = density * volume
+
+        if mass <= 0.0:
+            is_rigid = 0
+
+        if is_rigid:
+            if np.linalg.det(inertia_body) == 0.0:
+                inertia_body_inv = np.zeros((3, 3), dtype=float)
+            else:
+                inertia_body_inv = np.linalg.inv(inertia_body)
+        else:
+            inertia_body_inv = np.zeros((3, 3), dtype=float)
+
+        external_force = DictIO.get_alternative(wall_dict, "ExternalForce", [0.0, 0.0, 0.0])
+        external_torque = DictIO.get_alternative(wall_dict, "ExternalTorque", [0.0, 0.0, 0.0])
+        applied_point = DictIO.get_alternative(wall_dict, "AppliedPoint", mass_center)
+
+        external_force = np.asarray(external_force, dtype=float)
+        external_torque = np.asarray(external_torque, dtype=float)
+        applied_point = np.asarray(applied_point, dtype=float)
+
+        # convert off-center external force into torque about mass center
+        external_torque = self.torque_init(external_force, applied_point, mass_center, external_torque)
+
+        # for free rigid body, rotation center should usually be center of mass
+        if is_rigid:
+            rotate_center = np.asarray(mass_center, dtype=float)
+
+        if index == self.num:
+            self.rotate_center.append(rotate_center)
+            self.velocity.append(velocity)
+            self.angular_velocity.append(angular_velocity)
+            self.translate.append(is_translate)
+            self.rotate.append(is_rotate)
+
+            self.rigid.append(is_rigid)
+            self.density.append(density)
+            self.mass.append(mass)
+            self.inertia_body.append(inertia_body)
+            self.inertia_body_inv.append(inertia_body_inv)
+            self.mass_center.append(mass_center)
+            self.orientation.append(np.eye(3, dtype=float))
+
+            self.local_vertice1.append(local_data["v1"])
+            self.local_vertice2.append(local_data["v2"])
+            self.local_vertice3.append(local_data["v3"])
+            self.local_norm.append(local_data["norm"])
+
+            self.external_force.append(external_force)
+            self.external_torque.append(external_torque)
+            self.applied_point.append(applied_point)
+
+        else:
+            self.rotate_center[index] = rotate_center
+            self.velocity[index] = velocity
+            self.angular_velocity[index] = angular_velocity
+            self.translate[index] = is_translate
+            self.rotate[index] = is_rotate
+
+            self.rigid[index] = is_rigid
+            self.density[index] = density
+            self.mass[index] = mass
+            self.inertia_body[index] = inertia_body
+            self.inertia_body_inv[index] = inertia_body_inv
+            self.mass_center[index] = mass_center
+            self.orientation[index] = np.eye(3, dtype=float)
+
+            self.local_vertice1[index] = local_data["v1"]
+            self.local_vertice2[index] = local_data["v2"]
+            self.local_vertice3[index] = local_data["v3"]
+            self.local_norm[index] = local_data["norm"]
+
+            self.external_force[index] = external_force
+            self.external_torque[index] = external_torque
+            self.applied_point[index] = applied_point
+
+            self.reset(start_index, end_index, wall)
+
+        state = GeometryDeviceState(
+            mass=mass,
+            mass_center=mass_center,
+            orientation=np.eye(3, dtype=float),
+            velocity=velocity,
+            angular_velocity=angular_velocity,
+            inertia_body=inertia_body,
+            inertia_body_inv=inertia_body_inv,
+            rotate_center=rotate_center,
+            external_force=external_force,
+            external_torque=external_torque,
+            local_v1=local_data["v1"],
+            local_v2=local_data["v2"],
+            local_v3=local_data["v3"],
+            local_norm=local_data["norm"],
+        )
+        if index == self.num:
+            self.device_state.append(state)
+        else:
+            self.device_state[index] = state
+
+        # initialize wall velocity for non-rigid prescribed motion
+        if not is_rigid:
+            if self.translate[index]:
+                self.translate_initialize(start_index, end_index, velocity, wall)
+
+            if self.rotate[index]:
+                self.rotate_initialize(start_index, end_index, rotate_center, angular_velocity, wall)
+
+    def rigid_init(self, start_index, end_index, density, wall):
+        vertices1 = np.ascontiguousarray(wall.vertice1.to_numpy()[start_index:end_index], dtype=float)
+        vertices2 = np.ascontiguousarray(wall.vertice2.to_numpy()[start_index:end_index], dtype=float)
+        vertices3 = np.ascontiguousarray(wall.vertice3.to_numpy()[start_index:end_index], dtype=float)
+        shell_thickness = np.ascontiguousarray(wall.offset.to_numpy()[start_index:end_index], dtype=float)
+
+        n = vertices1.shape[0]
+
+        if n == 0:
+            local_data = {
+                "v1": np.zeros((0, 3), dtype=float),
+                "v2": np.zeros((0, 3), dtype=float),
+                "v3": np.zeros((0, 3), dtype=float),
+                "norm": np.zeros((0, 3), dtype=float),
+            }
+            return (0.0, np.zeros((3, 3), dtype=float), np.zeros(3, dtype=float), local_data)
+
+        edge1 = vertices2 - vertices1
+        edge2 = vertices3 - vertices1
+        cross = np.cross(edge1, edge2)
+        area = 0.5 * np.linalg.norm(cross, axis=1)
+
+        tri_center = (vertices1 + vertices2 + vertices3) / 3.0
+
+        shell_thickness = np.maximum(shell_thickness, 0.0)
+        volume_weight = area * shell_thickness
+        total_volume = np.sum(volume_weight)
+
+        total_area = np.sum(area)
+
+        if total_volume > 0.0:
+            mass_center = np.sum(volume_weight[:, None] * tri_center, axis=0) / total_volume
+        elif total_area > 0.0:
+            mass_center = np.sum(area[:, None] * tri_center, axis=0) / total_area
+        else:
+            mass_center = np.mean(tri_center, axis=0)
+
+        local_v1 = vertices1 - mass_center
+        local_v2 = vertices2 - mass_center
+        local_v3 = vertices3 - mass_center
+
+        # normals
+        norm_len = np.linalg.norm(cross, axis=1)
+        normals = np.zeros_like(cross)
+        valid = norm_len > 1e-14
+        normals[valid] = cross[valid] / norm_len[valid, None]
+
+        local_data = {
+            "v1": local_v1,
+            "v2": local_v2,
+            "v3": local_v3,
+            "norm": normals,
+        }
+
+        if total_volume <= 0.0 or density <= 0.0:
+            return (total_volume, np.zeros((3, 3), dtype=float), mass_center, local_data)
+
+        # second-order triangle quadrature
+        barycentric = np.array(
+            [
+                [2.0 / 3.0, 1.0 / 6.0, 1.0 / 6.0],
+                [1.0 / 6.0, 2.0 / 3.0, 1.0 / 6.0],
+                [1.0 / 6.0, 1.0 / 6.0, 2.0 / 3.0],
+            ],
+            dtype=float,
+        )
+
+        tri_vertices = np.stack((vertices1, vertices2, vertices3), axis=1)
+        sample_points = np.einsum("ab,nbc->nac", barycentric, tri_vertices)
+
+        rel = sample_points - mass_center
+
+        rel_sq = np.einsum("nij,nij->ni", rel, rel)
+        outer = np.einsum("nij,nik->nijk", rel, rel)
+
+        eye = np.eye(3, dtype=float)
+
+        # dV = thickness * dA
+        # dm = density * dV
+        # 3 quadrature points per triangle
+        weights = density * volume_weight / 3.0
+
+        weighted_tensor = weights[:, None, None, None] * (rel_sq[:, :, None, None] * eye[None, None, :, :] - outer)
+
+        inertia_body = np.sum(weighted_tensor, axis=(0, 1))
+        inertia_body = 0.5 * (inertia_body + inertia_body.T)
+
+        return total_volume, inertia_body, mass_center, local_data
+
+    def torque_init(self, external_force, applied_point, mass_center, external_torque):
+        external_force = np.asarray(external_force, dtype=float)
+        applied_point = np.asarray(applied_point, dtype=float)
+        mass_center = np.asarray(mass_center, dtype=float)
+        external_torque = np.asarray(external_torque, dtype=float)
+
+        torque_from_force = np.cross(applied_point - mass_center, external_force)
+
+        return torque_from_force + external_torque
+
+    # ----------------------------------------------------------------------
+    # time stepping
+    # ----------------------------------------------------------------------
+
+    def go(self, dt, delta, wall):
+        for i in range(self.num):
+            start_index = self.start_index[i]
+            end_index = self.end_index[i]
+
+            if self.rigid[i]:
+                self.device_state[i].step_rigid(start_index, end_index, delta, wall)
+            else:
+                if self.translate[i]:
+                    self.device_state[i].translate_prescribed(start_index, end_index, dt, wall)
+                if self.rotate[i]:
+                    self.device_state[i].rotate_prescribed(start_index, end_index, dt, wall)
+
+    def _step_prescribed_motion(self, i, start_index, end_index, dt, dt_value, wall):
+        if self.translate[i]:
+            self.device_state[i].translate_prescribed(start_index, end_index, dt, wall)
+        if self.rotate[i]:
+            self.device_state[i].rotate_prescribed(start_index, end_index, dt, wall)
+
+    # ----------------------------------------------------------------------
+    # Taichi kernels
+    # ----------------------------------------------------------------------
+
+    @ti.kernel
+    def reset(self, start_index: int, end_index: int, wall: ti.template()):
+        for nw in range(start_index, end_index):
+            wall[nw].v = ti.Vector([0.0, 0.0, 0.0])
+
+    @ti.kernel
+    def translate_initialize(
+        self, start_index: int, end_index: int, velocity: ti.types.vector(3, float), wall: ti.template()
+    ):
+        for nw in range(start_index, end_index):
+            wall[nw].v += velocity
+
+    @ti.kernel
+    def rotate_initialize(
+        self,
+        start_index: int,
+        end_index: int,
+        rotate_center: ti.types.vector(3, float),
+        angular_velocity: ti.types.vector(3, float),
+        wall: ti.template(),
+    ):
+        for nw in range(start_index, end_index):
+            omega_mag = angular_velocity.norm()
+
+            if omega_mag > 1e-14:
+                vec = wall[nw]._get_center() - rotate_center
+                omega_dir = angular_velocity / omega_mag
+                velocity = angular_velocity.cross(vec - vec.dot(omega_dir) * omega_dir)
+                wall[nw].v += velocity
+
+    @ti.kernel
+    def kernel_move_patch_wall(
+        self, start_index: int, end_index: int, disp: ti.types.vector(3, float), wall: ti.template()
+    ):
+        for nw in range(start_index, end_index):
+            wall[nw]._move(disp)

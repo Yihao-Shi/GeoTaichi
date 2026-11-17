@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "name": "Replace with a descriptive job name",
+  "description": "Trusted local GeoTaichi execution",
+  "model": {
+    "entry_script": "examples/replace-me.py",
+    "arguments": [
+      "--contract",
+      "{model_contract}",
+      "--output-dir",
+      "{output_directory}"
+    ],
+    "working_directory": ".",
+    "contract_path": "model-contract.json"
+  },
+  "scene": {
+    "manifest_path": ""
+  },
+  "execution": {
+    "profile": "trusted",
+    "requires_confirmation": true
+  },
+  "outputs": {
+    "requested_artifacts": []
+  },
+  "metadata": {
+    "source": "manual"
+  }
+}

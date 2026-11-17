@@ -1,0 +1,204 @@
+{
+  "schema_version": 1,
+  "title": "1000-bunny wall-release pile",
+  "module": "dem",
+  "dimension": 3,
+  "coordinate_assumption": "3d",
+  "units": {
+    "length": "m",
+    "mass": "kg",
+    "time": "s"
+  },
+  "physics": {
+    "processes": [
+      "gravity",
+      "AffineBody inertia",
+      "IPC collision",
+      "lagged friction",
+      "local damping"
+    ],
+    "governing_assumptions": [
+      "Same pure ABD solver and device block preconditioner as current runs."
+    ]
+  },
+  "geometry": {
+    "description": "1000 original watertight bunnies, 10x10x10 grid with non-overlapping circumspheres; full five-wall container",
+    "coordinate_frame": "global Cartesian, z up",
+    "dimensions": {
+      "count": 1000,
+      "pitch_m": 0.26351602,
+      "sphere_circumradius_m": null
+    }
+  },
+  "discretization": {
+    "grid_or_element_size": null,
+    "particle_or_template_resolution": {
+      "vertices_per_bunny": 2503,
+      "triangles_per_bunny": 5002
+    },
+    "refinement_plan": "Full-size CUDA capacity gate before production; no silent coarsening."
+  },
+  "materials": [
+    {
+      "name": "bunny",
+      "model": "AffineBody orthogonality penalty",
+      "parameters": {
+        "density_kg_m3": 1150,
+        "young_modulus_Pa": 2000000000000.0,
+        "local_damping": 0.08
+      },
+      "provenance": "Fixed numerical orthogonality penalty for the requested near-rigid trajectory; not a calibrated bunny material."
+    }
+  ],
+  "initial_conditions": {
+    "gravity": [
+      0,
+      0,
+      -9.81
+    ],
+    "stress_or_pressure": null,
+    "velocity": "zero",
+    "state_variables": "identity affine transforms, existing bunny rotations"
+  },
+  "boundary_conditions": [
+    {
+      "type": "Plane",
+      "description": "bottom plus all four sides; right wall translates after time >=2 s and maximum surface speed <=0.15 m/s"
+    }
+  ],
+  "contact_or_coupling": {
+    "enabled": true,
+    "law": "IPC + lagged friction",
+    "active_pairs": [
+      "body/body",
+      "body/wall"
+    ],
+    "parameters": {
+      "dhat_m": 0.006,
+      "barrier_stiffness": 8000000000000.0,
+      "friction": 0.45
+    }
+  },
+  "time": {
+    "timestep": 0.001,
+    "duration": 4,
+    "save_interval": 0.05,
+    "stability_policy": "Nominal1e-3s; recoverable failures roll back and halve dt, at most2retries per step, global minimum nominal/4; accepted increments sum from the recorded start_time to the target time. All convergence thresholds remain authoritative."
+  },
+  "capacities": {
+    "safety_margin": 2,
+    "estimates": {
+      "bodies": 1000,
+      "surface_vertices": 2503000,
+      "candidate_counts": "Initial separated grid is small; settled/colliding counts must be measured by full-size CUDA gate and production overflow checks."
+    },
+    "allocations": {
+      "max_point_triangle_pairs": 16000000,
+      "max_edge_edge_pairs": 32000000,
+      "max_hash_triplets": 8000000
+    },
+    "policy": "Stop and retain failure on overflow/OOM; never drop contacts or change mesh to fit."
+  },
+  "outputs": {
+    "path": "CLI output-dir",
+    "fields": [
+      "native triangle VTU",
+      "CSV",
+      "validation_summary.json"
+    ],
+    "restart": true,
+    "download_policy": "VTU/CSV/log/scalar JSON only; exclude checkpoints"
+  },
+  "validation": {
+    "observable": "wall release and horizontal runout",
+    "expectation": "1000 bunnies; finite; wall released; runout >0.05 m; retained wall gap >1e-8 m",
+    "tolerance": "Target time1e-8s; fixed Newton velocity1e-5m/s; PCG absolute1e-12, relative0.",
+    "linear_accuracy": {
+      "absolute_pcg_tolerance": 1e-12,
+      "newton_velocity_tolerance": 1e-05,
+      "minimum_timestep_linear_velocity_error_bound": 9.89677974948088e-07,
+      "relative_pcg_tolerance": 0.0,
+      "maximum_linear_iterations": 12000,
+      "maximum_newton_iterations": 1000
+    },
+    "evidence": "Controlled CPU free translation/rotation at E2TPa and dt1e-3 reproduced energy creation with Newton0.05; fixed Newton1e-5 removed it at the same PCG1e-12. Fresh1000-body CUDA validation uses these fixed public settings; complete4s release/runout acceptance remains pending.",
+    "invariants": [
+      {
+        "kind": "finite_state",
+        "expectation": true,
+        "tolerance": 0,
+        "basis": "non-finite state is invalid"
+      },
+      {
+        "kind": "contact_gap",
+        "expectation": "positive",
+        "tolerance": 1e-08,
+        "basis": "strictly feasible IPC"
+      }
+    ],
+    "timestep_policy": "Nominal1e-3s; recoverable failures roll back and halve dt, at most2retries per step, global minimum nominal/4; accepted increments sum from the recorded start_time to the target time. All convergence thresholds remain authoritative."
+  },
+  "assumptions": [
+    "SI units, original geometry/density/friction/local damping, f64. Fixed orthogonality penalty2TPa, contact kappa8e12, Newton velocity1e-5, PCG absolute1e-12; thresholds never relax after failure.",
+    "Open-top container: bottom and four side walls; right wall removed only after settling.",
+    "User requested1e-3s for both large scenes and monitoring; bounded, recorded timestep reduction after failed trials. Complete impact/release physics still require production validation.",
+    "At1000bodies the initial CUDA pool is1GB; this is not the total VRAM requirement. The running prefix used about8953MiB; the full-run peak remains unverified."
+  ],
+  "unresolved": [
+    "Complete4s CUDA wall-release/runout acceptance and full-trajectory capacity/energy/shape evidence remain pending."
+  ],
+  "api": {
+    "facade": "dem",
+    "runtime": {
+      "dim": 3,
+      "arch": "gpu",
+      "default_fp": "float64",
+      "device_memory_GB": 1.0
+    },
+    "environment": {
+      "GEOTAICHI_REAL_DTYPE": "float64",
+      "GT_AFFINE_MAX_HASH_TRIPLETS": "8000000"
+    },
+    "configuration": {
+      "scheme": "AffineBody",
+      "search": "BVH",
+      "gravity": [
+        0,
+        0,
+        -9.81
+      ]
+    },
+    "solver": {
+      "Timestep": 0.001,
+      "enable_step_retry": true,
+      "step_retry_max_retries": 2,
+      "step_retry_reduction": 0.5,
+      "step_retry_minimum_timestep": 0.00025
+    },
+    "memory": {
+      "max_point_triangle_pairs": 16000000,
+      "max_edge_edge_pairs": 32000000,
+      "max_hash_triplets": 8000000
+    },
+    "materials": [
+      {
+        "name": "bunny",
+        "model": "AffineBody orthogonality penalty",
+        "parameters": {
+          "density_kg_m3": 1150,
+          "young_modulus_Pa": 2000000000000.0,
+          "local_damping": 0.08
+        },
+        "provenance": "Fixed numerical orthogonality penalty for the requested near-rigid trajectory; not a calibrated bunny material."
+      }
+    ],
+    "bodies": [],
+    "boundaries": [
+      {
+        "type": "Plane",
+        "description": "bottom plus all four sides; right wall translates after time >=2 s and maximum surface speed <=0.15 m/s"
+      }
+    ],
+    "run": {}
+  }
+}

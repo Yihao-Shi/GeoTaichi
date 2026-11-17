@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "title": "Pure ABD single-arm pinch, lift, hold and release",
+  "module": "dem",
+  "dimension": 3,
+  "coordinate_assumption": "3d",
+  "units": {"length": "m", "mass": "kg", "time": "s"},
+  "physics": {
+    "processes": ["affine rigid-body approximation", "revolute servo motion", "frictional mesh IPC", "gravity"],
+    "governing_assumptions": ["backward Euler", "finite rigidity and joint stiffness", "free payload driven exclusively by gravity and contact", "ideal prescribed joint references"]
+  },
+  "geometry": {
+    "description": "One world-hinged box arm, two opposing hinged box fingers, one free box payload and a horizontal support plane",
+    "coordinate_frame": "global Cartesian; z up",
+    "dimensions": {
+      "arm_size": [0.64, 0.12, 0.08],
+      "finger_size": [0.10, 0.04, 0.30],
+      "payload_size": [0.16, 0.16, 0.16],
+      "arm_center": [0.8, 1.0, 0.56],
+      "finger_centers": [[1.1, 0.87, 0.37], [1.1, 1.13, 0.37]],
+      "payload_center": [1.1, 1.0, 0.281],
+      "arm_pivot": [0.5, 1.0, 0.56],
+      "table_z": 0.2
+    }
+  },
+  "discretization": {
+    "particle_or_template_resolution": "8 vertices and 12 triangles per box; existing unit-cube mesh scaled at setup",
+    "refinement_plan": "Repeat the full physical protocol with half the timestep; retain the same model and acceptance criteria"
+  },
+  "materials": [
+    {"name": "arm and fingers", "model": "ABD Green-strain rigidity", "parameters": {"Density": 1000.0, "YoungModulus": 10000000.0}, "provenance": "illustrative mechanism, not hardware calibration"},
+    {"name": "payload", "model": "ABD Green-strain rigidity", "parameters": {"Density": 300.0, "YoungModulus": 10000000.0}, "provenance": "illustrative free payload"}
+  ],
+  "initial_conditions": {"gravity": [0, 0, -9.81], "velocity": [0, 0, 0], "state_variables": "undeformed bodies, all hinge angles zero"},
+  "boundary_conditions": [
+    {"type": "world revolute", "body": 0, "anchor": [0.5, 1.0, 0.56], "axis": [0, 1, 0], "position_stiffness": 1000000, "axis_stiffness": 100000, "motor_stiffness": 10000, "damping": 10},
+    {"type": "finger revolutes", "bodies": [1, 2], "parent": 0, "axis": [1, 0, 0], "position_stiffness": 1000000, "axis_stiffness": 100000, "motor_stiffness": 100, "damping": 1},
+    {"type": "smooth joint references", "settle_until": 0.1, "close_until": 0.3, "lift_until": 0.7, "hold_until": 1.0, "open_until": 1.2, "finish": 1.6, "closed_finger_targets_degrees": [-16, 16], "raised_arm_target_degrees": -20},
+    {"type": "support plane", "z": 0.2}
+  ],
+  "contact_or_coupling": {
+    "enabled": true,
+    "law": "mesh BarrierIPC with converged lagged Coulomb friction",
+    "active_pairs": ["payload-fingers", "payload-arm if approached", "nonconnected mechanism bodies", "all bodies-table"],
+    "parameters": {"Dhat": 0.003, "BarrierStiffness": 1000000000.0, "Friction": 0.6, "friction_epsv": 0.0001, "CollideConnected": false}
+  },
+  "time": {"timestep": 0.005, "duration": 1.6, "save_interval": 0.025, "stability_policy": "fixed timestep, strict nonlinear and friction convergence; failures remain visible"},
+  "capacities": {
+    "safety_margin": 2.0,
+    "estimates": {"bodies": 4, "joints": 3, "vertices": 32, "faces": 48, "controls": 16},
+    "allocations": {"max_affine_body_number": 4, "max_point_triangle_pairs": 4096, "max_edge_edge_pairs": 8192, "affine_contact_block_capacity": 4096}
+  },
+  "outputs": {"path": "OutputData/robot_grasp", "fields": ["VTU body surfaces", "NPZ affine state", "trajectory.csv", "summary.json", "validation-evidence.json"], "restart": false},
+  "validation": {
+    "observable": "free payload lifted, held and released by contact",
+    "expectation": [0.12, 1.0],
+    "tolerance": 0.0,
+    "description": "minimum hold lift at least 0.12 m; arm-frame hold drift at most 0.03 m; release fall at least 0.08 m; finite state, positive determinant and strict nonpenetration",
+    "evidence": "trajectory.csv and saved NPZ/VTU state, topology audit and solver diagnostics",
+    "invariants": [
+      {"kind": "contract_observable", "expectation": [0.12, 1.0], "tolerance": 0.0, "basis": "minimum payload rise during hold; greater than initial table gap and half its height"},
+      {"kind": "benchmark", "expectation": [0.0, 0.03], "tolerance": 0.0, "basis": "maximum drift in the arm frame during hold; below one fifth of payload width"},
+      {"kind": "analytical", "expectation": [0.08, 1.0], "tolerance": 0.0, "basis": "payload fall after opening; at least half its height"},
+      {"kind": "contact_gap", "expectation": [0.0, 1.0], "tolerance": 0.0, "basis": "positive support-plane clearance of every surface vertex; mesh feasibility is additionally enforced by CCD/barrier"}
+    ]
+  },
+  "assumptions": ["Only stage one is implemented: pure ABD grasping", "No attachment, fixed motion, prescribed translation or external lifting force is applied to the payload", "Parameters define an illustrative test, not a calibrated industrial gripper"],
+  "unresolved": [],
+  "api": {
+    "facade": "dem",
+    "runtime": {"dim": 3, "arch": "cpu", "default_fp": "float64"},
+    "configuration": {"scheme": "AffineBody", "search": "BVH", "domain": [2, 2, 2], "gravity": [0, 0, -9.81]},
+    "solver": {"Timestep": 0.005, "SimulationTime": 1.6, "SaveInterval": 0.025},
+    "evidence_ledger": {
+      "geometry": "src/dem/generator/AffineBodyTemplate.py:surface_template/_extract_mesh and src/sdf/BasicShape.py:reset",
+      "joints and time targets": "src/dem/mainDEM.py:add_joint/set_joint_target_angles; src/dem/engines/AffineBodyOperator.py:_build_joint_storage/_assemble_joint_motors",
+      "callbacks": "src/dem/mainDEM.py:add_solver; src/dem/DEMBase.py:AffineBodySolver.core; src/utils/RuntimeHook.py:python_callback",
+      "accepted output": "src/dem/engines/AffineBodyEngine.py:output_snapshot; src/dem/Recorder.py:monitor_affine_body"
+    }
+  }
+}

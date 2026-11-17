@@ -1,0 +1,18 @@
+{
+  "command": "/opt/anaconda3/envs/geotaichi/bin/python examples/iga/twisting_column_3d/twisting_column_3d.py --solver implicit",
+  "solver": "implicit",
+  "backend": "Arch.arm64",
+  "precision": "float64",
+  "control_points": 648,
+  "degrees_of_freedom": 1944,
+  "elements": 256,
+  "steps": 300,
+  "dt": 0.005,
+  "output_interval": 10,
+  "physical_seconds": 1.49999999999999,
+  "angle_degrees": 450.0,
+  "setup_and_initial_output_seconds": 14.052269999985583,
+  "first_step_seconds": 102.00960279098945,
+  "remaining_steps_seconds": 340.7603684909409,
+  "wall_seconds": 459.04266266699415
+}

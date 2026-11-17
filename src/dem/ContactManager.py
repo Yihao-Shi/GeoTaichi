@@ -1,0 +1,230 @@
+from src.utils.errors import SimulationStateError
+import warnings
+
+from src.dem.Simulation import Simulation
+from src.dem.neighbor.BruteSearch import BruteSearch
+from src.dem.neighbor.HierarchicalLinkedCell import HierarchicalLinkedCell
+from src.dem.neighbor.LinkedCell import LinkedCell
+from src.dem.neighbor.BoundingVolumeHierarchy import BoundingVolumeHierarchy
+from src.dem.contact.ContactModelBase import ContactModelBase
+from src.dem.contact.Linear import LinearModel
+from src.dem.contact.HertzMindlin import HertzMindlinModel
+from src.dem.contact.LinearRolling import LinearRollingModel
+from src.dem.contact.JiangRolling import JiangRollingResistanceModel
+from src.dem.contact.EnergyConservation import EnergyConservation
+
+from src.utils.ObjectIO import DictIO
+
+
+class ContactManager(object):
+    physpp: ContactModelBase
+    physpw: ContactModelBase
+
+    def __init__(self):
+        self.neighbor = None
+        self.physpp = None
+        self.physpw = None
+        self.have_initialise = False
+
+    def initialize(self, sims: Simulation, scene, **kwargs):
+        # Bodies and walls can be created after the neighbor object itself.
+        # Rebind the scheme/particle/wall hooks against the completed scene
+        # before allocating hash tables; otherwise a neighbor constructed
+        # while ``wall_type`` was unset retains no-op facet functions and
+        # silently omits particle--wall contact.
+        self.neighbor.manage_function(scene)
+        self.neighbor.neighbor_initialze(
+            scene,
+            DictIO.get_alternative(kwargs, "min_bounding_radius", max(sims.domain)),
+            DictIO.get_alternative(kwargs, "max_bounding_radius", 0.0),
+        )
+        self.collision_list(sims)
+        self.have_initialise = True
+
+    def choose_neighbor(self, sims: Simulation, scene):
+        if self.neighbor is None:
+            if sims.search == "Brust":
+                self.neighbor = BruteSearch(sims, scene)
+            elif sims.search == "LinkedCell":
+                self.neighbor = LinkedCell(sims, scene)
+            elif sims.search == "HierarchicalLinkedCell":
+                self.neighbor = HierarchicalLinkedCell(sims, scene)
+            elif sims.search == "BVH":
+                self.neighbor = BoundingVolumeHierarchy(sims, scene)
+            else:
+                raise SimulationStateError("Failed to activate neighbor class!")
+
+    def particle_particle_initialize(self, sims: Simulation):
+        deactivate = False
+        if self.physpp is None:
+            if sims.max_particle_num == 0:
+                deactivate = True
+            if sims.scheme == "DEM" or sims.scheme == "PolySuperEllipsoid" or sims.scheme == "PolySuperQuadrics":
+                if sims.max_particle_num > 1 and not sims.particle_particle_contact_model is None:
+                    if sims.particle_particle_contact_model == "Linear Model":
+                        self.physpp = LinearModel(sims)
+                    elif sims.particle_particle_contact_model == "Hertz Mindlin Model":
+                        self.physpp = HertzMindlinModel(sims)
+                    elif sims.particle_particle_contact_model == "Linear Rolling Model":
+                        self.physpp = LinearRollingModel(sims)
+                    elif sims.particle_particle_contact_model == "Jiang Rolling Model":
+                        self.physpp = JiangRollingResistanceModel(sims)
+                    elif sims.particle_particle_contact_model == "User Defined":
+                        pass
+                    elif not sims.particle_particle_contact_model is None:
+                        model_list = [
+                            "Linear Model",
+                            "Hertz Mindlin Model",
+                            "Linear Rolling Model",
+                            "Jiang Rolling Model",
+                        ]
+                        raise ValueError("Particle to Particle Contact Model error!")
+                else:
+                    self.physpp = ContactModelBase(sims)
+
+            elif sims.scheme == "LSDEM" or sims.scheme == "LSMPM":
+                if sims.max_particle_num > 1 and not sims.particle_particle_contact_model is None:
+                    if sims.particle_particle_contact_model == "Linear Model":
+                        self.physpp = LinearModel(sims)
+                    elif sims.particle_particle_contact_model == "Hertz Mindlin Model":
+                        self.physpp = HertzMindlinModel(sims)
+                    elif sims.particle_particle_contact_model == "Energy Conserving Model":
+                        self.physpp = EnergyConservation(sims, types="Penalty")
+                    elif sims.particle_particle_contact_model == "Barrier Model":
+                        self.physpp = EnergyConservation(sims, types="Barrier")
+                    else:
+                        model_list = ["Linear Model", "Hertz Mindlin Model", "Energy Conserving Model", "Barrier Model"]
+                        raise ValueError("Particle to Particle Contact Model error!")
+                else:
+                    self.physpp = ContactModelBase(sims)
+
+            if deactivate:
+                self.physpp.null_model = True
+            self.physpp.manage_function("particle", sims.particle_work)
+
+    def particle_wall_initialize(self, sims: Simulation):
+        deactivate = False
+        if self.physpw is None:
+            if sims.max_particle_num == 0 or sims.max_wall_num == 0:
+                deactivate = True
+            if sims.scheme == "DEM" or sims.scheme == "PolySuperEllipsoid" or sims.scheme == "PolySuperQuadrics":
+                if sims.max_particle_num > 0 and sims.max_wall_num > 0 and not sims.particle_wall_contact_model is None:
+                    if sims.particle_wall_contact_model == "Linear Model":
+                        self.physpw = LinearModel(sims)
+                    elif sims.particle_wall_contact_model == "Hertz Mindlin Model":
+                        self.physpw = HertzMindlinModel(sims)
+                    elif sims.particle_wall_contact_model == "Linear Rolling Model":
+                        self.physpw = LinearRollingModel(sims)
+                    elif sims.particle_wall_contact_model == "Jiang Rolling Model":
+                        self.physpw = JiangRollingResistanceModel(sims)
+                    elif sims.particle_wall_contact_model == "User Defined":
+                        pass
+                    else:
+                        model_list = [
+                            "Linear Model",
+                            "Hertz Mindlin Model",
+                            "Linear Rolling Model",
+                            "Jiang Rolling Model",
+                        ]
+                        raise ValueError(
+                            f"Particle to Wall Contact Model error! Input {sims.particle_wall_contact_model} is invalid, only the following is available {model_list}"
+                        )
+                else:
+                    self.physpw = ContactModelBase(sims)
+
+            elif sims.scheme == "LSDEM" or sims.scheme == "LSMPM":
+                if sims.max_particle_num > 0 and sims.max_wall_num > 0 and not sims.particle_wall_contact_model is None:
+                    if sims.particle_wall_contact_model == "Linear Model":
+                        self.physpw = LinearModel(sims)
+                    elif sims.particle_wall_contact_model == "Hertz Mindlin Model":
+                        self.physpw = HertzMindlinModel(sims)
+                    elif sims.particle_wall_contact_model == "Energy Conserving Model":
+                        self.physpw = EnergyConservation(sims, types="Penalty")
+                    elif sims.particle_wall_contact_model == "Barrier Model":
+                        self.physpw = EnergyConservation(sims, types="Barrier")
+                    else:
+                        model_list = ["Linear Model", "Hertz Mindlin Model", "Energy Conserving Model", "Barrier Model"]
+                        raise ValueError(
+                            f"Particle to Wall Contact Model error! Input {sims.particle_wall_contact_model} is invalid, only the following is available {model_list}"
+                        )
+                else:
+                    self.physpw = ContactModelBase(sims)
+
+            if deactivate:
+                self.physpw.null_model = True
+            self.physpw.manage_function("wall", sims.wall_work)
+
+    def collision_list(self, sims: Simulation):
+        if self.physpp:
+            self.physpp.collision_initialize(
+                "particle",
+                sims.particle_work,
+                sims.particle_contact_list_length,
+                sims.max_particle_num,
+                sims.max_particle_num,
+            )
+        else:
+            raise SimulationStateError("Particle-Particle contact model have not been activated successfully!")
+
+        if self.physpw:
+            self.physpw.collision_initialize(
+                "wall", sims.wall_work, sims.wall_contact_list_length, sims.max_particle_num, sims.max_wall_num
+            )
+        else:
+            raise SimulationStateError("Particle-Wall contact model have not been activated successfully!")
+
+    def add_contact_property(self, sims: Simulation, materialID1, materialID2, property, dType):
+        if materialID1 > sims.max_material_num - 1 or materialID2 > sims.max_material_num - 1:
+            raise SimulationStateError("Material ID is out of the scope!")
+        else:
+            if dType == "particle-particle":
+                if self.physpp.null_model is True:
+                    dType = None
+                    warnings.warn("Particle-particle contact model is NULL, this procedure is automatically failed")
+                    print("\n")
+            elif dType == "particle-wall":
+                if self.physpw.null_model is True:
+                    dType = None
+                    warnings.warn("Particle-wall contact model is NULL, this procedure is automatically failed")
+                    print("\n")
+            elif dType == "all":
+                if self.physpp.null_model is True and self.physpw.null_model is True:
+                    dType = None
+                    warnings.warn(
+                        "Particle-particle contact model and particle-wall contact model are NULL, this procedure is automatically failed"
+                    )
+                    print("\n")
+                elif self.physpp.null_model is False and self.physpw.null_model is True:
+                    dType = "particle-particle"
+                    warnings.warn(
+                        "Particle-wall contact model is NULL, this procedure automatically transforms to add surface properties into particle-particle contact"
+                    )
+                    print("\n")
+                elif self.physpp.null_model is True and self.physpw.null_model is False:
+                    dType = "particle-wall"
+                    warnings.warn(
+                        "Particle-particle contact model is NULL, this procedure automatically transforms to add surface properties into particle-wall contact"
+                    )
+                    print("\n")
+
+            if dType == "particle-particle":
+                componous_id = self.physpp.add_surface_properties(materialID1, materialID2, property)
+                self.physpp.surfaceProps[componous_id].print_surface_info(materialID1, materialID2)
+
+            elif dType == "particle-wall":
+                componous_id = self.physpw.add_surface_properties(materialID1, materialID2, property)
+                self.physpw.surfaceProps[componous_id].print_surface_info(materialID1, materialID2)
+
+            elif dType == "all":
+                componous_id = self.physpp.add_surface_properties(materialID1, materialID2, property)
+                componous_id = self.physpw.add_surface_properties(materialID1, materialID2, property)
+                self.physpp.surfaceProps[componous_id].print_surface_info(materialID1, materialID2)
+
+    def update_contact_property(self, sims: Simulation, materialID1, materialID2, property_name, value, overide):
+        if materialID1 > sims.max_material_num - 1 or materialID2 > sims.max_material_num - 1:
+            raise SimulationStateError("Material ID is out of the scope!")
+        else:
+            if not self.physpp is None:
+                self.physpp.update_properties(materialID1, materialID2, property_name, value, overide)
+            if not self.physpw is None:
+                self.physpw.update_properties(materialID1, materialID2, property_name, value, overide)

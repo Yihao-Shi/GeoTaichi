@@ -1,0 +1,4 @@
+interface:
+  display_name: "GeoTaichi Model Builder"
+  short_description: "Build, execute, and validate GeoTaichi simulations"
+  default_prompt: "Use $geotaichi-model-builder to build and validate my GeoTaichi model, then run it through MCP when available."

@@ -1,0 +1,845 @@
+import taichi as ti
+
+from src.utils.constants import ZEROVEC8F, ZEROMAT8X3, PI, SQRT_PI, THRESHOLD, INV_PI
+from src.utils.ScalarFunction import sgn
+
+
+# ========================================================= #
+#                  GIMP shape function                      #
+# ========================================================= #
+@ti.func
+def shape_gimp(xp, xg, idx, lp):
+    nx = 0.0
+    dx = 1.0 / idx
+    d = xp - xg
+    a = dx + lp
+    b = dx * lp
+    if d < a:
+        if d > (dx - lp):
+            nx = (a - d) * (a - d) / (4.0 * b)
+        elif d > lp:
+            nx = 1.0 - d * idx
+        elif d > -lp:
+            nx = 1.0 - (d * d + lp * lp) / (2.0 * b)
+        elif d > (-dx + lp):
+            nx = 1.0 + d * idx
+        elif d > -a:
+            nx = (a + d) * (a + d) / (4.0 * b)
+    return nx
+
+
+@ti.func
+def g_shape_gimp(xp, xg, idx, lp):
+    dnx = 0.0
+    dx = 1.0 / idx
+    d = xp - xg
+    a = dx + lp
+    b = dx * lp
+    if d < a:
+        if d > (dx - lp):
+            dnx = (d - a) / (2.0 * b)
+        elif d > lp:
+            dnx = -1.0 * idx
+        elif d > -lp:
+            dnx = -d / b
+        elif d > (-dx + lp):
+            dnx = 1.0 * idx
+        elif d > -a:
+            dnx = (a + d) / (2.0 * b)
+    return dnx
+
+
+@ti.func
+def shape_gimp_center(xp, xg, idx, lp):
+    nxc = 0.0
+    dx = 1.0 / idx
+    d = xp - xg
+    a = dx + lp
+    b = dx * lp
+    if d < a:
+        if d > (dx - lp):
+            nxc = (a - d) / (4.0 * lp)
+        elif d > (-dx + lp):
+            nxc = 1.0 / 2.0
+        elif d > -a:
+            nxc = (a + d) / (4.0 * lp)
+    return nxc
+
+
+# ========================================================= #
+#                  AxisyGIMP shape function                 #
+# ========================================================= #
+# refer to Axisymmetric Generalized Interpolation Material Point Method for Fully Coupled Thermomechanical Evalution of Transient Responses. International Journal of Computational Methods
+@ti.func
+def shape_axisy_gimp(xp, xg, idx, lp):
+    nx = 0.0
+    dx = 1.0 / idx
+    d = xp - xg
+    a = dx + lp
+    b = dx * lp
+    if xg == 0 and (0 <= xp <= lp):
+        nx = 1.0 - 2.0 * (lp + xp) / (3.0 * dx)
+    elif xg == dx and (0 <= xp <= lp):
+        nx = 2.0 * (lp + xp) / (3.0 * dx)
+    else:
+        if d < a:
+            if d > (dx - lp):
+                nx = (dx - 2.0 * lp + xg + 2.0 * xp) * (a - d) * (a - d) / (12.0 * b * xp)
+            elif d > lp:
+                nx = 1.0 - (lp * lp + 3.0 * xp * xp - 3.0 * xg * xp) / (3.0 * dx * xp)
+            elif d > -lp:
+                nx = 1.0 - (
+                    2.0 * xp * xp * xp + xg * xg * xg - 3.0 * lp * lp * xg + 6.0 * lp * lp * xp - 3.0 * xp * xp * xg
+                ) / (6.0 * b * xp)
+            elif d > (-dx + lp):
+                nx = 1.0 + (lp * lp + 3.0 * xp * xp - 3.0 * xg * xp) / (3.0 * dx * xp)
+            elif d > -a:
+                nx = (2.0 * lp - dx + xg + 2.0 * xp) * (a + d) * (a + d) / (12.0 * b * xp)
+    return nx
+
+
+@ti.func
+def g_shape_axisy_gimp(xp, xg, idx, lp):
+    dnx = 0.0
+    dx = 1.0 / idx
+    d = xp - xg
+    a = dx + lp
+    b = dx * lp
+    if xg == 0 and (0 <= xp <= lp):
+        dnx = -1.0 * idx
+    elif xg == dx and (0 <= xp <= lp):
+        dnx = 1.0 * idx
+    else:
+        if d < a:
+            if d > (dx - lp):
+                dnx = ((lp - xp) * (lp - xp) - (dx + xg) * (dx + xg)) / (4.0 * b * xp)
+            elif d > lp:
+                dnx = -1.0 * idx
+            elif d > -lp:
+                dnx = (xg * xg - lp * lp - xp * xp) / (2.0 * b * xp)
+            elif d > (-dx + lp):
+                dnx = 1.0 * idx
+            elif d > -a:
+                dnx = ((lp + xp) * (lp + xp) - (dx - xg) * (dx - xg)) / (4.0 * b * xp)
+    return dnx
+
+
+@ti.func
+def shape_aix_gimp_center(xp, xg, idx, lp):
+    nxc = 0.0
+    dx = 1.0 / idx
+    d = xp - xg
+    a = dx + lp
+    b = dx * lp
+    if abs(d) < a:
+        if d > (dx - lp):
+            nxc = (a - d) / (4.0 * lp)
+        elif d > (-dx + lp):
+            nxc = 1.0 / 2.0
+        elif d > -a:
+            nxc = (a + d) / (4.0 * lp)
+    return nxc
+
+
+# ========================================================= #
+#                  Linear shape function                    #
+# ========================================================= #
+@ti.func
+def local_linear_shapefn(natural_position):
+    shapefn = ZEROVEC8F
+    shapefn[0] = 0.125 * (1 - natural_position[0]) * (1 - natural_position[1]) * (1 - natural_position[2])
+    shapefn[1] = 0.125 * (1 + natural_position[0]) * (1 - natural_position[1]) * (1 - natural_position[2])
+    shapefn[2] = 0.125 * (1 - natural_position[0]) * (1 + natural_position[1]) * (1 - natural_position[2])
+    shapefn[3] = 0.125 * (1 + natural_position[0]) * (1 + natural_position[1]) * (1 - natural_position[2])
+    shapefn[4] = 0.125 * (1 - natural_position[0]) * (1 - natural_position[1]) * (1 + natural_position[2])
+    shapefn[5] = 0.125 * (1 + natural_position[0]) * (1 - natural_position[1]) * (1 + natural_position[2])
+    shapefn[6] = 0.125 * (1 - natural_position[0]) * (1 + natural_position[1]) * (1 + natural_position[2])
+    shapefn[7] = 0.125 * (1 + natural_position[0]) * (1 + natural_position[1]) * (1 + natural_position[2])
+    return shapefn
+
+
+@ti.func
+def local_linear_dshapefn(natural_position):
+    dshapefn = ZEROMAT8X3
+    dshapefn[0, 0] = -0.125 * (1 - natural_position[1]) * (1 - natural_position[2])
+    dshapefn[0, 1] = -0.125 * (1 - natural_position[0]) * (1 - natural_position[2])
+    dshapefn[0, 2] = -0.125 * (1 - natural_position[0]) * (1 - natural_position[1])
+
+    dshapefn[1, 0] = -0.125 * (1 - natural_position[1]) * (1 - natural_position[2])
+    dshapefn[1, 1] = -0.125 * (1 + natural_position[0]) * (1 - natural_position[2])
+    dshapefn[1, 2] = -0.125 * (1 + natural_position[0]) * (1 - natural_position[1])
+
+    dshapefn[2, 0] = -0.125 * (1 + natural_position[1]) * (1 - natural_position[2])
+    dshapefn[2, 1] = -0.125 * (1 - natural_position[0]) * (1 - natural_position[2])
+    dshapefn[2, 2] = -0.125 * (1 - natural_position[0]) * (1 + natural_position[1])
+
+    dshapefn[3, 0] = -0.125 * (1 + natural_position[1]) * (1 - natural_position[2])
+    dshapefn[3, 1] = -0.125 * (1 + natural_position[0]) * (1 - natural_position[2])
+    dshapefn[3, 2] = -0.125 * (1 + natural_position[0]) * (1 + natural_position[1])
+
+    dshapefn[4, 0] = -0.125 * (1 - natural_position[1]) * (1 + natural_position[2])
+    dshapefn[4, 1] = -0.125 * (1 - natural_position[0]) * (1 + natural_position[2])
+    dshapefn[4, 2] = -0.125 * (1 - natural_position[0]) * (1 - natural_position[1])
+
+    dshapefn[5, 0] = -0.125 * (1 + natural_position[1]) * (1 + natural_position[2])
+    dshapefn[5, 1] = -0.125 * (1 + natural_position[0]) * (1 + natural_position[2])
+    dshapefn[5, 2] = -0.125 * (1 + natural_position[0]) * (1 - natural_position[1])
+
+    dshapefn[6, 0] = -0.125 * (1 + natural_position[1]) * (1 + natural_position[2])
+    dshapefn[6, 1] = -0.125 * (1 - natural_position[0]) * (1 + natural_position[2])
+    dshapefn[6, 2] = -0.125 * (1 - natural_position[0]) * (1 + natural_position[1])
+
+    dshapefn[7, 0] = -0.125 * (1 + natural_position[1]) * (1 + natural_position[2])
+    dshapefn[7, 1] = -0.125 * (1 + natural_position[0]) * (1 + natural_position[2])
+    dshapefn[7, 2] = -0.125 * (1 + natural_position[0]) * (1 + natural_position[1])
+    return dshapefn
+
+
+@ti.func
+def shape_linear(xp, xg, idx, lp):
+    nx = 0.0
+    d = ti.abs(xp - xg) * idx
+    if d < 1.0:
+        nx = 1.0 - d
+    return nx
+
+
+@ti.func
+def g_shape_linear(xp, xg, idx, lp):
+    dnx = 0.0
+    d = ti.abs(xp - xg) * idx
+    if d < 1.0:
+        dnx = -sgn(xp - xg) * idx
+    return dnx
+
+
+@ti.func
+def h_shape_linear(xp, xg, idx, lp):
+    # Piecewise-linear MPM has zero curvature away from grid knots.  The
+    # piecewise-smooth adjoint keeps the accepted stencil fixed at a knot.
+    return 0.0
+
+
+@ti.func
+def shape_linear_center(xp, xg, idx, lp):
+    return 1.0 / 2.0
+
+
+# ========================================================= #
+#           Quadratic bernstein shape function              #
+# ========================================================= #
+@ti.func
+def shape_bernstein_q(xp, xg, idx, btype):
+    nx = 0.0
+    d = ti.abs(xp - xg) * idx
+    if d < 1.0:
+        if btype == 1:  # Inside node:
+            if d >= 0.5:
+                nx = 0.0
+            else:
+                nx = 0.5 - 2.0 * d * d
+        else:  # Edge node:
+            nx = (1 - d) * (1 - d)
+    return nx
+
+
+@ti.func
+def g_shape_bernstein_q(xp, xg, idx, btype):
+    dnx = 0.0
+    d_signed = (xp - xg) * idx
+    d = ti.abs(d_signed)
+    if d < 1.0:
+        if btype == 1:  # Inside node:
+            if d >= 0.5:
+                dnx = -4 * d_signed
+            else:
+                dnx = 0.5 - 2.0 * d * d
+        else:  # Edge node:
+            if d_signed > 0.0:
+                dnx = -2 * (1 - d_signed)
+            else:
+                dnx = 2 * (1 + d_signed)
+    return dnx * idx
+
+
+# ========================================================= #
+#           Quadratic B-spline shape function               #
+# ========================================================= #
+@ti.func
+def _quadratic_boundary_coordinate(d, btype):
+    edge = 0.0
+    if btype == 2:
+        edge = -1.0
+    elif btype == 3:
+        edge = 1.0
+    # Fused arithmetic can place an exact domain endpoint just outside its
+    # one-sided support. Keep both its value and derivative on the endpoint.
+    if btype != 0 and ti.abs(d - edge) < 1.0e-12:
+        d = edge
+    return d
+
+
+@ti.func
+def shape_bspline_q(xp, xg, idx, btype):
+    nx = 0.0
+    d = _quadratic_boundary_coordinate((xp - xg) * idx, btype)
+    if btype == 0:
+        if d >= 0.5 and d < 1.5:
+            nx = (0.5 * d - 1.5) * d + 1.125
+        elif d >= -0.5 and d < 0.5:
+            nx = -d * d + 0.75
+        elif d >= -1.5 and d < 0.5:
+            nx = (0.5 * d + 1.5) * d + 1.125
+    elif btype == 1:
+        if d >= 0.0 and d < 0.5:
+            nx = 1.0 - d
+        elif d >= 0.5 and d < 1.5:
+            nx = (0.5 * d - 1.5) * d + 1.125
+    elif btype == 2:
+        if d >= -1.0 and d < -0.5:
+            nx = 1.0 + d
+        elif d >= -0.5 and d < 0.5:
+            nx = -d * d + 0.75
+        elif d >= 0.5 and d < 1.5:
+            nx = (0.5 * d - 1.5) * d + 1.125
+    elif btype == 3:
+        if d >= -1.5 and d < -0.5:
+            nx = (0.5 * d + 1.5) * d + 1.125
+        elif d >= -0.5 and d < 0.5:
+            nx = -d * d + 0.75
+        elif d >= 0.5 and d <= 1.0:
+            nx = 1.0 - d
+    elif btype == 4:
+        if d >= -1.5 and d < -0.5:
+            nx = (0.5 * d + 1.5) * d + 1.125
+        elif d >= -0.5 and d <= 0.0:
+            nx = 1.0 + d
+    return nx
+
+
+@ti.func
+def g_shape_bspline_q(xp, xg, idx, btype):
+    dnx = 0.0
+    d = _quadratic_boundary_coordinate((xp - xg) * idx, btype)
+    if btype == 0:
+        if d >= 0.5 and d < 1.5:
+            dnx = d - 1.5
+        elif d >= -0.5 and d < 0.5:
+            dnx = -2.0 * d
+        elif d >= -1.5 and d < 0.5:
+            dnx = d + 1.5
+    elif btype == 1:
+        if d >= 0.0 and d < 0.5:
+            dnx = -1.0
+        elif d >= 0.5 and d < 1.5:
+            dnx = d - 1.5
+    elif btype == 2:
+        if d >= -1.0 and d < -0.5:
+            dnx = 1.0
+        elif d >= -0.5 and d < 0.5:
+            dnx = -2.0 * d
+        elif d >= 0.5 and d < 1.5:
+            dnx = d - 1.5
+    elif btype == 3:
+        if d >= -1.5 and d < -0.5:
+            dnx = d + 1.5
+        elif d >= -0.5 and d < 0.5:
+            dnx = -2.0 * d
+        elif d >= 0.5 and d <= 1.0:
+            dnx = -1.0
+    elif btype == 4:
+        if d >= -1.5 and d < -0.5:
+            dnx = d + 1.5
+        elif d >= -0.5 and d <= 0.0:
+            dnx = 1.0
+    return dnx * idx
+
+
+@ti.func
+def h_shape_bspline_q(xp, xg, idx, btype):
+    d2nx = 0.0
+    d = (xp - xg) * idx
+    if btype == 0:
+        if 0.5 <= d < 1.5:
+            d2nx = 1.0
+        elif -0.5 <= d < 0.5:
+            d2nx = -2.0
+        elif -1.5 <= d < -0.5:
+            d2nx = 1.0
+    elif btype == 1:
+        if 0.5 <= d < 1.5:
+            d2nx = 1.0
+    elif btype == 2:
+        if -0.5 <= d < 0.5:
+            d2nx = -2.0
+        elif 0.5 <= d < 1.5:
+            d2nx = 1.0
+    elif btype == 3:
+        if -1.5 <= d < -0.5:
+            d2nx = 1.0
+        elif -0.5 <= d < 0.5:
+            d2nx = -2.0
+    elif btype == 4:
+        if -1.5 <= d < -0.5:
+            d2nx = 1.0
+    return d2nx * idx * idx
+
+
+# ========================================================= #
+#             Cubic B-spline shape function                 #
+# ========================================================= #
+@ti.func
+def shape_bspline_c(xp, xg, idx, btype):
+    nx = 0.0
+    d = (xp - xg) * idx
+    if d >= 1 and d < 2:
+        if btype != 3:
+            nx = ((-1.0 / 6.0 * d + 1) * d - 2) * d + 4.0 / 3.0
+    elif d >= 0 and d < 1:
+        if btype == 1:
+            nx = (1.0 / 6.0 * d * d - 1) * d + 1
+        elif btype == 3:
+            nx = (1.0 / 3.0 * d - 1) * d * d + 2.0 / 3.0
+        else:
+            nx = (0.5 * d - 1) * d * d + 2.0 / 3.0
+    elif d >= -1 and d < 0:
+        if btype == 4:
+            nx = (-1.0 / 6.0 * d * d + 1) * d + 1
+        elif btype == 2:
+            nx = (-1.0 / 3.0 * d - 1) * d * d + 2.0 / 3.0
+        else:
+            nx = (-0.5 * d - 1) * d * d + 2.0 / 3.0
+    elif d >= -2 and d < -1:
+        nx = ((1.0 / 6.0 * d + 1) * d + 2) * d + 4.0 / 3.0
+    return nx
+
+
+@ti.func
+def g_shape_bspline_c(xp, xg, idx, btype):
+    dnx = 0.0
+    d = (xp - xg) * idx
+    if d >= 1 and d < 2:
+        if btype != 3:
+            dnx = (-0.5 * d + 2) * d - 2.0
+    elif d >= 0 and d < 1:
+        if btype == 1:
+            dnx = 0.5 * d * d - 1.0
+        elif btype == 3:
+            dnx = d * (d - 2.0)
+        else:
+            dnx = (3.0 / 2.0 * d - 2) * d
+    elif d >= -1 and d < 0:
+        if btype == 4:
+            dnx = -0.5 * d * d + 1.0
+        elif btype == 2:
+            dnx = (-d - 2.0) * d
+        else:
+            dnx = (-3.0 / 2.0 * d - 2.0) * d
+    elif d >= -2 and d < -1:
+        dnx = (0.5 * d + 2.0) * d + 2.0
+    return dnx * idx
+
+
+@ti.func
+def shape_bspline_c_thb(xp, xg, dx, nlevel, ntype):
+    nx = 0.0
+    r = xp - xg
+    subdx = dx / (2.0**nlevel)
+    r /= subdx
+    if ntype == 3:
+        if -2.00 <= r < -1.00:
+            nx = r**3 / 6.0 + r**2 + 2.0 * r + 4.0 / 3.0
+        elif -1.00 <= r < 0.00:
+            nx = -(r**3) / 2.0 - r**2 + 2.0 / 3.0
+        elif 0.00 <= r < 1.00:
+            nx = 0.5 * r**3 - r**2 + 2.0 / 3.0
+        elif 1.00 <= r <= 2.00:
+            nx = -(r**3) / 6.0 + r**2 - 2.0 * r + 4.0 / 3.0
+        else:
+            nx = 0.0
+    elif ntype == 1 or ntype == 9:
+        if 0.00 <= r < 1.00:
+            nx = r**3 / 6.0 - r + 1.0
+        elif 1.00 <= r <= 2.00:
+            nx = -(r**3) / 6.0 + r**2 - 2.0 * r + 4.0 / 3.0
+        elif -2.00 <= r < -1.00:
+            nx = r**3 / 6.0 + r**2 + 2.0 * r + 4.0 / 3.0
+        elif -1.00 <= r < 0.00:
+            nx = -(r**3) / 6.0 + r + 1.0
+    elif ntype == 2:
+        if -1.00 <= r < 0.00:
+            nx = -(r**3) / 3.0 - r**2 + 2.0 / 3.0
+        elif 0.00 <= r < 1.00:
+            nx = 0.5 * r**3 - r**2 + 2.0 / 3.0
+        elif 1.00 <= r <= 2.00:
+            nx = -(r**3) / 6.0 + r**2 - 2.0 * r + 4.0 / 3.0
+    elif ntype == 8:
+        if -2.00 <= r < -1.00:
+            nx = r**3 / 6.0 + r**2 + 2.0 * r + 4.0 / 3.0
+        elif -1.00 <= r < 0.00:
+            nx = -(r**3) / 2.0 - r**2 + 2.0 / 3.0
+        elif 0.00 <= r < 1.00:
+            nx = r**3 / 3.0 - r**2 + 2.0 / 3.0
+    elif ntype == 4:
+        if -2.00 <= r < -1.00:
+            nx = r**3 / 6.0 + r**2 + 2.0 * r + 4.0 / 3.0
+        elif -1.00 <= r < 0.00:
+            nx = -(r**3) / 2.0 - r**2 + 2.0 / 3.0
+        elif 0.00 <= r < 0.50:
+            nx = r**3 / 3.0 - r**2 + 2.0 / 3.0
+        elif 0.50 <= r < 1.00:
+            nx = r**3 - 2.0 * r**2 + 0.5 * r + 7.0 / 12.0
+        elif 1.00 <= r < 1.50:
+            nx = -2.0 / 3.0 * r**3 + 3.0 * r**2 - 4.5 * r + 9.0 / 4.0
+    elif ntype == 7:
+        if 1.00 <= r < 2.00:
+            nx = -(r**3) / 6.0 + r**2 - 2.0 * r + 4.0 / 3.0
+        elif 0.00 <= r < 1.00:
+            nx = r**3 / 2.0 - r**2 + 2.0 / 3.0
+        elif -0.50 <= r < 0.00:
+            nx = -(r**3) / 3.0 - r**2 + 2.0 / 3.0
+        elif -1.00 <= r < -0.50:
+            nx = -(r**3) - 2.0 * r**2 - 0.5 * r + 7.0 / 12.0
+        elif -1.50 <= r < -1.00:
+            nx = 2.0 / 3.0 * r**3 + 3.0 * r**2 + 4.5 * r + 9.0 / 4.0
+    elif ntype == 5:
+        if -1.50 <= r < -0.5:
+            nx = 1.0 / 6.0 * r**3 + 3.0 / 4.0 * r**2 + 9.0 / 8.0 * r + 9.0 / 16.0
+        elif -0.50 <= r < 0.00:
+            nx = -3.0 / 2.0 * r**3 - 7.0 / 4.0 * r**2 - 1.0 / 8.0 * r + 17.0 / 48.0
+        elif 0.00 <= r < 0.50:
+            nx = 11.0 / 6.0 * r**3 - 7.0 / 4.0 * r**2 - 1.0 / 8.0 * r + 17.0 / 48.0
+        elif 0.50 <= r < 1.00:
+            nx = -2.0 / 3.0 * r**3 + 2.0 * r**2 - 2.0 * r + 2.0 / 3.0
+    elif ntype == 6:
+        if 0.50 <= r < 1.50:
+            nx = -1.0 / 6.0 * r**3 + 3.0 / 4.0 * r**2 - 9.0 / 8.0 * r + 9.0 / 16.0
+        elif 0.00 <= r < 0.50:
+            nx = 3.0 / 2.0 * r**3 - 7.0 / 4.0 * r**2 + 1.0 / 8.0 * r + 17.0 / 48.0
+        elif -0.50 <= r < 0.00:
+            nx = -11.0 / 6.0 * r**3 - 7.0 / 4.0 * r**2 + 1.0 / 8.0 * r + 17.0 / 48.0
+        elif -1.00 <= r < -0.50:
+            nx = 2.0 / 3.0 * r**3 + 2.0 * r**2 + 2.0 * r + 2.0 / 3.0
+    return nx
+
+
+@ti.func
+def g_shape_bspline_c_thb(xp, xg, dx, nlevel, ntype):
+    dnx = 0.0
+    r = xp - xg
+    subdx = dx / (2.0**nlevel)
+    r /= subdx
+    if ntype == 3:
+        if -2.00 <= r < -1.00:
+            dnx = r**2 / 2.0 + 2.0 * r + 2.0
+        elif -1.00 <= r < 0.00:
+            dnx = -1.5 * r**2 - 2.0 * r
+        elif 0.00 <= r < 1.00:
+            dnx = 1.5 * r**2 - 2.0 * r
+        elif 1.00 <= r <= 2.00:
+            dnx = -0.5 * r**2 + 2.0 * r - 2.0
+        else:
+            dnx = 0.0
+    elif ntype == 1 or ntype == 9:
+        if 0.00 <= r < 1.00:
+            dnx = 0.5 * r**2 - 1.0
+        elif 1.00 <= r <= 2.00:
+            dnx = -0.5 * r**2 + 2.0 * r - 2.0
+        elif -2.00 <= r < -1.00:
+            dnx = r**2 / 2.0 + 2.0 * r + 2.0
+        elif -1.00 <= r < 0.00:
+            dnx = -0.5 * r**2 + 1.0
+    elif ntype == 2:
+        if -1.00 <= r < 0.00:
+            dnx = -(r**2) - 2.0 * r
+        elif 0.00 <= r < 1.00:
+            dnx = 1.5 * r**2 - 2.0 * r
+        elif 1.00 <= r <= 2.00:
+            dnx = -0.5 * r**2 + 2.0 * r - 2.0
+    elif ntype == 8:
+        if -2.00 <= r < -1.00:
+            dnx = r**2 / 2.0 + 2.0 * r + 2.0
+        elif -1.00 <= r < 0.00:
+            dnx = -1.5 * r**2 - 2.0 * r
+        elif 0.00 <= r < 1.00:
+            dnx = r**2 - 2.0 * r
+    elif ntype == 4:
+        if -2.00 <= r < -1.00:
+            dnx = r**2 / 2.0 + 2.0 * r + 2.0
+        elif -1.00 <= r < 0.00:
+            dnx = -1.5 * r**2 - 2.0 * r
+        elif 0.00 <= r < 0.50:
+            dnx = r**2 - 2.0 * r
+        elif 0.50 <= r < 1.00:
+            dnx = 3.0 * r**2 - 4.0 * r + 0.5
+        elif 1.00 <= r < 1.50:
+            dnx = -2.0 * r**2 + 6.0 * r - 4.5
+    elif ntype == 7:
+        if 1.00 <= r < 2.00:
+            dnx = -(r**2) / 2.0 + 2.0 * r - 2.0
+        elif 0.00 <= r < 1.00:
+            dnx = 1.5 * r**2 - 2.0 * r
+        elif -0.50 <= r < 0.00:
+            dnx = -(r**2) - 2.0 * r
+        elif -1.00 <= r < -0.50:
+            dnx = -3.0 * r**2 - 4.0 * r - 0.5
+        elif -1.50 <= r < -1.00:
+            dnx = 2.0 * r**2 + 6.0 * r + 4.5
+    elif ntype == 5:
+        if -1.50 <= r < -0.5:
+            dnx = 0.5 * r**2 + 1.5 * r + 9.0 / 8.0
+        elif -0.50 <= r < 0.00:
+            dnx = -4.5 * r**2 - 3.5 * r - 1.0 / 8.0
+        elif 0.00 <= r < 0.50:
+            dnx = 11.0 / 2.0 * r**2 - 3.5 * r - 1.0 / 8.0
+        elif 0.50 <= r < 1.00:
+            dnx = -2.0 * r**2 + 4.0 * r - 2.0
+    elif ntype == 6:
+        if 0.50 <= r < 1.50:
+            dnx = -0.5 * r**2 + 1.5 * r - 9.0 / 8.0
+        elif 0.00 <= r < 0.50:
+            dnx = 4.5 * r**2 - 3.5 * r + 1.0 / 8.0
+        elif -0.50 <= r < 0.00:
+            dnx = -11.0 / 2.0 * r**2 - 3.5 * r + 1.0 / 8.0
+        elif -1.00 <= r < -0.50:
+            dnx = 2.0 * r**2 + 4.0 * r + 2.0
+    return dnx / subdx
+
+
+# ========================================================= #
+#              Cubic spline radial function                 #
+# ========================================================= #
+@ti.func
+def cubic_spline(smoothing_length, relative_distance):
+    norm_distance = relative_distance.norm()
+    multiplier = 3.0 / (2.0 * PI * smoothing_length * smoothing_length * smoothing_length)
+    radius = norm_distance / smoothing_length
+    basis_function = multiplier
+    if radius >= 0.0 and radius < 1.0:
+        basis_function *= 2.0 / 3.0 - radius * radius + 0.5 * radius * radius * radius
+    elif radius >= 1.0 and radius < 2.0:
+        basis_function *= 1.0 / 6.0 * (2.0 - radius) * (2.0 - radius) * (2.0 - radius)
+    else:
+        basis_function = 0.0
+    return basis_function
+
+
+@ti.func
+def g_cubic_spline(smoothing_length, relative_distance):
+    norm_distance = relative_distance.norm()
+    multiplier = 3.0 / (2.0 * PI * smoothing_length * smoothing_length * smoothing_length)
+    radius = norm_distance / smoothing_length
+    dw_dr = multiplier
+    if radius >= 0.0 and radius < 1.0:
+        dw_dr *= -2.0 * radius + 1.5 * radius * radius
+    elif radius >= 1.0 and radius < 2.0:
+        dw_dr *= -0.5 * (2.0 - radius) * (2.0 - radius)
+    else:
+        dw_dr = 0.0
+
+    gradient = relative_distance
+    if norm_distance > THRESHOLD:
+        gradient *= dw_dr / (norm_distance * smoothing_length)
+    else:
+        gradient *= 0.0
+    return gradient
+
+
+# ========================================================= #
+#             Quintic spline radial function                #
+# ========================================================= #
+@ti.func
+def quintic_spline_radial(smoothing_length, relative_distance):
+    norm_distance = relative_distance.norm()
+    multiplier = 3.0 / (359.0 * PI * smoothing_length * smoothing_length * smoothing_length)
+    radius = norm_distance / smoothing_length
+    basis_function = multiplier
+    if radius >= 0.0 and radius < 1.0:
+        basis_function *= (3.0 - radius) ** 5 - 6.0 * (2.0 - radius) ** 5 + 15.0 * (1.0 - radius) ** 5
+    elif radius >= 1.0 and radius < 2.0:
+        basis_function *= (3.0 - radius) ** 5 - 6.0 * (2.0 - radius) ** 5
+    elif radius >= 2.0 and radius < 3.0:
+        basis_function *= (3.0 - radius) ** 5
+    else:
+        basis_function = 0.0
+    return basis_function
+
+
+@ti.func
+def g_quintic_spline_radial(smoothing_length, relative_distance):
+    norm_distance = relative_distance.norm()
+    multiplier = 3.0 / (359.0 * PI * smoothing_length * smoothing_length * smoothing_length)
+    radius = norm_distance / smoothing_length
+    dw_dr = multiplier
+    if radius >= 0.0 and radius < 1.0:
+        dw_dr *= -5.0 * (3.0 - radius) ** 4 + 30.0 * (2.0 - radius) ** 4 - 75.0 * (1.0 - radius) ** 4
+    elif radius >= 1.0 and radius < 2.0:
+        dw_dr *= -5.0 * (3.0 - radius) ** 4 + 30.0 * (2.0 - radius) ** 4
+    elif radius >= 2.0 and radius < 3.0:
+        dw_dr *= -5.0 * (3.0 - radius) ** 4
+    else:
+        dw_dr = 0.0
+
+    gradient = relative_distance
+    if norm_distance > THRESHOLD:
+        gradient *= dw_dr / (norm_distance * smoothing_length)
+    else:
+        gradient *= 0.0
+    return gradient
+
+
+# ========================================================= #
+#                      Guass Kernel                         #
+# ========================================================= #
+@ti.func
+def guassian(smoothing_length, relative_distance, cut_off=3.0):
+    norm_distance = relative_distance.norm()
+    multiplier = 1.0 / ((SQRT_PI * smoothing_length) * (SQRT_PI * smoothing_length) * (SQRT_PI * smoothing_length))
+    radius = norm_distance / smoothing_length
+    basis_function = multiplier
+    if radius >= 0.0 and radius <= cut_off:
+        basis_function *= ti.exp(-radius * radius)
+    else:
+        basis_function = 0.0
+    return basis_function
+
+
+@ti.func
+def g_guassian(smoothing_length, relative_distance, cut_off=3.0):
+    norm_distance = relative_distance.norm()
+    multiplier = 1.0 / ((SQRT_PI * smoothing_length) * (SQRT_PI * smoothing_length) * (SQRT_PI * smoothing_length))
+    radius = norm_distance / smoothing_length
+    dw_dr = multiplier
+    if radius >= 0.0 and radius <= cut_off:
+        dw_dr *= -2.0 * radius * ti.exp(-radius * radius)
+    else:
+        dw_dr = 0.0
+
+    gradient = relative_distance
+    if norm_distance > THRESHOLD:
+        gradient *= dw_dr / (norm_distance * smoothing_length)
+    else:
+        gradient *= 0.0
+    return gradient
+
+
+# ========================================================= #
+#                   Super Guass Kernel                      #
+# ========================================================= #
+@ti.func
+def super_guassian(smoothing_length, relative_distance, cut_off=3.0):
+    norm_distance = relative_distance.norm()
+    multiplier = 1.0 / ((SQRT_PI * smoothing_length) * (SQRT_PI * smoothing_length) * (SQRT_PI * smoothing_length))
+    radius = norm_distance / smoothing_length
+    basis_function = multiplier
+    if radius >= 0.0 and radius <= cut_off:
+        basis_function *= ti.exp(-radius * radius) * (3.0 / 2.0 + 1.0 - radius * radius)
+    else:
+        basis_function = 0.0
+    return basis_function
+
+
+@ti.func
+def g_super_guassian(smoothing_length, relative_distance, cut_off=3.0):
+    norm_distance = relative_distance.norm()
+    multiplier = 1.0 / ((SQRT_PI * smoothing_length) * (SQRT_PI * smoothing_length) * (SQRT_PI * smoothing_length))
+    radius = norm_distance / smoothing_length
+    dw_dr = multiplier
+    if radius >= 0.0 and radius <= cut_off:
+        dw_dr *= radius * ti.exp(-radius * radius) * (-3 + 2.0 * radius * radius - 4.0)
+    else:
+        dw_dr = 0.0
+
+    gradient = relative_distance
+    if norm_distance > THRESHOLD:
+        gradient *= dw_dr / (norm_distance * smoothing_length)
+    else:
+        gradient *= 0.0
+    return gradient
+
+
+# ========================================================= #
+#                    Weight Functions                       #
+# ========================================================= #
+@ti.func
+def cubic_spline_weight(xp, xg, idx):
+    weight = 0.0
+    radius = ti.abs(xp - xg) * idx
+    if radius <= 0.5:
+        weight = 2.0 / 3.0 - 4 * radius * radius + 4 * radius * radius * radius
+    elif radius <= 1:
+        weight = 4.0 / 3.0 - 4.0 * radius + 4 * radius - radius - 4.0 / 3.0 * radius * radius * radius
+    return weight
+
+
+@ti.func
+def quartic_spline_weight(xp, xg, idx):
+    weight = 0.0
+    radius = ti.abs(xp - xg) * idx
+    if radius <= 1:
+        weight = 1.0 - 6.0 * radius * radius + 8 * radius * radius * radius - 3.0 * radius * radius * radius * radius
+    return weight
+
+
+@ti.func
+def cubic_spline_weight3d(xp, xg, idx):
+    wx = cubic_spline_weight(xp[0], xg[0], idx[0])
+    wy = cubic_spline_weight(xp[0], xg[0], idx[0])
+    wz = cubic_spline_weight(xp[0], xg[0], idx[0])
+    return wx * wy * wz
+
+
+@ti.func
+def quartic_spline_weight3d(xp, xg, idx):
+    wx = quartic_spline_weight(xp[0], xg[0], idx[0])
+    wy = quartic_spline_weight(xp[0], xg[0], idx[0])
+    wz = quartic_spline_weight(xp[0], xg[0], idx[0])
+    return wx * wy * wz
+
+
+# ========================================================= #
+#                  Heaviside Functions                      #
+# ========================================================= #
+@ti.func
+def smoothed_heaviside_function(epsilon, phi):
+    h = 0.0
+    ieps = 1.0 / epsilon
+    if phi > -epsilon:
+        if phi < epsilon:
+            h = 0.5 * (1 + phi * ieps + ti.sin(PI * phi * ieps) * INV_PI)
+        else:
+            h = 1.0
+    return h
+
+
+# ========================================================= #
+#               Distortion Ratio Functions                  #
+# ========================================================= #
+@ti.func
+def distortion_ratio_fuction(eta):
+    value = 0.0
+    if 0 <= eta < 0.5:
+        value = 0.5 * eta
+    elif 0.5 <= eta < 1.0:
+        value = -6.0 * eta * eta * eta + 14.0 * eta * eta - 9.0 * eta + 2.0
+    elif eta >= 1.0:
+        value = eta
+    return value
+
+
+@ti.func
+def cubic_smooth(relative_distance, support_domain):
+    norm_distance = relative_distance.norm()
+    relative_position = norm_distance / support_domain
+    single_value = 1 - relative_position * relative_position
+    return single_value * single_value * single_value if relative_position < 1.0 else 0.0
+
+
+@ti.func
+def jacobian2parent2parametric1d(eleknot):
+    return 0.5 * (eleknot[1] - eleknot[0])
+
+
+@ti.func
+def jacobian2parent2parametric2d(eleknot_u, eleknot_v):
+    return jacobian2parent2parametric1d(eleknot_u) * jacobian2parent2parametric1d(eleknot_v)

@@ -1,0 +1,4 @@
+global-exclude ._*
+global-exclude *.py[cod]
+global-exclude __pycache__
+prune build

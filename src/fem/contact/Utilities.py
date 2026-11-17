@@ -1,0 +1,154 @@
+import taichi as ti
+
+from src.utils.errors import RuntimeNotInitializedError
+from src.fem.contact.ContactTopology import ContactSurface
+import numpy as np
+
+
+def _triangulated_boundary(mesh):
+    if mesh.cell_type == "triangle":
+        return (
+            np.ascontiguousarray(mesh.cells, dtype=np.int32),
+            np.ascontiguousarray(mesh.cell_body_ids, dtype=np.int32),
+        )
+    facets, owners = mesh.boundary_facets()
+    body = mesh.cell_body_ids[owners]
+    if facets.shape[1] == 3:
+        return (
+            np.ascontiguousarray(facets, dtype=np.int32),
+            np.ascontiguousarray(body, dtype=np.int32),
+        )
+    triangles = np.empty((2 * facets.shape[0], 3), dtype=np.int32)
+    triangles[0::2] = facets[:, (0, 1, 2)]
+    triangles[1::2] = facets[:, (0, 2, 3)]
+    return triangles, np.repeat(body, 2).astype(np.int32)
+
+
+def build_contact_surface(mesh, body_ids=None):
+    """Build the triangulated surface and lumped primitive area measures."""
+    faces, face_body = _triangulated_boundary(mesh)
+    if body_ids is not None:
+        selected = np.isin(face_body, np.asarray(tuple(body_ids), dtype=np.int32))
+        faces = np.ascontiguousarray(faces[selected])
+        face_body = np.ascontiguousarray(face_body[selected])
+        if faces.shape[0] == 0:
+            raise ValueError("FEM contact body selection contains no surface faces")
+    edge_map = {}
+    edges = []
+    edge_body = []
+    for face, body_id in zip(faces, face_body):
+        for first, second in ((face[0], face[1]), (face[1], face[2]), (face[2], face[0])):
+            key = tuple(sorted((int(first), int(second))))
+            if key not in edge_map:
+                edge_map[key] = len(edges)
+                edges.append(key)
+                edge_body.append(int(body_id))
+            elif edge_body[edge_map[key]] != int(body_id):
+                raise ValueError("a FEM contact edge cannot belong to different bodies")
+    edges = np.asarray(edges, dtype=np.int32)
+    edge_body = np.asarray(edge_body, dtype=np.int32)
+    node_area = np.zeros(mesh.number_of_nodes, dtype=np.float64)
+    edge_area = np.zeros(edges.shape[0], dtype=np.float64)
+    for face in faces:
+        points = mesh.rest_shape[face]
+        area = 0.5 * float(np.linalg.norm(np.cross(points[1] - points[0], points[2] - points[0])))
+        if area <= 0.0:
+            raise ValueError("FEM contact surface contains a degenerate triangle")
+        node_area[face] += area / 3.0
+        for first, second in ((face[0], face[1]), (face[1], face[2]), (face[2], face[0])):
+            edge_area[edge_map[tuple(sorted((int(first), int(second))))]] += area / 3.0
+    vertices = np.unique(faces).astype(np.int32)
+    vertex_body = np.ascontiguousarray(mesh.node_body_ids[vertices], dtype=np.int32)
+    return ContactSurface(
+        faces,
+        edges,
+        vertices,
+        node_area,
+        edge_area,
+        np.ascontiguousarray(face_body, dtype=np.int32),
+        edge_body,
+        vertex_body,
+    )
+
+
+def broad_phase_candidates(surface, positions, radius, end_positions=None, broad_phase="LinkedCell"):
+    """Build PT/EE candidates with a selected dynamic Taichi backend.
+
+    This convenience adapter accepts and returns NumPy arrays at its public
+    API boundary.  The actual current/swept AABB insertion, count, prefix
+    sums, candidate counting and fill are device kernels.  Production FEM
+    keeps one selected broad-phase instance and does not perform these
+    input/output copies.
+    """
+    import taichi as ti
+
+    key = str(broad_phase).strip().replace("_", "").replace("-", "").replace(" ", "").lower()
+    if key in ("linkedcell", "cell", "dynamiclinkedcell"):
+        from src.fem.contact.LinkedCellBroadPhase import (
+            DynamicLinkedCellBroadPhase as BroadPhase,
+        )
+    elif key in ("bvh", "boundingvolumehierarchy"):
+        from src.fem.contact.BVHBroadPhase import (
+            DynamicBVHBroadPhase as BroadPhase,
+        )
+    else:
+        raise ValueError("broad_phase must be 'LinkedCell' or 'BVH'")
+
+    if ti.lang.impl.get_runtime().prog is None:
+        raise RuntimeNotInitializedError("broad_phase_candidates requires an initialized Taichi runtime")
+    real_type = ti.lang.impl.current_cfg().default_fp
+    numpy_type = np.float64 if real_type == ti.f64 else np.float32
+    positions = np.ascontiguousarray(positions, dtype=numpy_type)
+    if positions.ndim != 2 or positions.shape[1] != 3:
+        raise ValueError("FEM contact positions must have shape (n, 3)")
+    position_field = ti.Vector.field(3, dtype=real_type, shape=positions.shape[0])
+    position_field.from_numpy(positions)
+    end_field = None
+    if end_positions is not None:
+        end_positions = np.ascontiguousarray(end_positions, dtype=numpy_type)
+        if end_positions.shape != positions.shape:
+            raise ValueError("swept FEM contact endpoints must match positions")
+        end_field = ti.Vector.field(
+            3,
+            dtype=real_type,
+            shape=end_positions.shape[0],
+        )
+        end_field.from_numpy(end_positions)
+    broad_phase = BroadPhase(
+        surface.faces,
+        surface.edges,
+        surface.vertices,
+        surface.node_area,
+        surface.edge_area,
+        positions,
+    )
+    point_triangle_count, edge_edge_count = broad_phase.rebuild(
+        position_field,
+        float(radius),
+        end_positions=end_field,
+    )
+    return (
+        broad_phase.point_triangle.to_numpy()[:point_triangle_count].copy(),
+        broad_phase.edge_edge.to_numpy()[:edge_edge_count].copy(),
+    )
+
+
+@ti.func
+def _ipc_barrier_terms(value, active_value, kappa):
+    energy = 0.0
+    gradient = 0.0
+    hessian = 0.0
+    if value <= 0.0:
+        energy = ti.math.inf
+    elif value < active_value:
+        difference = value - active_value
+        inverse_active2 = 1.0 / (active_value * active_value)
+        logarithm = ti.log(value / active_value)
+        energy = -kappa * difference * difference * inverse_active2 * logarithm
+        gradient = -kappa * inverse_active2 * (2.0 * difference * logarithm + difference * difference / value)
+        hessian = (
+            -kappa
+            * inverse_active2
+            * (2.0 * logarithm + 4.0 * difference / value - difference * difference / (value * value))
+        )
+    return energy, gradient, hessian

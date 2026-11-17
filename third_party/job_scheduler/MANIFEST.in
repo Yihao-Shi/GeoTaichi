@@ -1,0 +1,7 @@
+include README.md
+include LICENSE
+include MANIFEST.in
+include pyproject.toml
+recursive-include job_scheduler *.py
+global-exclude *.pyc
+global-exclude __pycache__ 

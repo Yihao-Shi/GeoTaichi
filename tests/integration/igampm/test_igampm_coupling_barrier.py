@@ -1,0 +1,240 @@
+"""Three-dimensional IGA-MPM barrier integration check."""
+
+from src.physics_model.contact_model.ipc.Utilities import get_distance_to_surface_fixed_dim
+
+import numpy as np
+import pytest
+import taichi as ti
+
+import src.igampm.config as config
+
+pytestmark = [pytest.mark.integration, pytest.mark.slow, pytest.mark.serial]
+
+
+def _build_iga_cube(output_path):
+    from src.iga import Cube, ImplicitIGA, Primitives
+
+    cube = Cube()
+    cube.set_parameters(start_point=[0.0, 0.0, 0.0], size=[1.0, 1.0, 0.2])
+    cube.generate_knot_u(degree=2, num_ctrlpts=3)
+    cube.generate_knot_v(degree=2, num_ctrlpts=3)
+    cube.generate_knot_w(degree=2, num_ctrlpts=3)
+    cube.generate_ctrlpts()
+    cube.generate_weights()
+
+    primitives = Primitives()
+    primitives.append(cube, "cube")
+    primitives.finialize()
+    return ImplicitIGA(
+        primitives=primitives,
+        newmark=[1.0, 0.5, 1.0],
+        young_modulus=1.0e5,
+        poisson_ratio=0.3,
+        density=1000.0,
+        gravity=[0.0, 0.0, 0.0],
+        residual=1.0e-8,
+        interval=1,
+        step=1,
+        degree=[2, 2, 2],
+        path=str(output_path),
+    )
+
+
+def _build_mpm_particle(output_path):
+    from src.mpm.generator.Body import Body
+    from src.mpm.engines.direct.ImplicitULMPM import ImplicitULMPM
+
+    body = Body()
+    body.add_particles(
+        [[0.5, 0.5, -0.031]],
+        volume=1.0e-3,
+        xmin=[-0.1, -0.1, -0.1],
+        xmax=[1.1, 1.1, 0.3],
+        boundary_ids=[0],
+    )
+    mpm = ImplicitULMPM(
+        domain=[1.2, 1.2, 0.5],
+        dx=0.1,
+        dt=1.0e-3,
+        bodies=body,
+        newmark=[1.0, 0.5, 1.0],
+        young_modulus=1.0e5,
+        poisson_ratio=0.3,
+        density=1000.0,
+        gravity=[0.0, 0.0, 0.0],
+        residual=1.0e-8,
+        interval=1,
+        step=1,
+        scale=1.0,
+        line_search=False,
+        shape_function="linear",
+        visualize=False,
+        path=str(output_path),
+    )
+    mpm.init_f0()
+    mpm.mass_vec.fill(0.0)
+    mpm.grid_reset()
+    mpm.compute_shapefn()
+    mpm.mass_vel_acc_p2g()
+    mpm.find_active_node()
+    mpm.prefix_sum_executor.run(mpm.node2dof)
+    mpm.active_dof = mpm.set_active_dof()
+    mpm.compute_nodal_vel_acc()
+    assert mpm.active_dof > 0
+    return mpm
+
+
+@pytest.mark.isolated_dimension(3)
+def test_igampm_aabb_pruning_keeps_active_distances_and_safe_ccd(taichi_runtime, tmp_path):
+    from src.igampm import IGAMPM
+
+    config.set_dimension(3)
+    iga = _build_iga_cube(tmp_path / "iga-bounds")
+    points = iga.patch.control_points.to_numpy()
+    points[:, 2] += 0.16 * points[:, 0] * (1 - points[:, 0]) * points[:, 1] * (1 - points[:, 1])
+    iga.patch.control_points.from_numpy(points)
+    mpm = _build_mpm_particle(tmp_path / "mpm-bounds")
+    engine = IGAMPM(iga, mpm, kappa=1e4, dhat=0.08, dmin=0.005, barrier_nnz=20_000).build()
+    surface = engine.contact_surface
+    reference = ti.field(ti.f64, shape=surface.num_surfaces)
+
+    @ti.kernel
+    def full_query(basis: ti.template()):
+        for sid in range(surface.num_surfaces):
+            start_u = surface.prefix_num_knot_u_field[sid]
+            start_v = surface.prefix_num_knot_v_field[sid]
+            _, _, distance, _ = get_distance_to_surface_fixed_dim(
+                start_u,
+                start_v,
+                surface.prefix_num_ctrlpts_field[sid],
+                surface.prefix_num_knot_u_field[sid + 1] - start_u,
+                surface.prefix_num_knot_v_field[sid + 1] - start_v,
+                surface.knot_vector_u,
+                surface.knot_vector_v,
+                surface.control_points_hat,
+                surface.weights,
+                mpm.p_temp[0],
+                basis,
+            )
+            reference[sid] = distance
+
+    engine.initialize_barrier()
+    full_query(surface.basis[0])  # Every cube boundary has degree (2, 2).
+    actual = engine.contacts.distance.to_numpy()[: surface.num_surfaces]
+    exact = reference.to_numpy()
+    active = exact < 0.08
+    assert active.any() and (~active).any()
+    np.testing.assert_array_equal(engine.contacts.active.to_numpy()[: surface.num_surfaces], active.astype(int))
+    np.testing.assert_allclose(actual[active], exact[active], rtol=1e-12, atol=1e-13)
+    assert np.all(actual <= exact + 1e-13)
+    assert np.any(exact[~active] - actual[~active] > 1e-5)
+
+    # A distant, short segment is certified from the lower bound. A long
+    # approaching segment must still execute ACCD and remain strictly feasible.
+    direction = np.zeros(mpm.degree_of_freedom)
+    direction[: mpm.active_dof].reshape(-1, 3)[:, 2] = 0.001
+    mpm.incre_resolution.from_numpy(direction)
+    iga.incre_resolution.fill(0.0)
+    assert engine.conservative_contact_step_device(verify=False) == 1.0
+    direction[: mpm.active_dof].reshape(-1, 3)[:, 2] = 0.1
+    mpm.incre_resolution.from_numpy(direction)
+    alpha = engine.conservative_contact_step_device()
+    assert 0 < alpha < 1
+    engine._set_device_trial_displacements(alpha)
+    engine.initialize_barrier(mpm.grid_disp_temp, iga.grid_disp_temp)
+    full_query(surface.basis[0])
+    assert reference.to_numpy().min() > 0.005
+
+    # A lower bound below the strict feasibility tolerance must be refined
+    # even when the true distance lies outside the barrier activation radius.
+    translation = np.zeros(iga.degree_of_freedom)
+    translation.reshape(-1, 3)[:, 2] = 0.269
+    iga.grid_disp.from_numpy(translation)
+    strict_engine = IGAMPM(
+        iga, mpm, kappa=1e4, dhat=0.08, dmin=0.005, barrier_nnz=20_000, strict_feasibility_tolerance=0.2971
+    ).build()
+    strict_engine.initialize_barrier()
+    assert strict_engine.minimum_contact_distance() > 0.3021
+
+    # Bounds must not conceal invalid weights or particle coordinates, even
+    # on a non-debug CUDA runtime where device assertions can be disabled.
+    weights = surface.weights.to_numpy()
+    invalid_weights = weights.copy()
+    invalid_weights[0] = -1.0
+    surface.weights.from_numpy(invalid_weights)
+    with pytest.raises(RuntimeError, match="non-finite"):
+        engine.initialize_barrier()
+    surface.weights.from_numpy(weights)
+    positions = mpm.particle.x.to_numpy()
+    positions[0, 0] = np.nan
+    mpm.particle.x.from_numpy(positions)
+    with pytest.raises(RuntimeError, match="non-finite"):
+        engine.initialize_barrier()
+
+
+@pytest.mark.isolated_dimension(3)
+def test_igampm_coupling_barrier_3d_assembles_symmetric_system(
+    taichi_runtime,
+    tmp_path,
+):
+    config.set_dimension(3)
+
+    from src.igampm import IGAMPM
+
+    iga = _build_iga_cube(tmp_path / "iga")
+    mpm = _build_mpm_particle(tmp_path / "mpm")
+    coupling = IGAMPM(iga, mpm, kappa=1.0e4, dhat=0.08, barrier_nnz=20_000)
+
+    coupling.initialize_barrier()
+    print(f"IGA-MPM barrier contacts: {coupling.curr_barrier_contact_num}")
+    assert coupling.curr_barrier_contact_num > 0
+
+    iga.incre_resolution.fill(0.0)
+    mpm_direction = np.zeros(mpm.degree_of_freedom, dtype=np.float64)
+    mpm_direction[: mpm.active_dof].reshape((-1, 3))[:, 2] = 0.1
+    mpm.incre_resolution.from_numpy(mpm_direction)
+    control_points_before = coupling.contact_surface.control_points_hat.to_numpy().copy()
+    contact_step = coupling.conservative_contact_step_device(max_step=1.0, safety=0.9)
+    assert 0.0 < contact_step < 1.0
+    # The particle starts 0.031 m below the flat face and moves 0.1 m towards it.
+    assert np.isclose(
+        contact_step,
+        0.9 * 0.031 / 0.1,
+        rtol=1.0e-12,
+        atol=1.0e-12,
+    )
+    np.testing.assert_array_equal(
+        coupling.contact_surface.control_points_hat.to_numpy(),
+        control_points_before,
+    )
+
+    coupling.assemble_barrier_system()
+    K = coupling.barrier_matrix()
+    nnz_count = int(coupling.barrier_nnz_count[0])
+    grad = coupling.barrier_grad.to_numpy()
+    sym_diff = (K - K.T).tocoo()
+    max_sym = float(np.max(np.abs(sym_diff.data))) if sym_diff.nnz else 0.0
+    print(
+        "IGA-MPM barrier assembly:",
+        f"raw_triplets={nnz_count}",
+        f"reduced_nnz={K.nnz}",
+        f"grad_norm={np.linalg.norm(grad):.3e}",
+        f"sym_max={max_sym:.3e}",
+    )
+    blocks = coupling.barrier_blocks()
+    forces = coupling.barrier_contact_forces()
+    monolithic = coupling.assemble_monolithic_newton_system()
+    total_active = iga.degree_of_freedom + mpm.active_dof
+    monolithic_matrix = monolithic["matrix"].to_scipy(monolithic["active_nodes"])
+    monolithic_rhs = monolithic["rhs"].to_numpy()[:total_active]
+    assert nnz_count > 0
+    assert K.nnz > 0
+    assert np.linalg.norm(grad) > 0.0
+    assert max_sym < 1.0e-7
+    assert blocks["K_im"].shape == (iga.degree_of_freedom, mpm.active_dof)
+    assert blocks["K_mi"].shape == (mpm.active_dof, iga.degree_of_freedom)
+    assert forces["iga"].shape == (iga.degree_of_freedom,)
+    assert forces["mpm"].shape == (mpm.active_dof,)
+    assert np.linalg.norm(forces["mpm"]) > 0.0
+    assert monolithic_matrix.shape == (total_active, total_active)
+    assert monolithic_rhs.shape == (total_active,)

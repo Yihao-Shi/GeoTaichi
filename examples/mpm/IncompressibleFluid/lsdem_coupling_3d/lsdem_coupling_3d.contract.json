@@ -1,0 +1,217 @@
+{
+  "schema_version": 1,
+  "title": "Incompressible MPM and LSDEM sphere volume-fraction IBM validation",
+  "module": "cfdem",
+  "dimension": 3,
+  "coordinate_assumption": "3d",
+  "units": {
+    "length": "m",
+    "mass": "kg",
+    "time": "s"
+  },
+  "physics": {
+    "processes": [
+      "incompressible Newtonian free-surface flow",
+      "fully resolved SDF volume-fraction immersed-boundary coupling",
+      "fluid force and torque on a fixed rigid LSDEM sphere"
+    ],
+    "governing_assumptions": [
+      "fictitious fluid remains inside the moving-particle domain",
+      "mixed density and density-weighted solid fraction follow Lai et al. equations 18-21",
+      "fluid-to-particle resultant follows Lai et al. equations 22-23 and 28",
+      "surface tension is zero"
+    ]
+  },
+  "geometry": {
+    "description": "A radius-0.05 LSDEM sphere fixed inside a 0.4 by 0.2 by 0.24 rectangular tank; the analytical kernel test uses a centered sphere in a unit cube.",
+    "coordinate_frame": "global Cartesian; z upward",
+    "dimensions": {
+      "tank": [0.4, 0.2, 0.24],
+      "water_box_origin": [0.025, 0.025, 0.025],
+      "water_box_size": [0.23, 0.15, 0.16],
+      "sphere_center": [0.23, 0.1, 0.1],
+      "sphere_radius": 0.05
+    }
+  },
+  "discretization": {
+    "grid_or_element_size": [0.01, 0.01, 0.01],
+    "particle_or_template_resolution": "one MPM point per cell; LSDEM SDF template spacing 0.05 before radius scaling and extent 9; sphere D/dx=10",
+    "refinement_plan": "Production-kernel sphere fraction and pressure-resultant checks use D/dx=4, 8, and 16. Lai et al. test settling at D/dx=3 through 18 and report convergence around D/dx>=15; a settling/drag benchmark must therefore repeat the end-to-end model through at least D/dx=16 before a production claim."
+  },
+  "materials": [
+    {
+      "name": "water",
+      "model": "Newtonian",
+      "parameters": {
+        "density_kg_per_m3": 1000.0,
+        "dynamic_viscosity_Pa_s": 0.001,
+        "bulk_modulus_Pa": 2000000.0,
+        "atmospheric_pressure_Pa": 0.0
+      },
+      "provenance": "validation-model values"
+    },
+    {
+      "name": "fixed LSDEM sphere",
+      "model": "rigid body",
+      "parameters": {
+        "density_kg_per_m3": 2500.0
+      },
+      "provenance": "validation-model value"
+    }
+  ],
+  "initial_conditions": {
+    "gravity": [1.0, 0.0, -9.8],
+    "stress_or_pressure": "MPM hydrostatic gravity initialization",
+    "velocity": [0.0, 0.0, 0.0],
+    "state_variables": "single incompressible fluid material"
+  },
+  "boundary_conditions": [
+    {
+      "selection": "all six tank faces",
+      "type": "SolidCell",
+      "velocity": [0.0, 0.0, 0.0]
+    },
+    {
+      "selection": "LSDEM sphere",
+      "type": "fixed translation and rotation"
+    }
+  ],
+  "contact_or_coupling": {
+    "enabled": true,
+    "law": "SDF volume-fraction direct-forcing IBM",
+    "active_pairs": [
+      "Newtonian fluid / LSDEM rigid sphere"
+    ],
+    "parameters": {
+      "moving_solid_cut_cell": false,
+      "mixed_density": true,
+      "fictitious_interior_fluid": true,
+      "particle_contact": false,
+      "wall_contact": false
+    }
+  },
+  "time": {
+    "timestep": 0.0002,
+    "duration": 0.002,
+    "save_interval": 0.001,
+    "stability_policy": "The coupled critical-step check may reduce the requested timestep; reduced PCG/MGPCG comparison runs to 0.0004 s."
+  },
+  "capacities": {
+    "safety_margin": 1.0,
+    "basis": "The single fixed rigid body is an exact count; MPM, SDF-grid, and surface allocations retain separate positive margins.",
+    "estimates": {
+      "mpm_particles": 5520,
+      "lsdem_bodies": 1,
+      "levelset_grid_nodes": 205379,
+      "surface_nodes": 160
+    },
+    "allocations": {
+      "mpm_particles": 20000,
+      "lsdem_bodies": 1,
+      "levelset_grid_nodes": 250000,
+      "surface_nodes": 5000
+    }
+  },
+  "outputs": {
+    "path": "lsdem_coupling_3d",
+    "fields": [
+      "MPM particle position, velocity, and pressure",
+      "MPM cell pressure and type",
+      "LSDEM rigid force and torque"
+    ],
+    "restart": false
+  },
+  "validation": {
+    "observable": "relative error of the SDF-integrated fixed-sphere pressure resultant at D/dx=16",
+    "expectation": 0.0,
+    "tolerance": {
+      "absolute": 0.02
+    },
+    "evidence": "production Taichi SDF, pressure-gradient, and Eq. 28 device functions",
+    "invariants": [
+      {
+        "kind": "volume_balance",
+        "expectation": 0.0,
+        "tolerance": {
+          "absolute": 0.02
+        },
+        "basis": "Eq. 30 is first-order interface reconstruction; 2% is required at D/dx=16."
+      },
+      {
+        "kind": "convergence",
+        "expectation": [0.0, 0.25],
+        "tolerance": {
+          "absolute": 0.0
+        },
+        "basis": "The D/dx=16 relative error must be no more than one quarter of the D/dx=4 error."
+      },
+      {
+        "kind": "benchmark",
+        "expectation": 0.0,
+        "tolerance": {
+          "absolute": 0.0001
+        },
+        "basis": "PCG and MGPCG solve the same discrete pressure system to 1e-10 tolerance; end-state relative L2 differences must remain below 1e-4."
+      }
+    ]
+  },
+  "assumptions": [
+    "The sphere STL is treated as the repository's near-unit-radius LSDEM template and scaled to radius 0.05 m.",
+    "The reduced solver comparison is a numerical equivalence test, not a terminal-settling validation."
+  ],
+  "unresolved": [],
+  "api": {
+    "facade": "dempm",
+    "runtime": {
+      "dim": 3,
+      "arch": "GT_LSDEM_ARCH or cpu",
+      "default_fp": "float64"
+    },
+    "environment": {
+      "GEOTAICHI_REAL_DTYPE": "float64"
+    },
+    "configuration": {
+      "coupling_scheme": "MPDEM",
+      "mpm_solver_type": "Implicit",
+      "mpm_discretization": "FDM",
+      "dem_scheme": "LSDEM"
+    },
+    "solver": {
+      "linear_solver": "GT_LSDEM_LINEAR_SOLVER or MGPCG",
+      "multilevel": 3,
+      "max_iteration_number": 200,
+      "residual_tolerance": 1e-10
+    },
+    "memory": {
+      "max_particle_number": 20000,
+      "max_rigid_body_number": 1,
+      "levelset_grid_number": 250000
+    },
+    "materials": [
+      "Newtonian fluid",
+      "rigid LSDEM material"
+    ],
+    "elements": [
+      "Staggered 3D grid"
+    ],
+    "regions": [
+      "water rectangle"
+    ],
+    "bodies": [
+      "MPM water body",
+      "fixed LSDEM sphere"
+    ],
+    "boundaries": [
+      "six SolidCell tank faces"
+    ],
+    "save_data": {
+      "particle": true,
+      "grid": true,
+      "surface": true,
+      "bounding": true
+    },
+    "run": {
+      "mpm_gravity_field": true
+    }
+  }
+}

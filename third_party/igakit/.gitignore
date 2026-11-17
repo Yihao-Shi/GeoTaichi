@@ -1,0 +1,7 @@
+build
+dist
+install
+__pycache__
+*.pyc
+*.pyo
+.tox

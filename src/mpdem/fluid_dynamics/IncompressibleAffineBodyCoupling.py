@@ -1,0 +1,303 @@
+from src.utils.errors import NonfiniteStateError, SimulationStateError
+
+import taichi as ti
+from src.mpdem.fluid_dynamics.IncompressibleCouplingKernel import (
+    cell_pressure_acceleration_3d,
+    cell_viscous_stress_3d,
+    min_grid_spacing_3d,
+    partitioned_body_share,
+)
+from src.utils.constants import THRESHOLD
+
+
+@ti.data_oriented
+class IncompressibleAffineBodyCoupling:
+    """Partitioned volume-fraction IBM coupling for LevelSet affine bodies."""
+
+    def __init__(self, msims, mscene, mengine, affine_engine):
+        if msims.dimension != 3:
+            raise SimulationStateError("Incompressible MPM--AffineBody coupling currently supports 3D FDM grids only")
+        self.msims = msims
+        self.mscene = mscene
+        self.mengine = mengine
+        self.affine_engine = affine_engine
+        self.affine = affine_engine.operator
+        if self.affine is None or not self.affine.levelset_contact:
+            raise SimulationStateError(
+                "Incompressible MPM--AffineBody coupling requires LevelSet affine-body templates"
+            )
+        self.body_num = int(self.affine.body_num)
+        self.body_bbox_min = ti.Vector.field(3, dtype=float, shape=max(self.body_num, 1))
+        self.body_bbox_max = ti.Vector.field(3, dtype=float, shape=max(self.body_num, 1))
+        self.solid_fraction = None
+        self.solid_fraction_sum = None
+        self.solid_density = None
+        self.solid_velocity_cell = None
+        self.ibm_force_cell = None
+        self.viscous_stress_cell = None
+
+    def attach(self):
+        self.msims.set_fluid_level_set(True)
+        offset = 0 * self.mscene.element.cnum - self.mscene.element.ghost_cell
+        if self.solid_fraction is None:
+            self.solid_fraction = ti.field(dtype=float, shape=self.mscene.element.cnum, offset=offset)
+            self.solid_fraction_sum = ti.field(dtype=float, shape=self.mscene.element.cnum, offset=offset)
+            self.solid_density = ti.field(dtype=float, shape=self.mscene.element.cnum, offset=offset)
+            self.solid_velocity_cell = ti.Vector.field(3, dtype=float, shape=self.mscene.element.cnum, offset=offset)
+            self.ibm_force_cell = ti.Vector.field(3, dtype=float, shape=self.mscene.element.cnum, offset=offset)
+            self.viscous_stress_cell = ti.Matrix.field(3, 3, dtype=float, shape=self.mscene.element.cnum, offset=offset)
+        self.mengine.ibm_solid_fraction = self.solid_fraction
+        self.mengine.ibm_solid_density = self.solid_density
+        self.mengine.ibm_solid_velocity_cell = self.solid_velocity_cell
+        self.mengine.ibm_force_cell = self.ibm_force_cell
+        self.mengine.pressure_coupling_mode = 2
+        self.mengine.pressure_solid_fraction = self.solid_fraction
+        self.mengine.pressure_previous_solid_fraction = self.solid_fraction
+        self.mengine.pressure_solid_density = self.solid_density
+        self.mengine.update_external_ibm_fields = self.update_solid_cells
+        self.mengine.accumulate_external_fluid_force = self.accumulate_pressure_force
+        self.mengine.capture_external_fluid_stress = self.capture_viscous_stress
+        self.mengine.configure_runtime_functions(self.msims, self.mscene)
+
+    @ti.func
+    def _material_coordinate(self, body, position):
+        y0 = self.affine.y[4 * body]
+        frame = self.affine._affine_levelset_matrix(body)
+        return frame.inverse() @ (position - y0)
+
+    @ti.func
+    def _body_density(self, body):
+        return self.affine.body_mass[body] / (
+            self.affine.volume[body] * self.affine._affine_levelset_matrix(body).determinant()
+        )
+
+    @ti.kernel
+    def _invalid_frame_count(self) -> int:
+        count = 0
+        for body in range(self.body_num):
+            determinant = self.affine._affine_levelset_matrix(body).determinant()
+            if ti.math.isnan(determinant) or ti.math.isinf(determinant) or determinant <= 1.0e-12:
+                count += 1
+        return count
+
+    @ti.func
+    def _cell_intersects_body(self, cell, grid_size, body):
+        intersects = True
+        lower = cell.cast(float) * grid_size
+        upper = (cell.cast(float) + 1.0) * grid_size
+        margin = min_grid_spacing_3d(grid_size)
+        for d in ti.static(range(3)):
+            intersects = (
+                intersects
+                and upper[d] >= self.body_bbox_min[body][d] - margin
+                and lower[d] <= self.body_bbox_max[body][d] + margin
+            )
+        return intersects
+
+    @ti.func
+    def _cell_body_fraction(self, cell, grid_size, body):
+        negative = 0.0
+        magnitude = 0.0
+        offset = ti.Vector([0.25, 0.25, 0.25])
+        scale = ti.max(self.affine.body_scale[body], 1.0e-12)
+        for ox, oy, oz in ti.static(ti.ndrange(2, 2, 2)):
+            position = (cell.cast(float) + ti.Vector([ox, oy, oz]).cast(float)) * grid_size
+            material = self._material_coordinate(body, position)
+            template_point = (material - offset) / scale
+            phi, unused_gradient, unused_hessian, inside = self.affine._sample_affine_levelset(body, template_point)
+            distance = scale * phi
+            if not inside:
+                distance = 1.0e6 * min_grid_spacing_3d(grid_size)
+            magnitude += ti.abs(distance)
+            if distance < 0.0:
+                negative += -distance
+        fraction = 0.0
+        if magnitude > 1.0e-12:
+            fraction = ti.min(1.0, ti.max(0.0, negative / magnitude))
+        return fraction
+
+    @ti.kernel
+    def _reset_body_bounds(self):
+        for body in range(self.body_num):
+            self.body_bbox_min[body] = ti.Vector([1.0e30, 1.0e30, 1.0e30])
+            self.body_bbox_max[body] = ti.Vector([-1.0e30, -1.0e30, -1.0e30])
+
+    @ti.kernel
+    def _build_body_bounds(self):
+        for vertex in range(self.affine.vertex_num):
+            body = self.affine.node2body[vertex]
+            for d in ti.static(range(3)):
+                ti.atomic_min(self.body_bbox_min[body][d], self.affine.x[vertex][d])
+                ti.atomic_max(self.body_bbox_max[body][d], self.affine.x[vertex][d])
+
+    @ti.kernel
+    def _update_cell_fields(self, grid_size: ti.types.vector(3, float)):
+        # ponytail: the inner scan targets small robot/link counts; add a
+        # device body-to-cell bin only when many-body IBM becomes a workload.
+        for I in ti.grouped(self.solid_fraction):
+            fraction_sum = 0.0
+            density_sum = 0.0
+            velocity_sum = ti.Vector.zero(float, 3)
+            position = (I.cast(float) + 0.5) * grid_size
+            for body in range(self.body_num):
+                if self._cell_intersects_body(I, grid_size, body):
+                    fraction = self._cell_body_fraction(I, grid_size, body)
+                    if fraction > 1.0e-12:
+                        density = self._body_density(body)
+                        material = self._material_coordinate(body, position)
+                        weights = ti.Vector([1.0 - material.sum(), material[0], material[1], material[2]])
+                        velocity = ti.Vector.zero(float, 3)
+                        for control in ti.static(range(4)):
+                            velocity += weights[control] * self.affine.velocity_y[4 * body + control]
+                        fraction_sum += fraction
+                        density_sum += fraction * density
+                        velocity_sum += fraction * density * velocity
+            if fraction_sum > 1.0e-12:
+                self.solid_fraction[I] = ti.min(1.0, fraction_sum)
+                self.solid_fraction_sum[I] = fraction_sum
+                self.solid_density[I] = density_sum / fraction_sum
+                self.solid_velocity_cell[I] = velocity_sum / density_sum
+            else:
+                self.solid_fraction[I] = 0.0
+                self.solid_fraction_sum[I] = 0.0
+                self.solid_density[I] = 0.0
+                self.solid_velocity_cell[I] = ti.Vector.zero(float, 3)
+
+    @ti.kernel
+    def _capture_viscous_stress(
+        self,
+        active_cnum: ti.types.vector(3, int),
+        grid_size: ti.types.vector(3, float),
+        viscosity: float,
+        node: ti.template(),
+    ):
+        for I in ti.grouped(ti.ndrange(active_cnum[0], active_cnum[1], active_cnum[2])):
+            self.viscous_stress_cell[I] = cell_viscous_stress_3d(I, active_cnum, grid_size, viscosity, node)
+
+    def capture_viscous_stress(self, sims, scene):
+        del sims
+        self._capture_viscous_stress(
+            scene.element.cnum - 2 * scene.element.ghost_cell,
+            scene.element.grid_size,
+            self.mengine.get_single_fluid_mat_props(scene).viscosity,
+            scene.node,
+        )
+
+    @ti.kernel
+    def _accumulate_generalized_force(
+        self,
+        ghost_cell: int,
+        cnum: ti.types.vector(3, int),
+        grid_size: ti.types.vector(3, float),
+        node: ti.template(),
+        mat_props: ti.template(),
+        pressure: ti.template(),
+        surface_tension: ti.template(),
+        cell_type: ti.template(),
+        fluid_sdf: ti.template(),
+        use_free_surface_theta: ti.template(),
+        dt: float,
+        viscous_delta0: ti.template(),
+        viscous_delta1: ti.template(),
+        viscous_delta2: ti.template(),
+    ):
+        active_cnum = cnum - 2 * ghost_cell
+        cell_volume = grid_size[0] * grid_size[1] * grid_size[2]
+        for I in ti.grouped(ti.ndrange(active_cnum[0], active_cnum[1], active_cnum[2])):
+            total_fraction = ti.min(1.0, ti.max(0.0, self.solid_fraction[I]))
+            if total_fraction > THRESHOLD and int(cell_type[I]) == 1:
+                density = self.solid_density[I]
+                if density <= THRESHOLD:
+                    density = mat_props.density
+                acceleration = cell_pressure_acceleration_3d(
+                    I,
+                    active_cnum,
+                    grid_size,
+                    mat_props.density,
+                    mat_props.atmospheric_pressure,
+                    self.solid_fraction,
+                    self.solid_density,
+                    pressure,
+                    surface_tension,
+                    cell_type,
+                    fluid_sdf,
+                    use_free_surface_theta,
+                )
+                acceleration += (
+                    0.5
+                    / dt
+                    * ti.Vector(
+                        [
+                            viscous_delta0[I] + viscous_delta0[I + ti.Vector([1, 0, 0])],
+                            viscous_delta1[I] + viscous_delta1[I + ti.Vector([0, 1, 0])],
+                            viscous_delta2[I] + viscous_delta2[I + ti.Vector([0, 0, 1])],
+                        ]
+                    )
+                )
+                mixed_density = (1.0 - total_fraction) * mat_props.density + total_fraction * density
+                force_density = (
+                    total_fraction * density * acceleration
+                    - ((1.0 - total_fraction) * mat_props.density / mixed_density) * self.ibm_force_cell[I]
+                )
+                stress = self.viscous_stress_cell[I] - pressure[I] * ti.Matrix.identity(float, 3)
+                position = (I.cast(float) + 0.5) * grid_size
+                for body in range(self.body_num):
+                    if self._cell_intersects_body(I, grid_size, body):
+                        fraction = self._cell_body_fraction(I, grid_size, body)
+                        if fraction > 1.0e-12:
+                            force = (
+                                fraction
+                                * self._body_density(body)
+                                / (self.solid_fraction_sum[I] * density)
+                                * force_density
+                                * cell_volume
+                            )
+                            material = self._material_coordinate(body, position)
+                            weights = ti.Vector([1.0 - material.sum(), material[0], material[1], material[2]])
+                            stress_moment = (
+                                total_fraction
+                                * partitioned_body_share(fraction, self.solid_fraction_sum[I])
+                                * cell_volume
+                                * stress
+                                @ self.affine._affine_levelset_matrix(body).inverse().transpose()
+                            )
+                            for control in ti.static(range(4)):
+                                material_gradient = ti.Vector([-1.0, -1.0, -1.0])
+                                if ti.static(control > 0):
+                                    material_gradient = ti.Vector.unit(3, control - 1)
+                                moment_force = stress_moment @ material_gradient
+                                for d in ti.static(range(3)):
+                                    ti.atomic_add(
+                                        self.affine.external_generalized_force[4 * body + control][d],
+                                        weights[control] * force[d] + moment_force[d],
+                                    )
+
+    def update_solid_cells(self, sims, scene):
+        del sims
+        if self._invalid_frame_count():
+            raise NonfiniteStateError(
+                "Incompressible ABD coupling requires finite affine frames with positive determinant"
+            )
+        self.affine._reconstruct_vertices()
+        self._reset_body_bounds()
+        self._build_body_bounds()
+        self._update_cell_fields(scene.element.grid_size)
+
+    def accumulate_pressure_force(self, sims, scene):
+        self.affine.device_clear_external_generalized_force()
+        self._accumulate_generalized_force(
+            scene.element.ghost_cell,
+            scene.element.cnum,
+            scene.element.grid_size,
+            scene.node,
+            self.mengine.get_single_fluid_mat_props(scene),
+            scene.element.cell.pressure,
+            scene.element.cell.surface_tension,
+            scene.element.cell.type,
+            scene.element.cell.fluid_sdf,
+            self.mengine.use_pressure_free_surface_theta,
+            float(sims.dt[None]),
+            self.mengine.coupled_viscous_delta[0],
+            self.mengine.coupled_viscous_delta[1],
+            self.mengine.coupled_viscous_delta[2],
+        )

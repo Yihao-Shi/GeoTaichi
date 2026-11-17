@@ -1,0 +1,581 @@
+from src.utils.MatrixFunction import psd_project_nd
+from src.utils.StepRetry import StepRetryPolicy
+import taichi as ti
+import numpy as np
+import math
+
+import src.mpm.config as config
+from src.contact_detection.continuous_contact_detection.PolynomialCCD import deformation_gradient_ccd
+from src.mpm.engines.direct.ImplicitMPM import ImplicitMPM
+from src.utils.VectorFunction import copy_field
+from src.utils.ScalarFunction import vectorize_id
+from src.utils.errors import MPMConvergenceError
+
+
+@ti.data_oriented
+class ImplicitULMPM(ImplicitMPM):
+    def __init__(self, bodies, dirichlet=None, neumann=None, **kwargs):
+        self.configuration = "UL"
+        self.small_mass_ratio = float(kwargs.get("small_mass_ratio", 0.0))
+        if not math.isfinite(self.small_mass_ratio) or not 0.0 <= self.small_mass_ratio < 1.0:
+            raise ValueError("Direct ULMPM small_mass_ratio must be finite and in [0, 1)")
+        super().__init__(bodies, dirichlet, neumann, **kwargs)
+        self.last_small_mass_treatment = None
+        self.has_lagged_material = bool(getattr(self.material, "requires_lagged_incremental_potential", False))
+        self.material_lagged_tolerance = float(getattr(self.material, "lagged_tolerance", 0.0))
+        self.material_lagged_max_iterations = int(getattr(self.material, "lagged_max_iterations", 1))
+        self.last_material_lagged_error = 0.0
+        self.last_material_lagged_iterations = 0
+
+        # Owned by one residual/tangent assembly at a fixed trial state.
+        self.trial_material_F = ti.Matrix.field(
+            self.material_dimension, self.material_dimension, ti.f64, shape=self.particle.shape[0]
+        )
+        if self.is_finite_strain_plastic:
+            self.trial_material_response = ti.Struct.field(
+                {
+                    "u": ti.types.matrix(3, 3, ti.f64),
+                    "v": ti.types.matrix(3, 3, ti.f64),
+                    "singular": ti.types.vector(3, ti.f64),
+                    "strain": ti.types.vector(3, ti.f64),
+                    "trace": ti.f64,
+                    "dev": ti.types.vector(3, ti.f64),
+                    "norm": ti.f64,
+                    "projected": ti.types.vector(3, ti.f64),
+                    "multiplier": ti.f64,
+                    "region": ti.i32,
+                    "kirchhoff": ti.types.vector(3, ti.f64),
+                    "pk1": ti.types.vector(3, ti.f64),
+                },
+                shape=self.particle.shape[0],
+            )
+
+    @ti.kernel
+    def prepare_material_response(self, grid_disp: ti.template()):
+        for i in range(self.particleNum[0]):
+            deformation = ti.Matrix.identity(ti.f64, self.material_dimension)
+            if ti.static(self.is_axisymmetric):
+                deformation = self.get_axisymmetric_incremental_map(i, grid_disp) @ self.F0[i]
+            elif ti.static(self.is_plane_strain):
+                deformation = self.get_plane_strain_incremental_map(i, grid_disp) @ self.F0[i]
+            else:
+                deformation = (
+                    ti.Matrix.identity(ti.f64, config.DIM) + self.get_displacement_incre(i, grid_disp)
+                ) @ self.F0[i]
+            self.trial_material_F[i] = deformation
+            if ti.static(self.is_finite_strain_plastic):
+                response = self.material._principal_response(i, self.material.trial_elastic_deformation(i, deformation))
+                self.trial_material_response[i].u = response[0]
+                self.trial_material_response[i].v = response[1]
+                self.trial_material_response[i].singular = response[2]
+                self.trial_material_response[i].strain = response[3]
+                self.trial_material_response[i].trace = response[4]
+                self.trial_material_response[i].dev = response[5]
+                self.trial_material_response[i].norm = response[6]
+                self.trial_material_response[i].projected = response[7]
+                self.trial_material_response[i].multiplier = response[8]
+                self.trial_material_response[i].region = response[9]
+                self.trial_material_response[i].kirchhoff = response[10]
+                self.trial_material_response[i].pk1 = response[11]
+
+    @ti.func
+    def _prepared_material_response(self, i):
+        return (
+            self.trial_material_response[i].u,
+            self.trial_material_response[i].v,
+            self.trial_material_response[i].singular,
+            self.trial_material_response[i].strain,
+            self.trial_material_response[i].trace,
+            self.trial_material_response[i].dev,
+            self.trial_material_response[i].norm,
+            self.trial_material_response[i].projected,
+            self.trial_material_response[i].multiplier,
+            self.trial_material_response[i].region,
+            self.trial_material_response[i].kirchhoff,
+            self.trial_material_response[i].pk1,
+        )
+
+    @ti.kernel
+    def _begin_lagged_material_state(self):
+        for particle_id in range(self.particleNum[0]):
+            self.material.begin_lagged_incremental_potential(particle_id)
+
+    def begin_lagged_material_state(self):
+        if getattr(self.material, "is_state_dependent", False):
+            self.material.prepare_step_state(self.F0, int(self.particleNum[0]))
+        if self.has_lagged_material:
+            self._begin_lagged_material_state()
+        self.last_material_lagged_error = 0.0
+        self.last_material_lagged_iterations = 0
+
+    @ti.kernel
+    def _refresh_lagged_material_state(self, grid_disp: ti.template()) -> ti.f64:
+        error = 0.0
+        for particle_id in range(self.particleNum[0]):
+            deformation_gradient = ti.Matrix.identity(ti.f64, self.material_dimension)
+            if ti.static(self.is_axisymmetric):
+                deformation_gradient = (
+                    self.get_axisymmetric_incremental_map(particle_id, grid_disp) @ self.F0[particle_id]
+                )
+            elif ti.static(self.is_plane_strain):
+                deformation_gradient = (
+                    self.get_plane_strain_incremental_map(particle_id, grid_disp) @ self.F0[particle_id]
+                )
+            else:
+                gradu = self.get_displacement_incre(particle_id, grid_disp)
+                deformation_gradient = (ti.Matrix.identity(ti.f64, config.DIM) + gradu) @ self.F0[particle_id]
+            ti.atomic_max(
+                error,
+                self.material.refresh_lagged_incremental_potential(particle_id, deformation_gradient),
+            )
+        return error
+
+    def refresh_lagged_material_state(self, grid_disp):
+        if not self.has_lagged_material:
+            return 0.0
+        self.last_material_lagged_error = float(self._refresh_lagged_material_state(grid_disp))
+        self.last_material_lagged_iterations += 1
+        return self.last_material_lagged_error
+
+    @ti.kernel
+    def grid_reset(self):
+        for i in self.grid:
+            if self.grid[i].m > self.val_lim:
+                self.grid[i].m = 0.0
+                self.grid[i].v = ti.Vector.zero(ti.f64, config.DIM)
+                self.grid[i].a = ti.Vector.zero(ti.f64, config.DIM)
+
+    def mass_vel_acc_p2g(self):
+        self._mass_vel_acc_p2g()
+        if self.small_mass_ratio > 0.0:
+            mean_mass = float(self._mean_grid_mass())
+            threshold = max(self.val_lim, self.small_mass_ratio * mean_mass)
+            self._remove_small_mass_support(threshold)
+            if int(self.invalid_stencil_particle[None]) != 0:
+                raise ValueError("small_mass_ratio removes every support node of a particle")
+            removed = self._remove_small_mass_nodes(threshold)
+            self.last_small_mass_treatment = {
+                "ratio": self.small_mass_ratio,
+                "threshold": threshold,
+                "removed_mass": float(removed[0]),
+                "removed_mass_fraction": float(removed[0]) / max(mean_mass * self.total_background_grid_num, 1e-30),
+                "removed_momentum": [float(removed[d + 1]) for d in range(config.DIM)],
+                "removed_nodes": int(removed[config.DIM + 1]),
+            }
+
+    @ti.kernel
+    def _mean_grid_mass(self) -> ti.f64:
+        mass = 0.0
+        for node in self.grid:
+            mass += self.grid[node].m
+        return mass / self.total_background_grid_num
+
+    @ti.kernel
+    def _remove_small_mass_support(self, threshold: ti.f64):
+        self.invalid_stencil_particle[None] = 0
+        for particle in range(self.particleNum[0]):
+            retained = 0
+            for local in range(self.offset[particle]):
+                node = self.LnID[particle, local]
+                if self.grid[node].m > threshold:
+                    self.LnID[particle, retained] = node
+                    self.shape[particle, retained] = self.shape[particle, local]
+                    self.dshape[particle, retained] = self.dshape[particle, local]
+                    retained += 1
+            self.offset[particle] = retained
+            if retained == 0:
+                ti.atomic_max(self.invalid_stencil_particle[None], particle + 1)
+
+    @ti.kernel
+    def _remove_small_mass_nodes(self, threshold: ti.f64) -> ti.types.vector(config.DIM + 2, ti.f64):
+        removed = ti.Vector.zero(ti.f64, config.DIM + 2)
+        for node in self.grid:
+            if self.grid[node].m <= threshold:
+                removed[0] += self.grid[node].m
+                for d in ti.static(range(config.DIM)):
+                    removed[d + 1] += self.grid[node].v[d]
+                removed[config.DIM + 1] += ti.cast(self.grid[node].m > 0.0, ti.f64)
+                self.grid[node].m = 0.0
+                self.grid[node].v = ti.Vector.zero(ti.f64, config.DIM)
+                self.grid[node].a = ti.Vector.zero(ti.f64, config.DIM)
+        return removed
+
+    @ti.kernel
+    def _mass_vel_acc_p2g(self):
+        for i in range(self.particleNum[0]):
+            body_id = self.particle[i].bodyID
+            goffset = self.body[body_id].goffset
+            grid_num = self.body[body_id].grid_num
+            grid_size = self.body[body_id].grid_size
+            xmin = self.body[body_id].xmin
+
+            p_pos = self.affine_transfer_position(i)
+            p_mass = self.particle[i].m
+            p_vel = self.particle[i].v
+            p_acc = self.particle[i].a
+            for j in range(self.offset[i]):
+                node_id = self.LnID[i, j]
+                shape_fn = self.shape[i, j]
+                v_p2g = p_vel
+                if ti.static(self.velocity_proj):
+                    node_pos = xmin + grid_size * ti.Vector(vectorize_id(node_id - goffset, grid_num))
+                    v_p2g += self.gradv[i] @ (node_pos - p_pos)
+                self.grid[node_id].m += shape_fn * p_mass
+                self.grid[node_id].v += shape_fn * p_mass * v_p2g
+                self.grid[node_id].a += shape_fn * p_mass * p_acc
+
+    def assemble_material_force(self, active_dof, grid_disp, *, reuse_response=False):
+        self._assemble_material_force(active_dof, grid_disp, bool(reuse_response))
+
+    @ti.kernel
+    def _assemble_material_force(self, active_dof: int, grid_disp: ti.template(), reuse_response: ti.template()):
+        for i in range(self.particleNum[0]):
+            deformation_gradient = ti.Matrix.identity(ti.f64, self.material_dimension)
+            if ti.static(reuse_response):
+                deformation_gradient = self.trial_material_F[i]
+            elif ti.static(self.is_axisymmetric):
+                deformation_gradient = self.get_axisymmetric_incremental_map(i, grid_disp) @ self.F0[i]
+            elif ti.static(self.is_plane_strain):
+                deformation_gradient = self.get_plane_strain_incremental_map(i, grid_disp) @ self.F0[i]
+            else:
+                gradu = self.get_displacement_incre(i, grid_disp)
+                deformation_gradient = (ti.Matrix.identity(ti.f64, config.DIM) + gradu) @ self.F0[i]
+            pvol = self.particle[i].vol0
+            dPsi_dF = ti.Vector.zero(ti.f64, self.material_dimension * self.material_dimension)
+            if ti.static(self.is_finite_strain_plastic):
+                if ti.static(reuse_response):
+                    dPsi_dF = (
+                        self.material.total_stress_from_response(
+                            i, deformation_gradient, self._prepared_material_response(i)
+                        )
+                        * pvol
+                    )
+                else:
+                    dPsi_dF = self.material.total_d_psi_div_d_f_at(i, deformation_gradient) * pvol
+            else:
+                dPsi_dF = self.material.d_psi_div_d_f(deformation_gradient) * pvol
+            for j in range(self.offset[i]):
+                grid_id = self.LnID[i, j]
+                dofs = config.DIM * (self.node2dof[grid_id] - 1)
+                dPsi_dx = ti.Vector.zero(ti.f64, config.DIM)
+                if ti.static(self.is_axisymmetric):
+                    for component in ti.static(range(2)):
+                        derivative = self.axisymmetric_d_f_du(i, j, component)
+                        for column, row in ti.static(ti.ndrange(3, 3)):
+                            dPsi_dx[component] += derivative[row, column] * dPsi_dF[row + 3 * column]
+                elif ti.static(self.is_plane_strain):
+                    for component in ti.static(range(2)):
+                        derivative = self.plane_strain_d_f_du(i, j, component)
+                        for column, row in ti.static(ti.ndrange(3, 3)):
+                            dPsi_dx[component] += derivative[row, column] * dPsi_dF[row + 3 * column]
+                elif ti.static(config.DIM == 2):
+                    dF_dx = self.F0[i].transpose() @ self.dshape[i, j]
+                    dPsi_dx[0] = dPsi_dF[0] * dF_dx[0] + dPsi_dF[2] * dF_dx[1]
+                    dPsi_dx[1] = dPsi_dF[1] * dF_dx[0] + dPsi_dF[3] * dF_dx[1]
+                else:
+                    dF_dx = self.F0[i].transpose() @ self.dshape[i, j]
+                    dPsi_dx[0] = dPsi_dF[0] * dF_dx[0] + dPsi_dF[3] * dF_dx[1] + dPsi_dF[6] * dF_dx[2]
+                    dPsi_dx[1] = dPsi_dF[1] * dF_dx[0] + dPsi_dF[4] * dF_dx[1] + dPsi_dF[7] * dF_dx[2]
+                    dPsi_dx[2] = dPsi_dF[2] * dF_dx[0] + dPsi_dF[5] * dF_dx[1] + dPsi_dF[8] * dF_dx[2]
+                for d in ti.static(range(config.DIM)):
+                    self.rhs[dofs + d] -= dPsi_dx[d]
+
+    def assemble_stiffness_matrix(
+        self,
+        active_dof: int,
+        grid_disp,
+        project_spd=False,
+        exact_plastic_tangent=False,
+    ):
+        self.assemble_stiffness_matrix_hash(
+            active_dof,
+            grid_disp,
+            project_spd=project_spd,
+            exact_plastic_tangent=exact_plastic_tangent,
+        )
+
+    def assemble_stiffness_matrix_hash(
+        self,
+        active_dof: int,
+        grid_disp,
+        project_spd=False,
+        exact_plastic_tangent=False,
+        reuse_response=False,
+    ):
+        """Assemble the exact or projected-Newton material tangent.
+
+        Finite-strain plasticity always uses the symmetric PSD tangent of the
+        projected-Newton method.  Other models retain the exact
+        tangent unless the caller explicitly requests projection.
+        """
+        self._assemble_stiffness_matrix_hash(
+            active_dof,
+            grid_disp,
+            bool(project_spd) or (self.is_finite_strain_plastic and not bool(exact_plastic_tangent)),
+            bool(reuse_response),
+        )
+
+    @ti.kernel
+    def _assemble_stiffness_matrix_hash(
+        self,
+        active_dof: int,
+        grid_disp: ti.template(),
+        project_spd: ti.template(),
+        reuse_response: ti.template(),
+    ):
+        self.hash_matrix.raw_non_diag_count[0] = self.particleNum[0] * self.stiffness_stencil_stride
+        for i in range(self.particleNum[0]):
+            self.invalidate_particle_stiffness_slots(i)
+            pvol = self.particle[i].vol0
+            deformation_gradient = ti.Matrix.identity(ti.f64, self.material_dimension)
+            if ti.static(reuse_response):
+                deformation_gradient = self.trial_material_F[i]
+            elif ti.static(self.is_axisymmetric):
+                deformation_gradient = self.get_axisymmetric_incremental_map(i, grid_disp) @ self.F0[i]
+            elif ti.static(self.is_plane_strain):
+                deformation_gradient = self.get_plane_strain_incremental_map(i, grid_disp) @ self.F0[i]
+            else:
+                gradu = self.get_displacement_incre(i, grid_disp)
+                deformation_gradient = (ti.Matrix.identity(ti.f64, config.DIM) + gradu) @ self.F0[i]
+            d2Psi_d2F = ti.Matrix.zero(
+                ti.f64,
+                self.material_dimension * self.material_dimension,
+                self.material_dimension * self.material_dimension,
+            )
+            if ti.static(self.is_finite_strain_plastic):
+                if ti.static(reuse_response):
+                    d2Psi_d2F = (
+                        self.material.total_tangent_from_response(
+                            i, deformation_gradient, self._prepared_material_response(i)
+                        )
+                        * pvol
+                    )
+                else:
+                    d2Psi_d2F = self.material.total_d2_psi_div_d2_f_at(i, deformation_gradient) * pvol
+            else:
+                d2Psi_d2F = self.material.d2_psi_div_d2_f(deformation_gradient) * pvol
+            if ti.static(project_spd):
+                d2Psi_d2F = psd_project_nd(d2Psi_d2F)
+            for j in range(self.offset[i]):
+                base_jnode = self.LnID[i, j]
+                base_joffset = self.node2dof[base_jnode] - 1
+                for k in range(self.offset[i]):
+                    base_knode = self.LnID[i, k]
+                    base_koffset = self.node2dof[base_knode] - 1
+                    d2Psi_dx2 = ti.Matrix.zero(ti.f64, config.DIM, config.DIM)
+                    if ti.static(self.is_axisymmetric):
+                        d2Psi_dx2 = self.axisymmetric_local_stiffness(i, j, k, d2Psi_d2F)
+                    elif ti.static(self.is_plane_strain):
+                        d2Psi_dx2 = self.plane_strain_local_stiffness(i, j, k, d2Psi_d2F)
+                    else:
+                        dF_dx1 = self.F0[i].transpose() @ self.dshape[i, j]
+                        dF_dx2 = self.F0[i].transpose() @ self.dshape[i, k]
+                        d2Psi_dx2 = self.local_stiffness(dF_dx1, dF_dx2, d2Psi_d2F)
+                    raw_index = i * self.stiffness_stencil_stride + j * self.stiffness_stencil_width + k
+                    self.add_fixed_stiffness_block_entry(raw_index, base_joffset, base_koffset, d2Psi_dx2)
+
+    @ti.kernel
+    def advent_particles(self, coeff_pic: ti.f64):
+        dt = self.TIdt[None]
+        for i in range(self.particleNum[0]):
+            body_id = self.particle[i].bodyID
+            goffset = self.body[body_id].goffset
+            grid_num = self.body[body_id].grid_num
+            grid_size = self.body[body_id].grid_size
+            xmin = self.body[body_id].xmin
+
+            p_pos = self.affine_transfer_position(i)
+            acc = ti.Vector.zero(ti.f64, config.DIM)
+            vel = ti.Vector.zero(ti.f64, config.DIM)
+            disp = ti.Vector.zero(ti.f64, config.DIM)
+            Bp = ti.Matrix.zero(ti.f64, config.DIM, config.DIM)
+            Dp = ti.Matrix.zero(ti.f64, config.DIM, config.DIM)
+            gradu = ti.Matrix.zero(ti.f64, config.DIM, config.DIM)
+            radial_displacement = 0.0
+            v0 = self.particle[i].v
+            for j in range(self.offset[i]):
+                grid_id = self.LnID[i, j]
+                dofs = config.DIM * (self.node2dof[grid_id] - 1)
+                shape_fn = self.shape[i, j]
+                grid_v = self.grid[grid_id].v
+                grid_a = self.grid[grid_id].a
+                acc += shape_fn * grid_a
+                vel += shape_fn * grid_v
+                grid_displacement = ti.Vector([self.grid_disp[dofs + d] for d in ti.static(range(config.DIM))])
+                disp += shape_fn * grid_displacement
+                gradu += grid_displacement.outer_product(self.dshape[i, j])
+                if ti.static(self.is_axisymmetric):
+                    radial_displacement += shape_fn * grid_displacement[0]
+                if ti.static(self.velocity_proj):
+                    dpos = xmin + grid_size * ti.Vector(vectorize_id(grid_id - goffset, grid_num)) - p_pos
+                    Bp += shape_fn * grid_v.outer_product(dpos)
+                    Dp += shape_fn * dpos.outer_product(dpos)
+            v1 = (1.0 - coeff_pic) * (v0 + acc * dt) + coeff_pic * vel
+            self.particle[i].v = v1
+            self.particle[i].a = acc
+            self.particle[i].x += disp
+            trial_deformation_gradient = ti.Matrix.identity(ti.f64, self.material_dimension)
+            if ti.static(self.is_axisymmetric):
+                incremental = ti.Matrix.identity(ti.f64, 3)
+                for row, column in ti.static(ti.ndrange(2, 2)):
+                    incremental[row, column] += gradu[row, column]
+                radius = p_pos[0] - ti.static(self.axis_offset)
+                incremental[2, 2] += radial_displacement / ti.max(radius, 1.0e-30)
+                trial_deformation_gradient = incremental @ self.F0[i]
+            elif ti.static(self.is_plane_strain):
+                incremental = ti.Matrix.identity(ti.f64, 3)
+                for row, column in ti.static(ti.ndrange(2, 2)):
+                    incremental[row, column] += gradu[row, column]
+                trial_deformation_gradient = incremental @ self.F0[i]
+            else:
+                trial_deformation_gradient = (ti.Matrix.identity(ti.f64, config.DIM) + gradu) @ self.F0[i]
+            if ti.static(self.is_finite_strain_plastic):
+                self.F0[i] = self.material.commit_total_state(i, trial_deformation_gradient)
+            else:
+                self.F0[i] = trial_deformation_gradient
+            if ti.static(self.velocity_proj):
+                self.gradv[i] = self.affine_transfer_matrix(Bp, Dp, grid_size)
+
+    @ti.kernel
+    def material_ccd(self, slackness: ti.f64) -> ti.f64:
+        alpha = 1.0
+        for i in range(self.particleNum[0]):
+            map_dimension = ti.static(self.material_dimension)
+            current_gradu = ti.Matrix.zero(ti.f64, map_dimension, map_dimension)
+            increment_gradu = ti.Matrix.zero(ti.f64, map_dimension, map_dimension)
+            current_radial = 0.0
+            increment_radial = 0.0
+            for j in range(self.offset[i]):
+                grid_id = self.LnID[i, j]
+                dofs = config.DIM * (self.node2dof[grid_id] - 1)
+                current_displacement = ti.Vector([self.grid_disp[dofs + d] for d in ti.static(range(config.DIM))])
+                increment_displacement = ti.Vector(
+                    [self.incre_resolution[dofs + d] for d in ti.static(range(config.DIM))]
+                )
+                for row, column in ti.static(ti.ndrange(config.DIM, config.DIM)):
+                    current_gradu[row, column] += current_displacement[row] * self.dshape[i, j][column]
+                    increment_gradu[row, column] += increment_displacement[row] * self.dshape[i, j][column]
+                if ti.static(self.is_axisymmetric):
+                    current_radial += self.shape[i, j] * current_displacement[0]
+                    increment_radial += self.shape[i, j] * increment_displacement[0]
+
+            if ti.static(self.is_axisymmetric):
+                radius = self.particle[i].x[0] - ti.static(self.axis_offset)
+                current_gradu[2, 2] = current_radial / ti.max(radius, 1.0e-30)
+                increment_gradu[2, 2] = increment_radial / ti.max(radius, 1.0e-30)
+
+            # UL kinematics at a line-search trial are
+            # F(alpha) = (I + grad(u_k) + alpha grad(p)) F_n.  det(F_n)
+            # is a positive constant, so its first inversion time is exactly
+            # the first root for the two spatial maps below.  As in IPC/TL,
+            # stop with (1-slackness) of the current determinant remaining.
+            current_map = ti.Matrix.identity(ti.f64, map_dimension) + current_gradu
+            solution = deformation_gradient_ccd(current_map, increment_gradu, slackness)
+            ti.atomic_min(alpha, solution)
+        return alpha
+
+    @ti.kernel
+    def get_material_energy(self, grid_disp: ti.template()):
+        for i in range(self.particleNum[0]):
+            pvol = self.particle[i].vol0
+            deformation_gradient = ti.Matrix.identity(ti.f64, self.material_dimension)
+            if ti.static(self.is_axisymmetric):
+                deformation_gradient = self.get_axisymmetric_incremental_map(i, grid_disp) @ self.F0[i]
+            elif ti.static(self.is_plane_strain):
+                deformation_gradient = self.get_plane_strain_incremental_map(i, grid_disp) @ self.F0[i]
+            else:
+                gradu = self.get_displacement_incre(i, grid_disp)
+                deformation_gradient = (ti.Matrix.identity(ti.f64, config.DIM) + gradu) @ self.F0[i]
+            if ti.static(self.is_finite_strain_plastic):
+                self.energy[None] += self.material.total_strain_energy_density_at(i, deformation_gradient) * pvol
+            else:
+                self.energy[None] += self.material.psi(deformation_gradient) * pvol
+
+    def get_degree_of_freedom(self, **kwargs):
+        return int(kwargs.get("scale", 0.2) * config.DIM * self.total_background_grid_num)
+
+    def _solve_lagged_material_inner(self, verbose):
+        iter_num = 0
+        residual = 1.0
+        while iter_num < self.max_iters:
+            self.matrix_reset()
+            self.hash_matrix.reset_system()
+            self.assemble_inertia_force(self.active_dof, self.damping, self.gravity, self.integration, self.grid_disp)
+            self.assemble_material_force(self.active_dof, self.grid_disp)
+            self.assemble_stiffness_matrix_hash(
+                self.active_dof,
+                self.grid_disp,
+                project_spd=self.project_pd,
+            )
+            if config.DYNAMIC:
+                self.assemble_mass_matrix_hash()
+
+            self.assemble_neumann_step()
+            self.apply_dirichlet_step(self.active_dof)
+
+            try:
+                solve_result = self.solve_hash_system(self.active_dof)
+            except RuntimeError as exception:
+                if not StepRetryPolicy.is_recoverable_nonlinear_failure(exception):
+                    raise
+                raise MPMConvergenceError("Direct implicit ULMPM linear solve failed to converge") from exception
+            residual = solve_result["solution_inf_norm"] / self.dt
+            if residual < self.tol:
+                self.update_grid_disp(self.active_dof, 1.0)
+                copy_field(self.active_dof, self.grid_disp, self.grid_disp_temp)
+                break
+
+            success = self.line_search(self.active_dof, verbose)
+            if not success:
+                break
+            iter_num += 1
+        if residual >= self.tol:
+            raise MPMConvergenceError(
+                f"Direct implicit ULMPM did not converge: " f"residual={residual:.6e} after {iter_num} iterations"
+            )
+        return {"iterations": int(iter_num), "residual": float(residual)}
+
+    def substep(self, verbose=True):
+        if getattr(self.material, "is_state_dependent", False):
+            raise NotImplementedError("StateDependentDruckerPrager requires FEM-MPM, IGA-MPM or Direct MPM-ABD IPC")
+        self.mass_vec.fill(0)
+        self.grid_reset()
+        self.compute_shapefn()
+        self.mass_vel_acc_p2g()
+        self.find_active_node()
+        self.prefix_sum_executor.run(self.node2dof)
+        self.active_dof = self.set_active_dof()
+        self.assemble_traction_step()
+        self.compute_nodal_vel_acc()
+        if config.DYNAMIC:
+            self.compute_mass_list(self.integration)
+
+        self.grid_disp.fill(0)
+        self.begin_lagged_material_state()
+        result = None
+        material_converged = not self.has_lagged_material
+        outer_limit = self.material_lagged_max_iterations if self.has_lagged_material else 1
+        for _ in range(outer_limit):
+            result = self._solve_lagged_material_inner(verbose)
+            if not self.has_lagged_material:
+                material_converged = True
+                break
+            if self.refresh_lagged_material_state(self.grid_disp) <= self.material_lagged_tolerance:
+                material_converged = True
+                break
+        if not material_converged:
+            raise MPMConvergenceError(
+                "Direct implicit ULMPM lagged material state did not converge: "
+                f"error={self.last_material_lagged_error:.6e} after "
+                f"{self.material_lagged_max_iterations} iterations"
+            )
+        self.update_nodal_acc(self.integration)
+        self.advent_particles(self.coeffPIC)
+        if verbose:
+            print(
+                f"Iteration {result['iterations']}, residual: {result['residual']}, "
+                f"material_lagged_iterations: {self.last_material_lagged_iterations}"
+            )
+        result["material_lagged_iterations"] = self.last_material_lagged_iterations
+        result["material_lagged_error"] = self.last_material_lagged_error
+        return result

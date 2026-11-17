@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "task_status": "completed",
+  "finite_state": true,
+  "capacity_overflow": false,
+  "solver_converged": true,
+  "timestep_consistent": true,
+  "command": "PYTHONPATH=/Volumes/MyWork/GeoTaichi /opt/anaconda3/envs/geotaichi/bin/python -m pytest -q tests/verification/mpdem/test_incompressible_coupling_kernels.py tests/verification/mpdem/test_incompressible_ibm_coupling.py tests/unit/coupling/test_explicit_runtime_binding.py -k 'incompressible or moving_lsdem or mpdem_optional'; PYTHONPATH=/Volumes/MyWork/GeoTaichi /opt/anaconda3/envs/geotaichi/bin/python -m pytest -q tests/verification/mpdem/test_incompressible_lsdem_end_to_end.py",
+  "backend": "Apple Metal arm64 (arch=cpu requested and mapped by GeoTaichi)",
+  "precision": "float64",
+  "production_parameters": false,
+  "checks": [
+    {
+      "name": "fixed-sphere pressure resultant at D/dx=16",
+      "kind": "contract_observable",
+      "observed": 0.005071174338279404,
+      "expected": 0.0,
+      "tolerance": {
+        "absolute": 0.02
+      },
+      "evidence": "tests/verification/mpdem/test_incompressible_coupling_kernels.py::test_sdf_fraction_and_eq28_resultant_converge_for_sphere"
+    },
+    {
+      "name": "fixed-sphere SDF volume at D/dx=16",
+      "kind": "volume_balance",
+      "observed": 0.005071174338279404,
+      "expected": 0.0,
+      "tolerance": {
+        "absolute": 0.02
+      },
+      "evidence": "D/dx=4,8,16 relative volume errors were 0.0800797274, 0.0190439113, and 0.00507117434 in the production Eq. 30 device function."
+    },
+    {
+      "name": "SDF volume/resultant refinement ratio",
+      "kind": "convergence",
+      "observed": 0.0633265684694607,
+      "expected": [0.0, 0.25],
+      "tolerance": {
+        "absolute": 0.0
+      },
+      "evidence": "fine-grid D/dx=16 error divided by coarse D/dx=4 error"
+    },
+    {
+      "name": "aligned-grid PCG/MGPCG end-state agreement",
+      "kind": "benchmark",
+      "observed": 1.1431115020633955e-06,
+      "expected": 0.0,
+      "tolerance": {
+        "absolute": 0.0001
+      },
+      "evidence": "tests/verification/mpdem/test_incompressible_lsdem_end_to_end.py; maximum relative L2 difference among saved pressure, velocity, position, rigid force, and torque fields"
+    }
+  ]
+}

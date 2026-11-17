@@ -1,0 +1,24 @@
+{
+  "passed": true,
+  "checks": {
+    "finite_state": true,
+    "fixed_base": true,
+    "rotating_top": true,
+    "positive_quadrature_jacobian": true,
+    "physical_time": true,
+    "rotation_history_resolved": true,
+    "full_rotation_path": true
+  },
+  "solver": "implicit",
+  "backend": "Arch.arm64",
+  "precision": "float64",
+  "frames": 31,
+  "max_bottom_error_m": 0.0,
+  "max_top_error_m": 4.440892098500626e-16,
+  "max_time_error_s": 9.992007221626409e-15,
+  "minimum_quadrature_jacobian": 0.8674425077943528,
+  "max_rotation_error_degrees": 1.1368683772161603e-13,
+  "measured_rotation_degrees": 449.99999999999994,
+  "maximum_interior_displacement_m": 0.8474082644471469,
+  "limitations": "Checks saved frames, not every substep; no mesh convergence or static torque benchmark."
+}

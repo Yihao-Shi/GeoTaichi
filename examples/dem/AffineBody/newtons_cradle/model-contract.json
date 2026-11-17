@@ -1,0 +1,262 @@
+{
+  "schema_version": 1,
+  "title": "Five-particle ABD Newton cradle",
+  "module": "dem",
+  "dimension": 3,
+  "coordinate_assumption": "3d",
+  "units": {
+    "length": "m",
+    "mass": "kg",
+    "time": "s"
+  },
+  "physics": {
+    "processes": [
+      "gravity-driven pendula",
+      "frictionless IPC impact"
+    ],
+    "governing_assumptions": [
+      "Finite-stiffness affine rigidity and revolute hinges; massless suspension arms",
+      "Average-acceleration Newmark [0.5,0.25,0.5], matching the completed12s reference; the README animation shows only its first5 impacts. Finite penalties are not calibrated steel"
+    ]
+  },
+  "geometry": {
+    "description": "Five equal near-spherical closed 2562-vertex,5120-triangle meshes with independent fixed pivots; first ball released from20 degrees",
+    "coordinate_frame": "x horizontal row, y hinge axis, z upward",
+    "dimensions": {
+      "radius": 0.05,
+      "pendulum_length": 0.5,
+      "initial_surface_gap": 0.0022,
+      "release_angle_degrees": 20
+    }
+  },
+  "discretization": {
+    "grid_or_element_size": null,
+    "particle_or_template_resolution": "2562 vertices and5120 triangles per ball; icosphere_subdiv4.obj normalized to radius0.05m",
+    "refinement_plan": "The1GPa, dt1e-4, Newmark[.5,.25,.5] CUDA/f64 run completed12s with8measured returns and passed case acceptance; temporal and mesh convergence remain separate checks."
+  },
+  "materials": [
+    {
+      "name": "identical pendulum balls",
+      "model": "ABD rigidity penalty",
+      "parameters": {
+        "density_kg_m3": 7800,
+        "rigidity_modulus_Pa": 1000000000.0
+      },
+      "provenance": "Standard demonstration assumptions; rigidity penalty is not a calibrated steel constitutive law"
+    }
+  ],
+  "initial_conditions": {
+    "gravity": [
+      0,
+      0,
+      -9.81
+    ],
+    "stress_or_pressure": 0,
+    "velocity": [
+      0,
+      0,
+      0
+    ],
+    "state_variables": "Undeformed, zero velocity; first center elevated on its pivot circle"
+  },
+  "boundary_conditions": [
+    {
+      "type": "Revolute",
+      "body": "each ball independently",
+      "world_axis": [
+        0,
+        1,
+        0
+      ],
+      "body2": -1,
+      "position_stiffness_N_m": 10000000.0,
+      "axis_stiffness_N_m": 10000000.0,
+      "motor_stiffness": 0,
+      "damping": 0
+    }
+  ],
+  "contact_or_coupling": {
+    "enabled": true,
+    "law": "BarrierIPC triangle PT/EE with BVH and CCD",
+    "active_pairs": [
+      "all distinct balls"
+    ],
+    "parameters": {
+      "Dhat": 0.002,
+      "BarrierStiffness": 2e+16,
+      "Friction": 0,
+      "ContactDampingStiffness": 0
+    }
+  },
+  "time": {
+    "timestep": 0.0001,
+    "duration": 12.0,
+    "save_interval": 0.005,
+    "stability_policy": "Fixed nominal step; any nonlinear or linear failure aborts; no silent timestep retry",
+    "newmark": [
+      0.5,
+      0.25,
+      0.5
+    ]
+  },
+  "capacities": {
+    "safety_margin": 2,
+    "estimates": {
+      "bodies": 5,
+      "vertices": 12810,
+      "faces": 25600,
+      "unique_body_pairs": 10,
+      "projected_control_blocks": 400,
+      "edges": 38400
+    },
+    "allocations": {
+      "max_affine_body_number": 5,
+      "surface_node_number": 12810,
+      "max_point_triangle_pairs": 32768,
+      "max_edge_edge_pairs": 65536,
+      "affine_contact_block_capacity": 1024
+    }
+  },
+  "outputs": {
+    "path": "OutputData/newtons_cradle",
+    "fields": [
+      "NPZ and VTU ball trajectories",
+      "VTU massless suspension segments",
+      "CSV center positions and velocities",
+      "solver_failure.json on failure",
+      "validation_summary.json and validation-evidence.json"
+    ],
+    "restart": false
+  },
+  "validation": {
+    "observable": "README-reference horizontal transfer; target8 visible returns, at least7 accepted",
+    "expectation": [
+      0,
+      1
+    ],
+    "tolerance": 0,
+    "evidence": "CUDA/f64 reference completed12s with8measured returns; maximum certified energy ratio1.0000000145170336, final contact-free retention0.9766770564490858. This is case acceptance, not a temporal/mesh convergence certificate.",
+    "invariants": [
+      {
+        "kind": "contract_observable",
+        "expectation": [
+          0,
+          1
+        ],
+        "tolerance": 0,
+        "basis": "User accepts the README reference effect and excludes vertical vibration from the horizontal transfer criterion; retain the5% horizontal diagnostic and require7-8visible returns."
+      },
+      {
+        "kind": "analytical",
+        "expectation": [
+          0,
+          0.0002
+        ],
+        "tolerance": 0,
+        "basis": "Hinge anchor drift below 0.04% of the 0.5 m arm; penalty support mg/k is about 4e-6 m"
+      },
+      {
+        "kind": "benchmark",
+        "expectation": [
+          0,
+          1e-05
+        ],
+        "tolerance": 0,
+        "basis": "Symmetric x-z pendulum motion must stay within 10 micrometers of its y-plane"
+      },
+      {
+        "kind": "energy_balance",
+        "expectation": [
+          0,
+          1.000001
+        ],
+        "tolerance": 0,
+        "basis": "No energy creation beyond1e-6 relative numerical allowance; dissipation is permitted. Full potential is checked only at certified contact-free frames; kinetic+gravity in every frame."
+      }
+    ],
+    "refinement_gate": {
+      "energy_growth_ratio_max": 1.000001,
+      "energy_retention_lower_bound": null,
+      "first_and_middle_residual_speed_ratio_max": 0.05,
+      "outgoing_motion": "visible positive outgoing end-ball displacement>0.01m",
+      "scope": "Diagnostic only; do not block later independent cases after failed acceptance."
+    },
+    "first_transfer_gate": {
+      "first_ball_speed_ratio_max": 0.05,
+      "middle_ball_speed_ratio_max": 0.05,
+      "measurement": "Outgoing snapshot when last ball first crosses x=rest_x+0.01 m with positive x velocity within the first reference half-period; striker/middle ratios are maximum absolute horizontal center speeds over the subsequent observed forward-flight window. Energy is evaluated separately only at certified contact-free frames.",
+      "basis": "User target is near one-ball-to-one-ball transmission; tighter than old sanity gate and independent of total energy conservation.",
+      "outgoing_observable": "End ball advances>0.01m with positive horizontal speed; amplitude/velocity may decay."
+    },
+    "minimum_full_oscillations": 7,
+    "round_trip_counter": {
+      "body": "leftmost, initially raised ball",
+      "event": "negative-to-positive horizontal velocity crossing on the raised side",
+      "minimum_excursion_m": 0.01,
+      "minimum_time_between_returns": "0.5 * reference_period",
+      "required_for_long_run": 7,
+      "basis": "User accepts decay; count1cm visible returns, rejecting small residual wobble."
+    },
+    "normalized_error_definition": "max(striker_horizontal_ratio/0.05,middle_horizontal_ratio/0.05); for long runs also7/max(completed_round_trips,1). All checks are reported; failure does not block independent cube/bunny cases."
+  },
+  "assumptions": [
+    "5 equal particles, radius 0.05 m, suspension length 0.5 m, release 20 degrees",
+    "2.2 mm initial surface gap keeps the IPC initial geometry strictly feasible and outside activation",
+    "No friction, physical damping, motor, or servo; hinge axes fixed in world",
+    "The collision and all nonlinear/linear numerical work remain in Taichi fields; NumPy is used only for setup and saved-output diagnostics",
+    "Near-unit peak outgoing speed is not itself an energy balance; finite facets, simultaneous contacts and finite penalties can distribute energy among several balls",
+    "Case-specific regularization: kappa2e16, hinge position/axis penalties1e7, original ABD rigidity1e9. Mesh refinement removes large faceting-induced residual transfer; increasing rigidity alone did not fix it. Numerical solver tolerances and zero physical damping/friction are preserved.",
+    "Displayed README animation: first5impacts over0-3.605s from the completed12s/8returns reference; Newmark[.5,.25,.5], dt1e-4, rigidity1GPa, imageSHA2567057505b14a6e8f5a2986984255cbde6233ee7bcb310f2949e3fd605f1b2ee10. The2TPa short trials do not replace this validated reference."
+  ],
+  "unresolved": [
+    "Temporal and mesh convergence of the regularized contact model remain unverified.",
+    "At2TPa, dt1e-4 failed the energy standard despite100x tighter Newton/PCG; dt5e-5 passed a controlled first-impact comparison, but a fresh12s2TPa trajectory remains unverified."
+  ],
+  "api": {
+    "facade": "dem",
+    "runtime": {
+      "dim": 3,
+      "arch": "gpu",
+      "default_fp": "float64",
+      "device_memory_GB": 2,
+      "offline_cache": false
+    },
+    "environment": {
+      "GEOTAICHI_REAL_DTYPE": "float64"
+    },
+    "configuration": {
+      "scheme": "AffineBody",
+      "search": "BVH",
+      "gravity": [
+        0,
+        0,
+        -9.81
+      ],
+      "domain": [
+        1.6,
+        0.6,
+        1.2
+      ]
+    },
+    "solver": {
+      "Timestep": 0.0001,
+      "SimulationTime": 12.0,
+      "SaveInterval": 0.005
+    },
+    "memory": {
+      "max_material_number": 1,
+      "max_affine_body_number": 5,
+      "surface_node_number": 12810,
+      "max_point_triangle_pairs": 32768,
+      "max_edge_edge_pairs": 65536,
+      "affine_contact_block_capacity": 1024
+    },
+    "materials": [],
+    "elements": [],
+    "regions": [],
+    "bodies": [],
+    "boundaries": [],
+    "save_data": {},
+    "run": {}
+  }
+}

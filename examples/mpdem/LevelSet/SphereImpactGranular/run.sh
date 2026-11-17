@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+cd "$(dirname "$0")"
+python sphere.py -rho 700 -mu 0.3 -l 0.05 -model 0
+python sphere.py -rho 700 -mu 0.3 -l 0.1 -model 0
+python sphere.py -rho 700 -mu 0.3 -l 0.2 -model 0
+python sphere.py -rho 700 -mu 0.5 -l 0.05 -model 0
+python sphere.py -rho 700 -mu 0.5 -l 0.1 -model 0
+python sphere.py -rho 700 -mu 0.5 -l 0.2 -model 0
+python sphere.py -rho 2200 -mu 0.3 -l 0.05 -model 0
+python sphere.py -rho 2200 -mu 0.3 -l 0.1 -model 0
+python sphere.py -rho 2200 -mu 0.3 -l 0.2 -model 0
+python sphere.py -rho 2200 -mu 0.5 -l 0.05 -model 0
+python sphere.py -rho 2200 -mu 0.5 -l 0.1 -model 0
+python sphere.py -rho 2200 -mu 0.5 -l 0.2 -model 0
+
+python sphere.py -rho 700 -mu 0.3 -l 0.05 -model 1
+python sphere.py -rho 700 -mu 0.3 -l 0.1 -model 1
+python sphere.py -rho 700 -mu 0.3 -l 0.2 -model 1
+python sphere.py -rho 700 -mu 0.5 -l 0.05 -model 1
+python sphere.py -rho 700 -mu 0.5 -l 0.1 -model 1
+python sphere.py -rho 700 -mu 0.5 -l 0.2 -model 1
+python sphere.py -rho 2200 -mu 0.3 -l 0.05 -model 1
+python sphere.py -rho 2200 -mu 0.3 -l 0.1 -model 1
+python sphere.py -rho 2200 -mu 0.3 -l 0.2 -model 1
+python sphere.py -rho 2200 -mu 0.5 -l 0.05 -model 1
+python sphere.py -rho 2200 -mu 0.5 -l 0.1 -model 1
+python sphere.py -rho 2200 -mu 0.5 -l 0.2 -model 1

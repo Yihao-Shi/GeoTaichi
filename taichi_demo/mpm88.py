@@ -1,0 +1,91 @@
+import taichi as ti
+import random
+ti.init(arch=ti.cpu)
+
+dim = 2
+n_particles = 16384
+n_grid = 128
+dx = 1/n_grid
+inv_dx = 1/dx
+dt = 2.0e-4
+p_vol = (dx*0.5)**2
+p_rho = 1
+p_mass = p_vol*p_rho
+E = 400
+
+x = ti.Vector.field(dim, dtype=ti.f32, shape=n_particles)
+v = ti.Vector.field(dim, dtype=ti.f32, shape=n_particles)
+C = ti.Matrix.field(dim, dim, dtype=ti.f32, shape=n_particles)
+J = ti.field(dtype=ti.f32, shape=n_particles)
+grid_v = ti.Vector.field(dim, dtype=ti.f32, shape=(n_grid, n_grid))
+grid_m = ti.field(dtype=ti.f32, shape=(n_grid, n_grid))
+gravity = ti.Vector([0, -9.8])
+
+
+@ti.kernel
+def substep():
+    for p in x:
+        base = (x[p]*inv_dx-0.5).cast(int)
+        fx = x[p]*inv_dx-base.cast(float)
+        w = [0.5*(1.5-fx)**2, 0.75-(fx-1)**2, 0.5*(fx-0.5)**2]
+        stress = -dt*p_vol*(J[p]-1)*4*inv_dx*inv_dx*E
+        affine = ti.Matrix([[stress, 0], [0, stress]])+p_mass*C[p]
+        for i in ti.static(range(3)):
+            for j in ti.static(range(3)):
+                offset = ti.Vector([i, j])
+                dpos = (offset.cast(float)-fx)*dx
+                weight = w[i][0]*w[j][1]
+                grid_v[base+offset] += weight*(p_mass*v[p]+affine@dpos)
+                grid_m[base+offset] += weight*p_mass
+
+        
+
+    for i, j in grid_m:
+        if grid_m[i, j]>0:
+            bound = 3
+            inv_m = 1/grid_m[i, j]
+            grid_v[i, j] = inv_m*grid_v[i, j]
+            grid_v[i, j] += dt*gravity
+            if i < bound and grid_v[i, j][0] < 0:
+                grid_v[i, j][0] = 0
+            if i > n_grid-bound and grid_v[i, j][0] > 0:
+                grid_v[i, j][0] = 0
+            if j < bound and grid_v[i, j][1] < 0:
+                grid_v[i, j][1] = 0
+            if j > n_grid-bound and grid_v[i, j][1] > 0:
+                grid_v[i, j][1] = 0
+            
+
+    for p in x:
+        base = (x[p]*inv_dx-0.5).cast(int)
+        fx = x[p]*inv_dx-base.cast(float)
+        w = [0.5*(1.5-fx)**2, 0.75-(fx-1)**2, 0.5*(fx-0.5)**2]
+        new_v = ti.Vector.zero(ti.f32, 2)
+        new_C = ti.Matrix.zero(ti.f32, 2, 2)
+        for i in ti.static(range(3)):
+            for j in ti.static(range(3)):
+                dpos = ti.Vector([i, j]).cast(float)-fx
+                g_v = grid_v[base+ti.Vector([i, j])]
+                weight = w[i][0]*w[j][1]
+                new_v += weight*g_v
+                new_C += 4*weight*g_v.outer_product(dpos)*inv_dx
+        v[p] = new_v
+        x[p] += dt*v[p]
+        J[p] *= 1+dt*new_C.trace()
+        C[p] = new_C
+
+
+for i in range(n_particles):
+    x[i] = [random.random()*0.5, random.random()*0.6]
+    v[i] = [0, 0]
+    J[i] = 1
+
+gui = ti.GUI("MPM88", (512, 512))
+for frame in range(200000):
+    for s in range(500):
+        grid_v.fill([0, 0])
+        grid_m.fill(0)
+        substep()
+    gui.clear(0x112F41)
+    gui.circles(x.to_numpy(), radius=1.5, color=0x068587)
+    gui.show()
