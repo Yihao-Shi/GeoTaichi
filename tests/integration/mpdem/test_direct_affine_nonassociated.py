@@ -46,6 +46,7 @@ def _case(
     fixed_displacement=None,
     mpm_newmark=None,
     particle_count=1,
+    joint=None,
 ):
     from geotaichi import MPDEM, polyhedron
 
@@ -229,6 +230,8 @@ def _case(
     )
     if mpm_newmark is not None:
         mpm.direct_solver["newmark"] = mpm_newmark
+    if joint is not None:
+        dem.add_joint(joint)
     coupling.add_essentials()
     coupling.mpm.enginer.initial_simulation()
     coupling.mpm.enginer.prepare_step_device()

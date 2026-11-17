@@ -927,13 +927,27 @@ class SceneManager(object):
         self.affine_joints.append(dict(joint))
 
     def set_affine_joint_target_angle(self, joint_id, target_angle):
-        joint_id = int(joint_id)
-        if joint_id < 0 or joint_id >= len(self.affine_joints):
-            raise IndexError(f"AffineBody joint ID {joint_id} is out of range")
-        target_angle = float(target_angle)
-        if not np.isfinite(target_angle):
-            raise ValueError("AffineBody joint target angle must be finite")
-        self.affine_joints[joint_id]["TargetAngle"] = target_angle
+        self.set_affine_joint_target_angles([joint_id], [target_angle])
+
+    def set_affine_joint_target_angles(self, joint_ids, target_angles):
+        ids = np.asarray(joint_ids)
+        angles = np.asarray(target_angles, dtype=np.float64)
+        if ids.ndim != 1 or angles.ndim != 1 or ids.size != angles.size:
+            raise ValueError("joint IDs and target angles must be equal-length vectors")
+        if ids.size and (ids.dtype.kind not in "iu" or np.any(ids < 0) or np.any(ids >= len(self.affine_joints))):
+            raise IndexError("AffineBody joint IDs must be integers in range")
+        if np.unique(ids).size != ids.size or not np.isfinite(angles).all():
+            raise ValueError("joint IDs must be unique and target angles must be finite")
+        ids = np.ascontiguousarray(ids, dtype=np.int32)
+        angles = np.ascontiguousarray(angles)
+        for joint_id in ids:
+            spec = self.affine_joints[joint_id]
+            kind = str(spec.get("JointType", spec.get("joint_type", spec.get("Type", "Revolute"))))
+            if kind.strip().replace("_", "").replace("-", "").lower() not in ("revolute", "hinge"):
+                raise ValueError("Motor targets require a Revolute joint")
+        for joint_id, angle in zip(ids, angles):
+            self.affine_joints[joint_id]["TargetAngle"] = float(angle)
+        return ids, angles
 
     def add_affine_contact_property(self, materialID1, materialID2, property, dType="all"):
         dtype_key = str(dType).replace("_", "-").lower()

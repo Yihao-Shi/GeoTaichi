@@ -41,6 +41,12 @@ PCG uses device Cholesky, while exact-adjoint BiCGSTAB uses pivoted device LU.
 The complete mixed-contact matrix and the configured convergence tests remain
 unchanged; this preconditioner does not decouple the physical solve.
 
+FEM--ABD shares the ABD Revolute/Fixed/Spherical joint model. Its supported
+`differentiable(steps)` tape records motor targets per step, restores current
+targets after backward replay, and returns time-indexed target gradients in
+radians and degrees. See the [joint/control contract](../dem/README.md#robot-control-and-differentiable-trajectories)
+for units, shapes and the independent-command derivative convention.
+
 Thus “soft particle” describes a contact role, not a new bulk element. Its
 bulk response is still determined by the FEM row selected above.
 

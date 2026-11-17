@@ -211,6 +211,7 @@ class AffineBodySolver(Solver):
         print("#", " End Affine Body Simulation ".center(67, "="), "#", "\n")
 
     def core(self, scene: SceneManager):
+        self.run_preintegration_callbacks()
         self.sims.timer.begin("Affine body step")
         self.engine.step(self.sims, scene)
         self.sims.timer.end("Affine body step")

@@ -13,6 +13,7 @@ of contact laws.
 - Level-set discrete element method (LSDEM) for irregular particles: [polydisperse packing](../../examples/dem/LevelSet/GranularAssemble/polydisperse/packing_generate.py), [screw and nut](../../examples/dem/LevelSet/ParticleParticle/screw_and_nut.py), and [rotating drum](../../examples/dem/LevelSet/RotatingDrum/rotating_drum.py).
 - Affine body dynamics (ABD) with incremental potential contact (IPC): [sphere–wall collision](../../examples/dem/AffineBody/sphere_wall_collision/sphere_wall_collision.py) and [inclined-plane sliding](../../examples/dem/AffineBody/cube_incline_sliding/cube_incline_sliding.py).
 - ABD joints and motors: [multilink arm](../../examples/dem/AffineBody/robot_multilink_arm/robot_multilink_arm.py).
+- Pure ABD grasp/lift/hold/release with a free payload: [minimal gripper](../../examples/dem/AffineBody/robot_grasp/README.md).
 - Level-set MPM soft particles: [rigid–soft contact](../../examples/mpdem/LevelSet/SoftRigid/rigid_soft_sphere_drop_box.py).
 
 ## Package layout
@@ -76,13 +77,24 @@ complete 12-DOF principal block with device Cholesky, retaining coupling between
 control points. This resolves stiff body modes that separate 3x3 control-point
 blocks can converge on very slowly; the configured PCG and Newton tolerances
 remain authoritative.
-After two rejected energy trials, lagged ABD retries the search once with a
-quadratic upper bound of the frozen Coulomb potential. Concavity of
+The exact ABD adjoint also retains those body blocks. If its unprojected
+tangent has indefinite principal blocks, the existing BiCGSTAB fallback uses
+pivoted LU on the same blocks; the adjoint does not silently downgrade to
+separate control-point blocks. Linear residual tolerances remain explicit.
+After the configured Newton backtracking search is exhausted or an accepted
+energy trial stagnates despite a resolved descent prediction, lagged ABD
+retries the search once with a quadratic upper bound of the frozen Coulomb
+potential. Switching after only two rejected trials can stall near the sliding
+threshold; ordinary Newton first gets its full search budget to reach the
+regularized transition. Concavity of
 `f0(sqrt(t))` supplies the additional radial search curvature in sliding
 contacts. Energy and gradient are unchanged. The accepted iterate is assembled
 with the original Hessian again, so Newton stopping and the physical adjoint
 tangent retain their original definitions. This search safeguard changes no
 friction parameters or convergence thresholds.
+The [scalar near-threshold regression](../../tests/unit/dem/test_affine_solver_regressions.py)
+and the [grasp/release example](../../examples/dem/AffineBody/robot_grasp/README.md)
+exercise this search behavior.
 The [Newton cradle example](../../examples/dem/AffineBody/newtons_cradle/README.md)
 compares integration dissipation and checks time-step refinement before its
 queued formal run.
@@ -937,6 +949,115 @@ Angles are degrees at the public API. `CollideConnected=False` is the default:
 the connected pair is removed from body--body IPC, but each link still collides
 with other links and walls. `set_joint_target_angle(...)` may update a motor
 after initialization.
+
+For time-dependent drives in `dem.run`, use
+`preintegration_function=controller` and decorate the controller with
+`geotaichi.python_callback` when it calls Python setup/control APIs such as
+`set_joint_target_angles`. ABD executes it before each step, including the
+initial physical/JIT step. The `function` callback runs after the accepted
+solve; the solver increments its clock afterward, so endpoint commands and
+observations use `current_time + delta`. Default callbacks remain Taichi
+kernels. Neither callback changes the nonlinear solver's numerical method.
+
+`add_joint` returns the zero-based joint ID. `JointType="Fixed"` constrains
+the anchor, axis and one transverse director, locking relative rigid motion;
+`JointType="Spherical"` constrains only the anchor. For these two types,
+`WorldAxis` defaults to `[0, 0, 1]`; motors, angular limits and angular damping
+are rejected. All three types use soft quadratic constraints, with errors
+set by load and stiffness. They share the existing Taichi assembly and are
+available in standalone ABD, Direct MPM--ABD, and FEM--ABD coupling.
+
+`set_joint_target_angles(jointIDs, target_angles)` updates a subset of revolute
+motors between steps. Both arguments are equal-length vectors; IDs must be
+unique integers and angles finite degrees. Invalid batches leave every target
+unchanged. `get_joint_states()` requires an initialized engine and returns
+arrays in joint-ID order: `joint_type`, `angle` (degrees in `[-180, 180]`),
+`angular_velocity` (degrees/s), `target_angle` (degrees), `anchor_error` (m),
+and `axis_error` (dimensionless director difference). Body--body angles measure
+side `BodyID2` relative to `BodyID1`; world joints measure `BodyID1` relative
+to the world frame. These angles are relative to the initial joint frames.
+The angular speed is the analytic derivative of that coordinate, including
+affine deformation. Fixed/spherical joints report zero angle and speed;
+`axis_error` is unconstrained for spherical joints. The scalar angle wraps at
+180 degrees and does not count accumulated turns. Motor targets enter through
+sine/cosine and are not restricted to that reporting interval. This does not
+establish reliable continuous-wheel operation: repeated turns, phase tracking
+and any angle-limit interaction still need a dedicated regression. There is
+currently no public prescribed-angular-speed or joint-torque drive.
+
+### Robot control and differentiable trajectories
+
+The same joint model can drive an arm, an excavator linkage or a floating-base
+leg mechanism. Use Direct MPM--ABD IPC for continuum soil interaction; see
+[coupled trajectory adjoints](../mpdem/README.md#continuum-mpm--abd-trajectory-adjoints).
+Keep a walking robot's base free and let contact carry support loads.
+
+```python
+trajectory = dem.differentiable_affine(steps=len(commands))
+for target_angles in commands:  # degrees, one vector per fixed time step
+    dem.set_joint_target_angles(motor_ids, target_angles)
+    trajectory.step()
+    feedback = dem.get_joint_states()
+gradients = trajectory.backward(terminal_control_gradient)
+du = gradients["joint_target_angle_degrees_per_step"]
+```
+
+Standalone ABD, Direct MPM--ABD and FEM--ABD tapes record the exact motor
+targets for each accepted step. Their backward results include
+`joint_target_angle_radians_per_step` and
+`joint_target_angle_degrees_per_step`, shaped `(recorded_steps, joint_count)`.
+The existing `joint_target_angle_radians`/`joint_target_angle_degrees` arrays
+sum these rows: they differentiate a common offset added to all recorded
+targets. Unactuated and non-revolute columns are zero. Backward replay restores
+the caller's current targets even if they changed after the last forward step.
+The derivatives treat commands as independent inputs; differentiation through
+a feedback controller requires the controller's own chain rule. Stiffness,
+damping, gravity and other model parameters must stay fixed during recording
+and replay. Existing backward-Euler, contact-branch and friction restrictions
+still apply. Legacy LSMPM Soft-Affine multi-step replay remains unavailable.
+
+The [arm example](../../examples/dem/AffineBody/robot_multilink_arm/robot_multilink_arm.py)
+accepts `--differentiable --motion-amplitude 5 --steps 20 --output-dir /tmp/arm`
+to exercise changing targets and save their per-step gradients.
+Focused evidence is in
+[joint/control tests](../../tests/unit/dem/test_affine_robot_controls.py) and
+[plastic coupling gradients](../../tests/integration/mpdem/test_direct_affine_trajectory_gradients.py).
+
+The minimum application model depends on the requested observable. Prescribed
+joint motion can represent an ideal actuator without an electric motor,
+hydraulic cylinder or powertrain model. Current angle motors are compliant
+position servos; integrating a speed command into their target angle supplies
+a position reference, not an exactly enforced angular-speed constraint.
+
+| Application | Minimum model for the task | Detail to add only when required |
+| --- | --- | --- |
+| Arm grasping an object | Links with mass/inertia, joints and a supplied motion sequence; an actuated gripper; a dynamically free object; frictional gripper/object/environment contact | A prismatic joint only if the chosen gripper needs one; IK for Cartesian commands, URDF import, motor/electrical models and effort caps for hardware feasibility |
+| Excavator digging soil | Bucket and driven boom/stick/bucket links; plastic MPM soil with appropriate parameters; two-way bucket--soil contact and friction; a fixed base for stationary digging, or a free supported base when machine motion matters | Explicit cylinders and hydraulics for pressure/flow/actuator studies; detailed bucket linkage, tracks or powertrain when those are the observable |
+| Wheeled vehicle on soil | Free chassis and wheels with mass/inertia; wheel-axis joints; a rotation drive; plastic MPM soil and two-way wheel--soil contact/friction; steering only for turning | Suspension for ride/load-transfer studies; deformable tires when tire compliance matters; torque limits/powertrain for power-limited mobility |
+| Robot walking on soil | Free base, leg/foot geometry and inertias, driven joints, a supplied gait that maintains support/balance, and two-way foot--soil frictional contact | Sensor emulation, adaptive balance control, MPC/RL, actuator detail and effort caps according to the task |
+
+For vehicle mobility and walking, let chassis/base translation follow the
+computed forces; prescribing it would remove the soil-dependent slip,
+sinkage or loss of support being investigated. A speed-driven wheel can still
+slip or spin while the vehicle barely moves. For grasping, let the payload
+follow contact forces rather than attaching it to the hand when testing grip.
+Rigid wheels and feet suffice for a first soil-interaction model. Detailed
+hydraulics, deformable tires, IK, URDF and virtual sensors are not prerequisites
+for the supplied-motion tasks above.
+
+Current shared foundations cover joints, angle-reference sequences, contact
+and the supported coupled state/control VJPs. The next application evidence
+should be a grip/lift test, a driven bucket soil sweep, repeated wheel turns
+with a free chassis, and a free-base gait on soil. The existing small derivative
+tests do not establish those application outcomes. Add a torque input or
+bounded servo when the question includes stalling, motor feasibility or
+available traction at a given actuator limit. Prescribed-motion runs instead
+answer what soil/contact response that imposed motion requires.
+
+Angle motors are director springs, not ideal torque sources. Angle limits are
+soft penalties. Contact switches and angle-wrap crossings are nonsmooth, so
+trajectory derivatives are local to the recorded branches; these capabilities
+do not establish successful excavation or stable walking.
 
 Implicit AffineBody and LSMPM Soft-Affine IPC runs accept
 `enable_step_retry`, `step_retry_max_retries`, `step_retry_reduction`, and

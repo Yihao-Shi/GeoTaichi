@@ -2,6 +2,7 @@ from src.sdf.arbitrarily import arbitrarily
 from src.sdf.polyhedron import polyhedron
 from src.sdf.surfacefunction import surfacefunction
 from src.utils.SolverRuntime import StepSchedule
+from src.utils.RuntimeHook import python_callback
 
 # Copyright (c) 2023, multiscale geomechanics lab, Zhejiang University
 # This file is from the GeoTaichi project, released under the GNU General Public License v3.0

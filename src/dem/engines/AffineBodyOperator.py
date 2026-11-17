@@ -391,6 +391,7 @@ class TaichiAffineBodyOperator(object):
         self.external_generalized_force = ti.Vector.field(3, dtype=float, shape=max(self.control_num, 1))
         joint_capacity = max(self.joint_num, 1)
         self.joint_body = ti.Vector.field(2, dtype=ti.i32, shape=joint_capacity)
+        self.joint_kind = ti.field(dtype=ti.i32, shape=joint_capacity)
         self.joint_anchor_weight = ti.Vector.field(4, dtype=float, shape=(joint_capacity, 2))
         self.joint_axis_weight = ti.Vector.field(4, dtype=float, shape=(joint_capacity, 2))
         self.joint_u_weight = ti.Vector.field(4, dtype=float, shape=(joint_capacity, 2))
@@ -523,6 +524,50 @@ class TaichiAffineBodyOperator(object):
         if not np.isfinite(target_angle):
             raise ValueError("AffineBody joint target angle must be finite")
         self.joint_target_angle[joint_id] = np.deg2rad(target_angle)
+
+    @ti.kernel
+    def set_joint_target_angles(self, ids: ti.types.ndarray(), angles: ti.types.ndarray()):
+        for index in range(ids.shape[0]):
+            self.joint_target_angle[ids[index]] = angles[index] * (np.pi / 180.0)
+
+    def get_joint_states(self):
+        values = np.empty((self.joint_num, 5), dtype=np.float64)
+        if self.joint_num:
+            self._measure_joint_states(values)
+        if not np.isfinite(values).all():
+            raise SimulationStateError("AffineBody joint state is nonfinite")
+        result = dict(zip(("angle", "angular_velocity", "target_angle", "anchor_error", "axis_error"), values.T))
+        result["joint_type"] = np.array(["Revolute", "Fixed", "Spherical"])[self.joint_kind_np[: self.joint_num]]
+        return result
+
+    @ti.kernel
+    def _measure_joint_states(self, values: ti.types.ndarray()):
+        for joint in range(self.joint_num):
+            angle = self._joint_angle_compact(joint, self.y)
+            speed = 0.0
+            anchor = ti.Vector.zero(float, 3)
+            axis = ti.Vector.zero(float, 3)
+            for local in range(8):
+                side, control = local // 4, local % 4
+                body = self.joint_body[joint][side]
+                if body >= 0:
+                    speed += self._joint_angle_gradient_compact(joint, local, self.y).dot(
+                        self.velocity_y[body * 4 + control]
+                    )
+                    sign = 1.0 if side == 0 else -1.0
+                    anchor += sign * self.joint_anchor_weight[joint, side][control] * self.y[body * 4 + control]
+                    axis += sign * self.joint_axis_weight[joint, side][control] * self.y[body * 4 + control]
+            if self.joint_body[joint][1] < 0:
+                anchor -= self.joint_world_anchor[joint]
+                axis -= self.joint_world_axis[joint]
+            values[joint, 0] = angle * (180.0 / np.pi)
+            values[joint, 1] = speed * (180.0 / np.pi)
+            values[joint, 2] = self.joint_target_angle[joint] * (180.0 / np.pi)
+            values[joint, 3] = anchor.norm()
+            values[joint, 4] = axis.norm()
+            if self.joint_kind[joint] != 0:
+                values[joint, 0] = 0.0
+                values[joint, 1] = 0.0
 
     def _allocate_friction_contact_fields(self, prefix):
         fields = {
@@ -929,6 +974,7 @@ class TaichiAffineBodyOperator(object):
         self.joint_num = len(joints)
         capacity = max(self.joint_num, 1)
         self.joint_body_np = np.full((capacity, 2), -1, dtype=np.int32)
+        self.joint_kind_np = np.zeros(capacity, dtype=np.int32)
         self.joint_anchor_weight_np = np.zeros((capacity, 2, 4), dtype=np.float64)
         self.joint_axis_weight_np = np.zeros((capacity, 2, 4), dtype=np.float64)
         self.joint_u_weight_np = np.zeros((capacity, 2, 4), dtype=np.float64)
@@ -972,8 +1018,10 @@ class TaichiAffineBodyOperator(object):
                 raise TypeError("AffineBody joint must be a dictionary")
             joint_type = str(get(spec, ("JointType", "joint_type", "Type"), "Revolute"))
             joint_type = joint_type.strip().replace("_", "").replace("-", "").lower()
-            if joint_type not in ("revolute", "hinge"):
-                raise ValueError("AffineBody currently supports only Revolute joints")
+            kinds = {"revolute": 0, "hinge": 0, "fixed": 1, "spherical": 2, "ball": 2}
+            if joint_type not in kinds:
+                raise ValueError("AffineBody supports Revolute, Fixed, and Spherical joints")
+            self.joint_kind_np[joint_id] = kinds[joint_type]
             body_a = int(get(spec, ("BodyID1", "body_id1", "ParentBodyID")))
             body_b = int(get(spec, ("BodyID2", "body_id2", "ChildBodyID"), -1))
             if body_a < 0 or body_a >= self.body_num:
@@ -982,7 +1030,10 @@ class TaichiAffineBodyOperator(object):
                 raise ValueError(f"AffineBody joint {joint_id} BodyID2 is invalid")
 
             anchor = np.asarray(get(spec, ("WorldAnchor", "world_anchor", "Anchor")), dtype=np.float64).reshape(3)
-            axis = np.asarray(get(spec, ("WorldAxis", "world_axis", "Axis")), dtype=np.float64).reshape(3)
+            axis = np.asarray(
+                get(spec, ("WorldAxis", "world_axis", "Axis"), [0.0, 0.0, 1.0] if kinds[joint_type] else missing),
+                dtype=np.float64,
+            ).reshape(3)
             if not np.all(np.isfinite(anchor)) or not np.all(np.isfinite(axis)):
                 raise ValueError(f"AffineBody joint {joint_id} anchor and axis must be finite")
             axis_norm = float(np.linalg.norm(axis))
@@ -1004,6 +1055,10 @@ class TaichiAffineBodyOperator(object):
             limit_stiffness = float(
                 get(spec, ("LimitStiffness", "limit_stiffness"), base_stiffness if limits is not None else 0.0)
             )
+            if kinds[joint_type] and (
+                motor_stiffness != 0.0 or damping != 0.0 or limits is not None or target_angle != 0.0
+            ):
+                raise ValueError("Motor targets, angle limits, and angular damping require a Revolute joint")
             values = np.array(
                 [
                     base_stiffness,
@@ -1120,6 +1175,7 @@ class TaichiAffineBodyOperator(object):
         self.body_material.from_numpy(body_material_np)
         if self.joint_num > 0:
             self.joint_body.from_numpy(self.joint_body_np)
+            self.joint_kind.from_numpy(self.joint_kind_np)
             self.joint_anchor_weight.from_numpy(self.joint_anchor_weight_np)
             self.joint_axis_weight.from_numpy(self.joint_axis_weight_np)
             self.joint_u_weight.from_numpy(self.joint_u_weight_np)
@@ -2213,6 +2269,8 @@ class TaichiAffineBodyOperator(object):
                         adjoint[component] = self.linear_x[12 * body + 3 * control + component]
                     derivative += adjoint.dot(self._joint_linear_weight(joint_id, 2, angle, local) * residual)
             self.joint_damping_vjp[joint_id] = -self.dt_device[None] * derivative
+            if self.joint_kind[joint_id] != 0:
+                self.joint_damping_vjp[joint_id] = 0.0
 
     def differentiate_step_parameters(self):
         self._differentiate_gravity_parameter()
@@ -2244,15 +2302,29 @@ class TaichiAffineBodyOperator(object):
                 need_matrix,
                 matrix_target,
             )
-            self._scatter_joint_linear_term(
-                joint_id,
-                1,
-                0.0,
-                axis_target,
-                self.scale_device[None] * self.joint_axis_stiffness[joint_id],
-                need_matrix,
-                matrix_target,
-            )
+            if self.joint_kind[joint_id] != 2:
+                self._scatter_joint_linear_term(
+                    joint_id,
+                    1,
+                    0.0,
+                    axis_target,
+                    self.scale_device[None] * self.joint_axis_stiffness[joint_id],
+                    need_matrix,
+                    matrix_target,
+                )
+            if self.joint_kind[joint_id] == 1:
+                target = ti.Vector.zero(float, 3)
+                if body_b < 0:
+                    target = self.joint_world_u[joint_id]
+                self._scatter_joint_linear_term(
+                    joint_id,
+                    2,
+                    0.0,
+                    target,
+                    self.scale_device[None] * self.joint_axis_stiffness[joint_id],
+                    need_matrix,
+                    matrix_target,
+                )
 
     @ti.kernel
     def _assemble_joint_motors(self, need_matrix: ti.template(), matrix_target: ti.template()):

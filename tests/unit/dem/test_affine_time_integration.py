@@ -18,6 +18,7 @@ def build_body(
     friction_mode="lagged",
     viscous_friction=0.0,
     joint_damping=None,
+    joint=None,
 ):
     from geotaichi import DEM, polyhedron
 
@@ -87,6 +88,8 @@ def build_body(
                 Damping=joint_damping,
             )
         )
+    if joint is not None:
+        dem.add_joint(joint)
     dem.add_essentials()
     dem.enginer.initialize(dem.sims, dem.scene)
     return dem

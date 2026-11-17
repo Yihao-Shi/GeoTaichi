@@ -1705,6 +1705,22 @@ gradients = trajectory.backward({
 })
 ```
 
+For driven mechanisms, add joints with `coupling.dem.add_joint(...)` before
+initialization, and call
+`coupling.dem.set_joint_target_angles(motor_ids, angles_in_degrees)` before
+each `trajectory.step()`. Revolute, Fixed and Spherical joints reuse the same
+ABD operator in the monolithic soil--mechanism solve. Joint feedback comes
+from `coupling.dem.get_joint_states()`; see the
+[joint and control contract](../dem/README.md#robot-control-and-differentiable-trajectories).
+The device tape also records each step's motor targets. Backward returns
+`joint_target_angle_radians_per_step` and
+`joint_target_angle_degrees_per_step` of shape `(recorded_steps, joint_count)`;
+the corresponding arrays without `_per_step` are their sums. These gradients
+include the MPM response through contact, transfers and supported plastic
+history. Replay restores the targets present on entry to `backward()`,
+including commands set for a future step. Controls are independent inputs;
+feedback-controller derivatives are not included automatically.
+
 The trajectory reuses the original monolithic forward solve and solves the
 unprojected coupled transpose system for each executed friction outer iterate
 before each replayed state commit. The

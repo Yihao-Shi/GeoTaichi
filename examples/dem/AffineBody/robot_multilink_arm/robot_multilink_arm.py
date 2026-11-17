@@ -6,6 +6,7 @@ angle limit, and disables collision only for the connected pair.  VTU/NPZ
 frames are written below ``GT_ROBOT_SAVE_PATH`` (default ``robot_multilink``).
 """
 
+import argparse
 import json
 import os
 import sys
@@ -20,6 +21,24 @@ if str(ROOT) not in sys.path:
 
 from geotaichi import DEM, init, polyhedron
 
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument(
+    "--differentiable", action="store_true", default=bool(int(os.environ.get("GT_ROBOT_DIFFERENTIABLE", "0")))
+)
+parser.add_argument("--steps", type=int, default=int(os.environ.get("GT_ROBOT_STEPS", "400")))
+parser.add_argument("--output-dir", default=os.environ.get("GT_ROBOT_SAVE_PATH", "robot_multilink"))
+parser.add_argument(
+    "--motion-amplitude",
+    type=float,
+    default=0.0,
+    help="Sinusoidal target amplitude in degrees; requires --differentiable",
+)
+args = parser.parse_args()
+if args.steps <= 0 or not np.isfinite(args.motion_amplitude) or abs(args.motion_amplitude) > 40.0:
+    parser.error("steps must be positive and motion amplitude must be finite within [-40, 40] degrees")
+if args.motion_amplitude and not args.differentiable:
+    parser.error("--motion-amplitude requires --differentiable")
+
 LINK_COUNT = int(os.environ.get("GT_ROBOT_LINK_COUNT", "7"))
 if LINK_COUNT < 2:
     raise ValueError("GT_ROBOT_LINK_COUNT must be at least 2")
@@ -28,10 +47,10 @@ LINK_Z = 0.14
 BASE_X = 0.55
 BASE_Y = 0.9
 DT = float(os.environ.get("GT_ROBOT_DT", "1.0e-3"))
-STEPS = int(os.environ.get("GT_ROBOT_STEPS", "400"))
+STEPS = args.steps
 SAVE_INTERVAL = float(os.environ.get("GT_ROBOT_SAVE_INTERVAL", "0.02"))
-SAVE_PATH = os.environ.get("GT_ROBOT_SAVE_PATH", "robot_multilink")
-DIFFERENTIABLE = bool(int(os.environ.get("GT_ROBOT_DIFFERENTIABLE", "0")))
+SAVE_PATH = args.output_dir
+DIFFERENTIABLE = args.differentiable
 FRICTION_MAX_ITERATIONS = int(os.environ.get("GT_ROBOT_FRICTION_MAX_ITERATIONS", "20"))
 MESH = ROOT / "assets/mesh/AffineBody/robot_link.obj"
 
@@ -157,7 +176,12 @@ else:
     operator = dem.enginer.operator
     trajectory = dem.differentiable_affine(steps=STEPS)
     started = time.perf_counter()
-    for _ in range(STEPS):
+    joint_ids = np.arange(LINK_COUNT - 1)
+    for step in range(STEPS):
+        targets = 14.0 * np.sin(0.8 * joint_ids) + args.motion_amplitude * np.sin(
+            2.0 * np.pi * step / STEPS + 0.8 * joint_ids
+        )
+        dem.set_joint_target_angles(joint_ids, targets)
         trajectory.step()
     forward_seconds = time.perf_counter() - started
 
@@ -189,6 +213,8 @@ else:
         "initial_position_vjp_norm": float(np.linalg.norm(gradient["initial_position"])),
         "initial_velocity_vjp_norm": float(np.linalg.norm(gradient["initial_velocity"])),
         "joint_target_vjp": gradient["joint_target_angle_degrees"].tolist(),
+        "joint_target_vjp_per_step": gradient["joint_target_angle_degrees_per_step"].tolist(),
+        "joint_angles_degrees": dem.get_joint_states()["angle"].tolist(),
         "joint_damping_vjp": gradient["joint_damping"].tolist(),
     }
     output = Path(SAVE_PATH)

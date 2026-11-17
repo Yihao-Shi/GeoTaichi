@@ -350,6 +350,7 @@ class AffineBodyEngine(object):
                     solver="PCG",
                     matrix_symmetric=True,
                     device_reduction=True,
+                    preconditioner_group_size=4,
                 )
         self.operator.bind_hash_triplet(self.adjoint_triplet)
         self.adjoint_triplet.reset_system()
@@ -366,10 +367,8 @@ class AffineBodyEngine(object):
         self.adjoint_triplet.finalize_taichi_assembly()
         forward_residual = float(self.operator.device_gradient_inf_norm())
         forward_solver = self.adjoint_triplet.solver
-        forward_group_size = self.adjoint_triplet.preconditioner_group_size
         self.adjoint_triplet.solver = "PCG"
-        # The exact adjoint tangent can be indefinite; retain its BiCGSTAB fallback.
-        self.adjoint_triplet.preconditioner_group_size = 1
+        # Keep body blocks; indefinite blocks use the existing pivoted-LU BiCGSTAB fallback.
         try:
             result = self.adjoint_triplet.solve_flat_system(
                 self.operator.linear_rhs,
@@ -384,7 +383,6 @@ class AffineBodyEngine(object):
             )
         finally:
             self.adjoint_triplet.solver = forward_solver
-            self.adjoint_triplet.preconditioner_group_size = forward_group_size
         if not result["converged"]:
             raise NonlinearSolveError(
                 "AffineBody adjoint device solve did not converge: "
@@ -1073,21 +1071,29 @@ class AffineBodyEngine(object):
                 and int(self.operator.device_gradient_has_nonfinite()) == 0
                 and accepts_monotone_energy(energy, trial_energy, alpha, slope)
             ):
+                roundoff = 1e-12 * max(abs(energy), abs(trial_energy))
+                if (
+                    not _friction_majorized
+                    and -alpha * slope > roundoff
+                    and energy - trial_energy <= roundoff
+                    and self.operator.has_lagged_friction_contacts()
+                ):
+                    # A flat energy reflection can cycle across zero slip despite a resolved descent prediction.
+                    break
                 # The accepted energy trial already prepared this exact geometry.
                 self._assemble_system_device(sims, need_matrix=True, reuse_neighbor=True)
                 self._record_line_search(True, alpha, backtracks)
                 return trial_energy
-            if backtracks == 1 and not _friction_majorized and self.operator.has_lagged_friction_contacts():
-                # Sliding friction has no radial Newton curvature; avoid cycling across zero slip.
-                self.operator.device_restore_line_search_base()
-                energy = self._assemble_system_device(sims, need_matrix=True, friction_majorizer=True)
-                self._solve_hash_direction_device(sims)
-                self._clamp_device_direction(sims.affine_max_step)
-                if float(self.operator.device_gradient_direction_dot()) > 0.0:
-                    self.operator.device_scale_direction(-1.0)
-                return AffineBodyEngine._line_search_cuda(self, sims, energy, _friction_majorized=True)
             alpha *= 0.5
         self.operator.device_restore_line_search_base()
+        if not _friction_majorized and self.operator.has_lagged_friction_contacts():
+            # Let Newton reach the stick/slip transition before using the slower quadratic upper bound.
+            energy = self._assemble_system_device(sims, need_matrix=True, friction_majorizer=True)
+            self._solve_hash_direction_device(sims)
+            self._clamp_device_direction(sims.affine_max_step)
+            if float(self.operator.device_gradient_direction_dot()) > 0.0:
+                self.operator.device_scale_direction(-1.0)
+            return AffineBodyEngine._line_search_cuda(self, sims, energy, _friction_majorized=True)
         self._assemble_system_device(sims, need_matrix=True)
         self._record_line_search(False, backtracks=len(self.last_line_search_trials))
         self.last_inner_failure_reason = "monotone_line_search"

@@ -6,6 +6,7 @@ import numpy as np
 import taichi as ti
 
 from .AffineBodyEngine import AffineBodyEngine
+from .AffineJointControlTape import AffineJointControlTape
 
 
 @ti.data_oriented
@@ -24,6 +25,7 @@ class DifferentiableABD:
 
         self.engine = engine
         self.operator = engine.operator
+        self.joint_controls = AffineJointControlTape(self.operator, self.capacity)
         self.sims = engine.sims
         self.dt = float(self.sims.dt[None])
         self.initial_time = float(self.sims.current_time)
@@ -97,6 +99,7 @@ class DifferentiableABD:
             raise ValueError("time step changed during differentiable trajectory")
         if int(self.sims.current_step) != self.initial_step + self.record_count:
             raise ValueError("advance the solver only through DifferentiableABD.step()")
+        self.joint_controls.record(self.record_count)
         result = self.engine.step(self.sims, self.engine.scene)
         self.sims.current_time += self.dt
         self.sims.current_step += 1
@@ -119,6 +122,8 @@ class DifferentiableABD:
         self.operator.state_y_vjp.from_numpy(seed(position_gradient))
         self.operator.state_velocity_vjp.from_numpy(seed(velocity_gradient))
         self._clear_parameter_vjp()
+        self.joint_controls.gradient.fill(0.0)
+        self.joint_controls.save_current()
         terminal_time = float(self.sims.current_time)
         terminal_step = int(self.sims.current_step)
         history_length = len(self.engine.history)
@@ -126,21 +131,25 @@ class DifferentiableABD:
         try:
             for record in reversed(range(self.record_count)):
                 self._load_state(record)
+                self.joint_controls.load(record)
                 self.sims.current_time = self.initial_time + record * self.dt
                 self.sims.current_step = self.initial_step + record
                 self.engine.step(self.sims, self.engine.scene)
                 self.engine.pullback_step_device()
                 self._accumulate_parameter_vjp()
+                self.joint_controls.accumulate(record)
             completed = True
         finally:
             try:
                 if completed:
                     # Restore the final step's frozen lagged cache on device.
                     self._load_state(self.record_count - 1)
+                    self.joint_controls.load(self.record_count - 1)
                     self.sims.current_time = terminal_time - self.dt
                     self.sims.current_step = terminal_step - 1
                     self.engine.step(self.sims, self.engine.scene)
             finally:
+                self.joint_controls.restore_current()
                 self._restore_accepted_state(self.record_count, self.dt)
                 self.sims.current_time = terminal_time
                 self.sims.current_step = terminal_step
@@ -160,6 +169,7 @@ class DifferentiableABD:
             "joint_target_angle_degrees": target_radians * (np.pi / 180.0),
             "joint_damping": self.joint_damping_vjp.to_numpy()[: self.operator.joint_num].copy(),
             "friction_scale": float(self.friction_scale_vjp[None]),
+            **self.joint_controls.result(self.record_count),
         }
 
 

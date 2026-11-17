@@ -5224,14 +5224,14 @@
           "name": "add_engine",
           "signature": "add_engine(self, callback)",
           "source": "src/dem/mainDEM.py",
-          "line": 744,
+          "line": 757,
           "doc": ""
         },
         {
           "name": "add_essentials",
           "signature": "add_essentials(self, **kwargs)",
           "source": "src/dem/mainDEM.py",
-          "line": 801,
+          "line": 814,
           "doc": ""
         },
         {
@@ -5245,21 +5245,21 @@
           "name": "add_postfunctions",
           "signature": "add_postfunctions(self, **functions)",
           "source": "src/dem/mainDEM.py",
-          "line": 791,
+          "line": 804,
           "doc": ""
         },
         {
           "name": "add_property",
           "signature": "add_property(self, materialID1, materialID2, property, dType='all')",
           "source": "src/dem/mainDEM.py",
-          "line": 609,
+          "line": 622,
           "doc": ""
         },
         {
           "name": "add_recorder",
           "signature": "add_recorder(self)",
           "source": "src/dem/mainDEM.py",
-          "line": 759,
+          "line": 772,
           "doc": ""
         },
         {
@@ -5273,7 +5273,7 @@
           "name": "add_solver",
           "signature": "add_solver(self, **kwargs)",
           "source": "src/dem/mainDEM.py",
-          "line": 770,
+          "line": 783,
           "doc": ""
         },
         {
@@ -5287,42 +5287,42 @@
           "name": "add_wall",
           "signature": "add_wall(self, body)",
           "source": "src/dem/mainDEM.py",
-          "line": 585,
+          "line": 598,
           "doc": ""
         },
         {
           "name": "add_wall_from_file",
           "signature": "add_wall_from_file(self, body)",
           "source": "src/dem/mainDEM.py",
-          "line": 588,
+          "line": 601,
           "doc": ""
         },
         {
           "name": "check_critical_timestep",
           "signature": "check_critical_timestep(self)",
           "source": "src/dem/mainDEM.py",
-          "line": 877,
+          "line": 890,
           "doc": ""
         },
         {
           "name": "check_verlet_distance_multiplier",
           "signature": "check_verlet_distance_multiplier(self)",
           "source": "src/dem/mainDEM.py",
-          "line": 845,
+          "line": 858,
           "doc": ""
         },
         {
           "name": "choose_contact_model",
           "signature": "choose_contact_model(self, particle_particle_contact_model=None, particle_wall_contact_model=None)",
           "source": "src/dem/mainDEM.py",
-          "line": 598,
+          "line": 611,
           "doc": ""
         },
         {
           "name": "choose_neighbor",
           "signature": "choose_neighbor(self)",
           "source": "src/dem/mainDEM.py",
-          "line": 591,
+          "line": 604,
           "doc": ""
         },
         {
@@ -5343,14 +5343,14 @@
           "name": "delete_particles",
           "signature": "delete_particles(self, bodyID=None, region_name=None, function=None)",
           "source": "src/dem/mainDEM.py",
-          "line": 925,
+          "line": 938,
           "doc": ""
         },
         {
           "name": "delete_walls",
           "signature": "delete_walls(self, wallID)",
           "source": "src/dem/mainDEM.py",
-          "line": 934,
+          "line": 947,
           "doc": ""
         },
         {
@@ -5364,49 +5364,56 @@
           "name": "differentiable_affine",
           "signature": "differentiable_affine(self, steps)",
           "source": "src/dem/mainDEM.py",
-          "line": 557,
+          "line": 570,
           "doc": "Create a device-resident fixed-step AffineBody trajectory tape."
         },
         {
           "name": "differentiable_soft_affine",
           "signature": "differentiable_soft_affine(self, steps)",
           "source": "src/dem/mainDEM.py",
-          "line": 569,
+          "line": 582,
           "doc": "Create a soft MPM-ABD trajectory tape; plastic soft materials are rejected."
         },
         {
           "name": "differentiate_affine_step",
           "signature": "differentiate_affine_step(self, loss_gradient)",
           "source": "src/dem/mainDEM.py",
-          "line": 552,
+          "line": 565,
           "doc": ""
         },
         {
           "name": "get_critical_timestep",
           "signature": "get_critical_timestep(self)",
           "source": "src/dem/mainDEM.py",
-          "line": 885,
+          "line": 898,
           "doc": ""
+        },
+        {
+          "name": "get_joint_states",
+          "signature": "get_joint_states(self)",
+          "source": "src/dem/mainDEM.py",
+          "line": 553,
+          "doc": "Read joint angles (degrees), speeds (degrees/s), and constraint errors."
         },
         {
           "name": "inherit_property",
           "signature": "inherit_property(self, materialID, property)",
           "source": "src/dem/mainDEM.py",
-          "line": 619,
+          "line": 632,
           "doc": ""
         },
         {
           "name": "is_lsmpm_soft_affine_ipc",
           "signature": "is_lsmpm_soft_affine_ipc(self)",
           "source": "src/dem/mainDEM.py",
-          "line": 794,
+          "line": 807,
           "doc": ""
         },
         {
           "name": "load_history_contact",
           "signature": "load_history_contact(self)",
           "source": "src/dem/mainDEM.py",
-          "line": 622,
+          "line": 635,
           "doc": ""
         },
         {
@@ -5420,14 +5427,14 @@
           "name": "modify_parameters",
           "signature": "modify_parameters(self, **kwargs)",
           "source": "src/dem/mainDEM.py",
-          "line": 728,
+          "line": 741,
           "doc": ""
         },
         {
           "name": "postprocessing",
           "signature": "postprocessing(self, start_file=0, end_file=-1, read_path=None, write_path=None, scheme='DEM', **kwargs)",
           "source": "src/dem/mainDEM.py",
-          "line": 943,
+          "line": 956,
           "doc": ""
         },
         {
@@ -5476,35 +5483,35 @@
           "name": "read_restart",
           "signature": "read_restart(self, file_number, file_path, particle=True, sphere=True, clump=False, wall=True, servo=False, ppcontact=True, pwcontact=True, is_continue=True)",
           "source": "src/dem/mainDEM.py",
-          "line": 649,
+          "line": 662,
           "doc": ""
         },
         {
           "name": "run",
           "signature": "run(self, visualize=False, **kwargs)",
           "source": "src/dem/mainDEM.py",
-          "line": 864,
+          "line": 877,
           "doc": ""
         },
         {
           "name": "save_data",
           "signature": "save_data(self)",
           "source": "src/dem/mainDEM.py",
-          "line": 938,
+          "line": 951,
           "doc": ""
         },
         {
           "name": "select_save_data",
           "signature": "select_save_data(self, particle=True, sphere=False, clump=False, surface=True, grid=False, bounding=False, wall=False, particle_particle_contact=False, particle_wall_contact=False)",
           "source": "src/dem/mainDEM.py",
-          "line": 632,
+          "line": 645,
           "doc": ""
         },
         {
           "name": "servo_switch",
           "signature": "servo_switch(self, status='On')",
           "source": "src/dem/mainDEM.py",
-          "line": 856,
+          "line": 869,
           "doc": ""
         },
         {
@@ -5525,8 +5532,15 @@
           "name": "set_joint_target_angle",
           "signature": "set_joint_target_angle(self, jointID, target_angle)",
           "source": "src/dem/mainDEM.py",
-          "line": 541,
+          "line": 542,
           "doc": "Set an affine revolute-joint motor target in degrees."
+        },
+        {
+          "name": "set_joint_target_angles",
+          "signature": "set_joint_target_angles(self, jointIDs, target_angles)",
+          "source": "src/dem/mainDEM.py",
+          "line": 546,
+          "doc": "Set a batch of revolute motor targets in degrees, between steps."
         },
         {
           "name": "set_solver",
@@ -5539,49 +5553,49 @@
           "name": "set_static_wall",
           "signature": "set_static_wall(self, static_wall=True)",
           "source": "src/dem/mainDEM.py",
-          "line": 853,
+          "line": 866,
           "doc": ""
         },
         {
           "name": "set_window",
           "signature": "set_window(self, window)",
           "source": "src/dem/mainDEM.py",
-          "line": 861,
+          "line": 874,
           "doc": ""
         },
         {
           "name": "solve_affine_adjoint",
           "signature": "solve_affine_adjoint(self, loss_gradient)",
           "source": "src/dem/mainDEM.py",
-          "line": 547,
+          "line": 560,
           "doc": ""
         },
         {
           "name": "update_contact_properties",
           "signature": "update_contact_properties(self, materialID1, materialID2, property_name, value, overide=True)",
           "source": "src/dem/mainDEM.py",
-          "line": 922,
+          "line": 935,
           "doc": ""
         },
         {
           "name": "update_material_properties",
           "signature": "update_material_properties(self, materialID, property_name, value, override=True)",
           "source": "src/dem/mainDEM.py",
-          "line": 891,
+          "line": 904,
           "doc": ""
         },
         {
           "name": "update_particle_properties",
           "signature": "update_particle_properties(self, property_name, value, override=True, bodyID=None, region_name=None, function=None)",
           "source": "src/dem/mainDEM.py",
-          "line": 894,
+          "line": 907,
           "doc": ""
         },
         {
           "name": "update_wall_status",
           "signature": "update_wall_status(self, wallID, property_name, value, override=True)",
           "source": "src/dem/mainDEM.py",
-          "line": 909,
+          "line": 922,
           "doc": ""
         }
       ],
@@ -5656,7 +5670,7 @@
             },
             {
               "source": "src/dem/mainDEM.py",
-              "line": 736,
+              "line": 749,
               "reader": "get_essential"
             }
           ]
@@ -6106,17 +6120,17 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 804,
+              "line": 817,
               "reader": "get_alternative"
             },
             {
               "source": "src/dem/mainDEM.py",
-              "line": 811,
+              "line": 824,
               "reader": "get_alternative"
             },
             {
               "source": "src/dem/mainDEM.py",
-              "line": 831,
+              "line": 844,
               "reader": "get_alternative"
             }
           ]
@@ -6126,7 +6140,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 789,
+              "line": 802,
               "reader": "get_alternative"
             }
           ]
@@ -6181,7 +6195,7 @@
             },
             {
               "source": "src/dem/mainDEM.py",
-              "line": 734,
+              "line": 747,
               "reader": "get_essential"
             }
           ]
@@ -6621,7 +6635,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 623,
+              "line": 636,
               "reader": "get_alternative"
             }
           ]
@@ -6911,7 +6925,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 788,
+              "line": 801,
               "reader": "get_alternative"
             }
           ]
@@ -6976,7 +6990,7 @@
             },
             {
               "source": "src/dem/mainDEM.py",
-              "line": 742,
+              "line": 755,
               "reader": "get_essential"
             }
           ]
@@ -8706,7 +8720,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 624,
+              "line": 637,
               "reader": "get_alternative"
             }
           ]
@@ -8716,7 +8730,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 786,
+              "line": 799,
               "reader": "get_alternative"
             }
           ]
@@ -8726,7 +8740,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 625,
+              "line": 638,
               "reader": "get_alternative"
             }
           ]
@@ -8856,7 +8870,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 782,
+              "line": 795,
               "reader": "get_alternative"
             }
           ]
@@ -8956,7 +8970,7 @@
             },
             {
               "source": "src/dem/mainDEM.py",
-              "line": 738,
+              "line": 751,
               "reader": "get_essential"
             }
           ]
@@ -8986,7 +9000,7 @@
             },
             {
               "source": "src/dem/mainDEM.py",
-              "line": 740,
+              "line": 753,
               "reader": "get_essential"
             }
           ]
@@ -9136,7 +9150,7 @@
             },
             {
               "source": "src/dem/mainDEM.py",
-              "line": 730,
+              "line": 743,
               "reader": "get_essential"
             }
           ]
@@ -9761,7 +9775,7 @@
             },
             {
               "source": "src/dem/mainDEM.py",
-              "line": 732,
+              "line": 745,
               "reader": "get_essential"
             }
           ]
@@ -10316,6 +10330,7 @@
         "examples/dem/AffineBody/five_cubes_incline/render.py",
         "examples/dem/AffineBody/hundred_spheres_box/hundred_spheres_box.py",
         "examples/dem/AffineBody/newtons_cradle/newtons_cradle.py",
+        "examples/dem/AffineBody/robot_grasp/robot_grasp.py",
         "examples/dem/AffineBody/robot_multilink_arm/robot_multilink_arm.py",
         "examples/dem/AffineBody/sphere_wall_collision/sphere_wall_collision.py",
         "examples/dem/AffineBody/thousand_cubes_heavy_ball_impact/thousand_cubes_heavy_ball_impact.py",
@@ -10531,9 +10546,9 @@
         "examples/dem/MultiSphere/TriaxialShear/undrained.py"
       ],
       "summary": {
-        "method_count": 55,
+        "method_count": 57,
         "configuration_key_count": 295,
-        "example_count": 221
+        "example_count": 222
       }
     },
     "mpdem": {
@@ -17944,6 +17959,9 @@
         "mpdem/methods/get_critical_timestep",
         "cfdem/methods/get_critical_timestep"
       ],
+      "get_joint_states": [
+        "dem/methods/get_joint_states"
+      ],
       "inherit_property": [
         "dem/methods/inherit_property"
       ],
@@ -18120,6 +18138,9 @@
       ],
       "set_joint_target_angle": [
         "dem/methods/set_joint_target_angle"
+      ],
+      "set_joint_target_angles": [
+        "dem/methods/set_joint_target_angles"
       ],
       "set_semi_implicit_solver_parameters": [
         "mpm/methods/set_semi_implicit_solver_parameters"

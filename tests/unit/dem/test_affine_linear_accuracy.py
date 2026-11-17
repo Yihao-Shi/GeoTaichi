@@ -46,6 +46,59 @@ def test_default_linear_accuracy_resolves_small_mass_newton_correction(taichi_ru
     assert operator.device_surface_direction_inf_norm() / dt > sims.affine_newton_tolerance
 
 
+def test_adjoint_retains_complete_body_preconditioner_and_true_accuracy(taichi_runtime):
+    from types import SimpleNamespace
+
+    rng = np.random.default_rng(44)
+    rotation, _ = np.linalg.qr(rng.normal(size=(12, 12)))
+    dense = np.einsum("ik,k,jk->ij", rotation, np.geomspace(1e-3, 1e3, 12), rotation)
+    expected = rng.normal(scale=1e-4, size=12)
+    rhs = np.einsum("ij,j->i", dense, expected)
+    matrix = BuildTriplet(
+        3,
+        16,
+        16,
+        4,
+        symmetric=False,
+        solver="BiCGSTAB",
+        matrix_symmetric=True,
+        preconditioner_group_size=4,
+    )
+    linear_rhs = ti.field(ti.f64, shape=12)
+    linear_x = ti.field(ti.f64, shape=12)
+    linear_rhs.from_numpy(rhs)
+
+    @ti.kernel
+    def assemble(values: ti.types.ndarray()):
+        for row, col in ti.ndrange(4, 4):
+            if row <= col:
+                block = ti.Matrix.zero(ti.f64, 3, 3)
+                for i, j in ti.static(ti.ndrange(3, 3)):
+                    block[i, j] = values[3 * row + i, 3 * col + j]
+                matrix.add_block_entry(row, col, block)
+
+    engine = AffineBodyEngine()
+    engine.adjoint_triplet = matrix
+    engine.sims = SimpleNamespace(
+        affine_linear_tolerance=1e-12, affine_linear_relative_tolerance=0.0, affine_linear_max_iteration=4
+    )
+    engine.operator = SimpleNamespace(
+        control_num=4,
+        linear_rhs=linear_rhs,
+        linear_x=linear_x,
+        device_restore_lagged_friction_for_adjoint=lambda: None,
+        device_enter_equilibrium_adjoint=lambda: None,
+        bind_hash_triplet=lambda _matrix: None,
+        assemble_device=lambda **kwargs: assemble(np.ascontiguousarray(dense)),
+        device_gradient_inf_norm=lambda: 0.0,
+    )
+    engine._solve_adjoint_device()
+    actual = linear_x.to_numpy()
+    assert np.linalg.norm(np.einsum("ji,j->i", dense, actual) - rhs) <= engine.sims.affine_linear_tolerance
+    np.testing.assert_allclose(actual, expected, rtol=0, atol=1e-10)
+    assert matrix.preconditioner_group_size == 4 and matrix.solver == "BiCGSTAB"
+
+
 def test_explicit_linear_accuracy_remains_authoritative(taichi_runtime):
     sims = Simulation()
     sims.set_affine_body_parameters(linear_relative_tolerance=0.1)

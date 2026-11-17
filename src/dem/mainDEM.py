@@ -537,12 +537,25 @@ class DEM(SolverDiagnosticsMixin):
         if self.enginer is not None and getattr(self.enginer, "operator", None) is not None:
             raise ConfigurationError("AffineBody joints must be added before the first simulation run")
         self.scene.add_affine_joint(joint)
+        return len(self.scene.affine_joints) - 1
 
     def set_joint_target_angle(self, jointID, target_angle):
         """Set an affine revolute-joint motor target in degrees."""
-        self.scene.set_affine_joint_target_angle(jointID, target_angle)
-        if self.enginer is not None and getattr(self.enginer, "operator", None) is not None:
-            self.enginer.operator.set_joint_target_angle(jointID, target_angle)
+        self.set_joint_target_angles([jointID], [target_angle])
+
+    def set_joint_target_angles(self, jointIDs, target_angles):
+        """Set a batch of revolute motor targets in degrees, between steps."""
+        ids, angles = self.scene.set_affine_joint_target_angles(jointIDs, target_angles)
+        if ids.size and self.enginer is not None and getattr(self.enginer, "operator", None) is not None:
+            operator = self.enginer.operator
+            getattr(operator, "affine", operator).set_joint_target_angles(ids, angles)
+
+    def get_joint_states(self):
+        """Read joint angles (degrees), speeds (degrees/s), and constraint errors."""
+        if self.enginer is None or getattr(self.enginer, "operator", None) is None:
+            raise SimulationStateError("get_joint_states requires an initialized AffineBody simulation")
+        operator = self.enginer.operator
+        return getattr(operator, "affine", operator).get_joint_states()
 
     def solve_affine_adjoint(self, loss_gradient):
         if self.enginer is None or not isinstance(self.enginer, AffineBodyEngine):

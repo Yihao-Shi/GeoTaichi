@@ -64,6 +64,69 @@ def _signature(trajectory, result):
     )
 
 
+@pytest.mark.parametrize("material", ["DruckerPrager", "VonMises"])
+def test_joint_control_sequence_vjp_through_plastic_mpm_contact(tmp_path, material):
+    coupling = _case(
+        tmp_path,
+        material=material,
+        dilation=None,
+        joint=dict(
+            BodyID1=0,
+            WorldAnchor=[0.5, 0.5, 0.45],
+            WorldAxis=[0, 1, 0],
+            PositionStiffness=2e4,
+            AxisStiffness=2e4,
+            MotorStiffness=10.0,
+        ),
+    )
+    system, mpm = coupling.enginer, coupling.enginer.mpm
+    mpm.F0.from_numpy(np.array([np.diag([1.08, 0.94, 0.98])]))
+    trajectory = coupling.differentiable(steps=3)
+    fields = _fields(trajectory)
+    initial = {name: field.to_numpy().copy() for name, field in fields.items()}
+    commands = np.array([2.0, -3.0, 4.0])
+    signatures = []
+    for angle in commands:
+        coupling.dem.set_joint_target_angles([0], [angle])
+        result = trajectory.step(verbose=False)
+        assert result["friction_converged"] and system.mixed.friction_count > 0
+        signatures.append(_signature(trajectory, result))
+    assert mpm.material.equivalent_plastic_strain[0] > 0.0
+    terminal = {name: field.to_numpy().copy() for name, field in fields.items()}
+    seed = np.array([[0.3, -0.2, 0.7]])
+    coupling.dem.set_joint_target_angle(0, 17.0)
+    gradient = trajectory.backward({"velocity": seed})
+    repeated = trajectory.backward({"velocity": seed})
+    for name in gradient:
+        np.testing.assert_allclose(gradient[name], repeated[name], rtol=1e-12, atol=1e-12)
+    for name, field in fields.items():
+        np.testing.assert_array_equal(field.to_numpy(), terminal[name])
+    assert coupling.dem.get_joint_states()["target_angle"][0] == pytest.approx(17.0)
+    per_step = gradient["joint_target_angle_degrees_per_step"]
+    assert per_step.shape == (3, 1)
+    np.testing.assert_allclose(per_step.sum(axis=0), gradient["joint_target_angle_degrees"], atol=1e-12)
+
+    def objective(targets):
+        for name, field in fields.items():
+            field.from_numpy(initial[name])
+        mpm.time, mpm.step_count = 0.0, 0
+        for record, angle in enumerate(targets):
+            coupling.dem.set_joint_target_angle(0, angle)
+            forward = trajectory._advance(False)
+            assert forward["friction_converged"]
+            assert _signature(trajectory, forward) == signatures[record]
+        return np.sum(seed * mpm.particle.v.to_numpy())
+
+    epsilon = 1e-3
+    for step in range(3):
+        direction = np.eye(3)[step]
+        numerical = (objective(commands + epsilon * direction) - objective(commands - epsilon * direction)) / (
+            2 * epsilon
+        )
+        assert abs(per_step[step, 0]) > 1e-8
+        assert per_step[step, 0] == pytest.approx(numerical, rel=3e-3, abs=2e-7)
+
+
 @pytest.mark.parametrize(
     "material,epsv,ground,bodies",
     [

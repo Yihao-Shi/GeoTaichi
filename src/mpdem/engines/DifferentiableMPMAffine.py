@@ -5,6 +5,7 @@ import math
 import numpy as np
 import taichi as ti
 
+from src.dem.engines.AffineJointControlTape import AffineJointControlTape
 from src.mpm.soft_particle.DifferentiableMPM import DifferentiableMPM
 from src.utils.errors import CapacityError, RecordingError, SimulationStateError
 
@@ -33,6 +34,7 @@ class DifferentiableMPMAffine:
         steps = self.ipc._positive_integer(steps, "steps")
         self.mpm_diff = DifferentiableMPM(self.simulation, steps)
         self.capacity = steps
+        self.joint_controls = AffineJointControlTape(self.affine, steps)
         self.record_count = 0
         self.dt = self.mpm_diff.dt
         self.controls = int(self.affine.control_num)
@@ -179,6 +181,7 @@ class DifferentiableMPMAffine:
         if self.record_count >= self.capacity:
             raise SimulationStateError("Direct MPM--ABD trajectory tape is full")
         self._validate_clock()
+        self.joint_controls.record(self.record_count)
         self.mpm_diff._record_terminal_grid()
         initial_time, initial_step = self.mpm.time, self.mpm.step_count
         self.ipc.trajectory_capture_active = True
@@ -253,6 +256,7 @@ class DifferentiableMPMAffine:
                 )
             self.affine.device_propagate_mesh_friction_cache(self.affine_cache_position, self.cache_rhs)
             self._accumulate_equilibrium_parameters()
+            self.joint_controls.accumulate(self.reverse_record)
             if record > 1:
                 self.ipc.accumulate_equilibrium_history_vjp()
                 self._advance_outer_rhs()
@@ -290,9 +294,13 @@ class DifferentiableMPMAffine:
         ):
             field.fill(0.0)
         terminal_time, terminal_step = self.mpm.time, self.mpm.step_count
+        self.joint_controls.gradient.fill(0.0)
+        self.joint_controls.save_current()
         self.mpm_diff._record_terminal_grid()
         try:
             for record in reversed(range(self.record_count)):
+                self.reverse_record = record
+                self.joint_controls.load(record)
                 self.mpm_diff._load_state(record)
                 self._load_affine_state(record)
                 self.mpm.time = self.mpm_diff.initial_time + record * self.dt
@@ -305,6 +313,7 @@ class DifferentiableMPMAffine:
                 self._accumulate_material_parameters()
                 self.ipc.promote_plastic_particle_input_vjp_device()
         finally:
+            self.joint_controls.restore_current()
             self.mpm_diff._load_state(self.record_count)
             self._restore_affine_state(self.record_count)
             self.mpm_diff._restore_terminal_grid()
@@ -326,6 +335,8 @@ class DifferentiableMPMAffine:
             friction_scale=float(self.friction_scale_vjp[None]),
             mixed_friction_coefficient=self.mixed_friction_vjp.to_numpy(),
         )
+        result["joint_target_angle_degrees"] = result["joint_target_angle_radians"] * (np.pi / 180.0)
+        result.update(self.joint_controls.result(self.record_count))
         return result
 
 

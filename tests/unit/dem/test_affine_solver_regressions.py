@@ -154,6 +154,52 @@ def test_friction_search_breaks_sliding_cycle_and_keeps_physical_newton_stop():
     assert abs(state.x) < 1e-12 and np.isfinite(energy)
 
 
+def test_friction_near_sliding_threshold_allows_newton_backtracking():
+    engine = AffineBodyEngine()
+    mass, load, epsilon = 1e-4, 0.999, 1e-5
+    state = SimpleNamespace(x=0.01, p=0.0, g=0.0, h=0.0, base=0.0)
+
+    def assemble(_sims, need_matrix=True, friction_majorizer=False, reuse_neighbor=False):
+        radius = abs(state.x)
+        f1 = 2 / epsilon - radius / epsilon**2 if radius < epsilon else 1 / radius
+        radial = 2 * (epsilon - radius) / epsilon**2 if radius < epsilon else 0.0
+        state.g = mass * state.x - load + f1 * state.x
+        state.h = mass + (f1 if friction_majorizer else radial)
+        phi = radius**2 * (-radius / 3 + epsilon) / epsilon**2 + epsilon / 3 if radius < epsilon else radius
+        return 0.5 * mass * state.x**2 - load * state.x + phi
+
+    engine.operator = SimpleNamespace(
+        dt=1.0,
+        correction_velocity_factor=1.0,
+        device_gradient_has_nonfinite=lambda: 0,
+        device_direction_has_nonfinite=lambda: 0,
+        device_direction_inf_norm=lambda: abs(state.p),
+        device_gradient_direction_dot=lambda: state.g * state.p,
+        device_backup_line_search_base=lambda: setattr(state, "base", state.x),
+        device_restore_line_search_base=lambda: setattr(state, "x", state.base),
+        device_set_line_search_trial=lambda step: setattr(state, "x", state.base + step * state.p),
+        prepare_line_search_neighbors_device=lambda _alpha: False,
+        has_lagged_friction_contacts=lambda: True,
+    )
+    engine._assemble_system_device = assemble
+    engine._solve_hash_direction_device = lambda _sims: setattr(state, "p", -state.g / state.h)
+    engine._clamp_device_direction = lambda _maximum: None
+    engine._device_surface_direction_inf_norm = lambda _norm: abs(state.p)
+    engine._ccd_step_size_device = lambda _sims: 1.0
+    sims = SimpleNamespace(
+        affine_newton_tolerance=1e-9,
+        affine_max_newton_iteration=40,
+        affine_line_search_max_iteration=40,
+        affine_max_step=1.0,
+        current_step=0,
+    )
+    energy, _ = engine._solve_lagged_inner_cuda(sims, assemble(sims))
+    assert engine.last_inner_converged and np.isfinite(energy)
+    # The stationary sliding speed lies in the quadratic stick/slip transition.
+    expected = (2 / epsilon + mass - np.sqrt((2 / epsilon + mass) ** 2 - 4 * load / epsilon**2)) * epsilon**2 / 2
+    assert state.x == pytest.approx(expected, rel=1e-5, abs=1e-10)
+
+
 @pytest.mark.parametrize("omega", [[0.0, 0.0, 1.0], [1.0, -2.0, 3.0]])
 @pytest.mark.parametrize("force_damping", [0.0, 2.0])
 @pytest.mark.parametrize("newmark", [False, True])
@@ -303,3 +349,35 @@ def test_affine_solver_counts_accepted_steps_and_stops_at_requested_time(monkeyp
     assert sum(accepted) == pytest.approx(sims.current_time)
     assert sims.current_step == len(accepted)
     assert saved == pytest.approx([0.0, 0.05, 0.1, 0.15] if retry else [0.0, 0.1, 0.15])
+
+
+def test_affine_drive_callback_precedes_warmup_and_each_accepted_step(monkeypatch):
+    from geotaichi import python_callback
+
+    monkeypatch.setattr(ti, "sync", lambda: None)
+    sims = SimpleNamespace(
+        scheme="AffineBody", delta=0.1, time=0.3, current_time=0.0, current_step=0, timer=Timer(), save_interval=1.0
+    )
+    sims.set_timestep = lambda dt: setattr(sims, "delta", dt)
+    calls = []
+
+    @python_callback
+    def drive():
+        calls.append(("drive", sims.current_step, sims.current_time))
+
+    @python_callback
+    def observe():
+        calls.append(("observe", sims.current_step, sims.current_time))
+
+    engine = SimpleNamespace(
+        initialize=lambda *args: None,
+        step=lambda *args: calls.append(("solve", sims.current_step, sims.current_time)),
+    )
+    solver = AffineBodySolver(sims, None, None, engine, None)
+    solver.save_file = lambda *args: None
+    solver.set_preintegration_callback_function(drive)
+    solver.set_callback_function(observe)
+    solver.solve(None)
+    assert [event[0] for event in calls] == ["drive", "solve", "observe"] * 3
+    assert [event[1] for event in calls[::3]] == [0, 1, 2]
+    assert [event[2] for event in calls[::3]] == pytest.approx([0.0, 0.1, 0.2])

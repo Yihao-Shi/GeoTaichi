@@ -52,6 +52,33 @@ and FEM/MPM coupling. Child integrators may have different triplets; coupled
 assembly uses physical force units consistently. ABD trajectory adjoints
 remain backward-Euler only.
 
+ABD mechanisms use `add_joint` before initialization; its return value is the
+joint ID. `JointType` is `Revolute` (default), `Fixed`, or `Spherical`.
+Only Revolute accepts angle drives/limits/damping. Use
+`set_joint_target_angles(jointIDs, target_angles)` between steps for finite
+degree targets and `get_joint_states()` after initialization for degree angles,
+degree/s velocities and anchor/axis errors. Body--body angles measure side 2
+relative to side 1; world joints measure side 1 relative to the world. The
+angle wraps at 180 degrees, and all constraints/limits remain soft penalties.
+
+Standalone ABD and continuum Direct MPM--ABD trajectories record motor targets
+per step and return `joint_target_angle_degrees_per_step` (and radians), shaped
+`(recorded_steps, joint_count)`. The old target VJP arrays sum over time.
+This supports optimizing independent command sequences; it does not supply
+controller derivatives, torque-limited motors, cylinder hydraulics or gait
+planning. See the owning [robot-control contract](../../../src/dem/README.md#robot-control-and-differentiable-trajectories).
+
+For supplied-motion grasping, digging, driving and walking models, start with
+ideal joint actuation and the contact/soil dynamics required by the observable.
+Hydraulics, electric motors, URDF/IK, deformable tires and virtual sensors are
+optional detail. Keep payloads free for contact-based grasping and chassis/base
+motion free for mobility or walking. An adequate gait must be supplied, but it
+need not come from an in-simulator planner or feedback controller. Include
+actuator effort bounds when evaluating achievable motion or stalling.
+Current motor targets are periodic director references and feedback angles
+wrap at 180 degrees; this is not an intrinsic prohibition of repeated rigid
+rotation. Validate continuous wheel turns before claiming vehicle support.
+
 ## 4. LSMPM soft bodies
 
 Use `DEM.set_configuration(scheme="LSMPM")` for the current runnable route.

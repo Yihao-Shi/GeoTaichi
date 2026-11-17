@@ -8,6 +8,7 @@ import numpy as np
 import taichi as ti
 
 from src.fem.engines.DifferentiableFEM import DifferentiableFEM
+from src.dem.engines.AffineJointControlTape import AffineJointControlTape
 from src.linear_solver.MatrixFreePBICGSTAB import MatrixFreePBICGSTAB
 from src.physics_model.contact_model.ipc.ContactDistance import (
     edge_edge_distance2,
@@ -47,6 +48,7 @@ class DifferentiableFEMAffine:
         self.engine = engine
         self.fem = engine.fem
         self.affine = engine.affine
+        self.joint_controls = AffineJointControlTape(self.affine, self.capacity)
         self.fem_diff = DifferentiableFEM(self.fem, steps=self.capacity)
         self.dt = float(engine.dt)
         self.initial_time = float(engine.time)
@@ -465,6 +467,7 @@ class DifferentiableFEMAffine:
             raise SimulationStateError("differentiable FEM--AffineBody trajectory tape is full")
         if self.engine.dt != self.dt or self.engine.step_count != self.initial_step + self.record_count:
             raise ValueError("advance only fixed steps through DifferentiableFEMAffine.step()")
+        self.joint_controls.record(self.record_count)
         converged = self.engine.step(verbose=False, record_history=False)
         automatic_friction = self.engine._friction_controls()[2]
         if not converged or (automatic_friction and not self.engine.last_friction_converged):
@@ -503,6 +506,8 @@ class DifferentiableFEMAffine:
         )
         self.fem_diff._clear_parameter_vjp()
         self._clear_affine_parameter_vjp()
+        self.joint_controls.gradient.fill(0.0)
+        self.joint_controls.save_current()
 
         acceleration_factor = 1.0 / (2.0 * self.fem.alpha * self.fem.beta * self.dt**2)
         prediction_factor = self.dt**2 * self.fem.alpha * (1.0 - 2.0 * self.fem.beta)
@@ -521,6 +526,7 @@ class DifferentiableFEMAffine:
         try:
             for record in reversed(range(self.record_count)):
                 self._load_state(record)
+                self.joint_controls.load(record)
                 self._set_clock(record)
                 self.engine.step(verbose=False, record_history=False)
                 self.affine.device_prepare_step_state_adjoint(0)
@@ -551,6 +557,7 @@ class DifferentiableFEMAffine:
                     self.affine.device_propagate_step_state_adjoint()
                     self.affine.device_propagate_lagged_friction_state_adjoint()
                     self._accumulate_affine_parameter_vjp()
+                    self.joint_controls.accumulate(record)
                     self.fem_diff._propagate_step(
                         system["fem_internal_force"],
                         self.fem.state.mass,
@@ -591,18 +598,21 @@ class DifferentiableFEMAffine:
                     self.affine.device_leave_equilibrium_adjoint()
             completed = True
         finally:
-            if completed:
-                # Recreate the final step's device contact/friction caches so
-                # callers may continue the accepted trajectory after backward.
-                self._load_state(self.record_count - 1)
-                self._set_clock(self.record_count - 1)
-                self.engine.step(verbose=False, record_history=False)
-            self._restore_accepted_state(self.record_count, self.dt)
-            self._set_clock(self.record_count)
-            self.affine.sync_output_state()
-            if not completed:
-                self.engine.time = terminal_time
-                self.engine.step_count = terminal_step
+            try:
+                if completed:
+                    # Recreate the final step's caches before continuing the trajectory.
+                    self._load_state(self.record_count - 1)
+                    self.joint_controls.load(self.record_count - 1)
+                    self._set_clock(self.record_count - 1)
+                    self.engine.step(verbose=False, record_history=False)
+            finally:
+                self.joint_controls.restore_current()
+                self._restore_accepted_state(self.record_count, self.dt)
+                self._set_clock(self.record_count)
+                self.affine.sync_output_state()
+                if not completed:
+                    self.engine.time = terminal_time
+                    self.engine.step_count = terminal_step
 
         target_radians = self.joint_target_vjp.to_numpy()[: self.affine.joint_num].copy()
         result = {
@@ -621,6 +631,7 @@ class DifferentiableFEMAffine:
             "joint_damping": self.joint_damping_vjp.to_numpy()[: self.affine.joint_num].copy(),
             "friction_scale": float(self.friction_scale_vjp[None]),
             "mixed_friction_coefficient": self.mixed_friction_vjp.to_numpy(),
+            **self.joint_controls.result(self.record_count),
         }
         if self.fem_diff.is_cloth:
             scale = self.fem.material.thickness**3 / (24.0 * (1.0 - self.fem.material.bending_poisson_ratio**2))
