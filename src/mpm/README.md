@@ -204,7 +204,7 @@ MPM is organized here by physical model, Lagrangian configuration, time integrat
 | Two-phase porous media | [Porous-column dam break](../../examples/mmpm/DamBreakPorousElastic2D/double_point_dam_break_porous_elastic.py), [U-tube](../../examples/mmpm/UTubeFlow2D/u_tube_flow_2d.py) | Solid/fluid field exchange and semi-implicit pressure solve |
 | Soft-particle and cross-solver contact | [Rigid–soft drop](../../examples/mpdem/LevelSet/SoftRigid/rigid_soft_sphere_drop_box.py), [MPM–ABD impact](../../examples/mpdem/AffineBody/ABDImpactDP/direct_mpm_abd_impact.py) | Body-attached soft-particle grids or continuum contact; explicit level-set forces and implicit IPC are distinct contact formulations |
 
-Material equations remain in the [shared constitutive theory](../physics_model/consititutive_model/README.md). Fluid, continuum-solid, and soft-particle MPM–ABD configurations are compared in the [coupling route guide](../mpdem/README.md#mpm-affinebody-route-selection).
+Material equations remain in the [shared constitutive theory](../physics_model/constitutive_model/README.md). Fluid, continuum-solid, and soft-particle MPM–ABD configurations are compared in the [coupling route guide](../mpdem/README.md#mpm-affinebody-route-selection).
 
 ## Package layout
 
@@ -223,7 +223,7 @@ Material equations remain in the [shared constitutive theory](../physics_model/c
 
 Constitutive models are selected from `src/physics_model`. Their elastic,
 plastic, and fluid equations are collected in the
-[shared constitutive-model theory](../physics_model/consititutive_model/README.md).
+[shared constitutive-model theory](../physics_model/constitutive_model/README.md).
 Scalar penalty, DEM, and IPC contact laws are collected in the
 [shared contact-model theory](../physics_model/contact_model/README.md).
 
@@ -379,7 +379,7 @@ remain an error. Shape values, gradients, and the Hessians used by IPC share
 the same boundary polynomial, including its one-sided endpoint derivative.
 For axisymmetric MPM, linear radial displacement is therefore reproduced near
 the axis as well: `u_r = a r` gives radial and hoop stretches `1 + a`.
-The revolved reference-volume and pressure-area factors remain `2*pi*R`;
+The per-radian reference-volume and pressure-area factors are `R`;
 they do not multiply the interpolation basis.
 
 Moving-least-squares transfer uses a polynomial vector
@@ -570,7 +570,7 @@ The constitutive closure is
 ```
 
 The definitions of $`\mathcal{C}`$ are kept in the
-[constitutive-model theory](../physics_model/consititutive_model/README.md).
+[constitutive-model theory](../physics_model/constitutive_model/README.md).
 
 ### 5. Total-Lagrangian explicit integration
 
@@ -740,11 +740,23 @@ L_{zz}=\frac{\partial v_z}{\partial z},
 L_{\theta\theta}=\frac{v_r}{r}.
 ```
 
-The physical volume measure is
+The volume measure per radian is
 
 ```math
-\mathrm{d}V=2\pi r\,\mathrm{d}r\,\mathrm{d}z.
+\mathrm{d}V=r\,\mathrm{d}r\,\mathrm{d}z.
 ```
+
+Native and Direct MPM use this same per-radian convention. Particle volumes,
+masses, energies, nodal loads and contact forces are per radian. Multiply
+integrated quantities by `2*pi` to obtain full-revolution totals; density,
+stress, pressure, displacement and velocity need no conversion. Prescribed
+resultant forces must be supplied per radian. Direct boundary `surface_measure`
+is a meridional line weight; initialization multiplies it by reference radius
+once to obtain contact area per radian.
+
+Direct axisymmetric output previously used full-revolution measures. Start a
+new run when switching conventions; old saved masses, volumes and loads must
+not be mixed with newly initialized per-radian state. Native output is unchanged.
 
 Consequently, the radial and axial internal forces are
 
@@ -937,7 +949,7 @@ Material continuous collision detection also restricts $`\alpha`$ so that
 
 for every particle. Plastic trial states, return maps, tangents, and accepted
 history commits are defined in the
-[finite-strain plasticity section](../physics_model/consititutive_model/README.md#finite-strain-multiplicative-plasticity).
+[finite-strain plasticity section](../physics_model/constitutive_model/README.md#finite-strain-multiplicative-plasticity).
 
 ### 10. Explicit single-layer solid-fluid mixture
 
@@ -2142,7 +2154,7 @@ The constitutive update solves for the plastic shear rate and updated pressure
 together. MCC applies the rate increment through its critical stress ratio;
 this extension requires calibration for the intended material. An implicit
 global solver and other solids without this extension reject the flag.
-See the [rate-dependent material contract](../physics_model/consititutive_model/README.md#regularized-granular-mui-rheology)
+See the [rate-dependent material contract](../physics_model/constitutive_model/README.md#regularized-granular-mui-rheology)
 for the equations, defaults, supported local integrators and state variables.
 
 ## Particle construction and implicit examples
@@ -2165,7 +2177,7 @@ Kirchhoff stress, together with predicted plastic volume, rather than changes
 of the correction alone.
 Particle-local Aitken relaxation damps predictor updates; acceptance still
 checks their unrelaxed physical mismatch. See the
-[shared constitutive theory](../physics_model/consititutive_model/README.md#nonassociated-drucker--prager-and-symmetric-inner-solves).
+[shared constitutive theory](../physics_model/constitutive_model/README.md#nonassociated-drucker--prager-and-symmetric-inner-solves).
 
 The [axisymmetric annulus](../../examples/mpm/AxisyExample/axisymmetric_annulus.py) selects explicit or implicit time integration with `--solver explicit|implicit`. Its coordinates are `(r,z)` and require `radius > axis_offset`.
 
@@ -2221,7 +2233,7 @@ ULMPM and the physical residual/BiCGSTAB route. Standalone stepping, TLMPM,
 Native MPM, LSMPM, and parameter/history adjoints are unsupported. Accepted
 history includes void ratio, total Jacobian, and frozen previous pressure;
 VTU files include `void_ratio`. See the
-[state law and consistent tangent](../physics_model/consititutive_model/README.md#state-dependent-finite-strain-drucker--prager).
+[state law and consistent tangent](../physics_model/constitutive_model/README.md#state-dependent-finite-strain-drucker--prager).
 Ordinary `DruckerPrager` retains its current defaults.
 
 ## Sensitive-clay paper validation
@@ -2268,6 +2280,20 @@ not be interpreted as a speedup for the entire simulation. Select the actual
 backend with `--arch cpu|cuda|metal` and a supported `--fp f32|f64`.
 
 ## Numerical backend
+
+Native particle NPZ snapshots keep visualization fields in `state_vars` and
+raw material history in `constitutive_state`, including all vector and tensor
+components. Restart prefers raw history and validates every history field before
+uploading it. Legacy snapshots with expanded symmetric tensors remain readable;
+a scalar visualization invariant cannot reconstruct a lost strain tensor and
+raises `ValueError`. Loading history never silently skips an incompatible field.
+Equivalent-strain output is computed on device before download.
+Native single- and two-phase restart validates particle arrays, sizes, time and material
+history before committing. It replaces the saved size array and preserves
+the prior particles, history, boundary tractions, restart caches and clocks if the commit
+fails. Restart-file handles close on both success and failure.
+The public `read_restart` entry also preserves the output sequence and
+continuation flag when loading fails.
 
 Particle-grid transfers, stress updates, force assembly, grid solves, state
 updates, IPC contact, and default implicit Krylov iterations execute in

@@ -7,12 +7,12 @@ import pytest
 ti = pytest.importorskip("taichi")
 
 from geotaichi import DEM, polyhedron
-from src.fem.generator import FEMMesh
+from src.fem.generator.Mesh import FEMMesh
 from src.fem.mainFEM import FEM
 from src.fedem.mainFEDEM import FEDEM
 from src.fedem.DifferentiableFEMAffine import DifferentiableFEMAffine
 from src.linear_solver.BuildTriplet import BuildTriplet
-from src.fem.contact.ContactAssembler import FEMContactAssembler
+from src.fem.contact.FEMContactAssembler import FEMContactAssembler
 
 pytestmark = [
     pytest.mark.integration,

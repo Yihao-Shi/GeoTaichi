@@ -1,93 +1,21 @@
-import math
+from src.mpm.sparse_grid.Utilities import compact_node_id
+from src.utils.errors import BackendError, CapacityError
 
+import math
 import numpy as np
 import taichi as ti
 from taichi.lang.impl import current_cfg
-
 from src.utils.PrefixSum import PrefixSumExecutor
-from src.utils.TypeDefination import vec2i, vec3i
+from src.utils.TypeDefinition import vec2i, vec3i
 import src.utils.GlobalVariable as GlobalVariable
-
-
-@ti.func
-def compact_node_id(
-    physical_node: int,
-    gnum: ti.template(),
-    block_count: ti.template(),
-    block_size: ti.template(),
-    block_volume: ti.template(),
-    block_map: ti.template(),
-):
-    compact = -1
-    if physical_node >= 0:
-        if ti.static(GlobalVariable.DIMENSION == 2):
-            ix = physical_node % gnum[0]
-            iy = physical_node // gnum[0]
-            bx = ix // block_size
-            by = iy // block_size
-            block_id = bx + by * block_count[0]
-            compact_block = block_map[block_id]
-            if compact_block >= 0:
-                lx = ix - bx * block_size
-                ly = iy - by * block_size
-                compact = compact_block * block_volume + lx + ly * block_size
-        else:
-            layer = gnum[0] * gnum[1]
-            iz = physical_node // layer
-            local = physical_node - iz * layer
-            iy = local // gnum[0]
-            ix = local - iy * gnum[0]
-            bx = ix // block_size
-            by = iy // block_size
-            bz = iz // block_size
-            block_id = bx + by * block_count[0] + bz * block_count[0] * block_count[1]
-            compact_block = block_map[block_id]
-            if compact_block >= 0:
-                lx = ix - bx * block_size
-                ly = iy - by * block_size
-                lz = iz - bz * block_size
-                compact = compact_block * block_volume + lx + ly * block_size + lz * block_size * block_size
-    return compact
-
-
-@ti.func
-def compact_node_grid_coord(
-    compact_node: int,
-    block_count: ti.template(),
-    block_size: ti.template(),
-    block_volume: ti.template(),
-    active_block_ids: ti.template(),
-):
-    coord = ti.Vector.zero(int, GlobalVariable.DIMENSION)
-    if compact_node >= 0:
-        compact_block = compact_node // block_volume
-        local = compact_node - compact_block * block_volume
-        physical_block = active_block_ids[compact_block]
-        if physical_block >= 0:
-            if ti.static(GlobalVariable.DIMENSION == 2):
-                bx = physical_block % block_count[0]
-                by = physical_block // block_count[0]
-                lx = local % block_size
-                ly = local // block_size
-                coord = vec2i([bx * block_size + lx, by * block_size + ly])
-            else:
-                plane = block_count[0] * block_count[1]
-                bz = physical_block // plane
-                block_local = physical_block - bz * plane
-                by = block_local // block_count[0]
-                bx = block_local - by * block_count[0]
-                lx = local % block_size
-                ly = (local // block_size) % block_size
-                lz = local // (block_size * block_size)
-                coord = vec3i([bx * block_size + lx, by * block_size + ly, bz * block_size + lz])
-    return coord
 
 
 @ti.data_oriented
 class BlockSparseGrid:
+
     def __init__(self, sims, element, grid_level) -> None:
         if current_cfg().arch not in (ti.cpu, ti.cuda):
-            raise RuntimeError(
+            raise BackendError(
                 "BlockScan sparse_grid requires the Taichi CPU or CUDA backend; "
                 f"current backend is {current_cfg().arch}."
             )
@@ -159,7 +87,7 @@ class BlockSparseGrid:
         self._finalize_counts()
         if int(self.overflow[None]) != 0:
             active = int(self.block_mask[self.total_blocks - 1])
-            raise RuntimeError(
+            raise CapacityError(
                 "BlockSparseGrid capacity overflow: "
                 f"active blocks={active}, capacity={self.max_active_blocks}. "
                 "Increase sparse_grid/MaxActiveBlocks or sparse_grid/CapacityFactor."
@@ -222,14 +150,14 @@ class BlockSparseGrid:
         self,
         particle_num: int,
         total_nodes: int,
-        LnID: ti.template(),
+        ln_id: ti.template(),
         node_size: ti.template(),
         gnum: ti.types.vector(2, int),
     ):
         for np in range(particle_num):
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
-                node_id = LnID[ln]
+                node_id = ln_id[ln]
                 ix = node_id % gnum[0]
                 iy = node_id // gnum[0]
                 bx = ix // ti.static(self.block_size)
@@ -242,14 +170,14 @@ class BlockSparseGrid:
         self,
         particle_num: int,
         total_nodes: int,
-        LnID: ti.template(),
+        ln_id: ti.template(),
         node_size: ti.template(),
         gnum: ti.types.vector(3, int),
     ):
         for np in range(particle_num):
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
-                node_id = LnID[ln]
+                node_id = ln_id[ln]
                 layer = gnum[0] * gnum[1]
                 iz = node_id // layer
                 local = node_id - iz * layer
@@ -311,15 +239,15 @@ class BlockSparseGrid:
         self,
         particle_num: int,
         total_nodes: int,
-        LnID: ti.template(),
+        ln_id: ti.template(),
         node_size: ti.template(),
         gnum: ti.types.vector(2, int),
     ):
         for np in range(particle_num):
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
-                LnID[ln] = compact_node_id(
-                    LnID[ln],
+                ln_id[ln] = compact_node_id(
+                    ln_id[ln],
                     gnum,
                     self.block_count,
                     ti.static(self.block_size),
@@ -332,15 +260,15 @@ class BlockSparseGrid:
         self,
         particle_num: int,
         total_nodes: int,
-        LnID: ti.template(),
+        ln_id: ti.template(),
         node_size: ti.template(),
         gnum: ti.types.vector(3, int),
     ):
         for np in range(particle_num):
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
-                LnID[ln] = compact_node_id(
-                    LnID[ln],
+                ln_id[ln] = compact_node_id(
+                    ln_id[ln],
                     gnum,
                     self.block_count,
                     ti.static(self.block_size),

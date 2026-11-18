@@ -1,5 +1,11 @@
 """Monolithic Direct-MPM/AffineBody IPC linearization."""
 
+from src.linear_solver.Utilities import accepts_monotone_energy
+from src.linear_solver.Utilities import inexact_newton_absolute_tolerance
+from src.linear_solver.Utilities import inexact_newton_relative_tolerance
+
+from src.utils.errors import LineSearchError, NonfiniteStateError, NonlinearSolveError, SimulationStateError
+
 import math
 
 import numpy as np
@@ -9,11 +15,6 @@ from src.mpm.engines.direct.Convergence import mpm_correction_measure
 
 from src.dem.engines.AffineBodyOperator import MATRIX_HASH_TRIPLET
 from src.linear_solver.BuildTriplet import BuildTriplet
-from src.utils.SolverRuntime import (
-    accepts_monotone_energy,
-    inexact_newton_absolute_tolerance,
-    inexact_newton_relative_tolerance,
-)
 
 
 @ti.data_oriented
@@ -29,17 +30,35 @@ class DirectAffineIPCSystem:
         self.last_contact_count = 0
         self.last_candidate_count = 0
         self.last_step_record = None
+        self.friction_recorder = None
         if int(getattr(self.mpm, "dimension", 3)) != 3:
             raise ValueError("Direct MPM--ABD IPC currently requires 3D")
         if bool(getattr(affine, "fully_implicit", False)) or str(getattr(ipc, "friction_mode", "lagged")) != "lagged":
             raise ValueError(
                 "Direct MPM--ABD supports lagged friction only; fully " "implicit friction is not implemented"
             )
+        material = self.mpm.material
+        material_name = type(material).__name__
         self.nonassociated_newton = self.mpm.configure_nonassociated_newton()
+        if material_name == "FiniteStrainDruckerPragerModel":
+            material.use_direct_nonassociated_solve = True
+        elif material_name == "FiniteStrainModifiedCamClayModel":
+            material.use_direct_consistent_solve = True
+        if material_name in {
+            "FiniteStrainDruckerPragerModel",
+            "FiniteStrainVonMisesModel",
+            "FiniteStrainModifiedCamClayModel",
+        }:
+            # The existing flag selects physical Newton for associated plasticity too.
+            self.mpm.has_lagged_material = False
+            self.nonassociated_newton = True
+            if material_name != "FiniteStrainVonMisesModel":
+                material.has_incremental_potential = False
+                material.has_symmetric_tangent = False
         if not isinstance(inexact_newton, (bool, np.bool_)):
             raise ValueError("Direct MPM--ABD inexact_newton must be boolean")
         if inexact_newton and not self.nonassociated_newton:
-            raise ValueError("Direct MPM--ABD inexact_newton requires nonassociated DP")
+            raise ValueError("Direct MPM--ABD inexact_newton requires physical plastic Newton")
         self.inexact_newton = bool(inexact_newton)
         self.force_atol, self.force_rtol = float(force_atol), float(force_rtol)
         if not all(math.isfinite(value) and value >= 0.0 for value in (self.force_atol, self.force_rtol)):
@@ -130,6 +149,11 @@ class DirectAffineIPCSystem:
         self.ipc.refresh_friction_cache(self.mpm.grid_disp)
         self.mixed.refresh_friction(self.affine.x, self.mpm.grid_disp)
 
+    def _record_friction_iterate(self, record):
+        recorder = getattr(self, "friction_recorder", None)
+        if recorder is not None:
+            recorder._record_friction_iterate(int(record))
+
     def backup_lagged_friction_for_adjoint_device(self):
         self.affine.device_backup_lagged_friction_for_adjoint()
         if self.ipc.activate_fric:
@@ -170,12 +194,12 @@ class DirectAffineIPCSystem:
         return fixed
 
     @ti.func
-    def _mpm_fixed_correction(self, block, component):
+    def _mpm_fixed_correction(self, block, component, displacement):
         value = 0.0
         if ti.static(self.mpm.dirichlet.num > 0):
             local = block - ti.static(self.affine_controls)
             grid = self.mpm.dof2node[local]
-            value = self.mpm.dirichlet.value[3 * grid + component] - self.mpm.grid_disp[3 * local + component]
+            value = self.mpm.dirichlet.value[3 * grid + component] - displacement[3 * local + component]
         return value
 
     @ti.kernel
@@ -209,19 +233,32 @@ class DirectAffineIPCSystem:
         for dof in range(self.dof_capacity):
             self.rhs[dof] = source[dof] if dof < active_dof else 0.0
 
+    @ti.kernel
+    def _mask_adjoint_constraints(self, active_dof: ti.i32):
+        for dof in range(active_dof):
+            if self._mpm_fixed(dof // 3, dof % 3):
+                self.rhs[dof] = 0.0
+
     def solve_adjoint_device(
         self,
         loss_gradient,
         active_mpm_dof=None,
         *,
         exact_plastic_tangent=None,
+        use_trajectory_contacts=True,
     ):
         """Solve one coupled transpose system without host sparse conversion."""
         self.restore_lagged_friction_for_adjoint_device()
+        replay_record = int(getattr(self.ipc, "adjoint_trajectory_record", -1)) if use_trajectory_contacts else -1
+        if replay_record >= 0:
+            self.ipc._load_trajectory_contact_state(replay_record)
+            self.ipc.curr_barrier_contact_num = int(self.ipc.gbarrierNum[0] + self.ipc.pbarrierNum[0])
+            self.ipc.curr_friction_contact_num = int(self.ipc.gfrictionNum[0] + self.ipc.pfrictionNum[0])
         assembly = self.assemble_linearization_device(
             project_spd=False,
             exact_plastic_tangent=exact_plastic_tangent,
             solver_shift=False,
+            rebuild_mpm_contacts=replay_record < 0,
         )
         assembled_mpm_dof = int(assembly["active_mpm_dof"])
         active_mpm_dof = assembled_mpm_dof if active_mpm_dof is None else int(active_mpm_dof)
@@ -240,6 +277,7 @@ class DirectAffineIPCSystem:
             padded = np.zeros(self.dof_capacity, dtype=np.float64)
             padded[:active_dof] = values
             self.rhs.from_numpy(padded)
+        self._mask_adjoint_constraints(active_dof)
         self.correction.fill(0.0)
         forward_solver = self.matrix.solver
         self.matrix.solver = "PCG" if self.matrix.matrix_symmetric else "BiCGSTAB"
@@ -258,7 +296,7 @@ class DirectAffineIPCSystem:
         finally:
             self.matrix.solver = forward_solver
         if not result["converged"]:
-            raise RuntimeError(
+            raise NonlinearSolveError(
                 "Direct MPM--ABD coupled adjoint did not converge: " f"residual={result['residual']:.6e}"
             )
         self._scatter_adjoint(active_mpm_dof)
@@ -334,7 +372,7 @@ class DirectAffineIPCSystem:
         return result
 
     @ti.kernel
-    def _eliminate_mpm_dirichlet(self, active_nodes: ti.i32):
+    def _eliminate_mpm_dirichlet(self, active_nodes: ti.i32, displacement: ti.template()):
         for block in range(active_nodes):
             diagonal = self.matrix.diag[block]
             for row, column in ti.static(ti.ndrange(3, 3)):
@@ -342,7 +380,7 @@ class DirectAffineIPCSystem:
                 column_fixed = self._mpm_fixed(block, column)
                 value = diagonal[3 * row + column]
                 if column_fixed:
-                    self.rhs[3 * block + row] -= value * (self._mpm_fixed_correction(block, column))
+                    self.rhs[3 * block + row] -= value * (self._mpm_fixed_correction(block, column, displacement))
                 if row_fixed or column_fixed:
                     diagonal[3 * row + column] = 0.0
             for component in ti.static(range(3)):
@@ -362,13 +400,13 @@ class DirectAffineIPCSystem:
                     if column_fixed:
                         ti.atomic_add(
                             self.rhs[3 * first + row],
-                            -value * self._mpm_fixed_correction(second, column),
+                            -value * self._mpm_fixed_correction(second, column, displacement),
                         )
                     if ti.static(self.matrix.matrix_symmetric):
                         if row_fixed:
                             ti.atomic_add(
                                 self.rhs[3 * second + column],
-                                -value * self._mpm_fixed_correction(first, row),
+                                -value * self._mpm_fixed_correction(first, row, displacement),
                             )
                     if row_fixed or column_fixed:
                         block[3 * row + column] = 0.0
@@ -377,7 +415,7 @@ class DirectAffineIPCSystem:
         for block in range(ti.static(self.affine_controls), active_nodes):
             for component in ti.static(range(3)):
                 if self._mpm_fixed(block, component):
-                    self.rhs[3 * block + component] = self._mpm_fixed_correction(block, component)
+                    self.rhs[3 * block + component] = self._mpm_fixed_correction(block, component, displacement)
 
     def assemble_linearization_device(
         self,
@@ -388,6 +426,7 @@ class DirectAffineIPCSystem:
         include_mixed_friction=True,
         mpm_displacement=None,
         solver_shift=True,
+        rebuild_mpm_contacts=True,
     ):
         """Assemble one coupled residual and optional projected tangent."""
         if mpm_displacement is None:
@@ -410,6 +449,7 @@ class DirectAffineIPCSystem:
             need_matrix=bool(need_matrix),
             project_spd=bool(project_spd),
             exact_plastic_tangent=bool(exact_plastic_tangent),
+            rebuild_contacts=bool(rebuild_mpm_contacts),
         )
         contact_count = self.mixed.prepare(self.affine.x, mpm_displacement)
         self._load_rhs(int(active_mpm_dof))
@@ -452,7 +492,7 @@ class DirectAffineIPCSystem:
         if self.matrix.matrix_symmetric:
             self.matrix.canonicalize_full_symmetric_input()
         if self.mpm.dirichlet.num > 0:
-            self._eliminate_mpm_dirichlet(active_nodes)
+            self._eliminate_mpm_dirichlet(active_nodes, mpm_displacement)
         self.matrix.finalize_taichi_assembly()
         return {
             "matrix": self.matrix,
@@ -486,7 +526,7 @@ class DirectAffineIPCSystem:
             return_solution=False,
         )
         if not result["converged"]:
-            raise RuntimeError(
+            raise NonlinearSolveError(
                 f"Direct MPM--ABD coupled {self.matrix.solver} did not converge: "
                 f"residual={result['residual']:.6e}, "
                 f"iterations={result['iterations']}"
@@ -502,7 +542,7 @@ class DirectAffineIPCSystem:
         for dof in range(active_dof):
             block, component = dof // 3, dof % 3
             if self._mpm_fixed(block, component):
-                ti.atomic_max(prescribed, ti.abs(self._mpm_fixed_correction(block, component)))
+                ti.atomic_max(prescribed, ti.abs(self._mpm_fixed_correction(block, component, self.mpm.grid_disp)))
             else:
                 ti.atomic_add(squared, self.physical_rhs[dof] ** 2)
         return ti.Vector([squared, prescribed])
@@ -607,12 +647,12 @@ class DirectAffineIPCSystem:
             return self._residual_line_search_device(sims, energy, active_mpm_dof, merit_slope)
         slope = self.gradient_direction_dot(active_mpm_dof)
         if not math.isfinite(slope):
-            raise RuntimeError("Direct MPM--ABD lagged line-search slope is non-finite")
+            raise NonfiniteStateError("Direct MPM--ABD lagged line-search slope is non-finite")
         if slope > 0.0:
             self.scale_direction_device(-1.0, active_mpm_dof)
             slope = -slope
         if slope >= 0.0:
-            raise RuntimeError("Direct MPM--ABD lagged line search requires a descent direction")
+            raise LineSearchError("Direct MPM--ABD lagged line search requires a descent direction")
         alpha = (
             self.maximum_step_device(
                 active_mpm_dof=active_mpm_dof,
@@ -625,7 +665,7 @@ class DirectAffineIPCSystem:
             else 1.0
         )
         if not math.isfinite(alpha) or alpha <= 0.0:
-            raise RuntimeError("Direct MPM--ABD lagged CCD produced no feasible step")
+            raise SimulationStateError("Direct MPM--ABD lagged CCD produced no feasible step")
         self.begin_line_search_device()
         for _ in range(int(sims.affine_line_search_max_iteration)):
             trial = self.set_line_search_trial_device(alpha, active_mpm_dof)
@@ -637,11 +677,11 @@ class DirectAffineIPCSystem:
             alpha *= 0.5
         self.restore_line_search_base_device()
         self.assemble_linearization_device()
-        raise RuntimeError("Direct MPM--ABD lagged monotone line search failed")
+        raise LineSearchError("Direct MPM--ABD lagged monotone line search failed")
 
     def _residual_line_search_device(self, sims, residual, active_mpm_dof, merit_slope):
         if not math.isfinite(merit_slope) or merit_slope >= 0.0:
-            raise RuntimeError("Direct MPM--ABD residual Armijo requires a finite descent direction")
+            raise LineSearchError("Direct MPM--ABD residual Armijo requires a finite descent direction")
         alpha = self.maximum_step_device(
             active_mpm_dof=active_mpm_dof,
             ccd_type=sims.affine_ccd_type,
@@ -650,7 +690,7 @@ class DirectAffineIPCSystem:
             ccd_max_iterations=sims.affine_ccd_max_iteration,
         )
         if not math.isfinite(alpha) or alpha <= 0.0:
-            raise RuntimeError("Direct MPM--ABD residual CCD produced no feasible step")
+            raise SimulationStateError("Direct MPM--ABD residual CCD produced no feasible step")
         self.begin_line_search_device()
         for _ in range(int(sims.affine_line_search_max_iteration)):
             trial = self.set_line_search_trial_device(alpha, active_mpm_dof)
@@ -667,11 +707,12 @@ class DirectAffineIPCSystem:
             alpha *= 0.5
         self.restore_line_search_base_device()
         self.assemble_linearization_device(need_matrix=False)
-        raise RuntimeError("Direct MPM--ABD residual Armijo line search failed")
+        raise LineSearchError("Direct MPM--ABD residual Armijo line search failed")
 
     def _solve_nonassociated_equilibrium_device(self, sims, *, max_outer, requested_outer, record_adjoint):
         self.mpm.begin_lagged_material_state()
         self.begin_step_device(self.mpm.dt)
+        self._record_friction_iterate(0)
         active_mpm_dof = int(self.mpm.active_dof)
         total_newton = 0
         total_linear = 0
@@ -691,11 +732,13 @@ class DirectAffineIPCSystem:
                 previous_residual = None
                 for iteration in range(int(sims.affine_max_newton_iteration) + 1):
                     if not math.isfinite(residual):
-                        raise RuntimeError("Direct MPM--ABD physical residual is non-finite")
+                        raise NonfiniteStateError("Direct MPM--ABD physical residual is non-finite")
                     if residual == 0.0 and prescribed == 0.0:
                         break
                     if iteration == int(sims.affine_max_newton_iteration):
-                        raise RuntimeError("Direct MPM--ABD nonassociated Newton force residual did not converge")
+                        raise NonlinearSolveError(
+                            "Direct MPM--ABD physical plastic Newton force residual did not converge"
+                        )
                     self.assemble_linearization_device()
                     relative_tolerance = (
                         inexact_newton_relative_tolerance(residual, previous_residual)
@@ -710,7 +753,7 @@ class DirectAffineIPCSystem:
                     total_linear += linear["iterations"]
                     correction = self.direction_inf_norm(active_mpm_dof)
                     if not math.isfinite(correction):
-                        raise RuntimeError("Direct MPM--ABD Newton correction is non-finite")
+                        raise NonfiniteStateError("Direct MPM--ABD Newton correction is non-finite")
                     if (
                         self.inexact_newton
                         and relative_tolerance > 0.0
@@ -721,7 +764,7 @@ class DirectAffineIPCSystem:
                         total_linear += linear["iterations"]
                         correction = self.direction_inf_norm(active_mpm_dof)
                         if not math.isfinite(correction):
-                            raise RuntimeError("Direct MPM--ABD terminal Newton correction is non-finite")
+                            raise NonfiniteStateError("Direct MPM--ABD terminal Newton correction is non-finite")
                     if (
                         correction / self.mpm.dt <= float(sims.affine_newton_tolerance)
                         and residual <= target
@@ -740,6 +783,7 @@ class DirectAffineIPCSystem:
                     )
                     _, prescribed = self.residual_metrics_device(active_mpm_dof)
                     total_newton += 1
+                self._record_friction_iterate(outer + 1)
                 self.refresh_lagged_friction_device()
                 self.assemble_linearization_device(need_matrix=False)
                 residual, prescribed = self.residual_metrics_device(active_mpm_dof)
@@ -750,15 +794,15 @@ class DirectAffineIPCSystem:
                     linear = self.solve_direction_device(active_mpm_dof)
                     total_linear += linear["iterations"]
                     friction_residual = self.direction_inf_norm(active_mpm_dof, velocity=True)
-                if (
+                friction_converged = (
                     friction_residual <= float(sims.affine_friction_tolerance)
                     and residual <= target
                     and prescribed <= 1.0e-10
-                ):
-                    friction_converged = True
+                )
+                if friction_converged and requested_outer <= 0:
                     break
             if requested_outer <= 0 and not friction_converged:
-                raise RuntimeError("Direct MPM--ABD lagged friction fixed point did not converge")
+                raise NonlinearSolveError("Direct MPM--ABD lagged friction fixed point did not converge")
         except BaseException:
             self.affine.device_restore_step_start()
             self.mpm.grid_disp.fill(0.0)
@@ -804,6 +848,7 @@ class DirectAffineIPCSystem:
 
         if begin_step:
             self.begin_step_device(timestep)
+        self._record_friction_iterate(0)
         total_newton = 0
         outer_iterations = 0
         friction_residual = math.inf
@@ -811,7 +856,7 @@ class DirectAffineIPCSystem:
         try:
             energy = self.total_energy_device()
             if not math.isfinite(energy):
-                raise RuntimeError("Direct MPM--ABD initial IPC energy is non-finite")
+                raise NonfiniteStateError("Direct MPM--ABD initial IPC energy is non-finite")
             assembly = self.assemble_linearization_device()
             active_mpm_dof = int(assembly["active_mpm_dof"])
             for _ in range(max_outer):
@@ -823,7 +868,7 @@ class DirectAffineIPCSystem:
                     self.solve_direction_device(active_mpm_dof)
                     correction = self.direction_inf_norm(active_mpm_dof)
                     if not math.isfinite(correction):
-                        raise RuntimeError("Direct MPM--ABD Newton correction is non-finite")
+                        raise NonfiniteStateError("Direct MPM--ABD Newton correction is non-finite")
                     correction_velocity = self.direction_inf_norm(active_mpm_dof, velocity=True)
                     if correction == 0.0 or (iteration > 0 and correction_velocity < tolerance):
                         inner_converged = True
@@ -836,18 +881,19 @@ class DirectAffineIPCSystem:
                     energy, _ = self._line_search_device(sims, energy, active_mpm_dof)
                     total_newton += 1
                 if not inner_converged:
-                    raise RuntimeError("Direct MPM--ABD inner Newton solve did not converge")
+                    raise NonlinearSolveError("Direct MPM--ABD inner Newton solve did not converge")
 
+                self._record_friction_iterate(outer_iterations)
                 self.refresh_lagged_friction_device()
                 energy = self.total_energy_device()
                 self.assemble_linearization_device()
                 self.solve_direction_device(active_mpm_dof)
                 friction_residual = self.direction_inf_norm(active_mpm_dof, velocity=True)
-                if friction_residual < friction_tolerance:
-                    friction_converged = True
+                friction_converged = friction_residual < friction_tolerance
+                if friction_converged and requested_outer <= 0:
                     break
             if requested_outer <= 0 and not friction_converged:
-                raise RuntimeError(
+                raise NonlinearSolveError(
                     "Direct MPM--ABD lagged friction fixed point did not "
                     f"converge (residual={friction_residual:.6e})"
                 )
@@ -885,7 +931,7 @@ class DirectAffineIPCSystem:
                 return result
         self.affine.device_restore_step_start()
         self.mpm.grid_disp.fill(0.0)
-        raise RuntimeError(
+        raise NonlinearSolveError(
             "Direct MPM--ABD lagged MCC hardening did not converge: "
             f"error={self.mpm.last_material_lagged_error:.6e} after "
             f"{self.mpm.material_lagged_max_iterations} iterations"

@@ -45,9 +45,9 @@ def test_iga_neohookean_material_derivatives(taichi_runtime, dimension, implicit
         deformation = ti.Matrix.zero(ti.f64, dimension, dimension)
         for i, j in ti.static(ti.ndrange(dimension, dimension)):
             deformation[i, j] = values[i, j]
-        energy[None] = model.Psi(deformation)
-        stress[None] = model.dPsi_div_dF(deformation)
-        tangent[None] = model.d2Psi_div_d2F(deformation)
+        energy[None] = model.psi(deformation)
+        stress[None] = model.d_psi_div_d_f(deformation)
+        tangent[None] = model.d2_psi_div_d2_f(deformation)
 
     def pk1(deformation):
         jacobian = np.linalg.det(deformation)

@@ -1,5 +1,7 @@
 """Adaptive transfers and assembly preserve volume, pressure and constrained connectivity."""
 
+from src.mpm.elements.Utilities import build_hanging_constraint_table
+
 from types import SimpleNamespace
 
 import numpy as np
@@ -7,7 +9,7 @@ import pytest
 import taichi as ti
 
 import src.utils.GlobalVariable as GlobalVariable
-from src.mpm.elements.AdaptiveNodeMap import AdaptiveNodeMap, build_hanging_constraint_table
+from src.mpm.elements.AdaptiveNodeMap import AdaptiveNodeMap
 from src.mpm.elements.AdaptiveQuadrilateralKernel import (
     split_refined_particles_2d,
     split_refined_particles_with_traction_2d,
@@ -17,11 +19,13 @@ from src.mpm.elements.AdaptiveHexahedronKernel import (
     copy_refined_particle_children,
     split_refined_particles,
 )
-from src.mpm.engines.EngineKernel import kernel_update_displacement_gradient_2D, kernel_update_displacement_gradient
+from src.mpm.engines.EngineKernel import kernel_update_displacement_gradient_2d, kernel_update_displacement_gradient
 from src.mpm.engines.NewtonIteration import MomentumConservation
 from src.mpm.engines.TLExplicitEngine import TLExplicitEngine
 from src.mpm.engines.ULExplicitEngine import ULExplicitEngine
-from src.mpm.structs.Particle import ImplicitParticle2D, ImplicitParticle, ParticleCloud2D
+from src.mpm.structs.ImplicitParticle2D import ImplicitParticle2D
+from src.mpm.structs.ImplicitParticle import ImplicitParticle
+from src.mpm.structs.ParticleCloud2D import ParticleCloud2D
 
 DIMENSIONS = [
     pytest.param(2, marks=pytest.mark.isolated_dimension(2)),
@@ -214,7 +218,7 @@ def _split_scene(dimension, implicit=True, traction=False, contact=False):
 @ti.data_oriented
 class _VolumeMaterial:
     @ti.func
-    def update_particle_volume_2D(self, np, gradient, state: ti.template(), dt: ti.template()):
+    def update_particle_volume_2d(self, np, gradient, state: ti.template(), dt: ti.template()):
         return (ti.Matrix.identity(float, 2) + gradient * dt[None]).determinant()
 
     @ti.func
@@ -235,7 +239,7 @@ def test_implicit_split_preserves_reference_volume_at_next_newton_update(taichi_
     ids.from_numpy(np.arange(count, dtype=np.int32))
     dt = ti.field(float, shape=())
     dt[None] = 0.01
-    update = kernel_update_displacement_gradient_2D if dimension == 2 else kernel_update_displacement_gradient
+    update = kernel_update_displacement_gradient_2d if dimension == 2 else kernel_update_displacement_gradient
     update(
         1,
         0,

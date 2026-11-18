@@ -5,7 +5,6 @@ import pytest
 
 import src.igampm.config as config
 
-
 pytestmark = [pytest.mark.integration, pytest.mark.slow, pytest.mark.serial]
 
 
@@ -56,7 +55,7 @@ def _check_mpm_ul_assembly(output_path):
         visualize=False,
         path=str(output_path),
     )
-    mpm.init_F0()
+    mpm.init_f0()
 
     mpm.mass_vec.fill(0.0)
     mpm.grid_reset()
@@ -84,7 +83,7 @@ def _check_mpm_ul_assembly(output_path):
     mpm.apply_dirichlet(mpm.stiffness_nnz, mpm.active_dof)
     mpm.hash_matrix.finalize_taichi_assembly()
     raw = mpm.hash_matrix.to_scipy(mpm.active_dof // config.DIM).tocsr()
-    raw_rhs = mpm.rhs.to_numpy()[:mpm.active_dof]
+    raw_rhs = mpm.rhs.to_numpy()[: mpm.active_dof]
 
     mpm.matrix_reset()
     mpm.hash_matrix.reset_system()
@@ -95,7 +94,7 @@ def _check_mpm_ul_assembly(output_path):
     mpm.apply_dirichlet_hash(mpm.active_dof)
     mpm.hash_matrix.finalize_taichi_assembly()
     reduced = mpm.hash_matrix.to_scipy(mpm.active_dof // config.DIM).tocsr()
-    reduced_rhs = mpm.rhs.to_numpy()[:mpm.active_dof]
+    reduced_rhs = mpm.rhs.to_numpy()[: mpm.active_dof]
 
     _assert_same_matrix("ImplicitULMPM block hash assembly", raw, reduced)
     _assert_same_vector("ImplicitULMPM block hash rhs", raw_rhs, reduced_rhs)

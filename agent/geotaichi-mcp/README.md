@@ -220,6 +220,8 @@ coupling variable names and writes the bounded JSON-safe snapshot into the
 task's `diagnostics.json`. Specialized implicit engines add retry, nonlinear,
 linear, CCD, friction, and contact state; explicit/native engines retain the
 common time/step/timestep/target schema.
+For native solvers, progress uses `current_time`; the configured end time is
+reported separately as `target_time`.
 
 When a staged model contract exists, the worker also evaluates a public
 `validation_evidence` dictionary or `output/validation-evidence.json` against

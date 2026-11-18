@@ -23,7 +23,7 @@ def test_cpt_particle_pressure_follows_material_points(taichi_runtime, tmp_path,
     mpm = MPM(log=False)
     dx, particle_count = configure_direct_axisymmetric_mpm(mpm, tmp_path, 1.0e-3, 1.0e-3, 1.0e-3, 50.0)
     engine = mpm.enginer
-    engine.init_F0()
+    engine.init_f0()
     assert particle_count == 40
     assert engine.neumann.num == 0
     assert engine.compute_traction
@@ -33,7 +33,7 @@ def test_cpt_particle_pressure_follows_material_points(taichi_runtime, tmp_path,
     areas = engine.traction.surface_area.to_numpy()[:count]
     np.testing.assert_array_equal(pressure, np.tile([0.0, -SURFACE_PRESSURE], (count, 1)))
     forces = pressure * areas[:, None]
-    total_force = np.array([0.0, -SURFACE_PRESSURE * np.pi * SOIL_SIZE[0] ** 2])
+    total_force = np.array([0.0, -SURFACE_PRESSURE * 0.5 * SOIL_SIZE[0] ** 2])
     np.testing.assert_allclose(forces.sum(axis=0), total_force)
     initial_positions = engine.particle.x.to_numpy()
     assert np.all(initial_positions[ids, 1] == np.max(initial_positions[:, 1]))

@@ -1,9 +1,9 @@
 import taichi as ti
 
 from src.levelset.FluidLevelSetKernel import free_surface_theta, free_surface_theta_from_phi_half_default
-from src.utils.Quaternion import SetToRotate
-from src.utils.constants import Threshold
-from src.utils.TypeDefination import vec3f
+from src.utils.Quaternion import set_to_rotate
+from src.utils.constants import THRESHOLD
+from src.utils.TypeDefinition import vec3f
 from src.mpm.engines.EngineKernel import ibm_cell_pressure_acceleration as cell_pressure_acceleration_3d
 
 
@@ -73,7 +73,7 @@ def cell_viscous_stress_3d(cell, active_cnum, grid_size, viscosity, node: ti.tem
         left = clamp_cell_index_3d(cell - offset, active_cnum)
         right = clamp_cell_index_3d(cell + offset, active_cnum)
         distance = (right[d] - left[d]) * grid_size[d]
-        if distance > Threshold:
+        if distance > THRESHOLD:
             derivative = (cell_center_velocity_3d(right, node) - cell_center_velocity_3d(left, node)) / distance
             for component in ti.static(range(3)):
                 velocity_gradient[component, d] = derivative[component]
@@ -144,7 +144,7 @@ def cell_pressure_gradient_3d(
 
 @ti.func
 def partitioned_body_share(body_fraction, body_fraction_sum):
-    return ti.max(0.0, body_fraction) / ti.max(body_fraction_sum, Threshold)
+    return ti.max(0.0, body_fraction) / ti.max(body_fraction_sum, THRESHOLD)
 
 
 @ti.func
@@ -153,7 +153,7 @@ def lsdem_volume_fraction_ibm_force_density(
 ):
     mixed_density = (1.0 - solid_fraction) * fluid_density + solid_fraction * solid_density
     weighted_solid_fraction = ti.min(
-        1.0, ti.max(0.0, solid_fraction * solid_density / ti.max(mixed_density, Threshold))
+        1.0, ti.max(0.0, solid_fraction * solid_density / ti.max(mixed_density, THRESHOLD))
     )
     return weighted_solid_fraction * stress_divergence - (1.0 - weighted_solid_fraction) * ibm_force_density
 
@@ -219,7 +219,7 @@ def kernel_update_lsdem_cell_ibm_fields(
                         inside_bounds = 0
                 if inside_bounds == 1:
                     mass_center = rigid[body]._get_position()
-                    rotate_matrix = SetToRotate(rigid[body].q)
+                    rotate_matrix = set_to_rotate(rigid[body].q)
                     position = (I.cast(float) + 0.5) * grid_size
                     cell_solid_fraction = estimate_cell_solid_fraction_3d(
                         I,
@@ -262,7 +262,7 @@ def kernel_accumulate_lsdem_volume_fraction_ibm_force(
     rigid: ti.template(),
     box: ti.template(),
     levelset_grid: ti.template(),
-    matProps: ti.template(),
+    mat_props: ti.template(),
     solid_fraction: ti.template(),
     solid_fraction_sum: ti.template(),
     solid_density: ti.template(),
@@ -280,22 +280,22 @@ def kernel_accumulate_lsdem_volume_fraction_ibm_force(
     active_cnum = cnum - 2 * ghost_cell
     min_dx = min_grid_spacing_3d(grid_size)
     cell_volume = grid_size[0] * grid_size[1] * grid_size[2]
-    fluid_density = matProps.density
+    fluid_density = mat_props.density
     # The grid loop is the parallel dimension; rigid accumulation remains
     # atomic because many cell tasks contribute to the same body resultant.
     for I in ti.grouped(ti.ndrange(active_cnum[0], active_cnum[1], active_cnum[2])):
         total_solid_fraction = ti.min(1.0, ti.max(0.0, solid_fraction[I]))
-        if total_solid_fraction > Threshold and int(cell_type[I]) == 1:
+        if total_solid_fraction > THRESHOLD and int(cell_type[I]) == 1:
             position = (I.cast(float) + 0.5) * grid_size
             local_solid_density = solid_density[I]
-            if local_solid_density <= Threshold:
+            if local_solid_density <= THRESHOLD:
                 local_solid_density = fluid_density
             acceleration = cell_pressure_acceleration_3d(
                 I,
                 active_cnum,
                 grid_size,
                 fluid_density,
-                matProps.atmospheric_pressure,
+                mat_props.atmospheric_pressure,
                 solid_fraction,
                 solid_density,
                 pressure,
@@ -338,7 +338,7 @@ def kernel_accumulate_lsdem_volume_fraction_ibm_force(
                             inside_bounds = 0
                     if inside_bounds == 1:
                         mass_center = rigid[body]._get_position()
-                        rotate_matrix = SetToRotate(rigid[body].q)
+                        rotate_matrix = set_to_rotate(rigid[body].q)
                         body_solid_fraction = estimate_cell_solid_fraction_3d(
                             I,
                             grid_size,
@@ -389,7 +389,7 @@ def apply_double_layer_ibm_face_3d(
         face_fraction = ti.min(1.0, 0.5 * fraction_sum)
         if (lower[axis] < 0) or (upper[axis] >= cell_shape[axis]):
             face_fraction = ti.min(1.0, fraction_sum)
-        if face_fraction > Threshold and fraction_sum > Threshold:
+        if face_fraction > THRESHOLD and fraction_sum > THRESHOLD:
             target_velocity = target_numerator / fraction_sum
             velocity_change = face_fraction * (
                 target_velocity - fluid_velocity[face] - dt[None] * pressure_acceleration
@@ -397,9 +397,9 @@ def apply_double_layer_ibm_face_3d(
             fluid_velocity[face] += velocity_change
             fluid_acceleration[face] += velocity_change / dt[None]
             reaction = -fluid_mass[face] * velocity_change / dt[None]
-            if lower_fraction > Threshold:
+            if lower_fraction > THRESHOLD:
                 ti.atomic_add(reaction_cell[lower][axis], reaction * lower_fraction / fraction_sum)
-            if upper_fraction > Threshold:
+            if upper_fraction > THRESHOLD:
                 ti.atomic_add(reaction_cell[upper][axis], reaction * upper_fraction / fraction_sum)
 
 
@@ -556,7 +556,7 @@ def kernel_accumulate_double_layer_lsdem_ibm_force(
     min_dx = min_grid_spacing_3d(grid_size)
     for I in ti.grouped(ti.ndrange(cnum[0], cnum[1], cnum[2])):
         total_fraction = ti.min(1.0, ti.max(0.0, solid_fraction[I]))
-        if total_fraction > Threshold:
+        if total_fraction > THRESHOLD:
             # MAC reaction already includes actual fluid mass and both IBM passes.
             # Air-cell shares still carry impulse from adjacent occupied faces.
             force = reaction_cell[I]
@@ -580,7 +580,7 @@ def kernel_accumulate_double_layer_lsdem_ibm_force(
                     inside_bounds = (position - center).norm() <= radius + min_dx
                     if inside_bounds:
                         mass_center = rigid[body]._get_position()
-                        rotate_matrix = SetToRotate(rigid[body].q)
+                        rotate_matrix = set_to_rotate(rigid[body].q)
                         body_fraction = estimate_cell_solid_fraction_3d(
                             I,
                             grid_size,

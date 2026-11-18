@@ -1,22 +1,24 @@
+from src.mpm.sparse_grid.Utilities import compact_node_id
+from src.mpm.sparse_grid.Utilities import compact_node_grid_coord
 import taichi as ti
 
-from src.utils.constants import Threshold
-from src.utils.TypeDefination import vec2f, vec3f, vec3i, vec2i
-from src.utils.VectorFunction import SquareLen
+from src.utils.constants import THRESHOLD
+from src.utils.TypeDefinition import vec2f, vec3f, vec3i, vec2i
+from src.utils.VectorFunction import square_len
 from src.utils.ScalarFunction import linearize, vectorize_id, clamp
 from src.utils.ShapeFunctions import (
-    ShapeLinear,
-    GShapeLinear,
-    ShapeLinearCenter,
-    ShapeGIMP,
-    GShapeGIMP,
-    ShapeGIMPCenter,
-    ShapeBsplineQ,
-    GShapeBsplineQ,
-    ShapeBsplineC,
-    GShapeBsplineC,
+    shape_linear,
+    g_shape_linear,
+    shape_linear_center,
+    shape_gimp,
+    g_shape_gimp,
+    shape_gimp_center,
+    shape_bspline_q,
+    g_shape_bspline_q,
+    shape_bspline_c,
+    g_shape_bspline_c,
 )
-from src.mpm.sparse_grid.BlockSparseGrid import compact_node_grid_coord, compact_node_id
+from src.mpm.sparse_grid.BlockSparseGrid import BlockSparseGrid
 import src.utils.GlobalVariable as GlobalVariable
 
 
@@ -27,48 +29,48 @@ def kernel_initialize_boundary(constraint: ti.template()):
 
 
 @ti.kernel
-def add_boundary_flags(level: int, gridSum: int, inodes: ti.types.ndarray(), boundary_flag: ti.template()):
+def add_boundary_flags(level: int, grid_sum: int, inodes: ti.types.ndarray(), boundary_flag: ti.template()):
     for offset in range(inodes.shape[0]):
-        boundary_flag[inodes[offset] + level * gridSum] = 1
+        boundary_flag[inodes[offset] + level * grid_sum] = 1
 
 
 @ti.kernel
 def set_reflection_constraint(
     constraint: ti.template(),
-    nodeID: ti.types.ndarray(),
+    node_id: ti.types.ndarray(),
     levels: ti.types.ndarray(),
     dirs: ti.types.ndarray(),
     signs: ti.types.ndarray(),
 ):
-    for offset in range(nodeID.shape[0]):
-        constraint[offset].set_boundary_condition(nodeID[offset], levels[offset], dirs[offset], signs[offset])
+    for offset in range(node_id.shape[0]):
+        constraint[offset].set_boundary_condition(node_id[offset], levels[offset], dirs[offset], signs[offset])
 
 
 @ti.kernel
 def set_friction_constraint(
     constraint: ti.template(),
-    nodeID: ti.types.ndarray(),
+    node_id: ti.types.ndarray(),
     levels: ti.types.ndarray(),
     dirs: ti.types.ndarray(),
     signs: ti.types.ndarray(),
     mu: ti.types.ndarray(),
 ):
-    for offset in range(nodeID.shape[0]):
+    for offset in range(node_id.shape[0]):
         constraint[offset].set_boundary_condition(
-            nodeID[offset], levels[offset], mu[offset], dirs[offset], signs[offset]
+            node_id[offset], levels[offset], mu[offset], dirs[offset], signs[offset]
         )
 
 
 @ti.kernel
 def set_contraints(
     constraint: ti.template(),
-    nodeID: ti.types.ndarray(),
+    node_id: ti.types.ndarray(),
     levels: ti.types.ndarray(),
     dirs: ti.types.ndarray(),
     values: ti.types.ndarray(),
 ):
-    for offset in range(nodeID.shape[0]):
-        constraint[offset].set_boundary_condition(nodeID[offset], levels[offset], dirs[offset], values[offset])
+    for offset in range(node_id.shape[0]):
+        constraint[offset].set_boundary_condition(node_id[offset], levels[offset], dirs[offset], values[offset])
 
 
 @ti.func
@@ -85,14 +87,14 @@ def find_pre_location(start_index, pid, constraint):
 def prefind_particle_traction_contraint(
     lists: ti.types.ndarray(),
     constraint: ti.template(),
-    startNum: int,
-    particleNum: int,
+    start_num: int,
+    particle_num: int,
     particle: ti.template(),
     is_in_region: ti.template(),
 ) -> int:
     start_index = lists[0]
     pre_number = lists[0]
-    for np in range(startNum, startNum + particleNum):
+    for np in range(start_num, start_num + particle_num):
         if is_in_region(particle[np].x):
             temp = find_pre_location(pre_number, np, constraint)
             if temp == -1:
@@ -104,8 +106,8 @@ def prefind_particle_traction_contraint(
 def set_particle_traction_contraint(
     lists: ti.types.ndarray(),
     constraint: ti.template(),
-    startNum: int,
-    particleNum: int,
+    start_num: int,
+    particle_num: int,
     particle: ti.template(),
     is_in_region: ti.template(),
     value: ti.types.vector(3, float),
@@ -113,7 +115,7 @@ def set_particle_traction_contraint(
 ):
     start_index = lists[0]
     pre_number = lists[0]
-    for np in range(startNum, startNum + particleNum):
+    for np in range(start_num, start_num + particle_num):
         if is_in_region(particle[np].x):
             temp = find_pre_location(pre_number, np, constraint)
             if temp == -1:
@@ -126,8 +128,8 @@ def set_particle_traction_contraint(
 def set_particle_traction_contraint_twophase(
     lists: ti.types.ndarray(),
     constraint: ti.template(),
-    startNum: int,
-    particleNum: int,
+    start_num: int,
+    particle_num: int,
     particle: ti.template(),
     is_in_region: ti.template(),
     value: ti.types.vector(3, float),
@@ -136,7 +138,7 @@ def set_particle_traction_contraint_twophase(
 ):
     start_index = lists[0]
     pre_number = lists[0]
-    for np in range(startNum, startNum + particleNum):
+    for np in range(start_num, start_num + particle_num):
         if is_in_region(particle[np].x):
             temp = find_pre_location(pre_number, np, constraint)
             if temp == -1:
@@ -146,11 +148,11 @@ def set_particle_traction_contraint_twophase(
 
 
 @ti.kernel
-def set_particle_traction_contraint_2D(
+def set_particle_traction_contraint_2d(
     lists: ti.types.ndarray(),
     constraint: ti.template(),
-    startNum: int,
-    particleNum: int,
+    start_num: int,
+    particle_num: int,
     particle: ti.template(),
     is_in_region: ti.template(),
     value: ti.types.vector(2, float),
@@ -158,7 +160,7 @@ def set_particle_traction_contraint_2D(
 ):
     start_index = lists[0]
     pre_number = lists[0]
-    for np in range(startNum, startNum + particleNum):
+    for np in range(start_num, start_num + particle_num):
         if is_in_region(particle[np].x):
             temp = find_pre_location(pre_number, np, constraint)
             if temp == -1:
@@ -170,11 +172,11 @@ def set_particle_traction_contraint_2D(
 
 
 @ti.kernel
-def set_particle_traction_contraint_twophase_2D(
+def set_particle_traction_contraint_twophase_2d(
     lists: ti.types.ndarray(),
     constraint: ti.template(),
-    startNum: int,
-    particleNum: int,
+    start_num: int,
+    particle_num: int,
     particle: ti.template(),
     is_in_region: ti.template(),
     value: ti.types.vector(2, float),
@@ -183,7 +185,7 @@ def set_particle_traction_contraint_twophase_2D(
 ):
     start_index = lists[0]
     pre_number = lists[0]
-    for np in range(startNum, startNum + particleNum):
+    for np in range(start_num, start_num + particle_num):
         if is_in_region(particle[np].x):
             temp = find_pre_location(pre_number, np, constraint)
             if temp == -1:
@@ -194,9 +196,9 @@ def set_particle_traction_contraint_twophase_2D(
 
 @ti.kernel
 def clear_constraint(lists: ti.types.ndarray(), constraint: ti.template(), inodes: ti.types.ndarray(), nlevel: int):
-    for nodeID in range(inodes.shape[0]):
+    for node_id in range(inodes.shape[0]):
         for offset in range(lists[0]):
-            if constraint[offset].node == inodes[nodeID] and constraint[offset].level == nlevel:
+            if constraint[offset].node == inodes[node_id] and constraint[offset].level == nlevel:
                 constraint[offset].clear_boundary_condition()
 
 
@@ -226,16 +228,16 @@ def apply_velocity_constraint(
     cut_off: float, lists: int, constraints: ti.template(), is_rigid: ti.template(), node: ti.template()
 ):
     for nboundary in range(lists):
-        nodeID = constraints[nboundary].node
+        node_id = constraints[nboundary].node
         grid_level = int(constraints[nboundary].level)
-        if node[nodeID, grid_level].m > cut_off:
+        if node[node_id, grid_level].m > cut_off:
             direction = int(constraints[nboundary].dirs)
 
             if is_rigid[grid_level] == 0:
                 prescribed_velocity = constraints[nboundary].velocity
-                node[nodeID, grid_level].velocity_constraint(direction, prescribed_velocity)
+                node[node_id, grid_level].velocity_constraint(direction, prescribed_velocity)
             else:
-                node[nodeID, grid_level].rigid_body_velocity_constraint(direction)
+                node[node_id, grid_level].rigid_body_velocity_constraint(direction)
 
 
 @ti.kernel
@@ -253,15 +255,15 @@ def apply_velocity_constraint_sparse(
 ):
     for nboundary in range(lists):
         physical_node = constraints[nboundary].node
-        nodeID = compact_node_id(physical_node, gnum, block_count, block_size, block_volume, block_map)
+        node_id = compact_node_id(physical_node, gnum, block_count, block_size, block_volume, block_map)
         grid_level = int(constraints[nboundary].level)
-        if nodeID >= 0 and node[nodeID, grid_level].m > cut_off:
+        if node_id >= 0 and node[node_id, grid_level].m > cut_off:
             direction = int(constraints[nboundary].dirs)
             if is_rigid[grid_level] == 0:
                 prescribed_velocity = constraints[nboundary].velocity
-                node[nodeID, grid_level].velocity_constraint(direction, prescribed_velocity)
+                node[node_id, grid_level].velocity_constraint(direction, prescribed_velocity)
             else:
-                node[nodeID, grid_level].rigid_body_velocity_constraint(direction)
+                node[node_id, grid_level].rigid_body_velocity_constraint(direction)
 
 
 @ti.kernel
@@ -269,15 +271,15 @@ def apply_reflection_constraint(
     cut_off: float, lists: int, constraints: ti.template(), is_rigid: ti.template(), node: ti.template()
 ):
     for nboundary in range(lists):
-        nodeID = constraints[nboundary].node
+        node_id = constraints[nboundary].node
         grid_level = int(constraints[nboundary].level)
-        if node[nodeID, grid_level].m > cut_off:
+        if node[node_id, grid_level].m > cut_off:
             direction = int(constraints[nboundary].dirs)
             signs = int(constraints[nboundary].signs)
             if is_rigid[grid_level] == 0:
-                node[nodeID, grid_level].reflection_constraint(direction, signs)
+                node[node_id, grid_level].reflection_constraint(direction, signs)
             else:
-                node[nodeID, grid_level].rigid_body_reflection_constraint(direction, signs)
+                node[node_id, grid_level].rigid_body_reflection_constraint(direction, signs)
 
 
 @ti.kernel
@@ -295,15 +297,15 @@ def apply_reflection_constraint_sparse(
 ):
     for nboundary in range(lists):
         physical_node = constraints[nboundary].node
-        nodeID = compact_node_id(physical_node, gnum, block_count, block_size, block_volume, block_map)
+        node_id = compact_node_id(physical_node, gnum, block_count, block_size, block_volume, block_map)
         grid_level = int(constraints[nboundary].level)
-        if nodeID >= 0 and node[nodeID, grid_level].m > cut_off:
+        if node_id >= 0 and node[node_id, grid_level].m > cut_off:
             direction = int(constraints[nboundary].dirs)
             signs = int(constraints[nboundary].signs)
             if is_rigid[grid_level] == 0:
-                node[nodeID, grid_level].reflection_constraint(direction, signs)
+                node[node_id, grid_level].reflection_constraint(direction, signs)
             else:
-                node[nodeID, grid_level].rigid_body_reflection_constraint(direction, signs)
+                node[node_id, grid_level].rigid_body_reflection_constraint(direction, signs)
 
 
 @ti.kernel
@@ -316,10 +318,10 @@ def apply_contact_velocity_constraint(
     sparse_grid: ti.template(),
 ):
     for nboundary in range(lists):
-        nodeID = constraints[nboundary].node
+        node_id = constraints[nboundary].node
         if ti.static(sparse_grid != None):
-            nodeID = compact_node_id(
-                nodeID,
+            node_id = compact_node_id(
+                node_id,
                 gnum,
                 sparse_grid.block_count,
                 sparse_grid.block_size,
@@ -327,10 +329,10 @@ def apply_contact_velocity_constraint(
                 sparse_grid.block_map,
             )
         grid_level = int(constraints[nboundary].level)
-        if nodeID >= 0:
-            if SquareLen(node[nodeID, grid_level].contact_force) > cut_off:
+        if node_id >= 0:
+            if square_len(node[node_id, grid_level].contact_force) > cut_off:
                 direction = int(constraints[nboundary].dirs)
-                node[nodeID, grid_level].contact_velocity_constraint(direction)
+                node[node_id, grid_level].contact_velocity_constraint(direction)
 
 
 @ti.kernel
@@ -343,10 +345,10 @@ def apply_contact_reflection_constraint(
     sparse_grid: ti.template(),
 ):
     for nboundary in range(lists):
-        nodeID = constraints[nboundary].node
+        node_id = constraints[nboundary].node
         if ti.static(sparse_grid != None):
-            nodeID = compact_node_id(
-                nodeID,
+            node_id = compact_node_id(
+                node_id,
                 gnum,
                 sparse_grid.block_count,
                 sparse_grid.block_size,
@@ -355,11 +357,11 @@ def apply_contact_reflection_constraint(
             )
         grid_level = int(constraints[nboundary].level)
 
-        if nodeID >= 0:
-            if SquareLen(node[nodeID, grid_level].contact_force) > cut_off:
+        if node_id >= 0:
+            if square_len(node[node_id, grid_level].contact_force) > cut_off:
                 direction = int(constraints[nboundary].dirs)
                 signs = int(constraints[nboundary].signs)
-                node[nodeID, grid_level].contact_reflection_constraint(direction, signs)
+                node[node_id, grid_level].contact_reflection_constraint(direction, signs)
 
 
 @ti.kernel
@@ -372,17 +374,17 @@ def apply_friction_constraint(
     dt: ti.template(),
 ):
     for nboundary in range(lists):
-        nodeID = constraints[nboundary].node
+        node_id = constraints[nboundary].node
         grid_level = int(constraints[nboundary].level)
-        if node[nodeID, grid_level].m > cut_off:
+        if node[node_id, grid_level].m > cut_off:
             direction = int(constraints[nboundary].dirs)
             signs = int(constraints[nboundary].signs)
 
             if is_rigid[grid_level] == 0:
                 mu = constraints[nboundary].mu
-                node[nodeID, grid_level].friction_constraint(mu, direction, signs, dt)
+                node[node_id, grid_level].friction_constraint(mu, direction, signs, dt)
             else:
-                node[nodeID, grid_level].rigid_friction_constraint(direction, signs)
+                node[node_id, grid_level].rigid_friction_constraint(direction, signs)
 
 
 @ti.kernel
@@ -401,16 +403,16 @@ def apply_friction_constraint_sparse(
 ):
     for nboundary in range(lists):
         physical_node = constraints[nboundary].node
-        nodeID = compact_node_id(physical_node, gnum, block_count, block_size, block_volume, block_map)
+        node_id = compact_node_id(physical_node, gnum, block_count, block_size, block_volume, block_map)
         grid_level = int(constraints[nboundary].level)
-        if nodeID >= 0 and node[nodeID, grid_level].m > cut_off:
+        if node_id >= 0 and node[node_id, grid_level].m > cut_off:
             direction = int(constraints[nboundary].dirs)
             signs = int(constraints[nboundary].signs)
             if is_rigid[grid_level] == 0:
                 mu = constraints[nboundary].mu
-                node[nodeID, grid_level].friction_constraint(mu, direction, signs, dt)
+                node[node_id, grid_level].friction_constraint(mu, direction, signs, dt)
             else:
-                node[nodeID, grid_level].rigid_friction_constraint(direction, signs)
+                node[node_id, grid_level].rigid_friction_constraint(direction, signs)
 
 
 @ti.kernel
@@ -418,7 +420,7 @@ def apply_absorbing_constraint(
     lists: int, constraints: ti.template(), material: ti.template(), node: ti.template(), extra_node: ti.template()
 ):
     for nboundary in range(lists):
-        nodeID = constraints[nboundary].node
+        node_id = constraints[nboundary].node
         grid_level = int(constraints[nboundary].level)
         norm = constraints[nboundary].norm
         delta = constraints[nboundary].delta
@@ -427,11 +429,11 @@ def apply_absorbing_constraint(
         b = constraints[nboundary].b
         position_type = constraints[nboundary].position_type
 
-        mass = node[nodeID, grid_level].mass
-        pwave_v = node[nodeID, grid_level].pwave_velocity
-        swave_v = node[nodeID, grid_level].swave_velocity
+        mass = node[node_id, grid_level].mass
+        pwave_v = node[node_id, grid_level].pwave_velocity
+        swave_v = node[node_id, grid_level].swave_velocity
         density = material[grid_level].density
-        material_displacement = extra_node[nodeID, grid_level].displacement
+        material_displacement = extra_node[node_id, grid_level].displacement
 
         pwave_v /= mass
         swave_v /= mass
@@ -447,7 +449,7 @@ def apply_absorbing_constraint(
         spring_constant -= (spring_constant.dot(norm) - k_p) * norm
 
         absorbing_traction = (
-            node[nodeID, grid_level].momentum * wave_velocity * density + material_displacement * spring_constant
+            node[node_id, grid_level].momentum * wave_velocity * density + material_displacement * spring_constant
         )
         if position_type == 0:
             absorbing_traction *= 0.25 * h_min * h_min
@@ -455,31 +457,31 @@ def apply_absorbing_constraint(
             absorbing_traction *= 0.5 * h_min * h_min
         elif position_type == 2:
             absorbing_traction *= h_min * h_min
-        node[nodeID, grid_level]._update_nodal_force(-absorbing_traction)
+        node[node_id, grid_level]._update_nodal_force(-absorbing_traction)
 
 
 @ti.kernel
 def apply_traction_constraint(lists: int, constraints: ti.template(), node: ti.template()):
     for nboundary in range(lists):
-        nodeID = constraints[nboundary].node
+        node_id = constraints[nboundary].node
         grid_level = int(constraints[nboundary].level)
-        if node[nodeID, grid_level].m > Threshold:
+        if node[node_id, grid_level].m > THRESHOLD:
             direction = int(constraints[nboundary].dirs)
             traction = constraints[nboundary].traction
-            node[nodeID, grid_level].force += ti.Vector(
+            node[node_id, grid_level].force += ti.Vector(
                 [(direction == j) * traction for j in ti.static(range(3))], float
             )
 
 
 @ti.kernel
-def apply_traction_constraint_2D(lists: int, constraints: ti.template(), node: ti.template()):
+def apply_traction_constraint_2d(lists: int, constraints: ti.template(), node: ti.template()):
     for nboundary in range(lists):
-        nodeID = constraints[nboundary].node
+        node_id = constraints[nboundary].node
         grid_level = int(constraints[nboundary].level)
-        if node[nodeID, grid_level].m > Threshold:
+        if node[node_id, grid_level].m > THRESHOLD:
             direction = int(constraints[nboundary].dirs)
             traction = constraints[nboundary].traction
-            node[nodeID, grid_level].force += ti.Vector(
+            node[node_id, grid_level].force += ti.Vector(
                 [(direction == j) * traction for j in ti.static(range(2))], float
             )
 
@@ -497,12 +499,12 @@ def apply_traction_constraint_sparse(
 ):
     for nboundary in range(lists):
         physical_node = constraints[nboundary].node
-        nodeID = compact_node_id(physical_node, gnum, block_count, block_size, block_volume, block_map)
+        node_id = compact_node_id(physical_node, gnum, block_count, block_size, block_volume, block_map)
         grid_level = int(constraints[nboundary].level)
-        if nodeID >= 0 and node[nodeID, grid_level].m > Threshold:
+        if node_id >= 0 and node[node_id, grid_level].m > THRESHOLD:
             direction = int(constraints[nboundary].dirs)
             traction = constraints[nboundary].traction
-            node[nodeID, grid_level].force += ti.Vector(
+            node[node_id, grid_level].force += ti.Vector(
                 [(direction == j) * traction for j in ti.static(range(GlobalVariable.DIMENSION))], float
             )
 
@@ -523,11 +525,11 @@ def lightweight_particle_traction_constraint(
     for d in ti.static(range(GlobalVariable.DIMENSION)):
         ti.block_local(node.force.get_scalar_field(d))
     for nboundary in range(lists):
-        particleID = constraints[nboundary].pid
-        bodyID = int(particle[particleID].bodyID)
-        constraints[nboundary]._calc_psize_cp(dt, particle[particleID].velocity_gradient)
-        position = particle[particleID].x
-        psize = particle_lengths[bodyID]
+        particle_id = constraints[nboundary].pid
+        body_id = int(particle[particle_id].bodyID)
+        constraints[nboundary]._calc_psize_cp(dt, particle[particle_id].velocity_gradient)
+        position = particle[particle_id].x
+        psize = particle_lengths[body_id]
 
         external_force = constraints[nboundary]._compute_traction_force()
         for offset in ti.static(ti.grouped(ti.ndrange(*((GlobalVariable.INFLUENCENODE,) * GlobalVariable.DIMENSION)))):
@@ -538,31 +540,31 @@ def lightweight_particle_traction_constraint(
                 if grid_id[d] < 0 or grid_id[d] >= gnum[d]:
                     no_skip = False
             if no_skip:
-                nodeID = linearize(grid_id, gnum)
+                node_id = linearize(grid_id, gnum)
                 grid_pos = grid_id * grid_size
                 shape_fn = ti.Vector.zero(float, GlobalVariable.DIMENSION)
                 if ti.static(GlobalVariable.SHAPEFUNCTION == 0):
                     for d in ti.static(range(GlobalVariable.DIMENSION)):
-                        shape_fn[d] = ShapeLinear(position[d], grid_pos[d], igrid_size[d], 0)
+                        shape_fn[d] = shape_linear(position[d], grid_pos[d], igrid_size[d], 0)
                 elif ti.static(GlobalVariable.SHAPEFUNCTION == 1):
                     for d in ti.static(range(GlobalVariable.DIMENSION)):
-                        shape_fn[d] = ShapeGIMP(position[d], grid_pos[d], igrid_size[d], psize[d])
+                        shape_fn[d] = shape_gimp(position[d], grid_pos[d], igrid_size[d], psize[d])
                 elif ti.static(GlobalVariable.SHAPEFUNCTION == 2):
-                    boundary_type = boundary_types[nodeID, bodyID]
+                    boundary_type = boundary_types[node_id, body_id]
                     for d in ti.static(range(GlobalVariable.DIMENSION)):
                         btypes = int(boundary_type[d])
-                        shape_fn[d] = ShapeBsplineQ(position[d], grid_pos[d], igrid_size[d], btypes)
+                        shape_fn[d] = shape_bspline_q(position[d], grid_pos[d], igrid_size[d], btypes)
                 elif ti.static(GlobalVariable.SHAPEFUNCTION == 3):
-                    boundary_type = boundary_types[nodeID, bodyID]
+                    boundary_type = boundary_types[node_id, body_id]
                     for d in ti.static(range(GlobalVariable.DIMENSION)):
                         btypes = int(boundary_type[d])
-                        shape_fn[d] = ShapeBsplineC(position[d], grid_pos[d], igrid_size[d], btypes)
+                        shape_fn[d] = shape_bspline_c(position[d], grid_pos[d], igrid_size[d], btypes)
 
                 weight = 1.0
                 for d in ti.static(range(GlobalVariable.DIMENSION)):
                     weight *= shape_fn[d]
                 pforce = weight * external_force
-                node[nodeID, bodyID].force += pforce
+                node[node_id, body_id].force += pforce
 
 
 @ti.kernel
@@ -573,19 +575,19 @@ def apply_particle_traction_constraint(
     dt: ti.template(),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shape_fn: ti.template(),
     node_size: ti.template(),
 ):
     for nboundary in range(lists):
-        particleID = constraints[nboundary].pid
-        bodyID = int(particle[particleID].bodyID)
-        constraints[nboundary]._calc_psize_cp(dt, particle[particleID].velocity_gradient)
+        particle_id = constraints[nboundary].pid
+        body_id = int(particle[particle_id].bodyID)
+        constraints[nboundary]._calc_psize_cp(dt, particle[particle_id].velocity_gradient)
         traction = constraints[nboundary]._compute_traction_force()
-        offset = particleID * total_nodes
-        for ln in range(offset, offset + node_size[particleID]):
-            nodeID = LnID[ln]
-            node[nodeID, bodyID]._update_nodal_force(shape_fn[ln] * traction)
+        offset = particle_id * total_nodes
+        for ln in range(offset, offset + node_size[particle_id]):
+            node_id = ln_id[ln]
+            node[node_id, body_id]._update_nodal_force(shape_fn[ln] * traction)
 
 
 @ti.kernel
@@ -596,27 +598,27 @@ def apply_particle_traction_constraint_twophase(
     dt: ti.template(),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shape_fn: ti.template(),
     node_size: ti.template(),
     update_area: int,
 ):
     for nboundary in range(lists):
-        particleID = constraints[nboundary].pid
-        bodyID = int(particle[particleID].bodyID)
-        phase = int(particle[particleID].phase)
+        particle_id = constraints[nboundary].pid
+        body_id = int(particle[particle_id].bodyID)
+        phase = int(particle[particle_id].phase)
         if update_area != 0:
-            constraints[nboundary]._calc_psize_cp(dt, particle[particleID].solid_velocity_gradient)
+            constraints[nboundary]._calc_psize_cp(dt, particle[particle_id].solid_velocity_gradient)
         exts, extf = constraints[nboundary]._compute_traction_force()
         if phase == 1:
             extf *= 0.0
         elif phase == 2:
             exts *= 0.0
-        offset = particleID * total_nodes
-        for ln in range(offset, offset + node_size[particleID]):
-            nodeID = LnID[ln]
+        offset = particle_id * total_nodes
+        for ln in range(offset, offset + node_size[particle_id]):
+            node_id = ln_id[ln]
             shapefn = shape_fn[ln]
-            node[nodeID, bodyID]._update_nodal_force(shapefn * exts, shapefn * extf)
+            node[node_id, body_id]._update_nodal_force(shapefn * exts, shapefn * extf)
 
 
 @ti.func
@@ -674,7 +676,7 @@ def is_boundary_nodes(cell_id, body_id, cell, cnum):
 
 
 @ti.func
-def is_subset_neighbor_cell_2D(cell_id, body_id, cell, cnum):
+def is_subset_neighbor_cell_2d(cell_id, body_id, cell, cnum):
     return (
         int(cell[linearize(clamp(0, cnum, cell_id + vec2i(-1, -1)), cnum), body_id]) == 2
         or int(cell[linearize(clamp(0, cnum, cell_id + vec2i(0, -1)), cnum), body_id]) == 2
@@ -688,7 +690,7 @@ def is_subset_neighbor_cell_2D(cell_id, body_id, cell, cnum):
 
 
 @ti.func
-def is_boundary_nodes_2D(cell_id, body_id, cell, cnum):
+def is_boundary_nodes_2d(cell_id, body_id, cell, cnum):
     return (
         int(cell[linearize(clamp(0, cnum, cell_id + vec2i(-1, -1)), cnum), body_id]) == 2
         or int(cell[linearize(clamp(0, cnum, cell_id + vec2i(-1, -1)), cnum), body_id]) == 3
@@ -702,8 +704,8 @@ def is_boundary_nodes_2D(cell_id, body_id, cell, cnum):
 
 
 @ti.kernel
-def apply_particle_virtual_traction_constraint_2D(
-    particleNum: int,
+def apply_particle_virtual_traction_constraint_2d(
+    particle_num: int,
     grid_size: ti.types.vector(2, float),
     cnum: ti.types.vector(2, int),
     auxiliary_cell: ti.template(),
@@ -713,33 +715,33 @@ def apply_particle_virtual_traction_constraint_2D(
 ):
     auxiliary_cell.fill(0)
     auxiliary_node.fill(0)
-    for np in range(particleNum):
-        cellID = ti.cast(particle[np].x / grid_size, int)
-        bodyID = particle[np].bodyID
-        linear_cellID = linearize(cellID, cnum)
-        auxiliary_cell[linear_cellID, bodyID] = 1
+    for np in range(particle_num):
+        cell_id = ti.cast(particle[np].x / grid_size, int)
+        body_id = particle[np].bodyID
+        linear_cell_id = linearize(cell_id, cnum)
+        auxiliary_cell[linear_cell_id, body_id] = 1
 
     for nc, nb in auxiliary_cell:
         if int(auxiliary_cell[nc, nb]) == 0:
             for ndx, ndy in ti.static(ti.ndrange(2, 2)):
-                gridID = linearize(vec2i(vectorize_id(nc, cnum)) + vec2i(ndx, ndy), cnum + 1)
-                if node[gridID, nb].m > Threshold:
+                grid_id = linearize(vec2i(vectorize_id(nc, cnum)) + vec2i(ndx, ndy), cnum + 1)
+                if node[grid_id, nb].m > THRESHOLD:
                     auxiliary_cell[nc, nb] = 2
 
     for nc, nb in auxiliary_cell:
         if int(auxiliary_cell[nc, nb]) > 0:
-            if is_subset_neighbor_cell_2D(vec2i(vectorize_id(nc, cnum)), nb, auxiliary_cell, cnum):
+            if is_subset_neighbor_cell_2d(vec2i(vectorize_id(nc, cnum)), nb, auxiliary_cell, cnum):
                 auxiliary_cell[nc, nb] = 3
 
     for ng, nb in node:
-        if node[ng, nb].m > Threshold:
-            if is_boundary_nodes_2D(vec2i(vectorize_id(ng, cnum + 1)), nb, auxiliary_cell, cnum):
+        if node[ng, nb].m > THRESHOLD:
+            if is_boundary_nodes_2d(vec2i(vectorize_id(ng, cnum + 1)), nb, auxiliary_cell, cnum):
                 auxiliary_node[ng, nb] = 1
 
 
 @ti.kernel
-def apply_particle_virtual_traction_constraint_sparse_2D(
-    particleNum: int,
+def apply_particle_virtual_traction_constraint_sparse_2d(
+    particle_num: int,
     grid_size: ti.types.vector(2, float),
     cnum: ti.types.vector(2, int),
     gnum: ti.types.vector(2, int),
@@ -755,36 +757,36 @@ def apply_particle_virtual_traction_constraint_sparse_2D(
 ):
     auxiliary_cell.fill(0)
     auxiliary_node.fill(0)
-    for np in range(particleNum):
-        cellID = ti.cast(particle[np].x / grid_size, int)
-        bodyID = particle[np].bodyID
-        linear_cellID = linearize(cellID, cnum)
-        auxiliary_cell[linear_cellID, bodyID] = 1
+    for np in range(particle_num):
+        cell_id = ti.cast(particle[np].x / grid_size, int)
+        body_id = particle[np].bodyID
+        linear_cell_id = linearize(cell_id, cnum)
+        auxiliary_cell[linear_cell_id, body_id] = 1
 
     for nc, nb in auxiliary_cell:
         if int(auxiliary_cell[nc, nb]) == 0:
-            cellID = vec2i(vectorize_id(nc, cnum))
+            cell_id = vec2i(vectorize_id(nc, cnum))
             for ndx, ndy in ti.static(ti.ndrange(2, 2)):
-                physical_node = linearize(cellID + vec2i(ndx, ndy), gnum)
-                nodeID = compact_node_id(physical_node, gnum, block_count, block_size, block_volume, block_map)
-                if nodeID >= 0 and node[nodeID, nb].m > Threshold:
+                physical_node = linearize(cell_id + vec2i(ndx, ndy), gnum)
+                node_id = compact_node_id(physical_node, gnum, block_count, block_size, block_volume, block_map)
+                if node_id >= 0 and node[node_id, nb].m > THRESHOLD:
                     auxiliary_cell[nc, nb] = 2
 
     for nc, nb in auxiliary_cell:
         if int(auxiliary_cell[nc, nb]) > 0:
-            if is_subset_neighbor_cell_2D(vec2i(vectorize_id(nc, cnum)), nb, auxiliary_cell, cnum):
+            if is_subset_neighbor_cell_2d(vec2i(vectorize_id(nc, cnum)), nb, auxiliary_cell, cnum):
                 auxiliary_cell[nc, nb] = 3
 
     for ng, nb in auxiliary_node:
-        if node[ng, nb].m > Threshold:
+        if node[ng, nb].m > THRESHOLD:
             grid_coord = compact_node_grid_coord(ng, block_count, block_size, block_volume, active_block_ids)
-            if is_boundary_nodes_2D(grid_coord, nb, auxiliary_cell, cnum):
+            if is_boundary_nodes_2d(grid_coord, nb, auxiliary_cell, cnum):
                 auxiliary_node[ng, nb] = 1
 
 
 @ti.kernel
 def apply_particle_virtual_traction_constraint(
-    particleNum: int,
+    particle_num: int,
     grid_size: ti.types.vector(3, float),
     cnum: ti.types.vector(3, int),
     auxiliary_cell: ti.template(),
@@ -794,17 +796,17 @@ def apply_particle_virtual_traction_constraint(
 ):
     auxiliary_cell.fill(0)
     auxiliary_node.fill(0)
-    for np in range(particleNum):
-        cellID = ti.cast(particle[np].x / grid_size, int)
-        bodyID = particle[np].bodyID
-        linear_cellID = linearize(cellID, cnum)
-        auxiliary_cell[linear_cellID, bodyID] = 1
+    for np in range(particle_num):
+        cell_id = ti.cast(particle[np].x / grid_size, int)
+        body_id = particle[np].bodyID
+        linear_cell_id = linearize(cell_id, cnum)
+        auxiliary_cell[linear_cell_id, body_id] = 1
 
     for nc, nb in auxiliary_cell:
         if int(auxiliary_cell[nc, nb]) == 0:
             for ndx, ndy, ndz in ti.static(ti.ndrange(2, 2, 2)):
-                gridID = linearize(vec3i(vectorize_id(nc, cnum)) + vec3i(ndx, ndy, ndz), cnum + 1)
-                if node[gridID, nb].m > Threshold:
+                grid_id = linearize(vec3i(vectorize_id(nc, cnum)) + vec3i(ndx, ndy, ndz), cnum + 1)
+                if node[grid_id, nb].m > THRESHOLD:
                     auxiliary_cell[nc, nb] = 2
 
     for nc, nb in auxiliary_cell:
@@ -813,14 +815,14 @@ def apply_particle_virtual_traction_constraint(
                 auxiliary_cell[nc, nb] = 3
 
     for ng, nb in node:
-        if node[ng, nb].m > Threshold:
+        if node[ng, nb].m > THRESHOLD:
             if is_boundary_nodes(vec3i(vectorize_id(ng, cnum + 1)), nb, auxiliary_cell, cnum):
                 auxiliary_node[ng, nb] = 1
 
 
 @ti.kernel
 def apply_particle_virtual_traction_constraint_sparse(
-    particleNum: int,
+    particle_num: int,
     grid_size: ti.types.vector(3, float),
     cnum: ti.types.vector(3, int),
     gnum: ti.types.vector(3, int),
@@ -836,19 +838,19 @@ def apply_particle_virtual_traction_constraint_sparse(
 ):
     auxiliary_cell.fill(0)
     auxiliary_node.fill(0)
-    for np in range(particleNum):
-        cellID = ti.cast(particle[np].x / grid_size, int)
-        bodyID = particle[np].bodyID
-        linear_cellID = linearize(cellID, cnum)
-        auxiliary_cell[linear_cellID, bodyID] = 1
+    for np in range(particle_num):
+        cell_id = ti.cast(particle[np].x / grid_size, int)
+        body_id = particle[np].bodyID
+        linear_cell_id = linearize(cell_id, cnum)
+        auxiliary_cell[linear_cell_id, body_id] = 1
 
     for nc, nb in auxiliary_cell:
         if int(auxiliary_cell[nc, nb]) == 0:
-            cellID = vec3i(vectorize_id(nc, cnum))
+            cell_id = vec3i(vectorize_id(nc, cnum))
             for ndx, ndy, ndz in ti.static(ti.ndrange(2, 2, 2)):
-                physical_node = linearize(cellID + vec3i(ndx, ndy, ndz), gnum)
-                nodeID = compact_node_id(physical_node, gnum, block_count, block_size, block_volume, block_map)
-                if nodeID >= 0 and node[nodeID, nb].m > Threshold:
+                physical_node = linearize(cell_id + vec3i(ndx, ndy, ndz), gnum)
+                node_id = compact_node_id(physical_node, gnum, block_count, block_size, block_volume, block_map)
+                if node_id >= 0 and node[node_id, nb].m > THRESHOLD:
                     auxiliary_cell[nc, nb] = 2
 
     for nc, nb in auxiliary_cell:
@@ -857,80 +859,80 @@ def apply_particle_virtual_traction_constraint_sparse(
                 auxiliary_cell[nc, nb] = 3
 
     for ng, nb in auxiliary_node:
-        if node[ng, nb].m > Threshold:
+        if node[ng, nb].m > THRESHOLD:
             grid_coord = compact_node_grid_coord(ng, block_count, block_size, block_volume, active_block_ids)
             if is_boundary_nodes(grid_coord, nb, auxiliary_cell, cnum):
                 auxiliary_node[ng, nb] = 1
 
 
 @ti.kernel
-def apply_virtual_traction_field_2D(
+def apply_virtual_traction_field_2d(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     virtual_force: ti.template(),
     virtual_stress: ti.template(),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
     auxiliary_node: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
             position = particle[np].x
             volume = particle[np].vol
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             fex = volume * virtual_force(position)
-            fInt = volume * virtual_stress(position)
+            f_int = volume * virtual_stress(position)
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
-                if int(auxiliary_node[nodeID, bodyID]) == 1:
+                node_id = ln_id[ln]
+                if int(auxiliary_node[node_id, body_id]) == 1:
                     dshape_fn = dshapefn[ln]
                     external_force = shapefn[ln] * fex
                     internal_force = vec2f(
                         [
-                            dshape_fn[0] * fInt[0] + dshape_fn[1] * fInt[3],
-                            dshape_fn[1] * fInt[1] + dshape_fn[0] * fInt[3],
+                            dshape_fn[0] * f_int[0] + dshape_fn[1] * f_int[3],
+                            dshape_fn[1] * f_int[1] + dshape_fn[0] * f_int[3],
                         ]
                     )
-                    node[nodeID, bodyID]._update_nodal_force(external_force + internal_force)
+                    node[node_id, body_id]._update_nodal_force(external_force + internal_force)
 
 
 @ti.kernel
 def apply_virtual_traction_field(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     virtual_force: ti.template(),
     virtual_stress: ti.template(),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
     auxiliary_node: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
             position = particle[np].x
             volume = particle[np].vol
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             fex = volume * virtual_force(position)
-            fInt = volume * virtual_stress(position)
+            f_int = volume * virtual_stress(position)
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
-                if int(auxiliary_node[nodeID, bodyID]) == 1:
+                node_id = ln_id[ln]
+                if int(auxiliary_node[node_id, body_id]) == 1:
                     dshape_fn = dshapefn[ln]
                     external_force = shapefn[ln] * fex
                     internal_force = vec3f(
                         [
-                            dshape_fn[0] * fInt[0] + dshape_fn[1] * fInt[3] + dshape_fn[2] * fInt[5],
-                            dshape_fn[1] * fInt[1] + dshape_fn[0] * fInt[3] + dshape_fn[2] * fInt[4],
-                            dshape_fn[2] * fInt[2] + dshape_fn[1] * fInt[4] + dshape_fn[0] * fInt[5],
+                            dshape_fn[0] * f_int[0] + dshape_fn[1] * f_int[3] + dshape_fn[2] * f_int[5],
+                            dshape_fn[1] * f_int[1] + dshape_fn[0] * f_int[3] + dshape_fn[2] * f_int[4],
+                            dshape_fn[2] * f_int[2] + dshape_fn[1] * f_int[4] + dshape_fn[0] * f_int[5],
                         ]
                     )
-                    node[nodeID, bodyID]._update_nodal_force(external_force + internal_force)
+                    node[node_id, body_id]._update_nodal_force(external_force + internal_force)

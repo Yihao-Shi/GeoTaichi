@@ -1,6 +1,9 @@
 """Device-resident sparse Newton FEM with Newmark dynamics and line search."""
 
 from __future__ import annotations
+from src.utils.RuntimeHook import normalize_callbacks
+from src.dem.engines.Utilities import ipc_wall_boundary
+from src.utils.StepRetry import StepRetryPolicy
 
 import math
 import time
@@ -8,15 +11,10 @@ import time
 import taichi as ti
 
 from src.fem.engines.FEMSolver import FEMSolver
-from src.fem.engines.LineSearch import ArmijoLineSearch, LineSearchError
+from src.fem.engines.LineSearch import ArmijoLineSearch
 from src.utils.RuntimeHook import runtime_checkpoint
-from src.utils.SolverRuntime import normalize_callbacks
-from src.utils.StepRetry import StepRetryPolicy, nonlinear_failure_kind
 from src.utils.TimeIntegration import newmark_parameters
-
-
-class NewtonConvergenceError(RuntimeError):
-    pass
+from src.utils.errors import LineSearchError, NewtonConvergenceError
 
 
 class ImplicitFEM(FEMSolver):
@@ -82,17 +80,14 @@ class ImplicitFEM(FEMSolver):
                 raise ValueError(
                     "implicit FEM contact requires line_search=True for " "CCD/swept contact globalization"
                 )
-            from src.fem.contact.ContactAssembler import (
-                FEMContactAssembler,
-                FEMMultiContactAssembler,
-            )
+            from src.fem.contact.FEMContactAssembler import FEMContactAssembler
+            from src.fem.contact.FEMMultiContactAssembler import FEMMultiContactAssembler
 
             contacts = contact.contacts_for_mesh(self.mesh)
             assemblers = [FEMContactAssembler(self.mesh, self.material, entry) for entry in contacts]
             dem_walls = kwargs.get("dem_walls")
             if dem_walls is not None:
                 from dataclasses import replace
-                from src.dem.engines.IPCWallBoundary import ipc_wall_boundary
                 from src.fem.contact.DEMWallContact import DEMWallContactAssembler
 
                 self.wall_boundary = ipc_wall_boundary(dem_walls.scene, dem_walls.sims)
@@ -440,7 +435,7 @@ class ImplicitFEM(FEMSolver):
 
     def _failure_diagnostics(self, exception, attempt, timestep):
         return {
-            "kind": nonlinear_failure_kind(exception),
+            "kind": StepRetryPolicy.nonlinear_failure_kind(exception),
             "exception": type(exception).__name__,
             "message": str(exception),
             "attempt": int(attempt),
@@ -559,4 +554,4 @@ class ImplicitFEM(FEMSolver):
         return self.result(overall_convergence)
 
 
-__all__ = ["ImplicitFEM", "NewtonConvergenceError"]
+__all__ = ["ImplicitFEM"]

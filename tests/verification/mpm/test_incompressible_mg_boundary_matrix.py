@@ -6,8 +6,8 @@ import pytest
 ti = pytest.importorskip("taichi")
 
 from src.mpm.engines.EngineKernel import (
-    kernel_assemble_incompressible_mg_A_level0,
-    kernel_assemble_incompressible_mg_A_level0_cut_cell,
+    kernel_assemble_incompressible_mg_a_level0,
+    kernel_assemble_incompressible_mg_a_level0_cut_cell,
 )
 
 pytestmark = [pytest.mark.verification, pytest.mark.mpm, pytest.mark.cpu]
@@ -71,10 +71,10 @@ def test_level0_matrix_uses_air_ghost_cells(taichi_runtime):
         fluid_sdf,
         False,
     )
-    kernel_assemble_incompressible_mg_A_level0(*arguments, diagonal, positive_axis)
+    kernel_assemble_incompressible_mg_a_level0(*arguments, diagonal, positive_axis)
     np.testing.assert_allclose(diagonal.to_numpy()[0], [0.15, 0.15])
 
-    kernel_assemble_incompressible_mg_A_level0_cut_cell(
+    kernel_assemble_incompressible_mg_a_level0_cut_cell(
         ghost,
         cnum,
         dt,
@@ -95,7 +95,7 @@ def test_level0_matrix_uses_air_ghost_cells(taichi_runtime):
     np.testing.assert_allclose(diagonal.to_numpy()[0], [0.15, 0.15])
 
     solid_sdf[-1, 0] = -1.0
-    kernel_assemble_incompressible_mg_A_level0_cut_cell(
+    kernel_assemble_incompressible_mg_a_level0_cut_cell(
         ghost,
         cnum,
         dt,

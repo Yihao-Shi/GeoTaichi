@@ -1,33 +1,34 @@
+from src.utils.errors import ConfigurationError, SimulationStateError
+
 import math
-
 import taichi as ti
-
 from src.dem.BaseKernel import kernel_adaptive_timestep
 from src.dem.neighbor.LinkedCell import LinkedCell
 from src.dem.engines.ExplicitEngine import ExplicitEngine as DEMExplicitEngine
 from src.dem.engines.EngineKernel import (
-    get_contact_stiffness_,
-    get_wall_contact_force_,
+    get_contact_stiffness,
+    get_wall_contact_force,
     cache_dem_external_load,
     restore_dem_external_load,
 )
-from src.dem.SceneManager import myScene as DEMScene
+from src.dem.SceneManager import SceneManager as DEMScene
 from src.dem.Simulation import Simulation as DEMSimulation
 from src.mpdem.contact.ContactModelBase import ContactModelBase
 from src.mpdem.contact.NeighborBase import NeighborBase
 from src.mpdem.Simulation import Simulation
 from src.mpm.SpatialHashGrid import SpatialHashGrid
 from src.mpm.engines.ULExplicitEngine import ULExplicitEngine as MPMExplicitEngine
-from src.mpm.SceneManager import myScene as MPMScene
+from src.mpm.SceneManager import SceneManager as MPMScene
 from src.mpm.Simulation import Simulation as MPMSimulation
 from src.utils.linalg import no_operation
 
 
-def dem_substep_count(coupled_timestep, dem_timestep):
-    return max(1, int(math.ceil(coupled_timestep / dem_timestep - 1.0e-12)))
-
-
 class Engine(object):
+
+    @staticmethod
+    def dem_substep_count(coupled_timestep, dem_timestep):
+        return max(1, int(math.ceil(coupled_timestep / dem_timestep - 1.0e-12)))
+
     sims: Simulation
     msims: MPMSimulation
     dsims: DEMSimulation
@@ -66,7 +67,7 @@ class Engine(object):
         self.dem_external_torque = None
 
     def choose_incompressible_lsdem_coupling(self):
-        from src.mpdem.fluid_dynamics.IncompressibleCoupling import IncompressibleLSDEMCoupling
+        from src.mpdem.fluid_dynamics.IncompressibleLSDEMCoupling import IncompressibleLSDEMCoupling
 
         self.incompressible_coupler = IncompressibleLSDEMCoupling(
             self.msims, self.dsims, self.mscene, self.dscene, self.mengine
@@ -76,7 +77,7 @@ class Engine(object):
         self.compute = self.incompressible_lsdem_integration
 
     def choose_two_phase_double_layer_lsdem_coupling(self):
-        from src.mpdem.fluid_dynamics.IncompressibleCoupling import TwoPhaseDoubleLayerLSDEMCoupling
+        from src.mpdem.fluid_dynamics.TwoPhaseDoubleLayerLSDEMCoupling import TwoPhaseDoubleLayerLSDEMCoupling
 
         self.incompressible_coupler = TwoPhaseDoubleLayerLSDEMCoupling(
             self.msims, self.dsims, self.mscene, self.dscene, self.mengine
@@ -89,7 +90,7 @@ class Engine(object):
 
     def choose_incompressible_dem_sphere_coupling(self, drag_model):
         if int(self.dscene.clumpNum[0]) > 0:
-            raise RuntimeError(
+            raise SimulationStateError(
                 "SemiResolved incompressible DEM-MPM coupling supports DEM spheres only; "
                 "represent clumps and irregular particles as LSDEM SDF bodies in FullyResolved coupling"
             )
@@ -164,12 +165,12 @@ class Engine(object):
             elif self.dsims.scheme == "LSDEM":
                 self.choose_incompressible_lsdem_coupling()
         else:
-            raise RuntimeError(
+            raise SimulationStateError(
                 f"Keyword:: /coupling_scheme: {self.sims.coupling_scheme}/ is invalid. Only the following is valid: \n{valid_list}"
             )
 
         if self.compute is None:
-            raise RuntimeError(
+            raise ConfigurationError(
                 "Unsupported DEM-MPM coupling combination: "
                 f"coupling_scheme={self.sims.coupling_scheme}, "
                 f"DEM scheme={self.dsims.scheme}, "
@@ -249,7 +250,7 @@ class Engine(object):
 
     def update_servo_stiffness_control(self):
         self.sims.timer.begin("Coupling servo wall")
-        get_contact_stiffness_(
+        get_contact_stiffness(
             self.sims.max_material_num,
             int(self.mscene.couplingNum[0]),
             self.mscene.particle,
@@ -262,13 +263,13 @@ class Engine(object):
 
     def update_servo_gain_control(self):
         self.sims.timer.begin("Coupling servo wall")
-        get_wall_contact_force_(
+        get_wall_contact_force(
             int(self.mscene.couplingNum[0]), self.dscene.wall, self.physpw.cplist, self.neighbor.particle_wall
         )
         self.sims.timer.end("Coupling servo wall")
 
     def get_wall_contact_force(self):
-        get_wall_contact_force_(
+        get_wall_contact_force(
             int(self.mscene.couplingNum[0]), self.dscene.wall, self.physpw.cplist, self.neighbor.particle_wall
         )
 
@@ -285,11 +286,11 @@ class Engine(object):
 
     def lsdem_integration(self):
         if self.dengine.is_verlet_update(self.dengine.limit1) == 1:
-            self.dengine.update_LSDEM_verlet_table1(self.dsims, self.dscene, self.dneighbor)
-            self.dengine.update_LSDEM_verlet_table2(self.dsims, self.dscene, self.dneighbor)
+            self.dengine.update_lsdem_verlet_table1(self.dsims, self.dscene, self.dneighbor)
+            self.dengine.update_lsdem_verlet_table2(self.dsims, self.dscene, self.dneighbor)
             self.update_verlet_table()
         elif self.dengine.is_verlet_update_point(self.dengine.limit2) == 1:
-            self.dengine.update_LSDEM_verlet_table2(self.dsims, self.dscene, self.dneighbor)
+            self.dengine.update_lsdem_verlet_table2(self.dsims, self.dscene, self.dneighbor)
         self.dengine.system_resolve(self.dsims, self.dscene, self.dneighbor)
 
         self.update_servo_wall()
@@ -326,12 +327,12 @@ class Engine(object):
 
     def lsintegration(self):
         if self.mengine.is_verlet_update(self.mscene) == 1 or self.dengine.is_verlet_update(self.dengine.limit1) == 1:
-            self.dengine.update_LSDEM_verlet_table1(self.dsims, self.dscene, self.dneighbor)
-            self.dengine.update_LSDEM_verlet_table2(self.dsims, self.dscene, self.dneighbor)
+            self.dengine.update_lsdem_verlet_table1(self.dsims, self.dscene, self.dneighbor)
+            self.dengine.update_lsdem_verlet_table2(self.dsims, self.dscene, self.dneighbor)
             self.mengine.execute_board_serach(self.msims, self.mscene, self.mneighbor)
             self.update_verlet_table()
         elif self.dengine.is_verlet_update_point(self.dengine.limit2) == 1:
-            self.dengine.update_LSDEM_verlet_table2(self.dsims, self.dscene, self.dneighbor)
+            self.dengine.update_lsdem_verlet_table2(self.dsims, self.dscene, self.dneighbor)
         else:
             self.mengine.system_resolve(self.msims, self.mscene)
 
@@ -353,10 +354,10 @@ class Engine(object):
 
     def _lsdem_contact_search(self):
         if self.dengine.is_verlet_update(self.dengine.limit1) == 1:
-            self.dengine.update_LSDEM_verlet_table1(self.dsims, self.dscene, self.dneighbor)
-            self.dengine.update_LSDEM_verlet_table2(self.dsims, self.dscene, self.dneighbor)
+            self.dengine.update_lsdem_verlet_table1(self.dsims, self.dscene, self.dneighbor)
+            self.dengine.update_lsdem_verlet_table2(self.dsims, self.dscene, self.dneighbor)
         elif self.dengine.is_verlet_update_point(self.dengine.limit2) == 1:
-            self.dengine.update_LSDEM_verlet_table2(self.dsims, self.dscene, self.dneighbor)
+            self.dengine.update_lsdem_verlet_table2(self.dsims, self.dscene, self.dneighbor)
 
     def _ensure_dem_external_load_cache(self):
         if self.dem_external_force is None:
@@ -368,7 +369,7 @@ class Engine(object):
         body_num = int(self.dscene.particleNum[0])
         self._ensure_dem_external_load_cache()
         cache_dem_external_load(body_num, body, self.dem_external_force, self.dem_external_torque)
-        substeps = dem_substep_count(coupled_timestep, self.sims.dem_timestep)
+        substeps = Engine.dem_substep_count(coupled_timestep, self.sims.dem_timestep)
         self.dsims.set_timestep(coupled_timestep / substeps)
         try:
             for _ in range(substeps):

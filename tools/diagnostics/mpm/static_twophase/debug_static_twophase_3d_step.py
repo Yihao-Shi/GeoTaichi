@@ -95,7 +95,7 @@ def build_solver():
         dirichlet=dirichlet,
         neumann=neumann,
         gravity=[0.0, 0.0, 0.0],
-        material="neoHookean",
+        material="NeoHookean",
         young_modulus=1.5e3,
         poisson_ratio=0.25,
         density=1.0,
@@ -129,7 +129,12 @@ if __name__ == "__main__":
         solver.apply_pressure_projection_to_solution()
 
         p0 = solver.old_solution.to_numpy()[: solver.active_dof]
-        print(f"step {step + 1} projection_finite", np.isfinite(p0).all(), "projection_maxabs", np.max(np.abs(p0)) if p0.size else 0.0)
+        print(
+            f"step {step + 1} projection_finite",
+            np.isfinite(p0).all(),
+            "projection_maxabs",
+            np.max(np.abs(p0)) if p0.size else 0.0,
+        )
 
         solver.solve_current_step(verbose=True)
         j = solver.J_new.to_numpy()[:particle_num]

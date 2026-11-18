@@ -85,9 +85,13 @@ def particle_residual_and_jacobian(material, u_nodes, p_nodes, p_old_nodes, data
     v_new = np.zeros(2)
     if mode == "dynamic":
         a_new = newmark_acceleration(delta_u, data["velocity_old"], data["acceleration_old"], data["beta"], dt)
-        v_new = newmark_velocity(delta_u, data["velocity_old"], data["acceleration_old"], data["beta"], data["gamma"], dt)
+        v_new = newmark_velocity(
+            delta_u, data["velocity_old"], data["acceleration_old"], data["beta"], data["gamma"], dt
+        )
         p_rate_new = newmark_pressure_rate(p_new, p_old, pdot_old, pddot_old, data["beta"], data["gamma"], dt)
-        p_rate_new_avg = newmark_pressure_rate(p_avg, p_old_avg, pdot_old_avg, pddot_old_avg, data["beta"], data["gamma"], dt)
+        p_rate_new_avg = newmark_pressure_rate(
+            p_avg, p_old_avg, pdot_old_avg, pddot_old_avg, data["beta"], data["gamma"], dt
+        )
         p_rate_gap = (p_rate_new - p_rate_new_avg) - (pdot_old - pdot_old_avg)
 
     rloc = np.zeros(3 * len(node_ids))
@@ -133,13 +137,18 @@ def particle_residual_and_jacobian(material, u_nodes, p_nodes, p_old_nodes, data
                 mech = (-dsigma @ gi - sigma_total @ dgi + N[a] * drho * gravity) * vol
                 mech += (-sigma_total @ gi + N[a] * rho_mix * gravity) * dv
                 if mode == "dynamic":
-                    mech[comp] -= data["mass"] * N[a] * N[b] * (
-                        1.0 / (data["beta"] * dt * dt) + data["damping"] * data["gamma"] / (data["beta"] * dt)
+                    mech[comp] -= (
+                        data["mass"]
+                        * N[a]
+                        * N[b]
+                        * (1.0 / (data["beta"] * dt * dt) + data["damping"] * data["gamma"] / (data["beta"] * dt))
                     )
                 Kloc[3 * a + 0, col] = mech[0]
                 Kloc[3 * a + 1, col] = mech[1]
 
-                scalar_grad = (-Gj.dot(gi) * hcol.dot(q) - Gj.dot(q) * hcol.dot(gi) + gi.dot(q) * eta) * dt * mobility * vol
+                scalar_grad = (
+                    (-Gj.dot(gi) * hcol.dot(q) - Gj.dot(q) * hcol.dot(gi) + gi.dot(q) * eta) * dt * mobility * vol
+                )
                 kpu = N[a] * (1.0 + log_ratio) * eta * vol + scalar_grad
                 if ppp:
                     kpu += tau * (N[a] - Navg[a]) * (p_rate_gap if mode == "dynamic" else ppp_gap) * dv
@@ -152,7 +161,7 @@ def pack_unknowns(u_nodes, p_nodes):
     n = len(p_nodes)
     x = np.zeros(3 * n)
     for i in range(n):
-        x[3 * i:3 * i + 2] = u_nodes[i]
+        x[3 * i : 3 * i + 2] = u_nodes[i]
         x[3 * i + 2] = p_nodes[i]
     return x
 
@@ -162,7 +171,7 @@ def unpack_unknowns(x):
     u = np.zeros((n, 2))
     p = np.zeros(n)
     for i in range(n):
-        u[i] = x[3 * i:3 * i + 2]
+        u[i] = x[3 * i : 3 * i + 2]
         p[i] = x[3 * i + 2]
     return u, p
 
@@ -173,7 +182,7 @@ def global_residual(material, x, p_old_nodes, particles, n_nodes):
     for data in particles:
         rloc, _ = particle_residual_and_jacobian(material, u_nodes, p_nodes, p_old_nodes, data)
         for a, node in enumerate(data["node_ids"]):
-            r[3 * node:3 * node + 3] += rloc[3 * a:3 * a + 3]
+            r[3 * node : 3 * node + 3] += rloc[3 * a : 3 * a + 3]
     return r
 
 
@@ -276,6 +285,6 @@ def run_case(material, ppp, mode, trials=10):
 
 if __name__ == "__main__":
     for mode in ("static", "dynamic"):
-        for material in ("linearElastic", "neoHookean"):
+        for material in ("LinearElastic", "NeoHookean"):
             for ppp in (False, True):
                 run_case(material, ppp, mode, trials=12)

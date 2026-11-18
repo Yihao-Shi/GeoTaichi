@@ -1,3 +1,6 @@
+from src.utils.errors import GeometryError
+from src.utils.linalg import lumped_vertex_measures
+from src.utils.errors import ConfigurationError, SimulationStateError
 import numpy as np
 
 from src.sdf.BasicShape import BasicShape
@@ -23,24 +26,24 @@ class GeneralShapeTemplate(object):
 
     def levelset_template(self, template_dict):
         print("#", "Start calculating properties of level-set template ...".ljust(67))
-        self.name = DictIO.GetEssential(template_dict, "Name")
-        self.objects = DictIO.GetEssential(template_dict, "Object")
-        self.ray_path = DictIO.GetAlternative(template_dict, "RayPath", "Spiral")
-        self.surface_resolution = DictIO.GetAlternative(template_dict, "SurfaceResolution", self.surface_resolution)
-        self.surface_node_number = DictIO.GetAlternative(template_dict, "SurfaceNodeNumber", self.surface_node_number)
-        self.write_file = DictIO.GetAlternative(template_dict, "WriteFile", False)
-        self.save_path = DictIO.GetAlternative(template_dict, "SavePath", "./")
-        self.visualize_mode = DictIO.GetAlternative(template_dict, "VisualizeMode", None)
-        self.length_size = DictIO.GetAlternative(template_dict, "LengthSize", None)
+        self.name = DictIO.get_essential(template_dict, "Name")
+        self.objects = DictIO.get_essential(template_dict, "Object")
+        self.ray_path = DictIO.get_alternative(template_dict, "RayPath", "Spiral")
+        self.surface_resolution = DictIO.get_alternative(template_dict, "SurfaceResolution", self.surface_resolution)
+        self.surface_node_number = DictIO.get_alternative(template_dict, "SurfaceNodeNumber", self.surface_node_number)
+        self.write_file = DictIO.get_alternative(template_dict, "WriteFile", False)
+        self.save_path = DictIO.get_alternative(template_dict, "SavePath", "./")
+        self.visualize_mode = DictIO.get_alternative(template_dict, "VisualizeMode", None)
+        self.length_size = DictIO.get_alternative(template_dict, "LengthSize", None)
 
         if not self.visualize_mode in ["gui", "matplot", None]:
-            raise RuntimeError
+            raise ValueError("VisualizeMode must be gui, matplot, or None")
 
         if not self.ray_path in ["Rectangle", "Spiral"]:
-            raise RuntimeError
+            raise ValueError("RayPath must be Rectangle or Spiral")
 
         if self.surface_node_number <= 2 and self.surface_node_number != 0:
-            raise RuntimeError(
+            raise SimulationStateError(
                 "You asked for a level set shape with no more than two boundary nodes, for contact detection purposes. \
                                This is too few and will lead to square roots of negative numbers, then unexpected events."
             )
@@ -50,13 +53,6 @@ class GeneralShapeTemplate(object):
         self.print_info()
         self.visualize()
         self.write()
-        self.finalize()
-
-    def clear(self):
-        pass
-
-    def finalize(self):
-        pass
 
     def build(self):
         if not self.objects is None:
@@ -65,10 +61,10 @@ class GeneralShapeTemplate(object):
             else:
                 self.objects.generate(samples=self.surface_resolution)
             if not self.objects.mesh.is_watertight:
-                raise RuntimeError("Level-set surface mesh must be closed and watertight")
+                raise ConfigurationError("Level-set surface mesh must be closed and watertight")
             self.objects._essential_initialize()
         else:
-            raise RuntimeError("Keyword:: /Objects/ is None")
+            raise SimulationStateError("Keyword:: /Objects/ is None")
 
         if self.objects.mesh.vertices.shape[0] != self.surface_node_number:
             self.surface_node_number = self.objects.mesh.vertices.shape[0]
@@ -99,19 +95,13 @@ class GeneralShapeTemplate(object):
         self.calculate_surface_parameter()
 
     def calculate_surface_parameter(self):
-        faces = np.asarray(self.objects.mesh.faces, dtype=np.int64)
-        face_area = np.asarray(self.objects.mesh.area_faces, dtype=np.float64)
-        self.surface_area = float(np.sum(face_area))
+        nodal_area = lumped_vertex_measures(self.objects.mesh.vertices, self.objects.mesh.faces)
+        self.surface_area = float(np.sum(nodal_area))
         if not np.isfinite(self.surface_area) or self.surface_area <= 0.0:
-            raise RuntimeError("Level-set surface quadrature has a non-positive total nodal area")
-
-        # The vertex rule is the barycentric mass lumping of the triangular
-        # surface measure: every face contributes one third of its area to
-        # each incident vertex.
-        nodal_area = np.zeros(self.objects.mesh.vertices.shape[0], dtype=np.float64)
-        np.add.at(nodal_area, faces.reshape(-1), np.repeat(face_area / 3.0, 3))
+            raise GeometryError("Level-set surface quadrature has a non-positive total nodal area")
+        if np.any(~np.isfinite(nodal_area)) or np.any(nodal_area <= 0.0):
+            raise GeometryError("Level-set surface quadrature requires positive nodal areas")
         self.parameter = nodal_area / self.surface_area
-        assert (self.parameter > 0.0).all()
 
     def print_info(self):
         print(" Level-set Template Information ".center(71, "-"))
@@ -123,7 +113,7 @@ class GeneralShapeTemplate(object):
         print("Inertia tensor = ", self.objects.inertia)
         print("Center of bounding sphere = ", self.boundings.x_bound)
         print("Radius of bounding sphere = ", self.boundings.r_bound)
-        print("Bounding box = ", self.objects.grid.minBox(), " --> ", self.objects.grid.maxBox())
+        print("Bounding box = ", self.objects.grid.min_box(), " --> ", self.objects.grid.max_box())
         print("Number of grid = ", self.objects.grid.gnum)
         print("Number of surface nodes = ", self.surface_node_number, "\n")
 
@@ -139,6 +129,3 @@ class GeneralShapeTemplate(object):
             self.objects.visualize(
                 path=self.save_path, pname=self.name + "Particle", gname=self.name + "Grid", bname=self.name + "Box"
             )
-
-    def read(self):
-        pass

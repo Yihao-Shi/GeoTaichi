@@ -1,12 +1,14 @@
+from src.utils.errors import ConfigurationError, LineSearchError, SimulationStateError
+from src.contact_detection.bounding_volume_hierarchy.Utilities import validate_bvh_rebuild_interval
 import taichi as ti
 import math, warnings
 
 import src.utils.GlobalVariable as GlobalVariable
 from src.utils.ObjectIO import DictIO
-from src.utils.TypeDefination import vec3i, vec3f
+from src.utils.TypeDefinition import vec3i, vec3f
 from src.utils.TimeTicker import Timer
 from src.utils.TimeIntegration import newmark_parameters
-from src.utils.constants import Threshold
+from src.utils.constants import THRESHOLD
 
 
 class Simulation(object):
@@ -256,7 +258,7 @@ class Simulation(object):
     def _soft_particle_backend(self):
         backend = getattr(self, "soft_particle_backend", None)
         if backend is None:
-            raise RuntimeError(
+            raise SimulationStateError(
                 "SoftBody/LSMPM is an MPM soft-particle mode. Use MPDEM/MPM soft_particle so the coupling layer installs the backend."
             )
         return backend
@@ -271,7 +273,7 @@ class Simulation(object):
 
     def set_boundary(self, boundary):
         BOUNDARY = {None: -1, "Reflect": 0, "Destroy": 1, "Period": 2}
-        self.boundary = [DictIO.GetEssential(BOUNDARY, b) for b in boundary]
+        self.boundary = [DictIO.get_essential(BOUNDARY, b) for b in boundary]
         if self.boundary[0] == 2:
             self.xpbc = True
             GlobalVariable.DEMXPBC = True
@@ -295,19 +297,19 @@ class Simulation(object):
         self.engine = engine
         valid = ["SymplecticEuler", "VelocityVerlet", "PredictCorrector"]
         if not engine in valid:
-            raise RuntimeError(f"Keyword:: /engine/ is wrong, Only the following is valid: {valid}")
+            raise SimulationStateError(f"Keyword:: /engine/ is wrong, Only the following is valid: {valid}")
 
     def set_search(self, search):
         self.search = search
         valid = ["Brust", "LinkedCell", "HierarchicalLinkedCell", "BVH"]
         if not search in valid:
-            raise RuntimeError(f"Keyword:: /search/ is wrong, Only the following is valid: {valid}")
+            raise SimulationStateError(f"Keyword:: /search/ is wrong, Only the following is valid: {valid}")
 
     def set_search_direction(self, search_direction):
         self.search_direction = search_direction
         valid = ["Up", "Down"]
         if not search_direction in valid:
-            raise RuntimeError(f"Keyword:: /search_direction/ is wrong, Only the following is valid: {valid}")
+            raise SimulationStateError(f"Keyword:: /search_direction/ is wrong, Only the following is valid: {valid}")
 
     def set_track_energy(self, track_energy):
         self.energy_tracking = track_energy
@@ -354,7 +356,7 @@ class Simulation(object):
         self.max_level_grid_num = int(level_grid_num)
 
         if level_grid_num > 0 and (self.max_sphere_num > 0 or self.max_clump_num > 0):
-            raise RuntimeError("Sphere/Multisphere particles are not supported when using level set method")
+            raise ConfigurationError("Sphere/Multisphere particles are not supported when using level set method")
 
     def set_rigid_body_num(self, rigid_body_num):
         if rigid_body_num < 0:
@@ -363,7 +365,7 @@ class Simulation(object):
         self.max_particle_num += int(rigid_body_num)
 
         if rigid_body_num > 0 and (self.max_sphere_num > 0 or self.max_clump_num > 0):
-            raise RuntimeError("Sphere/Multisphere particles are not supported when using level set method")
+            raise ConfigurationError("Sphere/Multisphere particles are not supported when using level set method")
 
     def set_soft_body_num(self, soft_body_num):
         self._soft_particle_backend().set_soft_body_num(self, soft_body_num)
@@ -401,7 +403,7 @@ class Simulation(object):
             if self.wall_type == 1:
                 self.max_servo_wall_num = int(servo_wall_num)
             else:
-                raise RuntimeError("Facet Number has not been set")
+                raise SimulationStateError("Facet Number has not been set")
 
     def set_facet_num(self, facet_num):
         if facet_num > 0:
@@ -409,7 +411,7 @@ class Simulation(object):
                 self.max_wall_num = int(facet_num)
                 self.wall_type = 1
                 if self.enable_shell:
-                    raise RuntimeError("Polygon wall is not supported when enable_shell is True")
+                    raise ConfigurationError("Polygon wall is not supported when enable_shell is True")
             elif not self.wall_type is None:
                 self.raise_wall_error_info(curr_wall_type=1)
 
@@ -420,7 +422,7 @@ class Simulation(object):
                 self.wall_type = 0
                 self.static_wall = True
                 if self.enable_shell:
-                    raise RuntimeError("Half space plane is not supported when enable_shell is True")
+                    raise ConfigurationError("Half space plane is not supported when enable_shell is True")
             elif not self.wall_type is None:
                 self.raise_wall_error_info(curr_wall_type=0)
 
@@ -465,7 +467,7 @@ class Simulation(object):
 
         valid = ["DEM", "LSDEM", "LSMPM", "PolySuperEllipsoid", "PolySuperQuadrics", "AffineBody"]
         if not scheme in valid:
-            raise RuntimeError(f"Keyword:: /scheme/ error. Only the following {valid} is support")
+            raise SimulationStateError(f"Keyword:: /scheme/ error. Only the following {valid} is support")
         self.affine_body = scheme == "AffineBody"
 
     def set_soft_shape_function(self, shape_function):
@@ -499,7 +501,7 @@ class Simulation(object):
 
     def set_lsmpm_soft_rigid_contact(self, contact):
         if getattr(self, "_lsmpm_soft_rigid_contact_frozen", False):
-            raise RuntimeError(
+            raise SimulationStateError(
                 "LSMPM soft-rigid contact cannot be changed after engine "
                 "initialization; configure it before add_essentials()"
             )
@@ -514,7 +516,7 @@ class Simulation(object):
             "barrieripc": "IPC",
         }
         if key not in aliases:
-            raise RuntimeError("LSMPM soft-rigid contact must be one of ['DEM', 'IPC']")
+            raise ConfigurationError("LSMPM soft-rigid contact must be one of ['DEM', 'IPC']")
         self.lsmpm_soft_rigid_contact = aliases[key]
 
     def set_affine_body_parameters(self, **kwargs):
@@ -522,7 +524,7 @@ class Simulation(object):
         if removed:
             raise ValueError(f"removed SemiIPC parameters: {', '.join(sorted(removed))}")
         if getattr(self, "_affine_body_parameters_frozen", False):
-            raise RuntimeError(
+            raise SimulationStateError(
                 "AffineBody IPC parameters cannot be changed after engine "
                 "initialization; configure them before add_essentials()"
             )
@@ -539,7 +541,7 @@ class Simulation(object):
                 "triplet": "HashTriplet",
             }
             if key not in aliases:
-                raise RuntimeError("AffineBody assemble_type must be one of ['MatrixFree', 'COO', 'HashTriplet']")
+                raise ConfigurationError("AffineBody assemble_type must be one of ['MatrixFree', 'COO', 'HashTriplet']")
             self.affine_assemble_type = aliases[key]
         if "YoungModulus" in kwargs:
             self.affine_young_modulus = float(kwargs["YoungModulus"])
@@ -551,9 +553,9 @@ class Simulation(object):
             self.affine_barrier_stiffness = float(kwargs["barrier_stiffness"])
         for key in ("contact_model", "ipc_model", "contact_form"):
             if key in kwargs:
-                from src.physics_model.contact_model.ipc.IPC import normalize_ipc_model
+                from src.physics_model.contact_model.ipc.Barrier import Barrier as _Barrier_normalize_ipc_model_owner
 
-                self.affine_contact_model = normalize_ipc_model(kwargs[key])
+                self.affine_contact_model = _Barrier_normalize_ipc_model_owner.normalize_ipc_model(kwargs[key])
         for key in ("contact_damping_stiffness", "contact_damping", "k_CD", "k_cd"):
             if key in kwargs:
                 self.affine_contact_damping_stiffness = float(kwargs[key])
@@ -570,7 +572,7 @@ class Simulation(object):
         if "friction_epsv" in kwargs:
             epsv = float(kwargs["friction_epsv"])
             if not math.isfinite(epsv) or epsv <= 0.0:
-                raise RuntimeError("AffineBody friction_epsv must be finite and positive")
+                raise ConfigurationError("AffineBody friction_epsv must be finite and positive")
             self.affine_friction_epsv = epsv
         for key, attribute in (
             ("dynamic_friction", "affine_dynamic_friction"),
@@ -587,7 +589,7 @@ class Simulation(object):
                 )
                 if not math.isfinite(value) or (value < 0.0 and not (accepts_fallback and value == -1.0)):
                     suffix = " or -1" if accepts_fallback else ""
-                    raise RuntimeError(f"AffineBody {key} must be finite and non-negative{suffix}")
+                    raise ConfigurationError(f"AffineBody {key} must be finite and non-negative{suffix}")
                 setattr(self, attribute, value)
         if "friction_profile" in kwargs:
             profile = str(kwargs["friction_profile"]).strip().replace("-", "_").replace(" ", "_").lower()
@@ -601,14 +603,14 @@ class Simulation(object):
                 "c_infinity": "stabilized",
             }
             if profile not in aliases:
-                raise RuntimeError("AffineBody friction_profile must be 'quadratic' or 'stabilized'")
+                raise ConfigurationError("AffineBody friction_profile must be 'quadratic' or 'stabilized'")
             self.affine_friction_profile = aliases[profile]
         if (
             self.affine_static_friction >= 0.0
             and (self.affine_dynamic_friction < 0.0 or self.affine_static_friction != self.affine_dynamic_friction)
             and self.affine_stribeck_velocity == 0.0
         ):
-            raise RuntimeError(
+            raise ConfigurationError(
                 "AffineBody stribeck_velocity must be positive when " "static_friction differs from dynamic_friction"
             )
         if "friction_mode" in kwargs:
@@ -620,7 +622,7 @@ class Simulation(object):
                 "fullyimplicit": "fully_implicit",
             }
             if mode not in aliases:
-                raise RuntimeError("AffineBody friction_mode must be one of " "['lagged', 'fully_implicit']")
+                raise ConfigurationError("AffineBody friction_mode must be one of " "['lagged', 'fully_implicit']")
             self.affine_friction_mode = aliases[mode]
         for key in ("friction_iterations", "friction_fixed_point_iterations"):
             if key in kwargs:
@@ -628,45 +630,45 @@ class Simulation(object):
                     numeric_iterations = float(kwargs[key])
                     iterations = int(numeric_iterations)
                 except (TypeError, ValueError, OverflowError) as exc:
-                    raise RuntimeError("AffineBody friction_iterations must be an integer") from exc
+                    raise ConfigurationError("AffineBody friction_iterations must be an integer") from exc
                 if not math.isfinite(numeric_iterations) or numeric_iterations != iterations:
-                    raise RuntimeError("AffineBody friction_iterations must be an integer")
+                    raise ConfigurationError("AffineBody friction_iterations must be an integer")
                 self.affine_friction_iterations = -1 if iterations <= 0 else iterations
         for key in ("friction_tolerance", "friction_fixed_point_tolerance"):
             if key in kwargs:
                 try:
                     tolerance = float(kwargs[key])
                 except (TypeError, ValueError, OverflowError) as exc:
-                    raise RuntimeError("AffineBody friction_tolerance must be finite and positive") from exc
+                    raise ConfigurationError("AffineBody friction_tolerance must be finite and positive") from exc
                 if not math.isfinite(tolerance) or tolerance <= 0.0:
-                    raise RuntimeError("AffineBody friction_tolerance must be positive")
+                    raise ConfigurationError("AffineBody friction_tolerance must be positive")
                 self.affine_friction_tolerance = tolerance
         if "friction_max_iterations" in kwargs:
             try:
                 numeric_max_iterations = float(kwargs["friction_max_iterations"])
                 max_iterations = int(numeric_max_iterations)
             except (TypeError, ValueError, OverflowError) as exc:
-                raise RuntimeError("AffineBody friction_max_iterations must be a positive integer") from exc
+                raise ConfigurationError("AffineBody friction_max_iterations must be a positive integer") from exc
             if (
                 not math.isfinite(numeric_max_iterations)
                 or numeric_max_iterations != max_iterations
                 or max_iterations <= 0
             ):
-                raise RuntimeError("AffineBody friction_max_iterations must be a positive integer")
+                raise ConfigurationError("AffineBody friction_max_iterations must be a positive integer")
             self.affine_friction_max_iterations = max_iterations
         if "max_newton_iteration" in kwargs:
             try:
                 numeric_iterations = float(kwargs["max_newton_iteration"])
                 iterations = int(numeric_iterations)
             except (TypeError, ValueError, OverflowError) as exc:
-                raise RuntimeError("AffineBody max_newton_iteration must be a positive integer") from exc
+                raise ConfigurationError("AffineBody max_newton_iteration must be a positive integer") from exc
             if not math.isfinite(numeric_iterations) or numeric_iterations != iterations or iterations <= 0:
-                raise RuntimeError("AffineBody max_newton_iteration must be a positive integer")
+                raise ConfigurationError("AffineBody max_newton_iteration must be a positive integer")
             self.affine_max_newton_iteration = iterations
         if "newton_tolerance" in kwargs:
             tolerance = float(kwargs["newton_tolerance"])
             if not math.isfinite(tolerance) or tolerance <= 0.0:
-                raise RuntimeError("AffineBody newton_tolerance must be finite and positive " "(in m/s)")
+                raise ConfigurationError("AffineBody newton_tolerance must be finite and positive " "(in m/s)")
             self.affine_newton_tolerance = tolerance
         if "linear_tolerance" in kwargs or "linear_relative_tolerance" in kwargs:
             absolute = float(kwargs.get("linear_tolerance", self.affine_linear_tolerance))
@@ -677,38 +679,40 @@ class Simulation(object):
                 )
             )
             if not math.isfinite(absolute) or absolute < 0.0:
-                raise RuntimeError("AffineBody linear_tolerance must be finite and non-negative")
+                raise ConfigurationError("AffineBody linear_tolerance must be finite and non-negative")
             if not math.isfinite(relative) or relative < 0.0:
-                raise RuntimeError("AffineBody linear_relative_tolerance must be finite and non-negative")
+                raise ConfigurationError("AffineBody linear_relative_tolerance must be finite and non-negative")
             if absolute + relative <= 0.0:
-                raise RuntimeError("AffineBody linear_tolerance and linear_relative_tolerance cannot both be zero")
+                raise SimulationStateError(
+                    "AffineBody linear_tolerance and linear_relative_tolerance cannot both be zero"
+                )
             self.affine_linear_tolerance, self.affine_linear_relative_tolerance = absolute, relative
         if "linear_max_iteration" in kwargs:
             try:
                 numeric_iterations = float(kwargs["linear_max_iteration"])
                 iterations = int(numeric_iterations)
             except (TypeError, ValueError, OverflowError) as exc:
-                raise RuntimeError("AffineBody linear_max_iteration must be a positive integer") from exc
+                raise ConfigurationError("AffineBody linear_max_iteration must be a positive integer") from exc
             if not math.isfinite(numeric_iterations) or numeric_iterations != iterations or iterations <= 0:
-                raise RuntimeError("AffineBody linear_max_iteration must be a positive integer")
+                raise ConfigurationError("AffineBody linear_max_iteration must be a positive integer")
             self.affine_linear_max_iteration = iterations
         if "line_search_max_iteration" in kwargs:
             try:
                 numeric_iterations = float(kwargs["line_search_max_iteration"])
                 iterations = int(numeric_iterations)
             except (TypeError, ValueError, OverflowError) as exc:
-                raise RuntimeError("AffineBody line_search_max_iteration must be a " "positive integer") from exc
+                raise LineSearchError("AffineBody line_search_max_iteration must be a " "positive integer") from exc
             if not math.isfinite(numeric_iterations) or numeric_iterations != iterations or iterations <= 0:
-                raise RuntimeError("AffineBody line_search_max_iteration must be a " "positive integer")
+                raise LineSearchError("AffineBody line_search_max_iteration must be a " "positive integer")
             self.affine_line_search_max_iteration = iterations
         if "direct_hessian_dofs" in kwargs:
             try:
                 numeric_dofs = float(kwargs["direct_hessian_dofs"])
                 direct_dofs = int(numeric_dofs)
             except (TypeError, ValueError, OverflowError) as exc:
-                raise RuntimeError("AffineBody direct_hessian_dofs must be a non-negative integer") from exc
+                raise ConfigurationError("AffineBody direct_hessian_dofs must be a non-negative integer") from exc
             if not math.isfinite(numeric_dofs) or numeric_dofs != direct_dofs or direct_dofs < 0:
-                raise RuntimeError("AffineBody direct_hessian_dofs must be a non-negative integer")
+                raise ConfigurationError("AffineBody direct_hessian_dofs must be a non-negative integer")
             self.affine_direct_hessian_dofs = direct_dofs
         if "finite_difference" in kwargs:
             self.affine_finite_difference = float(kwargs["finite_difference"])
@@ -717,27 +721,27 @@ class Simulation(object):
         if "fully_implicit_jacobian_shift" in kwargs:
             shift = float(kwargs["fully_implicit_jacobian_shift"])
             if not math.isfinite(shift) or shift < 0.0:
-                raise RuntimeError("AffineBody fully_implicit_jacobian_shift must be " "finite and non-negative")
+                raise ConfigurationError("AffineBody fully_implicit_jacobian_shift must be " "finite and non-negative")
             self.affine_fully_implicit_jacobian_shift = shift
         if "fully_implicit_force_atol" in kwargs:
             tolerance = float(kwargs["fully_implicit_force_atol"])
             if not math.isfinite(tolerance) or tolerance < 0.0:
-                raise RuntimeError("AffineBody fully_implicit_force_atol must be finite and " "non-negative")
+                raise ConfigurationError("AffineBody fully_implicit_force_atol must be finite and " "non-negative")
             self.affine_fully_implicit_force_atol = tolerance
         if "fully_implicit_force_rtol" in kwargs:
             tolerance = float(kwargs["fully_implicit_force_rtol"])
             if not math.isfinite(tolerance) or tolerance < 0.0:
-                raise RuntimeError("AffineBody fully_implicit_force_rtol must be finite and " "non-negative")
+                raise ConfigurationError("AffineBody fully_implicit_force_rtol must be finite and " "non-negative")
             self.affine_fully_implicit_force_rtol = tolerance
         if "fully_implicit_armijo" in kwargs:
             armijo = float(kwargs["fully_implicit_armijo"])
             if not 0.0 < armijo < 1.0:
-                raise RuntimeError("AffineBody fully_implicit_armijo must lie in (0, 1)")
+                raise SimulationStateError("AffineBody fully_implicit_armijo must lie in (0, 1)")
             self.affine_fully_implicit_armijo = armijo
         if "fully_implicit_line_search_contraction" in kwargs:
             contraction = float(kwargs["fully_implicit_line_search_contraction"])
             if not 0.0 < contraction < 1.0:
-                raise RuntimeError("AffineBody fully_implicit_line_search_contraction must lie in (0, 1)")
+                raise LineSearchError("AffineBody fully_implicit_line_search_contraction must lie in (0, 1)")
             self.affine_fully_implicit_line_search_contraction = contraction
         if "max_step" in kwargs:
             self.affine_max_step = float(kwargs["max_step"])
@@ -747,7 +751,7 @@ class Simulation(object):
             ccd_type = str(kwargs["ccd_type"]).lower()
             valid = ["none", "off", "ccd", "accd"]
             if ccd_type not in valid:
-                raise RuntimeError(f"Keyword:: /ccd_type/ is wrong, Only the following is valid: {valid}")
+                raise SimulationStateError(f"Keyword:: /ccd_type/ is wrong, Only the following is valid: {valid}")
             self.affine_ccd_type = ccd_type
             self.affine_ccd = ccd_type not in ["none", "off"]
         if "ccd_eta" in kwargs:
@@ -789,14 +793,14 @@ class Simulation(object):
             if key in kwargs:
                 value = float(kwargs[key])
                 if not math.isfinite(value) or (positive and value <= 0.0):
-                    raise RuntimeError(f"AffineBody {key} must be finite and positive")
+                    raise ConfigurationError(f"AffineBody {key} must be finite and positive")
                 setattr(self, attribute, value)
         continuation_ratio = getattr(self, "affine_levelset_initial_continuation_ratio", 0.1)
         if not (0.0 < continuation_ratio < 1.0):
-            raise RuntimeError("AffineBody levelset_initial_continuation_ratio must lie " "in (0, 1)")
+            raise SimulationStateError("AffineBody levelset_initial_continuation_ratio must lie " "in (0, 1)")
         stiffness_growth = getattr(self, "affine_levelset_initial_stiffness_growth", 10.0)
         if stiffness_growth <= 1.0:
-            raise RuntimeError("AffineBody levelset_initial_stiffness_growth must be " "larger than one")
+            raise ConfigurationError("AffineBody levelset_initial_stiffness_growth must be " "larger than one")
         for key, attribute in (
             (
                 "levelset_initial_maximum_stages",
@@ -812,9 +816,9 @@ class Simulation(object):
                     numeric = float(kwargs[key])
                     value = int(numeric) if math.isfinite(numeric) else 0
                 except (TypeError, ValueError, OverflowError) as exc:
-                    raise RuntimeError(f"AffineBody {key} must be a positive integer") from exc
+                    raise ConfigurationError(f"AffineBody {key} must be a positive integer") from exc
                 if not math.isfinite(numeric) or numeric != value or value <= 0:
-                    raise RuntimeError(f"AffineBody {key} must be a positive integer")
+                    raise ConfigurationError(f"AffineBody {key} must be a positive integer")
                 setattr(self, attribute, value)
         for key in ("soft_background_damping", "background_damping", "BackgroundDamping"):
             if key in kwargs:
@@ -832,9 +836,9 @@ class Simulation(object):
                     numeric = float(kwargs[key])
                     value = int(numeric) if math.isfinite(numeric) else 0
                 except (TypeError, ValueError, OverflowError) as exc:
-                    raise RuntimeError(f"AffineBody {key} must be a positive integer") from exc
+                    raise ConfigurationError(f"AffineBody {key} must be a positive integer") from exc
                 if not math.isfinite(numeric) or numeric != value or value <= 0:
-                    raise RuntimeError(f"AffineBody {key} must be a positive integer")
+                    raise ConfigurationError(f"AffineBody {key} must be a positive integer")
                 setattr(self, attribute, value)
 
     def set_visualize(self, visualize):
@@ -849,7 +853,7 @@ class Simulation(object):
     def update_servo_status(self, status):
         valid = ["On", "Off", "StiffnessControl", "GainControl"]
         if not status in valid:
-            raise RuntimeError(f"Keyword:: /status/ error. Only the following {valid} is support")
+            raise SimulationStateError(f"Keyword:: /status/ error. Only the following {valid} is support")
 
         if status != "Off":
             self.static_wall = False
@@ -871,7 +875,7 @@ class Simulation(object):
                 self.body_coordination_number = [int(max(i, 1)) for i in body_coordination_number]
 
             if len(self.body_coordination_number) != self.hierarchical_level:
-                raise RuntimeError(
+                raise SimulationStateError(
                     f"Keyword:: /body_coordination_number/ should have a size of {self.hierarchical_level}"
                 )
         else:
@@ -900,7 +904,7 @@ class Simulation(object):
                 self.wall_coordination_number = wall_coordination_number
 
             if len(self.wall_coordination_number) != self.hierarchical_level:
-                raise RuntimeError(
+                raise SimulationStateError(
                     f"Keyword:: /wall_coordination_number/ should have a size of {self.hierarchical_level}"
                 )
         else:
@@ -919,7 +923,7 @@ class Simulation(object):
             else:
                 self.wall_per_cell = [int(max(i, 1)) for i in wall_per_cell]
             if len(self.wall_per_cell) != self.hierarchical_level:
-                raise RuntimeError(f"Keyword:: /wall_per_cell/ should have a size of {self.hierarchical_level}")
+                raise SimulationStateError(f"Keyword:: /wall_per_cell/ should have a size of {self.hierarchical_level}")
         else:
             self.wall_per_cell = wall_per_cell
 
@@ -927,7 +931,7 @@ class Simulation(object):
         self.iterative_model = model
         valid_list = ["LagrangianMultiplier", "PCN", "GJK"]
         if model not in valid_list:
-            raise RuntimeError(f"Keyword:: /iterative_model/ error. Only the following {valid_list} is support")
+            raise SimulationStateError(f"Keyword:: /iterative_model/ error. Only the following {valid_list} is support")
 
     def set_particle_particle_contact_model(self, model):
         self.particle_particle_contact_model = model
@@ -973,18 +977,17 @@ class Simulation(object):
             raise ValueError("Wall Type error!")
 
     def raise_wall_error_info(self, curr_wall_type):
-        Type1 = self.get_wall_type(curr_wall_type)
-        Type2 = self.get_wall_type(self.wall_type)
-        raise ValueError(f"Wall Type: {Type1} and Wall Type: {Type2} are activated simultaneously")
+        type1 = self.get_wall_type(curr_wall_type)
+        type2 = self.get_wall_type(self.wall_type)
+        raise ValueError(f"Wall Type: {type1} and Wall Type: {type2} are activated simultaneously")
 
     def set_hierarchical_level(self, hierarchical_level):
         if hierarchical_level > 8:
-            raise RuntimeError("The maximum level of grid is 8")
+            raise SimulationStateError("The maximum level of grid is 8")
         self.hierarchical_level = int(hierarchical_level)
 
     def set_rebuild_interval(self, rebuild_interval):
         if self.search == "BVH":
-            from src.contact_detection.bounding_volume_hierarchy.MultiPatchLBVH import validate_bvh_rebuild_interval
 
             self.bvh_rebuild_interval = validate_bvh_rebuild_interval(rebuild_interval)
 
@@ -1002,7 +1005,7 @@ class Simulation(object):
     def set_simulation_time(self, time):
         self.time = time
 
-    def set_CFL(self, CFL):
+    def set_cfl(self, CFL):
         self.CFL = CFL
 
     def set_adaptive_timestep(self, adaptive_timestep):
@@ -1040,27 +1043,27 @@ class Simulation(object):
                 elif len(list(compaction_ratio)) == 4:
                     self.compaction_ratio = list(compaction_ratio)
                 else:
-                    raise RuntimeError("Keyword:: /compaction_ratio/ dimension error")
+                    raise SimulationStateError("Keyword:: /compaction_ratio/ dimension error")
             else:
                 self.compaction_ratio = list(compaction_ratio)
 
     def set_window_parameters(self, windows):
-        self.visualize_interval = DictIO.GetAlternative(windows, "VisualizeInterval", self.save_interval)
-        self.window_size = DictIO.GetAlternative(windows, "WindowSize", self.window_size)
-        self.camera_up = DictIO.GetAlternative(windows, "CameraUp", self.camera_up)
-        self.look_at = DictIO.GetAlternative(
+        self.visualize_interval = DictIO.get_alternative(windows, "VisualizeInterval", self.save_interval)
+        self.window_size = DictIO.get_alternative(windows, "WindowSize", self.window_size)
+        self.camera_up = DictIO.get_alternative(windows, "CameraUp", self.camera_up)
+        self.look_at = DictIO.get_alternative(
             windows, "LookAt", (0.7 * self.domain[0], -1.5 * self.domain[1], 0.4 * self.domain[2])
         )
-        self.look_from = DictIO.GetAlternative(
+        self.look_from = DictIO.get_alternative(
             windows, "LookFrom", (0.7 * self.domain[0], -1.5 * self.domain[1], 0.5 * self.domain[2])
         )
-        self.particle_color = DictIO.GetAlternative(windows, "ParticleColor", (1, 1, 1))
-        self.background_color = DictIO.GetAlternative(windows, "BackgroundColor", (0, 0, 0))
-        self.point_light = DictIO.GetAlternative(
+        self.particle_color = DictIO.get_alternative(windows, "ParticleColor", (1, 1, 1))
+        self.background_color = DictIO.get_alternative(windows, "BackgroundColor", (0, 0, 0))
+        self.point_light = DictIO.get_alternative(
             windows, "PointLight", (0.5 * self.domain[0], 0.5 * self.domain[1], 1.0 * self.domain[2])
         )
-        self.view_angle = DictIO.GetAlternative(windows, "ViewAngle", 70.0)
-        self.move_velocity = DictIO.GetAlternative(
+        self.view_angle = DictIO.get_alternative(windows, "ViewAngle", 70.0)
+        self.move_velocity = DictIO.get_alternative(
             windows, "MoveVelocity", 0.01 * (self.domain[0] + self.domain[1] + self.domain[2])
         )
 
@@ -1083,10 +1086,10 @@ class Simulation(object):
 
     def check_grid_extent(self, pid, extent):
         if pid != -1:
-            raise RuntimeError(f"Keyword:: /extent/ is not large enough, Particle {pid} need extent = {extent}")
+            raise SimulationStateError(f"Keyword:: /extent/ is not large enough, Particle {pid} need extent = {extent}")
 
     def compute_potential_ratios(self, rad_max):
-        if rad_max <= Threshold:
+        if rad_max <= THRESHOLD:
             return 0.0
         return ((3 * rad_max + 2 * self.verlet_distance) ** 3 - rad_max**3) / (26.0 * rad_max**3)
 
@@ -1096,7 +1099,7 @@ class Simulation(object):
     def set_potential_list_size(self, rad_max):
         self.potential_particle_num = 0
         self.max_potential_particle_pairs = 0
-        if self.max_particle_num > 0 and rad_max > Threshold:
+        if self.max_particle_num > 0 and rad_max > THRESHOLD:
             potential_particle_ratio = self.compute_potential_ratios(rad_max)
             self.potential_particle_num = math.ceil(
                 potential_particle_ratio * self.body_coordination_number
@@ -1169,24 +1172,24 @@ class Simulation(object):
     def check_multiplier(self, penetration_depth):
         if self.scheme == "LSDEM" or self.scheme == "LSMPM":
             if penetration_depth > self.point_verlet_distance:
-                raise RuntimeError(
+                raise SimulationStateError(
                     f"Keyword:: /verlet_distance_multiplier[1]/ should larger, at least {penetration_depth / self.point_verlet_distance * self.verlet_distance_multiplier[1]}"
                 )
 
     def validate_configuration(self, require_memory=False):
         if self.enable_shell and self.wall_type in (0, 1):
-            raise RuntimeError("enable_shell=True is incompatible with plane and polygon walls")
+            raise ConfigurationError("enable_shell=True is incompatible with plane and polygon walls")
         if self.scheme == "LSMPM":
             self._soft_particle_backend().validate_soft_particle_configuration(self, require_memory)
         if self.max_servo_wall_num > 0 and self.wall_type != 1:
-            raise RuntimeError("Servo walls require polygon/facet wall_type")
+            raise SimulationStateError("Servo walls require polygon/facet wall_type")
         if require_memory and self.servo_status == "On" and self.max_servo_wall_num <= 0:
-            raise RuntimeError("Servo wall is enabled but max_servo_wall_number is zero")
+            raise SimulationStateError("Servo wall is enabled but max_servo_wall_number is zero")
         if (
             require_memory
             and self.search == "HierarchicalLinkedCell"
             and len(self.hierarchical_size) != self.hierarchical_level
         ):
-            raise RuntimeError(
+            raise SimulationStateError(
                 f"HierarchicalLinkedCell requires hierarchical_size with " f"{self.hierarchical_level} entries"
             )

@@ -1,3 +1,4 @@
+from src.utils.VectorFunction import squared_norm_nd
 import numpy as np
 import taichi as ti
 from src.physics_model.contact_model.ipc.ContactGeometry import aabb_overlap_with_clearance
@@ -5,8 +6,8 @@ from src.contact_detection.bounding_volume_hierarchy.AABB import AABB
 from src.contact_detection.bounding_volume_hierarchy.MultiPatchLBVH import LBVH
 
 import src.igampm.config as config
-from src.nurbs.core.NurbsGeometry import NurbsBasisFunction1d, NurbsBasisFunction2d
-from src.physics_model.contact_model.ipc.NurbsContact import squared_norm_nd
+from src.nurbs.core.NurbsBasisFunction1d import NurbsBasisFunction1d
+from src.nurbs.core.NurbsBasisFunction2d import NurbsBasisFunction2d
 
 
 @ti.data_oriented

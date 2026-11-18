@@ -89,7 +89,7 @@ Have an example to share? Submit a [PR](https://github.com/Yihao-Shi/GeoTaichi/p
 ### [MPM-DEM](src/mpdem/README.md#mpdem-theory-log)
 #### Explicit MPM-DEM
 
-| [A sphere impacting granular bed](examples/mpdem/MultiSphere/SphereImpactToGranularBed/plane_strain.py) | [Granular column impacting cubic particles](examples/mpdem/MultiSphere/GranularImpact/granular_impact.py) | [Box sinking into water](examples/mpdem/LevelSet/WaterImpact/box.py) | [Stone column axial loading](examples/mpdem/MultiSphere/StoneColumn/stone_column.py) |
+| [A sphere impacting granular bed](examples/mpdem/MultiSphere/SphereImpactToGranularBed/plane_strain.py) | [Granular column impacting cubic particles](examples/mpdem/MultiSphere/GranularImpact/granular_impact.py) | [Box sinking into water](examples/mpdem/LevelSet/WaterImpact/box.py) | [Stone column](examples/mpdem/MultiSphere/StoneColumn/stone_column.py) |
 | --- | --- | --- | --- |
 | <img src="images/mpdem1.gif" alt="A sphere impacting granular bed" width="200" height="132" /> | <img src="images/mpdem2.gif" alt="Granular column impacting cubic particles" width="200" height="132" /> | <img src="images/box_sinking.gif" alt="Box sinking into water" width="200" height="137" /> | <img src="images/stone_column_9d.png" alt="9D stone column: half-clipped MPM soil colored by smoothed stress zz, complete grey DEM column; c=20 kPa, E=4 MPa" width="200" height="229" /> |
 
@@ -189,7 +189,7 @@ Documentation is maintained alongside the source. Module READMEs describe suppor
 
 - Core solvers: [MPM](src/mpm/README.md#mpm-theory-log), [DEM](src/dem/README.md#dem-theory-log), [FEM](src/fem/README.md#fem-theory-log), and [IGA](src/iga/README.md#iga-theory-log).
 - Coupled solvers: [MPM–DEM](src/mpdem/README.md#mpdem-theory-log), [FEM–DEM](src/fedem/README.md#fedem-coupling-theory-log), [FEM–MPM](src/fempm/README.md#fem--mpm-coupling-theory-log), and [IGA–MPM](src/igampm/README.md#iga--mpm-coupling-theory-log).
-- Shared models and numerics: [Constitutive models](src/physics_model/consititutive_model/README.md), [Contact models](src/physics_model/contact_model/README.md), [Contact detection](src/contact_detection/README.md), and [Linear solvers](src/linear_solver/README.md).
+- Shared models and numerics: [Constitutive models](src/physics_model/constitutive_model/README.md), [Contact models](src/physics_model/contact_model/README.md), [Contact detection](src/contact_detection/README.md), and [Linear solvers](src/linear_solver/README.md).
 - Usage and development: [Python examples](examples/), [Solver integration principles](agent/SOLVER_INTEGRATION_PRINCIPLES.md), [Blender add-on](blender/README.md), [Developer tools](tools/README.md), and [Tests and verification](tests/README.md).
 
 Start with the README for your solver and a matching Python example. Additional derivations and technical notes are available in [docs](docs/helper/geotaichi_user_theory_manual.pdf).

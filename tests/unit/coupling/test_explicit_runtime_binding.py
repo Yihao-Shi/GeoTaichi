@@ -15,11 +15,11 @@ from src.mpdem.Engine import Engine as MPDEMEngine
 from src.mpdem.fluid_dynamics.IncompressibleSemiResolved import (
     IncompressibleDEMSphereCoupling,
 )
-from src.mpdem.fluid_dynamics.IncompressibleCoupling import (
-    IncompressibleLSDEMCoupling,
+from src.mpdem.fluid_dynamics.IncompressibleCouplingKernel import (
     kernel_accumulate_lsdem_volume_fraction_ibm_force,
     kernel_update_lsdem_cell_ibm_fields,
 )
+from src.mpdem.fluid_dynamics.IncompressibleLSDEMCoupling import IncompressibleLSDEMCoupling
 from src.mpm.engines.TLExplicitEngine import TLExplicitEngine
 from src.mpm.engines.Engine import Engine as MPMEngine
 from src.mpm.engines.IncompressibleEngine import IncompressibleEngine
@@ -268,7 +268,7 @@ def test_mpm_dense_and_sparse_taylor_p2g_are_separate_bound_paths():
     )
     assert "solid_sdf is not None" not in inspect.getsource(IncompressibleEngine.enforce_particle_domain_boundary)
     assert "use_elastic_matrix_free_tangent" not in inspect.getsource(MPMImplicitEngine.compute_stress_strain)
-    assert "use_elastic_matrix_free_tangent" not in inspect.getsource(MPMImplicitEngine.compute_stress_strain_2D)
+    assert "use_elastic_matrix_free_tangent" not in inspect.getsource(MPMImplicitEngine.compute_stress_strain_2d)
     fused_p2g = inspect.getsource(IncompressibleEngine.compute_nodal_kinematics)
     assert "cell_volumefrac" in fused_p2g
     assert "classify_fluid_domain" in fused_p2g
@@ -276,13 +276,13 @@ def test_mpm_dense_and_sparse_taylor_p2g_are_separate_bound_paths():
     assert "identify_fluid_domain" not in inspect.getsource(IncompressibleEngine.fdm_discretization_mgpcg)
     for function in (
         MomentumConservation.calculate_reaction_forces_penalty,
-        MomentumConservation.calculate_reaction_forces_matrix_free_2D,
+        MomentumConservation.calculate_reaction_forces_matrix_free_2d,
         MomentumConservation.calculate_reaction_forces_matrix_free,
-        MomentumConservation.calculate_reaction_forces_assembled_2D,
+        MomentumConservation.calculate_reaction_forces_assembled_2d,
         MomentumConservation.calculate_reaction_forces_assembled,
     ):
         assert "sparse_grid is not None" not in inspect.getsource(function)
-    poisson_step = inspect.getsource(ULSemiImplicitTwoPhaseEngine.compute_Poisson_equation_2D)
+    poisson_step = inspect.getsource(ULSemiImplicitTwoPhaseEngine.compute_poisson_equation_2d)
     assert "assemble_type" not in poisson_step
     assert "solve_poisson_system" in poisson_step
 

@@ -1,22 +1,9 @@
+from src.utils.errors import CapacityError
+
 import taichi as ti
 import numpy as np
-import operator
-
 from src.contact_detection.bounding_volume_hierarchy.AABB import AABB
 from src.utils.BitFunction import morton3d32, morton3d60
-from src.utils.TypeDefination import vec3f
-
-
-def validate_bvh_rebuild_interval(value):
-    if isinstance(value, (bool, np.bool_)):
-        raise ValueError("bvh_rebuild_interval must be a positive integer")
-    try:
-        interval = operator.index(value)
-    except TypeError as exc:
-        raise ValueError("bvh_rebuild_interval must be a positive integer") from exc
-    if interval <= 0:
-        raise ValueError("bvh_rebuild_interval must be a positive integer")
-    return interval
 
 
 @ti.data_oriented
@@ -116,13 +103,13 @@ class LBVH(object):
                 left (int): Index of the left child node.
                 right (int): Index of the right child node.
                 parent (int): Index of the parent node.
-                bound (ti_aabb): Bounding box of the node, represented as an AABB.
+                bound (TaichiAABB): Bounding box of the node, represented as an AABB.
             """
 
             left: ti.i32
             right: ti.i32
             parent: ti.i32
-            bound: aabb.ti_aabb
+            bound: aabb.TaichiAABB
 
         self.Node = Node
 
@@ -477,7 +464,7 @@ class LBVH(object):
         maximum_depth = self.initialize_leaf_bounds(n_batches, currnet_n_aabb)
         self.maximum_depth = int(maximum_depth)
         if maximum_depth + 2 > self.max_stack_depth:
-            raise RuntimeError("LBVH depth exceeds traversal capacity or contains a parent cycle")
+            raise CapacityError("LBVH depth exceeds traversal capacity or contains a parent cycle")
         # Kernel boundaries publish every child's bounds before its parent's layer reads them.
         for depth in range(maximum_depth, -1, -1):
             self.compute_bounds_at_depth(n_batches, currnet_n_aabb, depth)
@@ -526,7 +513,7 @@ class LBVH(object):
     @ti.kernel
     def query(
         self,
-        primitiveNum: int,
+        primitive_num: int,
         potential_primitive_num: int,
         batch_id: int,
         aabbs: ti.template(),
@@ -541,7 +528,7 @@ class LBVH(object):
         prefix_batch_num = self.prefix_batch_size[batch_id]
         batch_num = self.prefix_batch_size[batch_id + 1] - prefix_batch_num
         prefix_i_node = 2 * prefix_batch_num - batch_id
-        for master in range(primitiveNum):
+        for master in range(primitive_num):
             query_stack = ti.Vector.zero(ti.i32, 64)
             stack_depth = 1
 
@@ -574,7 +561,7 @@ class LBVH(object):
     @ti.kernel
     def self_query(
         self,
-        primitiveNum: int,
+        primitive_num: int,
         potential_primitive_num: int,
         master_batch: int,
         slave_batch: int,
@@ -591,7 +578,7 @@ class LBVH(object):
         prefix_slave_batch_num = self.prefix_batch_size[slave_batch]
         slave_batch_num = self.prefix_batch_size[slave_batch + 1] - prefix_slave_batch_num
         prefix_slave_i_node = 2 * prefix_slave_batch_num - slave_batch
-        for master in range(primitiveNum):
+        for master in range(primitive_num):
             query_stack = ti.Vector.zero(ti.i32, 64)
             stack_depth = 1
 

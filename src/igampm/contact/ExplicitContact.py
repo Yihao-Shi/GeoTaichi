@@ -1,115 +1,16 @@
 """GPU point--NURBS contact for explicit IGA--MPM coupling."""
 
+from src.utils.errors import ConfigurationError, SimulationStateError
+
 import numpy as np
 import taichi as ti
-
 import src.igampm.config as config
 import src.utils.GlobalVariable as GlobalVariable
 from src.igampm.contact.ContactSurface import CouplingContactSurface
 from src.utils.linalg import no_operation
 
-
 vec2d = ti.types.vector(2, ti.f64)
 vec3d = ti.types.vector(3, ti.f64)
-
-
-@ti.func
-def _closest_point_on_surface(
-    start_knot_u,
-    start_knot_v,
-    start_ctrlpt,
-    num_knot_u,
-    num_knot_v,
-    knot_vector_u,
-    knot_vector_v,
-    ctrlpts,
-    weight,
-    point,
-    basis,
-):
-    """All-span projected Gauss--Newton closest point for explicit contact."""
-    degree_u = ti.static(basis.basis_u.degree)
-    degree_v = ti.static(basis.basis_v.degree)
-    num_ctrlpts_u = num_knot_u - degree_u - 1
-    num_ctrlpts_v = num_knot_v - degree_v - 1
-    best_u = knot_vector_u[start_knot_u + degree_u]
-    best_v = knot_vector_v[start_knot_v + degree_v]
-    best_distance2 = ti.math.inf
-    best_pointer = ti.Vector.zero(ti.f64, 3)
-    for span_u in range(degree_u, num_ctrlpts_u):
-        lower_u = knot_vector_u[start_knot_u + span_u]
-        upper_u = knot_vector_u[start_knot_u + span_u + 1]
-        if upper_u > lower_u:
-            for span_v in range(degree_v, num_ctrlpts_v):
-                lower_v = knot_vector_v[start_knot_v + span_v]
-                upper_v = knot_vector_v[start_knot_v + span_v + 1]
-                if upper_v > lower_v:
-                    u = 0.5 * (lower_u + upper_u)
-                    v = 0.5 * (lower_v + upper_v)
-                    iteration = 0
-                    converged = 0
-                    while iteration < 25 and converged == 0:
-                        position, tangent_u, tangent_v = basis.NurbsBasisInterpolationsDers2d(
-                            start_knot_u,
-                            start_knot_v,
-                            start_ctrlpt,
-                            num_knot_u,
-                            num_knot_v,
-                            u,
-                            v,
-                            knot_vector_u,
-                            knot_vector_v,
-                            ctrlpts,
-                            weight,
-                        )
-                        residual = position - point
-                        gradient_u = residual.dot(tangent_u)
-                        gradient_v = residual.dot(tangent_v)
-                        hessian_uu = tangent_u.dot(tangent_u)
-                        hessian_uv = tangent_u.dot(tangent_v)
-                        hessian_vv = tangent_v.dot(tangent_v)
-                        determinant = hessian_uu * hessian_vv - hessian_uv * hessian_uv
-                        du = 0.0
-                        dv = 0.0
-                        if ti.abs(determinant) > 1.0e-24:
-                            du = (-hessian_vv * gradient_u + hessian_uv * gradient_v) / determinant
-                            dv = (hessian_uv * gradient_u - hessian_uu * gradient_v) / determinant
-                        else:
-                            scale = ti.max(
-                                tangent_u.norm_sqr() + tangent_v.norm_sqr(),
-                                1.0e-24,
-                            )
-                            du = -gradient_u / scale
-                            dv = -gradient_v / scale
-                        next_u = ti.min(upper_u, ti.max(lower_u, u + du))
-                        next_v = ti.min(upper_v, ti.max(lower_v, v + dv))
-                        parameter_step2 = (next_u - u) * (next_u - u) + (next_v - v) * (next_v - v)
-                        u = next_u
-                        v = next_v
-                        if parameter_step2 < 1.0e-24:
-                            converged = 1
-                        iteration += 1
-                    position = basis.NurbsBasisInterpolations2d(
-                        start_knot_u,
-                        start_knot_v,
-                        start_ctrlpt,
-                        num_knot_u,
-                        num_knot_v,
-                        u,
-                        v,
-                        knot_vector_u,
-                        knot_vector_v,
-                        ctrlpts,
-                        weight,
-                    )
-                    pointer = position - point
-                    distance2 = pointer.norm_sqr()
-                    if distance2 < best_distance2:
-                        best_u = u
-                        best_v = v
-                        best_distance2 = distance2
-                        best_pointer = pointer
-    return best_u, best_v, ti.sqrt(ti.max(best_distance2, 0.0)), best_pointer
 
 
 @ti.dataclass
@@ -129,9 +30,108 @@ class PointNurbsDEMContact:
 class ExplicitNurbsContact:
     """Stable point--surface table with current-control-hull AABB culling."""
 
+    @ti.func
+    def _closest_point_on_surface(
+        self,
+        start_knot_u,
+        start_knot_v,
+        start_ctrlpt,
+        num_knot_u,
+        num_knot_v,
+        knot_vector_u,
+        knot_vector_v,
+        ctrlpts,
+        weight,
+        point,
+        basis,
+    ):
+        """All-span projected Gauss--Newton closest point for explicit contact."""
+        degree_u = ti.static(basis.basis_u.degree)
+        degree_v = ti.static(basis.basis_v.degree)
+        num_ctrlpts_u = num_knot_u - degree_u - 1
+        num_ctrlpts_v = num_knot_v - degree_v - 1
+        best_u = knot_vector_u[start_knot_u + degree_u]
+        best_v = knot_vector_v[start_knot_v + degree_v]
+        best_distance2 = ti.math.inf
+        best_pointer = ti.Vector.zero(ti.f64, 3)
+        for span_u in range(degree_u, num_ctrlpts_u):
+            lower_u = knot_vector_u[start_knot_u + span_u]
+            upper_u = knot_vector_u[start_knot_u + span_u + 1]
+            if upper_u > lower_u:
+                for span_v in range(degree_v, num_ctrlpts_v):
+                    lower_v = knot_vector_v[start_knot_v + span_v]
+                    upper_v = knot_vector_v[start_knot_v + span_v + 1]
+                    if upper_v > lower_v:
+                        u = 0.5 * (lower_u + upper_u)
+                        v = 0.5 * (lower_v + upper_v)
+                        iteration = 0
+                        converged = 0
+                        while iteration < 25 and converged == 0:
+                            position, tangent_u, tangent_v = basis.nurbs_basis_interpolations_ders2d(
+                                start_knot_u,
+                                start_knot_v,
+                                start_ctrlpt,
+                                num_knot_u,
+                                num_knot_v,
+                                u,
+                                v,
+                                knot_vector_u,
+                                knot_vector_v,
+                                ctrlpts,
+                                weight,
+                            )
+                            residual = position - point
+                            gradient_u = residual.dot(tangent_u)
+                            gradient_v = residual.dot(tangent_v)
+                            hessian_uu = tangent_u.dot(tangent_u)
+                            hessian_uv = tangent_u.dot(tangent_v)
+                            hessian_vv = tangent_v.dot(tangent_v)
+                            determinant = hessian_uu * hessian_vv - hessian_uv * hessian_uv
+                            du = 0.0
+                            dv = 0.0
+                            if ti.abs(determinant) > 1.0e-24:
+                                du = (-hessian_vv * gradient_u + hessian_uv * gradient_v) / determinant
+                                dv = (hessian_uv * gradient_u - hessian_uu * gradient_v) / determinant
+                            else:
+                                scale = ti.max(
+                                    tangent_u.norm_sqr() + tangent_v.norm_sqr(),
+                                    1.0e-24,
+                                )
+                                du = -gradient_u / scale
+                                dv = -gradient_v / scale
+                            next_u = ti.min(upper_u, ti.max(lower_u, u + du))
+                            next_v = ti.min(upper_v, ti.max(lower_v, v + dv))
+                            parameter_step2 = (next_u - u) * (next_u - u) + (next_v - v) * (next_v - v)
+                            u = next_u
+                            v = next_v
+                            if parameter_step2 < 1.0e-24:
+                                converged = 1
+                            iteration += 1
+                        position = basis.nurbs_basis_interpolations2d(
+                            start_knot_u,
+                            start_knot_v,
+                            start_ctrlpt,
+                            num_knot_u,
+                            num_knot_v,
+                            u,
+                            v,
+                            knot_vector_u,
+                            knot_vector_v,
+                            ctrlpts,
+                            weight,
+                        )
+                        pointer = position - point
+                        distance2 = pointer.norm_sqr()
+                        if distance2 < best_distance2:
+                            best_u = u
+                            best_v = v
+                            best_distance2 = distance2
+                            best_pointer = pointer
+        return best_u, best_v, ti.sqrt(ti.max(best_distance2, 0.0)), best_pointer
+
     def __init__(self, iga, mpm_scene, model, **kwargs):
         if config.DIM != 3:
-            raise RuntimeError("explicit DEM-law IGA-MPM contact currently requires dimension=3")
+            raise ConfigurationError("explicit DEM-law IGA-MPM contact currently requires dimension=3")
         self.iga = iga
         self.mpm_scene = mpm_scene
         self.model = model
@@ -145,9 +145,9 @@ class ExplicitNurbsContact:
             self.surface_basis.append(canonical_basis[signature])
         self.particle_count = int(mpm_scene.couplingNum[0])
         if self.num_surfaces <= 0:
-            raise RuntimeError("explicit IGA-MPM found no selected IGA boundaries")
+            raise SimulationStateError("explicit IGA-MPM found no selected IGA boundaries")
         if self.particle_count <= 0:
-            raise RuntimeError("explicit IGA-MPM requires coupled MPM points")
+            raise SimulationStateError("explicit IGA-MPM requires coupled MPM points")
         weights = self.contact_surface.weights.to_numpy()[: self.contact_surface.total_ctrlpts]
         if np.any(weights <= 0.0):
             raise ValueError("explicit NURBS contact AABB culling requires positive weights")
@@ -177,7 +177,7 @@ class ExplicitNurbsContact:
         missing_pairs = sorted(active_pairs - registered_pairs)
         if missing_pairs:
             rendered = ", ".join(f"({material}, {body})" for material, body in missing_pairs)
-            raise RuntimeError("missing explicit IGA-MPM contact properties for " + rendered)
+            raise SimulationStateError("missing explicit IGA-MPM contact properties for " + rendered)
         max_mpm_material_num = int(
             getattr(getattr(mpm_scene, "material", None), "max_material_num", 0)
             or getattr(getattr(mpm_scene, "material", None), "material_num", 0)
@@ -278,7 +278,7 @@ class ExplicitNurbsContact:
                     and position[direction] <= self.surface_upper[surface_id][direction] + radius
                 )
             if inside_aabb:
-                uknot, vknot, distance, pointer = _closest_point_on_surface(
+                uknot, vknot, distance, pointer = self._closest_point_on_surface(
                     prefix_num_knot_u,
                     prefix_num_knot_v,
                     prefix_num_ctrlpts,
@@ -337,19 +337,19 @@ class ExplicitNurbsContact:
                 property_id = ti.cast(particle.materialID, ti.i32) * ti.static(self.max_iga_body_num) + body_id
                 assert active_properties[property_id] != 0, "IGA-MPM DEM contact property is missing"
                 num_ctrlpts_v = num_knot_v - basis.basis_v.degree - 1
-                span_u = basis.basis_u.FindSpan(
+                span_u = basis.basis_u.find_span(
                     prefix_num_knot_u,
                     num_ctrlpts_u,
                     uknot,
                     surface.knot_vector_u,
                 )
-                span_v = basis.basis_v.FindSpan(
+                span_v = basis.basis_v.find_span(
                     prefix_num_knot_v,
                     num_ctrlpts_v,
                     vknot,
                     surface.knot_vector_v,
                 )
-                nshape = basis.NurbsBasis2d(
+                nshape = basis.nurbs_basis2d(
                     prefix_num_knot_u,
                     prefix_num_knot_v,
                     prefix_num_ctrlpts,
@@ -374,7 +374,7 @@ class ExplicitNurbsContact:
                 relative_velocity = ti.cast(particle.v, ti.f64) - surface_velocity
                 normal = self.contacts[contact_id].normal
                 if normal.norm_sqr() < 1.0e-28:
-                    _, tangent_u, tangent_v = basis.NurbsBasisInterpolationsDers2d(
+                    _, tangent_u, tangent_v = basis.nurbs_basis_interpolations_ders2d(
                         prefix_num_knot_u,
                         prefix_num_knot_v,
                         prefix_num_ctrlpts,
@@ -473,6 +473,3 @@ class ExplicitNurbsContact:
             self.set_particle_contact_enabled(1)
             self.reset_contact_state()
             self.iga.rhs.fill(0.0)
-
-
-__all__ = ["ExplicitNurbsContact", "PointNurbsDEMContact"]

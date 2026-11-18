@@ -1,49 +1,27 @@
-import json
-
-
-class ObjectIO:
-    def __init__(self, FilePath):
-        self.Object = None
-        with open(FilePath, "r") as f:
-            self.Object = json.load(f)
-
-    def GetConfigSetting(self, keyword):
-        try:
-            if keyword in self.Object: 
-                return self.Object[keyword]
-            else:
-                raise KeyError
-        except:
-            print(f"KeyError: {keyword} is not included in the JSON file!", '\n')
-    
-    def GetEssential(self, dictionary, keyword):
-        try:
-            if keyword in dictionary: 
-                return dictionary[keyword]
-            else:
-                raise KeyError
-        except:
-            print(f"KeyError: {keyword} is not included in the data dictionary!", '\n')
-    
-    def GetAlternative(self, dictionary, keyword):
-        if keyword in dictionary:
-            return dictionary[keyword]
-        else:
-            return []
-    
-
 class DictIO:
     @staticmethod
-    def GetEssential(dictionary, *arg):
+    def get_normalized(dictionary, name, *aliases, default=None, required=False, context="property"):
+        """Read parameter aliases that ignore case, underscores and hyphens."""
+        normalized = {str(key).replace("_", "").replace("-", "").lower(): value for key, value in dictionary.items()}
+        for candidate in (name, *aliases):
+            key = str(candidate).replace("_", "").replace("-", "").lower()
+            if key in normalized:
+                return normalized[key]
+        if required:
+            raise KeyError(f"{context} {name!r} is required")
+        return default
+
+    @staticmethod
+    def get_essential(dictionary, *arg):
         dictionary = {key.lower() if isinstance(key, str) else key: value for key, value in dictionary.items()}
         for keyword in arg:
             keyword_lower = keyword.lower() if isinstance(keyword, str) else keyword
-            if keyword_lower in dictionary: 
+            if keyword_lower in dictionary:
                 return dictionary[keyword_lower]
-        raise KeyError(f"KeyError: {arg} is not included in the data dictionary!", '\n')
-    
+        raise KeyError(f"KeyError: {arg} is not included in the data dictionary!", "\n")
+
     @staticmethod
-    def GetAlternative(dictionary, keyword, default):
+    def get_alternative(dictionary, keyword, default):
         dictionary = {key.lower() if isinstance(key, str) else key: value for key, value in dictionary.items()}
         keyword_lower = keyword.lower() if isinstance(keyword, str) else keyword
         if keyword_lower in dictionary:
@@ -51,7 +29,7 @@ class DictIO:
         return default
 
     @staticmethod
-    def GetOptional(dictionary, keyword):
+    def get_optional(dictionary, keyword):
         dictionary = {key.lower() if isinstance(key, str) else key: value for key, value in dictionary.items()}
         keyword_lower = keyword.lower() if isinstance(keyword, str) else keyword
         if keyword_lower in dictionary:
@@ -73,7 +51,17 @@ class DictIO:
     @staticmethod
     def merge(dict1, dict2):
         for key, value in dict2.items():
-            if key not in dict1: 
+            if key not in dict1:
                 dict1[key] = value
         return dict1
 
+    @staticmethod
+    def read_dict_list(input, func, is_return=False, *arg, **kwargs):
+        auxiliary = []
+        if isinstance(input, dict):
+            auxiliary.append(func(input, *arg, **kwargs))
+        elif isinstance(input, list):
+            for lst in input:
+                auxiliary.append(func(lst, *arg, **kwargs))
+        if is_return:
+            return auxiliary

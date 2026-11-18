@@ -1,7 +1,7 @@
 # Nonlinear Solution Algorithms for Coupled Isogeometric–Material Point Mechanics
 
 This package separates explicit DEM-law stepping from the composed implicit
-IPC engine. Public engines are exported directly from this package.
+IPC engine. Consumers import the implementation module of each engine.
 
 | Module | Responsibility |
 | --- | --- |
@@ -12,7 +12,6 @@ IPC engine. Public engines are exported directly from this package.
 | `FrictionEngine.py` | Lagged and fully implicit friction assembly and nonlinear orchestration |
 | `FullyImplicitFriction.py` | Reusable exact Taichi friction derivative functions |
 | `TimeIntegration.py` | Host validation of scalar time-integration coefficients |
-| `_Common.py` | Imports shared by the responsibility mixins; it owns no solver state |
 
 All production per-contact calculations and reductions execute in Taichi.
 IPC queries rebuild current positive-weight control-hull AABBs. A bulk

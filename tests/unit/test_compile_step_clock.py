@@ -1,3 +1,5 @@
+from src.dem.DEMBase import Solver
+
 from types import SimpleNamespace
 
 import pytest
@@ -77,7 +79,7 @@ def test_mpm_loop_saves_post_step_state_without_overshoot(monkeypatch):
     monkeypatch.setattr(mpm_base, "runtime_checkpoint", lambda: None)
     monkeypatch.setattr(mpm_base, "print_simulation_start", lambda name: None)
 
-    solver.Solver(None, None)
+    solver.solve(None, None)
 
     assert stepped_from == [0.0, 1.0, 2.0]
     assert saved == [0.0, 1.0, 2.0, 3.0]
@@ -90,7 +92,7 @@ def test_dem_compile_counts_the_physical_step(monkeypatch):
     import src.dem.DEMBase as dem_base
 
     core_calls = []
-    solver = object.__new__(dem_base.Solver)
+    solver = object.__new__(Solver)
     solver.sims = SimpleNamespace(
         current_time=2.0,
         current_step=7,
@@ -111,7 +113,7 @@ def test_dem_compile_counts_the_physical_step(monkeypatch):
 def test_dem_compile_uses_timestep_that_was_integrated(monkeypatch):
     import src.dem.DEMBase as dem_base
 
-    solver = object.__new__(dem_base.Solver)
+    solver = object.__new__(Solver)
     solver.sims = SimpleNamespace(
         current_time=0.0,
         current_step=0,
@@ -186,7 +188,7 @@ def test_loops_skip_roundoff_but_integrate_real_fractional_steps(
     import importlib
 
     base = importlib.import_module(module_name)
-    solver = object.__new__(base.Solver)
+    solver = object.__new__(base.solve)
     solver.sims = SimpleNamespace(
         coupling_scheme="CFDEM",
         current_time=0.0,
@@ -237,13 +239,13 @@ def test_loops_skip_roundoff_but_integrate_real_fractional_steps(
     monkeypatch.setattr(base, "print_simulation_start", lambda name: None)
 
     if module_name == "src.mpdem.DEMPMBase":
-        solver.CouplingSolver(None, None)
+        solver.coupling_solver(None, None)
         assert abs(solver.msims.current_time - target) < 1.0e-14
         assert abs(solver.dsims.current_time - target) < 1.0e-14
     elif module_name == "src.mpm.MPMBase":
-        solver.Solver(None, None)
+        solver.solve(None, None)
     else:
-        solver.Solver(None)
+        solver.solve(None)
 
     assert len(calls) == count
     assert len(checkpoints) == count

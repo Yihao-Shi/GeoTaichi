@@ -1,20 +1,9 @@
 """Explicit DEM-style contact parameters for FEM soft particles."""
 
+from src.contact_detection.bounding_volume_hierarchy.Utilities import validate_bvh_rebuild_interval
+
 import math
-
 import taichi as ti
-from src.contact_detection.bounding_volume_hierarchy.MultiPatchLBVH import validate_bvh_rebuild_interval
-
-
-def property_value(mapping, name, *aliases, default=None, required=False):
-    normalized = {str(key).replace("_", "").replace("-", "").lower(): value for key, value in mapping.items()}
-    for candidate in (name, *aliases):
-        key = str(candidate).replace("_", "").replace("-", "").lower()
-        if key in normalized:
-            return normalized[key]
-    if required:
-        raise KeyError(f"FEM soft-particle contact property {name!r} is required")
-    return default
 
 
 @ti.dataclass
@@ -34,46 +23,54 @@ class FEMSoftParticleProperty:
     barrier_stiffness_ratio: float
 
 
-def _pair(first, second):
-    first, second = int(first), int(second)
-    if first < 0 or second < 0:
-        raise ValueError("FEM soft-particle body IDs must be non-negative")
-    if first == second:
-        raise ValueError("FEM soft-particle contact properties require two different bodies")
-    return (first, second) if first < second else (second, first)
-
-
-def _model_name(model):
-    key = str(model).replace("_", "").replace("-", "").replace(" ", "").lower()
-    if key in ("linear", "linearspring", "linearmodel"):
-        return "Linear"
-    if key in ("hertz", "hertzmindlin", "hertzmindlinmodel"):
-        return "HertzMindlin"
-    if key in ("barrier", "barriermodel"):
-        return "Barrier"
-    raise ValueError("FEM soft-particle contact model must be Linear, HertzMindlin, or Barrier")
-
-
-def _search_name(search):
-    key = str(search).replace("_", "").replace("-", "").replace(" ", "").lower()
-    if key in ("linkedcell", "cell", "dynamiclinkedcell"):
-        return "LinkedCell"
-    if key in ("bvh", "lbvh", "boundingvolumehierarchy"):
-        return "BVH"
-    raise ValueError("FEM soft-particle search must be LinkedCell or BVH")
-
-
 class FEMSoftParticleContactModel:
     """Host configuration compiled into a device pair table at FEM build."""
 
+    @staticmethod
+    def property_value(mapping, name, *aliases, default=None, required=False):
+        normalized = {str(key).replace("_", "").replace("-", "").lower(): value for key, value in mapping.items()}
+        for candidate in (name, *aliases):
+            key = str(candidate).replace("_", "").replace("-", "").lower()
+            if key in normalized:
+                return normalized[key]
+        if required:
+            raise KeyError(f"FEM soft-particle contact property {name!r} is required")
+        return default
+
+    @staticmethod
+    def _pair(first, second):
+        first, second = int(first), int(second)
+        if first < 0 or second < 0:
+            raise ValueError("FEM soft-particle body IDs must be non-negative")
+        if first == second:
+            raise ValueError("FEM soft-particle contact properties require two different bodies")
+        return (first, second) if first < second else (second, first)
+
+    @staticmethod
+    def _model_name(model):
+        if model not in ("Linear", "HertzMindlin", "Barrier"):
+            raise ValueError("FEM soft-particle contact model must be Linear, HertzMindlin, or Barrier")
+        return model
+
+    @staticmethod
+    def _search_name(search):
+        key = str(search).replace("_", "").replace("-", "").replace(" ", "").lower()
+        if key in ("linkedcell", "cell", "dynamiclinkedcell"):
+            return "LinkedCell"
+        if key in ("bvh", "lbvh", "boundingvolumehierarchy"):
+            return "BVH"
+        raise ValueError("FEM soft-particle search must be LinkedCell or BVH")
+
     def __init__(self, model="Linear", **kwargs):
-        self.model_name = _model_name(model)
+        self.model_name = FEMSoftParticleContactModel._model_name(model)
         self.model_type = {
             "Linear": 0,
             "HertzMindlin": 1,
             "Barrier": 2,
         }[self.model_name]
-        self.search = _search_name(kwargs.pop("search", kwargs.pop("broad_phase", "LinkedCell")))
+        self.search = FEMSoftParticleContactModel._search_name(
+            kwargs.pop("search", kwargs.pop("broad_phase", "LinkedCell"))
+        )
         self.bvh_rebuild_interval = validate_bvh_rebuild_interval(kwargs.pop("bvh_rebuild_interval", 1000))
         self.verlet_distance = kwargs.pop("verlet_distance", None)
         self.verlet_distance_multiplier = float(kwargs.pop("verlet_distance_multiplier", 0.1))
@@ -197,16 +194,20 @@ class FEMSoftParticleContactModel:
     def add_property(self, first_body, second_body, property=None, **kwargs):
         parameters = dict(property or {})
         parameters.update(kwargs)
-        self.properties[_pair(first_body, second_body)] = parameters
+        self.properties[FEMSoftParticleContactModel._pair(first_body, second_body)] = parameters
         return parameters
 
     def _linear_property(self, parameters):
-        kn = float(property_value(parameters, "NormalStiffness", "kn", required=True))
-        ks = float(property_value(parameters, "TangentialStiffness", "ks", required=True))
+        kn = float(FEMSoftParticleContactModel.property_value(parameters, "NormalStiffness", "kn", required=True))
+        ks = float(FEMSoftParticleContactModel.property_value(parameters, "TangentialStiffness", "ks", required=True))
         if kn <= 0.0 or ks <= 0.0:
             raise ValueError("FEM soft-particle linear stiffnesses must be positive")
-        normal_damping = float(property_value(parameters, "NormalViscousDamping", "ndratio", default=0.0))
-        tangential_damping = float(property_value(parameters, "TangentialViscousDamping", "sdratio", default=0.0))
+        normal_damping = float(
+            FEMSoftParticleContactModel.property_value(parameters, "NormalViscousDamping", "ndratio", default=0.0)
+        )
+        tangential_damping = float(
+            FEMSoftParticleContactModel.property_value(parameters, "TangentialViscousDamping", "sdratio", default=0.0)
+        )
         if normal_damping < 0.0 or tangential_damping < 0.0:
             raise ValueError("FEM soft-particle damping ratios must be non-negative")
         return {
@@ -220,9 +221,13 @@ class FEMSoftParticleContactModel:
         }
 
     def _hertz_property(self, parameters):
-        modulus = float(property_value(parameters, "ShearModulus", "Modulus", required=True))
-        poisson = float(property_value(parameters, "Poisson", "PoissonRatio", required=True))
-        restitution = float(property_value(parameters, "Restitution", required=True))
+        modulus = float(
+            FEMSoftParticleContactModel.property_value(parameters, "ShearModulus", "Modulus", required=True)
+        )
+        poisson = float(
+            FEMSoftParticleContactModel.property_value(parameters, "Poisson", "PoissonRatio", required=True)
+        )
+        restitution = float(FEMSoftParticleContactModel.property_value(parameters, "Restitution", required=True))
         if modulus <= 0.0 or not -1.0 < poisson < 0.5:
             raise ValueError("invalid FEM soft-particle Hertz modulus/Poisson ratio")
         if not 0.0 <= restitution <= 1.0:
@@ -247,9 +252,9 @@ class FEMSoftParticleContactModel:
         }
 
     def _barrier_property(self, parameters):
-        kappa = float(property_value(parameters, "Stiffness", "kappa", required=True))
+        kappa = float(FEMSoftParticleContactModel.property_value(parameters, "Stiffness", "kappa", required=True))
         cutoff = float(
-            property_value(
+            FEMSoftParticleContactModel.property_value(
                 parameters,
                 "NormalCutOff",
                 "NormalCutoff",
@@ -258,16 +263,18 @@ class FEMSoftParticleContactModel:
             )
         )
         stiffness_ratio = float(
-            property_value(
+            FEMSoftParticleContactModel.property_value(
                 parameters,
                 "StiffnessRatio",
                 "ratio",
                 default=1.0,
             )
         )
-        normal_damping = float(property_value(parameters, "NormalViscousDamping", "ndratio", default=0.0))
+        normal_damping = float(
+            FEMSoftParticleContactModel.property_value(parameters, "NormalViscousDamping", "ndratio", default=0.0)
+        )
         tangential_damping = float(
-            property_value(
+            FEMSoftParticleContactModel.property_value(
                 parameters,
                 "TangentialViscousDamping",
                 "sdratio",
@@ -294,7 +301,7 @@ class FEMSoftParticleContactModel:
     def canonical_property(self, parameters):
         parameters = dict(parameters)
         thickness = float(
-            property_value(
+            FEMSoftParticleContactModel.property_value(
                 parameters,
                 "ContactThickness",
                 "Thickness",
@@ -302,7 +309,7 @@ class FEMSoftParticleContactModel:
                 default=0.0,
             )
         )
-        friction = float(property_value(parameters, "Friction", "mu", default=0.0))
+        friction = float(FEMSoftParticleContactModel.property_value(parameters, "Friction", "mu", default=0.0))
         if thickness < 0.0 or friction < 0.0:
             raise ValueError("FEM soft-particle thickness/friction must be non-negative")
         if self.model_type == 0:
@@ -354,6 +361,3 @@ class FEMSoftParticleContactModel:
                 "or call add_soft_particle_property"
             )
         return default, overrides
-
-
-__all__ = ["FEMSoftParticleContactModel", "FEMSoftParticleProperty"]

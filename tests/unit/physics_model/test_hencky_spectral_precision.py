@@ -8,7 +8,7 @@ pytestmark = [pytest.mark.unit, pytest.mark.materials, pytest.mark.serial]
 
 
 def test_hencky_trial_basis_and_elastic_stress_match_double_precision_reference(taichi_runtime):
-    from src.physics_model.consititutive_model.finite_strain.DruckerPrager import FiniteStrainDruckerPragerModel
+    from src.physics_model.constitutive_model.finite_strain.DruckerPrager import FiniteStrainDruckerPragerModel
 
     model = FiniteStrainDruckerPragerModel()
     model.model_initialize(

@@ -1,22 +1,19 @@
 """Dynamic prefix-sum linked cells for deforming FEM triangles."""
 
-import math
+from src.utils.ScalarFunction import linearize3d
+from src.utils.errors import SimulationStateError
 
+import math
 import numpy as np
 import taichi as ti
-
 from src.fedem.neighbor.NeighborBase import FEDEMNeighborBase
-from src.utils.GeometryFunction import DistanceFromPointToTriangle
+from src.utils.GeometryFunction import distance_from_point_to_triangle
 from src.utils.PrefixSum import PrefixSumExecutor
-
-
-@ti.func
-def _linear_cell_id(index, cell_number):
-    return index[0] + cell_number[0] * (index[1] + cell_number[1] * index[2])
 
 
 @ti.data_oriented
 class FEDEMLinkedCell(FEDEMNeighborBase):
+
     def __init__(self, simulation, patch, maximum_particle_radius, face_radius):
         super().__init__(simulation, patch)
         self.maximum_particle_radius = float(maximum_particle_radius)
@@ -59,7 +56,7 @@ class FEDEMLinkedCell(FEDEMNeighborBase):
                 (begin[1], end[1] + 1),
                 (begin[2], end[2] + 1),
             ):
-                cell = _linear_cell_id(ti.Vector([i, j, k]), cell_number)
+                cell = linearize3d(i, j, k, cell_number)
                 ti.atomic_add(self.cell_offsets[cell + 1], 1)
 
     @ti.kernel
@@ -86,7 +83,7 @@ class FEDEMLinkedCell(FEDEMNeighborBase):
                 (begin[1], end[1] + 1),
                 (begin[2], end[2] + 1),
             ):
-                cell = _linear_cell_id(ti.Vector([i, j, k]), cell_number)
+                cell = linearize3d(i, j, k, cell_number)
                 offset = ti.atomic_add(self.cell_cursor[cell], 1)
                 self.cell_faces[self.cell_offsets[cell] + offset] = face
 
@@ -110,12 +107,12 @@ class FEDEMLinkedCell(FEDEMNeighborBase):
             if particles[particle].active != 0 and inside:
                 index = ti.cast(ti.floor(position * self.inverse_grid_size), ti.i32)
                 index = ti.max(0, ti.min(index, cell_number - 1))
-                cell = _linear_cell_id(index, cell_number)
+                cell = linearize3d(index[0], index[1], index[2], cell_number)
                 for cursor in range(self.cell_offsets[cell], self.cell_offsets[cell + 1]):
                     face = self.cell_faces[cursor]
                     ids = self.patch.faces[face]
                     distance = ti.abs(
-                        DistanceFromPointToTriangle(
+                        distance_from_point_to_triangle(
                             position,
                             self.patch.nodes[ids[0]],
                             self.patch.nodes[ids[1]],
@@ -137,7 +134,7 @@ class FEDEMLinkedCell(FEDEMNeighborBase):
         self.cell_scan.run(self.cell_offsets)
         facet_cell_pairs = int(self.cell_offsets[self.cell_count])
         if facet_cell_pairs > self.simulation.max_facet_cell_pairs:
-            raise RuntimeError(
+            raise SimulationStateError(
                 "FEDEM max_facet_cell_pairs is too small: "
                 f"need {facet_cell_pairs}, allocated {self.simulation.max_facet_cell_pairs}"
             )
@@ -145,6 +142,3 @@ class FEDEMLinkedCell(FEDEMNeighborBase):
         self._search(particle_count, particles, self.simulation.domain, self.cell_number)
         return self._finish_rebuild(particle_count)
         return self.contact_count
-
-
-__all__ = ["FEDEMLinkedCell"]

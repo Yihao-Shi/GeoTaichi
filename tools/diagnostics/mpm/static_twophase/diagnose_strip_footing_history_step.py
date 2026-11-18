@@ -22,9 +22,7 @@ from src.mpm.boundaries.BoundaryCondition import DirichletBoundary, NeumannBound
 
 def top_strip_nodes(coords, y_top, x_min, x_max):
     return np.where(
-        np.isclose(coords[:, 1], y_top)
-        & (coords[:, 0] >= x_min - 1.0e-12)
-        & (coords[:, 0] <= x_max + 1.0e-12)
+        np.isclose(coords[:, 1], y_top) & (coords[:, 0] >= x_min - 1.0e-12) & (coords[:, 0] <= x_max + 1.0e-12)
     )[0]
 
 
@@ -102,7 +100,7 @@ def build_solver():
         dirichlet=dirichlet,
         neumann=neumann,
         gravity=[0.0, 0.0],
-        material="druckerPrager",
+        material="DruckerPrager",
         young_modulus=2.0e4,
         poisson_ratio=0.3,
         density=2.0,
@@ -176,10 +174,7 @@ def compare_direct_solves(K, r):
         x = spsolve(A, rhs)
         step_inf = np.linalg.norm(x, np.inf)
         lin_res = np.linalg.norm(A @ x - rhs, np.inf)
-        print(
-            f"direct reg={reg:.1e} step_inf={step_inf:.6e} "
-            f"lin_res_inf={lin_res:.6e}"
-        )
+        print(f"direct reg={reg:.1e} step_inf={step_inf:.6e} " f"lin_res_inf={lin_res:.6e}")
 
 
 if __name__ == "__main__":

@@ -14,7 +14,12 @@ Three rules resolve most uncertainty:
 - **Documentation ships with behavior.** A code change is incomplete until every affected module README, helper
   manual entry, example, and agent-facing instruction is updated and validated in the same change.
 
-## 0. Coding-agent prerequisite: Ponytail
+## 0. Coding-agent prerequisites
+
+Use [Karpathy Guidelines](https://github.com/multica-ai/andrej-karpathy-skills/tree/main/skills/karpathy-guidelines)
+for coding and refactoring, alongside Ponytail below. Install `skills/karpathy-guidelines` from that repository with
+the Codex skill installer and read its installed `SKILL.md` before writing code. Keep the upstream skill outside
+solver packages; do not add a project-specific wrapper framework to enforce it.
 
 Coding agents must install and enable [Ponytail](https://github.com/DietrichGebert/ponytail) before implementing or
 reviewing GeoTaichi code. The repository checkout belongs at `agent/ponytail`; do not copy Ponytail rules or scripts
@@ -165,10 +170,66 @@ capability guarantees.
 
 ## 3. Naming and formatting
 
-- Match naming in the owning subsystem. GeoTaichi has established CamelCase module/class names and snake_case methods;
-  do not launch broad renames to enforce a new global style.
-- New local variables and free functions should use descriptive `snake_case` unless a neighboring numerical kernel
-  has a well-established mathematical convention.
+### 3.1 Source naming
+
+| Object | Convention | Examples |
+| --- | --- | --- |
+| Python package/directory | `snake_case`, with established solver abbreviations | `physics_model/constitutive_model`, `mpm/soft_particle` |
+| Solver implementation module | `PascalCase.py`; preserve established acronym spelling | `SceneManager.py`, `TypeDefinition.py`, `LevelSetBVH.py`, `NeighborKernel.py` |
+| Class, record, mixin, exception | `PascalCase`, without a leading underscore | `SceneManager`, `GeometryDeviceState`, `ClassicalAssemblyMixin`, `CapacityError` |
+| Function, method, argument, ordinary variable/attribute | Descriptive `snake_case` | `find_body`, `body_id`, `particle_num`, `point_body_ids` |
+| Fixed module constant / environment variable | `UPPER_SNAKE_CASE` | `THB_MAX_INFLUENCE_NODES`, `GEOTAICHI_REAL_DTYPE` |
+| Maintained test / standalone tool | `test_<behavior>.py` / `snake_case.py` | `test_source_layout.py`, `run_partition.py` |
+
+Use the implementation-module style for solver classes, kernel collections and shared numerical categories; do not
+rename a file merely to match one class. Keep the established `mainDEM.py`, `mainMPM.py`, etc. facade entry names.
+Lightweight support modules (`config.py`, `constants.py`, `errors.py`, `linalg.py`), the SDF factory modules,
+visualization adapters and MCP/Blender packages retain their existing `snake_case.py` convention. Spell out a variant
+in implementation names (`MultiGridPCGMixtureAxisymmetric`); do not mix CamelCase with `_mixture_Axi` suffixes.
+
+Do not add leading underscores to implementation files or classes as a visibility marker. Internal callables may
+use a leading underscore (`_get_position`). Remove trailing implementation underscores; distinguish real variants
+by their operation (`restrict_radius_weighted`, `usf_updating_drained`). Python protocol names such as `__init__`
+are unchanged. Host functions, kernels, `ti.func` and `ti.pyfunc` all use `snake_case`: `compute_stress`,
+`d_psi_div_d_f`, `get_essential`, `linearize3d`, `kernel_normalize_nodal_dpressure_2d`. Acronyms in callables are
+lowercase; dimension tags use `2d`/`3d`. Decorators identify the execution boundary, so do not add wrappers or
+runtime dispatch merely to give kernels and functions separate naming prefixes.
+SDF's exported callable classes (`sphere`, `rounded_box`, `text`, etc.) keep their public `snake_case` factory names;
+this exception is limited to the existing factory modules, not other classes in `src/sdf`.
+
+### 3.2 Numerical notation and compatibility
+
+- Keep recognizable mathematical notation in variables naming an equation quantity: `F`, `J`, `K`, `Ax`, `rTr`,
+  `dPsi_dF`, `dNdxi`. Short algebraic symbols and derivative notation are not prose variables to lowercase mechanically.
+- Use `body_id`/`node_id` for ordinary local IDs and `particle_num`/`particle_count` for counts, matching the closest
+  maintained caller. Distinguish a body index from a body count and a point-body ID array from one scalar ID.
+- Existing public Python keyword-argument spellings, callable constructors (`DEM`, `MPM`, etc.), accessible state attributes and
+  Taichi struct fields remain compatibility
+  contracts. For example, a local `body_id` may read `particle.bodyID`; `bodyID` in output/restart data stays `bodyID`.
+  New internal names follow the table. Changing one of these contracts needs its own complete consumer/schema
+  migration; never fix only the declaration or add aliases to hide a partial rename.
+- Internal kernel, `ti.func` and `ti.pyfunc` arguments follow `snake_case`, with the same mathematical-notation
+  exceptions as locals. Rename their launch/call keywords together. Keep separate argument and local bindings
+  distinct (`input_wall_id` versus `wall_id`, whole `state_variables` versus one local `state_vars` record).
+- Fixed module constants use uppercase (`THRESHOLD`, `L_THRESHOLD`, `ZEROVEC3F`, `ZEROMAT3X3`); keep the
+  established tensor dimensions and type suffixes readable. Internal mutable module variables use `snake_case`,
+  with imports and `global` declarations migrated together. Type aliases retain `PascalCase`; runtime configuration
+  attributes such as `GlobalVariable.Taylor` and `GlobalVariable.Affine` retain their compatibility spelling.
+- Numerical callables follow the same rule as other functions (`ComputeStress` → `compute_stress`, `Psi` → `psi`).
+  Property getter/setter names identify state attributes, so existing properties such as `gridSum` and
+  `materialID_numpy` retain their state-interface spelling. Source imports, method references, reflection and
+  embedded subprocess code migrate together; model-selection strings and serialized keys keep their exact values.
+- A source-module/class rename updates imports, exports, lazy-import strings, monkeypatch targets, subprocess code,
+  maintained examples/tools/tests, capability-index source paths, and documentation links together. Do not keep
+  forwarding implementation files. Historical migration records can retain the paths that existed at the time.
+- Before renaming locals, inspect the complete scope, nested references and comprehensions. Check collisions with
+  arguments and other locals; `bodyNum` and `body_num` can denote different values. Preserve signatures, field names,
+  dictionary keys, string payloads, decorators, annotation precision and every numerical expression.
+- `tests/unit/testing/test_source_layout.py` enforces source file/class naming, local binding style and resolvable
+  `src` import paths. These checks are included in the CPU pre-commit partition.
+
+### 3.3 Vocabulary and formatting
+
 - Reuse domain terms accurately: particle, grid/node, material, body, wall, clump, element, control point, contact,
   degree of freedom, residual, gradient, Hessian, tangent, and increment are not interchangeable.
 - Boolean names should read as conditions (`is_active`, `has_contact`, `enable_friction`) and preserve established
@@ -178,6 +239,8 @@ capability guarantees.
 - Include units or frames in names when the surrounding type cannot make them clear.
 - Preserve exact spelling and capitalization of public dictionary keys, enumerated strings, environment variables,
   output fields, and restart data.
+- Give each model one canonical, case-sensitive name. Reject unknown names and misspellings explicitly; do not
+  add aliases, abbreviations, punctuation stripping, or case folding to make invalid model names work.
 - Python formatting follows Black's configured 120-character line length. Do not reformat untouched regions merely
   because an old file differs from Black.
 - Wrap a long call consistently: prefer one argument per continuation line instead of mixed packing.
@@ -204,13 +267,65 @@ capability guarantees.
 
 ## 5. Imports, functions, and structure
 
+- A Python file's location follows its actual responsibility. Geometry/template preparation belongs to the
+  generator, field serialization to field I/O, and generic host mathematics to `linalg.py`; engine state and
+  solver algorithms stay with their engine. Inspect callers and an existing candidate before moving code.
+  Reuse a template only when its input ownership, coordinate transforms, geometry representation, and validation
+  match. Do not force surface-only affine preparation through an SDF template by adding flags or unused allocations.
+  Record each actual move, reuse decision, and correction in the existing structure refactor record.
+- Split a module when it contains multiple large implementations with independent responsibilities. Small,
+  closely related parallel classes, records, and a base class with small variants may stay together.
+  Class count or line count alone does not justify splitting. Preserve established filenames and import paths
+  when ownership is already clear; a filename need not match its class name. Before moving code, record the
+  concrete ownership or reuse problem and check whether keeping the existing module already solves it.
+  Follow the agreed boundaries and migration ledger in [the structure refactor record](CODE_STRUCTURE_REFACTOR.md).
+- Shared custom exception types belong in the dependency-free `src/utils/errors.py`, with small exception
+  declarations grouped there by failure meaning. Import them directly from that module; do not define duplicate
+  errors inside solvers or add forwarding modules. Before introducing or removing an error, trace its raise,
+  catch, retry, rollback, and reporting sites. Keep useful errors; delete unused declarations without removing
+  failure checks. Reuse a specific existing type when it matches the failure instead of raising bare
+  `RuntimeError` for every case. Use standard `ValueError`/`TypeError` for invalid inputs, and catch specific
+  failure types when recovery depends on their meaning. Preserve exception inheritance and retry/rollback
+  behavior when consolidating definitions; do not collapse distinct failures into one generic error.
+- Do not create or retain forwarding modules that only import and re-export symbols without implementation.
+  When moving a class, update callers to import its actual implementation module and delete the obsolete module;
+  do not replace it with a compatibility shim or add a package-level forwarding chain.
 - Keep imports at module scope. A local import is appropriate only for an established lazy-loading boundary, optional
   dependency, or real circular dependency; `src/__init__.py` contains intentional lazy constructors.
 - Preserve the public facade boundary. Examples should not depend on an internal class when a facade operation exists.
 - A helper should encode a reusable concept, not merely shorten one call site. Keep linear one-use logic local when it
   remains readable.
-- Prefer module-level numerical helpers when no object state is required. Use methods when the owning state and
-  invariants belong to the class.
+- Remove forwarding functions that add no validation, state, lifecycle, numerical specialization, or necessary API
+  boundary. Call the implementation directly. A one-line function is not automatically redundant: retain real
+  polymorphic interfaces, device template adapters, profiler/callback contracts, and synchronization or failure checks.
+- Do not turn unrelated shared functions into static methods on a configuration class just to give them a namespace.
+  `StepSchedule` owns accepted-step scheduling; runtime callbacks belong in `RuntimeHook.py`, and shared numerical
+  solver-control operations belong in `linear_solver/Utilities.py`. Keep actual formulas and validation centralized.
+- Put model-specific helpers, especially Python configuration and preprocessing functions, on the owning
+  class. For shared stateless helpers, search `src/utils/` first and reuse the existing owner: general Python
+  numerical/scalar helpers such as `positive()` belong in `src/utils/linalg.py`.
+- Decide helper ownership from its responsibility and callers, not from the source filename. A class-specific
+  helper belongs on that class even if several consumers call it. Functions genuinely shared by multiple files
+  within one subsystem belong in that subsystem's existing `Utilities.py`, or one such module if none exists.
+  Do not mechanically split each class module into a companion `xxxUtilities.py`, or create a utility
+  module merely to hold one or two class-specific helpers. In `src/utils/`, put class-specific helpers on the corresponding class
+  and general Python numerical helpers in `linalg.py`; do not add another `xxxUtilities.py` layer.
+  Check for an existing implementation before moving or adding a helper, and consolidate compatible duplicates
+  without merging different validation contracts or numerical assumptions.
+- Generic mathematics belongs to the existing shared numerical owner even if its first caller is a single solver.
+  `src/utils/linalg.py` contains host Python mathematics for setup and preprocessing, with no Taichi functions
+  or kernels. Shared device mathematics belongs in the existing functional categories under `src/utils/`,
+  such as `MatrixFunction.py`, `VectorFunction.py`, `ScalarFunction.py`, and `ShapeFunctions.py`.
+  Solver state, assembly, and algorithm orchestration stay in the owning solver; do not move them to shared
+  utilities merely because they contain formulas. Preserve the execution boundary, precision, and validation.
+  Taichi device helpers are module-level `@ti.func` functions or instance methods with `self`; do not wrap
+  them in Python `@staticmethod`, which changes Taichi's argument specialization.
+- Constitutive numerical computation in `src/` belongs in device functions and kernels, including energy,
+  stress, tangent, and output-stress evaluation. Do not keep Python/NumPy reference evaluators such as host
+  `evaluate()` implementations in production model files or move them into production utilities. Put independent
+  Python formulas and finite-difference oracles under `tests/` and compare them with the device implementation.
+  Python may validate configuration, prepare immutable inputs, dispatch kernels, and download output;
+  downloading output must not recompute the constitutive response on the host.
 - Avoid duplicate implementations of formulas or validation. Move shared logic only when callers truly share the same
   assumptions, dtype, shape, and failure behavior.
 - Review reuse over the complete high-level operation, not one call at a time. A shared routine with many mode flags or
@@ -229,12 +344,13 @@ schemas even when represented by plain Python dictionaries.
 
 - Find every accepted key in the consuming facade, `Simulation`, manager, generator, contact model, or constitutive
   model. Do not infer keys from a similar project.
-- Preserve full nesting, spelling, casing, aliases, defaults, units, and accepted value sets.
+- Preserve full nesting, spelling, casing, parameter-key aliases, defaults, units, and accepted value sets.
+  Model selection follows the canonical-name rule above; do not retain model-name aliases when consolidating selectors.
 - Use the existing dictionary access and configuration-validation utilities in that subsystem.
 - Validate required keys, ranges, mutually exclusive settings, backend restrictions, and solver compatibility before
   memory allocation or kernel launch whenever possible.
 - Error messages identify the full key path, invalid value, and accepted condition. Use `ValueError` for invalid user
-  values and `RuntimeError` for an unavailable runtime state or unsupported execution path.
+  values and the matching shared exception type for an unavailable runtime state or unsupported execution path.
 - Do not silently coerce a materially different algorithm, precision, backend, or contact law. Established benign
   aliases may be normalized at the existing validation boundary.
 - Add defaults only when they are safe across supported scenes. A new tuning knob must have a documented physical or
@@ -249,7 +365,7 @@ schemas even when represented by plain Python dictionaries.
   assert them at the boundary where ambiguity would cause incorrect physics.
 - Use the dtype definitions and precision flow already owned by the subsystem. Do not introduce isolated hard-coded
   `float32`/`float64` choices into a generic solver path.
-- `GEOTAICHI_REAL_DTYPE` is evaluated when `src/utils/TypeDefination.py` is imported. Any process that changes it must
+- `GEOTAICHI_REAL_DTYPE` is evaluated when `src/utils/TypeDefinition.py` is imported. Any process that changes it must
   set the environment variable before importing GeoTaichi.
 - Cast only at a real boundary: user input normalization, Taichi kernel arguments, serialization, native libraries,
   or an explicitly mixed-precision algorithm. Repeated casts can hide precision errors and allocate copies.

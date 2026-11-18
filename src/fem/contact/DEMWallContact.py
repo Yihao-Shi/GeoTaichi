@@ -1,16 +1,17 @@
 """Device IPC contact between FEM surface nodes and existing DEM facet walls."""
 
+from src.utils.MatrixFunction import psd_project_nd
+from src.fem.contact.Utilities import _ipc_barrier_terms
+from src.physics_model.contact_model.ipc.Utilities import ipc_friction_f0
+from src.physics_model.contact_model.ipc.Utilities import ipc_friction_f1_over_speed
+from src.physics_model.contact_model.ipc.Utilities import ipc_friction_hessian_term
+
 import taichi as ti
 
-from src.contact_detection.continuous_contact_detection import point_triangle_accd
-from src.fem.contact.ContactAssembler import FEMContactAssembler, _ipc_barrier_terms
-from src.physics_model.contact_model.ipc.ContactAssembly import psd_project_nd
+from src.contact_detection.continuous_contact_detection.AdditiveCCD import point_triangle_accd
+from src.fem.contact.FEMContactAssembler import FEMContactAssembler
 from src.physics_model.contact_model.ipc.ContactDistance import point_triangle_distance_grad_hess
-from src.physics_model.contact_model.ipc.IPC import (
-    ipc_friction_f0,
-    ipc_friction_f1_over_speed,
-    ipc_friction_hessian_term,
-)
+from src.physics_model.contact_model.ipc.Friction import Friction
 
 
 @ti.data_oriented
@@ -82,9 +83,6 @@ class DEMWallContactAssembler(FEMContactAssembler):
             )
             self.wall_normal_force[wall, vertex] = load
             self.wall_friction_normal[wall, vertex] = normal
-
-    def begin_step_device(self, positions, dt):
-        super().begin_step_device(positions, dt)
 
     def refresh_friction_device(self, positions):
         super().refresh_friction_device(positions)

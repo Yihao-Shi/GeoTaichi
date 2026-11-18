@@ -6,11 +6,12 @@ import pytest
 import taichi as ti
 
 from src.dem.engines.IPCWallBoundary import IPCWallBoundary
-from src.dem.structs.BaseStruct import FacetFamily, ServoWall
+from src.dem.structs.FacetFamily import FacetFamily
+from src.dem.structs.ServoWall import ServoWall
 from src.fem.contact.ContactModel import FEMContact
 from src.fem.contact.DEMWallContact import DEMWallContactAssembler
-from src.fem.engines.SparseMatrix import FEMTripletContribution
-from src.fem.generator import FEMMesh
+from src.fem.engines.FEMTripletContribution import FEMTripletContribution
+from src.fem.generator.Mesh import FEMMesh
 
 pytestmark = [
     pytest.mark.unit,
@@ -56,7 +57,7 @@ def test_wall_servo_combines_fem_abd_loads_limits_speed_and_rolls_back(taichi_ru
     assert b.scene.servo[0].pre_velocity == pytest.approx(-0.02, rel=1e-6)
 
 
-@pytest.mark.parametrize("model, friction", [("IPC", 0.0), ("IPC", 0.4)])
+@pytest.mark.parametrize("model, friction", [("BarrierIPC", 0.0), ("BarrierIPC", 0.4)])
 def test_fem_facet_force_matches_energy_gradient_and_wall_reaction(taichi_runtime, model, friction):
     b = boundary()
     points = np.array([[0.01, 0.25, 0.25], [0.08, 0.25, 0.25], [0.08, 0.35, 0.25], [0.08, 0.25, 0.35]])
@@ -115,7 +116,7 @@ def test_public_fem_wall_path_uses_device_newton_and_servo(taichi_runtime, tmp_p
     points = np.array([[0.01, 0.25, 0.25], [0.08, 0.25, 0.25], [0.08, 0.35, 0.25], [0.08, 0.25, 0.35]])
     fem.add_mesh(FEMMesh(points, np.array([[0, 1, 2, 3]], dtype=np.int32), "TET4"))
     fem.add_material("StVK", density=1000.0, young_modulus=1e4, poisson_ratio=0.3)
-    fem.add_contact("IPC", dem_walls=dem, self_contact=False, dhat=0.1, kappa=100.0)
+    fem.add_contact("BarrierIPC", dem_walls=dem, self_contact=False, dhat=0.1, kappa=100.0)
     fem.set_solver(dt=0.001, steps=2, assemble_type="HashTriplet", linear_solver="PCG")
     engine = fem.build()
     before = b.vertex1.to_numpy().copy()

@@ -115,7 +115,7 @@ def _build_mpm_particle(output_path):
         visualize=False,
         path=str(output_path),
     )
-    mpm.init_F0()
+    mpm.init_f0()
     mpm.mass_vec.fill(0.0)
     mpm.grid_reset()
     mpm.compute_shapefn()

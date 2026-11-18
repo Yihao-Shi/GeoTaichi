@@ -8,7 +8,6 @@ from src.physics_model.contact_model.ipc.ContactDistance import (
     point_edge_distance_grad_hess_2d,
 )
 
-
 pytestmark = [
     pytest.mark.unit,
     pytest.mark.ipc,
@@ -29,12 +28,10 @@ class _PointEdgeDerivativeHarness:
 
     @ti.kernel
     def evaluate(self):
-        distance2, gradient, hessian, distance_type = (
-            point_edge_distance_grad_hess_2d(
-                self.positions[0],
-                self.positions[1],
-                self.positions[2],
-            )
+        distance2, gradient, hessian, distance_type = point_edge_distance_grad_hess_2d(
+            self.positions[0],
+            self.positions[1],
+            self.positions[2],
         )
         self.distance2[None] = distance2
         self.gradient[None] = gradient
@@ -61,12 +58,8 @@ def _finite_difference_derivatives(coordinates, step=2.0e-5):
         negative = coordinates.copy()
         positive[row] += step
         negative[row] -= step
-        gradient[row] = (
-            _distance2(positive) - _distance2(negative)
-        ) / (2.0 * step)
-        hessian[row, row] = (
-            _distance2(positive) - 2.0 * center + _distance2(negative)
-        ) / (step * step)
+        gradient[row] = (_distance2(positive) - _distance2(negative)) / (2.0 * step)
+        hessian[row, row] = (_distance2(positive) - 2.0 * center + _distance2(negative)) / (step * step)
         for column in range(row):
             pp = coordinates.copy()
             pm = coordinates.copy()
@@ -80,38 +73,23 @@ def _finite_difference_derivatives(coordinates, step=2.0e-5):
             mp[column] += step
             mm[row] -= step
             mm[column] -= step
-            value = (
-                _distance2(pp)
-                - _distance2(pm)
-                - _distance2(mp)
-                + _distance2(mm)
-            ) / (4.0 * step * step)
+            value = (_distance2(pp) - _distance2(pm) - _distance2(mp) + _distance2(mm)) / (4.0 * step * step)
             hessian[row, column] = value
             hessian[column, row] = value
     return gradient, hessian
 
 
 def test_interior_point_edge_derivatives_are_analytic(taichi_runtime):
-    coordinates = np.array(
-        [0.2, 0.7, -0.5, 0.0, 1.2, 0.3], dtype=np.float64
-    )
-    expected_gradient, expected_hessian = _finite_difference_derivatives(
-        coordinates
-    )
+    coordinates = np.array([0.2, 0.7, -0.5, 0.0, 1.2, 0.3], dtype=np.float64)
+    expected_gradient, expected_hessian = _finite_difference_derivatives(coordinates)
     harness = _PointEdgeDerivativeHarness()
     harness.positions.from_numpy(coordinates.reshape(3, 2))
     harness.evaluate()
 
     assert int(harness.distance_type[None]) == 2
-    assert float(harness.distance2[None]) == pytest.approx(
-        _distance2(coordinates), abs=1.0e-13
-    )
-    np.testing.assert_allclose(
-        harness.gradient.to_numpy(), expected_gradient, rtol=2.0e-8, atol=2.0e-8
-    )
-    np.testing.assert_allclose(
-        harness.hessian.to_numpy(), expected_hessian, rtol=4.0e-6, atol=4.0e-6
-    )
+    assert float(harness.distance2[None]) == pytest.approx(_distance2(coordinates), abs=1.0e-13)
+    np.testing.assert_allclose(harness.gradient.to_numpy(), expected_gradient, rtol=2.0e-8, atol=2.0e-8)
+    np.testing.assert_allclose(harness.hessian.to_numpy(), expected_hessian, rtol=4.0e-6, atol=4.0e-6)
     np.testing.assert_allclose(
         harness.hessian.to_numpy(),
         harness.hessian.to_numpy().T,
@@ -121,9 +99,7 @@ def test_interior_point_edge_derivatives_are_analytic(taichi_runtime):
 
 
 def test_endpoint_region_reduces_to_exact_point_point_terms(taichi_runtime):
-    coordinates = np.array(
-        [-1.0, 0.5, 0.0, 0.0, 1.0, 0.0], dtype=np.float64
-    )
+    coordinates = np.array([-1.0, 0.5, 0.0, 0.0, 1.0, 0.0], dtype=np.float64)
     harness = _PointEdgeDerivativeHarness()
     harness.positions.from_numpy(coordinates.reshape(3, 2))
     harness.evaluate()
@@ -137,4 +113,3 @@ def test_endpoint_region_reduces_to_exact_point_point_terms(taichi_runtime):
     )
     eigenvalues = np.linalg.eigvalsh(harness.hessian.to_numpy())
     assert eigenvalues.min() >= -1.0e-13
-

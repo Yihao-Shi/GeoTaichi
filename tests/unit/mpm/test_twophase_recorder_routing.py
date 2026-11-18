@@ -20,4 +20,4 @@ def test_double_layer_keeps_two_phase_recorder_with_neighbor_detection():
 
     recorder.manage_function(sims)
 
-    assert recorder.save_particle.__func__ is WriteFile.MonitorParticleTwoPhase
+    assert recorder.save_particle.__func__ is WriteFile.monitor_particle_two_phase

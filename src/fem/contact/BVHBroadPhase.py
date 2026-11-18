@@ -1,11 +1,14 @@
 """Device-rebuilt BVH broad phase for deforming FEM contact surfaces."""
 
+from src.utils.errors import CapacityError
+from src.contact_detection.bounding_volume_hierarchy.Utilities import validate_bvh_rebuild_interval
+
 import numpy as np
 import taichi as ti
 
 from src.contact_detection.bounding_volume_hierarchy.AABB import AABB
-from src.contact_detection.bounding_volume_hierarchy.MultiPatchLBVH import LBVH, validate_bvh_rebuild_interval
-from src.fem.contact.LinkedCellBroadPhase import _grown_capacity
+from src.contact_detection.bounding_volume_hierarchy.MultiPatchLBVH import LBVH
+from src.fem.contact.LinkedCellBroadPhase import DynamicLinkedCellBroadPhase
 from src.physics_model.contact_model.ipc.ContactDistance import (
     edge_edge_distance2,
     point_triangle_distance2,
@@ -368,20 +371,20 @@ class DynamicBVHBroadPhase:
         pt_required = int(self.pt_prefix[self.vertex_count])
         ee_required = int(self.ee_prefix[self.edge_count])
         if self.fixed_pt_capacity and pt_required > self.pt_capacity:
-            raise RuntimeError(
+            raise CapacityError(
                 "point-triangle broad-phase capacity is too small: " f"need {pt_required}, allocated {self.pt_capacity}"
             )
         if self.fixed_ee_capacity and ee_required > self.ee_capacity:
-            raise RuntimeError(
+            raise CapacityError(
                 "edge-edge broad-phase capacity is too small: " f"need {ee_required}, allocated {self.ee_capacity}"
             )
-        capacity = _grown_capacity(pt_required, self.pt_capacity)
+        capacity = DynamicLinkedCellBroadPhase._grown_capacity(pt_required, self.pt_capacity)
         if capacity != self.pt_capacity:
             self.pt_capacity = capacity
             self.point_triangle = ti.Vector.field(4, dtype=ti.i32, shape=capacity)
             self.point_triangle_primitive = ti.Vector.field(2, dtype=ti.i32, shape=capacity)
             self.point_triangle_measure = ti.field(dtype=self.real_type, shape=capacity)
-        capacity = _grown_capacity(ee_required, self.ee_capacity)
+        capacity = DynamicLinkedCellBroadPhase._grown_capacity(ee_required, self.ee_capacity)
         if capacity != self.ee_capacity:
             self.ee_capacity = capacity
             self.edge_edge = ti.Vector.field(4, dtype=ti.i32, shape=capacity)

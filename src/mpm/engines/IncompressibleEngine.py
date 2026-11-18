@@ -1,10 +1,11 @@
+from src.utils.errors import NonlinearSolveError, SimulationStateError
 import os
 
 import taichi as ti
 
 from src.mpm.boundaries.BoundaryCore import apply_reflection_constraint, apply_velocity_constraint
 from src.mpm.Simulation import Simulation
-from src.mpm.SceneManager import myScene
+from src.mpm.SceneManager import SceneManager
 from src.mpm.SpatialHashGrid import SpatialHashGrid
 from src.mpm.engines.Engine import Engine
 from src.mpm.engines.EngineKernel import *
@@ -66,7 +67,7 @@ class IncompressibleEngine(Engine):
         if sims.velocity_projection_scheme == "Affine":
             self.compute = self.affine_updating
 
-    def affine_updating(self, sims: Simulation, scene: myScene, neighbor=None):
+    def affine_updating(self, sims: Simulation, scene: SceneManager, neighbor=None):
         if sims.linear_solver == "MGPCG":
             self.fdm_discretization_mgpcg(sims, scene, neighbor)
         else:
@@ -115,17 +116,17 @@ class IncompressibleEngine(Engine):
             if sims.boundary_direction_detection:
                 self.compute_boundary_direction = self.detection_boundary_direction
 
-    def choose_boundary_constraints(self, sims: Simulation, scene: myScene):
+    def choose_boundary_constraints(self, sims: Simulation, scene: SceneManager):
         pass
 
-    def reset_grid_message(self, scene: myScene):
+    def reset_grid_message(self, scene: SceneManager):
         scene.node.grid_reset(scene.mass_cut_off)
 
     def trace_precalculation_stage(self, name):
         if self.trace_precalculation:
             print(f"# Pre-calculate: {name}", flush=True)
 
-    def compute_nodal_kinematics(self, sims: Simulation, scene: myScene):
+    def compute_nodal_kinematics(self, sims: Simulation, scene: SceneManager):
         particle_num = int(scene.particleNum[0])
         self.reset_fluid_domain_volume(scene)
         kernel_mass_momentum_mac_cell_p2g(
@@ -144,11 +145,11 @@ class IncompressibleEngine(Engine):
         )
         self.classify_fluid_domain(sims, scene)
 
-    def update_velocity_gradient_2D(self, sims: Simulation, scene: myScene):
-        for materialID in range(scene.material.mapping.shape[0] - 1):
-            start_index = scene.material.mapping[materialID]
-            end_index = scene.material.mapping[materialID + 1]
-            kernel_update_velocity_gradient_2D(
+    def update_velocity_gradient_2d(self, sims: Simulation, scene: SceneManager):
+        for material_id in range(scene.material.mapping.shape[0] - 1):
+            start_index = scene.material.mapping[material_id]
+            end_index = scene.material.mapping[material_id + 1]
+            kernel_update_velocity_gradient_2d(
                 scene.element.grid_nodes,
                 start_index,
                 end_index,
@@ -156,17 +157,17 @@ class IncompressibleEngine(Engine):
                 scene.node,
                 scene.particle,
                 scene.material.materialID,
-                scene.material.matProps[materialID + 1],
+                scene.material.matProps[material_id + 1],
                 scene.material.stateVars,
                 scene.element.LnID,
                 scene.element.dshape_fn,
                 scene.element.node_size,
             )
 
-    def update_velocity_gradient(self, sims: Simulation, scene: myScene):
-        for materialID in range(scene.material.mapping.shape[0] - 1):
-            start_index = scene.material.mapping[materialID]
-            end_index = scene.material.mapping[materialID + 1]
+    def update_velocity_gradient(self, sims: Simulation, scene: SceneManager):
+        for material_id in range(scene.material.mapping.shape[0] - 1):
+            start_index = scene.material.mapping[material_id]
+            end_index = scene.material.mapping[material_id + 1]
             kernel_update_velocity_gradient(
                 scene.element.grid_nodes,
                 start_index,
@@ -175,17 +176,17 @@ class IncompressibleEngine(Engine):
                 scene.node,
                 scene.particle,
                 scene.material.materialID,
-                scene.material.matProps[materialID + 1],
+                scene.material.matProps[material_id + 1],
                 scene.material.stateVars,
                 scene.element.LnID,
                 scene.element.dshape_fn,
                 scene.element.node_size,
             )
 
-    def compute_force(self, sims: Simulation, scene: myScene):
-        for materialID in range(scene.material.mapping.shape[0] - 1):
-            start_index = scene.material.mapping[materialID]
-            end_index = scene.material.mapping[materialID + 1]
+    def compute_force(self, sims: Simulation, scene: SceneManager):
+        for material_id in range(scene.material.mapping.shape[0] - 1):
+            start_index = scene.material.mapping[material_id]
+            end_index = scene.material.mapping[material_id + 1]
             kernel_viscous_force_p2g(
                 scene.element.grid_nodes,
                 start_index,
@@ -197,14 +198,14 @@ class IncompressibleEngine(Engine):
                 scene.element.LnID,
                 scene.element.dshape_fn,
                 scene.element.node_size,
-                scene.material.matProps[materialID + 1],
+                scene.material.matProps[material_id + 1],
             )
 
-    def compute_force_2D(self, sims: Simulation, scene: myScene):
-        for materialID in range(scene.material.mapping.shape[0] - 1):
-            start_index = scene.material.mapping[materialID]
-            end_index = scene.material.mapping[materialID + 1]
-            kernel_viscous_force_p2g_2D(
+    def compute_force_2d(self, sims: Simulation, scene: SceneManager):
+        for material_id in range(scene.material.mapping.shape[0] - 1):
+            start_index = scene.material.mapping[material_id]
+            end_index = scene.material.mapping[material_id + 1]
+            kernel_viscous_force_p2g_2d(
                 scene.element.grid_nodes,
                 start_index,
                 end_index,
@@ -215,10 +216,10 @@ class IncompressibleEngine(Engine):
                 scene.element.LnID,
                 scene.element.dshape_fn,
                 scene.element.node_size,
-                scene.material.matProps[materialID + 1],
+                scene.material.matProps[material_id + 1],
             )
 
-    def reflection_constraints(self, sims: Simulation, scene: myScene):
+    def reflection_constraints(self, sims: Simulation, scene: SceneManager):
         apply_reflection_constraint(
             scene.mass_cut_off,
             int(scene.boundary.reflection_list[0]),
@@ -227,7 +228,7 @@ class IncompressibleEngine(Engine):
             scene.node,
         )
 
-    def velocity_constraints(self, sims: Simulation, scene: myScene):
+    def velocity_constraints(self, sims: Simulation, scene: SceneManager):
         apply_velocity_constraint(
             scene.mass_cut_off,
             int(scene.boundary.velocity_list[0]),
@@ -236,14 +237,14 @@ class IncompressibleEngine(Engine):
             scene.node,
         )
 
-    def apply_boundary_constraints(self, sims: Simulation, scene: myScene):
+    def apply_boundary_constraints(self, sims: Simulation, scene: SceneManager):
         self.apply_reflection_constraints(sims, scene)
         self.apply_velocity_constraints(sims, scene)
 
-    def compute_grid_velcity(self, sims: Simulation, scene: myScene):
+    def compute_grid_velcity(self, sims: Simulation, scene: SceneManager):
         kernel_compute_mac_grid_velocity(scene.mass_cut_off, scene.node)
 
-    def compute_grid_velcity_gravity(self, sims: Simulation, scene: myScene):
+    def compute_grid_velcity_gravity(self, sims: Simulation, scene: SceneManager):
         kernel_compute_mac_grid_velocity_gravity(scene.mass_cut_off, sims.gravity, sims.dt, scene.node)
 
     def has_ibm_source(self):
@@ -254,7 +255,7 @@ class IncompressibleEngine(Engine):
             and self.ibm_force_cell is not None
         )
 
-    def ensure_ibm_source_fields(self, scene: myScene):
+    def ensure_ibm_source_fields(self, scene: SceneManager):
         if self.ibm_solid_fraction is None:
             offset = 0 * scene.element.cnum - scene.element.ghost_cell
             self.ibm_solid_fraction = ti.field(dtype=float, shape=scene.element.cnum, offset=offset)
@@ -270,7 +271,7 @@ class IncompressibleEngine(Engine):
             offset = 0 * scene.element.cnum - scene.element.ghost_cell
             self.ibm_force_cell = ti.Vector.field(self.dimension, dtype=float, shape=scene.element.cnum, offset=offset)
 
-    def validate_ibm_cut_cell_geometry(self, sims: Simulation, scene: myScene):
+    def validate_ibm_cut_cell_geometry(self, sims: Simulation, scene: SceneManager):
         if not sims.solid_sdf_cut_cell or not self.has_ibm_source():
             return
         overlap = kernel_count_ibm_cut_cell_overlap(
@@ -280,13 +281,13 @@ class IncompressibleEngine(Engine):
             scene.element.cell.solid_sdf,
         )
         if overlap:
-            raise RuntimeError(
+            raise SimulationStateError(
                 f"IBM and cut-cell geometry overlap in {overlap} fully occupied body cells. "
                 "IBM bodies retain fictitious fluid; use separate geometry for "
                 "cut_cell_function and ibm_field_function."
             )
 
-    def apply_ibm_source(self, sims: Simulation, scene: myScene):
+    def apply_ibm_source(self, sims: Simulation, scene: SceneManager):
         if not self.has_ibm_source():
             return
         mat_props = self.get_single_fluid_mat_props(scene)
@@ -310,15 +311,15 @@ class IncompressibleEngine(Engine):
             self.use_pressure_free_surface_theta,
         )
 
-    def add_grid_gravity(self, sims: Simulation, scene: myScene):
+    def add_grid_gravity(self, sims: Simulation, scene: SceneManager):
         kernel_add_mac_grid_gravity(sims.gravity, sims.dt, scene.node)
 
-    def reset_fluid_domain_volume(self, scene: myScene):
+    def reset_fluid_domain_volume(self, scene: SceneManager):
         if scene.element.cell_volumefrac is None:
             scene.element.create_element_volume_fraction()
         cell_volume_reset(scene.element.cell_volumefrac)
 
-    def classify_fluid_domain(self, sims: Simulation, scene: myScene):
+    def classify_fluid_domain(self, sims: Simulation, scene: SceneManager):
         kernel_find_fluid_domain_by_volume(
             int(scene.particleNum[0]),
             scene.element.ghost_cell,
@@ -335,7 +336,7 @@ class IncompressibleEngine(Engine):
             scene.element.cell.type,
         )
 
-    def identify_fluid_domain(self, sims: Simulation, scene: myScene):
+    def identify_fluid_domain(self, sims: Simulation, scene: SceneManager):
         self.reset_fluid_domain_volume(scene)
         calculate_cell_volume_weighted(
             scene.element.cell_volumefrac,
@@ -349,20 +350,20 @@ class IncompressibleEngine(Engine):
         )
         self.classify_fluid_domain(sims, scene)
 
-    def needs_pressure_fluid_level_set(self, sims: Simulation, scene: myScene):
+    def needs_pressure_fluid_level_set(self, sims: Simulation, scene: SceneManager):
         mat_props = self.get_single_fluid_mat_props(scene)
         return bool(sims.fluid_level_set or getattr(mat_props, "surface_tension", 0.0) > 0.0)
 
-    def needs_density_projection_fluid_level_set(self, sims: Simulation, scene: myScene):
+    def needs_density_projection_fluid_level_set(self, sims: Simulation, scene: SceneManager):
         return bool(sims.density_projection and not sims.density_projection_interior_only)
 
-    def needs_particle_fluid_level_set(self, sims: Simulation, scene: myScene):
+    def needs_particle_fluid_level_set(self, sims: Simulation, scene: SceneManager):
         return bool(
             self.needs_pressure_fluid_level_set(sims, scene)
             or self.needs_density_projection_fluid_level_set(sims, scene)
         )
 
-    def configure_runtime_functions(self, sims: Simulation, scene: myScene = None):
+    def configure_runtime_functions(self, sims: Simulation, scene: SceneManager = None):
         self.run_pressure_fluid_level_set = no_operation
         needs_pressure_level_set = sims.discretization == "FDM"
         if scene is not None:
@@ -449,34 +450,34 @@ class IncompressibleEngine(Engine):
             else self.enforce_particle_domain_boundary
         )
 
-    def timed_pressure_fluid_level_set(self, sims: Simulation, scene: myScene):
+    def timed_pressure_fluid_level_set(self, sims: Simulation, scene: SceneManager):
         sims.timer.begin("Fluid level set")
         self.update_fluid_level_set(sims, scene)
         sims.timer.end("Fluid level set")
 
-    def timed_density_projection_level_set(self, sims: Simulation, scene: myScene):
+    def timed_density_projection_level_set(self, sims: Simulation, scene: SceneManager):
         sims.timer.begin("Density projection level set")
         self.update_fluid_level_set(sims, scene, force_rebuild=True)
         sims.timer.end("Density projection level set")
 
-    def timed_update_solid_cut_cell(self, sims: Simulation, scene: myScene):
+    def timed_update_solid_cut_cell(self, sims: Simulation, scene: SceneManager):
         sims.timer.begin("Cut cell")
         self.update_solid_cut_cell_step(sims, scene)
         sims.timer.end("Cut cell")
 
-    def timed_apply_ibm_source(self, sims: Simulation, scene: myScene):
+    def timed_apply_ibm_source(self, sims: Simulation, scene: SceneManager):
         sims.timer.begin("IBM source")
         self.apply_ibm_source(sims, scene)
         sims.timer.end("IBM source")
 
-    def ensure_coupled_viscosity_fields(self, scene: myScene):
+    def ensure_coupled_viscosity_fields(self, scene: SceneManager):
         if self.coupled_viscous_delta is None:
             offset = [-scene.element.ghost_cell for _ in range(self.dimension)]
             self.coupled_viscous_delta = [
                 ti.field(dtype=float, shape=scene.node.velocity[d].shape, offset=offset) for d in range(self.dimension)
             ]
 
-    def apply_coupled_viscosity(self, sims: Simulation, scene: myScene):
+    def apply_coupled_viscosity(self, sims: Simulation, scene: SceneManager):
         for field in self.coupled_viscous_delta:
             field.fill(0.0)
         # Mode zero does not read the coupled material fields.
@@ -509,17 +510,17 @@ class IncompressibleEngine(Engine):
             scene.node,
         )
 
-    def timed_density_projection_pcg(self, sims: Simulation, scene: myScene):
+    def timed_density_projection_pcg(self, sims: Simulation, scene: SceneManager):
         sims.timer.begin("Density projection")
         self.density_projection_pcg(sims, scene)
         sims.timer.end("Density projection")
 
-    def timed_density_projection_mgpcg(self, sims: Simulation, scene: myScene):
+    def timed_density_projection_mgpcg(self, sims: Simulation, scene: SceneManager):
         sims.timer.begin("Density projection")
         self.density_projection_mgpcg(sims, scene)
         sims.timer.end("Density projection")
 
-    def timed_particle_shifting(self, sims: Simulation, scene: myScene):
+    def timed_particle_shifting(self, sims: Simulation, scene: SceneManager):
         sims.timer.begin("Particle shifting")
         self.particle_shifting(sims, scene)
         sims.timer.end("Particle shifting")
@@ -527,7 +528,7 @@ class IncompressibleEngine(Engine):
         self.enforce_particle_boundary(scene)
         sims.timer.end("Particle boundary")
 
-    def update_fluid_level_set(self, sims: Simulation, scene: myScene, force_rebuild=False):
+    def update_fluid_level_set(self, sims: Simulation, scene: SceneManager, force_rebuild=False):
         current_step = int(sims.current_step)
         use_particle_sdf = self.needs_particle_fluid_level_set(sims, scene)
         if force_rebuild or self.fluid_sdf_build_step != current_step:
@@ -563,7 +564,7 @@ class IncompressibleEngine(Engine):
                 scene.element.cell.surface_tension,
             )
 
-    def apply_solid_cell_boundaries(self, sims: Simulation, scene: myScene):
+    def apply_solid_cell_boundaries(self, sims: Simulation, scene: SceneManager):
         if scene.boundary is None:
             kernel_reset_solid_sdf(scene.element.grid_size, scene.element.cell.solid_sdf)
             return
@@ -588,12 +589,12 @@ class IncompressibleEngine(Engine):
             scene.element.grid_size, scene.element.cell.type, scene.element.cell.solid_sdf
         )
 
-    def ensure_solid_cut_cell_fields(self, sims: Simulation, scene: myScene):
+    def ensure_solid_cut_cell_fields(self, sims: Simulation, scene: SceneManager):
         if self.ensure_solid_cut_cell_fields_step is None:
             self.configure_runtime_functions(sims, scene)
         self.ensure_solid_cut_cell_fields_step(scene)
 
-    def ensure_solid_cut_cell_fields2d(self, scene: myScene):
+    def ensure_solid_cut_cell_fields2d(self, scene: SceneManager):
         if self.solid_face_open_fraction is None:
             self.solid_face_open_fraction = [
                 ti.field(
@@ -621,7 +622,7 @@ class IncompressibleEngine(Engine):
                 ),
             ]
 
-    def ensure_solid_cut_cell_fields3d(self, scene: myScene):
+    def ensure_solid_cut_cell_fields3d(self, scene: SceneManager):
         if self.solid_face_open_fraction is None:
             self.solid_face_open_fraction = [
                 ti.field(
@@ -671,28 +672,28 @@ class IncompressibleEngine(Engine):
     def solid_face_velocity_z(self):
         return self.solid_face_velocity[2]
 
-    def reset_solid_face_velocity(self, sims: Simulation, scene: myScene):
+    def reset_solid_face_velocity(self, sims: Simulation, scene: SceneManager):
         if not sims.solid_sdf_cut_cell:
             return
         self.reset_solid_face_velocity_step(sims, scene)
 
-    def reset_solid_face_velocity_cut_cell2d(self, sims: Simulation, scene: myScene):
+    def reset_solid_face_velocity_cut_cell2d(self, sims: Simulation, scene: SceneManager):
         self.ensure_solid_cut_cell_fields2d(scene)
         self.solid_face_velocity[0].fill(0.0)
         self.solid_face_velocity[1].fill(0.0)
 
-    def reset_solid_face_velocity_cut_cell3d(self, sims: Simulation, scene: myScene):
+    def reset_solid_face_velocity_cut_cell3d(self, sims: Simulation, scene: SceneManager):
         self.ensure_solid_cut_cell_fields3d(scene)
         self.solid_face_velocity[0].fill(0.0)
         self.solid_face_velocity[1].fill(0.0)
         self.solid_face_velocity[2].fill(0.0)
 
-    def update_solid_cut_cell(self, sims: Simulation, scene: myScene):
+    def update_solid_cut_cell(self, sims: Simulation, scene: SceneManager):
         if not sims.solid_sdf_cut_cell:
             return
         self.update_solid_cut_cell_step(sims, scene)
 
-    def update_solid_cut_cell2d(self, sims: Simulation, scene: myScene):
+    def update_solid_cut_cell2d(self, sims: Simulation, scene: SceneManager):
         self.ensure_solid_cut_cell_fields2d(scene)
         kernel_build_solid_face_open_fraction_direction(
             0,
@@ -713,7 +714,7 @@ class IncompressibleEngine(Engine):
             self.solid_face_open_fraction[1],
         )
 
-    def update_solid_cut_cell3d(self, sims: Simulation, scene: myScene):
+    def update_solid_cut_cell3d(self, sims: Simulation, scene: SceneManager):
         self.ensure_solid_cut_cell_fields3d(scene)
         kernel_build_solid_face_open_fraction_direction(
             0,
@@ -743,7 +744,7 @@ class IncompressibleEngine(Engine):
             self.solid_face_open_fraction[2],
         )
 
-    def remove_particles_inside_solid_cells(self, scene: myScene):
+    def remove_particles_inside_solid_cells(self, scene: SceneManager):
         deactivated = kernel_deactivate_particles_in_solid_cells(
             int(scene.particleNum[0]),
             scene.element.ghost_cell,
@@ -766,7 +767,7 @@ class IncompressibleEngine(Engine):
                 int(scene.particleNum[0]), scene.particle
             )
 
-    def initialize_cell_pressure_from_particles(self, scene: myScene):
+    def initialize_cell_pressure_from_particles(self, scene: SceneManager):
         if getattr(scene, "restart_cell_pressure", None) is not None:
             scene.element.cell.pressure.from_numpy(scene.restart_cell_pressure)
             scene.restart_cell_pressure = None
@@ -786,7 +787,7 @@ class IncompressibleEngine(Engine):
             scene.particle,
         )
 
-    def enforce_particle_domain_boundary(self, scene: myScene):
+    def enforce_particle_domain_boundary(self, scene: SceneManager):
         enforce_particle_domain_collision(
             int(scene.particleNum[0]),
             scene.element.ghost_cell,
@@ -796,7 +797,7 @@ class IncompressibleEngine(Engine):
             scene.particle,
         )
 
-    def enforce_particle_domain_and_sdf_boundary(self, scene: myScene):
+    def enforce_particle_domain_and_sdf_boundary(self, scene: SceneManager):
         self.enforce_particle_domain_boundary(scene)
         enforce_particle_solid_sdf_collision(
             int(scene.particleNum[0]),
@@ -810,7 +811,7 @@ class IncompressibleEngine(Engine):
             scene.particle,
         )
 
-    def particle_shifting(self, sims: Simulation, scene: myScene):
+    def particle_shifting(self, sims: Simulation, scene: SceneManager):
         if not sims.particle_shifting:
             return
         if self.shifting_node_volume is None:
@@ -965,7 +966,7 @@ class IncompressibleEngine(Engine):
                     scene.particle,
                 )
 
-    def ensure_density_projection_fields(self, scene: myScene):
+    def ensure_density_projection_fields(self, scene: SceneManager):
         if self.density_projection_fields_ready:
             return
         if self.density_projection_cell_density is None:
@@ -989,7 +990,7 @@ class IncompressibleEngine(Engine):
             self.density_projection_needs_solve = ti.field(dtype=int, shape=())
         self.density_projection_fields_ready = True
 
-    def compute_density_projection_cell_density(self, scene: myScene):
+    def compute_density_projection_cell_density(self, scene: SceneManager):
         mat_props = self.get_single_fluid_mat_props(scene)
         kernel_compute_fdm_cell_density_from_volume_fraction(
             scene.element.ghost_cell,
@@ -1000,7 +1001,7 @@ class IncompressibleEngine(Engine):
             self.density_projection_cell_density,
         )
 
-    def compute_density_projection_fluid_fraction(self, scene: myScene):
+    def compute_density_projection_fluid_fraction(self, scene: SceneManager):
         kernel_compute_density_projection_fluid_fraction(
             scene.element.ghost_cell,
             scene.element.cnum,
@@ -1010,7 +1011,7 @@ class IncompressibleEngine(Engine):
             self.density_projection_cell_fraction,
         )
 
-    def find_density_projection_active_nodes(self, sims: Simulation, scene: myScene):
+    def find_density_projection_active_nodes(self, sims: Simulation, scene: SceneManager):
         find_active_density_projection_cell(
             scene.element.ghost_cell,
             scene.element.cellSum,
@@ -1029,7 +1030,7 @@ class IncompressibleEngine(Engine):
             scene.element.flag,
         )
 
-    def prepare_density_projection_equations_regular(self, sims: Simulation, scene: myScene):
+    def prepare_density_projection_equations_regular(self, sims: Simulation, scene: SceneManager):
         self.unknow_vector.fill(0)
         mat_props = self.get_single_fluid_mat_props(scene)
         use_fluid_fraction = not sims.density_projection_interior_only
@@ -1060,7 +1061,7 @@ class IncompressibleEngine(Engine):
             self.diag_A,
         )
 
-    def prepare_density_projection_equations_cut_cell(self, sims: Simulation, scene: myScene):
+    def prepare_density_projection_equations_cut_cell(self, sims: Simulation, scene: SceneManager):
         self.unknow_vector.fill(0)
         mat_props = self.get_single_fluid_mat_props(scene)
         use_fluid_fraction = not sims.density_projection_interior_only
@@ -1095,7 +1096,7 @@ class IncompressibleEngine(Engine):
             self.diag_A,
         )
 
-    def prepare_density_projection_equations_mgpcg_regular(self, sims: Simulation, scene: myScene):
+    def prepare_density_projection_equations_mgpcg_regular(self, sims: Simulation, scene: SceneManager):
         self.poisson_solver.initialize()
         mat_props = self.get_single_fluid_mat_props(scene)
         use_fluid_fraction = not sims.density_projection_interior_only
@@ -1121,7 +1122,7 @@ class IncompressibleEngine(Engine):
             use_fluid_fraction,
             self.poisson_solver.b,
         )
-        kernel_assemble_incompressible_mg_A_level0(
+        kernel_assemble_incompressible_mg_a_level0(
             scene.element.ghost_cell,
             scene.element.cnum,
             sims.dt,
@@ -1139,7 +1140,7 @@ class IncompressibleEngine(Engine):
             self.poisson_solver.init_gridtype(
                 self.poisson_solver.grid_type[level - 1], self.poisson_solver.grid_type[level]
             )
-            kernel_assemble_incompressible_mg_A(
+            kernel_assemble_incompressible_mg_a(
                 sims.dt,
                 scene.element.grid_size,
                 scene.element.igrid_size,
@@ -1149,7 +1150,7 @@ class IncompressibleEngine(Engine):
                 self.poisson_solver.Ax[level],
             )
 
-    def prepare_density_projection_equations_mgpcg_cut_cell(self, sims: Simulation, scene: myScene):
+    def prepare_density_projection_equations_mgpcg_cut_cell(self, sims: Simulation, scene: SceneManager):
         self.poisson_solver.initialize()
         mat_props = self.get_single_fluid_mat_props(scene)
         use_fluid_fraction = not sims.density_projection_interior_only
@@ -1175,7 +1176,7 @@ class IncompressibleEngine(Engine):
             use_fluid_fraction,
             self.poisson_solver.b,
         )
-        kernel_assemble_incompressible_mg_A_level0_cut_cell(
+        kernel_assemble_incompressible_mg_a_level0_cut_cell(
             scene.element.ghost_cell,
             scene.element.cnum,
             sims.dt,
@@ -1197,7 +1198,7 @@ class IncompressibleEngine(Engine):
             self.poisson_solver.init_gridtype(
                 self.poisson_solver.grid_type[level - 1], self.poisson_solver.grid_type[level]
             )
-            kernel_assemble_incompressible_mg_A(
+            kernel_assemble_incompressible_mg_a(
                 sims.dt,
                 scene.element.grid_size,
                 scene.element.igrid_size,
@@ -1207,7 +1208,7 @@ class IncompressibleEngine(Engine):
                 self.poisson_solver.Ax[level],
             )
 
-    def apply_density_projection_position_correction(self, sims: Simulation, scene: myScene):
+    def apply_density_projection_position_correction(self, sims: Simulation, scene: SceneManager):
         mat_props = self.get_single_fluid_mat_props(scene)
         face2 = (
             self.density_projection_face_displacement[2]
@@ -1245,7 +1246,7 @@ class IncompressibleEngine(Engine):
             face2,
         )
 
-    def density_projection(self, sims: Simulation, scene: myScene):
+    def density_projection(self, sims: Simulation, scene: SceneManager):
         if not sims.density_projection:
             return
         if sims.linear_solver == "PCG":
@@ -1253,14 +1254,14 @@ class IncompressibleEngine(Engine):
         elif sims.linear_solver == "MGPCG":
             self.density_projection_mgpcg(sims, scene)
 
-    def prepare_density_projection_state(self, sims: Simulation, scene: myScene):
+    def prepare_density_projection_state(self, sims: Simulation, scene: SceneManager):
         self.ensure_density_projection_fields(scene)
         self.identify_fluid_domain(sims, scene)
         self.run_density_projection_level_set(sims, scene)
         self.compute_density_projection_cell_density(scene)
         self.compute_density_projection_fluid_fraction_step(scene)
 
-    def density_projection_is_required(self, sims: Simulation, scene: myScene):
+    def density_projection_is_required(self, sims: Simulation, scene: SceneManager):
         mat_props = self.get_single_fluid_mat_props(scene)
         kernel_density_projection_needs_solve(
             scene.element.ghost_cell,
@@ -1276,7 +1277,7 @@ class IncompressibleEngine(Engine):
         )
         return bool(self.density_projection_needs_solve[None])
 
-    def density_projection_pcg(self, sims: Simulation, scene: myScene):
+    def density_projection_pcg(self, sims: Simulation, scene: SceneManager):
         self.prepare_density_projection_state(sims, scene)
         if not self.density_projection_is_required(sims, scene):
             return
@@ -1311,7 +1312,7 @@ class IncompressibleEngine(Engine):
         )
         self.apply_density_projection_position_correction(sims, scene)
 
-    def density_projection_mgpcg(self, sims: Simulation, scene: myScene):
+    def density_projection_mgpcg(self, sims: Simulation, scene: SceneManager):
         self.prepare_density_projection_state(sims, scene)
         if not self.density_projection_is_required(sims, scene):
             return
@@ -1323,10 +1324,12 @@ class IncompressibleEngine(Engine):
         )
         self.apply_density_projection_position_correction(sims, scene)
 
-    def get_single_fluid_mat_props(self, scene: myScene):
+    def get_single_fluid_mat_props(self, scene: SceneManager):
         material_count = scene.material.mapping.shape[0] - 1
         if material_count != 1:
-            raise RuntimeError(f"Incompressible MGPCG currently expects one fluid material, got {material_count}")
+            raise SimulationStateError(
+                f"Incompressible MGPCG currently expects one fluid material, got {material_count}"
+            )
         return scene.material.matProps[1]
 
     def require_pressure_solver_success(self, solved, stage):
@@ -1337,19 +1340,19 @@ class IncompressibleEngine(Engine):
         initial = getattr(solver, "last_initial_residual", getattr(solver, "initial_residual", float("nan")))
         final = getattr(solver, "last_residual", getattr(solver, "final_residual", float("nan")))
         iterations = getattr(solver, "last_iterations", -1)
-        raise RuntimeError(
+        raise NonlinearSolveError(
             f"Incompressible {stage} failed to converge after {iterations} iterations "
             f"(initial residual={initial:.6e}, final residual={final:.6e}, reason={reason})"
         )
 
-    def create_matrix_free_poisson_solver2d(self, sims: Simulation, scene: myScene):
+    def create_matrix_free_poisson_solver2d(self, sims: Simulation, scene: SceneManager):
         total_dofs = estimate_active_fdm_cell_dofs(
             scene.element.ghost_cell, scene.element.cnum, scene.element.cell.type
         )
         allocated_dofs = max(1, int(sims.dof_multiplier * max(1, total_dofs)))
 
         from src.linear_solver.MatrixFreePCG import MatrixFreePCG
-        from src.mpm.engines.Operator import PoissonEquationOperator
+        from src.mpm.engines.PoissonEquationOperator import PoissonEquationOperator
 
         self.poisson_solver = MatrixFreePCG(allocated_dofs)
         self.operator = PoissonEquationOperator(2)
@@ -1369,14 +1372,14 @@ class IncompressibleEngine(Engine):
         )
         self.operator.update_active_dofs(total_dofs)
 
-    def create_matrix_free_poisson_solver3d(self, sims: Simulation, scene: myScene):
+    def create_matrix_free_poisson_solver3d(self, sims: Simulation, scene: SceneManager):
         total_dofs = estimate_active_fdm_cell_dofs(
             scene.element.ghost_cell, scene.element.cnum, scene.element.cell.type
         )
         allocated_dofs = max(1, int(sims.dof_multiplier * max(1, total_dofs)))
 
         from src.linear_solver.MatrixFreePCG import MatrixFreePCG
-        from src.mpm.engines.Operator import PoissonEquationOperator
+        from src.mpm.engines.PoissonEquationOperator import PoissonEquationOperator
 
         self.poisson_solver = MatrixFreePCG(allocated_dofs)
         self.operator = PoissonEquationOperator(3)
@@ -1396,7 +1399,7 @@ class IncompressibleEngine(Engine):
         )
         self.operator.update_active_dofs(total_dofs)
 
-    def create_mgpcg_poisson_solver2d(self, sims: Simulation, scene: myScene):
+    def create_mgpcg_poisson_solver2d(self, sims: Simulation, scene: SceneManager):
         from src.linear_solver.MultiGridPCG import MGPCGPoissonSolver
 
         interior_cnum = [
@@ -1407,7 +1410,7 @@ class IncompressibleEngine(Engine):
             2, interior_cnum, sims.multilevel, sims.pre_and_post_smoothing, sims.bottom_smoothing
         )
 
-    def create_mgpcg_poisson_solver3d(self, sims: Simulation, scene: myScene):
+    def create_mgpcg_poisson_solver3d(self, sims: Simulation, scene: SceneManager):
         from src.linear_solver.MultiGridPCG import MGPCGPoissonSolver
 
         interior_cnum = [
@@ -1419,7 +1422,7 @@ class IncompressibleEngine(Engine):
             3, interior_cnum, sims.multilevel, sims.pre_and_post_smoothing, sims.bottom_smoothing
         )
 
-    def prepare_poisson_equations_regular(self, sims: Simulation, scene: myScene):
+    def prepare_poisson_equations_regular(self, sims: Simulation, scene: SceneManager):
         self.unknow_vector.fill(0)
         if self.operator is not None:
             self.operator.use_free_surface_theta = self.use_pressure_free_surface_theta
@@ -1452,7 +1455,7 @@ class IncompressibleEngine(Engine):
             self.diag_A,
         )
 
-    def prepare_poisson_equations_cut_cell(self, sims: Simulation, scene: myScene):
+    def prepare_poisson_equations_cut_cell(self, sims: Simulation, scene: SceneManager):
         self.unknow_vector.fill(0)
         if self.operator is not None:
             self.operator.use_free_surface_theta = self.use_pressure_free_surface_theta
@@ -1498,7 +1501,7 @@ class IncompressibleEngine(Engine):
             self.diag_A,
         )
 
-    def prepare_poisson_equations_coupled(self, sims: Simulation, scene: myScene):
+    def prepare_poisson_equations_coupled(self, sims: Simulation, scene: SceneManager):
         self.unknow_vector.fill(0)
         if self.operator is not None:
             self.operator.use_free_surface_theta = self.use_pressure_free_surface_theta
@@ -1553,7 +1556,7 @@ class IncompressibleEngine(Engine):
             self.diag_A,
         )
 
-    def prepare_poisson_equations_mgpcg_regular(self, sims: Simulation, scene: myScene):
+    def prepare_poisson_equations_mgpcg_regular(self, sims: Simulation, scene: SceneManager):
         self.poisson_solver.initialize()
         mat_props = self.get_single_fluid_mat_props(scene)
         kernel_prepare_incompressible_mg_level0(
@@ -1570,7 +1573,7 @@ class IncompressibleEngine(Engine):
             self.poisson_solver.grid_type[0],
             self.poisson_solver.b,
         )
-        kernel_assemble_incompressible_mg_A_level0(
+        kernel_assemble_incompressible_mg_a_level0(
             scene.element.ghost_cell,
             scene.element.cnum,
             sims.dt,
@@ -1588,7 +1591,7 @@ class IncompressibleEngine(Engine):
             self.poisson_solver.init_gridtype(
                 self.poisson_solver.grid_type[level - 1], self.poisson_solver.grid_type[level]
             )
-            kernel_assemble_incompressible_mg_A(
+            kernel_assemble_incompressible_mg_a(
                 sims.dt,
                 scene.element.grid_size,
                 scene.element.igrid_size,
@@ -1598,7 +1601,7 @@ class IncompressibleEngine(Engine):
                 self.poisson_solver.Ax[level],
             )
 
-    def prepare_poisson_equations_mgpcg_cut_cell(self, sims: Simulation, scene: myScene):
+    def prepare_poisson_equations_mgpcg_cut_cell(self, sims: Simulation, scene: SceneManager):
         self.poisson_solver.initialize()
         mat_props = self.get_single_fluid_mat_props(scene)
         face_fraction2 = self.solid_face_fraction2()
@@ -1624,7 +1627,7 @@ class IncompressibleEngine(Engine):
             self.poisson_solver.grid_type[0],
             self.poisson_solver.b,
         )
-        kernel_assemble_incompressible_mg_A_level0_cut_cell(
+        kernel_assemble_incompressible_mg_a_level0_cut_cell(
             scene.element.ghost_cell,
             scene.element.cnum,
             sims.dt,
@@ -1646,7 +1649,7 @@ class IncompressibleEngine(Engine):
             self.poisson_solver.init_gridtype(
                 self.poisson_solver.grid_type[level - 1], self.poisson_solver.grid_type[level]
             )
-            kernel_assemble_incompressible_mg_A(
+            kernel_assemble_incompressible_mg_a(
                 sims.dt,
                 scene.element.grid_size,
                 scene.element.igrid_size,
@@ -1656,7 +1659,7 @@ class IncompressibleEngine(Engine):
                 self.poisson_solver.Ax[level],
             )
 
-    def prepare_poisson_equations_mgpcg_coupled(self, sims: Simulation, scene: myScene):
+    def prepare_poisson_equations_mgpcg_coupled(self, sims: Simulation, scene: SceneManager):
         self.poisson_solver.initialize()
         mat_props = self.get_single_fluid_mat_props(scene)
         if sims.solid_sdf_cut_cell:
@@ -1690,7 +1693,7 @@ class IncompressibleEngine(Engine):
             self.poisson_solver.grid_type[0],
             self.poisson_solver.b,
         )
-        kernel_assemble_incompressible_mg_A_level0_coupled_3d(
+        kernel_assemble_incompressible_mg_a_level0_coupled_3d(
             sims.dt,
             scene.element.igrid_size,
             mat_props,
@@ -1712,7 +1715,7 @@ class IncompressibleEngine(Engine):
             self.poisson_solver.init_gridtype(
                 self.poisson_solver.grid_type[level - 1], self.poisson_solver.grid_type[level]
             )
-            kernel_assemble_incompressible_mg_A(
+            kernel_assemble_incompressible_mg_a(
                 sims.dt,
                 scene.element.grid_size,
                 scene.element.igrid_size,
@@ -1722,7 +1725,7 @@ class IncompressibleEngine(Engine):
                 self.poisson_solver.Ax[level],
             )
 
-    def apply_pressures_regular(self, sims: Simulation, scene: myScene):
+    def apply_pressures_regular(self, sims: Simulation, scene: SceneManager):
         kernel_update_cell_pressure(
             scene.element.ghost_cell,
             scene.element.cnum,
@@ -1747,7 +1750,7 @@ class IncompressibleEngine(Engine):
         )
         kernel_compute_mac_grid_acceleration(scene.mass_cut_off, scene.node)
 
-    def apply_pressures_cut_cell(self, sims: Simulation, scene: myScene):
+    def apply_pressures_cut_cell(self, sims: Simulation, scene: SceneManager):
         kernel_update_cell_pressure(
             scene.element.ghost_cell,
             scene.element.cnum,
@@ -1781,7 +1784,7 @@ class IncompressibleEngine(Engine):
         )
         kernel_compute_mac_grid_acceleration(scene.mass_cut_off, scene.node)
 
-    def apply_pressures_coupled(self, sims: Simulation, scene: myScene):
+    def apply_pressures_coupled(self, sims: Simulation, scene: SceneManager):
         kernel_update_cell_pressure(
             scene.element.ghost_cell,
             scene.element.cnum,
@@ -1792,7 +1795,7 @@ class IncompressibleEngine(Engine):
         )
         self.correct_velocity_coupled(sims, scene)
 
-    def apply_pressures_mgpcg_regular(self, sims: Simulation, scene: myScene):
+    def apply_pressures_mgpcg_regular(self, sims: Simulation, scene: SceneManager):
         mat_props = self.get_single_fluid_mat_props(scene)
         kernel_update_pressure_and_correct_velocity_from_mg(
             scene.element.ghost_cell,
@@ -1811,7 +1814,7 @@ class IncompressibleEngine(Engine):
         )
         kernel_compute_mac_grid_acceleration(scene.mass_cut_off, scene.node)
 
-    def apply_pressures_mgpcg_cut_cell(self, sims: Simulation, scene: myScene):
+    def apply_pressures_mgpcg_cut_cell(self, sims: Simulation, scene: SceneManager):
         mat_props = self.get_single_fluid_mat_props(scene)
         face_fraction2 = self.solid_face_fraction2()
         solid_velocity2 = self.solid_face_velocity2()
@@ -1839,13 +1842,13 @@ class IncompressibleEngine(Engine):
         )
         kernel_compute_mac_grid_acceleration(scene.mass_cut_off, scene.node)
 
-    def apply_pressures_mgpcg_coupled(self, sims: Simulation, scene: myScene):
+    def apply_pressures_mgpcg_coupled(self, sims: Simulation, scene: SceneManager):
         kernel_update_cell_pressure_from_mg(
             scene.element.cell.pressure, self.poisson_solver.grid_type[0], self.poisson_solver.x
         )
         self.correct_velocity_coupled(sims, scene)
 
-    def correct_velocity_coupled(self, sims: Simulation, scene: myScene):
+    def correct_velocity_coupled(self, sims: Simulation, scene: SceneManager):
         mat_props = self.get_single_fluid_mat_props(scene)
         if sims.solid_sdf_cut_cell:
             face_fraction = self.solid_face_open_fraction
@@ -1878,7 +1881,7 @@ class IncompressibleEngine(Engine):
         )
         kernel_compute_mac_grid_acceleration(scene.mass_cut_off, scene.node)
 
-    def compute_particle_kinematics(self, sims: Simulation, scene: myScene):
+    def compute_particle_kinematics(self, sims: Simulation, scene: SceneManager):
         kernel_kinemaitc_mac_cell_g2p(
             scene.element.grid_nodes,
             sims.alphaPIC,
@@ -1893,10 +1896,10 @@ class IncompressibleEngine(Engine):
             scene.element.calLength,
         )
 
-    def enforce_mac_boundary_regular(self, sims: Simulation, scene: myScene):
+    def enforce_mac_boundary_regular(self, sims: Simulation, scene: SceneManager):
         enforce_boundary(scene.element.ghost_cell, scene.element.cnum, scene.element.cell.type, scene.node)
 
-    def enforce_mac_boundary_cut_cell(self, sims: Simulation, scene: myScene):
+    def enforce_mac_boundary_cut_cell(self, sims: Simulation, scene: SceneManager):
         enforce_boundary_cut_cell(
             scene.element.ghost_cell,
             scene.element.cnum,
@@ -1908,12 +1911,12 @@ class IncompressibleEngine(Engine):
             sims.fluid_wall_no_slip,
         )
 
-    def enforce_mac_boundary_after_pressure_regular(self, sims: Simulation, scene: myScene):
+    def enforce_mac_boundary_after_pressure_regular(self, sims: Simulation, scene: SceneManager):
         enforce_boundary_and_extrapolate_mac_tangent_velocity(
             scene.element.ghost_cell, scene.element.cnum, scene.element.cell.type, scene.node
         )
 
-    def enforce_mac_boundary_after_pressure_cut_cell(self, sims: Simulation, scene: myScene):
+    def enforce_mac_boundary_after_pressure_cut_cell(self, sims: Simulation, scene: SceneManager):
         enforce_boundary_cut_cell(
             scene.element.ghost_cell,
             scene.element.cnum,
@@ -1925,7 +1928,7 @@ class IncompressibleEngine(Engine):
             sims.fluid_wall_no_slip,
         )
 
-    def find_active_nodes(self, scene: myScene):
+    def find_active_nodes(self, scene: SceneManager):
         find_active_fdm_cell(
             scene.element.ghost_cell,
             scene.element.cellSum,
@@ -1942,7 +1945,7 @@ class IncompressibleEngine(Engine):
             scene.element.flag,
         )
 
-    def pre_calculation(self, sims: Simulation, scene: myScene, neighbor: SpatialHashGrid):
+    def pre_calculation(self, sims: Simulation, scene: SceneManager, neighbor: SpatialHashGrid):
         # This is also the characteristic-length refresh point for new/restarted runs.
         # The basis integral is independent of the moving particles and cell types.
         self.shifting_reference_ready = False
@@ -2013,7 +2016,7 @@ class IncompressibleEngine(Engine):
 
             self.poisson_solver = CompressedSparseRow()
 
-    def fdm_discretization_pcg(self, sims: Simulation, scene: myScene, neighbor=None):
+    def fdm_discretization_pcg(self, sims: Simulation, scene: SceneManager, neighbor=None):
         sims.timer.begin("Solid boundary")
         self.reset_solid_face_velocity_step(sims, scene)
         self.update_external_cut_cell_boundary(sims, scene)
@@ -2071,7 +2074,7 @@ class IncompressibleEngine(Engine):
         self.enforce_particle_boundary(scene)
         sims.timer.end("Particle boundary")
 
-    def fdm_discretization_mgpcg(self, sims: Simulation, scene: myScene, neighbor=None):
+    def fdm_discretization_mgpcg(self, sims: Simulation, scene: SceneManager, neighbor=None):
         sims.timer.begin("Solid boundary")
         self.reset_solid_face_velocity_step(sims, scene)
         self.update_external_cut_cell_boundary(sims, scene)
@@ -2117,5 +2120,5 @@ class IncompressibleEngine(Engine):
         self.enforce_particle_boundary(scene)
         sims.timer.end("Particle boundary")
 
-    def fem_discretization(self, sims, scene: myScene, neighbor=None):
+    def fem_discretization(self, sims, scene: SceneManager, neighbor=None):
         pass

@@ -1,23 +1,25 @@
+from src.utils.errors import CapacityError, NonlinearSolveError
+from src.linear_solver.Utilities import solve_csr_system
 import taichi as ti
 import numpy as np
 
 import src.mpm.config as config
 from src.mpm.engines.direct.MPMSolver import MPMSolver
-from src.mpm.utils import copy_field, copy_grad
-from src.physics_model.consititutive_model.finite_strain.NeoHookean import NeoHookeanModel
-from src.physics_model.consititutive_model.finite_strain.DruckerPrager import (
+from src.utils.VectorFunction import copy_field, copy_grad
+from src.physics_model.constitutive_model.finite_strain.NeoHookean import NeoHookeanModel
+from src.physics_model.constitutive_model.finite_strain.DruckerPrager import (
     FiniteStrainDruckerPragerModel,
 )
-from src.physics_model.consititutive_model.finite_strain.StateDependentDruckerPrager import (
+from src.physics_model.constitutive_model.finite_strain.StateDependentDruckerPrager import (
     StateDependentDruckerPragerModel,
 )
-from src.physics_model.consititutive_model.finite_strain.VonMises import (
+from src.physics_model.constitutive_model.finite_strain.VonMises import (
     FiniteStrainVonMisesModel,
 )
-from src.physics_model.consititutive_model.finite_strain.ModifiedCamClay import (
+from src.physics_model.constitutive_model.finite_strain.ModifiedCamClay import (
     FiniteStrainModifiedCamClayModel,
 )
-from src.linear_solver.BuildTriplet import BuildTriplet, solve_csr_system
+from src.linear_solver.BuildTriplet import BuildTriplet
 from src.utils.PrefixSum import PrefixSumExecutor
 from src.utils.linalg import no_operation
 from src.utils.TimeIntegration import newmark_parameters
@@ -26,7 +28,7 @@ from src.utils.TimeIntegration import newmark_parameters
 @ti.data_oriented
 class ImplicitMPM(MPMSolver):
     def __init__(self, bodies, dirichlet=None, neumann=None, **kwargs):
-        material = kwargs.get("material", "neoHookean")
+        material = kwargs.get("material", "NeoHookean")
         material_key = str(material).replace("-", "").replace("_", "").replace(" ", "").lower()
         if material_key in ("neohookean", "neohookeanmodel", "neo"):
             self.material = NeoHookeanModel().initialize_from_kwargs(**kwargs)
@@ -191,7 +193,7 @@ class ImplicitMPM(MPMSolver):
         raise NotImplementedError
 
     @ti.kernel
-    def init_F0(self):
+    def init_f0(self):
         for i in self.F0:
             self.F0[i] = ti.Matrix.identity(ti.f64, self.material_dimension)
 
@@ -273,7 +275,7 @@ class ImplicitMPM(MPMSolver):
         active_nodes = active_dof // config.DIM
         node_capacity = int(self.dof2node.shape[0])
         if active_nodes > node_capacity or active_dof > self.degree_of_freedom:
-            raise RuntimeError(
+            raise CapacityError(
                 "Direct implicit MPM active-DOF capacity exceeded: "
                 f"required {active_dof} DOFs ({active_nodes} nodes), "
                 f"allocated {self.degree_of_freedom} DOFs "
@@ -332,7 +334,7 @@ class ImplicitMPM(MPMSolver):
         return incremental
 
     @ti.func
-    def axisymmetric_dF_du(self, particle_id, local_id, component):
+    def axisymmetric_d_f_du(self, particle_id, local_id, component):
         """Derivative of ``F = f F_n`` with respect to one meridian DOF."""
         derivative_incremental = ti.Matrix.zero(ti.f64, 3, 3)
         for material_axis in ti.static(range(2)):
@@ -343,7 +345,7 @@ class ImplicitMPM(MPMSolver):
         return derivative_incremental @ self.F0[particle_id]
 
     @ti.func
-    def plane_strain_dF_du(self, particle_id, local_id, component):
+    def plane_strain_d_f_du(self, particle_id, local_id, component):
         """Derivative of the embedded plane-strain ``F = f F_n`` map."""
         derivative_incremental = ti.Matrix.zero(ti.f64, 3, 3)
         for material_axis in ti.static(range(2)):
@@ -354,8 +356,8 @@ class ImplicitMPM(MPMSolver):
     def axisymmetric_local_stiffness(self, particle_id, local_i, local_j, tangent):
         block = ti.Matrix.zero(ti.f64, 2, 2)
         for component_i, component_j in ti.static(ti.ndrange(2, 2)):
-            derivative_i = self.axisymmetric_dF_du(particle_id, local_i, component_i)
-            derivative_j = self.axisymmetric_dF_du(particle_id, local_j, component_j)
+            derivative_i = self.axisymmetric_d_f_du(particle_id, local_i, component_i)
+            derivative_j = self.axisymmetric_d_f_du(particle_id, local_j, component_j)
             value = 0.0
             for column_i, row_i, column_j, row_j in ti.ndrange(3, 3, 3, 3):
                 value += (
@@ -370,8 +372,8 @@ class ImplicitMPM(MPMSolver):
     def plane_strain_local_stiffness(self, particle_id, local_i, local_j, tangent):
         block = ti.Matrix.zero(ti.f64, 2, 2)
         for component_i, component_j in ti.static(ti.ndrange(2, 2)):
-            derivative_i = self.plane_strain_dF_du(particle_id, local_i, component_i)
-            derivative_j = self.plane_strain_dF_du(particle_id, local_j, component_j)
+            derivative_i = self.plane_strain_d_f_du(particle_id, local_i, component_i)
+            derivative_j = self.plane_strain_d_f_du(particle_id, local_j, component_j)
             value = 0.0
             for column_i, row_i, column_j, row_j in ti.ndrange(3, 3, 3, 3):
                 value += (
@@ -619,7 +621,7 @@ class ImplicitMPM(MPMSolver):
         solver_name = getattr(self, "linear_solver_name", "BiCGSTAB")
         result["backend"] = "taichi_pcg" if solver_name == "PCG" else "taichi_bicgstab"
         if not result["converged"]:
-            raise RuntimeError(
+            raise NonlinearSolveError(
                 f"Direct implicit MPM Taichi {solver_name} did not converge: "
                 f"residual={result['residual']:.6e}, "
                 f"iterations={result['iterations']}"
@@ -705,7 +707,7 @@ class ImplicitMPM(MPMSolver):
         copy_grad(active_dof, energy_gradient, grid_disp.grad)
 
     def initial_simulation(self):
-        self.init_F0()
+        self.init_f0()
         super().initial_simulation()
 
     def calculate_von_mises(self):
@@ -718,7 +720,7 @@ class ImplicitMPM(MPMSolver):
                 if ti.static(self.is_finite_strain_plastic):
                     self.vonMises[i] = self.material.total_von_mises_at(i, deformation_gradient)
                 else:
-                    self.vonMises[i] = self.material.VonMises(deformation_gradient)
+                    self.vonMises[i] = self.material.von_mises(deformation_gradient)
 
         visualize_stress()
         return self.vonMises.to_numpy()[:particle_num]

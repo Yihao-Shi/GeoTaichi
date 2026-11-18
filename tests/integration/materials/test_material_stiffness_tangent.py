@@ -3,8 +3,8 @@ import taichi as ti
 
 
 import src.utils.GlobalVariable as GlobalVariable
-from src.mpm.MaterialManager import MaterialHandle
-from src.mpm.structs import ParticleCloud
+from src.mpm.MaterialHandle import MaterialHandle
+from src.mpm.structs.ParticleCloud import ParticleCloud
 
 
 class _Sims:
@@ -51,31 +51,45 @@ def _initialize_particles(particle: ti.template(), stress: ti.types.vector(6, fl
 
 
 @ti.kernel
-def _evaluate_tangent_columns(matProps: ti.template(), stateVars: ti.template(), particle: ti.template(), dt: ti.template(),
-                              eps: float, tangent: ti.template(), finite_difference: ti.template()):
+def _evaluate_tangent_columns(
+    matProps: ti.template(),
+    stateVars: ti.template(),
+    particle: ti.template(),
+    dt: ti.template(),
+    eps: float,
+    tangent: ti.template(),
+    finite_difference: ti.template(),
+):
     zero_gradient = ti.Matrix.zero(float, 3, 3)
-    base_stress = matProps.ComputeStress(0, particle[0].stress, zero_gradient, stateVars, dt)
+    base_stress = matProps.compute_stress(0, particle[0].stress, zero_gradient, stateVars, dt)
     tangent[None] = matProps.compute_stiffness_tensor(0, base_stress, stateVars)
     for comp in range(6):
         velocity_gradient = _engineering_gradient(comp, eps)
-        stress = matProps.ComputeStress(comp + 1, particle[comp + 1].stress, velocity_gradient, stateVars, dt)
+        stress = matProps.compute_stress(comp + 1, particle[comp + 1].stress, velocity_gradient, stateVars, dt)
         for row in ti.static(range(6)):
             finite_difference[None][row, comp] = (stress[row] - base_stress[row]) / eps
 
 
 @ti.kernel
-def _evaluate_preloaded_tangent_columns(matProps: ti.template(), stateVars: ti.template(), particle: ti.template(), dt: ti.template(),
-                                        preload: ti.types.matrix(3, 3, float), eps: float,
-                                        tangent: ti.template(), finite_difference: ti.template()):
+def _evaluate_preloaded_tangent_columns(
+    matProps: ti.template(),
+    stateVars: ti.template(),
+    particle: ti.template(),
+    dt: ti.template(),
+    preload: ti.types.matrix(3, 3, float),
+    eps: float,
+    tangent: ti.template(),
+    finite_difference: ti.template(),
+):
     zero_gradient = ti.Matrix.zero(float, 3, 3)
     for np in range(7):
-        particle[np].stress = matProps.ComputeStress(np, particle[np].stress, preload, stateVars, dt)
+        particle[np].stress = matProps.compute_stress(np, particle[np].stress, preload, stateVars, dt)
 
-    base_stress = matProps.ComputeStress(0, particle[0].stress, zero_gradient, stateVars, dt)
+    base_stress = matProps.compute_stress(0, particle[0].stress, zero_gradient, stateVars, dt)
     tangent[None] = matProps.compute_stiffness_tensor(0, base_stress, stateVars)
     for comp in range(6):
         velocity_gradient = _engineering_gradient(comp, eps)
-        stress = matProps.ComputeStress(comp + 1, particle[comp + 1].stress, velocity_gradient, stateVars, dt)
+        stress = matProps.compute_stress(comp + 1, particle[comp + 1].stress, velocity_gradient, stateVars, dt)
         for row in ti.static(range(6)):
             finite_difference[None][row, comp] = (stress[row] - base_stress[row]) / eps
 
@@ -113,7 +127,9 @@ def test_linear_elastic_stiffness_matches_stress_update_difference():
     dt[None] = 1.0
     tangent = ti.Matrix.field(6, 6, float, shape=())
     finite_difference = ti.Matrix.field(6, 6, float, shape=())
-    _evaluate_tangent_columns(material.matProps[1], material.stateVars, particle, dt, 1.0e-4, tangent, finite_difference)
+    _evaluate_tangent_columns(
+        material.matProps[1], material.stateVars, particle, dt, 1.0e-4, tangent, finite_difference
+    )
 
     tangent_np = tangent.to_numpy()[()]
     fd_np = finite_difference.to_numpy()[()]
@@ -131,7 +147,9 @@ def _assert_tangent_matches_finite_difference(model, material, stress, eps=1.0e-
     dt[None] = 1.0
     tangent = ti.Matrix.field(6, 6, float, shape=())
     finite_difference = ti.Matrix.field(6, 6, float, shape=())
-    _evaluate_tangent_columns(material_handle.matProps[1], material_handle.stateVars, particle, dt, eps, tangent, finite_difference)
+    _evaluate_tangent_columns(
+        material_handle.matProps[1], material_handle.stateVars, particle, dt, eps, tangent, finite_difference
+    )
 
     tangent_np = tangent.to_numpy()[()]
     fd_np = finite_difference.to_numpy()[()]
@@ -216,7 +234,9 @@ def test_modified_cam_clay_stiffness_matches_stress_update_difference():
     tangent = ti.Matrix.field(6, 6, float, shape=())
     finite_difference = ti.Matrix.field(6, 6, float, shape=())
     preload = ti.Matrix([[-8.0e-4, 2.0e-4, 0.0], [0.0, 3.0e-4, 1.0e-4], [0.0, 0.0, 2.0e-4]])
-    _evaluate_preloaded_tangent_columns(material.matProps[1], material.stateVars, particle, dt, preload, 1.0e-4, tangent, finite_difference)
+    _evaluate_preloaded_tangent_columns(
+        material.matProps[1], material.stateVars, particle, dt, preload, 1.0e-4, tangent, finite_difference
+    )
 
     tangent_np = tangent.to_numpy()[()]
     fd_np = finite_difference.to_numpy()[()]

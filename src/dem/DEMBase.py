@@ -1,19 +1,18 @@
+from src.utils.RuntimeHook import normalize_callbacks
+from src.utils.TimeTicker import Timer
 import time
-
 import taichi as ti
-
 from src.dem.ContactManager import ContactManager
 from src.dem.engines.ExplicitEngine import ExplicitEngine
 from src.dem.GenerateManager import GenerateManager
 from src.dem.Recorder import WriteFile
-from src.dem.SceneManager import myScene
+from src.dem.SceneManager import SceneManager
 from src.dem.Simulation import Simulation
 from src.utils.RuntimeHook import runtime_checkpoint
 from src.utils.SolverConsole import print_save_file_info, print_simulation_start
-from src.utils.SolverRuntime import normalize_callbacks
-from src.utils.TimeTicker import advance_time, has_remaining_time, time_tolerance
-from src.utils.constants import Threshold
+from src.utils.constants import THRESHOLD
 from src.utils.linalg import no_operation
+from src.utils.SolverConsole import print_simulation_start
 
 
 class Solver(object):
@@ -88,7 +87,7 @@ class Solver(object):
         if getattr(self.sims, "scheme", None) == "AffineBody":
             step_dt = self.sims.delta
         # JIT warm-up executes a complete physical step, so it must be counted.
-        advance_time(self.sims, step_dt)
+        Timer.advance_time(self.sims, step_dt)
         self.sims.current_step += 1
         ti.sync()
         end_time = time.perf_counter()
@@ -96,16 +95,16 @@ class Solver(object):
         print(f"Compiling time = {self.compile_seconds} \n")
         self.sims.timer.profile1()
 
-    def Solver(self, scene: myScene):
+    def solve(self, scene: SceneManager):
         print_simulation_start("DEM")
         ti.sync()
 
         self.engine.pre_calculation(self.sims, scene, self.contact.neighbor)
-        if self.sims.current_time < Threshold:
+        if self.sims.current_time < THRESHOLD:
             self.save_file(scene)
             self.last_save_time = 1.0 * self.sims.current_time
 
-        if has_remaining_time(self.sims.current_time, self.sims.time, self.sims.delta):
+        if Timer.has_remaining_time(self.sims.current_time, self.sims.time, self.sims.delta):
             self.sims.set_timestep(min(self.sims.delta, self.sims.time - self.sims.current_time))
             compile_step = self.sims.delta
             self.compile(scene)
@@ -116,13 +115,13 @@ class Solver(object):
         self.solver_compute_seconds = 0.0
         ti.sync()
         start_time = time.perf_counter()
-        while has_remaining_time(self.sims.current_time, self.sims.time, self.sims.delta):
+        while Timer.has_remaining_time(self.sims.current_time, self.sims.time, self.sims.delta):
             self.sims.set_timestep(min(self.sims.delta, self.sims.time - self.sims.current_time))
             step_dt = self.sims.delta
             self.core(scene)
 
             new_body = self.generator.regenerate(scene)
-            advance_time(self.sims, step_dt)
+            Timer.advance_time(self.sims, step_dt)
             self.sims.current_step += 1
             if self.sims.current_time - self.last_save_time >= self.sims.save_interval - 0.1 * step_dt or new_body:
                 ti.sync()
@@ -135,14 +134,14 @@ class Solver(object):
                     self.sims.set_max_bounding_sphere_radius(scene.find_bounding_sphere_max_radius(self.sims))
 
             runtime_checkpoint()
-        if abs(self.sims.time - self.sims.current_time) <= time_tolerance(self.sims.delta):
+        if abs(self.sims.time - self.sims.current_time) <= Timer.time_tolerance(self.sims.delta):
             self.sims.current_time = self.sims.time
         ti.sync()
         end_time = time.perf_counter()
         self.physical_seconds = end_time - start_time
         self.solver_compute_seconds = max(self.physical_seconds - self.in_loop_output_seconds, 0.0)
 
-        if has_remaining_time(self.last_save_time, self.sims.current_time, self.sims.delta):
+        if Timer.has_remaining_time(self.last_save_time, self.sims.current_time, self.sims.delta):
             self.save_file(scene)
 
         print("Simulation-loop time = ", self.physical_seconds)
@@ -150,12 +149,12 @@ class Solver(object):
         print("Solver compute time = ", self.solver_compute_seconds)
         print("#", " End Simulation ".center(67, "="), "#", "\n")
 
-    def Visualize(self, scene: myScene):
+    def visualize(self, scene: SceneManager):
         from src.visualization.solver_adapters import run_dem_gui
 
         return run_dem_gui(self, scene)
 
-    def core(self, scene: myScene):
+    def core(self, scene: SceneManager):
         self.sims.timer.begin("Reset")
         self.engine.reset_wall_message(scene)
         self.engine.reset_particle_message(scene)
@@ -174,44 +173,44 @@ class Solver(object):
 
 
 class AffineBodySolver(Solver):
-    def Solver(self, scene: myScene):
+    def solve(self, scene: SceneManager):
         print_simulation_start("DEM")
         ti.sync()
 
         self.engine.initialize(self.sims, scene)
-        if self.sims.current_time < Threshold:
+        if self.sims.current_time < THRESHOLD:
             self.save_file(scene)
             self.last_save_time = 1.0 * self.sims.current_time
 
         start_time = time.time()
         target_time = float(self.sims.current_time + self.sims.time)
         nominal_timestep = float(self.sims.delta)
-        if has_remaining_time(self.sims.current_time, target_time, self.sims.delta):
+        if Timer.has_remaining_time(self.sims.current_time, target_time, self.sims.delta):
             self.sims.set_timestep(min(nominal_timestep, target_time - self.sims.current_time))
             self.compile(scene)
             if self.sims.current_time - self.last_save_time >= self.sims.save_interval - 0.1 * self.sims.delta:
                 self.save_file(scene)
-        while has_remaining_time(self.sims.current_time, target_time, self.sims.delta):
+        while Timer.has_remaining_time(self.sims.current_time, target_time, self.sims.delta):
             self.sims.set_timestep(min(self.sims.delta, target_time - self.sims.current_time))
             self.core(scene)
-            advance_time(self.sims, self.sims.delta)
+            Timer.advance_time(self.sims, self.sims.delta)
             self.sims.current_step += 1
             runtime_checkpoint()
 
             if self.sims.current_time - self.last_save_time >= self.sims.save_interval - 0.1 * self.sims.delta:
                 self.save_file(scene)
-        if abs(target_time - self.sims.current_time) <= time_tolerance(self.sims.delta):
+        if abs(target_time - self.sims.current_time) <= Timer.time_tolerance(self.sims.delta):
             self.sims.current_time = target_time
         end_time = time.time()
         self.physical_seconds = end_time - start_time
 
-        if has_remaining_time(self.last_save_time, self.sims.current_time, self.sims.delta):
+        if Timer.has_remaining_time(self.last_save_time, self.sims.current_time, self.sims.delta):
             self.save_file(scene)
 
         print("Physical time = ", self.physical_seconds)
         print("#", " End Affine Body Simulation ".center(67, "="), "#", "\n")
 
-    def core(self, scene: myScene):
+    def core(self, scene: SceneManager):
         self.sims.timer.begin("Affine body step")
         self.engine.step(self.sims, scene)
         self.sims.timer.end("Affine body step")

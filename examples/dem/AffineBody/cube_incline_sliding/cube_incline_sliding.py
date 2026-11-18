@@ -1,3 +1,4 @@
+from src.physics_model.contact_model.ipc.Utilities import ipc_barrier_distance_terms
 import argparse
 import os
 import sys
@@ -37,9 +38,6 @@ if ROOT not in sys.path:
 
 
 from geotaichi import DEM, init, polyhedron, python_callback
-from src.physics_model.contact_model.ipc.IPC import (
-    ipc_toolkit_barrier_distance_terms,
-)
 
 mu = arguments.friction
 ccd_type = arguments.ccd_type
@@ -60,7 +58,7 @@ barrier_stiffness = arguments.barrier_stiffness
 
 @ti.kernel
 def barrier_normal_force(gap: ti.f64) -> ti.f64:
-    _, gradient, _ = ipc_toolkit_barrier_distance_terms(gap, dhat, barrier_stiffness)
+    _, gradient, _ = ipc_barrier_distance_terms(gap, dhat, barrier_stiffness)
     return ti.max(-gradient, 0.0)
 
 

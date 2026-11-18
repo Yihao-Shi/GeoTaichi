@@ -4,10 +4,9 @@ import numpy as np
 import pytest
 import taichi as ti
 
-from src.physics_model.consititutive_model.finite_strain.NeoHookean import (
+from src.physics_model.constitutive_model.finite_strain.NeoHookean import (
     NeoHookeanModel,
 )
-
 
 pytestmark = [pytest.mark.materials, pytest.mark.cpu]
 
@@ -18,9 +17,7 @@ def _neo_hookean(**kwargs):
 
 def _make_evaluator(model, dimension):
     energy = ti.field(dtype=ti.f64, shape=())
-    pk1 = ti.Matrix.field(
-        dimension, dimension, dtype=ti.f64, shape=()
-    )
+    pk1 = ti.Matrix.field(dimension, dimension, dtype=ti.f64, shape=())
     tangent = ti.Matrix.field(
         dimension * dimension,
         dimension * dimension,
@@ -33,22 +30,16 @@ def _make_evaluator(model, dimension):
     def evaluate_kernel(
         deformation_gradient: ti.types.ndarray(dtype=ti.f64, ndim=2),
     ):
-        deformation = ti.Matrix.zero(
-            ti.f64, dimension, dimension
-        )
-        for row, column in ti.static(
-            ti.ndrange(dimension, dimension)
-        ):
+        deformation = ti.Matrix.zero(ti.f64, dimension, dimension)
+        for row, column in ti.static(ti.ndrange(dimension, dimension)):
             deformation[row, column] = deformation_gradient[row, column]
-        energy[None] = model.Psi(deformation)
+        energy[None] = model.psi(deformation)
         pk1[None] = model.first_piola_stress(deformation)
         tangent[None] = model.first_piola_tangent(deformation)
-        von_mises[None] = model.VonMises(deformation)
+        von_mises[None] = model.von_mises(deformation)
 
     def evaluate(deformation_gradient):
-        evaluate_kernel(
-            np.ascontiguousarray(deformation_gradient, dtype=np.float64)
-        )
+        evaluate_kernel(np.ascontiguousarray(deformation_gradient, dtype=np.float64))
         return (
             float(energy[None]),
             pk1.to_numpy()[()],
@@ -65,15 +56,11 @@ def _closed_form_response(model, deformation_gradient):
     inverse_transpose = np.linalg.inv(deformation_gradient).T
     log_j = np.log(jacobian)
     energy = (
-        0.5
-        * model.shear
-        * (np.sum(deformation_gradient**2) - dimension)
+        0.5 * model.shear * (np.sum(deformation_gradient**2) - dimension)
         - model.shear * log_j
         + 0.5 * model.lame_lambda * log_j**2
     )
-    pk1 = model.shear * (
-        deformation_gradient - inverse_transpose
-    ) + model.lame_lambda * log_j * inverse_transpose
+    pk1 = model.shear * (deformation_gradient - inverse_transpose) + model.lame_lambda * log_j * inverse_transpose
     return energy, pk1
 
 
@@ -103,9 +90,7 @@ def test_initialize_from_kwargs_builds_neo_hookean_model(kwargs):
     assert model.young_modulus == 2.4e5
     assert model.poisson_ratio == 0.28
     assert model.mu_ == pytest.approx(2.4e5 / (2.0 * 1.28))
-    assert model.lambda_ == pytest.approx(
-        2.4e5 * 0.28 / (1.28 * (1.0 - 2.0 * 0.28))
-    )
+    assert model.lambda_ == pytest.approx(2.4e5 * 0.28 / (1.28 * (1.0 - 2.0 * 0.28)))
 
 
 def test_initialize_from_kwargs_requires_young_modulus():
@@ -114,9 +99,7 @@ def test_initialize_from_kwargs_requires_young_modulus():
 
 
 @pytest.mark.parametrize("dimension", [2, 3])
-def test_identity_has_zero_energy_and_zero_pk1(
-    taichi_material_cpu, dimension
-):
+def test_identity_has_zero_energy_and_zero_pk1(taichi_material_cpu, dimension):
     model = _neo_hookean(
         density=1000.0,
         young_modulus=2.4e5,
@@ -146,9 +129,7 @@ def test_identity_has_zero_energy_and_zero_pk1(
     ],
     ids=["2d", "3d"],
 )
-def test_energy_and_pk1_match_closed_form(
-    taichi_material_cpu, deformation_gradient
-):
+def test_energy_and_pk1_match_closed_form(taichi_material_cpu, deformation_gradient):
     model = _neo_hookean(
         density=1000.0,
         young_modulus=2.4e5,
@@ -157,17 +138,11 @@ def test_energy_and_pk1_match_closed_form(
     evaluate = _make_evaluator(model, deformation_gradient.shape[0])
 
     energy, pk1, tangent, von_mises = evaluate(deformation_gradient)
-    expected_energy, expected_pk1 = _closed_form_response(
-        model, deformation_gradient
-    )
+    expected_energy, expected_pk1 = _closed_form_response(model, deformation_gradient)
 
     assert energy == pytest.approx(expected_energy, rel=1.0e-12)
-    np.testing.assert_allclose(
-        pk1, expected_pk1, rtol=1.0e-12, atol=1.0e-10
-    )
-    np.testing.assert_allclose(
-        tangent, tangent.T, rtol=1.0e-12, atol=1.0e-10
-    )
+    np.testing.assert_allclose(pk1, expected_pk1, rtol=1.0e-12, atol=1.0e-10)
+    np.testing.assert_allclose(tangent, tangent.T, rtol=1.0e-12, atol=1.0e-10)
     assert von_mises > 0.0
 
 
@@ -185,9 +160,7 @@ def test_energy_and_pk1_match_closed_form(
     ],
     ids=["2d", "3d"],
 )
-def test_pk1_and_tangent_match_central_finite_differences(
-    taichi_material_cpu, deformation_gradient
-):
+def test_pk1_and_tangent_match_central_finite_differences(taichi_material_cpu, deformation_gradient):
     model = _neo_hookean(
         density=1000.0,
         young_modulus=2.4e5,
@@ -210,13 +183,8 @@ def test_pk1_and_tangent_match_central_finite_differences(
         minus[row_index, column_index] -= step
         energy_plus, pk1_plus, _, _ = evaluate(plus)
         energy_minus, pk1_minus, _, _ = evaluate(minus)
-        energy_gradient[column] = (
-            energy_plus - energy_minus
-        ) / (2.0 * step)
-        stress_jacobian[:, column] = (
-            pk1_plus.flatten(order="F")
-            - pk1_minus.flatten(order="F")
-        ) / (2.0 * step)
+        energy_gradient[column] = (energy_plus - energy_minus) / (2.0 * step)
+        stress_jacobian[:, column] = (pk1_plus.flatten(order="F") - pk1_minus.flatten(order="F")) / (2.0 * step)
 
     np.testing.assert_allclose(
         pk1.flatten(order="F"),
@@ -239,13 +207,7 @@ def test_neo_hookean_records_maximum_sound_speed():
         poisson_ratio=0.28,
     )
     expected = np.sqrt(
-        model.young
-        * (1.0 - model.poisson)
-        / (
-            (1.0 + model.poisson)
-            * (1.0 - 2.0 * model.poisson)
-            * model.density
-        )
+        model.young * (1.0 - model.poisson) / ((1.0 + model.poisson) * (1.0 - 2.0 * model.poisson) * model.density)
     )
 
     assert model.max_sound_speed == pytest.approx(expected)

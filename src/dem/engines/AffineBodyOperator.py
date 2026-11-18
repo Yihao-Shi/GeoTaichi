@@ -1,37 +1,47 @@
 """Affine-body contact assembly and device operators."""
 
+from src.utils.linalg import surface_vertex_edge_measures
+
+from src.utils.MatrixFunction import psd_project_nd
+
+from src.physics_model.contact_model.ipc.Utilities import ipc_friction_f0
+from src.physics_model.contact_model.ipc.Utilities import ipc_friction_f1_over_speed
+from src.physics_model.contact_model.ipc.Utilities import ipc_barrier_distance2_terms
+from src.utils.errors import CapacityError, SimulationStateError
+from src.dem.neighbor.Utilities import make_affine_body_neighbor
+from src.physics_model.contact_model.ipc.Utilities import ipc_fully_implicit_point_plane_stribeck_friction
+from src.physics_model.contact_model.ipc.Utilities import ipc_fully_implicit_profile_over_speed
+from src.physics_model.contact_model.ipc.Utilities import ipc_fully_implicit_profile_over_speed_derivative
+from src.physics_model.contact_model.ipc.Utilities import ipc_stribeck_falloff
+from src.physics_model.contact_model.ipc.Utilities import ipc_stribeck_falloff_derivative
+from src.physics_model.contact_model.ipc.Utilities import ipc_barrier_distance_terms
+from src.physics_model.contact_model.ipc.Utilities import (
+    ipc_barrier_force_magnitude_gradient,
+    ipc_lagged_friction_cache_vjp,
+)
+
 import os
 import time
-
 import numpy as np
 import taichi as ti
-
-from src.utils.TimeIntegration import (
-    newmark_acceleration,
-    newmark_parameters,
-    newmark_prediction,
-    newmark_velocity,
-)
-
-from src.contact_detection.continuous_contact_detection import (
-    ccd_mode_parameters,
-    edge_edge_accd,
-    edge_edge_ccd,
-    linear_gap_accd,
-    linear_gap_ccd,
-    point_triangle_accd,
-    point_triangle_ccd,
-)
+from src.utils.TimeIntegration import newmark_acceleration, newmark_parameters, newmark_prediction, newmark_velocity
+from src.contact_detection.continuous_contact_detection.CCD import ccd_mode_parameters
+from src.contact_detection.continuous_contact_detection.AdditiveCCD import edge_edge_accd
+from src.contact_detection.continuous_contact_detection.CCD import edge_edge_ccd
+from src.contact_detection.continuous_contact_detection.AdditiveCCD import linear_gap_accd
+from src.contact_detection.continuous_contact_detection.CCD import linear_gap_ccd
+from src.contact_detection.continuous_contact_detection.AdditiveCCD import point_triangle_accd
+from src.contact_detection.continuous_contact_detection.CCD import point_triangle_ccd
 from src.physics_model.contact_model.ipc.ContactDistance import (
-    H_EE,
-    H_PE3D,
+    h_ee,
+    h_pe3d,
     edge_edge_distance2_from_type,
     edge_edge_distance_grad,
     edge_edge_distance_grad_hess,
     edge_edge_distance_grad_hess_by_type,
     edge_edge_distance_type,
-    g_EE,
-    g_PE3D,
+    g_ee,
+    g_pe3d,
     line_line_distance2,
     point_line_distance2,
     point_point_distance2,
@@ -53,148 +63,89 @@ from src.physics_model.contact_model.ipc.ContactGeometry import (
     edge_edge_contact_frame,
     point_triangle_contact_frame,
 )
-from src.physics_model.contact_model.ipc.ContactMeasure import (
-    surface_vertex_edge_measures,
-)
-from src.physics_model.contact_model.ipc.ContactAssembly import (
-    psd_project_nd,
-)
-from src.physics_model.contact_model.ipc.IPC import (
-    ipc_fully_implicit_point_plane_stribeck_friction,
-    ipc_fully_implicit_profile_over_speed,
-    ipc_fully_implicit_profile_over_speed_derivative,
-    ipc_stribeck_falloff,
-    ipc_stribeck_falloff_derivative,
-    ipc_toolkit_barrier_distance2_terms,
-    ipc_toolkit_barrier_distance_terms,
-    ipc_friction_f0,
-    ipc_friction_f1_over_speed,
-    normalize_ipc_model,
-)
-from src.dem.neighbor.AffineBodyNeighbor import make_affine_body_neighbor
-from src.utils.ScalarFunction import linearize3D
+from src.physics_model.contact_model.ipc.Barrier import Barrier
+from src.physics_model.contact_model.ipc.Friction import Friction
+from src.utils.ScalarFunction import linearize3d
 
 MATRIX_COO = 1
 MATRIX_HASH_TRIPLET = 2
 MATRIX_CONTACT_DAMPING = 3
 
 
-def _normalize_affine_assemble_type(assemble_type):
-    key = str(assemble_type).replace("_", "").replace("-", "").lower()
-    aliases = {
-        "matrixfree": "MatrixFree",
-        "coo": "COO",
-        "csr": "COO",
-        "coordinate": "COO",
-        "coordinatematrix": "COO",
-        "hashtriplet": "HashTriplet",
-        "triplet": "HashTriplet",
-    }
-    if key not in aliases:
-        raise RuntimeError("AffineBody assemble_type must be one of ['MatrixFree', 'COO', 'HashTriplet']")
-    return aliases[key]
-
-
-def _normalize_affine_friction_mode(mode, error_type=RuntimeError):
-    key = str(mode).strip().replace("-", "_").lower()
-    aliases = {
-        "lagged": "lagged",
-        "lag": "lagged",
-        "fully_implicit": "fully_implicit",
-        "fullyimplicit": "fully_implicit",
-    }
-    if key not in aliases:
-        raise error_type("AffineBody friction_mode must be 'lagged' or " "'fully_implicit'")
-    return aliases[key]
-
-
-def _coordination_value(value, default=16):
-    if isinstance(value, (list, tuple, np.ndarray)):
-        return max(int(v) for v in value) if len(value) > 0 else int(default)
-    return int(value) if value is not None else int(default)
-
-
-def _asarray3(value, default=None):
-    if value is None:
-        value = default if default is not None else [0.0, 0.0, 0.0]
-    return np.asarray(value, dtype=np.float64).reshape(3)
-
-
-def _field_scalar(field_numpy, name, index, default=0.0):
-    if field_numpy is None:
-        return default
-    try:
-        return float(field_numpy[name][index])
-    except (KeyError, IndexError, TypeError, ValueError):
-        return default
-
-
-def _property_value(properties, names, default):
-    for name in names:
-        if name in properties:
-            return float(properties[name])
-    return default
-
-
-def _euler_to_matrix(orientation):
-    if orientation is None or isinstance(orientation, str):
-        return np.eye(3)
-    theta = np.radians(np.asarray(orientation, dtype=np.float64).reshape(3))
-    cx, cy, cz = np.cos(theta)
-    sx, sy, sz = np.sin(theta)
-    rx = np.array([[1.0, 0.0, 0.0], [0.0, cx, -sx], [0.0, sx, cx]], dtype=np.float64)
-    ry = np.array([[cy, 0.0, sy], [0.0, 1.0, 0.0], [-sy, 0.0, cy]], dtype=np.float64)
-    rz = np.array([[cz, -sz, 0.0], [sz, cz, 0.0], [0.0, 0.0, 1.0]], dtype=np.float64)
-    return rz @ ry @ rx
-
-
-def _triangle_normal(a, b, c):
-    n = np.cross(b - a, c - a)
-    norm = np.linalg.norm(n)
-    if norm <= 1.0e-30:
-        return np.array([1.0, 0.0, 0.0], dtype=np.float64)
-    return n / norm
-
-
-def _read_affine_walls(scene, sims):
-    if scene.wall is None or int(scene.wallNum[0]) == 0:
-        return []
-    raw = scene.wall.to_numpy()
-    walls = []
-    count = int(scene.wallNum[0])
-    if sims.wall_type == 0:
-        for i in range(count):
-            if raw["active"][i] == 0:
-                continue
-            normal = np.asarray(raw["norm"][i], dtype=np.float64)
-            norm = np.linalg.norm(normal)
-            normal = normal / norm if norm > 0.0 else normal
-            walls.append(
-                {
-                    "type": "plane",
-                    "point": np.asarray(raw["point"][i], dtype=np.float64),
-                    "normal": normal,
-                    "materialID": int(raw["materialID"][i]),
-                }
-            )
-    elif sims.wall_type in (1, 2):
-        for i in range(count):
-            if raw["active"][i] == 0:
-                continue
-            walls.append(
-                {
-                    "type": "facet",
-                    "vertices": np.vstack((raw["vertice1"][i], raw["vertice2"][i], raw["vertice3"][i])).astype(
-                        np.float64
-                    ),
-                    "materialID": int(raw["materialID"][i]),
-                }
-            )
-    return walls
-
-
 @ti.data_oriented
 class TaichiAffineBodyOperator(object):
+
+    @staticmethod
+    def _normalize_affine_friction_mode(mode, error_type=RuntimeError):
+        key = str(mode).strip().replace("-", "_").lower()
+        aliases = {
+            "lagged": "lagged",
+            "lag": "lagged",
+            "fully_implicit": "fully_implicit",
+            "fullyimplicit": "fully_implicit",
+        }
+        if key not in aliases:
+            raise error_type("AffineBody friction_mode must be 'lagged' or " "'fully_implicit'")
+        return aliases[key]
+
+    @staticmethod
+    def _coordination_value(value, default=16):
+        if isinstance(value, (list, tuple, np.ndarray)):
+            return max(int(v) for v in value) if len(value) > 0 else int(default)
+        return int(value) if value is not None else int(default)
+
+    @staticmethod
+    def _property_value(properties, names, default):
+        for name in names:
+            if name in properties:
+                return float(properties[name])
+        return default
+
+    @staticmethod
+    def _triangle_normal(a, b, c):
+        n = np.cross(b - a, c - a)
+        norm = np.linalg.norm(n)
+        if norm <= 1.0e-30:
+            return np.array([1.0, 0.0, 0.0], dtype=np.float64)
+        return n / norm
+
+    @staticmethod
+    def _read_affine_walls(scene, sims):
+        if scene.wall is None or int(scene.wallNum[0]) == 0:
+            return []
+        raw = scene.wall.to_numpy()
+        walls = []
+        count = int(scene.wallNum[0])
+        if sims.wall_type == 0:
+            for i in range(count):
+                if raw["active"][i] == 0:
+                    continue
+                normal = np.asarray(raw["norm"][i], dtype=np.float64)
+                norm = np.linalg.norm(normal)
+                normal = normal / norm if norm > 0.0 else normal
+                walls.append(
+                    {
+                        "type": "plane",
+                        "point": np.asarray(raw["point"][i], dtype=np.float64),
+                        "normal": normal,
+                        "materialID": int(raw["materialID"][i]),
+                    }
+                )
+        elif sims.wall_type in (1, 2):
+            for i in range(count):
+                if raw["active"][i] == 0:
+                    continue
+                walls.append(
+                    {
+                        "type": "facet",
+                        "vertices": np.vstack((raw["vertice1"][i], raw["vertice2"][i], raw["vertice3"][i])).astype(
+                            np.float64
+                        ),
+                        "materialID": int(raw["materialID"][i]),
+                    }
+                )
+        return walls
+
     use_newmark = False
 
     def __init__(self, state, sims, scene, initialization_only=False):
@@ -232,7 +183,7 @@ class TaichiAffineBodyOperator(object):
         self.scale_device[None] = self.scale
         self.default_dhat = float(sims.affine_dhat)
         self.default_kappa = float(sims.affine_barrier_stiffness)
-        self.contact_model = normalize_ipc_model(getattr(sims, "affine_contact_model", "BarrierIPC"))
+        self.contact_model = Barrier.normalize_ipc_model(getattr(sims, "affine_contact_model", "BarrierIPC"))
         self.default_contact_damping_stiffness = float(sims.affine_contact_damping_stiffness)
         self.epsv = float(sims.affine_friction_epsv)
         self.hessian_shift = float(sims.affine_hessian_shift)
@@ -241,7 +192,7 @@ class TaichiAffineBodyOperator(object):
         # so its production Jacobian is exact by default; users may opt into
         # this separate regularization explicitly.
         self.fully_implicit_jacobian_shift = float(getattr(sims, "affine_fully_implicit_jacobian_shift", 0.0))
-        mode = _normalize_affine_friction_mode(
+        mode = TaichiAffineBodyOperator._normalize_affine_friction_mode(
             getattr(sims, "affine_friction_mode", "lagged"),
             error_type=ValueError,
         )
@@ -351,7 +302,7 @@ class TaichiAffineBodyOperator(object):
                 "AffineBody does not mix TriangleMesh and LevelSet contact " "representations in one solve"
             )
         self.levelset_contact = representations == {"LevelSet"}
-        walls = _read_affine_walls(scene, sims)
+        walls = TaichiAffineBodyOperator._read_affine_walls(scene, sims)
         self.wall_num = len(walls)
         self._build_contact_property_arrays(scene, walls)
         if self.levelset_contact:
@@ -606,7 +557,7 @@ class TaichiAffineBodyOperator(object):
             self.body_num * max(self.body_num - 1, 0) // 2,
             mesh_candidates,
         )
-        wall_coord = _coordination_value(sims.wall_coordination_number, self.wall_num)
+        wall_coord = TaichiAffineBodyOperator._coordination_value(sims.wall_coordination_number, self.wall_num)
         wall_candidates = self.vertex_num * min(max(wall_coord, 0), self.wall_num) if self.wall_num > 0 else 0
         # One projected body pair has 8 affine controls (36 upper blocks);
         # one point-wall stencil has 4 controls (10 upper blocks).
@@ -637,7 +588,7 @@ class TaichiAffineBodyOperator(object):
             int(self.neighbor.edge_candidate_capacity if ee_candidate_capacity is None else ee_candidate_capacity),
             0,
         )
-        wall_coord = _coordination_value(sims.wall_coordination_number, self.wall_num)
+        wall_coord = TaichiAffineBodyOperator._coordination_value(sims.wall_coordination_number, self.wall_num)
         wall_candidates = self.vertex_num * min(max(wall_coord, 0), self.wall_num) if self.wall_num > 0 else 0
 
         # Friction is emitted per four-site stencil (16 affine controls).
@@ -710,7 +661,7 @@ class TaichiAffineBodyOperator(object):
     def finalize_coo_assembly(self):
         used = int(self.coo_entry_count[None])
         if int(self.coo_overflow[None]) != 0 or used > self.max_coo_entries:
-            raise RuntimeError(
+            raise CapacityError(
                 "AffineBody COO triplet buffer overflow: "
                 f"used {used}, capacity {self.max_coo_entries}; increase the "
                 "body/wall coordination number or GT_AFFINE_MAX_COO_ENTRIES"
@@ -752,13 +703,13 @@ class TaichiAffineBodyOperator(object):
             if target is None:
                 continue
             dhat, kappa, contact_damping, mu = target
-            dhat[mat_i, mat_j] = _property_value(
+            dhat[mat_i, mat_j] = TaichiAffineBodyOperator._property_value(
                 properties, ("Dhat", "dhat", "BarrierDistance", "barrier_distance"), dhat[mat_i, mat_j]
             )
-            kappa[mat_i, mat_j] = _property_value(
+            kappa[mat_i, mat_j] = TaichiAffineBodyOperator._property_value(
                 properties, ("BarrierStiffness", "barrier_stiffness", "Kappa", "kappa"), kappa[mat_i, mat_j]
             )
-            contact_damping[mat_i, mat_j] = _property_value(
+            contact_damping[mat_i, mat_j] = TaichiAffineBodyOperator._property_value(
                 properties,
                 (
                     "ContactDampingStiffness",
@@ -770,7 +721,7 @@ class TaichiAffineBodyOperator(object):
                 ),
                 contact_damping[mat_i, mat_j],
             )
-            mu_value = _property_value(
+            mu_value = TaichiAffineBodyOperator._property_value(
                 properties, ("Friction", "friction", "StaticFriction", "static_friction"), mu[mat_i, mat_j]
             )
             mu[mat_i, mat_j] = mu_value
@@ -1204,12 +1155,12 @@ class TaichiAffineBodyOperator(object):
             else:
                 wall_type_np[wall_id] = 1
                 wall_v0_np[wall_id], wall_v1_np[wall_id], wall_v2_np[wall_id] = wall["vertices"]
-                wall_normal_np[wall_id] = _triangle_normal(
+                wall_normal_np[wall_id] = TaichiAffineBodyOperator._triangle_normal(
                     wall_v0_np[wall_id], wall_v1_np[wall_id], wall_v2_np[wall_id]
                 )
             wall_material_np[wall_id] = int(wall.get("materialID", 0))
             wall_prop = scene.affine_contact_properties.get((0, wall_material_np[wall_id], "particle-wall"), {})
-            wall_mu_np[wall_id] = _property_value(
+            wall_mu_np[wall_id] = TaichiAffineBodyOperator._property_value(
                 wall_prop, ("Friction", "friction", "StaticFriction", "static_friction"), 0.0
             )
         self.wall_type.from_numpy(wall_type_np)
@@ -1302,7 +1253,7 @@ class TaichiAffineBodyOperator(object):
             if count_only:
                 self.device_reserve_lagged_friction_pages()
         if int(self.friction_contact_overflow[0]) != 0:
-            raise RuntimeError(
+            raise CapacityError(
                 "Affine lagged-friction contact buffer overflow: "
                 f"used {int(self.friction_contact_count[0])}, "
                 f"capacity {self.friction_contact_capacity}"
@@ -1324,7 +1275,7 @@ class TaichiAffineBodyOperator(object):
     def finalize_contact_damping_assembly(self):
         used = int(self.contact_damping_count[None])
         if int(self.contact_damping_overflow[None]) != 0 or used > self.contact_damping_capacity:
-            raise RuntimeError(
+            raise CapacityError(
                 "Affine contact-damping triplet buffer overflow: "
                 f"used {used}, capacity {self.contact_damping_capacity}; "
                 "increase the body/wall coordination number"
@@ -2219,7 +2170,7 @@ class TaichiAffineBodyOperator(object):
             velocity = projection @ ((rel - self.friction_contact_hat_rel[contact]) / self.dt_device[None])
             force = (
                 self.friction_contact_coeff[contact]
-                * self._friction_f1_div_vbarnorm(velocity.norm(), self.epsv)
+                * ipc_friction_f1_over_speed(velocity.norm(), self.epsv)
                 * (projection @ velocity)
             )
             ti.atomic_add(self.friction_scale_vjp[None], -adjoint_rel.dot(force))
@@ -2473,10 +2424,6 @@ class TaichiAffineBodyOperator(object):
         return mu
 
     @ti.func
-    def _closest_point_triangle(self, p, a, b, c):
-        return closest_point_triangle(p, a, b, c)
-
-    @ti.func
     def _scatter_distance2_barrier_hessian_four(
         self,
         body0,
@@ -2555,7 +2502,7 @@ class TaichiAffineBodyOperator(object):
 
     @ti.func
     def _ipc_barrier_gap(self, gap, active_gap, kappa):
-        energy, gradient, hessian = ipc_toolkit_barrier_distance_terms(gap, active_gap, kappa)
+        energy, gradient, hessian = ipc_barrier_distance_terms(gap, active_gap, kappa)
         # Unlike an unsigned point/triangle distance, a level-set or plane
         # gap is signed.  Squaring a negative gap would otherwise make an
         # interpenetrating trial look feasible to the IPC line search.
@@ -2565,15 +2512,11 @@ class TaichiAffineBodyOperator(object):
 
     @ti.func
     def _barrier_distance2(self, dist2):
-        energy, db, ddb = self._ipc_barrier_distance2(dist2, self.dhat * self.dhat, self.kappa)
+        energy, db, ddb = ipc_barrier_distance2_terms(dist2, self.dhat * self.dhat, self.kappa)
         energy *= self.scale_device[None]
         db *= self.scale_device[None]
         ddb *= self.scale_device[None]
         return energy, db, ddb
-
-    @ti.func
-    def _ipc_barrier_distance2(self, dist2, active_gap2, kappa):
-        return ipc_toolkit_barrier_distance2_terms(dist2, active_gap2, kappa)
 
     @ti.func
     def _point_triangle_tangent(self, p, t0, t1, t2, dtype):
@@ -3072,7 +3015,7 @@ class TaichiAffineBodyOperator(object):
         active_gap2 = dhat * dhat
         if pair_scale > 0.0 and dist2 < active_gap2:
             base_coeff = pair_scale * 0.25 * (self.edge_area[edge_i] + self.edge_area[edge_j])
-            energy, db, ddb = self._ipc_barrier_distance2(dist2, active_gap2, kappa)
+            energy, db, ddb = ipc_barrier_distance2_terms(dist2, active_gap2, kappa)
             eps_x = edge_edge_mollifier_threshold(
                 self.rest_x[ei[0]], self.rest_x[ei[1]], self.rest_x[ej[0]], self.rest_x[ej[1]]
             )
@@ -3178,20 +3121,12 @@ class TaichiAffineBodyOperator(object):
         self._scatter_hessian_block(body_i, vertex_i, local_i, body_j, vertex_j, local_j, H, matrix_target)
 
     @ti.func
-    def _friction_f0(self, vbarnorm, epsv, hat_h):
-        return ipc_friction_f0(vbarnorm, epsv, hat_h)
-
-    @ti.func
-    def _friction_f1_div_vbarnorm(self, vbarnorm, epsv):
-        return ipc_friction_f1_over_speed(vbarnorm, epsv)
-
-    @ti.func
     def _lagged_friction_hessian(self, rel, hat_rel, normal, coeff, majorize: ti.template()):
         unit_normal = normal / normal.norm()
         projection = ti.Matrix.identity(float, 3) - unit_normal.outer_product(unit_normal)
         velocity = projection @ ((rel - hat_rel) / self.dt_device[None])
         speed = velocity.norm()
-        f1 = self._friction_f1_div_vbarnorm(speed, self.epsv)
+        f1 = ipc_friction_f1_over_speed(speed, self.epsv)
         axis = ti.Vector([1.0, 0.0, 0.0])
         if ti.abs(unit_normal[0]) >= 0.9:
             axis = ti.Vector([0.0, 1.0, 0.0])
@@ -3273,9 +3208,9 @@ class TaichiAffineBodyOperator(object):
             speed = tangential_velocity.norm()
             ti.atomic_add(
                 self.energy[None],
-                coefficient * self._friction_f0(speed, self.epsv, self.dt_device[None]),
+                coefficient * ipc_friction_f0(speed, self.epsv, self.dt_device[None]),
             )
-            f1_over_speed = self._friction_f1_div_vbarnorm(speed, self.epsv)
+            f1_over_speed = ipc_friction_f1_over_speed(speed, self.epsv)
             local_gradient = coefficient * f1_over_speed * (projector @ tangential_velocity)
             self._scatter_levelset_friction_gradient(
                 source_body,
@@ -3294,12 +3229,6 @@ class TaichiAffineBodyOperator(object):
                     local_hessian,
                     matrix_target,
                 )
-
-    @ti.func
-    def _scatter_friction_pair(
-        self, body_i, vertex_i, local_i, body_j, vertex_j, local_j, H, matrix_target: ti.template()
-    ):
-        self._scatter_hessian_block(body_i, vertex_i, local_i, body_j, vertex_j, local_j, H, matrix_target)
 
     @ti.func
     def _store_lagged_friction_contact(
@@ -3390,7 +3319,7 @@ class TaichiAffineBodyOperator(object):
                     )
                     distance = ti.sqrt(ti.max(dist2, 1.0e-30))
                     normal_force = 0.0
-                    unused_energy, db, unused_hessian = self._ipc_barrier_distance2(
+                    unused_energy, db, unused_hessian = ipc_barrier_distance2_terms(
                         dist2, dhat * dhat, self._pp_kappa(body_i, body_j)
                     )
                     normal_force = ti.max(-2.0 * db * distance, 0.0)
@@ -3433,7 +3362,7 @@ class TaichiAffineBodyOperator(object):
                     )
                     distance = ti.sqrt(ti.max(dist2, 1.0e-30))
                     normal_force = 0.0
-                    unused_energy, db, unused_hessian = self._ipc_barrier_distance2(
+                    unused_energy, db, unused_hessian = ipc_barrier_distance2_terms(
                         dist2, dhat * dhat, self._pp_kappa(body_i, body_j)
                     )
                     normal_force = ti.max(-2.0 * db * distance, 0.0)
@@ -3484,7 +3413,7 @@ class TaichiAffineBodyOperator(object):
                             dtype,
                         )
                         distance = ti.sqrt(ti.max(dist2, 1.0e-30))
-                        unused_energy, db, unused_hessian = self._ipc_barrier_distance2(
+                        unused_energy, db, unused_hessian = ipc_barrier_distance2_terms(
                             dist2,
                             dhat * dhat,
                             self._pw_kappa(body_i, wall_id),
@@ -3682,9 +3611,9 @@ class TaichiAffineBodyOperator(object):
             vbarnorm = vbar.norm()
             ti.atomic_add(
                 self.energy[None],
-                coeff * self._friction_f0(vbarnorm, self.epsv, self.dt_device[None]),
+                coeff * ipc_friction_f0(vbarnorm, self.epsv, self.dt_device[None]),
             )
-            f1 = self._friction_f1_div_vbarnorm(vbarnorm, self.epsv)
+            f1 = ipc_friction_f1_over_speed(vbarnorm, self.epsv)
             grad_f = coeff * f1 * (P @ vbar)
             if w0 != 0.0:
                 self._scatter_gradient_vec(body0, vertex0, w0, grad_f)
@@ -3697,37 +3626,37 @@ class TaichiAffineBodyOperator(object):
             if ti.static(need_matrix):
                 H = self._lagged_friction_hessian(rel, hat_rel, normal, coeff, majorize)
                 if w0 != 0.0:
-                    self._scatter_friction_pair(body0, vertex0, w0, body0, vertex0, w0, H, matrix_target)
+                    self._scatter_hessian_block(body0, vertex0, w0, body0, vertex0, w0, H, matrix_target)
                     if w1 != 0.0:
-                        self._scatter_friction_pair(body0, vertex0, w0, body1, vertex1, w1, H, matrix_target)
+                        self._scatter_hessian_block(body0, vertex0, w0, body1, vertex1, w1, H, matrix_target)
                     if w2 != 0.0:
-                        self._scatter_friction_pair(body0, vertex0, w0, body2, vertex2, w2, H, matrix_target)
+                        self._scatter_hessian_block(body0, vertex0, w0, body2, vertex2, w2, H, matrix_target)
                     if w3 != 0.0:
-                        self._scatter_friction_pair(body0, vertex0, w0, body3, vertex3, w3, H, matrix_target)
+                        self._scatter_hessian_block(body0, vertex0, w0, body3, vertex3, w3, H, matrix_target)
                 if w1 != 0.0:
                     if w0 != 0.0:
-                        self._scatter_friction_pair(body1, vertex1, w1, body0, vertex0, w0, H, matrix_target)
-                    self._scatter_friction_pair(body1, vertex1, w1, body1, vertex1, w1, H, matrix_target)
+                        self._scatter_hessian_block(body1, vertex1, w1, body0, vertex0, w0, H, matrix_target)
+                    self._scatter_hessian_block(body1, vertex1, w1, body1, vertex1, w1, H, matrix_target)
                     if w2 != 0.0:
-                        self._scatter_friction_pair(body1, vertex1, w1, body2, vertex2, w2, H, matrix_target)
+                        self._scatter_hessian_block(body1, vertex1, w1, body2, vertex2, w2, H, matrix_target)
                     if w3 != 0.0:
-                        self._scatter_friction_pair(body1, vertex1, w1, body3, vertex3, w3, H, matrix_target)
+                        self._scatter_hessian_block(body1, vertex1, w1, body3, vertex3, w3, H, matrix_target)
                 if w2 != 0.0:
                     if w0 != 0.0:
-                        self._scatter_friction_pair(body2, vertex2, w2, body0, vertex0, w0, H, matrix_target)
+                        self._scatter_hessian_block(body2, vertex2, w2, body0, vertex0, w0, H, matrix_target)
                     if w1 != 0.0:
-                        self._scatter_friction_pair(body2, vertex2, w2, body1, vertex1, w1, H, matrix_target)
-                    self._scatter_friction_pair(body2, vertex2, w2, body2, vertex2, w2, H, matrix_target)
+                        self._scatter_hessian_block(body2, vertex2, w2, body1, vertex1, w1, H, matrix_target)
+                    self._scatter_hessian_block(body2, vertex2, w2, body2, vertex2, w2, H, matrix_target)
                     if w3 != 0.0:
-                        self._scatter_friction_pair(body2, vertex2, w2, body3, vertex3, w3, H, matrix_target)
+                        self._scatter_hessian_block(body2, vertex2, w2, body3, vertex3, w3, H, matrix_target)
                 if w3 != 0.0:
                     if w0 != 0.0:
-                        self._scatter_friction_pair(body3, vertex3, w3, body0, vertex0, w0, H, matrix_target)
+                        self._scatter_hessian_block(body3, vertex3, w3, body0, vertex0, w0, H, matrix_target)
                     if w1 != 0.0:
-                        self._scatter_friction_pair(body3, vertex3, w3, body1, vertex1, w1, H, matrix_target)
+                        self._scatter_hessian_block(body3, vertex3, w3, body1, vertex1, w1, H, matrix_target)
                     if w2 != 0.0:
-                        self._scatter_friction_pair(body3, vertex3, w3, body2, vertex2, w2, H, matrix_target)
-                    self._scatter_friction_pair(body3, vertex3, w3, body3, vertex3, w3, H, matrix_target)
+                        self._scatter_hessian_block(body3, vertex3, w3, body2, vertex2, w2, H, matrix_target)
+                    self._scatter_hessian_block(body3, vertex3, w3, body3, vertex3, w3, H, matrix_target)
 
     @ti.func
     def _resolved_fully_implicit_friction(self, pair_mu):
@@ -4003,7 +3932,7 @@ class TaichiAffineBodyOperator(object):
                     dist2, grad_d, hess_d, unused_type = point_triangle_distance_grad_hess(p, a, b, c)
                     dhat = self._pp_dhat(body_i, body_j)
                     if dist2 > 0.0 and dist2 < dhat * dhat:
-                        unused_energy, db, ddb = self._ipc_barrier_distance2(
+                        unused_energy, db, ddb = ipc_barrier_distance2_terms(
                             dist2,
                             dhat * dhat,
                             self._pp_kappa(body_i, body_j),
@@ -4042,7 +3971,7 @@ class TaichiAffineBodyOperator(object):
                     dist2, grad_d, unused_type = point_triangle_distance_grad(p, a, b, c)
                     dhat = self._pp_dhat(body_i, body_j)
                     if dist2 > 0.0 and dist2 < dhat * dhat:
-                        unused_energy, db, unused_ddb = self._ipc_barrier_distance2(
+                        unused_energy, db, unused_ddb = ipc_barrier_distance2_terms(
                             dist2,
                             dhat * dhat,
                             self._pp_kappa(body_i, body_j),
@@ -4093,7 +4022,7 @@ class TaichiAffineBodyOperator(object):
                     dist2, grad_d, hess_d, unused_type = edge_edge_distance_grad_hess(p0, p1, q0, q1)
                     dhat = self._pp_dhat(body_i, body_j)
                     if dist2 > 0.0 and dist2 < dhat * dhat:
-                        unused_energy, db, ddb = self._ipc_barrier_distance2(
+                        unused_energy, db, ddb = ipc_barrier_distance2_terms(
                             dist2,
                             dhat * dhat,
                             self._pp_kappa(body_i, body_j),
@@ -4139,7 +4068,7 @@ class TaichiAffineBodyOperator(object):
                     dist2, grad_d, unused_type = edge_edge_distance_grad(p0, p1, q0, q1)
                     dhat = self._pp_dhat(body_i, body_j)
                     if dist2 > 0.0 and dist2 < dhat * dhat:
-                        unused_energy, db, unused_ddb = self._ipc_barrier_distance2(
+                        unused_energy, db, unused_ddb = ipc_barrier_distance2_terms(
                             dist2,
                             dhat * dhat,
                             self._pp_kappa(body_i, body_j),
@@ -4223,7 +4152,7 @@ class TaichiAffineBodyOperator(object):
                 if ti.static(need_matrix):
                     dist2, grad_d, hess_d, unused_type = point_triangle_distance_grad_hess(p, a, b, c)
                     if dist2 > 0.0 and dist2 < dhat * dhat:
-                        unused_energy, db, ddb = self._ipc_barrier_distance2(dist2, dhat * dhat, kappa)
+                        unused_energy, db, ddb = ipc_barrier_distance2_terms(dist2, dhat * dhat, kappa)
                         positions = ti.Vector.zero(float, 12)
                         hats = ti.Vector.zero(float, 12)
                         for component in ti.static(range(3)):
@@ -4276,7 +4205,7 @@ class TaichiAffineBodyOperator(object):
                 else:
                     dist2, grad_d, unused_type = point_triangle_distance_grad(p, a, b, c)
                     if dist2 > 0.0 and dist2 < dhat * dhat:
-                        unused_energy, db, unused_ddb = self._ipc_barrier_distance2(dist2, dhat * dhat, kappa)
+                        unused_energy, db, unused_ddb = ipc_barrier_distance2_terms(dist2, dhat * dhat, kappa)
                         positions = ti.Vector.zero(float, 12)
                         hats = ti.Vector.zero(float, 12)
                         for component in ti.static(range(3)):
@@ -4358,7 +4287,7 @@ class TaichiAffineBodyOperator(object):
                 self.coo_overflow.fill(0)
                 storage_target = MATRIX_COO
             else:
-                raise RuntimeError("Affine contact damping needs a bound COO or HashTriplet " "workspace")
+                raise SimulationStateError("Affine contact damping needs a bound COO or HashTriplet " "workspace")
         tick = time.time()
         self.body_pair_point_type_count.fill(0)
         self.body_pair_edge_type_count.fill(0)
@@ -4579,7 +4508,7 @@ class TaichiAffineBodyOperator(object):
                         )
                     dhat = self._pp_dhat(point_body, face_body)
                     if pair_scale > 0.0 and dist2 < dhat * dhat:
-                        unused_energy, db, ddb = self._ipc_barrier_distance2(
+                        unused_energy, db, ddb = ipc_barrier_distance2_terms(
                             dist2, dhat * dhat, self._pp_kappa(point_body, face_body)
                         )
                         bodies = ti.Vector([point_body, face_body, face_body, face_body])
@@ -4671,7 +4600,7 @@ class TaichiAffineBodyOperator(object):
                         )
                     dhat = self._pp_dhat(edge_body_i, edge_body_j)
                     if pair_scale > 0.0 and dist2 < dhat * dhat:
-                        energy, db, ddb = self._ipc_barrier_distance2(
+                        energy, db, ddb = ipc_barrier_distance2_terms(
                             dist2, dhat * dhat, self._pp_kappa(edge_body_i, edge_body_j)
                         )
                         eps_x = edge_edge_mollifier_threshold(
@@ -4757,7 +4686,7 @@ class TaichiAffineBodyOperator(object):
                     active_gap2 = dhat * dhat
                     if dist2 < active_gap2:
                         base_coeff = self.scale_device[None] * 0.25 * self.node_area[vertex_id]
-                        energy, db, ddb = self._ipc_barrier_distance2(dist2, active_gap2, kappa)
+                        energy, db, ddb = ipc_barrier_distance2_terms(dist2, active_gap2, kappa)
                         ti.atomic_add(self.energy[None], base_coeff * energy)
                         local_grad = ti.Vector.zero(float, 12)
                         for i in range(12):
@@ -4780,7 +4709,7 @@ class TaichiAffineBodyOperator(object):
                     active_gap2 = dhat * dhat
                     if dist2 < active_gap2:
                         base_coeff = self.scale_device[None] * 0.25 * self.node_area[vertex_id]
-                        energy, db, unused_ddb = self._ipc_barrier_distance2(dist2, active_gap2, kappa)
+                        energy, db, unused_ddb = ipc_barrier_distance2_terms(dist2, active_gap2, kappa)
                         ti.atomic_add(self.energy[None], base_coeff * energy)
                         local_grad = ti.Vector.zero(float, 12)
                         for i in range(12):
@@ -4813,7 +4742,7 @@ class TaichiAffineBodyOperator(object):
                 active_gap2 = dhat * dhat
                 if damping_scale > 0.0 and dist2 < active_gap2:
                     base_coeff = damping_scale * 0.25 * self.node_area[vertex_id]
-                    energy, db, ddb = self._ipc_barrier_distance2(dist2, active_gap2, kappa)
+                    energy, db, ddb = ipc_barrier_distance2_terms(dist2, active_gap2, kappa)
                     bodies = ti.Vector([body_i, body_j, body_j, body_j])
                     vertices = ti.Vector([vertex_id, face[0], face[1], face[2]])
                     self._scatter_local_barrier_hessian(
@@ -4846,7 +4775,7 @@ class TaichiAffineBodyOperator(object):
                 active_gap2 = dhat * dhat
                 if dist2 < active_gap2:
                     base_coeff = self.scale_device[None] * 0.25 * (self.edge_area[edge_i] + self.edge_area[edge_j])
-                    energy, db, ddb = self._ipc_barrier_distance2(dist2, active_gap2, kappa)
+                    energy, db, ddb = ipc_barrier_distance2_terms(dist2, active_gap2, kappa)
                     eps_x = edge_edge_mollifier_threshold(
                         self.rest_x[ei[0]], self.rest_x[ei[1]], self.rest_x[ej[0]], self.rest_x[ej[1]]
                     )
@@ -4898,7 +4827,7 @@ class TaichiAffineBodyOperator(object):
                     )
                 if pair_scale > 0.0 and dist2 < active_gap2:
                     base_coeff = pair_scale * 0.25 * (self.edge_area[edge_i] + self.edge_area[edge_j])
-                    energy, db, ddb = self._ipc_barrier_distance2(dist2, active_gap2, self._pp_kappa(body_i, body_j))
+                    energy, db, ddb = ipc_barrier_distance2_terms(dist2, active_gap2, self._pp_kappa(body_i, body_j))
                     eps_x = edge_edge_mollifier_threshold(
                         self.rest_x[ei[0]], self.rest_x[ei[1]], self.rest_x[ej[0]], self.rest_x[ej[1]]
                     )
@@ -5023,8 +4952,8 @@ class TaichiAffineBodyOperator(object):
                         )
                     elif ti.static(edge_type == 2):
                         dist2 = point_line_distance2(p0, q0, q1)
-                        grad_d = g_PE3D(p0, q0, q1)
-                        hess_d = H_PE3D(p0, q0, q1)
+                        grad_d = g_pe3d(p0, q0, q1)
+                        hess_d = h_pe3d(p0, q0, q1)
                         ids = ti.Vector([0, 2, 3])
                         self._assemble_edge_barrier_hessian_compact(
                             edge_i,
@@ -5093,8 +5022,8 @@ class TaichiAffineBodyOperator(object):
                         )
                     elif ti.static(edge_type == 5):
                         dist2 = point_line_distance2(p1, q0, q1)
-                        grad_d = g_PE3D(p1, q0, q1)
-                        hess_d = H_PE3D(p1, q0, q1)
+                        grad_d = g_pe3d(p1, q0, q1)
+                        hess_d = h_pe3d(p1, q0, q1)
                         ids = ti.Vector([1, 2, 3])
                         self._assemble_edge_barrier_hessian_compact(
                             edge_i,
@@ -5117,8 +5046,8 @@ class TaichiAffineBodyOperator(object):
                         )
                     elif ti.static(edge_type == 6):
                         dist2 = point_line_distance2(q0, p0, p1)
-                        grad_d = g_PE3D(q0, p0, p1)
-                        hess_d = H_PE3D(q0, p0, p1)
+                        grad_d = g_pe3d(q0, p0, p1)
+                        hess_d = h_pe3d(q0, p0, p1)
                         ids = ti.Vector([2, 0, 1])
                         self._assemble_edge_barrier_hessian_compact(
                             edge_i,
@@ -5141,8 +5070,8 @@ class TaichiAffineBodyOperator(object):
                         )
                     elif ti.static(edge_type == 7):
                         dist2 = point_line_distance2(q1, p0, p1)
-                        grad_d = g_PE3D(q1, p0, p1)
-                        hess_d = H_PE3D(q1, p0, p1)
+                        grad_d = g_pe3d(q1, p0, p1)
+                        hess_d = h_pe3d(q1, p0, p1)
                         ids = ti.Vector([3, 0, 1])
                         self._assemble_edge_barrier_hessian_compact(
                             edge_i,
@@ -5165,8 +5094,8 @@ class TaichiAffineBodyOperator(object):
                         )
                     else:
                         dist2 = line_line_distance2(p0, p1, q0, q1)
-                        grad_d = g_EE(p0, p1, q0, q1)
-                        hess_d = H_EE(p0, p1, q0, q1)
+                        grad_d = g_ee(p0, p1, q0, q1)
+                        hess_d = h_ee(p0, p1, q0, q1)
                         ids = ti.Vector([0, 1, 2, 3])
                         self._assemble_edge_barrier_hessian_compact(
                             edge_i,
@@ -5230,7 +5159,7 @@ class TaichiAffineBodyOperator(object):
                         mollifier = edge_edge_mollifier(p0, p1, q0, q1, eps_x)
                         if mollifier < 1.0:
                             base_coeff = pair_scale * 0.25 * (self.edge_area[edge_i] + self.edge_area[edge_j])
-                            energy, db, ddb = self._ipc_barrier_distance2(dist2, active_gap2, kappa)
+                            energy, db, ddb = ipc_barrier_distance2_terms(dist2, active_gap2, kappa)
                             grad_m, hess_m = edge_edge_mollifier_grad_hess(p0, p1, q0, q1, eps_x)
                             local_hessian = ti.Matrix.zero(float, 12, 12)
                             for row, column in ti.ndrange(12, 12):
@@ -5271,7 +5200,7 @@ class TaichiAffineBodyOperator(object):
                 active_gap2 = dhat * dhat
                 if damping_scale > 0.0 and dist2 < active_gap2:
                     coeff = damping_scale * self.node_area[vertex_id]
-                    energy, db, ddb = self._ipc_barrier_distance2(dist2, active_gap2, kappa)
+                    energy, db, ddb = ipc_barrier_distance2_terms(dist2, active_gap2, kappa)
                     point_hess = ti.Matrix.zero(float, 3, 3)
                     for di in ti.static(range(3)):
                         for dj in ti.static(range(3)):
@@ -5506,7 +5435,7 @@ class TaichiAffineBodyOperator(object):
                 normal = boundary.normal[wall]
                 derivative = ti.Vector([gradient12[i] for i in ti.static(range(3))])
                 first, second = 0.0, 0.0
-                unused_energy, first, second = self._ipc_barrier_distance2(
+                unused_energy, first, second = ipc_barrier_distance2_terms(
                     distance2, dhat * dhat, self._pw_kappa(body, wall)
                 )
                 area = self.node_area[vertex]
@@ -5746,6 +5675,79 @@ class TaichiAffineBodyOperator(object):
     def device_add_translation_gravity_vjp(self):
         self.gravity_vjp[None] += self.dt_device[None] * self.translation_correction_vjp[None]
 
+    @ti.func
+    def _mesh_friction_cache_vjp(self, contact, cache_positions, edge_contact: ti.template()):
+        vertices = self.friction_contact_vertices[contact]
+        bodies = self.friction_contact_bodies[contact]
+        distance2 = 0.0
+        gradient = ti.Vector.zero(float, 12)
+        hessian = ti.Matrix.zero(float, 12, 12)
+        if ti.static(edge_contact):
+            distance2, gradient, hessian, _ = edge_edge_distance_grad_hess(
+                cache_positions[vertices[0]],
+                cache_positions[vertices[1]],
+                cache_positions[vertices[2]],
+                cache_positions[vertices[3]],
+            )
+        else:
+            distance2, gradient, hessian, _ = point_triangle_distance_grad_hess(
+                cache_positions[vertices[0]],
+                cache_positions[vertices[1]],
+                cache_positions[vertices[2]],
+                cache_positions[vertices[3]],
+            )
+        positions = ti.Vector.zero(float, 12)
+        references = ti.Vector.zero(float, 12)
+        adjoint = ti.Vector.zero(float, 12)
+        for site, component in ti.ndrange(4, 3):
+            positions[3 * site + component] = self.x[vertices[site]][component]
+            references[3 * site + component] = self.hat_x[vertices[site]][component]
+            for control in range(4):
+                adjoint[3 * site + component] += (
+                    self.basis[vertices[site], control] * self.linear_x[12 * bodies[site] + 3 * control + component]
+                )
+        dhat = self._pp_dhat(bodies[0], bodies[3])
+        kappa = self._pp_kappa(bodies[0], bodies[3])
+        _, first, _ = ipc_barrier_distance2_terms(distance2, dhat * dhat, kappa)
+        normal_force = -2.0 * ti.sqrt(ti.max(distance2, 1e-300)) * first
+        coefficient = self.friction_scale[0] * self.friction_contact_coeff[contact]
+        coefficient_gradient = ti.Vector.zero(float, 12)
+        if normal_force > 0.0:
+            coefficient_gradient = (
+                coefficient
+                / normal_force
+                * ipc_barrier_force_magnitude_gradient(distance2, gradient, dhat, 0.0, kappa, 0)
+            )
+        return -ipc_lagged_friction_cache_vjp(
+            positions,
+            references,
+            adjoint,
+            distance2,
+            gradient,
+            hessian,
+            coefficient,
+            coefficient_gradient,
+            self.dt_device[None],
+            self.epsv,
+            edge_contact,
+        )
+
+    @ti.kernel
+    def device_propagate_mesh_friction_cache(self, cache_positions: ti.template(), rhs: ti.template()):
+        for contact in range(self.friction_contact_count[0]):
+            bodies = self.friction_contact_bodies[contact]
+            vertices = self.friction_contact_vertices[contact]
+            value = ti.Vector.zero(float, 12)
+            if bodies[0] == bodies[1]:
+                value = self._mesh_friction_cache_vjp(contact, cache_positions, True)
+            else:
+                value = self._mesh_friction_cache_vjp(contact, cache_positions, False)
+            for site, control, component in ti.ndrange(4, 4, 3):
+                ti.atomic_add(
+                    rhs[12 * bodies[site] + 3 * control + component],
+                    self.basis[vertices[site], control] * value[3 * site + component],
+                )
+
     def sync_output_state(self):
         """Download an accepted snapshot only for recorder/user output."""
         shape = (self.body_num, 4, 3)
@@ -5907,7 +5909,7 @@ class TaichiAffineBodyOperator(object):
 
     def matvec(self, x, Ax):
         if self.coo_matrix is None:
-            raise RuntimeError("Affine COO matrix has not been bound.")
+            raise SimulationStateError("Affine COO matrix has not been bound.")
         self.coo_matrix.linear_operator.matvec(x, Ax)
 
     @ti.kernel
@@ -5962,7 +5964,7 @@ class TaichiAffineBodyOperator(object):
                         wz = (1.0 - fraction[2]) if k == 0 else fraction[2]
                         dwz = -1.0 if k == 0 else 1.0
                         node = (
-                            linearize3D(
+                            linearize3d(
                                 base[0] + i,
                                 base[1] + j,
                                 base[2] + k,
@@ -6522,7 +6524,7 @@ class TaichiAffineBodyOperator(object):
                 delta = gap * normal
                 active = gap < dhat
             else:
-                closest, bary = self._closest_point_triangle(
+                closest, bary = closest_point_triangle(
                     p, self.wall_v0[wall_id], self.wall_v1[wall_id], self.wall_v2[wall_id]
                 )
                 delta = p - closest
@@ -6550,7 +6552,7 @@ class TaichiAffineBodyOperator(object):
                         )
                         dist = ti.sqrt(ti.max(dist2, 1.0e-30))
                         coeff = self.scale_device[None] * self.node_area[vertex_id]
-                        energy, db, ddb = self._ipc_barrier_distance2(dist2, dhat * dhat, kappa)
+                        energy, db, ddb = ipc_barrier_distance2_terms(dist2, dhat * dhat, kappa)
                         ti.atomic_add(self.energy[None], coeff * energy)
                         point_grad = ti.Vector.zero(float, 3)
                         for di in ti.static(range(3)):
@@ -6581,7 +6583,7 @@ class TaichiAffineBodyOperator(object):
                         )
                         dist = ti.sqrt(ti.max(dist2, 1.0e-30))
                         coeff = self.scale_device[None] * self.node_area[vertex_id]
-                        energy, db, unused_ddb = self._ipc_barrier_distance2(dist2, dhat * dhat, kappa)
+                        energy, db, unused_ddb = ipc_barrier_distance2_terms(dist2, dhat * dhat, kappa)
                         ti.atomic_add(self.energy[None], coeff * energy)
                         point_grad = ti.Vector.zero(float, 3)
                         for di in ti.static(range(3)):
@@ -6732,16 +6734,3 @@ class TaichiAffineBodyOperator(object):
                         max_iteration,
                     )
                 ti.atomic_min(self.ccd_alpha[None], ti.max(0.0, ti.min(1.0, alpha)))
-
-
-__all__ = [
-    "MATRIX_CONTACT_DAMPING",
-    "MATRIX_COO",
-    "MATRIX_HASH_TRIPLET",
-    "TaichiAffineBodyOperator",
-    "_asarray3",
-    "_euler_to_matrix",
-    "_field_scalar",
-    "_normalize_affine_assemble_type",
-    "_normalize_affine_friction_mode",
-]

@@ -453,6 +453,7 @@ def test_direct_mpm_affine_adjoint_reassembles_exact_unshifted_jacobian():
     system.rhs = Field()
     system.correction = Field()
     system.matrix = Matrix()
+    system.ipc = SimpleNamespace(adjoint_trajectory_record=-1)
     system.mpm = SimpleNamespace(
         active_dof=3,
         linear_solver_tolerance=1.0e-10,
@@ -463,6 +464,7 @@ def test_direct_mpm_affine_adjoint_reassembles_exact_unshifted_jacobian():
     system.restore_lagged_friction_for_adjoint_device = lambda: events.append("restore")
     system.assemble_linearization_device = lambda **kwargs: (events.append(kwargs) or {"active_mpm_dof": 3})
     system._scatter_adjoint = lambda active: events.append(("scatter", active))
+    system._mask_adjoint_constraints = lambda active: events.append(("mask", active))
 
     system.solve_adjoint_device(np.ones(15), exact_plastic_tangent=True)
 
@@ -472,7 +474,9 @@ def test_direct_mpm_affine_adjoint_reassembles_exact_unshifted_jacobian():
             "project_spd": False,
             "exact_plastic_tangent": True,
             "solver_shift": False,
+            "rebuild_mpm_contacts": True,
         },
+        ("mask", 15),
         ("scatter", 3),
     ]
     assert system.matrix.solver == "PCG"
@@ -804,7 +808,8 @@ def test_fempm_residual_metric_excludes_dirichlet_reactions(taichi_runtime, monk
     assert engine.constraint_velocity_inf_norm[None] == pytest.approx(0.2)
 
 
-def test_direct_affine_nonsymmetric_dirichlet_elimination(taichi_runtime):
+@pytest.mark.parametrize("trial_value", [0.0, 0.1])
+def test_direct_affine_nonsymmetric_dirichlet_elimination(taichi_runtime, trial_value):
     import taichi as ti
 
     system = object.__new__(DirectAffineIPCSystem)
@@ -837,9 +842,11 @@ def test_direct_affine_nonsymmetric_dirichlet_elimination(taichi_runtime):
     for k, (i, j) in enumerate(pairs):
         system.matrix.non_diag.blockI[k], system.matrix.non_diag.blockJ[k] = i, j
         system.matrix.non_diag.blockH[k] = dense[3 * i : 3 * i + 3, 3 * j : 3 * j + 3].ravel()
-    system._eliminate_mpm_dirichlet(3)
-    expected_rhs = rhs - dense[:, 3] * 0.25
-    expected_rhs[3] = 0.25
+    trial = ti.field(ti.f64, shape=6)
+    trial[0] = trial_value
+    system._eliminate_mpm_dirichlet(3, trial)
+    expected_rhs = rhs - dense[:, 3] * (0.25 - trial_value)
+    expected_rhs[3] = 0.25 - trial_value
     np.testing.assert_allclose(system.rhs.to_numpy(), expected_rhs)
     actual = np.zeros((9, 9))
     for i, block in enumerate(system.matrix.diag.to_numpy()):
@@ -884,6 +891,36 @@ def test_direct_affine_force_convergence_still_finishes_constraints(pending):
     assert len(state["updates"]) == 1
     if pending == "dirichlet":
         assert state["updates"][0]["merit_slope"] < 0.0
+
+
+@pytest.mark.parametrize("physical", [False, True])
+@pytest.mark.parametrize("requested", [-1, 4])
+def test_direct_affine_positive_friction_count_is_exact(physical, requested):
+    system = object.__new__(DirectAffineIPCSystem)
+    system.nonassociated_newton, system.inexact_newton = physical, False
+    system.force_atol, system.force_rtol = 1e-10, 1e-8
+    system.mpm = SimpleNamespace(dt=0.001, active_dof=3, begin_lagged_material_state=lambda: None)
+    records = []
+    system.begin_step_device = lambda _dt: None
+    system._record_friction_iterate = records.append
+    system.assemble_linearization_device = lambda **_kwargs: {"active_mpm_dof": 3}
+    system.residual_metrics_device = lambda _dof: (0.0, 0.0)
+    system.refresh_lagged_friction_device = lambda: None
+    system.total_energy_device = lambda: 0.0
+    system.solve_direction_device = lambda _dof: {"iterations": 0}
+    system.direction_inf_norm = lambda _dof, velocity=False: 0.0
+    sims = SimpleNamespace(
+        affine_friction_iterations=requested,
+        affine_friction_max_iterations=4,
+        affine_max_newton_iteration=1,
+        affine_newton_tolerance=1e-7,
+        affine_friction_tolerance=1e-7,
+    )
+    result = system._solve_lagged_equilibrium_device(sims)
+    expected = 4 if requested > 0 else 1
+    assert result["friction_converged"]
+    assert result["friction_iterations"] == expected
+    assert records == list(range(expected + 1))
 
 
 def test_classical_fem_reduced_capacity_uses_unique_mesh_edges():

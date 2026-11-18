@@ -1,8 +1,10 @@
 """Planar point--edge culling on the shared dynamic linked-cell/BVH backends."""
 
+from src.utils.errors import CapacityError
+
 import taichi as ti
 
-from src.fem.contact.LinkedCellBroadPhase import _grown_capacity
+from src.fem.contact.LinkedCellBroadPhase import DynamicLinkedCellBroadPhase
 from src.physics_model.contact_model.ipc.ContactDistance import (
     point_edge_distance2,
 )
@@ -33,10 +35,10 @@ class FEMPMPlanarCulling:
 
     def _resize(self, raw_count):
         if self.fixed_capacity and raw_count > self.capacity:
-            raise RuntimeError(
+            raise CapacityError(
                 "point-edge culling capacity is too small: " f"need {raw_count}, allocated {self.capacity}"
             )
-        capacity = _grown_capacity(raw_count, self.capacity)
+        capacity = DynamicLinkedCellBroadPhase._grown_capacity(raw_count, self.capacity)
         if capacity == self.capacity:
             return
         self.capacity = capacity

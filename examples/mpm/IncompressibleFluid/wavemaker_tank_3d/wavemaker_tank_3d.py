@@ -1,5 +1,8 @@
 """3-D incompressible MPM tank with a left-wall piston wavemaker."""
 
+from src.utils.RuntimeHook import python_callback
+
+
 import argparse
 import math
 import os
@@ -26,7 +29,6 @@ os.environ.setdefault("GEOTAICHI_REAL_DTYPE", "float64")
 
 from geotaichi import MPM, init  # noqa: E402
 from src.mpm.engines.EngineKernel import kernel_update_solid_sdf_from_box  # noqa: E402
-from src.utils.SolverRuntime import python_callback  # noqa: E402
 
 WATER_ORIGIN = np.array([PISTON_MEAN_X, 0.0, 0.0])
 WATER_SIZE = np.array([TANK[0] - PISTON_MEAN_X, TANK[1], WATER_DEPTH])

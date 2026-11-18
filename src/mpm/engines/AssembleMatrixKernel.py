@@ -1,11 +1,13 @@
+from src.mpm.sparse_grid.Utilities import compact_node_id
+from src.mpm.sparse_grid.Utilities import compact_node_grid_coord
 import taichi as ti
 
-from src.utils.constants import PENALTY, BLOCK_SZ, Threshold
+from src.utils.constants import PENALTY, BLOCK_SZ, THRESHOLD
 import src.utils.GlobalVariable as GlobalVariable
-from src.utils.TypeDefination import vec2f, vec3f, vec4f, vec9f, vec2i, vec3i
+from src.utils.TypeDefinition import vec2f, vec3f, vec4f, vec9f, vec2i, vec3i
 from src.utils.VectorFunction import summation
 from src.utils.ScalarFunction import linearize, vectorize_id
-from src.mpm.sparse_grid.BlockSparseGrid import compact_node_grid_coord, compact_node_id
+from src.mpm.sparse_grid.BlockSparseGrid import BlockSparseGrid
 from src.levelset.FluidLevelSetKernel import free_surface_theta as pressure_free_surface_theta
 
 
@@ -19,7 +21,7 @@ def unknow_reset(old_total_dofs: int, unknown_vector: ti.template()):
 
 
 @ti.kernel
-def matrix_reset_(total_dofs: int, diag_A: ti.template(), mass_matrix: ti.template(), unknown_vector: ti.template()):
+def matrix_reset(total_dofs: int, diag_A: ti.template(), mass_matrix: ti.template(), unknown_vector: ti.template()):
     for i in range(total_dofs):
         diag_A[i] = mass_matrix[i]
         unknown_vector[i] = 0.0
@@ -32,8 +34,8 @@ def local_stiffness_reset(old_total_nodes: int, influenced_dofs: int, local_stif
 
 
 @ti.kernel
-def kernel_symmetrize_local_stiffness(particleNum: int, influenced_dofs: int, local_stiffness: ti.template()):
-    for np, i, j in ti.ndrange(particleNum, influenced_dofs, influenced_dofs):
+def kernel_symmetrize_local_stiffness(particle_num: int, influenced_dofs: int, local_stiffness: ti.template()):
+    for np, i, j in ti.ndrange(particle_num, influenced_dofs, influenced_dofs):
         if i < j:
             value = 0.5 * (local_stiffness[np, i, j] + local_stiffness[np, j, i])
             local_stiffness[np, i, j] = value
@@ -41,13 +43,13 @@ def kernel_symmetrize_local_stiffness(particleNum: int, influenced_dofs: int, lo
 
 
 @ti.kernel
-def MvP_reset(total_dofs: int, m_dot_v: ti.template()):
+def mv_p_reset(total_dofs: int, m_dot_v: ti.template()):
     for i in range(total_dofs):
         m_dot_v[i] = 0.0
 
 
 @ti.func
-def assemble_elastic_diagonal_stiffness_matrix_2D(idshape, jdshape, material_stiffness, stress):
+def assemble_elastic_diagonal_stiffness_matrix_2d(idshape, jdshape, material_stiffness, stress):
     local_stiffness = vec2f(0.0, 0.0)
     local_stiffness[0] = (
         idshape[0] * jdshape[0] * material_stiffness[0, 0]
@@ -65,7 +67,7 @@ def assemble_elastic_diagonal_stiffness_matrix_2D(idshape, jdshape, material_sti
 
 
 @ti.func
-def assemble_elastic_stiffness_matrix_2D(idshape, jdshape, material_stiffness, stress):
+def assemble_elastic_stiffness_matrix_2d(idshape, jdshape, material_stiffness, stress):
     local_stiffness = vec4f(0.0, 0.0, 0.0, 0.0)
     local_stiffness[0] = (
         idshape[0] * jdshape[0] * material_stiffness[0, 0]
@@ -96,7 +98,7 @@ def assemble_elastic_stiffness_matrix_2D(idshape, jdshape, material_stiffness, s
 
 
 @ti.func
-def assemble_diagonal_stiffness_matrix_2D(idshape, jdshape, material_stiffness, stress):
+def assemble_diagonal_stiffness_matrix_2d(idshape, jdshape, material_stiffness, stress):
     local_stiffness = vec2f(0.0, 0.0)
     local_stiffness[0] = (
         idshape[0] * jdshape[0] * material_stiffness[0, 0]
@@ -118,7 +120,7 @@ def assemble_diagonal_stiffness_matrix_2D(idshape, jdshape, material_stiffness, 
 
 
 @ti.func
-def assemble_stiffness_matrix_2D(idshape, jdshape, material_stiffness, stress):
+def assemble_stiffness_matrix_2d(idshape, jdshape, material_stiffness, stress):
     local_stiffness = vec4f(0.0, 0.0, 0.0, 0.0)
     local_stiffness[0] = (
         idshape[0] * jdshape[0] * material_stiffness[0, 0]
@@ -157,9 +159,9 @@ def assemble_stiffness_matrix_2D(idshape, jdshape, material_stiffness, stress):
 
 
 @ti.kernel
-def kernel_assemble_local_stiffness_2D(
+def kernel_assemble_local_stiffness_2d(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
@@ -167,7 +169,7 @@ def kernel_assemble_local_stiffness_2D(
     local_stiffness: ti.template(),
     assemble_matrix: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         material_stiffness = stiffness_matrix[np]
         offset = np * total_nodes
         volume = particle[np].vol
@@ -373,15 +375,15 @@ def kernel_assemble_coo_mass(
 
 @ti.kernel
 def kernel_assemble_coo_stiffness(
-    gridSum: int,
+    grid_sum: int,
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     influenced_node: int,
     gnum: ti.template(),
     particle: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     flag: ti.template(),
     stiffness_matrix: ti.template(),
     assemble_matrix: ti.template(),
@@ -390,23 +392,23 @@ def kernel_assemble_coo_stiffness(
     values: ti.template(),
 ):
     neighbor_nodes = _coo_neighbor_nodes(influenced_node)
-    for np in range(particleNum):
-        bodyID = int(particle[np].bodyID)
+    for np in range(particle_num):
+        body_id = int(particle[np].bodyID)
         offset = np * total_nodes
         material_stiffness = stiffness_matrix[np]
         stress = particle[np].stress
         volume = particle[np].vol
         for lni in range(offset, offset + int(node_size[np])):
-            nodeIDi = LnID[lni]
-            coord_i = _dense_node_grid_coord(nodeIDi, gnum)
-            dofsi = flag[nodeIDi + bodyID * gridSum]
+            node_i_di = ln_id[lni]
+            coord_i = _dense_node_grid_coord(node_i_di, gnum)
+            dofsi = flag[node_i_di + body_id * grid_sum]
             block_i = dofsi // GlobalVariable.DIMENSION
             for lnj in range(offset, offset + int(node_size[np])):
-                nodeIDj = LnID[lnj]
-                coord_j = _dense_node_grid_coord(nodeIDj, gnum)
+                node_i_dj = ln_id[lnj]
+                coord_j = _dense_node_grid_coord(node_i_dj, gnum)
                 slot = _coo_neighbor_slot(coord_i, coord_j, influenced_node)
                 if slot >= 0:
-                    dofsj = flag[nodeIDj + bodyID * gridSum]
+                    dofsj = flag[node_i_dj + body_id * grid_sum]
                     block = assemble_matrix(dshapefn[lni], dshapefn[lnj], material_stiffness, stress) * volume
                     for di, dj in ti.static(ti.ndrange(GlobalVariable.DIMENSION, GlobalVariable.DIMENSION)):
                         idx = _coo_slot_index(block_i, slot, di, dj, neighbor_nodes)
@@ -417,14 +419,14 @@ def kernel_assemble_coo_stiffness(
 
 @ti.kernel
 def kernel_assemble_coo_stiffness_sparse(
-    gridSum: int,
+    grid_sum: int,
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     influenced_node: int,
     particle: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     flag: ti.template(),
     stiffness_matrix: ti.template(),
     assemble_matrix: ti.template(),
@@ -437,23 +439,23 @@ def kernel_assemble_coo_stiffness_sparse(
     active_block_ids: ti.template(),
 ):
     neighbor_nodes = _coo_neighbor_nodes(influenced_node)
-    for np in range(particleNum):
-        bodyID = int(particle[np].bodyID)
+    for np in range(particle_num):
+        body_id = int(particle[np].bodyID)
         offset = np * total_nodes
         material_stiffness = stiffness_matrix[np]
         stress = particle[np].stress
         volume = particle[np].vol
         for lni in range(offset, offset + int(node_size[np])):
-            nodeIDi = LnID[lni]
-            coord_i = compact_node_grid_coord(nodeIDi, block_count, block_size, block_volume, active_block_ids)
-            dofsi = flag[nodeIDi + bodyID * gridSum]
+            node_i_di = ln_id[lni]
+            coord_i = compact_node_grid_coord(node_i_di, block_count, block_size, block_volume, active_block_ids)
+            dofsi = flag[node_i_di + body_id * grid_sum]
             block_i = dofsi // GlobalVariable.DIMENSION
             for lnj in range(offset, offset + int(node_size[np])):
-                nodeIDj = LnID[lnj]
-                coord_j = compact_node_grid_coord(nodeIDj, block_count, block_size, block_volume, active_block_ids)
+                node_i_dj = ln_id[lnj]
+                coord_j = compact_node_grid_coord(node_i_dj, block_count, block_size, block_volume, active_block_ids)
                 slot = _coo_neighbor_slot(coord_i, coord_j, influenced_node)
                 if slot >= 0:
-                    dofsj = flag[nodeIDj + bodyID * gridSum]
+                    dofsj = flag[node_i_dj + body_id * grid_sum]
                     block = assemble_matrix(dshapefn[lni], dshapefn[lnj], material_stiffness, stress) * volume
                     for di, dj in ti.static(ti.ndrange(GlobalVariable.DIMENSION, GlobalVariable.DIMENSION)):
                         idx = _coo_slot_index(block_i, slot, di, dj, neighbor_nodes)
@@ -686,7 +688,7 @@ def assemble_stiffness_matrix(idshape, jdshape, material_stiffness, stress):
 @ti.kernel
 def kernel_assemble_local_stiffness(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
@@ -694,7 +696,7 @@ def kernel_assemble_local_stiffness(
     local_stiffness: ti.template(),
     assemble_matrix: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         material_stiffness = stiffness_matrix[np]
         offset = np * total_nodes
         volume = particle[np].vol
@@ -719,7 +721,7 @@ def kernel_assemble_local_stiffness(
 
 @ti.kernel
 def kernel_compute_mass_matrix(
-    gridSum: int,
+    grid_sum: int,
     beta: float,
     cutoff: float,
     dt: ti.template(),
@@ -732,35 +734,35 @@ def kernel_compute_mass_matrix(
         for nb in range(node.shape[1]):
             nodal_mass = node[ng, nb].m
             if nodal_mass > cutoff:
-                dof0 = flag[ng + nb * gridSum]
+                dof0 = flag[ng + nb * grid_sum]
                 for d in ti.static(range(GlobalVariable.DIMENSION)):
                     mass_matrix[dof0 + d] = nodal_mass * constant
 
 
 @ti.kernel
 def kernel_compute_penalty_matrix(
-    gridSum: int,
+    grid_sum: int,
     cut_off: float,
-    displacementNum: int,
+    displacement_num: int,
     displacement_constraint: ti.template(),
     node: ti.template(),
     flag: ti.template(),
     mass_matrix: ti.template(),
 ):
-    for i in range(displacementNum):
-        nodeID = displacement_constraint[i].node
-        dofID = int(displacement_constraint[i].dof)
-        bodyID = int(displacement_constraint[i].level)
-        if node[nodeID, bodyID].m > cut_off:
-            global_dof = flag[nodeID + bodyID * gridSum]
-            mass_matrix[global_dof + dofID] += PENALTY
+    for i in range(displacement_num):
+        node_id = displacement_constraint[i].node
+        dof_id = int(displacement_constraint[i].dof)
+        body_id = int(displacement_constraint[i].level)
+        if node[node_id, body_id].m > cut_off:
+            global_dof = flag[node_id + body_id * grid_sum]
+            mass_matrix[global_dof + dof_id] += PENALTY
 
 
 @ti.kernel
 def kernel_compute_penalty_matrix_sparse(
-    gridSum: int,
+    grid_sum: int,
     cut_off: float,
-    displacementNum: int,
+    displacement_num: int,
     displacement_constraint: ti.template(),
     node: ti.template(),
     flag: ti.template(),
@@ -771,25 +773,25 @@ def kernel_compute_penalty_matrix_sparse(
     block_volume: ti.template(),
     block_map: ti.template(),
 ):
-    for i in range(displacementNum):
+    for i in range(displacement_num):
         physical_node = displacement_constraint[i].node
-        nodeID = compact_node_id(physical_node, gnum, block_count, block_size, block_volume, block_map)
-        dofID = int(displacement_constraint[i].dof)
-        bodyID = int(displacement_constraint[i].level)
-        if nodeID >= 0 and node[nodeID, bodyID].m > cut_off:
-            global_dof = flag[nodeID + bodyID * gridSum]
-            mass_matrix[global_dof + dofID] += PENALTY
+        node_id = compact_node_id(physical_node, gnum, block_count, block_size, block_volume, block_map)
+        dof_id = int(displacement_constraint[i].dof)
+        body_id = int(displacement_constraint[i].level)
+        if node_id >= 0 and node[node_id, body_id].m > cut_off:
+            global_dof = flag[node_id + body_id * grid_sum]
+            mass_matrix[global_dof + dof_id] += PENALTY
 
 
 @ti.kernel
-def kernel_moment_balance_cg_2D(
-    gridSum: int,
+def kernel_moment_balance_cg_2d(
+    grid_sum: int,
     total_nodes: int,
     total_dofs: int,
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
     node_size: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     flag: ti.template(),
     mass_matrix: ti.template(),
     local_stiffness: ti.template(),
@@ -799,18 +801,18 @@ def kernel_moment_balance_cg_2D(
     for ndof in range(total_dofs):
         m_dot_v[ndof] = mass_matrix[ndof] * unknown_vector[ndof]
 
-    for np in range(particleNum):
-        bodyID = int(particle[np].bodyID)
+    for np in range(particle_num):
+        body_id = int(particle[np].bodyID)
         offset = np * total_nodes
         for lni in range(offset, offset + int(node_size[np])):
-            nodeIDi = LnID[lni]
+            node_i_di = ln_id[lni]
             local_lni = lni - offset
-            dofsi = flag[nodeIDi + bodyID * gridSum]
+            dofsi = flag[node_i_di + body_id * grid_sum]
             Axb, Ayb = 0.0, 0.0
             for lnj in range(offset, offset + int(node_size[np])):
-                nodeIDj = LnID[lnj]
+                node_i_dj = ln_id[lnj]
                 local_lnj = lnj - offset
-                dofsj = flag[nodeIDj + bodyID * gridSum]
+                dofsj = flag[node_i_dj + body_id * grid_sum]
                 Axb += (
                     local_stiffness[np, 2 * local_lni, 2 * local_lnj] * unknown_vector[dofsj]
                     + local_stiffness[np, 2 * local_lni, 2 * local_lnj + 1] * unknown_vector[dofsj + 1]
@@ -825,13 +827,13 @@ def kernel_moment_balance_cg_2D(
 
 @ti.kernel
 def kernel_moment_balance_cg(
-    gridSum: int,
+    grid_sum: int,
     total_nodes: int,
     total_dofs: int,
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
     node_size: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     flag: ti.template(),
     mass_matrix: ti.template(),
     local_stiffness: ti.template(),
@@ -841,18 +843,18 @@ def kernel_moment_balance_cg(
     for ndof in range(total_dofs):
         m_dot_v[ndof] = mass_matrix[ndof] * unknown_vector[ndof]
 
-    for np in range(particleNum):
-        bodyID = int(particle[np].bodyID)
+    for np in range(particle_num):
+        body_id = int(particle[np].bodyID)
         offset = np * total_nodes
         for lni in range(offset, offset + int(node_size[np])):
-            nodeIDi = LnID[lni]
+            node_i_di = ln_id[lni]
             local_lni = lni - offset
-            dofsi = flag[nodeIDi + bodyID * gridSum]
+            dofsi = flag[node_i_di + body_id * grid_sum]
             Axb, Ayb, Azb = 0.0, 0.0, 0.0
             for lnj in range(offset, offset + int(node_size[np])):
-                nodeIDj = LnID[lnj]
+                node_i_dj = ln_id[lnj]
                 local_lnj = lnj - offset
-                dofsj = flag[nodeIDj + bodyID * gridSum]
+                dofsj = flag[node_i_dj + body_id * grid_sum]
                 Axb += (
                     local_stiffness[np, 3 * local_lni, 3 * local_lnj] * unknown_vector[dofsj]
                     + local_stiffness[np, 3 * local_lni, 3 * local_lnj + 1] * unknown_vector[dofsj + 1]
@@ -874,15 +876,15 @@ def kernel_moment_balance_cg(
 
 
 @ti.kernel
-def kernel_moment_balance_direct_2D(
-    gridSum: int,
+def kernel_moment_balance_direct_2d(
+    grid_sum: int,
     total_nodes: int,
     total_dofs: int,
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     flag: ti.template(),
     stiffness_matrix: ti.template(),
     assemble_matrix: ti.template(),
@@ -892,17 +894,17 @@ def kernel_moment_balance_direct_2D(
 ):
     for ndof in range(total_dofs):
         m_dot_v[ndof] = mass_matrix[ndof] * unknown_vector[ndof]
-    for np in range(particleNum):
-        bodyID = int(particle[np].bodyID)
+    for np in range(particle_num):
+        body_id = int(particle[np].bodyID)
         offset = np * total_nodes
         material_stiffness = stiffness_matrix[np]
         stress = particle[np].stress
         volume = particle[np].vol
         for lni in range(offset, offset + int(node_size[np])):
-            dofsi = flag[LnID[lni] + bodyID * gridSum]
+            dofsi = flag[ln_id[lni] + body_id * grid_sum]
             result = ti.Vector.zero(float, 2)
             for lnj in range(offset, offset + int(node_size[np])):
-                dofsj = flag[LnID[lnj] + bodyID * gridSum]
+                dofsj = flag[ln_id[lnj] + body_id * grid_sum]
                 block = assemble_matrix(dshapefn[lni], dshapefn[lnj], material_stiffness, stress) * volume
                 for row, column in ti.static(ti.ndrange(2, 2)):
                     result[row] += block[2 * row + column] * unknown_vector[dofsj + column]
@@ -912,14 +914,14 @@ def kernel_moment_balance_direct_2D(
 
 @ti.kernel
 def kernel_moment_balance_direct(
-    gridSum: int,
+    grid_sum: int,
     total_nodes: int,
     total_dofs: int,
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     flag: ti.template(),
     stiffness_matrix: ti.template(),
     assemble_matrix: ti.template(),
@@ -929,17 +931,17 @@ def kernel_moment_balance_direct(
 ):
     for ndof in range(total_dofs):
         m_dot_v[ndof] = mass_matrix[ndof] * unknown_vector[ndof]
-    for np in range(particleNum):
-        bodyID = int(particle[np].bodyID)
+    for np in range(particle_num):
+        body_id = int(particle[np].bodyID)
         offset = np * total_nodes
         material_stiffness = stiffness_matrix[np]
         stress = particle[np].stress
         volume = particle[np].vol
         for lni in range(offset, offset + int(node_size[np])):
-            dofsi = flag[LnID[lni] + bodyID * gridSum]
+            dofsi = flag[ln_id[lni] + body_id * grid_sum]
             result = ti.Vector.zero(float, 3)
             for lnj in range(offset, offset + int(node_size[np])):
-                dofsj = flag[LnID[lnj] + bodyID * gridSum]
+                dofsj = flag[ln_id[lnj] + body_id * grid_sum]
                 block = assemble_matrix(dshapefn[lni], dshapefn[lnj], material_stiffness, stress) * volume
                 for row, column in ti.static(ti.ndrange(3, 3)):
                     result[row] += block[3 * row + column] * unknown_vector[dofsj + column]
@@ -948,75 +950,75 @@ def kernel_moment_balance_direct(
 
 
 @ti.kernel
-def kernel_preconditioning_matrix_2D(
-    gridSum: int,
+def kernel_preconditioning_matrix_2d(
+    grid_sum: int,
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
     node_size: ti.template(),
     diag_A: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     flag: ti.template(),
     local_stiffness: ti.template(),
 ):
-    for np in range(particleNum):
-        bodyID = int(particle[np].bodyID)
+    for np in range(particle_num):
+        body_id = int(particle[np].bodyID)
         offset = np * total_nodes
         for ln in range(offset, offset + int(node_size[np])):
-            nodeID = LnID[ln]
+            node_id = ln_id[ln]
             local_ln = ln - offset
-            dofs = flag[nodeID + bodyID * gridSum]
+            dofs = flag[node_id + body_id * grid_sum]
             diag_A[dofs] += local_stiffness[np, 2 * local_ln, 2 * local_ln]
             diag_A[dofs + 1] += local_stiffness[np, 2 * local_ln + 1, 2 * local_ln + 1]
 
 
 @ti.kernel
 def kernel_preconditioning_matrix(
-    gridSum: int,
+    grid_sum: int,
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
     node_size: ti.template(),
     diag_A: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     flag: ti.template(),
     local_stiffness: ti.template(),
 ):
-    for np in range(particleNum):
-        bodyID = int(particle[np].bodyID)
+    for np in range(particle_num):
+        body_id = int(particle[np].bodyID)
         offset = np * total_nodes
         for ln in range(offset, offset + int(node_size[np])):
-            nodeID = LnID[ln]
+            node_id = ln_id[ln]
             local_ln = ln - offset
-            dofs = flag[nodeID + bodyID * gridSum]
+            dofs = flag[node_id + body_id * grid_sum]
             diag_A[dofs] += local_stiffness[np, 3 * local_ln, 3 * local_ln]
             diag_A[dofs + 1] += local_stiffness[np, 3 * local_ln + 1, 3 * local_ln + 1]
             diag_A[dofs + 2] += local_stiffness[np, 3 * local_ln + 2, 3 * local_ln + 2]
 
 
 @ti.kernel
-def kernel_preconditioning_matrix_direct_2D(
-    gridSum: int,
+def kernel_preconditioning_matrix_direct_2d(
+    grid_sum: int,
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
     diag_A: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     flag: ti.template(),
     stiffness_matrix: ti.template(),
     assemble_matrix: ti.template(),
 ):
-    for np in range(particleNum):
-        bodyID = int(particle[np].bodyID)
+    for np in range(particle_num):
+        body_id = int(particle[np].bodyID)
         offset = np * total_nodes
         material_stiffness = stiffness_matrix[np]
         stress = particle[np].stress
         volume = particle[np].vol
         for ln in range(offset, offset + int(node_size[np])):
-            nodeID = LnID[ln]
-            dofs = flag[nodeID + bodyID * gridSum]
+            node_id = ln_id[ln]
+            dofs = flag[node_id + body_id * grid_sum]
             block = assemble_matrix(dshapefn[ln], dshapefn[ln], material_stiffness, stress) * volume
             ti.atomic_add(diag_A[dofs], block[0])
             ti.atomic_add(diag_A[dofs + 1], block[3])
@@ -1024,27 +1026,27 @@ def kernel_preconditioning_matrix_direct_2D(
 
 @ti.kernel
 def kernel_preconditioning_matrix_direct(
-    gridSum: int,
+    grid_sum: int,
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
     diag_A: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     flag: ti.template(),
     stiffness_matrix: ti.template(),
     assemble_matrix: ti.template(),
 ):
-    for np in range(particleNum):
-        bodyID = int(particle[np].bodyID)
+    for np in range(particle_num):
+        body_id = int(particle[np].bodyID)
         offset = np * total_nodes
         material_stiffness = stiffness_matrix[np]
         stress = particle[np].stress
         volume = particle[np].vol
         for ln in range(offset, offset + int(node_size[np])):
-            nodeID = LnID[ln]
-            dofs = flag[nodeID + bodyID * gridSum]
+            node_id = ln_id[ln]
+            dofs = flag[node_id + body_id * grid_sum]
             block = assemble_matrix(dshapefn[ln], dshapefn[ln], material_stiffness, stress) * volume
             ti.atomic_add(diag_A[dofs], block[0])
             ti.atomic_add(diag_A[dofs + 1], block[4])
@@ -1086,33 +1088,33 @@ def kernel_assemble_hash_triplet_mass(active_dofs: int, mass_matrix: ti.template
 
 
 @ti.kernel
-def kernel_assemble_hash_triplet_stiffness_2D(
-    gridSum: int,
+def kernel_assemble_hash_triplet_stiffness_2d(
+    grid_sum: int,
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
     node_size: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     dshapefn: ti.template(),
     flag: ti.template(),
     stiffness_matrix: ti.template(),
     assemble_matrix: ti.template(),
     hash_triplet: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             material_stiffness = stiffness_matrix[np]
             stress = particle[np].stress
             volume = particle[np].vol
             for lni in range(offset, offset + int(node_size[np])):
-                nodeIDi = LnID[lni]
-                dofsi = flag[nodeIDi + bodyID * gridSum]
+                node_i_di = ln_id[lni]
+                dofsi = flag[node_i_di + body_id * grid_sum]
                 block_i = dofsi // 2
                 for lnj in range(offset, offset + int(node_size[np])):
-                    nodeIDj = LnID[lnj]
-                    dofsj = flag[nodeIDj + bodyID * gridSum]
+                    node_i_dj = ln_id[lnj]
+                    dofsj = flag[node_i_dj + body_id * grid_sum]
                     block_j = dofsj // 2
                     block = assemble_matrix(dshapefn[lni], dshapefn[lnj], material_stiffness, stress) * volume
                     if block_i == block_j:
@@ -1149,32 +1151,32 @@ def kernel_assemble_hash_triplet_stiffness_2D(
 
 @ti.kernel
 def kernel_assemble_hash_triplet_stiffness(
-    gridSum: int,
+    grid_sum: int,
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
     node_size: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     dshapefn: ti.template(),
     flag: ti.template(),
     stiffness_matrix: ti.template(),
     assemble_matrix: ti.template(),
     hash_triplet: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             material_stiffness = stiffness_matrix[np]
             stress = particle[np].stress
             volume = particle[np].vol
             for lni in range(offset, offset + int(node_size[np])):
-                nodeIDi = LnID[lni]
-                dofsi = flag[nodeIDi + bodyID * gridSum]
+                node_i_di = ln_id[lni]
+                dofsi = flag[node_i_di + body_id * grid_sum]
                 block_i = dofsi // 3
                 for lnj in range(offset, offset + int(node_size[np])):
-                    nodeIDj = LnID[lnj]
-                    dofsj = flag[nodeIDj + bodyID * gridSum]
+                    node_i_dj = ln_id[lnj]
+                    dofsj = flag[node_i_dj + body_id * grid_sum]
                     block_j = dofsj // 3
                     block = assemble_matrix(dshapefn[lni], dshapefn[lnj], material_stiffness, stress) * volume
                     if block_i == block_j:
@@ -1211,29 +1213,29 @@ def kernel_assemble_hash_triplet_stiffness(
 
 @ti.kernel
 def kernel_assemble_displacement_load(
-    gridSum: int,
+    grid_sum: int,
     cut_off: float,
-    displacementNum: int,
+    displacement_num: int,
     displacement_constraint: ti.template(),
     node: ti.template(),
     flag: ti.template(),
     right_hand_vector: ti.template(),
     diag_A: ti.template(),
 ):
-    for i in range(displacementNum):
-        nodeID = displacement_constraint[i].node
-        dofID = int(displacement_constraint[i].dof)
-        bodyID = int(displacement_constraint[i].level)
-        if node[nodeID, bodyID].m > cut_off:
-            global_dof = flag[nodeID + bodyID * gridSum]
-            right_hand_vector[global_dof + dofID] = diag_A[global_dof + dofID] * displacement_constraint[i].value
+    for i in range(displacement_num):
+        node_id = displacement_constraint[i].node
+        dof_id = int(displacement_constraint[i].dof)
+        body_id = int(displacement_constraint[i].level)
+        if node[node_id, body_id].m > cut_off:
+            global_dof = flag[node_id + body_id * grid_sum]
+            right_hand_vector[global_dof + dof_id] = diag_A[global_dof + dof_id] * displacement_constraint[i].value
 
 
 @ti.kernel
 def kernel_assemble_displacement_load_sparse(
-    gridSum: int,
+    grid_sum: int,
     cut_off: float,
-    displacementNum: int,
+    displacement_num: int,
     displacement_constraint: ti.template(),
     node: ti.template(),
     flag: ti.template(),
@@ -1245,21 +1247,21 @@ def kernel_assemble_displacement_load_sparse(
     block_volume: ti.template(),
     block_map: ti.template(),
 ):
-    for i in range(displacementNum):
+    for i in range(displacement_num):
         physical_node = displacement_constraint[i].node
-        nodeID = compact_node_id(physical_node, gnum, block_count, block_size, block_volume, block_map)
-        dofID = int(displacement_constraint[i].dof)
-        bodyID = int(displacement_constraint[i].level)
-        if nodeID >= 0 and node[nodeID, bodyID].m > cut_off:
-            global_dof = flag[nodeID + bodyID * gridSum]
-            right_hand_vector[global_dof + dofID] = diag_A[global_dof + dofID] * displacement_constraint[i].value
+        node_id = compact_node_id(physical_node, gnum, block_count, block_size, block_volume, block_map)
+        dof_id = int(displacement_constraint[i].dof)
+        body_id = int(displacement_constraint[i].level)
+        if node_id >= 0 and node[node_id, body_id].m > cut_off:
+            global_dof = flag[node_id + body_id * grid_sum]
+            right_hand_vector[global_dof + dof_id] = diag_A[global_dof + dof_id] * displacement_constraint[i].value
 
 
 @ti.kernel
 def kernel_apply_dirichlet_coo(
-    gridSum: int,
+    grid_sum: int,
     cut_off: float,
-    displacementNum: int,
+    displacement_num: int,
     original_nnz: int,
     displacement_constraint: ti.template(),
     node: ti.template(),
@@ -1270,24 +1272,24 @@ def kernel_apply_dirichlet_coo(
     right_hand_vector: ti.template(),
     diag_A: ti.template(),
 ):
-    for i in range(displacementNum):
-        nodeID = displacement_constraint[i].node
-        dofID = int(displacement_constraint[i].dof)
-        bodyID = int(displacement_constraint[i].level)
-        if node[nodeID, bodyID].m > cut_off:
-            global_dof = flag[nodeID + bodyID * gridSum] + dofID
+    for i in range(displacement_num):
+        node_id = displacement_constraint[i].node
+        dof_id = int(displacement_constraint[i].dof)
+        body_id = int(displacement_constraint[i].level)
+        if node[node_id, body_id].m > cut_off:
+            global_dof = flag[node_id + body_id * grid_sum] + dof_id
             prescribed_value = displacement_constraint[i].value
             for k in range(original_nnz):
                 if cols[k] == global_dof:
                     ti.atomic_add(right_hand_vector[rows[k]], -values[k] * prescribed_value)
 
-    for i in range(displacementNum):
-        nodeID = displacement_constraint[i].node
-        dofID = int(displacement_constraint[i].dof)
-        bodyID = int(displacement_constraint[i].level)
+    for i in range(displacement_num):
+        node_id = displacement_constraint[i].node
+        dof_id = int(displacement_constraint[i].dof)
+        body_id = int(displacement_constraint[i].level)
         identity = original_nnz + i
-        if node[nodeID, bodyID].m > cut_off:
-            global_dof = flag[nodeID + bodyID * gridSum] + dofID
+        if node[node_id, body_id].m > cut_off:
+            global_dof = flag[node_id + body_id * grid_sum] + dof_id
             for k in range(original_nnz):
                 if rows[k] == global_dof or cols[k] == global_dof:
                     values[k] = 0.0
@@ -1304,9 +1306,9 @@ def kernel_apply_dirichlet_coo(
 
 @ti.kernel
 def kernel_apply_dirichlet_coo_sparse(
-    gridSum: int,
+    grid_sum: int,
     cut_off: float,
-    displacementNum: int,
+    displacement_num: int,
     original_nnz: int,
     displacement_constraint: ti.template(),
     node: ti.template(),
@@ -1322,26 +1324,26 @@ def kernel_apply_dirichlet_coo_sparse(
     block_volume: ti.template(),
     block_map: ti.template(),
 ):
-    for i in range(displacementNum):
+    for i in range(displacement_num):
         physical_node = displacement_constraint[i].node
-        nodeID = compact_node_id(physical_node, gnum, block_count, block_size, block_volume, block_map)
-        dofID = int(displacement_constraint[i].dof)
-        bodyID = int(displacement_constraint[i].level)
-        if nodeID >= 0 and node[nodeID, bodyID].m > cut_off:
-            global_dof = flag[nodeID + bodyID * gridSum] + dofID
+        node_id = compact_node_id(physical_node, gnum, block_count, block_size, block_volume, block_map)
+        dof_id = int(displacement_constraint[i].dof)
+        body_id = int(displacement_constraint[i].level)
+        if node_id >= 0 and node[node_id, body_id].m > cut_off:
+            global_dof = flag[node_id + body_id * grid_sum] + dof_id
             prescribed_value = displacement_constraint[i].value
             for k in range(original_nnz):
                 if cols[k] == global_dof:
                     ti.atomic_add(right_hand_vector[rows[k]], -values[k] * prescribed_value)
 
-    for i in range(displacementNum):
+    for i in range(displacement_num):
         physical_node = displacement_constraint[i].node
-        nodeID = compact_node_id(physical_node, gnum, block_count, block_size, block_volume, block_map)
-        dofID = int(displacement_constraint[i].dof)
-        bodyID = int(displacement_constraint[i].level)
+        node_id = compact_node_id(physical_node, gnum, block_count, block_size, block_volume, block_map)
+        dof_id = int(displacement_constraint[i].dof)
+        body_id = int(displacement_constraint[i].level)
         identity = original_nnz + i
-        if nodeID >= 0 and node[nodeID, bodyID].m > cut_off:
-            global_dof = flag[nodeID + bodyID * gridSum] + dofID
+        if node_id >= 0 and node[node_id, body_id].m > cut_off:
+            global_dof = flag[node_id + body_id * grid_sum] + dof_id
             for k in range(original_nnz):
                 if rows[k] == global_dof or cols[k] == global_dof:
                     values[k] = 0.0
@@ -1358,9 +1360,9 @@ def kernel_apply_dirichlet_coo_sparse(
 
 @ti.kernel
 def kernel_apply_dirichlet_hash_triplet(
-    gridSum: int,
+    grid_sum: int,
     cut_off: float,
-    displacementNum: int,
+    displacement_num: int,
     active_nodes: int,
     displacement_constraint: ti.template(),
     node: ti.template(),
@@ -1368,12 +1370,12 @@ def kernel_apply_dirichlet_hash_triplet(
     hash_triplet: ti.template(),
     diag_A: ti.template(),
 ):
-    for i in range(displacementNum):
-        nodeID = displacement_constraint[i].node
-        dofID = int(displacement_constraint[i].dof)
-        bodyID = int(displacement_constraint[i].level)
-        if node[nodeID, bodyID].m > cut_off:
-            global_dof = flag[nodeID + bodyID * gridSum] + dofID
+    for i in range(displacement_num):
+        node_id = displacement_constraint[i].node
+        dof_id = int(displacement_constraint[i].dof)
+        body_id = int(displacement_constraint[i].level)
+        if node[node_id, body_id].m > cut_off:
+            global_dof = flag[node_id + body_id * grid_sum] + dof_id
             block = global_dof // GlobalVariable.DIMENSION
             comp = global_dof - block * GlobalVariable.DIMENSION
             prescribed_value = displacement_constraint[i].value
@@ -1405,12 +1407,12 @@ def kernel_apply_dirichlet_hash_triplet(
                                         -hash_triplet.non_diag.tripletH[k][h_index] * prescribed_value,
                                     )
 
-    for i in range(displacementNum):
-        nodeID = displacement_constraint[i].node
-        dofID = int(displacement_constraint[i].dof)
-        bodyID = int(displacement_constraint[i].level)
-        if node[nodeID, bodyID].m > cut_off:
-            global_dof = flag[nodeID + bodyID * gridSum] + dofID
+    for i in range(displacement_num):
+        node_id = displacement_constraint[i].node
+        dof_id = int(displacement_constraint[i].dof)
+        body_id = int(displacement_constraint[i].level)
+        if node[node_id, body_id].m > cut_off:
+            global_dof = flag[node_id + body_id * grid_sum] + dof_id
             block = global_dof // GlobalVariable.DIMENSION
             comp = global_dof - block * GlobalVariable.DIMENSION
             if block < active_nodes:
@@ -1436,9 +1438,9 @@ def kernel_apply_dirichlet_hash_triplet(
 
 @ti.kernel
 def kernel_apply_dirichlet_hash_triplet_sparse(
-    gridSum: int,
+    grid_sum: int,
     cut_off: float,
-    displacementNum: int,
+    displacement_num: int,
     active_nodes: int,
     displacement_constraint: ti.template(),
     node: ti.template(),
@@ -1451,13 +1453,13 @@ def kernel_apply_dirichlet_hash_triplet_sparse(
     block_volume: ti.template(),
     block_map: ti.template(),
 ):
-    for i in range(displacementNum):
+    for i in range(displacement_num):
         physical_node = displacement_constraint[i].node
-        nodeID = compact_node_id(physical_node, gnum, block_count, block_size, block_volume, block_map)
-        dofID = int(displacement_constraint[i].dof)
-        bodyID = int(displacement_constraint[i].level)
-        if nodeID >= 0 and node[nodeID, bodyID].m > cut_off:
-            global_dof = flag[nodeID + bodyID * gridSum] + dofID
+        node_id = compact_node_id(physical_node, gnum, block_count, block_size, block_volume, block_map)
+        dof_id = int(displacement_constraint[i].dof)
+        body_id = int(displacement_constraint[i].level)
+        if node_id >= 0 and node[node_id, body_id].m > cut_off:
+            global_dof = flag[node_id + body_id * grid_sum] + dof_id
             block = global_dof // GlobalVariable.DIMENSION
             comp = global_dof - block * GlobalVariable.DIMENSION
             prescribed_value = displacement_constraint[i].value
@@ -1489,13 +1491,13 @@ def kernel_apply_dirichlet_hash_triplet_sparse(
                                         -hash_triplet.non_diag.tripletH[k][h_index] * prescribed_value,
                                     )
 
-    for i in range(displacementNum):
+    for i in range(displacement_num):
         physical_node = displacement_constraint[i].node
-        nodeID = compact_node_id(physical_node, gnum, block_count, block_size, block_volume, block_map)
-        dofID = int(displacement_constraint[i].dof)
-        bodyID = int(displacement_constraint[i].level)
-        if nodeID >= 0 and node[nodeID, bodyID].m > cut_off:
-            global_dof = flag[nodeID + bodyID * gridSum] + dofID
+        node_id = compact_node_id(physical_node, gnum, block_count, block_size, block_volume, block_map)
+        dof_id = int(displacement_constraint[i].dof)
+        body_id = int(displacement_constraint[i].level)
+        if node_id >= 0 and node[node_id, body_id].m > cut_off:
+            global_dof = flag[node_id + body_id * grid_sum] + dof_id
             block = global_dof // GlobalVariable.DIMENSION
             comp = global_dof - block * GlobalVariable.DIMENSION
             if block < active_nodes:
@@ -1520,13 +1522,13 @@ def kernel_apply_dirichlet_hash_triplet_sparse(
 
 
 @ti.kernel
-def kernel_assemble_residual_force_quasi_static_2D(
-    gridSum: int, cutoff: float, node: ti.template(), flag: ti.template(), right_hand_vector: ti.template()
+def kernel_assemble_residual_force_quasi_static_2d(
+    grid_sum: int, cutoff: float, node: ti.template(), flag: ti.template(), right_hand_vector: ti.template()
 ):
     for ng in range(node.shape[0]):
         for nb in range(node.shape[1]):
             if node[ng, nb].m > cutoff:
-                dof0 = flag[ng + nb * gridSum]
+                dof0 = flag[ng + nb * grid_sum]
                 external_force = node[ng, nb].ext_force
                 internal_force = node[ng, nb].int_force
                 right_hand_vector[dof0] = external_force[0] + internal_force[0]
@@ -1535,12 +1537,12 @@ def kernel_assemble_residual_force_quasi_static_2D(
 
 @ti.kernel
 def kernel_assemble_residual_force_quasi_static(
-    gridSum: int, cutoff: float, node: ti.template(), flag: ti.template(), right_hand_vector: ti.template()
+    grid_sum: int, cutoff: float, node: ti.template(), flag: ti.template(), right_hand_vector: ti.template()
 ):
     for ng in range(node.shape[0]):
         for nb in range(node.shape[1]):
             if node[ng, nb].m > cutoff:
-                dof0 = flag[ng + nb * gridSum]
+                dof0 = flag[ng + nb * grid_sum]
                 external_force = node[ng, nb].ext_force
                 internal_force = node[ng, nb].int_force
                 right_hand_vector[dof0] = external_force[0] + internal_force[0]
@@ -1549,8 +1551,8 @@ def kernel_assemble_residual_force_quasi_static(
 
 
 @ti.kernel
-def kernel_assemble_residual_force_dynamic_2D(
-    gridSum: int,
+def kernel_assemble_residual_force_dynamic_2d(
+    grid_sum: int,
     cutoff: float,
     beta: float,
     node: ti.template(),
@@ -1564,7 +1566,7 @@ def kernel_assemble_residual_force_dynamic_2D(
     for ng in range(node.shape[0]):
         for nb in range(node.shape[1]):
             if node[ng, nb].m > cutoff:
-                dof0 = flag[ng + nb * gridSum]
+                dof0 = flag[ng + nb * grid_sum]
                 external_force = node[ng, nb].ext_force
                 internal_force = node[ng, nb].int_force
                 mass = node[ng, nb].m
@@ -1586,7 +1588,7 @@ def kernel_assemble_residual_force_dynamic_2D(
 
 @ti.kernel
 def kernel_assemble_residual_force_dynamic(
-    gridSum: int,
+    grid_sum: int,
     cutoff: float,
     beta: float,
     node: ti.template(),
@@ -1600,7 +1602,7 @@ def kernel_assemble_residual_force_dynamic(
     for ng in range(node.shape[0]):
         for nb in range(node.shape[1]):
             if node[ng, nb].m > cutoff:
-                dof0 = flag[ng + nb * gridSum]
+                dof0 = flag[ng + nb * grid_sum]
                 external_force = node[ng, nb].ext_force
                 internal_force = node[ng, nb].int_force
                 mass = node[ng, nb].m
@@ -1627,30 +1629,30 @@ def kernel_assemble_residual_force_dynamic(
 
 @ti.kernel
 def kernel_calculate_reaction_forces(
-    gridSum: int,
+    grid_sum: int,
     cut_off: float,
-    displacementNum: int,
+    displacement_num: int,
     displacement_constraint: ti.template(),
     node: ti.template(),
     flag: ti.template(),
     accmulated_reaction_forces: ti.template(),
 ):
-    for i in range(displacementNum):
-        nodeID = displacement_constraint[i].node
-        dofID = int(displacement_constraint[i].dof)
-        bodyID = int(displacement_constraint[i].level)
-        if node[nodeID, bodyID].m > cut_off:
-            global_dof = flag[nodeID + bodyID * gridSum]
-            accmulated_reaction_forces[global_dof + dofID] = (
-                displacement_constraint[i].value - node[nodeID, bodyID].displacement[dofID]
+    for i in range(displacement_num):
+        node_id = displacement_constraint[i].node
+        dof_id = int(displacement_constraint[i].dof)
+        body_id = int(displacement_constraint[i].level)
+        if node[node_id, body_id].m > cut_off:
+            global_dof = flag[node_id + body_id * grid_sum]
+            accmulated_reaction_forces[global_dof + dof_id] = (
+                displacement_constraint[i].value - node[node_id, body_id].displacement[dof_id]
             ) * PENALTY
 
 
 @ti.kernel
 def kernel_calculate_reaction_forces_sparse(
-    gridSum: int,
+    grid_sum: int,
     cut_off: float,
-    displacementNum: int,
+    displacement_num: int,
     displacement_constraint: ti.template(),
     node: ti.template(),
     flag: ti.template(),
@@ -1661,23 +1663,23 @@ def kernel_calculate_reaction_forces_sparse(
     block_volume: ti.template(),
     block_map: ti.template(),
 ):
-    for i in range(displacementNum):
+    for i in range(displacement_num):
         physical_node = displacement_constraint[i].node
-        nodeID = compact_node_id(physical_node, gnum, block_count, block_size, block_volume, block_map)
-        dofID = int(displacement_constraint[i].dof)
-        bodyID = int(displacement_constraint[i].level)
-        if nodeID >= 0 and node[nodeID, bodyID].m > cut_off:
-            global_dof = flag[nodeID + bodyID * gridSum]
-            accmulated_reaction_forces[global_dof + dofID] = (
-                displacement_constraint[i].value - node[nodeID, bodyID].displacement[dofID]
+        node_id = compact_node_id(physical_node, gnum, block_count, block_size, block_volume, block_map)
+        dof_id = int(displacement_constraint[i].dof)
+        body_id = int(displacement_constraint[i].level)
+        if node_id >= 0 and node[node_id, body_id].m > cut_off:
+            global_dof = flag[node_id + body_id * grid_sum]
+            accmulated_reaction_forces[global_dof + dof_id] = (
+                displacement_constraint[i].value - node[node_id, body_id].displacement[dof_id]
             ) * PENALTY
 
 
 @ti.kernel
 def kernel_extract_assembled_reaction_forces(
-    gridSum: int,
+    grid_sum: int,
     cut_off: float,
-    displacementNum: int,
+    displacement_num: int,
     displacement_constraint: ti.template(),
     node: ti.template(),
     flag: ti.template(),
@@ -1685,20 +1687,20 @@ def kernel_extract_assembled_reaction_forces(
     rhs_vector: ti.template(),
     accmulated_reaction_forces: ti.template(),
 ):
-    for i in range(displacementNum):
-        nodeID = displacement_constraint[i].node
-        dofID = int(displacement_constraint[i].dof)
-        bodyID = int(displacement_constraint[i].level)
-        if node[nodeID, bodyID].m > cut_off:
-            global_dof = flag[nodeID + bodyID * gridSum] + dofID
+    for i in range(displacement_num):
+        node_id = displacement_constraint[i].node
+        dof_id = int(displacement_constraint[i].dof)
+        body_id = int(displacement_constraint[i].level)
+        if node[node_id, body_id].m > cut_off:
+            global_dof = flag[node_id + body_id * grid_sum] + dof_id
             accmulated_reaction_forces[global_dof] = lhs_vector[global_dof] - rhs_vector[global_dof]
 
 
 @ti.kernel
 def kernel_extract_assembled_reaction_forces_sparse(
-    gridSum: int,
+    grid_sum: int,
     cut_off: float,
-    displacementNum: int,
+    displacement_num: int,
     displacement_constraint: ti.template(),
     node: ti.template(),
     flag: ti.template(),
@@ -1711,21 +1713,21 @@ def kernel_extract_assembled_reaction_forces_sparse(
     block_volume: ti.template(),
     block_map: ti.template(),
 ):
-    for i in range(displacementNum):
+    for i in range(displacement_num):
         physical_node = displacement_constraint[i].node
-        nodeID = compact_node_id(physical_node, gnum, block_count, block_size, block_volume, block_map)
-        dofID = int(displacement_constraint[i].dof)
-        bodyID = int(displacement_constraint[i].level)
-        if nodeID >= 0 and node[nodeID, bodyID].m > cut_off:
-            global_dof = flag[nodeID + bodyID * gridSum] + dofID
+        node_id = compact_node_id(physical_node, gnum, block_count, block_size, block_volume, block_map)
+        dof_id = int(displacement_constraint[i].dof)
+        body_id = int(displacement_constraint[i].level)
+        if node_id >= 0 and node[node_id, body_id].m > cut_off:
+            global_dof = flag[node_id + body_id * grid_sum] + dof_id
             accmulated_reaction_forces[global_dof] = lhs_vector[global_dof] - rhs_vector[global_dof]
 
 
 @ti.kernel
 def kernel_extract_matrix_free_reaction_forces(
-    gridSum: int,
+    grid_sum: int,
     cut_off: float,
-    displacementNum: int,
+    displacement_num: int,
     displacement_constraint: ti.template(),
     node: ti.template(),
     flag: ti.template(),
@@ -1734,12 +1736,12 @@ def kernel_extract_matrix_free_reaction_forces(
     unknown_vector: ti.template(),
     accmulated_reaction_forces: ti.template(),
 ):
-    for i in range(displacementNum):
-        nodeID = displacement_constraint[i].node
-        dofID = int(displacement_constraint[i].dof)
-        bodyID = int(displacement_constraint[i].level)
-        if node[nodeID, bodyID].m > cut_off:
-            global_dof = flag[nodeID + bodyID * gridSum] + dofID
+    for i in range(displacement_num):
+        node_id = displacement_constraint[i].node
+        dof_id = int(displacement_constraint[i].dof)
+        body_id = int(displacement_constraint[i].level)
+        if node[node_id, body_id].m > cut_off:
+            global_dof = flag[node_id + body_id * grid_sum] + dof_id
             accmulated_reaction_forces[global_dof] = (
                 lhs_vector[global_dof] - PENALTY * unknown_vector[global_dof] - rhs_vector[global_dof]
             )
@@ -1747,9 +1749,9 @@ def kernel_extract_matrix_free_reaction_forces(
 
 @ti.kernel
 def kernel_extract_matrix_free_reaction_forces_sparse(
-    gridSum: int,
+    grid_sum: int,
     cut_off: float,
-    displacementNum: int,
+    displacement_num: int,
     displacement_constraint: ti.template(),
     node: ti.template(),
     flag: ti.template(),
@@ -1763,13 +1765,13 @@ def kernel_extract_matrix_free_reaction_forces_sparse(
     block_volume: ti.template(),
     block_map: ti.template(),
 ):
-    for i in range(displacementNum):
+    for i in range(displacement_num):
         physical_node = displacement_constraint[i].node
-        nodeID = compact_node_id(physical_node, gnum, block_count, block_size, block_volume, block_map)
-        dofID = int(displacement_constraint[i].dof)
-        bodyID = int(displacement_constraint[i].level)
-        if nodeID >= 0 and node[nodeID, bodyID].m > cut_off:
-            global_dof = flag[nodeID + bodyID * gridSum] + dofID
+        node_id = compact_node_id(physical_node, gnum, block_count, block_size, block_volume, block_map)
+        dof_id = int(displacement_constraint[i].dof)
+        body_id = int(displacement_constraint[i].level)
+        if node_id >= 0 and node[node_id, body_id].m > cut_off:
+            global_dof = flag[node_id + body_id * grid_sum] + dof_id
             accmulated_reaction_forces[global_dof] = (
                 lhs_vector[global_dof] - PENALTY * unknown_vector[global_dof] - rhs_vector[global_dof]
             )
@@ -1779,15 +1781,15 @@ def kernel_extract_matrix_free_reaction_forces_sparse(
 #                  Convergence criterion                    #
 # ========================================================= #
 @ti.kernel
-def compute_disp_error_2D(
-    gridSum: int, cutoff: float, node: ti.template(), flag: ti.template(), disp: ti.template()
+def compute_disp_error_2d(
+    grid_sum: int, cutoff: float, node: ti.template(), flag: ti.template(), disp: ti.template()
 ) -> float:
     delta_u = 0.0
     u = 0.0
     for ng in range(node.shape[0]):
         for nb in range(node.shape[1]):
             if node[ng, nb].m > cutoff:
-                dof0 = flag[ng + nb * gridSum]
+                dof0 = flag[ng + nb * grid_sum]
                 dux, duy = disp[dof0], disp[dof0 + 1]
                 displacement = node[ng, nb].displacement
                 delta_u += dux * dux + duy * duy
@@ -1797,28 +1799,28 @@ def compute_disp_error_2D(
     # equilibrium consume the full Newton budget and then get accepted only
     # because the legacy driver did not report non-convergence.
     result = 0.0
-    if delta_u > Threshold:
-        result = ti.sqrt(delta_u / u) if ti.abs(u) > Threshold else 1.0
+    if delta_u > THRESHOLD:
+        result = ti.sqrt(delta_u / u) if ti.abs(u) > THRESHOLD else 1.0
     return result
 
 
 @ti.kernel
 def compute_disp_error(
-    gridSum: int, cutoff: float, node: ti.template(), flag: ti.template(), disp: ti.template()
+    grid_sum: int, cutoff: float, node: ti.template(), flag: ti.template(), disp: ti.template()
 ) -> float:
     delta_u = 0.0
     u = 0.0
     for ng in range(node.shape[0]):
         for nb in range(node.shape[1]):
             if node[ng, nb].m > cutoff:
-                dof0 = flag[ng + nb * gridSum]
+                dof0 = flag[ng + nb * grid_sum]
                 dux, duy, duz = disp[dof0], disp[dof0 + 1], disp[dof0 + 2]
                 displacement = node[ng, nb].displacement
                 delta_u += dux * dux + duy * duy + duz * duz
                 u += summation(displacement)
     result = 0.0
-    if delta_u > Threshold:
-        result = ti.sqrt(delta_u / u) if ti.abs(u) > Threshold else 1.0
+    if delta_u > THRESHOLD:
+        result = ti.sqrt(delta_u / u) if ti.abs(u) > THRESHOLD else 1.0
     return result
 
 
@@ -1908,7 +1910,7 @@ def coupled_projection_cell_density_3d(
     if ti.static(mode == 2):
         phi_s = ti.min(1.0, ti.max(0.0, solid_fraction[cell]))
         rho_s = solid_density[cell]
-        if rho_s <= Threshold:
+        if rho_s <= THRESHOLD:
             rho_s = rho_f
         density = (1.0 - phi_s) * rho_f + phi_s * rho_s
     return density
@@ -1931,7 +1933,7 @@ def coupled_projection_face_terms_3d(
         density = 0.5 * (
             density + coupled_projection_cell_density_3d(neighbor, rho_f, mode, solid_fraction, solid_density)
         )
-    pressure_coefficient = flux_fraction / ti.max(density, Threshold)
+    pressure_coefficient = flux_fraction / ti.max(density, THRESHOLD)
     return flux_fraction, pressure_coefficient
 
 
@@ -1970,14 +1972,14 @@ def kernel_assemble_poisson_equation_coupled_3d(
     solid_fraction: ti.template(),
     previous_solid_fraction: ti.template(),
     solid_density: ti.template(),
-    matProps: ti.template(),
+    mat_props: ti.template(),
     mode: ti.template(),
     use_cut_cell: ti.template(),
     use_free_surface_theta: ti.template(),
     right_hand_vector: ti.template(),
 ):
     active_cnum = cnum - 2 * ghost_cell
-    inv_dt = 1.0 / ti.max(dt[None], Threshold)
+    inv_dt = 1.0 / ti.max(dt[None], THRESHOLD)
     for I in ti.grouped(ti.ndrange((0, active_cnum[0]), (0, active_cnum[1]), (0, active_cnum[2]))):
         if int(cell_type[I]) == 1:
             cell_id = linearize(I, active_cnum)
@@ -1988,10 +1990,10 @@ def kernel_assemble_poisson_equation_coupled_3d(
                 left_neighbor = I - unit
                 right_neighbor = I + unit
                 left_fraction, _ = coupled_projection_face_terms_3d(
-                    I, left_neighbor, matProps.density, mode, cell_type, solid_fraction, solid_density
+                    I, left_neighbor, mat_props.density, mode, cell_type, solid_fraction, solid_density
                 )
                 right_fraction, _ = coupled_projection_face_terms_3d(
-                    I, right_neighbor, matProps.density, mode, cell_type, solid_fraction, solid_density
+                    I, right_neighbor, mat_props.density, mode, cell_type, solid_fraction, solid_density
                 )
                 left_open = coupled_projection_open_fraction_3d(
                     d, I, use_cut_cell, face_fraction0, face_fraction1, face_fraction2
@@ -2031,7 +2033,7 @@ def kernel_assemble_poisson_equation_coupled_3d(
                         d, face, use_cut_cell, face_fraction0, face_fraction1, face_fraction2
                     )
                     _, coefficient = coupled_projection_face_terms_3d(
-                        I, neighbor, matProps.density, mode, cell_type, solid_fraction, solid_density
+                        I, neighbor, mat_props.density, mode, cell_type, solid_fraction, solid_density
                     )
                     if int(cell_type[neighbor]) == 0 and face_open > 0.0:
                         theta = 1.0
@@ -2043,7 +2045,7 @@ def kernel_assemble_poisson_equation_coupled_3d(
                             * igrid_size[d]
                             * igrid_size[d]
                             / theta
-                            * (matProps.atmospheric_pressure + surface_tension[neighbor])
+                            * (mat_props.atmospheric_pressure + surface_tension[neighbor])
                         )
             right_hand_vector[dof_index] = rhs
 
@@ -2061,7 +2063,7 @@ def kernel_preconditioning_poisson_equation_coupled_3d(
     face_fraction2: ti.template(),
     solid_fraction: ti.template(),
     solid_density: ti.template(),
-    matProps: ti.template(),
+    mat_props: ti.template(),
     mode: ti.template(),
     use_cut_cell: ti.template(),
     use_free_surface_theta: ti.template(),
@@ -2084,7 +2086,7 @@ def kernel_preconditioning_poisson_equation_coupled_3d(
                             d, face, use_cut_cell, face_fraction0, face_fraction1, face_fraction2
                         )
                         _, coefficient = coupled_projection_face_terms_3d(
-                            I, neighbor, matProps.density, mode, cell_type, solid_fraction, solid_density
+                            I, neighbor, mat_props.density, mode, cell_type, solid_fraction, solid_density
                         )
                         if int(cell_type[neighbor]) == 0:
                             theta = 1.0
@@ -2111,7 +2113,7 @@ def kernel_poisson_equation_cg_coupled_3d(
     face_fraction2: ti.template(),
     solid_fraction: ti.template(),
     solid_density: ti.template(),
-    matProps: ti.template(),
+    mat_props: ti.template(),
     mode: ti.template(),
     use_cut_cell: ti.template(),
     use_free_surface_theta: ti.template(),
@@ -2136,7 +2138,7 @@ def kernel_poisson_equation_cg_coupled_3d(
                             d, face, use_cut_cell, face_fraction0, face_fraction1, face_fraction2
                         )
                         _, coefficient = coupled_projection_face_terms_3d(
-                            I, neighbor, matProps.density, mode, cell_type, solid_fraction, solid_density
+                            I, neighbor, mat_props.density, mode, cell_type, solid_fraction, solid_density
                         )
                         coefficient *= face_open * igrid_size[d] * igrid_size[d]
                         if int(cell_type[neighbor]) == 0:
@@ -2168,11 +2170,11 @@ def kernel_assemble_poisson_equation_dynamic(
     surface_tension: ti.template(),
     cell_type: ti.template(),
     fluid_sdf: ti.template(),
-    matProps: ti.template(),
+    mat_props: ti.template(),
     use_free_surface_theta: ti.template(),
     right_hand_vector: ti.template(),
 ):
-    parameter1 = matProps.density / dt[None] * igrid_size
+    parameter1 = mat_props.density / dt[None] * igrid_size
     parameter2 = 1.0 * igrid_size * igrid_size
     active_cnum = cnum - 2 * ghost_cell
     if ti.static(GlobalVariable.DIMENSION == 2):
@@ -2197,7 +2199,7 @@ def kernel_assemble_poisson_equation_dynamic(
                             theta = 1.0
                             if ti.static(use_free_surface_theta):
                                 theta = pressure_free_surface_theta(I, neighbor, fluid_sdf)
-                            rhs += parameter2[d] / theta * (matProps.atmospheric_pressure + surface_tension[neighbor])
+                            rhs += parameter2[d] / theta * (mat_props.atmospheric_pressure + surface_tension[neighbor])
                 right_hand_vector[dof_index] = rhs
     elif ti.static(GlobalVariable.DIMENSION == 3):
         for I in ti.grouped(ti.ndrange((0, active_cnum[0]), (0, active_cnum[1]), (0, active_cnum[2]))):
@@ -2221,7 +2223,7 @@ def kernel_assemble_poisson_equation_dynamic(
                             theta = 1.0
                             if ti.static(use_free_surface_theta):
                                 theta = pressure_free_surface_theta(I, neighbor, fluid_sdf)
-                            rhs += parameter2[d] / theta * (matProps.atmospheric_pressure + surface_tension[neighbor])
+                            rhs += parameter2[d] / theta * (mat_props.atmospheric_pressure + surface_tension[neighbor])
                 right_hand_vector[dof_index] = rhs
 
 
@@ -2368,11 +2370,11 @@ def kernel_assemble_poisson_equation_dynamic_cut_cell(
     solid_velocity0: ti.template(),
     solid_velocity1: ti.template(),
     solid_velocity2: ti.template(),
-    matProps: ti.template(),
+    mat_props: ti.template(),
     use_free_surface_theta: ti.template(),
     right_hand_vector: ti.template(),
 ):
-    parameter1 = matProps.density / dt[None] * igrid_size
+    parameter1 = mat_props.density / dt[None] * igrid_size
     parameter2 = 1.0 * igrid_size * igrid_size
     active_cnum = cnum - 2 * ghost_cell
     if ti.static(GlobalVariable.DIMENSION == 2):
@@ -2416,7 +2418,7 @@ def kernel_assemble_poisson_equation_dynamic_cut_cell(
                                 face_fraction
                                 * parameter2[d]
                                 / theta
-                                * (matProps.atmospheric_pressure + surface_tension[neighbor])
+                                * (mat_props.atmospheric_pressure + surface_tension[neighbor])
                             )
                 right_hand_vector[dof_index] = rhs
     elif ti.static(GlobalVariable.DIMENSION == 3):
@@ -2460,7 +2462,7 @@ def kernel_assemble_poisson_equation_dynamic_cut_cell(
                                 face_fraction
                                 * parameter2[d]
                                 / theta
-                                * (matProps.atmospheric_pressure + surface_tension[neighbor])
+                                * (mat_props.atmospheric_pressure + surface_tension[neighbor])
                             )
                 right_hand_vector[dof_index] = rhs
 
@@ -2633,12 +2635,12 @@ def kernel_poisson_equation_cg_cut_cell(
 
 
 @ti.kernel
-def kernel_assemble_residual_poisson_2D(
+def kernel_assemble_residual_poisson_2d(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
     node_size: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     node: ti.template(),
     dshapefn: ti.template(),
     shapefn: ti.template(),
@@ -2646,48 +2648,48 @@ def kernel_assemble_residual_poisson_2D(
 ):
     right_hand_vector.fill(0)
     ti.sync()
-    for np in range(particleNum):
-        bodyID = int(particle[np].bodyID)
+    for np in range(particle_num):
+        body_id = int(particle[np].bodyID)
         offset = np * total_nodes
         volume = particle[np].vol
         porosity = particle[np].porosity
-        materialID = int(particle[np].materialID)
-        if materialID > 0 and int(particle[np].active) == 1:
+        material_id = int(particle[np].materialID)
+        if material_id > 0 and int(particle[np].active) == 1:
             for lni in range(offset, offset + int(node_size[np])):
-                nodeIDi = LnID[lni]
+                node_i_di = ln_id[lni]
                 ishape = shapefn[lni]
                 idshape = dshapefn[lni]
-                dofsi = node[nodeIDi, bodyID].dof
+                dofsi = node[node_i_di, body_id].dof
                 if dofsi >= 0:
                     B1, B2 = 0.0, 0.0
                     for lnj in range(offset, offset + int(node_size[np])):
-                        nodeIDj = LnID[lnj]
+                        node_i_dj = ln_id[lnj]
                         jshape = shapefn[lnj]
                         jdshape = dshapefn[lnj]
                         # The material boundary moves with the skeleton.
                         # Keep its divergence in strong form: dropping the
                         # surface term invents flux even for rigid translation.
                         B1 -= (
-                            ishape * jdshape[0] * volume * node[nodeIDj, bodyID].momentums[0]
-                            + ishape * jdshape[1] * volume * node[nodeIDj, bodyID].momentums[1]
+                            ishape * jdshape[0] * volume * node[node_i_dj, body_id].momentums[0]
+                            + ishape * jdshape[1] * volume * node[node_i_dj, body_id].momentums[1]
                         )
                         # Differentiate the interpolated relative flux n*(vf-vs),
                         # retaining porosity gradients without a missing surface term.
-                        B2 -= ishape * jdshape[0] * volume * node[nodeIDj, bodyID].porosity * (
-                            node[nodeIDj, bodyID].momentumf[0] - node[nodeIDj, bodyID].momentums[0]
-                        ) + ishape * jdshape[1] * volume * node[nodeIDj, bodyID].porosity * (
-                            node[nodeIDj, bodyID].momentumf[1] - node[nodeIDj, bodyID].momentums[1]
+                        B2 -= ishape * jdshape[0] * volume * node[node_i_dj, body_id].porosity * (
+                            node[node_i_dj, body_id].momentumf[0] - node[node_i_dj, body_id].momentums[0]
+                        ) + ishape * jdshape[1] * volume * node[node_i_dj, body_id].porosity * (
+                            node[node_i_dj, body_id].momentumf[1] - node[node_i_dj, body_id].momentums[1]
                         )
                     right_hand_vector[dofsi] += B1 + B2
 
 
 @ti.kernel
-def kernel_assemble_residual_poisson_2DAxisy(
+def kernel_assemble_residual_poisson_2d_axisy(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
     node_size: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     node: ti.template(),
     dshapefn: ti.template(),
     shapefn: ti.template(),
@@ -2695,47 +2697,47 @@ def kernel_assemble_residual_poisson_2DAxisy(
 ):
     right_hand_vector.fill(0)
     ti.sync()
-    for np in range(particleNum):
-        bodyID = int(particle[np].bodyID)
+    for np in range(particle_num):
+        body_id = int(particle[np].bodyID)
         offset = np * total_nodes
         volume = particle[np].vol
         porosity = particle[np].porosity
         position = particle[np].x
-        materialID = int(particle[np].materialID)
-        if materialID > 0 and int(particle[np].active) == 1:
+        material_id = int(particle[np].materialID)
+        if material_id > 0 and int(particle[np].active) == 1:
             for lni in range(offset, offset + int(node_size[np])):
-                nodeIDi = LnID[lni]
+                node_i_di = ln_id[lni]
                 ishape = shapefn[lni]
                 idshape = dshapefn[lni]
-                dofsi = node[nodeIDi, bodyID].dof
+                dofsi = node[node_i_di, body_id].dof
                 if dofsi >= 0:
                     B1, B2 = 0.0, 0.0
                     for lnj in range(offset, offset + int(node_size[np])):
-                        nodeIDj = LnID[lnj]
+                        node_i_dj = ln_id[lnj]
                         jshape = shapefn[lnj]
                         jdshape = dshapefn[lnj]
                         B1 -= (
-                            ishape * jdshape[0] * volume * node[nodeIDj, bodyID].momentums[0]
-                            + ishape * jdshape[1] * volume * node[nodeIDj, bodyID].momentums[1]
-                            + ishape * jshape / position[0] * volume * node[nodeIDj, bodyID].momentums[0]
+                            ishape * jdshape[0] * volume * node[node_i_dj, body_id].momentums[0]
+                            + ishape * jdshape[1] * volume * node[node_i_dj, body_id].momentums[1]
+                            + ishape * jshape / position[0] * volume * node[node_i_dj, body_id].momentums[0]
                         )
                         B2 -= (
                             ishape
                             * jdshape[0]
                             * volume
                             * porosity
-                            * (node[nodeIDj, bodyID].momentumf[0] - node[nodeIDj, bodyID].momentums[0])
+                            * (node[node_i_dj, body_id].momentumf[0] - node[node_i_dj, body_id].momentums[0])
                             + ishape
                             * jdshape[1]
                             * volume
                             * porosity
-                            * (node[nodeIDj, bodyID].momentumf[1] - node[nodeIDj, bodyID].momentums[1])
+                            * (node[node_i_dj, body_id].momentumf[1] - node[node_i_dj, body_id].momentums[1])
                             + ishape
                             * jshape
                             / position[0]
                             * volume
                             * porosity
-                            * (node[nodeIDj, bodyID].momentumf[0] - node[nodeIDj, bodyID].momentums[0])
+                            * (node[node_i_dj, body_id].momentumf[0] - node[node_i_dj, body_id].momentums[0])
                         )
                     right_hand_vector[dofsi] += B1 + B2
 
@@ -2748,16 +2750,16 @@ def single_point_fic_time_scale(grid_size, young, poisson, solid_density):
 
 
 @ti.kernel
-def kernel_assemble_residual_poisson_FIC_2D(
+def kernel_assemble_residual_poisson_fic_2d(
     total_nodes: int,
     start_index: int,
     end_index: int,
     particle: ti.template(),
     material_mapping: ti.template(),
     node_size: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     node: ti.template(),
-    matProp: ti.template(),
+    mat_prop: ti.template(),
     dshapefn: ti.template(),
     shapefn: ti.template(),
     right_hand_vector: ti.template(),
@@ -2767,57 +2769,57 @@ def kernel_assemble_residual_poisson_FIC_2D(
 ):
     for i in range(start_index, end_index):
         np = material_mapping[i]
-        bodyID = int(particle[np].bodyID)
+        body_id = int(particle[np].bodyID)
         offset = np * total_nodes
         volume = particle[np].vol
         porosity = particle[np].porosity
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            density_s, density_f = matProp.solid_density, matProp.fluid_density
-            tau_ = single_point_fic_time_scale(grid_size, matProp.young, matProp.poisson, density_s)
+            density_s, density_f = mat_prop.solid_density, mat_prop.fluid_density
+            tau_ = single_point_fic_time_scale(grid_size, mat_prop.young, mat_prop.poisson, density_s)
             H = volume * tau_ * (porosity / density_f + (1.0 - porosity) / density_s)
             for lni in range(offset, offset + int(node_size[np])):
-                nodeIDi = LnID[lni]
+                node_i_di = ln_id[lni]
                 local_lni = lni - offset
                 ishape = shapefn[lni]
                 idshape = dshapefn[lni]
-                dofsi = node[nodeIDi, bodyID].dof
+                dofsi = node[node_i_di, body_id].dof
                 if dofsi >= 0:
                     B1, B2, B3, B4 = 0.0, 0.0, 0.0, 0.0
                     for lnj in range(offset, offset + int(node_size[np])):
-                        nodeIDj = LnID[lnj]
+                        node_i_dj = ln_id[lnj]
                         jshape = shapefn[lnj]
                         jdshape = dshapefn[lnj]
                         B1 -= (
-                            ishape * jdshape[0] * volume * node[nodeIDj, bodyID].momentums[0]
-                            + ishape * jdshape[1] * volume * node[nodeIDj, bodyID].momentums[1]
+                            ishape * jdshape[0] * volume * node[node_i_dj, body_id].momentums[0]
+                            + ishape * jdshape[1] * volume * node[node_i_dj, body_id].momentums[1]
                         )
-                        B2 -= ishape * jdshape[0] * volume * node[nodeIDj, bodyID].porosity * (
-                            node[nodeIDj, bodyID].momentumf[0] - node[nodeIDj, bodyID].momentums[0]
-                        ) + ishape * jdshape[1] * volume * node[nodeIDj, bodyID].porosity * (
-                            node[nodeIDj, bodyID].momentumf[1] - node[nodeIDj, bodyID].momentums[1]
+                        B2 -= ishape * jdshape[0] * volume * node[node_i_dj, body_id].porosity * (
+                            node[node_i_dj, body_id].momentumf[0] - node[node_i_dj, body_id].momentums[0]
+                        ) + ishape * jdshape[1] * volume * node[node_i_dj, body_id].porosity * (
+                            node[node_i_dj, body_id].momentumf[1] - node[node_i_dj, body_id].momentums[1]
                         )
                         B3 -= (
-                            idshape[0] * jdshape[0] * H * beta * node[nodeIDj, bodyID].pressure
-                            + idshape[1] * jdshape[1] * H * beta * node[nodeIDj, bodyID].pressure
+                            idshape[0] * jdshape[0] * H * beta * node[node_i_dj, body_id].pressure
+                            + idshape[1] * jdshape[1] * H * beta * node[node_i_dj, body_id].pressure
                         )
                         B4 -= (
-                            idshape[0] * jshape * volume * tau_ * node[nodeIDj, bodyID].extra_stabilize[0]
-                            + idshape[1] * jshape * volume * tau_ * node[nodeIDj, bodyID].extra_stabilize[1]
+                            idshape[0] * jshape * volume * tau_ * node[node_i_dj, body_id].extra_stabilize[0]
+                            + idshape[1] * jshape * volume * tau_ * node[node_i_dj, body_id].extra_stabilize[1]
                         )
                     right_hand_vector[dofsi] += B1 + B2 + B3 + B4
 
 
 @ti.kernel
-def kernel_assemble_residual_poisson_2D_u_p(
+def kernel_assemble_residual_poisson_2d_u_p(
     total_nodes: int,
     start_index: int,
     end_index: int,
     particle: ti.template(),
     material_mapping: ti.template(),
     node_size: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     node: ti.template(),
-    matProp: ti.template(),
+    mat_prop: ti.template(),
     gravity: ti.types.vector(3, float),
     dshapefn: ti.template(),
     shapefn: ti.template(),
@@ -2827,82 +2829,82 @@ def kernel_assemble_residual_poisson_2D_u_p(
 ):
     for i in range(start_index, end_index):
         np = material_mapping[i]
-        bodyID = int(particle[np].bodyID)
+        body_id = int(particle[np].bodyID)
         offset = np * total_nodes
         volume = particle[np].vol
         porosity = particle[np].porosity
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            density_s, density_f = matProp.solid_density, matProp.fluid_density
-            kk = matProp.permeability
-            H = volume * kk / matProp.fluid_unit_weight
-            storage = volume * porosity / matProp.fluid_bulk / dt[None]
+            density_s, density_f = mat_prop.solid_density, mat_prop.fluid_density
+            kk = mat_prop.permeability
+            H = volume * kk / mat_prop.fluid_unit_weight
+            storage = volume * porosity / mat_prop.fluid_bulk / dt[None]
             for lni in range(offset, offset + int(node_size[np])):
-                nodeIDi = LnID[lni]
+                node_i_di = ln_id[lni]
                 local_lni = lni - offset
                 ishape = shapefn[lni]
                 idshape = dshapefn[lni]
-                dofsi = node[nodeIDi, bodyID].dof
+                dofsi = node[node_i_di, body_id].dof
                 if dofsi >= 0:
                     B1, B2 = 0.0, storage * ishape * particle[np].pressure
                     for lnj in range(offset, offset + int(node_size[np])):
-                        nodeIDj = LnID[lnj]
+                        node_i_dj = ln_id[lnj]
                         jshape = shapefn[lnj]
                         jdshape = dshapefn[lnj]
                         B1 -= (
-                            ishape * jdshape[0] * volume * node[nodeIDj, bodyID].momentum[0]
-                            + ishape * jdshape[1] * volume * node[nodeIDj, bodyID].momentum[1]
+                            ishape * jdshape[0] * volume * node[node_i_dj, body_id].momentum[0]
+                            + ishape * jdshape[1] * volume * node[node_i_dj, body_id].momentum[1]
                         )
                         B2 -= idshape[0] * H * (
-                            beta * jdshape[0] * node[nodeIDj, bodyID].pressure - jshape * density_f * gravity[0]
+                            beta * jdshape[0] * node[node_i_dj, body_id].pressure - jshape * density_f * gravity[0]
                         ) + idshape[1] * H * (
-                            beta * jdshape[1] * node[nodeIDj, bodyID].pressure - jshape * density_f * gravity[1]
+                            beta * jdshape[1] * node[node_i_dj, body_id].pressure - jshape * density_f * gravity[1]
                         )
                         # p_new = beta*N*p_old_grid + N*dp. The physical old
                         # pressure is carried by the particle, not N*p_old_grid.
-                        B2 -= storage * ishape * jshape * beta * node[nodeIDj, bodyID].pressure
+                        B2 -= storage * ishape * jshape * beta * node[node_i_dj, body_id].pressure
                     right_hand_vector[dofsi] += B1 + B2
 
 
 @ti.kernel
 def kernel_compute_penalty_matrix_poisson(
     cut_off: float,
-    pressureNum: int,
+    pressure_num: int,
     pressure_constraint: ti.template(),
     node: ti.template(),
     mass_matrix: ti.template(),
 ):
-    for i in range(pressureNum):
-        nodeID = pressure_constraint[i]
-        bodyID = 0
-        if node[nodeID, bodyID].m > cut_off:
-            dofID = node[nodeID, bodyID].dof
-            mass_matrix[dofID] += PENALTY
+    for i in range(pressure_num):
+        node_id = pressure_constraint[i]
+        body_id = 0
+        if node[node_id, body_id].m > cut_off:
+            dof_id = node[node_id, body_id].dof
+            mass_matrix[dof_id] += PENALTY
 
 
 @ti.kernel
-def kernel_preconditioning_matrix_poisson2D(
+def kernel_preconditioning_matrix_poisson2d(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
     node_size: ti.template(),
     diag_A: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     node: ti.template(),
     local_stiffness: ti.template(),
 ):
-    for np in range(particleNum):
-        bodyID = int(particle[np].bodyID)
+    for np in range(particle_num):
+        body_id = int(particle[np].bodyID)
         offset = np * total_nodes
         for ln in range(offset, offset + int(node_size[np])):
-            nodeID = LnID[ln]
+            node_id = ln_id[ln]
             local_ln = ln - offset
-            dofs = node[nodeID, bodyID].dof
+            dofs = node[node_id, body_id].dof
             if dofs >= 0:
                 diag_A[dofs] += local_stiffness[np, local_ln, local_ln]
 
 
 @ti.kernel
-def kernel_assemble_local_stiffness_poisson_FIC_2D(
+def kernel_assemble_local_stiffness_poisson_fic_2d(
     total_nodes: int,
     start_index: int,
     end_index: int,
@@ -2911,7 +2913,7 @@ def kernel_assemble_local_stiffness_poisson_FIC_2D(
     shapefn: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
-    matProp: ti.template(),
+    mat_prop: ti.template(),
     local_stiffness: ti.template(),
     dt: ti.template(),
     grid_size: ti.types.vector(2, float),
@@ -2922,10 +2924,10 @@ def kernel_assemble_local_stiffness_poisson_FIC_2D(
         volume = particle[np].vol
         porosity = particle[np].porosity
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            density_s, density_f = matProp.solid_density, matProp.fluid_density
+            density_s, density_f = mat_prop.solid_density, mat_prop.fluid_density
             H = volume * (porosity / density_f + (1.0 - porosity) / density_s) * dt[None]
 
-            tau_ = single_point_fic_time_scale(grid_size, matProp.young, matProp.poisson, density_s)
+            tau_ = single_point_fic_time_scale(grid_size, mat_prop.young, mat_prop.poisson, density_s)
             H_ = volume * (porosity / density_f + (1.0 - porosity) / density_s) * tau_
 
             for lni in range(offset, offset + int(node_size[np])):
@@ -2942,7 +2944,7 @@ def kernel_assemble_local_stiffness_poisson_FIC_2D(
 
 
 @ti.kernel
-def kernel_assemble_local_stiffness_poisson2D(
+def kernel_assemble_local_stiffness_poisson2d(
     total_nodes: int,
     start_index: int,
     end_index: int,
@@ -2950,11 +2952,11 @@ def kernel_assemble_local_stiffness_poisson2D(
     material_mapping: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
-    matProp: ti.template(),
+    mat_prop: ti.template(),
     local_stiffness: ti.template(),
     dt: ti.template(),
     grid_size: ti.types.vector(2, float),
-    stateVars: ti.template(),
+    state_variables: ti.template(),
 ):
     for i in range(start_index, end_index):
         np = material_mapping[i]
@@ -2962,7 +2964,7 @@ def kernel_assemble_local_stiffness_poisson2D(
         volume = particle[np].vol
         porosity = particle[np].porosity
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            density_s, density_f = matProp.solid_density, matProp.fluid_density
+            density_s, density_f = mat_prop.solid_density, mat_prop.fluid_density
             L = volume * (porosity / density_f + (1.0 - porosity) / density_s) * dt[None]
 
             for lni in range(offset, offset + int(node_size[np])):
@@ -2975,7 +2977,7 @@ def kernel_assemble_local_stiffness_poisson2D(
 
 
 @ti.kernel
-def kernel_assemble_local_stiffness_poisson2D_u_p(
+def kernel_assemble_local_stiffness_poisson2d_u_p(
     total_nodes: int,
     start_index: int,
     end_index: int,
@@ -2984,7 +2986,7 @@ def kernel_assemble_local_stiffness_poisson2D_u_p(
     shapefn: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
-    matProp: ti.template(),
+    mat_prop: ti.template(),
     local_stiffness: ti.template(),
     dt: ti.template(),
 ):
@@ -2994,12 +2996,12 @@ def kernel_assemble_local_stiffness_poisson2D_u_p(
         volume = particle[np].vol
         porosity = particle[np].porosity
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            density_s, density_f = matProp.solid_density, matProp.fluid_density
-            kk = matProp.permeability
-            bulk = matProp.fluid_bulk
+            density_s, density_f = mat_prop.solid_density, mat_prop.fluid_density
+            kk = mat_prop.permeability
+            bulk = mat_prop.fluid_bulk
             rho = porosity * density_f + (1.0 - porosity) * density_s
             S = volume * porosity / bulk / dt[None]
-            H = volume * kk / matProp.fluid_unit_weight
+            H = volume * kk / mat_prop.fluid_unit_weight
             H_ = volume / rho * dt[None]
             for lni in range(offset, offset + int(node_size[np])):
                 ishape = shapefn[lni]
@@ -3015,7 +3017,7 @@ def kernel_assemble_local_stiffness_poisson2D_u_p(
 
 
 @ti.kernel
-def kernel_assemble_stiffness_poisson2D(
+def kernel_assemble_stiffness_poisson2d(
     ifnode: int,
     total_nodes: int,
     start_index: int,
@@ -3024,13 +3026,13 @@ def kernel_assemble_stiffness_poisson2D(
     material_mapping: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     node: ti.template(),
-    matProp: ti.template(),
+    mat_prop: ti.template(),
     sparse_matrix: ti.template(),
     dt: ti.template(),
     grid_size: ti.types.vector(2, float),
-    stateVars: ti.template(),
+    state_variables: ti.template(),
     cutoff: float,
     beta: float,
     boundary_pressure: float,
@@ -3039,38 +3041,38 @@ def kernel_assemble_stiffness_poisson2D(
 ):
     for i in range(start_index, end_index):
         np = material_mapping[i]
-        bodyID = int(particle[np].bodyID)
+        body_id = int(particle[np].bodyID)
         offset = np * total_nodes
         volume = particle[np].vol
         porosity = particle[np].porosity
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            density_s, density_f = matProp.solid_density, matProp.fluid_density
+            density_s, density_f = mat_prop.solid_density, mat_prop.fluid_density
             L = volume * (porosity / density_f + (1.0 - porosity) / density_s) * dt[None]
             if ti.static(fic):
                 L += (
                     volume
                     * (porosity / density_f + (1.0 - porosity) / density_s)
-                    * single_point_fic_time_scale(grid_size, matProp.young, matProp.poisson, density_s)
+                    * single_point_fic_time_scale(grid_size, mat_prop.young, mat_prop.poisson, density_s)
                 )
 
             for lni in range(offset, offset + int(node_size[np])):
                 idshape = dshapefn[lni]
                 local_lni = lni - offset
-                nodeIDi = LnID[lni]
-                dofsi = node[nodeIDi, bodyID].dof
+                node_i_di = ln_id[lni]
+                dofsi = node[node_i_di, body_id].dof
                 if dofsi >= 0:
                     for lnj in range(offset, offset + int(node_size[np])):
                         jdshape = dshapefn[lnj]
                         local_lnj = lnj - offset
-                        nodeIDj = LnID[lnj]
-                        dofsj = node[nodeIDj, bodyID].dof
+                        node_i_dj = ln_id[lnj]
+                        dofsj = node[node_i_dj, body_id].dof
                         if dofsj >= 0:
                             index = ifnode * ifnode * np + local_lni * ifnode + local_lnj
                             sparse_matrix.rows[index] = dofsi
                             sparse_matrix.cols[index] = dofsj
                             sparse_matrix.data[index] = (idshape[0] * jdshape[0] + idshape[1] * jdshape[1]) * L
-                        elif node[nodeIDj, bodyID].m > cutoff:
-                            prescribed_increment = boundary_pressure - beta * node[nodeIDj, bodyID].pressure
+                        elif node[node_i_dj, body_id].m > cutoff:
+                            prescribed_increment = boundary_pressure - beta * node[node_i_dj, body_id].pressure
                             right_hand_vector[dofsi] -= (
                                 (idshape[0] * jdshape[0] + idshape[1] * jdshape[1]) * L * prescribed_increment
                             )
@@ -3079,10 +3081,10 @@ def kernel_assemble_stiffness_poisson2D(
 @ti.kernel
 def kernel_eliminate_pressure_increment_dirichlet(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
     node_size: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     node: ti.template(),
     local_stiffness: ti.template(),
     cutoff: float,
@@ -3090,19 +3092,19 @@ def kernel_eliminate_pressure_increment_dirichlet(
     boundary_pressure: float,
     right_hand_vector: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             for lni in range(offset, offset + int(node_size[np])):
-                nodeIDi = LnID[lni]
-                dofsi = node[nodeIDi, bodyID].dof
+                node_i_di = ln_id[lni]
+                dofsi = node[node_i_di, body_id].dof
                 if dofsi >= 0:
                     local_lni = lni - offset
                     for lnj in range(offset, offset + int(node_size[np])):
-                        nodeIDj = LnID[lnj]
-                        if node[nodeIDj, bodyID].dof < 0 and node[nodeIDj, bodyID].m > cutoff:
-                            prescribed_increment = boundary_pressure - beta * node[nodeIDj, bodyID].pressure
+                        node_i_dj = ln_id[lnj]
+                        if node[node_i_dj, body_id].dof < 0 and node[node_i_dj, body_id].m > cutoff:
+                            prescribed_increment = boundary_pressure - beta * node[node_i_dj, body_id].pressure
                             right_hand_vector[dofsi] -= (
                                 local_stiffness[np, local_lni, lnj - offset] * prescribed_increment
                             )
@@ -3110,13 +3112,13 @@ def kernel_eliminate_pressure_increment_dirichlet(
 
 # ---- SemiImplicit TwoPhaseSingleLayer compatibility kernels ----
 @ti.kernel
-def kernel_mass_balance_cg_poisson2D(
+def kernel_mass_balance_cg_poisson2d(
     total_nodes: int,
     total_dofs: int,
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
     node_size: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     node: ti.template(),
     mass_matrix: ti.template(),
     local_stiffness: ti.template(),
@@ -3129,19 +3131,19 @@ def kernel_mass_balance_cg_poisson2D(
         # if ndof >= 10100:
         #     print(ndof, mass_matrix[ndof], unknown_vector[ndof])
 
-    for np in range(particleNum):
-        bodyID = int(particle[np].bodyID)
+    for np in range(particle_num):
+        body_id = int(particle[np].bodyID)
         offset = np * total_nodes
         for lni in range(offset, offset + int(node_size[np])):
-            nodeIDi = LnID[lni]
+            node_i_di = ln_id[lni]
             local_lni = lni - offset
-            dofsi = node[nodeIDi, bodyID].dof
+            dofsi = node[node_i_di, body_id].dof
             if dofsi >= 0:
                 Ab = 0.0
                 for lnj in range(offset, offset + int(node_size[np])):
-                    nodeIDj = LnID[lnj]
+                    node_i_dj = ln_id[lnj]
                     local_lnj = lnj - offset
-                    dofsj = node[nodeIDj, bodyID].dof
+                    dofsj = node[node_i_dj, body_id].dof
                     if dofsj >= 0:
                         Ab += local_stiffness[np, local_lni, local_lnj] * unknown_vector[dofsj]
                 m_dot_v[dofsi] += Ab

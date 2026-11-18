@@ -1,123 +1,127 @@
-import math
+from src.utils.MatrixFunction import psd_project_nd
+from src.utils.errors import (
+    BackendError,
+    CapacityError,
+    ConfigurationError,
+    LineSearchError,
+    LinearSolveError,
+    NonfiniteStateError,
+    NonlinearSolveError,
+    RecordingError,
+    SimulationStateError,
+)
+from src.physics_model.contact_model.ipc.Utilities import ipc_fully_implicit_point_plane_stribeck_force
+from src.physics_model.contact_model.ipc.Utilities import ipc_fully_implicit_point_plane_stribeck_friction
 
+import math
 import taichi as ti
 import numpy as np
 from taichi.lang.impl import current_cfg
-
 import src.mpm.config as config
-from src.contact_detection.continuous_contact_detection import (
-    linear_gap_accd,
-    point_point_accd,
-)
+from src.contact_detection.continuous_contact_detection.AdditiveCCD import linear_gap_accd
+from src.contact_detection.continuous_contact_detection.AdditiveCCD import point_point_accd
 from src.mpm.engines.direct.Convergence import mpm_correction_measure
 from src.mpm.engines.direct.ImplicitMPM import ImplicitMPM
 from src.physics_model.contact_model.ipc.ContactGeometry import aabb_overlap_with_clearance
 from src.mpm.generator.Ground import Ground
-from src.physics_model.contact_model.ipc.IPC import (
-    Barrier,
-    Friction,
-    ipc_fully_implicit_point_plane_stribeck_force,
-    ipc_fully_implicit_point_plane_stribeck_friction,
-)
-from src.physics_model.contact_model.ipc.ContactAssembly import (
-    psd_project_nd,
-    scatter_hash_scalar,
-)
-from src.physics_model.contact_model.ipc.ContactMeasure import (
-    point_contact_measure,
-    symmetric_contact_measure,
-)
+from src.physics_model.contact_model.ipc.Barrier import Barrier
+from src.physics_model.contact_model.ipc.Friction import Friction
+from src.physics_model.contact_model.ipc.ContactAssembly import scatter_hash_scalar
+from src.physics_model.contact_model.ipc.ContactMeasure import point_contact_measure, symmetric_contact_measure
 from src.mpm.soft_particle.IPCFunction import PointPointDerivative, PointGroundDerivative
-from src.mpm.utils import add_field, copy_field
+from src.utils.VectorFunction import add_field, copy_field
 from src.linear_solver.BuildTriplet import BuildTriplet
 from src.utils.MatrixFunction import contraction, flatten_matrix, unflatten_matrix
-
-
-def _first_float(value, default):
-    if isinstance(value, (list, tuple, np.ndarray)):
-        return float(value[0]) if len(value) > 0 else float(default)
-    if value is None:
-        return float(default)
-    return float(value)
-
-
-def _normalize_contact_search(value):
-    key = str(value).strip().replace("_", "").replace("-", "").replace(" ", "").lower()
-    if key in ("linkedcell", "cell", "lc"):
-        return "LinkedCell"
-    if key in ("hierarchicallinkedcell", "hierarchicalcell", "hlc"):
-        return "HierarchicalLinkedCell"
-    if key in ("bvh", "boundingvolumehierarchy"):
-        return "BVH"
-    if key in ("brust", "brute", "bruteforce"):
-        return "Brust"
-    raise ValueError("contact_search must be 'LinkedCell', 'HierarchicalLinkedCell', " "'BVH', or explicit 'Brust'")
-
-
-def _normalize_friction_mode(value):
-    key = str(value).strip().replace("-", "_").replace(" ", "_").lower()
-    aliases = {
-        "lag": "lagged",
-        "lagged": "lagged",
-        "fullyimplicit": "fully_implicit",
-        "fully_implicit": "fully_implicit",
-        "fully_implicit_experimental": "fully_implicit",
-    }
-    if key not in aliases:
-        raise ValueError("friction_mode must be 'lagged' or 'fully_implicit'")
-    return aliases[key]
-
-
-def _normalize_friction_iterations(value):
-    try:
-        numeric_value = float(value)
-        iterations = int(numeric_value)
-    except (TypeError, ValueError, OverflowError) as exc:
-        raise ValueError("friction_iterations must be an integer") from exc
-    if not np.isfinite(numeric_value) or numeric_value != iterations:
-        raise ValueError("friction_iterations must be an integer")
-    # Original IPC's fricIterAmt treats every non-positive value as
-    # iterate-to-convergence. Canonicalize those aliases to one sentinel.
-    return -1 if iterations <= 0 else iterations
-
-
-def _positive_integer(value, name):
-    try:
-        numeric_value = float(value)
-        integer_value = int(numeric_value)
-    except (TypeError, ValueError, OverflowError) as exc:
-        raise ValueError(f"{name} must be a positive integer") from exc
-    if not np.isfinite(numeric_value) or numeric_value != integer_value or integer_value <= 0:
-        raise ValueError(f"{name} must be a positive integer")
-    return integer_value
-
-
-def _positive_float(value, name):
-    try:
-        float_value = float(value)
-    except (TypeError, ValueError, OverflowError) as exc:
-        raise ValueError(f"{name} must be positive") from exc
-    if not np.isfinite(float_value) or float_value <= 0.0:
-        raise ValueError(f"{name} must be positive")
-    return float_value
-
-
-def _nonnegative_float(value, name):
-    try:
-        float_value = float(value)
-    except (TypeError, ValueError, OverflowError) as exc:
-        raise ValueError(f"{name} must be finite and nonnegative") from exc
-    if not np.isfinite(float_value) or float_value < 0.0:
-        raise ValueError(f"{name} must be finite and nonnegative")
-    return float_value
-
-
-class IPCInfeasibleContactState(RuntimeError):
-    """A trial configuration crossed the IPC minimum-distance boundary."""
+from src.utils.errors import IPCInfeasibleContactState
 
 
 @ti.data_oriented
 class IPCMPM:
+
+    def supports_plastic_adjoint(self):
+        name = type(self.mpm.material).__name__
+        return name in {"FiniteStrainDruckerPragerModel", "FiniteStrainVonMisesModel"} or (
+            name == "FiniteStrainModifiedCamClayModel" and self.mpm.material.use_direct_consistent_solve
+        )
+
+    @staticmethod
+    def _first_float(value, default):
+        if isinstance(value, (list, tuple, np.ndarray)):
+            return float(value[0]) if len(value) > 0 else float(default)
+        if value is None:
+            return float(default)
+        return float(value)
+
+    @staticmethod
+    def _normalize_contact_search(value):
+        key = str(value).strip().replace("_", "").replace("-", "").replace(" ", "").lower()
+        if key in ("linkedcell", "cell", "lc"):
+            return "LinkedCell"
+        if key in ("hierarchicallinkedcell", "hierarchicalcell", "hlc"):
+            return "HierarchicalLinkedCell"
+        if key in ("bvh", "boundingvolumehierarchy"):
+            return "BVH"
+        if key in ("brust", "brute", "bruteforce"):
+            return "Brust"
+        raise ValueError("contact_search must be 'LinkedCell', 'HierarchicalLinkedCell', " "'BVH', or explicit 'Brust'")
+
+    @staticmethod
+    def _normalize_friction_mode(value):
+        key = str(value).strip().replace("-", "_").replace(" ", "_").lower()
+        aliases = {
+            "lag": "lagged",
+            "lagged": "lagged",
+            "fullyimplicit": "fully_implicit",
+            "fully_implicit": "fully_implicit",
+            "fully_implicit_experimental": "fully_implicit",
+        }
+        if key not in aliases:
+            raise ValueError("friction_mode must be 'lagged' or 'fully_implicit'")
+        return aliases[key]
+
+    @staticmethod
+    def _normalize_friction_iterations(value):
+        try:
+            numeric_value = float(value)
+            iterations = int(numeric_value)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("friction_iterations must be an integer") from exc
+        if not np.isfinite(numeric_value) or numeric_value != iterations:
+            raise ValueError("friction_iterations must be an integer")
+        # Original IPC's fricIterAmt treats every non-positive value as
+        # iterate-to-convergence. Canonicalize those aliases to one sentinel.
+        return -1 if iterations <= 0 else iterations
+
+    @staticmethod
+    def _positive_integer(value, name):
+        try:
+            numeric_value = float(value)
+            integer_value = int(numeric_value)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError(f"{name} must be a positive integer") from exc
+        if not np.isfinite(numeric_value) or numeric_value != integer_value or integer_value <= 0:
+            raise ValueError(f"{name} must be a positive integer")
+        return integer_value
+
+    @staticmethod
+    def _positive_float(value, name):
+        try:
+            float_value = float(value)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError(f"{name} must be positive") from exc
+        if not np.isfinite(float_value) or float_value <= 0.0:
+            raise ValueError(f"{name} must be positive")
+        return float_value
+
+    @staticmethod
+    def _nonnegative_float(value, name):
+        try:
+            float_value = float(value)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError(f"{name} must be finite and nonnegative") from exc
+        if not np.isfinite(float_value) or float_value < 0.0:
+            raise ValueError(f"{name} must be finite and nonnegative")
+        return float_value
 
     def __init__(self, mpm: ImplicitMPM, ground: Ground = None, **kwargs):
         self.mpm = mpm
@@ -149,7 +153,7 @@ class IPCMPM:
         self.line_search_stagnation_energy_tol = kwargs.get("line_search_stagnation_energy_tol", 1.0e-6)
         self.line_search_max_backtracks = kwargs.get("line_search_max_backtracks", 25)
         self.line_search_descent_fallback = kwargs.get("line_search_descent_fallback", True)
-        self.line_search_armijo = _positive_float(
+        self.line_search_armijo = IPCMPM._positive_float(
             kwargs.get("line_search_armijo", 1.0e-4),
             "line_search_armijo",
         )
@@ -167,18 +171,18 @@ class IPCMPM:
         self.line_search_last_trial_energy = 0.0
         self.line_search_last_accepted_energy = 0.0
         self.friction_reference_initialized = False
-        self.friction_mode = _normalize_friction_mode(kwargs.get("friction_mode", "lagged"))
-        self.friction_iterations = _normalize_friction_iterations(
+        self.friction_mode = IPCMPM._normalize_friction_mode(kwargs.get("friction_mode", "lagged"))
+        self.friction_iterations = IPCMPM._normalize_friction_iterations(
             kwargs.get(
                 "friction_iterations",
                 kwargs.get("friction_fixed_point_iterations", 1),
             )
         )
-        self.friction_max_iterations = _positive_integer(
+        self.friction_max_iterations = IPCMPM._positive_integer(
             kwargs.get("friction_max_iterations", 50),
             "friction_max_iterations",
         )
-        self.friction_tolerance = _positive_float(
+        self.friction_tolerance = IPCMPM._positive_float(
             kwargs.get(
                 "friction_residual",
                 kwargs.get(
@@ -196,7 +200,7 @@ class IPCMPM:
         self.last_friction_iterations = 0
         self.last_friction_residual = np.inf
         self.last_friction_converged = False
-        self.fully_implicit_armijo = _positive_float(
+        self.fully_implicit_armijo = IPCMPM._positive_float(
             kwargs.get("fully_implicit_armijo", 1.0e-4),
             "fully_implicit_armijo",
         )
@@ -205,15 +209,15 @@ class IPCMPM:
         self.fully_implicit_backtrack = float(kwargs.get("fully_implicit_backtrack", 0.5))
         if not 0.0 < self.fully_implicit_backtrack < 1.0:
             raise ValueError("fully_implicit_backtrack must lie in (0, 1)")
-        self.fully_implicit_max_backtracks = _positive_integer(
+        self.fully_implicit_max_backtracks = IPCMPM._positive_integer(
             kwargs.get("fully_implicit_max_backtracks", 30),
             "fully_implicit_max_backtracks",
         )
-        self.fully_implicit_residual_atol = _nonnegative_float(
+        self.fully_implicit_residual_atol = IPCMPM._nonnegative_float(
             kwargs.get("fully_implicit_residual_atol", 1.0e-12),
             "fully_implicit_residual_atol",
         )
-        self.fully_implicit_residual_rtol = _nonnegative_float(
+        self.fully_implicit_residual_rtol = IPCMPM._nonnegative_float(
             kwargs.get("fully_implicit_residual_rtol", 1.0e-8),
             "fully_implicit_residual_rtol",
         )
@@ -221,7 +225,7 @@ class IPCMPM:
         self.last_fully_implicit_initial_residual = np.inf
         self.last_fully_implicit_backtracks = 0
         self.fully_implicit_velocity_predictor = bool(kwargs.get("fully_implicit_velocity_predictor", True))
-        self.contact_search = _normalize_contact_search(
+        self.contact_search = IPCMPM._normalize_contact_search(
             kwargs.get("contact_search", kwargs.get("search", "LinkedCell"))
         )
         self.last_particle_search_backend = self.contact_search
@@ -367,8 +371,9 @@ class IPCMPM:
         self.adjoint_trajectory_record = -1
         self.gravity_vjp = ti.Vector.field(config.DIM, ti.f64, shape=())
         self.young_vjp = ti.field(ti.f64, shape=())
-        # (Young, Poisson, DP cohesion/friction angle or VM yield/hardening)
-        self.material_parameter_vjp = ti.Vector.field(4, ti.f64, shape=())
+        # DP/VM: E, nu, strength, angle/hardening; MCC: nu, M, lambda*, kappa*, p0.
+        self.material_parameter_count = int(getattr(self.mpm.material, "parameter_count", 4))
+        self.material_parameter_vjp = ti.Vector.field(self.material_parameter_count, ti.f64, shape=())
         self.friction_parameter_vjp = ti.Vector.field(4, ti.f64, shape=())
         history_capacity = max(
             self.mpm.n_particles if self.mpm.is_finite_strain_plastic else 1,
@@ -387,6 +392,10 @@ class IPCMPM:
         self.plastic_output_inverse_vjp = ti.Matrix.field(3, 3, ti.f64, shape=history_capacity)
         self.plastic_output_equivalent_vjp = ti.field(ti.f64, shape=history_capacity)
         self.plastic_output_volumetric_vjp = ti.field(ti.f64, shape=history_capacity)
+        if type(self.mpm.material).__name__ == "FiniteStrainModifiedCamClayModel":
+            self.plastic_pressure_vjp = ti.field(ti.f64, shape=history_capacity)
+            self.plastic_commit_pressure_vjp = ti.field(ti.f64, shape=history_capacity)
+            self.plastic_output_pressure_vjp = ti.field(ti.f64, shape=history_capacity)
         plastic_dof_capacity = self.mpm.degree_of_freedom if self.mpm.is_finite_strain_plastic else 1
         self.plastic_commit_grid_vjp = ti.field(ti.f64, shape=plastic_dof_capacity)
         self.plastic_step_rhs = ti.field(ti.f64, shape=plastic_dof_capacity)
@@ -410,7 +419,7 @@ class IPCMPM:
         # Transactional rollback remains device-resident on every backend.
         self.device_grid_disp_snapshot = ti.field(ti.f64, shape=self.mpm.degree_of_freedom)
 
-        dhat_value = _first_float(kwargs.get("dhat", 1.0e-3), 1.0e-3)
+        dhat_value = IPCMPM._first_float(kwargs.get("dhat", 1.0e-3), 1.0e-3)
         surface_starts = [0 for _ in range(max(self.mpm.n_body, 1))]
         surface_counts = [0 for _ in range(max(self.mpm.n_body, 1))]
         cursor = 0
@@ -455,7 +464,7 @@ class IPCMPM:
         self.body_min = ti.Vector.field(config.DIM, ti.f64, shape=max(self.mpm.n_body, 1))
         self.body_max = ti.Vector.field(config.DIM, ti.f64, shape=max(self.mpm.n_body, 1))
         self.surface_sweep_disp = ti.Vector.field(config.DIM, ti.f64, shape=max(int(self.mpm.total_surface_num), 1))
-        cell_size = _first_float(kwargs.get("contact_cell_size", None), max(2.0 * dhat_value, 1.0e-5))
+        cell_size = IPCMPM._first_float(kwargs.get("contact_cell_size", None), max(2.0 * dhat_value, 1.0e-5))
         domain = np.asarray(self.mpm.domain, dtype=np.float64).reshape(-1)
         if domain.size < config.DIM:
             domain = np.pad(domain, (0, config.DIM - domain.size), mode="constant", constant_values=cell_size)
@@ -505,11 +514,11 @@ class IPCMPM:
         solve of each time step.  It intentionally stores no Newton trial or
         CCD branch; the adjoint is conditional on this accepted relation.
         """
-        capacity = _positive_integer(capacity, "trajectory contact tape capacity")
+        capacity = IPCMPM._positive_integer(capacity, "trajectory contact tape capacity")
         if getattr(self, "trajectory_contact_capacity", 0) >= capacity:
             return
         if not self.activate_barrier:
-            raise RuntimeError("trajectory contact tape requires IPC barrier contacts")
+            raise RecordingError("trajectory contact tape requires IPC barrier contacts")
 
         self.trajectory_contact_capacity = capacity
         self.trajectory_gbarrier_capacity = int(self.gbarrier.shape[0])
@@ -590,7 +599,7 @@ class IPCMPM:
 
     def record_trajectory_contact_state(self, record):
         if not hasattr(self, "trajectory_contact_capacity"):
-            raise RuntimeError("allocate the trajectory contact tape before recording")
+            raise RecordingError("allocate the trajectory contact tape before recording")
         record = int(record)
         if record < 0 or record >= self.trajectory_contact_capacity:
             raise IndexError("trajectory contact tape record is out of range")
@@ -633,12 +642,12 @@ class IPCMPM:
 
     def begin_trajectory_adjoint(self, record):
         if not hasattr(self, "trajectory_contact_capacity"):
-            raise RuntimeError("allocate the trajectory contact tape before replay")
+            raise RecordingError("allocate the trajectory contact tape before replay")
         record = int(record)
         if record < 0 or record >= self.trajectory_contact_capacity:
             raise IndexError("trajectory contact tape record is out of range")
         if int(self.trajectory_contact_valid[record]) == 0:
-            raise RuntimeError(f"trajectory contact record {record} is not committed")
+            raise RecordingError(f"trajectory contact record {record} is not committed")
         self.adjoint_trajectory_record = record
 
     def end_trajectory_adjoint(self):
@@ -657,7 +666,7 @@ class IPCMPM:
             return
         if current_cfg().arch == ti.cuda:
             if self.contact_prefix_sum_executor is None:
-                raise RuntimeError("CUDA contact compaction requires a device prefix-sum executor")
+                raise BackendError("CUDA contact compaction requires a device prefix-sum executor")
             self.contact_prefix_sum_executor.run(prefix)
         else:
             self._serial_surface_prefix_sum(prefix)
@@ -687,7 +696,7 @@ class IPCMPM:
         mu_static = float(self.friction.mu_static[0])
         mu_viscous = float(self.friction.mu_viscous[0])
         if mu != mu_dynamic or mu_dynamic != mu_static or mu_viscous != 0.0 or self.friction.profile_id != 0:
-            raise RuntimeError(
+            raise ConfigurationError(
                 "lagged IPC friction supports only the equal-static/dynamic "
                 "quadratic Coulomb potential; Stribeck, viscous, or "
                 "stabilized-profile friction requires friction_mode="
@@ -710,10 +719,10 @@ class IPCMPM:
 
     def _validate_fully_implicit_configuration(self):
         if not config.DYNAMIC:
-            raise RuntimeError("fully implicit IPC friction currently requires dynamic MPM")
+            raise SimulationStateError("fully implicit IPC friction currently requires dynamic MPM")
         integration = np.asarray(self.mpm.integration, dtype=np.float64)
         if integration.size != 3 or not np.all(np.isfinite(integration[:3])) or np.any(integration[:3] <= 0.0):
-            raise RuntimeError(
+            raise ConfigurationError(
                 "fully implicit IPC friction requires finite positive " "Newmark [alpha, beta, gamma] parameters"
             )
         # These are the two schemes derived explicitly in the paper.  The
@@ -725,7 +734,7 @@ class IPCMPM:
         elif np.allclose(integration[:3], [0.5, 0.25, 0.5], rtol=0.0, atol=1.0e-14):
             self.fully_implicit_integrator = "trapezoidal"
         else:
-            raise RuntimeError(
+            raise SimulationStateError(
                 "fully implicit IPC friction currently implements the "
                 "paper's backward Euler [1, 0.5, 1] and trapezoidal "
                 "[0.5, 0.25, 0.5] schemes only"
@@ -744,12 +753,12 @@ class IPCMPM:
         for name in ("dt", "dhat", "kappa", "epsv"):
             value = parameter_values[name]
             if not np.isfinite(value) or value <= 0.0:
-                raise RuntimeError(f"fully implicit IPC friction requires finite positive {name}")
+                raise ConfigurationError(f"fully implicit IPC friction requires finite positive {name}")
         stribeck_velocity = parameter_values["stribeck_velocity"]
         if not np.isfinite(stribeck_velocity) or stribeck_velocity < 0.0:
-            raise RuntimeError("fully implicit IPC friction requires finite nonnegative " "stribeck_velocity")
+            raise ConfigurationError("fully implicit IPC friction requires finite nonnegative " "stribeck_velocity")
         if parameter_values["static_friction"] != parameter_values["dynamic_friction"] and stribeck_velocity <= 0.0:
-            raise RuntimeError(
+            raise ConfigurationError(
                 "fully implicit IPC friction requires positive "
                 "stribeck_velocity when static_friction differs from "
                 "dynamic_friction"
@@ -762,33 +771,33 @@ class IPCMPM:
         ):
             value = parameter_values[name]
             if not np.isfinite(value) or value < 0.0:
-                raise RuntimeError("fully implicit IPC friction requires finite " f"nonnegative {name}")
+                raise ConfigurationError("fully implicit IPC friction requires finite " f"nonnegative {name}")
         if self.mpm.n_body != 1 or self.enable_particle_contact:
-            raise RuntimeError(
+            raise SimulationStateError(
                 "fully implicit IPC friction currently supports one MPM body " "against planar ground only"
             )
         if self.friction_iterations != 1:
-            raise RuntimeError(
+            raise SimulationStateError(
                 "friction_iterations is only defined for lagged friction and " "must equal 1 in fully implicit mode"
             )
         if self.ground.num <= 0:
-            raise RuntimeError("fully implicit IPC friction requires at least one planar ground")
+            raise SimulationStateError("fully implicit IPC friction requires at least one planar ground")
         if self.mpm.dirichlet.num > 0:
-            raise RuntimeError(
+            raise SimulationStateError(
                 "fully implicit IPC friction currently rejects Dirichlet "
                 "constraints because contact blocks require coupled elimination"
             )
         normals = np.asarray(self.ground.np_norm, dtype=np.float64)
         velocities = np.asarray(self.ground.np_vel, dtype=np.float64)
         if not np.all(np.isfinite(normals)) or not np.all(np.isfinite(velocities)):
-            raise RuntimeError("fully implicit IPC friction requires finite ground data")
+            raise SimulationStateError("fully implicit IPC friction requires finite ground data")
         if not np.allclose(np.linalg.norm(normals, axis=1), 1.0, rtol=1.0e-10, atol=1.0e-12):
-            raise RuntimeError("fully implicit IPC friction requires unit planar-ground normals")
+            raise SimulationStateError("fully implicit IPC friction requires unit planar-ground normals")
         if not np.allclose(velocities, 0.0, rtol=0.0, atol=1.0e-14):
-            raise RuntimeError("fully implicit IPC friction currently supports stationary ground only")
+            raise SimulationStateError("fully implicit IPC friction currently supports stationary ground only")
         maximum_ground_contacts = int(self.mpm.total_surface_num * self.ground.num)
         if self.gbarrier.shape[0] < maximum_ground_contacts or self.gfriction.shape[0] < maximum_ground_contacts:
-            raise RuntimeError(
+            raise SimulationStateError(
                 "fully implicit IPC friction requires ground barrier/friction "
                 "buffers sized for every surface-point/ground pair"
             )
@@ -1092,7 +1101,7 @@ class IPCMPM:
                 self.last_particle_search_backend = "Brust"
                 self._body_pair_search_brust()
         if int(self.body_pair_overflow[0]) != 0:
-            raise RuntimeError("body-pair contact capacity exceeded; increase body_pair_capacity")
+            raise CapacityError("body-pair contact capacity exceeded; increase body_pair_capacity")
 
     def update_swept_body_pair_table(self, grid_disp):
         self._prepare_swept_body_bounds(grid_disp)
@@ -1176,7 +1185,7 @@ class IPCMPM:
         self._scan_surface_prefix(self.surface_body_prefix)
         self._finalize_surface_body_contact_count(self.surface_body_contact.shape[0])
         if int(self.surface_body_contact_overflow[0]) != 0:
-            raise RuntimeError("surface/body contact capacity exceeded; increase " "point_body_contact_capacity")
+            raise CapacityError("surface/body contact capacity exceeded; increase " "point_body_contact_capacity")
         self._fill_surface_body_contacts()
         self._sort_surface_body_contacts()
 
@@ -1236,7 +1245,7 @@ class IPCMPM:
             or not np.isfinite(minimum_distance)
             or minimum_distance <= dmin + safe_floor
         ):
-            raise RuntimeError(
+            raise ConfigurationError(
                 "IPC requires a strictly feasible positive starting gap "
                 f"above dmin (minimum={minimum_distance:.6e}, "
                 f"dmin={dmin:.6e}, margin={safe_floor:.6e})"
@@ -1311,7 +1320,7 @@ class IPCMPM:
             self.pbarrier.shape[0],
         )
         if int(self.pbarrier_overflow[0]) != 0:
-            raise RuntimeError("particle barrier contact capacity exceeded; increase barrier_set[0]")
+            raise CapacityError("particle barrier contact capacity exceeded; increase barrier_set[0]")
         self._fill_particle_barrier_contacts_stable()
 
     @ti.kernel
@@ -1353,7 +1362,7 @@ class IPCMPM:
             self.gbarrier.shape[0],
         )
         if int(self.gbarrier_overflow[0]) != 0:
-            raise RuntimeError("ground barrier contact capacity exceeded; increase barrier_set[1]")
+            raise CapacityError("ground barrier contact capacity exceeded; increase barrier_set[1]")
         self._fill_ground_barrier_contacts_stable()
 
     def rebuild_barrier_contacts(self):
@@ -1406,7 +1415,7 @@ class IPCMPM:
             self.gfriction.shape[0],
         )
         if int(self.gfriction_overflow[0]) != 0:
-            raise RuntimeError("ground friction contact capacity exceeded; increase friction_set[1]")
+            raise CapacityError("ground friction contact capacity exceeded; increase friction_set[1]")
         self._fill_ground_friction_contacts_stable()
 
     @ti.kernel
@@ -1479,7 +1488,7 @@ class IPCMPM:
             self.pfriction.shape[0],
         )
         if int(self.pfriction_overflow[0]) != 0:
-            raise RuntimeError("particle friction contact capacity exceeded; increase friction_set[0]")
+            raise CapacityError("particle friction contact capacity exceeded; increase friction_set[0]")
         self._fill_particle_friction_contacts_stable()
 
     def assemble_current_system(
@@ -1503,7 +1512,7 @@ class IPCMPM:
             return None
         if self.cuda_monolithic_solver:
             return self._assemble_cuda_monolithic_matrix(active_dof)
-        raise RuntimeError(
+        raise BackendError(
             "SoftParticle IPC requires the monolithic Taichi HashTriplet "
             "path; host CSR assembly is not a runtime backend"
         )
@@ -1647,7 +1656,7 @@ class IPCMPM:
         )
         self.last_adjoint_result = result
         if not result["converged"]:
-            raise RuntimeError(
+            raise NonlinearSolveError(
                 "Direct IPC-MPM adjoint solve did not converge: "
                 f"residual={result['residual']:.6e}, iterations={result['iterations']}"
             )
@@ -1805,9 +1814,9 @@ class IPCMPM:
                         if free:
                             derivative = ti.Matrix.zero(ti.f64, 3, 3)
                             if ti.static(self.mpm.is_axisymmetric):
-                                derivative = self.mpm.axisymmetric_dF_du(particle_id, local_id, component)
+                                derivative = self.mpm.axisymmetric_d_f_du(particle_id, local_id, component)
                             elif ti.static(self.mpm.is_plane_strain):
-                                derivative = self.mpm.plane_strain_dF_du(particle_id, local_id, component)
+                                derivative = self.mpm.plane_strain_d_f_du(particle_id, local_id, component)
                             else:
                                 direction = (
                                     self.mpm.F0[particle_id].transpose() @ self.mpm.dshape[particle_id, local_id]
@@ -1839,6 +1848,20 @@ class IPCMPM:
             elastic_stress = self.mpm.material.first_piola_stress_at(particle_id, elastic_trial)
             elastic_tangent = self.mpm.material.first_piola_tangent_at(particle_id, elastic_trial)
             reference_jacobian = 1.0 / plastic_inverse.determinant()
+            elastic_log_jacobian_gradient = ti.Matrix.zero(ti.f64, 3, 3)
+            if ti.static(getattr(self.mpm.material, "use_direct_nonassociated_solve", False)):
+                response = self.mpm.material._principal_response(particle_id, elastic_trial)
+                reference_jacobian = self.mpm.material._physical_plastic_jacobian_from_response(
+                    total_deformation, response
+                )
+                returned_jacobian = self.mpm.material._projected_strain_jacobian(
+                    particle_id, response[3], response[4], response[5], response[6], response[8], response[9]
+                )
+                diagonal = ti.Matrix.zero(ti.f64, 3, 3)
+                for column in ti.static(range(3)):
+                    for row in ti.static(range(3)):
+                        diagonal[column, column] -= returned_jacobian[row, column] / response[2][column]
+                elastic_log_jacobian_gradient = response[0] @ diagonal @ response[1].transpose()
             pulled_stress = elastic_stress @ plastic_inverse.transpose()
             particle_volume = self.mpm.particle[particle_id].vol0
             inverse = plastic_inverse.inverse()
@@ -1857,9 +1880,15 @@ class IPCMPM:
                             * total_deformation[elastic_row, history_row]
                         )
                     elastic_stress_derivative[stress_row, stress_column] = value
+                log_jacobian_derivative = -inverse[history_column, history_row]
+                if ti.static(getattr(self.mpm.material, "use_direct_nonassociated_solve", False)):
+                    log_jacobian_derivative = 0.0
+                    for row in ti.static(range(3)):
+                        log_jacobian_derivative += (
+                            elastic_log_jacobian_gradient[row, history_column] * total_deformation[row, history_row]
+                        )
                 total_stress_derivative = reference_jacobian * (
-                    elastic_stress_derivative @ plastic_inverse.transpose()
-                    - inverse[history_column, history_row] * pulled_stress
+                    elastic_stress_derivative @ plastic_inverse.transpose() + log_jacobian_derivative * pulled_stress
                 )
                 for row in ti.static(range(3)):
                     total_stress_derivative[row, history_row] += (
@@ -1888,6 +1917,11 @@ class IPCMPM:
                 @ plastic_inverse.transpose()
             )
             total_stress = reference_jacobian * pulled_stress
+            if ti.static(getattr(self.mpm.material, "use_direct_nonassociated_solve", False)):
+                stress_vjp += contraction(adjoint_deformation, total_stress) * (
+                    total_deformation.inverse().transpose()
+                    + elastic_log_jacobian_gradient @ plastic_inverse.transpose()
+                )
             parameter_vjp = self.mpm.material.total_first_piola_parameter_vjp_at(
                 particle_id, total_deformation, adjoint_deformation
             )
@@ -1902,6 +1936,37 @@ class IPCMPM:
             self.plastic_deformation_vjp[particle_id] = -particle_volume * (
                 incremental_map.transpose() @ stress_vjp + adjoint_incremental_map.transpose() @ total_stress
             )
+
+    @ti.kernel
+    def _differentiate_mcc_input_history(self):
+        for particle in range(self.mpm.particleNum[0]):
+            adjoint_increment = ti.Matrix.zero(ti.f64, 3, 3)
+            for local in range(self.mpm.offset[particle]):
+                node = self.mpm.LnID[particle, local]
+                block = self.mpm.node2dof[node] - 1
+                if block >= 0:
+                    for i, j in ti.static(ti.ndrange(3, 3)):
+                        adjoint_increment[i, j] += (
+                            self.mpm.incre_resolution[3 * block + i] * self.mpm.dshape[particle, local][j]
+                        )
+            previous = self.mpm.F0[particle]
+            increment = ti.Matrix.identity(ti.f64, 3) + self.mpm.get_displacement_incre(particle, self.mpm.grid_disp)
+            deformation = increment @ previous
+            volume = self.mpm.particle[particle].vol0
+            zero = ti.Matrix.zero(ti.f64, 3, 3)
+            gF, gB, _, _, gpc, gparam = self.mpm.material.physical_return_vjp(
+                particle, deformation, zero, zero, 0.0, 0.0, 0.0, -volume * adjoint_increment @ previous, True
+            )
+            stress = self.mpm.material.total_first_piola_stress_at(particle, deformation)
+            self.plastic_deformation_vjp[particle] = (
+                increment.transpose() @ gF - volume * adjoint_increment.transpose() @ stress
+            )
+            self.plastic_inverse_vjp[particle] = gB
+            self.plastic_pressure_vjp[particle] = gpc
+            self.plastic_equivalent_strain_vjp[particle] = 0.0
+            self.plastic_volumetric_strain_vjp[particle] = 0.0
+            for parameter in ti.static(range(5)):
+                ti.atomic_add(self.material_parameter_vjp[None][parameter], gparam[parameter])
 
     @ti.kernel
     def _differentiate_plastic_commit_state(self):
@@ -1923,27 +1988,41 @@ class IPCMPM:
                 total_deformation = (
                     ti.Matrix.identity(ti.f64, 3) + self.mpm.get_displacement_incre(particle_id, self.mpm.grid_disp)
                 ) @ self.mpm.F0[particle_id]
-            (
-                trial_vjp,
-                plastic_vjp,
-                equivalent_vjp,
-                volumetric_vjp,
-            ) = self.mpm.material.commit_total_state_vjp(
-                particle_id,
-                total_deformation,
-                self.plastic_output_deformation_vjp[particle_id],
-                self.plastic_output_inverse_vjp[particle_id],
-                self.plastic_output_equivalent_vjp[particle_id],
-                self.plastic_output_volumetric_vjp[particle_id],
-            )
-            parameter_vjp = self.mpm.material.commit_total_state_parameter_vjp(
-                particle_id,
-                total_deformation,
-                self.plastic_output_inverse_vjp[particle_id],
-                self.plastic_output_equivalent_vjp[particle_id],
-                self.plastic_output_volumetric_vjp[particle_id],
-            )
-            for parameter_id in ti.static(range(4)):
+            trial_vjp, plastic_vjp = ti.Matrix.zero(ti.f64, 3, 3), ti.Matrix.zero(ti.f64, 3, 3)
+            equivalent_vjp, volumetric_vjp = 0.0, 0.0
+            parameter_vjp = ti.Vector.zero(ti.f64, self.material_parameter_count)
+            if ti.static(type(self.mpm.material).__name__ == "FiniteStrainModifiedCamClayModel"):
+                trial_vjp, plastic_vjp, equivalent_vjp, volumetric_vjp, pressure_vjp, parameter_vjp = (
+                    self.mpm.material.physical_return_vjp(
+                        particle_id,
+                        total_deformation,
+                        self.plastic_output_deformation_vjp[particle_id],
+                        self.plastic_output_inverse_vjp[particle_id],
+                        self.plastic_output_equivalent_vjp[particle_id],
+                        self.plastic_output_volumetric_vjp[particle_id],
+                        self.plastic_output_pressure_vjp[particle_id],
+                        ti.Matrix.zero(ti.f64, 3, 3),
+                        False,
+                    )
+                )
+                self.plastic_commit_pressure_vjp[particle_id] = pressure_vjp
+            else:
+                trial_vjp, plastic_vjp, equivalent_vjp, volumetric_vjp = self.mpm.material.commit_total_state_vjp(
+                    particle_id,
+                    total_deformation,
+                    self.plastic_output_deformation_vjp[particle_id],
+                    self.plastic_output_inverse_vjp[particle_id],
+                    self.plastic_output_equivalent_vjp[particle_id],
+                    self.plastic_output_volumetric_vjp[particle_id],
+                )
+                parameter_vjp = self.mpm.material.commit_total_state_parameter_vjp(
+                    particle_id,
+                    total_deformation,
+                    self.plastic_output_inverse_vjp[particle_id],
+                    self.plastic_output_equivalent_vjp[particle_id],
+                    self.plastic_output_volumetric_vjp[particle_id],
+                )
+            for parameter_id in ti.static(range(self.material_parameter_count)):
                 ti.atomic_add(
                     self.material_parameter_vjp[None][parameter_id],
                     parameter_vjp[parameter_id],
@@ -1965,9 +2044,9 @@ class IPCMPM:
                         if free:
                             derivative = ti.Matrix.zero(ti.f64, 3, 3)
                             if ti.static(self.mpm.is_axisymmetric):
-                                derivative = self.mpm.axisymmetric_dF_du(particle_id, local_id, component)
+                                derivative = self.mpm.axisymmetric_d_f_du(particle_id, local_id, component)
                             elif ti.static(self.mpm.is_plane_strain):
-                                derivative = self.mpm.plane_strain_dF_du(particle_id, local_id, component)
+                                derivative = self.mpm.plane_strain_d_f_du(particle_id, local_id, component)
                             else:
                                 direction = (
                                     self.mpm.F0[particle_id].transpose() @ self.mpm.dshape[particle_id, local_id]
@@ -1986,6 +2065,8 @@ class IPCMPM:
             self.plastic_inverse_vjp[particle_id] += self.plastic_commit_inverse_vjp[particle_id]
             self.plastic_equivalent_strain_vjp[particle_id] += self.plastic_commit_equivalent_vjp[particle_id]
             self.plastic_volumetric_strain_vjp[particle_id] += self.plastic_commit_volumetric_vjp[particle_id]
+            if ti.static(type(self.mpm.material).__name__ == "FiniteStrainModifiedCamClayModel"):
+                self.plastic_pressure_vjp[particle_id] += self.plastic_commit_pressure_vjp[particle_id]
 
     def _load_particle_output_state_vjp(self, state_vjp):
         particle_num = int(self.mpm.particleNum[0])
@@ -2175,10 +2256,10 @@ class IPCMPM:
                     ti.Matrix.identity(ti.f64, 3) + self.mpm.get_displacement_incre(particle_id, self.mpm.grid_disp)
                 ) @ self.mpm.F0[particle_id]
             stress = unflatten_matrix(
-                self.mpm.material.total_dPsi_div_dF_at(particle_id, total_deformation),
+                self.mpm.material.total_d_psi_div_d_f_at(particle_id, total_deformation),
                 total_deformation,
             )
-            tangent = self.mpm.material.total_d2Psi_div_d2F_at(particle_id, total_deformation)
+            tangent = self.mpm.material.total_d2_psi_div_d2_f_at(particle_id, total_deformation)
             deformation_vjp = unflatten_matrix(
                 -self.mpm.particle[particle_id].vol0 * tangent.transpose() @ flatten_matrix(adjoint_deformation),
                 total_deformation,
@@ -2219,7 +2300,7 @@ class IPCMPM:
             value = self.gbarrier[contact].distance
             measure = point_contact_measure(self.mpm.surface_measure[surface])
             _, first, second = self._normal_terms(value)
-            distance_gradient = self.gderivative.Ddistance_div_Dpoint(wall)
+            distance_gradient = self.gderivative.ddistance_div_dpoint(wall)
             energy_gradient = measure * first * distance_gradient
             point_adjoint = ti.Vector.zero(ti.f64, config.DIM)
             # Flatten these tiny matrices explicitly.  This avoids a CUDA
@@ -2276,7 +2357,7 @@ class IPCMPM:
                 self.mpm.surface_measure[master_surface],
                 self.mpm.surface_measure[slave_surface],
             )
-            distance_gradient, _ = self.pderivative.Ddistance_div_Dpoint(master_position, slave_position)
+            distance_gradient, _ = self.pderivative.ddistance_div_dpoint(master_position, slave_position)
             _, first, second = self._normal_terms(self.pbarrier[contact].distance)
             energy_gradient = measure * first * distance_gradient
             relative_position = master_position - slave_position
@@ -2374,9 +2455,7 @@ class IPCMPM:
 
     @ti.kernel
     def _differentiate_lagged_friction_position(self):
-        # ponytail: the accepted lagged normal, tangent frame, active set, and
-        # normal-force magnitude are stop-gradient state; differentiate their
-        # update only if the outer fixed-point map itself becomes an objective.
+        # Frozen-equilibrium partial; coupled trajectories also reverse the cache update.
         for contact in range(self.gfrictionNum[0]):
             surface = self.gfriction[contact].surfaceID
             particle = self.mpm.surface_id[surface]
@@ -2607,17 +2686,15 @@ class IPCMPM:
     def pullback_plastic_equilibrium_from_current_adjoint_device(self, reset_material_parameters=True):
         """Pull back with an adjoint already stored in ``incre_resolution``."""
         self._validate_differentiable_friction()
-        if type(self.mpm.material).__name__ not in {
-            "FiniteStrainDruckerPragerModel",
-            "FiniteStrainVonMisesModel",
-        }:
-            raise ValueError(
-                "plastic equilibrium pullback supports Drucker-Prager and " "von Mises; MCC is intentionally excluded"
-            )
+        if not self.supports_plastic_adjoint():
+            raise ValueError("plastic equilibrium pullback requires DP, von Mises or coupled physical MCC")
         if reset_material_parameters:
             self.material_parameter_vjp.fill(0.0)
         self._differentiate_elastic_gravity()
-        self._differentiate_plastic_input_history()
+        if type(self.mpm.material).__name__ == "FiniteStrainModifiedCamClayModel":
+            self._differentiate_mcc_input_history()
+        else:
+            self._differentiate_plastic_input_history()
         self.friction_parameter_vjp.fill(0.0)
         if self.activate_fric:
             self._differentiate_lagged_friction_parameters()
@@ -2656,6 +2733,8 @@ class IPCMPM:
         load_matrix("plastic_deformation_inverse", self.plastic_output_inverse_vjp)
         load_scalar("equivalent_plastic_strain", self.plastic_output_equivalent_vjp)
         load_scalar("volumetric_plastic_strain", self.plastic_output_volumetric_vjp)
+        if type(self.mpm.material).__name__ == "FiniteStrainModifiedCamClayModel":
+            load_scalar("preconsolidation_pressure", self.plastic_output_pressure_vjp)
 
     def differentiate_plastic_step_parameters(self, loss_gradient, state_vjp):
         """Pull one accepted plastic step back to its material input state."""
@@ -2734,13 +2813,8 @@ class IPCMPM:
 
     def _validate_plastic_particle_adjoint_configuration(self):
         self._validate_differentiable_friction()
-        if type(self.mpm.material).__name__ not in {
-            "FiniteStrainDruckerPragerModel",
-            "FiniteStrainVonMisesModel",
-        }:
-            raise ValueError(
-                "particle-state differentiation supports Drucker-Prager " "and von Mises; MCC is intentionally excluded"
-            )
+        if not self.supports_plastic_adjoint():
+            raise ValueError("particle-state differentiation requires DP, von Mises or coupled physical MCC")
         if not config.DYNAMIC or self.mpm.configuration != "UL":
             raise ValueError("particle-state differentiation requires dynamic Direct ULMPM")
         if self.mpm.is_axisymmetric:
@@ -2762,8 +2836,8 @@ class IPCMPM:
         self._differentiate_particle_advection()
         return self.trajectory_grid_vjp
 
-    def finish_plastic_particle_step_adjoint_device(self):
-        """Finish a particle-step pullback from the current MPM adjoint."""
+    def pullback_particle_equilibrium_device(self):
+        """Accumulate one frozen equilibrium's input-state and parameter VJPs."""
         self.pullback_plastic_equilibrium_from_current_adjoint_device(reset_material_parameters=False)
         self._differentiate_inertia_input_state()
         self._differentiate_material_position()
@@ -2780,8 +2854,73 @@ class IPCMPM:
             self._differentiate_lagged_friction_position()
         if self.mpm.tractionNum[0] > 0:
             self._differentiate_traction_position()
+
+    def finish_plastic_particle_step_adjoint_device(self):
+        """Finish a particle-step pullback from the current MPM adjoint."""
+        self.pullback_particle_equilibrium_device()
         self._differentiate_p2g_input_state()
         self._combine_plastic_step_vjp()
+
+    @ti.kernel
+    def accumulate_equilibrium_history_vjp(self):
+        for particle in range(self.mpm.particleNum[0]):
+            self.plastic_commit_deformation_vjp[particle] += self.plastic_deformation_vjp[particle]
+            self.plastic_commit_inverse_vjp[particle] += self.plastic_inverse_vjp[particle]
+            self.plastic_commit_equivalent_vjp[particle] += self.plastic_equivalent_strain_vjp[particle]
+            self.plastic_commit_volumetric_vjp[particle] += self.plastic_volumetric_strain_vjp[particle]
+            if ti.static(type(self.mpm.material).__name__ == "FiniteStrainModifiedCamClayModel"):
+                self.plastic_commit_pressure_vjp[particle] += self.plastic_pressure_vjp[particle]
+
+    @ti.func
+    def scatter_friction_cache_point_vjp(self, particle, value, displacement_tape, record, rhs, offset):
+        position_vjp = value
+        for local in range(self.mpm.offset[particle]):
+            node = self.mpm.LnID[particle, local]
+            block = self.mpm.node2dof[node] - 1
+            if block >= 0:
+                displacement = ti.Vector.zero(ti.f64, config.DIM)
+                for component in ti.static(range(config.DIM)):
+                    ti.atomic_add(
+                        rhs[offset + config.DIM * block + component], self.mpm.shape[particle, local] * value[component]
+                    )
+                    displacement[component] = displacement_tape[record, config.DIM * block + component]
+                position_vjp += self.mpm.dshape[particle, local] * displacement.dot(value)
+        for component in ti.static(range(config.DIM)):
+            ti.atomic_add(self.particle_position_vjp[particle][component], position_vjp[component])
+
+    @ti.kernel
+    def pullback_ground_friction_cache(
+        self,
+        displacement_tape: ti.template(),
+        record: ti.i32,
+        rhs: ti.template(),
+        offset: ti.i32,
+    ):
+        for contact in range(self.gfrictionNum[0]):
+            surface = self.gfriction[contact].surfaceID
+            particle = self.mpm.surface_id[surface]
+            wall = self.gfriction[contact].wallID
+            cache_point = self.mpm.particle[particle].x
+            point_adjoint = ti.Vector.zero(ti.f64, config.DIM)
+            for local in range(self.mpm.offset[particle]):
+                node = self.mpm.LnID[particle, local]
+                block = self.mpm.node2dof[node] - 1
+                if block >= 0:
+                    for component in ti.static(range(config.DIM)):
+                        weight = self.mpm.shape[particle, local]
+                        cache_point[component] += weight * displacement_tape[record, config.DIM * block + component]
+                        point_adjoint[component] += weight * self.mpm.incre_resolution[config.DIM * block + component]
+            tangent = self.ground.tangent_operator(wall)
+            velocity = tangent.transpose() @ (self.mpm.p_temp[surface] - self.hat_x[surface]) / self.mpm.dt
+            contraction = point_adjoint.dot(self.friction.grad_term(velocity.norm()) * (tangent @ velocity))
+            gap = self.ground.distance(wall, cache_point)
+            _, first, hessian = self._normal_terms(gap)
+            measure = point_contact_measure(self.mpm.surface_measure[surface])
+            # The frozen pullback divides by mu and skips its zero boundary.
+            if self.friction.mu[0] == 0.0:
+                ti.atomic_add(self.friction_parameter_vjp[None][0], contraction * measure * first)
+            value = contraction * measure * self.friction.mu[0] * hessian * self.ground.norm[wall]
+            self.scatter_friction_cache_point_vjp(particle, value, displacement_tape, record, rhs, offset)
 
     def pullback_plastic_particle_step_device(self):
         """Reverse one loaded particle step without host gradient staging."""
@@ -2800,6 +2939,8 @@ class IPCMPM:
             self.plastic_output_inverse_vjp[particle] = self.plastic_inverse_vjp[particle]
             self.plastic_output_equivalent_vjp[particle] = self.plastic_equivalent_strain_vjp[particle]
             self.plastic_output_volumetric_vjp[particle] = self.plastic_volumetric_strain_vjp[particle]
+            if ti.static(type(self.mpm.material).__name__ == "FiniteStrainModifiedCamClayModel"):
+                self.plastic_output_pressure_vjp[particle] = self.plastic_pressure_vjp[particle]
 
     def differentiate_plastic_particle_step_parameters(self, state_vjp):
         """Pull one accepted DP/VM step through transfer, solve, and commit."""
@@ -2843,7 +2984,7 @@ class IPCMPM:
     def _differentiate_step(self, step, loss_gradient, mode, verbose, plastic_state_vjp=None):
         self._validate_differentiable_friction()
         if self.pending_adjoint_seed is not None:
-            raise RuntimeError("A Direct IPC-MPM differentiation step is already active")
+            raise SimulationStateError("A Direct IPC-MPM differentiation step is already active")
         self.pending_adjoint_seed = loss_gradient
         self.pending_adjoint_mode = mode
         self.pending_plastic_state_vjp = plastic_state_vjp
@@ -2851,7 +2992,7 @@ class IPCMPM:
         try:
             step(verbose=verbose)
             if self.last_elastic_differentiation is None:
-                raise RuntimeError("Direct IPC-MPM step completed without its pre-commit adjoint")
+                raise SimulationStateError("Direct IPC-MPM step completed without its pre-commit adjoint")
             return self.last_elastic_differentiation
         finally:
             self.pending_adjoint_seed = None
@@ -3051,13 +3192,15 @@ class IPCMPM:
                 "taichi_cuda_monolithic_pcg" if krylov_solver == "PCG" else "taichi_cuda_monolithic_bicgstab"
             )
             if not result["converged"]:
-                raise RuntimeError(
+                raise LinearSolveError(
                     f"SoftParticle IPC CUDA {krylov_solver} did not converge: "
                     f"residual={result['residual']:.6e}, "
                     f"iterations={result['iterations']}"
                 )
             return result
-        raise RuntimeError("SoftParticle IPC linear solves must use the device monolithic " "HashTriplet backend")
+        raise SimulationStateError(
+            "SoftParticle IPC linear solves must use the device monolithic " "HashTriplet backend"
+        )
 
     def _correction_inf_norm(self, correction, *, load_solution=False):
         if self.friction_mode == "lagged":
@@ -3067,7 +3210,7 @@ class IPCMPM:
     def _current_rhs_l2_norm(self):
         if self.cuda_monolithic_solver:
             return self.system_hash_matrix.flat_l2_norm(self.mpm.rhs, self.mpm.active_dof)
-        raise RuntimeError("SoftParticle IPC residual norms require the device monolithic " "backend")
+        raise SimulationStateError("SoftParticle IPC residual norms require the device monolithic " "backend")
 
     @ti.kernel
     def _lagged_force_metrics(self, active_dof: ti.i32) -> ti.types.vector(2, ti.f64):
@@ -3109,7 +3252,7 @@ class IPCMPM:
                 / self.mpm.dt
             )
             if not math.isfinite(residual) or not math.isfinite(self.last_lagged_force_residual):
-                raise RuntimeError("nonassociated IPC-MPM Newton residual is non-finite")
+                raise NonfiniteStateError("nonassociated IPC-MPM Newton residual is non-finite")
             if residual <= self.mpm.tol and force_balanced:
                 self.last_inner_converged = True
                 self.last_inner_failure_reason = ""
@@ -3251,9 +3394,9 @@ class IPCMPM:
         current_merit = 0.5 * current_residual * current_residual
         directional_derivative = float(directional_derivative)
         if not np.isfinite(current_merit) or not np.isfinite(directional_derivative):
-            raise RuntimeError("fully implicit residual merit or directional derivative " "is non-finite")
+            raise NonfiniteStateError("fully implicit residual merit or directional derivative " "is non-finite")
         if directional_derivative >= 0.0:
-            raise RuntimeError("fully implicit Newton correction is not a descent " "direction for 0.5 * ||R||^2")
+            raise LineSearchError("fully implicit Newton correction is not a descent " "direction for 0.5 * ||R||^2")
         alpha = float(self.ccd(active_dof))
         alpha = min(max(alpha, 0.0), 1.0)
         self.last_fully_implicit_backtracks = 0
@@ -3297,7 +3440,7 @@ class IPCMPM:
         self.update_particle_pos(self.mpm.grid_disp)
         surface_count = int(self.mpm.total_surface_num)
         if surface_count <= 0:
-            raise RuntimeError("fully implicit IPC friction requires at least one surface point")
+            raise SimulationStateError("fully implicit IPC friction requires at least one surface point")
         self._compute_minimum_candidate_distance()
         minimum_gap = float(self.minimum_candidate_distance[0])
         dmin = float(self.barrier.dmin[0])
@@ -3310,14 +3453,11 @@ class IPCMPM:
             or not np.isfinite(minimum_gap)
             or minimum_gap <= dmin + safe_floor
         ):
-            raise RuntimeError(
+            raise ConfigurationError(
                 "fully implicit IPC friction requires a strictly feasible "
                 f"positive starting gap above dmin (minimum={minimum_gap:.6e}, "
                 f"dmin={dmin:.6e}, margin={safe_floor:.6e})"
             )
-
-    def _restore_fully_implicit_displacement(self, displacement):
-        self._restore_grid_displacement(displacement)
 
     @ti.kernel
     def _build_fully_implicit_velocity_predictor(self):
@@ -3349,10 +3489,12 @@ class IPCMPM:
 
         self.update_particle_pos(self.mpm.grid_disp)
         if not self.rebuild_barrier_contacts():
-            raise RuntimeError("fully implicit velocity predictor requires a feasible " "starting configuration")
+            raise SimulationStateError(
+                "fully implicit velocity predictor requires a feasible " "starting configuration"
+            )
         self._build_fully_implicit_velocity_predictor()
         if int(self._active_field_is_finite(active_dof, self.mpm.incre_resolution)) == 0:
-            raise RuntimeError("fully implicit velocity predictor produced a non-finite step")
+            raise NonfiniteStateError("fully implicit velocity predictor produced a non-finite step")
         predictor_norm = float(self._active_field_inf_norm(active_dof, self.mpm.incre_resolution))
         if predictor_norm <= 1.0e-30:
             return
@@ -3412,7 +3554,7 @@ class IPCMPM:
                 merit_slope = self._fully_implicit_cuda_merit_slope(self.mpm.active_dof)
                 correction_residual = self._correction_inf_norm(correction, load_solution=True) / self.mpm.dt
                 if not np.isfinite(current_residual) or not np.isfinite(correction_residual):
-                    raise RuntimeError(
+                    raise NonfiniteStateError(
                         "fully implicit IPC friction produced a non-finite " "residual or Newton correction"
                     )
                 if initial_residual is None:
@@ -3434,13 +3576,13 @@ class IPCMPM:
                     break
                 iteration += 1
         except Exception:
-            self._restore_fully_implicit_displacement(initial_displacement)
+            self._restore_grid_displacement(initial_displacement)
             raise
 
         if not self.last_friction_converged:
-            self._restore_fully_implicit_displacement(initial_displacement)
+            self._restore_grid_displacement(initial_displacement)
             reason = self.line_search_stop_reason or "maximum_newton_iterations"
-            raise RuntimeError(
+            raise NonlinearSolveError(
                 "fully implicit IPC friction did not converge; the time-step "
                 f"displacement was rolled back (reason={reason}, "
                 f"residual={self.last_fully_implicit_residual:.6e}, "
@@ -3478,7 +3620,7 @@ class IPCMPM:
                 self.last_newton_iterations = solve_count
                 self.last_newton_residual = residual
                 if not bool(getattr(self, "last_inner_converged", True)):
-                    raise RuntimeError(
+                    raise NonlinearSolveError(
                         "lagged IPC inner Newton solve did not converge "
                         f"(reason={self.last_inner_failure_reason}, "
                         f"residual={residual:.6e})"
@@ -3491,7 +3633,7 @@ class IPCMPM:
             for outer_iteration in range(self.friction_outer_iteration_limit()):
                 iter_num, residual, solve_count = self.solve_frozen_friction_newton(verbose)
                 if not bool(getattr(self, "last_inner_converged", True)):
-                    raise RuntimeError(
+                    raise NonlinearSolveError(
                         "lagged IPC inner Newton solve did not converge "
                         f"(outer_iteration={outer_iteration + 1}, "
                         f"reason={self.last_inner_failure_reason}, "
@@ -3510,14 +3652,14 @@ class IPCMPM:
                 self.refresh_friction_cache(self.mpm.grid_disp)
                 self.last_friction_residual = self.updated_friction_system_residual()
                 if not np.isfinite(self.last_friction_residual):
-                    raise RuntimeError("lagged IPC updated friction residual is non-finite")
+                    raise NonfiniteStateError("lagged IPC updated friction residual is non-finite")
                 force_balanced = not getattr(self, "nonassociated_newton", False) or self._lagged_force_converged()
                 if self.last_friction_residual <= self.friction_tolerance and force_balanced:
                     self.last_friction_converged = True
                     break
 
             if self.friction_iterations == -1 and not self.last_friction_converged:
-                raise RuntimeError(
+                raise NonlinearSolveError(
                     "lagged IPC friction fixed-point iteration did not converge "
                     f"within safety cap {self.friction_max_iterations} "
                     f"(residual={self.last_friction_residual:.6e}, "
@@ -3557,13 +3699,13 @@ class IPCMPM:
         for c in range(self.gbarrierNum[0]):
             s = self.gbarrier[c].surfaceID
             i = self.mpm.surface_id[s]
-            wallID = self.gbarrier[c].wallID
+            wall_id = self.gbarrier[c].wallID
             dist = self.gbarrier[c].distance
             value = dist
             measure = point_contact_measure(self.mpm.surface_measure[s])
             _, first, second = self._normal_terms(value)
             barrier_gradient = measure * first
-            ddistance_dpoint = self.gderivative.Ddistance_div_Dpoint(wallID)
+            ddistance_dpoint = self.gderivative.ddistance_div_dpoint(wall_id)
 
             for j in range(self.mpm.offset[i]):
                 base_jnode = self.mpm.LnID[i, j]
@@ -3668,7 +3810,7 @@ class IPCMPM:
             dist = self.pbarrier[c].distance
             measure = symmetric_contact_measure(self.mpm.surface_measure[sp], self.mpm.surface_measure[tp])
             # 1st derivatives
-            ddist_ip, ddist_jp = self.pderivative.Ddistance_div_Dpoint(ipos, jpos)
+            ddist_ip, ddist_jp = self.pderivative.ddistance_div_dpoint(ipos, jpos)
             value = dist
             _, first, second = self._normal_terms(value)
             barrier_grad = measure * first
@@ -3676,7 +3818,7 @@ class IPCMPM:
             if ti.static(need_matrix):
                 barrier_hess = measure * second
                 relative_hessian = barrier_hess * ddist_ip.outer_product(ddist_ip)
-                d2dist = self.pderivative.D2distance_div_Dpoint2(ipos, jpos)
+                d2dist = self.pderivative.d2distance_div_dpoint2(ipos, jpos)
                 # For a PP stencil H_local = [I,-I]^T H_relative [I,-I].
                 relative_hessian += barrier_grad * d2dist
                 if ti.static(project_spd):
@@ -4174,8 +4316,8 @@ class IPCMPM:
             value = dist
             _, first, _ = self._normal_terms(value)
             barrier_gradient = point_contact_measure(self.mpm.surface_measure[s]) * first
-            bodyID = self.mpm.particle[i].bodyID
-            self.normal_force[bodyID] -= barrier_gradient * self.ground.norm[wid]
+            body_id = self.mpm.particle[i].bodyID
+            self.normal_force[body_id] -= barrier_gradient * self.ground.norm[wid]
 
     @ti.kernel
     def compute_tangential_contact_force(self):
@@ -4190,9 +4332,9 @@ class IPCMPM:
             vbarnorm = vbar.norm()
             friction_gradient = self.friction.grad_term(vbarnorm)
             if vbarnorm != 0:
-                bodyID = self.mpm.particle[i].bodyID
+                body_id = self.mpm.particle[i].bodyID
                 ddispbar_dpoint = mu_lambda * friction_gradient * T @ vbar
-                self.tangential_force[bodyID] -= ddispbar_dpoint
+                self.tangential_force[body_id] -= ddispbar_dpoint
 
     @ti.kernel
     def ground_ccd(self, slackness: ti.f64, grid_disp: ti.template()) -> ti.f64:

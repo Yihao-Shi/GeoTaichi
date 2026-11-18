@@ -1,3 +1,4 @@
+from src.utils.RuntimeHook import normalize_callbacks
 import taichi as ti
 
 import src.mpm.config as config
@@ -5,7 +6,6 @@ from src.mpm.engines.direct.ImplicitTLMPM import ImplicitTLMPM
 from src.mpm.soft_particle.IPCMPM import IPCMPM
 from src.mpm.generator.Ground import Ground
 from src.utils.RuntimeHook import runtime_checkpoint
-from src.utils.SolverRuntime import normalize_callbacks
 
 
 @ti.data_oriented

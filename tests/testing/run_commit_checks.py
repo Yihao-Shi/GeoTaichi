@@ -24,7 +24,7 @@ def affected_law_partitions(changed_paths):
             continue
         if relative.startswith("tests/data/ipc_toolkit/"):
             affected.add("commit-contact")
-        elif relative.startswith(("src/physics_model/consititutive_model/", "tests/unit/physics_model/materials/")) or (
+        elif relative.startswith(("src/physics_model/constitutive_model/", "tests/unit/physics_model/materials/")) or (
             relative.startswith("tests/") and "material" in relative.lower()
         ):
             affected.add("commit-materials")

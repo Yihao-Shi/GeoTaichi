@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 import taichi as ti
 
-from src.igampm.engines import Engine
+from src.igampm.engines.CoupledEngine import Engine
 from src.utils.SolverRuntime import StepSchedule
 from src.utils.StepRetry import StepRetryPolicy
 
@@ -178,7 +178,7 @@ def _mock_lifecycle_engine(total_lagrangian=False):
         events.append("mpm_advent")
         particle.x.from_numpy(particle.x.to_numpy() + [[0.25, 0.0]])
 
-    mpm.init_F0 = init_f0
+    mpm.init_f0 = init_f0
     mpm.compute_shapefn = compute_shape
     mpm.mass_p2g = mass_p2g
     mpm.find_active_node = find_active

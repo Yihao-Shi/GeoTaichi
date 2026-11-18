@@ -1,32 +1,32 @@
+from src.mpm.elements.Utilities import adaptive_list_count
 import taichi as ti
-from src.mpm.elements.AdaptiveTopologyKernel import adaptive_list_count
-from src.physics_model.consititutive_model.infinitesimal_strain.MaterialKernel import (
-    EquivalentDeviatoricStrain,
-    EquivalentDeviatoricStress,
+from src.physics_model.constitutive_model.infinitesimal_strain.MaterialKernel import (
+    equivalent_deviatoric_strain,
+    equivalent_deviatoric_stress,
 )
-from src.utils.constants import Threshold
+from src.utils.constants import THRESHOLD
 from src.utils.ScalarFunction import linearize, vectorize_id
-from src.utils.TypeDefination import vec2f, vec2i
+from src.utils.TypeDefinition import vec2f, vec2i
 
 
 @ti.kernel
 def initialize_adaptive_particle_size_2d(
-    particleNum: int,
+    particle_num: int,
     characteristic_mode: int,
     coarse_grid_size: vec2f,
     psize: ti.types.ndarray(),
     particle_size: ti.template(),
-    calLength: ti.template(),
+    cal_length: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         particle_size[np] = vec2f(psize[np, 0], psize[np, 1])
-        calLength[np] = vec2f(0.0, 0.0)
+        cal_length[np] = vec2f(0.0, 0.0)
         if characteristic_mode == 1:
-            calLength[np] = particle_size[np]
+            cal_length[np] = particle_size[np]
         elif characteristic_mode == 2:
-            calLength[np] = 0.5 * coarse_grid_size
+            cal_length[np] = 0.5 * coarse_grid_size
         elif characteristic_mode == 3:
-            calLength[np] = coarse_grid_size
+            cal_length[np] = coarse_grid_size
 
 
 @ti.func
@@ -50,8 +50,8 @@ def scaled_penalty_relaxation_2d(
     inverse_effective_mass: float,
 ):
     relaxation = penalty_cap
-    if penalty_beta > Threshold and penalty_young > Threshold and penalty_length > Threshold:
-        stiffness = penalty_beta * penalty_young * ti.sqrt(ti.max(reference_volume, Threshold)) / penalty_length
+    if penalty_beta > THRESHOLD and penalty_young > THRESHOLD and penalty_length > THRESHOLD:
+        stiffness = penalty_beta * penalty_young * ti.sqrt(ti.max(reference_volume, THRESHOLD)) / penalty_length
         scaled = stiffness * dt[None] * dt[None] * inverse_effective_mass
         relaxation = scaled / (1.0 + scaled)
         relaxation = ti.min(relaxation, penalty_cap)
@@ -67,20 +67,20 @@ def append_or_accumulate_adaptive_support_node_2d(
     shape_value: float,
     dshape_value: vec2f,
     support_overflow: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shape_fn: ti.template(),
     dshape_fn: ti.template(),
 ):
     found = 0
     for slot in range(row_start, active_id):
-        if found == 0 and LnID[slot] == compact_id:
+        if found == 0 and ln_id[slot] == compact_id:
             shape_fn[slot] += shape_value
             dshape_fn[slot] += dshape_value
             found = 1
 
     if found == 0:
         if compact_id >= 0 and active_id < row_end:
-            LnID[active_id] = compact_id
+            ln_id[active_id] = compact_id
             shape_fn[active_id] = shape_value
             dshape_fn[active_id] = dshape_value
             active_id += 1
@@ -99,14 +99,14 @@ def append_or_accumulate_adaptive_support_node_bbar_2d(
     dshape_value: vec2f,
     dshape_center_value: vec2f,
     support_overflow: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shape_fn: ti.template(),
     dshape_fn: ti.template(),
     dshape_fnc: ti.template(),
 ):
     found = 0
     for slot in range(row_start, active_id):
-        if found == 0 and LnID[slot] == compact_id:
+        if found == 0 and ln_id[slot] == compact_id:
             shape_fn[slot] += shape_value
             dshape_fn[slot] += dshape_value
             dshape_fnc[slot] += dshape_center_value
@@ -114,7 +114,7 @@ def append_or_accumulate_adaptive_support_node_bbar_2d(
 
     if found == 0:
         if compact_id >= 0 and active_id < row_end:
-            LnID[active_id] = compact_id
+            ln_id[active_id] = compact_id
             shape_fn[active_id] = shape_value
             dshape_fn[active_id] = dshape_value
             dshape_fnc[active_id] = dshape_center_value
@@ -137,7 +137,7 @@ def append_projected_hanging_node_2d(
     hanging_master_id: ti.template(),
     hanging_master_weight: ti.template(),
     support_overflow: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shape_fn: ti.template(),
     dshape_fn: ti.template(),
 ):
@@ -146,7 +146,7 @@ def append_projected_hanging_node_2d(
         if constraint_id >= 0:
             for master in ti.static(range(4)):
                 weight = hanging_master_weight[constraint_id][master]
-                if weight > Threshold:
+                if weight > THRESHOLD:
                     active_id = append_or_accumulate_adaptive_support_node_2d(
                         row_start,
                         active_id,
@@ -155,7 +155,7 @@ def append_projected_hanging_node_2d(
                         weight * shape_value,
                         weight * dshape_value,
                         support_overflow,
-                        LnID,
+                        ln_id,
                         shape_fn,
                         dshape_fn,
                     )
@@ -168,12 +168,12 @@ def append_projected_hanging_node_2d(
                 shape_value,
                 dshape_value,
                 support_overflow,
-                LnID,
+                ln_id,
                 shape_fn,
                 dshape_fn,
             )
     else:
-        LnID[active_id] = compact_id
+        ln_id[active_id] = compact_id
         shape_fn[active_id] = shape_value
         dshape_fn[active_id] = dshape_value
         active_id += 1
@@ -194,7 +194,7 @@ def append_projected_hanging_node_bbar_2d(
     hanging_master_id: ti.template(),
     hanging_master_weight: ti.template(),
     support_overflow: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shape_fn: ti.template(),
     dshape_fn: ti.template(),
     dshape_fnc: ti.template(),
@@ -204,7 +204,7 @@ def append_projected_hanging_node_bbar_2d(
         if constraint_id >= 0:
             for master in ti.static(range(4)):
                 weight = hanging_master_weight[constraint_id][master]
-                if weight > Threshold:
+                if weight > THRESHOLD:
                     active_id = append_or_accumulate_adaptive_support_node_bbar_2d(
                         row_start,
                         active_id,
@@ -214,7 +214,7 @@ def append_projected_hanging_node_bbar_2d(
                         weight * dshape_value,
                         weight * dshape_center_value,
                         support_overflow,
-                        LnID,
+                        ln_id,
                         shape_fn,
                         dshape_fn,
                         dshape_fnc,
@@ -229,13 +229,13 @@ def append_projected_hanging_node_bbar_2d(
                 dshape_value,
                 dshape_center_value,
                 support_overflow,
-                LnID,
+                ln_id,
                 shape_fn,
                 dshape_fn,
                 dshape_fnc,
             )
     else:
-        LnID[active_id] = compact_id
+        ln_id[active_id] = compact_id
         shape_fn[active_id] = shape_value
         dshape_fn[active_id] = dshape_value
         dshape_fnc[active_id] = dshape_center_value
@@ -258,9 +258,9 @@ def adaptive_global_update_2d(
     fine_grid_size: vec2f,
     fine_igrid_size: vec2f,
     fine_gnum: ti.types.vector(2, int),
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
-    calLength: ti.template(),
+    cal_length: ti.template(),
     refined_cell: ti.template(),
     particle_level: ti.template(),
     logical_to_compact: ti.template(),
@@ -269,7 +269,7 @@ def adaptive_global_update_2d(
     hanging_master_weight: ti.template(),
     support_overflow: ti.template(),
     node_size: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shape_fn: ti.template(),
     dshape_fn: ti.template(),
     shape_function_r: ti.template(),
@@ -277,7 +277,7 @@ def adaptive_global_update_2d(
     grad_shape_function_r: ti.template(),
     grad_shape_function_z: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         position = particle[np].x
         coarse_cell = ti.floor(position * coarse_igrid_size, int)
         coarse_cell = ti.min(ti.max(coarse_cell, 0), coarse_cnum - 1)
@@ -299,7 +299,7 @@ def adaptive_global_update_2d(
         level_gnum = coarse_cnum * level_divisions + 1
         node_stride = finest_ratio // level_divisions
 
-        psize = calLength[np]
+        psize = cal_length[np]
         support_shift = psize
         if shape_mode == 1:
             support_shift = 0.5 * element_size
@@ -308,7 +308,7 @@ def adaptive_global_update_2d(
         base_bound = ti.floor((position - support_shift) * ielement_size, int)
         row_start = np * total_nodes
         row_end = (np + 1) * total_nodes
-        activeID = row_start
+        active_id = row_start
         for j in range(base_bound[1], base_bound[1] + influenced_node):
             for i in range(base_bound[0], base_bound[0] + influenced_node):
                 level_node = vec2i(i, j)
@@ -334,7 +334,7 @@ def adaptive_global_update_2d(
                         shape_parameter[1],
                     )
                     shapeval = shapen0 * shapen1
-                    if shapeval > Threshold:
+                    if shapeval > THRESHOLD:
                         logical_id = linearize(fine_node, fine_gnum)
                         compact_id = logical_to_compact[logical_id]
                         assert compact_id >= 0, "AdaptiveGrid node map is incomplete"
@@ -350,8 +350,8 @@ def adaptive_global_update_2d(
                             ielement_size[1],
                             shape_parameter[1],
                         )
-                        activeID = append_projected_hanging_node_2d(
-                            activeID,
+                        active_id = append_projected_hanging_node_2d(
+                            active_id,
                             row_start,
                             row_end,
                             compact_id,
@@ -365,11 +365,11 @@ def adaptive_global_update_2d(
                             hanging_master_id,
                             hanging_master_weight,
                             support_overflow,
-                            LnID,
+                            ln_id,
                             shape_fn,
                             dshape_fn,
                         )
-        node_size[np] = ti.cast(activeID - row_start, ti.u8)
+        node_size[np] = ti.cast(active_id - row_start, ti.u8)
 
 
 @ti.kernel
@@ -384,9 +384,9 @@ def adaptive_global_update_bbar_2d(
     coarse_igrid_size: vec2f,
     coarse_cnum: ti.types.vector(2, int),
     fine_gnum: ti.types.vector(2, int),
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
-    calLength: ti.template(),
+    cal_length: ti.template(),
     refined_cell: ti.template(),
     particle_level: ti.template(),
     logical_to_compact: ti.template(),
@@ -395,7 +395,7 @@ def adaptive_global_update_bbar_2d(
     hanging_master_weight: ti.template(),
     support_overflow: ti.template(),
     node_size: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shape_fn: ti.template(),
     dshape_fn: ti.template(),
     dshape_fnc: ti.template(),
@@ -403,7 +403,7 @@ def adaptive_global_update_bbar_2d(
     grad_shape_function: ti.template(),
     shape_function_center: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         position = particle[np].x
         coarse_cell = ti.floor(position * coarse_igrid_size, int)
         coarse_cell = ti.min(ti.max(coarse_cell, 0), coarse_cnum - 1)
@@ -422,11 +422,11 @@ def adaptive_global_update_bbar_2d(
         level_gnum = coarse_cnum * level_divisions + 1
         node_stride = finest_ratio // level_divisions
 
-        psize = calLength[np]
+        psize = cal_length[np]
         base_bound = ti.floor((position - psize) * ielement_size, int)
         row_start = np * total_nodes
         row_end = (np + 1) * total_nodes
-        activeID = row_start
+        active_id = row_start
         for j in range(base_bound[1], base_bound[1] + influenced_node):
             for i in range(base_bound[0], base_bound[0] + influenced_node):
                 level_node = vec2i(i, j)
@@ -446,7 +446,7 @@ def adaptive_global_update_bbar_2d(
                         psize[1],
                     )
                     shapeval = shapen0 * shapen1
-                    if shapeval > Threshold:
+                    if shapeval > THRESHOLD:
                         logical_id = linearize(fine_node, fine_gnum)
                         compact_id = logical_to_compact[logical_id]
                         assert compact_id >= 0, "AdaptiveGrid node map is incomplete"
@@ -474,8 +474,8 @@ def adaptive_global_update_bbar_2d(
                             ielement_size[1],
                             psize[1],
                         )
-                        activeID = append_projected_hanging_node_bbar_2d(
-                            activeID,
+                        active_id = append_projected_hanging_node_bbar_2d(
+                            active_id,
                             row_start,
                             row_end,
                             compact_id,
@@ -487,12 +487,12 @@ def adaptive_global_update_bbar_2d(
                             hanging_master_id,
                             hanging_master_weight,
                             support_overflow,
-                            LnID,
+                            ln_id,
                             shape_fn,
                             dshape_fn,
                             dshape_fnc,
                         )
-        node_size[np] = ti.cast(activeID - row_start, ti.u8)
+        node_size[np] = ti.cast(active_id - row_start, ti.u8)
 
 
 @ti.kernel
@@ -503,12 +503,12 @@ def adaptive_coarse_global_update_2d(
     coarse_grid_size: vec2f,
     coarse_igrid_size: vec2f,
     coarse_gnum: ti.types.vector(2, int),
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
-    calLength: ti.template(),
+    cal_length: ti.template(),
     particle_level: ti.template(),
     node_size: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shape_fn: ti.template(),
     dshape_fn: ti.template(),
     shape_function_r: ti.template(),
@@ -516,10 +516,10 @@ def adaptive_coarse_global_update_2d(
     grad_shape_function_r: ti.template(),
     grad_shape_function_z: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         position = particle[np].x
         particle_level[np] = ti.u8(0)
-        psize = calLength[np]
+        psize = cal_length[np]
         support_shift = psize
         if shape_mode == 1:
             support_shift = 0.5 * coarse_grid_size
@@ -551,7 +551,7 @@ def adaptive_coarse_global_update_2d(
                         shape_parameter[1],
                     )
                     shapeval = shapen0 * shapen1
-                    if shapeval > Threshold:
+                    if shapeval > THRESHOLD:
                         dshapen0 = grad_shape_function_r(
                             position[0],
                             node_coords[0],
@@ -564,7 +564,7 @@ def adaptive_coarse_global_update_2d(
                             coarse_igrid_size[1],
                             shape_parameter[1],
                         )
-                        LnID[active_id] = linearize(node_index, coarse_gnum)
+                        ln_id[active_id] = linearize(node_index, coarse_gnum)
                         shape_fn[active_id] = shapeval
                         dshape_fn[active_id] = vec2f(
                             dshapen0 * shapen1,
@@ -582,12 +582,12 @@ def adaptive_coarse_global_update_bbar_2d(
     coarse_grid_size: vec2f,
     coarse_igrid_size: vec2f,
     coarse_gnum: ti.types.vector(2, int),
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
-    calLength: ti.template(),
+    cal_length: ti.template(),
     particle_level: ti.template(),
     node_size: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shape_fn: ti.template(),
     dshape_fn: ti.template(),
     dshape_fnc: ti.template(),
@@ -595,10 +595,10 @@ def adaptive_coarse_global_update_bbar_2d(
     grad_shape_function: ti.template(),
     shape_function_center: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         position = particle[np].x
         particle_level[np] = ti.u8(0)
-        psize = calLength[np]
+        psize = cal_length[np]
         base_bound = ti.floor((position - psize) * coarse_igrid_size, int)
         active_id = np * total_nodes
         for j in range(base_bound[1], base_bound[1] + influenced_node):
@@ -619,7 +619,7 @@ def adaptive_coarse_global_update_bbar_2d(
                         psize[1],
                     )
                     shapeval = shapen0 * shapen1
-                    if shapeval > Threshold:
+                    if shapeval > THRESHOLD:
                         dshapen0 = grad_shape_function(
                             position[0],
                             node_coords[0],
@@ -644,7 +644,7 @@ def adaptive_coarse_global_update_bbar_2d(
                             coarse_igrid_size[1],
                             psize[1],
                         )
-                        LnID[active_id] = linearize(node_index, coarse_gnum)
+                        ln_id[active_id] = linearize(node_index, coarse_gnum)
                         shape_fn[active_id] = shapeval
                         dshape_fn[active_id] = vec2f(
                             dshapen0 * shapen1,
@@ -673,7 +673,7 @@ def append_bridging_support_2d(
     node_stride,
     fine_gnum,
     level_to_compact: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shape_fn: ti.template(),
     dshape_fn: ti.template(),
     shape_function_r: ti.template(),
@@ -713,7 +713,7 @@ def append_bridging_support_2d(
                     shape_parameter[1],
                 )
                 shapeval = shapen0 * shapen1
-                if shapeval > Threshold:
+                if shapeval > THRESHOLD:
                     logical_id = linearize(fine_node, fine_gnum)
                     compact_id = level_to_compact[logical_id]
                     assert compact_id >= 0, "AdaptiveGrid bridging node map is incomplete"
@@ -729,7 +729,7 @@ def append_bridging_support_2d(
                         ielement_size[1],
                         shape_parameter[1],
                     )
-                    LnID[active_id] = compact_id
+                    ln_id[active_id] = compact_id
                     shape_fn[active_id] = weight * shapeval
                     dshape_fn[active_id] = weight * vec2f(
                         dshapen0 * shapen1,
@@ -752,9 +752,9 @@ def adaptive_bridging_global_update_2d(
     fine_grid_size: vec2f,
     fine_igrid_size: vec2f,
     fine_gnum: ti.types.vector(2, int),
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
-    calLength: ti.template(),
+    cal_length: ti.template(),
     refined_cell: ti.template(),
     particle_level: ti.template(),
     logical_to_compact: ti.template(),
@@ -764,7 +764,7 @@ def adaptive_bridging_global_update_2d(
     bridge_coarse_size: ti.template(),
     bridge_body_id: ti.template(),
     node_size: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shape_fn: ti.template(),
     dshape_fn: ti.template(),
     shape_function_r: ti.template(),
@@ -772,7 +772,7 @@ def adaptive_bridging_global_update_2d(
     grad_shape_function_r: ti.template(),
     grad_shape_function_z: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         position = particle[np].x
         coarse_cell = ti.floor(position * coarse_igrid_size, int)
         coarse_cell = ti.min(ti.max(coarse_cell, 0), coarse_cnum - 1)
@@ -795,8 +795,8 @@ def adaptive_bridging_global_update_2d(
         bridge_alpha[np] = alpha
 
         active_id = np * total_nodes
-        psize = calLength[np]
-        if alpha > Threshold:
+        psize = cal_length[np]
+        if alpha > THRESHOLD:
             active_id = append_bridging_support_2d(
                 active_id,
                 position,
@@ -810,7 +810,7 @@ def adaptive_bridging_global_update_2d(
                 refinement_ratio,
                 fine_gnum,
                 logical_to_compact,
-                LnID,
+                ln_id,
                 shape_fn,
                 dshape_fn,
                 shape_function_r,
@@ -821,7 +821,7 @@ def adaptive_bridging_global_update_2d(
         coarse_size = active_id - np * total_nodes
         bridge_coarse_size[np] = ti.cast(coarse_size, ti.u8)
 
-        if level == 1 and 1.0 - alpha > Threshold:
+        if level == 1 and 1.0 - alpha > THRESHOLD:
             active_id = append_bridging_support_2d(
                 active_id,
                 position,
@@ -835,7 +835,7 @@ def adaptive_bridging_global_update_2d(
                 1,
                 fine_gnum,
                 fine_logical_to_compact,
-                LnID,
+                ln_id,
                 shape_fn,
                 dshape_fn,
                 shape_function_r,
@@ -856,22 +856,22 @@ def assemble_bridging_penalty_impulse_2d(
     penalty_length: float,
     dt: ti.template(),
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
     bridge_alpha: ti.template(),
     bridge_coarse_size: ti.template(),
     bridge_body_id: ti.template(),
     node_size: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shape_fn: ti.template(),
     node: ti.template(),
     penalty_impulse: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         alpha = bridge_alpha[np]
         coarse_size = int(bridge_coarse_size[np])
         support_size = int(node_size[np])
-        if alpha > Threshold and alpha < 1.0 - Threshold and coarse_size > 0 and support_size > coarse_size:
+        if alpha > THRESHOLD and alpha < 1.0 - THRESHOLD and coarse_size > 0 and support_size > coarse_size:
             body_id = int(bridge_body_id[np])
             active_id = np * total_nodes
             coarse_velocity = vec2f(0.0, 0.0)
@@ -885,7 +885,7 @@ def assemble_bridging_penalty_impulse_2d(
                     shape /= alpha
                 else:
                     shape /= 1.0 - alpha
-                node_id = LnID[active_id + local_id]
+                node_id = ln_id[active_id + local_id]
                 mass = node[node_id, body_id].m
                 if mass <= cutoff:
                     support_is_active = False
@@ -896,7 +896,7 @@ def assemble_bridging_penalty_impulse_2d(
                     else:
                         fine_velocity += shape * node[node_id, body_id].momentum
 
-            if support_is_active and inverse_effective_mass > Threshold:
+            if support_is_active and inverse_effective_mass > THRESHOLD:
                 relaxation = scaled_penalty_relaxation_2d(
                     penalty,
                     penalty_beta,
@@ -915,7 +915,7 @@ def assemble_bridging_penalty_impulse_2d(
                         direction = -1.0
                     else:
                         shape /= 1.0 - alpha
-                    node_id = LnID[active_id + local_id]
+                    node_id = ln_id[active_id + local_id]
                     for d in ti.static(range(2)):
                         ti.atomic_add(
                             penalty_impulse[node_id, body_id][d],
@@ -929,20 +929,20 @@ def mark_refined_cells_epdstrain_2d(
     max_refinement_level: int,
     coarse_igrid_size: vec2f,
     coarse_cnum: ti.types.vector(2, int),
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
-    stateVars: ti.template(),
+    state_variables: ti.template(),
     current_refined_cell: ti.template(),
     refined_cell: ti.template(),
     material_id: int,
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1 and int(particle[np].materialID) == material_id:
             cell = ti.floor(particle[np].x * coarse_igrid_size, int)
             cell = ti.min(ti.max(cell, 0), coarse_cnum - 1)
             cell_id = linearize(cell, coarse_cnum)
             current = int(current_refined_cell[cell_id])
-            if current < max_refinement_level and stateVars[np].epdstrain >= threshold:
+            if current < max_refinement_level and state_variables[np].epdstrain >= threshold:
                 refined_cell[cell_id] = ti.cast(current + 1, ti.u8)
 
 
@@ -952,20 +952,20 @@ def mark_refined_cells_epstrain_2d(
     max_refinement_level: int,
     coarse_igrid_size: vec2f,
     coarse_cnum: ti.types.vector(2, int),
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
-    stateVars: ti.template(),
+    state_variables: ti.template(),
     current_refined_cell: ti.template(),
     refined_cell: ti.template(),
     material_id: int,
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1 and int(particle[np].materialID) == material_id:
             cell = ti.floor(particle[np].x * coarse_igrid_size, int)
             cell = ti.min(ti.max(cell, 0), coarse_cnum - 1)
             cell_id = linearize(cell, coarse_cnum)
             current = int(current_refined_cell[cell_id])
-            if current < max_refinement_level and stateVars[np].epstrain >= threshold:
+            if current < max_refinement_level and state_variables[np].epstrain >= threshold:
                 refined_cell[cell_id] = ti.cast(current + 1, ti.u8)
 
 
@@ -975,20 +975,20 @@ def mark_refined_cells_strain_2d(
     max_refinement_level: int,
     coarse_igrid_size: vec2f,
     coarse_cnum: ti.types.vector(2, int),
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
-    stateVars: ti.template(),
+    state_variables: ti.template(),
     current_refined_cell: ti.template(),
     refined_cell: ti.template(),
     material_id: int,
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1 and int(particle[np].materialID) == material_id:
             cell = ti.floor(particle[np].x * coarse_igrid_size, int)
             cell = ti.min(ti.max(cell, 0), coarse_cnum - 1)
             cell_id = linearize(cell, coarse_cnum)
             current = int(current_refined_cell[cell_id])
-            if current < max_refinement_level and EquivalentDeviatoricStrain(stateVars[np].strain) >= threshold:
+            if current < max_refinement_level and equivalent_deviatoric_strain(state_variables[np].strain) >= threshold:
                 refined_cell[cell_id] = ti.cast(current + 1, ti.u8)
 
 
@@ -998,20 +998,20 @@ def mark_refined_cells_deviatoric_strain_2d(
     max_refinement_level: int,
     coarse_igrid_size: vec2f,
     coarse_cnum: ti.types.vector(2, int),
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
-    stateVars: ti.template(),
+    state_variables: ti.template(),
     current_refined_cell: ti.template(),
     refined_cell: ti.template(),
     material_id: int,
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1 and int(particle[np].materialID) == material_id:
             cell = ti.floor(particle[np].x * coarse_igrid_size, int)
             cell = ti.min(ti.max(cell, 0), coarse_cnum - 1)
             cell_id = linearize(cell, coarse_cnum)
             current = int(current_refined_cell[cell_id])
-            if current < max_refinement_level and EquivalentDeviatoricStrain(stateVars[np].strain) >= threshold:
+            if current < max_refinement_level and equivalent_deviatoric_strain(state_variables[np].strain) >= threshold:
                 refined_cell[cell_id] = ti.cast(current + 1, ti.u8)
 
 
@@ -1021,20 +1021,20 @@ def mark_refined_cells_stress_2d(
     max_refinement_level: int,
     coarse_igrid_size: vec2f,
     coarse_cnum: ti.types.vector(2, int),
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
-    stateVars: ti.template(),
+    state_variables: ti.template(),
     current_refined_cell: ti.template(),
     refined_cell: ti.template(),
     material_id: int,
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1 and int(particle[np].materialID) == material_id:
             cell = ti.floor(particle[np].x * coarse_igrid_size, int)
             cell = ti.min(ti.max(cell, 0), coarse_cnum - 1)
             cell_id = linearize(cell, coarse_cnum)
             current = int(current_refined_cell[cell_id])
-            if current < max_refinement_level and EquivalentDeviatoricStress(particle[np].stress) >= threshold:
+            if current < max_refinement_level and equivalent_deviatoric_stress(particle[np].stress) >= threshold:
                 refined_cell[cell_id] = ti.cast(current + 1, ti.u8)
 
 
@@ -1060,14 +1060,14 @@ def mark_refined_cells_matrix_stress_2d(
     max_refinement_level: int,
     coarse_igrid_size: vec2f,
     coarse_cnum: ti.types.vector(2, int),
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
-    stateVars: ti.template(),
+    state_variables: ti.template(),
     current_refined_cell: ti.template(),
     refined_cell: ti.template(),
     material_id: int,
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1 and int(particle[np].materialID) == material_id:
             cell = ti.floor(particle[np].x * coarse_igrid_size, int)
             cell = ti.min(ti.max(cell, 0), coarse_cnum - 1)
@@ -1086,20 +1086,20 @@ def mark_refined_cells_softening_2d(
     max_refinement_level: int,
     coarse_igrid_size: vec2f,
     coarse_cnum: ti.types.vector(2, int),
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
-    stateVars: ti.template(),
+    state_variables: ti.template(),
     current_refined_cell: ti.template(),
     refined_cell: ti.template(),
     material_id: int,
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1 and int(particle[np].materialID) == material_id:
             cell = ti.floor(particle[np].x * coarse_igrid_size, int)
             cell = ti.min(ti.max(cell, 0), coarse_cnum - 1)
             cell_id = linearize(cell, coarse_cnum)
             current = int(current_refined_cell[cell_id])
-            if current < max_refinement_level and stateVars[np].epdstrain >= threshold:
+            if current < max_refinement_level and state_variables[np].epdstrain >= threshold:
                 refined_cell[cell_id] = ti.cast(current + 1, ti.u8)
 
 
@@ -1107,13 +1107,13 @@ def mark_refined_cells_softening_2d(
 def mark_refined_cells_migrated_particles_2d(
     coarse_igrid_size: vec2f,
     coarse_cnum: ti.types.vector(2, int),
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
     current_refined_cell: ti.template(),
     particle_refined: ti.template(),
     refined_cell: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1 and int(particle[np].materialID) > 0 and particle_refined[np] > 0:
             cell = ti.floor(particle[np].x * coarse_igrid_size, int)
             cell = ti.min(ti.max(cell, 0), coarse_cnum - 1)
@@ -1186,12 +1186,12 @@ def balance_refined_cells_2d(
 def assign_particle_levels_2d(
     coarse_igrid_size: vec2f,
     coarse_cnum: ti.types.vector(2, int),
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
     refined_cell: ti.template(),
     particle_level: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         cell = ti.floor(particle[np].x * coarse_igrid_size, int)
         cell = ti.min(ti.max(cell, 0), coarse_cnum - 1)
         particle_level[np] = refined_cell[linearize(cell, coarse_cnum)]
@@ -1216,7 +1216,7 @@ def split_children_fit_grid_2d(coarse_igrid_size, coarse_cnum, position, particl
 def count_particles_to_split_2d(
     coarse_igrid_size: vec2f,
     coarse_cnum: ti.types.vector(2, int),
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
     refined_cell: ti.template(),
     particle_refined: ti.template(),
@@ -1225,7 +1225,7 @@ def count_particles_to_split_2d(
 ) -> int:
     split_count = 0
     unrefined_particle_count[None] = 0
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1 and int(particle[np].materialID) > 0:
             ti.atomic_add(unrefined_particle_count[None], 1)
             cell = ti.floor(particle[np].x * coarse_igrid_size, int)
@@ -1245,20 +1245,20 @@ def count_particles_to_split_2d(
 
 @ti.kernel
 def build_particle_traction_linked_list_2d(
-    particleNum: int,
+    particle_num: int,
     ptraction_count: int,
     particle_traction: ti.template(),
     particle_traction_head: ti.template(),
     particle_traction_next: ti.template(),
 ):
-    for pid in range(particleNum):
+    for pid in range(particle_num):
         particle_traction_head[pid] = -1
     for traction_id in range(ptraction_count):
         particle_traction_next[traction_id] = -1
     ti.loop_config(serialize=True)
     for traction_id in range(ptraction_count):
         pid = particle_traction[traction_id].pid
-        if 0 <= pid and pid < particleNum:
+        if 0 <= pid and pid < particle_num:
             previous = particle_traction_head[pid]
             particle_traction_head[pid] = traction_id
             particle_traction_next[traction_id] = previous
@@ -1268,7 +1268,7 @@ def build_particle_traction_linked_list_2d(
 def count_particle_traction_constraints_to_split_2d(
     coarse_igrid_size: vec2f,
     coarse_cnum: ti.types.vector(2, int),
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
     particle_traction_head: ti.template(),
     particle_traction_next: ti.template(),
@@ -1277,7 +1277,7 @@ def count_particle_traction_constraints_to_split_2d(
     particle_size: ti.template(),
 ) -> int:
     split_constraint_count = 0
-    for pid in range(particleNum):
+    for pid in range(particle_num):
         if int(particle[pid].active) == 1 and int(particle[pid].materialID) > 0:
             cell = ti.floor(particle[pid].x * coarse_igrid_size, int)
             cell = ti.min(ti.max(cell, 0), coarse_cnum - 1)
@@ -1303,18 +1303,18 @@ def count_particle_traction_constraints_to_split_2d(
 def split_refined_particles_2d(
     coarse_igrid_size: vec2f,
     coarse_cnum: ti.types.vector(2, int),
-    particleNum: int,
+    particle_num: int,
     is_axisymmetric: ti.template(),
     refined_cell: ti.template(),
     particle: ti.template(),
-    stateVars: ti.template(),
+    state_variables: ti.template(),
     particle_size: ti.template(),
-    calLength: ti.template(),
+    cal_length: ti.template(),
     particle_level: ti.template(),
     particle_refined: ti.template(),
     new_particle_num: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1 and int(particle[np].materialID) > 0:
             cell = ti.floor(particle[np].x * coarse_igrid_size, int)
             cell = ti.min(ti.max(cell, 0), coarse_cnum - 1)
@@ -1344,7 +1344,7 @@ def split_refined_particles_2d(
                 if ti.static(hasattr(particle, "contact_traction")):
                     parent_contact_traction = particle[np].contact_traction
                 child_size = 0.5 * particle_size[np]
-                child_cal_length = 0.5 * calLength[np]
+                child_cal_length = 0.5 * cal_length[np]
                 child_level = ti.cast(ti.min(current_level + 1, cell_level), ti.u8)
 
                 for offset in ti.static(ti.grouped(ti.ndrange(2, 2))):
@@ -1353,13 +1353,13 @@ def split_refined_particles_2d(
                     if child_index > 0:
                         target = appended_start + child_index - 1
                         particle[target] = particle[np]
-                        stateVars[target] = stateVars[np]
+                        state_variables[target] = state_variables[np]
 
                     child_offset = 0.999 * (2 * offset.cast(float) - 1.0) * child_size
                     child_position = parent_position + child_offset
                     radial_factor = 1.0
                     if ti.static(is_axisymmetric):
-                        radial_factor = ti.max(child_position[0], Threshold) / ti.max(parent_position[0], Threshold)
+                        radial_factor = ti.max(child_position[0], THRESHOLD) / ti.max(parent_position[0], THRESHOLD)
                     particle[target].particleID = target
                     particle[target].m = 0.25 * parent_mass * radial_factor
                     particle[target].vol = 0.25 * parent_volume * radial_factor
@@ -1371,7 +1371,7 @@ def split_refined_particles_2d(
                     particle[target].v = parent_velocity
                     particle[target].velocity_gradient = 0.0 * parent_velocity_gradient
                     particle_size[target] = child_size
-                    calLength[target] = child_cal_length
+                    cal_length[target] = child_cal_length
                     particle_level[target] = child_level
                     particle_refined[target] = child_level
 
@@ -1380,14 +1380,14 @@ def split_refined_particles_2d(
 def split_refined_particles_with_traction_2d(
     coarse_igrid_size: vec2f,
     coarse_cnum: ti.types.vector(2, int),
-    particleNum: int,
+    particle_num: int,
     ptraction_count: int,
     is_axisymmetric: ti.template(),
     refined_cell: ti.template(),
     particle: ti.template(),
-    stateVars: ti.template(),
+    state_variables: ti.template(),
     particle_size: ti.template(),
-    calLength: ti.template(),
+    cal_length: ti.template(),
     particle_level: ti.template(),
     particle_refined: ti.template(),
     particle_traction: ti.template(),
@@ -1396,7 +1396,7 @@ def split_refined_particles_with_traction_2d(
     new_particle_num: ti.template(),
     new_particle_traction_num: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1 and int(particle[np].materialID) > 0:
             cell = ti.floor(particle[np].x * coarse_igrid_size, int)
             cell = ti.min(ti.max(cell, 0), coarse_cnum - 1)
@@ -1426,7 +1426,7 @@ def split_refined_particles_with_traction_2d(
                 if ti.static(hasattr(particle, "contact_traction")):
                     parent_contact_traction = particle[np].contact_traction
                 child_size = 0.5 * particle_size[np]
-                child_cal_length = 0.5 * calLength[np]
+                child_cal_length = 0.5 * cal_length[np]
                 child_level = ti.cast(ti.min(current_level + 1, cell_level), ti.u8)
 
                 for offset in ti.static(ti.grouped(ti.ndrange(2, 2))):
@@ -1435,13 +1435,13 @@ def split_refined_particles_with_traction_2d(
                     if child_index > 0:
                         target = appended_start + child_index - 1
                         particle[target] = particle[np]
-                        stateVars[target] = stateVars[np]
+                        state_variables[target] = state_variables[np]
 
                     child_offset = 0.999 * (2 * offset.cast(float) - 1.0) * child_size
                     child_position = parent_position + child_offset
                     radial_factor = 1.0
                     if ti.static(is_axisymmetric):
-                        radial_factor = ti.max(child_position[0], Threshold) / ti.max(parent_position[0], Threshold)
+                        radial_factor = ti.max(child_position[0], THRESHOLD) / ti.max(parent_position[0], THRESHOLD)
                     particle[target].particleID = target
                     particle[target].m = 0.25 * parent_mass * radial_factor
                     particle[target].vol = 0.25 * parent_volume * radial_factor
@@ -1453,7 +1453,7 @@ def split_refined_particles_with_traction_2d(
                     particle[target].v = parent_velocity
                     particle[target].velocity_gradient = 0.0 * parent_velocity_gradient
                     particle_size[target] = child_size
-                    calLength[target] = child_cal_length
+                    cal_length[target] = child_cal_length
                     particle_level[target] = child_level
                     particle_refined[target] = child_level
 
@@ -1470,8 +1470,8 @@ def split_refined_particles_with_traction_2d(
                             particle_traction[target_traction].pid = child_pid
                         radial_factor = 1.0
                         if ti.static(is_axisymmetric):
-                            radial_factor = ti.max(particle[child_pid].x[0], Threshold) / ti.max(
-                                parent_position[0], Threshold
+                            radial_factor = ti.max(particle[child_pid].x[0], THRESHOLD) / ti.max(
+                                parent_position[0], THRESHOLD
                             )
                         particle_traction[target_traction].psize = 0.25 * radial_factor * parent_traction_size
                     traction_id = particle_traction_next[traction_id]
@@ -1512,7 +1512,7 @@ def assemble_hanging_penalty_impulse_list_2d(
 
             for master in ti.static(range(4)):
                 weight = hanging_master_weight[constraint_id][master]
-                if weight > Threshold:
+                if weight > THRESHOLD:
                     master_id = hanging_master_id[constraint_id][master]
                     master_mass = node[master_id, body_id].m
                     if master_mass <= cutoff:
@@ -1538,7 +1538,7 @@ def assemble_hanging_penalty_impulse_list_2d(
 
                 for master in ti.static(range(4)):
                     weight = hanging_master_weight[constraint_id][master]
-                    if weight > Threshold:
+                    if weight > THRESHOLD:
                         master_id = hanging_master_id[constraint_id][master]
                         for d in ti.static(range(2)):
                             ti.atomic_add(

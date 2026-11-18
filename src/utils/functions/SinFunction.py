@@ -15,7 +15,7 @@ class Function:
     def set_value(self, to_beg, to_end, period, phase, magnitude):
         self.beg_time = to_beg
         self.end_time = to_end
-        self.iperiod = 1. / period
+        self.iperiod = 1.0 / period
         self.phase = phase
         self.magnitude = magnitude
 
@@ -46,11 +46,11 @@ class SinFunction:
 
         self.function = Function.field(shape=self.i_interval)
         for i in range(self.i_interval):
-            start_time = DictIO.GetEssential(functions[0], "StartTime")
-            end_time = DictIO.GetEssential(functions[i], "EndTime")
-            period = DictIO.GetEssential(functions[i], "Period")
-            phase = DictIO.GetEssential(functions[i], "Phase") / 180 * PI
-            magnitude = DictIO.GetEssential(functions[i], "Magnitude")
+            start_time = DictIO.get_essential(functions[0], "StartTime")
+            end_time = DictIO.get_essential(functions[i], "EndTime")
+            period = DictIO.get_essential(functions[i], "Period")
+            phase = DictIO.get_essential(functions[i], "Phase") / 180 * PI
+            magnitude = DictIO.get_essential(functions[i], "Magnitude")
             if end_time <= start_time:
                 raise ValueError("The interval time should be larger than zero")
             self.function[i - 1].set_value(start_time, end_time, period, phase, magnitude)

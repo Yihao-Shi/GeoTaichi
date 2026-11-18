@@ -1,48 +1,45 @@
 """Built-in and file-based mesh generation for the FEM engine."""
 
 from __future__ import annotations
-
 from pathlib import Path
-
 import numpy as np
-
-from src.fem.generator.Mesh import FEMMesh, normalize_cell_type
-
-
-def _positive_divisions(values, size, label):
-    divisions = np.asarray(values, dtype=np.int32).reshape(-1)
-    if divisions.size != size or np.any(divisions <= 0):
-        raise ValueError(f"{label} must contain {size} positive integers")
-    return divisions
-
-
-def _origin(origin):
-    origin = np.asarray(origin, dtype=np.float64).reshape(-1)
-    if origin.size == 2:
-        origin = np.append(origin, 0.0)
-    if origin.size != 3:
-        raise ValueError("origin must contain two or three coordinates")
-    return origin
-
-
-def _compact(points, cells, node_sets=None):
-    """Remove nodes not referenced by the selected cell formulation."""
-    points = np.asarray(points, dtype=np.float64)
-    cells = np.asarray(cells, dtype=np.int32)
-    used = np.unique(cells)
-    if used.size == points.shape[0] and np.array_equal(used, np.arange(points.shape[0])):
-        return points, cells, dict(node_sets or {})
-    inverse = np.full(points.shape[0], -1, dtype=np.int32)
-    inverse[used] = np.arange(used.size, dtype=np.int32)
-    compact_sets = {}
-    for set_name, indices in dict(node_sets or {}).items():
-        mapped = inverse[np.asarray(indices, dtype=np.int32).reshape(-1)]
-        compact_sets[set_name] = np.unique(mapped[mapped >= 0])
-    return points[used], inverse[cells], compact_sets
+from src.fem.generator.Mesh import FEMMesh
 
 
 class FEMGenerateManager:
     """Create structured primitive meshes or import meshio-supported files."""
+
+    @staticmethod
+    def _positive_divisions(values, size, label):
+        divisions = np.asarray(values, dtype=np.int32).reshape(-1)
+        if divisions.size != size or np.any(divisions <= 0):
+            raise ValueError(f"{label} must contain {size} positive integers")
+        return divisions
+
+    @staticmethod
+    def _origin(origin):
+        origin = np.asarray(origin, dtype=np.float64).reshape(-1)
+        if origin.size == 2:
+            origin = np.append(origin, 0.0)
+        if origin.size != 3:
+            raise ValueError("origin must contain two or three coordinates")
+        return origin
+
+    @staticmethod
+    def _compact(points, cells, node_sets=None):
+        """Remove nodes not referenced by the selected cell formulation."""
+        points = np.asarray(points, dtype=np.float64)
+        cells = np.asarray(cells, dtype=np.int32)
+        used = np.unique(cells)
+        if used.size == points.shape[0] and np.array_equal(used, np.arange(points.shape[0])):
+            return points, cells, dict(node_sets or {})
+        inverse = np.full(points.shape[0], -1, dtype=np.int32)
+        inverse[used] = np.arange(used.size, dtype=np.int32)
+        compact_sets = {}
+        for set_name, indices in dict(node_sets or {}).items():
+            mapped = inverse[np.asarray(indices, dtype=np.int32).reshape(-1)]
+            compact_sets[set_name] = np.unique(mapped[mapped >= 0])
+        return points[used], inverse[cells], compact_sets
 
     def create_box(
         self,
@@ -55,8 +52,8 @@ class FEMGenerateManager:
         size = np.asarray(size, dtype=np.float64).reshape(-1)
         if size.size != 3 or np.any(size <= 0.0):
             raise ValueError("box size must contain three positive lengths")
-        nx, ny, nz = _positive_divisions(divisions, 3, "box divisions")
-        origin = _origin(origin)
+        nx, ny, nz = FEMGenerateManager._positive_divisions(divisions, 3, "box divisions")
+        origin = FEMGenerateManager._origin(origin)
         x = np.linspace(origin[0], origin[0] + size[0], nx + 1)
         y = np.linspace(origin[1], origin[1] + size[1], ny + 1)
         z = np.linspace(origin[2], origin[2] + size[2], nz + 1)
@@ -79,7 +76,7 @@ class FEMGenerateManager:
                         ]
                     )
         hexahedra = np.asarray(hexahedra, dtype=np.int32)
-        cell_type = normalize_cell_type(element_type)
+        cell_type = FEMMesh.normalize_cell_type(element_type)
         if cell_type == "hexahedron":
             cells = hexahedra
         elif cell_type == "tetra":
@@ -112,8 +109,8 @@ class FEMGenerateManager:
         size = np.asarray(size, dtype=np.float64).reshape(-1)
         if size.size != 2 or np.any(size <= 0.0):
             raise ValueError("rectangle size must contain two positive lengths")
-        nx, ny = _positive_divisions(divisions, 2, "rectangle divisions")
-        origin = _origin(origin)
+        nx, ny = FEMGenerateManager._positive_divisions(divisions, 2, "rectangle divisions")
+        origin = FEMGenerateManager._origin(origin)
         u = np.linspace(0.0, size[0], nx + 1)
         v = np.linspace(0.0, size[1], ny + 1)
         uv = np.stack(np.meshgrid(u, v, indexing="ij"), axis=-1).reshape(-1, 2)
@@ -152,7 +149,7 @@ class FEMGenerateManager:
         circumferential_divisions = int(circumferential_divisions)
         if radius <= 0.0 or radial_divisions <= 0 or circumferential_divisions < 3:
             raise ValueError("circle radius/divisions must be positive and use at least three angular sectors")
-        center = _origin(center)
+        center = FEMGenerateManager._origin(center)
         local_points = [[0.0, 0.0]]
         angles = 2.0 * np.pi * np.arange(circumferential_divisions) / circumferential_divisions
         for radial_id in range(1, radial_divisions + 1):
@@ -211,7 +208,7 @@ class FEMGenerateManager:
             circumferential_divisions,
             center=(0.0, 0.0, 0.0),
         )
-        origin = _origin(origin)
+        origin = FEMGenerateManager._origin(origin)
         layers = []
         for z in np.linspace(0.0, height, height_divisions + 1):
             layer = disk.points.copy()
@@ -250,7 +247,7 @@ class FEMGenerateManager:
         """Read OBJ, Gmsh, Abaqus, VTK and other meshio-supported files."""
         filename = Path(filename)
         if filename.suffix.lower() == ".obj":
-            requested = normalize_cell_type(cell_type or "TRI3")
+            requested = FEMMesh.normalize_cell_type(cell_type or "TRI3")
             if requested != "triangle":
                 raise ValueError("OBJ input is a surface mesh and requires cell_type='TRI3'")
             points = []
@@ -295,13 +292,13 @@ class FEMGenerateManager:
                     texture_points
                 ):
                     raise ValueError(f"OBJ file {filename} contains an invalid texture index")
-                points, triangles, _ = _compact(points, triangles)
-                material_points, material_cells, _ = _compact(texture_points, material_cells)
+                points, triangles, _ = FEMGenerateManager._compact(points, triangles)
+                material_points, material_cells, _ = FEMGenerateManager._compact(texture_points, material_cells)
             elif any(has_texture):
                 raise ValueError(f"OBJ file {filename} mixes textured and untextured face corners")
             else:
                 triangles = [[corner[0] for corner in face] for face in polygon_corners]
-                points, triangles, _ = _compact(points, triangles)
+                points, triangles, _ = FEMGenerateManager._compact(points, triangles)
             return FEMMesh(
                 points,
                 triangles,
@@ -317,7 +314,7 @@ class FEMGenerateManager:
                 f"Reading {filename.suffix or 'this mesh format'} requires the GeoTaichi meshio dependency"
             ) from exc
         imported = meshio.read(filename)
-        requested = normalize_cell_type(cell_type) if cell_type is not None else None
+        requested = FEMMesh.normalize_cell_type(cell_type) if cell_type is not None else None
         candidates = []
         conversions = {
             "tetra": ("tetra", 4),
@@ -373,7 +370,7 @@ class FEMGenerateManager:
                 break
         original_points = np.asarray(imported.points)
         used_points = np.unique(cells)
-        points, cells, node_sets = _compact(original_points, cells, node_sets)
+        points, cells, node_sets = FEMGenerateManager._compact(original_points, cells, node_sets)
         if material_points is not None:
             if material_points.shape[0] == original_points.shape[0] and points.shape[0] != original_points.shape[0]:
                 material_points = material_points[used_points]
@@ -387,6 +384,3 @@ class FEMGenerateManager:
         )
 
     load = read
-
-
-__all__ = ["FEMGenerateManager"]

@@ -4,11 +4,11 @@ import pytest
 import taichi as ti
 
 import src.utils.GlobalVariable as GlobalVariable
-from src.physics_model.consititutive_model.infinitesimal_strain.DruckerPrager import DruckerPragerModel
-from src.physics_model.consititutive_model.infinitesimal_strain.ElasticPerfectlyPlastic import (
+from src.physics_model.constitutive_model.infinitesimal_strain.DruckerPrager import DruckerPragerModel
+from src.physics_model.constitutive_model.infinitesimal_strain.ElasticPerfectlyPlastic import (
     ElasticPerfectlyPlasticModel,
 )
-from src.physics_model.consititutive_model.infinitesimal_strain.MohrCoulomb import MohrCoulombModel
+from src.physics_model.constitutive_model.infinitesimal_strain.MohrCoulomb import MohrCoulombModel
 from src.utils.VectorFunction import voigt_tensor_dot
 
 pytestmark = [pytest.mark.materials, pytest.mark.cpu]
@@ -43,10 +43,10 @@ def test_dp_history_rate_matches_tensile_flow_norm(taichi_material_cpu):
     @ti.kernel
     def evaluate():
         stress = ti.Vector([150.0, 130.0, 110.0, 10.0, 3.0, -5.0])
-        params = model.GetMaterialParameter(stress, state[0])
-        internal = model.GetInternalVariables(state[0])
-        flow = model.ComputeDgDsigma(2, stress, internal, params)
-        out[0] = model.ComputeInternalVariables(1.0, flow, internal, params)[0]
+        params = model.get_material_parameter(stress, state[0])
+        internal = model.get_internal_variables(state[0])
+        flow = model.compute_dg_dsigma(2, stress, internal, params)
+        out[0] = model.compute_internal_variables(1.0, flow, internal, params)[0]
         out[1] = ti.sqrt(2.0 / 3.0 * voigt_tensor_dot(flow, flow))
 
     evaluate()
@@ -66,23 +66,23 @@ def test_softened_tensile_cap_modulus_matches_history_direction(taichi_material_
         else:
             state[0].strain = ti.Vector([0.0, 0.0, 0.0, 0.2 * ti.sqrt(1.5), 0.0, 0.0])
         stress = ti.Vector([150.0, 130.0, 110.0, 10.0, 3.0, -5.0])
-        params = model.GetMaterialParameter(stress, state[0])
-        internal = model.GetInternalVariables(state[0])
-        flow = model.ComputeDgDsigma(2, stress, internal, params)
-        out[0] = model.ComputePlasticModulus(2, flow, stress, internal, state[0], params)
+        params = model.get_material_parameter(stress, state[0])
+        internal = model.get_internal_variables(state[0])
+        flow = model.compute_dg_dsigma(2, stress, internal, params)
+        out[0] = model.compute_plastic_modulus(2, flow, stress, internal, state[0], params)
         plus, minus = state[0], state[0]
         if ti.static(kind == "dp"):
-            rate = model.ComputeInternalVariables(1.0, flow, internal, params)[0]
+            rate = model.compute_internal_variables(1.0, flow, internal, params)[0]
             plus.epdstrain += 1e-6 * rate
             minus.epdstrain -= 1e-6 * rate
         else:
             plus.strain += 1e-6 * flow
             minus.strain -= 1e-6 * flow
-        _, fp = model.ComputeYieldFunction(
-            stress, model.GetInternalVariables(plus), model.GetMaterialParameter(stress, plus)
+        _, fp = model.compute_yield_function(
+            stress, model.get_internal_variables(plus), model.get_material_parameter(stress, plus)
         )
-        _, fm = model.ComputeYieldFunction(
-            stress, model.GetInternalVariables(minus), model.GetMaterialParameter(stress, minus)
+        _, fm = model.compute_yield_function(
+            stress, model.get_internal_variables(minus), model.get_material_parameter(stress, minus)
         )
         out[1] = (fp - fm) / 2e-6
 
@@ -104,16 +104,16 @@ def test_dp_random_field_modulus_uses_particle_strengths(taichi_material_cpu, mo
         state[0].bulk, state[0].shear = model.bulk, model.shear
         state[0].fai_peak, state[0].psi_peak, state[0].c_peak, state[0].tensile = 0.4, 0.0, 250.0, 0.0
         stress = ti.Vector([-1200.0, -950.0, -850.0, 310.0, -70.0, 80.0])
-        params = model.GetMaterialParameter(stress, state[0])
-        internal = model.GetInternalVariables(state[0])
-        flow = model.ComputeDgDsigma(1, stress, internal, params)
-        out[0] = model.ComputePlasticModulus(1, flow, stress, internal, state[0], params)
-        rate = model.ComputeInternalVariables(1.0, flow, internal, params)[0]
+        params = model.get_material_parameter(stress, state[0])
+        internal = model.get_internal_variables(state[0])
+        flow = model.compute_dg_dsigma(1, stress, internal, params)
+        out[0] = model.compute_plastic_modulus(1, flow, stress, internal, state[0], params)
+        rate = model.compute_internal_variables(1.0, flow, internal, params)[0]
         plus, minus = state[0], state[0]
         plus.epdstrain += 1e-6 * rate
         minus.epdstrain -= 1e-6 * rate
-        fp, _ = model.ComputeYieldFunction(stress, internal, model.GetMaterialParameter(stress, plus))
-        fm, _ = model.ComputeYieldFunction(stress, internal, model.GetMaterialParameter(stress, minus))
+        fp, _ = model.compute_yield_function(stress, internal, model.get_material_parameter(stress, plus))
+        fm, _ = model.compute_yield_function(stress, internal, model.get_material_parameter(stress, minus))
         out[1] = (fp - fm) / 2e-6
 
     evaluate()
@@ -144,7 +144,7 @@ def test_mises_random_field_initialization_preserves_softening_endpoints(taichi_
     def evaluate():
         for i in range(2):
             state[i].strain = ti.Vector([0.0, 0.0, 0.0, 0.2 * ti.sqrt(1.5), 0.0, 0.0])
-            params = model.GetMaterialParameter(ti.Vector.zero(ti.f64, 6), state[i])
+            params = model.get_material_parameter(ti.Vector.zero(ti.f64, 6), state[i])
             out[i] = params[2]
 
     evaluate()

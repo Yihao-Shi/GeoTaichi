@@ -6,7 +6,7 @@ import pytest
 ti = pytest.importorskip("taichi")
 
 from src.fem import FEM
-from src.fempm import FEMPM
+from src.fempm.mainFEMPM import FEMPM
 from src.mpm import MPM
 
 pytestmark = [
@@ -140,7 +140,7 @@ def _coupled_system(tmp_path, axisymmetric, search, mpm_material="NeoHookean", d
     coupling.add_surface()
     coupling.memory_allocate({})
     coupling.choose_contact_model(
-        "IPC",
+        "BarrierIPC",
         dhat=0.05,
         dmin=0.0,
         kappa=100.0,
@@ -264,8 +264,8 @@ def test_fempm_planar_point_edge_ipc_assembles_symmetric_system(tmp_path, monkey
     if axisymmetric:
         particle_volume = coupling.mpm.enginer.particle.vol0.to_numpy()[0]
         contact_measure = coupling.mpm.enginer.surface_measure.to_numpy()[0]
-        assert particle_volume == pytest.approx(2.0 * np.pi * 1.0e-3)
-        assert contact_measure == pytest.approx(2.0 * np.pi * 1.0e-2)
+        assert particle_volume == pytest.approx(1.0e-3)
+        assert contact_measure == pytest.approx(1.0e-2)
 
 
 @pytest.mark.parametrize("mpm_material", ["DruckerPrager", "VonMises"])

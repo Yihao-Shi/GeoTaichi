@@ -1,3 +1,4 @@
+from src.mpm.soft_particle.Structs import DeformableGrid
 from pathlib import Path
 
 import numpy as np
@@ -73,15 +74,13 @@ def _reference_mass_fields(ti):
 
 def test_reference_grid_mass_is_precomputed_and_idempotent(taichi_runtime):
     from src.mpm.soft_particle.SoftBodyKernel import (
-        precompute_soft_grid_reference_mass_,
+        precompute_soft_grid_reference_mass,
     )
 
     fields = _reference_mass_fields(taichi_runtime)
     soft, point, grid, shape_node, shape, shape_count, rigid = fields
-    arguments = (
-        1, 3, 2, soft, point, grid, shape_node, shape, shape_count, rigid
-    )
-    precompute_soft_grid_reference_mass_(*arguments)
+    arguments = (1, 3, 2, soft, point, grid, shape_node, shape, shape_count, rigid)
+    precompute_soft_grid_reference_mass(*arguments)
     np.testing.assert_allclose(grid.m.to_numpy(), [0.5, 3.0, 1.5])
     np.testing.assert_allclose(
         grid.v.to_numpy(),
@@ -89,7 +88,7 @@ def test_reference_grid_mass_is_precomputed_and_idempotent(taichi_runtime):
     )
 
     # A refresh must replace, rather than accumulate onto, cached mass.
-    precompute_soft_grid_reference_mass_(*arguments)
+    precompute_soft_grid_reference_mass(*arguments)
     np.testing.assert_allclose(grid.m.to_numpy(), [0.5, 3.0, 1.5])
     np.testing.assert_allclose(
         grid.v.to_numpy(),
@@ -99,7 +98,6 @@ def test_reference_grid_mass_is_precomputed_and_idempotent(taichi_runtime):
 
 def test_tlmpm_step_reset_preserves_cross_step_state(taichi_runtime):
     ti = taichi_runtime
-    from src.mpm.soft_particle.Structs import DeformableGrid
 
     grid = DeformableGrid.field(shape=1)
     grid.m[0] = 4.25
@@ -120,9 +118,9 @@ def test_tlmpm_step_reset_preserves_cross_step_state(taichi_runtime):
 
 def test_initial_constitutive_cache_handles_nonzero_prestrain(taichi_runtime):
     ti = taichi_runtime
-    from src.mpm.MaterialManager import SoftParticleNeoHookeanMaterialTable
+    from src.mpm.SoftParticleNeoHookeanMaterialTable import SoftParticleNeoHookeanMaterialTable
     from src.mpm.soft_particle.SoftBodyKernel import (
-        initialize_soft_particle_constitutive_state_,
+        initialize_soft_particle_constitutive_state,
     )
 
     class Parameters:
@@ -148,13 +146,12 @@ def test_initial_constitutive_cache_handles_nonzero_prestrain(taichi_runtime):
     point.materialID[0] = 0
     point.F[0] = deformation_gradient
     point.vol0[0] = 0.25
-    initialize_soft_particle_constitutive_state_(1, point, material, state)
+    initialize_soft_particle_constitutive_state(1, point, material, state)
 
     inverse_transpose = np.linalg.inv(deformation_gradient).T
     expected = (
         2.0 * (deformation_gradient - inverse_transpose)
-        + 3.0 * np.log(np.linalg.det(deformation_gradient))
-        * inverse_transpose
+        + 3.0 * np.log(np.linalg.det(deformation_gradient)) * inverse_transpose
     )
     np.testing.assert_allclose(point.stress.to_numpy()[0], expected)
     assert float(state.estress[0]) > 0.0
@@ -163,9 +160,9 @@ def test_initial_constitutive_cache_handles_nonzero_prestrain(taichi_runtime):
 def test_soft_body_translation_constraint_uses_parallel_reduction(taichi_runtime):
     ti = taichi_runtime
     from src.mpm.soft_particle.SoftBodyKernel import (
-        apply_soft_body_translation_constraint_,
-        reduce_soft_body_kinematics_,
-        reset_soft_body_kinematic_reduction_,
+        apply_soft_body_translation_constraint,
+        reduce_soft_body_kinematics,
+        reset_soft_body_kinematic_reduction,
     )
 
     vec3 = ti.types.vector(3, ti.f64)
@@ -199,12 +196,12 @@ def test_soft_body_translation_constraint_uses_parallel_reduction(taichi_runtime
     point.x[0], point.x[1] = [0.0, 0.0, 2.0], [4.0, 0.0, 8.0]
     point.v[0], point.v[1] = [1.0, 2.0, 1.0], [3.0, 4.0, 5.0]
 
-    reset_soft_body_kinematic_reduction_(1, soft)
-    reduce_soft_body_kinematics_(2, soft, point, rigid)
+    reset_soft_body_kinematic_reduction(1, soft)
+    reduce_soft_body_kinematics(2, soft, point, rigid)
     np.testing.assert_allclose(soft.previous_center.to_numpy()[0], [12.0, 0.0, 26.0])
     np.testing.assert_allclose(soft.v.to_numpy()[0], [10.0, 14.0, 16.0])
 
-    apply_soft_body_translation_constraint_(2, soft, point, rigid)
+    apply_soft_body_translation_constraint(2, soft, point, rigid)
     positions = point.x.to_numpy()
     velocities = point.v.to_numpy()
     np.testing.assert_allclose(np.average(positions, axis=0, weights=(1.0, 3.0)), [3.0, 0.0, 5.0])
@@ -214,14 +211,11 @@ def test_soft_body_translation_constraint_uses_parallel_reduction(taichi_runtime
 
 
 def test_tlmpm_split_stages_reuse_cached_stress_and_update_it_once():
-    source_path = (
-        Path(__file__).parents[3]
-        / "src/mpm/soft_particle/SoftBodyKernel.py"
-    )
+    source_path = Path(__file__).parents[3] / "src/mpm/soft_particle/SoftBodyKernel.py"
     source = source_path.read_text(encoding="utf-8")
-    p2g_start = source.index("def soft_body_force_p2g_(")
+    p2g_start = source.index("def soft_body_force_p2g(")
     p2g_end = source.index("\n\n@ti.kernel", p2g_start)
-    stress_start = source.index("def update_soft_particle_stress_(")
+    stress_start = source.index("def update_soft_particle_stress(")
     stress_end = source.index("\n\n@ti.kernel", stress_start)
 
     assert "def soft_body_tlmpm_step_(" not in source
@@ -230,10 +224,7 @@ def test_tlmpm_split_stages_reuse_cached_stress_and_update_it_once():
 
 
 def test_tlmpm_scheduler_profiles_split_kernels_in_physical_order():
-    source_path = (
-        Path(__file__).parents[3]
-        / "src/mpm/engines/SoftParticleEngine.py"
-    )
+    source_path = Path(__file__).parents[3] / "src/mpm/engines/SoftParticleEngine.py"
     source = source_path.read_text(encoding="utf-8")
     start = source.index("    def euler_lsmpm_integration(")
     stage_names = [

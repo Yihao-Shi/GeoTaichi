@@ -4,12 +4,12 @@ import numpy as np
 
 from src.dem.GenerateManager import GenerateManager as DEMGenerateManager
 from src.dem.Simulation import Simulation as DEMSimulation
-from src.dem.SceneManager import myScene as DEMScene
+from src.dem.SceneManager import SceneManager as DEMScene
 from src.mpdem.Simulation import Simulation
 from src.mpdem.generator.GeneratorKernel import *
 from src.mpm.GenerateManager import GenerateManager as MPMGenerateManager
-from src.mpm.SceneManager import myScene as MPMScene
-from src.utils.TypeDefination import vec3i
+from src.mpm.SceneManager import SceneManager as MPMScene
+from src.utils.TypeDefinition import vec3i
 
 
 class MixtureGenerator(object):

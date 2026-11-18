@@ -849,7 +849,7 @@ def _build(
         soft_meshes.append(mesh)
         soft_ranges.append((node_offset, node_offset + mesh.number_of_nodes))
         node_offset += mesh.number_of_nodes
-    from src.fem.generator import FEMMesh
+    from src.fem.generator.Mesh import FEMMesh
 
     fem.add_soft_particle(FEMMesh.concatenate(soft_meshes))
     fem.add_material(

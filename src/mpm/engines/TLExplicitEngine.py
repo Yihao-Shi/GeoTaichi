@@ -1,6 +1,6 @@
 from src.mpm.engines.ULExplicitEngine import ULExplicitEngine
 from src.mpm.engines.EngineKernel import *
-from src.mpm.SceneManager import myScene
+from src.mpm.SceneManager import SceneManager
 from src.mpm.Simulation import Simulation
 from src.mpm.SpatialHashGrid import SpatialHashGrid
 from src.utils.linalg import no_operation
@@ -18,13 +18,13 @@ class TLExplicitEngine(ULExplicitEngine):
         self.apply_reflection_constraints = None
         super().__init__(sims)
         if sims.dimension == 2:
-            self.compute_forces = self.compute_force_2D
-            self.compute_stress_strains = self.compute_stress_strain_2D
+            self.compute_forces = self.compute_force_2d
+            self.compute_stress_strains = self.compute_stress_strain_2d
         elif sims.dimension == 3:
             self.compute_forces = self.compute_force
             self.compute_stress_strains = self.compute_stress_strain
 
-    def choose_boundary_constraints(self, sims: Simulation, scene: myScene):
+    def choose_boundary_constraints(self, sims: Simulation, scene: SceneManager):
         super().choose_boundary_constraints(sims, scene)
         if int(scene.boundary.reflection_list[0]) > 0:
             self.apply_reflection_constraints = self.reflection_constraints
@@ -33,13 +33,13 @@ class TLExplicitEngine(ULExplicitEngine):
         if int(scene.boundary.absorbing_list[0]) > 0:
             self.apply_absorbing_constraints = self.absorbing_constraints
 
-    def reset_adaptive_grid_message(self, scene: myScene):
+    def reset_adaptive_grid_message(self, scene: SceneManager):
         grid_reset(scene.mass_cut_off, scene.node)
 
-    def reset_reference_grid_message(self, scene: myScene):
+    def reset_reference_grid_message(self, scene: SceneManager):
         tlgrid_reset(scene.mass_cut_off, scene.node)
 
-    def compute_nodal_kinematics(self, sims: Simulation, scene: myScene):
+    def compute_nodal_kinematics(self, sims: Simulation, scene: SceneManager):
         kernel_momentum_p2g(
             scene.element.grid_nodes,
             int(scene.particleNum[0]),
@@ -51,7 +51,7 @@ class TLExplicitEngine(ULExplicitEngine):
             scene.element.node_size,
         )
 
-    def compute_adaptive_nodal_kinematics(self, sims: Simulation, scene: myScene):
+    def compute_adaptive_nodal_kinematics(self, sims: Simulation, scene: SceneManager):
         kernel_mass_momentum_p2g(
             scene.element.grid_nodes,
             int(scene.particleNum[0]),
@@ -63,7 +63,7 @@ class TLExplicitEngine(ULExplicitEngine):
             scene.element.node_size,
         )
 
-    def _bind_adaptive_runtime_functions(self, scene: myScene):
+    def _bind_adaptive_runtime_functions(self, scene: SceneManager):
         adaptive = bool(getattr(scene.element, "adaptive", False))
         self.update_adaptive_interpolation = self.calculate_interpolation if adaptive else no_operation
         self.compute_nodal_kinematic = (
@@ -81,7 +81,7 @@ class TLExplicitEngine(ULExplicitEngine):
         if scene.sparse_grid is None:
             self.reset_grid_messages = selected_reset
 
-    def compute_nodal_mass(self, sims: Simulation, scene: myScene):
+    def compute_nodal_mass(self, sims: Simulation, scene: SceneManager):
         kernel_mass_p2g(
             scene.element.grid_nodes,
             int(scene.particleNum[0]),
@@ -93,35 +93,35 @@ class TLExplicitEngine(ULExplicitEngine):
             scene.element.node_size,
         )
 
-    def compute_stress_strain(self, sims: Simulation, scene: myScene):
-        for materialID in range(scene.material.mapping.shape[0] - 1):
-            start_index = scene.material.mapping[materialID]
-            end_index = scene.material.mapping[materialID + 1]
+    def compute_stress_strain(self, sims: Simulation, scene: SceneManager):
+        for material_id in range(scene.material.mapping.shape[0] - 1):
+            start_index = scene.material.mapping[material_id]
+            end_index = scene.material.mapping[material_id + 1]
             kernel_compute_reference_stress_strain(
                 start_index,
                 end_index,
                 sims.dt,
                 scene.particle,
                 scene.material.materialID,
-                scene.material.matProps[materialID + 1],
+                scene.material.matProps[material_id + 1],
                 scene.material.stateVars,
             )
 
-    def compute_stress_strain_2D(self, sims: Simulation, scene: myScene):
-        for materialID in range(scene.material.mapping.shape[0] - 1):
-            start_index = scene.material.mapping[materialID]
-            end_index = scene.material.mapping[materialID + 1]
-            kernel_compute_reference_stress_strain_2D(
+    def compute_stress_strain_2d(self, sims: Simulation, scene: SceneManager):
+        for material_id in range(scene.material.mapping.shape[0] - 1):
+            start_index = scene.material.mapping[material_id]
+            end_index = scene.material.mapping[material_id + 1]
+            kernel_compute_reference_stress_strain_2d(
                 start_index,
                 end_index,
                 sims.dt,
                 scene.particle,
                 scene.material.materialID,
-                scene.material.matProps[materialID + 1],
+                scene.material.matProps[material_id + 1],
                 scene.material.stateVars,
             )
 
-    def compute_force(self, sims: Simulation, scene: myScene):
+    def compute_force(self, sims: Simulation, scene: SceneManager):
         kernel_reference_force_p2g(
             scene.element.grid_nodes,
             int(scene.particleNum[0]),
@@ -135,8 +135,8 @@ class TLExplicitEngine(ULExplicitEngine):
             scene.element.node_size,
         )
 
-    def compute_force_2D(self, sims: Simulation, scene: myScene):
-        kernel_reference_force_p2g_2D(
+    def compute_force_2d(self, sims: Simulation, scene: SceneManager):
+        kernel_reference_force_p2g_2d(
             scene.element.grid_nodes,
             int(scene.particleNum[0]),
             scene.element.gnum,
@@ -149,7 +149,7 @@ class TLExplicitEngine(ULExplicitEngine):
             scene.element.node_size,
         )
 
-    def pre_calculation(self, sims: Simulation, scene: myScene, neighbor: SpatialHashGrid):
+    def pre_calculation(self, sims: Simulation, scene: SceneManager, neighbor: SpatialHashGrid):
         self._bind_adaptive_runtime_functions(scene)
         self.limit = sims.verlet_distance * sims.verlet_distance
         scene.element.calculate_characteristic_length(sims, int(scene.particleNum[0]), scene.particle, scene.psize)
@@ -164,7 +164,7 @@ class TLExplicitEngine(ULExplicitEngine):
             )
         self.compute_nodal_mass(sims, scene)
 
-    def usl_updating(self, sims: Simulation, scene: myScene, neighbor=None):
+    def usl_updating(self, sims: Simulation, scene: SceneManager, neighbor=None):
         sims.timer.begin("Shape function")
         self.update_adaptive_interpolation(sims, scene)
         sims.timer.end("Shape function")
@@ -201,7 +201,7 @@ class TLExplicitEngine(ULExplicitEngine):
         sims.timer.end("Misc")
         self.update_grid_refinement_profiled(sims, scene)
 
-    def usf_updating(self, sims: Simulation, scene: myScene, neighbor=None):
+    def usf_updating(self, sims: Simulation, scene: SceneManager, neighbor=None):
         sims.timer.begin("Shape function")
         self.update_adaptive_interpolation(sims, scene)
         sims.timer.end("Shape function")
@@ -243,7 +243,7 @@ class TLExplicitEngine(ULExplicitEngine):
         sims.timer.end("G2P")
         self.update_grid_refinement_profiled(sims, scene)
 
-    def musl_updating(self, sims: Simulation, scene: myScene, neighbor=None):
+    def musl_updating(self, sims: Simulation, scene: SceneManager, neighbor=None):
         sims.timer.begin("Shape function")
         self.update_adaptive_interpolation(sims, scene)
         sims.timer.end("Shape function")

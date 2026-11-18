@@ -3,6 +3,7 @@ import taichi as ti
 from src.utils.BitFunction import split_f64, merge_f64, brev, clz
 from src.utils.constants import WARP_SZ
 
+
 @ti.func
 def warp_scan_up_i32(lane_id, val):
     # Intra-warp scan, manually unrolled
@@ -106,6 +107,7 @@ def warp_scan_down_f32(lane_id, val):
         val += n
     return val
 
+
 @ti.func
 def shfl_down_f64(x: ti.f64, offset: ti.i32):
     lo, hi = split_f64(x)
@@ -114,6 +116,7 @@ def shfl_down_f64(x: ti.f64, offset: ti.i32):
     lo2 = ti.simt.warp.shfl_down_i32(ti.simt.warp.active_mask(), lo_i32, offset)
     hi2 = ti.simt.warp.shfl_down_i32(ti.simt.warp.active_mask(), hi_i32, offset)
     return merge_f64(ti.bit_cast(lo2, ti.u32), ti.bit_cast(hi2, ti.u32))
+
 
 @ti.func
 def warp_scan_down_f64(lane_id, val):
@@ -139,6 +142,7 @@ def warp_scan_down_f64(lane_id, val):
         val += n
     return val
 
+
 @ti.func
 def warp_reduce_sum_f32(val):
     val = ti.cast(val, ti.f32)
@@ -146,8 +150,13 @@ def warp_reduce_sum_f32(val):
     val += ti.simt.warp.shfl_down_f32(ti.simt.warp.active_mask(), val, 8)
     val += ti.simt.warp.shfl_down_f32(ti.simt.warp.active_mask(), val, 4)
     val += ti.simt.warp.shfl_down_f32(ti.simt.warp.active_mask(), val, 2)
-    val += ti.simt.warp.shfl_down_f32(ti.simt.warp.active_mask(), val, 1,)
+    val += ti.simt.warp.shfl_down_f32(
+        ti.simt.warp.active_mask(),
+        val,
+        1,
+    )
     return val
+
 
 @ti.func
 def warp_reduce_sum_f64(val: ti.f64):
@@ -158,43 +167,44 @@ def warp_reduce_sum_f64(val: ti.f64):
     val += shfl_down_f64(val, 1)
     return val
 
+
 @ti.kernel
 def warp_reduce_i32(value: ti.template(), flag: ti.template(), output: ti.template()):
-    for threadIdx in value:
-        rdata = value[threadIdx]
-        warp_id = threadIdx & 0x1f
-        bBoundary = (int(flag[threadIdx]) == 1) or (warp_id == 0)
+    for thread_idx in value:
+        rdata = value[thread_idx]
+        warp_id = thread_idx & 0x1F
+        b_boundary = (int(flag[thread_idx]) == 1) or (warp_id == 0)
 
-        mark = brev(ti.simt.warp.ballot(bBoundary))
+        mark = brev(ti.simt.warp.ballot(b_boundary))
         interval = min(ti.i32(clz(mark << (warp_id + 1))), 31 - warp_id)
         rdata = warp_scan_down_i32(interval, rdata)
-        if bBoundary:
-            output[threadIdx] += rdata
+        if b_boundary:
+            output[thread_idx] += rdata
 
 
 @ti.kernel
 def warp_reduce_f32(value: ti.template(), flag: ti.template(), output: ti.template()):
-    for threadIdx in value:
-        rdata = value[threadIdx]
-        warp_id = threadIdx & 0x1f
-        bBoundary = (int(flag[threadIdx]) == 1) or (warp_id == 0)
+    for thread_idx in value:
+        rdata = value[thread_idx]
+        warp_id = thread_idx & 0x1F
+        b_boundary = (int(flag[thread_idx]) == 1) or (warp_id == 0)
 
-        mark = brev(ti.simt.warp.ballot(bBoundary))
+        mark = brev(ti.simt.warp.ballot(b_boundary))
         interval = min(ti.i32(clz(mark << (warp_id + 1))), 31 - warp_id)
         rdata = warp_scan_down_f32(interval, rdata)
-        if bBoundary:
-            output[threadIdx] += rdata
+        if b_boundary:
+            output[thread_idx] += rdata
 
 
 @ti.kernel
 def warp_reduce_f64(value: ti.template(), flag: ti.template(), output: ti.template()):
-    for threadIdx in value:
-        rdata = value[threadIdx]
-        warp_id = threadIdx & 0x1f
-        bBoundary = (int(flag[threadIdx]) == 1) or (warp_id == 0)
+    for thread_idx in value:
+        rdata = value[thread_idx]
+        warp_id = thread_idx & 0x1F
+        b_boundary = (int(flag[thread_idx]) == 1) or (warp_id == 0)
 
-        mark = brev(ti.simt.warp.ballot(bBoundary))
+        mark = brev(ti.simt.warp.ballot(b_boundary))
         interval = min(ti.i32(clz(mark << (warp_id + 1))), 31 - warp_id)
         rdata = warp_scan_down_f64(interval, rdata)
-        if bBoundary:
-            output[threadIdx] += rdata
+        if b_boundary:
+            output[thread_idx] += rdata

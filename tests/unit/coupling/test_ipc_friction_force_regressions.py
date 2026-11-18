@@ -1,3 +1,4 @@
+from src.physics_model.contact_model.ipc.Utilities import ipc_barrier_distance2_offset_terms
 from types import SimpleNamespace
 
 import numpy as np
@@ -11,13 +12,13 @@ from src.physics_model.contact_model.ipc.ContactDistance import (
     edge_edge_distance_grad,
     point_triangle_distance_grad,
 )
-from src.physics_model.contact_model.ipc.IPC import ipc_toolkit_barrier_distance2_offset_terms
+from src.physics_model.contact_model.ipc.Barrier import Barrier
 
 
 @ti.kernel
 def _offset_barrier_energy(distance: ti.f64, dmin: ti.f64) -> ti.f64:
     active = (0.02 + 2.0 * dmin) * 0.02
-    energy, first, second = ipc_toolkit_barrier_distance2_offset_terms(
+    energy, first, second = ipc_barrier_distance2_offset_terms(
         distance * distance, 0.02, dmin, 1.0 / (active * active), 0
     )
     return 0.02 * energy
@@ -52,7 +53,7 @@ def _energy_normal_force(distance, dmin):
 def test_fem_host_and_device_friction_load_matches_barrier_energy(taichi_runtime, kind, dmin):
     assembler = object.__new__(FEMContactAssembler)
     assembler.real_type = ti.f64
-    assembler.contact = SimpleNamespace(model="IPC")
+    assembler.contact = SimpleNamespace(model="BarrierIPC")
     assembler.dmin, assembler.dhat, assembler.kappa = dmin, 0.02, 1.0
     distance = dmin + 0.001
     data = _positions(kind, distance)

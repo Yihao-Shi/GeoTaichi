@@ -4,13 +4,12 @@ import numpy as np
 import pytest
 import taichi as ti
 
-from src.physics_model.consititutive_model.strain_rate.Bingham import (
+from src.physics_model.constitutive_model.strain_rate.Bingham import (
     BinghamModel,
 )
-from src.physics_model.consititutive_model.strain_rate.Newtonian import (
+from src.physics_model.constitutive_model.strain_rate.Newtonian import (
     NewtonianModel,
 )
-
 
 pytestmark = [pytest.mark.materials, pytest.mark.cpu]
 
@@ -78,7 +77,7 @@ def test_fluid_state_schema_depends_on_solver_type(model_class, solver_type, exp
     model = model_class(solver_type=solver_type)
 
     assert model.get_state_vars() == expected
-    assert model._initialize_vars == model._initialize_vars_
+    assert model._initialize_vars == model._initialize_vars
 
 
 def test_newtonian_model_initialize_reads_properties_and_defaults():

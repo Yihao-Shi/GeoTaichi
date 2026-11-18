@@ -1,6 +1,8 @@
 """Configuration state shared by explicit and IPC FEM--DEM coupling."""
 
 from __future__ import annotations
+from src.utils.errors import SimulationStateError
+from src.contact_detection.bounding_volume_hierarchy.Utilities import validate_bvh_rebuild_interval
 
 from pathlib import Path
 
@@ -9,7 +11,6 @@ import taichi as ti
 
 from src.utils.TimeTicker import Timer
 from src.utils.SolverRuntime import StepSchedule
-from src.contact_detection.bounding_volume_hierarchy.MultiPatchLBVH import validate_bvh_rebuild_interval
 
 
 class FEDEMSimulation:
@@ -166,11 +167,11 @@ class FEDEMSimulation:
         if self.search not in ("LinkedCell", "BVH"):
             raise ValueError("FEDEM search must be 'LinkedCell' or 'BVH'")
         if self.max_particle_num <= 0:
-            raise RuntimeError("allocate DEM particle memory before FEDEM")
+            raise SimulationStateError("allocate DEM particle memory before FEDEM")
         if self.max_surface_facet_num <= 0:
-            raise RuntimeError("FEDEM coupled surface contains no facets")
+            raise SimulationStateError("FEDEM coupled surface contains no facets")
         if self.max_dem_material_num <= 0:
-            raise RuntimeError("allocate DEM material memory before FEDEM")
+            raise SimulationStateError("allocate DEM material memory before FEDEM")
         if self.max_contact_pairs <= 0:
             raise ValueError("FEDEM max_contact_pairs must be positive")
         if self.max_filtered_contact_pairs <= 0:

@@ -1,14 +1,15 @@
+from src.utils.errors import CapacityError, SimulationStateError
 import taichi as ti
 import math
 
-from src.dem.neighbor.neighbor_kernel import *
+from src.dem.neighbor.NeighborKernel import *
 from src.dem.neighbor.NeighborBase import NeighborBase
-from src.dem.SceneManager import myScene
+from src.dem.SceneManager import SceneManager
 from src.dem.Simulation import Simulation
-from src.utils.constants import Threshold
+from src.utils.constants import THRESHOLD
 from src.utils.linalg import no_operation
 from src.utils.PrefixSum import PrefixSumExecutor, BLOCK_SZ as PREFIX_BLOCK_SZ
-from src.utils.TypeDefination import vec3i
+from src.utils.TypeDefinition import vec3i
 
 MAX_TAICHI_FIELD_SHAPE = 2147483647
 
@@ -27,10 +28,7 @@ class LinkedCell(NeighborBase):
         self.minimum_grid_size = 0.0
         self.allocated_cell_sum = 0
         self.adaptive_regrid_count = 0
-        self.adaptive_cell_size = (
-            sims.scheme == "LSMPM"
-            and getattr(sims, "max_soft_body_num", 0) > 0
-        )
+        self.adaptive_cell_size = sims.scheme == "LSMPM" and getattr(sims, "max_soft_body_num", 0) > 0
 
     @staticmethod
     def prefix_sum_storage_length(batch_length):
@@ -55,17 +53,17 @@ class LinkedCell(NeighborBase):
         return lower
 
     def calculate_cell_grid(self):
-        self.igrid_size = 1. / self.grid_size
+        self.igrid_size = 1.0 / self.grid_size
         cnum = [max(int(domain * self.igrid_size), 1) for domain in self.sims.domain]
         cell_sum = int(cnum[0]) * int(cnum[1]) * int(cnum[2])
         return cnum, cell_sum
-        
+
     def manage_function(self, scene):
         self.manage_function_base(scene)
         self.manage_particle_function(scene)
         self.manage_wall_function()
 
-    def manage_particle_function(self, scene: myScene):
+    def manage_particle_function(self, scene: SceneManager):
         self.place_particle_to_cells = no_operation
         self.particle_hash_tables = no_operation
         if self.sims.max_particle_num > 1 or (self.sims.coupling and scene.particleNum[0] > 0):
@@ -80,10 +78,10 @@ class LinkedCell(NeighborBase):
                 self.place_wall_to_cells = self.place_plane_to_cell
                 self.wall_hash_tables = self.plane_hash_table
             elif self.sims.wall_type == 1:
-                '''if self.sims.static_wall:
+                """if self.sims.static_wall:
                     self.place_wall_to_cells = self.place_static_facet_to_cell
                     self.wall_hash_tables = self.static_facet_hash_table
-                else:'''
+                else:"""
                 self.place_wall_to_cells = self.place_facet_to_cell
                 self.wall_hash_tables = self.facet_hash_table
             elif self.sims.wall_type == 2:
@@ -95,29 +93,31 @@ class LinkedCell(NeighborBase):
         del self.cell_pse, self.igrid_size, self.cnum, self.cellSum
         del self.particle_current, self.particle_count
         self.particle_wall_delete_vars()
-        self.neighbor_initialze(scene, max(self.sims.domain), 0.)
+        self.neighbor_initialze(scene, max(self.sims.domain), 0.0)
 
-    def neighbor_initialze(self, scene: myScene, min_bounding_rad, max_bounding_rad):
+    def neighbor_initialze(self, scene: SceneManager, min_bounding_rad, max_bounding_rad):
         rad_min, rad_max = scene.find_bounding_sphere_radius(self.sims)
         self.sims.set_max_bounding_sphere_radius(rad_max)
         self.sims.set_min_bounding_sphere_radius(rad_min)
         rad_max = max(max_bounding_rad, rad_max) if abs(rad_max) > 1e-15 else max_bounding_rad
         rad_min = min(min_bounding_rad, rad_min) if abs(rad_min) > 1e-15 else min_bounding_rad
-        self.sims.set_verlet_distance(
-            self._verlet_reference_radius(scene, rad_min))
+        self.sims.set_verlet_distance(self._verlet_reference_radius(scene, rad_min))
         self.sims.set_potential_list_size(rad_max)
-        
+
         self.contact_grid_size = 2 * (rad_max + self.sims.verlet_distance)
         self.grid_size = self.contact_grid_size
         self.plane_insert_factor = 0.5 + rad_max / self.grid_size
-        if self.grid_size < 1e-3 * Threshold:
-            raise RuntimeError("Particle radius is equal to zero!")
+        if self.grid_size < 1e-3 * THRESHOLD:
+            raise SimulationStateError("Particle radius is equal to zero!")
         cnum, cell_sum = self.calculate_cell_grid()
         self.max_linked_cell_sum = self.max_cell_sum_for_field_shape()
         self.cell_shape_limited = cell_sum > self.max_linked_cell_sum
         if self.cell_shape_limited:
-            domain_volume = max(float(self.sims.domain[0]) * float(self.sims.domain[1]) * float(self.sims.domain[2]), self.contact_grid_size ** 3)
-            self.grid_size = max(self.contact_grid_size, (domain_volume / self.max_linked_cell_sum) ** (1. / 3.))
+            domain_volume = max(
+                float(self.sims.domain[0]) * float(self.sims.domain[1]) * float(self.sims.domain[2]),
+                self.contact_grid_size**3,
+            )
+            self.grid_size = max(self.contact_grid_size, (domain_volume / self.max_linked_cell_sum) ** (1.0 / 3.0))
             self.plane_insert_factor = 0.5 + rad_max / self.grid_size
             cnum, cell_sum = self.calculate_cell_grid()
             while cell_sum > self.max_linked_cell_sum:
@@ -125,7 +125,7 @@ class LinkedCell(NeighborBase):
                 self.plane_insert_factor = 0.5 + rad_max / self.grid_size
                 cnum, cell_sum = self.calculate_cell_grid()
         if cell_sum > self.max_linked_cell_sum:
-            raise RuntimeError(
+            raise SimulationStateError(
                 "LinkedCell grid is too large for DEM neighbor search: "
                 f"grid_number={cnum}, cell_number={cell_sum}. "
                 f"The Taichi field shape limit is {MAX_TAICHI_FIELD_SHAPE}."
@@ -136,7 +136,7 @@ class LinkedCell(NeighborBase):
         self.allocated_cell_sum = self.cellSum
         self.wall_in_cell = self.sims.wall_per_cell * self.cellSum
         self.check_memory()
-        
+
         if self.first_run:
             self.cell_pse = PrefixSumExecutor(self.cellSum + 1)
             self.particle_pse = PrefixSumExecutor(self.sims.max_particle_num + 1)
@@ -147,26 +147,21 @@ class LinkedCell(NeighborBase):
         self.print_info()
         self.first_run = False
 
-    def refresh_contact_grid(self, scene: myScene):
+    def refresh_contact_grid(self, scene: SceneManager):
         if not self.adaptive_cell_size:
             return False
         rad_min, rad_max = scene.find_bounding_sphere_radius(self.sims)
         self.sims.set_max_bounding_sphere_radius(rad_max)
         self.sims.set_min_bounding_sphere_radius(rad_min)
-        if rad_max <= Threshold:
+        if rad_max <= THRESHOLD:
             return False
 
         contact_grid_size = 2.0 * (rad_max + self.sims.verlet_distance)
         new_grid_size = max(self.minimum_grid_size, contact_grid_size)
         new_plane_insert_factor = 0.5 + rad_max / new_grid_size
-        grid_changed = not math.isclose(
-            new_grid_size, self.grid_size,
-            rel_tol=1.0e-12, abs_tol=1.0e-15)
-        plane_band_changed = (
-            getattr(self.sims, "wall_type", None) == 0
-            and not math.isclose(
-                new_plane_insert_factor, self.plane_insert_factor,
-                rel_tol=1.0e-12, abs_tol=1.0e-15)
+        grid_changed = not math.isclose(new_grid_size, self.grid_size, rel_tol=1.0e-12, abs_tol=1.0e-15)
+        plane_band_changed = getattr(self.sims, "wall_type", None) == 0 and not math.isclose(
+            new_plane_insert_factor, self.plane_insert_factor, rel_tol=1.0e-12, abs_tol=1.0e-15
         )
         if not grid_changed:
             self.contact_grid_size = contact_grid_size
@@ -180,7 +175,7 @@ class LinkedCell(NeighborBase):
         if cell_sum > self.allocated_cell_sum:
             self.grid_size = old_grid_size
             self.calculate_cell_grid()
-            raise RuntimeError(
+            raise CapacityError(
                 "Adaptive LinkedCell grid exceeds its initialized capacity: "
                 f"required={cell_sum}, allocated={self.allocated_cell_sum}."
             )
@@ -191,7 +186,7 @@ class LinkedCell(NeighborBase):
         return True
 
     def print_info(self):
-        print(" Neighbor Search Initialize ".center(71,"-"))
+        print(" Neighbor Search Initialize ".center(71, "-"))
         print("Neighbor search method:  Linked-cell")
         print("Verlet distance: ", self.sims.verlet_distance)
         print("Grid size: ", self.grid_size)
@@ -200,7 +195,7 @@ class LinkedCell(NeighborBase):
             print("Linked-cell shape cell limit: ", self.max_linked_cell_sum)
         print("Grid number: ", self.cnum)
         print("Potental contact number per particle: ", self.sims.potential_particle_num)
-        print("Potental contact wall per particle: ", self.sims.wall_coordination_number, '\n')
+        print("Potental contact wall per particle: ", self.sims.wall_coordination_number, "\n")
 
     def set_hash_table(self):
         self.particle_hash_tables()
@@ -214,7 +209,7 @@ class LinkedCell(NeighborBase):
     def plane_hash_table(self):
         self.wall_count = ti.field(int, shape=self.cell_pse.get_length())
         self.WallID = ti.field(int, shape=self.sims.wall_per_cell * self.cellSum)
-    
+
     def facet_hash_table(self):
         self.wall_count = ti.field(int, shape=self.cell_pse.get_length())
         if self.sims.wall_per_cell == "sparse_grid":
@@ -243,8 +238,8 @@ class LinkedCell(NeighborBase):
     def particle_patch_delete_vars(self):
         del self.potential_list_particle_wall, self.particle_wall, self.hist_particle_wall
         del self.patch_current, self.wall_count, self.WallID
-    
-    def pre_neighbor(self, scene: myScene):
+
+    def pre_neighbor(self, scene: SceneManager):
         if self.sims.static_wall is True:
             self.manage_wall_function()
             # A facet wall may be declared static after the neighbor object
@@ -253,7 +248,7 @@ class LinkedCell(NeighborBase):
             # before its one-time build.
             if self.wall_count is None or self.WallID is None:
                 self.wall_hash_tables()
-            
+
         self.place_particle_to_cells(scene)
         self.update_verlet_tables_particle_particle(scene)
         self.place_wall_to_cells(scene)
@@ -274,60 +269,168 @@ class LinkedCell(NeighborBase):
             self.place_wall_to_cells = no_operation
         self.reset_verletDisp()
 
-    def place_particle_to_cell(self, scene: myScene):
-        calculate_particles_position_(int(scene.particleNum[0]), self.igrid_size, scene.particle, self.particle_count, self.particle_current, self.cnum)
+    def place_particle_to_cell(self, scene: SceneManager):
+        calculate_particles_position(
+            int(scene.particleNum[0]),
+            self.igrid_size,
+            scene.particle,
+            self.particle_count,
+            self.particle_current,
+            self.cnum,
+        )
         self.cell_pse.run(self.particle_count)
-        insert_particle_to_cell_(self.igrid_size, int(scene.particleNum[0]), scene.particle, self.particle_count, self.particle_current, self.ParticleID, self.cnum)
+        insert_particle_to_cell(
+            self.igrid_size,
+            int(scene.particleNum[0]),
+            scene.particle,
+            self.particle_count,
+            self.particle_current,
+            self.ParticleID,
+            self.cnum,
+        )
 
-    def place_plane_to_cell(self, scene: myScene):
-        insert_plane_to_cell_(self.plane_insert_factor, int(scene.wallNum[0]), self.grid_size, self.cellSum, self.sims.wall_per_cell, self.wall_count, self.WallID, scene.wall, self.cnum)
+    def place_plane_to_cell(self, scene: SceneManager):
+        insert_plane_to_cell(
+            self.plane_insert_factor,
+            int(scene.wallNum[0]),
+            self.grid_size,
+            self.cellSum,
+            self.sims.wall_per_cell,
+            self.wall_count,
+            self.WallID,
+            scene.wall,
+            self.cnum,
+        )
 
-    def place_facet_to_cell(self, scene: myScene):
-        insert_facet_to_cell_(int(scene.wallNum[0]), self.grid_size, self.igrid_size, self.sims.domain, self.sims.wall_per_cell, self.wall_count, self.WallID, scene.wall, self.cnum)
+    def place_facet_to_cell(self, scene: SceneManager):
+        insert_facet_to_cell(
+            int(scene.wallNum[0]),
+            self.grid_size,
+            self.igrid_size,
+            self.sims.domain,
+            self.sims.wall_per_cell,
+            self.wall_count,
+            self.WallID,
+            scene.wall,
+            self.cnum,
+        )
         maximum = int(self.wall_count.to_numpy().max())
         if maximum > self.sims.wall_per_cell:
-            raise RuntimeError(
+            raise CapacityError(
                 "LinkedCell facet capacity is insufficient: "
                 f"required wall_per_cell={maximum}, "
                 f"configured={self.sims.wall_per_cell}."
             )
 
-    def place_static_facet_to_cell(self, scene: myScene):
-        calculate_static_facet_position_(int(scene.wallNum[0]), self.igrid_size, scene.wall, self.wall_count, self.static_facet_current, self.cnum)
+    def place_static_facet_to_cell(self, scene: SceneManager):
+        calculate_static_facet_position(
+            int(scene.wallNum[0]), self.igrid_size, scene.wall, self.wall_count, self.static_facet_current, self.cnum
+        )
         self.cell_pse.run(self.wall_count)
         total_length = get_total_static_wall_length(self.cellSum, self.wall_count)
         self.WallID = ti.field(int, shape=total_length)
-        insert_static_facet_to_cell_(self.igrid_size, int(scene.wallNum[0]), scene.wall, self.wall_count, self.static_facet_current, self.WallID, self.cnum)
+        insert_static_facet_to_cell(
+            self.igrid_size,
+            int(scene.wallNum[0]),
+            scene.wall,
+            self.wall_count,
+            self.static_facet_current,
+            self.WallID,
+            self.cnum,
+        )
 
-    def place_patch_to_cell(self, scene: myScene):
-        calculate_patch_position_(int(scene.wallNum[0]), self.igrid_size, scene.wall, self.wall_count, self.patch_current, self.cnum)
+    def place_patch_to_cell(self, scene: SceneManager):
+        calculate_patch_position(
+            int(scene.wallNum[0]), self.igrid_size, scene.wall, self.wall_count, self.patch_current, self.cnum
+        )
         self.cell_pse.run(self.wall_count)
-        insert_patch_to_cell_(self.igrid_size, int(scene.wallNum[0]), scene.wall, self.wall_count, self.patch_current, self.WallID, self.cnum)
+        insert_patch_to_cell(
+            self.igrid_size,
+            int(scene.wallNum[0]),
+            scene.wall,
+            self.wall_count,
+            self.patch_current,
+            self.WallID,
+            self.cnum,
+        )
 
-    def update_verlet_table_particle_particle(self, scene: myScene):
-        board_search_particle_particle_linked_cell_(int(scene.particleNum[0]), self.sims.potential_particle_num, self.sims.verlet_distance, self.igrid_size,
-                                                    self.particle_count, self.ParticleID, scene.particle, self.potential_list_particle_particle, 
-                                                    self.particle_particle, self.cnum)
+    def update_verlet_table_particle_particle(self, scene: SceneManager):
+        board_search_particle_particle_linked_cell(
+            int(scene.particleNum[0]),
+            self.sims.potential_particle_num,
+            self.sims.verlet_distance,
+            self.igrid_size,
+            self.particle_count,
+            self.ParticleID,
+            scene.particle,
+            self.potential_list_particle_particle,
+            self.particle_particle,
+            self.cnum,
+        )
         self.particle_pse.run(self.particle_particle)
 
-    def update_verlet_table_particle_plane(self, scene: myScene):
-        board_search_particle_plane_linked_cell_(int(scene.particleNum[0]), self.sims.wall_coordination_number, self.sims.wall_per_cell, self.sims.verlet_distance, self.igrid_size, self.wall_count,
-                                                 self.WallID, scene.particle, scene.wall, self.potential_list_particle_wall, self.particle_wall, self.cnum)
+    def update_verlet_table_particle_plane(self, scene: SceneManager):
+        board_search_particle_plane_linked_cell(
+            int(scene.particleNum[0]),
+            self.sims.wall_coordination_number,
+            self.sims.wall_per_cell,
+            self.sims.verlet_distance,
+            self.igrid_size,
+            self.wall_count,
+            self.WallID,
+            scene.particle,
+            scene.wall,
+            self.potential_list_particle_wall,
+            self.particle_wall,
+            self.cnum,
+        )
         self.particle_pse.run(self.particle_wall)
 
-    def update_verlet_table_particle_facet(self, scene: myScene):
-        board_search_particle_facet_linked_cell_(int(scene.particleNum[0]), self.sims.wall_coordination_number, self.sims.wall_per_cell, self.sims.verlet_distance, self.igrid_size, self.wall_count,
-                                                 self.WallID, scene.particle, scene.wall, self.potential_list_particle_wall, self.particle_wall, self.cnum)
+    def update_verlet_table_particle_facet(self, scene: SceneManager):
+        board_search_particle_facet_linked_cell(
+            int(scene.particleNum[0]),
+            self.sims.wall_coordination_number,
+            self.sims.wall_per_cell,
+            self.sims.verlet_distance,
+            self.igrid_size,
+            self.wall_count,
+            self.WallID,
+            scene.particle,
+            scene.wall,
+            self.potential_list_particle_wall,
+            self.particle_wall,
+            self.cnum,
+        )
         self.particle_pse.run(self.particle_wall)
 
-    def update_verlet_table_particle_static_facet(self, scene: myScene):
-        board_search_particle_static_facet_linked_cell_(int(scene.particleNum[0]), self.sims.wall_coordination_number, self.sims.verlet_distance, self.igrid_size, 
-                                                        self.wall_count, self.WallID, scene.particle, scene.wall, self.potential_list_particle_wall, 
-                                                        self.particle_wall, self.cnum)
+    def update_verlet_table_particle_static_facet(self, scene: SceneManager):
+        board_search_particle_static_facet_linked_cell(
+            int(scene.particleNum[0]),
+            self.sims.wall_coordination_number,
+            self.sims.verlet_distance,
+            self.igrid_size,
+            self.wall_count,
+            self.WallID,
+            scene.particle,
+            scene.wall,
+            self.potential_list_particle_wall,
+            self.particle_wall,
+            self.cnum,
+        )
         self.particle_pse.run(self.particle_wall)
 
-    def update_verlet_table_particle_patch(self, scene: myScene):
-        board_search_particle_patch_linked_cell_(int(scene.particleNum[0]), self.sims.wall_coordination_number, self.sims.verlet_distance, self.igrid_size, 
-                                                 self.wall_count, self.WallID, scene.particle, scene.wall, self.potential_list_particle_wall, 
-                                                 self.particle_wall, self.cnum)
+    def update_verlet_table_particle_patch(self, scene: SceneManager):
+        board_search_particle_patch_linked_cell(
+            int(scene.particleNum[0]),
+            self.sims.wall_coordination_number,
+            self.sims.verlet_distance,
+            self.igrid_size,
+            self.wall_count,
+            self.WallID,
+            scene.particle,
+            scene.wall,
+            self.potential_list_particle_wall,
+            self.particle_wall,
+            self.cnum,
+        )
         self.particle_pse.run(self.particle_wall)

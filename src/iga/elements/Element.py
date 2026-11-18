@@ -3,8 +3,9 @@ import numpy as np
 from math import prod
 
 import src.iga.config as config
-from src.mesh.GaussPoint import GaussPointInRectangle
-from src.nurbs.core.NurbsGeometry import NurbsBasisFunction2d, NurbsBasisFunction3d
+from src.mesh.GaussPointInRectangle import GaussPointInRectangle
+from src.nurbs.core.NurbsBasisFunction2d import NurbsBasisFunction2d
+from src.nurbs.core.NurbsBasisFunction3d import NurbsBasisFunction3d
 
 
 @ti.data_oriented
@@ -49,24 +50,24 @@ class Element:
         return local_gradient
 
     @ti.func
-    def compute_shape_gradient(self, local_offset, dNdnat, dnatdX):
+    def compute_shape_gradient(self, local_offset, dNdnat, dnatd_x):
         """Return grad_X N_I without constructing the full dF/dx map."""
         shape_gradient = ti.Vector.zero(ti.f64, config.DIM)
         for material_axis in ti.static(range(config.DIM)):
             parametric_axis = 0
             while parametric_axis < config.DIM:
                 shape_gradient[material_axis] += (
-                    dNdnat[local_offset, parametric_axis] * dnatdX[parametric_axis, material_axis]
+                    dNdnat[local_offset, parametric_axis] * dnatd_x[parametric_axis, material_axis]
                 )
                 parametric_axis += 1
         return shape_gradient
 
     @ti.func
-    def compute_shape_gradients(self, dNdnat, dnatdX):
+    def compute_shape_gradients(self, dNdnat, dnatd_x):
         """Cache only support x DIM shape gradients for implicit assembly."""
         shape_gradients = ti.Matrix.zero(ti.f64, self.total_knot_range, config.DIM)
         for local_offset in range(self.total_knot_range):
-            shape_gradient = self.compute_shape_gradient(local_offset, dNdnat, dnatdX)
+            shape_gradient = self.compute_shape_gradient(local_offset, dNdnat, dnatd_x)
             for material_axis in ti.static(range(config.DIM)):
                 shape_gradients[local_offset, material_axis] = shape_gradient[material_axis]
         return shape_gradients
@@ -123,10 +124,10 @@ class Element:
         return F
 
     @ti.func
-    def compute_deformation_gradient(self, dNdnat, dnatdX, current_ctrl_coords):
+    def compute_deformation_gradient(self, dNdnat, input_dnatd_x, current_ctrl_coords):
         F = ti.Matrix.zero(ti.f64, config.DIM, config.DIM)
         for local_offset in range(self.total_knot_range):
-            shape_gradient = self.compute_shape_gradient(local_offset, dNdnat, dnatdX)
+            shape_gradient = self.compute_shape_gradient(local_offset, dNdnat, input_dnatd_x)
             for spatial_axis in ti.static(range(config.DIM)):
                 for material_axis in ti.static(range(config.DIM)):
                     F[spatial_axis, material_axis] += (
@@ -230,10 +231,10 @@ class Element:
         return hessian
 
     @ti.func
-    def compute_dF_div_dx(self, dNdnat, dnatdX):
+    def compute_d_f_div_dx(self, dNdnat, dnatd_x):
         dFdx = ti.Matrix.zero(ti.f64, self.total_knot_range * config.DIM, config.DIM * config.DIM)
         for linear_id in range(self.total_knot_range):
-            shape_gradient = self.compute_shape_gradient(linear_id, dNdnat, dnatdX)
+            shape_gradient = self.compute_shape_gradient(linear_id, dNdnat, dnatd_x)
             for a in ti.static(range(config.DIM)):
                 for b in ti.static(range(config.DIM)):
                     dFdx[
@@ -249,7 +250,7 @@ class Element:
         pts = self.gauss_points[gauss_id]
         if ti.static(config.DIM == 2):
             knots = self.parent2parametric2d(element_u, element_v, pts)
-            N = self.patch_basis.NurbsBasis2d(
+            N = self.patch_basis.nurbs_basis2d(
                 prefix_num_knot[0],
                 prefix_num_knot[1],
                 prefix_total_num_ctrlpts,
@@ -264,7 +265,7 @@ class Element:
             return N
         else:
             knots = self.parent2parametric3d(element_u, element_v, element_w, pts)
-            N = self.patch_basis.NurbsBasis3d(
+            N = self.patch_basis.nurbs_basis3d(
                 prefix_num_knot[0],
                 prefix_num_knot[1],
                 prefix_num_knot[2],
@@ -289,7 +290,7 @@ class Element:
         pts = self.gauss_points[gauss_id]
         if ti.static(config.DIM == 2):
             knots = self.parent2parametric2d(element_u, element_v, pts)
-            N, dNdnat = self.patch_basis.NurbsBasisDers2d(
+            N, dNdnat = self.patch_basis.nurbs_basis_ders2d(
                 prefix_num_knot[0],
                 prefix_num_knot[1],
                 prefix_total_num_ctrlpts,
@@ -304,7 +305,7 @@ class Element:
             return N, dNdnat
         else:
             knots = self.parent2parametric3d(element_u, element_v, element_w, pts)
-            N, dNdnat = self.patch_basis.NurbsBasisDers3d(
+            N, dNdnat = self.patch_basis.nurbs_basis_ders3d(
                 prefix_num_knot[0],
                 prefix_num_knot[1],
                 prefix_num_knot[2],
@@ -329,7 +330,7 @@ class Element:
         pts = self.gauss_points[gauss_id]
         if ti.static(config.DIM == 2):
             knots = self.parent2parametric2d(element_u, element_v, pts)
-            N, dNdnat, d2Ndnat = self.patch_basis.NurbsBasis2ndDers2d(
+            N, dNdnat, d2Ndnat = self.patch_basis.nurbs_basis2nd_ders2d(
                 prefix_num_knot[0],
                 prefix_num_knot[1],
                 prefix_total_num_ctrlpts,
@@ -344,7 +345,7 @@ class Element:
             return N, dNdnat, d2Ndnat
         else:
             knots = self.parent2parametric3d(element_u, element_v, element_w, pts)
-            N, dNdnat, d2Ndnat = self.patch_basis.NurbsBasis2ndDers3d(
+            N, dNdnat, d2Ndnat = self.patch_basis.nurbs_basis2nd_ders3d(
                 prefix_num_knot[0],
                 prefix_num_knot[1],
                 prefix_num_knot[2],

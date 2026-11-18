@@ -6,10 +6,10 @@ import numpy as np
 import pytest
 import taichi as ti
 
-from src.physics_model.consititutive_model.finite_strain.DruckerPrager import (
+from src.physics_model.constitutive_model.finite_strain.DruckerPrager import (
     FiniteStrainDruckerPragerModel,
 )
-from src.physics_model.consititutive_model.finite_strain.VonMises import (
+from src.physics_model.constitutive_model.finite_strain.VonMises import (
     FiniteStrainVonMisesModel,
 )
 
@@ -24,7 +24,11 @@ def _model(kind, values):
             poisson_ratio=values[1],
             Cohesion=values[2],
             FrictionAngle=values[3],
-            DilationAngle=15.0 if kind == "dp_nonassociated" else values[3],
+            **(
+                {"DilationAngle": 15.0 if kind == "dp_nonassociated" else 28.0}
+                if kind in {"dp_nonassociated", "dp_associated_independent"}
+                else {}
+            ),
         )
     else:
         model = FiniteStrainVonMisesModel().initialize_from_kwargs(
@@ -175,3 +179,54 @@ def test_nonassociated_frozen_inner_parameter_derivatives(taichi_runtime):
         minus[parameter] -= step
         numeric[:, parameter] = (frozen_pk1(plus) - frozen_pk1(minus)) / (2 * step)
     np.testing.assert_allclose(partials.to_numpy()[()], numeric, rtol=1e-6, atol=1e-5)
+
+
+@pytest.mark.parametrize("kind", ["dp_nonassociated", "dp", "dp_associated_independent"])
+def test_physical_total_parameter_vjp_includes_plastic_volume(taichi_runtime, kind):
+    values = np.array([2e4, 0.3, 120.0, 28.0])
+    model = _model(kind, values)
+    model.use_direct_nonassociated_solve = True
+    deformation = np.array([[1.24, 0.03, 0.0], [0.0, 0.86, 0.02], [0.0, 0.0, 0.82]])
+    plastic_inverse = np.array([[1.01, 0.01, 0.0], [0.0, 0.99, 0.0], [0.0, 0.0, 1.02]])
+    model.plastic_deformation_inverse.from_numpy(plastic_inverse[None])
+    seed = np.array([[0.3, -0.2, 0.1], [0.0, 0.4, -0.1], [0.2, 0.0, -0.25]])
+    result = ti.Vector.field(4, ti.f64, shape=())
+
+    @ti.kernel
+    def evaluate():
+        F = ti.Matrix.zero(ti.f64, 3, 3)
+        adjoint = ti.Matrix.zero(ti.f64, 3, 3)
+        for row, column in ti.static(ti.ndrange(3, 3)):
+            F[row, column] = deformation[row, column]
+            adjoint[row, column] = seed[row, column]
+        result[None] = model.total_first_piola_parameter_vjp_at(0, F, adjoint)
+
+    def objective(parameters):
+        young, poisson, cohesion, angle = parameters
+        shear, bulk = young / (2 * (1 + poisson)), young / (3 * (1 - 2 * poisson))
+        q, k = model._cone_parameters(cohesion, math.radians(angle), model.dp_type)
+        alpha, intercept = math.sqrt(2) * q / 3, math.sqrt(2) * k
+        dilation = angle if kind == "dp" else (15.0 if kind == "dp_nonassociated" else 28.0)
+        beta = math.sqrt(2) * model._cone_parameters(0.0, math.radians(dilation), model.dp_type)[0] / 3
+        u, stretch, vt = np.linalg.svd(deformation @ plastic_inverse)
+        strain = np.log(stretch)
+        dev = strain - strain.mean()
+        norm = np.linalg.norm(dev)
+        multiplier = (2 * shear * norm + 3 * alpha * bulk * strain.sum() - intercept) / (
+            2 * shear + 9 * alpha * beta * bulk
+        )
+        assert 0 < multiplier < norm
+        returned = strain - multiplier * (dev / norm + beta)
+        tau = 2 * shear * (returned - returned.mean()) + bulk * returned.sum()
+        jacobian = np.linalg.det(deformation) / np.exp(returned.sum())
+        stress = jacobian * (u @ np.diag(tau / stretch) @ vt) @ plastic_inverse.T
+        return np.sum(seed * stress)
+
+    evaluate()
+    numeric = np.zeros(4)
+    for parameter, step in enumerate([1e-3, 1e-6, 1e-3, 1e-3]):
+        plus, minus = values.copy(), values.copy()
+        plus[parameter] += step
+        minus[parameter] -= step
+        numeric[parameter] = (objective(plus) - objective(minus)) / (2 * step)
+    np.testing.assert_allclose(result.to_numpy()[()], numeric, rtol=1e-6, atol=1e-5)

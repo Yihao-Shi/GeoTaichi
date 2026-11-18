@@ -77,7 +77,7 @@ def test_implicit_facade_records_initial_interval_and_final_frames(tmp_path, cap
 
     coupling = object.__new__(IGAMPM)
     coupling.log = False
-    coupling.contactor = SimpleNamespace(contact_model="IPC")
+    coupling.contactor = SimpleNamespace(contact_model="BarrierIPC")
     coupling.engine = engine
     coupling.sims = SimpleNamespace(timer=Timer())
     coupling.iga_engine = iga_engine

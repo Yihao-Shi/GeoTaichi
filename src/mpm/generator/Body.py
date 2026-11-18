@@ -2,44 +2,45 @@ import numpy as np
 from scipy.stats import qmc
 
 
-def sample_solid_hemisphere_halton(
-    center,
-    radius,
-    n_particles,
-    *,
-    side="lower",
-    center_is_mass_center=True,
-    seed=None,
-):
-    """Return volume-uniform Halton points in a solid upper or lower hemisphere."""
-    center = np.asarray(center, dtype=np.float64)
-    if center.shape != (3,):
-        raise ValueError("hemisphere center must contain three coordinates")
-    if radius <= 0.0 or int(n_particles) < 1:
-        raise ValueError("hemisphere radius and particle count must be positive")
-    side_sign = {"lower": -1.0, "upper": 1.0}.get(str(side).strip().lower())
-    if side_sign is None:
-        raise ValueError("hemisphere side must be 'lower' or 'upper'")
-
-    sampler = qmc.Halton(d=3, scramble=True, seed=seed)
-    uvw = sampler.random(int(n_particles))
-    cosine = side_sign * uvw[:, 0]
-    sine = np.sqrt(np.maximum(1.0 - cosine * cosine, 0.0))
-    theta = 2.0 * np.pi * uvw[:, 1]
-    radial = float(radius) * np.cbrt(uvw[:, 2])
-    points = np.column_stack(
-        (
-            radial * sine * np.cos(theta),
-            radial * sine * np.sin(theta),
-            radial * cosine,
-        )
-    )
-    if center_is_mass_center:
-        points[:, 2] -= side_sign * 3.0 * float(radius) / 8.0
-    return np.ascontiguousarray(points + center[None, :], dtype=np.float64)
-
-
 class Body:
+
+    @staticmethod
+    def sample_solid_hemisphere_halton(
+        center,
+        radius,
+        n_particles,
+        *,
+        side="lower",
+        center_is_mass_center=True,
+        seed=None,
+    ):
+        """Return volume-uniform Halton points in a solid upper or lower hemisphere."""
+        center = np.asarray(center, dtype=np.float64)
+        if center.shape != (3,):
+            raise ValueError("hemisphere center must contain three coordinates")
+        if radius <= 0.0 or int(n_particles) < 1:
+            raise ValueError("hemisphere radius and particle count must be positive")
+        side_sign = {"lower": -1.0, "upper": 1.0}.get(str(side).strip().lower())
+        if side_sign is None:
+            raise ValueError("hemisphere side must be 'lower' or 'upper'")
+
+        sampler = qmc.Halton(d=3, scramble=True, seed=seed)
+        uvw = sampler.random(int(n_particles))
+        cosine = side_sign * uvw[:, 0]
+        sine = np.sqrt(np.maximum(1.0 - cosine * cosine, 0.0))
+        theta = 2.0 * np.pi * uvw[:, 1]
+        radial = float(radius) * np.cbrt(uvw[:, 2])
+        points = np.column_stack(
+            (
+                radial * sine * np.cos(theta),
+                radial * sine * np.sin(theta),
+                radial * cosine,
+            )
+        )
+        if center_is_mass_center:
+            points[:, 2] -= side_sign * 3.0 * float(radius) / 8.0
+        return np.ascontiguousarray(points + center[None, :], dtype=np.float64)
+
     def __init__(self):
         self.bodies = {}
         self.body_counter = 0
@@ -232,7 +233,7 @@ class Body:
         xmax=None,
         seed=None,
     ):
-        points = sample_solid_hemisphere_halton(
+        points = Body.sample_solid_hemisphere_halton(
             center,
             radius,
             n_particles,

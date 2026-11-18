@@ -46,6 +46,10 @@ acceleration, residual/tangent and endpoint recovery, including FEM coupling.
 
 ## 4. Cloth energies
 
+Use exactly `ClothARAP` or `ClothNeoHookean` for the membrane model, and
+`Quadratic`, `Dihedral`, or `None` for `bending_model` or
+`set_bending_model()`. Aliases and case variants raise `ValueError`.
+
 Cloth supports quadratic, dihedral, or disabled bending, plus garment stitch,
 target spring, and frozen-frame SDF energies. These use analytic device
 gradients/Hessians. Stitch point--edge neighborhoods are excluded from
@@ -79,7 +83,7 @@ reduction. IPC rebuilds every CCD query without a Verlet multiplier. Do not
 describe raw broad-phase candidates as the active contact set.
 
 For multiple disconnected bodies, `FEMMesh.cell_body_ids` owns one body ID
-per cell; omission infers connected components. After `add_contact("IPC")`,
+per cell; omission infers connected components. After `add_contact("BarrierIPC")`,
 `add_contact_property(body_id1, body_id2, ...)` creates independent unordered
 pair settings. Once pair settings exist, only listed pairs and any global
 planes are active. Pair-specific settings are IPC-only.

@@ -1,8 +1,11 @@
 """Shared compact contact-list storage for FEM--MPM broad phases."""
 
+from src.utils.errors import CapacityError, SimulationStateError
+
 import taichi as ti
 
-from src.fempm.structs import FEMPMContact, FEMPMHistoryContact
+from src.fempm.structs.Contact import FEMPMContact
+from src.fempm.structs.Contact import FEMPMHistoryContact
 from src.utils.PrefixSum import PrefixSumExecutor
 
 
@@ -78,11 +81,11 @@ class FEMPMNeighborBase:
     def _finish_rebuild(self, particle_count):
         if int(self.overflow[None]) != 0:
             reason = "BVH traversal stack" if int(self.overflow[None]) == 2 else "contact_coordination_number"
-            raise RuntimeError(f"FEMPM {reason} capacity is too small")
+            raise CapacityError(f"FEMPM {reason} capacity is too small")
         self.particle_scan.run(self.particle_offsets)
         self.contact_count = int(self.particle_offsets[particle_count])
         if self.contact_count > self.simulation.max_contact_pairs:
-            raise RuntimeError(
+            raise SimulationStateError(
                 "FEMPM max_contact_pairs/compaction_ratio is too small: "
                 f"need {self.contact_count}, allocated "
                 f"{self.simulation.max_contact_pairs}"

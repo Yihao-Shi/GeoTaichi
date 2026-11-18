@@ -1,7 +1,5 @@
-from src.utils.SolverDiagnostics import (
-    SolverDiagnosticsMixin,
-    solver_diagnostics_snapshot,
-)
+from src.utils.SolverDiagnostics import SolverDiagnosticsMixin
+from types import SimpleNamespace
 
 
 class _Engine:
@@ -23,7 +21,7 @@ class _Facade(SolverDiagnosticsMixin):
 
 
 def test_common_solver_diagnostics_reads_progress_without_backend_imports():
-    snapshot = solver_diagnostics_snapshot(_Facade())
+    snapshot = _Facade().diagnostics_snapshot()
 
     assert snapshot["schema_version"] == 1
     assert snapshot["solver"] == "_Facade"
@@ -50,3 +48,16 @@ def test_diagnostics_mixin_delegates_to_specialized_engine_snapshot():
     assert snapshot["solver"] == "_Facade"
     assert snapshot["engine"] == "_Engine"
     assert snapshot["schema_version"] == 1
+
+
+def test_native_solver_progress_uses_current_time_and_keeps_the_target_time():
+    facade = _Facade()
+    facade.enginer = object()
+    facade.sims = SimpleNamespace(time=4.0, current_time=0.25, current_step=3, delta=0.05)
+
+    assert facade.diagnostics_snapshot()["state"] == {
+        "time": 0.25,
+        "step": 3,
+        "timestep": 0.05,
+        "target_time": 4.0,
+    }

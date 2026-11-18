@@ -1,13 +1,10 @@
 """Finite-element mesh container and geometric selection utilities."""
 
 from __future__ import annotations
-
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, Iterable, Optional
-
 import numpy as np
-
 
 _CELL_ALIASES = {
     "tet4": "tetra",
@@ -25,25 +22,6 @@ _CELL_ALIASES = {
 }
 
 
-def normalize_cell_type(cell_type: str) -> str:
-    key = str(cell_type).strip().replace("_", "").replace("-", "").lower()
-    if key not in _CELL_ALIASES:
-        supported = "TET4, HEX8, and TRI3"
-        raise ValueError(f"Unsupported FEM cell type {cell_type!r}; expected {supported}")
-    return _CELL_ALIASES[key]
-
-
-def _as_points(points) -> np.ndarray:
-    points = np.asarray(points, dtype=np.float64)
-    if points.ndim != 2 or points.shape[1] not in (2, 3):
-        raise ValueError("mesh points must have shape (number_of_nodes, 2 or 3)")
-    if points.shape[1] == 2:
-        points = np.column_stack((points, np.zeros(points.shape[0])))
-    if not np.all(np.isfinite(points)):
-        raise ValueError("mesh points must be finite")
-    return np.ascontiguousarray(points)
-
-
 @dataclass
 class FEMMesh:
     """A single compatible FEM cell block.
@@ -52,6 +30,25 @@ class FEMMesh:
     volume meshes use TET4 or HEX8, while surface meshes use TRI3 membranes.
     Multiple bodies can be represented by concatenating compatible blocks.
     """
+
+    @staticmethod
+    def normalize_cell_type(cell_type: str) -> str:
+        key = str(cell_type).strip().replace("_", "").replace("-", "").lower()
+        if key not in _CELL_ALIASES:
+            supported = "TET4, HEX8, and TRI3"
+            raise ValueError(f"Unsupported FEM cell type {cell_type!r}; expected {supported}")
+        return _CELL_ALIASES[key]
+
+    @staticmethod
+    def _as_points(points) -> np.ndarray:
+        points = np.asarray(points, dtype=np.float64)
+        if points.ndim != 2 or points.shape[1] not in (2, 3):
+            raise ValueError("mesh points must have shape (number_of_nodes, 2 or 3)")
+        if points.shape[1] == 2:
+            points = np.column_stack((points, np.zeros(points.shape[0])))
+        if not np.all(np.isfinite(points)):
+            raise ValueError("mesh points must be finite")
+        return np.ascontiguousarray(points)
 
     points: np.ndarray
     cells: np.ndarray
@@ -65,14 +62,14 @@ class FEMMesh:
     cell_body_ids: Optional[np.ndarray] = None
 
     def __post_init__(self):
-        self.points = _as_points(self.points)
+        self.points = FEMMesh._as_points(self.points)
         if self.rest_shape is None:
             self.rest_shape = self.points.copy()
         else:
-            self.rest_shape = _as_points(self.rest_shape)
+            self.rest_shape = FEMMesh._as_points(self.rest_shape)
             if self.rest_shape.shape != self.points.shape:
                 raise ValueError("rest_shape must contain one coordinate per mesh node")
-        self.cell_type = normalize_cell_type(self.cell_type)
+        self.cell_type = FEMMesh.normalize_cell_type(self.cell_type)
         expected_nodes = {"tetra": 4, "hexahedron": 8, "triangle": 3}[self.cell_type]
         self.cells = np.asarray(self.cells, dtype=np.int32)
         if self.cells.ndim != 2 or self.cells.shape[1] != expected_nodes:
@@ -86,7 +83,7 @@ class FEMMesh:
         if self.material_points is None:
             self.material_points = self.rest_shape.copy()
         else:
-            self.material_points = _as_points(self.material_points)
+            self.material_points = FEMMesh._as_points(self.material_points)
         if self.material_cells is None:
             self.material_cells = self.cells.copy()
         else:
@@ -202,7 +199,7 @@ class FEMMesh:
         return self.rest_shape
 
     def set_rest_shape(self, rest_shape, *, update_material_coordinates=False):
-        rest_shape = _as_points(rest_shape)
+        rest_shape = FEMMesh._as_points(rest_shape)
         if rest_shape.shape != self.points.shape:
             raise ValueError("rest_shape must contain one coordinate per mesh node")
         self.rest_shape = rest_shape
@@ -394,6 +391,3 @@ class FEMMesh:
                 cell_data=normalized_cell_data,
             ),
         )
-
-
-__all__ = ["FEMMesh", "normalize_cell_type"]

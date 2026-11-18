@@ -5,7 +5,7 @@ import pytest
 import taichi as ti
 
 import src.utils.GlobalVariable as GV
-from src.mpdem.fluid_dynamics.IncompressibleCoupling import IncompressibleAffineBodyCoupling
+from src.mpdem.fluid_dynamics.IncompressibleAffineBodyCoupling import IncompressibleAffineBodyCoupling
 from src.mpm.engines.IncompressibleEngine import IncompressibleEngine
 from src.mpm.engines.EngineKernel import kernel_correct_velocity_coupled_3d
 from src.mpm.structs.StaggeredGrid import StaggeredGrid

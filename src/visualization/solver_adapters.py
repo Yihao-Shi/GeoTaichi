@@ -1,21 +1,21 @@
 """Entry points that attach the real-time viewer to existing solvers."""
 
 from __future__ import annotations
+from src.visualization.realtime import CallbackSceneModel
+from src.visualization.realtime import RealtimeViewerOptions
+from src.visualization.Utilities import dem_render_sources
+from src.visualization.Utilities import mpm_particle_source
 
 import time
 
 import numpy as np
 import taichi as ti
 
-from src.utils.constants import Threshold
+from src.utils.constants import THRESHOLD
 
-from .adapters import IGARenderSource, dem_render_sources, mpm_particle_source
-from .realtime import (
-    CallbackSceneModel,
-    CameraOptions,
-    RealtimeViewer,
-    RealtimeViewerOptions,
-)
+from src.visualization.adapters import IGARenderSource
+from src.visualization.realtime import CameraOptions
+from src.visualization.RealtimeViewer import RealtimeViewer
 
 
 def _resolution(value):
@@ -56,10 +56,7 @@ def _camera(sims):
     lower, upper = _domain_bounds(sims)
     view = look_at - position
     invalid_view = np.linalg.norm(view) <= np.finfo(float).eps
-    invalid_up = (
-        not invalid_view
-        and np.linalg.norm(np.cross(view, up)) <= np.finfo(float).eps
-    )
+    invalid_up = not invalid_view and np.linalg.norm(np.cross(view, up)) <= np.finfo(float).eps
     if invalid_view or invalid_up:
         center = 0.5 * (lower + upper)
         span = max(float(np.max(upper - lower)), 1.0e-3)
@@ -108,7 +105,7 @@ def run_dem_gui(solver, scene):
         scene.activate_surface_node_visualization(sims, force=True)
     ti.sync()
     solver.engine.pre_calculation(sims, scene, solver.contact.neighbor)
-    if sims.current_time < Threshold:
+    if sims.current_time < THRESHOLD:
         solver.save_file(scene)
         solver.last_save_time = float(sims.current_time)
     solver.compile(scene)
@@ -118,19 +115,11 @@ def run_dem_gui(solver, scene):
             return
         solver.core(scene)
         new_body = solver.generator.regenerate(scene)
-        if (
-            sims.current_time - solver.last_save_time - 0.1 * sims.delta
-            > sims.save_interval
-            or new_body
-        ):
+        if sims.current_time - solver.last_save_time - 0.1 * sims.delta > sims.save_interval or new_body:
             solver.save_file(scene)
             if new_body:
-                solver.engine.update_verlet_table(
-                    sims, scene, solver.contact.neighbor
-                )
-                sims.set_max_bounding_sphere_radius(
-                    scene.find_bounding_sphere_max_radius(sims)
-                )
+                solver.engine.update_verlet_table(sims, scene, solver.contact.neighbor)
+                sims.set_max_bounding_sphere_radius(scene.find_bounding_sphere_max_radius(sims))
         sims.current_time += sims.delta
         sims.current_step += 1
 
@@ -150,10 +139,7 @@ def run_dem_gui(solver, scene):
     start = time.perf_counter()
     RealtimeViewer(model, _options(sims, "GeoTaichi | DEM")).run()
     solver.physical_seconds = time.perf_counter() - start
-    if (
-        abs(sims.current_time - solver.last_save_time)
-        > 0.9 * sims.save_interval
-    ):
+    if abs(sims.current_time - solver.last_save_time) > 0.9 * sims.save_interval:
         solver.save_file(scene)
 
 
@@ -163,7 +149,7 @@ def run_mpm_gui(solver, scene, neighbor):
     sims = solver.sims
     ti.sync()
     solver.engine.pre_calculation(sims, scene, neighbor)
-    if sims.current_time < Threshold:
+    if sims.current_time < THRESHOLD:
         solver.save_file(scene)
         solver.last_save_time = float(sims.current_time)
     solver.compile(scene, neighbor)
@@ -173,11 +159,7 @@ def run_mpm_gui(solver, scene, neighbor):
             return
         solver.core(scene, neighbor)
         new_body = solver.generator.regenerate(scene)
-        if (
-            sims.current_time - solver.last_save_time - 0.1 * sims.delta
-            > sims.save_interval
-            or new_body
-        ):
+        if sims.current_time - solver.last_save_time - 0.1 * sims.delta > sims.save_interval or new_body:
             solver.save_file(scene)
         sims.current_time += sims.delta
         sims.current_step += 1
@@ -196,10 +178,7 @@ def run_mpm_gui(solver, scene, neighbor):
         },
     )
     RealtimeViewer(model, _options(sims, "GeoTaichi | MPM")).run()
-    if (
-        abs(sims.current_time - solver.last_save_time)
-        > 0.9 * sims.save_interval
-    ):
+    if abs(sims.current_time - solver.last_save_time) > 0.9 * sims.save_interval:
         solver.save_file(scene)
 
 

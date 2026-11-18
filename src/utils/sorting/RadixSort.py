@@ -1,27 +1,29 @@
+from src.utils.errors import ConfigurationError
 import taichi as ti
 from taichi.lang.impl import current_cfg
 
 from src.utils.PrefixSum import PrefixSumExecutor
 
-
 # Reference: Ha, L., Krüger, J., & Silva, C. T. (2009, December). Fast Four‐Way Parallel Radix Sorting on GPUs. In Computer Graphics Forum (Vol. 28, No. 8, pp. 2368-2378). Oxford, UK: Blackwell Publishing Ltd.
 BLOCK_SZ = 64
+
+
 @ti.data_oriented
 class RadixSort(object):
-    def __init__(self, input_len, dtype, batch_size=1, val_col=0, mode='general') -> None:
+    def __init__(self, input_len, dtype, batch_size=1, val_col=0, mode="general") -> None:
         self.dtype = dtype
-        self.data_in = ti.field(dtype=dtype, shape=(input_len, val_col+1))
-        self.data_out = ti.field(dtype=dtype, shape=(input_len, val_col+1))
+        self.data_in = ti.field(dtype=dtype, shape=(input_len, val_col + 1))
+        self.data_out = ti.field(dtype=dtype, shape=(input_len, val_col + 1))
         self.sort_with_value = False
         self.value_in = None
         self.value_out = None
-        self.val_col = val_col+1
+        self.val_col = val_col + 1
         if val_col > 0:
             self.sort_with_value = True
         self.max_bits = 64 if dtype == ti.i64 else 32
         self.batch_size = batch_size
-        
-        if mode == 'general':
+
+        if mode == "general":
             radix = 8
             self.num_buckets = 1 << radix
             self.num_iters = int(self.max_bits / radix)
@@ -42,8 +44,8 @@ class RadixSort(object):
                 self.radix_offset1 = ti.field(dtype, shape=self.pse.get_length())
                 self.run = self.radix_sort_cpu
             else:
-                raise RuntimeError(f"{str(current_cfg().arch)} is not supported for radix sort.")
-            
+                raise ConfigurationError(f"{str(current_cfg().arch)} is not supported for radix sort.")
+
     def radix_sort_general(self, input_len):
         source = self.data_in
         destination = self.data_out
@@ -64,7 +66,7 @@ class RadixSort(object):
         # public result field expected by the contact-detection callers.
         if source is not self.data_out:
             self.copy_rows(input_len, self.data_out, source)
-    
+
     @ti.kernel
     def general_radix_sort_pass(
         self,
@@ -96,9 +98,7 @@ class RadixSort(object):
 
         for input_index in range(input_len):
             code = (data_in[input_index, 0] >> shift) & 0xFF
-            output_index = ti.i32(
-                offset[input_index] + prefix_sum[ti.i32(code)]
-            )
+            output_index = ti.i32(offset[input_index] + prefix_sum[ti.i32(code)])
             for column in ti.static(range(self.val_col)):
                 data_out[output_index, column] = data_in[input_index, column]
 
@@ -119,11 +119,21 @@ class RadixSort(object):
             self.radix_sort_predicate(input_len, mask, move, self.radix_offset0, self.radix_offset1, self.data_in)
             self.pse.run(self.radix_offset0)
             self.pse.run(self.radix_offset1)
-            self.radix_sort_fill(input_len, mask, move, self.radix_offset0, self.radix_offset1, self.data_in, self.data_out)
+            self.radix_sort_fill(
+                input_len, mask, move, self.radix_offset0, self.radix_offset1, self.data_in, self.data_out
+            )
             self.data_in, self.data_out = self.data_out, self.data_in
 
     @ti.kernel
-    def radix_sort_predicate(self, input_len: int, mask: int, move: int, radix_offset0: ti.template(), radix_offset1: ti.template(), data_in: ti.template()):
+    def radix_sort_predicate(
+        self,
+        input_len: int,
+        mask: int,
+        move: int,
+        radix_offset0: ti.template(),
+        radix_offset1: ti.template(),
+        data_in: ti.template(),
+    ):
         for i in range(input_len):
             radix_offset1[i + 1] = (data_in[i, 0] & mask) >> move
             radix_offset0[i + 1] = 1 - radix_offset1[i + 1]
@@ -132,7 +142,16 @@ class RadixSort(object):
             radix_offset1[i] = 0
 
     @ti.kernel
-    def radix_sort_fill(self, input_len: int, mask: int, move: int, radix_offset0: ti.template(), radix_offset1: ti.template(), data_in: ti.template(), data_out: ti.template()):
+    def radix_sort_fill(
+        self,
+        input_len: int,
+        mask: int,
+        move: int,
+        radix_offset0: ti.template(),
+        radix_offset1: ti.template(),
+        data_in: ti.template(),
+        data_out: ti.template(),
+    ):
         radix_count_zero = radix_offset0[radix_offset0.shape[0] - 1]
         for i in range(input_len):
             condition = (data_in[i, 0] & mask) >> move
@@ -143,24 +162,37 @@ class RadixSort(object):
                 offset = radix_offset0[i]
             for j in ti.static(range(self.val_col)):
                 data_out[offset, j] = data_in[i, j]
-        
+
     def radix_sort_gpu(self, input_len):
-        for shift_width in range(0, self.max_bits-1, 2):
+        for shift_width in range(0, self.max_bits - 1, 2):
             self.block_sums.fill(0)
-            self.radix_sort_local(shift_width, input_len, self.grid_sz, self.data_in, self.data_out, self.block_sums, self.prefix_sums)
+            self.radix_sort_local(
+                shift_width, input_len, self.grid_sz, self.data_in, self.data_out, self.block_sums, self.prefix_sums
+            )
             self.pse.run(self.block_sums)
-            self.glbl_shuffle(shift_width, input_len, self.grid_sz, self.data_out, self.data_in, self.block_sums, self.prefix_sums)
-    
+            self.glbl_shuffle(
+                shift_width, input_len, self.grid_sz, self.data_out, self.data_in, self.block_sums, self.prefix_sums
+            )
+
     @ti.kernel
-    def radix_sort_local(self, shift_width: int, size: int, grid_sz: int, data_in: ti.template(), data_out: ti.template(), block_sums: ti.template(), prefix_sums: ti.template()):
+    def radix_sort_local(
+        self,
+        shift_width: int,
+        size: int,
+        grid_sz: int,
+        data_in: ti.template(),
+        data_out: ti.template(),
+        block_sums: ti.template(),
+        prefix_sums: ti.template(),
+    ):
         ti.loop_config(block_dim=BLOCK_SZ)
         for cpy_idx in range(size):
-            s_data = ti.simt.block.SharedArray((BLOCK_SZ, ), self.dtype)
+            s_data = ti.simt.block.SharedArray((BLOCK_SZ,), self.dtype)
             s_value = ti.simt.block.SharedArray((BLOCK_SZ, self.val_col), self.dtype)
-            mask_out = ti.simt.block.SharedArray((BLOCK_SZ + 1, ), ti.i32)
-            merged_scan_mask_out = ti.simt.block.SharedArray((BLOCK_SZ, ), ti.i32)
-            mask_out_sums = ti.simt.block.SharedArray((4, ), ti.i32)
-            scan_mask_out_sums = ti.simt.block.SharedArray((4, ), ti.i32)
+            mask_out = ti.simt.block.SharedArray((BLOCK_SZ + 1,), ti.i32)
+            merged_scan_mask_out = ti.simt.block.SharedArray((BLOCK_SZ,), ti.i32)
+            mask_out_sums = ti.simt.block.SharedArray((4,), ti.i32)
+            scan_mask_out_sums = ti.simt.block.SharedArray((4,), ti.i32)
 
             thid = int(cpy_idx % BLOCK_SZ)
             blid = int(cpy_idx // BLOCK_SZ)
@@ -168,7 +200,7 @@ class RadixSort(object):
             t_value = ti.Vector.zero(self.dtype, self.val_col)
             if ti.static(self.sort_with_value):
                 for i in ti.static(range(1, self.val_col)):
-                    t_value[i-1] = data_in[cpy_idx, i]
+                    t_value[i - 1] = data_in[cpy_idx, i]
             t_2bit_extract = ti.cast((t_data >> shift_width) & 3, ti.i32)
 
             for i in ti.static(range(4)):
@@ -209,7 +241,7 @@ class RadixSort(object):
                 if val_equals_i:
                     merged_scan_mask_out[thid] = mask_out[thid]
                 ti.simt.block.sync()
-                
+
             if thid == 0:
                 run_sum = ti.cast(0, self.dtype)
                 for i in ti.static(range(4)):
@@ -224,19 +256,28 @@ class RadixSort(object):
             s_data[new_pos] = t_data
             if ti.static(self.sort_with_value):
                 for i in ti.static(range(1, self.val_col)):
-                    s_value[new_pos, i-1] = t_value[i-1]
+                    s_value[new_pos, i - 1] = t_value[i - 1]
             merged_scan_mask_out[new_pos] = t_prefix_sum
             ti.simt.block.sync()
-            
+
             prefix_sums[cpy_idx] = merged_scan_mask_out[thid]
             data_out[cpy_idx, 0] = s_data[thid]
             if ti.static(self.sort_with_value):
                 for i in ti.static(range(1, self.val_col)):
-                    data_out[cpy_idx, i] = s_value[thid, i-1]
+                    data_out[cpy_idx, i] = s_value[thid, i - 1]
             ti.simt.block.sync()
-            
+
     @ti.kernel
-    def glbl_shuffle(self, shift_width: int, size: int, grid_sz: int, data_in: ti.template(), data_out: ti.template(), block_sums: ti.template(), prefix_sums: ti.template()):
+    def glbl_shuffle(
+        self,
+        shift_width: int,
+        size: int,
+        grid_sz: int,
+        data_in: ti.template(),
+        data_out: ti.template(),
+        block_sums: ti.template(),
+        prefix_sums: ti.template(),
+    ):
         ti.loop_config(block_dim=BLOCK_SZ)
         for thread_id in range(size):
             t_data = data_in[thread_id, 0]
@@ -248,9 +289,9 @@ class RadixSort(object):
             t_value = ti.Vector.zero(self.dtype, self.val_col)
             if ti.static(self.sort_with_value):
                 for i in ti.static(range(1, self.val_col)):
-                    t_value[i-1] = data_in[thread_id, i]
+                    t_value[i - 1] = data_in[thread_id, i]
             ti.simt.block.sync()
             data_out[data_glbl_pos, 0] = t_data
             if ti.static(self.sort_with_value):
                 for i in ti.static(range(1, self.val_col)):
-                    data_out[data_glbl_pos, i] = t_value[i-1]
+                    data_out[data_glbl_pos, i] = t_value[i - 1]

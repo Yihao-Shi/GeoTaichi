@@ -1,9 +1,9 @@
 import taichi as ti
 
-from src.utils.constants import ZEROVEC3f
+from src.utils.constants import ZEROVEC3F
 import src.utils.GlobalVariable as GlobalVariable
-from src.utils.TypeDefination import real
-from src.utils.VectorFunction import Normalize, Squared
+from src.utils.TypeDefinition import real
+from src.utils.VectorFunction import normalize, squared
 
 
 @ti.dataclass
@@ -46,9 +46,9 @@ class HertzMindlinSurfaceProperty:
         particle_rad, norm = particle[end1].rad, wall[end2]._get_norm(pos1)
         distance = (pos1 - pos2).dot(norm)
         gapn = distance - particle_rad
-        contactAreaRadius = ti.sqrt(-gapn * particle_rad)
-        fraction = ti.abs(wall[end2].processCircleShape(pos1, particle_rad, distance))
-        return fraction * ti.max(2 * self.YoungModulus * contactAreaRadius, 1e3)
+        contact_area_radius = ti.sqrt(-gapn * particle_rad)
+        fraction = ti.abs(wall[end2].process_circle_shape(pos1, particle_rad, distance))
+        return fraction * ti.max(2 * self.YoungModulus * contact_area_radius, 1e3)
 
     @ti.func
     def _get_ls_equivalent_stiffness(self, parameter, end1, end2, rigid, particle, wall):
@@ -63,8 +63,8 @@ class HertzMindlinSurfaceProperty:
         return normal_damping_force * vn
 
     @ti.func
-    def _elastic_tangential_energy(self, ks, tangOverTemp):
-        return 0.5 * Squared(tangOverTemp) * ks
+    def _elastic_tangential_energy(self, ks, tang_over_temp):
+        return 0.5 * squared(tang_over_temp) * ks
 
     @ti.func
     def _viscous_tangential_energy(self, tangential_damping_force, vs):
@@ -90,49 +90,49 @@ class HertzMindlinSurfaceProperty:
         return normal_force, norm_elastic, norm_viscous_rate
 
     @ti.func
-    def _tangential_force(self, ks, damping, m_eff, normal_force, vs, norm, tangOverlapOld, dt):
-        tangOverlapRot = tangOverlapOld - tangOverlapOld.dot(norm) * norm
-        tangOverTemp = vs * dt[None] + tangOverlapOld.norm() * Normalize(tangOverlapRot)
-        tangOverlapTrial = tangOverTemp
-        trial_ft = -ks * tangOverTemp
+    def _tangential_force(self, ks, damping, m_eff, normal_force, vs, norm, tang_overlap_old, dt):
+        tang_overlap_rot = tang_overlap_old - tang_overlap_old.dot(norm) * norm
+        tang_over_temp = vs * dt[None] + tang_overlap_old.norm() * normalize(tang_overlap_rot)
+        tang_overlap_trial = tang_over_temp
+        trial_ft = -ks * tang_over_temp
 
         cf = ti.abs(normal_force)
-        tangential_force = ZEROVEC3f
+        tangential_force = ZEROVEC3F
         tang_elastic, tang_viscous_rate, friction_energy = 0.0, 0.0, 0.0
         if trial_ft.norm() > self.mus * cf:
             tangential_force = self.mud * cf * trial_ft.normalized()
-            tangOverTemp = -tangential_force / ks
+            tang_over_temp = -tangential_force / ks
             if ti.static(GlobalVariable.TRACKENERGY):
-                tang_elastic = self._elastic_tangential_energy(ks, tangOverTemp)
-                friction_energy = self._friction_energy(tangOverlapTrial - tangOverTemp, tangential_force)
+                tang_elastic = self._elastic_tangential_energy(ks, tang_over_temp)
+                friction_energy = self._friction_energy(tang_overlap_trial - tang_over_temp, tangential_force)
         else:
             tang_damping_force = -1.8257 * damping * vs * ti.sqrt(ks * m_eff)
             tangential_force = trial_ft + tang_damping_force
             if ti.static(GlobalVariable.TRACKENERGY):
-                tang_elastic = self._elastic_tangential_energy(ks, tangOverTemp)
+                tang_elastic = self._elastic_tangential_energy(ks, tang_over_temp)
                 tang_viscous_rate = self._viscous_tangential_energy(tang_damping_force, vs)
-        return tangential_force, tangOverTemp, tang_elastic, tang_viscous_rate, friction_energy
+        return tangential_force, tang_over_temp, tang_elastic, tang_viscous_rate, friction_energy
 
     @ti.func
     def _resisting_momentum(self, rad_eff, normal_force, w_rel):
-        return -Normalize(w_rel) * self.rmu * ti.abs(normal_force) * rad_eff
+        return -normalize(w_rel) * self.rmu * ti.abs(normal_force) * rad_eff
 
     @ti.func
-    def _force_assemble(self, m_eff, rad_eff, gapn, coeff, param, norm, v_rel, w_rel, tangOverlapOld, dt):
-        contactAreaRadius = ti.sqrt(-gapn * rad_eff)
+    def _force_assemble(self, m_eff, rad_eff, gapn, coeff, param, norm, v_rel, w_rel, tang_overlap_old, dt):
+        contact_area_radius = ti.sqrt(-gapn * rad_eff)
         effective_E, effective_G = self.YoungModulus, self.ShearModulus
         damping = self.damping
-        kn = 2 * effective_E * contactAreaRadius * coeff
-        ks = 8 * effective_G * contactAreaRadius * coeff
+        kn = 2 * effective_E * contact_area_radius * coeff
+        ks = 8 * effective_G * contact_area_radius * coeff
 
         vn = v_rel.dot(norm)
         vs = v_rel - vn * norm
 
         normal_force, norm_elastic, norm_viscous_rate = self._normal_force(kn, damping, m_eff, gapn, vn)
-        tangential_force, tangOverTemp, tang_elastic, tang_viscous_rate, friction_energy = self._tangential_force(
-            ks, damping, m_eff, normal_force, vs, norm, tangOverlapOld, dt
+        tangential_force, tang_over_temp, tang_elastic, tang_viscous_rate, friction_energy = self._tangential_force(
+            ks, damping, m_eff, normal_force, vs, norm, tang_overlap_old, dt
         )
-        resisting_momentum = ZEROVEC3f
+        resisting_momentum = ZEROVEC3F
         if ti.static(GlobalVariable.CONSTANTORQUEMODEL):
             resisting_momentum = self._resisting_momentum(rad_eff, normal_force, w_rel)
         if ti.static(GlobalVariable.TRACKENERGY):
@@ -141,5 +141,5 @@ class HertzMindlinSurfaceProperty:
                 self.friction_energy += friction_energy
                 self.damp_energy += (norm_viscous_rate + tang_viscous_rate) * dt[None]
         if dt[None] == 0.0:
-            tangOverTemp = tangOverlapOld
-        return normal_force * norm, tangential_force, resisting_momentum, tangOverTemp
+            tang_over_temp = tang_overlap_old
+        return normal_force * norm, tangential_force, resisting_momentum, tang_over_temp

@@ -27,7 +27,7 @@ def build_primitives():
 
 
 def test_material_ccd_traverses_each_patch_element_count():
-    from src.iga.engines import ImplicitIGA
+    from src.iga.engines.ImplicitIGA import ImplicitIGA
 
     engine = object.__new__(ImplicitIGA)
     engine.patch = SimpleNamespace(
@@ -52,9 +52,35 @@ def test_material_ccd_traverses_each_patch_element_count():
     assert visited == [3, 5]
 
 
+@pytest.mark.parametrize("invalid", [None, np.nan, np.inf])
+def test_host_linear_solution_uses_device_newton_norm(taichi_runtime, monkeypatch, invalid):
+    import taichi as ti
+    from src.iga.engines.ImplicitIGA import ImplicitIGA
+    from src.utils.errors import LinearSolveError
+
+    engine = object.__new__(ImplicitIGA)
+    engine.degree_of_freedom = 4
+    engine.incre_resolution = ti.field(ti.f64, shape=4)
+    engine.dt = 0.1
+    values = np.array([0.25, -2.0, 0.0, 1.0])
+    if invalid is not None:
+        values[0] = invalid
+    engine.solve_system = lambda **_: values
+
+    def reject_host_norm(*_args, **_kwargs):
+        raise AssertionError("Newton convergence must use a device reduction")
+
+    monkeypatch.setattr(np.linalg, "norm", reject_host_norm)
+    if invalid is None:
+        assert engine._solve_host_newton_iteration() == pytest.approx(20.0)
+    else:
+        with pytest.raises(LinearSolveError, match="non-finite"):
+            engine._solve_host_newton_iteration()
+
+
 def test_iga_backend_builds_implicit_solver(taichi_runtime, tmp_path):
     from src.iga import IGA, DirichletBoundary, get_dimension
-    from src.iga.engines import ImplicitIGA
+    from src.iga.engines.ImplicitIGA import ImplicitIGA
 
     iga = IGA(log=False)
     iga.set_configuration(dimension=2, solver_type="Implicit")
@@ -86,7 +112,7 @@ def test_iga_backend_builds_implicit_solver(taichi_runtime, tmp_path):
 
 def test_explicit_iga_energy_is_sampled_only_when_enabled(taichi_runtime, tmp_path):
     from src.iga import IGA
-    from src.iga.engines import ExplicitIGA
+    from src.iga.engines.ExplicitIGA import ExplicitIGA
 
     iga = IGA(log=False)
     iga.set_configuration(dimension=2, solver_type="Explicit")
@@ -367,7 +393,7 @@ def test_iga_backend_builds_and_steps_explicit_solver(
     tmp_path,
 ):
     from src.iga import IGA, DirichletBoundary
-    from src.iga.engines import ExplicitIGA
+    from src.iga.engines.ExplicitIGA import ExplicitIGA
 
     iga = IGA(log=False)
     iga.set_configuration(dimension=2, solver_type="Explicit")

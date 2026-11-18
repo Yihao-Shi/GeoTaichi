@@ -1,6 +1,7 @@
 """Explicit two-way FEM--DEM step orchestration."""
 
 from __future__ import annotations
+from src.utils.errors import InvertedElementError
 
 from src.utils.linalg import no_operation
 
@@ -96,7 +97,7 @@ class Engine:
             # constant Jacobian after every contact step.
             self.minimum_jacobian = self.fem_engine._minimum_jacobian_ratio_device(self.fem_engine.state.position)
             if self.minimum_jacobian <= 1.0e-10:
-                raise RuntimeError("fixed FEDEM contact surface has an inverted/collapsed FEM element")
+                raise InvertedElementError("fixed FEDEM contact surface has an inverted/collapsed FEM element")
         self.initialized = True
 
     def reset_message(self):
@@ -137,12 +138,12 @@ class Engine:
         if need_rebuild:
             # The coarse list owns the fine surface list. Refresh them in
             # dependency order whenever the bounding-sphere list changes.
-            self.dem_engine.update_LSDEM_verlet_table1(
+            self.dem_engine.update_lsdem_verlet_table1(
                 self.dem.sims,
                 self.dem.scene,
                 self.dem.contactor.neighbor,
             )
-            self.dem_engine.update_LSDEM_verlet_table2(
+            self.dem_engine.update_lsdem_verlet_table2(
                 self.dem.sims,
                 self.dem.scene,
                 self.dem.contactor.neighbor,
@@ -151,7 +152,7 @@ class Engine:
             self.dem_engine.limit2,
             self.dem.scene,
         ):
-            self.dem_engine.update_LSDEM_verlet_table2(
+            self.dem_engine.update_lsdem_verlet_table2(
                 self.dem.sims,
                 self.dem.scene,
                 self.dem.contactor.neighbor,
@@ -252,7 +253,7 @@ class Engine:
                 self.fem_engine.state.position,
             )
             if self.minimum_jacobian <= 1.0e-10:
-                raise RuntimeError(
+                raise InvertedElementError(
                     "explicit FEDEM produced an inverted/collapsed FEM element "
                     f"at t={next_time:.9g} with minimum Jacobian ratio "
                     f"{self.minimum_jacobian:.9g}; reduce dt or revise the "

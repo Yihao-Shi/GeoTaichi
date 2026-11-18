@@ -1,6 +1,7 @@
 """FEM--DEM coupled contact and subsystem output."""
 
 from __future__ import annotations
+from src.utils.errors import SimulationStateError
 
 from pathlib import Path
 
@@ -132,7 +133,7 @@ class WriteFile:
         if not self.simulation.save_checkpoint:
             return
         if self.checkpoint_owner is None or self.simulation.path is None:
-            raise RuntimeError("FEDEM checkpoint output has no coupled owner/path")
+            raise SimulationStateError("FEDEM checkpoint output has no coupled owner/path")
         checkpoint_path = Path(self.simulation.path) / "checkpoints"
         self.checkpoint_owner.save_checkpoint(
             checkpoint_path / f"FEDEMCheckpoint{self.simulation.current_print:06d}.npz"

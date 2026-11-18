@@ -235,7 +235,7 @@ perform reductions.
 
 ```python
 import taichi as ti
-from src.contact_detection.continuous_contact_detection import point_point_ccd
+from src.contact_detection.continuous_contact_detection.CCD import point_point_ccd
 
 toi = ti.field(dtype=ti.f64, shape=())
 

@@ -8,9 +8,8 @@ remains in each solver module.
 ## Capabilities
 
 - Structured quadrilateral and hexahedral meshes.
-- Simplex quadrature tables and an experimental tetrahedral-mesh wrapper.
+- Simplex quadrature tables.
 - Rectangle and box mesh generation.
-- Optional Gmsh-based box and cylinder generation.
 - Cell-to-node connectivity, face centers, face-to-cell maps, and
   boundary/internal face tags.
 - Triangle, tetrahedron, rectangle, and tensor-product Gaussian quadrature.
@@ -21,10 +20,12 @@ remains in each solver module.
 | --- | --- |
 | `QuadrilateralMesh` | Structured 2D cells and face topology |
 | `HexahedronMesh` | Structured 3D cells and face topology |
-| `TetraMesh` | Experimental tetrahedral meshing wrapper |
 | `GaussPointInTriangle` | Triangle and tetrahedron quadrature rules |
 | `GaussPointInRectangle` | Tensor-product Gauss-Legendre rules |
-| `GenerateMesh.py` | Procedural and Gmsh-backed mesh generation |
+
+Solver mesh input and boundary normalization are owned by
+[`src/fem/generator/Mesh.py`](../fem/generator/Mesh.py). Unused JAX-dependent
+mesh prototypes and the incomplete tetrahedral wrapper have been removed.
 
 ## Structured-grid geometry and topology
 
@@ -117,7 +118,7 @@ $`\lambda_0=1-\sum_{k=1}^{d}\lambda_k`$.
 
 ```python
 from src.mesh.QuadMesh import QuadrilateralMesh
-from src.mesh.GaussPoint import GaussPointInRectangle
+from src.mesh.GaussPointInRectangle import GaussPointInRectangle
 
 mesh = QuadrilateralMesh(
     nx=20,

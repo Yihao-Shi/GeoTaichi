@@ -8,18 +8,15 @@ import taichi as ti
 
 from src.contact_detection.bounding_volume_hierarchy.AABB import AABB
 from src.dem.BaseKernel import (
-    reset_verlet_disp_,
-    validate_deformable_bounding_sphere_,
+    reset_verlet_disp,
+    validate_deformable_bounding_sphere,
 )
-from src.dem.structs.BaseStruct import (
-    BoundingBox,
-    DeformableBoundingSphere,
-    RigidBody,
-)
+from src.dem.structs.BoundingBox import BoundingBox
+from src.dem.structs.DeformableBoundingSphere import DeformableBoundingSphere
+from src.dem.structs.RigidBody import RigidBody
 from src.dem.neighbor.LinkedCell import LinkedCell
 from src.dem.neighbor.NeighborBase import NeighborBase
-from src.utils.TypeDefination import vec3i
-
+from src.utils.TypeDefinition import vec3i
 
 pytestmark = [pytest.mark.unit, pytest.mark.dem, pytest.mark.cpu]
 
@@ -80,11 +77,11 @@ def test_radial_growth_triggers_verlet_rebuild_without_center_motion() -> None:
         expanded_radius = float(sphere.rad.to_numpy()[0])
         np.testing.assert_allclose(sphere.verletDisp.to_numpy()[0], 0.0, atol=1.0e-15)
         assert expanded_radius > initial_radius + 0.2
-        assert validate_deformable_bounding_sphere_(0.2**2, 1, sphere) == 1
+        assert validate_deformable_bounding_sphere(0.2**2, 1, sphere) == 1
 
-        reset_verlet_disp_(1, sphere)
+        reset_verlet_disp(1, sphere)
         shrink_without_translation()
-        assert validate_deformable_bounding_sphere_(0.2**2, 1, sphere) == 0
+        assert validate_deformable_bounding_sphere(0.2**2, 1, sphere) == 0
     finally:
         ti.reset()
 
@@ -99,9 +96,7 @@ def test_lsmpm_bvh_uses_current_shape_aabb_instead_of_sdf_domain_sphere() -> Non
 
         @ti.kernel
         def initialize():
-            sphere[0]._add_bounding_sphere(
-                ti.Vector([3.0, 4.0, 5.0]), 100.0
-            )
+            sphere[0]._add_bounding_sphere(ti.Vector([3.0, 4.0, 5.0]), 100.0)
             rigid[0].mass_center = ti.Vector([3.0, 4.0, 5.0])
             rigid[0].q = ti.Vector([1.0, 0.0, 0.0, 0.0])
             rigid[0].is_soft = ti.u8(1)
@@ -143,12 +138,8 @@ def test_lsmpm_bvh_world_aabb_encloses_all_rotated_obb_corners() -> None:
 
         @ti.kernel
         def initialize():
-            rigid[0].mass_center = ti.Vector(
-                [mass_center[0], mass_center[1], mass_center[2]]
-            )
-            rigid[0].q = ti.Vector(
-                [quaternion[0], quaternion[1], quaternion[2], quaternion[3]]
-            )
+            rigid[0].mass_center = ti.Vector([mass_center[0], mass_center[1], mass_center[2]])
+            rigid[0].q = ti.Vector([quaternion[0], quaternion[1], quaternion[2], quaternion[3]])
             rigid[0].is_soft = ti.u8(1)
             box[0]._set_bounding_box(
                 ti.Vector([-10.0, -10.0, -10.0]),
@@ -162,9 +153,7 @@ def test_lsmpm_bvh_world_aabb_encloses_all_rotated_obb_corners() -> None:
 
         initialize()
         verlet_distance = 0.2
-        aabb.set_lsmpm_body_aabbs(
-            1, 0, verlet_distance, sphere, rigid, box
-        )
+        aabb.set_lsmpm_body_aabbs(1, 0, verlet_distance, sphere, rigid, box)
 
         cross = np.array(
             [
@@ -173,11 +162,7 @@ def test_lsmpm_bvh_world_aabb_encloses_all_rotated_obb_corners() -> None:
                 [-axis[1], axis[0], 0.0],
             ]
         )
-        rotation = (
-            np.cos(angle) * np.eye(3)
-            + (1.0 - np.cos(angle)) * np.outer(axis, axis)
-            + np.sin(angle) * cross
-        )
+        rotation = np.cos(angle) * np.eye(3) + (1.0 - np.cos(angle)) * np.outer(axis, axis) + np.sin(angle) * cross
         corners = np.array(
             [
                 [x, y, z]

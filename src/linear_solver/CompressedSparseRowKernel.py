@@ -7,7 +7,7 @@ from src.utils.WarpReduce import warp_scan_up_f32
 
 
 @ti.kernel
-def compute_Ap(
+def compute_ap(
     total_row: int,
     values: ti.template(),
     indices: ti.template(),
@@ -23,7 +23,7 @@ def compute_Ap(
 
 
 @ti.kernel
-def compute_Ap_warp_reduce(
+def compute_ap_warp_reduce(
     total_row: int,
     values: ti.template(),
     indices: ti.template(),
@@ -49,7 +49,7 @@ def compute_Ap_warp_reduce(
 
 
 @ti.kernel
-def compute_Ap_shared_reduce(
+def compute_ap_shared_reduce(
     total_row: int,
     values: ti.template(),
     indices: ti.template(),

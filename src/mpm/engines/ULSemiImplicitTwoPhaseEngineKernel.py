@@ -1,12 +1,12 @@
 """Taichi kernels for the u-p two-phase MPM engine."""
 
 import taichi as ti
-from src.utils.constants import ZEROVEC2f
-from src.utils.TypeDefination import vec2f
+from src.utils.constants import ZEROVEC2F
+from src.utils.TypeDefinition import vec2f
 
 
 @ti.kernel
-def kernel_recover_darcy_fluid_velocity_2D(
+def kernel_recover_darcy_fluid_velocity_2d(
     total_nodes: int,
     start_index: int,
     end_index: int,
@@ -16,7 +16,7 @@ def kernel_recover_darcy_fluid_velocity_2D(
     gravity: ti.types.vector(3, float),
     particle: ti.template(),
     node: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
 ):
@@ -27,11 +27,11 @@ def kernel_recover_darcy_fluid_velocity_2D(
         np = material_mapping[i]
         if int(particle[np].active) == 1 and int(particle[np].materialID) > 0:
             offset = np * total_nodes
-            bodyID = int(particle[np].bodyID)
-            gradient = ZEROVEC2f
+            body_id = int(particle[np].bodyID)
+            gradient = ZEROVEC2F
             for ln in range(offset, offset + int(node_size[np])):
-                ng = LnID[ln]
-                pressure = beta * node[ng, bodyID].pressure + node[ng, bodyID].dpressure
+                ng = ln_id[ln]
+                pressure = beta * node[ng, body_id].pressure + node[ng, body_id].dpressure
                 gradient += dshapefn[ln] * pressure
             driving_gradient = gradient - mat_prop.fluid_density * vec2f([gravity[0], gravity[1]])
             flux = -mat_prop.permeability / mat_prop.fluid_unit_weight * driving_gradient

@@ -1,6 +1,5 @@
+from src.utils.StepRetry import StepRetryPolicy
 import pytest
-
-from src.utils.StepRetry import StepRetryPolicy, is_recoverable_nonlinear_failure, nonlinear_failure_kind
 
 
 def test_step_retry_policy_is_bounded_and_honors_minimum():
@@ -36,22 +35,27 @@ def test_step_retry_policy_rejects_invalid_configuration(kwargs):
 
 
 def test_nonlinear_failure_categories_are_stable():
-    assert nonlinear_failure_kind(RuntimeError("PCG linear solve failed")) == "linear_solver_nonconvergence"
-    assert nonlinear_failure_kind(RuntimeError("Armijo line search failed")) == "line_search_failure"
     assert (
-        nonlinear_failure_kind(
+        StepRetryPolicy.nonlinear_failure_kind(RuntimeError("PCG linear solve failed"))
+        == "linear_solver_nonconvergence"
+    )
+    assert StepRetryPolicy.nonlinear_failure_kind(RuntimeError("Armijo line search failed")) == "line_search_failure"
+    assert (
+        StepRetryPolicy.nonlinear_failure_kind(
             RuntimeError("Affine lagged IPC monotone line search failed (linear_method=PCG, linear_residual=9e-7)")
         )
         == "line_search_failure"
     )
-    assert nonlinear_failure_kind(RuntimeError("direction is not descending")) == "non_descent_direction"
-    assert nonlinear_failure_kind(RuntimeError("Newton did not converge")) == "newton_nonconvergence"
     assert (
-        nonlinear_failure_kind(
+        StepRetryPolicy.nonlinear_failure_kind(RuntimeError("direction is not descending")) == "non_descent_direction"
+    )
+    assert StepRetryPolicy.nonlinear_failure_kind(RuntimeError("Newton did not converge")) == "newton_nonconvergence"
+    assert (
+        StepRetryPolicy.nonlinear_failure_kind(
             RuntimeError("Affine IPC inner Newton solve did not converge (linear_method=PCG, linear_residual=2e-6)")
         )
         == "newton_nonconvergence"
     )
     ccd_failure = RuntimeError("CCD produced no strictly feasible step")
-    assert nonlinear_failure_kind(ccd_failure) == "line_search_failure"
-    assert is_recoverable_nonlinear_failure(ccd_failure)
+    assert StepRetryPolicy.nonlinear_failure_kind(ccd_failure) == "line_search_failure"
+    assert StepRetryPolicy.is_recoverable_nonlinear_failure(ccd_failure)

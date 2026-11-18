@@ -2,8 +2,8 @@
 
 import taichi as ti
 
-from src.utils.GeometryFunction import SphereTriangleIntersectionArea
-from src.utils.VectorFunction import Normalize
+from src.utils.GeometryFunction import sphere_triangle_intersection_area
+from src.utils.VectorFunction import normalize
 from src.utils.constants import PI
 
 
@@ -19,7 +19,7 @@ def _contact_area_fraction(point, radius, distance, normal, first, second, third
         section_radius = ti.sqrt(radius * radius - distance * distance)
         section_area = PI * section_radius * section_radius
         projection = point - distance * normal
-        area = SphereTriangleIntersectionArea(projection, section_radius, first, second, third, normal)
+        area = sphere_triangle_intersection_area(projection, section_radius, first, second, third, normal)
         fraction = ti.abs(area / section_area)
     return fraction
 
@@ -115,7 +115,7 @@ def resolve_linear_contact(
 
             old_overlap = contacts[contact].old_tangential_overlap
             rotated = old_overlap - old_overlap.dot(normal) * normal
-            overlap = tangential_velocity * dt + old_overlap.norm() * Normalize(rotated)
+            overlap = tangential_velocity * dt + old_overlap.norm() * normalize(rotated)
             trial_force = -prop.ks * overlap
             tangential_damping = (
                 -2.0 * prop.tangential_damping * ti.sqrt(particles[particle_id].m * prop.ks) * tangential_velocity
@@ -196,7 +196,7 @@ def resolve_hertz_mindlin_contact(
 
             old_overlap = contacts[contact].old_tangential_overlap
             rotated = old_overlap - old_overlap.dot(normal) * normal
-            overlap = tangential_velocity * dt + old_overlap.norm() * Normalize(rotated)
+            overlap = tangential_velocity * dt + old_overlap.norm() * normalize(rotated)
             trial_force = -ks * overlap
             tangential_damping = -1.8257 * prop.damping * tangential_velocity * ti.sqrt(ks * particles[particle_id].m)
             friction_limit = prop.friction * ti.abs(normal_elastic + normal_damping)

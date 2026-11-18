@@ -96,8 +96,8 @@ def prepare_cloth(source, folder):
 
 
 def sample_twist(source, folder):
-    from src.nurbs.BasicVolume import Cube
-    from src.nurbs.NurbsBasis import NurbsBasisInterpolations3d
+    from src.nurbs.Cube import Cube
+    from src.nurbs.NurbsBasis import nurbs_basis_interpolations3d
     from third_party.pyevtk.hl import gridToVTK
 
     summary = json.loads((source / "summary.json").read_text())
@@ -115,7 +115,7 @@ def sample_twist(source, folder):
     weights = np.ones(len(reference))
     basis = np.array(
         [
-            NurbsBasisInterpolations3d(
+            nurbs_basis_interpolations3d(
                 *(np.array(index) / (np.array(resolution) - 1)),
                 2,
                 2,

@@ -5,16 +5,15 @@ import pytest
 import taichi as ti
 
 from src.utils.ShapeFunctions import (
-    GShapeBsplineC,
-    GShapeBsplineQ,
-    GShapeGIMP,
-    GShapeLinear,
-    ShapeBsplineC,
-    ShapeBsplineQ,
-    ShapeGIMP,
-    ShapeLinear,
+    g_shape_bspline_c,
+    g_shape_bspline_q,
+    g_shape_gimp,
+    g_shape_linear,
+    shape_bspline_c,
+    shape_bspline_q,
+    shape_gimp,
+    shape_linear,
 )
-
 
 pytestmark = [pytest.mark.unit, pytest.mark.mpm, pytest.mark.cpu]
 
@@ -27,12 +26,8 @@ def _evaluate_linear(
 ):
     for node in values:
         coordinate = ti.cast(node, ti.f64)
-        values[node] = ShapeLinear(
-            particle, coordinate, 1.0, 0.0
-        )
-        gradients[node] = GShapeLinear(
-            particle, coordinate, 1.0, 0.0
-        )
+        values[node] = shape_linear(particle, coordinate, 1.0, 0.0)
+        gradients[node] = g_shape_linear(particle, coordinate, 1.0, 0.0)
 
 
 @ti.kernel
@@ -43,12 +38,8 @@ def _evaluate_gimp(
 ):
     for node in values:
         coordinate = ti.cast(node, ti.f64)
-        values[node] = ShapeGIMP(
-            particle, coordinate, 1.0, 0.25
-        )
-        gradients[node] = GShapeGIMP(
-            particle, coordinate, 1.0, 0.25
-        )
+        values[node] = shape_gimp(particle, coordinate, 1.0, 0.25)
+        gradients[node] = g_shape_gimp(particle, coordinate, 1.0, 0.25)
 
 
 @ti.kernel
@@ -59,12 +50,8 @@ def _evaluate_quadratic_bspline(
 ):
     for node in values:
         coordinate = ti.cast(node, ti.f64)
-        values[node] = ShapeBsplineQ(
-            particle, coordinate, 1.0, 0
-        )
-        gradients[node] = GShapeBsplineQ(
-            particle, coordinate, 1.0, 0
-        )
+        values[node] = shape_bspline_q(particle, coordinate, 1.0, 0)
+        gradients[node] = g_shape_bspline_q(particle, coordinate, 1.0, 0)
 
 
 @ti.kernel
@@ -75,12 +62,8 @@ def _evaluate_cubic_bspline(
 ):
     for node in values:
         coordinate = ti.cast(node, ti.f64)
-        values[node] = ShapeBsplineC(
-            particle, coordinate, 1.0, 0
-        )
-        gradients[node] = GShapeBsplineC(
-            particle, coordinate, 1.0, 0
-        )
+        values[node] = shape_bspline_c(particle, coordinate, 1.0, 0)
+        gradients[node] = g_shape_bspline_c(particle, coordinate, 1.0, 0)
 
 
 @pytest.mark.parametrize(
@@ -93,20 +76,14 @@ def _evaluate_cubic_bspline(
     ],
     ids=("linear", "gimp", "quadratic-bspline", "cubic-bspline"),
 )
-def test_shape_partition_of_unity_and_zero_gradient(
-    taichi_runtime, evaluator, node_count
-):
+def test_shape_partition_of_unity_and_zero_gradient(taichi_runtime, evaluator, node_count):
     values = ti.field(ti.f64, shape=node_count)
     gradients = ti.field(ti.f64, shape=node_count)
 
     evaluator(2.37, values, gradients)
 
-    assert np.sum(values.to_numpy()) == pytest.approx(
-        1.0, abs=2.0e-14
-    )
-    assert np.sum(gradients.to_numpy()) == pytest.approx(
-        0.0, abs=2.0e-14
-    )
+    assert np.sum(values.to_numpy()) == pytest.approx(1.0, abs=2.0e-14)
+    assert np.sum(gradients.to_numpy()) == pytest.approx(0.0, abs=2.0e-14)
 
 
 @pytest.mark.parametrize(
@@ -119,9 +96,7 @@ def test_shape_partition_of_unity_and_zero_gradient(
     ],
     ids=("linear", "gimp", "quadratic-bspline", "cubic-bspline"),
 )
-def test_shape_gradient_matches_finite_difference(
-    taichi_runtime, evaluator, node_count
-):
+def test_shape_gradient_matches_finite_difference(taichi_runtime, evaluator, node_count):
     values = ti.field(ti.f64, shape=node_count)
     gradients = ti.field(ti.f64, shape=node_count)
     step = 1.0e-6

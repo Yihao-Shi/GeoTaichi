@@ -9,8 +9,9 @@ class GenerateManager(object):
     def regenerate(self, sims, dsims, msims, mscene, dscene):
         self.mixGenerator.mpmGenerator.regenerate(mscene)
         self.mixGenerator.demGenerator.regenerate(dscene)
-        
-        if len(self.myGenerator) == 0: return 0
+
+        if len(self.myGenerator) == 0:
+            return 0
         is_insert = 0
         for i in range(len(self.myGenerator)):
             is_insert = self.myGenerator[i].regenerate()
@@ -18,8 +19,9 @@ class GenerateManager(object):
                 self.myGenerator[i].finalize()
                 del self.myGenerator[i]
         return is_insert or self.mixGenerator.regenerate(sims, dsims, msims, mscene, dscene)
-    
-    def add_mixture(self, check_overlap, adaptive_boundary_radius, dem_particle, mpm_body, sims, dscene, mscene, dsims, msims):
+
+    def add_mixture(
+        self, check_overlap, adaptive_boundary_radius, dem_particle, mpm_body, sims, dscene, mscene, dsims, msims
+    ):
         self.mixGenerator.set_essentials(check_overlap, adaptive_boundary_radius)
         self.mixGenerator.add_mixture(sims, dscene, mscene, dem_particle, mpm_body, dsims, msims)
-

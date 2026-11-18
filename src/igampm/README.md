@@ -100,7 +100,8 @@ a fresh output directory can instead be used for an independent replay.
 | --- | --- |
 | `geometry/` | NURBS closest-point geometry and surface topology |
 | `contact/` | Barrier, friction, CCD, and coupled contact assembly |
-| `contact/DEMContact.py` | Shared DEM property ownership for explicit contact |
+| `contact/DEMContactModelBase.py` | Shared DEM property ownership for explicit contact |
+| `contact/LinearDEMContactModel.py`, `contact/HertzMindlinDEMContactModel.py` | Explicit DEM contact laws |
 | `contact/ExplicitContact.py` | Device point--NURBS culling, projection, history, and force transfer |
 | `engines/CoupledEngine.py` | Composed public engine and field allocation |
 | `engines/ExplicitEngine.py` | Explicit IGA/MPM/contact step orchestration |
@@ -164,13 +165,20 @@ $`d_{min}`$ is its complete finite clearance. In explicit DEM-law coupling the
 sample is a finite-radius particle, so its radius enters the overlap directly.
 
 For an axisymmetric meridian calculation the distance is still evaluated in
-the $`(r,z)`$ plane, but a sample represents a ring. If $`\bar w_s`$ is its
-meridional measure and $`R_s`$ its reference radius, the physical contact
-measure is
+the $`(r,z)`$ plane, but a sample represents one radian of a ring. If $`\bar w_s`$ is its
+meridional measure and $`R_s`$ its reference radius, the contact
+measure per radian is
 
 ```math
-w_s=2\pi R_s\bar w_s.
+w_s=R_s\bar w_s.
 ```
+
+Both children and contact use per-radian mass, energy and resultant forces.
+Full-revolution totals are `2*pi` times the reported values; pressure and
+material parameters are unchanged. Start axisymmetric runs from frame zero
+after changing from the previous full-revolution convention. The CPT driver
+records `axisymmetric_measure=per_radian` and rejects older IPC checkpoints
+without this convention.
 
 ### 2. Point--NURBS closest-point geometry
 
@@ -703,7 +711,7 @@ The admissible line-search fraction is therefore
 
 The multiplicative Hencky, associated/nonassociated Drucker--Prager, and von Mises
 equations are maintained in the
-[shared constitutive-model theory](../physics_model/consititutive_model/README.md#finite-strain-multiplicative-plasticity).
+[shared constitutive-model theory](../physics_model/constitutive_model/README.md#finite-strain-multiplicative-plasticity).
 This section records only how that local material response enters the coupled
 IGA--MPM solve.
 
@@ -964,7 +972,7 @@ gt.init(dim=3, arch="gpu", default_fp="float64", log=False)
 
 coupling = gt.IGAMPM(
     log=False,
-    contact_model="IPC",
+    contact_model="BarrierIPC",
     kappa=4.0e5,
     dhat=0.05,
     dmin=0.005,
@@ -974,7 +982,7 @@ coupling = gt.IGAMPM(
 coupling.set_configuration(
     dimension=3,
     coupling_scheme="IGAMPM",
-    contact_model="IPC",
+    contact_model="BarrierIPC",
     activate_friction=False,
 )
 
@@ -1022,7 +1030,7 @@ rolled back with `F0`. The axisymmetric CPT script accepts
 save `void_ratio`, `committed_jacobian`, and `state_pressure`, and reject a
 material-mode mismatch on resume. Its default remains ordinary DP. See
 [parameters](../mpm/README.md#state-dependent-dp-in-coupled-implicit-ulmpm) and
-[theory](../physics_model/consititutive_model/README.md#state-dependent-finite-strain-drucker--prager).
+[theory](../physics_model/constitutive_model/README.md#state-dependent-finite-strain-drucker--prager).
 Parameter/history adjoints for the state-dependent law are unsupported.
 
 The implicit IPC coupling accepts a `coupling={...}` dictionary in
@@ -1083,13 +1091,13 @@ Axisymmetric runs set `dimension=2`, `axisymmetric=True`, and one shared
 radial coordinate is component zero. Both material blocks use the full
 three-dimensional no-swirl map, including `F_theta_theta=r/R`, while their
 unknowns remain the two meridional displacement components. Reference volume
-and MPM contact-ring weights include `2*pi*R`; point--curve NURBS distance,
+and MPM contact-ring weights include `R`; point--curve NURBS distance,
 ACCD, friction, and Armijo line search operate in the meridian plane. The axis
 itself is excluded from material/contact quadrature, so all participating
 reference points must satisfy `R > 0` relative to `axis_offset`.
 IGA reference patch Jacobians must also be finite and positive at every
 quadrature point. IGA Neumann values are resultant control-point loads; users
-supplying an axisymmetric traction density must integrate its `2*pi*R` measure
+supplying an axisymmetric traction density must integrate its `R` measure
 before calling `NeumannBoundary.append`.
 
 ## Fully coupled implicit solve

@@ -14,8 +14,8 @@ from src.mpm.engines.EngineKernel import (
     kernel_mass_momentum_mac_cell_p2g,
     resolve_solid_normal_velocity,
 )
-from src.mpm.generator.InsertionKernel import kernel_rebulid_incompressible_particle_2D
-from src.mpm.structs.Particle import ParticleCloudIncompressible2D
+from src.mpm.generator.InsertionKernel import kernel_rebulid_incompressible_particle_2d
+from src.mpm.structs.ParticleCloudIncompressible2D import ParticleCloudIncompressible2D
 from src.mpm.structs.StaggeredGrid import StaggeredGrid
 import src.utils.GlobalVariable as GlobalVariable
 from examples.mpm.IncompressibleFluid.wavemaker_tank_3d.wavemaker_tank_3d import (
@@ -451,7 +451,7 @@ def test_incompressible_restart_restores_coupling_and_affine_gradient(taichi_run
     is_rigid = ti.field(dtype=int, shape=1)
     gradient = np.array([[[1.0, 2.0], [3.0, 4.0]]])
 
-    kernel_rebulid_incompressible_particle_2D(
+    kernel_rebulid_incompressible_particle_2d(
         1,
         particle,
         is_rigid,

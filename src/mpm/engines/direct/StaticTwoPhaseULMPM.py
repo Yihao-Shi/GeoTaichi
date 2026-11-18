@@ -1,3 +1,4 @@
+from src.utils.errors import LinearSolveError, NonlinearSolveError
 import os
 import math
 import numpy as np
@@ -25,9 +26,9 @@ class StaticTwoPhaseULMPM(MPMSolver):
         self.young_modulus = kwargs.get("young_modulus")
         self.poisson_ratio = kwargs.get("poisson_ratio")
         self.density = kwargs.get("density")
-        self.material_model = kwargs.get("material", "linearElastic")
+        self.material_model = kwargs.get("material", "LinearElastic")
         self.shape_function_name = kwargs.get("shape_function", "linear")
-        if self.material_model not in ("linearElastic", "neoHookean", "druckerPrager"):
+        if self.material_model not in ("LinearElastic", "NeoHookean", "DruckerPrager"):
             raise ValueError("StaticTwoPhaseULMPM material must be 'linearElastic', 'neoHookean', or 'druckerPrager'.")
         self.fluid_density = kwargs.get("fluid_density", 1.0)
         self.phi0 = kwargs.get("porosity", kwargs.get("phi", 0.5))
@@ -92,7 +93,7 @@ class StaticTwoPhaseULMPM(MPMSolver):
         self.bulk_ = self.lambda_ + 2.0 * self.mu_ / 3.0
         self.solid_fraction0 = 1.0 - self.phi0
         self.material_id = (
-            0 if self.material_model == "linearElastic" else (1 if self.material_model == "neoHookean" else 2)
+            0 if self.material_model == "LinearElastic" else (1 if self.material_model == "NeoHookean" else 2)
         )
 
         material = type("LinearElasticMaterial", (), {"density": self.density})()
@@ -407,18 +408,18 @@ class StaticTwoPhaseULMPM(MPMSolver):
                 while flat_offset < 3**config.DIM:
                     offset = self.stencil_offset_from_flat(flat_offset, 3)
                     N = 1.0
-                    Navg = 1.0
+                    navg = 1.0
                     dN = ti.Vector.zero(ti.f64, config.DIM)
                     for d in ti.static(range(config.DIM)):
                         N *= w[d, offset[d]]
-                        Navg *= wa[d, offset[d]]
+                        navg *= wa[d, offset[d]]
                     for d in ti.static(range(config.DIM)):
                         grad_comp = dw[d, offset[d]]
                         for e in ti.static(range(config.DIM)):
                             if e != d:
                                 grad_comp *= w[e, offset[e]]
                         dN[d] = grad_comp
-                    if N > self.val_lim or Navg > self.val_lim:
+                    if N > self.val_lim or navg > self.val_lim:
                         node = base + offset
                         grid_id = node[0]
                         stride = self.grid_num[0]
@@ -427,7 +428,7 @@ class StaticTwoPhaseULMPM(MPMSolver):
                             stride *= self.grid_num[d]
                         self.LnID[p, count] = grid_id
                         self.shape[p, count] = N
-                        self.shape_avg[p, count] = Navg
+                        self.shape_avg[p, count] = navg
                         self.dshape[p, count] = dN
                         self.dshape_ref[p, count] = dN
                         count += 1
@@ -472,13 +473,13 @@ class StaticTwoPhaseULMPM(MPMSolver):
                         for d in ti.static(range(1, config.DIM)):
                             linear_grid_id += grid_id[d] * stride
                             stride *= grid_num[d]
-                        Navg = 1.0
+                        navg = 1.0
                         for d in ti.static(range(config.DIM)):
                             xg = xmin[d] + grid_id[d] * dx
-                            Navg *= self.bspline_1d_average(pos[d], xg, inv_dx, self.lp[p][d])
+                            navg *= self.bspline_1d_average(pos[d], xg, inv_dx, self.lp[p][d])
                         self.LnID[p, count] = linear_grid_id + goffset
                         self.shape[p, count] = N
-                        self.shape_avg[p, count] = Navg
+                        self.shape_avg[p, count] = navg
                         self.dshape[p, count] = dN
                         self.dshape_ref[p, count] = dN
                         count += 1
@@ -659,7 +660,7 @@ class StaticTwoPhaseULMPM(MPMSolver):
         return sigma
 
     @ti.func
-    def constitutive_response(self, p, Fnew, Jnew, grad_u):
+    def constitutive_response(self, p, fnew, jnew, grad_u):
         deps = 0.5 * (grad_u + grad_u.transpose())
         sigma = ti.Matrix.zero(ti.f64, config.DIM, config.DIM)
         if ti.static(self.material_id == 0):
@@ -670,7 +671,7 @@ class StaticTwoPhaseULMPM(MPMSolver):
             )
             self.elastic_strain_new[p] = self.elastic_strain_old[p]
         elif ti.static(self.material_id == 1):
-            sigma = self.neo_hookean_stress(Fnew, Jnew)
+            sigma = self.neo_hookean_stress(fnew, jnew)
             self.elastic_strain_new[p] = self.elastic_strain_old[p]
         else:
             eps_trial = self.elastic_strain_old[p] + deps
@@ -679,7 +680,7 @@ class StaticTwoPhaseULMPM(MPMSolver):
         return sigma
 
     @ti.func
-    def constitutive_tangent_apply(self, p, Fnew, Jnew, grad_u, G, comp, eta):
+    def constitutive_tangent_apply(self, p, fnew, jnew, grad_u, G, comp, eta):
         deps = ti.Matrix.zero(ti.f64, config.DIM, config.DIM)
         for d in ti.static(range(config.DIM)):
             deps[comp, d] += 0.5 * G[d]
@@ -692,11 +693,11 @@ class StaticTwoPhaseULMPM(MPMSolver):
             dF = ti.Matrix.zero(ti.f64, config.DIM, config.DIM)
             for d in ti.static(range(config.DIM)):
                 dF[comp, d] = H[d]
-            b = Fnew @ Fnew.transpose()
-            db = dF @ Fnew.transpose() + Fnew @ dF.transpose()
-            dJ = Jnew * eta
-            sigma = self.mu_ / Jnew * db - self.mu_ / (Jnew * Jnew) * (b - ti.Matrix.identity(ti.f64, config.DIM)) * dJ
-            sigma += self.lambda_ * (1.0 - ti.log(Jnew)) / (Jnew * Jnew) * dJ * ti.Matrix.identity(ti.f64, config.DIM)
+            b = fnew @ fnew.transpose()
+            db = dF @ fnew.transpose() + fnew @ dF.transpose()
+            dJ = jnew * eta
+            sigma = self.mu_ / jnew * db - self.mu_ / (jnew * jnew) * (b - ti.Matrix.identity(ti.f64, config.DIM)) * dJ
+            sigma += self.lambda_ * (1.0 - ti.log(jnew)) / (jnew * jnew) * dJ * ti.Matrix.identity(ti.f64, config.DIM)
         else:
             eps_trial = self.elastic_strain_old[p] + 0.5 * (grad_u + grad_u.transpose())
             _, _, _, s_trial, p_trial, t_trial, t_dev, delta_lambda = self.dp_local_update(eps_trial)
@@ -799,7 +800,7 @@ class StaticTwoPhaseULMPM(MPMSolver):
             return_solution=False,
         )
         if not result["converged"]:
-            raise RuntimeError(
+            raise NonlinearSolveError(
                 "StaticTwoPhaseULMPM device pressure projection did not "
                 f"converge: residual={result['residual']:.6e}, "
                 f"iterations={result['iterations']}"
@@ -819,7 +820,7 @@ class StaticTwoPhaseULMPM(MPMSolver):
             return_solution=False,
         )
         if not result["converged"]:
-            raise RuntimeError(
+            raise NonlinearSolveError(
                 "StaticTwoPhaseULMPM device pressure projection did not "
                 f"converge: residual={result['residual']:.6e}, "
                 f"iterations={result['iterations']}"
@@ -982,10 +983,10 @@ class StaticTwoPhaseULMPM(MPMSolver):
             Kuu = K[disp_ids, :][:, disp_ids].tocsc()
             try:
                 kuu_solver = splu(Kuu)
-            except Exception:
+            except RuntimeError:
                 try:
                     kuu_solver = spilu(Kuu)
-                except Exception:
+                except RuntimeError:
                     return None
             if pres_ids.size > 0:
                 kpp_diag = K[pres_ids, :][:, pres_ids].diagonal().copy()
@@ -1017,10 +1018,10 @@ class StaticTwoPhaseULMPM(MPMSolver):
             Kpp = K[pres_ids, :][:, pres_ids].tocsc()
             try:
                 kuu_solver = splu(Kuu)
-            except Exception:
+            except RuntimeError:
                 try:
                     kuu_solver = spilu(Kuu)
-                except Exception:
+                except RuntimeError:
                     return None
             try:
                 kup_dense = Kup.toarray()
@@ -1028,7 +1029,7 @@ class StaticTwoPhaseULMPM(MPMSolver):
                 schur_dense = Kpp.toarray() - (Kpu @ kuu_inv_kup)
                 schur = csc_matrix(schur_dense)
                 schur_solver = splu(schur)
-            except Exception:
+            except RuntimeError:
                 schur_diag = schur.diagonal().copy() if "schur" in locals() else Kpp.diagonal().copy()
                 safe = np.abs(schur_diag) > 1.0e-30
                 inv_schur = np.ones_like(schur_diag)
@@ -1055,7 +1056,7 @@ class StaticTwoPhaseULMPM(MPMSolver):
             try:
                 ilu = spilu(K.tocsc())
                 return LinearOperator(K.shape, matvec=ilu.solve, dtype=np.float64)
-            except Exception:
+            except RuntimeError:
                 return None
         raise ValueError(f"Unknown iterative_preconditioner: {self.iterative_preconditioner}")
 
@@ -1113,7 +1114,7 @@ class StaticTwoPhaseULMPM(MPMSolver):
             M = self.build_preconditioner(K_reduced, reduced_dofs=reduced_dofs)
             delta_reduced, info = self.solve_reduced_krylov_system(K_reduced, rhs_reduced, M)
             if info != 0:
-                raise RuntimeError(f"{self.linear_solver} failed with info={info}")
+                raise LinearSolveError(f"{self.linear_solver} failed with info={info}")
             delta_active[active_mask] = delta_reduced
         delta = np.zeros(self.degree_of_freedom, dtype=np.float64)
         delta[active_slice] = delta_active
@@ -1179,41 +1180,41 @@ class StaticTwoPhaseULMPM(MPMSolver):
                 pn = self.new_solution[self.global_index(node, self.pressure_component)]
                 po = self.old_solution[self.global_index(node, self.pressure_component)]
                 Na = self.shape[p, a]
-                Navg = self.shape_avg[p, a]
-                Gref = self.dshape_ref[p, a]
-                grad_u += u.outer_product(Gref)
+                navg = self.shape_avg[p, a]
+                gref = self.dshape_ref[p, a]
+                grad_u += u.outer_product(gref)
                 delta_u += Na * u
                 p_new += Na * pn
                 p_old += Na * po
-                p_avg += Navg * pn
-                p_old_avg += Navg * po
+                p_avg += navg * pn
+                p_old_avg += navg * po
                 if ti.static(self.dynamic_formulation):
                     p_rate_node = self.pressure_rate_projection[node]
                     p_acc_node = self.pressure_accel_projection[node]
                     p_rate_old += Na * p_rate_node
-                    p_rate_old_avg += Navg * p_rate_node
+                    p_rate_old_avg += navg * p_rate_node
                     p_acc_old += Na * p_acc_node
-                    p_acc_old_avg += Navg * p_acc_node
+                    p_acc_old_avg += navg * p_acc_node
 
-            deltaF = ti.Matrix.identity(ti.f64, config.DIM) + grad_u
-            deltaF_inv = deltaF.inverse()
-            Fnew = deltaF @ self.F_old[p]
-            Jold = self.J_old[p]
-            Jnew = Fnew.determinant()
-            vol = self.particle[p].vol0 * Jnew
-            log_ratio = ti.log(ti.max(Jnew, 1.0e-12)) - ti.log(ti.max(Jold, 1.0e-12))
-            porosity = 1.0 - self.solid_fraction0 / ti.max(Jnew, 1.0e-12)
+            delta_f = ti.Matrix.identity(ti.f64, config.DIM) + grad_u
+            delta_f_inv = delta_f.inverse()
+            fnew = delta_f @ self.F_old[p]
+            jold = self.J_old[p]
+            jnew = fnew.determinant()
+            vol = self.particle[p].vol0 * jnew
+            log_ratio = ti.log(ti.max(jnew, 1.0e-12)) - ti.log(ti.max(jold, 1.0e-12))
+            porosity = 1.0 - self.solid_fraction0 / ti.max(jnew, 1.0e-12)
             rho_mix = porosity * self.fluid_density + (1.0 - porosity) * self.density
             q = ti.Vector.zero(ti.f64, config.DIM)
             tau = 0.5 / self.mu_
 
             for a in range(self.offset[p]):
-                gcur = deltaF_inv @ self.dshape_ref[p, a]
+                gcur = delta_f_inv @ self.dshape_ref[p, a]
                 node = self.LnID[p, a]
                 pn = self.new_solution[self.global_index(node, self.pressure_component)]
                 q += pn * gcur
 
-            sigma_eff = self.constitutive_response(p, Fnew, Jnew, grad_u)
+            sigma_eff = self.constitutive_response(p, fnew, jnew, grad_u)
             sigma_total = sigma_eff - p_new * ti.Matrix.identity(ti.f64, config.DIM)
             a_new = ti.Vector.zero(ti.f64, config.DIM)
             v_new = ti.Vector.zero(ti.f64, config.DIM)
@@ -1229,8 +1230,8 @@ class StaticTwoPhaseULMPM(MPMSolver):
                 p_acc_new = self.newmark_pressure_accel(p_new, p_old, p_rate_old, p_acc_old, dt)
                 p_rate_gap = (p_rate_new - p_rate_new_avg) - (p_rate_old - p_rate_old_avg)
 
-            self.F_new[p] = Fnew
-            self.J_new[p] = Jnew
+            self.F_new[p] = fnew
+            self.J_new[p] = jnew
             self.stress_new[p] = sigma_eff
             self.particle_pressure_new[p] = p_new
             self.particle_disp[p] = delta_u
@@ -1242,8 +1243,8 @@ class StaticTwoPhaseULMPM(MPMSolver):
             for a in range(self.offset[p]):
                 node_a = self.LnID[p, a]
                 Na = self.shape[p, a]
-                Navg_a = self.shape_avg[p, a]
-                gI = deltaF_inv @ self.dshape_ref[p, a]
+                navg_a = self.shape_avg[p, a]
+                gI = delta_f_inv @ self.dshape_ref[p, a]
                 row_p = self.global_index(node_a, self.pressure_component)
 
                 base_force = (-sigma_total @ gI + Na * rho_mix * gravity) * vol
@@ -1256,17 +1257,17 @@ class StaticTwoPhaseULMPM(MPMSolver):
                 mass_res = (Na * log_ratio + darcy) * vol
                 if ti.static(self.ppp_stabilization):
                     if ti.static(self.dynamic_formulation):
-                        mass_res += tau * (Na - Navg_a) * p_rate_gap * vol
+                        mass_res += tau * (Na - navg_a) * p_rate_gap * vol
                     else:
-                        mass_res += tau * (Na - Navg_a) * ppp_gap * vol
+                        mass_res += tau * (Na - navg_a) * ppp_gap * vol
                 self.rhs[row_p] += mass_res
 
                 for b in range(self.offset[p]):
                     node_b = self.LnID[p, b]
                     Nb = self.shape[p, b]
-                    Navg_b = self.shape_avg[p, b]
+                    navg_b = self.shape_avg[p, b]
                     GJ = self.dshape_ref[p, b]
-                    gJ = deltaF_inv @ GJ
+                    gJ = delta_f_inv @ GJ
                     block_i = self.node2dof[node_a] - 1
                     block_j = self.node2dof[node_b] - 1
                     raw_block = self.begin_block_triplet(block_i, block_j)
@@ -1277,23 +1278,23 @@ class StaticTwoPhaseULMPM(MPMSolver):
                             Kpp += (
                                 tau
                                 * (self.newmark_gamma / (self.newmark_scale * dt))
-                                * (Na - Navg_a)
-                                * (Nb - Navg_b)
+                                * (Na - navg_a)
+                                * (Nb - navg_b)
                                 * vol
                             )
                         else:
-                            Kpp += tau * (Na - Navg_a) * (Nb - Navg_b) * vol
+                            Kpp += tau * (Na - navg_a) * (Nb - navg_b) * vol
 
                     Kup = vol * Nb * gI
 
                     for comp in ti.static(range(config.DIM)):
-                        hcol = self.column(deltaF_inv, comp)
+                        hcol = self.column(delta_f_inv, comp)
                         eta = GJ.dot(hcol)
                         dgI = -hcol * GJ.dot(gI)
                         dv = vol * eta
-                        coeff_rho = (self.fluid_density - self.density) * self.solid_fraction0 / ti.max(Jnew, 1.0e-12)
+                        coeff_rho = (self.fluid_density - self.density) * self.solid_fraction0 / ti.max(jnew, 1.0e-12)
                         drho = coeff_rho * eta
-                        dsigma = self.constitutive_tangent_apply(p, Fnew, Jnew, grad_u, GJ, comp, eta)
+                        dsigma = self.constitutive_tangent_apply(p, fnew, jnew, grad_u, GJ, comp, eta)
 
                         mech = (-dsigma @ gI - sigma_total @ dgI + Na * drho * gravity) * vol + (
                             -sigma_total @ gI + Na * rho_mix * gravity
@@ -1321,9 +1322,9 @@ class StaticTwoPhaseULMPM(MPMSolver):
                         kpu += scalar_grad_term
                         if ti.static(self.ppp_stabilization):
                             if ti.static(self.dynamic_formulation):
-                                kpu += tau * (Na - Navg_a) * p_rate_gap * dv
+                                kpu += tau * (Na - navg_a) * p_rate_gap * dv
                             else:
-                                kpu += tau * (Na - Navg_a) * ppp_gap * dv
+                                kpu += tau * (Na - navg_a) * ppp_gap * dv
                         self.add_block_component(block_i, block_j, raw_block, self.pressure_component, comp, kpu)
 
                     for row_comp in ti.static(range(config.DIM)):
@@ -1528,7 +1529,7 @@ class StaticTwoPhaseULMPM(MPMSolver):
             return_solution=False,
         )
         if not result["converged"]:
-            raise RuntimeError(
+            raise LinearSolveError(
                 "StaticTwoPhaseULMPM device BiCGSTAB did not "
                 f"converge: residual={result['residual']:.6e}, "
                 f"iterations={result['iterations']}"

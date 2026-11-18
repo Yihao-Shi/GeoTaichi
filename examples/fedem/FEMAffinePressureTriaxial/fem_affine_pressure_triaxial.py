@@ -176,7 +176,7 @@ def main():
         }
     )
     coupling.choose_contact_model(
-        "IPC",
+        "BarrierIPC",
         dhat=0.012,
         dmin=0.0,
         kappa=4.0e4,

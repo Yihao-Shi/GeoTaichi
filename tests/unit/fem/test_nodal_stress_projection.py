@@ -4,21 +4,17 @@ import pytest
 ti = pytest.importorskip("taichi")
 
 from src.fem import FEM
-from src.fem.engines.FEMSolver import _volume_weighted_cell_to_node
+from src.fem.engines.FEMSolver import FEMSolver
 
 
 def test_volume_weighted_cell_tensor_projection():
-    connectivity = np.asarray(
-        [[0, 1, 2, 3], [1, 2, 3, 4]], dtype=np.int32
-    )
+    connectivity = np.asarray([[0, 1, 2, 3], [1, 2, 3, 4]], dtype=np.int32)
     reference_weights = np.asarray([[1.0], [3.0]], dtype=np.float64)
     stress = np.zeros((2, 3, 3), dtype=np.float64)
     stress[0, 0, 0] = 2.0
     stress[1, 0, 0] = 10.0
 
-    nodal = _volume_weighted_cell_to_node(
-        stress, connectivity, reference_weights, node_count=5
-    )
+    nodal = FEMSolver._volume_weighted_cell_to_node(stress, connectivity, reference_weights, node_count=5)
 
     assert nodal.shape == (5, 3, 3)
     assert nodal[0, 0, 0] == 2.0
@@ -58,8 +54,6 @@ def test_fem_vtu_writes_only_nodal_von_mises(tmp_path):
     engine.record(output, log=False)
 
     archived = meshio.read(output)
-    assert archived.point_data["von_mises"].shape == (
-        mesh.number_of_nodes,
-    )
+    assert archived.point_data["von_mises"].shape == (mesh.number_of_nodes,)
     assert "von_mises" not in archived.cell_data_dict
     assert "strain_energy" not in archived.cell_data_dict

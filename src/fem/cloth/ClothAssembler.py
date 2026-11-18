@@ -1,226 +1,18 @@
 """Taichi kernels for triangular cloth finite-element assembly."""
 
+from src.fem.cloth.Utilities import create_cloth_element
+from src.fem.cloth.Utilities import prepare_cloth_energies
+
 import numpy as np
 import taichi as ti
 
-from src.fem.cloth.ClothEnergy import (
-    normalize_bending_model,
-    prepare_cloth_energies,
-)
-from src.fem.cloth.ClothElement import create_cloth_element
-from src.fem.engines.SparseMatrix import FEMSparseMatrix
+from src.fem.engines.FEMSparseMatrix import FEMSparseMatrix
 from src.physics_model.contact_model.ipc.ContactAssembly import (
     psd_project_cloth_tangent_6x6,
 )
-
-
-def _require_initialized_taichi():
-    if ti.lang.impl.get_runtime().prog is None:
-        raise RuntimeError(
-            "Taichi cloth FEM requires an initialized runtime; call geotaichi.init(...) or taichi.init(...) first"
-        )
-
-
-@ti.func
-def _hinge_projection_direction(point, edge0, edge1):
-    edge = edge1 - edge0
-    denominator = ti.max(edge.dot(edge), 1.0e-30)
-    direction = edge0 + (point - edge0).dot(edge) / denominator * edge - point
-    return direction / ti.max(direction.norm(), 1.0e-15)
-
-
-@ti.func
-def signed_dihedral_angle(x0, x1, x2, x3):
-    normal0 = (x1 - x0).cross(x2 - x0)
-    normal1 = (x2 - x3).cross(x1 - x3)
-    denominator = ti.max(normal0.norm() * normal1.norm(), 1.0e-30)
-    cosine = ti.max(-1.0, ti.min(1.0, normal0.dot(normal1) / denominator))
-    angle = ti.acos(cosine)
-    if normal1.cross(normal0).dot(x1 - x2) < 0.0:
-        angle = -angle
-    return angle
-
-
-@ti.func
-def signed_dihedral_gradient(x0, x1, x2, x3):
-    edge0 = x2 - x1
-    edge1 = x0 - x1
-    edge2 = x3 - x1
-    edge3 = x0 - x2
-    edge4 = x3 - x2
-    normal0 = edge0.cross(edge1)
-    normal1 = edge2.cross(edge0)
-    normal0_squared = ti.max(normal0.dot(normal0), 1.0e-30)
-    normal1_squared = ti.max(normal1.dot(normal1), 1.0e-30)
-    hinge_length = ti.max(edge0.norm(), 1.0e-15)
-    gradient = ti.Vector.zero(float, 12)
-    value0 = -hinge_length / normal0_squared * normal0
-    value1 = (
-        -edge0.dot(edge3) / (hinge_length * normal0_squared) * normal0
-        - edge0.dot(edge4) / (hinge_length * normal1_squared) * normal1
-    )
-    value2 = (
-        edge0.dot(edge1) / (hinge_length * normal0_squared) * normal0
-        + edge0.dot(edge2) / (hinge_length * normal1_squared) * normal1
-    )
-    value3 = -hinge_length / normal1_squared * normal1
-    for component in ti.static(range(3)):
-        gradient[component] = value0[component]
-        gradient[3 + component] = value1[component]
-        gradient[6 + component] = value2[component]
-        gradient[9 + component] = value3[component]
-    return gradient
-
-
-@ti.func
-def _store_direct_block(
-    target: ti.template(),
-    assemble_hash: ti.template(),
-    scalar_entry: ti.i32,
-    raw_entry: ti.i32,
-    node_i: ti.i32,
-    node_j: ti.i32,
-    block,
-):
-    if ti.static(assemble_hash):
-        if raw_entry < 0:
-            target.add_block_entry(node_i, node_j, block)
-        else:
-            target.initialize_raw_block_slot(raw_entry, node_i, node_j)
-            target.atomic_add_raw_block_slot(raw_entry, block)
-    else:
-        for row, column in ti.static(ti.ndrange(3, 3)):
-            entry = scalar_entry + 3 * row + column
-            target.rows[entry] = 3 * node_i + row
-            target.cols[entry] = 3 * node_j + column
-            target.data[entry] = block[row, column]
-
-
-@ti.func
-def assemble_signed_dihedral_hessian_blocks(
-    target: ti.template(),
-    assemble_hash: ti.template(),
-    scalar_base: ti.i32,
-    raw_base: ti.i32,
-    nodes,
-    x0,
-    x1,
-    x2,
-    x3,
-    first,
-    second,
-    angle_gradient,
-    project_pd: ti.template(),
-    store_only: ti.template(),
-    tangent_target: ti.template(),
-    tangent_id: ti.i32,
-):
-    edge0 = x2 - x1
-    edge1 = x0 - x1
-    edge2 = x3 - x1
-    edge3 = x0 - x2
-    edge4 = x3 - x2
-    length0 = ti.max(edge0.norm(), 1.0e-15)
-    length1 = ti.max(edge1.norm(), 1.0e-15)
-    length2 = ti.max(edge2.norm(), 1.0e-15)
-    length3 = ti.max(edge3.norm(), 1.0e-15)
-    length4 = ti.max(edge4.norm(), 1.0e-15)
-    normal0 = edge0.cross(edge1)
-    normal1 = edge2.cross(edge0)
-    normal0_length = ti.max(normal0.norm(), 1.0e-15)
-    normal1_length = ti.max(normal1.norm(), 1.0e-15)
-
-    m1 = _hinge_projection_direction(x2, x1, x0)
-    m2 = _hinge_projection_direction(x2, x1, x3)
-    m3 = _hinge_projection_direction(x1, x2, x0)
-    m4 = _hinge_projection_direction(x1, x2, x3)
-    m01 = _hinge_projection_direction(x0, x1, x2)
-    m02 = _hinge_projection_direction(x3, x1, x2)
-    cosine1 = edge0.dot(edge1) / (length0 * length1)
-    cosine2 = edge0.dot(edge2) / (length0 * length2)
-    cosine3 = -edge0.dot(edge3) / (length0 * length3)
-    cosine4 = -edge0.dot(edge4) / (length0 * length4)
-    height1 = normal0_length / length1
-    height2 = normal1_length / length2
-    height3 = normal0_length / length3
-    height4 = normal1_length / length4
-    height01 = normal0_length / length0
-    height02 = normal1_length / length0
-
-    n1_01 = normal0.outer_product(m01) / (height01 * height01 * normal0_length)
-    n2_02 = normal1.outer_product(m02) / (height02 * height02 * normal1_length)
-    n1_3 = normal0.outer_product(m3) / (height01 * height3 * normal0_length)
-    n1_1 = normal0.outer_product(m1) / (height01 * height1 * normal0_length)
-    n2_4 = normal1.outer_product(m4) / (height02 * height4 * normal1_length)
-    n2_2 = normal1.outer_product(m2) / (height02 * height2 * normal1_length)
-    m3_01_1 = cosine3 / (height3 * height01 * normal0_length) * m01.outer_product(normal0)
-    m1_01_1 = cosine1 / (height1 * height01 * normal0_length) * m01.outer_product(normal0)
-    m1_1_1 = cosine1 / (height1 * height1 * normal0_length) * m1.outer_product(normal0)
-    m3_3_1 = cosine3 / (height3 * height3 * normal0_length) * m3.outer_product(normal0)
-    m3_1_1 = cosine3 / (height3 * height1 * normal0_length) * m1.outer_product(normal0)
-    m1_3_1 = cosine1 / (height1 * height3 * normal0_length) * m3.outer_product(normal0)
-    m4_02_2 = cosine4 / (height4 * height02 * normal1_length) * m02.outer_product(normal1)
-    m2_02_2 = cosine2 / (height2 * height02 * normal1_length) * m02.outer_product(normal1)
-    m4_4_2 = cosine4 / (height4 * height4 * normal1_length) * m4.outer_product(normal1)
-    m2_4_2 = cosine2 / (height2 * height4 * normal1_length) * m4.outer_product(normal1)
-    m4_2_2 = cosine4 / (height4 * height2 * normal1_length) * m2.outer_product(normal1)
-    m2_2_2 = cosine2 / (height2 * height2 * normal1_length) * m2.outer_product(normal1)
-    b1 = normal0.outer_product(m01) / (length0 * length0 * normal0_length)
-    b2 = normal1.outer_product(m02) / (length0 * length0 * normal1_length)
-
-    block00 = -(n1_01 + n1_01.transpose())
-    block10 = m3_01_1 - n1_3
-    block20 = m1_01_1 - n1_1
-    block11 = m3_3_1 + m3_3_1.transpose() - b1 + m4_4_2 + m4_4_2.transpose() - b2
-    block12 = m3_1_1 + m1_3_1.transpose() + b1 + m4_2_2 + m2_4_2.transpose() + b2
-    block13 = m4_02_2 - n2_4
-    block22 = m1_1_1 + m1_1_1.transpose() - b1 + m2_2_2 + m2_2_2.transpose() - b2
-    block23 = m2_02_2 - n2_2
-    block33 = -(n2_02 + n2_02.transpose())
-    angle_hessian = ti.Matrix.zero(float, 12, 12)
-    for row, column in ti.static(ti.ndrange(3, 3)):
-        angle_hessian[row, column] = block00[row, column]
-        angle_hessian[3 + row, column] = block10[row, column]
-        angle_hessian[row, 3 + column] = block10[column, row]
-        angle_hessian[6 + row, column] = block20[row, column]
-        angle_hessian[row, 6 + column] = block20[column, row]
-        angle_hessian[3 + row, 3 + column] = block11[row, column]
-        angle_hessian[3 + row, 6 + column] = block12[row, column]
-        angle_hessian[6 + row, 3 + column] = block12[column, row]
-        angle_hessian[3 + row, 9 + column] = block13[row, column]
-        angle_hessian[9 + row, 3 + column] = block13[column, row]
-        angle_hessian[6 + row, 6 + column] = block22[row, column]
-        angle_hessian[6 + row, 9 + column] = block23[row, column]
-        angle_hessian[9 + row, 6 + column] = block23[column, row]
-        angle_hessian[9 + row, 9 + column] = block33[row, column]
-    angle_hessian = 0.5 * (angle_hessian + angle_hessian.transpose())
-    local_hessian = first * angle_hessian + second * angle_gradient.outer_product(angle_gradient)
-    local_hessian = 0.5 * (local_hessian + local_hessian.transpose())
-    if ti.static(project_pd):
-        # Gauss--Newton bending block: ``second * g g.T`` is PSD by
-        # construction and avoids a 12x12 eigensolve/majorizer in the sparse
-        # scatter kernel. The exact angle-Hessian term remains available when
-        # project_pd=False (BiCGSTAB/debug path).
-        local_hessian = second * angle_gradient.outer_product(angle_gradient)
-    if ti.static(store_only):
-        tangent_target[tangent_id] = local_hessian
-    else:
-        for local_i, local_j in ti.static(ti.ndrange(4, 4)):
-            block = ti.Matrix.zero(float, 3, 3)
-            for row, column in ti.static(ti.ndrange(3, 3)):
-                block[row, column] = local_hessian[3 * local_i + row, 3 * local_j + column]
-            raw_entry = -1
-            if local_i != local_j:
-                raw_entry = raw_base + local_i * 3 + local_j - ti.cast(local_j > local_i, ti.i32)
-            _store_direct_block(
-                target,
-                assemble_hash,
-                scalar_base + 9 * (4 * local_i + local_j),
-                raw_entry,
-                nodes[local_i],
-                nodes[local_j],
-                block,
-            )
+from src.physics_model.constitutive_model.cloth_model.ClothBending import ClothBending
+from src.utils.ScalarFunction import isinf
+from src.utils.errors import InvertedElementError, RuntimeNotInitializedError
 
 
 @ti.data_oriented
@@ -241,11 +33,17 @@ class ClothAssembler:
         project_bending_pd=None,
         linear_solver_relative_tolerance=0.0,
     ):
-        _require_initialized_taichi()
+        if ti.lang.impl.get_runtime().prog is None:
+            raise RuntimeNotInitializedError(
+                "Taichi cloth FEM requires an initialized runtime; call geotaichi.init(...) or taichi.init(...) first"
+            )
+        self.bending = ClothBending()
         self.mesh = mesh
         self.material = material
         self.element = create_cloth_element(mesh, material)
-        self.bending_model = normalize_bending_model(material.bending_model if bending_model is None else bending_model)
+        self.bending_model = ClothBending.validate_model(
+            material.bending_model if bending_model is None else bending_model
+        )
         self.bending_model_id = {
             "None": 0,
             "Quadratic": 1,
@@ -283,6 +81,8 @@ class ClothAssembler:
         # the material tangent once per static block stencil.
         self.membrane_tangent = ti.Matrix.field(6, 6, dtype=self.real_type, shape=self.element_count)
         self.element_energy = ti.field(dtype=self.real_type, shape=self.element_count)
+        self.element_stress = ti.Matrix.field(3, 3, dtype=self.real_type, shape=self.element_count)
+        self.invalid_stress_geometry = ti.field(dtype=ti.i32, shape=())
         allocated_bending_elements = max(self.bending_element_count, 1)
         self.bending_connectivity = ti.Vector.field(4, dtype=ti.i32, shape=allocated_bending_elements)
         self.bending_tangent = ti.Matrix.field(12, 12, dtype=self.real_type, shape=allocated_bending_elements)
@@ -379,6 +179,30 @@ class ClothAssembler:
             self.sdf_stiffness.from_numpy(stiffness)
             self.sdf_dhat.from_numpy(dhat)
 
+    @ti.func
+    def _store_direct_block(
+        self,
+        target: ti.template(),
+        assemble_hash: ti.template(),
+        scalar_entry: ti.i32,
+        raw_entry: ti.i32,
+        node_i: ti.i32,
+        node_j: ti.i32,
+        block,
+    ):
+        if ti.static(assemble_hash):
+            if raw_entry < 0:
+                target.add_block_entry(node_i, node_j, block)
+            else:
+                target.initialize_raw_block_slot(raw_entry, node_i, node_j)
+                target.atomic_add_raw_block_slot(raw_entry, block)
+        else:
+            for row, column in ti.static(ti.ndrange(3, 3)):
+                entry = scalar_entry + 3 * row + column
+                target.rows[entry] = 3 * node_i + row
+                target.cols[entry] = 3 * node_j + column
+                target.data[entry] = block[row, column]
+
     def bind_positions(self, positions):
         self.bound_positions = positions
 
@@ -440,29 +264,29 @@ class ClothAssembler:
             nodes = self.bending_connectivity[bending_id]
             value = 0.0
             local_gradient = ti.Vector.zero(self.real_type, 12)
+            x0 = self.positions[nodes[0]]
+            x1 = self.positions[nodes[1]]
+            x2 = self.positions[nodes[2]]
+            x3 = self.positions[nodes[3]]
             if ti.static(self.bending_model_id == 1):
-                local_stiffness = self.bending_stiffness[bending_id]
-                for first, second in ti.static(ti.ndrange(4, 4)):
-                    value += (
-                        0.5
-                        * local_stiffness[first, second]
-                        * self.positions[nodes[first]].dot(self.positions[nodes[second]])
-                    )
-                    for component in ti.static(range(3)):
-                        local_gradient[3 * first + component] += (
-                            local_stiffness[first, second] * self.positions[nodes[second]][component]
-                        )
+                value, local_gradient = self.bending.quadratic_response(
+                    self.bending_stiffness[bending_id],
+                    x0,
+                    x1,
+                    x2,
+                    x3,
+                )
             elif ti.static(self.bending_model_id == 2):
-                x0 = self.positions[nodes[0]]
-                x1 = self.positions[nodes[1]]
-                x2 = self.positions[nodes[2]]
-                x3 = self.positions[nodes[3]]
-                angle = signed_dihedral_angle(x0, x1, x2, x3)
-                angle_gradient = signed_dihedral_gradient(x0, x1, x2, x3)
-                difference = angle - self.bending_rest_angle[bending_id]
-                ratio = self.bending_edge_length[bending_id] / self.bending_height[bending_id]
-                value = self.bending_modulus * ratio * difference * difference
-                local_gradient = 2.0 * self.bending_modulus * ratio * difference * angle_gradient
+                value, local_gradient = self.bending.dihedral_response(
+                    self.bending_modulus,
+                    self.bending_edge_length[bending_id],
+                    self.bending_height[bending_id],
+                    self.bending_rest_angle[bending_id],
+                    x0,
+                    x1,
+                    x2,
+                    x3,
+                )
             ti.atomic_add(self.total_energy[None], value)
             for local, component in ti.static(ti.ndrange(4, 3)):
                 ti.atomic_add(
@@ -579,7 +403,7 @@ class ClothAssembler:
                 raw_entry = -1
                 if local_i != local_j:
                     raw_entry = raw_offset + element_id * 6 + local_i * 2 + local_j - ti.cast(local_j > local_i, ti.i32)
-                _store_direct_block(
+                self._store_direct_block(
                     target,
                     assemble_hash,
                     scalar_offset + 9 * (9 * element_id + 3 * local_i + local_j),
@@ -597,32 +421,17 @@ class ClothAssembler:
             x1 = positions[nodes[1]]
             x2 = positions[nodes[2]]
             x3 = positions[nodes[3]]
-            angle = signed_dihedral_angle(x0, x1, x2, x3)
-            angle_gradient = signed_dihedral_gradient(x0, x1, x2, x3)
-            difference = angle - self.bending_rest_angle[bending_id]
-            ratio = self.bending_edge_length[bending_id] / self.bending_height[bending_id]
-            second = 2.0 * self.bending_modulus * ratio
-            if ti.static(self.project_bending_pd):
-                self.bending_tangent[bending_id] = second * angle_gradient.outer_product(angle_gradient)
-            else:
-                assemble_signed_dihedral_hessian_blocks(
-                    self.bending_tangent,
-                    False,
-                    0,
-                    0,
-                    nodes,
-                    x0,
-                    x1,
-                    x2,
-                    x3,
-                    2.0 * self.bending_modulus * ratio * difference,
-                    second,
-                    angle_gradient,
-                    False,
-                    True,
-                    self.bending_tangent,
-                    bending_id,
-                )
+            self.bending_tangent[bending_id] = self.bending.dihedral_tangent(
+                self.bending_modulus,
+                self.bending_edge_length[bending_id],
+                self.bending_height[bending_id],
+                self.bending_rest_angle[bending_id],
+                x0,
+                x1,
+                x2,
+                x3,
+                self.project_bending_pd,
+            )
 
     @ti.kernel
     def _assemble_bending_stiffness_direct(
@@ -644,7 +453,7 @@ class ClothAssembler:
                         raw_entry = (
                             raw_offset + bending_id * 12 + local_i * 3 + local_j - ti.cast(local_j > local_i, ti.i32)
                         )
-                    _store_direct_block(
+                    self._store_direct_block(
                         target,
                         assemble_hash,
                         scalar_offset + 9 * (16 * bending_id + 4 * local_i + local_j),
@@ -664,7 +473,7 @@ class ClothAssembler:
                         raw_entry = (
                             raw_offset + bending_id * 12 + local_i * 3 + local_j - ti.cast(local_j > local_i, ti.i32)
                         )
-                    _store_direct_block(
+                    self._store_direct_block(
                         target,
                         assemble_hash,
                         scalar_offset + bending_id * 144 + 9 * (4 * local_i + local_j),
@@ -737,7 +546,7 @@ class ClothAssembler:
                 raw_entry = -1
                 if local_i != local_j:
                     raw_entry = raw_offset + stitch_id * 6 + local_i * 2 + local_j - ti.cast(local_j > local_i, ti.i32)
-                _store_direct_block(
+                self._store_direct_block(
                     target,
                     assemble_hash,
                     scalar_offset + 9 * (9 * stitch_id + 3 * local_i + local_j),
@@ -750,7 +559,7 @@ class ClothAssembler:
         spring_offset = scalar_offset + self.stitch_count * 81
         for spring_id in range(self.spring_count):
             node = self.spring_nodes[spring_id]
-            _store_direct_block(
+            self._store_direct_block(
                 target,
                 assemble_hash,
                 spring_offset + spring_id * 9,
@@ -773,7 +582,7 @@ class ClothAssembler:
                     / self.sdf_dhat[sdf_id]
                     * (1.0 - distance / self.sdf_dhat[sdf_id])
                 )
-            _store_direct_block(
+            self._store_direct_block(
                 target,
                 assemble_hash,
                 sdf_offset + sdf_id * 9,
@@ -852,6 +661,18 @@ class ClothAssembler:
             self._assemble_bending_force()
         return self.internal_force
 
+    @ti.kernel
+    def _compute_cauchy_stress(self):
+        self.invalid_stress_geometry[None] = 0
+        for element_id in range(self.element_count):
+            deformation_gradient = self.deformation_gradient[element_id]
+            metric = deformation_gradient.transpose() @ deformation_gradient
+            determinant = metric.determinant()
+            if determinant > self.material.minimum_jacobian**2 and not isinf(determinant):
+                self.element_stress[element_id] = self.material.cauchy_stress(deformation_gradient)
+            else:
+                ti.atomic_max(self.invalid_stress_geometry[None], 1)
+
     def assemble_system(self, positions, need_stiffness=False, need_stress=False):
         """Explicit host snapshot adapter for tests and output only."""
         if hasattr(positions, "to_numpy"):
@@ -865,8 +686,10 @@ class ClothAssembler:
         force, stiffness = self.assemble_device(source, need_stiffness=need_stiffness)
         stress = None
         if need_stress:
-            gradients = self.deformation_gradient.to_numpy()
-            stress = np.asarray([self.material.cauchy_stress(value) for value in gradients])
+            self._compute_cauchy_stress()
+            if self.invalid_stress_geometry[None]:
+                raise InvertedElementError("cloth triangle is inverted, collapsed, or nonfinite")
+            stress = self.element_stress.to_numpy()
         result = (
             float(self.total_energy[None]),
             force.to_numpy(),

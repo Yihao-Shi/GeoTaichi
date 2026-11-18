@@ -9,7 +9,8 @@ from src.mpm.engines.TwoPhaseDoubleLayerKernel import (
     kernel_classify_double_layer_fluid_cells3d,
     kernel_extrapolate_double_layer_ghost_faces,
 )
-from src.mpm.structs.Particle import ParticleCloudTwoPhase, ParticleCloudTwoPhase2D
+from src.mpm.structs.ParticleCloudTwoPhase import ParticleCloudTwoPhase
+from src.mpm.structs.ParticleCloudTwoPhase2D import ParticleCloudTwoPhase2D
 
 
 @pytest.mark.parametrize("dimension", [2, pytest.param(3, marks=pytest.mark.isolated_dimension(3))])

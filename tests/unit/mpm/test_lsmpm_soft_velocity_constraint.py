@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from src.mpm.generator.BodyGenerator import compact_soft_grid_nodes_in_region
+from src.mpm.generator.SoftParticleCreatorMixin import SoftParticleCreatorMixin
 
 
 def _support():
@@ -22,7 +22,7 @@ def _topology():
 
 
 def test_region_is_preprocessed_to_compact_local_node_ids():
-    nodes = compact_soft_grid_nodes_in_region(
+    nodes = SoftParticleCreatorMixin.compact_soft_grid_nodes_in_region(
         {
             "StartPoint": [-0.61, -0.21, -0.06],
             "EndPoint": [-0.49, 0.21, 0.06],
@@ -45,7 +45,7 @@ def test_region_is_preprocessed_to_compact_local_node_ids():
 
 def test_nonzero_prescribed_velocity_is_rejected():
     with pytest.raises(ValueError, match="zero velocity"):
-        compact_soft_grid_nodes_in_region(
+        SoftParticleCreatorMixin.compact_soft_grid_nodes_in_region(
             {
                 "StartPoint": [-0.6, -0.2, -0.05],
                 "EndPoint": [-0.5, 0.2, 0.05],

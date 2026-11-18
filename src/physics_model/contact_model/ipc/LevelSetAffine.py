@@ -1,26 +1,8 @@
 """Validated affine level-set input storage and initialization result schema."""
 
 from __future__ import annotations
-
 from dataclasses import dataclass
-
 import numpy as np
-
-
-def _as_float_array(value, shape, name):
-    array = np.asarray(value, dtype=np.float64)
-    if array.shape != tuple(shape):
-        raise ValueError(f"{name} must have shape {tuple(shape)}, got {array.shape}")
-    if not np.all(np.isfinite(array)):
-        raise ValueError(f"{name} must be finite")
-    return np.ascontiguousarray(array)
-
-
-def _as_positive_scalar(value, name):
-    scalar = float(value)
-    if not np.isfinite(scalar) or scalar <= 0.0:
-        raise ValueError(f"{name} must be finite and positive")
-    return scalar
 
 
 @dataclass(frozen=True)
@@ -33,6 +15,22 @@ class TrilinearLevelSet:
     quadrature mesh without resampling the signed-distance field.
     """
 
+    @staticmethod
+    def _as_float_array(value, shape, name):
+        array = np.asarray(value, dtype=np.float64)
+        if array.shape != tuple(shape):
+            raise ValueError(f"{name} must have shape {tuple(shape)}, got {array.shape}")
+        if not np.all(np.isfinite(array)):
+            raise ValueError(f"{name} must be finite")
+        return np.ascontiguousarray(array)
+
+    @staticmethod
+    def _as_positive_scalar(value, name):
+        scalar = float(value)
+        if not np.isfinite(scalar) or scalar <= 0.0:
+            raise ValueError(f"{name} must be finite and positive")
+        return scalar
+
     origin: np.ndarray
     spacing: float
     shape: np.ndarray
@@ -41,8 +39,8 @@ class TrilinearLevelSet:
     template_to_grid_offset: np.ndarray = None
 
     def __post_init__(self):
-        origin = _as_float_array(self.origin, (3,), "origin")
-        spacing = _as_positive_scalar(self.spacing, "spacing")
+        origin = TrilinearLevelSet._as_float_array(self.origin, (3,), "origin")
+        spacing = TrilinearLevelSet._as_positive_scalar(self.spacing, "spacing")
         shape = np.asarray(self.shape, dtype=np.int32)
         if shape.shape != (3,) or np.any(shape < 2):
             raise ValueError("shape must contain three grid sizes >= 2")
@@ -55,12 +53,12 @@ class TrilinearLevelSet:
         linear = (
             np.eye(3, dtype=np.float64)
             if self.template_to_grid is None
-            else _as_float_array(self.template_to_grid, (3, 3), "template_to_grid")
+            else TrilinearLevelSet._as_float_array(self.template_to_grid, (3, 3), "template_to_grid")
         )
         offset = (
             np.zeros(3, dtype=np.float64)
             if self.template_to_grid_offset is None
-            else _as_float_array(
+            else TrilinearLevelSet._as_float_array(
                 self.template_to_grid_offset,
                 (3,),
                 "template_to_grid_offset",
@@ -109,6 +107,3 @@ class NonpenetrationResult:
     success: bool
     message: str
     objective: float
-
-
-__all__ = ["TrilinearLevelSet", "NonpenetrationResult"]

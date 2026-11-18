@@ -43,7 +43,7 @@ color = [
 ]
 
 
-def SetToRotate(q):
+def set_to_rotate(q):
     qw, qx, qy, qz = q[3], q[0], q[1], q[2]
     return np.array(
         [
@@ -64,7 +64,7 @@ def get_data(path, start, end):
             pos30x = data["mass_center"][4][0]
         disp1.append(100 * (data["mass_center"][2][0] - pos10x))
         disp3.append(100 * (data["mass_center"][4][0] - pos30x))
-        dirs = SetToRotate(data["quanternion"][5]).T @ np.array([0, 0, 1])
+        dirs = set_to_rotate(data["quanternion"][5]).T @ np.array([0, 0, 1])
         dirs = dirs / np.linalg.norm(dirs)
         theta = 90 - np.arccos(np.dot(dirs, np.array([0, 0, 1]))) / math.pi * 180
         rot.append(theta)

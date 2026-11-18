@@ -1,35 +1,9 @@
 """IPC configuration for implicit FEM--MPM surface coupling."""
 
 from __future__ import annotations
-
 import math
-
 import numpy as np
-
-from src.fem.contact.ContactModel import FEMContact, _integer
-
-
-def _canonical_property(parameters):
-    aliases = {
-        "activationdistance": "dhat",
-        "barrierdistance": "dhat",
-        "minimumdistance": "dmin",
-        "contactdistance": "dmin",
-        "barrierstiffness": "kappa",
-        "contactstiffness": "kappa",
-        "friction": "friction_coefficient",
-        "mu": "friction_coefficient",
-        "frictioncoefficient": "friction_coefficient",
-        "velocityepsilon": "epsv",
-        "projectpd": "project_pd",
-        "ccdsafety": "ccd_safety",
-        "ccdmaxiterations": "ccd_max_iterations",
-    }
-    result = {}
-    for name, value in dict(parameters).items():
-        key = str(name).replace("_", "").replace("-", "").replace(" ", "").lower()
-        result[aliases.get(key, name)] = value
-    return result
+from src.fem.contact.ContactModel import FEMContact
 
 
 class IPCModel:
@@ -40,7 +14,30 @@ class IPCModel:
     public coupling facade so explicit scripts do not need a second method.
     """
 
-    model_name = "IPC"
+    @staticmethod
+    def _canonical_property(parameters):
+        aliases = {
+            "activationdistance": "dhat",
+            "barrierdistance": "dhat",
+            "minimumdistance": "dmin",
+            "contactdistance": "dmin",
+            "barrierstiffness": "kappa",
+            "contactstiffness": "kappa",
+            "friction": "friction_coefficient",
+            "mu": "friction_coefficient",
+            "frictioncoefficient": "friction_coefficient",
+            "velocityepsilon": "epsv",
+            "projectpd": "project_pd",
+            "ccdsafety": "ccd_safety",
+            "ccdmaxiterations": "ccd_max_iterations",
+        }
+        result = {}
+        for name, value in dict(parameters).items():
+            key = str(name).replace("_", "").replace("-", "").replace(" ", "").lower()
+            result[aliases.get(key, name)] = value
+        return result
+
+    model_name = "BarrierIPC"
     coupling_name = "FEMPM"
     first_body_name = "MPM"
 
@@ -67,10 +64,10 @@ class IPCModel:
                 "point--triangle/grid pullback"
             )
         self.friction_mode = "lagged"
-        self.friction_iterations = _integer("friction_iterations", friction_iterations_value)
+        self.friction_iterations = FEMContact._integer("friction_iterations", friction_iterations_value)
         if self.friction_iterations != -1 and self.friction_iterations <= 0:
             raise ValueError(f"{self.coupling_name} IPC friction_iterations must be -1 or positive")
-        self.friction_max_iterations = _integer("friction_max_iterations", friction_max_iterations_value)
+        self.friction_max_iterations = FEMContact._integer("friction_max_iterations", friction_max_iterations_value)
         if self.friction_max_iterations <= 0:
             raise ValueError(f"{self.coupling_name} IPC friction_max_iterations must be positive")
         self.friction_tolerance = float(friction_tolerance_value)
@@ -98,7 +95,7 @@ class IPCModel:
             "friction_coefficient": self.contact.friction_coefficient,
             "epsv": self.contact.epsv,
         }
-        values.update(_canonical_property(parameters))
+        values.update(IPCModel._canonical_property(parameters))
         created = FEMContact.create(values.pop("model"), **values)
         if not created.project_pd:
             raise ValueError(f"{self.coupling_name} implicit IPC pair properties require " "project_pd=True")
@@ -162,6 +159,3 @@ class IPCModel:
 
     def critical_timestep(self, *_):
         return math.inf
-
-
-__all__ = ["IPCModel"]

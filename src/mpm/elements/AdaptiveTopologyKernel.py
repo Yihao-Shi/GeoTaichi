@@ -1,18 +1,9 @@
 """Device-resident node allocation and interface topology shared by 2D/3D MPM."""
 
+from src.utils.errors import CapacityError
+
 from math import prod
-
 import taichi as ti
-
-
-@ti.func
-def adaptive_list_count(count: ti.template()):
-    value = 0
-    if ti.static(hasattr(count, "snode")):
-        value = count[None]
-    else:
-        value = count
-    return value
 
 
 @ti.data_oriented
@@ -142,7 +133,7 @@ class AdaptiveTopology:
         self.count_request_blocks()
         required = self.allocate_nodes()
         if required > self.capacity:
-            raise RuntimeError(
+            raise CapacityError(
                 f"AdaptiveGrid dense node capacity {self.capacity} exceeded: {required} nodes are required. "
                 "Increase AdaptiveGrid/RefineRatio."
             )
@@ -279,7 +270,7 @@ class AdaptiveTopology:
         self.pack_constraints(source_ids, source_weights, count, node_ids, lookup, master_ids, master_weights)
         error = self.pack_touched(touched_count, touched_ids)
         if error:
-            raise RuntimeError(
+            raise CapacityError(
                 f"AdaptiveGrid hanging topology failed (error mask {error}): "
                 "1=missing master node, 2=master capacity exceeded, 4=unresolved constraint chain"
             )

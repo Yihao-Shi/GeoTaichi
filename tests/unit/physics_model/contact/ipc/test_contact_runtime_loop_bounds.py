@@ -1,21 +1,21 @@
 """Device equivalence checks for contact loops above the 3x3 static limit."""
 
+from src.utils.MatrixFunction import outer_product_nd
+
+from src.physics_model.contact_model.ipc.Utilities import curve_barrier_projected_metric
+from src.physics_model.contact_model.ipc.Utilities import get_distance_to_curve_fixed_dim
+
 import numpy as np
 import pytest
 import taichi as ti
 
-from src.nurbs.core.NurbsGeometry import NurbsBasisFunction1d
+from src.nurbs.core.NurbsBasisFunction1d import NurbsBasisFunction1d
 from src.physics_model.contact_model.ipc.ContactAssembly import (
     scatter_flat_gradient,
     scatter_flat_weighted_gradient,
     scatter_vector_weighted_gradient,
 )
-from src.physics_model.contact_model.ipc.NurbsContact import (
-    curve_barrier_projected_metric,
-    get_distance_to_curve_fixed_dim,
-    outer_product_nd,
-)
-
+from src.physics_model.contact_model.ipc.NurbsContact import PointNurbsDerivative
 
 pytestmark = [
     pytest.mark.unit,

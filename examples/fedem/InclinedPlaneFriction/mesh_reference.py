@@ -53,7 +53,7 @@ def _volume_centroid(points: np.ndarray, cells: np.ndarray) -> np.ndarray:
 def normalize_reference(mesh):
     """Center a tetra mesh at its volume centroid and set bounding radius to one."""
 
-    from src.fem.generator import FEMMesh
+    from src.fem.generator.Mesh import FEMMesh
 
     points = np.asarray(mesh.points, dtype=np.float64)
     cells = np.asarray(mesh.cells, dtype=np.int32)
@@ -73,7 +73,7 @@ def normalize_reference(mesh):
 
 
 def load_sphere_reference(path: Path):
-    from src.fem.generator import FEMGenerateManager
+    from src.fem.generator.MeshGenerator import FEMGenerateManager
 
     mesh = FEMGenerateManager().read(Path(path), cell_type="TET4")
     normalized, quality = normalize_reference(mesh)
@@ -94,7 +94,7 @@ def tetrahedralize_irregular_reference(
     """Tetrahedralize a closed irregular STL and normalize it to unit radius."""
 
     import gmsh
-    from src.fem.generator import FEMMesh
+    from src.fem.generator.Mesh import FEMMesh
 
     path = Path(path).expanduser().resolve()
     if not path.is_file():
@@ -188,7 +188,7 @@ def tetrahedralize_primitive_reference(
     """
 
     import gmsh
-    from src.fem.generator import FEMMesh
+    from src.fem.generator.Mesh import FEMMesh
 
     normalized_shape = str(shape).strip().lower()
     if normalized_shape not in ("sphere", "cube"):
@@ -303,7 +303,7 @@ def euler_rotation(angles_degrees) -> np.ndarray:
 
 
 def place_reference(reference, center, radius: float, angles_degrees, *, name: str):
-    from src.fem.generator import FEMMesh
+    from src.fem.generator.Mesh import FEMMesh
 
     radius = float(radius)
     if radius <= 0.0:

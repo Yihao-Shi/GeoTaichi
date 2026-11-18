@@ -1,16 +1,12 @@
+from src.utils.RuntimeHook import normalize_callbacks
 import taichi as ti
 import time
 
 import src.iga.config as config
 from src.iga.engines.IGASolver import IGASolver
-from src.iga.engines.EngineUtils import (
-    jacobian2parent2parametric1d,
-    jacobian2parent2parametric2d,
-    linearize,
-    vectorize_id,
-)
+from src.utils.ShapeFunctions import jacobian2parent2parametric1d, jacobian2parent2parametric2d
+from src.utils.ScalarFunction import linearize, vectorize_id
 from src.utils.RuntimeHook import runtime_checkpoint
-from src.utils.SolverRuntime import normalize_callbacks
 from src.utils.linalg import no_operation
 
 
@@ -64,10 +60,10 @@ class ExplicitIGA(IGASolver):
 
             rest_ctrl_coords = ti.Matrix.zero(ti.f64, self.element.total_knot_range, config.DIM)
             current_ctrl_coords = ti.Matrix.zero(ti.f64, self.element.total_knot_range, config.DIM)
-            for nodeID in ti.grouped(ti.ndrange(*self.element.knot_range)):
-                global_nodeID = nodeID + eleid
-                local_offset = linearize(nodeID, self.element.knot_range)
-                global_offset = linearize(global_nodeID, num_ctrlpts)
+            for node_id in ti.grouped(ti.ndrange(*self.element.knot_range)):
+                global_node_id = node_id + eleid
+                local_offset = linearize(node_id, self.element.knot_range)
+                global_offset = linearize(global_node_id, num_ctrlpts)
                 ctrlpt_id = prefix_total_num_ctrlpts + global_offset
                 rest_control_points = self.patch.rest_control_points[ctrlpt_id]
                 control_points = self.patch.control_points[ctrlpt_id]
@@ -89,22 +85,41 @@ class ExplicitIGA(IGASolver):
                 jacobian = self.calculate_jacobian(dNdnat, rest_ctrl_coords)
                 j1 = self.require_positive_reference_jacobian(jacobian)
                 volume = j1 * j2 * self.element.gauss_weights[gauss_id]
-                dnatdX = jacobian.inverse()
-                deformation_gradient = self.element.compute_deformation_gradient(dNdnat, dnatdX, current_ctrl_coords)
-                dFdx = self.element.compute_dF_div_dx(dNdnat, dnatdX)
-                dPsi_dF = self.material.dPsi_div_dF(deformation_gradient) * volume
+                dnatd_x = jacobian.inverse()
+                reference_radius = 1.0
+                if ti.static(self.is_axisymmetric):
+                    reference_radius = self.element.interpolate_component(N, rest_ctrl_coords, 0) - ti.static(
+                        self.axis_offset
+                    )
+                    reference_radius = self.require_positive_reference_radius(reference_radius)
+                    volume *= reference_radius
+                deformation_gradient = self._deformation_gradient(
+                    N, dNdnat, dnatd_x, rest_ctrl_coords, current_ctrl_coords
+                )
+                dFdx = self.element.compute_d_f_div_dx(dNdnat, dnatd_x)
+                dPsi_dF = self.material.d_psi_div_d_f(deformation_gradient) * volume
                 if ti.static(self.track_energy):
                     ti.atomic_add(
                         self.material_energy[None],
-                        self.material.Psi(deformation_gradient) * volume,
+                        self.material.psi(deformation_gradient) * volume,
                     )
 
-                for nodeID in ti.grouped(ti.ndrange(*self.element.knot_range)):
-                    global_nodeID = nodeID + eleid
-                    local_offset = linearize(nodeID, self.element.knot_range)
-                    global_offset = linearize(global_nodeID, num_ctrlpts)
+                for node_id in ti.grouped(ti.ndrange(*self.element.knot_range)):
+                    global_node_id = node_id + eleid
+                    local_offset = linearize(node_id, self.element.knot_range)
+                    global_offset = linearize(global_node_id, num_ctrlpts)
                     ctrlpt_id = prefix_total_num_ctrlpts + global_offset
-                    local_gradient = self.compute_local_gradient(local_offset, dPsi_dF, dFdx)
+                    local_gradient = ti.Vector.zero(ti.f64, config.DIM)
+                    if ti.static(self.is_axisymmetric):
+                        local_gradient = self.element.compute_axisymmetric_local_gradient(
+                            local_offset,
+                            dPsi_dF,
+                            N,
+                            self.element.compute_shape_gradients(dNdnat, dnatd_x),
+                            reference_radius,
+                        )
+                    else:
+                        local_gradient = self.compute_local_gradient(local_offset, dPsi_dF, dFdx)
                     for d in ti.static(range(config.DIM)):
                         self.rhs[config.DIM * ctrlpt_id + d] -= local_gradient[d]
 

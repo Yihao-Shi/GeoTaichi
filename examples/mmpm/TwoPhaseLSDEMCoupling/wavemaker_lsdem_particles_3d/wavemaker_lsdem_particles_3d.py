@@ -4,6 +4,9 @@ Fluid points exchange momentum with the LSDEM bodies through IBM.  The
 trapezoidal MPM bed uses the ordinary point--level-set contact law.
 """
 
+from src.utils.RuntimeHook import python_callback
+
+
 import argparse
 import math
 import os
@@ -31,7 +34,6 @@ from examples.mmpm.TwoPhaseLSDEMCoupling.wavemaker_lsdem_particles_3d.draw.evalu
 
 
 from geotaichi import DEMPM, init, polyhedron
-from src.utils.SolverRuntime import python_callback
 
 SLOPE_HEIGHT = WATER_DEPTH / 3.0
 SLOPE_TOE = 0.35

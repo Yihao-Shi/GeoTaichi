@@ -1,6 +1,7 @@
 """Lumped-mass explicit total-Lagrangian FEM integrator."""
 
 from __future__ import annotations
+from src.utils.RuntimeHook import normalize_callbacks
 
 import math
 import time
@@ -9,8 +10,8 @@ import taichi as ti
 
 from src.fem.engines.FEMSolver import FEMSolver
 from src.utils.RuntimeHook import runtime_checkpoint
-from src.utils.SolverRuntime import normalize_callbacks
 from src.utils.linalg import no_operation
+from src.utils.errors import InvertedElementError
 
 
 class ExplicitFEM(FEMSolver):
@@ -138,7 +139,7 @@ class ExplicitFEM(FEMSolver):
         if check_jacobian:
             self.minimum_jacobian = self._minimum_jacobian_ratio_device(self.state.position)
             if self.minimum_jacobian <= 1.0e-10:
-                raise RuntimeError(
+                raise InvertedElementError(
                     f"explicit FEM produced an inverted/collapsed element at time {next_time:.6g}; "
                     "reduce dt or refine the mesh"
                 )

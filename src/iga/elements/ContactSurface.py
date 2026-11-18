@@ -6,7 +6,8 @@ import numpy as np
 import taichi as ti
 
 import src.iga.config as config
-from src.nurbs.core.NurbsGeometry import NurbsBasisFunction1d, NurbsBasisFunction2d
+from src.nurbs.core.NurbsBasisFunction1d import NurbsBasisFunction1d
+from src.nurbs.core.NurbsBasisFunction2d import NurbsBasisFunction2d
 
 if TYPE_CHECKING:
     from src.iga.elements.Patch import Patch
@@ -60,18 +61,20 @@ class ContactSurface:
                 degree_lists[index],
             )
 
-            for surfIndex in range(2 * config.DIM):
-                self.total_num_ctrlpts[2 * config.DIM * index + surfIndex + 1] = len(patch_size[surfIndex])
-                self.num_knot[2 * config.DIM * index + surfIndex + 1, 0] = len(knot_vector_list[surfIndex][0])
-                self.fill_knot_vector(begin_knot[0], np.asarray(knot_vector_list[surfIndex][0]), self.knot_vector_u)
-                begin_knot[0] += len(knot_vector_list[surfIndex][0])
+            for surf_index in range(2 * config.DIM):
+                self.total_num_ctrlpts[2 * config.DIM * index + surf_index + 1] = len(patch_size[surf_index])
+                self.num_knot[2 * config.DIM * index + surf_index + 1, 0] = len(knot_vector_list[surf_index][0])
+                self.fill_knot_vector(begin_knot[0], np.asarray(knot_vector_list[surf_index][0]), self.knot_vector_u)
+                begin_knot[0] += len(knot_vector_list[surf_index][0])
                 if config.DIM == 3:
-                    self.num_knot[2 * config.DIM * index + surfIndex + 1, 1] = len(knot_vector_list[surfIndex][1])
-                    self.fill_knot_vector(begin_knot[1], np.asarray(knot_vector_list[surfIndex][1]), self.knot_vector_v)
-                    begin_knot[1] += len(knot_vector_list[surfIndex][1])
-                    self.basis.append(NurbsBasisFunction2d(degree_list[surfIndex][0], degree_list[surfIndex][1]))
+                    self.num_knot[2 * config.DIM * index + surf_index + 1, 1] = len(knot_vector_list[surf_index][1])
+                    self.fill_knot_vector(
+                        begin_knot[1], np.asarray(knot_vector_list[surf_index][1]), self.knot_vector_v
+                    )
+                    begin_knot[1] += len(knot_vector_list[surf_index][1])
+                    self.basis.append(NurbsBasisFunction2d(degree_list[surf_index][0], degree_list[surf_index][1]))
                 else:
-                    self.basis.append(NurbsBasisFunction1d(degree_list[surfIndex][0]))
+                    self.basis.append(NurbsBasisFunction1d(degree_list[surf_index][0]))
 
             boundary_ctrlpts_id = np.asarray(boundary_ctrlpts_id) + prefix_total_num_ctrlpts
             all_surface_ids.append(boundary_ctrlpts_id)

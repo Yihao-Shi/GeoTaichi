@@ -11,10 +11,9 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
 
 def run_case(output_root):
     from geotaichi import MPM, init
-    from src.mpm.engines.AssembleMatrixKernel import kernel_moment_balance_direct_2D
+    from src.mpm.engines.AssembleMatrixKernel import kernel_moment_balance_direct_2d
 
-    save_path = os.path.join(
-        os.fspath(output_root), "implicit_hash_triplet_2d")
+    save_path = os.path.join(os.fspath(output_root), "implicit_hash_triplet_2d")
     assemble_type = os.environ.get("GT_IMPLICIT_ASSEMBLE_TYPE", "HashTriplet")
 
     init(dim=2, arch="cpu", cpu_max_num_threads=2, offline_cache=False, log=False)
@@ -120,7 +119,7 @@ def run_case(output_root):
     ax = ti.field(float, shape=iterator.unknow_vector.shape[0])
     x.from_numpy(x_np)
 
-    kernel_moment_balance_direct_2D(
+    kernel_moment_balance_direct_2d(
         mpm.scene.element.gridSum,
         mpm.scene.element.grid_nodes,
         active_dofs,

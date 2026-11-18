@@ -1,5 +1,8 @@
 """Four Taylor--Green vortices on [0, 2*pi]^2 with free-slip outer walls."""
 
+from src.utils.RuntimeHook import python_callback
+
+
 import argparse
 import math
 import os
@@ -22,7 +25,6 @@ from examples.mpm.IncompressibleFluid.taylor_green_vortex_2d.draw.evaluate_taylo
 os.environ.setdefault("GEOTAICHI_REAL_DTYPE", "float64")
 
 from geotaichi import MPM, init  # noqa: E402
-from src.utils.SolverRuntime import python_callback  # noqa: E402
 
 
 def parse_args():

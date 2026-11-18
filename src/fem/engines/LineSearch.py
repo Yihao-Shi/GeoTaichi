@@ -3,10 +3,6 @@
 import math
 
 
-class LineSearchError(RuntimeError):
-    pass
-
-
 class ArmijoLineSearch:
     def __init__(self, reduction=0.5, sufficient_decrease=1.0e-4, max_backtracks=20, minimum_step=1.0e-8):
         self.reduction = float(reduction)
@@ -25,4 +21,4 @@ class ArmijoLineSearch:
         return math.isfinite(value) and (value <= armijo or (-step * slope <= roundoff and value <= initial + roundoff))
 
 
-__all__ = ["ArmijoLineSearch", "LineSearchError"]
+__all__ = ["ArmijoLineSearch"]

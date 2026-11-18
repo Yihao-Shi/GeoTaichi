@@ -1,9 +1,9 @@
+from src.linear_solver.DeviceKrylov import DeviceKrylov
 from math import isfinite, sqrt
 
 import taichi as ti
 
 from src.linear_solver.LinearOperator import LinearOperator
-from src.linear_solver.DeviceKrylov import DeviceKrylov, device_krylov_enabled
 
 from src.linear_solver.MatrixFreeKrylovKernel import (
     pcg_init as init,
@@ -27,7 +27,7 @@ class MatrixFreePCG(object):
         ti.root.dense(ti.i, int(length)).place(self.p, self.r, self.z, self.Ap, self.Ax)
         self.scalar_rest()
         self.reduce = reduce_atomic
-        self.device_execution = device_krylov_enabled()
+        self.device_execution = DeviceKrylov.device_krylov_enabled()
         self._device_solver = None
 
     def scalar_rest(self):
@@ -82,8 +82,8 @@ class MatrixFreePCG(object):
         self.scalar_rest()
         A.matvec(x, self.Ax)
         initialize()
-        initial_rTz = self.reduce(size, self.r, self.z)
-        old_rTz = initial_rTz
+        initial_r_tz = self.reduce(size, self.r, self.z)
+        old_r_tz = initial_r_tz
         # ``r.T @ M^-1 @ r`` is the PCG recurrence scalar, not an
         # unscaled residual norm.  Comparing its square root with an absolute
         # tolerance makes convergence depend on the arbitrary scaling of the
@@ -91,8 +91,8 @@ class MatrixFreePCG(object):
         # quantity tiny while ``||b - A x||`` is still large, returning the
         # untouched zero initial guess.  Use the true residual for every
         # stopping decision and keep rTz only in alpha/beta.
-        initial_rTr = self.reduce(size, self.r, self.r)
-        initial_residual = sqrt(max(initial_rTr, 0.0))
+        initial_r_tr = self.reduce(size, self.r, self.r)
+        initial_residual = sqrt(max(initial_r_tr, 0.0))
         convergence_tol = max(tol, rel_tol * initial_residual)
         self.last_initial_residual = initial_residual
         self.last_residual = initial_residual
@@ -100,7 +100,7 @@ class MatrixFreePCG(object):
         if initial_residual <= convergence_tol:
             self.last_converged = True
             return True
-        if not isfinite(old_rTz) or old_rTz <= 0.0:
+        if not isfinite(old_r_tz) or old_r_tz <= 0.0:
             self.last_breakdown_reason = "non_positive_preconditioned_residual"
             return False
 
@@ -117,7 +117,7 @@ class MatrixFreePCG(object):
             if not isfinite(pAp) or pAp <= 0.0:
                 self.last_breakdown_reason = "non_positive_curvature"
                 break
-            self.alpha = old_rTz / pAp
+            self.alpha = old_r_tz / pAp
             if not isfinite(self.alpha):
                 self.last_breakdown_reason = "non_finite_alpha"
                 break
@@ -149,22 +149,22 @@ class MatrixFreePCG(object):
                 if self.last_residual <= convergence_tol:
                     self.last_converged = True
                     break
-                old_rTz = self.reduce(size, self.r, self.z)
-                if not isfinite(old_rTz) or old_rTz <= 0.0:
+                old_r_tz = self.reduce(size, self.r, self.z)
+                if not isfinite(old_r_tz) or old_r_tz <= 0.0:
                     self.last_breakdown_reason = "non_positive_preconditioned_residual"
                     break
                 self.last_residual_restarts += 1
                 continue
-            new_rTz = self.reduce(size, self.r, self.z)
-            if not isfinite(new_rTz) or new_rTz <= 0.0:
+            new_r_tz = self.reduce(size, self.r, self.z)
+            if not isfinite(new_r_tz) or new_r_tz <= 0.0:
                 self.last_breakdown_reason = "non_positive_preconditioned_residual"
                 break
-            self.beta = new_rTz / old_rTz
+            self.beta = new_r_tz / old_r_tz
             if not isfinite(self.beta):
                 self.last_breakdown_reason = "non_finite_beta"
                 break
             update_p(size, self.p, self.z, self.beta)
-            old_rTz = new_rTz
+            old_r_tz = new_r_tz
 
         if not self.last_converged:
             # Report and decide from the actual residual, never from the

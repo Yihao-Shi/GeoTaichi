@@ -26,10 +26,12 @@ def test_boundary_grid_requires_distinct_first_and_last_two_nodes(shape_name, no
 
 def _basis(dimension):
     from src.mpm.engines.direct.ImplicitMPM import ImplicitMPM
-    from src.mpm.engines.direct.MPMSolver import _make_shape_function
+    from src.mpm.engines.direct.MPMSolver import MPMSolver as _MPMSolver__make_shape_function_owner
 
     engine = object.__new__(ImplicitMPM)
-    engine.shape_func, engine.shape_function_name = _make_shape_function("QuadBSpline")
+    engine.shape_func, engine.shape_function_name = _MPMSolver__make_shape_function_owner._make_shape_function(
+        "QuadBSpline"
+    )
     points = np.array([[0.0, 0.0], [0.025, 0.075], [0.235, 0.457], [0.999, 0.725], [1.0, 1.0]])
     if dimension == 3:
         points = np.column_stack((points, [0.025, 0.457, 0.73, 0.999, 1.0]))

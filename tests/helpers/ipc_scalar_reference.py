@@ -1,7 +1,9 @@
 """Independent host IPC scalar laws for numerical verification only."""
 
+from src.physics_model.contact_model.ipc.Utilities import _single_finite_parameter
+
 import numpy as np
-from src.physics_model.contact_model.ipc.IPC import _normalize_friction_profile, _single_finite_parameter
+from src.physics_model.contact_model.ipc.Friction import Friction
 
 
 def ipc_fully_implicit_scalar_law_py(
@@ -37,7 +39,7 @@ def ipc_fully_implicit_scalar_law_py(
     profile_id = (
         int(profile)
         if isinstance(profile, (int, np.integer)) and int(profile) in (0, 1)
-        else _normalize_friction_profile(profile)
+        else Friction._normalize_friction_profile(profile)
     )
     friction_difference = mu_static - mu_dynamic
     if friction_difference != 0.0 and stribeck_velocity <= 0.0:
@@ -88,7 +90,7 @@ def ipc_barrier_distance_terms_py(
 
     Returns energy, first derivative, and second derivative with respect to
     the unshifted Euclidean ``distance``. The algebra and physical-unit
-    scaling match :func:`ipc_toolkit_barrier_distance_offset_terms`.
+    scaling match :func:`ipc_barrier_distance_offset_terms`.
     Invalid states (``distance <= dmin``) return ``(+inf, 0, 0)`` so callers
     can reject them through CCD/line search without silently clamping a gap.
     """

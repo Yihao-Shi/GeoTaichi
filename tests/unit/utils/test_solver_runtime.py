@@ -1,14 +1,11 @@
+from src.linear_solver.Utilities import inexact_newton_absolute_tolerance
+from src.linear_solver.Utilities import inexact_newton_relative_tolerance
+from src.utils.RuntimeHook import normalize_callbacks
+from src.utils.RuntimeHook import python_callback
+from src.utils.SolverRuntime import StepSchedule
 import importlib
 
 import pytest
-
-from src.utils.SolverRuntime import (
-    StepSchedule,
-    inexact_newton_absolute_tolerance,
-    inexact_newton_relative_tolerance,
-    normalize_callbacks,
-    python_callback,
-)
 
 
 def test_inexact_newton_forcing_restarts_caps_and_tightens():

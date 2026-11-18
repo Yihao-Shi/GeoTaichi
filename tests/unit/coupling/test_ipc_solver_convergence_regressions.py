@@ -6,7 +6,7 @@ import taichi as ti
 from scipy.sparse import csr_matrix
 
 import src.mpm.config as mpm_config
-from src.igampm.engines import Engine as IGAEngine
+from src.igampm.engines.CoupledEngine import Engine as IGAEngine
 from src.linear_solver.BuildTriplet import BuildTriplet
 from src.linear_solver.CoordinateSparseMatrix import CoordinateSparseMatrix
 from src.mpdem.engines.SoftAffineIPCEngine import SoftAffineIPCEngine

@@ -1,12 +1,29 @@
 """Nonlinear affine-body solver orchestration."""
 
+from src.linear_solver.Utilities import accepts_monotone_energy
+from src.utils.RuntimeHook import normalize_callbacks
+
+from src.utils.errors import (
+    ConfigurationError,
+    LineSearchError,
+    LinearSolveError,
+    NonfiniteStateError,
+    NonlinearSolveError,
+    RuntimeNotInitializedError,
+    SimulationStateError,
+)
+from src.dem.engines.Utilities import _normalize_affine_assemble_type
+from src.dem.engines.Utilities import ipc_wall_boundary
+from src.utils.StepRetry import StepRetryPolicy
+from src.utils.TimeTicker import Timer
+
 import os
 
 import numpy as np
 import taichi as ti
 from taichi.lang.impl import current_cfg
 
-from src.linear_solver.BlockJacobi import BlockJacobi, BlockJacobiError
+from src.linear_solver.BlockJacobi import BlockJacobi
 from src.linear_solver.LinearOperator import LinearOperator
 from src.linear_solver.BuildTriplet import BuildTriplet
 from src.linear_solver.CoordinateSparseMatrix import CoordinateSparseMatrix
@@ -14,30 +31,21 @@ from src.physics_model.contact_model.ipc.LevelSetAffine import (
     NonpenetrationResult,
 )
 from src.utils.RuntimeHook import runtime_checkpoint
-from src.utils.SolverRuntime import accepts_monotone_energy, normalize_callbacks
-from src.utils.TimeTicker import advance_time, has_remaining_time, time_tolerance
 from src.utils.SolverConsole import print_save_file_info, print_simulation_start
-from src.utils.StepRetry import (
-    StepRetryPolicy,
-    is_recoverable_nonlinear_failure,
-    nonlinear_failure_kind,
-)
 from third_party.pyevtk.hl import unstructuredGridToVTK
 from third_party.pyevtk.vtk import VtkTriangle
 
-from .AffineBodyOperator import (
+from src.dem.engines.AffineBodyOperator import (
     MATRIX_CONTACT_DAMPING,
     MATRIX_COO,
     MATRIX_HASH_TRIPLET,
     TaichiAffineBodyOperator,
-    _normalize_affine_assemble_type,
-    _normalize_affine_friction_mode,
 )
+from src.dem.engines.AffineBodyOperator import TaichiAffineBodyOperator
 from .AffineBodyState import AffineBodyState
-from .AffineDiffIPC import (
-    TaichiAffineDiffIPCProjector,
-    TaichiAffineMeshDiffIPCProjector,
-)
+from src.dem.engines.TaichiAffineDiffIPCProjector import TaichiAffineDiffIPCProjector
+from src.dem.engines.TaichiAffineMeshDiffIPCProjector import TaichiAffineMeshDiffIPCProjector
+from src.utils.errors import BlockJacobiError
 
 
 class AffineBodyEngine(object):
@@ -114,7 +122,7 @@ class AffineBodyEngine(object):
         absolute = float(sims.affine_fully_implicit_force_atol)
         relative = float(sims.affine_fully_implicit_force_rtol)
         if not np.isfinite(absolute) or absolute < 0.0 or not np.isfinite(relative) or relative < 0.0:
-            raise RuntimeError("Affine fully implicit force tolerances must be finite and " "non-negative")
+            raise ConfigurationError("Affine fully implicit force tolerances must be finite and " "non-negative")
         alpha, beta, _ = getattr(sims, "affine_newmark", (1.0, 0.5, 1.0))
         return 2.0 * alpha * beta * float(dt) ** 2 * absolute + relative * float(initial_residual)
 
@@ -133,7 +141,7 @@ class AffineBodyEngine(object):
     def initialize(self, sims, scene):
         self.sims = sims
         if len(scene.affine_bodies) == 0:
-            raise RuntimeError("AffineBody simulation has no affine bodies.")
+            raise SimulationStateError("AffineBody simulation has no affine bodies.")
         if self.state is None:
             self.state = AffineBodyState.from_scene(scene, sims)
             self.operator = TaichiAffineBodyOperator(self.state, sims, scene)
@@ -150,7 +158,6 @@ class AffineBodyEngine(object):
             if self.operator.levelset_contact and sims.affine_levelset_auto_initialize:
                 self.resolve_levelset_initial_overlaps(sims)
         if sims.wall_type == 1 and int(scene.servoNum[0]) > 0:
-            from src.dem.engines.IPCWallBoundary import ipc_wall_boundary
 
             self.wall_boundary = ipc_wall_boundary(scene, sims)
             self.operator.bind_ipc_wall_boundary(self.wall_boundary)
@@ -170,7 +177,7 @@ class AffineBodyEngine(object):
             self.operator.initialize_contact_damping_device()
             energy = self._assemble_system_device(sims, need_matrix=False)
             if not np.isfinite(energy) or self.operator.device_gradient_has_nonfinite():
-                raise RuntimeError("Cannot initialize Newmark acceleration from an invalid initial state")
+                raise SimulationStateError("Cannot initialize Newmark acceleration from an invalid initial state")
             self.operator.device_initialize_newmark_acceleration()
             self.newmark_initialized = True
 
@@ -179,7 +186,9 @@ class AffineBodyEngine(object):
         if sims is None:
             raise ValueError("sims is required to resolve level-set initial overlaps")
         if self.state is None or self.operator is None or not self.operator.levelset_contact:
-            raise RuntimeError("Initial level-set nonpenetration requires an initialized LevelSet AffineBody engine")
+            raise SimulationStateError(
+                "Initial level-set nonpenetration requires an initialized LevelSet AffineBody engine"
+            )
         parameters = {
             "dhat": float(self.operator.max_dhat),
             "kappa": float(np.max(self.operator.pp_kappa_np)),
@@ -258,7 +267,7 @@ class AffineBodyEngine(object):
         )
         self.last_nonpenetration_result = result
         if not result.success:
-            raise RuntimeError(
+            raise SimulationStateError(
                 "LevelSet AffineBody initial nonpenetration failed: "
                 f"{result.message}; minimum_gap={result.minimum_gap:.6e}"
             )
@@ -271,7 +280,7 @@ class AffineBodyEngine(object):
     def differentiate_levelset_initialization(self, loss_translation_gradient, direct_anchor_gradient=None):
         """Apply the stored adjoint of the initial nonpenetration solve."""
         if self.nonpenetration_solver is None:
-            raise RuntimeError("No level-set initial nonpenetration solve is available")
+            raise SimulationStateError("No level-set initial nonpenetration solve is available")
         if isinstance(loss_translation_gradient, ti.MatrixField):
             return self.nonpenetration_solver.solve_adjoint(
                 loss_translation_gradient,
@@ -299,7 +308,7 @@ class AffineBodyEngine(object):
         if self.wall_boundary is not None:
             raise ValueError("AffineBody adjoint does not differentiate DEM wall servo feedback yet")
         if self.state is None or self.operator is None:
-            raise RuntimeError("AffineBodyEngine must complete a forward step before solve_adjoint")
+            raise SimulationStateError("AffineBodyEngine must complete a forward step before solve_adjoint")
         if getattr(self.operator, "use_newmark", False):
             raise ValueError("ABD adjoints currently require newmark=[1, 0.5, 1]")
         if self.operator.levelset_contact:
@@ -377,7 +386,7 @@ class AffineBodyEngine(object):
             self.adjoint_triplet.solver = forward_solver
             self.adjoint_triplet.preconditioner_group_size = forward_group_size
         if not result["converged"]:
-            raise RuntimeError(
+            raise NonlinearSolveError(
                 "AffineBody adjoint device solve did not converge: "
                 f"residual={result['residual']:.6e}, iterations={result['iterations']}"
             )
@@ -455,16 +464,16 @@ class AffineBodyEngine(object):
         last_save_time = float(sims.current_time)
         target_time = float(sims.current_time + sims.time)
         print_simulation_start("DEM")
-        while has_remaining_time(sims.current_time, target_time, sims.delta):
+        while Timer.has_remaining_time(sims.current_time, target_time, sims.delta):
             sims.set_timestep(min(sims.delta, target_time - sims.current_time))
             self.step(sims, scene)
-            advance_time(sims, sims.delta)
+            Timer.advance_time(sims, sims.delta)
             sims.current_step += 1
             runtime_checkpoint()
             if sims.current_time - last_save_time >= sims.save_interval - 0.1 * sims.delta:
                 self._save(sims, scene)
                 last_save_time = float(sims.current_time)
-        if abs(target_time - sims.current_time) <= time_tolerance(sims.delta):
+        if abs(target_time - sims.current_time) <= Timer.time_tolerance(sims.delta):
             sims.current_time = target_time
         if abs(sims.current_time - last_save_time) > 0.9 * sims.save_interval:
             self._save(sims, scene)
@@ -472,7 +481,7 @@ class AffineBodyEngine(object):
 
     def _failure_diagnostics(self, sims, exception, attempt, timestep):
         return {
-            "kind": nonlinear_failure_kind(exception),
+            "kind": StepRetryPolicy.nonlinear_failure_kind(exception),
             "exception": type(exception).__name__,
             "message": str(exception),
             "attempt": int(attempt),
@@ -526,7 +535,7 @@ class AffineBodyEngine(object):
     def translate_wall(self, wall_id, offset):
         """Translate a standalone AffineBody IPC wall between accepted steps."""
         if self.operator is None:
-            raise RuntimeError("AffineBody engine must be initialized before moving a wall")
+            raise ConfigurationError("AffineBody engine must be initialized before moving a wall")
         wall_id = int(wall_id)
         if not 0 <= wall_id < self.operator.wall_num:
             raise IndexError(f"Affine wall id {wall_id} is outside [0, {self.operator.wall_num})")
@@ -552,7 +561,9 @@ class AffineBodyEngine(object):
             except BaseException as exception:
                 if self.wall_boundary is not None:
                     self.wall_boundary.rollback_device()
-                if not isinstance(exception, RuntimeError) or not is_recoverable_nonlinear_failure(exception):
+                if not isinstance(exception, RuntimeError) or not StepRetryPolicy.is_recoverable_nonlinear_failure(
+                    exception
+                ):
                     raise
                 failure = self._failure_diagnostics(sims, exception, attempt, attempt_timestep)
                 attempts.append(failure)
@@ -607,10 +618,10 @@ class AffineBodyEngine(object):
         self.step_line_search_max_backtracks = 0
         self.step_line_search_converged = True
         dt = float(sims.dt[None])
-        mode = _normalize_affine_friction_mode(sims.affine_friction_mode)
+        mode = TaichiAffineBodyOperator._normalize_affine_friction_mode(sims.affine_friction_mode)
         operator_fully_implicit = self.operator.fully_implicit
         if (mode == "fully_implicit") != operator_fully_implicit:
-            raise RuntimeError(
+            raise SimulationStateError(
                 "AffineBody friction_mode cannot be changed after engine "
                 "initialization; configure it before add_essentials()"
             )
@@ -624,11 +635,11 @@ class AffineBodyEngine(object):
         raw_outer = sims.affine_friction_iterations
         requested_outer = int(raw_outer)
         if not np.isfinite(float(raw_outer)) or float(raw_outer) != requested_outer:
-            raise RuntimeError("AffineBody friction_iterations must be an integer")
+            raise ConfigurationError("AffineBody friction_iterations must be an integer")
         requested_outer = -1 if requested_outer <= 0 else requested_outer
         max_outer = sims.affine_friction_max_iterations if requested_outer < 0 else requested_outer
         if max_outer <= 0:
-            raise RuntimeError("AffineBody friction_max_iterations must be a positive integer")
+            raise ConfigurationError("AffineBody friction_max_iterations must be a positive integer")
         tolerance = float(sims.affine_friction_tolerance)
         self.last_newton_iterations = 0
         self.last_friction_iterations = 0
@@ -699,7 +710,7 @@ class AffineBodyEngine(object):
         try:
             current_cfg().arch
         except (AttributeError, RuntimeError):
-            raise RuntimeError(
+            raise RuntimeNotInitializedError(
                 "AffineBody runtime requires an initialized Taichi " "architecture; the NumPy oracle is not a backend"
             )
         return _normalize_affine_assemble_type(sims.affine_assemble_type) in (
@@ -830,7 +841,7 @@ class AffineBodyEngine(object):
                     )
                     self.operator.finalize_coo_assembly()
             method = "BiCGSTAB" if self.operator.fully_implicit else "PCG"
-            raise RuntimeError(
+            raise LinearSolveError(
                 f"Affine {backend} device {method} did not converge: "
                 f"residual={self.last_linear_residual:.6e}, "
                 f"iterations={self.last_linear_iterations}"
@@ -883,7 +894,7 @@ class AffineBodyEngine(object):
             )
         else:
             message = f"Affine HashTriplet {method} did not converge"
-        raise RuntimeError(message) from last_error
+        raise SimulationStateError(message) from last_error
 
     def _clamp_device_direction(self, max_step):
         norm = float(self.operator.device_direction_inf_norm())
@@ -952,7 +963,7 @@ class AffineBodyEngine(object):
 
         self.last_friction_terminated_by_cap = not self.last_friction_converged
         if requested_outer < 0 and not self.last_friction_converged:
-            raise RuntimeError(
+            raise NonlinearSolveError(
                 "Affine lagged IPC friction fixed-point iteration did not "
                 f"converge within safety cap {max_outer} "
                 f"(residual={self.last_friction_residual:.6e})"
@@ -972,16 +983,16 @@ class AffineBodyEngine(object):
         for iteration in range(maximum_updates + 1):
             if not np.isfinite(energy):
                 self.last_inner_failure_reason = "non_finite_energy"
-                raise RuntimeError(
+                raise NonfiniteStateError(
                     "Affine lagged IPC energy is non-finite; the current " "configuration is not strictly feasible"
                 )
             if int(self.operator.device_gradient_has_nonfinite()) != 0:
                 self.last_inner_failure_reason = "non_finite_gradient"
-                raise RuntimeError("Affine lagged Newton residual is non-finite")
+                raise NonfiniteStateError("Affine lagged Newton residual is non-finite")
             self._solve_hash_direction_device(sims)
             if int(self.operator.device_direction_has_nonfinite()) != 0:
                 self.last_inner_failure_reason = "non_finite_direction"
-                raise RuntimeError("Affine lagged Newton correction is non-finite")
+                raise NonfiniteStateError("Affine lagged Newton correction is non-finite")
             raw_direction_norm = float(self.operator.device_direction_inf_norm())
             surface_direction_norm = self._device_surface_direction_inf_norm(raw_direction_norm)
             velocity_factor = getattr(self.operator, "correction_velocity_factor", 1.0 / self.operator.dt)
@@ -1010,7 +1021,7 @@ class AffineBodyEngine(object):
             energy = self._line_search_cuda(sims, energy)
             iterations = iteration + 1
         if not self.last_inner_converged:
-            raise RuntimeError(
+            raise LinearSolveError(
                 "Affine IPC inner Newton solve did not converge "
                 f"(reason={self.last_inner_failure_reason}, "
                 f"time_step={sims.current_step}, "
@@ -1041,12 +1052,12 @@ class AffineBodyEngine(object):
         if not np.isfinite(slope) or slope >= 0.0:
             self._record_line_search(False)
             self.last_inner_failure_reason = "non_descent_direction"
-            raise RuntimeError("Affine IPC line search requires a descent direction")
+            raise LineSearchError("Affine IPC line search requires a descent direction")
         alpha = self._ccd_step_size_device(sims)
         if not np.isfinite(alpha) or alpha <= 0.0:
             self._record_line_search(False)
             self.last_inner_failure_reason = "ccd_step_size"
-            raise RuntimeError("Affine lagged IPC CCD produced no strictly feasible step")
+            raise LineSearchError("Affine lagged IPC CCD produced no strictly feasible step")
         self.last_line_search_initial_alpha = float(alpha)
         self.last_line_search_slope = slope
         self.last_line_search_base_energy = float(energy)
@@ -1080,7 +1091,7 @@ class AffineBodyEngine(object):
         self._assemble_system_device(sims, need_matrix=True)
         self._record_line_search(False, backtracks=len(self.last_line_search_trials))
         self.last_inner_failure_reason = "monotone_line_search"
-        raise RuntimeError(
+        raise LineSearchError(
             "Affine lagged IPC monotone line search failed "
             f"(base_energy={energy:.17e}, slope={slope:.17e}, "
             f"initial_alpha={self.last_line_search_initial_alpha:.17e}, "
@@ -1108,25 +1119,27 @@ class AffineBodyEngine(object):
         if predictor_norm > 0.0:
             alpha = self._ccd_step_size_device(sims)
             if not np.isfinite(alpha) or alpha <= 0.0:
-                raise RuntimeError("Affine fully implicit predictor CCD returned an " "invalid/non-positive step")
+                raise SimulationStateError(
+                    "Affine fully implicit predictor CCD returned an " "invalid/non-positive step"
+                )
             self.operator.device_backup_line_search_base()
             self.operator.device_set_line_search_trial(alpha)
 
         initial_energy = self._assemble_system_device(sims, need_matrix=True)
         if not np.isfinite(initial_energy):
             self.last_inner_failure_reason = "non_finite_energy"
-            raise RuntimeError("Affine fully implicit initial state has non-finite IPC " "energy")
+            raise NonfiniteStateError("Affine fully implicit initial state has non-finite IPC " "energy")
         iterations = 0
         initial_residual = float(self.operator.device_gradient_inf_norm())
         if not np.isfinite(initial_residual):
             self.last_inner_failure_reason = "non_finite_residual"
-            raise RuntimeError("Affine fully implicit initial residual is non-finite")
+            raise NonfiniteStateError("Affine fully implicit initial residual is non-finite")
         tolerance = self._fully_implicit_force_target(sims, initial_residual, dt)
         self.last_inner_failure_reason = "maximum_newton_iterations"
         for iteration in range(int(sims.affine_max_newton_iteration)):
             if int(self.operator.device_gradient_has_nonfinite()) != 0:
                 self.last_inner_failure_reason = "non_finite_residual"
-                raise RuntimeError("Affine fully implicit residual is non-finite")
+                raise NonfiniteStateError("Affine fully implicit residual is non-finite")
             residual_norm = float(self.operator.device_gradient_inf_norm())
             if residual_norm <= tolerance:
                 self.last_inner_converged = True
@@ -1137,10 +1150,12 @@ class AffineBodyEngine(object):
             direction_norm = self._clamp_device_direction(sims.affine_max_step)
             if int(self.operator.device_direction_has_nonfinite()) != 0:
                 self.last_inner_failure_reason = "non_finite_direction"
-                raise RuntimeError("Affine fully implicit Newton correction is non-finite")
+                raise NonfiniteStateError("Affine fully implicit Newton correction is non-finite")
             if direction_norm <= np.finfo(float).eps:
                 self.last_inner_failure_reason = "newton_stagnation"
-                raise RuntimeError("Affine fully implicit Newton stagnated before the " "residual tolerance was met")
+                raise SimulationStateError(
+                    "Affine fully implicit Newton stagnated before the " "residual tolerance was met"
+                )
 
             self._fully_implicit_line_search_cuda(sims)
             iterations = iteration + 1
@@ -1156,7 +1171,7 @@ class AffineBodyEngine(object):
         self.last_friction_residual = float(self.operator.device_gradient_inf_norm())
         self.last_friction_converged = self.last_inner_converged
         if not self.last_inner_converged:
-            raise RuntimeError(
+            raise NonlinearSolveError(
                 "Affine fully implicit Newton solve did not converge "
                 f"(reason={self.last_inner_failure_reason}, "
                 f"iterations={iterations}, "
@@ -1191,11 +1206,11 @@ class AffineBodyEngine(object):
         if not np.isfinite(base_merit) or not np.isfinite(merit_slope):
             self._record_line_search(False)
             self.last_inner_failure_reason = "non_finite_residual_merit"
-            raise RuntimeError("Affine fully implicit residual merit or directional " "derivative is non-finite")
+            raise NonfiniteStateError("Affine fully implicit residual merit or directional " "derivative is non-finite")
         if merit_slope >= 0.0:
             self._record_line_search(False)
             self.last_inner_failure_reason = "non_descent_residual_merit_direction"
-            raise RuntimeError(
+            raise LineSearchError(
                 "Affine fully implicit Newton correction is not a descent " "direction for 0.5 * ||R||^2"
             )
 
@@ -1203,7 +1218,7 @@ class AffineBodyEngine(object):
         if not np.isfinite(alpha) or alpha <= 0.0:
             self._record_line_search(False)
             self.last_inner_failure_reason = "ccd_step_size"
-            raise RuntimeError("Affine fully implicit CCD produced no feasible step")
+            raise SimulationStateError("Affine fully implicit CCD produced no feasible step")
         armijo = float(sims.affine_fully_implicit_armijo)
         contraction = float(sims.affine_fully_implicit_line_search_contraction)
         if not 0.0 < armijo < 1.0 or not 0.0 < contraction < 1.0:
@@ -1222,7 +1237,7 @@ class AffineBodyEngine(object):
                 if not np.isfinite(accepted_energy):
                     self._record_line_search(False, backtracks=backtracks)
                     self.last_inner_failure_reason = "non_finite_energy"
-                    raise RuntimeError("Affine fully implicit accepted state has " "non-finite IPC energy")
+                    raise NonfiniteStateError("Affine fully implicit accepted state has " "non-finite IPC energy")
                 self._record_line_search(True, alpha, backtracks)
                 return alpha
             alpha *= contraction
@@ -1231,7 +1246,7 @@ class AffineBodyEngine(object):
         self._assemble_system_device(sims, need_matrix=True)
         self._record_line_search(False, backtracks=int(sims.affine_line_search_max_iteration))
         self.last_inner_failure_reason = "residual_armijo_line_search"
-        raise RuntimeError("Affine fully implicit residual Armijo line search failed")
+        raise LineSearchError("Affine fully implicit residual Armijo line search failed")
 
     def _matrix_mode(self, sims):
         backend = _normalize_affine_assemble_type(sims.affine_assemble_type)
@@ -1347,7 +1362,7 @@ class AffineBodyEngine(object):
 
     def output_snapshot(self):
         if self.state is None:
-            raise RuntimeError("AffineBodyEngine has not been initialized.")
+            raise SimulationStateError("AffineBodyEngine has not been initialized.")
         if self.last_device_nonlinear_path or getattr(self.operator, "use_newmark", False):
             # The accepted affine state stays device-resident throughout the
             # nonlinear loop.  Synchronize it once at the recorder/user

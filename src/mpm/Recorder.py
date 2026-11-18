@@ -1,137 +1,218 @@
 import os
 from itertools import product
-
 import numpy as np
-
 from src.mpm.elements.AdaptiveGridOutput import build_adaptive_leaf_mesh
 from src.mpm.Simulation import Simulation
-from src.mpm.SceneManager import myScene
-from src.mpm.SoftParticleOutput import (
-    pk1_to_cauchy,
-    von_mises_stress,
-    vtk_vector,
-)
+from src.mpm.SceneManager import SceneManager
+from src.mpm.SoftParticleOutput import pk1_to_cauchy, von_mises_stress, vtk_vector
 from src.utils.FieldIO import field_to_numpy_prefix
-from src.utils.linalg import no_operation, get_dataclass_to_dict
-from third_party.pyevtk.hl import pointsToVTK, gridToVTK, unstructuredGridToVTK
+from src.utils.linalg import no_operation
+from third_party.pyevtk.hl import pointsToVTK, unstructuredGridToVTK
 from third_party.pyevtk.vtk import VtkHexahedron, VtkQuad, VtkVertex
 
 
-def _has_resolved_air_reference(cell_type):
-    has_air_reference = bool(np.any(np.asarray(cell_type) == 0))
-    types = np.asarray(cell_type).squeeze()
-    if has_air_reference and types.ndim in (2, 3):
-        # Isolated wall voids are not a resolved atmospheric free surface.
-        indices = np.array(np.nonzero(types == 0))
-        isolated = np.ones(indices.shape[1], dtype=bool)
-        fluid_neighbors = np.zeros(indices.shape[1], dtype=int)
-        for axis, size in enumerate(types.shape):
-            isolated &= (indices[axis] > 0) & (indices[axis] < size - 1)
-            for direction in (-1, 1):
-                neighbor = indices.copy()
-                neighbor[axis] = np.clip(neighbor[axis] + direction, 0, size - 1)
-                values = types[tuple(neighbor)]
-                isolated &= (values == 1) | (values == 2)
-                fluid_neighbors += values == 1
-        has_air_reference = not bool(np.all(isolated & (fluid_neighbors >= types.ndim)))
-    return has_air_reference
-
-
-def _closed_domain_pressure_offset(pressure, cell_type):
-    pressure_flat = np.asarray(pressure).reshape(-1)
-    cell_type_flat = np.asarray(cell_type).reshape(-1)
-    if pressure_flat.size != cell_type_flat.size:
-        return 0.0
-    fluid = cell_type_flat == 1
-    if np.any(fluid) and not _has_resolved_air_reference(cell_type):
-        return float(np.mean(pressure_flat[fluid], dtype=np.float64))
-    return 0.0
-
-
-def _normalize_closed_domain_pressure(pressure, cell_type):
-    """Use one zero-mean output gauge when no atmospheric cell fixes pressure."""
-    normalized = np.array(pressure, copy=True)
-    offset = _closed_domain_pressure_offset(pressure, cell_type)
-    if offset != 0.0:
-        normalized.reshape(-1)[np.asarray(cell_type).reshape(-1) == 1] -= offset
-    return normalized
-
-
-def build_sparse_block_mesh(dimension, active_block_ids, block_count, block_size, grid_size, gnum):
-    """Build one clipped VTK cell for every active BlockScan storage block."""
-    dimension = int(dimension)
-    if dimension not in (2, 3):
-        raise ValueError(f"Sparse block output requires dimension 2 or 3, got {dimension}")
-
-    active_block_ids = np.asarray(active_block_ids, dtype=np.int64).reshape(-1)
-    block_count = np.asarray(block_count, dtype=np.int64).reshape(-1)[:dimension]
-    grid_size = np.asarray(grid_size, dtype=np.float64).reshape(-1)[:dimension]
-    gnum = np.asarray(gnum, dtype=np.int64).reshape(-1)[:dimension]
-    block_size = int(block_size)
-    if block_size <= 1:
-        raise ValueError(f"Sparse block output requires block_size > 1, got {block_size}")
-    if block_count.size != dimension or grid_size.size != dimension or gnum.size != dimension:
-        raise ValueError("Sparse block output arrays must match the requested dimension")
-    if np.any(block_count <= 0) or np.any(grid_size <= 0.0) or np.any(gnum <= 1):
-        raise ValueError(
-            "Sparse block output requires positive block counts/grid spacing and at least two nodes per axis"
+class WriteFile:
+    def monitor_soft_material_point(self, sims, scene):
+        point_num = int(scene.softPointNum[0])
+        active = np.ascontiguousarray(scene.soft_point.active.to_numpy()[0:point_num])
+        point_body_ids = np.ascontiguousarray(scene.soft_point.bodyID.to_numpy()[0:point_num])
+        material_id = np.ascontiguousarray(scene.soft_point.materialID.to_numpy()[0:point_num])
+        group_id = np.ascontiguousarray(scene.soft_point.groupID.to_numpy()[0:point_num])
+        position = np.ascontiguousarray(scene.soft_point.x.to_numpy()[0:point_num])
+        reference = np.ascontiguousarray(scene.soft_point.x0.to_numpy()[0:point_num])
+        velocity = np.ascontiguousarray(scene.soft_point.v.to_numpy()[0:point_num])
+        contact_force = np.ascontiguousarray(scene.soft_point.contact_force.to_numpy()[0:point_num])
+        external_force = np.ascontiguousarray(scene.soft_point.external_force.to_numpy()[0:point_num])
+        mass = np.ascontiguousarray(scene.soft_point.m.to_numpy()[0:point_num])
+        volume = np.ascontiguousarray(scene.soft_point.vol0.to_numpy()[0:point_num])
+        deformation = np.ascontiguousarray(scene.soft_point.F.to_numpy()[0:point_num])
+        stress = np.ascontiguousarray(scene.soft_point.stress.to_numpy()[0:point_num])
+        displacement = np.ascontiguousarray(position - reference)
+        cauchy_stress, _ = pk1_to_cauchy(stress, deformation)
+        von_mises = von_mises_stress(cauchy_stress)
+        energy_output = {}
+        if sims.energy_tracking:
+            point_strain_energy = np.ascontiguousarray(scene.soft_point.strain_energy.to_numpy()[0:point_num])
+            soft_num = int(scene.softNum[0])
+            soft_body_ids = np.ascontiguousarray(scene.soft.bodyID.to_numpy()[0:soft_num])
+            soft_local_damping_energy = np.ascontiguousarray(scene.soft.damp_energy.to_numpy()[0:soft_num])
+            soft_kinetic_energy = np.zeros(soft_num, dtype=np.float64)
+            soft_strain_energy = np.zeros(soft_num, dtype=np.float64)
+            soft_gravitational_potential_energy = np.zeros(soft_num, dtype=np.float64)
+            gravity = np.asarray(
+                [float(sims.gravity[index]) for index in range(position.shape[1])],
+                dtype=np.float64,
+            )
+            for soft_id, body_id in enumerate(soft_body_ids):
+                body_mask = point_body_ids == body_id
+                soft_kinetic_energy[soft_id] = 0.5 * np.sum(
+                    mass[body_mask] * np.einsum("ij,ij->i", velocity[body_mask], velocity[body_mask])
+                )
+                soft_strain_energy[soft_id] = np.sum(point_strain_energy[body_mask])
+                soft_gravitational_potential_energy[soft_id] = -np.sum(
+                    mass[body_mask] * np.einsum("ij,j->i", position[body_mask], gravity)
+                )
+            energy_output = {
+                "point_strain_energy": point_strain_energy,
+                "soft_body_id": soft_body_ids,
+                "soft_kinetic_energy": soft_kinetic_energy,
+                "soft_strain_energy": soft_strain_energy,
+                "soft_gravitational_potential_energy": soft_gravitational_potential_energy,
+                "soft_local_damping_energy": soft_local_damping_energy,
+            }
+        if sims.visualize and point_num > 0:
+            pointsToVTK(
+                self.vtk_path + f"/GraphicLSMPMPoint{sims.current_print:06d}",
+                np.ascontiguousarray(position[:, 0]),
+                np.ascontiguousarray(position[:, 1]),
+                np.ascontiguousarray(position[:, 2]),
+                data={
+                    "bodyID": point_body_ids,
+                    "group": group_id,
+                    "displacement": vtk_vector(displacement),
+                    "velocity": vtk_vector(velocity),
+                    "contact_force": vtk_vector(contact_force),
+                    "external_force": vtk_vector(external_force),
+                    "von_mises_stress": von_mises,
+                    "cauchy_stress_xx": np.ascontiguousarray(cauchy_stress[:, 0, 0]),
+                    "cauchy_stress_yy": np.ascontiguousarray(cauchy_stress[:, 1, 1]),
+                    "cauchy_stress_zz": np.ascontiguousarray(cauchy_stress[:, 2, 2]),
+                },
+            )
+        np.savez(
+            self.particle_path + f"/LSMPMSoftPoint{sims.current_print:06d}",
+            t_current=sims.current_time,
+            point_num=point_num,
+            active=active,
+            bodyID=point_body_ids,
+            materialID=material_id,
+            groupID=group_id,
+            position=position,
+            reference=reference,
+            velocity=velocity,
+            contact_force=contact_force,
+            external_force=external_force,
+            mass=mass,
+            volume=volume,
+            F=deformation,
+            stress=stress,
+            **energy_output,
         )
 
-    total_blocks = int(np.prod(block_count))
-    if np.any(active_block_ids < 0) or np.any(active_block_ids >= total_blocks):
-        raise ValueError("Sparse block output received an active block id outside the physical block grid")
+    @staticmethod
+    def _has_resolved_air_reference(cell_type):
+        has_air_reference = bool(np.any(np.asarray(cell_type) == 0))
+        types = np.asarray(cell_type).squeeze()
+        if has_air_reference and types.ndim in (2, 3):
+            # Isolated wall voids are not a resolved atmospheric free surface.
+            indices = np.array(np.nonzero(types == 0))
+            isolated = np.ones(indices.shape[1], dtype=bool)
+            fluid_neighbors = np.zeros(indices.shape[1], dtype=int)
+            for axis, size in enumerate(types.shape):
+                isolated &= (indices[axis] > 0) & (indices[axis] < size - 1)
+                for direction in (-1, 1):
+                    neighbor = indices.copy()
+                    neighbor[axis] = np.clip(neighbor[axis] + direction, 0, size - 1)
+                    values = types[tuple(neighbor)]
+                    isolated &= (values == 1) | (values == 2)
+                    fluid_neighbors += values == 1
+            has_air_reference = not bool(np.all(isolated & (fluid_neighbors >= types.ndim)))
+        return has_air_reference
 
-    vertices_per_cell = 4 if dimension == 2 else 8
-    coords = np.empty((active_block_ids.size * vertices_per_cell, dimension), dtype=np.float64)
-    connectivity = np.arange(coords.shape[0], dtype=np.int64).reshape(-1, vertices_per_cell)
-    block_indices = np.empty((active_block_ids.size, dimension), dtype=np.int32)
-    domain_upper = (gnum - 1) * grid_size
+    @staticmethod
+    def _closed_domain_pressure_offset(pressure, cell_type):
+        pressure_flat = np.asarray(pressure).reshape(-1)
+        cell_type_flat = np.asarray(cell_type).reshape(-1)
+        if pressure_flat.size != cell_type_flat.size:
+            return 0.0
+        fluid = cell_type_flat == 1
+        if np.any(fluid) and not WriteFile._has_resolved_air_reference(cell_type):
+            return float(np.mean(pressure_flat[fluid], dtype=np.float64))
+        return 0.0
 
-    for compact_id, physical_id in enumerate(active_block_ids):
-        block_index = np.empty(dimension, dtype=np.int64)
-        remaining = int(physical_id)
-        for axis in range(dimension):
-            block_index[axis] = remaining % int(block_count[axis])
-            remaining //= int(block_count[axis])
-        block_indices[compact_id, :] = block_index
+    @staticmethod
+    def _normalize_closed_domain_pressure(pressure, cell_type):
+        """Use one zero-mean output gauge when no atmospheric cell fixes pressure."""
+        normalized = np.array(pressure, copy=True)
+        offset = WriteFile._closed_domain_pressure_offset(pressure, cell_type)
+        if offset != 0.0:
+            normalized.reshape(-1)[np.asarray(cell_type).reshape(-1) == 1] -= offset
+        return normalized
 
-        first_node = block_index * block_size
-        lower = np.maximum(0.0, (first_node - 0.5) * grid_size)
-        upper = np.minimum(domain_upper, (first_node + block_size - 0.5) * grid_size)
-        offset = compact_id * vertices_per_cell
-        if dimension == 2:
-            x0, y0 = lower
-            x1, y1 = upper
-            coords[offset : offset + 4, :] = (
-                (x0, y0),
-                (x1, y0),
-                (x1, y1),
-                (x0, y1),
+    @staticmethod
+    def build_sparse_block_mesh(dimension, active_block_ids, block_count, block_size, grid_size, gnum):
+        """Build one clipped VTK cell for every active BlockScan storage block."""
+        dimension = int(dimension)
+        if dimension not in (2, 3):
+            raise ValueError(f"Sparse block output requires dimension 2 or 3, got {dimension}")
+
+        active_block_ids = np.asarray(active_block_ids, dtype=np.int64).reshape(-1)
+        block_count = np.asarray(block_count, dtype=np.int64).reshape(-1)[:dimension]
+        grid_size = np.asarray(grid_size, dtype=np.float64).reshape(-1)[:dimension]
+        gnum = np.asarray(gnum, dtype=np.int64).reshape(-1)[:dimension]
+        block_size = int(block_size)
+        if block_size <= 1:
+            raise ValueError(f"Sparse block output requires block_size > 1, got {block_size}")
+        if block_count.size != dimension or grid_size.size != dimension or gnum.size != dimension:
+            raise ValueError("Sparse block output arrays must match the requested dimension")
+        if np.any(block_count <= 0) or np.any(grid_size <= 0.0) or np.any(gnum <= 1):
+            raise ValueError(
+                "Sparse block output requires positive block counts/grid spacing and at least two nodes per axis"
             )
-        else:
-            x0, y0, z0 = lower
-            x1, y1, z1 = upper
-            coords[offset : offset + 8, :] = (
-                (x0, y0, z0),
-                (x1, y0, z0),
-                (x1, y1, z0),
-                (x0, y1, z0),
-                (x0, y0, z1),
-                (x1, y0, z1),
-                (x1, y1, z1),
-                (x0, y1, z1),
-            )
 
-    return {
-        "coords": np.ascontiguousarray(coords),
-        "connectivity": np.ascontiguousarray(connectivity),
-        "active_block_id": np.ascontiguousarray(active_block_ids),
-        "compact_block_id": np.arange(active_block_ids.size, dtype=np.int64),
-        "block_index": np.ascontiguousarray(block_indices),
-    }
+        total_blocks = int(np.prod(block_count))
+        if np.any(active_block_ids < 0) or np.any(active_block_ids >= total_blocks):
+            raise ValueError("Sparse block output received an active block id outside the physical block grid")
 
+        vertices_per_cell = 4 if dimension == 2 else 8
+        coords = np.empty((active_block_ids.size * vertices_per_cell, dimension), dtype=np.float64)
+        connectivity = np.arange(coords.shape[0], dtype=np.int64).reshape(-1, vertices_per_cell)
+        block_indices = np.empty((active_block_ids.size, dimension), dtype=np.int32)
+        domain_upper = (gnum - 1) * grid_size
 
-class WriteFile:
+        for compact_id, physical_id in enumerate(active_block_ids):
+            block_index = np.empty(dimension, dtype=np.int64)
+            remaining = int(physical_id)
+            for axis in range(dimension):
+                block_index[axis] = remaining % int(block_count[axis])
+                remaining //= int(block_count[axis])
+            block_indices[compact_id, :] = block_index
+
+            first_node = block_index * block_size
+            lower = np.maximum(0.0, (first_node - 0.5) * grid_size)
+            upper = np.minimum(domain_upper, (first_node + block_size - 0.5) * grid_size)
+            offset = compact_id * vertices_per_cell
+            if dimension == 2:
+                x0, y0 = lower
+                x1, y1 = upper
+                coords[offset : offset + 4, :] = (
+                    (x0, y0),
+                    (x1, y0),
+                    (x1, y1),
+                    (x0, y1),
+                )
+            else:
+                x0, y0, z0 = lower
+                x1, y1, z1 = upper
+                coords[offset : offset + 8, :] = (
+                    (x0, y0, z0),
+                    (x1, y0, z0),
+                    (x1, y1, z0),
+                    (x0, y1, z0),
+                    (x0, y0, z1),
+                    (x1, y0, z1),
+                    (x1, y1, z1),
+                    (x0, y1, z1),
+                )
+
+        return {
+            "coords": np.ascontiguousarray(coords),
+            "connectivity": np.ascontiguousarray(connectivity),
+            "active_block_id": np.ascontiguousarray(active_block_ids),
+            "compact_block_id": np.arange(active_block_ids.size, dtype=np.int64),
+            "block_index": np.ascontiguousarray(block_indices),
+        }
+
     def __init__(self, sims):
         self.vtk_path = None
         self.particle_path = None
@@ -150,46 +231,46 @@ class WriteFile:
         if "particle" in sims.monitor_type:
             if sims.visualize:
                 if sims.dimension == 2:
-                    self.visualizeParticle = self.VisualizeParticle2D
+                    self.visualizeParticle = self.visualize_particle2d
                 elif sims.dimension == 3:
-                    self.visualizeParticle = self.VisualizeParticle
+                    self.visualizeParticle = self.visualize_particle
             if sims.material_type in ("TwoPhaseSingleLayer", "TwoPhaseDoubleLayer"):
-                self.save_particle = self.MonitorParticleTwoPhase
+                self.save_particle = self.monitor_particle_two_phase
             elif sims.neighbor_detection or sims.coupling:
                 if "Implicit" in sims.solver_type:
                     if sims.material_type == "Fluid" or sims.material_type == "TwoPhaseDoubleLayer":
-                        self.save_particle = self.MonitorIncompressibleParticleCoupling
+                        self.save_particle = self.monitor_incompressible_particle_coupling
                     elif sims.material_type == "Solid":
                         self.save_particle = self.MonitorImplicitParticleCoupling
                 else:
-                    self.save_particle = self.MonitorParticleCoupling
+                    self.save_particle = self.monitor_particle_coupling
             else:
                 if sims.material_type in ("TwoPhaseSingleLayer", "TwoPhaseDoubleLayer"):
-                    self.save_particle = self.MonitorParticleTwoPhase
+                    self.save_particle = self.monitor_particle_two_phase
                 else:
                     if "Implicit" in sims.solver_type:
                         if sims.material_type == "Fluid" or sims.material_type == "TwoPhaseDoubleLayer":
-                            self.save_particle = self.MonitorIncompressibleParticle
+                            self.save_particle = self.monitor_incompressible_particle
                         elif sims.material_type == "Solid":
-                            self.save_particle = self.MonitorImplicitParticle
+                            self.save_particle = self.monitor_implicit_particle
                     else:
-                        self.save_particle = self.MonitorParticle
+                        self.save_particle = self.monitor_particle
 
         self.visualizeGrid = no_operation
         if "grid" in sims.monitor_type:
             if sims.visualize:
                 if sims.dimension == 2:
-                    self.visualizeGrid = self.VisualizeGrid2D
+                    self.visualizeGrid = self.visualize_grid2d
                 elif sims.dimension == 3:
-                    self.visualizeGrid = self.VisualizeGrid
+                    self.visualizeGrid = self.visualize_grid
             if sims.contact_detection:
-                self.save_grid = self.MonitorContactGrid
+                self.save_grid = self.monitor_contact_grid
             else:
-                self.save_grid = self.MonitorGrid
+                self.save_grid = self.monitor_grid
 
         self.visualizedObject = no_operation
         if "object" in sims.monitor_type:
-            self.visualizedObject = self.VisualizeObject2D
+            self.visualizedObject = self.visualize_object2d
 
     def output(self, sims, scene):
         self.save_particle(sims, scene)
@@ -214,7 +295,7 @@ class WriteFile:
         if not os.path.exists(self.grid_path):
             os.makedirs(self.grid_path)
 
-    def VisualizeObject2D(self, sims: Simulation, scene: myScene):
+    def visualize_object2d(self, sims: Simulation, scene: SceneManager):
         polygon = scene.contact.polygon_vertices.to_numpy()
         points_flattened = polygon.flatten()
         posx = np.ascontiguousarray(polygon[:, 0])
@@ -233,7 +314,7 @@ class WriteFile:
             cell_types,
         )
 
-    def VisualizeParticle(self, sims: Simulation, position, velocity, volume, state_vars):
+    def visualize_particle(self, sims: Simulation, position, velocity, volume, state_vars):
         posx = np.ascontiguousarray(position[:, 0], dtype=np.float64)
         posy = np.ascontiguousarray(position[:, 1], dtype=np.float64)
         posz = np.ascontiguousarray(position[:, 2], dtype=np.float64)
@@ -244,7 +325,7 @@ class WriteFile:
         data.update(state_vars)
         pointsToVTK(self.vtk_path + f"/GraphicMPMParticle{sims.current_print:06d}", posx, posy, posz, data=data)
 
-    def VisualizeParticle2D(self, sims: Simulation, position, velocity, volume, state_vars):
+    def visualize_particle2d(self, sims: Simulation, position, velocity, volume, state_vars):
         posx = np.ascontiguousarray(position[:, 0], dtype=np.float64)
         posy = np.ascontiguousarray(position[:, 1], dtype=np.float64)
         posz = np.zeros(position.shape[0], dtype=np.float64)
@@ -433,13 +514,13 @@ class WriteFile:
             cellData=self._flatten_vtk_data(cell_data, cell_count),
         )
 
-    def VisualizeGrid(self, sims: Simulation, coords, point_data=None, cell_data=None, element=None):
+    def visualize_grid(self, sims: Simulation, coords, point_data=None, cell_data=None, element=None):
         self._write_regular_grid_as_unstructured_vtk(sims, coords, point_data, cell_data, element)
 
-    def VisualizeGrid2D(self, sims: Simulation, coords, point_data=None, cell_data=None, element=None):
+    def visualize_grid2d(self, sims: Simulation, coords, point_data=None, cell_data=None, element=None):
         self._write_regular_grid_as_unstructured_vtk(sims, coords, point_data, cell_data, element)
 
-    def VisualizeAdaptiveGrid(self, sims: Simulation, mesh):
+    def visualize_adaptive_grid(self, sims: Simulation, mesh):
         coords = mesh["coords"]
         posx = np.ascontiguousarray(coords[:, 0], dtype=np.float64)
         posy = np.ascontiguousarray(coords[:, 1], dtype=np.float64)
@@ -475,7 +556,7 @@ class WriteFile:
             pointData={"logical_node_id": mesh["logical_node_id"]},
         )
 
-    def VisualizeTHBGrid(self, sims: Simulation, coords, point_data=None, cell_data=None):
+    def visualize_thb_grid(self, sims: Simulation, coords, point_data=None, cell_data=None):
         coords = np.ascontiguousarray(coords, dtype=np.float64)
         posx = np.ascontiguousarray(coords[:, 0], dtype=np.float64)
         posy = np.ascontiguousarray(coords[:, 1], dtype=np.float64)
@@ -499,7 +580,7 @@ class WriteFile:
             cellData=self._flatten_vtk_data(cell_data or {}, node_count),
         )
 
-    def VisualizeSparseGrid(self, sims: Simulation, mesh):
+    def visualize_sparse_grid(self, sims: Simulation, mesh):
         coords = mesh["coords"]
         posx = np.ascontiguousarray(coords[:, 0], dtype=np.float64)
         posy = np.ascontiguousarray(coords[:, 1], dtype=np.float64)
@@ -537,9 +618,9 @@ class WriteFile:
             },
         )
 
-    def MonitorParticleCoupling(self, sims: Simulation, scene: myScene):
+    def monitor_particle_coupling(self, sims: Simulation, scene: SceneManager):
         particle_num = scene.particleNum[0]
-        output = self.MonitorParticleBase(sims, scene, particle_num)
+        output = self.monitor_particle_base(sims, scene, particle_num)
 
         coupling = field_to_numpy_prefix(scene.particle.coupling, particle_num)
         radius = field_to_numpy_prefix(scene.particle.rad, particle_num)
@@ -571,12 +652,12 @@ class WriteFile:
         self.visualizeParticle(sims, output["position"], output["velocity"], output["volume"], state_vars)
         np.savez(self.particle_path + f"/MPMParticle{sims.current_print:06d}", **output)
 
-    def MonitorParticleTwoPhase(self, sims: Simulation, scene: myScene):
+    def monitor_particle_two_phase(self, sims: Simulation, scene: SceneManager):
         particle_num = scene.particleNum[0]
-        particleID = field_to_numpy_prefix(scene.particle.particleID, particle_num)
+        particle_id = field_to_numpy_prefix(scene.particle.particleID, particle_num)
         position = field_to_numpy_prefix(scene.particle.x, particle_num)
-        bodyID = field_to_numpy_prefix(scene.particle.bodyID, particle_num)
-        materialID = field_to_numpy_prefix(scene.particle.materialID, particle_num)
+        body_id = field_to_numpy_prefix(scene.particle.bodyID, particle_num)
+        material_id = field_to_numpy_prefix(scene.particle.materialID, particle_num)
         active = field_to_numpy_prefix(scene.particle.active, particle_num)
         phase = None
         if hasattr(scene.particle, "phase"):
@@ -601,7 +682,7 @@ class WriteFile:
         state_vars: dict = scene.material.get_state_vars_dict(start_index=0, end_index=scene.particleNum[0])
         state_vars.update({"pressure": pressure})
         if phase is not None:
-            state_vars.update({"phase": phase, "bodyID": bodyID, "materialID": materialID})
+            state_vars.update({"phase": phase, "bodyID": body_id, "materialID": material_id})
         free_surface = None
         if sims.free_surface_detection:
             free_surface = field_to_numpy_prefix(scene.particle.free_surface, particle_num)
@@ -642,9 +723,9 @@ class WriteFile:
             dimension=sims.dimension,
             two_phase_fluid_mass_initialized=scene.two_phase_fluid_mass_initialized,
             body_num=particle_num,
-            particleID=particleID,
-            bodyID=bodyID,
-            materialID=materialID,
+            particleID=particle_id,
+            bodyID=body_id,
+            materialID=material_id,
             active=active,
             mass=mass,
             volume=volume,
@@ -687,9 +768,9 @@ class WriteFile:
         self._append_incompressible_restart_pressure(output, scene)
         np.savez(self.particle_path + f"/MPMParticle{sims.current_print:06d}", **output)
 
-    def MonitorIncompressibleParticleCoupling(self, sims: Simulation, scene: myScene):
+    def monitor_incompressible_particle_coupling(self, sims: Simulation, scene: SceneManager):
         particle_num = scene.particleNum[0]
-        output = self.MonitorParticleBase(sims, scene, particle_num)
+        output = self.monitor_particle_base(sims, scene, particle_num)
 
         pressure = self.sample_incompressible_cell_pressure(sims, scene, output["position"])
         if (
@@ -727,9 +808,9 @@ class WriteFile:
         self.visualizeParticle(sims, output["position"], output["velocity"], output["volume"], state_vars)
         np.savez(self.particle_path + f"/MPMParticle{sims.current_print:06d}", **output)
 
-    def MonitorParticle(self, sims: Simulation, scene: myScene):
+    def monitor_particle(self, sims: Simulation, scene: SceneManager):
         particle_num = scene.particleNum[0]
-        output = self.MonitorParticleBase(sims, scene, particle_num)
+        output = self.monitor_particle_base(sims, scene, particle_num)
 
         stress = field_to_numpy_prefix(scene.particle.stress, particle_num)
         velocity_gradient = field_to_numpy_prefix(scene.particle.velocity_gradient, particle_num)
@@ -753,9 +834,9 @@ class WriteFile:
         self.visualizeParticle(sims, output["position"], output["velocity"], output["volume"], state_vars)
         np.savez(self.particle_path + f"/MPMParticle{sims.current_print:06d}", **output)
 
-    def MonitorImplicitParticle(self, sims: Simulation, scene: myScene):
+    def monitor_implicit_particle(self, sims: Simulation, scene: SceneManager):
         particle_num = scene.particleNum[0]
-        output = self.MonitorParticleBase(sims, scene, particle_num)
+        output = self.monitor_particle_base(sims, scene, particle_num)
 
         stress = field_to_numpy_prefix(scene.particle.stress, particle_num)
         acceleration = field_to_numpy_prefix(scene.particle.a, particle_num)
@@ -765,9 +846,9 @@ class WriteFile:
         self.visualizeParticle(sims, output["position"], output["velocity"], output["volume"], state_vars)
         np.savez(self.particle_path + f"/MPMParticle{sims.current_print:06d}", **output)
 
-    def MonitorIncompressibleParticle(self, sims: Simulation, scene: myScene):
+    def monitor_incompressible_particle(self, sims: Simulation, scene: SceneManager):
         particle_num = scene.particleNum[0]
-        output = self.MonitorParticleBase(sims, scene, particle_num)
+        output = self.monitor_particle_base(sims, scene, particle_num)
 
         pressure = self.sample_incompressible_cell_pressure(sims, scene, output["position"])
         output.update(
@@ -790,7 +871,7 @@ class WriteFile:
             output["restart_grid_size"] = np.asarray(scene.element.grid_size, dtype=np.float64)
             output["restart_ghost_cell"] = int(scene.element.ghost_cell)
 
-    def sample_incompressible_cell_pressure(self, sims: Simulation, scene: myScene, position):
+    def sample_incompressible_cell_pressure(self, sims: Simulation, scene: SceneManager, position):
         particle_num = position.shape[0]
         if particle_num == 0:
             return np.zeros(0, dtype=np.float64)
@@ -800,7 +881,7 @@ class WriteFile:
         dim = sims.dimension
         pressure_field = scene.element.cell.pressure.to_numpy()
         cell_type_field = scene.element.cell.type.to_numpy()
-        pressure_field = _normalize_closed_domain_pressure(pressure_field, cell_type_field)
+        pressure_field = WriteFile._normalize_closed_domain_pressure(pressure_field, cell_type_field)
         surface_tension_field = scene.element.cell.surface_tension.to_numpy()
         cnum = np.asarray(scene.element.cnum, dtype=np.int64)[:dim]
         ghost_cell = int(scene.element.ghost_cell)
@@ -882,7 +963,7 @@ class WriteFile:
             )
         return pressure
 
-    def get_incompressible_atmospheric_pressure(self, scene: myScene):
+    def get_incompressible_atmospheric_pressure(self, scene: SceneManager):
         mat_props = getattr(scene.material, "matProps", None)
         if mat_props is None:
             return 0.0
@@ -893,11 +974,11 @@ class WriteFile:
             return 0.0
         return 0.0
 
-    def MonitorParticleBase(self, sims: Simulation, scene: myScene, particle_num):
-        particleID = field_to_numpy_prefix(scene.particle.particleID, particle_num)
+    def monitor_particle_base(self, sims: Simulation, scene: SceneManager, particle_num):
+        particle_id = field_to_numpy_prefix(scene.particle.particleID, particle_num)
         position = field_to_numpy_prefix(scene.particle.x, particle_num)
-        bodyID = field_to_numpy_prefix(scene.particle.bodyID, particle_num)
-        materialID = field_to_numpy_prefix(scene.particle.materialID, particle_num)
+        body_id = field_to_numpy_prefix(scene.particle.bodyID, particle_num)
+        material_id = field_to_numpy_prefix(scene.particle.materialID, particle_num)
         active = field_to_numpy_prefix(scene.particle.active, particle_num)
         velocity = field_to_numpy_prefix(scene.particle.v, particle_num)
         mass = field_to_numpy_prefix(scene.particle.m, particle_num)
@@ -911,18 +992,22 @@ class WriteFile:
             "t_current": sims.current_time,
             "body_num": particle_num,
             "active": active,
-            "particleID": particleID,
-            "bodyID": bodyID,
-            "materialID": materialID,
+            "particleID": particle_id,
+            "bodyID": body_id,
+            "materialID": material_id,
             "mass": mass,
             "volume": volume,
             "position": position,
             "velocity": velocity,
             "fix_v": fix_v,
             "psize": psize,
+            "constitutive_state": {
+                name: field_to_numpy_prefix(field, particle_num)
+                for name, field in (scene.material.stateVars.field_dict.items() if scene.material.stateVars else [])
+            },
         }
 
-    def MonitorContactGrid(self, sims: Simulation, scene: myScene):
+    def monitor_contact_grid(self, sims: Simulation, scene: SceneManager):
         coords = self._regular_grid_coords(sims, None, scene.element)
         output = {"t_current": sims.current_time, "dims": scene.element.gnum, "coords": coords}
         if hasattr(scene.node, "contact_force"):
@@ -936,13 +1021,13 @@ class WriteFile:
         self.visualizeGrid(sims, coords, element=scene.element)
         np.savez(self.grid_path + f"/MPMGrid{sims.current_print:06d}", **output)
 
-    def MonitorGrid(self, sims: Simulation, scene: myScene):
+    def monitor_grid(self, sims: Simulation, scene: SceneManager):
         if getattr(sims, "isTHB", False):
-            return self.MonitorTHBGrid(sims, scene)
+            return self.monitor_thb_grid(sims, scene)
         if getattr(scene.element, "adaptive", False):
-            return self.MonitorAdaptiveGrid(sims, scene)
+            return self.monitor_adaptive_grid(sims, scene)
         if scene.sparse_grid is not None and getattr(sims, "sparse_grid_visualize_active_blocks", False):
-            return self.MonitorSparseGrid(sims, scene)
+            return self.monitor_sparse_grid(sims, scene)
 
         coords = self._regular_grid_coords(sims, None, scene.element)
 
@@ -966,7 +1051,7 @@ class WriteFile:
             self._append_cell_field(cell_data, "cell_fluid_sdf", getattr(cell, "fluid_sdf", None), cell_shape)
             self._append_cell_field(cell_data, "cell_solid_sdf", getattr(cell, "solid_sdf", None), cell_shape)
             if sims.material_type == "Fluid" and "Implicit" in sims.solver_type and "cell_pressure" in cell_data:
-                cell_data["cell_pressure"] = _normalize_closed_domain_pressure(
+                cell_data["cell_pressure"] = WriteFile._normalize_closed_domain_pressure(
                     cell_data["cell_pressure"], cell_data["cell_type"]
                 )
 
@@ -975,14 +1060,14 @@ class WriteFile:
         output.update(cell_data)
         np.savez(self.grid_path + f"/MPMGrid{sims.current_print:06d}", **output)
 
-    def MonitorSparseGrid(self, sims: Simulation, scene: myScene):
+    def monitor_sparse_grid(self, sims: Simulation, scene: SceneManager):
         sparse_grid = scene.sparse_grid
         active_count = sparse_grid.get_active_blocks()
         active_block_ids = np.ascontiguousarray(
             sparse_grid.active_block_ids.to_numpy()[:active_count],
             dtype=np.int64,
         )
-        mesh = build_sparse_block_mesh(
+        mesh = WriteFile.build_sparse_block_mesh(
             sims.dimension,
             active_block_ids,
             sparse_grid.block_count_np,
@@ -991,7 +1076,7 @@ class WriteFile:
             sparse_grid.gnum_np,
         )
         if active_count > 0:
-            self.VisualizeSparseGrid(sims, mesh)
+            self.visualize_sparse_grid(sims, mesh)
         np.savez(
             self.grid_path + f"/MPMGrid{sims.current_print:06d}",
             t_current=sims.current_time,
@@ -1002,7 +1087,7 @@ class WriteFile:
             **mesh,
         )
 
-    def MonitorTHBGrid(self, sims: Simulation, scene: myScene):
+    def monitor_thb_grid(self, sims: Simulation, scene: SceneManager):
         coords = np.ascontiguousarray(scene.element.nodal_coords, dtype=np.float64)
         logical_node_id = np.arange(coords.shape[0], dtype=np.int64)
         node_level = np.asarray(scene.element.Nlevel, dtype=np.int32)
@@ -1024,7 +1109,7 @@ class WriteFile:
             "thb_level_y": np.ascontiguousarray(node_level[:, 1], dtype=np.int32),
         }
         if sims.visualize:
-            self.VisualizeTHBGrid(sims, coords, point_data=point_data, cell_data=cell_data)
+            self.visualize_thb_grid(sims, coords, point_data=point_data, cell_data=cell_data)
 
         output = {
             "t_current": sims.current_time,
@@ -1039,7 +1124,7 @@ class WriteFile:
         }
         np.savez(self.grid_path + f"/MPMGrid{sims.current_print:06d}", **output)
 
-    def MonitorAdaptiveGrid(self, sims: Simulation, scene: myScene):
+    def monitor_adaptive_grid(self, sims: Simulation, scene: SceneManager):
         refined_cell = scene.element.refined_cell.to_numpy()
         coarse_cnum = np.asarray(scene.element.coarse_cnum, dtype=np.int32)
         signature = (
@@ -1058,7 +1143,7 @@ class WriteFile:
 
         mesh = self.adaptive_grid_cache
         if sims.visualize:
-            self.VisualizeAdaptiveGrid(sims, mesh)
+            self.visualize_adaptive_grid(sims, mesh)
         nodes_per_cell = mesh["connectivity"].shape[1]
         cell_count = mesh["connectivity"].shape[0]
         offsets = np.arange(
@@ -1094,91 +1179,3 @@ class WriteFile:
             self.grid_path + f"/MPMGrid{sims.current_print:06d}",
             **output,
         )
-
-
-def monitor_soft_material_point(recorder, sims, scene):
-    point_num = int(scene.softPointNum[0])
-    active = np.ascontiguousarray(scene.soft_point.active.to_numpy()[0:point_num])
-    bodyID = np.ascontiguousarray(scene.soft_point.bodyID.to_numpy()[0:point_num])
-    materialID = np.ascontiguousarray(scene.soft_point.materialID.to_numpy()[0:point_num])
-    groupID = np.ascontiguousarray(scene.soft_point.groupID.to_numpy()[0:point_num])
-    position = np.ascontiguousarray(scene.soft_point.x.to_numpy()[0:point_num])
-    reference = np.ascontiguousarray(scene.soft_point.x0.to_numpy()[0:point_num])
-    velocity = np.ascontiguousarray(scene.soft_point.v.to_numpy()[0:point_num])
-    contact_force = np.ascontiguousarray(scene.soft_point.contact_force.to_numpy()[0:point_num])
-    external_force = np.ascontiguousarray(scene.soft_point.external_force.to_numpy()[0:point_num])
-    mass = np.ascontiguousarray(scene.soft_point.m.to_numpy()[0:point_num])
-    volume = np.ascontiguousarray(scene.soft_point.vol0.to_numpy()[0:point_num])
-    deformation = np.ascontiguousarray(scene.soft_point.F.to_numpy()[0:point_num])
-    stress = np.ascontiguousarray(scene.soft_point.stress.to_numpy()[0:point_num])
-    displacement = np.ascontiguousarray(position - reference)
-    cauchy_stress, _ = pk1_to_cauchy(stress, deformation)
-    von_mises = von_mises_stress(cauchy_stress)
-    energy_output = {}
-    if sims.energy_tracking:
-        point_strain_energy = np.ascontiguousarray(scene.soft_point.strain_energy.to_numpy()[0:point_num])
-        soft_num = int(scene.softNum[0])
-        soft_body_ids = np.ascontiguousarray(scene.soft.bodyID.to_numpy()[0:soft_num])
-        soft_local_damping_energy = np.ascontiguousarray(scene.soft.damp_energy.to_numpy()[0:soft_num])
-        soft_kinetic_energy = np.zeros(soft_num, dtype=np.float64)
-        soft_strain_energy = np.zeros(soft_num, dtype=np.float64)
-        soft_gravitational_potential_energy = np.zeros(soft_num, dtype=np.float64)
-        gravity = np.asarray(
-            [float(sims.gravity[index]) for index in range(position.shape[1])],
-            dtype=np.float64,
-        )
-        for soft_id, body_id in enumerate(soft_body_ids):
-            body_mask = bodyID == body_id
-            soft_kinetic_energy[soft_id] = 0.5 * np.sum(
-                mass[body_mask] * np.einsum("ij,ij->i", velocity[body_mask], velocity[body_mask])
-            )
-            soft_strain_energy[soft_id] = np.sum(point_strain_energy[body_mask])
-            soft_gravitational_potential_energy[soft_id] = -np.sum(
-                mass[body_mask] * np.einsum("ij,j->i", position[body_mask], gravity)
-            )
-        energy_output = {
-            "point_strain_energy": point_strain_energy,
-            "soft_body_id": soft_body_ids,
-            "soft_kinetic_energy": soft_kinetic_energy,
-            "soft_strain_energy": soft_strain_energy,
-            "soft_gravitational_potential_energy": soft_gravitational_potential_energy,
-            "soft_local_damping_energy": soft_local_damping_energy,
-        }
-    if sims.visualize and point_num > 0:
-        pointsToVTK(
-            recorder.vtk_path + f"/GraphicLSMPMPoint{sims.current_print:06d}",
-            np.ascontiguousarray(position[:, 0]),
-            np.ascontiguousarray(position[:, 1]),
-            np.ascontiguousarray(position[:, 2]),
-            data={
-                "bodyID": bodyID,
-                "group": groupID,
-                "displacement": vtk_vector(displacement),
-                "velocity": vtk_vector(velocity),
-                "contact_force": vtk_vector(contact_force),
-                "external_force": vtk_vector(external_force),
-                "von_mises_stress": von_mises,
-                "cauchy_stress_xx": np.ascontiguousarray(cauchy_stress[:, 0, 0]),
-                "cauchy_stress_yy": np.ascontiguousarray(cauchy_stress[:, 1, 1]),
-                "cauchy_stress_zz": np.ascontiguousarray(cauchy_stress[:, 2, 2]),
-            },
-        )
-    np.savez(
-        recorder.particle_path + f"/LSMPMSoftPoint{sims.current_print:06d}",
-        t_current=sims.current_time,
-        point_num=point_num,
-        active=active,
-        bodyID=bodyID,
-        materialID=materialID,
-        groupID=groupID,
-        position=position,
-        reference=reference,
-        velocity=velocity,
-        contact_force=contact_force,
-        external_force=external_force,
-        mass=mass,
-        volume=volume,
-        F=deformation,
-        stress=stress,
-        **energy_output,
-    )

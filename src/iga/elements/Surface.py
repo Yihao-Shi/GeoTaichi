@@ -1,7 +1,7 @@
 import taichi as ti
 import numpy as np
 
-from src.nurbs.core.NurbsGeometry import NurbsBasisFunction2d
+from src.nurbs.core.NurbsBasisFunction2d import NurbsBasisFunction2d
 
 
 @ti.data_oriented

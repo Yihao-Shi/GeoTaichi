@@ -116,7 +116,7 @@ def composition():
 
 def fem_sphere(center, subdivisions, name):
     import trimesh
-    from src.fem.generator import FEMMesh
+    from src.fem.generator.Mesh import FEMMesh
 
     surface = trimesh.creation.icosphere(subdivisions=subdivisions, radius=RADIUS)
     vertices = np.asarray(surface.vertices, dtype=np.float64) + np.asarray(center)[None, :]
@@ -133,7 +133,7 @@ def fem_sphere(center, subdivisions, name):
 
 def build_fem(gt, soft_ids, centers, parsed):
     from src.fem import DirichletBoundary
-    from src.fem.generator import FEMMesh
+    from src.fem.generator.Mesh import FEMMesh
 
     fem = gt.FEM(log=True)
     fem.set_configuration(dimension=3, solver_type="Implicit")
@@ -173,7 +173,7 @@ def build_fem(gt, soft_ids, centers, parsed):
     )
     fem.add_boundary_condition(dirichlet=boundary)
     fem.add_contact(
-        "IPC",
+        "BarrierIPC",
         broad_phase="BVH",
         dhat=CONTACT_DHAT,
         dmin=0.0,
@@ -333,7 +333,7 @@ def main():
         }
     )
     coupling.choose_contact_model(
-        "IPC",
+        "BarrierIPC",
         dhat=CONTACT_DHAT,
         dmin=0.0,
         kappa=CONTACT_KAPPA,

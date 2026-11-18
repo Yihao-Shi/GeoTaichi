@@ -31,7 +31,9 @@ def dp_yield_value(p_mean, t_dev, Af, Bf, shape_factor):
     return np.sqrt(t_dev * t_dev + kf * kf) - Af + Bf * p_mean
 
 
-def dp_local_update(eps_trial, lam, mu, friction_angle, dilation_angle, cohesion, shape_factor, tol=1.0e-10, max_iters=25):
+def dp_local_update(
+    eps_trial, lam, mu, friction_angle, dilation_angle, cohesion, shape_factor, tol=1.0e-10, max_iters=25
+):
     I = np.eye(3)
     bulk = lam + 2.0 * mu / 3.0
     sigma_trial = lam * np.trace(eps_trial) * I + 2.0 * mu * eps_trial
@@ -58,7 +60,7 @@ def dp_local_update(eps_trial, lam, mu, friction_angle, dilation_angle, cohesion
             R2 = rf - Af + Bf * (p_trial - bulk * Bg * delta_lambda)
             if max(abs(R1), abs(R2)) < tol:
                 break
-            a11 = 1.0 + 2.0 * mu * delta_lambda * kg * kg / (rg ** 3)
+            a11 = 1.0 + 2.0 * mu * delta_lambda * kg * kg / (rg**3)
             a12 = 2.0 * mu * t_dev / rg
             a21 = t_dev / rf
             a22 = -Bf * bulk * Bg
@@ -85,7 +87,21 @@ def dp_local_update(eps_trial, lam, mu, friction_angle, dilation_angle, cohesion
     return sigma, eps_elastic, s_trial, p_trial, t_trial, t_dev, delta_lambda
 
 
-def dp_consistent_tangent_apply(deps, s_trial, p_trial, t_trial, t_dev, delta_lambda, lam, mu, friction_angle, dilation_angle, cohesion, shape_factor, tol=1.0e-10):
+def dp_consistent_tangent_apply(
+    deps,
+    s_trial,
+    p_trial,
+    t_trial,
+    t_dev,
+    delta_lambda,
+    lam,
+    mu,
+    friction_angle,
+    dilation_angle,
+    cohesion,
+    shape_factor,
+    tol=1.0e-10,
+):
     I = np.eye(3)
     bulk = lam + 2.0 * mu / 3.0
     Af, Bf = dp_material_constants(friction_angle, cohesion)
@@ -110,7 +126,7 @@ def dp_consistent_tangent_apply(deps, s_trial, p_trial, t_trial, t_dev, delta_la
 
     rf = np.sqrt(max(t_dev * t_dev + kf * kf, 1.0e-30))
     rg = np.sqrt(max(t_dev * t_dev + kg * kg, 1.0e-30))
-    a11 = 1.0 + 2.0 * mu * delta_lambda * kg * kg / (rg ** 3)
+    a11 = 1.0 + 2.0 * mu * delta_lambda * kg * kg / (rg**3)
     a12 = 2.0 * mu * t_dev / rg
     a21 = t_dev / rf
     a22 = -Bf * bulk * Bg
@@ -133,12 +149,12 @@ def dp_consistent_tangent_apply(deps, s_trial, p_trial, t_trial, t_dev, delta_la
 
 
 def constitutive_response(material, stress_old, F_old, F_new, J_new, grad_u, lam, mu):
-    if material == "linearElastic":
+    if material == "LinearElastic":
         eps = 0.5 * (grad_u + grad_u.T)
         return stress_old + lam * np.trace(eps) * np.eye(3) + 2.0 * mu * eps
-    if material == "neoHookean":
+    if material == "NeoHookean":
         return neo_hookean_stress(F_new, J_new, lam, mu)
-    if material == "druckerPrager":
+    if material == "DruckerPrager":
         eps_old = elastic_strain_from_stress(stress_old, lam, mu)
         sigma, *_ = dp_local_update(
             eps_old + 0.5 * (grad_u + grad_u.T),
@@ -158,9 +174,9 @@ def constitutive_tangent_apply(material, stress_old, F_old, F_new, J_new, grad_u
     for d in range(3):
         deps[comp, d] += 0.5 * G[d]
         deps[d, comp] += 0.5 * G[d]
-    if material == "linearElastic":
+    if material == "LinearElastic":
         return lam * np.trace(deps) * np.eye(3) + 2.0 * mu * deps
-    if material == "neoHookean":
+    if material == "NeoHookean":
         H = F_old.T @ G
         dF = np.zeros((3, 3))
         for d in range(3):
@@ -173,7 +189,7 @@ def constitutive_tangent_apply(material, stress_old, F_old, F_new, J_new, grad_u
             - mu / (J_new * J_new) * (b - np.eye(3)) * dJ
             + lam * (1.0 - np.log(J_new)) / (J_new * J_new) * dJ * np.eye(3)
         )
-    if material == "druckerPrager":
+    if material == "DruckerPrager":
         eps_old = elastic_strain_from_stress(stress_old, lam, mu)
         _, _, s_trial, p_trial, t_trial, t_dev, delta_lambda = dp_local_update(
             eps_old + 0.5 * (grad_u + grad_u.T),
@@ -247,7 +263,7 @@ def residual(material, u_new, p_new_nodes, p_old_nodes, data):
     for a in range(len(N)):
         gi = gcur[a]
         base_force = (-sigma_total @ gi + N[a] * rho_mix * gravity) * vol
-        r[4 * a:4 * a + 3] = base_force
+        r[4 * a : 4 * a + 3] = base_force
         darcy = dt * mobility * gi.dot(q)
         mass = (N[a] * log_ratio + darcy) * vol
         if data["ppp"]:
@@ -308,7 +324,7 @@ def jacobian_manual(material, u_new, p_new_nodes, p_old_nodes, data):
             Gj = Gref[b]
             gj = gcur[b]
             Kup = vol * N[b] * gi
-            K[4 * a + 0:4 * a + 3, 4 * b + 3] = Kup
+            K[4 * a + 0 : 4 * a + 3, 4 * b + 3] = Kup
 
             Kpp = dt * mobility * gi.dot(gj) * vol
             if data["ppp"]:
@@ -322,16 +338,16 @@ def jacobian_manual(material, u_new, p_new_nodes, p_old_nodes, data):
                 dgi = -hcol * (Gj.dot(gi))
                 dv = vol * eta
                 drho = coeff_rho * eta
-                dsigma = constitutive_tangent_apply(material, stress_old, F_old, F_new, J_new, grad_u, Gj, comp, eta, lam, mu)
+                dsigma = constitutive_tangent_apply(
+                    material, stress_old, F_old, F_new, J_new, grad_u, Gj, comp, eta, lam, mu
+                )
                 mech = (-dsigma @ gi - sigma_total @ dgi + N[a] * drho * gravity) * vol
                 mech += (-sigma_total @ gi + N[a] * rho_mix * gravity) * dv
-                K[4 * a + 0:4 * a + 3, col] = mech
+                K[4 * a + 0 : 4 * a + 3, col] = mech
 
                 scalar_grad = (
-                    -Gj.dot(gi) * hcol.dot(q)
-                    - Gj.dot(q) * hcol.dot(gi)
-                    + gi.dot(q) * eta
-                ) * dt * mobility * vol
+                    (-Gj.dot(gi) * hcol.dot(q) - Gj.dot(q) * hcol.dot(gi) + gi.dot(q) * eta) * dt * mobility * vol
+                )
                 kpu = N[a] * (1.0 + log_ratio) * eta * vol + scalar_grad
                 if data["ppp"]:
                     kpu += tau * (N[a] - Navg[a]) * ppp_gap * dv
@@ -342,7 +358,7 @@ def jacobian_manual(material, u_new, p_new_nodes, p_old_nodes, data):
 def pack_unknowns(u, p):
     x = np.zeros(4 * len(p))
     for a in range(len(p)):
-        x[4 * a:4 * a + 3] = u[a]
+        x[4 * a : 4 * a + 3] = u[a]
         x[4 * a + 3] = p[a]
     return x
 
@@ -352,7 +368,7 @@ def unpack_unknowns(x):
     u = np.zeros((n, 3))
     p = np.zeros(n)
     for a in range(n):
-        u[a] = x[4 * a:4 * a + 3]
+        u[a] = x[4 * a : 4 * a + 3]
         p[a] = x[4 * a + 3]
     return u, p
 
@@ -407,7 +423,7 @@ def random_case(rng, ppp):
 
 
 def make_admissible_old_stress(material, data, rng):
-    if material != "druckerPrager":
+    if material != "DruckerPrager":
         return
     eps0 = rng.uniform(-2.0e-3, 2.0e-3, size=(3, 3))
     eps0 = 0.5 * (eps0 + eps0.T)
@@ -449,6 +465,6 @@ def run_case(material, ppp, trials=16):
 
 
 if __name__ == "__main__":
-    for material in ("linearElastic", "neoHookean", "druckerPrager"):
+    for material in ("LinearElastic", "NeoHookean", "DruckerPrager"):
         for ppp in (False, True):
             run_case(material, ppp, trials=20)

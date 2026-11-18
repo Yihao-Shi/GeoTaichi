@@ -6,14 +6,12 @@ import pytest
 
 import src.igampm.config as config
 from src.igampm.ContactManager import ContactManager
-from src.igampm.engines import Engine
+from src.igampm.engines.CoupledEngine import Engine
 from src.igampm.Simulation import Simulation
 from src.igampm.mainIGAMPM import IGAMPM
 
 
-@pytest.mark.parametrize(
-    "alias", ("DEM", "LINEAR-DEM")
-)
+@pytest.mark.parametrize("alias", ("DEM", "LINEAR-DEM"))
 def test_igampm_rejects_ambiguous_dem_contact_aliases(alias):
     with pytest.raises(ValueError, match="IPC, Linear, or HertzMindlin"):
         config.normalize_contact_model(alias)
@@ -38,7 +36,7 @@ def test_direct_contact_manager_reconfiguration_is_rejected_after_freeze():
     manager.freeze_configuration()
 
     with pytest.raises(RuntimeError, match="cannot be changed after build"):
-        manager.choose_contact_model(contact_model="IPC")
+        manager.choose_contact_model(contact_model="BarrierIPC")
 
 
 def test_direct_simulation_reconfiguration_is_rejected_without_mutation():
@@ -63,9 +61,7 @@ def test_wrapper_rejects_same_mode_contact_parameter_replacement_after_build():
     coupling.engine = SimpleNamespace(implicit_step_in_progress=False)
 
     with pytest.raises(RuntimeError, match="all contact parameters are frozen"):
-        coupling.choose_contact_model(
-            contact_model="IPC", friction_mode="fully_implicit", mu=0.7
-        )
+        coupling.choose_contact_model(contact_model="BarrierIPC", friction_mode="fully_implicit", mu=0.7)
 
 
 def test_wrapper_rejects_general_configuration_replacement_after_build():
@@ -74,18 +70,14 @@ def test_wrapper_rejects_general_configuration_replacement_after_build():
     coupling.sims = SimpleNamespace(dimension=2)
 
     with pytest.raises(RuntimeError, match="configuration cannot be changed"):
-        coupling.set_configuration(dimension=None, contact_model="IPC")
+        coupling.set_configuration(dimension=None, contact_model="BarrierIPC")
 
 
 def test_wrapper_freezes_both_configuration_owners_after_build():
     frozen = []
     coupling = object.__new__(IGAMPM)
-    coupling.contactor = SimpleNamespace(
-        freeze_configuration=lambda: frozen.append("contact")
-    )
-    coupling.sims = SimpleNamespace(
-        freeze_configuration=lambda: frozen.append("simulation")
-    )
+    coupling.contactor = SimpleNamespace(freeze_configuration=lambda: frozen.append("contact"))
+    coupling.sims = SimpleNamespace(freeze_configuration=lambda: frozen.append("simulation"))
 
     coupling._freeze_built_configuration()
 
@@ -97,7 +89,5 @@ def test_conservative_newton_rejects_fully_implicit_friction():
     engine.activate_fric = True
     engine.friction_mode = "fully_implicit"
 
-    with pytest.raises(
-        RuntimeError, match="solve_fully_implicit_friction_newton"
-    ):
+    with pytest.raises(RuntimeError, match="solve_fully_implicit_friction_newton"):
         engine.solve_monolithic_newton(include_friction=True)

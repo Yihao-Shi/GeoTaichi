@@ -1,12 +1,13 @@
 """Public explicit and implicit IPC FEM--MPM coupling facade."""
 
 from __future__ import annotations
+from src.utils.errors import BackendError, ConfigurationError, SimulationStateError
+from src.fem.contact.Utilities import build_contact_surface
 
 import math
 
 import numpy as np
 
-from src.fem.contact.ContactTopology import build_contact_surface
 from src.fem.mainFEM import FEM
 from src.fempm.ContactManager import ContactManager
 from src.fempm.Engine import Engine
@@ -14,7 +15,7 @@ from src.fempm.FEMPMBase import Solver
 from src.fempm.Patch import FEMPMSurfacePatch
 from src.fempm.Recorder import WriteFile
 from src.fempm.Simulation import FEMPMSimulation
-from src.fempm.contact import IPCModel
+from src.fempm.contact.IPC import IPCModel
 from src.mpm.mainMPM import MPM
 from src.utils.ObjectIO import DictIO
 from src.utils.SolverConsole import (
@@ -40,7 +41,7 @@ class FEMPM(SolverDiagnosticsMixin):
         self.log = bool(log)
         if not mpm.sims.is_direct_backend():
             if mpm.scene.particle is not None and mpm.sims.coupling != "Lagrangian":
-                raise RuntimeError(
+                raise SimulationStateError(
                     "construct FEMPM before MPM particle fields, or configure " "MPM coupling='Lagrangian' first"
                 )
             mpm.sims.set_mpm_coupling("Lagrangian")
@@ -78,17 +79,17 @@ class FEMPM(SolverDiagnosticsMixin):
         if mpm_axisymmetric != fem_axisymmetric:
             raise ValueError("FEMPM child solvers must use the same planar or " "axisymmetric mode")
         axis_offset = float(self.mpm.sims.axis_offset)
-        requested_axisymmetric = bool(DictIO.GetAlternative(kwargs, "axisymmetric", mpm_axisymmetric))
+        requested_axisymmetric = bool(DictIO.get_alternative(kwargs, "axisymmetric", mpm_axisymmetric))
         if requested_axisymmetric != mpm_axisymmetric:
             raise ValueError("FEMPM coupling and child solvers must use the same planar " "or axisymmetric mode")
-        requested_axis_offset = float(DictIO.GetAlternative(kwargs, "axis_offset", axis_offset))
+        requested_axis_offset = float(DictIO.get_alternative(kwargs, "axis_offset", axis_offset))
         if not math.isfinite(requested_axis_offset):
             raise ValueError("FEMPM axis_offset must be finite")
         if mpm_axisymmetric and not np.isclose(axis_offset, self.fem.sims.axis_offset):
             raise ValueError("axisymmetric FEMPM children must share axis_offset")
         if mpm_axisymmetric and not np.isclose(axis_offset, requested_axis_offset):
             raise ValueError("axisymmetric FEMPM coupling and children must share axis_offset")
-        domain = DictIO.GetAlternative(kwargs, "domain", None)
+        domain = DictIO.get_alternative(kwargs, "domain", None)
         if domain is None:
             domain = np.asarray(self.mpm.sims.get_simulation_domain(), dtype=float)
         self.sims.set_domain(
@@ -103,7 +104,7 @@ class FEMPM(SolverDiagnosticsMixin):
         elif not np.allclose(child_domain[:dimension], self.sims.domain[:dimension]):
             raise ValueError("FEMPM and MPM domains must match")
 
-        search = str(DictIO.GetAlternative(kwargs, "search", "LinkedCell"))
+        search = str(DictIO.get_alternative(kwargs, "search", "LinkedCell"))
         normalized = search.replace("_", "").replace("-", "").lower()
         if normalized == "linkedcell":
             self.sims.search = "LinkedCell"
@@ -111,7 +112,7 @@ class FEMPM(SolverDiagnosticsMixin):
             self.sims.search = "BVH"
         else:
             self.sims.search = search
-        gravity = DictIO.GetAlternative(kwargs, "gravity", None)
+        gravity = DictIO.get_alternative(kwargs, "gravity", None)
         if gravity is not None:
             self.mpm.sims.set_gravity(gravity)
             self.fem.solver_kwargs["gravity"] = gravity
@@ -147,10 +148,10 @@ class FEMPM(SolverDiagnosticsMixin):
         parameters = {} if solver is None else dict(solver)
         parameters.update(kwargs)
         retry_policy = StepRetryPolicy(
-            enabled=DictIO.GetAlternative(parameters, "enable_step_retry", False),
-            maximum_retries=DictIO.GetAlternative(parameters, "step_retry_max_retries", 2),
-            reduction=DictIO.GetAlternative(parameters, "step_retry_reduction", 0.5),
-            minimum_timestep=DictIO.GetAlternative(parameters, "step_retry_minimum_timestep", 0.0),
+            enabled=DictIO.get_alternative(parameters, "enable_step_retry", False),
+            maximum_retries=DictIO.get_alternative(parameters, "step_retry_max_retries", 2),
+            reduction=DictIO.get_alternative(parameters, "step_retry_reduction", 0.5),
+            minimum_timestep=DictIO.get_alternative(parameters, "step_retry_minimum_timestep", 0.0),
         )
         parameters.update(
             enable_step_retry=retry_policy.enabled,
@@ -161,28 +162,28 @@ class FEMPM(SolverDiagnosticsMixin):
         if "linear_solver_tolerance" in parameters:
             parameters.setdefault("linear_solver_relative_tolerance", 0.0)
         self.solver_parameters.update(parameters)
-        timestep = DictIO.GetAlternative(parameters, "Timestep", DictIO.GetAlternative(parameters, "dt", None))
-        simulation_time = DictIO.GetAlternative(
+        timestep = DictIO.get_alternative(parameters, "Timestep", DictIO.get_alternative(parameters, "dt", None))
+        simulation_time = DictIO.get_alternative(
             parameters,
             "SimulationTime",
-            DictIO.GetAlternative(parameters, "simulation_time", None),
+            DictIO.get_alternative(parameters, "simulation_time", None),
         )
-        save_interval = DictIO.GetAlternative(
+        save_interval = DictIO.get_alternative(
             parameters,
             "SaveInterval",
-            DictIO.GetAlternative(parameters, "output_interval", 1.0e6),
+            DictIO.get_alternative(parameters, "output_interval", 1.0e6),
         )
         if timestep is None or simulation_time is None:
             raise KeyError("FEMPM.set_solver requires Timestep and SimulationTime")
         self.sims.set_timestep(timestep)
         self.sims.set_simulation_time(simulation_time)
-        self.sims.cfl = float(DictIO.GetAlternative(parameters, "CFL", 0.5))
+        self.sims.cfl = float(DictIO.get_alternative(parameters, "CFL", 0.5))
         self.sims.set_save_interval(save_interval)
         self.sims.set_save_path(
-            DictIO.GetAlternative(
+            DictIO.get_alternative(
                 parameters,
                 "SavePath",
-                DictIO.GetAlternative(parameters, "path", "OutputData"),
+                DictIO.get_alternative(parameters, "path", "OutputData"),
             )
         )
         output_steps = max(1, int(math.ceil(save_interval / float(timestep))))
@@ -229,7 +230,7 @@ class FEMPM(SolverDiagnosticsMixin):
 
     def _default_surface(self):
         if self.fem.scene.mesh is None:
-            raise RuntimeError("add the FEM mesh before selecting its coupled surface")
+            raise SimulationStateError("add the FEM mesh before selecting its coupled surface")
         if self.sims.dimension == 2:
             edges, owners = self.fem.scene.mesh.boundary_facets()
             return (
@@ -280,7 +281,7 @@ class FEMPM(SolverDiagnosticsMixin):
         if self.mpm.sims.is_direct_backend():
             direct_bodies = self.mpm.direct_bodies
             if direct_bodies is None:
-                raise RuntimeError("add Direct MPM bodies before FEMPM.memory_allocate")
+                raise SimulationStateError("add Direct MPM bodies before FEMPM.memory_allocate")
             memory.setdefault("max_particle_number", int(direct_bodies.particle_counter))
             memory.setdefault("max_mpm_material_number", 1)
         body_capacity = int(np.max(self.surface_body)) + 1
@@ -350,7 +351,7 @@ class FEMPM(SolverDiagnosticsMixin):
 
     def choose_contact_model(self, contact_model="Linear", **kwargs):
         if self._memory is None:
-            raise RuntimeError("call FEMPM.memory_allocate before choosing contact")
+            raise SimulationStateError("call FEMPM.memory_allocate before choosing contact")
         return self.contactor.choose_contact_model(contact_model, **kwargs)
 
     def add_property(self, MPMmaterial, FEMbody, property, dType="all"):
@@ -368,31 +369,31 @@ class FEMPM(SolverDiagnosticsMixin):
 
     def add_essentials(self, **kwargs):
         if self.sims.delta <= 0.0:
-            raise RuntimeError("configure the FEMPM solver before run")
+            raise SimulationStateError("configure the FEMPM solver before run")
         if self._memory is None:
             self.memory_allocate({})
         if self.contactor.model is None:
-            raise RuntimeError("choose a FEMPM contact model before run")
+            raise SimulationStateError("choose a FEMPM contact model before run")
         if self.mpm.sims.dimension not in (2, 3):
-            raise RuntimeError("FEMPM IPC requires dimension=2 or 3")
+            raise ConfigurationError("FEMPM IPC requires dimension=2 or 3")
         if isinstance(self.contactor.model, IPCModel):
             if self.mpm.sims.soft_particle and bool(getattr(self.fem.scene.material, "is_cloth", False)):
                 raise NotImplementedError("soft-particle MPM--cloth IPC coupling is intentionally unsupported")
             if not self.mpm.sims.is_direct_backend():
-                raise RuntimeError(
+                raise BackendError(
                     "FEMPM IPC requires mpm_backend='Direct' so MPM active "
                     "grid DOFs can enter the monolithic Newton system"
                 )
             if self.mpm.sims.solver_type != "Implicit":
-                raise RuntimeError("FEMPM IPC requires implicit MPM integration")
+                raise ConfigurationError("FEMPM IPC requires implicit MPM integration")
             if self.mpm.sims.ipc_contact:
-                raise RuntimeError("disable standalone MPM IPC; FEMPM owns the coupled IPC system")
+                raise SimulationStateError("disable standalone MPM IPC; FEMPM owns the coupled IPC system")
             if self.fem.sims.solver_type != "Implicit":
-                raise RuntimeError("FEMPM IPC requires implicit FEM integration")
+                raise ConfigurationError("FEMPM IPC requires implicit FEM integration")
             if bool(getattr(self.fem.scene.material, "is_fem_elastoplastic", False)):
-                raise RuntimeError("FEMPM IPC currently supports elastic FEM constitutive " "models only")
+                raise SimulationStateError("FEMPM IPC currently supports elastic FEM constitutive " "models only")
             if self.fem.scene.contact is not None:
-                raise RuntimeError("standalone FEM IPC/AL cannot be combined with FEMPM IPC yet")
+                raise SimulationStateError("standalone FEM IPC/AL cannot be combined with FEMPM IPC yet")
             if self.fem.engine is None:
                 self.fem.build()
             self.fem.engine.dt = self.sims.delta
@@ -402,7 +403,7 @@ class FEMPM(SolverDiagnosticsMixin):
             from src.mpm.engines.direct.ImplicitMPM import ImplicitMPM
 
             if not isinstance(self.mpm.enginer, ImplicitMPM):
-                raise RuntimeError("FEMPM IPC requires the Direct finite-strain implicit " "MPM engine")
+                raise ConfigurationError("FEMPM IPC requires the Direct finite-strain implicit " "MPM engine")
             if self.enginer is None:
                 from src.fempm.ImplicitEngine import FEMPMImplicitEngine
 
@@ -420,24 +421,24 @@ class FEMPM(SolverDiagnosticsMixin):
                 self.recorder = WriteFile(self.sims, self.fem, self.mpm, self.contactor)
             return
         if self.solver_parameters.get("enable_step_retry", False):
-            raise RuntimeError("FEMPM step retry is available only with implicit IPC contact")
+            raise SimulationStateError("FEMPM step retry is available only with implicit IPC contact")
         if self.sims.dimension == 2:
-            raise RuntimeError(
+            raise ConfigurationError(
                 "two-dimensional and axisymmetric FEMPM coupling currently " "require the implicit IPC contact model"
             )
         if self.mpm.sims.solver_type != "Explicit":
-            raise RuntimeError("FEMPM supports explicit MPM integration only")
+            raise SimulationStateError("FEMPM supports explicit MPM integration only")
         if self.mpm.sims.is_direct_backend():
-            raise RuntimeError("FEMPM requires the particle/grid MPM backend")
+            raise BackendError("FEMPM requires the particle/grid MPM backend")
         if self.fem.sims.solver_type != "Explicit":
-            raise RuntimeError("FEMPM supports explicit FEM integration only")
+            raise SimulationStateError("FEMPM supports explicit FEM integration only")
         if self.fem.scene.contact is not None:
-            raise RuntimeError("FEM internal IPC/AL is not part of explicit FEMPM")
+            raise SimulationStateError("FEM internal IPC/AL is not part of explicit FEMPM")
         self.mpm.scene.update_coupling_points_number(self.mpm.sims)
         if int(self.mpm.scene.couplingNum[0]) <= 0:
-            raise RuntimeError("FEMPM requires at least one coupled MPM point")
+            raise SimulationStateError("FEMPM requires at least one coupled MPM point")
         if int(self.mpm.scene.couplingNum[0]) > self.sims.max_particle_num:
-            raise RuntimeError("FEMPM max_particle_number is smaller than the coupled MPM " "point count")
+            raise SimulationStateError("FEMPM max_particle_number is smaller than the coupled MPM " "point count")
         if self.fem.engine is None:
             self.fem.build()
         self.fem.engine.dt = self.sims.delta
@@ -454,26 +455,26 @@ class FEMPM(SolverDiagnosticsMixin):
             self.enginer = Engine(self.sims, self.fem, self.mpm, self.contactor, self.patch)
             self.recorder = WriteFile(self.sims, self.fem, self.mpm, self.contactor)
             self.solver = Solver(self.sims, self.fem, self.mpm, self.enginer, self.recorder)
-        elif DictIO.GetAlternative(kwargs, "reset_function", True):
+        elif DictIO.get_alternative(kwargs, "reset_function", True):
             self.solver.postprocess.clear()
-        self.solver.set_callback_function(DictIO.GetAlternative(kwargs, "function", None))
+        self.solver.set_callback_function(DictIO.get_alternative(kwargs, "function", None))
 
     def add_postfunctions(self, **functions):
         if isinstance(self.contactor.model, IPCModel):
             self.postprocess.extend(functions.values())
             return
         if self.solver is None:
-            raise RuntimeError("call FEMPM.add_essentials before callbacks")
+            raise SimulationStateError("call FEMPM.add_essentials before callbacks")
         self.solver.set_callback_function(functions)
 
     def modify_parameters(self, **kwargs):
-        simulation_time = DictIO.GetAlternative(kwargs, "SimulationTime", None)
+        simulation_time = DictIO.get_alternative(kwargs, "SimulationTime", None)
         if simulation_time is not None:
             self.sims.set_simulation_time(simulation_time)
             self.mpm.sims.set_simulation_time(simulation_time)
             if self.fem.engine is not None:
                 self.fem.engine.total_step = int(math.ceil(float(simulation_time) / self.sims.delta))
-        timestep = DictIO.GetAlternative(kwargs, "Timestep", None)
+        timestep = DictIO.get_alternative(kwargs, "Timestep", None)
         if timestep is not None:
             self.sims.set_timestep(timestep)
             self.mpm.sims.set_timestep(timestep)
@@ -485,11 +486,11 @@ class FEMPM(SolverDiagnosticsMixin):
         if self.fem.engine is not None and (simulation_time is not None or timestep is not None):
             total_step = int(math.ceil(self.sims.time / self.sims.delta))
             self.fem.engine.reconfigure_device_boundary_timeline(self.sims.delta, total_step)
-        save_interval = DictIO.GetAlternative(kwargs, "SaveInterval", None)
+        save_interval = DictIO.get_alternative(kwargs, "SaveInterval", None)
         if save_interval is not None:
             self.sims.set_save_interval(save_interval)
             self.mpm.sims.set_save_interval(save_interval)
-        gravity = DictIO.GetAlternative(kwargs, "gravity", None)
+        gravity = DictIO.get_alternative(kwargs, "gravity", None)
         if gravity is not None:
             self.mpm.sims.set_gravity(gravity)
             if self.fem.engine is not None:
@@ -518,7 +519,7 @@ class FEMPM(SolverDiagnosticsMixin):
                 self._save_implicit_frame()
             elif self._last_implicit_save_time is None:
                 self._last_implicit_save_time = self.sims.current_time
-            callbacks = tuple(DictIO.GetAlternative(kwargs, "postprocessing", self.postprocess) or ())
+            callbacks = tuple(DictIO.get_alternative(kwargs, "postprocessing", self.postprocess) or ())
 
             def postprocess_and_save(engine):
                 for callback in callbacks:
@@ -530,8 +531,8 @@ class FEMPM(SolverDiagnosticsMixin):
                     self._save_implicit_frame()
 
             result = self.enginer.run(
-                steps=DictIO.GetAlternative(kwargs, "steps", None),
-                verbose=DictIO.GetAlternative(kwargs, "verbose", True),
+                steps=DictIO.get_alternative(kwargs, "steps", None),
+                verbose=DictIO.get_alternative(kwargs, "verbose", True),
                 postprocessing=(postprocess_and_save,),
             )
             if self.sims.current_time - self._last_implicit_save_time > 0.9 * self.sims.save_interval:
@@ -543,7 +544,7 @@ class FEMPM(SolverDiagnosticsMixin):
         else:
             self.patch.update(self.fem.engine.position_field)
         self.check_critical_timestep()
-        self.solver.CouplingSolver(precalculated=True)
+        self.solver.coupling_solver(precalculated=True)
         self.mpm.first_run = False
 
     solve = run

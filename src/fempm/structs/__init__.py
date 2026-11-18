@@ -1,3 +1,1 @@
-from src.fempm.structs.Contact import FEMPMContact, FEMPMHistoryContact
-
-__all__ = ["FEMPMContact", "FEMPMHistoryContact"]
+"""src.fempm.structs package. Import implementation modules directly."""

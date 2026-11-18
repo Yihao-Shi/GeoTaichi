@@ -1,5 +1,7 @@
 """Persistent Taichi fields and vector kernels shared by FEM integrators."""
 
+from src.utils.errors import RuntimeNotInitializedError
+
 import math
 
 import numpy as np
@@ -20,7 +22,7 @@ class FEMState:
 
     def __init__(self, positions, velocity, mass):
         if ti.lang.impl.get_runtime().prog is None:
-            raise RuntimeError(
+            raise RuntimeNotInitializedError(
                 "FEM requires an initialized Taichi runtime; call " "geotaichi.init(...) or taichi.init(...) first"
             )
         positions = np.asarray(positions)

@@ -1,27 +1,27 @@
 import taichi as ti
 import math
 
-from src.utils.constants import ZEROVEC3f, DELTA, PI, ZEROVEC4f, Threshold
-from src.utils.TypeDefination import vec3f, vec4f, mat2x2, mat3x3, mat4x4
+from src.utils.constants import ZEROVEC3F, DELTA, PI, ZEROVEC4F, THRESHOLD
+from src.utils.TypeDefinition import real, vec3f, vec4f, mat2x2, mat3x3, mat4x4
 from src.utils.ScalarFunction import clamp
-from src.utils.VectorFunction import Normalize
+from src.utils.VectorFunction import normalize
 
 # https://api.flutter.dev/flutter/vector_math/Quaternion/setAxisAngle.html
 
 
 # ================================= Operator ===================================== #
 @ti.func
-def Add(q1, q2):
+def add(q1, q2):
     return q1 + q2
 
 
 @ti.func
-def Sub(q1, q2):
+def sub(q1, q2):
     return q1 - q2
 
 
 @ti.func
-def Multiply(q1, q2):
+def multiply(q1, q2):
     q1w, q1x, q1y, q1z = q1[3], q1[0], q1[1], q1[2]
     q2w, q2x, q2y, q2z = q2[3], q2[0], q2[1], q2[2]
     return vec4f(
@@ -35,16 +35,16 @@ def Multiply(q1, q2):
 
 
 @ti.func
-def Normalized(q):
-    qr = Normalize(q)
-    if q[0] < -Threshold:
+def normalized(q):
+    qr = normalize(q)
+    if q[0] < -THRESHOLD:
         qr = -qr
     return qr
 
 
 @ti.func
-def Average(q1, q2):
-    aq = ZEROVEC4f
+def average(q1, q2):
+    aq = ZEROVEC4F
     q1w, q1x, q1y, q1z = q1[3], q1[0], q1[1], q1[2]
     q2w, q2x, q2y, q2z = q2[3], q2[0], q2[1], q2[2]
     q1Tq2 = q1w * q2w + q1x * q2x + q1y * q2y + q1z * q2z
@@ -55,27 +55,27 @@ def Average(q1, q2):
         w2 = 0.6
         z = ti.sqrt((w1 - w2) * (w1 - w2) + 4 * w1 * w2 * q1Tq2 * q1Tq2)
         aq = q1 * 2 * w1 * q1Tq2 + q2 * (w2 - w1 + z)
-    aq = Normalized(aq)
+    aq = normalized(aq)
     return aq
 
 
 @ti.func
-def Sacle(q, scale):
+def sacle(q, scale):
     return q * scale
 
 
 @ti.func
-def Conjugate(q):
+def conjugate(q):
     return vec4f([-q[0], -q[1], -q[2], q[3]])
 
 
 @ti.func
-def Inverse(q):
+def inverse(q):
     return vec4f([-q[0], -q[1], -q[2], q[3]]).normalized()
 
 
 @ti.func
-def RandomGenerator():
+def random_generator():
     # From http://planning.cs.uiuc.edu/node198.html.
     # See K. Shoemake - Uniform random rotations - In D. Kirk, editor, Graphics Gems III, pages 124-132. Academic, New York, 1992.
     u1, u2, u3 = ti.random(), ti.random(), ti.random()
@@ -87,12 +87,12 @@ def RandomGenerator():
             ti.sqrt(u1) * ti.cos(2 * PI * u3),
         ]
     )
-    return Normalized(q)
+    return normalized(q)
 
 
 # ============================================== Method ========================================== #
 @ti.func
-def SetToRotate(q):
+def set_to_rotate(q):
     qw, qx, qy, qz = q[3], q[0], q[1], q[2]
     return mat3x3(
         [
@@ -104,9 +104,9 @@ def SetToRotate(q):
 
 
 @ti.func
-def SetToEulerXYZ(q):
-    euler = ZEROVEC3f
-    q = Normalized(q)
+def set_to_euler_xyz(q):
+    euler = ZEROVEC3F
+    q = normalized(q)
     qw, qx, qy, qz = q[3], q[0], q[1], q[2]
     t2 = 2 * (qw * qy - qx * qz)
     t2 = clamp(-1.0, 1.0, t2)
@@ -121,8 +121,8 @@ def SetToEulerXYZ(q):
 
 
 @ti.func
-def Rotate(q, vec):
-    q_inv = Conjugate(q)
+def rotate(q, vec):
+    q_inv = conjugate(q)
     qw, qx, qy, qz = q[3], q[0], q[1], q[2]
     qwi, qxi, qyi, qzi = q_inv[3], q_inv[0], q_inv[1], q_inv[2]
     vx, vy, vz = vec[0], vec[1], vec[2]
@@ -142,8 +142,8 @@ def Rotate(q, vec):
 
 
 @ti.func
-def GetAxis(q):
-    axis = ZEROVEC3f
+def get_axis(q):
+    axis = ZEROVEC3F
     qw, qx, qy, qz = q[3], q[0], q[1], q[2]
     den = 1.0 - qw * qw
     if den > 1e-8:
@@ -153,18 +153,18 @@ def GetAxis(q):
 
 
 @ti.func
-def Length(q):
+def length(q):
     return q.norm()
 
 
 @ti.func
-def Radians(q):
+def radians(q):
     return 2.0 * ti.acos(q[3])
 
 
 # ======================================== Set up Quaternion ============================================ #
 @ti.func
-def SetDQ(q, omega):
+def set_dq(q, omega):
     qw, qx, qy, qz = q[3], q[0], q[1], q[2]
     ox, oy, oz = omega[0], omega[1], omega[2]
     return 0.5 * vec4f(
@@ -178,7 +178,7 @@ def SetDQ(q, omega):
 
 
 @ti.func
-def UpdateQAccurate(q, omega, dt):
+def update_q_accurate(q, omega, dt):
     beta = 0.25 * dt[None] * omega
     qw, qx, qy, qz = q[3], q[0], q[1], q[2]
     bx, by, bz = beta[0], beta[1], beta[2]
@@ -194,73 +194,73 @@ def UpdateQAccurate(q, omega, dt):
 
 
 @ti.func
-def SetFromValue(qx, qy, qz, qw):
+def set_from_value(qx, qy, qz, qw):
     return vec4f([qx, qy, qz, qw])
 
 
 @ti.func
-def SetFromAxisAngle(axis, radians):
-    leng = Length(axis)
-    halfSin = ti.sin(0.5 * radians) / leng
-    return vec4f([axis[0] * halfSin, axis[1] * halfSin, axis[2] * halfSin, ti.cos(0.5 * radians)])
+def set_from_axis_angle(axis, radians):
+    leng = length(axis)
+    half_sin = ti.sin(0.5 * radians) / leng
+    return vec4f([axis[0] * half_sin, axis[1] * half_sin, axis[2] * half_sin, ti.cos(0.5 * radians)])
 
 
 @ti.func
-def SetFromEuler(roll, pitch, yaw):
-    halfYaw = yaw * 0.5
-    halfPitch = pitch * 0.5
-    halfRoll = roll * 0.5
-    cosYaw = ti.cos(halfYaw)
-    sinYaw = ti.sin(halfYaw)
-    cosPitch = ti.cos(halfPitch)
-    sinPitch = ti.sin(halfPitch)
-    cosRoll = ti.cos(halfRoll)
-    sinRoll = ti.sin(halfRoll)
+def set_from_euler(roll, pitch, yaw):
+    half_yaw = yaw * 0.5
+    half_pitch = pitch * 0.5
+    half_roll = roll * 0.5
+    cos_yaw = ti.cos(half_yaw)
+    sin_yaw = ti.sin(half_yaw)
+    cos_pitch = ti.cos(half_pitch)
+    sin_pitch = ti.sin(half_pitch)
+    cos_roll = ti.cos(half_roll)
+    sin_roll = ti.sin(half_roll)
     return vec4f(
         [
-            sinRoll * cosPitch * cosYaw - cosRoll * sinPitch * sinYaw,
-            cosRoll * sinPitch * cosYaw + sinRoll * cosPitch * sinYaw,
-            cosRoll * cosPitch * sinYaw - sinRoll * sinPitch * cosYaw,
-            cosRoll * cosPitch * cosYaw + sinRoll * sinPitch * sinYaw,
+            sin_roll * cos_pitch * cos_yaw - cos_roll * sin_pitch * sin_yaw,
+            cos_roll * sin_pitch * cos_yaw + sin_roll * cos_pitch * sin_yaw,
+            cos_roll * cos_pitch * sin_yaw - sin_roll * sin_pitch * cos_yaw,
+            cos_roll * cos_pitch * cos_yaw + sin_roll * sin_pitch * sin_yaw,
         ]
     )
 
 
 @ti.func
-def SetFromRotation(rotationMatrix):
+def set_from_rotation(rotation_matrix):
     # see http://www.euclideanspace.com/maths/geometry/rotations/conversions/matrixToQuaternion/index.htm
-    q = ZEROVEC4f
-    trace = rotationMatrix.trace()
+    q = ZEROVEC4F
+    trace = rotation_matrix.trace()
     if trace > 0.0:
         s = 0.5 / ti.sqrt(trace + 1.0)
         q[3] = 0.25 / s
-        q[0] = (rotationMatrix[2, 1] - rotationMatrix[1, 2]) * s
-        q[1] = (rotationMatrix[0, 2] - rotationMatrix[2, 0]) * s
-        q[2] = (rotationMatrix[1, 0] - rotationMatrix[0, 1]) * s
+        q[0] = (rotation_matrix[2, 1] - rotation_matrix[1, 2]) * s
+        q[1] = (rotation_matrix[0, 2] - rotation_matrix[2, 0]) * s
+        q[2] = (rotation_matrix[1, 0] - rotation_matrix[0, 1]) * s
     else:
-        if rotationMatrix[0, 0] > rotationMatrix[1, 1] and rotationMatrix[0, 0] > rotationMatrix[2, 2]:
-            s = 1.0 / (2.0 * ti.sqrt(1.0 + rotationMatrix[0, 0] - rotationMatrix[1, 1] - rotationMatrix[2, 2]))
-            q[3] = (rotationMatrix[2, 1] - rotationMatrix[1, 2]) * s
+        if rotation_matrix[0, 0] > rotation_matrix[1, 1] and rotation_matrix[0, 0] > rotation_matrix[2, 2]:
+            s = 1.0 / (2.0 * ti.sqrt(1.0 + rotation_matrix[0, 0] - rotation_matrix[1, 1] - rotation_matrix[2, 2]))
+            q[3] = (rotation_matrix[2, 1] - rotation_matrix[1, 2]) * s
             q[0] = 0.25 / s
-            q[1] = (rotationMatrix[1, 0] + rotationMatrix[0, 1]) * s
-            q[2] = (rotationMatrix[0, 2] + rotationMatrix[2, 0]) * s
-        elif rotationMatrix[1, 1] > rotationMatrix[2, 2]:
-            s = 1.0 / (2.0 * ti.sqrt(1.0 + rotationMatrix[1, 1] - rotationMatrix[0, 0] - rotationMatrix[2, 2]))
-            q[3] = (rotationMatrix[0, 2] - rotationMatrix[2, 0]) * s
-            q[0] = (rotationMatrix[0, 1] + rotationMatrix[1, 0]) * s
+            q[1] = (rotation_matrix[1, 0] + rotation_matrix[0, 1]) * s
+            q[2] = (rotation_matrix[0, 2] + rotation_matrix[2, 0]) * s
+        elif rotation_matrix[1, 1] > rotation_matrix[2, 2]:
+            s = 1.0 / (2.0 * ti.sqrt(1.0 + rotation_matrix[1, 1] - rotation_matrix[0, 0] - rotation_matrix[2, 2]))
+            q[3] = (rotation_matrix[0, 2] - rotation_matrix[2, 0]) * s
+            q[0] = (rotation_matrix[0, 1] + rotation_matrix[1, 0]) * s
             q[1] = 0.25 / s
-            q[2] = (rotationMatrix[1, 2] + rotationMatrix[2, 1]) * s
+            q[2] = (rotation_matrix[1, 2] + rotation_matrix[2, 1]) * s
         else:
-            s = 1.0 / (2.0 * ti.sqrt(1.0 + rotationMatrix[2, 2] - rotationMatrix[0, 0] - rotationMatrix[1, 1]))
-            q[3] = (rotationMatrix[1, 0] - rotationMatrix[0, 1]) * s
-            q[0] = (rotationMatrix[0, 2] + rotationMatrix[2, 0]) * s
-            q[1] = (rotationMatrix[1, 2] + rotationMatrix[2, 1]) * s
+            s = 1.0 / (2.0 * ti.sqrt(1.0 + rotation_matrix[2, 2] - rotation_matrix[0, 0] - rotation_matrix[1, 1]))
+            q[3] = (rotation_matrix[1, 0] - rotation_matrix[0, 1]) * s
+            q[0] = (rotation_matrix[0, 2] + rotation_matrix[2, 0]) * s
+            q[1] = (rotation_matrix[1, 2] + rotation_matrix[2, 1]) * s
             q[2] = 0.25 / s
-    return Normalized(q)
+    return normalized(q)
 
 
 @ti.func
-def SetFromTwoVec(vec1, vec2):
+def set_from_two_vec(vec1, vec2):
     v1 = vec1.normalized()
     v2 = vec2.normalized()
 
@@ -278,57 +278,59 @@ def SetFromTwoVec(vec1, vec2):
         angle = 0.0
         axis = vec3f([1.0, 0.0, 0.0])
 
-    return SetFromAxisAngle(axis.normalized(), angle)
+    return set_from_axis_angle(axis.normalized(), angle)
 
 
 @ti.pyfunc
-def RodriguesRotationMatrix(origin, target):
+def rodrigues_rotation_matrix(origin, target, dtype: ti.template() = real):
     cos_theta = origin.dot(target)
     norm_vec = origin.cross(target)
-    norm_vec_invert = mat3x3(
-        [[0.0, -norm_vec[2], norm_vec[1]], [norm_vec[2], 0.0, -norm_vec[0]], [-norm_vec[1], norm_vec[0], 0.0]]
+    norm_vec_invert = ti.Matrix(
+        [[0.0, -norm_vec[2], norm_vec[1]], [norm_vec[2], 0.0, -norm_vec[0]], [-norm_vec[1], norm_vec[0], 0.0]],
+        dt=dtype,
     )
-    RotationMartix = DELTA + norm_vec_invert + (norm_vec_invert @ norm_vec_invert) / (1 + cos_theta)
-    return RotationMartix
+    identity = ti.Matrix([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], dt=dtype)
+    rotation_martix = identity + norm_vec_invert + (norm_vec_invert @ norm_vec_invert) / (1 + cos_theta)
+    return rotation_martix
 
 
 @ti.pyfunc
-def RotationMatrix2D(origin, target):
+def rotation_matrix2d(origin, target):
     cos_theta = origin.dot(target)
     sin_theta = ti.pow(1 - cos_theta * cos_theta, 0.5)
-    RotationMartix = mat2x2([[cos_theta, -sin_theta], [sin_theta, cos_theta]])
-    return RotationMartix
+    rotation_martix = mat2x2([[cos_theta, -sin_theta], [sin_theta, cos_theta]])
+    return rotation_martix
 
 
 @ti.pyfunc
-def ThetaToRotationMatrix(theta):
-    contentInRad = theta * PI / 180
-    rotateX = ti.Matrix(
+def theta_to_rotation_matrix(theta):
+    content_in_rad = theta * PI / 180
+    rotate_x = ti.Matrix(
         [
             [1.0, 0.0, 0.0],
-            [0, ti.cos(contentInRad[0]), -ti.sin(contentInRad[0])],
-            [0, ti.sin(contentInRad[0]), ti.cos(contentInRad[0])],
+            [0, ti.cos(content_in_rad[0]), -ti.sin(content_in_rad[0])],
+            [0, ti.sin(content_in_rad[0]), ti.cos(content_in_rad[0])],
         ]
     )
-    rotateY = ti.Matrix(
+    rotate_y = ti.Matrix(
         [
-            [ti.cos(contentInRad[1]), 0, ti.sin(contentInRad[1])],
+            [ti.cos(content_in_rad[1]), 0, ti.sin(content_in_rad[1])],
             [0.0, 1.0, 0.0],
-            [-ti.sin(contentInRad[1]), 0, ti.cos(contentInRad[1])],
+            [-ti.sin(content_in_rad[1]), 0, ti.cos(content_in_rad[1])],
         ]
     )
-    rotateZ = ti.Matrix(
+    rotate_z = ti.Matrix(
         [
-            [ti.cos(contentInRad[2]), -ti.sin(contentInRad[2]), 0],
-            [ti.sin(contentInRad[2]), ti.cos(contentInRad[2]), 0],
+            [ti.cos(content_in_rad[2]), -ti.sin(content_in_rad[2]), 0],
+            [ti.sin(content_in_rad[2]), ti.cos(content_in_rad[2]), 0],
             [0.0, 0.0, 1.0],
         ]
     )
-    return rotateZ @ rotateY @ rotateX
+    return rotate_z @ rotate_y @ rotate_x
 
 
 @ti.pyfunc
-def ThetaToRotationMatrix2D(theta):
+def theta_to_rotation_matrix2d(theta):
     angle_rad = theta * PI / 180
     R = ti.Matrix([[ti.cos(angle_rad), -ti.sin(angle_rad)], [ti.sin(angle_rad), ti.cos(angle_rad)]])
     return R

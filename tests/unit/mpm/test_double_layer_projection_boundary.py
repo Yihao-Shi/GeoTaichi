@@ -17,7 +17,8 @@ from src.mpm.engines.TwoPhaseDoubleLayerKernel import (
 @pytest.mark.parametrize("phase", [1, 2])
 @pytest.mark.parametrize("upper_wall", [False, True])
 def test_wall_contact_cannot_escape_along_a_domain_spanning_tangent(taichi_runtime, dimension, phase, upper_wall):
-    from src.mpm.structs.Particle import ParticleCloudTwoPhase, ParticleCloudTwoPhase2D
+    from src.mpm.structs.ParticleCloudTwoPhase import ParticleCloudTwoPhase
+    from src.mpm.structs.ParticleCloudTwoPhase2D import ParticleCloudTwoPhase2D
 
     particle = (ParticleCloudTwoPhase if dimension == 3 else ParticleCloudTwoPhase2D).field(shape=1)
     position = np.full(dimension, 0.5)
@@ -58,7 +59,7 @@ def test_wall_contact_cannot_escape_along_a_domain_spanning_tangent(taichi_runti
 )
 def test_moving_piston_constrains_the_velocity_used_by_each_phase(taichi_runtime, case_name):
     import importlib
-    from src.mpm.structs.Particle import ParticleCloudTwoPhase
+    from src.mpm.structs.ParticleCloudTwoPhase import ParticleCloudTwoPhase
 
     particle = ParticleCloudTwoPhase.field(shape=5)
     phase = np.array([2, 1, 2, 2, 1], np.uint8)

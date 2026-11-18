@@ -479,7 +479,7 @@ def test_gpu_diffipc_projector_pushes_overlap_without_host_iterate_download(
 
     from src.dem.engines.AffineBodyOperator import TaichiAffineBodyOperator
     from src.dem.engines.AffineBodyState import AffineBodyState
-    from src.dem.engines.AffineDiffIPC import TaichiAffineDiffIPCProjector
+    from src.dem.engines.TaichiAffineDiffIPCProjector import TaichiAffineDiffIPCProjector
 
     state = AffineBodyState.from_scene(dem.scene, dem.sims)
     operator = TaichiAffineBodyOperator(state, dem.sims, dem.scene, initialization_only=True)
@@ -558,7 +558,7 @@ def test_gpu_mesh_untangling_removes_triangle_intersections_before_diffipc(
 
     from src.dem.engines.AffineBodyOperator import TaichiAffineBodyOperator
     from src.dem.engines.AffineBodyState import AffineBodyState
-    from src.dem.engines.AffineDiffIPC import TaichiAffineMeshDiffIPCProjector
+    from src.dem.engines.TaichiAffineMeshDiffIPCProjector import TaichiAffineMeshDiffIPCProjector
 
     state = AffineBodyState.from_scene(dem.scene, dem.sims)
     operator = TaichiAffineBodyOperator(state, dem.sims, dem.scene, initialization_only=True)
@@ -754,7 +754,7 @@ def test_affine_distribute_uses_gpu_diffipc_to_meet_porosity_and_feasibility(tmp
     assert result["continuation_stages"] >= 1
     assert dem.scene.affine_bodies[0]["template"].contact_representation == contact_representation
     if contact_representation == "TriangleMesh":
-        from src.dem.engines.AffineDiffIPC import TaichiAffineMeshDiffIPCProjector
+        from src.dem.engines.TaichiAffineMeshDiffIPCProjector import TaichiAffineMeshDiffIPCProjector
 
         assert isinstance(
             dem.scene.last_affine_diffipc_projector,

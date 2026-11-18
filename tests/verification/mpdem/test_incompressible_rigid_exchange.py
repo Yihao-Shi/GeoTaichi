@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 import taichi as ti
 
-from src.mpdem.fluid_dynamics.IncompressibleCoupling import IncompressibleLSDEMCoupling
+from src.mpdem.fluid_dynamics.IncompressibleLSDEMCoupling import IncompressibleLSDEMCoupling
 from src.mpm.engines.EngineKernel import kernel_correct_velocity_coupled_3d
 from tests.verification.mpdem.test_incompressible_affine_exchange import build, Fluid
 from tests.verification.mpdem.test_incompressible_coupling_kernels import AnalyticSphereSDF

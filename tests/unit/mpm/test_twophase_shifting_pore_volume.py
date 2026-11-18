@@ -13,7 +13,8 @@ def test_saturated_porosity_interface_does_not_move_water(dimension):
         kernel_delta_correct_double_layer_fluid2d,
         kernel_delta_correct_double_layer_fluid3d,
     )
-    from src.mpm.structs.Particle import ParticleCloudTwoPhase, ParticleCloudTwoPhase2D
+    from src.mpm.structs.ParticleCloudTwoPhase import ParticleCloudTwoPhase
+    from src.mpm.structs.ParticleCloudTwoPhase2D import ParticleCloudTwoPhase2D
 
     init(dim=dimension, arch="cpu", default_fp="float64", cpu_max_num_threads=2, offline_cache=False, log=False)
     dx, count = 0.125, 4

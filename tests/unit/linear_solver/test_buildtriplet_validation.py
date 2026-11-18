@@ -33,7 +33,7 @@ def test_buildtriplet_pcg_matches_scipy(taichi_runtime, dimension):
     system.diag.from_numpy(diagonal)
     system._set_reduced_non_diag(block_i, block_j, block_h)
     rhs = rng.normal(size=(active_nodes, dimension))
-    result = system.PCGSolver(rhs=rhs, active_nodes=active_nodes, tol=1.0e-9, maxiter=500)
+    result = system.pcg_solver(rhs=rhs, active_nodes=active_nodes, tol=1.0e-9, maxiter=500)
     reference, info = cg(system.to_scipy(active_nodes), rhs.reshape(-1), rtol=1.0e-9, atol=0.0, maxiter=500)
     _assert_matches_scipy(system, result, reference, info, rhs)
 
@@ -61,7 +61,7 @@ def test_pcg_reuses_dirty_workspace_with_nonzero_initial_guess(taichi_runtime, d
         expected = scale * rng.normal(size=(active_nodes, dimension))
         rhs = (matrix @ expected.ravel()).reshape(active_nodes, dimension)
         initial = scale * rng.normal(size=(active_nodes, dimension))
-        result = system.PCGSolver(rhs=rhs, x=initial, active_nodes=active_nodes, tol=1e-12, maxiter=100)
+        result = system.pcg_solver(rhs=rhs, x=initial, active_nodes=active_nodes, tol=1e-12, maxiter=100)
         np.testing.assert_allclose(result["x"], expected, rtol=1e-10, atol=1e-12)
         true_residual = np.linalg.norm(matrix @ result["x"].ravel() - rhs.ravel())
         assert result["converged"] and true_residual <= 1e-12
@@ -83,7 +83,7 @@ def test_buildtriplet_bicgstab_matches_scipy(taichi_runtime, dimension):
     system.diag.from_numpy(diagonal)
     system._set_reduced_non_diag(block_i, block_j, block_h)
     rhs = rng.normal(size=(active_nodes, dimension))
-    result = system.BiCGSTABSolver(rhs=rhs, active_nodes=active_nodes, tol=1.0e-9, maxiter=500)
+    result = system.bi_cgstab_solver(rhs=rhs, active_nodes=active_nodes, tol=1.0e-9, maxiter=500)
     reference, info = bicgstab(system.to_scipy(active_nodes), rhs.reshape(-1), rtol=1.0e-9, atol=0.0, maxiter=500)
     _assert_matches_scipy(system, result, reference, info, rhs)
 
@@ -139,13 +139,13 @@ def test_bicgstab_preserves_recurrence_and_checks_true_residual(taichi_runtime, 
 
     monkeypatch.setattr(system, "_init_bicgstab", initialize_and_capture)
     monkeypatch.setattr(system, "matvec", check_direction)
-    result = system.BiCGSTABSolver(rhs=np.ones((size, 1)), tol=1e-14, maxiter=33)
+    result = system.bi_cgstab_solver(rhs=np.ones((size, 1)), tol=1e-14, maxiter=33)
     assert result["iterations"] == 33
     assert len(checked) == 1
     np.testing.assert_allclose(
         result["residual"], np.linalg.norm(csr_matrix(dense) @ result["x"].ravel() - 1), atol=1e-12
     )
-    result = system.BiCGSTABSolver(rhs=np.ones((size, 1)), tol=1e-8, maxiter=200)
+    result = system.bi_cgstab_solver(rhs=np.ones((size, 1)), tol=1e-8, maxiter=200)
     assert result["converged"]
     assert np.linalg.norm(csr_matrix(dense) @ result["x"].ravel() - 1) <= 1e-8
 

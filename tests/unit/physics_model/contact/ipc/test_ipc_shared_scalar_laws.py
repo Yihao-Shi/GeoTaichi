@@ -1,28 +1,26 @@
+from src.physics_model.contact_model.ipc.Utilities import ipc_friction_f0
+from src.physics_model.contact_model.ipc.Utilities import ipc_friction_f1_over_speed
+from src.physics_model.contact_model.ipc.Utilities import ipc_friction_hessian_term
+from src.physics_model.contact_model.ipc.Utilities import ipc_barrier_distance2_offset_terms
+from src.physics_model.contact_model.ipc.Utilities import ipc_barrier_distance2_terms
+from src.physics_model.contact_model.ipc.Utilities import ipc_barrier_distance_offset_terms
+from src.physics_model.contact_model.ipc.Utilities import ipc_barrier_force_magnitude
+from src.physics_model.contact_model.ipc.Utilities import ipc_barrier_force_magnitude_gradient
+from src.physics_model.contact_model.ipc.Utilities import ipc_friction_f1
+from src.physics_model.contact_model.ipc.Utilities import ipc_friction_f1_derivative
+from src.physics_model.contact_model.ipc.Utilities import ipc_fully_implicit_point_plane_friction
+from src.physics_model.contact_model.ipc.Utilities import ipc_fully_implicit_point_plane_stribeck_friction
+from src.physics_model.contact_model.ipc.Utilities import ipc_stribeck_falloff
+from src.physics_model.contact_model.ipc.Utilities import ipc_stribeck_falloff_derivative
+from src.physics_model.contact_model.ipc.Utilities import ipc_barrier_distance_terms
 import numpy as np
 import pytest
 import taichi as ti
 
 pytestmark = [pytest.mark.unit, pytest.mark.ipc, pytest.mark.contact]
 
-from src.physics_model.contact_model.ipc.IPC import (
-    Barrier,
-    Friction,
-    ipc_barrier_force_magnitude,
-    ipc_barrier_force_magnitude_gradient,
-    ipc_toolkit_barrier_distance2_terms,
-    ipc_toolkit_barrier_distance2_offset_terms,
-    ipc_toolkit_barrier_distance_offset_terms,
-    ipc_toolkit_barrier_distance_terms,
-    ipc_friction_f0,
-    ipc_friction_f1,
-    ipc_friction_f1_derivative,
-    ipc_friction_f1_over_speed,
-    ipc_friction_hessian_term,
-    ipc_fully_implicit_point_plane_friction,
-    ipc_fully_implicit_point_plane_stribeck_friction,
-    ipc_stribeck_falloff,
-    ipc_stribeck_falloff_derivative,
-)
+from src.physics_model.contact_model.ipc.Barrier import Barrier
+from src.physics_model.contact_model.ipc.Friction import Friction
 from tests.helpers.ipc_scalar_reference import (
     clamped_log_barrier_second_derivative,
     initial_barrier_stiffness,
@@ -47,10 +45,10 @@ def _initialize_taichi():
 def _eval_official_distance_terms(
     distance: ti.f64, active_distance: ti.f64, kappa: ti.f64
 ) -> ti.types.vector(6, ti.f64):
-    energy2, gradient2, hessian2 = ipc_toolkit_barrier_distance2_terms(
+    energy2, gradient2, hessian2 = ipc_barrier_distance2_terms(
         distance * distance, active_distance * active_distance, kappa
     )
-    energy, gradient, hessian = ipc_toolkit_barrier_distance_terms(distance, active_distance, kappa)
+    energy, gradient, hessian = ipc_barrier_distance_terms(distance, active_distance, kappa)
     return ti.Vector([energy2, gradient2, hessian2, energy, gradient, hessian])
 
 
@@ -62,10 +60,8 @@ def _eval_official_offset_terms(
     kappa: ti.f64,
     physical: ti.i32,
 ) -> ti.types.vector(6, ti.f64):
-    energy2, gradient2, hessian2 = ipc_toolkit_barrier_distance2_offset_terms(
-        distance * distance, dhat, dmin, kappa, physical
-    )
-    energy, gradient, hessian = ipc_toolkit_barrier_distance_offset_terms(distance, dhat, dmin, kappa, physical)
+    energy2, gradient2, hessian2 = ipc_barrier_distance2_offset_terms(distance * distance, dhat, dmin, kappa, physical)
+    energy, gradient, hessian = ipc_barrier_distance_offset_terms(distance, dhat, dmin, kappa, physical)
     return ti.Vector([energy2, gradient2, hessian2, energy, gradient, hessian])
 
 
@@ -457,7 +453,7 @@ def test_c1_friction_values_at_zero_inside_and_outside_mollifier():
     assert at_zero[4] == pytest.approx(-1.0 / (epsv * epsv))
 
 
-def test_ipc_toolkit_smooth_friction_mollifier_log_grid():
+def test_ipc_smooth_friction_mollifier_log_grid():
     """Check the smooth-friction mollifier on an 8-by-8 logarithmic grid."""
     for eps_power in range(-8, 0):
         epsv = 10.0**eps_power
@@ -882,17 +878,17 @@ def test_host_fully_implicit_scalar_law_matches_taichi_and_fd(profile_id, speed)
 
 @pytest.mark.parametrize("model", ["SemiIPC", "semi", "AL", "AugmentedLagrangian"])
 def test_removed_semi_ipc_model_is_rejected(model):
-    from src.physics_model.contact_model.ipc.IPC import normalize_ipc_model
+    from src.physics_model.contact_model.ipc.Barrier import Barrier as _Barrier_normalize_ipc_model_owner
     from src.fem.contact.ContactModel import FEMContact
 
     with pytest.raises(ValueError, match="BarrierIPC"):
-        normalize_ipc_model(model)
+        _Barrier_normalize_ipc_model_owner.normalize_ipc_model(model)
     with pytest.raises(ValueError, match="BarrierIPC"):
         FEMContact(model)
 
 
 def test_removed_semi_parameters_are_not_silently_ignored():
-    from src.physics_model.contact_model.ipc.IPC import Barrier
+    from src.physics_model.contact_model.ipc.Barrier import Barrier
     from src.dem.Simulation import Simulation
 
     with pytest.raises(ValueError, match="removed SemiIPC parameters"):

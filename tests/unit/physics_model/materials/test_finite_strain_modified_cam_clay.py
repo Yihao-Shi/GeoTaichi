@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 import taichi as ti
 
-from src.physics_model.consititutive_model.finite_strain.ModifiedCamClay import (
+from src.physics_model.constitutive_model.finite_strain.ModifiedCamClay import (
     FiniteStrainModifiedCamClayModel,
 )
 
@@ -41,7 +41,7 @@ def _evaluator(model):
         deformation = ti.Matrix.zero(ti.f64, 3, 3)
         for row, column in ti.static(ti.ndrange(3, 3)):
             deformation[row, column] = values[row, column]
-        energy[None] = model.Psi_at(0, deformation)
+        energy[None] = model.psi_at(0, deformation)
         stress[None] = model.first_piola_stress_at(0, deformation)
         tangent[None] = model.first_piola_tangent_at(0, deformation)
         projected[None] = model.project_elastic_deformation(0, deformation)

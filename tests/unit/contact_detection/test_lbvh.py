@@ -1,5 +1,8 @@
 """Deterministic unit contracts for the multi-batch LBVH implementation."""
 
+from src.contact_detection.bounding_volume_hierarchy.Utilities import validate_bvh_rebuild_interval
+from src.fem.contact.Utilities import build_contact_surface
+
 import numpy as np
 import pytest
 import taichi as ti
@@ -8,8 +11,8 @@ from src.contact_detection.bounding_volume_hierarchy.MultiPatchLBVH import (
     AABB,
     LBVH,
 )
-from src.utils.BitFunction import expandBits
-from src.utils.TypeDefination import vec3f
+from src.utils.BitFunction import expand_bits
+from src.utils.TypeDefinition import vec3f
 
 pytestmark = [pytest.mark.contact, pytest.mark.geometry, pytest.mark.cpu]
 
@@ -17,7 +20,7 @@ pytestmark = [pytest.mark.contact, pytest.mark.geometry, pytest.mark.cpu]
 @ti.kernel
 def _expand_bits(values: ti.template(), expanded: ti.template()):
     for i in values:
-        expanded[i] = expandBits(values[i])
+        expanded[i] = expand_bits(values[i])
 
 
 def _build_random_tree(count, seed=731):
@@ -345,7 +348,6 @@ def test_explicit_bvh_schedule_handles_sparse_queries_static_batches_and_reiniti
 
 @pytest.mark.parametrize("value", [0, -1, 1.5, True, np.bool_(True), float("inf"), "5", None])
 def test_bvh_rebuild_interval_rejects_invalid_values(value):
-    from src.contact_detection.bounding_volume_hierarchy.MultiPatchLBVH import validate_bvh_rebuild_interval
 
     with pytest.raises(ValueError, match="positive integer"):
         validate_bvh_rebuild_interval(value)
@@ -450,9 +452,9 @@ def test_stackless_export_visits_each_primitive_across_many_batches(taichi_runti
 @pytest.mark.parametrize("rebuild_interval", [None, 5])
 def test_fem_contact_bvh_rebuilds_current_and_swept_queries_on_device(taichi_runtime, monkeypatch, rebuild_interval):
     from src.fem.contact.BVHBroadPhase import DynamicBVHBroadPhase
-    from src.fem.contact.ContactTopology import build_contact_surface
+
     from tests.helpers.fem_broad_phase_reference import _reference_broad_phase_candidates
-    from src.fem.generator import FEMMesh
+    from src.fem.generator.Mesh import FEMMesh
 
     points = np.array(
         [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.1, 0.1, 0.05], [1.1, 0.1, 0.05], [0.1, 1.1, 0.05]]
@@ -510,7 +512,7 @@ def test_fem_contact_bvh_rebuilds_current_and_swept_queries_on_device(taichi_run
 
 def test_abd_rebuilds_topology_and_preserves_current_and_swept_candidates(taichi_runtime, monkeypatch):
     from types import SimpleNamespace
-    from src.dem.neighbor.AffineBodyNeighbor import AffineBodyBoundingVolumeHierarchy
+    from src.dem.neighbor.AffineBodyBoundingVolumeHierarchy import AffineBodyBoundingVolumeHierarchy
 
     points = np.array(
         [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.1, 0.1, 0.05], [1.1, 0.1, 0.05], [0.1, 1.1, 0.05]]

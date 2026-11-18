@@ -5,38 +5,39 @@ import numpy as np
 import pytest
 import taichi as ti
 
-from src.linear_solver.MultiGridPCG_mixture import MGPCGMixPoissonSolver
-from src.linear_solver.MultiGridPCG_mixture_Axi import MGPCGMixPoissonSolver_Axi
+from src.linear_solver.MultiGridPCGMixture import MGPCGMixPoissonSolver
+from src.linear_solver.MultiGridPCGMixtureAxisymmetric import MGPCGMixPoissonSolverAxisymmetric
 from src.mpm.elements.QuadrilateralElement4Nodes import QuadrilateralElement4Nodes
 from src.mpm.elements.QuadrilateralKernel import estimate_active_dofs_poisson
 from src.mpm.engines.EngineKernel import (
-    kernel_assemble_A,
+    kernel_assemble_a,
     kernel_clamp_twophase_particle_pressure,
     kernel_correct_grid_kinematic_semitwophase,
-    kernel_correct_grid_kinematic_semitwophase_2DAxisy,
+    kernel_correct_grid_kinematic_semitwophase_2d_axisy,
     kernel_correct_grid_kinematic_semitwophase_u_p,
     kernel_correct_grid_kinematic_semitwophase_mg,
-    kernel_correct_grid_kinematic_semitwophase_mg_3D,
-    kernel_update_nodal_pressure_2D,
-    kernel_kinemaitc_g2p_semitwophase2D,
-    kernel_kinemaitc_g2p_semitwophase2D_FIC,
-    kernel_kinemaitc_g2p_semitwophase2D_u_p,
-    kernel_force_p2g_semitwophase2D,
-    kernel_force_p2g_semitwophase2D_u_p,
+    kernel_correct_grid_kinematic_semitwophase_mg_3d,
+    kernel_update_nodal_pressure_2d,
+    kernel_kinemaitc_g2p_semitwophase2d,
+    kernel_kinemaitc_g2p_semitwophase2d_fic,
+    kernel_kinemaitc_g2p_semitwophase2d_u_p,
+    kernel_force_p2g_semitwophase2d,
+    kernel_force_p2g_semitwophase2d_u_p,
     kernel_single_point_porosity_p2g,
     kernel_compute_grid_velocity_twophase,
     kernel_mass_momentum_p2g_twophase_u_p,
-    kernel_pressure_tpic_p2g_correction_2D,
+    kernel_pressure_tpic_p2g_correction_2d,
 )
 from src.mpm.engines.AssembleMatrixKernel import (
     kernel_eliminate_pressure_increment_dirichlet,
-    kernel_assemble_residual_poisson_2D,
-    kernel_assemble_residual_poisson_FIC_2D,
-    kernel_assemble_residual_poisson_2D_u_p,
-    kernel_assemble_local_stiffness_poisson2D_u_p,
+    kernel_assemble_residual_poisson_2d,
+    kernel_assemble_residual_poisson_fic_2d,
+    kernel_assemble_residual_poisson_2d_u_p,
+    kernel_assemble_local_stiffness_poisson2d_u_p,
 )
-from src.mpm.structs.GridNode import NodeTwoPhase, NodeTwoPhase2D
-from src.mpm.structs.Particle import ParticleCloudTwoPhase2D
+from src.mpm.structs.NodeTwoPhase import NodeTwoPhase
+from src.mpm.structs.NodeTwoPhase2D import NodeTwoPhase2D
+from src.mpm.structs.ParticleCloudTwoPhase2D import ParticleCloudTwoPhase2D
 
 pytestmark = [pytest.mark.unit, pytest.mark.mpm, pytest.mark.assembly, pytest.mark.cpu]
 
@@ -70,7 +71,7 @@ def test_single_point_twophase_particle_follows_solid_skeleton(taichi_runtime):
 
 
 def test_up_usf_applies_velocity_boundary_before_stress():
-    from src.mpm.engines.ULSemiImplicitTwoPhaseEngine_u_p import ULSemiImplicitTwoPhaseEngine_u_p
+    from src.mpm.engines.ULSemiImplicitTwoPhaseEngineUP import ULSemiImplicitTwoPhaseEngineUP
 
     calls = []
     stages = (
@@ -91,10 +92,10 @@ def test_up_usf_applies_velocity_boundary_before_stress():
         "compute_affine_matrix",
         "compute_particle_kinematic",
     )
-    engine = object.__new__(ULSemiImplicitTwoPhaseEngine_u_p)
+    engine = object.__new__(ULSemiImplicitTwoPhaseEngineUP)
     for name in stages:
         setattr(engine, name, lambda *args, name=name: calls.append(name))
-    ULSemiImplicitTwoPhaseEngine_u_p.usf_updating(engine, None, None, None)
+    ULSemiImplicitTwoPhaseEngineUP.usf_updating(engine, None, None, None)
     assert calls.index("compute_grid_velcity") < calls.index("apply_dirichlet_constraints")
     assert calls.index("apply_dirichlet_constraints") < calls.index("compute_stress_strains")
 
@@ -131,9 +132,9 @@ def test_pressure_capacity_covers_moving_particle_support(taichi_runtime, node_s
 @pytest.mark.parametrize(
     "transfer",
     (
-        kernel_kinemaitc_g2p_semitwophase2D,
-        kernel_kinemaitc_g2p_semitwophase2D_FIC,
-        kernel_kinemaitc_g2p_semitwophase2D_u_p,
+        kernel_kinemaitc_g2p_semitwophase2d,
+        kernel_kinemaitc_g2p_semitwophase2d_fic,
+        kernel_kinemaitc_g2p_semitwophase2d_u_p,
     ),
 )
 def test_single_layer_pressure_transfer_matches_formulation(taichi_runtime, beta, transfer):
@@ -192,7 +193,7 @@ def test_up_pressure_split_has_consistent_darcy_and_storage_terms(taichi_runtime
     rhs = ti.field(float, shape=2)
     stiffness = ti.field(float, shape=(1, 2, 2))
 
-    kernel_assemble_residual_poisson_2D_u_p(
+    kernel_assemble_residual_poisson_2d_u_p(
         2,
         0,
         1,
@@ -209,7 +210,7 @@ def test_up_pressure_split_has_consistent_darcy_and_storage_terms(taichi_runtime
         dt,
         beta,
     )
-    kernel_assemble_local_stiffness_poisson2D_u_p(
+    kernel_assemble_local_stiffness_poisson2d_u_p(
         2,
         0,
         1,
@@ -290,7 +291,7 @@ def test_single_point_pressure_predictor_and_rigid_translation(taichi_runtime, f
     fluid_pressure_force = node.forcef.to_numpy().copy()
     particle.pressure.fill(float(shape.to_numpy() @ pressure))
     particle.permeability.fill(1.0e-3)
-    for predictor in (kernel_force_p2g_semitwophase2D, kernel_force_p2g_semitwophase2D_u_p):
+    for predictor in (kernel_force_p2g_semitwophase2d, kernel_force_p2g_semitwophase2d_u_p):
         node.force.fill(0.0)
         node.forcef.fill(0.0)
         arguments = (
@@ -305,12 +306,12 @@ def test_single_point_pressure_predictor_and_rigid_translation(taichi_runtime, f
             node_size,
             1.0,
         )
-        if predictor is kernel_force_p2g_semitwophase2D:
+        if predictor is kernel_force_p2g_semitwophase2d:
             predictor(*arguments, True)
         else:
             predictor(*arguments)
         np.testing.assert_allclose(node.force.to_numpy(), total_pressure_force, rtol=1.0e-12)
-        if predictor is kernel_force_p2g_semitwophase2D:
+        if predictor is kernel_force_p2g_semitwophase2d:
             np.testing.assert_allclose(node.forcef.to_numpy(), fluid_pressure_force, rtol=1.0e-12)
 
     # On a partially filled cell the pressure test function does not vanish
@@ -325,7 +326,7 @@ def test_single_point_pressure_predictor_and_rigid_translation(taichi_runtime, f
     np.testing.assert_allclose(node.porosity.to_numpy(), particle.porosity[0])
     np.testing.assert_allclose(node.pressure.to_numpy(), 0.0)
     if formulation == "uvp":
-        kernel_assemble_residual_poisson_2D(2, 1, particle, node_size, node_ids, node, dshape, shape, rhs)
+        kernel_assemble_residual_poisson_2d(2, 1, particle, node_size, node_ids, node, dshape, shape, rhs)
     else:
         mapping = ti.field(int, shape=1)
         material = namedtuple(
@@ -340,7 +341,7 @@ def test_single_point_pressure_predictor_and_rigid_translation(taichi_runtime, f
             0.3,
         )
         if formulation == "up":
-            kernel_assemble_residual_poisson_2D_u_p(
+            kernel_assemble_residual_poisson_2d_u_p(
                 2,
                 0,
                 1,
@@ -358,7 +359,7 @@ def test_single_point_pressure_predictor_and_rigid_translation(taichi_runtime, f
                 1.0,
             )
         else:
-            kernel_assemble_residual_poisson_FIC_2D(
+            kernel_assemble_residual_poisson_fic_2d(
                 2,
                 0,
                 1,
@@ -383,9 +384,9 @@ def test_single_point_pressure_predictor_and_rigid_translation(taichi_runtime, f
         node.porosity.from_numpy(np.array([[0.2], [0.6]]))
         rhs.fill(0.0)
         if formulation == "uvp":
-            kernel_assemble_residual_poisson_2D(2, 1, particle, node_size, node_ids, node, dshape, shape, rhs)
+            kernel_assemble_residual_poisson_2d(2, 1, particle, node_size, node_ids, node, dshape, shape, rhs)
         else:
-            kernel_assemble_residual_poisson_FIC_2D(
+            kernel_assemble_residual_poisson_fic_2d(
                 2,
                 0,
                 1,
@@ -410,7 +411,7 @@ def test_single_point_pressure_predictor_and_rigid_translation(taichi_runtime, f
     "correction_kernel",
     (
         kernel_correct_grid_kinematic_semitwophase,
-        kernel_correct_grid_kinematic_semitwophase_2DAxisy,
+        kernel_correct_grid_kinematic_semitwophase_2d_axisy,
         kernel_correct_grid_kinematic_semitwophase_u_p,
     ),
 )
@@ -487,7 +488,7 @@ def test_standard_pressure_operator_scales_with_timestep(taichi_runtime):
         diagonal.fill(0.0)
         off_diagonal.fill(0.0)
         element_size = ti.Vector([0.1, 0.2])
-        kernel_assemble_A(
+        kernel_assemble_a(
             0,
             dt,
             material,
@@ -522,7 +523,7 @@ def test_standard_pressure_operator_has_3d_laplacian_units(taichi_runtime):
 
     grid_type[1, 1, 1] = 1
     cell_porosity[1, 1, 1] = 0.4
-    kernel_assemble_A(
+    kernel_assemble_a(
         0,
         dt,
         material,
@@ -557,7 +558,7 @@ def test_3d_pressure_correction_uses_each_axis_spacing(taichi_runtime):
         pressure[index] = material.solid_density * np.dot([1.0, 2.0, 3.0], spacing * index)
     cell_type.fill(1)
     cell_dpressure.from_numpy(pressure)
-    kernel_correct_grid_kinematic_semitwophase_mg_3D(
+    kernel_correct_grid_kinematic_semitwophase_mg_3d(
         0,
         node,
         dt,
@@ -583,7 +584,7 @@ def test_mixture_mgpcg_supports_negative_definite_operator_and_reports_exhaustio
     if solver_type == "cartesian":
         solver = MGPCGMixPoissonSolver(2, (3, 3), n_mg_levels=1, bottom_smoothing=2)
     else:
-        solver = MGPCGMixPoissonSolver_Axi(2, (3, 3), 1.0, n_mg_levels=1, bottom_smoothing=2)
+        solver = MGPCGMixPoissonSolverAxisymmetric(2, (3, 3), 1.0, n_mg_levels=1, bottom_smoothing=2)
     solver.grid_type[0][1, 1] = solver.FLUID
     solver.Adiag[0][1, 1] = -1.0
     solver.b[1, 1] = 1.0
@@ -604,7 +605,7 @@ def test_mixture_multigrid_coarsening_handles_odd_grid_shapes(taichi_runtime, so
     if solver_type == "cartesian":
         solver = MGPCGMixPoissonSolver(2, (5, 3), n_mg_levels=2)
     else:
-        solver = MGPCGMixPoissonSolver_Axi(2, (5, 3), 1.0, n_mg_levels=2)
+        solver = MGPCGMixPoissonSolverAxisymmetric(2, (5, 3), 1.0, n_mg_levels=2)
     solver.grid_type[0].fill(solver.SOLID)
     solver.grid_type[0][4, 2] = solver.FLUID
 
@@ -720,7 +721,7 @@ def test_tpic_pressure_transfer_preserves_affine_field(taichi_runtime):
         0,
         is_rigid,
     )
-    kernel_pressure_tpic_p2g_correction_2D(
+    kernel_pressure_tpic_p2g_correction_2d(
         2,
         1,
         ti.Vector([1.0, 1.0]),
@@ -778,9 +779,9 @@ def test_twophase_pressure_respects_configured_cavitation_limit(taichi_runtime, 
 @pytest.mark.parametrize("formulation", ("up", "uvp"))
 def test_single_layer_free_surface_pressure_is_not_cavitation_pressure(taichi_runtime, formulation):
     from src.mpm.engines.ULSemiImplicitTwoPhaseEngine import ULSemiImplicitTwoPhaseEngine
-    from src.mpm.engines.ULSemiImplicitTwoPhaseEngine_u_p import ULSemiImplicitTwoPhaseEngine_u_p
+    from src.mpm.engines.ULSemiImplicitTwoPhaseEngineUP import ULSemiImplicitTwoPhaseEngineUP
 
-    engine_type = ULSemiImplicitTwoPhaseEngine_u_p if formulation == "up" else ULSemiImplicitTwoPhaseEngine
+    engine_type = ULSemiImplicitTwoPhaseEngineUP if formulation == "up" else ULSemiImplicitTwoPhaseEngine
     engine = object.__new__(engine_type)
     engine._iter_twophase_materials = lambda scene: [(1, 0, 1, SimpleNamespace(cavitation_pressure=-1.0e30))]
     node = NodeTwoPhase2D.field(shape=(1, 1))
@@ -789,7 +790,7 @@ def test_single_layer_free_surface_pressure_is_not_cavitation_pressure(taichi_ru
     node.dof.fill(-1)
     engine.matrix_free = SimpleNamespace(unknow_vector=ti.field(float, shape=1))
 
-    engine.update_nodal_pressure_2D(
+    engine.update_nodal_pressure_2d(
         SimpleNamespace(pressure_beta=1.0), SimpleNamespace(mass_cut_off=1.0e-12, node=node)
     )
 
@@ -833,7 +834,7 @@ def test_free_surface_prescribes_pressure_increment_and_eliminates_rhs(taichi_ru
     unknown = ti.field(float, shape=1)
     unknown[0] = 3.0
 
-    kernel_update_nodal_pressure_2D(1.0e-12, 0.5, 1.0, node, unknown)
+    kernel_update_nodal_pressure_2d(1.0e-12, 0.5, 1.0, node, unknown)
     np.testing.assert_allclose(node.dpressure.to_numpy().ravel(), [3.0, -1.5])
 
     particle = ParticleCloudTwoPhase2D.field(shape=1)
@@ -886,7 +887,7 @@ def test_mg_single_layer_requires_nonincremental_pressure_projection(taichi_runt
 
 @pytest.mark.parametrize("beta", (0.0, 0.5, 1.0))
 def test_up_recovers_darcy_velocity_without_changing_solid_update(taichi_runtime, beta):
-    from src.mpm.engines.ULSemiImplicitTwoPhaseEngine_u_p import ULSemiImplicitTwoPhaseEngine_u_p
+    from src.mpm.engines.ULSemiImplicitTwoPhaseEngineUP import ULSemiImplicitTwoPhaseEngineUP
 
     particle = ParticleCloudTwoPhase2D.field(shape=3)
     particle.active.from_numpy(np.array([1, 1, 0], dtype=np.uint8))
@@ -909,7 +910,7 @@ def test_up_recovers_darcy_velocity_without_changing_solid_update(taichi_runtime
     material_mapping.from_numpy(np.array([1, 0], dtype=np.int32))
     props = namedtuple("DarcyWater", "fluid_density permeability fluid_unit_weight cavitation_pressure")
     materials = [props(1000.0, 0.5, 5000.0, -1e30), props(1000.0, 1.0, 5000.0, -1e30)]
-    engine = object.__new__(ULSemiImplicitTwoPhaseEngine_u_p)
+    engine = object.__new__(ULSemiImplicitTwoPhaseEngineUP)
     engine._iter_twophase_materials = lambda _: [(1, 0, 1, materials[0]), (2, 1, 2, materials[1])]
     dt = ti.field(float, shape=())
     dt[None] = 0.01
@@ -921,7 +922,7 @@ def test_up_recovers_darcy_velocity_without_changing_solid_update(taichi_runtime
         material=SimpleNamespace(materialID=material_mapping),
         element=SimpleNamespace(grid_nodes=3, LnID=node_ids, shape_fn=shape, dshape_fn=dshape, node_size=node_size),
     )
-    engine.compute_particle_kinematics_twophase2D(sims, scene)
+    engine.compute_particle_kinematics_twophase2d(sims, scene)
 
     # grad(p)=(100,-200), rho*g=(0,-200): only horizontal Darcy flow.
     np.testing.assert_allclose(particle.vf.to_numpy()[:2], [[0.3 - 0.08, -0.1], [0.3 - 0.02, -0.1]], atol=1e-12)
@@ -931,10 +932,10 @@ def test_up_recovers_darcy_velocity_without_changing_solid_update(taichi_runtime
     np.testing.assert_array_equal(particle.vf.to_numpy()[2], [7.0, 8.0])
 
     materials[1] = materials[1]._replace(permeability=0.0)
-    engine.compute_particle_kinematics_twophase2D(sims, scene)
+    engine.compute_particle_kinematics_twophase2d(sims, scene)
     np.testing.assert_allclose(particle.vf.to_numpy()[0], [0.3, -0.1], atol=1e-12)
     node.dpressure.from_numpy(np.array([[200.0], [200.0], [0.0]]) - beta * node.pressure.to_numpy())
-    engine.compute_particle_kinematics_twophase2D(sims, scene)
+    engine.compute_particle_kinematics_twophase2d(sims, scene)
     np.testing.assert_allclose(particle.vf.to_numpy()[:2], particle.vs.to_numpy()[:2], atol=1e-12)
 
 
@@ -983,7 +984,7 @@ def test_fic_gradient_projection_matches_poisson_mobility(taichi_runtime, densit
 
     node.dof.from_numpy(np.array([[0], [1]], dtype=np.int32))
     rhs = ti.field(float, shape=2)
-    kernel_assemble_residual_poisson_FIC_2D(
+    kernel_assemble_residual_poisson_fic_2d(
         2,
         0,
         1,

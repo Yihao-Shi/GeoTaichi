@@ -20,9 +20,16 @@ def initialize():
 
 if os.environ['INITIALIZE_FIRST'] == '1':
     initialize()
-from src.mpm.structs.Particle import ParticleCloudTwoPhase2D, ParticleCloudTwoPhase, ImplicitParticle2D
-from src.mpm.structs.GridNode import Nodes2D, Nodes, ImplicitNodes2D
-from src.mpm.soft_particle.Structs import DeformableGrid, SoftBody, SoftMaterialPoint, TemplateSoftNode
+from src.mpm.structs.ParticleCloudTwoPhase2D import ParticleCloudTwoPhase2D
+from src.mpm.structs.ParticleCloudTwoPhase import ParticleCloudTwoPhase
+from src.mpm.structs.ImplicitParticle2D import ImplicitParticle2D
+from src.mpm.structs.Nodes2D import Nodes2D
+from src.mpm.structs.Nodes import Nodes
+from src.mpm.structs.GridNode import ImplicitNodes2D
+from src.mpm.soft_particle.Structs import DeformableGrid
+from src.mpm.soft_particle.SoftBody import SoftBody
+from src.mpm.soft_particle.Structs import SoftMaterialPoint
+from src.mpm.soft_particle.Structs import TemplateSoftNode
 if os.environ['INITIALIZE_FIRST'] == '0':
     initialize()
 expected = ti.f64 if os.environ['GEOTAICHI_REAL_DTYPE'] == 'float64' else ti.f32

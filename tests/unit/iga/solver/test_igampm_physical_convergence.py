@@ -7,7 +7,7 @@ import pytest
 import taichi as ti
 
 from src.igampm.engines.ImplicitEngine import ImplicitEngineMixin
-from src.igampm.engines import Engine
+from src.igampm.engines.CoupledEngine import Engine
 from src.igampm import config
 
 

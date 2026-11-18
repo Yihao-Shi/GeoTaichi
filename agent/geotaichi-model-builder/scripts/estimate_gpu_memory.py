@@ -21,7 +21,6 @@ from typing import Any
 
 from common import build_error, build_ok, emit
 
-
 TAICHI_DEFAULT_DEVICE_MEMORY_GIB = 1.0
 GPU_ARCHES = {"gpu", "cuda", "metal", "vulkan", "opengl", "dx11"}
 CPU_ARCHES = {"cpu", "x64", "arm64"}
@@ -310,9 +309,7 @@ class ScriptAnalyzer:
         self.environment = environment
         self.target_platform = target_platform
         self.target_machine = target_machine
-        self.functions = {
-            node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)
-        }
+        self.functions = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
         self.module_scope: dict[str, Any] = {}
         self.geotaichi_init_names: set[str] = set()
         self.taichi_init_names: set[str] = set()

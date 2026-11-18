@@ -1,7 +1,10 @@
 import taichi as ti
 
+
 @ti.kernel
-def merge_sort_key_value(length: int, keys: ti.template(), vals: ti.template(), temp_keys: ti.template(), temp_vals: ti.template()):
+def merge_sort_key_value(
+    length: int, keys: ti.template(), vals: ti.template(), temp_keys: ti.template(), temp_vals: ti.template()
+):
     width = 1
     stages = ti.ceil(ti.log(length, 2))
     for stage in range(stages):

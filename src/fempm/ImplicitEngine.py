@@ -1,46 +1,48 @@
 """Monolithic implicit FEM--MPM solver with IPC contact and friction."""
 
+from src.linear_solver.Utilities import inexact_newton_absolute_tolerance
+from src.linear_solver.Utilities import inexact_newton_relative_tolerance
+
+from src.utils.errors import BackendError, CapacityError, NonfiniteStateError, SimulationStateError
+from src.utils.StepRetry import StepRetryPolicy
+
 import math
 import time
-
 import numpy as np
 import taichi as ti
-
 import src.mpm.config as mpm_config
 from src.mpm.engines.direct.Convergence import particle_correction_measure
-from src.fem.engines.ImplicitFEM import NewtonConvergenceError
 from src.fem.engines.ClassicalAssembler import ClassicalAssembler
 from src.fem.cloth.ClothAssembler import ClothAssembler
 from src.fempm.contact.IPCAssembler import FEMPMIPCAssembler
 from src.linear_solver.BuildTriplet import BuildTriplet
 from src.linear_solver.CoordinateSparseMatrix import CoordinateSparseMatrix
 from src.utils.RuntimeHook import runtime_checkpoint
-from src.utils.SolverRuntime import inexact_newton_absolute_tolerance, inexact_newton_relative_tolerance
-from src.utils.StepRetry import StepRetryPolicy, nonlinear_failure_kind
 from src.utils.linalg import no_operation
-
-
-def _normalize_assembly(value):
-    key = str(value).replace("_", "").replace("-", "").lower()
-    if key in ("hash", "hashtriplet", "triplet", "buildtriplet"):
-        return "HashTriplet"
-    if key in ("coo", "coordinate", "coordinatesparse"):
-        return "COO"
-    raise ValueError("FEMPM implicit assemble_type must be COO or HashTriplet")
-
-
-def _normalize_solver(value):
-    key = str(value).replace("_", "").replace("-", "").lower()
-    if key in ("pcg", "cg", "taichipcg"):
-        return "PCG"
-    if key in ("scipy", "spsolve", "cpu", "direct"):
-        return "Scipy"
-    raise ValueError("FEMPM IPC linear_solver must be PCG or Scipy")
+from src.utils.errors import NewtonConvergenceError
 
 
 @ti.data_oriented
 class FEMPMImplicitEngine:
     """Projected-Newton solve over FEM nodes and active MPM grid nodes."""
+
+    @staticmethod
+    def _normalize_assembly(value):
+        key = str(value).replace("_", "").replace("-", "").lower()
+        if key in ("hash", "hashtriplet", "triplet", "buildtriplet"):
+            return "HashTriplet"
+        if key in ("coo", "coordinate", "coordinatesparse"):
+            return "COO"
+        raise ValueError("FEMPM implicit assemble_type must be COO or HashTriplet")
+
+    @staticmethod
+    def _normalize_solver(value):
+        key = str(value).replace("_", "").replace("-", "").lower()
+        if key in ("pcg", "cg", "taichipcg"):
+            return "PCG"
+        if key in ("scipy", "spsolve", "cpu", "direct"):
+            return "Scipy"
+        raise ValueError("FEMPM IPC linear_solver must be PCG or Scipy")
 
     def __init__(
         self,
@@ -86,10 +88,10 @@ class FEMPMImplicitEngine:
             reduction=kwargs.get("step_retry_reduction", 0.5),
             minimum_timestep=kwargs.get("step_retry_minimum_timestep", 0.0),
         )
-        self.assemble_type = _normalize_assembly(
+        self.assemble_type = FEMPMImplicitEngine._normalize_assembly(
             kwargs.get("assemble_type", kwargs.get("assembly", self.fem.assemble_type))
         )
-        self.linear_solver = _normalize_solver(kwargs.get("linear_solver", self.fem.linear_solver))
+        self.linear_solver = FEMPMImplicitEngine._normalize_solver(kwargs.get("linear_solver", self.fem.linear_solver))
         if self.nonassociated_newton and self.linear_solver == "PCG":
             self.linear_solver = "BiCGSTAB"
         self.linear_solver_tolerance = float(kwargs.get("linear_solver_tolerance", 1.0e-12))
@@ -206,7 +208,7 @@ class FEMPMImplicitEngine:
         if self.mpm_has_plastic_history:
             history_state_size = int(self.mpm.material.history_state_size)
             if history_state_size <= 0:
-                raise RuntimeError(
+                raise BackendError(
                     "FEM-MPM finite-strain plasticity requires a " "material-owned device history-state interface"
                 )
             self.snapshot_mpm_plastic_history = ti.Vector.field(history_state_size, ti.f64, shape=particle_capacity)
@@ -262,11 +264,11 @@ class FEMPMImplicitEngine:
             return
         self._inspect_mpm_reference_state()
         if int(self.mpm_reference_status[1]) != 0:
-            raise RuntimeError("FEM-MPM MPM deformation gradients contain non-finite values")
+            raise NonfiniteStateError("FEM-MPM MPM deformation gradients contain non-finite values")
         if int(self.mpm_reference_status[0]) == 0:
-            self.mpm.init_F0()
+            self.mpm.init_f0()
         elif int(self.mpm_reference_status[2]) != 0:
-            raise RuntimeError("FEM-MPM MPM deformation gradients must all have positive " "determinants")
+            raise NonfiniteStateError("FEM-MPM MPM deformation gradients must all have positive " "determinants")
         if hasattr(self.mpm, "mass_p2g"):
             self.mpm.compute_shapefn()
             self.mpm.mass_p2g()
@@ -314,7 +316,7 @@ class FEMPMImplicitEngine:
             getattr(self.fem, "cloth_assembler", None),
         )
         if assembler is None:
-            raise RuntimeError("FEMPM IPC requires a Taichi elastic FEM assembler")
+            raise SimulationStateError("FEMPM IPC requires a Taichi elastic FEM assembler")
         return assembler
 
     def _fem_material_step(self):
@@ -396,7 +398,7 @@ class FEMPMImplicitEngine:
             return
         contact_capacity = self.contact.configured_contact_block_capacity()
         if required > contact_capacity:
-            raise RuntimeError(
+            raise CapacityError(
                 "FEMPM contact block capacity is too small: " f"need {required}, configured bound {contact_capacity}"
             )
         self._matrix_contact_capacity = contact_capacity
@@ -484,7 +486,7 @@ class FEMPMImplicitEngine:
             if not reuse_force:
                 stiffness = self.fem._current_stiffness
                 if stiffness.values.size:
-                    raise RuntimeError(
+                    raise SimulationStateError(
                         "FEMPM IPC cannot consume host FEM triplets; move the "
                         "contribution to a Taichi scatter_stiffness_to_hash kernel"
                     )
@@ -806,7 +808,7 @@ class FEMPMImplicitEngine:
             else:
                 self._eliminate_coo_constraints(active_dof)
                 if int(self.coo_overflow[None]) != 0:
-                    raise RuntimeError("FEMPM COO capacity exceeded while assembling IPC")
+                    raise CapacityError("FEMPM COO capacity exceeded while assembling IPC")
                 matrix.linear_operator.update_active_dofs(active_dof)
                 matrix.linear_operator.update_nnz(int(self.coo_count[None]))
                 self._build_coo_diagonal(active_dof)
@@ -844,7 +846,7 @@ class FEMPMImplicitEngine:
 
             solution = np.asarray(spsolve(matrix, self.rhs.to_numpy()[:active_dof]), dtype=np.float64)
             if not np.all(np.isfinite(solution)):
-                raise RuntimeError("FEMPM Scipy linear solve returned non-finite values")
+                raise NonfiniteStateError("FEMPM Scipy linear solve returned non-finite values")
             self._load_host_solution(active_dof, solution)
             result = {
                 "converged": True,
@@ -1417,7 +1419,7 @@ class FEMPMImplicitEngine:
         except Exception as diagnostic_error:
             contact = {"unavailable": str(diagnostic_error)}
         return {
-            "kind": nonlinear_failure_kind(exception),
+            "kind": StepRetryPolicy.nonlinear_failure_kind(exception),
             "exception": type(exception).__name__,
             "message": str(exception),
             "attempt": int(attempt),
@@ -1600,6 +1602,3 @@ class FEMPMImplicitEngine:
             "step": self.step_count,
             "history": list(self.history),
         }
-
-
-__all__ = ["FEMPMImplicitEngine"]

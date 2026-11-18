@@ -5,6 +5,10 @@ The 446 cube/cube cases are read directly from
 checkout.
 """
 
+from src.physics_model.contact_model.ipc.Utilities import ipc_friction_f0
+from src.physics_model.contact_model.ipc.Utilities import ipc_friction_f1_over_speed
+from src.physics_model.contact_model.ipc.Utilities import ipc_friction_hessian_term
+
 import hashlib
 import json
 import os
@@ -19,11 +23,7 @@ import taichi as ti
 
 pytestmark = [pytest.mark.unit, pytest.mark.ipc, pytest.mark.contact]
 
-from src.physics_model.contact_model.ipc.IPC import (
-    ipc_friction_f0,
-    ipc_friction_f1_over_speed,
-    ipc_friction_hessian_term,
-)
+from src.physics_model.contact_model.ipc.Friction import Friction
 
 _CASE_COUNT = 446
 _ARCHIVE_SHA256 = "1b3ddd33327957d759564a3aeb3e44ea80e3e4cead49e12dc534761e80570d38"
@@ -172,7 +172,7 @@ def _stored_hessian(data):
     return hessian
 
 
-def test_all_ipc_toolkit_cube_cube_friction_data():
+def test_all_ipc_cube_cube_friction_data():
     for name, data in _reference_data_cases():
         energy, gradient, hessian = _assemble_frozen_friction(data)
         expected_gradient = np.asarray(data["gradient"], dtype=np.float64)

@@ -6,9 +6,10 @@ import pytest
 from src.fedem.AffineIPCEngine import FEMAffineIPCEngine
 from src.fedem.contact.AffineIPC import AffineIPCModel
 from src.fem.contact.ContactModel import FEMContact
-from src.fem.engines.ImplicitFEM import ImplicitFEM, NewtonConvergenceError
+from src.fem.engines.ImplicitFEM import ImplicitFEM
 from src.fempm.ImplicitEngine import FEMPMImplicitEngine
 from src.fempm.contact.IPC import IPCModel
+from src.utils.errors import NewtonConvergenceError
 
 pytestmark = [pytest.mark.unit, pytest.mark.ipc, pytest.mark.contact]
 
@@ -92,7 +93,7 @@ def test_coupled_ipc_accepts_strict_friction_fixed_point_settings(model_type):
 
 def test_fem_contact_accepts_strict_friction_fixed_point_settings():
     contact = FEMContact.create(
-        "IPC",
+        "BarrierIPC",
         friction_iterations=-1,
         friction_max_iterations=17,
         friction_tolerance=2.0e-8,
@@ -105,7 +106,7 @@ def test_fem_contact_accepts_strict_friction_fixed_point_settings():
 
 def test_fem_pair_contact_inherits_fixed_point_settings():
     contact = FEMContact.create(
-        "IPC",
+        "BarrierIPC",
         friction_iterations=-1,
         friction_max_iterations=17,
         friction_tolerance=2.0e-8,
@@ -121,7 +122,7 @@ def test_fem_pair_contact_inherits_fixed_point_settings():
 @pytest.mark.parametrize("value", (0, -2, 1.5, float("nan"), "many"))
 def test_fem_contact_rejects_invalid_friction_iterations(value):
     with pytest.raises(ValueError, match="friction_iterations"):
-        FEMContact.create("IPC", friction_iterations=value)
+        FEMContact.create("BarrierIPC", friction_iterations=value)
 
 
 @pytest.mark.parametrize("model_type", (IPCModel, AffineIPCModel))

@@ -1,16 +1,33 @@
 from math import pi, sqrt
 import numpy as np
 
-from src.utils.TypeDefination import (vec2i, vec2f, vec3f, vec3i, mat3x3, vec4f, vec5f, vec6f, vec8f,
-                                      mat6x3, mat4x4, mat2x2, mat2x5, mat3x5, mat5x5, mat8x3, mat3x9)
+from src.utils.TypeDefinition import (
+    vec2i,
+    vec2f,
+    vec3f,
+    vec3i,
+    mat3x3,
+    vec4f,
+    vec5f,
+    vec6f,
+    vec8f,
+    mat6x3,
+    mat4x4,
+    mat2x2,
+    mat2x5,
+    mat3x5,
+    mat5x5,
+    mat8x3,
+    mat3x9,
+)
 
 BLOCK_SZ = 128
 WARP_SZ = 32
 
-ILThreshold = 1e6
-LThreshold = 1e-6
-Threshold = 1e-14
-MThreshold = 1e15
+IL_THRESHOLD = 1e6
+L_THRESHOLD = 1e-6
+THRESHOLD = 1e-14
+M_THRESHOLD = 1e15
 PENALTY = 1e25
 DBL_DIG = 15
 DBL_EPSILON = 2.2204460492503131e-16
@@ -31,75 +48,84 @@ FLT_MIN_EXP = -125
 
 
 PI = pi
-iPI = 1. / pi
+INV_PI = 1.0 / pi
 SQRT_PI = sqrt(pi)
 SQRT2 = sqrt(2)
 SQRT3 = sqrt(3)
-SQRT3_INV = sqrt(1./3.)
-NP_IDENTITY = np.array([1., 1., 1.])
+SQRT3_INV = sqrt(1.0 / 3.0)
+NP_IDENTITY = np.array([1.0, 1.0, 1.0])
 
-IDENTITY = vec3f([1., 1., 1.])
-EYE = vec6f([1., 1., 1., 0., 0., 0.])
-EYE2D = vec3f([1., 1., 0.])
-DELTA = mat3x3([[1., 0., 0.], [0., 1., 0.],[0., 0., 1.]])
-DELTA2D = mat2x2([[1., 0.], [0., 1.]])
+IDENTITY = vec3f([1.0, 1.0, 1.0])
+EYE = vec6f([1.0, 1.0, 1.0, 0.0, 0.0, 0.0])
+EYE2D = vec3f([1.0, 1.0, 0.0])
+DELTA = mat3x3([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
+DELTA2D = mat2x2([[1.0, 0.0], [0.0, 1.0]])
 
-ZEROVEC2i = vec2i([0, 0])
-ZEROVEC2f = vec2f([0., 0.])
-ZEROVEC3f = vec3f([0., 0., 0.])
-ZEROVEC4f = vec4f([0., 0., 0., 0.])
-ZEROVEC3i = vec3i([0, 0, 0])
-ZEROVEC5f = vec5f([0., 0., 0., 0., 0.])
-ZEROVEC6f = vec6f([0., 0., 0., 0., 0., 0.])
-ZEROVEC8f = vec8f([0., 0., 0., 0., 0., 0., 0., 0.])
+ZEROVEC2I = vec2i([0, 0])
+ZEROVEC2F = vec2f([0.0, 0.0])
+ZEROVEC3F = vec3f([0.0, 0.0, 0.0])
+ZEROVEC4F = vec4f([0.0, 0.0, 0.0, 0.0])
+ZEROVEC3I = vec3i([0, 0, 0])
+ZEROVEC5F = vec5f([0.0, 0.0, 0.0, 0.0, 0.0])
+ZEROVEC6F = vec6f([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+ZEROVEC8F = vec8f([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
 
-ZEROMAT2x2 = mat2x2([[0., 0.], 
-                     [0., 0.]])
-ZEROMAT2x5 = mat2x5([[0., 0., 0., 0., 0.], 
-                     [0., 0., 0., 0., 0.]])
-ZEROMAT3x3 = mat3x3([[0., 0., 0.], [0., 0., 0.], [0., 0., 0.]])
-ZEROMAT3x5 = mat3x5([[0., 0., 0., 0., 0.], 
-                     [0., 0., 0., 0., 0.],
-                     [0., 0., 0., 0., 0.]])
-ZEROMAT3x9 = mat3x9([0, 0, 0, 0, 0, 0, 0, 0, 0], 
-                    [0, 0, 0, 0, 0, 0, 0, 0, 0], 
-                    [0, 0, 0, 0, 0, 0, 0, 0, 0])
-ZEROMAT4x4 = mat4x4([[0., 0., 0., 0.], [0., 0., 0., 0.], [0., 0., 0., 0.], [0., 0., 0., 0.]])
-ZEROMAT5x5 = mat5x5([[0., 0., 0., 0., 0.], 
-                     [0., 0., 0., 0., 0.], 
-                     [0., 0., 0., 0., 0.], 
-                     [0., 0., 0., 0., 0.], 
-                     [0., 0., 0., 0., 0.]])
-ZEROMAT6x3 = mat6x3([[0., 0., 0.], [0., 0., 0.], [0., 0., 0.], 
-                     [0., 0., 0.], [0., 0., 0.], [0., 0., 0.]])
-ZEROMAT8x3 = mat8x3([[0., 0., 0.], [0., 0., 0.], [0., 0., 0.], [0., 0., 0.], 
-                     [0., 0., 0.], [0., 0., 0.], [0., 0., 0.], [0., 0., 0.]])
+ZEROMAT2X2 = mat2x2([[0.0, 0.0], [0.0, 0.0]])
+ZEROMAT2X5 = mat2x5([[0.0, 0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0]])
+ZEROMAT3X3 = mat3x3([[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]])
+ZEROMAT3X5 = mat3x5([[0.0, 0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0]])
+ZEROMAT3X9 = mat3x9([0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0])
+ZEROMAT4X4 = mat4x4([[0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0]])
+ZEROMAT5X5 = mat5x5(
+    [
+        [0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0],
+    ]
+)
+ZEROMAT6X3 = mat6x3(
+    [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
+)
+ZEROMAT8X3 = mat8x3(
+    [
+        [0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0],
+    ]
+)
 
 # Consititutive models
-FTOL = 1.e-6        # yield function tolerance
-STOL = 1.e-3        # stress tolerance
-LTOL = 1.e-6        # detecting tolerance
-MAXITS = 5         # maximum iteration number
+FTOL = 1.0e-6  # yield function tolerance
+STOL = 1.0e-3  # stress tolerance
+LTOL = 1.0e-6  # detecting tolerance
+MAXITS = 5  # maximum iteration number
 NSUB = 10
-dTmin = 1e-4
-EPS = 1.e-16        # machine error
-ITS = 3 
-itrstep = 100
-substep = 100
-Ftolerance = 1e-5
-Gtolerance = 1e-5
+MIN_DT = 1e-4
+EPS = 1.0e-16  # machine error
+ITS = 3
+ITERATION_STEP = 100
+SUBSTEP = 100
+FTOLERANCE = 1e-5
+GTOLERANCE = 1e-5
 
 # WENO intepolation
 WENO_EPS = 1e-6
 
 # Bounding volume hierarchy
-IS_LEAF         = 1
-PRIMITIVE_NONE  = 0
-PRIMITIVE_TRI   = 1
+IS_LEAF = 1
+PRIMITIVE_NONE = 0
+PRIMITIVE_TRI = 1
 PRIMITIVE_SHAPE = 2
-SHPAE_NONE      = 0
-SHPAE_SPHERE    = 1
-SHPAE_QUAD      = 2
-SHPAE_SPOT      = 3
-SHPAE_LASER     = 4
-MAX_PRIM        = 6
+SHAPE_NONE = 0
+SHAPE_SPHERE = 1
+SHAPE_QUAD = 2
+SHAPE_SPOT = 3
+SHAPE_LASER = 4
+MAX_PRIM = 6

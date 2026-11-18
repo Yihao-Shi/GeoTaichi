@@ -4,14 +4,14 @@ from src.dem.contact.ContactKernel import (
     lsmpm_surface_quadrature_coefficient,
     stiffness_parameter,
 )
-from src.utils.constants import ZEROVEC3f, Threshold
-from src.utils.Quaternion import SetToRotate
-from src.utils.ScalarFunction import PairingMapping, EffectiveValue, linearize3D
+from src.utils.constants import ZEROVEC3F, THRESHOLD
+from src.utils.Quaternion import set_to_rotate
+from src.utils.ScalarFunction import pairing_mapping, effective_value, linearize3d
 from src.utils import GlobalVariable
 
 
 @ti.func
-def soft_soft_work_conjugate_penetration_state_(
+def soft_soft_work_conjugate_penetration_state(
     stored_penetration,
     stored_active,
     gap_rate,
@@ -37,13 +37,13 @@ def soft_soft_work_conjugate_penetration_state_(
 
 
 @ti.func
-def soft_surface_node_mass_(bodyID, rigid):
-    node_count = ti.max(rigid[bodyID]._get_vertice_number(), 1)
-    return rigid[bodyID].m / node_count
+def soft_surface_node_mass(body_id, rigid):
+    node_count = ti.max(rigid[body_id]._get_vertice_number(), 1)
+    return rigid[body_id].m / node_count
 
 
 @ti.kernel
-def reset_soft_contact_trace_(
+def reset_soft_contact_trace(
     soft_num: int,
     max_grid_num: int,
     soft: ti.template(),
@@ -55,13 +55,13 @@ def reset_soft_contact_trace_(
     for sb, local_grid in ti.ndrange(soft_num, max_grid_num):
         if local_grid < soft[sb].gridNum:
             node = soft[sb].gridStart + local_grid
-            trace_velocity[node] = ZEROVEC3f
+            trace_velocity[node] = ZEROVEC3F
             trace_weight[node] = 0.0
-            trace_force[node] = ZEROVEC3f
+            trace_force[node] = ZEROVEC3F
 
 
 @ti.kernel
-def project_current_soft_surface_to_contact_trace_(
+def project_current_soft_surface_to_contact_trace(
     surface_num: int,
     surface: ti.template(),
     rigid: ti.template(),
@@ -97,7 +97,7 @@ def project_current_soft_surface_to_contact_trace_(
                     * ((1.0 - fraction[2]) if k == 0 else fraction[2])
                     * area_weight
                 )
-                local_sdf_node = linearize3D(
+                local_sdf_node = linearize3d(
                     base[0] + i,
                     base[1] + j,
                     base[2] + k,
@@ -112,7 +112,7 @@ def project_current_soft_surface_to_contact_trace_(
 
 
 @ti.kernel
-def normalize_soft_contact_trace_(
+def normalize_soft_contact_trace(
     soft_num: int,
     max_grid_num: int,
     soft: ti.template(),
@@ -122,15 +122,15 @@ def normalize_soft_contact_trace_(
     for sb, local_grid in ti.ndrange(soft_num, max_grid_num):
         if local_grid < soft[sb].gridNum:
             node = soft[sb].gridStart + local_grid
-            if trace_weight[node] > Threshold:
+            if trace_weight[node] > THRESHOLD:
                 trace_velocity[node] /= trace_weight[node]
             else:
-                trace_velocity[node] = ZEROVEC3f
+                trace_velocity[node] = ZEROVEC3F
 
 
 @ti.func
-def soft_grid_trace_velocity_(
-    bodyID,
+def soft_grid_trace_velocity(
+    body_id,
     local_position,
     rigid,
     box,
@@ -139,20 +139,20 @@ def soft_grid_trace_velocity_(
     trace_weight,
     uncovered,
 ):
-    soft_id = rigid[bodyID].softID
-    inv_dx = 1.0 / box[bodyID].grid_space
+    soft_id = rigid[body_id].softID
+    inv_dx = 1.0 / box[body_id].grid_space
     base = ti.Vector([0, 0, 0])
     for d in ti.static(range(3)):
         base[d] = ti.min(
-            box[bodyID].gnum[d] - 2,
+            box[body_id].gnum[d] - 2,
             ti.max(
                 0,
-                int((local_position[d] - box[bodyID].xmin[d]) * inv_dx),
+                int((local_position[d] - box[body_id].xmin[d]) * inv_dx),
             ),
         )
-    origin = box[bodyID].xmin + ti.cast(base, float) * box[bodyID].grid_space
+    origin = box[body_id].xmin + ti.cast(base, float) * box[body_id].grid_space
     fraction = (local_position - origin) * inv_dx
-    velocity = ZEROVEC3f
+    velocity = ZEROVEC3F
     active_weight = 0.0
     for i, j, k in ti.static(ti.ndrange(2, 2, 2)):
         weight = (
@@ -160,29 +160,29 @@ def soft_grid_trace_velocity_(
             * ((1.0 - fraction[1]) if j == 0 else fraction[1])
             * ((1.0 - fraction[2]) if k == 0 else fraction[2])
         )
-        local_sdf_node = linearize3D(
+        local_sdf_node = linearize3d(
             base[0] + i,
             base[1] + j,
             base[2] + k,
-            box[bodyID].gnum,
+            box[body_id].gnum,
         )
         sdf_node = soft[soft_id].gridStart + local_sdf_node
         nodal_weight = weight * trace_weight[sdf_node]
         active_weight += nodal_weight
         velocity += nodal_weight * trace_velocity[sdf_node]
-    if active_weight > Threshold:
+    if active_weight > THRESHOLD:
         velocity /= active_weight
     else:
         ti.atomic_add(uncovered[None], 1)
-        velocity = rigid[bodyID].v + rigid[bodyID].w.cross(
-            rigid[bodyID].mass_center + SetToRotate(rigid[bodyID].q) @ local_position - rigid[bodyID].mass_center
+        velocity = rigid[body_id].v + rigid[body_id].w.cross(
+            rigid[body_id].mass_center + set_to_rotate(rigid[body_id].q) @ local_position - rigid[body_id].mass_center
         )
     return velocity
 
 
 @ti.func
-def transfer_force_to_soft_grid_(
-    bodyID,
+def transfer_force_to_soft_grid(
+    body_id,
     local_position,
     force,
     rigid,
@@ -191,19 +191,19 @@ def transfer_force_to_soft_grid_(
     contact_weight,
     trace_force,
 ):
-    soft_id = rigid[bodyID].softID
+    soft_id = rigid[body_id].softID
     ti.atomic_add(soft[soft_id].contact_force, force)
-    inv_dx = 1.0 / box[bodyID].grid_space
+    inv_dx = 1.0 / box[body_id].grid_space
     base = ti.Vector([0, 0, 0])
     for d in ti.static(range(3)):
         base[d] = ti.min(
-            box[bodyID].gnum[d] - 2,
+            box[body_id].gnum[d] - 2,
             ti.max(
                 0,
-                int((local_position[d] - box[bodyID].xmin[d]) * inv_dx),
+                int((local_position[d] - box[body_id].xmin[d]) * inv_dx),
             ),
         )
-    origin = box[bodyID].xmin + ti.cast(base, float) * box[bodyID].grid_space
+    origin = box[body_id].xmin + ti.cast(base, float) * box[body_id].grid_space
     fraction = (local_position - origin) * inv_dx
     active_weight = 0.0
     for i, j, k in ti.static(ti.ndrange(2, 2, 2)):
@@ -212,26 +212,26 @@ def transfer_force_to_soft_grid_(
             * ((1.0 - fraction[1]) if j == 0 else fraction[1])
             * ((1.0 - fraction[2]) if k == 0 else fraction[2])
         )
-        local_sdf_node = linearize3D(
+        local_sdf_node = linearize3d(
             base[0] + i,
             base[1] + j,
             base[2] + k,
-            box[bodyID].gnum,
+            box[body_id].gnum,
         )
         sdf_node = soft[soft_id].gridStart + local_sdf_node
         active_weight += interpolation_weight * contact_weight[sdf_node]
-    if active_weight > Threshold:
+    if active_weight > THRESHOLD:
         for i, j, k in ti.static(ti.ndrange(2, 2, 2)):
             interpolation_weight = (
                 ((1.0 - fraction[0]) if i == 0 else fraction[0])
                 * ((1.0 - fraction[1]) if j == 0 else fraction[1])
                 * ((1.0 - fraction[2]) if k == 0 else fraction[2])
             )
-            local_sdf_node = linearize3D(
+            local_sdf_node = linearize3d(
                 base[0] + i,
                 base[1] + j,
                 base[2] + k,
-                box[bodyID].gnum,
+                box[body_id].gnum,
             )
             sdf_node = soft[soft_id].gridStart + local_sdf_node
             ti.atomic_add(
@@ -241,7 +241,7 @@ def transfer_force_to_soft_grid_(
 
 
 @ti.kernel
-def gather_soft_contact_trace_force_(
+def gather_soft_contact_trace_force(
     surface_num: int,
     surface: ti.template(),
     rigid: ti.template(),
@@ -269,7 +269,7 @@ def gather_soft_contact_trace_force_(
                 )
             origin = box[body_id].xmin + ti.cast(base, float) * box[body_id].grid_space
             fraction = (position - origin) * inv_dx
-            force = ZEROVEC3f
+            force = ZEROVEC3F
             for i, j, k in ti.static(ti.ndrange(2, 2, 2)):
                 weight = (
                     ((1.0 - fraction[0]) if i == 0 else fraction[0])
@@ -277,7 +277,7 @@ def gather_soft_contact_trace_force_(
                     * ((1.0 - fraction[2]) if k == 0 else fraction[2])
                     * area_weight
                 )
-                local_sdf_node = linearize3D(
+                local_sdf_node = linearize3d(
                     base[0] + i,
                     base[1] + j,
                     base[2] + k,
@@ -285,16 +285,16 @@ def gather_soft_contact_trace_force_(
                 )
                 sdf_node = soft[soft_id].gridStart + local_sdf_node
                 force += weight * trace_force[sdf_node]
-            if force.dot(force) > Threshold * Threshold:
-                vertice[local_node]._update_contact_interaction(force, ZEROVEC3f)
+            if force.dot(force) > THRESHOLD * THRESHOLD:
+                vertice[local_node]._update_contact_interaction(force, ZEROVEC3F)
 
 
 @ti.kernel
-def kernel_LSMPM_LSparticle_LSparticle_force_assemble_(
-    contactNodeNum: int,
+def kernel_lsmpm_l_sparticle_l_sparticle_force_assemble(
+    contact_node_num: int,
     dt: ti.template(),
     max_material_num: int,
-    surfaceProps: ti.template(),
+    surface_props: ti.template(),
     rigid: ti.template(),
     grid: ti.template(),
     vertice: ti.template(),
@@ -311,7 +311,7 @@ def kernel_LSMPM_LSparticle_LSparticle_force_assemble_(
     particle_particle: ti.template(),
     model_type: ti.template(),
 ):
-    total_contact_num = particle_particle[contactNodeNum]
+    total_contact_num = particle_particle[contact_node_num]
     for nc in range(total_contact_num):
         contact_node, end2 = cplist[nc].endID1, cplist[nc].endID2
         end1 = ls_contact_body[contact_node]
@@ -336,12 +336,12 @@ def kernel_LSMPM_LSparticle_LSparticle_force_assemble_(
                     - ti.cast(mass_center2[2] > 0.5 * GlobalVariable.DEMZSIZE, float)
                 ) * GlobalVariable.DEMZSIZE
 
-        rotate_matrix1, rotate_matrix2 = SetToRotate(rigid[end1].q), SetToRotate(rigid[end2].q)
-        matID1, matID2 = rigid[end1].materialID, rigid[end2].materialID
-        materialID = PairingMapping(matID1, matID2, max_material_num)
+        rotate_matrix1, rotate_matrix2 = set_to_rotate(rigid[end1].q), set_to_rotate(rigid[end2].q)
+        mat_id1, mat_id2 = rigid[end1].materialID, rigid[end2].materialID
+        material_id = pairing_mapping(mat_id1, mat_id2, max_material_num)
 
-        intruding_node = ZEROVEC3f
-        intruding_velocity = ZEROVEC3f
+        intruding_node = ZEROVEC3F
+        intruding_velocity = ZEROVEC3F
         coeff = 1.0
         contact_radius = 0.0
         master_is_soft = int(ls_contact_kind[contact_node]) == 1
@@ -376,19 +376,19 @@ def kernel_LSMPM_LSparticle_LSparticle_force_assemble_(
         if ti.static(GlobalVariable.LSMPM_SOFT_SOFT_WORK_CONJUGATE and model_type == 0):
             if master_is_soft and int(rigid[end2].is_soft) == 1:
                 retained_work_conjugate_contact = int(cplist[nc].normalOverlapActive) == 1
-        if gapn < surfaceProps[materialID].ncut or retained_work_conjugate_contact:
-            dgdx = ZEROVEC3f
-            norm = ZEROVEC3f
+        if gapn < surface_props[material_id].ncut or retained_work_conjugate_contact:
+            dgdx = ZEROVEC3F
+            norm = ZEROVEC3F
             if ti.static(model_type == 0):
                 dgdx = rotate_matrix2 @ box[end2].calculate_gradient(local_intruding_node, grid)
-                norm = dgdx.normalized(Threshold)
+                norm = dgdx.normalized(THRESHOLD)
             else:
                 norm = rotate_matrix2 @ box[end2].calculate_normal(local_intruding_node, grid)
             cpos = intruding_node - 0.5 * norm * (gapn + contact_radius)
             slave_velocity = rigid[end2].v + rigid[end2].w.cross(cpos - mass_center2)
             slave_projection_local = local_intruding_node - gapn * (rotate_matrix2.transpose() @ norm)
             if int(rigid[end2].is_soft) == 1:
-                slave_velocity = soft_grid_trace_velocity_(
+                slave_velocity = soft_grid_trace_velocity(
                     end2,
                     slave_projection_local,
                     rigid,
@@ -400,24 +400,24 @@ def kernel_LSMPM_LSparticle_LSparticle_force_assemble_(
                 )
 
             v_rel = intruding_velocity - slave_velocity
-            w_rel = ZEROVEC3f
+            w_rel = ZEROVEC3F
             if not master_is_soft:
                 w_rel += rigid[end1].w
             if int(rigid[end2].is_soft) == 0:
                 w_rel -= rigid[end2].w
-            tangOverlapOld = cplist[nc].oldTangOverlap
+            tang_overlap_old = cplist[nc].oldTangOverlap
             mass1 = rigid[end1].m
             rad1 = rigid[end1]._get_contact_radius(cpos)
             if master_is_soft:
-                mass1 = soft_surface_node_mass_(end1, rigid)
+                mass1 = soft_surface_node_mass(end1, rigid)
                 rad1 = rigid[end1].equi_r
             mass2 = rigid[end2].m
             rad2 = rigid[end2]._get_contact_radius(cpos)
             if int(rigid[end2].is_soft) == 1:
-                mass2 = soft_surface_node_mass_(end2, rigid)
+                mass2 = soft_surface_node_mass(end2, rigid)
                 rad2 = rigid[end2].equi_r
-            m_eff = EffectiveValue(mass1, mass2)
-            rad_eff = EffectiveValue(rad1, rad2)
+            m_eff = effective_value(mass1, mass2)
+            rad_eff = effective_value(rad1, rad2)
             param = stiffness_parameter(rad1, rad2)
             assemble_contact = True
             penetration = 0.0
@@ -426,7 +426,7 @@ def kernel_LSMPM_LSparticle_LSparticle_force_assemble_(
             if ti.static(GlobalVariable.LSMPM_SOFT_SOFT_WORK_CONJUGATE and model_type == 0):
                 if master_is_soft and int(rigid[end2].is_soft) == 1:
                     use_work_conjugate_contact = True
-                    penetration, next_penetration, assemble_contact = soft_soft_work_conjugate_penetration_state_(
+                    penetration, next_penetration, assemble_contact = soft_soft_work_conjugate_penetration_state(
                         cplist[nc].normalOverlap,
                         cplist[nc].normalOverlapActive,
                         v_rel.dot(dgdx),
@@ -434,46 +434,46 @@ def kernel_LSMPM_LSparticle_LSparticle_force_assemble_(
                     )
 
             if assemble_contact:
-                normal_force = ZEROVEC3f
-                tangential_force = ZEROVEC3f
-                momentum = ZEROVEC3f
-                tangOverTemp = ZEROVEC3f
+                normal_force = ZEROVEC3F
+                tangential_force = ZEROVEC3F
+                momentum = ZEROVEC3F
+                tang_over_temp = ZEROVEC3F
                 if ti.static(model_type == 0):
                     if ti.static(GlobalVariable.LSMPM_SOFT_SOFT_WORK_CONJUGATE):
                         if use_work_conjugate_contact:
-                            normal_force, tangential_force, tangOverTemp = surfaceProps[
-                                materialID
+                            normal_force, tangential_force, tang_over_temp = surface_props[
+                                material_id
                             ]._force_assemble_work_conjugate(
-                                m_eff, rad_eff, penetration, next_penetration, coeff, dgdx, v_rel, tangOverlapOld, dt
+                                m_eff, rad_eff, penetration, next_penetration, coeff, dgdx, v_rel, tang_overlap_old, dt
                             )
                         else:
-                            normal_force, tangential_force, tangOverTemp = surfaceProps[materialID]._force_assemble(
-                                m_eff, rad_eff, gapn, coeff, dgdx, v_rel, tangOverlapOld, dt
+                            normal_force, tangential_force, tang_over_temp = surface_props[material_id]._force_assemble(
+                                m_eff, rad_eff, gapn, coeff, dgdx, v_rel, tang_overlap_old, dt
                             )
                     else:
-                        normal_force, tangential_force, tangOverTemp = surfaceProps[materialID]._force_assemble(
-                            m_eff, rad_eff, gapn, coeff, dgdx, v_rel, tangOverlapOld, dt
+                        normal_force, tangential_force, tang_over_temp = surface_props[material_id]._force_assemble(
+                            m_eff, rad_eff, gapn, coeff, dgdx, v_rel, tang_overlap_old, dt
                         )
                 else:
-                    normal_force, tangential_force, momentum, tangOverTemp = surfaceProps[materialID]._force_assemble(
-                        m_eff, rad_eff, gapn, coeff, param, norm, v_rel, w_rel, tangOverlapOld, dt
-                    )
+                    normal_force, tangential_force, momentum, tang_over_temp = surface_props[
+                        material_id
+                    ]._force_assemble(m_eff, rad_eff, gapn, coeff, param, norm, v_rel, w_rel, tang_overlap_old, dt)
 
-                cplist[nc]._set_contact(normal_force, tangential_force, tangOverTemp)
+                cplist[nc]._set_contact(normal_force, tangential_force, tang_over_temp)
                 if use_work_conjugate_contact:
                     cplist[nc].normalOverlap = next_penetration
-                    cplist[nc].normalOverlapActive = ti.u8(next_penetration > Threshold)
-                Ftotal = normal_force + tangential_force
+                    cplist[nc].normalOverlapActive = ti.u8(next_penetration > THRESHOLD)
+                ftotal = normal_force + tangential_force
                 if master_is_soft:
-                    vertice[master_local_node]._update_contact_interaction(Ftotal, ZEROVEC3f)
+                    vertice[master_local_node]._update_contact_interaction(ftotal, ZEROVEC3F)
                 else:
-                    momentum1 = Ftotal.cross(mass_center1 - cpos) + momentum
-                    rigid[end1]._update_contact_interaction(Ftotal, momentum1)
+                    momentum1 = ftotal.cross(mass_center1 - cpos) + momentum
+                    rigid[end1]._update_contact_interaction(ftotal, momentum1)
                 if int(rigid[end2].is_soft) == 1:
-                    transfer_force_to_soft_grid_(
+                    transfer_force_to_soft_grid(
                         end2,
                         slave_projection_local,
-                        -Ftotal,
+                        -ftotal,
                         rigid,
                         box,
                         soft,
@@ -481,8 +481,8 @@ def kernel_LSMPM_LSparticle_LSparticle_force_assemble_(
                         trace_force,
                     )
                 else:
-                    momentum2 = Ftotal.cross(cpos - mass_center2) - momentum
-                    rigid[end2]._update_contact_interaction(-Ftotal, momentum2)
+                    momentum2 = ftotal.cross(cpos - mass_center2) - momentum
+                    rigid[end2]._update_contact_interaction(-ftotal, momentum2)
             else:
                 cplist[nc]._no_contact()
         else:
@@ -490,7 +490,7 @@ def kernel_LSMPM_LSparticle_LSparticle_force_assemble_(
 
 
 @ti.func
-def assemble_lsmpm_wall_contact_force_(
+def assemble_lsmpm_wall_contact_force(
     surface_properties: ti.template(),
     material_id,
     model_type: ti.template(),
@@ -505,10 +505,10 @@ def assemble_lsmpm_wall_contact_force_(
     old_tangential_overlap,
     dt,
 ):
-    normal_force = ZEROVEC3f
-    tangential_force = ZEROVEC3f
-    momentum = ZEROVEC3f
-    tangential_overlap = ZEROVEC3f
+    normal_force = ZEROVEC3F
+    tangential_force = ZEROVEC3F
+    momentum = ZEROVEC3F
+    tangential_overlap = ZEROVEC3F
     if ti.static(model_type == 0):
         normal_force, tangential_force, tangential_overlap = surface_properties[material_id]._force_assemble(
             mass, radius, gap, coefficient, normal, relative_velocity, old_tangential_overlap, dt
@@ -530,11 +530,11 @@ def assemble_lsmpm_wall_contact_force_(
 
 
 @ti.kernel
-def kernel_LSMPM_LSparticle_wall_force_assemble_(
-    contactNodeNum: int,
+def kernel_lsmpm_l_sparticle_wall_force_assemble(
+    contact_node_num: int,
     dt: ti.template(),
     max_material_num: int,
-    surfaceProps: ti.template(),
+    surface_props: ti.template(),
     rigid: ti.template(),
     vertice: ti.template(),
     box: ti.template(),
@@ -549,17 +549,17 @@ def kernel_LSMPM_LSparticle_wall_force_assemble_(
     particle_wall: ti.template(),
     model_type: ti.template(),
 ):
-    total_contact_num = particle_wall[contactNodeNum]
+    total_contact_num = particle_wall[contact_node_num]
     for nc in range(total_contact_num):
         contact_node, end2 = cplist[nc].endID1, cplist[nc].endID2
         end1 = ls_contact_body[contact_node]
         mass_center1 = rigid[end1]._get_position()
-        rotate_matrix1 = SetToRotate(rigid[end1].q)
-        matID1, matID2 = rigid[end1].materialID, wall[end2].materialID
-        materialID = PairingMapping(matID1, matID2, max_material_num)
+        rotate_matrix1 = set_to_rotate(rigid[end1].q)
+        mat_id1, mat_id2 = rigid[end1].materialID, wall[end2].materialID
+        material_id = pairing_mapping(mat_id1, mat_id2, max_material_num)
 
-        intruding_node = ZEROVEC3f
-        intruding_velocity = ZEROVEC3f
+        intruding_node = ZEROVEC3F
+        intruding_velocity = ZEROVEC3F
         coeff = 1.0
         contact_radius = 0.0
         master_is_soft = int(ls_contact_kind[contact_node]) == 1
@@ -573,21 +573,21 @@ def kernel_LSMPM_LSparticle_wall_force_assemble_(
             intruding_velocity = rigid[end1].v + rigid[end1].w.cross(intruding_node - mass_center1)
 
         gapn = wall[end2]._get_norm_distance(intruding_node) - contact_radius
-        if gapn < surfaceProps[materialID].ncut:
+        if gapn < surface_props[material_id].ncut:
             norm = wall[end2]._get_norm(mass_center1)
             cpos = intruding_node + 0.5 * norm * (gapn + contact_radius)
             v_rel = intruding_velocity - wall[end2]._get_velocity()
-            w_rel = ZEROVEC3f if master_is_soft else rigid[end1].w
-            tangOverlapOld = cplist[nc].oldTangOverlap
+            w_rel = ZEROVEC3F if master_is_soft else rigid[end1].w
+            tang_overlap_old = cplist[nc].oldTangOverlap
             mass1 = rigid[end1].m
             rad_eff = rigid[end1]._get_contact_radius(cpos)
             if master_is_soft:
-                mass1 = soft_surface_node_mass_(end1, rigid)
+                mass1 = soft_surface_node_mass(end1, rigid)
                 rad_eff = rigid[end1].equi_r
             param = rad_eff
-            normal_force, tangential_force, momentum, tangOverTemp = assemble_lsmpm_wall_contact_force_(
-                surfaceProps,
-                materialID,
+            normal_force, tangential_force, momentum, tang_over_temp = assemble_lsmpm_wall_contact_force(
+                surface_props,
+                material_id,
                 model_type,
                 mass1,
                 rad_eff,
@@ -597,18 +597,18 @@ def kernel_LSMPM_LSparticle_wall_force_assemble_(
                 norm,
                 v_rel,
                 w_rel,
-                tangOverlapOld,
+                tang_overlap_old,
                 dt,
             )
 
-            Ftotal = normal_force + tangential_force
-            cplist[nc]._set_contact(normal_force, tangential_force, tangOverTemp)
+            ftotal = normal_force + tangential_force
+            cplist[nc]._set_contact(normal_force, tangential_force, tang_over_temp)
             if master_is_soft:
-                vertice[master_local_node]._update_contact_interaction(Ftotal, ZEROVEC3f)
+                vertice[master_local_node]._update_contact_interaction(ftotal, ZEROVEC3F)
             else:
-                resultant_momentum = Ftotal.cross(mass_center1 - cpos) + momentum
-                rigid[end1]._update_contact_interaction(Ftotal, resultant_momentum)
+                resultant_momentum = ftotal.cross(mass_center1 - cpos) + momentum
+                rigid[end1]._update_contact_interaction(ftotal, resultant_momentum)
                 if ti.static(GlobalVariable.ENABLESHELL):
-                    wall[end2]._update_contact_interaction(-Ftotal, -resultant_momentum)
+                    wall[end2]._update_contact_interaction(-ftotal, -resultant_momentum)
         else:
             cplist[nc]._no_contact()

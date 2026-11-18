@@ -3,7 +3,6 @@
 import numpy as np
 import pytest
 
-
 pytestmark = [pytest.mark.unit, pytest.mark.cpu, pytest.mark.serial]
 
 
@@ -99,7 +98,7 @@ def test_structured_local_pullbacks_match_random_dense_oracles(
             dNdnat_field[None],
             dnatdX_field[None],
         )
-        dFdx = element.compute_dF_div_dx(
+        dFdx = element.compute_d_f_div_dx(
             dNdnat_field[None],
             dnatdX_field[None],
         )
@@ -108,11 +107,9 @@ def test_structured_local_pullbacks_match_random_dense_oracles(
             dnatdX_field[None],
             coordinates_field[None],
         )
-        structured_deformation_gradient = (
-            element.compute_deformation_gradient_from_shape_gradients(
-                shape_gradients,
-                coordinates_field[None],
-            )
+        structured_deformation_gradient = element.compute_deformation_gradient_from_shape_gradients(
+            shape_gradients,
+            coordinates_field[None],
         )
 
         row = 0
@@ -127,9 +124,7 @@ def test_structured_local_pullbacks_match_random_dense_oracles(
         while support < support_count:
             material_axis = 0
             while material_axis < dimension:
-                shape_gradients_field[support, material_axis] = (
-                    shape_gradients[support, material_axis]
-                )
+                shape_gradients_field[support, material_axis] = shape_gradients[support, material_axis]
                 material_axis += 1
             support += 1
 
@@ -137,12 +132,8 @@ def test_structured_local_pullbacks_match_random_dense_oracles(
         while row < dimension:
             column = 0
             while column < dimension:
-                deformation_gradient_field[row, column] = (
-                    deformation_gradient[row, column]
-                )
-                structured_deformation_gradient_field[row, column] = (
-                    structured_deformation_gradient[row, column]
-                )
+                deformation_gradient_field[row, column] = deformation_gradient[row, column]
+                structured_deformation_gradient_field[row, column] = structured_deformation_gradient[row, column]
                 column += 1
             row += 1
 
@@ -155,23 +146,17 @@ def test_structured_local_pullbacks_match_random_dense_oracles(
             )
             component = 0
             while component < dimension:
-                gradient_field[
-                    dimension * support_i + component
-                ] = local_gradient[component]
+                gradient_field[dimension * support_i + component] = local_gradient[component]
                 component += 1
 
-            structured_local_gradient = (
-                element.compute_local_gradient_from_shape_gradients(
-                    support_i,
-                    stress_field[None],
-                    shape_gradients,
-                )
+            structured_local_gradient = element.compute_local_gradient_from_shape_gradients(
+                support_i,
+                stress_field[None],
+                shape_gradients,
             )
             component = 0
             while component < dimension:
-                structured_gradient_field[
-                    dimension * support_i + component
-                ] = structured_local_gradient[component]
+                structured_gradient_field[dimension * support_i + component] = structured_local_gradient[component]
                 component += 1
 
             support_j = 0
@@ -196,13 +181,11 @@ def test_structured_local_pullbacks_match_random_dense_oracles(
                         column_component += 1
                     row_component += 1
 
-                structured_local_hessian = (
-                    element.compute_local_hessian_from_shape_gradients(
-                        support_i,
-                        support_j,
-                        tangent_field[None],
-                        shape_gradients,
-                    )
+                structured_local_hessian = element.compute_local_hessian_from_shape_gradients(
+                    support_i,
+                    support_j,
+                    tangent_field[None],
+                    shape_gradients,
                 )
                 row_component = 0
                 while row_component < dimension:
@@ -226,9 +209,7 @@ def test_structured_local_pullbacks_match_random_dense_oracles(
     dnatdX += 2.0 * np.eye(dimension)
     coordinates = rng.normal(size=(support_count, dimension))
     stress = rng.normal(size=deformation_size)
-    tangent = rng.normal(
-        size=(deformation_size, deformation_size)
-    )
+    tangent = rng.normal(size=(deformation_size, deformation_size))
 
     dNdnat_field.from_numpy(dNdnat)
     dnatdX_field.from_numpy(dnatdX)
@@ -247,15 +228,12 @@ def test_structured_local_pullbacks_match_random_dense_oracles(
             for deformation_column in range(dimension):
                 expected_dFdx[
                     dimension * support + spatial_component,
-                    spatial_component
-                    + dimension * deformation_column,
+                    spatial_component + dimension * deformation_column,
                 ] = dNdX[support, deformation_column]
 
     expected_deformation_gradient = coordinates.T @ dNdX
     expected_gradient = expected_dFdx @ stress
-    expected_hessian = (
-        expected_dFdx @ tangent @ expected_dFdx.T
-    )
+    expected_hessian = expected_dFdx @ tangent @ expected_dFdx.T
 
     np.testing.assert_allclose(
         shape_gradients_field.to_numpy(),

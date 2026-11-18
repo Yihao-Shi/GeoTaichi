@@ -1,9 +1,9 @@
 import taichi as ti
 
-from src.utils.TypeDefination import vec2f, vec2i, vec3f, vec3i, mat2x2
-from src.utils.ShapeFunctions import ShapeLinear, ShapeGIMP, ShapeBsplineQ, ShapeBsplineC
+from src.utils.TypeDefinition import vec2f, vec2i, vec3f, vec3i, mat2x2
+from src.utils.ShapeFunctions import shape_linear, shape_gimp, shape_bspline_q, shape_bspline_c
 from src.utils.ScalarFunction import vectorize_id
-from src.utils.constants import Threshold, ZEROVEC2f, ZEROVEC3f, ZEROMAT2x2, ZEROMAT3x3
+from src.utils.constants import THRESHOLD, ZEROVEC2F, ZEROVEC3F, ZEROMAT2X2, ZEROMAT3X3
 from src.levelset.FluidLevelSetKernel import (
     free_surface_theta_from_phi_half_default as _pressure_free_surface_theta_from_phi,
 )
@@ -103,22 +103,22 @@ def _mac_weight_1d(xp, xg, inv_dx, lp, btype: int, shape_type: ti.template()):
     weight = 0.0
     if ti.static(isinstance(shape_type, int)):
         if ti.static(shape_type == MAC_SHAPE_GIMP):
-            weight = ShapeGIMP(xp, xg, inv_dx, lp)
+            weight = shape_gimp(xp, xg, inv_dx, lp)
         elif ti.static(shape_type == MAC_SHAPE_QUAD_BSPLINE):
-            weight = ShapeBsplineQ(xp, xg, inv_dx, btype)
+            weight = shape_bspline_q(xp, xg, inv_dx, btype)
         elif ti.static(shape_type == MAC_SHAPE_CUBIC_BSPLINE):
-            weight = ShapeBsplineC(xp, xg, inv_dx, btype)
+            weight = shape_bspline_c(xp, xg, inv_dx, btype)
         else:
-            weight = ShapeLinear(xp, xg, inv_dx, lp)
+            weight = shape_linear(xp, xg, inv_dx, lp)
     else:
         if shape_type == MAC_SHAPE_GIMP:
-            weight = ShapeGIMP(xp, xg, inv_dx, lp)
+            weight = shape_gimp(xp, xg, inv_dx, lp)
         elif shape_type == MAC_SHAPE_QUAD_BSPLINE:
-            weight = ShapeBsplineQ(xp, xg, inv_dx, btype)
+            weight = shape_bspline_q(xp, xg, inv_dx, btype)
         elif shape_type == MAC_SHAPE_CUBIC_BSPLINE:
-            weight = ShapeBsplineC(xp, xg, inv_dx, btype)
+            weight = shape_bspline_c(xp, xg, inv_dx, btype)
         else:
-            weight = ShapeLinear(xp, xg, inv_dx, lp)
+            weight = shape_linear(xp, xg, inv_dx, lp)
     return weight
 
 
@@ -382,14 +382,14 @@ def _semi_implicit_drag_acceleration_pair(solid_acc, fluid_acc, rel, dt):
 
 
 @ti.func
-def _ergun_drag_accelerations(rel, porosity, matProps, dt):
+def _ergun_drag_accelerations(rel, porosity, mat_props, dt):
     return _ergun_drag_accelerations_props(
         rel,
         porosity,
-        matProps.solid_density,
-        matProps.fluid_density,
-        matProps.fluid_viscosity,
-        matProps.grain_diameter,
+        mat_props.solid_density,
+        mat_props.fluid_density,
+        mat_props.fluid_viscosity,
+        mat_props.grain_diameter,
         dt,
     )
 
@@ -583,7 +583,7 @@ def _sample_cell_scalar(position, grid_size, cell_type, cell_value):
                 weight = wx * wy
                 value += weight * cell_value[cell]
                 weight_sum += weight
-    if weight_sum > Threshold:
+    if weight_sum > THRESHOLD:
         value /= weight_sum
     return value
 
@@ -605,7 +605,7 @@ def _sample_cell_pressure(position, grid_size, cell_type, cell_pressure):
                 if attr == FLUID_CELL:
                     value += weight * cell_pressure[cell]
                 weight_sum += weight
-    if weight_sum > Threshold:
+    if weight_sum > THRESHOLD:
         value /= weight_sum
     return value
 
@@ -658,7 +658,7 @@ def _sample_cell_pressure_gfm(position, grid_size, cell_type, cell_pressure, flu
                     if ghost_weight > 0.0:
                         value += weight * ghost_pressure
                         weight_sum += weight
-    if weight_sum > Threshold:
+    if weight_sum > THRESHOLD:
         value /= weight_sum
     return value
 
@@ -706,7 +706,7 @@ def _sample_cell_pressure_gfm_shape2d(
                     else:
                         # Atmospheric air contributes zero physical pressure to the solid force.
                         weight_sum += weight
-    if weight_sum > Threshold:
+    if weight_sum > THRESHOLD:
         value /= weight_sum
     return value
 
@@ -719,11 +719,11 @@ def _sample_solid_grid_velocity2d(
     cutoff: float,
     shape_type: ti.template(),
     influenced_node: int,
-    calLength: ti.template(),
+    cal_length: ti.template(),
     node: ti.template(),
     sample_force: ti.template() = False,
 ):
-    velocity = ZEROVEC2f
+    velocity = ZEROVEC2F
     weight_sum = 0.0
     if shape_type == MAC_SHAPE_LINEAR or shape_type == MAC_SHAPE_GIMP:
         base = ti.floor(position / grid_size).cast(int)
@@ -744,7 +744,7 @@ def _sample_solid_grid_velocity2d(
                         weight_sum += mass_weight
     else:
         for body_id in range(node.shape[1]):
-            psize = calLength[body_id]
+            psize = cal_length[body_id]
             base = vec2i(
                 _mac_base_1d(position[0], 1.0 / grid_size[0], 0.0, psize[0], shape_type),
                 _mac_base_1d(position[1], 1.0 / grid_size[1], 0.0, psize[1], shape_type),
@@ -774,7 +774,7 @@ def _sample_solid_grid_velocity2d(
 @ti.func
 def _sample_solid_grid_velocity_linear2d(position, grid_size, gnum, cutoff: float, node: ti.template()):
     base = ti.floor(position / grid_size).cast(int)
-    velocity = ZEROVEC2f
+    velocity = ZEROVEC2F
     weight_sum = 0.0
     for i, j in ti.static(ti.ndrange(2, 2)):
         node_ij = base + vec2i(i, j)
@@ -811,7 +811,7 @@ def _sample_mac_velocity(
             weight = _mac_weight2d(position, face_pos, grid_size, psize, btype, shape_type)
             vx += weight * velocity_x[face]
             wx_sum += weight
-    if wx_sum > Threshold:
+    if wx_sum > THRESHOLD:
         vx /= wx_sum
 
     vy = 0.0
@@ -828,7 +828,7 @@ def _sample_mac_velocity(
             weight = _mac_weight2d(position, face_pos, grid_size, psize, btype, shape_type)
             vy += weight * velocity_y[face]
             wy_sum += weight
-    if wy_sum > Threshold:
+    if wy_sum > THRESHOLD:
         vy /= wy_sum
     return vec2f(vx, vy)
 
@@ -837,11 +837,11 @@ def _sample_mac_velocity(
 def _sample_mac_velocity_gradient(
     position, psize, shape_type: ti.template(), influenced_node: int, grid_size, velocity_x, velocity_y, v_pic
 ):
-    gradv = ZEROMAT2x2
-    dx_mat = ZEROMAT2x2
-    dy_mat = ZEROMAT2x2
-    bx = ZEROVEC2f
-    by = ZEROVEC2f
+    gradv = ZEROMAT2X2
+    dx_mat = ZEROMAT2X2
+    dy_mat = ZEROMAT2X2
+    bx = ZEROVEC2F
+    by = ZEROVEC2F
 
     base_x = vec2i(
         _mac_base_1d(position[0], 1.0 / grid_size[0], 0.0, psize[0], shape_type),
@@ -931,8 +931,8 @@ def kernel_reset_double_layer_fields(
         cell_fluid_mass[I] = 0.0
         cell_solid_mass[I] = 0.0
         cell_porosity[I] = 0.0
-        cell_solid_velocity[I] = ZEROVEC2f
-        cell_fluid_velocity[I] = ZEROVEC2f
+        cell_solid_velocity[I] = ZEROVEC2F
+        cell_fluid_velocity[I] = ZEROVEC2F
         cell_pressure[I] = 0.0
 
 
@@ -1013,9 +1013,9 @@ def kernel_accumulate_double_layer_material_fields2d(
     mac_influenced_node: ti.template(),
     particle: ti.template(),
     material_mapping: ti.template(),
-    matProps: ti.template(),
-    calLength: ti.template(),
-    LnID: ti.template(),
+    mat_props: ti.template(),
+    cal_length: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
     face_material_weight_x: ti.template(),
@@ -1052,16 +1052,16 @@ def kernel_accumulate_double_layer_material_fields2d(
         np = material_mapping[i]
         if int(particle[np].active) == 1 and int(particle[np].materialID) > 0:
             position = particle[np].x
-            psize = calLength[int(particle[np].bodyID)]
+            psize = cal_length[int(particle[np].bodyID)]
             mass = ti.max(particle[np].m, particle[np].ms + particle[np].mf)
-            if mass > Threshold:
+            if mass > THRESHOLD:
                 cell = ti.floor(position / grid_size).cast(int)
                 if 0 <= cell[0] < cell_material_weight.shape[0] and 0 <= cell[1] < cell_material_weight.shape[1]:
                     cell_material_weight[cell] += mass
-                    cell_solid_density[cell] += mass * matProps.solid_density
-                    cell_fluid_density[cell] += mass * matProps.fluid_density
-                    cell_fluid_viscosity[cell] += mass * matProps.fluid_viscosity
-                    cell_grain_diameter[cell] += mass * matProps.grain_diameter
+                    cell_solid_density[cell] += mass * mat_props.solid_density
+                    cell_fluid_density[cell] += mass * mat_props.fluid_density
+                    cell_fluid_viscosity[cell] += mass * mat_props.fluid_viscosity
+                    cell_grain_diameter[cell] += mass * mat_props.grain_diameter
 
                 base_x = vec2i(
                     _mac_base_1d(position[0], 1.0 / grid_size[0], 0.0, psize[0], mac_shape_type),
@@ -1078,13 +1078,13 @@ def kernel_accumulate_double_layer_material_fields2d(
                         weight = _mac_weight2d(position, face_pos, grid_size, psize, btype, mac_shape_type)
                         weighted_mass = weight * mass
                         face_material_weight_x[face] += weighted_mass
-                        face_solid_density_x[face] += weighted_mass * matProps.solid_density
-                        face_fluid_density_x[face] += weighted_mass * matProps.fluid_density
-                        face_fluid_viscosity_x[face] += weighted_mass * matProps.fluid_viscosity
-                        face_grain_diameter_x[face] += weighted_mass * matProps.grain_diameter
-                        face_permeability_x[face] += weighted_mass * matProps.permeability
-                        face_fluid_unit_weight_x[face] += weighted_mass * matProps.fluid_unit_weight
-                        face_drag_model_x[face] += weighted_mass * matProps.drag_model
+                        face_solid_density_x[face] += weighted_mass * mat_props.solid_density
+                        face_fluid_density_x[face] += weighted_mass * mat_props.fluid_density
+                        face_fluid_viscosity_x[face] += weighted_mass * mat_props.fluid_viscosity
+                        face_grain_diameter_x[face] += weighted_mass * mat_props.grain_diameter
+                        face_permeability_x[face] += weighted_mass * mat_props.permeability
+                        face_fluid_unit_weight_x[face] += weighted_mass * mat_props.fluid_unit_weight
+                        face_drag_model_x[face] += weighted_mass * mat_props.drag_model
 
                 base_y = vec2i(
                     _mac_base_1d(position[0], 1.0 / grid_size[0], 0.5, psize[0], mac_shape_type),
@@ -1101,32 +1101,32 @@ def kernel_accumulate_double_layer_material_fields2d(
                         weight = _mac_weight2d(position, face_pos, grid_size, psize, btype, mac_shape_type)
                         weighted_mass = weight * mass
                         face_material_weight_y[face] += weighted_mass
-                        face_solid_density_y[face] += weighted_mass * matProps.solid_density
-                        face_fluid_density_y[face] += weighted_mass * matProps.fluid_density
-                        face_fluid_viscosity_y[face] += weighted_mass * matProps.fluid_viscosity
-                        face_grain_diameter_y[face] += weighted_mass * matProps.grain_diameter
-                        face_permeability_y[face] += weighted_mass * matProps.permeability
-                        face_fluid_unit_weight_y[face] += weighted_mass * matProps.fluid_unit_weight
-                        face_drag_model_y[face] += weighted_mass * matProps.drag_model
+                        face_solid_density_y[face] += weighted_mass * mat_props.solid_density
+                        face_fluid_density_y[face] += weighted_mass * mat_props.fluid_density
+                        face_fluid_viscosity_y[face] += weighted_mass * mat_props.fluid_viscosity
+                        face_grain_diameter_y[face] += weighted_mass * mat_props.grain_diameter
+                        face_permeability_y[face] += weighted_mass * mat_props.permeability
+                        face_fluid_unit_weight_y[face] += weighted_mass * mat_props.fluid_unit_weight
+                        face_drag_model_y[face] += weighted_mass * mat_props.drag_model
 
-                bodyID = int(particle[np].bodyID)
+                body_id = int(particle[np].bodyID)
                 offset = np * total_nodes
                 for ln in range(offset, offset + int(node_size[np])):
-                    nodeID = LnID[ln]
+                    node_id = ln_id[ln]
                     weighted_mass = shapefn[ln] * mass
-                    node_material_weight[nodeID, bodyID] += weighted_mass
-                    node_solid_density[nodeID, bodyID] += weighted_mass * matProps.solid_density
-                    node_fluid_density[nodeID, bodyID] += weighted_mass * matProps.fluid_density
-                    node_fluid_viscosity[nodeID, bodyID] += weighted_mass * matProps.fluid_viscosity
-                    node_grain_diameter[nodeID, bodyID] += weighted_mass * matProps.grain_diameter
-                    node_permeability[nodeID, bodyID] += weighted_mass * matProps.permeability
-                    node_fluid_unit_weight[nodeID, bodyID] += weighted_mass * matProps.fluid_unit_weight
-                    node_drag_model[nodeID, bodyID] += weighted_mass * matProps.drag_model
+                    node_material_weight[node_id, body_id] += weighted_mass
+                    node_solid_density[node_id, body_id] += weighted_mass * mat_props.solid_density
+                    node_fluid_density[node_id, body_id] += weighted_mass * mat_props.fluid_density
+                    node_fluid_viscosity[node_id, body_id] += weighted_mass * mat_props.fluid_viscosity
+                    node_grain_diameter[node_id, body_id] += weighted_mass * mat_props.grain_diameter
+                    node_permeability[node_id, body_id] += weighted_mass * mat_props.permeability
+                    node_fluid_unit_weight[node_id, body_id] += weighted_mass * mat_props.fluid_unit_weight
+                    node_drag_model[node_id, body_id] += weighted_mass * mat_props.drag_model
 
 
 @ti.kernel
 def kernel_normalize_double_layer_material_fields(
-    default_matProps: ti.template(),
+    default_mat_props: ti.template(),
     face_material_weight_x: ti.template(),
     face_material_weight_y: ti.template(),
     face_solid_density_x: ti.template(),
@@ -1158,7 +1158,7 @@ def kernel_normalize_double_layer_material_fields(
     node_drag_model: ti.template(),
 ):
     for I in ti.grouped(face_material_weight_x):
-        if face_material_weight_x[I] > Threshold:
+        if face_material_weight_x[I] > THRESHOLD:
             inv_weight = 1.0 / face_material_weight_x[I]
             face_solid_density_x[I] *= inv_weight
             face_fluid_density_x[I] *= inv_weight
@@ -1168,15 +1168,15 @@ def kernel_normalize_double_layer_material_fields(
             face_fluid_unit_weight_x[I] *= inv_weight
             face_drag_model_x[I] *= inv_weight
         else:
-            face_solid_density_x[I] = default_matProps.solid_density
-            face_fluid_density_x[I] = default_matProps.fluid_density
-            face_fluid_viscosity_x[I] = default_matProps.fluid_viscosity
-            face_grain_diameter_x[I] = default_matProps.grain_diameter
-            face_permeability_x[I] = default_matProps.permeability
-            face_fluid_unit_weight_x[I] = default_matProps.fluid_unit_weight
-            face_drag_model_x[I] = default_matProps.drag_model
+            face_solid_density_x[I] = default_mat_props.solid_density
+            face_fluid_density_x[I] = default_mat_props.fluid_density
+            face_fluid_viscosity_x[I] = default_mat_props.fluid_viscosity
+            face_grain_diameter_x[I] = default_mat_props.grain_diameter
+            face_permeability_x[I] = default_mat_props.permeability
+            face_fluid_unit_weight_x[I] = default_mat_props.fluid_unit_weight
+            face_drag_model_x[I] = default_mat_props.drag_model
     for I in ti.grouped(face_material_weight_y):
-        if face_material_weight_y[I] > Threshold:
+        if face_material_weight_y[I] > THRESHOLD:
             inv_weight = 1.0 / face_material_weight_y[I]
             face_solid_density_y[I] *= inv_weight
             face_fluid_density_y[I] *= inv_weight
@@ -1186,27 +1186,27 @@ def kernel_normalize_double_layer_material_fields(
             face_fluid_unit_weight_y[I] *= inv_weight
             face_drag_model_y[I] *= inv_weight
         else:
-            face_solid_density_y[I] = default_matProps.solid_density
-            face_fluid_density_y[I] = default_matProps.fluid_density
-            face_fluid_viscosity_y[I] = default_matProps.fluid_viscosity
-            face_grain_diameter_y[I] = default_matProps.grain_diameter
-            face_permeability_y[I] = default_matProps.permeability
-            face_fluid_unit_weight_y[I] = default_matProps.fluid_unit_weight
-            face_drag_model_y[I] = default_matProps.drag_model
+            face_solid_density_y[I] = default_mat_props.solid_density
+            face_fluid_density_y[I] = default_mat_props.fluid_density
+            face_fluid_viscosity_y[I] = default_mat_props.fluid_viscosity
+            face_grain_diameter_y[I] = default_mat_props.grain_diameter
+            face_permeability_y[I] = default_mat_props.permeability
+            face_fluid_unit_weight_y[I] = default_mat_props.fluid_unit_weight
+            face_drag_model_y[I] = default_mat_props.drag_model
     for I in ti.grouped(cell_material_weight):
-        if cell_material_weight[I] > Threshold:
+        if cell_material_weight[I] > THRESHOLD:
             inv_weight = 1.0 / cell_material_weight[I]
             cell_solid_density[I] *= inv_weight
             cell_fluid_density[I] *= inv_weight
             cell_fluid_viscosity[I] *= inv_weight
             cell_grain_diameter[I] *= inv_weight
         else:
-            cell_solid_density[I] = default_matProps.solid_density
-            cell_fluid_density[I] = default_matProps.fluid_density
-            cell_fluid_viscosity[I] = default_matProps.fluid_viscosity
-            cell_grain_diameter[I] = default_matProps.grain_diameter
+            cell_solid_density[I] = default_mat_props.solid_density
+            cell_fluid_density[I] = default_mat_props.fluid_density
+            cell_fluid_viscosity[I] = default_mat_props.fluid_viscosity
+            cell_grain_diameter[I] = default_mat_props.grain_diameter
     for I in ti.grouped(node_material_weight):
-        if node_material_weight[I] > Threshold:
+        if node_material_weight[I] > THRESHOLD:
             inv_weight = 1.0 / node_material_weight[I]
             node_solid_density[I] *= inv_weight
             node_fluid_density[I] *= inv_weight
@@ -1216,13 +1216,13 @@ def kernel_normalize_double_layer_material_fields(
             node_fluid_unit_weight[I] *= inv_weight
             node_drag_model[I] *= inv_weight
         else:
-            node_solid_density[I] = default_matProps.solid_density
-            node_fluid_density[I] = default_matProps.fluid_density
-            node_fluid_viscosity[I] = default_matProps.fluid_viscosity
-            node_grain_diameter[I] = default_matProps.grain_diameter
-            node_permeability[I] = default_matProps.permeability
-            node_fluid_unit_weight[I] = default_matProps.fluid_unit_weight
-            node_drag_model[I] = default_matProps.drag_model
+            node_solid_density[I] = default_mat_props.solid_density
+            node_fluid_density[I] = default_mat_props.fluid_density
+            node_fluid_viscosity[I] = default_mat_props.fluid_viscosity
+            node_grain_diameter[I] = default_mat_props.grain_diameter
+            node_permeability[I] = default_mat_props.permeability
+            node_fluid_unit_weight[I] = default_mat_props.fluid_unit_weight
+            node_drag_model[I] = default_mat_props.drag_model
 
 
 @ti.func
@@ -1233,7 +1233,7 @@ def _double_layer_fluid_fraction2d(I, grid_size, cell_fluid_mass, cell_fluid_den
 
 @ti.kernel
 def kernel_classify_double_layer_fluid_cells2d(
-    particleNum: int,
+    particle_num: int,
     grid_size: vec2f,
     particle: ti.template(),
     cell_fluid_mass: ti.template(),
@@ -1247,7 +1247,7 @@ def kernel_classify_double_layer_fluid_cells2d(
             cell_type[I] = FLUID_CELL
 
     # Detached sub-cell spray stays pressure-free; attached surface support is retained.
-    for np in range(particleNum):
+    for np in range(particle_num):
         if (
             int(particle[np].active) == 1
             and int(particle[np].materialID) > 0
@@ -1267,7 +1267,7 @@ def kernel_classify_double_layer_fluid_cells2d(
                         if cell_type[right] == FLUID_CELL:
                             resolved = True
                 # Saturated porous cells carry pressure even beside a resolved water cell.
-                if cell_porosity[cell] < 1.0 - Threshold:
+                if cell_porosity[cell] < 1.0 - THRESHOLD:
                     cell_type[cell] = 3
                 elif not resolved:
                     attached = False
@@ -1285,7 +1285,7 @@ def kernel_classify_double_layer_fluid_cells2d(
     for i in range(cell_type.shape[0]):
         lower = -1
         for j in range(cell_type.shape[1]):
-            if cell_fluid_mass[i, j] <= Threshold:
+            if cell_fluid_mass[i, j] <= THRESHOLD:
                 lower = -1
             elif (
                 _double_layer_fluid_fraction2d(
@@ -1571,8 +1571,8 @@ def kernel_constrain_double_layer_particles_to_solid_region2d(
     particle: ti.template(),
 ):
     eps = 1.0e-6 * ti.max(domain[0], domain[1])
-    discrete_start = ZEROVEC2f
-    discrete_end = ZEROVEC2f
+    discrete_start = ZEROVEC2F
+    discrete_end = ZEROVEC2F
     for d in ti.static(range(2)):
         first_cell = ti.ceil(start_point[d] / grid_size[d] - 0.5)
         last_cell = ti.floor(end_point[d] / grid_size[d] - 0.5)
@@ -1923,51 +1923,51 @@ def kernel_extrapolate_double_layer_ghost_faces(
 @ti.kernel
 def kernel_p2g_double_layer_mass2d(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     grid_size: vec2f,
     gnum: ti.types.vector(2, int),
     use_affine: ti.template(),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1 and int(particle[np].materialID) > 0:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             phase = int(particle[np].phase)
             position = particle[np].x
             if phase == PHASE_SOLID:
                 for ln in range(offset, offset + int(node_size[np])):
-                    nodeID = LnID[ln]
+                    node_id = ln_id[ln]
                     shape = shapefn[ln]
                     nmass_s = shape * particle[np].ms
                     nodal_velocity_s = particle[np].vs
                     if ti.static(use_affine != 0):
-                        nodal_coord = grid_size * vec2f(vectorize_id(nodeID, gnum))
+                        nodal_coord = grid_size * vec2f(vectorize_id(node_id, gnum))
                         nodal_velocity_s += particle[np].solid_velocity_gradient @ (nodal_coord - position)
-                    node[nodeID, bodyID].m += nmass_s
-                    node[nodeID, bodyID].ms += nmass_s
-                    node[nodeID, bodyID].momentum += nmass_s * nodal_velocity_s
-                    node[nodeID, bodyID].momentums += nmass_s * nodal_velocity_s
+                    node[node_id, body_id].m += nmass_s
+                    node[node_id, body_id].ms += nmass_s
+                    node[node_id, body_id].momentum += nmass_s * nodal_velocity_s
+                    node[node_id, body_id].momentums += nmass_s * nodal_velocity_s
                     shape_volume = shape * particle[np].vol
-                    node[nodeID, bodyID].porosity += shape_volume * (1.0 - particle[np].porosity)
+                    node[node_id, body_id].porosity += shape_volume * (1.0 - particle[np].porosity)
             elif phase == PHASE_FLUID:
                 for ln in range(offset, offset + int(node_size[np])):
-                    nodeID = LnID[ln]
+                    node_id = ln_id[ln]
                     shape = shapefn[ln]
                     nmass_f = shape * particle[np].mf
                     nodal_velocity_f = particle[np].vf
                     if ti.static(use_affine != 0):
-                        nodal_coord = grid_size * vec2f(vectorize_id(nodeID, gnum))
+                        nodal_coord = grid_size * vec2f(vectorize_id(node_id, gnum))
                         nodal_velocity_f += particle[np].fluid_velocity_gradient @ (nodal_coord - position)
-                    node[nodeID, bodyID].mf += nmass_f
-                    node[nodeID, bodyID].momentumf += nmass_f * nodal_velocity_f
+                    node[node_id, body_id].mf += nmass_f
+                    node[node_id, body_id].momentumf += nmass_f * nodal_velocity_f
             else:
                 for ln in range(offset, offset + int(node_size[np])):
-                    nodeID = LnID[ln]
+                    node_id = ln_id[ln]
                     shape = shapefn[ln]
                     nmass = shape * particle[np].m
                     nmass_s = shape * particle[np].ms
@@ -1976,17 +1976,17 @@ def kernel_p2g_double_layer_mass2d(
                     nodal_velocity_s = particle[np].vs
                     nodal_velocity_f = particle[np].vf
                     if ti.static(use_affine != 0):
-                        nodal_coord = grid_size * vec2f(vectorize_id(nodeID, gnum))
+                        nodal_coord = grid_size * vec2f(vectorize_id(node_id, gnum))
                         pointer = nodal_coord - position
                         nodal_velocity += particle[np].solid_velocity_gradient @ pointer
                         nodal_velocity_s += particle[np].solid_velocity_gradient @ pointer
                         nodal_velocity_f += particle[np].fluid_velocity_gradient @ pointer
-                    node[nodeID, bodyID].m += nmass
-                    node[nodeID, bodyID].ms += nmass_s
-                    node[nodeID, bodyID].mf += nmass_f
-                    node[nodeID, bodyID].momentum += nmass * nodal_velocity
-                    node[nodeID, bodyID].momentums += nmass_s * nodal_velocity_s
-                    node[nodeID, bodyID].momentumf += nmass_f * nodal_velocity_f
+                    node[node_id, body_id].m += nmass
+                    node[node_id, body_id].ms += nmass_s
+                    node[node_id, body_id].mf += nmass_f
+                    node[node_id, body_id].momentum += nmass * nodal_velocity
+                    node[node_id, body_id].momentums += nmass_s * nodal_velocity_s
+                    node[node_id, body_id].momentumf += nmass_f * nodal_velocity_f
 
 
 @ti.kernel
@@ -2011,12 +2011,12 @@ def kernel_update_double_layer_solid_state2d(
     start_index: int,
     end_index: int,
     dt: ti.template(),
-    matProps: ti.template(),
-    stateVars: ti.template(),
+    mat_props: ti.template(),
+    state_variables: ti.template(),
     node: ti.template(),
     particle: ti.template(),
     material_mapping: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
 ):
@@ -2028,56 +2028,58 @@ def kernel_update_double_layer_solid_state2d(
             and int(particle[np].phase) == PHASE_SOLID
         ):
             if particle[np].fix_v[0] == 0 or particle[np].fix_v[1] == 0:
-                bodyID = int(particle[np].bodyID)
+                body_id = int(particle[np].bodyID)
                 offset = np * total_nodes
-                gradv = ZEROMAT2x2
+                gradv = ZEROMAT2X2
                 for ln in range(offset, offset + int(node_size[np])):
-                    nodeID = LnID[ln]
-                    gradv += node[nodeID, bodyID].momentums.outer_product(dshapefn[ln])
+                    node_id = ln_id[ln]
+                    gradv += node[node_id, body_id].momentums.outer_product(dshapefn[ln])
                 particle[np].solid_velocity_gradient = gradv
-                volume_ratio = matProps.update_particle_volume_2D(np, gradv, stateVars, dt)
-                porosity = matProps.update_particle_porosity(gradv, particle[np].porosity, dt)
+                volume_ratio = mat_props.update_particle_volume_2d(np, gradv, state_variables, dt)
+                porosity = mat_props.update_particle_porosity(gradv, particle[np].porosity, dt)
                 particle[np].vol *= volume_ratio
                 particle[np].porosity = porosity
-                if porosity > matProps.maximum_porosity:
+                if porosity > mat_props.maximum_porosity:
                     particle[np].stress *= 0.0
                 else:
-                    particle[np].stress = matProps.ComputeStress2D(np, particle[np].stress, gradv, stateVars, dt)
+                    particle[np].stress = mat_props.compute_stress2d(
+                        np, particle[np].stress, gradv, state_variables, dt
+                    )
 
 
 @ti.kernel
 def kernel_force_p2g_double_layer2d(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if (
             int(particle[np].active) == 1
             and int(particle[np].materialID) > 0
             and int(particle[np].phase) == PHASE_SOLID
         ):
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             internal = -particle[np].vol * particle[np].stress
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 dshape = dshapefn[ln]
                 pforce = vec2f(
                     dshape[0] * internal[0] + dshape[1] * internal[3], dshape[1] * internal[1] + dshape[0] * internal[3]
                 )
-                node[nodeID, bodyID].force += pforce
-                node[nodeID, bodyID].forces += pforce
+                node[node_id, body_id].force += pforce
+                node[node_id, body_id].forces += pforce
 
 
 @ti.kernel
 def kernel_mac_p2g_double_layer2d(
-    particleNum: int,
+    particle_num: int,
     grid_size: vec2f,
     mac_shape_type: ti.template(),
     mac_influenced_node: ti.template(),
@@ -2098,17 +2100,17 @@ def kernel_mac_p2g_double_layer2d(
     cell_solid_velocity: ti.template(),
     cell_fluid_velocity: ti.template(),
     particle: ti.template(),
-    calLength: ti.template(),
+    cal_length: ti.template(),
 ):
     cell_measure = grid_size[0] * grid_size[1]
     cell_shape_type, cell_support = MAC_SHAPE_LINEAR, 2
     if mac_shape_type == MAC_SHAPE_QUAD_BSPLINE:
         cell_shape_type, cell_support = MAC_SHAPE_QUAD_BSPLINE, 3
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1 and int(particle[np].materialID) > 0:
             phase = int(particle[np].phase)
             position = particle[np].x
-            psize = calLength[int(particle[np].bodyID)]
+            psize = cal_length[int(particle[np].bodyID)]
             # A linear volume map can create false air ports in a smooth Q2 liquid.
             base_cell = vec2i(
                 _mac_base_1d(position[0], 1.0 / grid_size[0], 0.5, psize[0], cell_shape_type),
@@ -2119,7 +2121,7 @@ def kernel_mac_p2g_double_layer2d(
                 if 0 <= cell[0] < cell_fluid_mass.shape[0] and 0 <= cell[1] < cell_fluid_mass.shape[1]:
                     cell_pos = (cell.cast(float) + 0.5) * grid_size
                     weight = _mac_weight2d(position, cell_pos, grid_size, psize, vec2i(0, 0), cell_shape_type)
-                    if weight > Threshold:
+                    if weight > THRESHOLD:
                         if phase == PHASE_SOLID:
                             mass = weight * particle[np].ms
                             cell_velocity_s = particle[np].vs
@@ -2252,7 +2254,7 @@ def kernel_normalize_double_layer_mac_fields2d(
         if cell_solid_mass[I] > cutoff:
             cell_solid_velocity[I] /= cell_solid_mass[I]
         else:
-            cell_solid_velocity[I] = ZEROVEC2f
+            cell_solid_velocity[I] = ZEROVEC2F
         cell_porosity[I] = _mapped_porosity(cell_porosity[I])
 
 
@@ -2297,7 +2299,7 @@ def kernel_predict_double_layer2d(
     node_drag_model: ti.template(),
     shape_type: ti.template(),
     influenced_node: ti.template(),
-    calLength: ti.template(),
+    cal_length: ti.template(),
     solid_pressure_factor: ti.template(),
     fluid_pressure_mobility: ti.template(),
     mixture_pressure_mobility: ti.template(),
@@ -2333,7 +2335,7 @@ def kernel_predict_double_layer2d(
                 position = vec2i(vectorize_id(ng, gnum)).cast(float) * grid_size
                 external_f = _sample_mac_velocity(
                     position,
-                    calLength[nb],
+                    cal_length[nb],
                     shape_type,
                     influenced_node,
                     grid_size,
@@ -2365,7 +2367,7 @@ def kernel_predict_double_layer2d(
             node[ng, nb].momentum = node[ng, nb].momentums
         else:
             # G2P reads acceleration here, never the unscaled deposited force.
-            node[ng, nb].forces = ZEROVEC2f
+            node[ng, nb].forces = ZEROVEC2F
     for I in ti.grouped(fluid_velocity_x):
         acc = 0.0
         mu_s = 1.0 / ti.max(face_solid_density_x[I], 1.0e-12)
@@ -2376,7 +2378,7 @@ def kernel_predict_double_layer2d(
                 0, I, (fluid_velocity_x, fluid_velocity_y), (solid_velocity_x, solid_velocity_y)
             )
             external_s, weight = _sample_solid_grid_velocity2d(
-                position, grid_size, gnum, cutoff, shape_type, influenced_node, calLength, node, True
+                position, grid_size, gnum, cutoff, shape_type, influenced_node, cal_length, node, True
             )
             external_f = vec2f(fluid_acceleration_x[I], 0.0)
             a, b = _drag_rates_props(
@@ -2412,7 +2414,7 @@ def kernel_predict_double_layer2d(
                 1, I, (fluid_velocity_x, fluid_velocity_y), (solid_velocity_x, solid_velocity_y)
             )
             external_s, weight = _sample_solid_grid_velocity2d(
-                position, grid_size, gnum, cutoff, shape_type, influenced_node, calLength, node, True
+                position, grid_size, gnum, cutoff, shape_type, influenced_node, cal_length, node, True
             )
             external_f = vec2f(0.0, fluid_acceleration_y[I])
             a, b = _drag_rates_props(
@@ -2459,7 +2461,7 @@ def kernel_project_solid_grid_velocity_to_mac2d(
     shape_type: ti.template(),
     influenced_node: ti.template(),
     node: ti.template(),
-    calLength: ti.template(),
+    cal_length: ti.template(),
     cell_type: ti.template(),
     solid_mass_x: ti.template(),
     solid_mass_y: ti.template(),
@@ -2487,7 +2489,7 @@ def kernel_project_solid_grid_velocity_to_mac2d(
                 cutoff,
                 shape_type,
                 influenced_node,
-                calLength,
+                cal_length,
                 node,
             )
             if weight_sum > cutoff:
@@ -2512,7 +2514,7 @@ def kernel_project_solid_grid_velocity_to_mac2d(
                 cutoff,
                 shape_type,
                 influenced_node,
-                calLength,
+                cal_length,
                 node,
             )
             if weight_sum > cutoff:
@@ -2554,7 +2556,7 @@ def kernel_assemble_double_layer_pressure_rhs(
 
 
 @ti.kernel
-def kernel_assemble_double_layer_pressure_A(
+def kernel_assemble_double_layer_pressure_a(
     grid_size: vec2f,
     dt: ti.template(),
     grid_type: ti.template(),
@@ -2563,13 +2565,13 @@ def kernel_assemble_double_layer_pressure_A(
     cell_solid_density: ti.template(),
     cell_fluid_density: ti.template(),
     fluid_sdf: ti.template(),
-    Adiag: ti.template(),
+    adiag: ti.template(),
     Ax: ti.template(),
     coupled_mobility: ti.template(),
 ):
     for I in ti.grouped(grid_type):
-        Adiag[I] = 0.0
-        Ax[I] = ZEROVEC2f
+        adiag[I] = 0.0
+        Ax[I] = ZEROVEC2F
         if grid_type[I] == FLUID_CELL:
             # Keep a symmetric face-averaged mobility so PCG/MGPCG remains applicable.
             mobility = _cell_mobility2d(
@@ -2591,10 +2593,10 @@ def kernel_assemble_double_layer_pressure_A(
                     )
                     face_scale = 0.5 * (scale_x + dt[None] * mobility_right / (grid_size[0] * grid_size[0]))
                     Ax[I][0] = -face_scale
-                    Adiag[I] += face_scale
+                    adiag[I] += face_scale
                 elif grid_type[right] == AIR_CELL:
                     theta = _pressure_free_surface_theta(I, right, fluid_sdf)
-                    Adiag[I] += scale_x / theta
+                    adiag[I] += scale_x / theta
             if up[1] < grid_type.shape[1]:
                 if grid_type[up] == FLUID_CELL:
                     mobility_up = _cell_mobility2d(
@@ -2602,10 +2604,10 @@ def kernel_assemble_double_layer_pressure_A(
                     )
                     face_scale = 0.5 * (scale_y + dt[None] * mobility_up / (grid_size[1] * grid_size[1]))
                     Ax[I][1] = -face_scale
-                    Adiag[I] += face_scale
+                    adiag[I] += face_scale
                 elif grid_type[up] == AIR_CELL:
                     theta = _pressure_free_surface_theta(I, up, fluid_sdf)
-                    Adiag[I] += scale_y / theta
+                    adiag[I] += scale_y / theta
             left = I - vec2i(1, 0)
             down = I - vec2i(0, 1)
             if left[0] >= 0:
@@ -2613,23 +2615,23 @@ def kernel_assemble_double_layer_pressure_A(
                     mobility_left = _cell_mobility2d(
                         left, face_porosity_x, face_porosity_y, cell_solid_density, cell_fluid_density, coupled_mobility
                     )
-                    Adiag[I] += 0.5 * (scale_x + dt[None] * mobility_left / (grid_size[0] * grid_size[0]))
+                    adiag[I] += 0.5 * (scale_x + dt[None] * mobility_left / (grid_size[0] * grid_size[0]))
                 elif grid_type[left] == AIR_CELL:
                     theta = _pressure_free_surface_theta(I, left, fluid_sdf)
-                    Adiag[I] += scale_x / theta
+                    adiag[I] += scale_x / theta
             if down[1] >= 0:
                 if grid_type[down] == FLUID_CELL:
                     mobility_down = _cell_mobility2d(
                         down, face_porosity_x, face_porosity_y, cell_solid_density, cell_fluid_density, coupled_mobility
                     )
-                    Adiag[I] += 0.5 * (scale_y + dt[None] * mobility_down / (grid_size[1] * grid_size[1]))
+                    adiag[I] += 0.5 * (scale_y + dt[None] * mobility_down / (grid_size[1] * grid_size[1]))
                 elif grid_type[down] == AIR_CELL:
                     theta = _pressure_free_surface_theta(I, down, fluid_sdf)
-                    Adiag[I] += scale_y / theta
-            if Adiag[I] <= 1.0e-12:
-                Adiag[I] = 1.0
+                    adiag[I] += scale_y / theta
+            if adiag[I] <= 1.0e-12:
+                adiag[I] = 1.0
             else:
-                Adiag[I] += 1.0e-12
+                adiag[I] += 1.0e-12
 
 
 @ti.kernel
@@ -2655,7 +2657,7 @@ def kernel_coarsen_double_layer_grid_type2d(fine_grid_type: ti.template(), coars
 
 
 @ti.kernel
-def kernel_assemble_double_layer_pressure_mg_A(
+def kernel_assemble_double_layer_pressure_mg_a(
     grid_size: vec2f,
     dt: ti.template(),
     factor: int,
@@ -2665,14 +2667,14 @@ def kernel_assemble_double_layer_pressure_mg_A(
     cell_solid_density: ti.template(),
     cell_fluid_density: ti.template(),
     fluid_sdf: ti.template(),
-    Adiag: ti.template(),
+    adiag: ti.template(),
     Ax: ti.template(),
     coupled_mobility: ti.template(),
 ):
     coarse_grid_size = grid_size * factor
     for I in ti.grouped(grid_type):
-        Adiag[I] = 0.0
-        Ax[I] = ZEROVEC2f
+        adiag[I] = 0.0
+        Ax[I] = ZEROVEC2F
         if grid_type[I] == FLUID_CELL:
             mobility = _coarse_mobility2d(
                 I, factor, face_porosity_x, face_porosity_y, cell_solid_density, cell_fluid_density, coupled_mobility
@@ -2696,10 +2698,10 @@ def kernel_assemble_double_layer_pressure_mg_A(
                         scale_x + dt[None] * mobility_right / (coarse_grid_size[0] * coarse_grid_size[0])
                     )
                     Ax[I][0] = -face_scale
-                    Adiag[I] += face_scale
+                    adiag[I] += face_scale
                 elif grid_type[right] == AIR_CELL:
                     theta = _pressure_free_surface_theta_coarse2d(I, right, factor, fluid_sdf)
-                    Adiag[I] += scale_x / theta
+                    adiag[I] += scale_x / theta
             if up[1] < grid_type.shape[1]:
                 if grid_type[up] == FLUID_CELL:
                     mobility_up = _coarse_mobility2d(
@@ -2713,10 +2715,10 @@ def kernel_assemble_double_layer_pressure_mg_A(
                     )
                     face_scale = 0.5 * (scale_y + dt[None] * mobility_up / (coarse_grid_size[1] * coarse_grid_size[1]))
                     Ax[I][1] = -face_scale
-                    Adiag[I] += face_scale
+                    adiag[I] += face_scale
                 elif grid_type[up] == AIR_CELL:
                     theta = _pressure_free_surface_theta_coarse2d(I, up, factor, fluid_sdf)
-                    Adiag[I] += scale_y / theta
+                    adiag[I] += scale_y / theta
             left = I - vec2i(1, 0)
             down = I - vec2i(0, 1)
             if left[0] >= 0:
@@ -2730,10 +2732,10 @@ def kernel_assemble_double_layer_pressure_mg_A(
                         cell_fluid_density,
                         coupled_mobility,
                     )
-                    Adiag[I] += 0.5 * (scale_x + dt[None] * mobility_left / (coarse_grid_size[0] * coarse_grid_size[0]))
+                    adiag[I] += 0.5 * (scale_x + dt[None] * mobility_left / (coarse_grid_size[0] * coarse_grid_size[0]))
                 elif grid_type[left] == AIR_CELL:
                     theta = _pressure_free_surface_theta_coarse2d(I, left, factor, fluid_sdf)
-                    Adiag[I] += scale_x / theta
+                    adiag[I] += scale_x / theta
             if down[1] >= 0:
                 if grid_type[down] == FLUID_CELL:
                     mobility_down = _coarse_mobility2d(
@@ -2745,14 +2747,14 @@ def kernel_assemble_double_layer_pressure_mg_A(
                         cell_fluid_density,
                         coupled_mobility,
                     )
-                    Adiag[I] += 0.5 * (scale_y + dt[None] * mobility_down / (coarse_grid_size[1] * coarse_grid_size[1]))
+                    adiag[I] += 0.5 * (scale_y + dt[None] * mobility_down / (coarse_grid_size[1] * coarse_grid_size[1]))
                 elif grid_type[down] == AIR_CELL:
                     theta = _pressure_free_surface_theta_coarse2d(I, down, factor, fluid_sdf)
-                    Adiag[I] += scale_y / theta
-            if Adiag[I] <= 1.0e-12:
-                Adiag[I] = 1.0
+                    adiag[I] += scale_y / theta
+            if adiag[I] <= 1.0e-12:
+                adiag[I] = 1.0
             else:
-                Adiag[I] += 1.0e-12
+                adiag[I] += 1.0e-12
 
 
 @ti.kernel
@@ -2831,14 +2833,14 @@ def kernel_project_double_layer_pressure_to_solid_nodes2d(
     cell_pressure: ti.template(),
     fluid_sdf: ti.template(),
     node: ti.template(),
-    calLength: ti.template(),
+    cal_length: ti.template(),
 ):
     for ng, nb in node:
         node[ng, nb].pressure = 0.0
         if node[ng, nb].ms > cutoff:
             grid_id = vec2i(vectorize_id(ng, gnum))
             position = grid_id.cast(float) * grid_size
-            psize = calLength[nb]
+            psize = cal_length[nb]
             node[ng, nb].pressure = _sample_cell_pressure_gfm_shape2d(
                 position,
                 psize,
@@ -2861,7 +2863,7 @@ def kernel_sample_double_layer_solid_pressure_from_nodes2d(
     particle: ti.template(),
     material_mapping: ti.template(),
     node: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
 ):
@@ -2872,17 +2874,17 @@ def kernel_sample_double_layer_solid_pressure_from_nodes2d(
             and int(particle[np].materialID) > 0
             and int(particle[np].phase) == PHASE_SOLID
         ):
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             pressure = 0.0
             weight = 0.0
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 shape = shapefn[ln]
-                if node[nodeID, bodyID].ms > cutoff:
-                    pressure += shape * node[nodeID, bodyID].pressure
+                if node[node_id, body_id].ms > cutoff:
+                    pressure += shape * node[node_id, body_id].pressure
                     weight += shape
-            if weight > Threshold:
+            if weight > THRESHOLD:
                 particle[np].pressure = pressure / weight
             else:
                 particle[np].pressure = 0.0
@@ -2898,7 +2900,7 @@ def kernel_correct_double_layer_solid_velocity_paper2d(
     node: ti.template(),
     particle: ti.template(),
     material_mapping: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
@@ -2911,22 +2913,22 @@ def kernel_correct_double_layer_solid_velocity_paper2d(
             and int(particle[np].materialID) > 0
             and int(particle[np].phase) == PHASE_SOLID
         ):
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
-            pressure_gradient = ZEROVEC2f
+            pressure_gradient = ZEROVEC2F
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
-                pressure_gradient += node[nodeID, bodyID].pressure * dshapefn[ln]
+                node_id = ln_id[ln]
+                pressure_gradient += node[node_id, body_id].pressure * dshapefn[ln]
             pressure_force = -particle[np].vol * (1.0 - particle[np].porosity) * pressure_gradient
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
-                if node[nodeID, bodyID].ms > cutoff:
-                    acc = shapefn[ln] * pressure_force / ti.max(node[nodeID, bodyID].ms, 1.0e-12)
+                node_id = ln_id[ln]
+                if node[node_id, body_id].ms > cutoff:
+                    acc = shapefn[ln] * pressure_force / ti.max(node[node_id, body_id].ms, 1.0e-12)
                     if ti.static(pressure_factor != None):
-                        acc *= pressure_factor[nodeID, bodyID]
-                    node[nodeID, bodyID].momentums += dt[None] * acc
-                    node[nodeID, bodyID].momentum = node[nodeID, bodyID].momentums
-                    node[nodeID, bodyID].forces += acc
+                        acc *= pressure_factor[node_id, body_id]
+                    node[node_id, body_id].momentums += dt[None] * acc
+                    node[node_id, body_id].momentum = node[node_id, body_id].momentums
+                    node[node_id, body_id].forces += acc
 
 
 @ti.kernel
@@ -2956,7 +2958,7 @@ def kernel_update_double_layer_fluid_volume2d(
     node: ti.template(),
     particle: ti.template(),
     material_mapping: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
     phase_volume_support: ti.template(),
@@ -2968,16 +2970,16 @@ def kernel_update_double_layer_fluid_volume2d(
             and int(particle[np].materialID) > 0
             and int(particle[np].phase) == PHASE_FLUID
         ):
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             porosity = 0.0
             weight = 0.0
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 shape = shapefn[ln]
-                porosity += shape * _intrinsic_pore_porosity(nodeID, bodyID, node, phase_volume_support)
+                porosity += shape * _intrinsic_pore_porosity(node_id, body_id, node, phase_volume_support)
                 weight += shape
-            if weight > Threshold:
+            if weight > THRESHOLD:
                 porosity = _clamp_porosity(porosity / weight)
                 if initialize_mass != 0:
                     particle[np].mf = fluid_density * porosity * particle[np].vol
@@ -2994,7 +2996,7 @@ def kernel_volume_p2g_double_layer_fluid2d(
     particle_count: int,
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
 ):
@@ -3004,11 +3006,11 @@ def kernel_volume_p2g_double_layer_fluid2d(
             and int(particle[np].materialID) > 0
             and int(particle[np].phase) == PHASE_FLUID
         ):
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
-                node[nodeID, bodyID].vol += shapefn[ln] * particle[np].vol * particle[np].porosity
+                node_id = ln_id[ln]
+                node[node_id, body_id].vol += shapefn[ln] * particle[np].vol * particle[np].porosity
 
 
 @ti.kernel
@@ -3022,7 +3024,7 @@ def kernel_delta_correct_double_layer_fluid2d(
     cell_type: ti.template(),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
     reference_volume: ti.template(),
@@ -3042,12 +3044,12 @@ def kernel_delta_correct_double_layer_fluid2d(
             and int(particle[np].phase) == PHASE_FLUID
             and _double_layer_shifting_is_interior2d(particle[np].x, grid_size, cnum, cell_type)
         ):
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
-            gradient = ZEROVEC2f
+            gradient = ZEROVEC2F
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
-                error = volume_error[nodeID, bodyID]
+                node_id = ln_id[ln]
+                error = volume_error[node_id, body_id]
                 gradient += dshapefn[ln] * error
             gradient *= 2.0 * particle[np].vol * particle[np].porosity
             particle[np].grad_E2 = gradient
@@ -3058,24 +3060,24 @@ def kernel_delta_correct_double_layer_fluid2d(
         volume_error[ng, nb] = 0.0
     for np in range(particle_count):
         if (
-            denominator > Threshold * gradient_scale * gradient_scale
+            denominator > THRESHOLD * gradient_scale * gradient_scale
             and int(particle[np].active) == 1
             and int(particle[np].materialID) > 0
             and int(particle[np].phase) == PHASE_FLUID
             and _double_layer_shifting_is_interior2d(particle[np].x, grid_size, cnum, cell_type)
         ):
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
-                volume_error[nodeID, bodyID] += (
+                node_id = ln_id[ln]
+                volume_error[node_id, body_id] += (
                     particle[np].vol * particle[np].porosity * dshapefn[ln].dot(particle[np].grad_E2)
                 )
     curvature = 0.0
     for ng, nb in node:
         curvature += volume_error[ng, nb] * volume_error[ng, nb]
     step = 0.0
-    if denominator > Threshold * gradient_scale * gradient_scale and curvature > 0.0:
+    if denominator > THRESHOLD * gradient_scale * gradient_scale and curvature > 0.0:
         step = shifting_scale * denominator / (2.0 * curvature)
     for np in range(particle_count):
         if (
@@ -3107,13 +3109,13 @@ def kernel_g2p_double_layer2d(
     mac_influenced_node: ti.template(),
     use_affine: ti.template(),
     dt: ti.template(),
-    matProps: ti.template(),
-    stateVars: ti.template(),
+    mat_props: ti.template(),
+    state_variables: ti.template(),
     node: ti.template(),
     particle: ti.template(),
     material_mapping: ti.template(),
-    calLength: ti.template(),
-    LnID: ti.template(),
+    cal_length: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
@@ -3131,34 +3133,34 @@ def kernel_g2p_double_layer2d(
     for i in range(start_index, end_index):
         np = material_mapping[i]
         if int(particle[np].active) == 1 and int(particle[np].materialID) > 0:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             phase = int(particle[np].phase)
             position = particle[np].x
             if phase == PHASE_SOLID:
-                v_pic = ZEROVEC2f
-                a_pic = ZEROVEC2f
-                gradv = ZEROMAT2x2
+                v_pic = ZEROVEC2F
+                a_pic = ZEROVEC2F
+                gradv = ZEROMAT2X2
                 for ln in range(offset, offset + int(node_size[np])):
-                    nodeID = LnID[ln]
+                    node_id = ln_id[ln]
                     shape = shapefn[ln]
                     dshape = dshapefn[ln]
-                    velocity = node[nodeID, bodyID].momentums
-                    acceleration = node[nodeID, bodyID].forces
+                    velocity = node[node_id, body_id].momentums
+                    acceleration = node[node_id, body_id].forces
                     v_pic += shape * velocity
                     a_pic += shape * acceleration
                     gradv += velocity.outer_product(dshape)
                 if ti.static(use_affine != 0 and mac_shape_type != MAC_SHAPE_LINEAR):
-                    Dp = ZEROMAT2x2
-                    Bp = ZEROMAT2x2
+                    Dp = ZEROMAT2X2
+                    Bp = ZEROMAT2X2
                     for ln in range(offset, offset + int(node_size[np])):
-                        nodeID = LnID[ln]
+                        node_id = ln_id[ln]
                         shape = shapefn[ln]
                         nodal_coord = grid_size * vec2f(
-                            vectorize_id(nodeID, vec2i(fluid_velocity_x.shape[0], fluid_velocity_y.shape[1]))
+                            vectorize_id(node_id, vec2i(fluid_velocity_x.shape[0], fluid_velocity_y.shape[1]))
                         )
                         pointer = nodal_coord - position
-                        velocity = node[nodeID, bodyID].momentums
+                        velocity = node[node_id, body_id].momentums
                         Dp += shape * pointer.outer_product(pointer)
                         Bp += shape * (velocity - v_pic).outer_product(pointer)
                     dp_trace = ti.max(Dp[0, 0] + Dp[1, 1], 0.0)
@@ -3169,23 +3171,25 @@ def kernel_g2p_double_layer2d(
                 flag_free = vec2f(1.0, 1.0) - flag_fix
                 if particle[np].fix_v[0] != 0 and particle[np].fix_v[1] != 0:
                     # A fixed skeleton must not scatter a moving APIC field next step.
-                    gradv = ZEROMAT2x2
+                    gradv = ZEROMAT2X2
                 v_flip = particle[np].vs + dt[None] * a_pic
                 new_v = (alpha * v_pic + (1.0 - alpha) * v_flip) * flag_free + particle[np].vs * flag_fix
                 particle[np].vs = new_v
                 particle[np].v = new_v
                 particle[np].solid_velocity_gradient = gradv
                 if ti.static(update_solid_state != 0):
-                    volume_ratio = matProps.update_particle_volume_2D(np, gradv, stateVars, dt)
-                    porosity = matProps.update_particle_porosity(gradv, particle[np].porosity, dt)
+                    volume_ratio = mat_props.update_particle_volume_2d(np, gradv, state_variables, dt)
+                    porosity = mat_props.update_particle_porosity(gradv, particle[np].porosity, dt)
                     particle[np].vol *= volume_ratio
                     particle[np].porosity = porosity
-                    if porosity > matProps.maximum_porosity:
+                    if porosity > mat_props.maximum_porosity:
                         particle[np].stress *= 0.0
                     else:
-                        particle[np].stress = matProps.ComputeStress2D(np, particle[np].stress, gradv, stateVars, dt)
+                        particle[np].stress = mat_props.compute_stress2d(
+                            np, particle[np].stress, gradv, state_variables, dt
+                        )
                 if ti.static(preserve_solid_pressure == 0):
-                    psize = calLength[bodyID]
+                    psize = cal_length[body_id]
                     particle[np].pressure = _sample_cell_pressure_gfm_shape2d(
                         position,
                         psize,
@@ -3198,7 +3202,7 @@ def kernel_g2p_double_layer2d(
                     )
                 particle[np].x += dt[None] * (v_pic * flag_free + particle[np].vs * flag_fix)
             elif phase == PHASE_FLUID:
-                psize = calLength[bodyID]
+                psize = cal_length[body_id]
                 v_pic = _sample_mac_velocity(
                     position, psize, mac_shape_type, mac_influenced_node, grid_size, fluid_velocity_x, fluid_velocity_y
                 )
@@ -3266,7 +3270,7 @@ def _sample_cell_scalar3d(position, grid_size, cell_type, cell_value):
                 )
                 value += weight * cell_value[cell]
                 weight_sum += weight
-    if weight_sum > Threshold:
+    if weight_sum > THRESHOLD:
         value /= weight_sum
     return value
 
@@ -3293,7 +3297,7 @@ def _sample_cell_pressure3d(position, grid_size, cell_type, cell_pressure):
                 if attr == FLUID_CELL:
                     value += weight * cell_pressure[cell]
                 weight_sum += weight
-    if weight_sum > Threshold:
+    if weight_sum > THRESHOLD:
         value /= weight_sum
     return value
 
@@ -3354,7 +3358,7 @@ def _sample_cell_pressure_gfm3d(position, grid_size, cell_type, cell_pressure, f
                     if ghost_weight > 0.0:
                         value += weight * ghost_pressure
                         weight_sum += weight
-    if weight_sum > Threshold:
+    if weight_sum > THRESHOLD:
         value /= weight_sum
     return value
 
@@ -3403,7 +3407,7 @@ def _sample_cell_pressure_gfm_shape3d(
                     else:
                         # Atmospheric air contributes zero physical pressure to the solid force.
                         weight_sum += weight
-    if weight_sum > Threshold:
+    if weight_sum > THRESHOLD:
         value /= weight_sum
     return value
 
@@ -3462,11 +3466,11 @@ def _sample_solid_grid_velocity3d(
     cutoff: float,
     shape_type: ti.template(),
     influenced_node: int,
-    calLength: ti.template(),
+    cal_length: ti.template(),
     node: ti.template(),
     sample_force: ti.template() = False,
 ):
-    velocity = ZEROVEC3f
+    velocity = ZEROVEC3F
     weight_sum = 0.0
     if shape_type == MAC_SHAPE_LINEAR or shape_type == MAC_SHAPE_GIMP:
         base = ti.floor(position / grid_size).cast(int)
@@ -3488,7 +3492,7 @@ def _sample_solid_grid_velocity3d(
                         weight_sum += mass_weight
     else:
         for body_id in range(node.shape[1]):
-            psize = calLength[body_id]
+            psize = cal_length[body_id]
             base = vec3i(
                 _mac_base_1d(position[0], 1.0 / grid_size[0], 0.0, psize[0], shape_type),
                 _mac_base_1d(position[1], 1.0 / grid_size[1], 0.0, psize[1], shape_type),
@@ -3550,7 +3554,7 @@ def _mac_component_stencil3d(
 def _sample_mac_velocity3d(
     position, psize, shape_type: ti.template(), influenced_node: int, grid_size, velocity_x, velocity_y, velocity_z
 ):
-    velocity = ZEROVEC3f
+    velocity = ZEROVEC3F
     # A serial component loop avoids three copies of the boundary shape CFG.
     axis = 0
     while axis < 3:
@@ -3569,7 +3573,7 @@ def _sample_mac_velocity3d(
                 value += weight * _mac_component_value3d(axis, face, velocity_x, velocity_y, velocity_z)
                 weight_sum += weight
         velocity[axis] = value
-        if weight_sum > Threshold:
+        if weight_sum > THRESHOLD:
             velocity[axis] /= weight_sum
         axis += 1
     return velocity
@@ -3587,14 +3591,14 @@ def _sample_mac_velocity_gradient3d(
     velocity_z,
     v_pic,
 ):
-    gradv = ZEROMAT3x3
+    gradv = ZEROMAT3X3
     axis = 0
     while axis < 3:
         base, shape, offset = _mac_component_stencil3d(
             axis, position, psize, shape_type, grid_size, velocity_x, velocity_y, velocity_z
         )
-        moment = ZEROMAT3x3
-        rhs = ZEROVEC3f
+        moment = ZEROMAT3X3
+        rhs = ZEROVEC3F
         for i, j, k in ti.ndrange(influenced_node, influenced_node, influenced_node):
             face = base + vec3i(i, j, k)
             if 0 <= face[0] < shape[0] and 0 <= face[1] < shape[1] and 0 <= face[2] < shape[2]:
@@ -3676,8 +3680,8 @@ def kernel_reset_double_layer_fields3d(
         cell_fluid_mass[I] = 0.0
         cell_solid_mass[I] = 0.0
         cell_porosity[I] = 0.0
-        cell_solid_velocity[I] = ZEROVEC3f
-        cell_fluid_velocity[I] = ZEROVEC3f
+        cell_solid_velocity[I] = ZEROVEC3F
+        cell_fluid_velocity[I] = ZEROVEC3F
         cell_pressure[I] = 0.0
 
 
@@ -3775,9 +3779,9 @@ def kernel_accumulate_double_layer_material_fields3d(
     mac_influenced_node: ti.template(),
     particle: ti.template(),
     material_mapping: ti.template(),
-    matProps: ti.template(),
-    calLength: ti.template(),
-    LnID: ti.template(),
+    mat_props: ti.template(),
+    cal_length: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
     face_material_weight_x: ti.template(),
@@ -3822,9 +3826,9 @@ def kernel_accumulate_double_layer_material_fields3d(
         np = material_mapping[i]
         if int(particle[np].active) == 1 and int(particle[np].materialID) > 0:
             position = particle[np].x
-            psize = calLength[int(particle[np].bodyID)]
+            psize = cal_length[int(particle[np].bodyID)]
             mass = ti.max(particle[np].m, particle[np].ms + particle[np].mf)
-            if mass > Threshold:
+            if mass > THRESHOLD:
                 cell = ti.floor(position / grid_size).cast(int)
                 if (
                     0 <= cell[0] < cell_material_weight.shape[0]
@@ -3832,10 +3836,10 @@ def kernel_accumulate_double_layer_material_fields3d(
                     and 0 <= cell[2] < cell_material_weight.shape[2]
                 ):
                     cell_material_weight[cell] += mass
-                    cell_solid_density[cell] += mass * matProps.solid_density
-                    cell_fluid_density[cell] += mass * matProps.fluid_density
-                    cell_fluid_viscosity[cell] += mass * matProps.fluid_viscosity
-                    cell_grain_diameter[cell] += mass * matProps.grain_diameter
+                    cell_solid_density[cell] += mass * mat_props.solid_density
+                    cell_fluid_density[cell] += mass * mat_props.fluid_density
+                    cell_fluid_viscosity[cell] += mass * mat_props.fluid_viscosity
+                    cell_grain_diameter[cell] += mass * mat_props.grain_diameter
 
                 base_x = vec3i(
                     _mac_base_1d(position[0], 1.0 / grid_size[0], 0.0, psize[0], mac_shape_type),
@@ -3856,13 +3860,13 @@ def kernel_accumulate_double_layer_material_fields3d(
                         weight = _mac_weight3d(position, face_pos, grid_size, psize, btype, mac_shape_type)
                         weighted_mass = weight * mass
                         face_material_weight_x[face] += weighted_mass
-                        face_solid_density_x[face] += weighted_mass * matProps.solid_density
-                        face_fluid_density_x[face] += weighted_mass * matProps.fluid_density
-                        face_fluid_viscosity_x[face] += weighted_mass * matProps.fluid_viscosity
-                        face_grain_diameter_x[face] += weighted_mass * matProps.grain_diameter
-                        face_permeability_x[face] += weighted_mass * matProps.permeability
-                        face_fluid_unit_weight_x[face] += weighted_mass * matProps.fluid_unit_weight
-                        face_drag_model_x[face] += weighted_mass * matProps.drag_model
+                        face_solid_density_x[face] += weighted_mass * mat_props.solid_density
+                        face_fluid_density_x[face] += weighted_mass * mat_props.fluid_density
+                        face_fluid_viscosity_x[face] += weighted_mass * mat_props.fluid_viscosity
+                        face_grain_diameter_x[face] += weighted_mass * mat_props.grain_diameter
+                        face_permeability_x[face] += weighted_mass * mat_props.permeability
+                        face_fluid_unit_weight_x[face] += weighted_mass * mat_props.fluid_unit_weight
+                        face_drag_model_x[face] += weighted_mass * mat_props.drag_model
 
                 base_y = vec3i(
                     _mac_base_1d(position[0], 1.0 / grid_size[0], 0.5, psize[0], mac_shape_type),
@@ -3883,13 +3887,13 @@ def kernel_accumulate_double_layer_material_fields3d(
                         weight = _mac_weight3d(position, face_pos, grid_size, psize, btype, mac_shape_type)
                         weighted_mass = weight * mass
                         face_material_weight_y[face] += weighted_mass
-                        face_solid_density_y[face] += weighted_mass * matProps.solid_density
-                        face_fluid_density_y[face] += weighted_mass * matProps.fluid_density
-                        face_fluid_viscosity_y[face] += weighted_mass * matProps.fluid_viscosity
-                        face_grain_diameter_y[face] += weighted_mass * matProps.grain_diameter
-                        face_permeability_y[face] += weighted_mass * matProps.permeability
-                        face_fluid_unit_weight_y[face] += weighted_mass * matProps.fluid_unit_weight
-                        face_drag_model_y[face] += weighted_mass * matProps.drag_model
+                        face_solid_density_y[face] += weighted_mass * mat_props.solid_density
+                        face_fluid_density_y[face] += weighted_mass * mat_props.fluid_density
+                        face_fluid_viscosity_y[face] += weighted_mass * mat_props.fluid_viscosity
+                        face_grain_diameter_y[face] += weighted_mass * mat_props.grain_diameter
+                        face_permeability_y[face] += weighted_mass * mat_props.permeability
+                        face_fluid_unit_weight_y[face] += weighted_mass * mat_props.fluid_unit_weight
+                        face_drag_model_y[face] += weighted_mass * mat_props.drag_model
 
                 base_z = vec3i(
                     _mac_base_1d(position[0], 1.0 / grid_size[0], 0.5, psize[0], mac_shape_type),
@@ -3910,32 +3914,32 @@ def kernel_accumulate_double_layer_material_fields3d(
                         weight = _mac_weight3d(position, face_pos, grid_size, psize, btype, mac_shape_type)
                         weighted_mass = weight * mass
                         face_material_weight_z[face] += weighted_mass
-                        face_solid_density_z[face] += weighted_mass * matProps.solid_density
-                        face_fluid_density_z[face] += weighted_mass * matProps.fluid_density
-                        face_fluid_viscosity_z[face] += weighted_mass * matProps.fluid_viscosity
-                        face_grain_diameter_z[face] += weighted_mass * matProps.grain_diameter
-                        face_permeability_z[face] += weighted_mass * matProps.permeability
-                        face_fluid_unit_weight_z[face] += weighted_mass * matProps.fluid_unit_weight
-                        face_drag_model_z[face] += weighted_mass * matProps.drag_model
+                        face_solid_density_z[face] += weighted_mass * mat_props.solid_density
+                        face_fluid_density_z[face] += weighted_mass * mat_props.fluid_density
+                        face_fluid_viscosity_z[face] += weighted_mass * mat_props.fluid_viscosity
+                        face_grain_diameter_z[face] += weighted_mass * mat_props.grain_diameter
+                        face_permeability_z[face] += weighted_mass * mat_props.permeability
+                        face_fluid_unit_weight_z[face] += weighted_mass * mat_props.fluid_unit_weight
+                        face_drag_model_z[face] += weighted_mass * mat_props.drag_model
 
-                bodyID = int(particle[np].bodyID)
+                body_id = int(particle[np].bodyID)
                 offset = np * total_nodes
                 for ln in range(offset, offset + int(node_size[np])):
-                    nodeID = LnID[ln]
+                    node_id = ln_id[ln]
                     weighted_mass = shapefn[ln] * mass
-                    node_material_weight[nodeID, bodyID] += weighted_mass
-                    node_solid_density[nodeID, bodyID] += weighted_mass * matProps.solid_density
-                    node_fluid_density[nodeID, bodyID] += weighted_mass * matProps.fluid_density
-                    node_fluid_viscosity[nodeID, bodyID] += weighted_mass * matProps.fluid_viscosity
-                    node_grain_diameter[nodeID, bodyID] += weighted_mass * matProps.grain_diameter
-                    node_permeability[nodeID, bodyID] += weighted_mass * matProps.permeability
-                    node_fluid_unit_weight[nodeID, bodyID] += weighted_mass * matProps.fluid_unit_weight
-                    node_drag_model[nodeID, bodyID] += weighted_mass * matProps.drag_model
+                    node_material_weight[node_id, body_id] += weighted_mass
+                    node_solid_density[node_id, body_id] += weighted_mass * mat_props.solid_density
+                    node_fluid_density[node_id, body_id] += weighted_mass * mat_props.fluid_density
+                    node_fluid_viscosity[node_id, body_id] += weighted_mass * mat_props.fluid_viscosity
+                    node_grain_diameter[node_id, body_id] += weighted_mass * mat_props.grain_diameter
+                    node_permeability[node_id, body_id] += weighted_mass * mat_props.permeability
+                    node_fluid_unit_weight[node_id, body_id] += weighted_mass * mat_props.fluid_unit_weight
+                    node_drag_model[node_id, body_id] += weighted_mass * mat_props.drag_model
 
 
 @ti.kernel
 def kernel_normalize_double_layer_material_fields3d(
-    default_matProps: ti.template(),
+    default_mat_props: ti.template(),
     face_material_weight_x: ti.template(),
     face_material_weight_y: ti.template(),
     face_material_weight_z: ti.template(),
@@ -3975,7 +3979,7 @@ def kernel_normalize_double_layer_material_fields3d(
     node_drag_model: ti.template(),
 ):
     for I in ti.grouped(face_material_weight_x):
-        if face_material_weight_x[I] > Threshold:
+        if face_material_weight_x[I] > THRESHOLD:
             inv_weight = 1.0 / face_material_weight_x[I]
             face_solid_density_x[I] *= inv_weight
             face_fluid_density_x[I] *= inv_weight
@@ -3985,15 +3989,15 @@ def kernel_normalize_double_layer_material_fields3d(
             face_fluid_unit_weight_x[I] *= inv_weight
             face_drag_model_x[I] *= inv_weight
         else:
-            face_solid_density_x[I] = default_matProps.solid_density
-            face_fluid_density_x[I] = default_matProps.fluid_density
-            face_fluid_viscosity_x[I] = default_matProps.fluid_viscosity
-            face_grain_diameter_x[I] = default_matProps.grain_diameter
-            face_permeability_x[I] = default_matProps.permeability
-            face_fluid_unit_weight_x[I] = default_matProps.fluid_unit_weight
-            face_drag_model_x[I] = default_matProps.drag_model
+            face_solid_density_x[I] = default_mat_props.solid_density
+            face_fluid_density_x[I] = default_mat_props.fluid_density
+            face_fluid_viscosity_x[I] = default_mat_props.fluid_viscosity
+            face_grain_diameter_x[I] = default_mat_props.grain_diameter
+            face_permeability_x[I] = default_mat_props.permeability
+            face_fluid_unit_weight_x[I] = default_mat_props.fluid_unit_weight
+            face_drag_model_x[I] = default_mat_props.drag_model
     for I in ti.grouped(face_material_weight_y):
-        if face_material_weight_y[I] > Threshold:
+        if face_material_weight_y[I] > THRESHOLD:
             inv_weight = 1.0 / face_material_weight_y[I]
             face_solid_density_y[I] *= inv_weight
             face_fluid_density_y[I] *= inv_weight
@@ -4003,15 +4007,15 @@ def kernel_normalize_double_layer_material_fields3d(
             face_fluid_unit_weight_y[I] *= inv_weight
             face_drag_model_y[I] *= inv_weight
         else:
-            face_solid_density_y[I] = default_matProps.solid_density
-            face_fluid_density_y[I] = default_matProps.fluid_density
-            face_fluid_viscosity_y[I] = default_matProps.fluid_viscosity
-            face_grain_diameter_y[I] = default_matProps.grain_diameter
-            face_permeability_y[I] = default_matProps.permeability
-            face_fluid_unit_weight_y[I] = default_matProps.fluid_unit_weight
-            face_drag_model_y[I] = default_matProps.drag_model
+            face_solid_density_y[I] = default_mat_props.solid_density
+            face_fluid_density_y[I] = default_mat_props.fluid_density
+            face_fluid_viscosity_y[I] = default_mat_props.fluid_viscosity
+            face_grain_diameter_y[I] = default_mat_props.grain_diameter
+            face_permeability_y[I] = default_mat_props.permeability
+            face_fluid_unit_weight_y[I] = default_mat_props.fluid_unit_weight
+            face_drag_model_y[I] = default_mat_props.drag_model
     for I in ti.grouped(face_material_weight_z):
-        if face_material_weight_z[I] > Threshold:
+        if face_material_weight_z[I] > THRESHOLD:
             inv_weight = 1.0 / face_material_weight_z[I]
             face_solid_density_z[I] *= inv_weight
             face_fluid_density_z[I] *= inv_weight
@@ -4021,27 +4025,27 @@ def kernel_normalize_double_layer_material_fields3d(
             face_fluid_unit_weight_z[I] *= inv_weight
             face_drag_model_z[I] *= inv_weight
         else:
-            face_solid_density_z[I] = default_matProps.solid_density
-            face_fluid_density_z[I] = default_matProps.fluid_density
-            face_fluid_viscosity_z[I] = default_matProps.fluid_viscosity
-            face_grain_diameter_z[I] = default_matProps.grain_diameter
-            face_permeability_z[I] = default_matProps.permeability
-            face_fluid_unit_weight_z[I] = default_matProps.fluid_unit_weight
-            face_drag_model_z[I] = default_matProps.drag_model
+            face_solid_density_z[I] = default_mat_props.solid_density
+            face_fluid_density_z[I] = default_mat_props.fluid_density
+            face_fluid_viscosity_z[I] = default_mat_props.fluid_viscosity
+            face_grain_diameter_z[I] = default_mat_props.grain_diameter
+            face_permeability_z[I] = default_mat_props.permeability
+            face_fluid_unit_weight_z[I] = default_mat_props.fluid_unit_weight
+            face_drag_model_z[I] = default_mat_props.drag_model
     for I in ti.grouped(cell_material_weight):
-        if cell_material_weight[I] > Threshold:
+        if cell_material_weight[I] > THRESHOLD:
             inv_weight = 1.0 / cell_material_weight[I]
             cell_solid_density[I] *= inv_weight
             cell_fluid_density[I] *= inv_weight
             cell_fluid_viscosity[I] *= inv_weight
             cell_grain_diameter[I] *= inv_weight
         else:
-            cell_solid_density[I] = default_matProps.solid_density
-            cell_fluid_density[I] = default_matProps.fluid_density
-            cell_fluid_viscosity[I] = default_matProps.fluid_viscosity
-            cell_grain_diameter[I] = default_matProps.grain_diameter
+            cell_solid_density[I] = default_mat_props.solid_density
+            cell_fluid_density[I] = default_mat_props.fluid_density
+            cell_fluid_viscosity[I] = default_mat_props.fluid_viscosity
+            cell_grain_diameter[I] = default_mat_props.grain_diameter
     for I in ti.grouped(node_material_weight):
-        if node_material_weight[I] > Threshold:
+        if node_material_weight[I] > THRESHOLD:
             inv_weight = 1.0 / node_material_weight[I]
             node_solid_density[I] *= inv_weight
             node_fluid_density[I] *= inv_weight
@@ -4051,13 +4055,13 @@ def kernel_normalize_double_layer_material_fields3d(
             node_fluid_unit_weight[I] *= inv_weight
             node_drag_model[I] *= inv_weight
         else:
-            node_solid_density[I] = default_matProps.solid_density
-            node_fluid_density[I] = default_matProps.fluid_density
-            node_fluid_viscosity[I] = default_matProps.fluid_viscosity
-            node_grain_diameter[I] = default_matProps.grain_diameter
-            node_permeability[I] = default_matProps.permeability
-            node_fluid_unit_weight[I] = default_matProps.fluid_unit_weight
-            node_drag_model[I] = default_matProps.drag_model
+            node_solid_density[I] = default_mat_props.solid_density
+            node_fluid_density[I] = default_mat_props.fluid_density
+            node_fluid_viscosity[I] = default_mat_props.fluid_viscosity
+            node_grain_diameter[I] = default_mat_props.grain_diameter
+            node_permeability[I] = default_mat_props.permeability
+            node_fluid_unit_weight[I] = default_mat_props.fluid_unit_weight
+            node_drag_model[I] = default_mat_props.drag_model
 
 
 @ti.func
@@ -4068,7 +4072,7 @@ def _double_layer_fluid_fraction3d(I, grid_size, cell_fluid_mass, cell_fluid_den
 
 @ti.kernel
 def kernel_classify_double_layer_fluid_cells3d(
-    particleNum: int,
+    particle_num: int,
     grid_size: vec3f,
     particle: ti.template(),
     cell_fluid_mass: ti.template(),
@@ -4081,7 +4085,7 @@ def kernel_classify_double_layer_fluid_cells3d(
         if _double_layer_fluid_fraction3d(I, grid_size, cell_fluid_mass, cell_fluid_density, cell_porosity) >= 0.5:
             cell_type[I] = FLUID_CELL
 
-    for np in range(particleNum):
+    for np in range(particle_num):
         if (
             int(particle[np].active) == 1
             and int(particle[np].materialID) > 0
@@ -4106,7 +4110,7 @@ def kernel_classify_double_layer_fluid_cells3d(
                         if cell_type[right] == FLUID_CELL:
                             resolved = True
                 # Saturated porous cells carry pressure even beside a resolved water cell.
-                if cell_porosity[cell] < 1.0 - Threshold:
+                if cell_porosity[cell] < 1.0 - THRESHOLD:
                     cell_type[cell] = 3
                 elif not resolved:
                     attached = False
@@ -4127,7 +4131,7 @@ def kernel_classify_double_layer_fluid_cells3d(
     for i, j in ti.ndrange(cell_type.shape[0], cell_type.shape[1]):
         lower = -1
         for k in range(cell_type.shape[2]):
-            if cell_fluid_mass[i, j, k] <= Threshold:
+            if cell_fluid_mass[i, j, k] <= THRESHOLD:
                 lower = -1
             elif (
                 _double_layer_fluid_fraction3d(
@@ -4189,8 +4193,8 @@ def kernel_constrain_double_layer_particles_to_solid_region3d(
     particle: ti.template(),
 ):
     eps = 1.0e-6 * ti.max(ti.max(domain[0], domain[1]), domain[2])
-    discrete_start = ZEROVEC3f
-    discrete_end = ZEROVEC3f
+    discrete_start = ZEROVEC3F
+    discrete_end = ZEROVEC3F
     for d in ti.static(range(3)):
         first_cell = ti.ceil(start_point[d] / grid_size[d] - 0.5)
         last_cell = ti.floor(end_point[d] / grid_size[d] - 0.5)
@@ -4299,51 +4303,51 @@ def kernel_enforce_double_layer_solid_cell_faces3d(
 @ti.kernel
 def kernel_p2g_double_layer_mass3d(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     grid_size: vec3f,
     gnum: ti.types.vector(3, int),
     use_affine: ti.template(),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1 and int(particle[np].materialID) > 0:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             phase = int(particle[np].phase)
             position = particle[np].x
             if phase == PHASE_SOLID:
                 for ln in range(offset, offset + int(node_size[np])):
-                    nodeID = LnID[ln]
+                    node_id = ln_id[ln]
                     shape = shapefn[ln]
                     nmass_s = shape * particle[np].ms
                     nodal_velocity_s = particle[np].vs
                     if ti.static(use_affine != 0):
-                        nodal_coord = grid_size * vec3f(vectorize_id(nodeID, gnum))
+                        nodal_coord = grid_size * vec3f(vectorize_id(node_id, gnum))
                         nodal_velocity_s += particle[np].solid_velocity_gradient @ (nodal_coord - position)
-                    node[nodeID, bodyID].m += nmass_s
-                    node[nodeID, bodyID].ms += nmass_s
-                    node[nodeID, bodyID].momentum += nmass_s * nodal_velocity_s
-                    node[nodeID, bodyID].momentums += nmass_s * nodal_velocity_s
+                    node[node_id, body_id].m += nmass_s
+                    node[node_id, body_id].ms += nmass_s
+                    node[node_id, body_id].momentum += nmass_s * nodal_velocity_s
+                    node[node_id, body_id].momentums += nmass_s * nodal_velocity_s
                     shape_volume = shape * particle[np].vol
-                    node[nodeID, bodyID].porosity += shape_volume * (1.0 - particle[np].porosity)
+                    node[node_id, body_id].porosity += shape_volume * (1.0 - particle[np].porosity)
             elif phase == PHASE_FLUID:
                 for ln in range(offset, offset + int(node_size[np])):
-                    nodeID = LnID[ln]
+                    node_id = ln_id[ln]
                     shape = shapefn[ln]
                     nmass_f = shape * particle[np].mf
                     nodal_velocity_f = particle[np].vf
                     if ti.static(use_affine != 0):
-                        nodal_coord = grid_size * vec3f(vectorize_id(nodeID, gnum))
+                        nodal_coord = grid_size * vec3f(vectorize_id(node_id, gnum))
                         nodal_velocity_f += particle[np].fluid_velocity_gradient @ (nodal_coord - position)
-                    node[nodeID, bodyID].mf += nmass_f
-                    node[nodeID, bodyID].momentumf += nmass_f * nodal_velocity_f
+                    node[node_id, body_id].mf += nmass_f
+                    node[node_id, body_id].momentumf += nmass_f * nodal_velocity_f
             else:
                 for ln in range(offset, offset + int(node_size[np])):
-                    nodeID = LnID[ln]
+                    node_id = ln_id[ln]
                     shape = shapefn[ln]
                     nmass = shape * particle[np].m
                     nmass_s = shape * particle[np].ms
@@ -4352,17 +4356,17 @@ def kernel_p2g_double_layer_mass3d(
                     nodal_velocity_s = particle[np].vs
                     nodal_velocity_f = particle[np].vf
                     if ti.static(use_affine != 0):
-                        nodal_coord = grid_size * vec3f(vectorize_id(nodeID, gnum))
+                        nodal_coord = grid_size * vec3f(vectorize_id(node_id, gnum))
                         pointer = nodal_coord - position
                         nodal_velocity += particle[np].solid_velocity_gradient @ pointer
                         nodal_velocity_s += particle[np].solid_velocity_gradient @ pointer
                         nodal_velocity_f += particle[np].fluid_velocity_gradient @ pointer
-                    node[nodeID, bodyID].m += nmass
-                    node[nodeID, bodyID].ms += nmass_s
-                    node[nodeID, bodyID].mf += nmass_f
-                    node[nodeID, bodyID].momentum += nmass * nodal_velocity
-                    node[nodeID, bodyID].momentums += nmass_s * nodal_velocity_s
-                    node[nodeID, bodyID].momentumf += nmass_f * nodal_velocity_f
+                    node[node_id, body_id].m += nmass
+                    node[node_id, body_id].ms += nmass_s
+                    node[node_id, body_id].mf += nmass_f
+                    node[node_id, body_id].momentum += nmass * nodal_velocity
+                    node[node_id, body_id].momentums += nmass_s * nodal_velocity_s
+                    node[node_id, body_id].momentumf += nmass_f * nodal_velocity_f
 
 
 @ti.kernel
@@ -4387,12 +4391,12 @@ def kernel_update_double_layer_solid_state3d(
     start_index: int,
     end_index: int,
     dt: ti.template(),
-    matProps: ti.template(),
-    stateVars: ti.template(),
+    mat_props: ti.template(),
+    state_variables: ti.template(),
     node: ti.template(),
     particle: ti.template(),
     material_mapping: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
 ):
@@ -4404,46 +4408,46 @@ def kernel_update_double_layer_solid_state3d(
             and int(particle[np].phase) == PHASE_SOLID
         ):
             if particle[np].fix_v[0] == 0 or particle[np].fix_v[1] == 0 or particle[np].fix_v[2] == 0:
-                bodyID = int(particle[np].bodyID)
+                body_id = int(particle[np].bodyID)
                 offset = np * total_nodes
-                gradv = ZEROMAT3x3
+                gradv = ZEROMAT3X3
                 for ln in range(offset, offset + int(node_size[np])):
-                    nodeID = LnID[ln]
-                    gradv += node[nodeID, bodyID].momentums.outer_product(dshapefn[ln])
+                    node_id = ln_id[ln]
+                    gradv += node[node_id, body_id].momentums.outer_product(dshapefn[ln])
                 particle[np].solid_velocity_gradient = gradv
-                volume_ratio = matProps.update_particle_volume(np, gradv, stateVars, dt)
-                porosity = matProps.update_particle_porosity(gradv, particle[np].porosity, dt)
+                volume_ratio = mat_props.update_particle_volume(np, gradv, state_variables, dt)
+                porosity = mat_props.update_particle_porosity(gradv, particle[np].porosity, dt)
                 particle[np].vol *= volume_ratio
                 particle[np].porosity = porosity
-                if porosity > matProps.maximum_porosity:
+                if porosity > mat_props.maximum_porosity:
                     particle[np].stress *= 0.0
                 else:
-                    particle[np].stress = matProps.ComputeStress(np, particle[np].stress, gradv, stateVars, dt)
+                    particle[np].stress = mat_props.compute_stress(np, particle[np].stress, gradv, state_variables, dt)
 
 
 @ti.kernel
 def kernel_force_p2g_double_layer3d(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if (
             int(particle[np].active) == 1
             and int(particle[np].materialID) > 0
             and int(particle[np].phase) == PHASE_SOLID
         ):
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             internal = -particle[np].vol * particle[np].stress
             external = particle[np].external_force
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 dshape = dshapefn[ln]
                 shape = shapefn[ln]
                 pforce = (
@@ -4454,13 +4458,13 @@ def kernel_force_p2g_double_layer3d(
                     )
                     + shape * external
                 )
-                node[nodeID, bodyID].force += pforce
-                node[nodeID, bodyID].forces += pforce
+                node[node_id, body_id].force += pforce
+                node[node_id, body_id].forces += pforce
 
 
 @ti.kernel
 def kernel_mac_p2g_double_layer3d(
-    particleNum: int,
+    particle_num: int,
     grid_size: vec3f,
     mac_shape_type: ti.template(),
     mac_influenced_node: ti.template(),
@@ -4486,17 +4490,17 @@ def kernel_mac_p2g_double_layer3d(
     cell_solid_velocity: ti.template(),
     cell_fluid_velocity: ti.template(),
     particle: ti.template(),
-    calLength: ti.template(),
+    cal_length: ti.template(),
 ):
     cell_measure = grid_size[0] * grid_size[1] * grid_size[2]
     cell_shape_type, cell_support = MAC_SHAPE_LINEAR, 2
     if mac_shape_type == MAC_SHAPE_QUAD_BSPLINE:
         cell_shape_type, cell_support = MAC_SHAPE_QUAD_BSPLINE, 3
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1 and int(particle[np].materialID) > 0:
             phase = int(particle[np].phase)
             position = particle[np].x
-            psize = calLength[int(particle[np].bodyID)]
+            psize = cal_length[int(particle[np].bodyID)]
             base_cell = vec3i(
                 _mac_base_1d(position[0], 1.0 / grid_size[0], 0.5, psize[0], cell_shape_type),
                 _mac_base_1d(position[1], 1.0 / grid_size[1], 0.5, psize[1], cell_shape_type),
@@ -4511,7 +4515,7 @@ def kernel_mac_p2g_double_layer3d(
                 ):
                     cell_pos = (cell.cast(float) + 0.5) * grid_size
                     weight = _mac_weight3d(position, cell_pos, grid_size, psize, vec3i(0, 0, 0), cell_shape_type)
-                    if weight > Threshold:
+                    if weight > THRESHOLD:
                         if phase == PHASE_SOLID:
                             mass = weight * particle[np].ms
                             cell_velocity_s = particle[np].vs
@@ -4711,7 +4715,7 @@ def kernel_normalize_double_layer_mac_fields3d(
         if cell_solid_mass[I] > cutoff:
             cell_solid_velocity[I] /= cell_solid_mass[I]
         else:
-            cell_solid_velocity[I] = ZEROVEC3f
+            cell_solid_velocity[I] = ZEROVEC3F
         cell_porosity[I] = _mapped_porosity(cell_porosity[I])
 
 
@@ -4768,7 +4772,7 @@ def kernel_predict_double_layer3d(
     node_drag_model: ti.template(),
     shape_type: ti.template(),
     influenced_node: ti.template(),
-    calLength: ti.template(),
+    cal_length: ti.template(),
     solid_pressure_factor: ti.template(),
     fluid_pressure_mobility: ti.template(),
     mixture_pressure_mobility: ti.template(),
@@ -4813,7 +4817,7 @@ def kernel_predict_double_layer3d(
                 position = vec3i(vectorize_id(ng, gnum)).cast(float) * grid_size
                 external_f = _sample_mac_velocity3d(
                     position,
-                    calLength[nb],
+                    cal_length[nb],
                     shape_type,
                     influenced_node,
                     grid_size,
@@ -4846,7 +4850,7 @@ def kernel_predict_double_layer3d(
             node[ng, nb].momentum = node[ng, nb].momentums
         else:
             # G2P reads acceleration here, never the unscaled deposited force.
-            node[ng, nb].forces = ZEROVEC3f
+            node[ng, nb].forces = ZEROVEC3F
     for I in ti.grouped(fluid_velocity_x):
         acc = 0.0
         mu_s = 1.0 / ti.max(face_solid_density_x[I], 1.0e-12)
@@ -4860,7 +4864,7 @@ def kernel_predict_double_layer3d(
                 (solid_velocity_x, solid_velocity_y, solid_velocity_z),
             )
             external_s, weight = _sample_solid_grid_velocity3d(
-                position, grid_size, gnum, cutoff, shape_type, influenced_node, calLength, node, True
+                position, grid_size, gnum, cutoff, shape_type, influenced_node, cal_length, node, True
             )
             external_f = vec3f(fluid_acceleration_x[I], 0.0, 0.0)
             a, b = _drag_rates_props(
@@ -4899,7 +4903,7 @@ def kernel_predict_double_layer3d(
                 (solid_velocity_x, solid_velocity_y, solid_velocity_z),
             )
             external_s, weight = _sample_solid_grid_velocity3d(
-                position, grid_size, gnum, cutoff, shape_type, influenced_node, calLength, node, True
+                position, grid_size, gnum, cutoff, shape_type, influenced_node, cal_length, node, True
             )
             external_f = vec3f(0.0, fluid_acceleration_y[I], 0.0)
             a, b = _drag_rates_props(
@@ -4938,7 +4942,7 @@ def kernel_predict_double_layer3d(
                 (solid_velocity_x, solid_velocity_y, solid_velocity_z),
             )
             external_s, weight = _sample_solid_grid_velocity3d(
-                position, grid_size, gnum, cutoff, shape_type, influenced_node, calLength, node, True
+                position, grid_size, gnum, cutoff, shape_type, influenced_node, cal_length, node, True
             )
             external_f = vec3f(0.0, 0.0, fluid_acceleration_z[I])
             a, b = _drag_rates_props(
@@ -4990,7 +4994,7 @@ def kernel_project_solid_grid_velocity_to_mac3d(
     shape_type: ti.template(),
     influenced_node: ti.template(),
     node: ti.template(),
-    calLength: ti.template(),
+    cal_length: ti.template(),
     cell_type: ti.template(),
     solid_mass_x: ti.template(),
     solid_mass_y: ti.template(),
@@ -5020,7 +5024,7 @@ def kernel_project_solid_grid_velocity_to_mac3d(
                 cutoff,
                 shape_type,
                 influenced_node,
-                calLength,
+                cal_length,
                 node,
             )
             if weight_sum > cutoff:
@@ -5045,7 +5049,7 @@ def kernel_project_solid_grid_velocity_to_mac3d(
                 cutoff,
                 shape_type,
                 influenced_node,
-                calLength,
+                cal_length,
                 node,
             )
             if weight_sum > cutoff:
@@ -5070,7 +5074,7 @@ def kernel_project_solid_grid_velocity_to_mac3d(
                 cutoff,
                 shape_type,
                 influenced_node,
-                calLength,
+                cal_length,
                 node,
             )
             if weight_sum > cutoff:
@@ -5122,7 +5126,7 @@ def kernel_assemble_double_layer_pressure_rhs3d(
 
 
 @ti.kernel
-def kernel_assemble_double_layer_pressure_A3d(
+def kernel_assemble_double_layer_pressure_a3d(
     grid_size: vec3f,
     dt: ti.template(),
     grid_type: ti.template(),
@@ -5132,13 +5136,13 @@ def kernel_assemble_double_layer_pressure_A3d(
     cell_solid_density: ti.template(),
     cell_fluid_density: ti.template(),
     fluid_sdf: ti.template(),
-    Adiag: ti.template(),
+    adiag: ti.template(),
     Ax: ti.template(),
     coupled_mobility: ti.template(),
 ):
     for I in ti.grouped(grid_type):
-        Adiag[I] = 0.0
-        Ax[I] = ZEROVEC3f
+        adiag[I] = 0.0
+        Ax[I] = ZEROVEC3F
         if grid_type[I] == FLUID_CELL:
             # Keep a symmetric face-averaged mobility so PCG/MGPCG remains applicable.
             mobility = _cell_mobility3d(
@@ -5166,10 +5170,10 @@ def kernel_assemble_double_layer_pressure_A3d(
                         )
                         face_scale = 0.5 * (scale + dt[None] * mobility_right / (grid_size[d] * grid_size[d]))
                         Ax[I][d] = -face_scale
-                        Adiag[I] += face_scale
+                        adiag[I] += face_scale
                     elif grid_type[right] == AIR_CELL:
                         theta = _pressure_free_surface_theta(I, right, fluid_sdf)
-                        Adiag[I] += scale / theta
+                        adiag[I] += scale / theta
                 left = I - ti.Vector.unit(3, d)
                 if left[d] >= 0:
                     if grid_type[left] == FLUID_CELL:
@@ -5182,14 +5186,14 @@ def kernel_assemble_double_layer_pressure_A3d(
                             cell_fluid_density,
                             coupled_mobility,
                         )
-                        Adiag[I] += 0.5 * (scale + dt[None] * mobility_left / (grid_size[d] * grid_size[d]))
+                        adiag[I] += 0.5 * (scale + dt[None] * mobility_left / (grid_size[d] * grid_size[d]))
                     elif grid_type[left] == AIR_CELL:
                         theta = _pressure_free_surface_theta(I, left, fluid_sdf)
-                        Adiag[I] += scale / theta
-            if Adiag[I] <= 1.0e-12:
-                Adiag[I] = 1.0
+                        adiag[I] += scale / theta
+            if adiag[I] <= 1.0e-12:
+                adiag[I] = 1.0
             else:
-                Adiag[I] += 1.0e-12
+                adiag[I] += 1.0e-12
 
 
 @ti.kernel
@@ -5219,7 +5223,7 @@ def kernel_coarsen_double_layer_grid_type3d(fine_grid_type: ti.template(), coars
 
 
 @ti.kernel
-def kernel_assemble_double_layer_pressure_mg_A3d(
+def kernel_assemble_double_layer_pressure_mg_a3d(
     grid_size: vec3f,
     dt: ti.template(),
     factor: int,
@@ -5230,14 +5234,14 @@ def kernel_assemble_double_layer_pressure_mg_A3d(
     cell_solid_density: ti.template(),
     cell_fluid_density: ti.template(),
     fluid_sdf: ti.template(),
-    Adiag: ti.template(),
+    adiag: ti.template(),
     Ax: ti.template(),
     coupled_mobility: ti.template(),
 ):
     coarse_grid_size = grid_size * factor
     for I in ti.grouped(grid_type):
-        Adiag[I] = 0.0
-        Ax[I] = ZEROVEC3f
+        adiag[I] = 0.0
+        Ax[I] = ZEROVEC3F
         if grid_type[I] == FLUID_CELL:
             mobility = _coarse_mobility3d(
                 I,
@@ -5268,10 +5272,10 @@ def kernel_assemble_double_layer_pressure_mg_A3d(
                             scale + dt[None] * mobility_right / (coarse_grid_size[d] * coarse_grid_size[d])
                         )
                         Ax[I][d] = -face_scale
-                        Adiag[I] += face_scale
+                        adiag[I] += face_scale
                     elif grid_type[right] == AIR_CELL:
                         theta = _pressure_free_surface_theta_coarse3d(I, right, factor, fluid_sdf)
-                        Adiag[I] += scale / theta
+                        adiag[I] += scale / theta
                 left = I - ti.Vector.unit(3, d)
                 if left[d] >= 0:
                     if grid_type[left] == FLUID_CELL:
@@ -5285,16 +5289,16 @@ def kernel_assemble_double_layer_pressure_mg_A3d(
                             cell_fluid_density,
                             coupled_mobility,
                         )
-                        Adiag[I] += 0.5 * (
+                        adiag[I] += 0.5 * (
                             scale + dt[None] * mobility_left / (coarse_grid_size[d] * coarse_grid_size[d])
                         )
                     elif grid_type[left] == AIR_CELL:
                         theta = _pressure_free_surface_theta_coarse3d(I, left, factor, fluid_sdf)
-                        Adiag[I] += scale / theta
-            if Adiag[I] <= 1.0e-12:
-                Adiag[I] = 1.0
+                        adiag[I] += scale / theta
+            if adiag[I] <= 1.0e-12:
+                adiag[I] = 1.0
             else:
-                Adiag[I] += 1.0e-12
+                adiag[I] += 1.0e-12
 
 
 @ti.kernel
@@ -5398,14 +5402,14 @@ def kernel_project_double_layer_pressure_to_solid_nodes3d(
     cell_pressure: ti.template(),
     fluid_sdf: ti.template(),
     node: ti.template(),
-    calLength: ti.template(),
+    cal_length: ti.template(),
 ):
     for ng, nb in node:
         node[ng, nb].pressure = 0.0
         if node[ng, nb].ms > cutoff:
             grid_id = vec3i(vectorize_id(ng, gnum))
             position = grid_id.cast(float) * grid_size
-            psize = calLength[nb]
+            psize = cal_length[nb]
             node[ng, nb].pressure = _sample_cell_pressure_gfm_shape3d(
                 position,
                 psize,
@@ -5428,7 +5432,7 @@ def kernel_sample_double_layer_solid_pressure_from_nodes3d(
     particle: ti.template(),
     material_mapping: ti.template(),
     node: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
 ):
@@ -5439,17 +5443,17 @@ def kernel_sample_double_layer_solid_pressure_from_nodes3d(
             and int(particle[np].materialID) > 0
             and int(particle[np].phase) == PHASE_SOLID
         ):
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             pressure = 0.0
             weight = 0.0
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 shape = shapefn[ln]
-                if node[nodeID, bodyID].ms > cutoff:
-                    pressure += shape * node[nodeID, bodyID].pressure
+                if node[node_id, body_id].ms > cutoff:
+                    pressure += shape * node[node_id, body_id].pressure
                     weight += shape
-            if weight > Threshold:
+            if weight > THRESHOLD:
                 particle[np].pressure = pressure / weight
             else:
                 particle[np].pressure = 0.0
@@ -5465,7 +5469,7 @@ def kernel_correct_double_layer_solid_velocity_paper3d(
     node: ti.template(),
     particle: ti.template(),
     material_mapping: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
@@ -5478,22 +5482,22 @@ def kernel_correct_double_layer_solid_velocity_paper3d(
             and int(particle[np].materialID) > 0
             and int(particle[np].phase) == PHASE_SOLID
         ):
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
-            pressure_gradient = ZEROVEC3f
+            pressure_gradient = ZEROVEC3F
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
-                pressure_gradient += node[nodeID, bodyID].pressure * dshapefn[ln]
+                node_id = ln_id[ln]
+                pressure_gradient += node[node_id, body_id].pressure * dshapefn[ln]
             pressure_force = -particle[np].vol * (1.0 - particle[np].porosity) * pressure_gradient
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
-                if node[nodeID, bodyID].ms > cutoff:
-                    acc = shapefn[ln] * pressure_force / ti.max(node[nodeID, bodyID].ms, 1.0e-12)
+                node_id = ln_id[ln]
+                if node[node_id, body_id].ms > cutoff:
+                    acc = shapefn[ln] * pressure_force / ti.max(node[node_id, body_id].ms, 1.0e-12)
                     if ti.static(pressure_factor != None):
-                        acc *= pressure_factor[nodeID, bodyID]
-                    node[nodeID, bodyID].momentums += dt[None] * acc
-                    node[nodeID, bodyID].momentum = node[nodeID, bodyID].momentums
-                    node[nodeID, bodyID].forces += acc
+                        acc *= pressure_factor[node_id, body_id]
+                    node[node_id, body_id].momentums += dt[None] * acc
+                    node[node_id, body_id].momentum = node[node_id, body_id].momentums
+                    node[node_id, body_id].forces += acc
 
 
 @ti.kernel
@@ -5523,7 +5527,7 @@ def kernel_update_double_layer_fluid_volume3d(
     node: ti.template(),
     particle: ti.template(),
     material_mapping: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
     phase_volume_support: ti.template(),
@@ -5535,16 +5539,16 @@ def kernel_update_double_layer_fluid_volume3d(
             and int(particle[np].materialID) > 0
             and int(particle[np].phase) == PHASE_FLUID
         ):
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             porosity = 0.0
             weight = 0.0
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 shape = shapefn[ln]
-                porosity += shape * _intrinsic_pore_porosity(nodeID, bodyID, node, phase_volume_support)
+                porosity += shape * _intrinsic_pore_porosity(node_id, body_id, node, phase_volume_support)
                 weight += shape
-            if weight > Threshold:
+            if weight > THRESHOLD:
                 porosity = _clamp_porosity(porosity / weight)
                 if initialize_mass != 0:
                     particle[np].mf = fluid_density * porosity * particle[np].vol
@@ -5561,7 +5565,7 @@ def kernel_volume_p2g_double_layer_fluid3d(
     particle_count: int,
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
 ):
@@ -5571,11 +5575,11 @@ def kernel_volume_p2g_double_layer_fluid3d(
             and int(particle[np].materialID) > 0
             and int(particle[np].phase) == PHASE_FLUID
         ):
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
-                node[nodeID, bodyID].vol += shapefn[ln] * particle[np].vol * particle[np].porosity
+                node_id = ln_id[ln]
+                node[node_id, body_id].vol += shapefn[ln] * particle[np].vol * particle[np].porosity
 
 
 @ti.kernel
@@ -5589,7 +5593,7 @@ def kernel_delta_correct_double_layer_fluid3d(
     cell_type: ti.template(),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
     reference_volume: ti.template(),
@@ -5609,12 +5613,12 @@ def kernel_delta_correct_double_layer_fluid3d(
             and int(particle[np].phase) == PHASE_FLUID
             and _double_layer_shifting_is_interior3d(particle[np].x, grid_size, cnum, cell_type)
         ):
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
-            gradient = ZEROVEC3f
+            gradient = ZEROVEC3F
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
-                error = volume_error[nodeID, bodyID]
+                node_id = ln_id[ln]
+                error = volume_error[node_id, body_id]
                 gradient += dshapefn[ln] * error
             gradient *= 2.0 * particle[np].vol * particle[np].porosity
             particle[np].grad_E2 = gradient
@@ -5625,24 +5629,24 @@ def kernel_delta_correct_double_layer_fluid3d(
         volume_error[ng, nb] = 0.0
     for np in range(particle_count):
         if (
-            denominator > Threshold * gradient_scale * gradient_scale
+            denominator > THRESHOLD * gradient_scale * gradient_scale
             and int(particle[np].active) == 1
             and int(particle[np].materialID) > 0
             and int(particle[np].phase) == PHASE_FLUID
             and _double_layer_shifting_is_interior3d(particle[np].x, grid_size, cnum, cell_type)
         ):
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
-                volume_error[nodeID, bodyID] += (
+                node_id = ln_id[ln]
+                volume_error[node_id, body_id] += (
                     particle[np].vol * particle[np].porosity * dshapefn[ln].dot(particle[np].grad_E2)
                 )
     curvature = 0.0
     for ng, nb in node:
         curvature += volume_error[ng, nb] * volume_error[ng, nb]
     step = 0.0
-    if denominator > Threshold * gradient_scale * gradient_scale and curvature > 0.0:
+    if denominator > THRESHOLD * gradient_scale * gradient_scale and curvature > 0.0:
         step = shifting_scale * denominator / (2.0 * curvature)
     for np in range(particle_count):
         if (
@@ -5675,13 +5679,13 @@ def _kernel_g2p_double_layer3d(
     mac_influenced_node: ti.template(),
     use_affine: ti.template(),
     dt: ti.template(),
-    matProps: ti.template(),
-    stateVars: ti.template(),
+    mat_props: ti.template(),
+    state_variables: ti.template(),
     node: ti.template(),
     particle: ti.template(),
     material_mapping: ti.template(),
-    calLength: ti.template(),
-    LnID: ti.template(),
+    cal_length: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
@@ -5705,32 +5709,32 @@ def _kernel_g2p_double_layer3d(
             and int(particle[np].materialID) > 0
             and int(particle[np].phase) == phase_filter
         ):
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             position = particle[np].x
             if ti.static(phase_filter == PHASE_SOLID):
-                v_pic = ZEROVEC3f
-                a_pic = ZEROVEC3f
-                gradv = ZEROMAT3x3
+                v_pic = ZEROVEC3F
+                a_pic = ZEROVEC3F
+                gradv = ZEROMAT3X3
                 for ln in range(offset, offset + int(node_size[np])):
-                    nodeID = LnID[ln]
+                    node_id = ln_id[ln]
                     shape = shapefn[ln]
                     dshape = dshapefn[ln]
-                    velocity = node[nodeID, bodyID].momentums
-                    acceleration = node[nodeID, bodyID].forces
+                    velocity = node[node_id, body_id].momentums
+                    acceleration = node[node_id, body_id].forces
                     v_pic += shape * velocity
                     a_pic += shape * acceleration
                     gradv += velocity.outer_product(dshape)
                 if ti.static(use_affine != 0 and mac_shape_type != MAC_SHAPE_LINEAR):
-                    Dp = ZEROMAT3x3
-                    Bp = ZEROMAT3x3
+                    Dp = ZEROMAT3X3
+                    Bp = ZEROMAT3X3
                     for ln in range(offset, offset + int(node_size[np])):
-                        nodeID = LnID[ln]
+                        node_id = ln_id[ln]
                         shape = shapefn[ln]
                         gnum = vec3i(fluid_velocity_x.shape[0], fluid_velocity_y.shape[1], fluid_velocity_z.shape[2])
-                        nodal_coord = grid_size * vec3f(vectorize_id(nodeID, gnum))
+                        nodal_coord = grid_size * vec3f(vectorize_id(node_id, gnum))
                         pointer = nodal_coord - position
-                        velocity = node[nodeID, bodyID].momentums
+                        velocity = node[node_id, body_id].momentums
                         Dp += shape * pointer.outer_product(pointer)
                         Bp += shape * (velocity - v_pic).outer_product(pointer)
                     dp_trace = ti.max(Dp[0, 0] + Dp[1, 1] + Dp[2, 2], 0.0)
@@ -5740,23 +5744,25 @@ def _kernel_g2p_double_layer3d(
                 flag_fix = ti.cast(particle[np].fix_v, float)
                 flag_free = vec3f(1.0, 1.0, 1.0) - flag_fix
                 if particle[np].fix_v[0] != 0 and particle[np].fix_v[1] != 0 and particle[np].fix_v[2] != 0:
-                    gradv = ZEROMAT3x3
+                    gradv = ZEROMAT3X3
                 v_flip = particle[np].vs + dt[None] * a_pic
                 new_v = (alpha * v_pic + (1.0 - alpha) * v_flip) * flag_free + particle[np].vs * flag_fix
                 particle[np].vs = new_v
                 particle[np].v = new_v
                 particle[np].solid_velocity_gradient = gradv
                 if ti.static(update_solid_state != 0):
-                    volume_ratio = matProps.update_particle_volume(np, gradv, stateVars, dt)
-                    porosity = matProps.update_particle_porosity(gradv, particle[np].porosity, dt)
+                    volume_ratio = mat_props.update_particle_volume(np, gradv, state_variables, dt)
+                    porosity = mat_props.update_particle_porosity(gradv, particle[np].porosity, dt)
                     particle[np].vol *= volume_ratio
                     particle[np].porosity = porosity
-                    if porosity > matProps.maximum_porosity:
+                    if porosity > mat_props.maximum_porosity:
                         particle[np].stress *= 0.0
                     else:
-                        particle[np].stress = matProps.ComputeStress(np, particle[np].stress, gradv, stateVars, dt)
+                        particle[np].stress = mat_props.compute_stress(
+                            np, particle[np].stress, gradv, state_variables, dt
+                        )
                 if ti.static(preserve_solid_pressure == 0):
-                    psize = calLength[bodyID]
+                    psize = cal_length[body_id]
                     particle[np].pressure = _sample_cell_pressure_gfm_shape3d(
                         position,
                         psize,
@@ -5772,7 +5778,7 @@ def _kernel_g2p_double_layer3d(
                 if int(particle[np].coupling) == 1:
                     particle[np].verletDisp += displacement
             elif ti.static(phase_filter == PHASE_FLUID):
-                psize = calLength[bodyID]
+                psize = cal_length[body_id]
                 v_pic = _sample_mac_velocity3d(
                     position,
                     psize,

@@ -1,10 +1,17 @@
 """Host numerical contact references, available to tests only."""
 
+from src.utils.MatrixFunction import psd_project_gershgorin_nd
+from src.fem.contact.Utilities import _ipc_barrier_terms
+from src.physics_model.contact_model.ipc.Utilities import ipc_friction_f0
+from src.physics_model.contact_model.ipc.Utilities import ipc_friction_f1_over_speed
+from src.physics_model.contact_model.ipc.Utilities import ipc_friction_hessian_term
+from src.physics_model.contact_model.ipc.Utilities import ipc_barrier_distance2_offset_terms
+
 import numpy as np
 import taichi as ti
 
-from src.fem.engines.SparseMatrix import FEMTripletContribution
-from src.physics_model.contact_model.ipc.ContactAssembly import psd_project_gershgorin_nd
+from src.fem.engines.FEMTripletContribution import FEMTripletContribution
+
 from src.physics_model.contact_model.ipc.ContactDistance import (
     edge_edge_distance_grad,
     edge_edge_distance_grad_hess,
@@ -17,15 +24,11 @@ from src.physics_model.contact_model.ipc.ContactMollifier import (
     edge_edge_mollifier_terms,
     edge_edge_mollifier_threshold,
 )
-from src.physics_model.contact_model.ipc.IPC import ipc_toolkit_barrier_distance2_offset_terms
-from src.physics_model.contact_model.ipc.IPC import (
-    ipc_friction_f0,
-    ipc_friction_f1_over_speed,
-    ipc_friction_hessian_term,
-)
+from src.physics_model.contact_model.ipc.Barrier import Barrier
+from src.physics_model.contact_model.ipc.Friction import Friction
 
 
-from src.fem.contact.ContactAssembler import FEMContactAssembler, _ipc_barrier_terms
+from src.fem.contact.FEMContactAssembler import FEMContactAssembler
 
 
 def _ipc_barrier_terms_numpy(value, active_value, kappa):
@@ -308,7 +311,7 @@ class ReferenceFEMContactAssembler(FEMContactAssembler):
                 )
             shifted = distance2 - self.dmin * self.dmin
             if shifted < active_gap2:
-                value, first, second = ipc_toolkit_barrier_distance2_offset_terms(
+                value, first, second = ipc_barrier_distance2_offset_terms(
                     distance2, self.dhat, self.dmin, normalized_kappa, 0
                 )
                 scale = measures[contact_id]
@@ -363,7 +366,7 @@ class ReferenceFEMContactAssembler(FEMContactAssembler):
                 distance2, distance_gradient, _ = edge_edge_distance_grad(a0, a1, b0, b1)
             shifted = distance2 - self.dmin * self.dmin
             if shifted < active_gap2:
-                value, first, second = ipc_toolkit_barrier_distance2_offset_terms(
+                value, first, second = ipc_barrier_distance2_offset_terms(
                     distance2, self.dhat, self.dmin, normalized_kappa, 0
                 )
                 ra0, ra1 = self._position(reference, ids[0]), self._position(reference, ids[1])

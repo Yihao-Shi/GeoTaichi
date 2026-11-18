@@ -108,7 +108,7 @@ def test_extruded_native_capacity_accounts_for_three_dimensional_ppc(cpt):
     assert cpt.native_particle_capacity(reference.GRID_SIZE) == 1_760_000
 
 
-def test_axisymmetric_discretization_and_surface_pressure_are_physical(cpt):
+def test_axisymmetric_discretization_and_surface_pressure_are_per_radian(cpt):
     from src.mpm.generator.Body import Body
 
     assert cpt.axisymmetric_particle_count(reference.GRID_SIZE) == 100_000
@@ -120,7 +120,7 @@ def test_axisymmetric_discretization_and_surface_pressure_are_physical(cpt):
     particle_ids, area = cpt.axisymmetric_surface_pressure_particles(points, reference.GRID_SIZE)
     assert area.shape == (200,)
     assert np.all(points[particle_ids, 1] == np.max(points[:, 1]))
-    assert np.sum(area) == pytest.approx(np.pi * reference.SOIL_SIZE[0] ** 2)
+    assert np.sum(area) == pytest.approx(0.5 * reference.SOIL_SIZE[0] ** 2)
 
 
 def test_axisymmetric_direct_preload_reproduces_reference_hencky_stress(cpt):

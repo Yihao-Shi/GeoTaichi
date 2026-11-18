@@ -15,8 +15,8 @@ from src.linear_solver.MatrixFreeCG import MatrixFreeCG
 from src.linear_solver.MatrixFreePCG import MatrixFreePCG
 from src.linear_solver.MatrixFreeBICGSTAB import MatrixFreeBICGSTAB
 from src.linear_solver.MatrixFreePBICGSTAB import MatrixFreePBICGSTAB
-from src.linear_solver.MultiGridPCG_mixture import MGPCGMixPoissonSolver
-from src.linear_solver.MultiGridPCG_mixture_Axi import MGPCGMixPoissonSolver_Axi
+from src.linear_solver.MultiGridPCGMixture import MGPCGMixPoissonSolver
+from src.linear_solver.MultiGridPCGMixtureAxisymmetric import MGPCGMixPoissonSolverAxisymmetric
 
 
 @ti.data_oriented
@@ -116,7 +116,7 @@ def block_case(nodes, nonsymmetric):
 def mixture_case(axisymmetric):
     dim = 2 if axisymmetric else 3
     shape = (128, 64) if axisymmetric else (32, 32, 32)
-    cls = MGPCGMixPoissonSolver_Axi if axisymmetric else MGPCGMixPoissonSolver
+    cls = MGPCGMixPoissonSolverAxisymmetric if axisymmetric else MGPCGMixPoissonSolver
     solver = cls(dim, shape, n_mg_levels=3, bottom_smoothing=10, **({"dr": 0.1} if axisymmetric else {}))
     for level in range(3):
         solver.grid_type[level].fill(solver.FLUID)

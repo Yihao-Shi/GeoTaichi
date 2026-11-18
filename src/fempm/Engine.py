@@ -1,6 +1,7 @@
 """Explicit two-way FEM--MPM step orchestration."""
 
 from __future__ import annotations
+from src.utils.errors import InvertedElementError
 
 from src.utils.linalg import no_operation
 
@@ -60,7 +61,7 @@ class Engine:
         if check_jacobian:
             self.minimum_jacobian = self.fem_engine._minimum_jacobian_ratio_device(self.fem_engine.state.position)
             if self.minimum_jacobian <= 1.0e-10:
-                raise RuntimeError("explicit FEMPM produced an inverted/collapsed FEM element; reduce dt")
+                raise InvertedElementError("explicit FEMPM produced an inverted/collapsed FEM element; reduce dt")
         if update_diagnostics:
             updated_internal = self.fem_engine.assemble_explicit_internal_force()
             self.fem_engine.state.assemble_equilibrium(updated_internal, self.fem_engine.damping, 0)

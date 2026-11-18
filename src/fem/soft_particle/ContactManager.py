@@ -1,13 +1,13 @@
 """Lifecycle and persistent history for FEM soft-particle PT/EE contact."""
 
-import math
+from src.utils.errors import CapacityError
+from src.fem.contact.Utilities import build_contact_surface
 
+import math
 import numpy as np
 import taichi as ti
-
 from src.fem.contact.BVHBroadPhase import DynamicBVHBroadPhase
 from src.fem.contact.CollisionCulling import FEMCollisionCulling
-from src.fem.contact.ContactTopology import build_contact_surface
 from src.fem.contact.LinkedCellBroadPhase import DynamicLinkedCellBroadPhase
 from src.fem.soft_particle.ContactKernel import (
     build_point_triangle_ranges,
@@ -20,14 +20,14 @@ from src.fem.soft_particle.ContactModel import FEMSoftParticleProperty
 from src.utils.FieldIO import field_to_numpy_prefix
 
 
-def _power_of_two(value):
-    value = max(int(value), 1)
-    return 1 << (value - 1).bit_length()
-
-
 @ti.data_oriented
 class FEMSoftParticleContactManager:
     """Device-resident explicit contact between disconnected FEM bodies."""
+
+    @staticmethod
+    def _power_of_two(value):
+        value = max(int(value), 1)
+        return 1 << (value - 1).bit_length()
 
     def __init__(self, mesh, state, contact, track_energy=True):
         if not mesh.is_volume:
@@ -196,7 +196,7 @@ class FEMSoftParticleContactManager:
 
         self.fixed_history_capacity = contact.contact_history_capacity is not None
         self.history_load_factor = contact.contact_history_load_factor
-        self.history_capacity = _power_of_two(int(contact.contact_history_capacity or 1))
+        self.history_capacity = FEMSoftParticleContactManager._power_of_two(int(contact.contact_history_capacity or 1))
         self.history_state = ti.field(dtype=ti.i32, shape=self.history_capacity)
         self.history_kind = ti.field(dtype=ti.i32, shape=self.history_capacity)
         self.history_stencil = ti.Vector.field(4, dtype=ti.i32, shape=self.history_capacity)
@@ -486,7 +486,7 @@ class FEMSoftParticleContactManager:
             )
 
     def _resize_history(self, required):
-        capacity = _power_of_two(
+        capacity = FEMSoftParticleContactManager._power_of_two(
             max(
                 int(math.ceil(int(required) / self.history_load_factor)),
                 1,
@@ -495,7 +495,7 @@ class FEMSoftParticleContactManager:
         if capacity <= self.history_capacity:
             return
         if self.fixed_history_capacity:
-            raise RuntimeError(
+            raise CapacityError(
                 "FEM soft-particle contact_history_capacity is too small: "
                 f"need at least {capacity}, allocated {self.history_capacity}"
             )
@@ -506,10 +506,10 @@ class FEMSoftParticleContactManager:
         self.history_overlap = ti.Vector.field(3, dtype=self.real_type, shape=capacity)
 
     def _resize_contacts(self, pt_count, ee_count):
-        required = _power_of_two(max(pt_count, 1))
+        required = FEMSoftParticleContactManager._power_of_two(max(pt_count, 1))
         if required > self.pt_capacity:
             if self.fixed_pt_capacity:
-                raise RuntimeError(
+                raise CapacityError(
                     "FEM soft-particle max_point_triangle_pairs is too small: "
                     f"need {pt_count}, allocated {self.pt_capacity}"
                 )
@@ -518,10 +518,10 @@ class FEMSoftParticleContactManager:
             self.pt_normal_force = ti.Vector.field(3, dtype=self.real_type, shape=required)
             self.pt_tangential_force = ti.Vector.field(3, dtype=self.real_type, shape=required)
             self.pt_tangential_overlap = ti.Vector.field(3, dtype=self.real_type, shape=required)
-        required = _power_of_two(max(ee_count, 1))
+        required = FEMSoftParticleContactManager._power_of_two(max(ee_count, 1))
         if required > self.ee_capacity:
             if self.fixed_ee_capacity:
-                raise RuntimeError(
+                raise CapacityError(
                     "FEM soft-particle max_edge_edge_pairs is too small: "
                     f"need {ee_count}, allocated {self.ee_capacity}"
                 )
@@ -554,7 +554,7 @@ class FEMSoftParticleContactManager:
             )
             penetration = float(self.maximum_point_triangle_penetration[None])
             if penetration > self.maximum_penetration:
-                raise RuntimeError(
+                raise CapacityError(
                     "FEM soft-particle penetration exceeded the mesh-scale "
                     "quality limit before a Verlet rebuild: "
                     f"depth={penetration:.6g}, quality limit="
@@ -591,7 +591,7 @@ class FEMSoftParticleContactManager:
                 self.history_overflow,
             )
             if int(self.history_overflow[None]) != 0:
-                raise RuntimeError("FEM soft-particle contact-history hash overflow")
+                raise CapacityError("FEM soft-particle contact-history hash overflow")
         pt_count, ee_count = self.culling.rebuild_proximity(
             positions,
             self.search_distance,
@@ -801,6 +801,3 @@ class FEMSoftParticleContactManager:
             "point_triangle_search_distance": self.search_distance,
             "edge_edge_search_distance": self.edge_search_distance,
         }
-
-
-__all__ = ["FEMSoftParticleContactManager"]

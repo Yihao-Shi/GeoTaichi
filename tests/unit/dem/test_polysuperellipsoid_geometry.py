@@ -2,8 +2,7 @@ import numpy as np
 import pytest
 import taichi as ti
 
-from src.dem.structs.BaseStruct import PolySuperEllipsoid
-
+from src.dem.structs.PolySuperEllipsoid import PolySuperEllipsoid
 
 pytestmark = [pytest.mark.unit, pytest.mark.dem, pytest.mark.geometry, pytest.mark.cpu]
 
@@ -18,28 +17,18 @@ def test_spherical_special_case_has_exact_implicit_derivatives(taichi_runtime):
 
     @ti.kernel
     def evaluate():
-        primitive[0]._add_template_parameter(
-            2.0, 2.0, 2.0, 1.0, 1.0, 2.0, 2.0, 2.0
-        )
+        primitive[0]._add_template_parameter(2.0, 2.0, 2.0, 1.0, 1.0, 2.0, 2.0, 2.0)
         parameters = primitive[0].physical_parameters(1.0)
         point = ti.Vector([1.0, 0.5, 0.25])
-        value[None] = primitive[0].fx(
-            point[0], point[1], point[2], parameters
-        )
-        gradient[None] = primitive[0].gradient(
-            point[0], point[1], point[2], parameters
-        )
-        hessian[None] = primitive[0].hessian(
-            point[0], point[1], point[2], parameters
-        )
+        value[None] = primitive[0].fx(point[0], point[1], point[2], parameters)
+        gradient[None] = primitive[0].gradient(point[0], point[1], point[2], parameters)
+        hessian[None] = primitive[0].hessian(point[0], point[1], point[2], parameters)
         nearest[None] = primitive[0].nearest_point(
             ti.Vector([3.0, 0.0, 0.0]),
             ti.Vector([-1.0, 0.0, 0.0]),
             parameters,
         )
-        support[None] = primitive[0].support(
-            ti.Vector([1.0, 0.0, 0.0]), parameters
-        )
+        support[None] = primitive[0].support(ti.Vector([1.0, 0.0, 0.0]), parameters)
 
     evaluate()
     point = np.asarray([1.0, 0.5, 0.25])

@@ -5,17 +5,19 @@ contains continuum constitutive responses and pair/contact potentials, while
 solver modules own discretization, topology, state integration, and global
 assembly.
 
-The existing directory name `consititutive_model` is intentionally preserved
-for import compatibility.
+Constitutive implementations use the correctly spelled `constitutive_model`
+package. Low-level imports must use this path; the former misspelled package
+has no forwarding module. Public `geotaichi` solver constructors are unchanged.
 
 ## Package layout
 
 | Path | Responsibility |
 | --- | --- |
-| [`consititutive_model/`](consititutive_model/README.md) | Shared constitutive theory and material-model implementations |
-| `consititutive_model/finite_strain/` | Hyperelastic, cloth, and multiplicative finite-strain plastic models |
-| `consititutive_model/infinitesimal_strain/` | Elasticity, plasticity, critical-state, and granular models |
-| `consititutive_model/strain_rate/` | Newtonian and Bingham fluid responses |
+| [`constitutive_model/`](constitutive_model/README.md) | Shared constitutive theory and material-model implementations |
+| `constitutive_model/finite_strain/` | Hyperelastic and multiplicative finite-strain plastic models |
+| `constitutive_model/cloth_model/` | Cloth ARAP and Neo-Hookean membranes, quadratic and dihedral bending laws |
+| `constitutive_model/infinitesimal_strain/` | Elasticity, plasticity, critical-state, and granular models |
+| `constitutive_model/strain_rate/` | Newtonian and Bingham fluid responses |
 | [`contact_model/`](contact_model/README.md) | Shared DEM and IPC contact theory and implementations |
 | `contact_model/ipc/` | IPC barrier, friction, closest-point derivatives, mollifiers, measures, PSD projection, and NURBS/affine contact helpers |
 
@@ -72,7 +74,7 @@ mpm.add_material(
 Direct low-level use is intended for material development and unit tests:
 
 ```python
-from src.physics_model.consititutive_model.finite_strain import NeoHookeanModel
+from src.physics_model.constitutive_model.finite_strain.NeoHookean import NeoHookeanModel
 
 model = NeoHookeanModel(
     material_type="Solid", configuration="TL", solver_type="Implicit"
@@ -101,11 +103,19 @@ an intersection of the supporting lines outside the segments is not contact.
 ## Runtime conventions
 
 Production stress updates and contact evaluations are `@ti.func` or
-`@ti.kernel` operations. NumPy evaluation methods are reference/output
-adapters and preprocessing tools; they must not become a hidden stepping
-backend. A constitutive implementation should keep energy, stress, and tangent
+`@ti.kernel` operations. Python/NumPy reference responses belong under `tests/`;
+production model changes should expose device numerical implementations.
+Output adapters download device results rather than recomputing constitutive
+responses on the host. Python owns configuration validation and preprocessing.
+Native MPM keeps raw restart history separate from visualization invariants;
+`ConstitutiveBase.reload_state_variables` validates field names, particle counts,
+components and finite values before uploading any material history.
+A constitutive implementation should keep energy, stress, and tangent
 formulas mutually consistent and document any regularization or PSD projection
 that changes the Newton path.
+Shared failure types are defined in `src/utils/errors.py`. Import
+`InvertedElementError` directly from there when handling invalid element maps;
+constitutive modules do not define or re-export their own copy.
 
 ## Tests
 

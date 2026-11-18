@@ -1,5 +1,8 @@
 """Production engine staging; force law is an independent conservative spring."""
 
+from src.dem.structs.BaseStruct import BoundingSphere
+from src.dem.structs.BaseStruct import SphereFamily
+
 from types import SimpleNamespace
 
 import numpy as np
@@ -7,14 +10,11 @@ import pytest
 import taichi as ti
 
 from src.dem.engines.ExplicitEngine import ExplicitEngine
-from src.dem.structs.BaseStruct import (
-    BoundingSphere,
-    ClumpFamily,
-    Material,
-    ParticleFamily,
-    RigidBody,
-    SphereFamily,
-)
+
+from src.dem.structs.ClumpFamily import ClumpFamily
+from src.dem.structs.Material import Material
+from src.dem.structs.ParticleFamily import ParticleFamily
+from src.dem.structs.RigidBody import RigidBody
 from src.mpdem.fluid_dynamics.IncompressibleSemiResolved import kernel_apply_integrated_added_mass
 from src.utils.linalg import no_operation
 

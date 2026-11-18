@@ -24,137 +24,137 @@ def find_span(start_knot, num_ctrlpts, knot, knot_vector):
 
 
 @ti.func
-def BSplineLeftBoundary(knot_val):
+def b_spline_left_boundary(knot_val):
     return (knot_val - 1.0) * (knot_val - 1.0)
 
 
 @ti.func
-def BSplineLeftInterior1(knot_val):
+def b_spline_left_interior1(knot_val):
     return -1.5 * knot_val * knot_val + 2.0 * knot_val
 
 
 @ti.func
-def BSplineLeftInterior2(knot_val):
+def b_spline_left_interior2(knot_val):
     return 0.5 * knot_val * knot_val - knot_val + 0.5
 
 
 @ti.func
-def BSplineInterior1(knot_val):
+def b_spline_interior1(knot_val):
     return 0.5 * knot_val * knot_val
 
 
 @ti.func
-def BSplineInterior2(knot_val):
+def b_spline_interior2(knot_val):
     return -knot_val * knot_val + knot_val + 0.5
 
 
 @ti.func
-def BSplineInterior3(knot_val):
+def b_spline_interior3(knot_val):
     return 0.5 * (knot_val - 1.0) * (knot_val - 1.0)
 
 
 @ti.func
-def BSplineRightInterior1(knot_val):
+def b_spline_right_interior1(knot_val):
     return 0.5 * knot_val * knot_val
 
 
 @ti.func
-def BSplineRightInterior2(knot_val):
+def b_spline_right_interior2(knot_val):
     return -1.5 * knot_val * knot_val + knot_val + 0.5
 
 
 @ti.func
-def BSplineRightBoundary(knot_val):
+def b_spline_right_boundary(knot_val):
     return knot_val * knot_val
 
 
 @ti.func
-def BSplineDerivativeLeftBoundary(knot_val):
+def b_spline_derivative_left_boundary(knot_val):
     return 2 * (knot_val - 1.0)
 
 
 @ti.func
-def BSplineDerivativeLeftInterior1(knot_val):
+def b_spline_derivative_left_interior1(knot_val):
     return -3.0 * knot_val + 2.0
 
 
 @ti.func
-def BSplineDerivativeLeftInterior2(knot_val):
+def b_spline_derivative_left_interior2(knot_val):
     return knot_val - 1.0
 
 
 @ti.func
-def BSplineDerivativeInterior1(knot_val):
+def b_spline_derivative_interior1(knot_val):
     return knot_val
 
 
 @ti.func
-def BSplineDerivativeInterior2(knot_val):
+def b_spline_derivative_interior2(knot_val):
     return -2.0 * knot_val + 1.0
 
 
 @ti.func
-def BSplineDerivativeInterior3(knot_val):
+def b_spline_derivative_interior3(knot_val):
     return knot_val - 1.0
 
 
 @ti.func
-def BSplineDerivativeRightInterior1(knot_val):
+def b_spline_derivative_right_interior1(knot_val):
     return knot_val
 
 
 @ti.func
-def BSplineDerivativeRightInterior2(knot_val):
+def b_spline_derivative_right_interior2(knot_val):
     return -3.0 * knot_val + 1.0
 
 
 @ti.func
-def BSplineDerivativeRightBoundary(knot_val):
+def b_spline_derivative_right_boundary(knot_val):
     return 2.0 * knot_val
 
 
 @ti.func
-def BSplineSecondDerivativeLeftBoundary(knot_val):
+def b_spline_second_derivative_left_boundary(knot_val):
     return 2
 
 
 @ti.func
-def BSplineSecondDerivativeLeftInterior1(knot_val):
+def b_spline_second_derivative_left_interior1(knot_val):
     return -3.0
 
 
 @ti.func
-def BSplineSecondDerivativeLeftInterior2(knot_val):
+def b_spline_second_derivative_left_interior2(knot_val):
     return 1.0
 
 
 @ti.func
-def BSplineSecondDerivativeInterior1(knot_val):
+def b_spline_second_derivative_interior1(knot_val):
     return 1.0
 
 
 @ti.func
-def BSplineSecondDerivativeInterior2(knot_val):
+def b_spline_second_derivative_interior2(knot_val):
     return -2.0
 
 
 @ti.func
-def BSplineSecondDerivativeInterior3(knot_val):
+def b_spline_second_derivative_interior3(knot_val):
     return 1.0
 
 
 @ti.func
-def BSplineSecondDerivativeRightInterior1(knot_val):
+def b_spline_second_derivative_right_interior1(knot_val):
     return 1.0
 
 
 @ti.func
-def BSplineSecondDerivativeRightInterior2(knot_val):
+def b_spline_second_derivative_right_interior2(knot_val):
     return -3.0
 
 
 @ti.func
-def BSplineSecondDerivativeRightBoundary(knot_val):
+def b_spline_second_derivative_right_boundary(knot_val):
     return 2.0
 
 
@@ -163,20 +163,24 @@ def choose_bspline_shape_function(num_ctrlpts, span, knot_val):
     shape_func = ti.Vector([0.0, 0.0, 0.0])
     if span == 2:
         shape_func = ti.Vector(
-            [BSplineLeftBoundary(knot_val), BSplineLeftInterior1(knot_val), BSplineInterior1(knot_val)]
+            [b_spline_left_boundary(knot_val), b_spline_left_interior1(knot_val), b_spline_interior1(knot_val)]
         )
     elif span == 3:
-        shape_func = ti.Vector([BSplineLeftInterior2(knot_val), BSplineInterior2(knot_val), BSplineInterior1(knot_val)])
+        shape_func = ti.Vector(
+            [b_spline_left_interior2(knot_val), b_spline_interior2(knot_val), b_spline_interior1(knot_val)]
+        )
     elif span == num_ctrlpts - 2:
         shape_func = ti.Vector(
-            [BSplineInterior3(knot_val), BSplineRightInterior2(knot_val), BSplineRightBoundary(knot_val)]
+            [b_spline_interior3(knot_val), b_spline_right_interior2(knot_val), b_spline_right_boundary(knot_val)]
         )
     elif span == num_ctrlpts - 3:
         shape_func = ti.Vector(
-            [BSplineInterior3(knot_val), BSplineInterior2(knot_val), BSplineRightInterior1(knot_val)]
+            [b_spline_interior3(knot_val), b_spline_interior2(knot_val), b_spline_right_interior1(knot_val)]
         )
     else:
-        shape_func = ti.Vector([BSplineInterior3(knot_val), BSplineInterior2(knot_val), BSplineInterior1(knot_val)])
+        shape_func = ti.Vector(
+            [b_spline_interior3(knot_val), b_spline_interior2(knot_val), b_spline_interior1(knot_val)]
+        )
     return shape_func
 
 
@@ -186,55 +190,55 @@ def choose_bspline_derivative_shape_function(num_ctrlpts, span, knot_val):
     if span == 2:
         dshape_func = ti.Vector(
             [
-                [BSplineLeftBoundary(knot_val), BSplineLeftInterior1(knot_val), BSplineInterior1(knot_val)],
+                [b_spline_left_boundary(knot_val), b_spline_left_interior1(knot_val), b_spline_interior1(knot_val)],
                 [
-                    BSplineDerivativeLeftBoundary(knot_val),
-                    BSplineDerivativeLeftInterior1(knot_val),
-                    BSplineDerivativeInterior1(knot_val),
+                    b_spline_derivative_left_boundary(knot_val),
+                    b_spline_derivative_left_interior1(knot_val),
+                    b_spline_derivative_interior1(knot_val),
                 ],
             ]
         )
     elif span == 3:
         dshape_func = ti.Vector(
             [
-                [BSplineLeftInterior2(knot_val), BSplineInterior2(knot_val), BSplineInterior1(knot_val)],
+                [b_spline_left_interior2(knot_val), b_spline_interior2(knot_val), b_spline_interior1(knot_val)],
                 [
-                    BSplineDerivativeLeftInterior2(knot_val),
-                    BSplineDerivativeInterior2(knot_val),
-                    BSplineDerivativeInterior1(knot_val),
+                    b_spline_derivative_left_interior2(knot_val),
+                    b_spline_derivative_interior2(knot_val),
+                    b_spline_derivative_interior1(knot_val),
                 ],
             ]
         )
     elif span == num_ctrlpts - 2:
         dshape_func = ti.Vector(
             [
-                [BSplineInterior3(knot_val), BSplineRightInterior2(knot_val), BSplineRightBoundary(knot_val)],
+                [b_spline_interior3(knot_val), b_spline_right_interior2(knot_val), b_spline_right_boundary(knot_val)],
                 [
-                    BSplineDerivativeInterior3(knot_val),
-                    BSplineDerivativeRightInterior2(knot_val),
-                    BSplineDerivativeRightBoundary(knot_val),
+                    b_spline_derivative_interior3(knot_val),
+                    b_spline_derivative_right_interior2(knot_val),
+                    b_spline_derivative_right_boundary(knot_val),
                 ],
             ]
         )
     elif span == num_ctrlpts - 3:
         dshape_func = ti.Vector(
             [
-                [BSplineInterior3(knot_val), BSplineInterior2(knot_val), BSplineRightInterior1(knot_val)],
+                [b_spline_interior3(knot_val), b_spline_interior2(knot_val), b_spline_right_interior1(knot_val)],
                 [
-                    BSplineDerivativeInterior3(knot_val),
-                    BSplineDerivativeInterior2(knot_val),
-                    BSplineDerivativeRightInterior1(knot_val),
+                    b_spline_derivative_interior3(knot_val),
+                    b_spline_derivative_interior2(knot_val),
+                    b_spline_derivative_right_interior1(knot_val),
                 ],
             ]
         )
     else:
         dshape_func = ti.Vector(
             [
-                [BSplineInterior3(knot_val), BSplineInterior2(knot_val), BSplineInterior1(knot_val)],
+                [b_spline_interior3(knot_val), b_spline_interior2(knot_val), b_spline_interior1(knot_val)],
                 [
-                    BSplineDerivativeInterior3(knot_val),
-                    BSplineDerivativeInterior2(knot_val),
-                    BSplineDerivativeInterior1(knot_val),
+                    b_spline_derivative_interior3(knot_val),
+                    b_spline_derivative_interior2(knot_val),
+                    b_spline_derivative_interior1(knot_val),
                 ],
             ]
         )
@@ -264,19 +268,19 @@ def quadratic_nurbs_derivative(
     num_ctrlpts_v = num_knot_v - 1 - 2
     num_ctrlpts_w = num_knot_w - 1 - 2
 
-    spanU = find_span(start_knot_u, num_ctrlpts_u, xi, knot_vector_u)
-    spanV = find_span(start_knot_v, num_ctrlpts_v, eta, knot_vector_v)
-    spanW = find_span(start_knot_w, num_ctrlpts_w, zeta, knot_vector_w)
-    dNurbsU = choose_bspline_derivative_shape_function(num_ctrlpts_u, spanU, xi)
-    dNurbsV = choose_bspline_derivative_shape_function(num_ctrlpts_v, spanV, eta)
-    dNurbsW = choose_bspline_derivative_shape_function(num_ctrlpts_w, spanW, zeta)
+    span_u = find_span(start_knot_u, num_ctrlpts_u, xi, knot_vector_u)
+    span_v = find_span(start_knot_v, num_ctrlpts_v, eta, knot_vector_v)
+    span_w = find_span(start_knot_w, num_ctrlpts_w, zeta, knot_vector_w)
+    dNurbsU = choose_bspline_derivative_shape_function(num_ctrlpts_u, span_u, xi)
+    dNurbsV = choose_bspline_derivative_shape_function(num_ctrlpts_v, span_v, eta)
+    dNurbsW = choose_bspline_derivative_shape_function(num_ctrlpts_w, span_w, zeta)
 
     w, dwdxi, dwdet, dwdze = 0.0, 0.0, 0.0, 0.0
-    uind = spanU - 2
+    uind = span_u - 2
     for i in ti.static(range(2 + 1)):
-        wind = spanW - 2 + i
+        wind = span_w - 2 + i
         for j in ti.static(range(2 + 1)):
-            vind = spanV - 2 + j
+            vind = span_v - 2 + j
             for k in ti.static(range(2 + 1)):
                 linear_id = start_ctrlpts + uind + k + vind * num_ctrlpts_u + wind * num_ctrlpts_u * num_ctrlpts_v
                 wgt = weight[linear_id]
@@ -286,11 +290,11 @@ def quadratic_nurbs_derivative(
                 dwdze += dNurbsU[0, k] * dNurbsV[0, j] * dNurbsW[1, i] * wgt
 
     kk = 0
-    uind = spanU - 2
+    uind = span_u - 2
     for i in ti.static(range(3)):
-        wind = spanW - 2 + i
+        wind = span_w - 2 + i
         for j in ti.static(range(3)):
-            vind = spanV - 2 + j
+            vind = span_v - 2 + j
             for k in ti.static(range(3)):
                 linear_id = start_ctrlpts + uind + k + vind * num_ctrlpts_u + wind * num_ctrlpts_u * num_ctrlpts_v
                 fac = weight[linear_id] / (w * w)

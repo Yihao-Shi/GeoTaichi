@@ -1,10 +1,12 @@
 """DEM linear spring-dashpot law for FEM--MPM surface contact."""
 
+from src.utils.ObjectIO import DictIO
+
 import math
 
 import taichi as ti
 
-from src.fempm.contact.ContactModelBase import ContactModelBase, property_value
+from src.fempm.contact.ContactModelBase import ContactModelBase
 
 
 @ti.dataclass
@@ -32,18 +34,24 @@ class LinearModel(ContactModelBase):
 
     def add_property(self, mpm_material, fem_body, parameters):
         mpm_material, fem_body = self.property_index(mpm_material, fem_body)
-        kn = float(property_value(parameters, "NormalStiffness", "kn", required=True))
-        ks = float(property_value(parameters, "TangentialStiffness", "ks", required=True))
+        kn = float(
+            DictIO.get_normalized(parameters, "NormalStiffness", "kn", required=True, context="FEMPM contact property")
+        )
+        ks = float(
+            DictIO.get_normalized(
+                parameters, "TangentialStiffness", "ks", required=True, context="FEMPM contact property"
+            )
+        )
         if kn <= 0.0 or ks <= 0.0:
             raise ValueError("FEMPM linear stiffnesses must be positive")
         values = {
             "active": 1,
             "kn": kn,
             "ks": ks,
-            "friction": float(property_value(parameters, "Friction", "mu", default=0.0)),
-            "normal_damping": float(property_value(parameters, "NormalViscousDamping", "ndratio", default=0.0)),
+            "friction": float(DictIO.get_normalized(parameters, "Friction", "mu", default=0.0)),
+            "normal_damping": float(DictIO.get_normalized(parameters, "NormalViscousDamping", "ndratio", default=0.0)),
             "tangential_damping": float(
-                property_value(
+                DictIO.get_normalized(
                     parameters,
                     "TangentialViscousDamping",
                     "sdratio",

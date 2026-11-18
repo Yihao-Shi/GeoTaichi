@@ -20,7 +20,6 @@ arguments = parser.parse_args()
 
 import geotaichi as gt
 
-
 gt.init(arch=arguments.arch, default_fp=arguments.default_fp, log=True)
 
 cloth = gt.FEM("Cloth FEM IPC", log=True)
@@ -42,7 +41,7 @@ cloth.add_material(
     bending_poisson_ratio=0.3,
 )
 cloth.add_contact(
-    "IPC",
+    "BarrierIPC",
     self_contact=True,
     planes=[{"point": (0.0, 0.0, 0.0), "normal": (0.0, 0.0, 1.0)}],
     dhat=2.0e-2,

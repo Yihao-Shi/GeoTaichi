@@ -20,10 +20,10 @@ from src.igampm.engines.FullyImplicitFriction import (
     surface_relative_velocity_jacobian,
 )
 from src.nurbs.NurbsBasis import (
-    NurbsBasis2ndDers1d,
-    NurbsBasis2ndDers2d,
-    NurbsBasisInterpolations2ndDers1d,
-    NurbsBasisInterpolations2ndDers2d,
+    nurbs_basis2nd_ders1d,
+    nurbs_basis2nd_ders2d,
+    nurbs_basis_interpolations2nd_ders1d,
+    nurbs_basis_interpolations2nd_ders2d,
 )
 from tests.helpers.ipc_scalar_reference import ipc_barrier_distance_terms_py
 from tests.helpers.ipc_nurbs_reference import closest_curve_point_py
@@ -65,7 +65,7 @@ def _flatten_blocks(blocks):
 def _refine_curve_parameter(knots, weights, control, point, seed):
     parameter = float(seed)
     for _ in range(30):
-        position, tangent, curvature = NurbsBasisInterpolations2ndDers1d(parameter, 2, knots, control, weights)
+        position, tangent, curvature = nurbs_basis_interpolations2nd_ders1d(parameter, 2, knots, control, weights)
         residual = position - point
         tangent = tangent[0]
         curvature = curvature[0]
@@ -81,7 +81,7 @@ def _refine_curve_parameter(knots, weights, control, point, seed):
 def _refine_surface_parameter(knots, weights, control, point, seed):
     parameter = np.asarray(seed, dtype=np.float64).copy()
     for _ in range(40):
-        position, tangent, curvature = NurbsBasisInterpolations2ndDers2d(
+        position, tangent, curvature = nurbs_basis_interpolations2nd_ders2d(
             parameter[0],
             parameter[1],
             2,
@@ -468,7 +468,7 @@ def test_curve_block_helpers_compile_and_match_complete_numpy_oracle(
     point = reference_point + displacement[6:]
     seed, _ = closest_curve_point_py(2, knots, current_control, weights, point)
     parameter = _refine_curve_parameter(knots, weights, current_control, point, seed)
-    shape, derivative, second = NurbsBasis2ndDers1d(parameter, 2, knots, weights)
+    shape, derivative, second = nurbs_basis2nd_ders1d(parameter, 2, knots, weights)
 
     velocity_scale = 7.25
     velocity_offset = np.asarray(
@@ -558,7 +558,7 @@ def test_surface_block_helpers_compile_and_match_complete_numpy_oracle(
         second_uu,
         second_vv,
         second_uv,
-    ) = NurbsBasis2ndDers2d(parameter[0], parameter[1], 2, 2, knots, knots, weights)
+    ) = nurbs_basis2nd_ders2d(parameter[0], parameter[1], 2, 2, knots, knots, weights)
     first = np.column_stack([derivative_u, derivative_v])
     second = np.empty((9, 2, 2), dtype=np.float64)
     second[:, 0, 0] = second_uu

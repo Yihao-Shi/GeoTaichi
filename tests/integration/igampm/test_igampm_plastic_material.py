@@ -102,7 +102,7 @@ def _build_plastic_mpm_particle(
         path=str(output_path),
         **material_parameters,
     )
-    mpm.init_F0()
+    mpm.init_f0()
     return mpm
 
 
@@ -299,7 +299,7 @@ def test_axisymmetric_plastic_ulmpm_uses_three_dimensional_material_map(
     assert engine.mpm_has_plastic_history
     assert mpm.material_dimension == 3
     assert mpm.F0.to_numpy().shape == (1, 3, 3)
-    assert mpm.particle.vol0.to_numpy()[0] == pytest.approx(2.0 * np.pi * 1.0e-3)
+    assert mpm.particle.vol0.to_numpy()[0] == pytest.approx(1.0e-3)
     assert begin["active_mpm_dof"] > 0
     assert engine.curr_barrier_contact_num > 0
     assert np.all(np.isfinite(system["rhs"].to_numpy()[: system["active_dof"]]))

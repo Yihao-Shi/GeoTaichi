@@ -200,7 +200,7 @@ coupling.memory_allocate(
     }
 )
 coupling.choose_contact_model(
-    "IPC",
+    "BarrierIPC",
     dhat=0.01,
     dmin=0.0,
     kappa=2.0e4,

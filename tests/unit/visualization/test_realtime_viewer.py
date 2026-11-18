@@ -1,3 +1,12 @@
+from src.dem.DEMBase import Solver
+from src.visualization.realtime import CallbackSceneModel
+from src.visualization.realtime import RealtimeViewerOptions
+from src.visualization.sources import ParticleRenderSource
+from src.visualization.sources import TriangleMeshRenderSource
+from src.visualization.Utilities import dem_particle_source
+from src.visualization.Utilities import dem_render_sources
+from src.visualization.Utilities import dem_triangle_wall_source
+from src.visualization.Utilities import mpm_particle_source
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -8,27 +17,11 @@ import pytest
 import third_party.pyrender as vendored_pyrender
 from third_party.pyrender.trackball import Trackball
 from third_party.pyrender.viewer import Viewer as PyRenderViewer
-from src.visualization.adapters import (
-    IGARenderSource,
-    LevelSetDEMRenderSource,
-    dem_particle_source,
-    dem_render_sources,
-    dem_triangle_wall_source,
-    mpm_particle_source,
-)
-from src.visualization.realtime import (
-    CallbackSceneModel,
-    CameraOptions,
-    PlaybackController,
-    RealtimeViewer,
-    RealtimeViewerOptions,
-    _camera_pose,
-    _particle_poses,
-)
-from src.visualization.sources import (
-    ParticleRenderSource,
-    TriangleMeshRenderSource,
-)
+from src.visualization.adapters import IGARenderSource, LevelSetDEMRenderSource
+from src.visualization.realtime import CameraOptions, PlaybackController
+
+from src.visualization.RealtimeViewer import RealtimeViewer
+
 from src.visualization.solver_adapters import _camera, _domain_bounds
 
 
@@ -98,9 +91,7 @@ def test_callback_model_owns_time_bookkeeping_and_optional_reset():
         render_sources=(particle_source(),),
         time_step=0.025,
         step_callback=lambda: calls.__setitem__("step", calls["step"] + 1),
-        reset_callback=lambda: calls.__setitem__(
-            "reset", calls["reset"] + 1
-        ),
+        reset_callback=lambda: calls.__setitem__("reset", calls["reset"] + 1),
         statistics_callback=lambda: {"solver": "fake"},
     )
 
@@ -178,9 +169,7 @@ def test_particle_binding_updates_positions_and_host_radii_without_rebuild():
 
 def test_triangle_source_builds_pyrender_mesh():
     triangle = TriangleMeshRenderSource(
-        vertices=np.asarray(
-            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
-        ),
+        vertices=np.asarray([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]),
         faces=np.asarray([[0, 1, 2]]),
     )
     viewer = RealtimeViewer(callback_model(triangle))
@@ -193,9 +182,7 @@ def test_triangle_source_builds_pyrender_mesh():
 
 
 def test_dynamic_triangle_source_replaces_mesh_with_current_vertices():
-    vertices = np.asarray(
-        [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
-    )
+    vertices = np.asarray([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
     triangle = TriangleMeshRenderSource(
         vertices=lambda: vertices,
         faces=np.asarray([[0, 1, 2]]),
@@ -300,7 +287,6 @@ def test_dem_source_selection_uses_levelset_surface_and_triangle_walls():
 
 
 def test_existing_solver_visualize_methods_delegate_to_generic_gui(monkeypatch):
-    from src.dem.DEMBase import Solver as DEMSolver
     from src.mpm.MPMBase import Solver as MPMSolver
     from src.visualization import solver_adapters
 
@@ -316,13 +302,13 @@ def test_existing_solver_visualize_methods_delegate_to_generic_gui(monkeypatch):
 
     monkeypatch.setattr(solver_adapters, "run_dem_gui", dem_gui)
     monkeypatch.setattr(solver_adapters, "run_mpm_gui", mpm_gui)
-    dem_solver = object.__new__(DEMSolver)
+    dem_solver = object.__new__(Solver)
     mpm_solver = object.__new__(MPMSolver)
     scene = object()
     neighbor = object()
 
-    assert dem_solver.Visualize(scene) == "dem viewer"
-    assert mpm_solver.Visualize(scene, neighbor) == "mpm viewer"
+    assert dem_solver.visualize(scene) == "dem viewer"
+    assert mpm_solver.visualize(scene, neighbor) == "mpm viewer"
     assert calls == [
         ("dem", dem_solver, scene),
         ("mpm", mpm_solver, scene, neighbor),
@@ -370,26 +356,18 @@ def test_iga_adapter_samples_a_bilinear_surface():
         weights=np.ones(4),
     )
     patch = SimpleNamespace(
-        control_points=ArrayField(
-            [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]]
-        ),
+        control_points=ArrayField([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]]),
         prefix_total_num_ctrlpts=np.asarray([0, 4]),
         total_num_ctrlpts=np.asarray([0, 4]),
-        primitive=SimpleNamespace(
-            body={"surface": {"primitive": primitive}}
-        ),
+        primitive=SimpleNamespace(body={"surface": {"primitive": primitive}}),
     )
 
     snapshot = IGARenderSource(patch, resolution=3).snapshot()
 
     assert snapshot.vertices.shape == (9, 3)
     assert snapshot.faces.shape == (8, 3)
-    np.testing.assert_allclose(
-        snapshot.vertices.min(axis=0), [0.0, 0.0, 0.0]
-    )
-    np.testing.assert_allclose(
-        snapshot.vertices.max(axis=0), [1.0, 1.0, 0.0]
-    )
+    np.testing.assert_allclose(snapshot.vertices.min(axis=0), [0.0, 0.0, 0.0])
+    np.testing.assert_allclose(snapshot.vertices.max(axis=0), [1.0, 1.0, 0.0])
 
 
 def test_camera_pose_uses_pyrender_negative_z_view_convention():
@@ -399,7 +377,7 @@ def test_camera_pose_uses_pyrender_negative_z_view_convention():
         up=(0.0, 0.0, 1.0),
     )
 
-    pose = _camera_pose(options)
+    pose = RealtimeViewer._camera_pose(options)
 
     np.testing.assert_allclose(pose[:3, 3], options.position)
     np.testing.assert_allclose(-pose[:3, 2], (-1.0, 0.0, 0.0))
@@ -429,7 +407,7 @@ def test_two_dimensional_mpm_domain_gets_a_host_only_render_thickness():
 
 def test_particle_poses_reject_nonfinite_geometry():
     with pytest.raises(FloatingPointError):
-        _particle_poses(
+        RealtimeViewer._particle_poses(
             np.asarray([[np.nan, 0.0, 0.0]]),
             np.asarray([0.1]),
         )
@@ -453,9 +431,7 @@ def test_simulation_shortcuts_do_not_replace_render_shortcuts():
         (pyglet.window.mouse.RIGHT, 0, Trackball.STATE_ZOOM),
     ],
 )
-def test_mouse_buttons_match_trackball_controls(
-    button, modifiers, expected_state
-):
+def test_mouse_buttons_match_trackball_controls(button, modifiers, expected_state):
     class TrackballSpy:
         def __init__(self):
             self.state = None

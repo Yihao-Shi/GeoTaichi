@@ -6,8 +6,8 @@ from src.fem.contact.ExplicitGeometry import (
     closest_point_triangle as _closest_point_triangle,
     signed_closest_feature_geometry as _signed_closest_feature_geometry,
 )
-from src.utils.VectorFunction import Normalize
-from src.utils.constants import PI, Threshold
+from src.utils.VectorFunction import normalize
+from src.utils.constants import PI, THRESHOLD
 
 
 @ti.kernel
@@ -28,13 +28,13 @@ def update_surface_pseudonormals(
         third = positions[face[2]]
         face_cross = (second - first).cross(third - first)
         face_length = face_cross.norm()
-        if face_length > Threshold:
+        if face_length > THRESHOLD:
             normal = face_cross / face_length
             for local in ti.static(range(3)):
                 center = positions[face[local]]
                 before = positions[face[(local + 1) % 3]] - center
                 after = positions[face[(local + 2) % 3]] - center
-                cosine = before.dot(after) / ti.max(before.norm() * after.norm(), Threshold)
+                cosine = before.dot(after) / ti.max(before.norm() * after.norm(), THRESHOLD)
                 angle = ti.acos(ti.max(-1.0, ti.min(1.0, cosine)))
                 for component in ti.static(range(3)):
                     ti.atomic_add(
@@ -55,16 +55,16 @@ def _closest_segment_parameters(first0, first1, second0, second1):
     bo = second_direction.dot(offset)
     first_ratio = 0.0
     second_ratio = 0.0
-    if aa <= Threshold and bb <= Threshold:
+    if aa <= THRESHOLD and bb <= THRESHOLD:
         pass
-    elif aa <= Threshold:
-        second_ratio = ti.max(0.0, ti.min(1.0, bo / ti.max(bb, Threshold)))
-    elif bb <= Threshold:
-        first_ratio = ti.max(0.0, ti.min(1.0, -ao / ti.max(aa, Threshold)))
+    elif aa <= THRESHOLD:
+        second_ratio = ti.max(0.0, ti.min(1.0, bo / ti.max(bb, THRESHOLD)))
+    elif bb <= THRESHOLD:
+        first_ratio = ti.max(0.0, ti.min(1.0, -ao / ti.max(aa, THRESHOLD)))
     else:
         cross = first_direction.cross(second_direction)
         denominator = cross.norm_sqr()
-        if denominator > Threshold:
+        if denominator > THRESHOLD:
             first_ratio = ti.max(0.0, ti.min(1.0, second_direction.cross(offset).dot(cross) / denominator))
         projected = ab * first_ratio + bo
         if projected < 0.0:
@@ -82,8 +82,8 @@ def _closest_segment_parameters(first0, first1, second0, second1):
 def _effective_mass(stencil, weights, mass):
     inverse_mass = 0.0
     for local in ti.static(range(4)):
-        inverse_mass += weights[local] * weights[local] / ti.max(mass[stencil[local]], Threshold)
-    return 1.0 / ti.max(inverse_mass, Threshold)
+        inverse_mass += weights[local] * weights[local] / ti.max(mass[stencil[local]], THRESHOLD)
+    return 1.0 / ti.max(inverse_mass, THRESHOLD)
 
 
 @ti.func
@@ -108,8 +108,8 @@ def _contact_force(
             - 2.0 * prop.normal_damping * ti.sqrt(ti.max(effective_mass * normal_stiffness, 0.0)) * normal_velocity
         )
     elif ti.static(model_type == 1):
-        effective_radius = ti.sqrt(ti.max(measure / PI, Threshold))
-        contact_radius = ti.sqrt(ti.max(overlap * effective_radius, Threshold))
+        effective_radius = ti.sqrt(ti.max(measure / PI, THRESHOLD))
+        contact_radius = ti.sqrt(ti.max(overlap * effective_radius, THRESHOLD))
         normal_stiffness = measure * 2.0 * prop.effective_young * contact_radius
         tangential_stiffness = measure * 8.0 * prop.effective_shear * contact_radius
         normal_scalar = (
@@ -133,7 +133,7 @@ def _contact_force(
     normal_scalar = ti.max(normal_scalar, 0.0)
     normal_force = normal_scalar * normal
     rotated = old_tangential_overlap - old_tangential_overlap.dot(normal) * normal
-    trial_overlap = tangential_velocity * dt + old_tangential_overlap.norm() * Normalize(rotated)
+    trial_overlap = tangential_velocity * dt + old_tangential_overlap.norm() * normalize(rotated)
     current_overlap = trial_overlap
     elastic_tangential_trial = -tangential_stiffness * current_overlap
     tangential_force = elastic_tangential_trial
@@ -142,19 +142,19 @@ def _contact_force(
     if ti.static(model_type == 2):
         cutoff = friction_limit / ti.max(
             prop.barrier_stiffness_ratio * prop.barrier_kappa * measure,
-            Threshold,
+            THRESHOLD,
         )
-        direction = Normalize(trial_overlap)
+        direction = normalize(trial_overlap)
         tangential_force = -friction_limit * direction
         if trial_overlap.norm() < cutoff:
             magnitude_ratio = (
                 trial_overlap.norm()
                 * (2.0 * cutoff - trial_overlap.norm())
-                / ti.max(cutoff * cutoff, Threshold * Threshold)
+                / ti.max(cutoff * cutoff, THRESHOLD * THRESHOLD)
             )
             tangential_force *= magnitude_ratio
             equivalent_stiffness = 0.0
-            if trial_overlap.norm() > Threshold:
+            if trial_overlap.norm() > THRESHOLD:
                 equivalent_stiffness = tangential_force.norm() / trial_overlap.norm()
             tangential_force -= (
                 2.0
@@ -169,9 +169,9 @@ def _contact_force(
                 0.0,
             )
     elif elastic_tangential_trial.norm() > friction_limit:
-        if elastic_tangential_trial.norm() > Threshold:
+        if elastic_tangential_trial.norm() > THRESHOLD:
             tangential_force = friction_limit * elastic_tangential_trial.normalized()
-        current_overlap = -tangential_force / ti.max(tangential_stiffness, Threshold)
+        current_overlap = -tangential_force / ti.max(tangential_stiffness, THRESHOLD)
         plastic_slip = trial_overlap - current_overlap
         friction_increment = ti.max(-tangential_force.dot(plastic_slip), 0.0)
     elif ti.static(model_type == 0):
@@ -217,8 +217,8 @@ def _contact_energy_terms(
     normal_elastic_scalar = normal_stiffness * overlap
     normal_elastic_energy = 0.5 * normal_stiffness * overlap * overlap
     if ti.static(model_type == 1):
-        effective_radius = ti.sqrt(ti.max(measure / PI, Threshold))
-        contact_radius = ti.sqrt(ti.max(overlap * effective_radius, Threshold))
+        effective_radius = ti.sqrt(ti.max(measure / PI, THRESHOLD))
+        contact_radius = ti.sqrt(ti.max(overlap * effective_radius, THRESHOLD))
         normal_stiffness = measure * 2.0 * prop.effective_young * contact_radius
         tangential_stiffness = measure * 8.0 * prop.effective_shear * contact_radius
         normal_elastic_scalar = (2.0 / 3.0) * normal_stiffness * overlap
@@ -244,10 +244,10 @@ def _contact_energy_terms(
         friction_limit = prop.friction * normal_force.norm()
         tangential_cutoff = friction_limit / ti.max(
             prop.barrier_stiffness_ratio * prop.barrier_kappa * measure,
-            Threshold,
+            THRESHOLD,
         )
         elastic_tangential_force = ti.Vector.zero(float, 3)
-        if current_tangential_overlap.norm() > Threshold:
+        if current_tangential_overlap.norm() > THRESHOLD:
             magnitude_ratio = 1.0
             if current_tangential_overlap.norm() < tangential_cutoff:
                 magnitude_ratio = (
@@ -255,7 +255,7 @@ def _contact_energy_terms(
                     * (2.0 * tangential_cutoff - current_tangential_overlap.norm())
                     / ti.max(
                         tangential_cutoff * tangential_cutoff,
-                        Threshold * Threshold,
+                        THRESHOLD * THRESHOLD,
                     )
                 )
             elastic_tangential_force = -friction_limit * magnitude_ratio * current_tangential_overlap.normalized()
@@ -272,8 +272,8 @@ def _contact_energy_terms(
     elastic_tangential_magnitude = tangential_stiffness * current_tangential_overlap.norm()
     if ti.static(model_type == 2):
         elastic_tangential_magnitude = tangential_force.norm()
-    sliding = friction_limit > Threshold and elastic_tangential_magnitude >= friction_limit - 1.0e-8 * ti.max(
-        friction_limit, Threshold
+    sliding = friction_limit > THRESHOLD and elastic_tangential_magnitude >= friction_limit - 1.0e-8 * ti.max(
+        friction_limit, THRESHOLD
     )
     # Coulomb work is accumulated exactly once by _contact_force from the
     # returned plastic slip.  Only viscous tangential work remains here.
@@ -343,7 +343,7 @@ def measure_active_point_triangle_penetration(
             closest, barycentric = _closest_point_triangle(point, first, second, third)
             face_cross = (second - first).cross(third - first)
             face_length = face_cross.norm()
-            if face_length > Threshold:
+            if face_length > THRESHOLD:
                 offset = point - closest
                 _, signed_gap = _signed_closest_feature_geometry(
                     offset,
@@ -442,7 +442,7 @@ def resolve_point_triangle_contact(
         )
         face_cross = (second - first).cross(third - first)
         face_length = face_cross.norm()
-        if prop.active != 0 and face_length > Threshold and selected:
+        if prop.active != 0 and face_length > THRESHOLD and selected:
             face_normal = face_cross / face_length
             offset = point - closest
             distance = offset.norm()
@@ -565,15 +565,15 @@ def resolve_edge_edge_contact(
             contact_active = overlap > -prop.barrier_cutoff
         if prop.active != 0 and contact_active:
             normal = ti.Vector.zero(float, 3)
-            if distance > Threshold:
+            if distance > THRESHOLD:
                 normal = delta / distance
             else:
                 normal = (
                     (positions[stencil[1]] - positions[stencil[0]])
                     .cross(positions[stencil[3]] - positions[stencil[2]])
-                    .normalized(Threshold)
+                    .normalized(THRESHOLD)
                 )
-            if normal.norm_sqr() > Threshold * Threshold:
+            if normal.norm_sqr() > THRESHOLD * THRESHOLD:
                 weights = ti.Vector([1.0 - first_ratio, first_ratio, -(1.0 - second_ratio), -second_ratio])
                 relative_velocity = ti.Vector.zero(float, 3)
                 for local in ti.static(range(4)):
@@ -678,7 +678,7 @@ def accumulate_point_triangle_contact_energy(
             )
             face_cross = (second - first).cross(third - first)
             face_length = face_cross.norm()
-            if face_length > Threshold and selected:
+            if face_length > THRESHOLD and selected:
                 face_normal = face_cross / face_length
                 offset = point - closest
                 distance = offset.norm()
@@ -747,15 +747,15 @@ def accumulate_edge_edge_contact_energy(
             delta = first_point - second_point
             distance = delta.norm()
             normal = ti.Vector.zero(float, 3)
-            if distance > Threshold:
+            if distance > THRESHOLD:
                 normal = delta / distance
             else:
                 normal = (
                     (positions[stencil[1]] - positions[stencil[0]])
                     .cross(positions[stencil[3]] - positions[stencil[2]])
-                    .normalized(Threshold)
+                    .normalized(THRESHOLD)
                 )
-            if normal.norm_sqr() > Threshold * Threshold:
+            if normal.norm_sqr() > THRESHOLD * THRESHOLD:
                 prop = properties[node_body[stencil[0]], node_body[stencil[2]]]
                 overlap = prop.thickness - distance
                 weights = ti.Vector(

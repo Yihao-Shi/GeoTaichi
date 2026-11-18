@@ -22,13 +22,13 @@ from examples.cfdem.FullyResolved.IBMDraftingKissingTumbling.draw.evaluate_draft
     evaluate as evaluate_dkt,
 )
 from src.mpdem.mainDEMPM import DEMPM
-from src.mpdem.Engine import Engine, dem_substep_count
+from src.mpdem.Engine import Engine
 from src.mpdem.Simulation import Simulation
 
 
 def test_dem_substep_count_covers_coupled_step_without_roundoff_extra_step():
-    assert dem_substep_count(5.0e-5, 1.0e-7) == 500
-    assert dem_substep_count(5.01e-5, 1.0e-7) == 501
+    assert Engine.dem_substep_count(5.0e-5, 1.0e-7) == 500
+    assert Engine.dem_substep_count(5.01e-5, 1.0e-7) == 501
 
 
 @pytest.mark.parametrize("scheme", ["DEM", "LSDEM"])

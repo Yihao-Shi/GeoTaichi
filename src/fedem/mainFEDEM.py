@@ -1,13 +1,14 @@
 """Public FEM--DEM/LSDEM/AffineBody coupling facade."""
 
 from __future__ import annotations
+from src.utils.errors import ConfigurationError, SimulationStateError
+from src.fem.contact.Utilities import build_contact_surface
 
 import math
 from pathlib import Path
 
 import numpy as np
 
-from src.fem.contact.ContactTopology import build_contact_surface
 from src.fem.mainFEM import FEM
 from src.fedem.ContactManager import ContactManager
 from src.fedem.Checkpoint import load_checkpoint, save_checkpoint
@@ -16,7 +17,7 @@ from src.fedem.FEDEMBase import Solver
 from src.fedem.Patch import FEMSurfacePatch
 from src.fedem.Recorder import WriteFile
 from src.fedem.Simulation import FEDEMSimulation
-from src.fedem.contact import AffineIPCModel
+from src.fedem.contact.AffineIPC import AffineIPCModel
 from src.utils.ObjectIO import DictIO
 from src.utils.SolverConsole import (
     print_save_file_info,
@@ -85,11 +86,11 @@ class FEDEM(SolverDiagnosticsMixin):
             self.enginer.add_affine_body_pressure_servo(**specification)
 
     def set_configuration(self, log=True, **kwargs):
-        domain = DictIO.GetAlternative(kwargs, "domain", None)
+        domain = DictIO.get_alternative(kwargs, "domain", None)
         if domain is None:
             domain = np.asarray(self.dem.sims.get_simulation_domain(), dtype=float)
         self.sims.set_domain(domain)
-        search = str(DictIO.GetAlternative(kwargs, "search", "LinkedCell"))
+        search = str(DictIO.get_alternative(kwargs, "search", "LinkedCell"))
         normalized = search.replace("_", "").replace("-", "").lower()
         if normalized == "linkedcell":
             self.sims.search = "LinkedCell"
@@ -97,13 +98,13 @@ class FEDEM(SolverDiagnosticsMixin):
             self.sims.search = "BVH"
         else:
             self.sims.search = search
-        contact_work_mode = DictIO.GetAlternative(
+        contact_work_mode = DictIO.get_alternative(
             kwargs,
             "contact_work_mode",
-            DictIO.GetAlternative(kwargs, "ContactWorkMode", "Explicit"),
+            DictIO.get_alternative(kwargs, "ContactWorkMode", "Explicit"),
         )
         self.sims.set_contact_work_mode(contact_work_mode)
-        gravity = DictIO.GetAlternative(kwargs, "gravity", None)
+        gravity = DictIO.get_alternative(kwargs, "gravity", None)
         if gravity is not None:
             self.dem.sims.set_gravity(gravity)
             self.fem.solver_kwargs["gravity"] = gravity
@@ -137,10 +138,10 @@ class FEDEM(SolverDiagnosticsMixin):
         parameters = {} if solver is None else dict(solver)
         parameters.update(kwargs)
         retry_policy = StepRetryPolicy(
-            enabled=DictIO.GetAlternative(parameters, "enable_step_retry", False),
-            maximum_retries=DictIO.GetAlternative(parameters, "step_retry_max_retries", 2),
-            reduction=DictIO.GetAlternative(parameters, "step_retry_reduction", 0.5),
-            minimum_timestep=DictIO.GetAlternative(parameters, "step_retry_minimum_timestep", 0.0),
+            enabled=DictIO.get_alternative(parameters, "enable_step_retry", False),
+            maximum_retries=DictIO.get_alternative(parameters, "step_retry_max_retries", 2),
+            reduction=DictIO.get_alternative(parameters, "step_retry_reduction", 0.5),
+            minimum_timestep=DictIO.get_alternative(parameters, "step_retry_minimum_timestep", 0.0),
         )
         parameters.update(
             enable_step_retry=retry_policy.enabled,
@@ -151,28 +152,28 @@ class FEDEM(SolverDiagnosticsMixin):
         if "linear_solver_tolerance" in parameters:
             parameters.setdefault("linear_solver_relative_tolerance", 0.0)
         self.solver_parameters.update(parameters)
-        timestep = DictIO.GetAlternative(parameters, "Timestep", DictIO.GetAlternative(parameters, "dt", None))
-        simulation_time = DictIO.GetAlternative(
+        timestep = DictIO.get_alternative(parameters, "Timestep", DictIO.get_alternative(parameters, "dt", None))
+        simulation_time = DictIO.get_alternative(
             parameters,
             "SimulationTime",
-            DictIO.GetAlternative(parameters, "simulation_time", None),
+            DictIO.get_alternative(parameters, "simulation_time", None),
         )
-        save_interval = DictIO.GetAlternative(
+        save_interval = DictIO.get_alternative(
             parameters,
             "SaveInterval",
-            DictIO.GetAlternative(parameters, "output_interval", 1.0e6),
+            DictIO.get_alternative(parameters, "output_interval", 1.0e6),
         )
         if timestep is None or simulation_time is None:
             raise KeyError("FEDEM.set_solver requires Timestep and SimulationTime")
         self.sims.set_timestep(timestep)
         self.sims.set_simulation_time(simulation_time)
-        self.sims.cfl = float(DictIO.GetAlternative(parameters, "CFL", 0.5))
+        self.sims.cfl = float(DictIO.get_alternative(parameters, "CFL", 0.5))
         self.sims.set_save_interval(save_interval)
         self.sims.set_save_path(
-            DictIO.GetAlternative(
+            DictIO.get_alternative(
                 parameters,
                 "SavePath",
-                DictIO.GetAlternative(parameters, "path", "OutputData"),
+                DictIO.get_alternative(parameters, "path", "OutputData"),
             )
         )
         output_steps = max(1, int(math.ceil(save_interval / float(timestep))))
@@ -216,7 +217,7 @@ class FEDEM(SolverDiagnosticsMixin):
 
     def _default_surface(self):
         if self.fem.scene.mesh is None:
-            raise RuntimeError("add the FEM mesh before selecting its coupled surface")
+            raise SimulationStateError("add the FEM mesh before selecting its coupled surface")
         surface = build_contact_surface(self.fem.scene.mesh)
         return surface.faces, surface.face_body
 
@@ -333,7 +334,7 @@ class FEDEM(SolverDiagnosticsMixin):
 
     def choose_contact_model(self, contact_model="Linear", **kwargs):
         if self._memory is None:
-            raise RuntimeError("call FEDEM.memory_allocate before choosing contact")
+            raise SimulationStateError("call FEDEM.memory_allocate before choosing contact")
         return self.contactor.choose_contact_model(contact_model, **kwargs)
 
     def add_property(self, DEMmaterial, FEMbody, property, dType="all"):
@@ -354,7 +355,7 @@ class FEDEM(SolverDiagnosticsMixin):
         """Save one exact explicit FEM--DEM continuation point."""
         if file_path is None:
             if self.sims.path is None:
-                raise RuntimeError("set a SavePath or pass an explicit checkpoint path")
+                raise SimulationStateError("set a SavePath or pass an explicit checkpoint path")
             file_path = Path(self.sims.path) / "checkpoints" / f"FEDEMCheckpoint{self.sims.current_print:06d}.npz"
         return save_checkpoint(self, file_path)
 
@@ -363,7 +364,7 @@ class FEDEM(SolverDiagnosticsMixin):
         if file_number is not None:
             file_path = Path(file_path) / "checkpoints" / f"FEDEMCheckpoint{int(file_number):06d}.npz"
         if self.enginer is None:
-            raise RuntimeError("call FEDEM.add_essentials before read_restart")
+            raise SimulationStateError("call FEDEM.add_essentials before read_restart")
         self.enginer.pre_calculate()
         return load_checkpoint(self, file_path)
 
@@ -373,14 +374,14 @@ class FEDEM(SolverDiagnosticsMixin):
         """Return elastic penalty energy carried by one facet-wall group."""
 
         if self.enginer is None or not self.contactor.initialized:
-            raise RuntimeError("initialize FEDEM before measuring wall contact energy")
+            raise SimulationStateError("initialize FEDEM before measuring wall contact energy")
         wall_id = int(wall_id)
         wall = self.dem.scene.wall
         energy = self.contactor.wall_elastic_energy(wall_id, wall)
         dem_wall_model = getattr(self.dem.contactor, "physpw", None)
         measure_dem = getattr(dem_wall_model, "lsparticle_wall_elastic_energy", None)
         if measure_dem is None:
-            raise RuntimeError("DEM wall contact model does not expose elastic-energy accounting")
+            raise SimulationStateError("DEM wall contact model does not expose elastic-energy accounting")
         energy += measure_dem(
             self.dem.scene,
             self.dem.contactor.neighbor,
@@ -418,23 +419,25 @@ class FEDEM(SolverDiagnosticsMixin):
 
     def add_essentials(self, **kwargs):
         if self.sims.delta <= 0.0:
-            raise RuntimeError("configure the FEDEM solver before run")
+            raise SimulationStateError("configure the FEDEM solver before run")
         if self._memory is None:
             self.memory_allocate({})
         if self.contactor.model is None:
-            raise RuntimeError("choose a FEDEM contact model before run")
+            raise SimulationStateError("choose a FEDEM contact model before run")
         if isinstance(self.contactor.model, AffineIPCModel):
             if self.dem.sims.scheme != "AffineBody":
-                raise RuntimeError("FEDEM IPC requires DEM scheme='AffineBody'")
+                raise ConfigurationError("FEDEM IPC requires DEM scheme='AffineBody'")
             if self.fem.sims.solver_type != "Implicit":
-                raise RuntimeError("FEM--AffineBody IPC requires implicit FEM integration")
+                raise ConfigurationError("FEM--AffineBody IPC requires implicit FEM integration")
             if bool(getattr(self.fem.scene.material, "is_fem_elastoplastic", False)):
-                raise RuntimeError("FEM--AffineBody IPC currently supports elastic FEM " "constitutive models only")
+                raise SimulationStateError(
+                    "FEM--AffineBody IPC currently supports elastic FEM " "constitutive models only"
+                )
             if self.fem.engine is None:
                 self.fem.build()
             fem_contact = getattr(self.fem.engine, "contact_assembler", None)
             if fem_contact is not None and not fem_contact.is_ipc:
-                raise RuntimeError("FEM--AffineBody IPC can combine only FEM IPC contact")
+                raise SimulationStateError("FEM--AffineBody IPC can combine only FEM IPC contact")
             self.fem.engine.dt = self.sims.delta
             self.fem.engine.time = self.sims.current_time
             self.fem.engine.step_count = self.sims.current_step
@@ -466,13 +469,13 @@ class FEDEM(SolverDiagnosticsMixin):
                 self.recorder.checkpoint_owner = self
             return
         if self.solver_parameters.get("enable_step_retry", False):
-            raise RuntimeError("FEDEM step retry is available only with AffineBody IPC contact")
+            raise SimulationStateError("FEDEM step retry is available only with AffineBody IPC contact")
         if self.fem.sims.solver_type != "Explicit":
-            raise RuntimeError("explicit FEDEM contact requires explicit FEM integration")
+            raise ConfigurationError("explicit FEDEM contact requires explicit FEM integration")
         if self.fem.scene.contact is not None:
-            raise RuntimeError("FEM internal IPC/AL is not part of explicit FEDEM")
+            raise SimulationStateError("FEM internal IPC/AL is not part of explicit FEDEM")
         if self.dem.sims.scheme not in ("DEM", "LSDEM"):
-            raise RuntimeError("explicit FEDEM contact requires DEM scheme='DEM' or 'LSDEM'")
+            raise ConfigurationError("explicit FEDEM contact requires DEM scheme='DEM' or 'LSDEM'")
         if self.fem.engine is None:
             self.fem.build()
         self.fem.engine.dt = self.sims.delta
@@ -490,16 +493,16 @@ class FEDEM(SolverDiagnosticsMixin):
             self.recorder = WriteFile(self.sims, self.fem, self.dem, self.contactor)
             self.recorder.checkpoint_owner = self
             self.solver = Solver(self.sims, self.fem, self.dem, self.enginer, self.recorder)
-        elif DictIO.GetAlternative(kwargs, "reset_function", True):
+        elif DictIO.get_alternative(kwargs, "reset_function", True):
             self.solver.postprocess.clear()
-        self.solver.set_callback_function(DictIO.GetAlternative(kwargs, "function", None))
+        self.solver.set_callback_function(DictIO.get_alternative(kwargs, "function", None))
 
     def add_postfunctions(self, **functions):
         if isinstance(self.contactor.model, AffineIPCModel):
             self.postprocess.extend(functions.values())
             return
         if self.solver is None:
-            raise RuntimeError("call FEDEM.add_essentials before adding callbacks")
+            raise SimulationStateError("call FEDEM.add_essentials before adding callbacks")
         self.solver.set_callback_function(functions)
 
     def differentiable(self, steps):
@@ -511,13 +514,13 @@ class FEDEM(SolverDiagnosticsMixin):
         return DifferentiableFEMAffine(self.enginer, steps)
 
     def modify_parameters(self, **kwargs):
-        simulation_time = DictIO.GetAlternative(kwargs, "SimulationTime", None)
+        simulation_time = DictIO.get_alternative(kwargs, "SimulationTime", None)
         if simulation_time is not None:
             self.sims.set_simulation_time(simulation_time)
             self.dem.sims.set_simulation_time(simulation_time)
             if self.fem.engine is not None:
                 self.fem.engine.total_step = int(math.ceil(float(simulation_time) / self.sims.delta))
-        timestep = DictIO.GetAlternative(kwargs, "Timestep", None)
+        timestep = DictIO.get_alternative(kwargs, "Timestep", None)
         if timestep is not None:
             self.sims.set_timestep(timestep)
             self.dem.sims.set_timestep(timestep)
@@ -528,11 +531,11 @@ class FEDEM(SolverDiagnosticsMixin):
         if self.fem.engine is not None and (simulation_time is not None or timestep is not None):
             total_step = int(math.ceil(self.sims.time / self.sims.delta))
             self.fem.engine.reconfigure_device_boundary_timeline(self.sims.delta, total_step)
-        save_interval = DictIO.GetAlternative(kwargs, "SaveInterval", None)
+        save_interval = DictIO.get_alternative(kwargs, "SaveInterval", None)
         if save_interval is not None:
             self.sims.set_save_interval(save_interval)
             self.dem.sims.set_save_interval(save_interval)
-        gravity = DictIO.GetAlternative(kwargs, "gravity", None)
+        gravity = DictIO.get_alternative(kwargs, "gravity", None)
         if gravity is not None:
             self.dem.sims.set_gravity(gravity)
             if self.fem.engine is not None:
@@ -566,7 +569,7 @@ class FEDEM(SolverDiagnosticsMixin):
                 self._save_implicit_frame()
             elif self._last_implicit_save_time is None:
                 self._last_implicit_save_time = self.sims.current_time
-            callbacks = tuple(DictIO.GetAlternative(kwargs, "postprocessing", self.postprocess) or ())
+            callbacks = tuple(DictIO.get_alternative(kwargs, "postprocessing", self.postprocess) or ())
 
             def postprocess_and_save(engine):
                 for callback in callbacks:
@@ -578,8 +581,8 @@ class FEDEM(SolverDiagnosticsMixin):
                     self._save_implicit_frame()
 
             result = self.enginer.run(
-                steps=DictIO.GetAlternative(kwargs, "steps", None),
-                verbose=DictIO.GetAlternative(kwargs, "verbose", True),
+                steps=DictIO.get_alternative(kwargs, "steps", None),
+                verbose=DictIO.get_alternative(kwargs, "verbose", True),
                 postprocessing=(postprocess_and_save,),
             )
             if self.sims.current_time - self._last_implicit_save_time > 0.9 * self.sims.save_interval:
@@ -595,7 +598,7 @@ class FEDEM(SolverDiagnosticsMixin):
                 update_area=False,
             )
         self.check_critical_timestep()
-        self.solver.CouplingSolver(precalculated=True)
+        self.solver.coupling_solver(precalculated=True)
         self.dem.first_run = False
 
     solve = run

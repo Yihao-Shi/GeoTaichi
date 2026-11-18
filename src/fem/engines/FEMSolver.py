@@ -1,53 +1,20 @@
 """Shared configuration, preprocessing and output for FEM engines."""
 
 from __future__ import annotations
-
+from src.utils.errors import SimulationStateError
+from src.fem.elements.Utilities import create_element
 from dataclasses import dataclass, field
 from pathlib import Path
-
 import numpy as np
-
-from src.fem.boundaries import (
-    DeviceBoundaryData,
-    DirichletBoundary,
-    NeumannBoundary,
-)
-from src.fem.elements import create_element
+from src.fem.boundaries.DeviceBoundary import DeviceBoundaryData
+from src.fem.boundaries.DirichletBoundary import DirichletBoundary
+from src.fem.boundaries.NeumannBoundary import NeumannBoundary
 from src.fem.engines.FEMState import FEMState
 from src.mpm.SoftParticleOutput import von_mises_stress
 from src.utils.SolverConsole import print_save_file_info
 from src.utils.SolverRuntime import StepSchedule
 from src.utils.TimeTicker import Timer
 from src.utils.linalg import no_operation
-
-
-def _volume_weighted_cell_to_node(
-    cell_values,
-    connectivity,
-    reference_weights,
-    node_count,
-):
-    """Project constant/averaged cell fields to nodes by reference measure."""
-
-    values = np.asarray(cell_values, dtype=np.float64)
-    connectivity = np.asarray(connectivity, dtype=np.int32)
-    if values.shape[0] != connectivity.shape[0]:
-        raise ValueError("one cell value is required per FEM element")
-    cell_measure = np.sum(np.asarray(reference_weights, dtype=np.float64), axis=1)
-    if np.any(cell_measure <= 0.0):
-        raise ValueError("FEM cell-to-node projection requires positive measures")
-    incidence_weight = cell_measure / connectivity.shape[1]
-    nodal_weight = np.zeros(int(node_count), dtype=np.float64)
-    nodal_values = np.zeros((int(node_count), *values.shape[1:]), dtype=np.float64)
-    weighted_values = values * incidence_weight.reshape((-1, *([1] * (values.ndim - 1))))
-    for local in range(connectivity.shape[1]):
-        nodes = connectivity[:, local]
-        np.add.at(nodal_weight, nodes, incidence_weight)
-        np.add.at(nodal_values, nodes, weighted_values)
-    if np.any(nodal_weight <= 0.0):
-        raise ValueError("FEM mesh contains a node with no incident cell measure")
-    nodal_values /= nodal_weight.reshape((-1, *([1] * (values.ndim - 1))))
-    return np.ascontiguousarray(nodal_values)
 
 
 @dataclass
@@ -72,6 +39,35 @@ class FEMSolver:
     :class:`FEMState` Taichi fields.  The array properties below are explicit
     user/output snapshots; production time integration never calls them.
     """
+
+    @staticmethod
+    def _volume_weighted_cell_to_node(
+        cell_values,
+        connectivity,
+        reference_weights,
+        node_count,
+    ):
+        """Project constant/averaged cell fields to nodes by reference measure."""
+
+        values = np.asarray(cell_values, dtype=np.float64)
+        connectivity = np.asarray(connectivity, dtype=np.int32)
+        if values.shape[0] != connectivity.shape[0]:
+            raise ValueError("one cell value is required per FEM element")
+        cell_measure = np.sum(np.asarray(reference_weights, dtype=np.float64), axis=1)
+        if np.any(cell_measure <= 0.0):
+            raise ValueError("FEM cell-to-node projection requires positive measures")
+        incidence_weight = cell_measure / connectivity.shape[1]
+        nodal_weight = np.zeros(int(node_count), dtype=np.float64)
+        nodal_values = np.zeros((int(node_count), *values.shape[1:]), dtype=np.float64)
+        weighted_values = values * incidence_weight.reshape((-1, *([1] * (values.ndim - 1))))
+        for local in range(connectivity.shape[1]):
+            nodes = connectivity[:, local]
+            np.add.at(nodal_weight, nodes, incidence_weight)
+            np.add.at(nodal_values, nodes, weighted_values)
+        if np.any(nodal_weight <= 0.0):
+            raise ValueError("FEM mesh contains a node with no incident cell measure")
+        nodal_values /= nodal_weight.reshape((-1, *([1] * (values.ndim - 1))))
+        return np.ascontiguousarray(nodal_values)
 
     def __init__(self, mesh, material, dirichlet=None, neumann=None, **kwargs):
         self.mesh = mesh.copy()
@@ -373,7 +369,7 @@ class FEMSolver:
             self._boundary_time_step = timestep
             return self.boundary_data
         if self.step_count != 0:
-            raise RuntimeError(
+            raise SimulationStateError(
                 "cannot change dt/simulation time after advancing a FEM solve "
                 "with preallocated Python-callable boundary frames"
             )
@@ -393,12 +389,12 @@ class FEMSolver:
         return step
 
     def _boundary_data_not_initialized(self, *_args, **_kwargs):
-        raise RuntimeError("FEM device boundary data has not been initialized")
+        raise SimulationStateError("FEM device boundary data has not been initialized")
 
     def bind_boundary_functions(self):
         """Bind fixed, transient, and empty boundary paths once."""
         if self.boundary_data is None:
-            raise RuntimeError("FEM device boundary data has not been initialized")
+            raise SimulationStateError("FEM device boundary data has not been initialized")
         self.set_boundary_data_step = (
             self._set_adaptive_boundary_data
             if self.boundary_data.dirichlet_dynamic and self._adaptive_boundary_evaluation
@@ -513,7 +509,7 @@ class FEMSolver:
     def _output_fields(self):
         """Download diagnostics only when output/result is explicitly requested."""
         energy, _, _, stress = self._assemble_output_diagnostics()
-        nodal_stress = _volume_weighted_cell_to_node(
+        nodal_stress = FEMSolver._volume_weighted_cell_to_node(
             stress,
             self.element.connectivity,
             self.element.reference_weights,
@@ -569,6 +565,3 @@ class FEMSolver:
                 self.time,
                 self.path if self.path is not None else filename.parent,
             )
-
-
-__all__ = ["FEMResult", "FEMSolver"]

@@ -7,7 +7,7 @@ pytestmark = [pytest.mark.unit, pytest.mark.ipc, pytest.mark.contact]
 from src.dem.Simulation import Simulation
 from src.dem.engines.AffineBodyEngine import AffineBodyEngine
 from src.dem.mainDEM import DEM
-from src.fempm.contact import IPCModel
+from src.fempm.contact.IPC import IPCModel
 from src.fempm.mainFEMPM import FEMPM
 from src.mpm.mainMPM import MPM
 from src.mpdem.engines.SoftAffineIPCEngine import SoftAffineIPCEngine
@@ -34,7 +34,7 @@ def test_lsmpm_soft_rigid_route_is_frozen_after_engine_selection():
     sims.freeze_lsmpm_soft_rigid_contact()
 
     with pytest.raises(RuntimeError, match="cannot be changed after engine"):
-        sims.set_lsmpm_soft_rigid_contact("IPC")
+        sims.set_lsmpm_soft_rigid_contact("BarrierIPC")
 
     assert sims.lsmpm_soft_rigid_contact == original_route
 

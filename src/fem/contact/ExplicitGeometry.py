@@ -2,7 +2,7 @@
 
 import taichi as ti
 
-from src.utils.constants import Threshold
+from src.utils.constants import THRESHOLD
 
 
 @ti.func
@@ -24,7 +24,7 @@ def closest_point_triangle(point, first, second, third):
         else:
             vc = d1 * d4 - d3 * d2
             if vc <= 0.0 and d1 >= 0.0 and d3 <= 0.0:
-                ratio = d1 / ti.max(d1 - d3, Threshold)
+                ratio = d1 / ti.max(d1 - d3, THRESHOLD)
                 barycentric = ti.Vector([1.0 - ratio, ratio, 0.0])
             else:
                 cp = point - third
@@ -35,15 +35,15 @@ def closest_point_triangle(point, first, second, third):
                 else:
                     vb = d5 * d2 - d1 * d6
                     if vb <= 0.0 and d2 >= 0.0 and d6 <= 0.0:
-                        ratio = d2 / ti.max(d2 - d6, Threshold)
+                        ratio = d2 / ti.max(d2 - d6, THRESHOLD)
                         barycentric = ti.Vector([1.0 - ratio, 0.0, ratio])
                     else:
                         va = d3 * d6 - d5 * d4
                         if va <= 0.0 and d4 - d3 >= 0.0 and d5 - d6 >= 0.0:
-                            ratio = (d4 - d3) / ti.max(d4 - d3 + d5 - d6, Threshold)
+                            ratio = (d4 - d3) / ti.max(d4 - d3 + d5 - d6, THRESHOLD)
                             barycentric = ti.Vector([0.0, 1.0 - ratio, ratio])
                         else:
-                            inverse = 1.0 / ti.max(va + vb + vc, Threshold)
+                            inverse = 1.0 / ti.max(va + vb + vc, THRESHOLD)
                             barycentric[1] = vb * inverse
                             barycentric[2] = vc * inverse
                             barycentric[0] = 1.0 - barycentric[1] - barycentric[2]
@@ -64,15 +64,15 @@ def signed_closest_feature_geometry(
         + barycentric[1] * pseudonormals[stencil[2]]
         + barycentric[2] * pseudonormals[stencil[3]]
     )
-    if pseudo.norm_sqr() <= Threshold * Threshold:
+    if pseudo.norm_sqr() <= THRESHOLD * THRESHOLD:
         pseudo = face_normal
-    pseudo = pseudo.normalized(Threshold)
+    pseudo = pseudo.normalized(THRESHOLD)
     signed_projection = offset.dot(pseudo)
     side = ti.select(signed_projection >= 0.0, 1.0, -1.0)
     distance = offset.norm()
     normal = pseudo
     signed_gap = signed_projection
-    if distance > Threshold:
+    if distance > THRESHOLD:
         normal = side * offset / distance
         signed_gap = side * distance
     return normal, signed_gap
@@ -93,7 +93,7 @@ def signed_point_triangle_gap(
     closest, barycentric = closest_point_triangle(point, first, second, third)
     face_cross = (second - first).cross(third - first)
     face_length = face_cross.norm()
-    if face_length > Threshold:
+    if face_length > THRESHOLD:
         _, signed_gap = signed_closest_feature_geometry(
             point - closest,
             barycentric,

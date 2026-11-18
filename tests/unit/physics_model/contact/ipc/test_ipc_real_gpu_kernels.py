@@ -6,19 +6,19 @@ after that probe succeeds, target-kernel compilation and numerical failures
 remain test failures.
 """
 
+from src.utils.MatrixFunction import psd_project_nd
+from src.physics_model.contact_model.ipc.Utilities import ipc_friction_f0
+from src.physics_model.contact_model.ipc.Utilities import ipc_friction_f1_over_speed
+from src.physics_model.contact_model.ipc.Utilities import ipc_friction_hessian_term
+from src.physics_model.contact_model.ipc.Utilities import ipc_barrier_distance_terms
+
 import numpy as np
 import pytest
 import taichi as ti
 
 from src.linear_solver.HashReduction import HashReduction
-from src.physics_model.contact_model.ipc.ContactAssembly import psd_project_nd
-from src.physics_model.contact_model.ipc.IPC import (
-    ipc_friction_f0,
-    ipc_friction_f1_over_speed,
-    ipc_friction_hessian_term,
-    ipc_toolkit_barrier_distance_terms,
-)
 
+from src.physics_model.contact_model.ipc.Friction import Friction
 
 pytestmark = [
     pytest.mark.unit,
@@ -43,9 +43,7 @@ def _initialize_real_device(requested_arch, default_fp):
         )
     except Exception as error:
         ti.reset()
-        pytest.skip(
-            f"Taichi backend {requested_arch!s} is unavailable: {error}"
-        )
+        pytest.skip(f"Taichi backend {requested_arch!s} is unavailable: {error}")
 
     actual_arch = ti.lang.impl.current_cfg().arch
     if requested_arch == ti.cuda:
@@ -54,25 +52,18 @@ def _initialize_real_device(requested_arch, default_fp):
         is_requested_device = actual_arch != ti.cpu
     if not is_requested_device:
         ti.reset()
-        pytest.skip(
-            f"Taichi selected {actual_arch!s}, not a real "
-            f"{requested_arch!s} device"
-        )
+        pytest.skip(f"Taichi selected {actual_arch!s}, not a real " f"{requested_arch!s} device")
     try:
         probe_result = float(_device_capability_probe(2.0))
         ti.sync()
     except Exception as error:
         ti.reset()
         pytest.skip(
-            f"Taichi selected {actual_arch!s}, but that backend cannot "
-            f"execute a minimal device kernel: {error}"
+            f"Taichi selected {actual_arch!s}, but that backend cannot " f"execute a minimal device kernel: {error}"
         )
     if probe_result != pytest.approx(3.0):
         ti.reset()
-        pytest.fail(
-            f"Taichi {actual_arch!s} capability probe returned "
-            f"{probe_result}, expected 3"
-        )
+        pytest.fail(f"Taichi {actual_arch!s} capability probe returned " f"{probe_result}, expected 3")
     return actual_arch
 
 
@@ -111,9 +102,7 @@ class _IPCScalarHarness:
         epsv: ti.f32,
         timestep: ti.f32,
     ):
-        energy, gradient, hessian = ipc_toolkit_barrier_distance_terms(
-            distance, active_distance, kappa
-        )
+        energy, gradient, hessian = ipc_barrier_distance_terms(distance, active_distance, kappa)
         self.output[None] = ti.Vector(
             [
                 energy,
@@ -144,20 +133,13 @@ def _barrier_oracle(distance, active_distance, kappa):
         return np.zeros(3, dtype=np.float64)
     diff = distance2 - active_distance2
     log_term = np.log(distance2 / active_distance2)
-    gradient_distance2 = -kappa * (
-        2.0 * diff * log_term + diff * diff / distance2
-    )
-    hessian_distance2 = -kappa * (
-        2.0 * log_term
-        + 4.0 * diff / distance2
-        - diff * diff / (distance2 * distance2)
-    )
+    gradient_distance2 = -kappa * (2.0 * diff * log_term + diff * diff / distance2)
+    hessian_distance2 = -kappa * (2.0 * log_term + 4.0 * diff / distance2 - diff * diff / (distance2 * distance2))
     return np.asarray(
         [
             -kappa * diff * diff * log_term,
             2.0 * distance * gradient_distance2,
-            2.0 * gradient_distance2
-            + 4.0 * distance2 * hessian_distance2,
+            2.0 * gradient_distance2 + 4.0 * distance2 * hessian_distance2,
         ],
         dtype=np.float64,
     )
@@ -167,22 +149,14 @@ def _friction_oracle(speed, epsv, timestep):
     if speed < epsv:
         displacement = speed * timestep
         threshold = epsv * timestep
-        f0 = (
-            displacement
-            * displacement
-            * (-displacement / 3.0 + threshold)
-            / (threshold * threshold)
-            + threshold / 3.0
-        )
+        f0 = displacement * displacement * (-displacement / 3.0 + threshold) / (threshold * threshold) + threshold / 3.0
         f1_over_speed = (-speed + 2.0 * epsv) / (epsv * epsv)
         hessian_term = -1.0 / (epsv * epsv)
     else:
         f0 = speed * timestep
         f1_over_speed = 1.0 / speed
         hessian_term = -1.0 / (speed * speed)
-    return np.asarray(
-        [f0, f1_over_speed, hessian_term], dtype=np.float64
-    )
+    return np.asarray([f0, f1_over_speed, hessian_term], dtype=np.float64)
 
 
 @pytest.mark.gpu
@@ -200,9 +174,7 @@ def test_real_gpu_ipc_scalar_kernels_match_numpy_oracle(real_gpu_f32):
         (0.25, 0.10),
         (0.30, 0.25),
     ):
-        harness.evaluate(
-            distance, active_distance, kappa, speed, epsv, timestep
-        )
+        harness.evaluate(distance, active_distance, kappa, speed, epsv, timestep)
         ti.sync()
         actual = np.asarray(
             [float(harness.output[None][i]) for i in range(6)],
@@ -214,9 +186,7 @@ def test_real_gpu_ipc_scalar_kernels_match_numpy_oracle(real_gpu_f32):
                 _friction_oracle(speed, epsv, timestep),
             )
         )
-        np.testing.assert_allclose(
-            actual, expected, rtol=3.0e-5, atol=3.0e-5
-        )
+        np.testing.assert_allclose(actual, expected, rtol=3.0e-5, atol=3.0e-5)
 
 
 def _coordinate_block_sums(block_i, block_j, block_h):
@@ -247,10 +217,7 @@ def test_real_cuda_psd_and_hash_reduction_match_numpy_oracles(
     ti.sync()
     actual_projection = psd.projected.to_numpy()
     eigenvalues, eigenvectors = np.linalg.eigh(0.5 * (matrix + matrix.T))
-    expected_projection = (
-        eigenvectors @ np.diag(np.maximum(eigenvalues, 0.0))
-        @ eigenvectors.T
-    )
+    expected_projection = eigenvectors @ np.diag(np.maximum(eigenvalues, 0.0)) @ eigenvectors.T
     np.testing.assert_allclose(
         actual_projection,
         expected_projection,
@@ -290,9 +257,7 @@ def test_real_cuda_psd_and_hash_reduction_match_numpy_oracles(
     reduction.go(block_i.size)
     second_statistics = reduction.pattern_cache_statistics()
     assert second_statistics["last_mapping_misses"] == 0
-    assert second_statistics["pattern_hits"] == (
-        first_statistics["pattern_hits"] + 1
-    )
+    assert second_statistics["pattern_hits"] == (first_statistics["pattern_hits"] + 1)
     out_i, out_j, out_h = reduction.get_reduced_triplets_numpy()
     expected = _coordinate_block_sums(block_i, block_j, scaled_h)
     actual = _coordinate_block_sums(out_i, out_j, out_h)

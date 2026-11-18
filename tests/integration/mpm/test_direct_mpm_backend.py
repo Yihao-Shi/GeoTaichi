@@ -30,7 +30,7 @@ def _configure_direct_mpm(output_path, volume=0.01):
     mpm = MPM(log=False)
     mpm.set_configuration(dimension=2, mpm_backend="Direct", solver_type="Implicit", configuration="ULMPM")
     mpm.add_body(_make_body(volume))
-    mpm.add_material(young_modulus=1.0e5, poisson_ratio=0.3, density=1000.0, material="neoHookean")
+    mpm.add_material(young_modulus=1.0e5, poisson_ratio=0.3, density=1000.0, material="NeoHookean")
     mpm.set_solver(
         {
             "domain": [1.0, 1.0],
@@ -238,7 +238,7 @@ def _make_direct_engine(engine_type, output_path, *, scale=1.0):
 
 
 def _prepare_direct_stiffness(engine, *, updated_lagrangian):
-    engine.init_F0()
+    engine.init_f0()
     engine.grid_disp.fill(0.0)
     if updated_lagrangian:
         engine.mass_vec.fill(0.0)

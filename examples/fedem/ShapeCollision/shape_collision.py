@@ -223,7 +223,7 @@ def _build_case(
     fem.set_configuration(dimension=3, solver_type="Explicit", log=False)
     first_mesh, mesh_quality = _soft_mesh(fem, soft_shape, soft_center)
     if contact_kind == "fem_fem":
-        from src.fem.generator import FEMMesh
+        from src.fem.generator.Mesh import FEMMesh
 
         second_mesh, second_quality = _soft_mesh(fem, rigid_shape, rigid_center)
         mesh = fem.add_soft_particle(FEMMesh.concatenate([first_mesh, second_mesh]))

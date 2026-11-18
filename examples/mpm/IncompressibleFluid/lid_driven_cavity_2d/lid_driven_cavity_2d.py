@@ -1,3 +1,4 @@
+from src.utils.RuntimeHook import python_callback
 import os
 import sys
 import math
@@ -11,7 +12,6 @@ if ROOT not in sys.path:
 # Struct precision is selected at import, independently of ti.init(default_fp).
 os.environ.setdefault("GEOTAICHI_REAL_DTYPE", "float64")
 from geotaichi import *
-from src.utils.SolverRuntime import python_callback
 
 ARCH = os.environ.get("GEOTAICHI_ARCH", "cpu")
 DT = float(os.environ.get("GEOTAICHI_LID_2D_DT", "0.002"))

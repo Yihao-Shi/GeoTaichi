@@ -28,9 +28,9 @@ class DirichletBoundary:
     @ti.kernel
     def set_constraints(self, node: ti.types.ndarray(), value: ti.types.ndarray()):
         for i in range(node.shape[0]):
-            dofID = node[i]
-            self.node[dofID] = 1
-            self.value[dofID] = value[i]
+            dof_id = node[i]
+            self.node[dof_id] = 1
+            self.value[dof_id] = value[i]
 
 
 @ti.data_oriented

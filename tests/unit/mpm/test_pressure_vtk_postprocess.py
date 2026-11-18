@@ -1,15 +1,16 @@
+from src.mpm.PostPlot import write_vtk_file
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
 from src.mpm import PostPlot
-from src.mpm.Recorder import _closed_domain_pressure_offset
+from src.mpm.Recorder import WriteFile
 
 
 @pytest.mark.parametrize("cell_type,expected", [([1, 1, 2], 200), ([1, 0, 2], 0), ([2, 2, 2], 0)])
 def test_closed_pressure_offset_preserves_air_reference(cell_type, expected):
-    assert _closed_domain_pressure_offset([100, 300, 999], cell_type) == expected
+    assert WriteFile._closed_domain_pressure_offset([100, 300, 999], cell_type) == expected
 
 
 @pytest.mark.parametrize(
@@ -41,7 +42,7 @@ def test_particle_vtk_uses_grid_gauge_only_for_incompressible_fluid(
     np.savez(tmp_path / "grids/MPMGrid000000.npz", cell_type=cell_type, cell_pressure=[100.0, 300.0, 999.0])
     written = []
     monkeypatch.setattr(PostPlot, "pointsToVTK", lambda *args, **kwargs: written.append(kwargs["data"]))
-    PostPlot.write_vtk_file(
+    write_vtk_file(
         SimpleNamespace(material_type=material, solver_type=solver),
         0,
         1,

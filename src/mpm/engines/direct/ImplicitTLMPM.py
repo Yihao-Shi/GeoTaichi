@@ -1,14 +1,13 @@
+from src.utils.MatrixFunction import psd_project_nd
+from src.utils.StepRetry import StepRetryPolicy
 import taichi as ti
 
 import src.mpm.config as config
-from src.contact_detection.continuous_contact_detection import (
-    deformation_gradient_ccd,
-)
+from src.contact_detection.continuous_contact_detection.PolynomialCCD import deformation_gradient_ccd
 from src.mpm.engines.direct.ImplicitMPM import ImplicitMPM
-from src.mpm.engines.direct.MPMSolver import MPMConvergenceError
-from src.mpm.utils import clear_field, copy_field, vectorize_id
-from src.utils.StepRetry import is_recoverable_nonlinear_failure
-from src.physics_model.contact_model.ipc.ContactAssembly import psd_project_nd
+from src.utils.VectorFunction import clear_field, copy_field
+from src.utils.ScalarFunction import vectorize_id
+from src.utils.errors import MPMConvergenceError
 
 
 @ti.data_oriented
@@ -39,32 +38,32 @@ class ImplicitTLMPM(ImplicitMPM):
         for i in range(self.particleNum[0]):
             p_mass = self.particle[i].m
             for j in range(self.offset[i]):
-                nodeID = self.LnID[i, j]
+                node_id = self.LnID[i, j]
                 shape_fn = self.shape[i, j]
-                self.grid[nodeID].m += shape_fn * p_mass
+                self.grid[node_id].m += shape_fn * p_mass
 
     @ti.kernel
     def vel_acc_p2g(self):
         for i in range(self.particleNum[0]):
-            bodyID = self.particle[i].bodyID
-            goffset = self.body[bodyID].goffset
-            grid_num = self.body[bodyID].grid_num
-            grid_size = self.body[bodyID].grid_size
-            xmin = self.body[bodyID].xmin
+            body_id = self.particle[i].bodyID
+            goffset = self.body[body_id].goffset
+            grid_num = self.body[body_id].grid_num
+            grid_size = self.body[body_id].grid_size
+            xmin = self.body[body_id].xmin
 
             p_pos = self.affine_transfer_position(i)
             p_mass = self.particle[i].m
             p_vel = self.particle[i].v
             p_acc = self.particle[i].a
             for j in range(self.offset[i]):
-                nodeID = self.LnID[i, j]
+                node_id = self.LnID[i, j]
                 shape_fn = self.shape[i, j]
                 v_p2g = p_vel
                 if ti.static(self.velocity_proj):
-                    node_pos = xmin + grid_size * ti.Vector(vectorize_id(nodeID - goffset, grid_num))
+                    node_pos = xmin + grid_size * ti.Vector(vectorize_id(node_id - goffset, grid_num))
                     v_p2g += self.gradv[i] @ (node_pos - p_pos)
-                self.grid[nodeID].v += shape_fn * p_mass * v_p2g
-                self.grid[nodeID].a += shape_fn * p_mass * p_acc
+                self.grid[node_id].v += shape_fn * p_mass * v_p2g
+                self.grid[node_id].a += shape_fn * p_mass * p_acc
 
     @ti.kernel
     def assemble_material_force(self, active_dof: int, grid_disp: ti.template()):
@@ -72,7 +71,7 @@ class ImplicitTLMPM(ImplicitMPM):
             gradu = self.get_displacement_incre(i, grid_disp)
             deformation_gradient = gradu + self.F0[i]
             pvol = self.particle[i].vol0
-            dPsi_dF = self.material.dPsi_div_dF(deformation_gradient) * pvol
+            dPsi_dF = self.material.d_psi_div_d_f(deformation_gradient) * pvol
 
             for j in range(self.offset[i]):
                 grid_id = self.LnID[i, j]
@@ -135,7 +134,7 @@ class ImplicitTLMPM(ImplicitMPM):
             pvol = self.particle[i].vol0
             gradu = self.get_displacement_incre(i, grid_disp)
             deformation_gradient = gradu + self.F0[i]
-            d2Psi_d2F = self.material.d2Psi_div_d2F(deformation_gradient) * pvol
+            d2Psi_d2F = self.material.d2_psi_div_d2_f(deformation_gradient) * pvol
             if ti.static(project_spd):
                 d2Psi_d2F = psd_project_nd(d2Psi_d2F)
             for j in range(self.offset[i]):
@@ -151,14 +150,14 @@ class ImplicitTLMPM(ImplicitMPM):
                     self.add_fixed_stiffness_block_entry(raw_index, base_joffset, base_koffset, d2Psi_dx2)
 
     @ti.kernel
-    def advent_particles(self, coeffPIC: ti.f64):
+    def advent_particles(self, coeff_pic: ti.f64):
         dt = self.TIdt[None]
         for i in range(self.particleNum[0]):
-            bodyID = self.particle[i].bodyID
-            goffset = self.body[bodyID].goffset
-            grid_num = self.body[bodyID].grid_num
-            grid_size = self.body[bodyID].grid_size
-            xmin = self.body[bodyID].xmin
+            body_id = self.particle[i].bodyID
+            goffset = self.body[body_id].goffset
+            grid_num = self.body[body_id].grid_num
+            grid_size = self.body[body_id].grid_size
+            xmin = self.body[body_id].xmin
 
             p_pos = self.affine_transfer_position(i)
             acc = ti.Vector.zero(ti.f64, config.DIM)
@@ -183,7 +182,7 @@ class ImplicitTLMPM(ImplicitMPM):
                     dpos = xmin + grid_size * ti.Vector(vectorize_id(grid_id - goffset, grid_num)) - p_pos
                     Bp += shape_fn * grid_v.outer_product(dpos)
                     Dp += shape_fn * dpos.outer_product(dpos)
-            v1 = (1.0 - coeffPIC) * (v0 + acc * dt) + coeffPIC * vel
+            v1 = (1.0 - coeff_pic) * (v0 + acc * dt) + coeff_pic * vel
             self.particle[i].v = v1
             self.particle[i].a = acc
             self.particle[i].x += disp
@@ -221,7 +220,7 @@ class ImplicitTLMPM(ImplicitMPM):
             pvol = self.particle[i].vol0
             gradu = self.get_displacement_incre(i, grid_disp)
             deformation_gradient = self.F0[i] + gradu
-            self.energy[None] += self.material.Psi(deformation_gradient) * pvol
+            self.energy[None] += self.material.psi(deformation_gradient) * pvol
 
     def get_degree_of_freedom(self, **kwargs):
         self.compute_shapefn()
@@ -275,7 +274,7 @@ class ImplicitTLMPM(ImplicitMPM):
             try:
                 solve_result = self.solve_hash_system(self.active_dof)
             except RuntimeError as exception:
-                if not is_recoverable_nonlinear_failure(exception):
+                if not StepRetryPolicy.is_recoverable_nonlinear_failure(exception):
                     raise
                 raise MPMConvergenceError("Direct implicit TLMPM linear solve failed to converge") from exception
             residual = solve_result["solution_inf_norm"] / self.dt

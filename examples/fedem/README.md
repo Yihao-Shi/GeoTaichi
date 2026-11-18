@@ -22,7 +22,9 @@ Each case family owns its script, assets, and `OutputData` directory:
 - `MixedFunnel/mixed_funnel.py`: 400 deformable and 400 rigid grains settling behind a
   gate and discharging into a separate catcher.
 - `IsotropicCompaction/isotropic_compaction.py`: 125-particle all-soft and 50% soft packings under
-  six-wall isotropic compression.
+  six-wall isotropic compression. The entry script owns its packing, reference
+  geometry, scene construction and output audit; it does not import another
+  example's executable setup or modify its parameters.
 - `ExplicitLevelSetSoftParticle/`, `ExplicitSphereMembrane/`,
   `ImplicitAffineIPCMembrane/`, and `ImplicitAffineIPCSoftParticle/`: compact
   explicit or implicit coupling examples.

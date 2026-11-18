@@ -96,7 +96,7 @@ polynomials. Each grid axis requires at least four nodes. Particles inside
 the grid keep partition of unity and linear reproduction near its boundary;
 particles outside still fail. Values, gradients and IPC shape Hessians must
 use the same boundary type. In axisymmetry, check an affine radial field
-against both radial and hoop stretches and retain the revolved measures.
+against both radial and hoop stretches and retain the per-radian measures.
 
 ## 5. Resolution and capacity
 

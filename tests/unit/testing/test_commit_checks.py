@@ -45,7 +45,7 @@ def commit_repo(tmp_path, monkeypatch):
     (repo / "example.py").write_text("value = 1\n", encoding="utf-8")
     (repo / "failure.json").write_text('""', encoding="utf-8")
     stage_change(repo, "tests/data/fixture.dat", "staged fixture")
-    stage_change(repo, "src/physics_model/consititutive_model/Old.py")
+    stage_change(repo, "src/physics_model/constitutive_model/Old.py")
     git(repo, "add", ".")
     git(
         repo,
@@ -117,22 +117,20 @@ def test_failed_checks_reject_the_commit(commit_repo, partition):
     ("paths", "expected"),
     [
         (["README.md", "src/mpm/README.md", "tools/render.py"], ()),
-        (["src/physics_model/consititutive_model/finite_strain/NeoHookean.py"], ("commit-materials",)),
+        (["src/physics_model/constitutive_model/finite_strain/NeoHookean.py"], ("commit-materials",)),
         (["tests/helpers/material_cases.py"], ("commit-materials",)),
         (["src/fem/MaterialManager.py"], ("commit-materials", "commit-contact")),
         (["src/mpm/MaterialManager.py"], ("commit-materials", "commit-contact")),
         (["tests/unit/physics_model/materials/test_linear_elastic.py"], ("commit-materials",)),
         (["src/physics_model/contact_model/LinearModel.py"], ("commit-contact",)),
-        (
-            ["src/dem/contact/HertzMindlinModel.py", "tests/data/ipc_toolkit/friction/cube_cube.tar.gz"],
-            ("commit-contact",),
-        ),
+        (["src/dem/contact/HertzMindlinModel.py"], ("commit-contact",)),
+        (["tests/data/ipc_toolkit/friction/cube_cube.tar.gz"], ("commit-contact",)),
         (["tests/unit/mpm/test_grid_wall_friction.py"], ("commit-contact",)),
-        (["src/utils/TypeDefination.py"], ("commit-materials", "commit-contact")),
+        (["src/utils/TypeDefinition.py"], ("commit-materials", "commit-contact")),
         (["src/mpm/engines/direct/MPMSolver.py"], ("commit-materials", "commit-contact")),
         (["pyproject.toml", "requirements.txt", "tests/conftest.py"], ("commit-materials", "commit-contact")),
         (
-            ["src/physics_model/consititutive_model/Old.py", "src/dem/contact/New.py"],
+            ["src/physics_model/constitutive_model/Old.py", "src/dem/contact/New.py"],
             ("commit-materials", "commit-contact"),
         ),
     ],
@@ -145,7 +143,7 @@ def test_law_selection_includes_direct_and_shared_dependencies(paths, expected):
     ("relative", "expected"),
     [
         ("notes.md", ()),
-        ("src/physics_model/consititutive_model/New.py", ("commit-materials",)),
+        ("src/physics_model/constitutive_model/New.py", ("commit-materials",)),
         ("src/dem/contact/New.py", ("commit-contact",)),
         ("src/utils/shared.py", ("commit-materials", "commit-contact")),
     ],
@@ -175,7 +173,7 @@ def test_validation_precision_does_not_inherit_simulation_settings(commit_repo, 
 
 @pytest.mark.parametrize("operation", ["delete", "rename"])
 def test_removed_or_moved_material_still_triggers_material_checks(commit_repo, operation):
-    original = "src/physics_model/consititutive_model/Old.py"
+    original = "src/physics_model/constitutive_model/Old.py"
     if operation == "delete":
         git(commit_repo, "rm", "--", original)
     else:

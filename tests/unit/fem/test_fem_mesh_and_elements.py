@@ -1,3 +1,5 @@
+from src.fem.cloth.Utilities import create_cloth_element
+from src.fem.elements.Utilities import create_element
 from tests.helpers.fem_element_reference import (
     compute_deformation_gradient,
     compute_metric_tensor,
@@ -11,12 +13,9 @@ import pytest
 
 ti = pytest.importorskip("taichi")
 
-from src.fem.boundaries import NeumannBoundary
-from src.fem.elements import create_element
-from src.fem.generator import FEMGenerateManager
-from src.physics_model.consititutive_model.finite_strain import (
-    ClothARAP,
-)
+from src.fem.boundaries.NeumannBoundary import NeumannBoundary
+from src.fem.generator.MeshGenerator import FEMGenerateManager
+from src.physics_model.constitutive_model.cloth_model.ClothARAP import ClothARAP
 from src.fem.MaterialManager import FEMMaterialManager
 
 
@@ -26,7 +25,6 @@ def create_material(model, **parameters):
 
 from src.fem.engines.FEMSolver import FEMSolver
 from src.fem.engines.ClassicalAssembler import ClassicalAssembler
-from src.fem.cloth import create_cloth_element
 from src.fem import FEM
 
 pytestmark = [pytest.mark.unit, pytest.mark.fem, pytest.mark.geometry, pytest.mark.cpu]
@@ -191,7 +189,7 @@ def test_triangle_membrane_uses_constant_edge_matrix_gradient():
     np.testing.assert_allclose(np.sum(element.reference_weights), 0.5, atol=2.0e-15)
 
 
-def test_axisymmetric_tri3_revolves_measure_and_uses_3d_no_swirl_map():
+def test_axisymmetric_tri3_uses_per_radian_measure_and_3d_no_swirl_map():
     mesh = FEMGenerateManager().create_rectangle(
         size=(1.0, 0.2),
         divisions=(1, 1),
@@ -199,7 +197,7 @@ def test_axisymmetric_tri3_revolves_measure_and_uses_3d_no_swirl_map():
     )
     element = create_element(mesh, axisymmetric=True, axis_offset=0.0)
 
-    expected_volume = np.pi * (1.5**2 - 0.5**2) * 0.2
+    expected_volume = 0.5 * (1.5**2 - 0.5**2) * 0.2
     assert element.formulation == "axisymmetric_solid"
     assert element.constitutive_dimension == 3
     assert np.sum(element.reference_weights) == pytest.approx(expected_volume, rel=2.0e-15)
@@ -284,7 +282,7 @@ def test_axisymmetric_tri3_revolves_measure_and_uses_3d_no_swirl_map():
     boundary_force = traction.force(mesh, axisymmetric=True, axis_offset=0.0)
     np.testing.assert_allclose(
         np.sum(boundary_force, axis=0),
-        (0.0, np.pi * (1.5**2 - 0.5**2), 0.0),
+        (0.0, 0.5 * (1.5**2 - 0.5**2), 0.0),
         rtol=2.0e-15,
         atol=2.0e-15,
     )

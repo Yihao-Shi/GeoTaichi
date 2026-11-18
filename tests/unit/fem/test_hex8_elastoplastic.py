@@ -4,6 +4,7 @@ import pytest
 ti = pytest.importorskip("taichi")
 
 from src.fem import FEM
+from tests.helpers.material_cases import initial_stress, material_parameters
 
 pytestmark = [
     pytest.mark.unit,
@@ -83,7 +84,7 @@ def test_hex8_elastoplastic_rejects_implicit_and_ipc():
         fem.build()
 
     fem.set_configuration(dimension=3, solver_type="Explicit")
-    fem.add_contact("IPC", dhat=0.1)
+    fem.add_contact("BarrierIPC", dhat=0.1)
     with pytest.raises(ValueError, match="does not support IPC"):
         fem.build()
 
@@ -120,6 +121,21 @@ def test_hex8_elastoplastic_uses_rest_to_current_deformation_increment():
     stress = engine.classical_assembler.cauchy_stress.to_numpy()
     assert np.allclose(deformation[:, :, 0, 0], 1.01)
     assert np.linalg.norm(stress) > 0.0
+
+
+def test_hex8_norsand_preserves_initial_stress_at_rest():
+    _, _, engine = _hex8_solver("NorSand", initial_stress=initial_stress("NorSand"), **material_parameters("NorSand"))
+    assembler = engine.classical_assembler
+    expected_stress = np.tile(initial_stress("NorSand"), (8, 1))
+    np.testing.assert_array_equal(assembler.cauchy_stress.to_numpy(), expected_stress)
+    np.testing.assert_array_equal(assembler.deformation_gradient.to_numpy(), np.broadcast_to(np.eye(3), (1, 8, 3, 3)))
+    original_state = assembler.state_variables.to_numpy()
+
+    assembler.advance_state(engine.state.position, engine.state.velocity, engine.dt)
+
+    np.testing.assert_array_equal(assembler.cauchy_stress.to_numpy(), expected_stress)
+    for name, values in assembler.state_variables.to_numpy().items():
+        np.testing.assert_array_equal(values, original_state[name], err_msg=name)
 
 
 def test_state_dependent_hex8_requires_explicit_finite_timestep():
@@ -206,16 +222,8 @@ def test_state_dependent_hex8_requires_explicit_finite_timestep():
         (
             "NorSand",
             {
-                "G0": 1.0e5,
-                "kappa": 0.04,
-                "lambda": 0.2,
-                "M": 1.2,
-                "N": 0.3,
-                "beta": 1.0,
-                "vc0": 1.9,
-                "v0": 1.7,
-                "h": 100.0,
-                "initial_stress": (-1.0e5, -1.0e5, -1.0e5, 0, 0, 0),
+                **material_parameters("NorSand"),
+                "initial_stress": initial_stress("NorSand"),
             },
         ),
     ],
@@ -245,8 +253,6 @@ def test_hex8_advanced_elastoplastic_models_initialize_and_advance(model, parame
     ],
 )
 def test_all_hex8_materials_respond_to_affine_loading_and_balance_force(model):
-    from tests.helpers.material_cases import initial_stress, material_parameters
-
     fem = FEM(log=False)
     fem.set_configuration(dimension=3, solver_type="Explicit")
     mesh = fem.create_mesh("box", size=(1.0, 1.0, 1.0), divisions=(1, 1, 1), element_type="HEX8")

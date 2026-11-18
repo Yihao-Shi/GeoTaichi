@@ -1,9 +1,8 @@
+from src.mpdem.engines.SoftAffineIPCEngine import SoftAffineIPCEngine
 from pathlib import Path
 
 import numpy as np
 import pyvista as pv
-
-from src.mpdem.engines.SoftAffineIPCOperator import write_soft_affine_surface_vtu
 
 
 def test_write_soft_affine_surface_vtu_round_trip(tmp_path: Path):
@@ -21,7 +20,7 @@ def test_write_soft_affine_surface_vtu_round_trip(tmp_path: Path):
     }
     output = tmp_path / "GraphicAffineBody000000"
 
-    assert write_soft_affine_surface_vtu(output, snapshot)
+    assert SoftAffineIPCEngine.write_soft_affine_surface_vtu(output, snapshot)
     mesh = pv.read(output.with_suffix(".vtu"))
 
     assert mesh.n_points == 3

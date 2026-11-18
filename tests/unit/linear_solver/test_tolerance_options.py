@@ -63,7 +63,7 @@ def test_public_absolute_override_replaces_relative_but_explicit_pair_is_preserv
         configure = lambda values: model.add_element(**values)
     elif entry == "contact":
         configure = (
-            (lambda values: model.add_contact("IPC", **values))
+            (lambda values: model.add_contact("BarrierIPC", **values))
             if owner == "DirectMPM"
             else (lambda values: model.choose_contact_model(**values))
         )

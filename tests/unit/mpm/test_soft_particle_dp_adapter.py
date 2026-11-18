@@ -4,7 +4,7 @@ import pytest
 ti = pytest.importorskip("taichi")
 
 from src.mpm.MaterialManager import SoftParticleSingleMaterialAdapter
-from src.physics_model.consititutive_model.finite_strain.DruckerPrager import (
+from src.physics_model.constitutive_model.finite_strain.DruckerPrager import (
     DruckerPragerModel,
 )
 
@@ -57,8 +57,8 @@ def test_soft_affine_dp_uses_particle_history_and_commits_plastic_state():
         displacement_gradient[0, 1] = 0.15
         trial = adapter.trial_deformation_gradient(0, 0, initial, displacement_gradient)
         trial_field[None] = trial
-        energy[None] = adapter.Psi_at(0, 0, trial)
-        tangent = adapter.d2Psi_div_d2F_at(0, 0, trial)
+        energy[None] = adapter.psi_at(0, 0, trial)
+        tangent = adapter.d2_psi_div_d2_f_at(0, 0, trial)
         tangent_norm[None] = tangent.norm()
         committed, stress = adapter.commit_soft_particle_state(0, 0, trial, state)
         committed_field[None] = committed

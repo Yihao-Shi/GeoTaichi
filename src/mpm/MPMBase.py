@@ -1,3 +1,5 @@
+from src.utils.RuntimeHook import normalize_callbacks
+from src.utils.TimeTicker import Timer
 import time
 
 import taichi as ti
@@ -5,13 +7,11 @@ import taichi as ti
 from src.mpm.engines.Engine import Engine
 from src.mpm.GenerateManager import GenerateManager
 from src.mpm.Recorder import WriteFile
-from src.mpm.SceneManager import myScene
+from src.mpm.SceneManager import SceneManager
 from src.mpm.Simulation import Simulation
 from src.utils.RuntimeHook import runtime_checkpoint
 from src.utils.SolverConsole import print_save_file_info, print_simulation_start
-from src.utils.SolverRuntime import normalize_callbacks
-from src.utils.TimeTicker import advance_time, has_remaining_time, time_tolerance
-from src.utils.constants import Threshold
+from src.utils.constants import THRESHOLD
 
 
 class Solver:
@@ -54,22 +54,22 @@ class Solver:
         step_dt = self.sims.delta
         self.core(scene, neighbor)
         # JIT warm-up executes a complete physical step, so it must be counted.
-        advance_time(self.sims, step_dt)
+        Timer.advance_time(self.sims, step_dt)
         self.sims.current_step += 1
         end_time = time.time()
         print(f"Compiling time = {end_time - start_time} \n")
         self.sims.timer.profile1()
 
-    def Solver(self, scene: myScene, neighbor):
+    def solve(self, scene: SceneManager, neighbor):
         print_simulation_start("MPM")
         ti.sync()
 
         self.engine.pre_calculation(self.sims, scene, neighbor)
-        if self.sims.current_time < Threshold:
+        if self.sims.current_time < THRESHOLD:
             self.save_file(scene)
             self.last_save_time = 1.0 * self.sims.current_time
 
-        if has_remaining_time(self.sims.current_time, self.sims.time, self.sims.delta):
+        if Timer.has_remaining_time(self.sims.current_time, self.sims.time, self.sims.delta):
             self.sims.set_timestep(min(self.sims.delta, self.sims.time - self.sims.current_time))
             compile_step = self.sims.delta
             self.compile(scene, neighbor)
@@ -77,36 +77,36 @@ class Solver:
                 self.save_file(scene)
             runtime_checkpoint()
         start_time = time.time()
-        while has_remaining_time(self.sims.current_time, self.sims.time, self.sims.delta):
+        while Timer.has_remaining_time(self.sims.current_time, self.sims.time, self.sims.delta):
             self.sims.set_timestep(min(self.sims.delta, self.sims.time - self.sims.current_time))
             step_dt = self.sims.delta
             self.core(scene, neighbor)
 
             new_body = self.generator.regenerate(scene)
-            advance_time(self.sims, step_dt)
+            Timer.advance_time(self.sims, step_dt)
             self.sims.current_step += 1
             if self.sims.current_time - self.last_save_time >= self.sims.save_interval - 0.1 * step_dt or new_body:
                 self.save_file(scene)
 
             runtime_checkpoint()
 
-        if abs(self.sims.time - self.sims.current_time) <= time_tolerance(self.sims.delta):
+        if abs(self.sims.time - self.sims.current_time) <= Timer.time_tolerance(self.sims.delta):
             self.sims.current_time = self.sims.time
 
         end_time = time.time()
 
-        if has_remaining_time(self.last_save_time, self.sims.current_time, self.sims.delta):
+        if Timer.has_remaining_time(self.last_save_time, self.sims.current_time, self.sims.delta):
             self.save_file(scene)
 
         print("Physical time = ", end_time - start_time)
         print("#", " End Simulation ".center(67, "="), "#", "\n")
 
-    def Visualize(self, scene: myScene, neighbor):
+    def visualize(self, scene: SceneManager, neighbor):
         from src.visualization.solver_adapters import run_mpm_gui
 
         return run_mpm_gui(self, scene, neighbor)
 
-    def core(self, scene: myScene, neighbor):
+    def core(self, scene: SceneManager, neighbor):
         self.sims.timer.begin("Grid reset")
         self.engine.reset_grid_messages(scene)
         self.sims.timer.end("Grid reset")

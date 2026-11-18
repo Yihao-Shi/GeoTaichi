@@ -1,95 +1,11 @@
 """Rendering adapters for GeoTaichi solver data structures."""
 
 from __future__ import annotations
-
+from src.utils.errors import SimulationStateError
 from dataclasses import dataclass
 from typing import Any
-
 import numpy as np
-
-from .sources import (
-    ParticleRenderSource,
-    TriangleMeshRenderSource,
-    TriangleMeshSnapshot,
-    _validate_color,
-)
-
-
-def dem_particle_source(
-    scene: Any,
-    *,
-    color=(0.22, 0.58, 0.95),
-) -> ParticleRenderSource:
-    """Render ordinary DEM particles using their existing physical radius."""
-
-    return ParticleRenderSource(
-        name="DEM particles",
-        positions=scene.particle.x,
-        radii=scene.particle.rad,
-        active=scene.particle.active,
-        count=lambda: int(scene.particleNum[0]),
-        color=color,
-    )
-
-
-def _mpm_host_radii(scene: Any) -> np.ndarray:
-    """Return visualization radii from the existing CPU particle-size array."""
-
-    count = int(scene.particleNum[0])
-    psize = np.asarray(scene.psize[:count], dtype=np.float64)
-    if psize.ndim == 1:
-        radii = np.abs(psize)
-    elif psize.ndim == 2 and psize.shape[1] in (2, 3):
-        radii = np.linalg.norm(psize, axis=1)
-    else:
-        raise ValueError(
-            "MPM scene.psize must contain one 2D/3D half-size per particle"
-        )
-    return np.maximum(radii, 1.0e-12).astype(np.float32)
-
-
-def mpm_particle_source(
-    scene: Any,
-    *,
-    color=(0.22, 0.58, 0.95),
-) -> ParticleRenderSource:
-    """Render MPM particles without allocating a GPU radius field."""
-
-    return ParticleRenderSource(
-        name="MPM material points",
-        positions=scene.particle.x,
-        radii=lambda: _mpm_host_radii(scene),
-        active=scene.particle.active,
-        count=lambda: int(scene.particleNum[0]),
-        color=color,
-    )
-
-
-def dem_triangle_wall_source(
-    scene: Any,
-    *,
-    color=(0.66, 0.68, 0.72),
-) -> TriangleMeshRenderSource:
-    """Render the current DEM facet/patch walls as triangles."""
-
-    def vertices():
-        count = int(scene.wallNum[0])
-        first = scene.wall.vertice1.to_numpy()[:count]
-        second = scene.wall.vertice2.to_numpy()[:count]
-        third = scene.wall.vertice3.to_numpy()[:count]
-        return np.stack((first, second, third), axis=1).reshape(-1, 3)
-
-    def faces():
-        count = int(scene.wallNum[0])
-        return np.arange(3 * count, dtype=np.int32).reshape(-1, 3)
-
-    return TriangleMeshRenderSource(
-        name="DEM triangle walls",
-        vertices=vertices,
-        faces=faces,
-        color=color,
-        smooth=False,
-    )
+from src.visualization.sources import TriangleMeshSnapshot
 
 
 @dataclass
@@ -104,11 +20,13 @@ class LevelSetDEMRenderSource:
     name: str = "level-set DEM surface"
 
     def __post_init__(self) -> None:
+        from src.visualization.Utilities import _validate_color
+
         self.color = _validate_color(self.color)
 
     def snapshot(self) -> TriangleMeshSnapshot:
         if self.scene.visualzie_surface_node is None:
-            raise RuntimeError(
+            raise SimulationStateError(
                 "level-set real-time rendering requires surface visualization "
                 "to be activated while building the DEM scene"
             )
@@ -127,22 +45,22 @@ class LevelSetDEMRenderSource:
         )
 
 
-def _grid_triangles(nu: int, nv: int, offset: int = 0) -> np.ndarray:
-    faces = np.empty((2 * max(nu - 1, 0) * max(nv - 1, 0), 3), dtype=np.int32)
-    cursor = 0
-    for i in range(nu - 1):
-        for j in range(nv - 1):
-            n0 = offset + i * nv + j
-            n1 = n0 + nv
-            faces[cursor] = (n0, n1, n1 + 1)
-            faces[cursor + 1] = (n0, n1 + 1, n0 + 1)
-            cursor += 2
-    return faces
-
-
 @dataclass
 class IGARenderSource:
     """Sample current IGA control points into renderable boundary triangles."""
+
+    @staticmethod
+    def _grid_triangles(nu: int, nv: int, offset: int = 0) -> np.ndarray:
+        faces = np.empty((2 * max(nu - 1, 0) * max(nv - 1, 0), 3), dtype=np.int32)
+        cursor = 0
+        for i in range(nu - 1):
+            for j in range(nv - 1):
+                n0 = offset + i * nv + j
+                n1 = n0 + nv
+                faces[cursor] = (n0, n1, n1 + 1)
+                faces[cursor + 1] = (n0, n1 + 1, n0 + 1)
+                cursor += 2
+        return faces
 
     patch: Any
     resolution: int = 16
@@ -152,6 +70,8 @@ class IGARenderSource:
     name: str = "IGA surface"
 
     def __post_init__(self) -> None:
+        from src.visualization.Utilities import _validate_color
+
         if int(self.resolution) < 2:
             raise ValueError("IGA render resolution must be at least two")
         self.resolution = int(self.resolution)
@@ -159,13 +79,13 @@ class IGARenderSource:
 
     @staticmethod
     def _sample_patch_2d(primitive, control_points, resolution):
-        from src.nurbs.NurbsBasis import NurbsBasisInterpolations2d
+        from src.nurbs.NurbsBasis import nurbs_basis_interpolations2d
 
         values = np.linspace(0.0, 1.0, resolution)
         points = np.empty((resolution, resolution, primitive.dimension))
         for i, u in enumerate(values):
             for j, v in enumerate(values):
-                points[i, j] = NurbsBasisInterpolations2d(
+                points[i, j] = nurbs_basis_interpolations2d(
                     u,
                     v,
                     *primitive.degree,
@@ -174,13 +94,11 @@ class IGARenderSource:
                     control_points,
                     primitive.weights,
                 )
-        return points.reshape(-1, primitive.dimension), _grid_triangles(
-            resolution, resolution
-        )
+        return points.reshape(-1, primitive.dimension), IGARenderSource._grid_triangles(resolution, resolution)
 
     @staticmethod
     def _sample_patch_3d(primitive, control_points, resolution):
-        from src.nurbs.NurbsBasis import NurbsBasisInterpolations3d
+        from src.nurbs.NurbsBasis import nurbs_basis_interpolations3d
 
         values = np.linspace(0.0, 1.0, resolution)
         vertices = []
@@ -195,7 +113,7 @@ class IGARenderSource:
                         coords[fixed_axis] = fixed_value
                         coords[free_axes[0]] = first
                         coords[free_axes[1]] = second
-                        surface[i, j] = NurbsBasisInterpolations3d(
+                        surface[i, j] = nurbs_basis_interpolations3d(
                             *coords,
                             *primitive.degree,
                             primitive.knot_vector_u,
@@ -207,7 +125,7 @@ class IGARenderSource:
                 offset = sum(block.shape[0] for block in vertices)
                 block = surface.reshape(-1, 3)
                 vertices.append(block)
-                triangles = _grid_triangles(resolution, resolution, offset)
+                triangles = IGARenderSource._grid_triangles(resolution, resolution, offset)
                 if fixed_value == 0.0:
                     triangles = triangles[:, ::-1]
                 faces.append(triangles)
@@ -221,17 +139,11 @@ class IGARenderSource:
             primitive = metadata["primitive"]
             begin = int(self.patch.prefix_total_num_ctrlpts[index])
             count = int(self.patch.total_num_ctrlpts[index + 1])
-            control_points = np.ascontiguousarray(
-                all_control_points[begin : begin + count]
-            )
+            control_points = np.ascontiguousarray(all_control_points[begin : begin + count])
             if primitive.dimension == 2:
-                patch_vertices, patch_faces = self._sample_patch_2d(
-                    primitive, control_points, self.resolution
-                )
+                patch_vertices, patch_faces = self._sample_patch_2d(primitive, control_points, self.resolution)
             elif primitive.dimension == 3:
-                patch_vertices, patch_faces = self._sample_patch_3d(
-                    primitive, control_points, self.resolution
-                )
+                patch_vertices, patch_faces = self._sample_patch_3d(primitive, control_points, self.resolution)
             else:
                 raise ValueError("IGA rendering supports only 2D and 3D patches")
             patch_faces = patch_faces + sum(block.shape[0] for block in vertices)
@@ -255,21 +167,3 @@ class IGARenderSource:
             wireframe=bool(self.wireframe),
             smooth=bool(self.smooth),
         )
-
-
-def dem_render_sources(sims: Any, scene: Any):
-    """Select the appropriate render sources for a built DEM scene."""
-
-    sources = []
-    if sims.scheme in ("LSDEM", "LSMPM", "PolySuperEllipsoid", "PolySuperQuadrics"):
-        sources.append(LevelSetDEMRenderSource(sims, scene))
-    elif scene.particle is not None:
-        sources.append(
-            dem_particle_source(
-                scene,
-                color=getattr(sims, "particle_color", (0.22, 0.58, 0.95)),
-            )
-        )
-    if getattr(sims, "wall_type", None) in (1, 2) and scene.wall is not None:
-        sources.append(dem_triangle_wall_source(scene))
-    return tuple(sources)

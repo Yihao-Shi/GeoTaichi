@@ -40,7 +40,7 @@ def build_problem(
     fem.add_boundary_condition({"type": "Dirichlet", "nodes": fixed, "components": "all", "value": 0.0})
     if plane_contact:
         fem.add_contact(
-            "IPC",
+            "BarrierIPC",
             self_contact=False,
             planes=[((0, 0, 0), (0, 0, 1))],
             dhat=0.02,

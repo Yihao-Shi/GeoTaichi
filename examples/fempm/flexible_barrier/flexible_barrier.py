@@ -59,7 +59,7 @@ def parameters(args):
         elastic_model="NeoHookean",
         shape_function="Linear",
         gravity=[0.0, 0.0, -9.8],
-        contact_model="IPC",
+        contact_model="BarrierIPC",
         contact_friction=0.577,
         friction_mode="lagged",
         # Start at the particle-centre gap so the initial unstrained soil is
@@ -258,7 +258,7 @@ def build(p, output):
             }
         )
         model.choose_contact_model(
-            "IPC",
+            "BarrierIPC",
             dhat=p["dhat"],
             dmin=p["dmin"],
             kappa=p["kappa"],
@@ -277,7 +277,7 @@ def build(p, output):
             elastic,
             mpm,
             log=False,
-            contact_model="IPC",
+            contact_model="BarrierIPC",
             activate_friction=True,
             kappa=p["kappa"],
             dhat=p["dhat"],
@@ -301,7 +301,9 @@ def build(p, output):
             monolithic_linear_solver_max_iters=30000,
             **common,
         )
-        model.set_configuration(dimension=3, coupling_scheme="IGAMPM", contact_model="IPC", activate_friction=True)
+        model.set_configuration(
+            dimension=3, coupling_scheme="IGAMPM", contact_model="BarrierIPC", activate_friction=True
+        )
         engine = model.build()
     return model, engine
 

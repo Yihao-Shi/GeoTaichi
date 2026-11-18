@@ -1,0 +1,91 @@
+import taichi as ti
+
+from src.physics_model.constitutive_model.MaterialKernel import spherical_tensor
+from src.physics_model.constitutive_model.Fluid import Fluid
+from src.utils.constants import ZEROVEC6F, EYE
+from src.utils.ObjectIO import DictIO
+from src.utils.VectorFunction import voigt_tensor_trace
+
+
+@ti.data_oriented
+class NewtonianModel(Fluid):
+    def __init__(self, material_type="Fluid", configuration="UL", solver_type="Explicit"):
+        super().__init__(material_type, configuration, solver_type)
+
+    def model_initialize(self, material):
+        self.material = material
+        density = DictIO.get_alternative(material, "Density", 1000)
+        modulus = None
+        if not self.incompressible_fluid:
+            modulus = DictIO.get_alternative(material, "Modulus", 3.6e5)
+            self.validate_fluid_bulk_modulus(modulus, "Modulus")
+        viscosity = DictIO.get_alternative(material, "Viscosity", 1e-3)
+        cl = DictIO.get_alternative(material, "cL", 1.0)
+        cq = DictIO.get_alternative(material, "cQ", 2.0)
+        element_length = DictIO.get_alternative(material, "ElementLength", 0.0)
+        atmospheric_pressure = DictIO.get_alternative(material, "atmospheric_pressure", 0.0)
+        surface_tension = DictIO.get_alternative(
+            material, "SurfaceTension", DictIO.get_alternative(material, "surface_tension", 0.0)
+        )
+        self.add_material(density, modulus, viscosity, element_length, cl, cq, atmospheric_pressure, surface_tension)
+
+    def add_material(
+        self, density, modulus, viscosity, element_length, cl, cq, atmospheric_pressure, surface_tension=0.0, gamma=1.0
+    ):
+        self.density = density
+        self.modulus = None if self.incompressible_fluid else modulus
+        self.viscosity = viscosity
+        self.element_length = element_length
+        self.cl = cl
+        self.cq = cq
+        self.atmospheric_pressure = atmospheric_pressure
+        self.surface_tension = surface_tension
+        self.gamma = gamma
+        self.max_sound_speed = 0.0 if self.incompressible_fluid else self.get_sound_speed(self.density, self.modulus)
+
+    def print_message(self, materialID):
+        self.print_console_header()
+        print("Constitutive model: Newtonian")
+        print("Material ID: ", materialID)
+        print("Model density = ", self.density)
+        if self.incompressible_fluid:
+            print("Fluid incompressibility = pressure projection")
+        else:
+            print("Bulk Modulus = ", self.modulus)
+        print("Viscosity = ", self.viscosity)
+        print("Surface tension = ", self.surface_tension)
+        print("Characteristic Element Length = ", self.element_length)
+        print("Artifical Viscosity Parameter = ", self.cl, self.cq, "\n")
+
+    def define_state_vars(self):
+        if self.solver_type == 0:
+            return {"pressure": float, "rho": float}
+        elif self.solver_type == 1:
+            return {}
+
+    @ti.func
+    def _initialize_vars(self, np, particle, state_variables):
+        if ti.static(self.solver_type == 0):
+            stress = particle[np].stress
+            state_variables[np].pressure = spherical_tensor(stress)
+            state_variables[np].rho = self.density
+
+    @ti.func
+    def shear_stress(self, strain_rate):
+        viscosity = self.viscosity
+        mean_volumetric_strain_rate = voigt_tensor_trace(strain_rate) / 3.0
+
+        sstress = ZEROVEC6F
+        sstress[0] = 2.0 * viscosity * (strain_rate[0] - mean_volumetric_strain_rate)
+        sstress[1] = 2.0 * viscosity * (strain_rate[1] - mean_volumetric_strain_rate)
+        sstress[2] = 2.0 * viscosity * (strain_rate[2] - mean_volumetric_strain_rate)
+        sstress[3] = 2.0 * viscosity * strain_rate[3]
+        sstress[4] = 2.0 * viscosity * strain_rate[4]
+        sstress[5] = 2.0 * viscosity * strain_rate[5]
+        return sstress
+
+    @ti.func
+    def core(self, np, strain_rate, state_variables, dt):
+        pressure_av = self.fluid_pressure(np, state_variables, strain_rate, dt)
+        shear_stress = self.shear_stress(strain_rate)
+        return -pressure_av * EYE + shear_stress

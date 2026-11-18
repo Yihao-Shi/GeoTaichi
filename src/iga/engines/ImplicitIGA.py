@@ -1,3 +1,8 @@
+from src.utils.RuntimeHook import normalize_callbacks
+from src.utils.MatrixFunction import psd_project_nd
+from src.utils.errors import LinearSolveError
+from src.linear_solver.Utilities import solve_csr_system
+from src.utils.StepRetry import StepRetryPolicy
 import taichi as ti
 import numpy as np
 import time
@@ -5,33 +10,17 @@ from src.utils.TimeIntegration import newmark_parameters
 from taichi.lang.impl import current_cfg
 
 import src.iga.config as config
-from src.contact_detection.continuous_contact_detection import (
-    deformation_gradient_ccd,
-)
+from src.contact_detection.continuous_contact_detection.PolynomialCCD import deformation_gradient_ccd
 from src.iga.engines.IGASolver import IGASolver
-from src.iga.engines.EngineUtils import (
-    copy_group_field,
-    jacobian2parent2parametric1d,
-    jacobian2parent2parametric2d,
-    linearize,
-    matrix_cols,
-    vectorize_id,
-)
-from src.linear_solver.BuildTriplet import BuildTriplet, solve_csr_system
+from src.utils.VectorFunction import copy_group_field
+from src.utils.ShapeFunctions import jacobian2parent2parametric1d, jacobian2parent2parametric2d
+from src.utils.ScalarFunction import linearize, vectorize_id
+from src.utils.MatrixFunction import matrix_cols
+from src.linear_solver.BuildTriplet import BuildTriplet
 from src.linear_solver.CoordinateSparseMatrix import CoordinateSparseMatrix
-from src.physics_model.contact_model.ipc.ContactAssembly import psd_project_nd
 from src.utils.RuntimeHook import runtime_checkpoint
-from src.utils.SolverRuntime import normalize_callbacks
-from src.utils.StepRetry import (
-    StepRetryPolicy,
-    is_recoverable_nonlinear_failure,
-    nonlinear_failure_kind,
-)
 from src.utils.linalg import no_operation
-
-
-class IGAConvergenceError(RuntimeError):
-    """A recoverable failure before an implicit IGA step is accepted."""
+from src.utils.errors import IGAConvergenceError
 
 
 @ti.data_oriented
@@ -226,7 +215,7 @@ class ImplicitIGA(IGASolver):
     def _physical_quadrature_weight(self, base_weight, reference_radius):
         weight = base_weight
         if ti.static(self.is_axisymmetric):
-            weight *= 2.0 * ti.math.pi * reference_radius
+            weight *= reference_radius
         return weight
 
     @ti.func
@@ -276,10 +265,10 @@ class ImplicitIGA(IGASolver):
 
             rest_ctrl_coords = ti.Matrix.zero(ti.f64, self.element.total_knot_range, config.DIM)
             current_ctrl_coords = ti.Matrix.zero(ti.f64, self.element.total_knot_range, config.DIM)
-            for nodeID in ti.grouped(ti.ndrange(*self.element.knot_range)):
-                global_nodeID = nodeID + eleid
-                local_offset = linearize(nodeID, self.element.knot_range)
-                global_offset = linearize(global_nodeID, num_ctrlpts)
+            for node_id in ti.grouped(ti.ndrange(*self.element.knot_range)):
+                global_node_id = node_id + eleid
+                local_offset = linearize(node_id, self.element.knot_range)
+                global_offset = linearize(global_node_id, num_ctrlpts)
                 rest_control_points = self.patch.rest_control_points[prefix_total_num_ctrlpts + global_offset]
                 control_points = self.patch.control_points[prefix_total_num_ctrlpts + global_offset]
                 for j in ti.static(range(config.DIM)):
@@ -306,15 +295,15 @@ class ImplicitIGA(IGASolver):
                     j1 * j2 * self.element.gauss_weights[gauss_id],
                     reference_radius,
                 )
-                dnatdX = jacobian.inverse()
-                shape_gradients = self.element.compute_shape_gradients(dNdnat, dnatdX)
+                dnatd_x = jacobian.inverse()
+                shape_gradients = self.element.compute_shape_gradients(dNdnat, dnatd_x)
                 deformation_gradient = self._constitutive_deformation_gradient(
                     N,
                     shape_gradients,
                     rest_ctrl_coords,
                     current_ctrl_coords,
                 )
-                self.energy[None] += self.material.Psi(deformation_gradient) * volume
+                self.energy[None] += self.material.psi(deformation_gradient) * volume
 
     @ti.kernel
     def calculate_inertia_energy(
@@ -528,10 +517,10 @@ class ImplicitIGA(IGASolver):
 
             rest_ctrl_coords = ti.Matrix.zero(ti.f64, self.element.total_knot_range, config.DIM)
             current_ctrl_coords = ti.Matrix.zero(ti.f64, self.element.total_knot_range, config.DIM)
-            for nodeID in ti.grouped(ti.ndrange(*self.element.knot_range)):
-                global_nodeID = nodeID + eleid
-                local_offset = linearize(nodeID, self.element.knot_range)
-                global_offset = linearize(global_nodeID, num_ctrlpts)
+            for node_id in ti.grouped(ti.ndrange(*self.element.knot_range)):
+                global_node_id = node_id + eleid
+                local_offset = linearize(node_id, self.element.knot_range)
+                global_offset = linearize(global_node_id, num_ctrlpts)
                 ctrlpt_id = prefix_total_num_ctrlpts + global_offset
                 rest_control_points = self.patch.rest_control_points[ctrlpt_id]
                 control_points = self.patch.control_points[ctrlpt_id]
@@ -557,29 +546,29 @@ class ImplicitIGA(IGASolver):
                     j1 * j2 * self.element.gauss_weights[gauss_id],
                     reference_radius,
                 )
-                dnatdX = jacobian.inverse()
-                shape_gradients = self.element.compute_shape_gradients(dNdnat, dnatdX)
+                dnatd_x = jacobian.inverse()
+                shape_gradients = self.element.compute_shape_gradients(dNdnat, dnatd_x)
                 deformation_gradient = self._constitutive_deformation_gradient(
                     N,
                     shape_gradients,
                     rest_ctrl_coords,
                     current_ctrl_coords,
                 )
-                dPsi_dF = self.material.dPsi_div_dF(deformation_gradient) * volume
+                dPsi_dF = self.material.d_psi_div_d_f(deformation_gradient) * volume
                 d2Psi_d2F = ti.Matrix.zero(
                     ti.f64,
                     self.material_dimension * self.material_dimension,
                     self.material_dimension * self.material_dimension,
                 )
                 if ti.static(need_matrix):
-                    d2Psi_d2F = self.material.d2Psi_div_d2F(deformation_gradient) * volume
+                    d2Psi_d2F = self.material.d2_psi_div_d2_f(deformation_gradient) * volume
                     if ti.static(project_spd):
                         d2Psi_d2F = psd_project_nd(d2Psi_d2F)
 
-                for nodeID1 in ti.grouped(ti.ndrange(*self.element.knot_range)):
-                    global_nodeID1 = nodeID1 + eleid
-                    local_offset1 = linearize(nodeID1, self.element.knot_range)
-                    global_offset1 = linearize(global_nodeID1, num_ctrlpts)
+                for node_id1 in ti.grouped(ti.ndrange(*self.element.knot_range)):
+                    global_node_id1 = node_id1 + eleid
+                    local_offset1 = linearize(node_id1, self.element.knot_range)
+                    global_offset1 = linearize(global_node_id1, num_ctrlpts)
                     block_i = prefix_total_num_ctrlpts + global_offset1
                     local_gradient = self.compute_local_gradient(
                         local_offset1,
@@ -591,10 +580,10 @@ class ImplicitIGA(IGASolver):
                     for d in ti.static(range(config.DIM)):
                         self.rhs[config.DIM * block_i + d] -= local_gradient[d]
                     if ti.static(need_matrix):
-                        for nodeID2 in ti.grouped(ti.ndrange(*self.element.knot_range)):
-                            global_nodeID2 = nodeID2 + eleid
-                            local_offset2 = linearize(nodeID2, self.element.knot_range)
-                            global_offset2 = linearize(global_nodeID2, num_ctrlpts)
+                        for node_id2 in ti.grouped(ti.ndrange(*self.element.knot_range)):
+                            global_node_id2 = node_id2 + eleid
+                            local_offset2 = linearize(node_id2, self.element.knot_range)
+                            global_offset2 = linearize(global_node_id2, num_ctrlpts)
                             block_j = prefix_total_num_ctrlpts + global_offset2
                             local_d2Psi_d2x = self.compute_local_hessian(
                                 local_offset1,
@@ -683,10 +672,10 @@ class ImplicitIGA(IGASolver):
 
             rest_ctrl_coords = ti.Matrix.zero(ti.f64, self.element.total_knot_range, config.DIM)
             current_ctrl_coords = ti.Matrix.zero(ti.f64, self.element.total_knot_range, config.DIM)
-            for nodeID in ti.grouped(ti.ndrange(*self.element.knot_range)):
-                global_nodeID = nodeID + eleid
-                local_offset = linearize(nodeID, self.element.knot_range)
-                global_offset = linearize(global_nodeID, num_ctrlpts)
+            for node_id in ti.grouped(ti.ndrange(*self.element.knot_range)):
+                global_node_id = node_id + eleid
+                local_offset = linearize(node_id, self.element.knot_range)
+                global_offset = linearize(global_node_id, num_ctrlpts)
                 ctrlpt_id = prefix_total_num_ctrlpts + global_offset
                 rest_control_points = self.patch.rest_control_points[ctrlpt_id]
                 control_points = self.patch.control_points[ctrlpt_id]
@@ -723,8 +712,8 @@ class ImplicitIGA(IGASolver):
                         j1 * j2 * self.element.gauss_weights[gauss_id],
                         reference_radius,
                     )
-                    dnatdX = jacobian.inverse()
-                    shape_gradients = self.element.compute_shape_gradients(dNdnat, dnatdX)
+                    dnatd_x = jacobian.inverse()
+                    shape_gradients = self.element.compute_shape_gradients(dNdnat, dnatd_x)
                     for node in range(self.element.total_knot_range):
                         self.reference_N[prefix_element + ele, gauss_id, node] = N[node]
                         self.reference_gradient[prefix_element + ele, gauss_id, node] = ti.Vector(
@@ -740,21 +729,21 @@ class ImplicitIGA(IGASolver):
                 )
                 dPsi_dF = ti.Vector.zero(ti.f64, self.material_dimension * self.material_dimension)
                 if ti.static(need_force):
-                    dPsi_dF = self.material.dPsi_div_dF(deformation_gradient) * volume
+                    dPsi_dF = self.material.d_psi_div_d_f(deformation_gradient) * volume
                 d2Psi_d2F = ti.Matrix.zero(
                     ti.f64,
                     self.material_dimension * self.material_dimension,
                     self.material_dimension * self.material_dimension,
                 )
                 if ti.static(need_matrix):
-                    d2Psi_d2F = self.material.d2Psi_div_d2F(deformation_gradient) * volume
+                    d2Psi_d2F = self.material.d2_psi_div_d2_f(deformation_gradient) * volume
                     if ti.static(project_spd):
                         d2Psi_d2F = psd_project_nd(d2Psi_d2F)
 
-                for nodeID1 in ti.grouped(ti.ndrange(*self.element.knot_range)):
-                    global_nodeID1 = nodeID1 + eleid
-                    local_offset1 = linearize(nodeID1, self.element.knot_range)
-                    global_offset1 = linearize(global_nodeID1, num_ctrlpts)
+                for node_id1 in ti.grouped(ti.ndrange(*self.element.knot_range)):
+                    global_node_id1 = node_id1 + eleid
+                    local_offset1 = linearize(node_id1, self.element.knot_range)
+                    global_offset1 = linearize(global_node_id1, num_ctrlpts)
                     block_i = prefix_total_num_ctrlpts + global_offset1
                     if ti.static(need_force):
                         local_gradient = self.compute_local_gradient(
@@ -767,10 +756,10 @@ class ImplicitIGA(IGASolver):
                         for d in ti.static(range(config.DIM)):
                             self.rhs[config.DIM * block_i + d] -= local_gradient[d]
                     if ti.static(need_matrix):
-                        for nodeID2 in ti.grouped(ti.ndrange(*self.element.knot_range)):
-                            global_nodeID2 = nodeID2 + eleid
-                            local_offset2 = linearize(nodeID2, self.element.knot_range)
-                            global_offset2 = linearize(global_nodeID2, num_ctrlpts)
+                        for node_id2 in ti.grouped(ti.ndrange(*self.element.knot_range)):
+                            global_node_id2 = node_id2 + eleid
+                            local_offset2 = linearize(node_id2, self.element.knot_range)
+                            global_offset2 = linearize(global_node_id2, num_ctrlpts)
                             block_j = prefix_total_num_ctrlpts + global_offset2
                             slot = -1
                             if ti.static(direct):
@@ -959,7 +948,7 @@ class ImplicitIGA(IGASolver):
                 return_solution=return_solution,
             )
             if not result["converged"]:
-                raise RuntimeError(
+                raise LinearSolveError(
                     f"ImplicitIGA Taichi {self.linear_solver} did not "
                     "converge: "
                     f"residual={result['residual']:.6e}, "
@@ -987,7 +976,10 @@ class ImplicitIGA(IGASolver):
     def increment_inf_norm(self) -> ti.f64:
         value = 0.0
         for dof in range(self.degree_of_freedom):
-            ti.atomic_max(value, ti.abs(self.incre_resolution[dof]))
+            component = ti.abs(self.incre_resolution[dof])
+            if ti.math.isnan(component) or ti.math.isinf(component):
+                component = ti.math.inf
+            ti.atomic_max(value, component)
         return value
 
     def solve_coo_system(self, return_solution=True):
@@ -1083,10 +1075,10 @@ class ImplicitIGA(IGASolver):
             rest_ctrl_coords = ti.Matrix.zero(ti.f64, self.element.total_knot_range, config.DIM)
             current_ctrl_coords = ti.Matrix.zero(ti.f64, self.element.total_knot_range, config.DIM)
             current_incre_disps = ti.Matrix.zero(ti.f64, self.element.total_knot_range, config.DIM)
-            for nodeID in ti.grouped(ti.ndrange(*self.element.knot_range)):
-                global_nodeID = nodeID + eleid
-                offset = linearize(nodeID, self.element.knot_range)
-                global_offset = linearize(global_nodeID, num_ctrlpts)
+            for node_id in ti.grouped(ti.ndrange(*self.element.knot_range)):
+                global_node_id = node_id + eleid
+                offset = linearize(node_id, self.element.knot_range)
+                global_offset = linearize(global_node_id, num_ctrlpts)
                 rest_control_points = self.patch.rest_control_points[prefix_total_num_ctrlpts + global_offset]
                 control_points = self.patch.control_points[prefix_total_num_ctrlpts + global_offset]
                 for j in ti.static(range(config.DIM)):
@@ -1098,7 +1090,7 @@ class ImplicitIGA(IGASolver):
                         config.DIM * (prefix_total_num_ctrlpts + global_offset) + j
                     ]
 
-            alphaE = 1.0
+            alpha_e = 1.0
             for gauss_id in range(self.element.gauss_number):
                 N, dNdnat = self.element.dshapefn(
                     gauss_id,
@@ -1112,8 +1104,8 @@ class ImplicitIGA(IGASolver):
                 )
                 jacobian = self.calculate_jacobian(dNdnat, rest_ctrl_coords)
                 self.require_positive_reference_jacobian(jacobian)
-                dnatdX = jacobian.inverse()
-                shape_gradients = self.element.compute_shape_gradients(dNdnat, dnatdX)
+                dnatd_x = jacobian.inverse()
+                shape_gradients = self.element.compute_shape_gradients(dNdnat, dnatd_x)
                 deformation_gradient = self._constitutive_deformation_gradient(
                     N,
                     shape_gradients,
@@ -1134,16 +1126,16 @@ class ImplicitIGA(IGASolver):
                     ) / ti.max(reference_radius, 1.0e-30)
                 else:
                     deformation_gradient_incre = self.element.compute_deformation_gradient(
-                        dNdnat, dnatdX, current_incre_disps
+                        dNdnat, dnatd_x, current_incre_disps
                     )
                 solution = deformation_gradient_ccd(
                     deformation_gradient,
                     deformation_gradient_incre,
                     slackness,
                 )
-                if solution < alphaE:
-                    alphaE = solution
-            ti.atomic_min(alpha, alphaE)
+                if solution < alpha_e:
+                    alpha_e = solution
+            ti.atomic_min(alpha, alpha_e)
         return alpha
 
     @ti.kernel
@@ -1298,7 +1290,10 @@ class ImplicitIGA(IGASolver):
     def _solve_host_newton_iteration(self):
         result = self.solve_system(return_solution=True)
         self.incre_resolution.from_numpy(result)
-        return np.linalg.norm(result, np.inf) / self.dt
+        residual = self.increment_inf_norm() / self.dt
+        if not np.isfinite(residual):
+            raise LinearSolveError("ImplicitIGA host linear solve returned a non-finite correction")
+        return residual
 
     def precompute(self):
         super().precompute()
@@ -1333,7 +1328,7 @@ class ImplicitIGA(IGASolver):
             try:
                 residual = self.solve_newton_iteration()
             except RuntimeError as exception:
-                if not is_recoverable_nonlinear_failure(exception):
+                if not StepRetryPolicy.is_recoverable_nonlinear_failure(exception):
                     raise
                 raise IGAConvergenceError("implicit IGA linear solve did not converge") from exception
             if residual < self.tol:
@@ -1363,7 +1358,7 @@ class ImplicitIGA(IGASolver):
 
     def _failure_diagnostics(self, exception, attempt, timestep):
         return {
-            "kind": nonlinear_failure_kind(exception),
+            "kind": StepRetryPolicy.nonlinear_failure_kind(exception),
             "exception": type(exception).__name__,
             "message": str(exception),
             "attempt": int(attempt),
@@ -1462,4 +1457,4 @@ class ImplicitIGA(IGASolver):
                     f()
 
 
-__all__ = ["IGAConvergenceError", "ImplicitIGA"]
+__all__ = ["ImplicitIGA"]

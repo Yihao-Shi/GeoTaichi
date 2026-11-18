@@ -1,320 +1,19 @@
+from src.utils.MatrixFunction import _apply_dense_block_jacobi
+from src.utils.MatrixFunction import _dense_block_matvec
+from src.utils.MatrixFunction import _dense_block_transpose_matvec
+from src.utils.errors import BackendError, CapacityError, SimulationStateError, SparseAssemblyError
+from src.linear_solver.DeviceKrylov import DeviceKrylov
+
 import taichi as ti
 import numpy as np
 import math
 from taichi.lang.impl import current_cfg
-
 from src.linear_solver.HashReduction import HashReduction
-from src.linear_solver.DeviceKrylov import DeviceKrylov, device_krylov_enabled
 from src.linear_solver.LinearOperator import LinearOperator
 from src.utils.FieldIO import field_to_numpy_prefix
 from src.utils.PrefixSum import PrefixSumExecutor
 from src.utils.WarpReduce import warp_reduce_sum_f32, warp_reduce_sum_f64
-
-
-def solve_csr_system(rhs, sparse_matrixes):
-    from scipy.sparse.linalg import spsolve
-
-    if isinstance(rhs, ti.ScalarField):
-        rhs = rhs.to_numpy()
-    sparse_matrixes = sparse_matrixes.tocsr()
-    sparse_matrixes.data[np.abs(sparse_matrixes.data) < 2.2204460492503131e-15] = 0
-    sparse_matrixes.eliminate_zeros()
-    non_zero_rows = sparse_matrixes.getnnz(axis=1) != 0
-    non_zero_cols = sparse_matrixes.getnnz(axis=0) != 0
-    csr_matrixes_reduced = sparse_matrixes[non_zero_rows, :][:, non_zero_cols]
-    rhs_reduced = rhs[non_zero_rows]
-    x_reduced = spsolve(csr_matrixes_reduced, rhs_reduced)
-    x_full = np.zeros(sparse_matrixes.shape[1])
-    x_full[non_zero_cols] = x_reduced
-    return x_full
-
-
-@ti.func
-def _sym_block_matvec(h, x, dim: ti.template()):
-    y = ti.Vector.zero(float, dim)
-    y[0] = h[0] * x[0]
-    if ti.static(dim >= 2):
-        y[0] += h[3] * x[1]
-        y[1] = h[3] * x[0] + h[1] * x[1]
-    if ti.static(dim == 3):
-        y[0] += h[5] * x[2]
-        y[1] += h[4] * x[2]
-        y[2] = h[5] * x[0] + h[4] * x[1] + h[2] * x[2]
-    return y
-
-
-@ti.func
-def _dense_block_matvec(h, x, dim: ti.template()):
-    y = ti.Vector.zero(float, dim)
-    for i in range(dim):
-        for j in range(dim):
-            y[i] += h[i * dim + j] * x[j]
-    return y
-
-
-@ti.func
-def _dense_block_transpose_matvec(h, x, dim: ti.template()):
-    y = ti.Vector.zero(float, dim)
-    for i in range(dim):
-        for j in range(dim):
-            y[i] += h[j * dim + i] * x[j]
-    return y
-
-
-@ti.func
-def _apply_sym_block_jacobi(h, r, dim: ti.template()):
-    """Apply a scale-invariant inverse or a bounded diagonal fallback.
-
-    Determinants carry ``dim`` powers of the physical matrix scale, so an
-    absolute determinant threshold incorrectly classifies small, otherwise
-    well-conditioned blocks as singular.  Normalize first and accept the
-    inverse only when an infinity-norm reciprocal-condition estimate is
-    sufficiently large.  The fallback uses the original scale and never
-    returns an all-zero preconditioner for a zero block (which would make PCG
-    report a false zero preconditioned residual).
-    """
-    z = r
-    scale = 0.0
-    finite_input = 1
-    for component in ti.static(range(6)):
-        value = h[component]
-        if not (-ti.math.inf < value and value < ti.math.inf):
-            finite_input = 0
-        scale = ti.max(scale, ti.abs(value))
-
-    condition_tolerance = 1.0e-12
-    determinant_floor = 1.0e-30
-    if finite_input != 0 and scale > 0.0 and scale < ti.math.inf:
-        # A scale-aware diagonal fallback is also the safe path for a block
-        # whose normalized inverse is too ill-conditioned.  Tiny diagonals are
-        # replaced by the block scale instead of producing an unbounded inverse.
-        for row in ti.static(range(4)):
-            if ti.static(row < dim):
-                diagonal = h[row]
-                denominator = scale
-                if ti.abs(diagonal) > condition_tolerance * scale:
-                    denominator = diagonal
-                value = r[row] / denominator
-                if -ti.math.inf < value and value < ti.math.inf:
-                    z[row] = value
-
-    if ti.static(dim == 2):
-        if finite_input != 0 and scale > 0.0 and scale < ti.math.inf:
-            a00 = h[0] / scale
-            a11 = h[1] / scale
-            a01 = h[3] / scale
-            det = a00 * a11 - a01 * a01
-            if ti.abs(det) > determinant_floor:
-                inverse00 = a11 / det
-                inverse01 = -a01 / det
-                inverse11 = a00 / det
-                matrix_norm = ti.max(
-                    ti.abs(a00) + ti.abs(a01),
-                    ti.abs(a01) + ti.abs(a11),
-                )
-                inverse_norm = ti.max(
-                    ti.abs(inverse00) + ti.abs(inverse01),
-                    ti.abs(inverse01) + ti.abs(inverse11),
-                )
-                rcond = 0.0
-                if matrix_norm > 0.0 and inverse_norm > 0.0:
-                    rcond = 1.0 / (matrix_norm * inverse_norm)
-                if rcond > condition_tolerance:
-                    candidate0 = (inverse00 * r[0] + inverse01 * r[1]) / scale
-                    candidate1 = (inverse01 * r[0] + inverse11 * r[1]) / scale
-                    if (
-                        -ti.math.inf < candidate0
-                        and candidate0 < ti.math.inf
-                        and -ti.math.inf < candidate1
-                        and candidate1 < ti.math.inf
-                    ):
-                        z[0] = candidate0
-                        z[1] = candidate1
-    else:
-        if finite_input != 0 and scale > 0.0 and scale < ti.math.inf:
-            a00, a11, a22 = h[0] / scale, h[1] / scale, h[2] / scale
-            a01, a12, a02 = h[3] / scale, h[4] / scale, h[5] / scale
-            c00 = a11 * a22 - a12 * a12
-            c01 = a02 * a12 - a01 * a22
-            c02 = a01 * a12 - a02 * a11
-            c11 = a00 * a22 - a02 * a02
-            c12 = a01 * a02 - a00 * a12
-            c22 = a00 * a11 - a01 * a01
-            det = a00 * c00 + a01 * c01 + a02 * c02
-            if ti.abs(det) > determinant_floor:
-                inverse00, inverse01, inverse02 = c00 / det, c01 / det, c02 / det
-                inverse11, inverse12, inverse22 = c11 / det, c12 / det, c22 / det
-                matrix_norm = ti.max(
-                    ti.abs(a00) + ti.abs(a01) + ti.abs(a02),
-                    ti.abs(a01) + ti.abs(a11) + ti.abs(a12),
-                    ti.abs(a02) + ti.abs(a12) + ti.abs(a22),
-                )
-                inverse_norm = ti.max(
-                    ti.abs(inverse00) + ti.abs(inverse01) + ti.abs(inverse02),
-                    ti.abs(inverse01) + ti.abs(inverse11) + ti.abs(inverse12),
-                    ti.abs(inverse02) + ti.abs(inverse12) + ti.abs(inverse22),
-                )
-                rcond = 0.0
-                if matrix_norm > 0.0 and inverse_norm > 0.0:
-                    rcond = 1.0 / (matrix_norm * inverse_norm)
-                if rcond > condition_tolerance:
-                    candidate0 = (inverse00 * r[0] + inverse01 * r[1] + inverse02 * r[2]) / scale
-                    candidate1 = (inverse01 * r[0] + inverse11 * r[1] + inverse12 * r[2]) / scale
-                    candidate2 = (inverse02 * r[0] + inverse12 * r[1] + inverse22 * r[2]) / scale
-                    if (
-                        -ti.math.inf < candidate0
-                        and candidate0 < ti.math.inf
-                        and -ti.math.inf < candidate1
-                        and candidate1 < ti.math.inf
-                        and -ti.math.inf < candidate2
-                        and candidate2 < ti.math.inf
-                    ):
-                        z[0] = candidate0
-                        z[1] = candidate1
-                        z[2] = candidate2
-    return z
-
-
-@ti.func
-def _apply_dense_block_jacobi(h, r, dim: ti.template()):
-    """Dense counterpart of the scale-aware block-Jacobi solve above."""
-    z = r
-    scale = 0.0
-    finite_input = 1
-    for row in range(dim):
-        for column in range(dim):
-            value = h[row * dim + column]
-            if not (-ti.math.inf < value and value < ti.math.inf):
-                finite_input = 0
-            scale = ti.max(scale, ti.abs(value))
-
-    condition_tolerance = 1.0e-12
-    determinant_floor = 1.0e-30
-    if finite_input != 0 and scale > 0.0 and scale < ti.math.inf:
-        for row in ti.static(range(4)):
-            if ti.static(row < dim):
-                diagonal = h[row * dim + row]
-                denominator = scale
-                if ti.abs(diagonal) > condition_tolerance * scale:
-                    denominator = diagonal
-                value = r[row] / denominator
-                if -ti.math.inf < value and value < ti.math.inf:
-                    z[row] = value
-
-    if ti.static(dim == 1):
-        if finite_input != 0 and scale > 0.0 and scale < ti.math.inf:
-            z[0] = r[0] / h[0]
-    elif ti.static(dim == 2):
-        if finite_input != 0 and scale > 0.0 and scale < ti.math.inf:
-            a00, a01 = h[0] / scale, h[1] / scale
-            a10, a11 = h[2] / scale, h[3] / scale
-            det = a00 * a11 - a01 * a10
-            if ti.abs(det) > determinant_floor:
-                inverse00, inverse01 = a11 / det, -a01 / det
-                inverse10, inverse11 = -a10 / det, a00 / det
-                matrix_norm = ti.max(
-                    ti.abs(a00) + ti.abs(a01),
-                    ti.abs(a10) + ti.abs(a11),
-                )
-                inverse_norm = ti.max(
-                    ti.abs(inverse00) + ti.abs(inverse01),
-                    ti.abs(inverse10) + ti.abs(inverse11),
-                )
-                rcond = 0.0
-                if matrix_norm > 0.0 and inverse_norm > 0.0:
-                    rcond = 1.0 / (matrix_norm * inverse_norm)
-                if rcond > condition_tolerance:
-                    candidate0 = (inverse00 * r[0] + inverse01 * r[1]) / scale
-                    candidate1 = (inverse10 * r[0] + inverse11 * r[1]) / scale
-                    if (
-                        -ti.math.inf < candidate0
-                        and candidate0 < ti.math.inf
-                        and -ti.math.inf < candidate1
-                        and candidate1 < ti.math.inf
-                    ):
-                        z[0] = candidate0
-                        z[1] = candidate1
-    elif ti.static(dim == 3):
-        if finite_input != 0 and scale > 0.0 and scale < ti.math.inf:
-            a00, a01, a02 = h[0] / scale, h[1] / scale, h[2] / scale
-            a10, a11, a12 = h[3] / scale, h[4] / scale, h[5] / scale
-            a20, a21, a22 = h[6] / scale, h[7] / scale, h[8] / scale
-            c00 = a11 * a22 - a12 * a21
-            c01 = a02 * a21 - a01 * a22
-            c02 = a01 * a12 - a02 * a11
-            c10 = a12 * a20 - a10 * a22
-            c11 = a00 * a22 - a02 * a20
-            c12 = a02 * a10 - a00 * a12
-            c20 = a10 * a21 - a11 * a20
-            c21 = a01 * a20 - a00 * a21
-            c22 = a00 * a11 - a01 * a10
-            det = a00 * c00 + a01 * c10 + a02 * c20
-            if ti.abs(det) > determinant_floor:
-                inverse00, inverse01, inverse02 = c00 / det, c01 / det, c02 / det
-                inverse10, inverse11, inverse12 = c10 / det, c11 / det, c12 / det
-                inverse20, inverse21, inverse22 = c20 / det, c21 / det, c22 / det
-                matrix_norm = ti.max(
-                    ti.abs(a00) + ti.abs(a01) + ti.abs(a02),
-                    ti.abs(a10) + ti.abs(a11) + ti.abs(a12),
-                    ti.abs(a20) + ti.abs(a21) + ti.abs(a22),
-                )
-                inverse_norm = ti.max(
-                    ti.abs(inverse00) + ti.abs(inverse01) + ti.abs(inverse02),
-                    ti.abs(inverse10) + ti.abs(inverse11) + ti.abs(inverse12),
-                    ti.abs(inverse20) + ti.abs(inverse21) + ti.abs(inverse22),
-                )
-                rcond = 0.0
-                if matrix_norm > 0.0 and inverse_norm > 0.0:
-                    rcond = 1.0 / (matrix_norm * inverse_norm)
-                if rcond > condition_tolerance:
-                    candidate0 = (inverse00 * r[0] + inverse01 * r[1] + inverse02 * r[2]) / scale
-                    candidate1 = (inverse10 * r[0] + inverse11 * r[1] + inverse12 * r[2]) / scale
-                    candidate2 = (inverse20 * r[0] + inverse21 * r[1] + inverse22 * r[2]) / scale
-                    if (
-                        -ti.math.inf < candidate0
-                        and candidate0 < ti.math.inf
-                        and -ti.math.inf < candidate1
-                        and candidate1 < ti.math.inf
-                        and -ti.math.inf < candidate2
-                        and candidate2 < ti.math.inf
-                    ):
-                        z[0] = candidate0
-                        z[1] = candidate1
-                        z[2] = candidate2
-    else:
-        if finite_input != 0 and scale > 0.0 and scale < ti.math.inf:
-            A = ti.Matrix.zero(float, 4, 4)
-            for i in range(4):
-                for j in range(4):
-                    A[i, j] = h[i * 4 + j] / scale
-            det = A.determinant()
-            if ti.abs(det) > determinant_floor:
-                inverse = A.inverse()
-                matrix_norm = 0.0
-                inverse_norm = 0.0
-                finite_inverse = 1
-                for row in range(4):
-                    row_norm = 0.0
-                    inverse_row_norm = 0.0
-                    for column in range(4):
-                        row_norm += ti.abs(A[row, column])
-                        inverse_row_norm += ti.abs(inverse[row, column])
-                        if not (-ti.math.inf < inverse[row, column] and inverse[row, column] < ti.math.inf):
-                            finite_inverse = 0
-                    matrix_norm = ti.max(matrix_norm, row_norm)
-                    inverse_norm = ti.max(inverse_norm, inverse_row_norm)
-                rcond = 0.0
-                if matrix_norm > 0.0 and inverse_norm > 0.0:
-                    rcond = 1.0 / (matrix_norm * inverse_norm)
-                if finite_inverse != 0 and rcond > condition_tolerance:
-                    candidate = (inverse @ r) / scale
-                    finite_candidate = 1
-                    for row in ti.static(range(4)):
-                        if not (-ti.math.inf < candidate[row] and candidate[row] < ti.math.inf):
-                            finite_candidate = 0
-                    if finite_candidate != 0:
-                        z = candidate
-    return z
+from src.utils.errors import BlockJacobiError
 
 
 @ti.data_oriented
@@ -335,6 +34,132 @@ class BuildTriplet:
     for projected-Newton IPC systems whose source assemblers are also reused by
     a nonsymmetric fully implicit solve.
     """
+
+    @ti.func
+    def _sym_block_matvec(self, h, x, dim: ti.template()):
+        y = ti.Vector.zero(float, dim)
+        y[0] = h[0] * x[0]
+        if ti.static(dim >= 2):
+            y[0] += h[3] * x[1]
+            y[1] = h[3] * x[0] + h[1] * x[1]
+        if ti.static(dim == 3):
+            y[0] += h[5] * x[2]
+            y[1] += h[4] * x[2]
+            y[2] = h[5] * x[0] + h[4] * x[1] + h[2] * x[2]
+        return y
+
+    @ti.func
+    def _apply_sym_block_jacobi(self, h, r, dim: ti.template()):
+        """Apply a scale-invariant inverse or a bounded diagonal fallback.
+
+        Determinants carry ``dim`` powers of the physical matrix scale, so an
+        absolute determinant threshold incorrectly classifies small, otherwise
+        well-conditioned blocks as singular.  Normalize first and accept the
+        inverse only when an infinity-norm reciprocal-condition estimate is
+        sufficiently large.  The fallback uses the original scale and never
+        returns an all-zero preconditioner for a zero block (which would make PCG
+        report a false zero preconditioned residual).
+        """
+        z = r
+        scale = 0.0
+        finite_input = 1
+        for component in ti.static(range(6)):
+            value = h[component]
+            if not (-ti.math.inf < value and value < ti.math.inf):
+                finite_input = 0
+            scale = ti.max(scale, ti.abs(value))
+
+        condition_tolerance = 1.0e-12
+        determinant_floor = 1.0e-30
+        if finite_input != 0 and scale > 0.0 and scale < ti.math.inf:
+            # A scale-aware diagonal fallback is also the safe path for a block
+            # whose normalized inverse is too ill-conditioned.  Tiny diagonals are
+            # replaced by the block scale instead of producing an unbounded inverse.
+            for row in ti.static(range(4)):
+                if ti.static(row < dim):
+                    diagonal = h[row]
+                    denominator = scale
+                    if ti.abs(diagonal) > condition_tolerance * scale:
+                        denominator = diagonal
+                    value = r[row] / denominator
+                    if -ti.math.inf < value and value < ti.math.inf:
+                        z[row] = value
+
+        if ti.static(dim == 2):
+            if finite_input != 0 and scale > 0.0 and scale < ti.math.inf:
+                a00 = h[0] / scale
+                a11 = h[1] / scale
+                a01 = h[3] / scale
+                det = a00 * a11 - a01 * a01
+                if ti.abs(det) > determinant_floor:
+                    inverse00 = a11 / det
+                    inverse01 = -a01 / det
+                    inverse11 = a00 / det
+                    matrix_norm = ti.max(
+                        ti.abs(a00) + ti.abs(a01),
+                        ti.abs(a01) + ti.abs(a11),
+                    )
+                    inverse_norm = ti.max(
+                        ti.abs(inverse00) + ti.abs(inverse01),
+                        ti.abs(inverse01) + ti.abs(inverse11),
+                    )
+                    rcond = 0.0
+                    if matrix_norm > 0.0 and inverse_norm > 0.0:
+                        rcond = 1.0 / (matrix_norm * inverse_norm)
+                    if rcond > condition_tolerance:
+                        candidate0 = (inverse00 * r[0] + inverse01 * r[1]) / scale
+                        candidate1 = (inverse01 * r[0] + inverse11 * r[1]) / scale
+                        if (
+                            -ti.math.inf < candidate0
+                            and candidate0 < ti.math.inf
+                            and -ti.math.inf < candidate1
+                            and candidate1 < ti.math.inf
+                        ):
+                            z[0] = candidate0
+                            z[1] = candidate1
+        else:
+            if finite_input != 0 and scale > 0.0 and scale < ti.math.inf:
+                a00, a11, a22 = h[0] / scale, h[1] / scale, h[2] / scale
+                a01, a12, a02 = h[3] / scale, h[4] / scale, h[5] / scale
+                c00 = a11 * a22 - a12 * a12
+                c01 = a02 * a12 - a01 * a22
+                c02 = a01 * a12 - a02 * a11
+                c11 = a00 * a22 - a02 * a02
+                c12 = a01 * a02 - a00 * a12
+                c22 = a00 * a11 - a01 * a01
+                det = a00 * c00 + a01 * c01 + a02 * c02
+                if ti.abs(det) > determinant_floor:
+                    inverse00, inverse01, inverse02 = c00 / det, c01 / det, c02 / det
+                    inverse11, inverse12, inverse22 = c11 / det, c12 / det, c22 / det
+                    matrix_norm = ti.max(
+                        ti.abs(a00) + ti.abs(a01) + ti.abs(a02),
+                        ti.abs(a01) + ti.abs(a11) + ti.abs(a12),
+                        ti.abs(a02) + ti.abs(a12) + ti.abs(a22),
+                    )
+                    inverse_norm = ti.max(
+                        ti.abs(inverse00) + ti.abs(inverse01) + ti.abs(inverse02),
+                        ti.abs(inverse01) + ti.abs(inverse11) + ti.abs(inverse12),
+                        ti.abs(inverse02) + ti.abs(inverse12) + ti.abs(inverse22),
+                    )
+                    rcond = 0.0
+                    if matrix_norm > 0.0 and inverse_norm > 0.0:
+                        rcond = 1.0 / (matrix_norm * inverse_norm)
+                    if rcond > condition_tolerance:
+                        candidate0 = (inverse00 * r[0] + inverse01 * r[1] + inverse02 * r[2]) / scale
+                        candidate1 = (inverse01 * r[0] + inverse11 * r[1] + inverse12 * r[2]) / scale
+                        candidate2 = (inverse02 * r[0] + inverse12 * r[1] + inverse22 * r[2]) / scale
+                        if (
+                            -ti.math.inf < candidate0
+                            and candidate0 < ti.math.inf
+                            and -ti.math.inf < candidate1
+                            and candidate1 < ti.math.inf
+                            and -ti.math.inf < candidate2
+                            and candidate2 < ti.math.inf
+                        ):
+                            z[0] = candidate0
+                            z[1] = candidate1
+                            z[2] = candidate2
+        return z
 
     def __init__(
         self,
@@ -412,7 +237,7 @@ class BuildTriplet:
             if grouped_nodes % self.preconditioner_group_size:
                 raise ValueError("Grouped preconditioning requires complete groups of active blocks")
         self.preconditioner_group_nodes = preconditioner_group_nodes
-        self.device_execution = device_krylov_enabled()
+        self.device_execution = DeviceKrylov.device_krylov_enabled()
         self._device_solvers = {}
 
         self.diag = ti.Vector.field(self.hessian_size, dtype=float, shape=max_active_nodes)
@@ -494,7 +319,7 @@ class BuildTriplet:
         if getattr(self.non_diag, "fixed_count", 0) and getattr(self, "_fixed_finalized", False):
             return
         if self.raw_only:
-            raise RuntimeError(
+            raise SparseAssemblyError(
                 "raw-only BuildTriplet sources cannot be reduced directly; "
                 "append them to a reducible destination first"
             )
@@ -555,7 +380,7 @@ class BuildTriplet:
         start = int(self.raw_non_diag_count[0])
         end = start + count
         if end > int(self.non_diag.max_pairs_num):
-            raise RuntimeError(
+            raise CapacityError(
                 "BuildTriplet non-diagonal triplet buffer overflow: "
                 f"need {end}, capacity {self.non_diag.max_pairs_num}."
             )
@@ -579,7 +404,7 @@ class BuildTriplet:
 
     def _append_source(self, source, active_nodes, block_offset, scale, *, reduced):
         if getattr(self, "_fixed_finalized", False):
-            raise RuntimeError("reset a finalized fixed-slot matrix before appending new sources")
+            raise SparseAssemblyError("reset a finalized fixed-slot matrix before appending new sources")
         if not isinstance(source, BuildTriplet):
             raise TypeError("source must be a BuildTriplet")
         if self.full_symmetric_input:
@@ -637,19 +462,19 @@ class BuildTriplet:
     ):
         if current_cfg().arch == ti.cuda:
             if rhs is not None or x is not None:
-                raise RuntimeError(
+                raise BackendError(
                     "CUDA BuildTriplet.solve requires rhs/x to be preloaded "
                     "in Taichi fields; host vectors are not supported"
                 )
             if return_solution:
-                raise RuntimeError(
+                raise SimulationStateError(
                     "CUDA BuildTriplet.solve cannot return a full host solution; "
                     "use return_solution=False and keep x in its Taichi field"
                 )
         if self.solver in ("CG", "PCG"):
             if transpose and not self.matrix_symmetric:
                 raise ValueError("transpose=True for a nonsymmetric matrix requires BiCGSTAB")
-            return self.PCGSolver(
+            return self.pcg_solver(
                 rhs=rhs,
                 x=x,
                 active_nodes=active_nodes,
@@ -658,7 +483,7 @@ class BuildTriplet:
                 maxiter=maxiter,
                 return_solution=return_solution,
             )
-        return self.BiCGSTABSolver(
+        return self.bi_cgstab_solver(
             rhs=rhs,
             x=x,
             active_nodes=active_nodes,
@@ -695,9 +520,9 @@ class BuildTriplet:
         active_nodes = self.max_active_nodes if active_nodes is None else int(active_nodes)
         if current_cfg().arch == ti.cuda:
             if not isinstance(rhs, ti.ScalarField):
-                raise RuntimeError("CUDA solve_flat_system requires a Taichi scalar rhs field")
+                raise BackendError("CUDA solve_flat_system requires a Taichi scalar rhs field")
             if return_solution:
-                raise RuntimeError(
+                raise SimulationStateError(
                     "CUDA solve_flat_system cannot return a full host solution; "
                     "provide a Taichi solution field instead"
                 )
@@ -713,7 +538,6 @@ class BuildTriplet:
             if values.size < expected:
                 raise ValueError(f"flat rhs has {values.size} values, expected at least {expected}")
             self.rhs.from_numpy(self._pad_vector_array(values[:expected].reshape((active_nodes, self.dim))))
-        from src.linear_solver.BlockJacobi import BlockJacobiError
 
         try:
             result = self.solve(
@@ -779,7 +603,7 @@ class BuildTriplet:
             raise ValueError(f"active_dofs={active_dofs} is outside field capacity " f"[0, {int(values.shape[0])}]")
         return math.sqrt(max(float(self._flat_squared_norm(active_dofs, values)), 0.0))
 
-    def PCGSolver(
+    def pcg_solver(
         self,
         rhs=None,
         x=None,
@@ -804,7 +628,7 @@ class BuildTriplet:
 
         # Matvec and initialization overwrite every PCG workspace before use.
         if self.preconditioner_group_size > 1:
-            self._build_group_jacobi(active_nodes, nnz)
+            self.group_preconditioner.build_triplet(self, active_nodes, nnz)
         else:
             self._build_block_jacobi(active_nodes)
         if self.device_execution:
@@ -876,7 +700,7 @@ class BuildTriplet:
         result["recursive_residual"] = float(recursive_residual)
         return result
 
-    def BiCGSTABSolver(
+    def bi_cgstab_solver(
         self,
         rhs=None,
         x=None,
@@ -1163,7 +987,7 @@ class BuildTriplet:
         if self._full_input_canonicalized:
             return int(self.raw_non_diag_count[0])
         if int(self.overflow[0]) != 0:
-            raise RuntimeError("BuildTriplet cannot canonicalize an overflowed raw matrix")
+            raise CapacityError("BuildTriplet cannot canonicalize an overflowed raw matrix")
         pairs_num = int(self.raw_non_diag_count[0])
         self._canonicalize_full_symmetric_input(pairs_num)
         self._full_input_canonicalized = True
@@ -1174,12 +998,12 @@ class BuildTriplet:
         if fixed and getattr(self, "_fixed_finalized", False):
             return int(self.raw_non_diag_count[0])
         if self.raw_only:
-            raise RuntimeError(
+            raise SparseAssemblyError(
                 "raw-only BuildTriplet sources cannot be finalized directly; "
                 "append them to a reducible destination first"
             )
         if int(self.overflow[0]) != 0:
-            raise RuntimeError(
+            raise CapacityError(
                 f"BuildTriplet non-diagonal triplet buffer overflow: used {int(self.raw_non_diag_count[0])}, "
                 f"capacity {self.non_diag.max_pairs_num}."
             )
@@ -1193,7 +1017,7 @@ class BuildTriplet:
 
     def to_scipy(self, active_nodes=None):
         if self.raw_only:
-            raise RuntimeError(
+            raise SparseAssemblyError(
                 "raw-only BuildTriplet sources cannot be converted directly; "
                 "append them to a reducible destination first"
             )
@@ -1307,7 +1131,7 @@ class BuildTriplet:
 
     def load_from_scipy_blocks(self, K, active_nodes=None):
         if self.full_symmetric_input:
-            raise RuntimeError(
+            raise SimulationStateError(
                 "full_symmetric_input matrices require raw two-triangle "
                 "assembly followed by canonicalization; reduced SciPy "
                 "loading bypasses that lifecycle"
@@ -1744,7 +1568,7 @@ class BuildTriplet:
                 if encoded < 0:
                     column = self.non_diag.tripletI[k]
                 if ti.static(self.symmetric):
-                    value += _sym_block_matvec(self.non_diag.tripletH[k], x[column], ti.static(self.dim))
+                    value += self._sym_block_matvec(self.non_diag.tripletH[k], x[column], ti.static(self.dim))
                 else:
                     if encoded < 0:
                         value += _dense_block_transpose_matvec(
@@ -1761,7 +1585,7 @@ class BuildTriplet:
                         value[d] = warp_reduce_sum_f32(value[d])
             if lane == 0:
                 if ti.static(self.symmetric):
-                    value += _sym_block_matvec(self.diag[row], x[row], ti.static(self.dim))
+                    value += self._sym_block_matvec(self.diag[row], x[row], ti.static(self.dim))
                 elif ti.static(transpose):
                     value += _dense_block_transpose_matvec(self.diag[row], x[row], ti.static(self.dim))
                 else:
@@ -1772,7 +1596,7 @@ class BuildTriplet:
     def _matvec(self, active_nodes: int, nnz: int, x: ti.template(), Ax: ti.template()):
         for i in range(active_nodes):
             if ti.static(self.symmetric):
-                Ax[i] = _sym_block_matvec(self.diag[i], x[i], ti.static(self.dim))
+                Ax[i] = self._sym_block_matvec(self.diag[i], x[i], ti.static(self.dim))
             else:
                 Ax[i] = _dense_block_matvec(self.diag[i], x[i], ti.static(self.dim))
         for k in range(nnz):
@@ -1780,9 +1604,9 @@ class BuildTriplet:
             j = self.non_diag.tripletJ[k]
             if i < active_nodes and j < active_nodes:
                 if ti.static(self.symmetric):
-                    Ax[i] += _sym_block_matvec(self.non_diag.tripletH[k], x[j], ti.static(self.dim))
+                    Ax[i] += self._sym_block_matvec(self.non_diag.tripletH[k], x[j], ti.static(self.dim))
                     if ti.static(self.matrix_symmetric):
-                        Ax[j] += _sym_block_matvec(self.non_diag.tripletH[k], x[i], ti.static(self.dim))
+                        Ax[j] += self._sym_block_matvec(self.non_diag.tripletH[k], x[i], ti.static(self.dim))
                 else:
                     Ax[i] += _dense_block_matvec(self.non_diag.tripletH[k], x[j], ti.static(self.dim))
                     if ti.static(self.matrix_symmetric):
@@ -1792,7 +1616,7 @@ class BuildTriplet:
     def _transpose_matvec(self, active_nodes: int, nnz: int, x: ti.template(), Ax: ti.template()):
         for i in range(active_nodes):
             if ti.static(self.symmetric):
-                Ax[i] = _sym_block_matvec(self.diag[i], x[i], ti.static(self.dim))
+                Ax[i] = self._sym_block_matvec(self.diag[i], x[i], ti.static(self.dim))
             else:
                 Ax[i] = _dense_block_transpose_matvec(self.diag[i], x[i], ti.static(self.dim))
         for k in range(nnz):
@@ -1800,7 +1624,7 @@ class BuildTriplet:
             j = self.non_diag.tripletJ[k]
             if i < active_nodes and j < active_nodes:
                 if ti.static(self.symmetric):
-                    Ax[j] += _sym_block_matvec(self.non_diag.tripletH[k], x[i], ti.static(self.dim))
+                    Ax[j] += self._sym_block_matvec(self.non_diag.tripletH[k], x[i], ti.static(self.dim))
                 else:
                     Ax[j] += _dense_block_transpose_matvec(self.non_diag.tripletH[k], x[i], ti.static(self.dim))
 
@@ -1828,12 +1652,12 @@ class BuildTriplet:
 
     def _init_grouped_pcg(self, active_nodes):
         self._grouped_true_residual(active_nodes)
-        self._apply_group_jacobi(active_nodes, self.r, self.z)
+        self.group_preconditioner.apply(active_nodes, self.r, self.z)
         return self._reduce_grouped_pcg(active_nodes, True)
 
     def _update_grouped_pcg(self, active_nodes, alpha):
         self._grouped_update_residual(active_nodes, alpha)
-        self._apply_group_jacobi(active_nodes, self.r, self.z)
+        self.group_preconditioner.apply(active_nodes, self.r, self.z)
         return self._reduce_grouped_pcg(active_nodes, False)
 
     @ti.kernel
@@ -1857,12 +1681,6 @@ class BuildTriplet:
                 self.p[i] = self.z[i]
         return rz, rr
 
-    def _build_group_jacobi(self, active_nodes, nnz):
-        self.group_preconditioner.build_triplet(self, active_nodes, nnz)
-
-    def _apply_group_jacobi(self, active_nodes, source, destination):
-        self.group_preconditioner.apply(active_nodes, source, destination)
-
     @ti.kernel
     def _build_block_jacobi(self, active_nodes: int):
         for block in range(active_nodes):
@@ -1872,7 +1690,7 @@ class BuildTriplet:
                 basis[column] = 1.0
                 result = ti.Vector.zero(float, self.dim)
                 if ti.static(self.symmetric):
-                    result = _apply_sym_block_jacobi(self.diag[block], basis, ti.static(self.dim))
+                    result = self._apply_sym_block_jacobi(self.diag[block], basis, ti.static(self.dim))
                 else:
                     result = _apply_dense_block_jacobi(self.diag[block], basis, ti.static(self.dim))
                 for row in range(self.dim):

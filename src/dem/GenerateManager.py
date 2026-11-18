@@ -1,13 +1,15 @@
+from src.dem.generator.AffineBodyTemplate import AffineBodyTemplate
+from src.utils.errors import ConfigurationError, SimulationStateError
 import numpy as np
 import taichi as ti
 
-from src.dem.generator.BodyGenerator import ParticleCreator, ParticleGenerator
+from src.dem.generator.ParticleCreator import ParticleCreator
+from src.dem.generator.ParticleGenerator import ParticleGenerator
 from src.dem.generator.LoadFromFile import ParticleReader
 from src.dem.generator.ClumpTemplate import ClumpTemplate
 from src.dem.generator.GeneralShapeTemplate import GeneralShapeTemplate
-from src.dem.affine.AffineBodyTemplate import AffineBodyTemplate
 from src.dem.generator.WallGenerator import WallGenerator
-from src.dem.SceneManager import myScene
+from src.dem.SceneManager import SceneManager
 from src.utils.ObjectIO import DictIO
 from src.utils.FieldIO import runtime_float_numpy_dtype
 from src.utils.RegionFunction import RegionFunction
@@ -22,7 +24,7 @@ class GenerateManager(object):
         self.bodyCreator = ParticleCreator()
 
     def add_my_region(self, dims, domain, region_dict):
-        name = DictIO.GetEssential(region_dict, "Name")
+        name = DictIO.get_essential(region_dict, "Name")
         if name in self.myRegion:
             region: RegionFunction = self.myRegion[name]
             region.finalize()
@@ -41,10 +43,10 @@ class GenerateManager(object):
         if not self.myRegion is None:
             return self.myRegion[name]
         else:
-            raise RuntimeError("Region class should be activated first!")
+            raise SimulationStateError("Region class should be activated first!")
 
     def check_template_name(self, template_dict):
-        name = DictIO.GetEssential(template_dict, "Name")
+        name = DictIO.get_essential(template_dict, "Name")
         if name in self.myTemplate:
             del self.myTemplate[name]
         return name
@@ -58,17 +60,17 @@ class GenerateManager(object):
                 name = self.check_template_name(dicts)
                 self.add_template(name, dicts, types, scene)
 
-    def add_template(self, name, template_dict, types, scene: myScene):
+    def add_template(self, name, template_dict, types, scene: SceneManager):
         if types == "DEM":
             if not "Pebble" in template_dict:
-                raise RuntimeError("Plase double check if the scheme is set as /DEM/")
+                raise SimulationStateError("Plase double check if the scheme is set as /DEM/")
             DictIO.append(self.myTemplate, name, ClumpTemplate())
             template_ptr: ClumpTemplate = self.myTemplate[name]
             template_ptr.clump_template(template_dict)
             template_ptr.clear()
         elif types == "LSDEM" or types == "LSMPM" or types == "PolySuperEllipsoid" or types == "PolySuperQuadrics":
             if not "Object" in template_dict:
-                raise RuntimeError("Plase double check if the scheme is set as /LSDEM/")
+                raise SimulationStateError("Plase double check if the scheme is set as /LSDEM/")
             DictIO.append(self.myTemplate, name, GeneralShapeTemplate())
             ltemplate_ptr: GeneralShapeTemplate = self.myTemplate[name]
             ltemplate_ptr.levelset_template(template_dict)
@@ -84,17 +86,16 @@ class GenerateManager(object):
                 scene.add_rigid_implicit_surface_template(
                     name, ltemplate_ptr.objects.mesh.vertices, ltemplate_ptr.objects.physical_parameter
                 )
-            ltemplate_ptr.clear()
         elif types == "AffineBody":
             if not "Object" in template_dict:
-                raise RuntimeError("Plase double check if the scheme is set as /AffineBody/")
+                raise SimulationStateError("Plase double check if the scheme is set as /AffineBody/")
             DictIO.append(self.myTemplate, name, AffineBodyTemplate())
             atemplate_ptr: AffineBodyTemplate = self.myTemplate[name]
             atemplate_ptr.surface_template(template_dict)
             scene.add_affine_template(name, atemplate_ptr)
         else:
             valid_list = ["DEM", "LSDEM", "LSMPM", "PolySuperEllipsoid", "PolySuperQuadrics", "AffineBody"]
-            raise RuntimeError(f"Only {valid_list} is valid for Keyword:: /types/")
+            raise SimulationStateError(f"Only {valid_list} is valid for Keyword:: /types/")
 
     def insert_template_to_creator(self):
         self.bodyCreator.set_template(self.myTemplate)
@@ -113,13 +114,13 @@ class GenerateManager(object):
                 or (generator.btype == "RigidBody" and generator.write_file is False)
             ):
                 if len(self.myTemplate) == 0:
-                    raise RuntimeError("The template must be set first")
+                    raise ConfigurationError("The template must be set first")
             generator.set_template(self.myTemplate)
 
     def insert_region_to_generator(self, generator: ParticleGenerator):
         if generator.type == "Generate" or generator.type == "Distribute" or generator.type == "Lattice":
             if len(self.myRegion) == 0:
-                raise RuntimeError("The region must be set first")
+                raise ConfigurationError("The region must be set first")
             generator.set_region(self.myRegion)
 
     def create_body(self, body_dict, sims, scene):
@@ -127,24 +128,24 @@ class GenerateManager(object):
         self.bodyCreator.create(sims, scene, body_dict)
 
     def create_body_batch(self, body_dict, sims, scene):
-        body_type = DictIO.GetEssential(body_dict, "BodyType")
+        body_type = DictIO.get_essential(body_dict, "BodyType")
         if body_type not in ("RigidBody", "SoftBody"):
             raise ValueError("Batch creation currently supports only RigidBody and SoftBody")
-        template = DictIO.GetEssential(body_dict, "Template")
+        template = DictIO.get_essential(body_dict, "Template")
         if not isinstance(template, dict):
             raise TypeError("Batch body Template must be a dictionary")
 
-        centers = np.asarray(DictIO.GetEssential(template, "BodyPoints"), dtype=np.float64)
-        radii = np.asarray(DictIO.GetEssential(template, "BoundingRadii"), dtype=np.float64)
+        centers = np.asarray(DictIO.get_essential(template, "BodyPoints"), dtype=np.float64)
+        radii = np.asarray(DictIO.get_essential(template, "BoundingRadii"), dtype=np.float64)
         orientations = np.asarray(
-            DictIO.GetAlternative(
+            DictIO.get_alternative(
                 template,
                 "BodyOrientationsRadians",
                 np.zeros_like(centers),
             ),
             dtype=np.float64,
         )
-        coordinates_are_mass_centers = bool(DictIO.GetAlternative(template, "CoordinatesAreMassCenters", True))
+        coordinates_are_mass_centers = bool(DictIO.get_alternative(template, "CoordinatesAreMassCenters", True))
         if centers.ndim != 2 or centers.shape[1] != 3:
             raise ValueError("BodyPoints must have shape (body_count, 3)")
         body_count = int(centers.shape[0])
@@ -195,12 +196,12 @@ class GenerateManager(object):
         return {
             "body_type": body_type,
             "body_count": body_count,
-            "template_name": DictIO.GetEssential(common_template, "Name"),
+            "template_name": DictIO.get_essential(common_template, "Name"),
             "coordinate_semantics": "center_of_mass",
             "orientation_units": "radians",
         }
 
-    def regenerate(self, scene: myScene):
+    def regenerate(self, scene: SceneManager):
         if len(self.myGenerator) == 0:
             return 0
 
@@ -223,9 +224,9 @@ class GenerateManager(object):
         else:
             generator.finalize()
 
-    def read_body_file(self, body_dict, sims, scene: myScene):
+    def read_body_file(self, body_dict, sims, scene: SceneManager):
         if scene.material is None:
-            raise RuntimeError("The attribute must be added first")
+            raise ConfigurationError("The attribute must be added first")
 
         generator = ParticleReader(sims)
         generator.set_system_strcuture(body_dict)
@@ -243,7 +244,7 @@ class GenerateManager(object):
             for wall in wall_dict:
                 self.wallGenerator.insert_wall(wall, sims, scene)
 
-    def read_wall_file(self, wall_dict, sims, scene: myScene):
+    def read_wall_file(self, wall_dict, sims, scene: SceneManager):
         if type(wall_dict) is dict:
             self.wallGenerator.restart_walls(wall_dict, sims, scene)
         elif type(wall_dict) is list:

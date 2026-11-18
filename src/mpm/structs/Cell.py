@@ -1,7 +1,7 @@
 import taichi as ti
 
-from src.utils.constants import ZEROVEC6f
-from src.utils.TypeDefination import vec6f
+from src.utils.constants import ZEROVEC6F
+from src.utils.TypeDefinition import vec6f
 
 
 @ti.dataclass
@@ -11,7 +11,7 @@ class HexahedronCell:
 
     @ti.func
     def _reset(self):
-        self.volume = 0.
+        self.volume = 0.0
 
     @ti.func
     def _update_cell_volume(self, volume):
@@ -25,9 +25,9 @@ class HexahedronGuassCell:
 
     @ti.func
     def _reset(self):
-        if self.vol > 0.:
-            self.stress = ZEROVEC6f
-            self.vol = 0.
+        if self.vol > 0.0:
+            self.stress = ZEROVEC6F
+            self.vol = 0.0
 
 
 @ti.data_oriented
@@ -64,6 +64,7 @@ class IncompressibleCell:
             self.solid_sdf = ti.field(dtype=float, shape=self.cnum, offset=0 * self.cnum - self.ghost_cell)
         else:
             self.solid_sdf = solid_sdf
+
 
 @ti.data_oriented
 class IncompressibleFace:

@@ -1,13 +1,13 @@
 import taichi as ti
 
-from src.utils.constants import Threshold, ZEROVEC3f
-from src.utils.ScalarFunction import PairingMapping, linearize3D
-from src.utils.TypeDefination import vec3f
+from src.utils.constants import THRESHOLD, ZEROVEC3F
+from src.utils.ScalarFunction import pairing_mapping, linearize3d
+from src.utils.TypeDefinition import vec3f
 
 
 @ti.func
 def _valid_height(height, no_data):
-    return ti.abs(height - no_data) > Threshold
+    return ti.abs(height - no_data) > THRESHOLD
 
 
 @ti.func
@@ -18,10 +18,10 @@ def _heightfield_point(xind, yind, cell_size, height):
 @ti.func
 def _set_heightfield_triangle(point1, point2, point3):
     active = ti.u8(1)
-    normal = ZEROVEC3f
+    normal = ZEROVEC3F
     cross = (point2 - point1).cross(point3 - point1)
     norm = cross.norm()
-    if norm > Threshold:
+    if norm > THRESHOLD:
         normal = cross / norm
     else:
         active = ti.u8(0)
@@ -31,10 +31,10 @@ def _set_heightfield_triangle(point1, point2, point3):
 @ti.func
 def _digital_elevation_triangle(position, cell_size, icell_size, cnum, height_dim, no_data, heightfield):
     active = ti.u8(0)
-    point1 = ZEROVEC3f
-    point2 = ZEROVEC3f
-    point3 = ZEROVEC3f
-    normal = ZEROVEC3f
+    point1 = ZEROVEC3F
+    point2 = ZEROVEC3F
+    point3 = ZEROVEC3F
+    normal = ZEROVEC3F
 
     xcoord = position[0] * icell_size
     ycoord = position[1] * icell_size
@@ -42,10 +42,10 @@ def _digital_elevation_triangle(position, cell_size, icell_size, cnum, height_di
     yind = ti.floor(ycoord, int)
 
     if xind >= 0 and xind < cnum[0] and yind >= 0 and yind < cnum[1]:
-        ind00 = linearize3D(xind, yind, 0, height_dim)
-        ind10 = linearize3D(xind + 1, yind, 0, height_dim)
-        ind01 = linearize3D(xind, yind + 1, 0, height_dim)
-        ind11 = linearize3D(xind + 1, yind + 1, 0, height_dim)
+        ind00 = linearize3d(xind, yind, 0, height_dim)
+        ind10 = linearize3d(xind + 1, yind, 0, height_dim)
+        ind01 = linearize3d(xind, yind + 1, 0, height_dim)
+        ind11 = linearize3d(xind + 1, yind + 1, 0, height_dim)
 
         height00 = heightfield[ind00]
         height10 = heightfield[ind10]
@@ -81,11 +81,11 @@ def _digital_elevation_triangle(position, cell_size, icell_size, cnum, height_di
 
 
 @ti.kernel
-def kernel_particle_digital_elevation_heightfield_force_assemble_(
-    particleNum: int,
+def kernel_particle_digital_elevation_heightfield_force_assemble(
+    particle_num: int,
     dt: ti.template(),
     max_material_num: int,
-    surfaceProps: ti.template(),
+    surface_props: ti.template(),
     particle: ti.template(),
     terrain_material: int,
     cell_size: float,
@@ -97,7 +97,7 @@ def kernel_particle_digital_elevation_heightfield_force_assemble_(
     cplist: ti.template(),
     model_type: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 0:
             cplist[np]._no_contact()
             continue
@@ -114,8 +114,8 @@ def kernel_particle_digital_elevation_heightfield_force_assemble_(
         distance = (position - point_on_plane).dot(normal)
         gapn = distance - radius
 
-        materialID = PairingMapping(particle[np].materialID, terrain_material, max_material_num)
-        if gapn < surfaceProps[materialID].ncut:
+        material_id = pairing_mapping(particle[np].materialID, terrain_material, max_material_num)
+        if gapn < surface_props[material_id].ncut:
             velocity = particle[np]._get_velocity()
             angular_velocity = particle[np]._get_angular_velocity()
             mass = particle[np]._get_mass()
@@ -124,17 +124,17 @@ def kernel_particle_digital_elevation_heightfield_force_assemble_(
             contact_position = projection - 0.5 * gapn * normal
             relative_velocity = velocity + angular_velocity.cross(contact_position - position)
             if ti.static(model_type == 3):
-                normal_force, tangential_force = surfaceProps[materialID]._fluid_force_assemble(
+                normal_force, tangential_force = surface_props[material_id]._fluid_force_assemble(
                     mass, gapn, 1.0, normal, relative_velocity, dt
                 )
                 total_force = normal_force + tangential_force
                 resultant_momentum = total_force.cross(position - contact_position)
-                cplist[np]._set_contact(normal_force, tangential_force, ZEROVEC3f)
+                cplist[np]._set_contact(normal_force, tangential_force, ZEROVEC3F)
                 particle[np]._update_contact_interaction(total_force, resultant_momentum)
             else:
                 tangential_overlap = cplist[np].oldTangOverlap
-                normal_force, tangential_force, momentum, tangential_overlap_temp = surfaceProps[
-                    materialID
+                normal_force, tangential_force, momentum, tangential_overlap_temp = surface_props[
+                    material_id
                 ]._force_assemble(
                     mass,
                     rad_eff,

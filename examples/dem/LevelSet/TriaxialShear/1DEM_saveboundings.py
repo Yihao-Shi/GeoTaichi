@@ -36,17 +36,25 @@ init(arch="gpu", debug=True)
 
 dem = DEM()
 
-dem.set_configuration(domain=ti.Vector([0.1, 0.1, 0.1]),
-                      boundary=["Destroy", "Destroy", "Destroy"],
-                      gravity=ti.Vector([0., 0., 0.]),
-                      engine="SymplecticEuler",
-                      search="LinkedCell")          
+dem.set_configuration(
+    domain=ti.Vector([0.1, 0.1, 0.1]),
+    boundary=["Destroy", "Destroy", "Destroy"],
+    gravity=ti.Vector([0.0, 0.0, 0.0]),
+    engine="SymplecticEuler",
+    search="LinkedCell",
+)
 
-                            
-dem.add_region(region=[{"Name": "region1",
-                          "Type": "Rectangle",
-                          "BoundingBoxPoint": ti.Vector([0.0125, 0.0125, 0.0125]),
-                          "BoundingBoxSize": ti.Vector([0.005*scale_fac, 0.005*scale_fac, 0.005*scale_fac])}])
+
+dem.add_region(
+    region=[
+        {
+            "Name": "region1",
+            "Type": "Rectangle",
+            "BoundingBoxPoint": ti.Vector([0.0125, 0.0125, 0.0125]),
+            "BoundingBoxSize": ti.Vector([0.005 * scale_fac, 0.005 * scale_fac, 0.005 * scale_fac]),
+        }
+    ]
+)
 
 # dem.add_body(body={
 #                    "GenerateType": "Distribute",
@@ -85,42 +93,57 @@ dem.add_region(region=[{"Name": "region1",
 #     "BodyOrientation": "uniform",
 #     "Fraction":0.16}]})
 
-dem.add_body(body={
-                   "GenerateType": "Distribute",
-                   "BodyType": "Sphere",
-                   "RegionName": "region1",
-                   "Porosity":   0.5,
-                   "WriteFile":  True,
-                   "Template":[{"GroupID": 0,
-    "MaterialID": 0,
-    "MinRadius": 0.00007*scale_fac,
-    "MaxRadius": 0.00007*scale_fac,
-    "BodyOrientation": "uniform",
-    "Fraction":0.10},
-    {"GroupID": 0,
-    "MaterialID": 0,
-    "MinRadius": 0.000085*scale_fac,
-    "MaxRadius": 0.000085*scale_fac,
-    "BodyOrientation": "uniform",
-    "Fraction":0.20},
-    {"GroupID": 0,
-    "MaterialID": 0,
-    "MinRadius": 0.00012*scale_fac,
-    "MaxRadius": 0.00012*scale_fac,
-    "BodyOrientation": "uniform",
-    "Fraction":0.3},
-    {"GroupID": 0,
-    "MaterialID": 0,
-    "MinRadius": 0.00015*scale_fac,
-    "MaxRadius": 0.00015*scale_fac,
-    "BodyOrientation": "uniform",
-    "Fraction":0.24},
-    {"GroupID": 0,
-    "MaterialID": 0,
-    "MinRadius": 0.000175*scale_fac,
-    "MaxRadius": 0.000175*scale_fac,
-    "BodyOrientation": "uniform",
-    "Fraction":0.16}]})
+dem.add_body(
+    body={
+        "GenerateType": "Distribute",
+        "BodyType": "Sphere",
+        "RegionName": "region1",
+        "Porosity": 0.5,
+        "WriteFile": True,
+        "Template": [
+            {
+                "GroupID": 0,
+                "MaterialID": 0,
+                "MinRadius": 0.00007 * scale_fac,
+                "MaxRadius": 0.00007 * scale_fac,
+                "BodyOrientation": "uniform",
+                "Fraction": 0.10,
+            },
+            {
+                "GroupID": 0,
+                "MaterialID": 0,
+                "MinRadius": 0.000085 * scale_fac,
+                "MaxRadius": 0.000085 * scale_fac,
+                "BodyOrientation": "uniform",
+                "Fraction": 0.20,
+            },
+            {
+                "GroupID": 0,
+                "MaterialID": 0,
+                "MinRadius": 0.00012 * scale_fac,
+                "MaxRadius": 0.00012 * scale_fac,
+                "BodyOrientation": "uniform",
+                "Fraction": 0.3,
+            },
+            {
+                "GroupID": 0,
+                "MaterialID": 0,
+                "MinRadius": 0.00015 * scale_fac,
+                "MaxRadius": 0.00015 * scale_fac,
+                "BodyOrientation": "uniform",
+                "Fraction": 0.24,
+            },
+            {
+                "GroupID": 0,
+                "MaterialID": 0,
+                "MinRadius": 0.000175 * scale_fac,
+                "MaxRadius": 0.000175 * scale_fac,
+                "BodyOrientation": "uniform",
+                "Fraction": 0.16,
+            },
+        ],
+    }
+)
 
 if destination_file.exists() and destination_file != generated_file:
     destination_file.unlink()

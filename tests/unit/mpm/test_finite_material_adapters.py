@@ -13,7 +13,7 @@ pytestmark = [pytest.mark.materials, pytest.mark.cpu, pytest.mark.isolated_dimen
 
 @pytest.mark.parametrize("name", FINITE_ELASTIC)
 def test_soft_material_manager_derivatives_and_commit(taichi_runtime, name):
-    from src.mpm.MaterialManager import SoftParticleMaterialManager
+    from src.mpm.SoftParticleMaterialManager import SoftParticleMaterialManager
 
     soft = ti.Struct.field({"materialID": int}, shape=1)
     soft.materialID.fill(1)
@@ -36,9 +36,9 @@ def test_soft_material_manager_derivatives_and_commit(taichi_runtime, name):
         deformation = ti.Matrix.zero(ti.f64, 3, 3)
         for i, j in ti.static(ti.ndrange(3, 3)):
             deformation[i, j] = values[i, j]
-        energy[None] = model.Psi(1, deformation)
-        stress[None] = model.dPsi_div_dF(1, deformation)
-        tangent[None] = model.d2Psi_div_d2F(1, deformation)
+        energy[None] = model.psi(1, deformation)
+        stress[None] = model.d_psi_div_d_f(1, deformation)
+        tangent[None] = model.d2_psi_div_d2_f(1, deformation)
         if commit:
             committed[None], committed_stress[None] = model.commit_soft_particle_state(0, 1, deformation, state)
 

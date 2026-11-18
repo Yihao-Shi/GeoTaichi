@@ -317,7 +317,7 @@ class MGPCGPoissonSolver:
                 operations = list(self._v_cycle_operations(self.smoother))
                 operations += [(self.reduce, (self.z[0], self.r[0])), (self.update_device_direction, ())]
             else:
-                operations = [(self.compute_Ap_dot, ()), (self.update_device_alpha, ()), (self.update_xr_dot, ())]
+                operations = [(self.compute_ap_dot, ()), (self.update_device_alpha, ()), (self.update_xr_dot, ())]
             self._cg_graphs[key] = self._compile_graph(operations)
         self._cg_graphs[key].run({})
 
@@ -345,29 +345,29 @@ class MGPCGPoissonSolver:
             self.cg_epsilon[None] = eps
         self.compute_true_residual()
         self.reduce(self.r[0], self.r[0])
-        initial_rTr = self.sum[None]
-        self.initial_residual = initial_rTr
-        self.final_residual = initial_rTr
+        initial_r_tr = self.sum[None]
+        self.initial_residual = initial_r_tr
+        self.final_residual = initial_r_tr
         self.last_iterations = 0
         self.breakdown_reason = ""
         self.breakdown_value = 0.0
 
-        if not isfinite(initial_rTr) or initial_rTr < 0.0:
-            return self.fail("initial_rTr", initial_rTr)
-        tol = max(abs_tol, initial_rTr * rel_tol)
-        if initial_rTr < tol:
+        if not isfinite(initial_r_tr) or initial_r_tr < 0.0:
+            return self.fail("initial_rTr", initial_r_tr)
+        tol = max(abs_tol, initial_r_tr * rel_tol)
+        if initial_r_tr < tol:
             return True
         self.beta[None] = 0.0
         self.apply_v_cycle()
         self.update_p()
 
         self.reduce(self.z[0], self.r[0])
-        old_zTr = self.sum[None]
-        if self._invalid_cg_product(old_zTr):
-            return self.fail("initial_zTr", old_zTr)
+        old_z_tr = self.sum[None]
+        if self._invalid_cg_product(old_z_tr):
+            return self.fail("initial_zTr", old_z_tr)
 
         if self.graph_dispatch:
-            self.cg_state[None] = ti.Vector([0.0, old_zTr, 0.0, 0.0])
+            self.cg_state[None] = ti.Vector([0.0, old_z_tr, 0.0, 0.0])
 
         # Conjugate gradients. Recompute b-Ax before accepting convergence;
         # the recursively updated residual can lose accuracy for stiff systems.
@@ -382,12 +382,12 @@ class MGPCGPoissonSolver:
                     return self.fail(reason, state[3])
                 rTr = float(state[0])
             else:
-                self.compute_Ap()
+                self.compute_ap()
                 self.reduce(self.p, self.Ap)
                 pAp = self.sum[None]
                 if self._invalid_cg_product(pAp):
                     return self.fail("pAp", pAp)
-                self.alpha[None] = old_zTr / pAp
+                self.alpha[None] = old_z_tr / pAp
                 self.update_xr()
                 self.reduce(self.r[0], self.r[0])
                 rTr = self.sum[None]
@@ -400,21 +400,21 @@ class MGPCGPoissonSolver:
             if rTr < tol or iter % reliable_update_interval == 0:
                 self.compute_true_residual()
                 self.reduce(self.r[0], self.r[0])
-                verified_rTr = self.sum[None]
-                self.final_residual = verified_rTr
-                if not isfinite(verified_rTr) or verified_rTr < 0.0:
-                    return self.fail("verified_rTr", verified_rTr)
-                if verified_rTr < tol:
+                verified_r_tr = self.sum[None]
+                self.final_residual = verified_r_tr
+                if not isfinite(verified_r_tr) or verified_r_tr < 0.0:
+                    return self.fail("verified_rTr", verified_r_tr)
+                if verified_r_tr < tol:
                     return True
                 self.beta[None] = 0.0
                 self.apply_v_cycle()
                 self.update_p()
                 self.reduce(self.z[0], self.r[0])
-                old_zTr = self.sum[None]
-                if self._invalid_cg_product(old_zTr):
-                    return self.fail("verified_zTr", old_zTr)
+                old_z_tr = self.sum[None]
+                if self._invalid_cg_product(old_z_tr):
+                    return self.fail("verified_zTr", old_z_tr)
                 if self.graph_dispatch:
-                    self.cg_state[None] = ti.Vector([verified_rTr, old_zTr, 0.0, 0.0])
+                    self.cg_state[None] = ti.Vector([verified_r_tr, old_z_tr, 0.0, 0.0])
                 continue
 
             if self.graph_dispatch:
@@ -422,15 +422,15 @@ class MGPCGPoissonSolver:
                 continue
             self.apply_v_cycle()
             self.reduce(self.z[0], self.r[0])
-            new_zTr = self.sum[None]
-            if self._invalid_cg_product(new_zTr, allow_zero=True):
-                return self.fail("new_zTr", new_zTr)
-            if self._invalid_cg_product(old_zTr):
-                return self.fail("old_zTr", old_zTr)
-            self.beta[None] = new_zTr / old_zTr
+            new_z_tr = self.sum[None]
+            if self._invalid_cg_product(new_z_tr, allow_zero=True):
+                return self.fail("new_zTr", new_z_tr)
+            if self._invalid_cg_product(old_z_tr):
+                return self.fail("old_zTr", old_z_tr)
+            self.beta[None] = new_z_tr / old_z_tr
 
             self.update_p()
-            old_zTr = new_zTr
+            old_z_tr = new_z_tr
         if self.graph_dispatch:
             state = self.read_cg_state()
             if state[2] != 0:
@@ -446,7 +446,7 @@ class MGPCGPoissonSolver:
         return False
 
     @ti.kernel
-    def compute_Ap_dot(self):
+    def compute_ap_dot(self):
         self.sum[None] = 0.0
         for I in ti.grouped(self.Ap):
             if self.grid_type[0][I] == self.FLUID:
@@ -504,7 +504,7 @@ class MGPCGPoissonSolver:
                 self.sum[None] += p[I] * q[I]
 
     @ti.kernel
-    def compute_Ap(self):
+    def compute_ap(self):
         for I in ti.grouped(self.Ap):
             if self.grid_type[0][I] == self.FLUID:
                 r = self.Adiag[0][I] * self.p[I]

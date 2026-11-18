@@ -1,3 +1,4 @@
+from src.linear_solver.Utilities import solve_csr_system
 import os
 
 import numpy as np
@@ -27,7 +28,7 @@ def _build_point_plane_contact(
     activate_friction=True,
     gravity=(2.0, -9.81),
     newmark=(1.0, 0.5, 1.0),
-    material="neoHookean",
+    material="NeoHookean",
     material_parameters=None,
 ):
     import src.mpm.config as config
@@ -68,7 +69,7 @@ def _build_point_plane_contact(
         path=str(tmp_path / "mpm"),
         **material_parameters,
     )
-    mpm.init_F0()
+    mpm.init_f0()
     mpm.mass_vec.fill(0.0)
     mpm.grid_reset()
     mpm.compute_shapefn()
@@ -156,7 +157,7 @@ def test_lagged_friction_and_plasticity_share_exact_adjoint(tmp_path):
     config, mpm, contact = _build_point_plane_contact(
         tmp_path,
         friction_mode="lagged",
-        material="vonMises",
+        material="VonMises",
         material_parameters={
             "yield_stress": 500.0,
             "hardening_modulus": 1200.0,
@@ -256,11 +257,11 @@ def test_lagged_adjoint_cache_is_distinct_from_fixed_point_probe(tmp_path):
     ("material", "material_parameters"),
     [
         (
-            "vonMises",
+            "VonMises",
             {"yield_stress": 500.0, "hardening_modulus": 1200.0},
         ),
         (
-            "druckerPrager",
+            "DruckerPrager",
             {"cohesion": 100.0, "friction_angle": 20.0},
         ),
     ],
@@ -402,7 +403,7 @@ def test_complete_plastic_particle_trajectory_vjp_matches_directional_fd(tmp_pat
             activate_friction=True,
             gravity=(2.0, -9.81),
             newmark=(0.5, 0.25, 0.5),
-            material="vonMises",
+            material="VonMises",
             material_parameters={
                 "yield_stress": 80.0,
                 "hardening_modulus": 400.0,
@@ -618,7 +619,6 @@ def test_cuda_monolithic_soft_particle_matrix_matches_cpu_oracle(
     tmp_path,
 ):
     """Exercise the CUDA production dataflow with Taichi's CPU test backend."""
-    from src.linear_solver.BuildTriplet import solve_csr_system
     from src.mpm.boundaries.BoundaryCondition import DirichletBoundary
 
     config, mpm, contact = _build_point_plane_contact(tmp_path)
@@ -766,7 +766,6 @@ def test_cuda_lagged_monolithic_matrix_is_spd_and_uses_pcg(
     tmp_path,
 ):
     """Projected local blocks plus dynamic mass form the SPD solve."""
-    from src.linear_solver.BuildTriplet import solve_csr_system
     from src.mpm.boundaries.BoundaryCondition import DirichletBoundary
 
     config, mpm, contact = _build_point_plane_contact(tmp_path)
@@ -899,12 +898,15 @@ def test_complete_fully_implicit_residual_jacobian_by_finite_difference(
 def test_fully_implicit_mode_rejects_lagged_outer_iterations():
     # Validation is deliberately covered through the public constructor by the
     # production test above; this small check documents the accepted mode name.
-    from src.mpm.soft_particle.IPCMPM import _normalize_friction_mode
+    from src.mpm.soft_particle.IPCMPM import IPCMPM as _IPCMPM__normalize_friction_mode_owner
 
-    assert _normalize_friction_mode("fully_implicit_experimental") == "fully_implicit"
-    assert _normalize_friction_mode("lagged") == "lagged"
+    assert (
+        _IPCMPM__normalize_friction_mode_owner._normalize_friction_mode("fully_implicit_experimental")
+        == "fully_implicit"
+    )
+    assert _IPCMPM__normalize_friction_mode_owner._normalize_friction_mode("lagged") == "lagged"
     with pytest.raises(ValueError, match="friction_mode"):
-        _normalize_friction_mode("current-but-inexact")
+        _IPCMPM__normalize_friction_mode_owner._normalize_friction_mode("current-but-inexact")
 
 
 def test_fully_implicit_point_plane_newton_smoke(tmp_path):

@@ -13,7 +13,6 @@ import glob
 import json
 import math
 import os
-from pathlib import Path
 import numpy as np
 
 from examples.mmpm.UTubeFlow2D.u_tube_flow_2d_parameters import (

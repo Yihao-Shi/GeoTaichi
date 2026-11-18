@@ -8,7 +8,7 @@ import taichi as ti
 
 from src.linear_solver.MatrixFreePCG import MatrixFreePCG
 from src.mpm.engines.IncompressibleEngine import IncompressibleEngine
-from src.mpm.engines.Operator import PoissonEquationOperator
+from src.mpm.engines.PoissonEquationOperator import PoissonEquationOperator
 from tests.verification.mpdem.test_incompressible_coupling_kernels import FluidProperties
 
 pytestmark = [pytest.mark.verification, pytest.mark.mpdem, pytest.mark.cpu, pytest.mark.isolated_dimension(3)]

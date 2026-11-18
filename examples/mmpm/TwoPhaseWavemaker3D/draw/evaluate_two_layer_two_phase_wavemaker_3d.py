@@ -12,7 +12,6 @@ if str(ROOT) not in sys.path:
 import glob
 import json
 import math
-from pathlib import Path
 import numpy as np
 from tools.postprocessing.mpm.fluid_metrics import (
     deep_air_particle_count,

@@ -4,6 +4,9 @@ The host timing excludes its field downloads/uploads, giving a conservative
 comparison. Neither timing includes particle marking, splitting, or physics.
 """
 
+from src.mpm.elements.Utilities import build_bridging_node_weights
+from src.mpm.elements.Utilities import build_hanging_constraint_table
+
 import argparse
 import json
 from pathlib import Path
@@ -17,11 +20,7 @@ import taichi as ti
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 
-from src.mpm.elements.AdaptiveNodeMap import (
-    AdaptiveNodeMap,
-    build_bridging_node_weights,
-    build_hanging_constraint_table,
-)
+from src.mpm.elements.AdaptiveNodeMap import AdaptiveNodeMap
 
 
 def snapshots(cells, max_level, events):

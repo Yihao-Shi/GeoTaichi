@@ -1,7 +1,7 @@
 import taichi as ti
 import math
 
-from src.utils.TypeDefination import vec3i
+from src.utils.TypeDefinition import vec3i
 
 from src.dem.generator.LinkedCellNeighborKernel import (
     kernel_pre_neighbor_sphere,

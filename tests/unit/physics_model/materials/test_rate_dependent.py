@@ -6,16 +6,17 @@ import numpy as np
 import pytest
 import taichi as ti
 
-from src.physics_model.consititutive_model.infinitesimal_strain.DruckerPrager import DruckerPragerModel
-from src.physics_model.consititutive_model.infinitesimal_strain.ElasPlasticity import PlasticMaterial
-from src.physics_model.consititutive_model.infinitesimal_strain.ElasticPerfectlyPlastic import (
+from src.physics_model.constitutive_model.infinitesimal_strain.DruckerPrager import DruckerPragerModel
+from src.physics_model.constitutive_model.infinitesimal_strain.PlasticMaterial import PlasticMaterial
+from src.physics_model.constitutive_model.infinitesimal_strain.ElasticPerfectlyPlastic import (
     ElasticPerfectlyPlasticModel,
 )
-from src.physics_model.consititutive_model.infinitesimal_strain.GranularMaterial import GranularMaterial
-from src.physics_model.consititutive_model.infinitesimal_strain.MohrCoulomb import MohrCoulombModel
-from src.physics_model.consititutive_model.infinitesimal_strain.ModifiedCamClay import ModifiedCamClayModel
-from src.physics_model.consititutive_model.infinitesimal_strain.NorSandModel import NorSandModel
-from src.physics_model.consititutive_model.infinitesimal_strain.RateDependent import RateDependent
+from src.physics_model.constitutive_model.infinitesimal_strain.GranularMaterial import GranularMaterial
+from src.physics_model.constitutive_model.infinitesimal_strain.MohrCoulomb import MohrCoulombModel
+from src.physics_model.constitutive_model.infinitesimal_strain.ModifiedCamClay import ModifiedCamClayModel
+from src.physics_model.constitutive_model.infinitesimal_strain.NorSandModel import NorSandModel
+from src.physics_model.constitutive_model.infinitesimal_strain.RateDependent import RateDependent
+from tests.helpers.material_cases import material_parameters
 
 pytestmark = [pytest.mark.materials, pytest.mark.cpu]
 
@@ -72,14 +73,14 @@ def _update(model, *, dt_value=0.01, shear_rate=10.0, mean=-1000.0, dimension=2)
         if ti.static(granular):
             elastic[0], elastic[1] = model.bulk, model.shear
         else:
-            parameters = model.GetMaterialParameter(particle[0].stress, state[0])
-            elastic[0], elastic[1] = model.ComputeElasticModulus(particle[0].stress, parameters)
+            parameters = model.get_material_parameter(particle[0].stress, state[0])
+            elastic[0], elastic[1] = model.compute_elastic_modulus(particle[0].stress, parameters)
         gradient = ti.Matrix.zero(ti.f64, dimension, dimension)
         gradient[0, 1], gradient[1, 0] = 0.5 * shear_rate, 0.5 * shear_rate
         if ti.static(dimension == 2):
-            stress[None] = model.ComputeStress2D(0, particle[0].stress, gradient, state, dt)
+            stress[None] = model.compute_stress2d(0, particle[0].stress, gradient, state, dt)
         else:
-            stress[None] = model.ComputeStress(0, particle[0].stress, gradient, state, dt)
+            stress[None] = model.compute_stress(0, particle[0].stress, gradient, state, dt)
 
     update()
     return stress.to_numpy(), state, elastic.to_numpy()
@@ -88,11 +89,11 @@ def _update(model, *, dt_value=0.01, shear_rate=10.0, mean=-1000.0, dimension=2)
 @pytest.mark.parametrize("integration", ["ReturnMapping", "ImplicitIntegration", "SubStepping"])
 def test_dp_dispatch_separates_closed_form_from_rate_coupling(integration):
     model = _model(DruckerPragerModel, integration, RateDependent=False)
-    static_core = model.ExplicitIntegration if integration == "SubStepping" else model.ClosedFormIntegration
+    static_core = model.explicit_integration if integration == "SubStepping" else model.closed_form_integration
     assert model.core == static_core
     model.set_rate_dependent_model(PARAMETERS)
-    assert model.core == model.ImplicitIntegration
-    assert DruckerPragerModel.ImplicitIntegration is PlasticMaterial.ImplicitIntegration
+    assert model.core == model.implicit_integration
+    assert DruckerPragerModel.implicit_integration is PlasticMaterial.implicit_integration
     model.set_rate_dependent_model(dict(PARAMETERS, RateDependent=False))
     assert model.core == static_core
 
@@ -131,10 +132,10 @@ def test_mu_and_pressure_derivatives(taichi_material_cpu, pressure, rate_value):
 
     @ti.kernel
     def evaluate():
-        output[0] = rate.GetMuI(pressure, rate_value)
-        output[1] = rate.DMuIDpressure(pressure, rate_value)
-        output[2] = rate.GetInertialNumber(pressure, rate_value)
-        output[3] = rate.DInertialNumberDpressure(pressure, rate_value)
+        output[0] = rate.get_mu_i(pressure, rate_value)
+        output[1] = rate.d_mu_i_dpressure(pressure, rate_value)
+        output[2] = rate.get_inertial_number(pressure, rate_value)
+        output[3] = rate.d_inertial_number_dpressure(pressure, rate_value)
 
     evaluate()
     result = output.to_numpy()
@@ -289,9 +290,9 @@ def test_converged_rate_pressure_and_yield_surface(taichi_material_cpu, model_cl
 
     @ti.kernel
     def evaluate():
-        parameters = model.GetMaterialParameter(value, state[0])
-        internal = model.GetInternalVariables(state[0])
-        branch, output[None] = model.ComputeYieldState(value, internal, parameters)
+        parameters = model.get_material_parameter(value, state[0])
+        internal = model.get_internal_variables(state[0])
+        branch, output[None] = model.compute_yield_state(value, internal, parameters)
 
     evaluate()
     assert state.rate_pressure[0] == pytest.approx(-np.mean(stress[:3]), rel=1.0e-8)
@@ -339,10 +340,7 @@ def test_implicit_global_solver_rejects_unimplemented_rate_tangent(model_class):
     "model_class,extra",
     [
         (ElasticPerfectlyPlasticModel, dict(YieldStress=100.0)),
-        (
-            NorSandModel,
-            dict(G0=100.0, kappa=0.01, **{"lambda": 0.05}, M=1.25, N=0.3, beta=3.5, vc0=1.9, v0=1.8, h=150.0),
-        ),
+        (NorSandModel, material_parameters("NorSand")),
     ],
 )
 @pytest.mark.parametrize("solver_type", ["Explicit", "Implicit"])
@@ -391,20 +389,20 @@ def test_frozen_rate_yield_gradient_matches_finite_difference(taichi_material_cp
     @ti.kernel
     def evaluate():
         value = ti.Vector([-1200.0, -950.0, -850.0, 310.0, -70.0, 80.0])
-        parameters = model.GetMaterialParameter(value, state[0])
-        internal = model.GetInternalVariables(state[0])
-        grad = model.ComputeDfDsigma(1, value, internal, parameters)
+        parameters = model.get_material_parameter(value, state[0])
+        internal = model.get_internal_variables(state[0])
+        grad = model.compute_df_dsigma(1, value, internal, parameters)
         for component in ti.static(range(6)):
             plus, minus = value, value
             plus[component] += 0.001
             minus[component] -= 0.001
             fp, fm = 0.0, 0.0
             if ti.static(cam_clay):
-                fp = model.ComputeYieldFunction(plus, internal, parameters)
-                fm = model.ComputeYieldFunction(minus, internal, parameters)
+                fp = model.compute_yield_function(plus, internal, parameters)
+                fm = model.compute_yield_function(minus, internal, parameters)
             else:
-                fp, ft = model.ComputeYieldFunction(plus, internal, parameters)
-                fm, ft = model.ComputeYieldFunction(minus, internal, parameters)
+                fp, ft = model.compute_yield_function(plus, internal, parameters)
+                fm, ft = model.compute_yield_function(minus, internal, parameters)
             output[component, 0] = grad[component] * (1.0 if component < 3 else 2.0)
             output[component, 1] = (fp - fm) / 0.002
 
@@ -458,7 +456,7 @@ def test_random_field_initialization_enables_rate_extension(tmp_path, model_clas
 
 
 def test_unsupported_solid_rejects_rate_flag():
-    from src.physics_model.consititutive_model.infinitesimal_strain.LinearElastic import LinearElasticModel
+    from src.physics_model.constitutive_model.infinitesimal_strain.LinearElastic import LinearElasticModel
 
     with pytest.raises(ValueError, match="does not implement"):
         LinearElasticModel().model_initialize(PARAMETERS)
@@ -467,7 +465,7 @@ def test_unsupported_solid_rejects_rate_flag():
 @pytest.mark.parametrize("model_class", [DruckerPragerModel, MohrCoulombModel])
 @pytest.mark.parametrize("rate_dependent", [False, True])
 def test_softening_rate_chain_matches_history_finite_difference(taichi_material_cpu, model_class, rate_dependent):
-    from src.physics_model.consititutive_model.infinitesimal_strain.MaterialKernel import DeqepsilonqDepsilon
+    from src.physics_model.constitutive_model.infinitesimal_strain.MaterialKernel import deqepsilonq_depsilon
     from src.utils.VectorFunction import voigt_tensor_dot
 
     model = _model(
@@ -493,24 +491,24 @@ def test_softening_rate_chain_matches_history_finite_difference(taichi_material_
             state[0].strain_rate, state[0].rate_pressure = 3.0, 1000.0
         value = ti.Vector([-1200.0, -950.0, -850.0, 310.0, -70.0, 80.0])
         flow = ti.Vector([0.1, -0.05, -0.05, 0.2, 0.1, -0.03])
-        parameters = model.GetMaterialParameter(value, state[0])
-        internal = model.GetInternalVariables(state[0])
-        modulus = model.ComputePlasticModulus(1, flow, value, internal, state[0], parameters)
+        parameters = model.get_material_parameter(value, state[0])
+        internal = model.get_internal_variables(state[0])
+        modulus = model.compute_plastic_modulus(1, flow, value, internal, state[0], parameters)
         if ti.static(dp):
             output[0] = modulus
         else:
-            output[0] = modulus / voigt_tensor_dot(DeqepsilonqDepsilon(state[0].strain), flow)
+            output[0] = modulus / voigt_tensor_dot(deqepsilonq_depsilon(state[0].strain), flow)
         plus, minus = state[0], state[0]
         if ti.static(dp):
             # Differentiate along the plastic multiplier, including d(kappa)/d(lambda).
-            history_rate = model.ComputeInternalVariables(1, flow, internal, parameters)[0]
+            history_rate = model.compute_internal_variables(1, flow, internal, parameters)[0]
             plus.epdstrain += 1.0e-6 * history_rate
             minus.epdstrain -= 1.0e-6 * history_rate
         else:
             plus.strain *= 1.0 + 1.0e-5
             minus.strain *= 1.0 - 1.0e-5
-        fp, ft = model.ComputeYieldFunction(value, internal, model.GetMaterialParameter(value, plus))
-        fm, ft = model.ComputeYieldFunction(value, internal, model.GetMaterialParameter(value, minus))
+        fp, ft = model.compute_yield_function(value, internal, model.get_material_parameter(value, plus))
+        fm, ft = model.compute_yield_function(value, internal, model.get_material_parameter(value, minus))
         output[1] = (fp - fm) / 2.0e-6
 
     evaluate()

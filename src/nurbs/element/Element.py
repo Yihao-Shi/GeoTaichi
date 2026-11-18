@@ -2,8 +2,10 @@ import numpy as np
 
 from src.nurbs.Energy import SurfaceEnergy
 
+
 class Element:
     _energy: SurfaceEnergy
+
     def __init__(self, current_configuration, reference_configuration, connectivity, energy=None):
         self._face_num = 0
         self._vertice_num = 0
@@ -21,7 +23,7 @@ class Element:
     @property
     def dimension(self):
         return self._dimension
-    
+
     @dimension.setter
     def dimension(self, dimension):
         self._dimension = dimension
@@ -29,7 +31,7 @@ class Element:
     @property
     def reference_dimension(self):
         return self._reference_dimension
-    
+
     @reference_dimension.setter
     def reference_dimension(self, reference_dimension):
         self._reference_dimension = reference_dimension
@@ -37,7 +39,7 @@ class Element:
     @property
     def face_num(self):
         return self._face_num
-    
+
     @face_num.setter
     def face_num(self, face_num):
         self._face_num = face_num
@@ -45,7 +47,7 @@ class Element:
     @property
     def vertice_num(self):
         return self._vertice_num
-    
+
     @vertice_num.setter
     def vertice_num(self, vertice_num):
         self._vertice_num = vertice_num
@@ -98,7 +100,7 @@ class Element:
         self.vertice_num = self.vertice.shape[0]
         if self.vertice.shape[0] != self.reference_vertice.shape[0]:
             raise ValueError("Current shape and rest shape should have the same dimension!")
-        
+
     def find_zero_volume_roots_2x2(self, a, b, c, tol=1e-7):
         coeffs = [a, b, c]
         roots = np.roots(coeffs)
@@ -111,20 +113,22 @@ class Element:
         return min(positive_alphas)
 
     def find_zero_volume_roots_3x2(self, a, b, c, tol=1e-7):
-        if np.linalg.norm(np.cross(c, b)) > tol * (np.linalg.norm(c) + np.linalg.norm(b)) or np.linalg.norm(np.cross(c, a)) > tol * (np.linalg.norm(c) + np.linalg.norm(a)):
-            return 1.
+        if np.linalg.norm(np.cross(c, b)) > tol * (np.linalg.norm(c) + np.linalg.norm(b)) or np.linalg.norm(
+            np.cross(c, a)
+        ) > tol * (np.linalg.norm(c) + np.linalg.norm(a)):
+            return 1.0
         if np.allclose(c, 0, atol=tol):
             return 0.0
-        absC2 = np.abs(a)
-        if np.max(absC2) > tol:
-            idx = np.argmax(absC2)
+        abs_c2 = np.abs(a)
+        if np.max(abs_c2) > tol:
+            idx = np.argmax(abs_c2)
             c2 = a[idx]
             c1 = b[idx]
             c0 = c[idx]
         else:
-            absC1 = np.abs(b)
-            if np.max(absC1) > tol:
-                idx = np.argmax(absC1)
+            abs_c1 = np.abs(b)
+            if np.max(abs_c1) > tol:
+                idx = np.argmax(abs_c1)
                 c2 = 0.0
                 c1 = b[idx]
                 c0 = c[idx]
@@ -158,9 +162,9 @@ class Element:
 
     def surface_energy_hessian(self, deformation_gradient, dF_dx):
         raise NotImplementedError
-    
+
     def compute_step_size(self, delta, deformation_gradient, tol=1e-7):
         raise NotImplementedError
-    
+
     def visualize(self):
         raise NotImplementedError

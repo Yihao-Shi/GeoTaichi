@@ -1,10 +1,12 @@
 """DEM barrier law reused by explicit FEM--DEM surface contact."""
 
+from src.utils.ObjectIO import DictIO
+
 import math
 
 import taichi as ti
 
-from src.fedem.contact.ContactModelBase import ContactModelBase, property_value
+from src.fedem.contact.ContactModelBase import ContactModelBase
 
 
 @ti.dataclass
@@ -34,18 +36,21 @@ class BarrierModel(ContactModelBase):
 
     def add_property(self, dem_material, fem_body, parameters):
         dem_material, fem_body = self.property_index(dem_material, fem_body)
-        kappa = float(property_value(parameters, "Stiffness", "kappa", required=True))
+        kappa = float(
+            DictIO.get_normalized(parameters, "Stiffness", "kappa", required=True, context="FEDEM contact property")
+        )
         normal_cutoff = float(
-            property_value(
+            DictIO.get_normalized(
                 parameters,
                 "NormalCutOff",
                 "NormalCutoff",
                 "ncut",
                 required=True,
+                context="FEDEM contact property",
             )
         )
         stiffness_ratio = float(
-            property_value(
+            DictIO.get_normalized(
                 parameters,
                 "StiffnessRatio",
                 "ratio",
@@ -57,9 +62,9 @@ class BarrierModel(ContactModelBase):
             "kappa": kappa,
             "normal_cutoff": normal_cutoff,
             "stiffness_ratio": stiffness_ratio,
-            "friction": float(property_value(parameters, "Friction", "mu", default=0.0)),
+            "friction": float(DictIO.get_normalized(parameters, "Friction", "mu", default=0.0)),
             "normal_damping": float(
-                property_value(
+                DictIO.get_normalized(
                     parameters,
                     "NormalViscousDamping",
                     "ndratio",
@@ -67,7 +72,7 @@ class BarrierModel(ContactModelBase):
                 )
             ),
             "tangential_damping": float(
-                property_value(
+                DictIO.get_normalized(
                     parameters,
                     "TangentialViscousDamping",
                     "sdratio",

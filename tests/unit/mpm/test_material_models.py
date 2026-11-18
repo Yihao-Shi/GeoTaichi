@@ -25,7 +25,7 @@ pytestmark = [pytest.mark.materials, pytest.mark.cpu]
     ],
 )
 def test_material_state_and_stress_update(taichi_runtime, dimension, backend, name):
-    from src.mpm.MaterialManager import MaterialHandle
+    from src.mpm.MaterialHandle import MaterialHandle
     from src.mpm.Simulation import Simulation
 
     sims = Simulation()
@@ -72,17 +72,17 @@ def test_material_state_and_stress_update(taichi_runtime, dimension, backend, na
             gradient[axis, axis] = -0.001 * magnitude
         gradient[0, 1] = 0.01 * magnitude
         if ti.static(dimension == 2):
-            volumes[point] *= model.update_particle_volume_2D(point, gradient, state, dt)
-            particles[point].stress = model.ComputeStress2D(point, particles[point].stress, gradient, state, dt)
+            volumes[point] *= model.update_particle_volume_2d(point, gradient, state, dt)
+            particles[point].stress = model.compute_stress2d(point, particles[point].stress, gradient, state, dt)
         else:
             volumes[point] *= model.update_particle_volume(point, gradient, state, dt)
-            particles[point].stress = model.ComputeStress(point, particles[point].stress, gradient, state, dt)
+            particles[point].stress = model.compute_stress(point, particles[point].stress, gradient, state, dt)
         if ti.static(name in FINITE_ELASTIC and dimension == 2):
             deformation = ti.Matrix.identity(ti.f64, 3)
             for i, j in ti.static(ti.ndrange(2, 2)):
                 deformation[i, j] = state[point].deformation_gradient[i, j]
             pk1_3d[None] = model.first_piola_stress(deformation)
-            pk1_2d[None] = model.ComputePKStress2D(point, ti.Matrix.zero(ti.f64, 2, 2), gradient, state, dt)
+            pk1_2d[None] = model.compute_pk_stress2d(point, ti.Matrix.zero(ti.f64, 2, 2), gradient, state, dt)
 
     initialize()
     assert model.density == material_parameters(name)["Density"]

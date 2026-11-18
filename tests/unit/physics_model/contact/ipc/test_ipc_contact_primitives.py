@@ -1,13 +1,11 @@
+from src.utils.linalg import lumped_boundary_vertex_measures
+from src.utils.linalg import segment_length
 import numpy as np
 import pytest
 import taichi as ti
 
 pytestmark = [pytest.mark.unit, pytest.mark.ipc, pytest.mark.contact]
 
-from src.physics_model.contact_model.ipc.ContactMeasure import (
-    lumped_boundary_vertex_measures,
-    segment_length,
-)
 from src.physics_model.contact_model.ipc.ContactDistance import (
     edge_edge_distance_type,
     point_edge_distance_type,

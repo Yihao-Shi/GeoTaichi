@@ -1,12 +1,11 @@
 """Deterministic contracts for the scalar root solvers used by SDF and IPC."""
 
+from src.utils.linalg import newton
+
 import math
 
 import numpy as np
 import pytest
-
-from src.utils.Root import newton
-
 
 pytestmark = [pytest.mark.cpu]
 

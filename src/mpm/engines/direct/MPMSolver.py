@@ -1,44 +1,38 @@
+from src.utils.RuntimeHook import normalize_callbacks
+from src.utils.errors import SimulationStateError
+from src.utils.SolverRuntime import StepSchedule
+from src.utils.StepRetry import StepRetryPolicy
+
 import taichi as ti
 import numpy as np
 import math
 import time
-
 import src.mpm.config as config
-from src.mpm.utils import vectorize_id
+from src.utils.ScalarFunction import vectorize_id
 from src.mpm.generator.Body import Body
 from src.mpm.boundaries.BoundaryCondition import DirichletBoundary, NeumannBoundary
 from src.utils.ShapeFunctions import (
-    ShapeLinear,
-    GShapeLinear,
-    HShapeLinear,
-    ShapeGIMP,
-    GShapeGIMP,
-    ShapeBsplineQ,
-    GShapeBsplineQ,
-    HShapeBsplineQ,
+    shape_linear,
+    g_shape_linear,
+    h_shape_linear,
+    shape_gimp,
+    g_shape_gimp,
+    shape_bspline_q,
+    g_shape_bspline_q,
+    h_shape_bspline_q,
 )
 from third_party.pyevtk.hl import pointsToVTK
-
 from src.physics_model.contact_model.ipc.ContactMeasure import reference_point_measure
 from src.utils.RuntimeHook import runtime_checkpoint
-from src.utils.SolverRuntime import StepSchedule, normalize_callbacks
 from src.utils.SolverConsole import print_save_file_info
 from src.utils.TimeTicker import Timer
 from src.utils.linalg import no_operation
 from src.utils.MatrixFunction import affine_velocity_matrix
-from src.utils.StepRetry import (
-    StepRetryPolicy,
-    is_recoverable_nonlinear_failure,
-    nonlinear_failure_kind,
-)
-
-
-class MPMConvergenceError(RuntimeError):
-    """A recoverable failure before a Direct MPM step is accepted."""
+from src.utils.errors import MPMConvergenceError
 
 
 @ti.data_oriented
-class _LinearShapeFunction:
+class LinearShapeFunction:
     def __init__(self):
         self.offset = 0.0
         self.max_node_per_particle_one_axis = 2
@@ -47,19 +41,19 @@ class _LinearShapeFunction:
 
     @ti.func
     def shapefn(self, xp, xg, idx, lp):
-        return ShapeLinear(xp, xg, idx, lp)
+        return shape_linear(xp, xg, idx, lp)
 
     @ti.func
     def dshapefn(self, xp, xg, idx, lp):
-        return GShapeLinear(xp, xg, idx, lp)
+        return g_shape_linear(xp, xg, idx, lp)
 
     @ti.func
     def hshapefn(self, xp, xg, idx, lp):
-        return HShapeLinear(xp, xg, idx, lp)
+        return h_shape_linear(xp, xg, idx, lp)
 
 
 @ti.data_oriented
-class _GIMPShapeFunction:
+class GIMPShapeFunction:
     def __init__(self):
         self.offset = 0.0
         self.max_node_per_particle_one_axis = 3
@@ -68,15 +62,15 @@ class _GIMPShapeFunction:
 
     @ti.func
     def shapefn(self, xp, xg, idx, lp):
-        return ShapeGIMP(xp, xg, idx, lp)
+        return shape_gimp(xp, xg, idx, lp)
 
     @ti.func
     def dshapefn(self, xp, xg, idx, lp):
-        return GShapeGIMP(xp, xg, idx, lp)
+        return g_shape_gimp(xp, xg, idx, lp)
 
 
 @ti.data_oriented
-class _QuadBSplineShapeFunction:
+class QuadBSplineShapeFunction:
     def __init__(self):
         self.offset = 0.5
         self.max_node_per_particle_one_axis = 3
@@ -85,30 +79,31 @@ class _QuadBSplineShapeFunction:
 
     @ti.func
     def shapefn(self, xp, xg, idx, btype):
-        return ShapeBsplineQ(xp, xg, idx, btype)
+        return shape_bspline_q(xp, xg, idx, btype)
 
     @ti.func
     def dshapefn(self, xp, xg, idx, btype):
-        return GShapeBsplineQ(xp, xg, idx, btype)
+        return g_shape_bspline_q(xp, xg, idx, btype)
 
     @ti.func
     def hshapefn(self, xp, xg, idx, btype):
-        return HShapeBsplineQ(xp, xg, idx, btype)
-
-
-def _make_shape_function(shape_function):
-    key = str(shape_function).replace("-", "").replace("_", "").replace(" ", "").lower()
-    if key in ("linear", "smoothlinear"):
-        return _LinearShapeFunction(), "linear"
-    if key == "gimp":
-        return _GIMPShapeFunction(), "gimp"
-    if key in ("bspline", "quadbspline", "quadraticbspline"):
-        return _QuadBSplineShapeFunction(), "bspline"
-    raise ValueError("shape_function must be one of: linear, gimp, bspline/QuadBSpline")
+        return h_shape_bspline_q(xp, xg, idx, btype)
 
 
 @ti.data_oriented
 class MPMSolver:
+
+    @staticmethod
+    def _make_shape_function(shape_function):
+        key = str(shape_function).replace("-", "").replace("_", "").replace(" ", "").lower()
+        if key in ("linear", "smoothlinear"):
+            return LinearShapeFunction(), "linear"
+        if key == "gimp":
+            return GIMPShapeFunction(), "gimp"
+        if key in ("bspline", "quadbspline", "quadraticbspline"):
+            return QuadBSplineShapeFunction(), "bspline"
+        raise ValueError("shape_function must be one of: linear, gimp, bspline/QuadBSpline")
+
     @property
     def dt(self):
         return self._dt
@@ -153,7 +148,9 @@ class MPMSolver:
         self.TIdt = ti.field(ti.f64, shape=())
         self.dt = kwargs.get("dt", 1e-2)
         self.gravity = kwargs.get("gravity")
-        self.shape_func, self.shape_function_name = _make_shape_function(kwargs.get("shape_function", "linear"))
+        self.shape_func, self.shape_function_name = MPMSolver._make_shape_function(
+            kwargs.get("shape_function", "linear")
+        )
 
         self.vis = kwargs.get("visualize", True)
         self.output_interval = int(kwargs.get("interval", 1))
@@ -305,9 +302,8 @@ class MPMSolver:
                 reference_radius = np.asarray(body["points"], dtype=np.float64)[local_surface_id, 0] - self.axis_offset
                 if np.any(reference_radius <= 0.0):
                     raise ValueError(f"{name}: axisymmetric surface points must satisfy " "radius > axis_offset")
-                # The configured measure is a meridional line weight. Its
-                # revolution supplies the physical reference contact area.
-                measures = 2.0 * np.pi * reference_radius * measures
+                # Convert meridional line weights to reference areas per radian.
+                measures = reference_radius * measures
             if np.any(~np.isfinite(measures)) or np.any(measures < 0.0):
                 raise ValueError(f"{name}: surface measures must be finite and non-negative")
             all_surface_measures.append(np.asarray(measures, dtype=np.float64))
@@ -369,11 +365,11 @@ class MPMSolver:
         if config.DIM == 3:
             velz = np.ascontiguousarray(vel[:, 2])
         stress = self.calculate_von_mises()
-        bodyID = np.ascontiguousarray(self.particle.bodyID.to_numpy()[:particle_num])
+        body_id = np.ascontiguousarray(self.particle.bodyID.to_numpy()[:particle_num])
         point_data = {
             "velocity": (velx, vely, velz),
             "stress": stress,
-            "bodyID": bodyID,
+            "bodyID": body_id,
         }
         if hasattr(self, "surface_id"):
             contact_sample = np.zeros(particle_num, dtype=np.int32)
@@ -529,7 +525,7 @@ class MPMSolver:
             if ti.static(self.is_axisymmetric):
                 radius = body[i, 0] - ti.static(self.axis_offset)
                 assert radius > 0.0, "axisymmetric particles require radius > axis_offset"
-                physical_volume = 2.0 * ti.math.pi * radius * volume[i]
+                physical_volume = radius * volume[i]
             self.particle[ind].vol0 = physical_volume
             self.particle[ind].m = self.material.density * physical_volume
             self.particle[ind].v = init_v
@@ -686,7 +682,7 @@ class MPMSolver:
         invalid = int(self.invalid_stencil_particle[None]) - 1
         if invalid >= 0:
             position = self.particle.x.to_numpy()[invalid].tolist()
-            raise RuntimeError(
+            raise SimulationStateError(
                 f"Direct MPM particle {invalid} at {position} has an interpolation stencil "
                 "outside its background grid"
             )
@@ -720,7 +716,7 @@ class MPMSolver:
 
     def _failure_diagnostics(self, exception, attempt, timestep):
         return {
-            "kind": nonlinear_failure_kind(exception),
+            "kind": StepRetryPolicy.nonlinear_failure_kind(exception),
             "exception": type(exception).__name__,
             "message": str(exception),
             "attempt": int(attempt),
@@ -750,7 +746,10 @@ class MPMSolver:
             try:
                 result = substep(verbose)
             except RuntimeError as exception:
-                if not (isinstance(exception, MPMConvergenceError) or is_recoverable_nonlinear_failure(exception)):
+                if not (
+                    isinstance(exception, MPMConvergenceError)
+                    or StepRetryPolicy.is_recoverable_nonlinear_failure(exception)
+                ):
                     raise
                 failure = self._failure_diagnostics(exception, attempt, attempt_timestep)
                 attempts.append(failure)
@@ -825,6 +824,3 @@ class MPMSolver:
             with self.timer.section("Postprocess"):
                 for f in postprocessing:
                     f()
-
-
-__all__ = ["MPMConvergenceError", "MPMSolver"]

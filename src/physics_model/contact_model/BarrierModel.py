@@ -1,9 +1,9 @@
 import taichi as ti
 
-from src.utils.constants import Threshold
+from src.utils.constants import THRESHOLD
 import src.utils.GlobalVariable as GlobalVariable
-from src.utils.TypeDefination import real
-from src.utils.VectorFunction import Normalize
+from src.utils.TypeDefinition import real
+from src.utils.VectorFunction import normalize
 
 
 @ti.dataclass
@@ -43,7 +43,7 @@ class BarrierProperty:
         particle_rad, norm = particle[end1].rad, wall[end2]._get_norm(pos1)
         distance = (pos1 - pos2).dot(norm)
         gapn = distance - particle_rad
-        fraction = ti.abs(wall[end2].processCircleShape(pos1, particle_rad, distance))
+        fraction = ti.abs(wall[end2].process_circle_shape(pos1, particle_rad, distance))
         return fraction * (
             -2 * self.kappa * ti.log(-gapn / self.ncut)
             - self.kappa * (-gapn - self.ncut) * (3.0 * -gapn + self.ncut) / (gapn * gapn)
@@ -89,13 +89,13 @@ class BarrierProperty:
         return normal_force, norm_elastic, norm_viscous_rate
 
     @ti.func
-    def _tangential_force(self, coeff, sdratio, m_eff, vs, normal_force, norm, tangOverlapOld, dt):
+    def _tangential_force(self, coeff, sdratio, m_eff, vs, normal_force, norm, tang_overlap_old, dt):
         m = 1.0
         cut_off = self.mu * ti.abs(normal_force) / (self.ratio * self.kappa * coeff)
-        tangOverlapRot = tangOverlapOld - tangOverlapOld.dot(norm) * norm
-        tangOverTemp = vs * dt[None] + tangOverlapOld.norm() * Normalize(tangOverlapRot)
-        overlap_tang = tangOverTemp.norm()
-        overlap_dir = Normalize(tangOverTemp)
+        tang_overlap_rot = tang_overlap_old - tang_overlap_old.dot(norm) * norm
+        tang_over_temp = vs * dt[None] + tang_overlap_old.norm() * normalize(tang_overlap_rot)
+        overlap_tang = tang_over_temp.norm()
+        overlap_dir = normalize(tang_over_temp)
         tangential_force = -self.mu * ti.abs(normal_force) * overlap_dir
         tang_elastic, tang_viscous_rate, friction_energy = 0.0, 0.0, 0.0
         if overlap_tang < cut_off:
@@ -104,19 +104,19 @@ class BarrierProperty:
             eqkt = tangential_force.norm() / overlap_tang if overlap_tang != 0.0 else 0.0
             tang_damping_force = -2 * sdratio * ti.sqrt(m_eff * eqkt) * vs
             if ti.static(GlobalVariable.TRACKENERGY):
-                tang_elastic = self._elastic_tangential_energy(tangOverTemp, tangential_force)
+                tang_elastic = self._elastic_tangential_energy(tang_over_temp, tangential_force)
                 tang_viscous_rate = self._viscous_tangential_energy(tang_damping_force, vs)
             tangential_force += tang_damping_force
         else:
-            tangOverNew = cut_off * overlap_dir
+            tang_over_new = cut_off * overlap_dir
             if ti.static(GlobalVariable.TRACKENERGY):
-                tang_elastic = self._elastic_tangential_energy(tangOverNew, tangential_force)
-                friction_energy = self._friction_energy(tangOverTemp - tangOverNew, tangential_force)
-            tangOverTemp = tangOverNew
-        return tangential_force, tangOverTemp, tang_elastic, tang_viscous_rate, friction_energy
+                tang_elastic = self._elastic_tangential_energy(tang_over_new, tangential_force)
+                friction_energy = self._friction_energy(tang_over_temp - tang_over_new, tangential_force)
+            tang_over_temp = tang_over_new
+        return tangential_force, tang_over_temp, tang_elastic, tang_viscous_rate, friction_energy
 
     @ti.func
-    def _force_assemble(self, m_eff, rad_eff, gapn, coeff, dgdx, v_rel, tangOverlapOld, dt):
+    def _force_assemble(self, m_eff, rad_eff, gapn, coeff, dgdx, v_rel, tang_overlap_old, dt):
         coeff = coeff * dgdx.norm()
         eta = gapn + self.ncut
         d_cap = 2.0 * self.ncut
@@ -125,13 +125,13 @@ class BarrierProperty:
             -2.0 * self.kappa * ti.log(eta / d_cap) - self.kappa * (eta - d_cap) * (3.0 * eta + d_cap) / (eta * eta)
         )
         ndratio, sdratio = self.ndratio, self.sdratio
-        norm = dgdx.normalized(Threshold)
+        norm = dgdx.normalized(THRESHOLD)
         vn = v_rel.dot(norm)
         vs = v_rel - vn * norm
 
         normal_force, norm_elastic, norm_viscous_rate = self._normal_force(kn, ndratio, m_eff, eta, d_cap, vn, coeff)
-        tangential_force, tangOverTemp, tang_elastic, tang_viscous_rate, friction_energy = self._tangential_force(
-            coeff, sdratio, m_eff, vs, normal_force, norm, tangOverlapOld, dt
+        tangential_force, tang_over_temp, tang_elastic, tang_viscous_rate, friction_energy = self._tangential_force(
+            coeff, sdratio, m_eff, vs, normal_force, norm, tang_overlap_old, dt
         )
         if ti.static(GlobalVariable.TRACKENERGY):
             self.elastic_energy += norm_elastic + tang_elastic
@@ -139,5 +139,5 @@ class BarrierProperty:
                 self.friction_energy += friction_energy
                 self.damp_energy += (norm_viscous_rate + tang_viscous_rate) * dt[None]
         if dt[None] == 0.0:
-            tangOverTemp = tangOverlapOld
-        return normal_force * norm, tangential_force, tangOverTemp
+            tang_over_temp = tang_overlap_old
+        return normal_force * norm, tangential_force, tang_over_temp

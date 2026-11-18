@@ -1,9 +1,10 @@
+from src.utils.errors import CapacityError, NonlinearSolveError
 import taichi as ti
 
 from src.mpm.Simulation import Simulation
-from src.mpm.SceneManager import myScene
+from src.mpm.SceneManager import SceneManager
 from src.mpm.engines.AssembleMatrixKernel import *
-from src.mpm.engines.Operator import MomentBalanceDynamicOperator
+from src.mpm.engines.MomentBalanceDynamicOperator import MomentBalanceDynamicOperator
 from src.linear_solver.CoordinateSparseMatrix import CoordinateSparseMatrix
 from src.linear_solver.BuildTriplet import BuildTriplet
 from src.linear_solver.MatrixFreePCG import MatrixFreePCG
@@ -48,7 +49,7 @@ class MomentumConservation(object):
         self.hash_triplet_solver = "BiCGSTAB"
         self.hash_triplet_matrix_symmetric = False
 
-    def manage_function(self, sims: Simulation, scene: myScene):
+    def manage_function(self, sims: Simulation, scene: SceneManager):
         self.operator = MomentBalanceDynamicOperator(sims.dimension, sims.assemble_type)
         self.assemble_displacement_load = no_operation
         self.apply_dirichlet_boundary = no_operation
@@ -76,35 +77,35 @@ class MomentumConservation(object):
         if sims.calculate_reaction_force:
             if sims.assemble_type == "MatrixFree":
                 if sims.dimension == 2:
-                    self.calculate_reaction_force = self.calculate_reaction_forces_matrix_free_2D
+                    self.calculate_reaction_force = self.calculate_reaction_forces_matrix_free_2d
                 else:
                     self.calculate_reaction_force = self.calculate_reaction_forces_matrix_free
             elif sims.dimension == 2:
-                self.calculate_reaction_force = self.calculate_reaction_forces_assembled_2D
+                self.calculate_reaction_force = self.calculate_reaction_forces_assembled_2d
             else:
                 self.calculate_reaction_force = self.calculate_reaction_forces_assembled
 
         if sims.dimension == 2:
-            self.preconditioning_matrix = self.preconditioning_matrix_2D
+            self.preconditioning_matrix = self.preconditioning_matrix_2d
             if sims.quasi_static:
-                self.assemble_residual_force = self.assemble_residual_force_quasi_static_2D
+                self.assemble_residual_force = self.assemble_residual_force_quasi_static_2d
             else:
-                self.assemble_residual_force = self.assemble_residual_force_dynamic_2D
+                self.assemble_residual_force = self.assemble_residual_force_dynamic_2d
 
-            self.compute_residual_error = compute_disp_error_2D
-            self.assemble_element_local_stiffnesses = self.assemble_element_local_stiffness_2D
+            self.compute_residual_error = compute_disp_error_2d
+            self.assemble_element_local_stiffnesses = self.assemble_element_local_stiffness_2d
             if scene.check_elastic_material():
-                self.assemble_diagonal_stiffness_matrix = assemble_elastic_diagonal_stiffness_matrix_2D
-                self.assemble_stiffness_matrix = assemble_elastic_stiffness_matrix_2D
+                self.assemble_diagonal_stiffness_matrix = assemble_elastic_diagonal_stiffness_matrix_2d
+                self.assemble_stiffness_matrix = assemble_elastic_stiffness_matrix_2d
             else:
-                self.assemble_diagonal_stiffness_matrix = assemble_diagonal_stiffness_matrix_2D
-                self.assemble_stiffness_matrix = assemble_stiffness_matrix_2D
+                self.assemble_diagonal_stiffness_matrix = assemble_diagonal_stiffness_matrix_2d
+                self.assemble_stiffness_matrix = assemble_stiffness_matrix_2d
             if sims.assemble_type == "COO":
                 self.assemble_global_matrix = self.assemble_coo_matrix
             elif sims.assemble_type == "HashTriplet":
-                self.assemble_global_matrix = self.assemble_hash_triplet_matrix_2D
+                self.assemble_global_matrix = self.assemble_hash_triplet_matrix_2d
         elif sims.dimension == 3:
-            self.preconditioning_matrix = self.preconditioning_matrix_
+            self.preconditioning_matrix = self.preconditioning_matrix
             if sims.quasi_static:
                 self.assemble_residual_force = self.assemble_residual_force_quasi_static
             else:
@@ -126,7 +127,7 @@ class MomentumConservation(object):
         if sims.assemble_type != "MatrixFree":
             self.assemble_element_local_stiffnesses = no_operation
             self.preconditioning_matrix = (
-                self.preconditioning_matrix_direct_2D if sims.dimension == 2 else self.preconditioning_matrix_direct
+                self.preconditioning_matrix_direct_2d if sims.dimension == 2 else self.preconditioning_matrix_direct
             )
 
         self.solve_linear_system = self.solve_matrix_free
@@ -138,10 +139,10 @@ class MomentumConservation(object):
     def manage_operator(self, scene):
         self.operator.link_ptrs(scene, self.mass_matrix, self.local_stiffness)
 
-    def node_stride(self, scene: myScene):
+    def node_stride(self, scene: SceneManager):
         return scene.sparse_grid.node_capacity if scene.sparse_grid is not None else scene.element.gridSum
 
-    def sparse_grid_args(self, scene: myScene):
+    def sparse_grid_args(self, scene: SceneManager):
         sparse_grid = scene.sparse_grid
         return (
             scene.element.gnum,
@@ -151,7 +152,7 @@ class MomentumConservation(object):
             sparse_grid.block_map,
         )
 
-    def hash_triplet_particle_capacity(self, sims: Simulation, scene: myScene):
+    def hash_triplet_particle_capacity(self, sims: Simulation, scene: SceneManager):
         if getattr(scene.element, "adaptive", False):
             return max(1, int(sims.max_particle_num))
         particle_capacity = int(scene.particleNum[0])
@@ -159,21 +160,21 @@ class MomentumConservation(object):
             particle_capacity = int(sims.max_particle_num)
         return max(1, particle_capacity)
 
-    def hash_triplet_support_nodes(self, sims: Simulation, scene: myScene):
+    def hash_triplet_support_nodes(self, sims: Simulation, scene: SceneManager):
         support_nodes = int(getattr(scene.element, "grid_nodes", 0))
         if support_nodes <= 0:
             influenced_node = int(getattr(scene.element, "influenced_node", 1))
             support_nodes = max(1, influenced_node**sims.dimension)
         return support_nodes
 
-    def hash_triplet_pair_capacity(self, sims: Simulation, scene: myScene, matrix_symmetric=False):
+    def hash_triplet_pair_capacity(self, sims: Simulation, scene: SceneManager, matrix_symmetric=False):
         support_nodes = self.hash_triplet_support_nodes(sims, scene)
         off_diagonal_pairs = support_nodes * max(0, support_nodes - 1)
         if matrix_symmetric:
             off_diagonal_pairs //= 2
         return max(1, self.hash_triplet_particle_capacity(sims, scene) * off_diagonal_pairs)
 
-    def hash_triplet_neighbor_nodes(self, sims: Simulation, scene: myScene):
+    def hash_triplet_neighbor_nodes(self, sims: Simulation, scene: SceneManager):
         get_nonzero_grids = getattr(scene.element, "get_nonzero_grids_per_row", None)
         if get_nonzero_grids is not None:
             nonzero_grids = get_nonzero_grids()
@@ -183,7 +184,7 @@ class MomentumConservation(object):
         return max(1, (2 * influenced_node - 1) ** sims.dimension)
 
     def hash_triplet_nonzeros_capacity(
-        self, sims: Simulation, scene: myScene, active_node_capacity, max_pairs_num, matrix_symmetric=False
+        self, sims: Simulation, scene: SceneManager, active_node_capacity, max_pairs_num, matrix_symmetric=False
     ):
         neighbor_nodes = self.hash_triplet_neighbor_nodes(sims, scene)
         off_diagonal_per_row = max(0, neighbor_nodes - 1)
@@ -192,19 +193,19 @@ class MomentumConservation(object):
             max_nonzeros = (max_nonzeros + 1) // 2
         return max(1, min(int(max_pairs_num), int(max_nonzeros)))
 
-    def use_symmetric_linear_system(self, sims: Simulation, scene: myScene):
+    def use_symmetric_linear_system(self, sims: Simulation, scene: SceneManager):
         matrix_symmetric = getattr(sims, "hash_triplet_matrix_symmetric", None)
         if matrix_symmetric is not None:
             return bool(matrix_symmetric)
         return False
 
-    def use_symmetric_hash_triplet_matrix(self, sims: Simulation, scene: myScene):
+    def use_symmetric_hash_triplet_matrix(self, sims: Simulation, scene: SceneManager):
         return self.use_symmetric_linear_system(sims, scene)
 
     def use_bicg_matrix_free_solver(self, sims: Simulation):
         return sims.linear_solver == "BiCG"
 
-    def choose_hash_triplet_solver(self, sims: Simulation, scene: myScene):
+    def choose_hash_triplet_solver(self, sims: Simulation, scene: SceneManager):
         if sims.linear_solver == "BiCG":
             return "BiCGSTAB"
         if self.use_symmetric_hash_triplet_matrix(sims, scene):
@@ -213,7 +214,7 @@ class MomentumConservation(object):
             return sims.linear_solver
         return "BiCGSTAB"
 
-    def set_matrix_vector(self, dofs, sims: Simulation, scene: myScene):
+    def set_matrix_vector(self, dofs, sims: Simulation, scene: SceneManager):
         if sims.assemble_type == "HashTriplet":
             active_node_capacity = max(1, int(sims.dof_multiplier * dofs) // sims.dimension)
             self.hash_triplet_matrix_symmetric = self.use_symmetric_hash_triplet_matrix(sims, scene)
@@ -306,13 +307,13 @@ class MomentumConservation(object):
     def reset_matrix(self):
         unknow_reset(self.operator.active_dofs, self.unknow_vector)
 
-    def assemble_residual_force_quasi_static(self, sims: Simulation, scene: myScene):
+    def assemble_residual_force_quasi_static(self, sims: Simulation, scene: SceneManager):
         kernel_assemble_residual_force_quasi_static(
             self.node_stride(scene), scene.mass_cut_off, scene.node, scene.element.flag, self.right_hand_vector
         )
         self.assemble_displacement_load(sims, scene)
 
-    def assemble_residual_force_dynamic(self, sims: Simulation, scene: myScene):
+    def assemble_residual_force_dynamic(self, sims: Simulation, scene: SceneManager):
         kernel_assemble_residual_force_dynamic(
             self.node_stride(scene),
             scene.mass_cut_off,
@@ -324,14 +325,14 @@ class MomentumConservation(object):
         )
         self.assemble_displacement_load(sims, scene)
 
-    def assemble_residual_force_quasi_static_2D(self, sims: Simulation, scene: myScene):
-        kernel_assemble_residual_force_quasi_static_2D(
+    def assemble_residual_force_quasi_static_2d(self, sims: Simulation, scene: SceneManager):
+        kernel_assemble_residual_force_quasi_static_2d(
             self.node_stride(scene), scene.mass_cut_off, scene.node, scene.element.flag, self.right_hand_vector
         )
         self.assemble_displacement_load(sims, scene)
 
-    def assemble_residual_force_dynamic_2D(self, sims: Simulation, scene: myScene):
-        kernel_assemble_residual_force_dynamic_2D(
+    def assemble_residual_force_dynamic_2d(self, sims: Simulation, scene: SceneManager):
+        kernel_assemble_residual_force_dynamic_2d(
             self.node_stride(scene),
             scene.mass_cut_off,
             sims.newmark_beta,
@@ -342,7 +343,7 @@ class MomentumConservation(object):
         )
         self.assemble_displacement_load(sims, scene)
 
-    def assemble_displacement_load_penalty(self, sims: Simulation, scene: myScene):
+    def assemble_displacement_load_penalty(self, sims: Simulation, scene: SceneManager):
         if self.reaction_rhs_vector is not None:
             kernel_copy_scalar_field(self.operator.active_dofs, self.right_hand_vector, self.reaction_rhs_vector)
         displacement_num = int(scene.boundary.displacement_list[0])
@@ -370,7 +371,7 @@ class MomentumConservation(object):
                 self.diag_A,
             )
 
-    def assemble_mass_matrix_quasi_static(self, sims: Simulation, scene: myScene):
+    def assemble_mass_matrix_quasi_static(self, sims: Simulation, scene: SceneManager):
         if sims.assemble_type == "MatrixFree":
             displacement_num = int(scene.boundary.displacement_list[0])
             if scene.sparse_grid is not None:
@@ -395,7 +396,7 @@ class MomentumConservation(object):
                     self.mass_matrix,
                 )
 
-    def assemble_mass_matrix_dynamic(self, sims: Simulation, scene: myScene):
+    def assemble_mass_matrix_dynamic(self, sims: Simulation, scene: SceneManager):
         kernel_compute_mass_matrix(
             self.node_stride(scene),
             sims.newmark_beta,
@@ -429,9 +430,9 @@ class MomentumConservation(object):
                     self.mass_matrix,
                 )
 
-    def preconditioning_matrix_(self, sims: Simulation, scene: myScene):
+    def preconditioning_matrix(self, sims: Simulation, scene: SceneManager):
         sims.timer.begin("Precondition reset")
-        matrix_reset_(self.operator.active_dofs, self.diag_A, self.mass_matrix, self.unknow_vector)
+        matrix_reset(self.operator.active_dofs, self.diag_A, self.mass_matrix, self.unknow_vector)
         sims.timer.end("Precondition reset")
         sims.timer.begin("Precondition kernel")
         kernel_preconditioning_matrix(
@@ -447,12 +448,12 @@ class MomentumConservation(object):
         )
         sims.timer.end("Precondition kernel")
 
-    def preconditioning_matrix_2D(self, sims: Simulation, scene: myScene):
+    def preconditioning_matrix_2d(self, sims: Simulation, scene: SceneManager):
         sims.timer.begin("Precondition reset")
-        matrix_reset_(self.operator.active_dofs, self.diag_A, self.mass_matrix, self.unknow_vector)
+        matrix_reset(self.operator.active_dofs, self.diag_A, self.mass_matrix, self.unknow_vector)
         sims.timer.end("Precondition reset")
         sims.timer.begin("Precondition kernel")
-        kernel_preconditioning_matrix_2D(
+        kernel_preconditioning_matrix_2d(
             self.node_stride(scene),
             scene.element.grid_nodes,
             int(scene.particleNum[0]),
@@ -465,9 +466,9 @@ class MomentumConservation(object):
         )
         sims.timer.end("Precondition kernel")
 
-    def preconditioning_matrix_direct(self, sims: Simulation, scene: myScene):
+    def preconditioning_matrix_direct(self, sims: Simulation, scene: SceneManager):
         sims.timer.begin("Precondition reset")
-        matrix_reset_(self.operator.active_dofs, self.diag_A, self.mass_matrix, self.unknow_vector)
+        matrix_reset(self.operator.active_dofs, self.diag_A, self.mass_matrix, self.unknow_vector)
         sims.timer.end("Precondition reset")
         sims.timer.begin("Precondition kernel")
         kernel_preconditioning_matrix_direct(
@@ -485,12 +486,12 @@ class MomentumConservation(object):
         )
         sims.timer.end("Precondition kernel")
 
-    def preconditioning_matrix_direct_2D(self, sims: Simulation, scene: myScene):
+    def preconditioning_matrix_direct_2d(self, sims: Simulation, scene: SceneManager):
         sims.timer.begin("Precondition reset")
-        matrix_reset_(self.operator.active_dofs, self.diag_A, self.mass_matrix, self.unknow_vector)
+        matrix_reset(self.operator.active_dofs, self.diag_A, self.mass_matrix, self.unknow_vector)
         sims.timer.end("Precondition reset")
         sims.timer.begin("Precondition kernel")
-        kernel_preconditioning_matrix_direct_2D(
+        kernel_preconditioning_matrix_direct_2d(
             self.node_stride(scene),
             scene.element.grid_nodes,
             int(scene.particleNum[0]),
@@ -505,7 +506,7 @@ class MomentumConservation(object):
         )
         sims.timer.end("Precondition kernel")
 
-    def assemble_element_local_stiffness(self, scene: myScene):
+    def assemble_element_local_stiffness(self, scene: SceneManager):
         kernel_assemble_local_stiffness(
             scene.element.grid_nodes,
             int(scene.particleNum[0]),
@@ -517,8 +518,8 @@ class MomentumConservation(object):
             self.assemble_stiffness_matrix,
         )
 
-    def assemble_element_local_stiffness_2D(self, scene: myScene):
-        kernel_assemble_local_stiffness_2D(
+    def assemble_element_local_stiffness_2d(self, scene: SceneManager):
+        kernel_assemble_local_stiffness_2d(
             scene.element.grid_nodes,
             int(scene.particleNum[0]),
             scene.particle,
@@ -529,7 +530,7 @@ class MomentumConservation(object):
             self.assemble_stiffness_matrix,
         )
 
-    def assemble_coo_matrix(self, sims: Simulation, scene: myScene):
+    def assemble_coo_matrix(self, sims: Simulation, scene: SceneManager):
         if self.adaptive_coo_offsets is not None:
             self.assemble_adaptive_coo_matrix(sims, scene)
             return
@@ -598,7 +599,7 @@ class MomentumConservation(object):
         self.sparse_matrix.linear_operator.update_active_dofs(active_dofs)
         self.sparse_matrix.linear_operator.update_nnz(nnz)
 
-    def assemble_adaptive_coo_matrix(self, sims: Simulation, scene: myScene):
+    def assemble_adaptive_coo_matrix(self, sims: Simulation, scene: SceneManager):
         active_dofs = self.operator.active_dofs
         particle_num = int(scene.particleNum[0])
         sims.timer.begin("COO reset")
@@ -607,7 +608,7 @@ class MomentumConservation(object):
             active_dofs, particle_num, scene.particle, scene.element.node_size, self.adaptive_coo_offsets
         )
         if int(counts[1]) != 0:
-            raise RuntimeError("Adaptive COO scalar-triplet count exceeds the int32 capacity limit")
+            raise CapacityError("Adaptive COO scalar-triplet count exceeds the int32 capacity limit")
         nnz = int(counts[0])
         required = nnz + int(getattr(sims, "ndisplacement", 0))
         if required > self.sparse_matrix.capacity:
@@ -642,7 +643,7 @@ class MomentumConservation(object):
         self.sparse_matrix.linear_operator.update_active_dofs(active_dofs)
         self.sparse_matrix.linear_operator.update_nnz(nnz)
 
-    def assemble_hash_triplet_matrix_2D(self, sims: Simulation, scene: myScene):
+    def assemble_hash_triplet_matrix_2d(self, sims: Simulation, scene: SceneManager):
         sims.timer.begin("HashTriplet reset")
         self.hash_triplet.reset_system()
         sims.timer.end("HashTriplet reset")
@@ -651,7 +652,7 @@ class MomentumConservation(object):
         kernel_assemble_hash_triplet_mass(self.operator.active_dofs, self.mass_matrix, self.hash_triplet)
         sims.timer.end("HashTriplet assemble mass")
         sims.timer.begin("HashTriplet assemble stiffness")
-        kernel_assemble_hash_triplet_stiffness_2D(
+        kernel_assemble_hash_triplet_stiffness_2d(
             self.node_stride(scene),
             scene.element.grid_nodes,
             int(scene.particleNum[0]),
@@ -669,7 +670,7 @@ class MomentumConservation(object):
         self.hash_triplet.finalize_taichi_assembly()
         sims.timer.end("HashTriplet finalize")
 
-    def assemble_hash_triplet_matrix(self, sims: Simulation, scene: myScene):
+    def assemble_hash_triplet_matrix(self, sims: Simulation, scene: SceneManager):
         sims.timer.begin("HashTriplet reset")
         self.hash_triplet.reset_system()
         sims.timer.end("HashTriplet reset")
@@ -696,12 +697,12 @@ class MomentumConservation(object):
         self.hash_triplet.finalize_taichi_assembly()
         sims.timer.end("HashTriplet finalize")
 
-    def calculate_reaction_forces_penalty(self, scene: myScene):
+    def calculate_reaction_forces_penalty(self, scene: SceneManager):
         self.accmulated_reaction_forces.fill(0.0)
         displacement_num = int(scene.boundary.displacement_list[0])
         self.calculate_penalty_reaction_force(scene, displacement_num)
 
-    def _calculate_penalty_reaction_force_dense(self, scene: myScene, displacement_num):
+    def _calculate_penalty_reaction_force_dense(self, scene: SceneManager, displacement_num):
         kernel_calculate_reaction_forces(
             scene.element.gridSum,
             scene.mass_cut_off,
@@ -712,7 +713,7 @@ class MomentumConservation(object):
             self.accmulated_reaction_forces,
         )
 
-    def _calculate_penalty_reaction_force_sparse(self, scene: myScene, displacement_num):
+    def _calculate_penalty_reaction_force_sparse(self, scene: SceneManager, displacement_num):
         kernel_calculate_reaction_forces_sparse(
             self.node_stride(scene),
             scene.mass_cut_off,
@@ -724,7 +725,7 @@ class MomentumConservation(object):
             *self.sparse_grid_args(scene),
         )
 
-    def _extract_matrix_free_reaction_force_dense(self, scene: myScene, displacement_num):
+    def _extract_matrix_free_reaction_force_dense(self, scene: SceneManager, displacement_num):
         kernel_extract_matrix_free_reaction_forces(
             scene.element.gridSum,
             scene.mass_cut_off,
@@ -738,7 +739,7 @@ class MomentumConservation(object):
             self.accmulated_reaction_forces,
         )
 
-    def _extract_matrix_free_reaction_force_sparse(self, scene: myScene, displacement_num):
+    def _extract_matrix_free_reaction_force_sparse(self, scene: SceneManager, displacement_num):
         kernel_extract_matrix_free_reaction_forces_sparse(
             self.node_stride(scene),
             scene.mass_cut_off,
@@ -753,7 +754,7 @@ class MomentumConservation(object):
             *self.sparse_grid_args(scene),
         )
 
-    def _extract_assembled_reaction_force_dense(self, scene: myScene, displacement_num):
+    def _extract_assembled_reaction_force_dense(self, scene: SceneManager, displacement_num):
         kernel_extract_assembled_reaction_forces(
             scene.element.gridSum,
             scene.mass_cut_off,
@@ -766,7 +767,7 @@ class MomentumConservation(object):
             self.accmulated_reaction_forces,
         )
 
-    def _extract_assembled_reaction_force_sparse(self, scene: myScene, displacement_num):
+    def _extract_assembled_reaction_force_sparse(self, scene: SceneManager, displacement_num):
         kernel_extract_assembled_reaction_forces_sparse(
             self.node_stride(scene),
             scene.mass_cut_off,
@@ -780,9 +781,9 @@ class MomentumConservation(object):
             *self.sparse_grid_args(scene),
         )
 
-    def calculate_reaction_forces_matrix_free_2D(self, scene: myScene):
+    def calculate_reaction_forces_matrix_free_2d(self, scene: SceneManager):
         self.accmulated_reaction_forces.fill(0.0)
-        kernel_moment_balance_cg_2D(
+        kernel_moment_balance_cg_2d(
             self.node_stride(scene),
             scene.element.grid_nodes,
             self.operator.active_dofs,
@@ -799,7 +800,7 @@ class MomentumConservation(object):
         displacement_num = int(scene.boundary.displacement_list[0])
         self.extract_matrix_free_reaction_force(scene, displacement_num)
 
-    def calculate_reaction_forces_matrix_free(self, scene: myScene):
+    def calculate_reaction_forces_matrix_free(self, scene: SceneManager):
         self.accmulated_reaction_forces.fill(0.0)
         kernel_moment_balance_cg(
             self.node_stride(scene),
@@ -818,9 +819,9 @@ class MomentumConservation(object):
         displacement_num = int(scene.boundary.displacement_list[0])
         self.extract_matrix_free_reaction_force(scene, displacement_num)
 
-    def calculate_reaction_forces_assembled_2D(self, scene: myScene):
+    def calculate_reaction_forces_assembled_2d(self, scene: SceneManager):
         self.accmulated_reaction_forces.fill(0.0)
-        kernel_moment_balance_direct_2D(
+        kernel_moment_balance_direct_2d(
             self.node_stride(scene),
             scene.element.grid_nodes,
             self.operator.active_dofs,
@@ -839,7 +840,7 @@ class MomentumConservation(object):
         displacement_num = int(scene.boundary.displacement_list[0])
         self.extract_assembled_reaction_force(scene, displacement_num)
 
-    def calculate_reaction_forces_assembled(self, scene: myScene):
+    def calculate_reaction_forces_assembled(self, scene: SceneManager):
         self.accmulated_reaction_forces.fill(0.0)
         kernel_moment_balance_direct(
             self.node_stride(scene),
@@ -860,7 +861,7 @@ class MomentumConservation(object):
         displacement_num = int(scene.boundary.displacement_list[0])
         self.extract_assembled_reaction_force(scene, displacement_num)
 
-    def apply_dirichlet_boundary_coo(self, sims: Simulation, scene: myScene):
+    def apply_dirichlet_boundary_coo(self, sims: Simulation, scene: SceneManager):
         displacement_num = int(scene.boundary.displacement_list[0])
         if displacement_num <= 0:
             return
@@ -903,7 +904,7 @@ class MomentumConservation(object):
         sims.timer.end("COO apply Dirichlet")
         self.sparse_matrix.linear_operator.update_nnz(self.coo_base_nnz + displacement_num)
 
-    def apply_dirichlet_boundary_hash_triplet(self, sims: Simulation, scene: myScene):
+    def apply_dirichlet_boundary_hash_triplet(self, sims: Simulation, scene: SceneManager):
         displacement_num = int(scene.boundary.displacement_list[0])
         if self.reaction_rhs_vector is not None:
             sims.timer.begin("HashTriplet reaction rhs copy")
@@ -943,7 +944,7 @@ class MomentumConservation(object):
             sims.timer.end("HashTriplet apply Dirichlet")
         self.hash_triplet_rhs_constrained = True
 
-    def solve_matrix_free(self, sims: Simulation, scene: myScene):
+    def solve_matrix_free(self, sims: Simulation, scene: SceneManager):
         result = self.cg.solve(
             self.operator,
             self.right_hand_vector,
@@ -955,13 +956,13 @@ class MomentumConservation(object):
             rel_tol=sims.linear_solver_relative_tolerance,
         )
         if result is False:
-            raise RuntimeError(
+            raise NonlinearSolveError(
                 f"MatrixFree {type(self.cg).__name__} failed to converge. "
                 f"Initial residual is {self.cg.last_initial_residual}, final residual is {self.cg.last_residual}, "
                 f"iterations = {self.cg.last_iterations}."
             )
 
-    def solve_coo(self, sims: Simulation, scene: myScene):
+    def solve_coo(self, sims: Simulation, scene: SceneManager):
         sims.timer.begin("COO solve")
         result = self.sparse_matrix.solve(
             self.right_hand_vector,
@@ -974,13 +975,13 @@ class MomentumConservation(object):
         sims.timer.end("COO solve")
         if not result:
             solver = self.sparse_matrix.linear_solver
-            raise RuntimeError(
+            raise NonlinearSolveError(
                 f"COO {type(solver).__name__} failed to converge. "
                 f"Initial residual is {solver.last_initial_residual}, final residual is {solver.last_residual}, "
                 f"iterations = {solver.last_iterations}, reason = {solver.last_breakdown_reason}."
             )
 
-    def solve_hash_triplet(self, sims: Simulation, scene: myScene):
+    def solve_hash_triplet(self, sims: Simulation, scene: SceneManager):
         active_nodes = self.operator.active_dofs // sims.dimension
         if not self.hash_triplet_rhs_constrained:
             sims.timer.begin("HashTriplet rhs copy")
@@ -998,7 +999,7 @@ class MomentumConservation(object):
         )
         sims.timer.end("HashTriplet solve")
         if not result["converged"]:
-            raise RuntimeError(
+            raise NonlinearSolveError(
                 f"HashTriplet {self.hash_triplet_solver} failed to converge. Final residual is {result['residual']}"
             )
         sims.timer.begin("HashTriplet solution copy")
@@ -1006,7 +1007,7 @@ class MomentumConservation(object):
         sims.timer.end("HashTriplet solution copy")
         self.hash_triplet_rhs_constrained = False
 
-    def run(self, sims: Simulation, scene: myScene):
+    def run(self, sims: Simulation, scene: SceneManager):
         sims.timer.begin("Assemble matrix")
         self.assemble_element_local_stiffnesses(scene)
         if sims.assemble_type == "MatrixFree" and sims.symmetrize_matrix_free_tangent:

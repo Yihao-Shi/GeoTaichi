@@ -1,13 +1,13 @@
 import taichi as ti
 
-from src.utils.TypeDefination import vec3i, vec3f
-from src.utils.Quaternion import SetToRotate
+from src.utils.TypeDefinition import vec3i, vec3f
+from src.utils.Quaternion import set_to_rotate
 
 
 @ti.kernel
-def copy_values(psize: ti.types.ndarray(), calLength: ti.template(), particle: ti.template()):
+def copy_values(psize: ti.types.ndarray(), cal_length: ti.template(), particle: ti.template()):
     for i in range(psize.shape[0]):
-        psize[i, :] = calLength[int(particle[i].bodyID)]
+        psize[i, :] = cal_length[int(particle[i].bodyID)]
 
 
 @ti.func
@@ -146,7 +146,7 @@ def find_lsoverlap(
                 rad = dem_particle[pID].rad
                 mass_center = dem_rigid[pID].mass_center
                 if (position - pos).norm() - rad - radius < 0.0:
-                    rotation_matrix = SetToRotate(dem_rigid[pID].q).transpose()
+                    rotation_matrix = set_to_rotate(dem_rigid[pID].q).transpose()
                     local_pos = rotation_matrix @ (position - mass_center)
                     if not dem_box[pID]._in_box(local_pos):
                         continue

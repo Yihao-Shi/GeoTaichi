@@ -106,21 +106,21 @@ dem.add_wall(
                    "WallCenter":   ti.Vector([7., 3.5, 3.5]),
                    "OuterNormal":  ti.Vector([-1., 0., 0.])
                   })
-                  
+
 dem.add_wall(body={
                    "WallType":    "Plane",
                    "MaterialID":   1,
                    "WallCenter":   ti.Vector([0., 3.5, 3.5]),
                    "OuterNormal":  ti.Vector([1., 0., 0.])
                   })
-                  
+
 dem.add_wall(body={
                    "WallType":    "Plane",
                    "MaterialID":   1,
                    "WallCenter":   ti.Vector([3.5, 0., 3.5]),
                    "OuterNormal":  ti.Vector([0., 1., 0.])
                   })
-                  
+
 dem.add_wall(body={
                    "WallType":    "Plane",
                    "MaterialID":   1,

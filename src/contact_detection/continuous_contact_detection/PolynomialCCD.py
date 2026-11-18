@@ -1,10 +1,8 @@
 """Polynomial continuous-contact queries shared by implicit solvers."""
 
-import taichi as ti
+from src.utils.ScalarFunction import get_smallest_positive_real_quad_root
 
-from src.utils.Root import (
-    getSmallestPositiveRealQuadRoot,
-)
+import taichi as ti
 
 
 @ti.func
@@ -118,7 +116,7 @@ def point_point_quadratic_ccd(
     quadratic_a = relative_displacement.dot(relative_displacement)
     quadratic_b = 2.0 * relative_position.dot(relative_displacement)
     quadratic_c = relative_position.dot(relative_position) - minimum_distance * minimum_distance
-    solution = getSmallestPositiveRealQuadRoot(quadratic_a, quadratic_b, quadratic_c)
+    solution = get_smallest_positive_real_quad_root(quadratic_a, quadratic_b, quadratic_c)
     if solution < 0.0:
         solution = 1.0e20
     else:

@@ -4,21 +4,23 @@ Adaptation of reference-SDF pullback: affine particle patches replace k-NN
 displacement interpolation. No previous-step SDF enters reconstruction.
 """
 
+from src.utils.errors import NonfiniteStateError, SimulationStateError
+
 import taichi as ti
 
 from src.mpm.soft_particle.SoftBodyKernel import (
-    audit_soft_levelset_velocity_projection_,
-    normalize_soft_levelset_velocity_projection_,
-    reset_soft_levelset_velocity_projection_,
-    scatter_soft_point_to_sdf_node_,
+    audit_soft_levelset_velocity_projection,
+    normalize_soft_levelset_velocity_projection,
+    reset_soft_levelset_velocity_projection,
+    scatter_soft_point_to_sdf_node,
 )
-from src.utils.constants import Threshold
-from src.utils.Quaternion import SetToRotate
-from src.utils.ScalarFunction import linearize3D
+from src.utils.constants import THRESHOLD
+from src.utils.Quaternion import set_to_rotate
+from src.utils.ScalarFunction import linearize3d
 
 
 @ti.kernel
-def initialize_soft_reference_sdf_(
+def initialize_soft_reference_sdf(
     soft_num: int, soft: ti.template(), grid: ti.template(), reference: ti.template(), initialized: ti.template()
 ):
     # Per-body flags also handle bodies inserted after simulation starts.
@@ -31,7 +33,7 @@ def initialize_soft_reference_sdf_(
 
 
 @ti.kernel
-def project_soft_inverse_map_(
+def project_soft_inverse_map(
     point_num: int,
     shape_type: ti.template(),
     soft: ti.template(),
@@ -50,11 +52,11 @@ def project_soft_inverse_map_(
             body = points[p].bodyID
             sb = rigid[body].softID
             scale = soft[sb].scale
-            R = SetToRotate(rigid[body].q)
+            R = set_to_rotate(rigid[body].q)
             X = soft[sb].referenceRotation.transpose() @ (points[p].x0 - soft[sb].mass_center0) / scale
             x = R.transpose() @ (points[p].x - rigid[body].mass_center) / scale
             determinant = points[p].F.determinant()
-            if not (determinant > Threshold) or ti.math.isinf(determinant):
+            if not (determinant > THRESHOLD) or ti.math.isinf(determinant):
                 ti.atomic_add(invalid, 1)
             else:
                 B = soft[sb].referenceRotation.transpose() @ points[p].F.inverse() @ R
@@ -73,7 +75,7 @@ def project_soft_inverse_map_(
                 total = 0.0
                 for i, j, k in ti.ndrange(width, width, width):
                     ijk = base + ti.Vector([i, j, k])
-                    w = scatter_soft_point_to_sdf_node_(
+                    w = scatter_soft_point_to_sdf_node(
                         shape_type,
                         sb,
                         body,
@@ -90,8 +92,8 @@ def project_soft_inverse_map_(
                         weight,
                         box,
                     )
-                    if w > Threshold:
-                        node = soft[sb].gridStart + linearize3D(ijk[0], ijk[1], ijk[2], box[body].gnum)
+                    if w > THRESHOLD:
+                        node = soft[sb].gridStart + linearize3d(ijk[0], ijk[1], ijk[2], box[body].gnum)
                         ti.atomic_add(derivative[node], points[p].m * w * D)
                     total += w
                 ti.atomic_max(support_loss[None], ti.abs(1.0 - total))
@@ -99,18 +101,18 @@ def project_soft_inverse_map_(
 
 
 @ti.kernel
-def normalize_soft_inverse_derivative_(
+def normalize_soft_inverse_derivative(
     soft_num: int, max_grid: int, soft: ti.template(), derivative: ti.template(), weight: ti.template()
 ):
     for sb, local in ti.ndrange(soft_num, max_grid):
         if local < soft[sb].gridNum:
             node = soft[sb].gridStart + local
-            if weight[node] > Threshold:
+            if weight[node] > THRESHOLD:
                 derivative[node] /= weight[node]
 
 
 @ti.kernel
-def extend_soft_inverse_map_(
+def extend_soft_inverse_map(
     soft_num: int,
     max_grid: int,
     soft: ti.template(),
@@ -126,7 +128,7 @@ def extend_soft_inverse_map_(
             h = box[body].grid_space / soft[sb].scale
             ijk = ti.Vector([local % gnum[0], (local // gnum[0]) % gnum[1], local // (gnum[0] * gnum[1])])
             node = soft[sb].gridStart + local
-            if weight[node] <= Threshold:
+            if weight[node] <= THRESHOLD:
                 total = 0.0
                 value = ti.Vector.zero(float, 3)
                 gradient = ti.Matrix.zero(float, 3, 3)
@@ -136,9 +138,9 @@ def extend_soft_inverse_map_(
                     direction = -1 if side == 0 else 1
                     neighbor[axis] += direction
                     if 0 <= neighbor[axis] < gnum[axis]:
-                        other = soft[sb].gridStart + linearize3D(neighbor[0], neighbor[1], neighbor[2], gnum)
+                        other = soft[sb].gridStart + linearize3d(neighbor[0], neighbor[1], neighbor[2], gnum)
                         w = weight[other]
-                        if w > Threshold:
+                        if w > THRESHOLD:
                             # Affine extrapolation preserves rigid/affine maps in the exterior halo.
                             delta = ti.Vector.zero(float, 3)
                             delta[axis] = -direction * h
@@ -146,7 +148,7 @@ def extend_soft_inverse_map_(
                             gradient += w * derivative[other]
                             total += w
                             count += 1
-                if total > Threshold:
+                if total > THRESHOLD:
                     displacement[node] = value / total
                     derivative[node] = gradient / total
                     # Negative marks this wave's nodes: readers only use positive
@@ -155,7 +157,7 @@ def extend_soft_inverse_map_(
 
 
 @ti.kernel
-def activate_soft_inverse_extension_(soft_num: int, max_grid: int, soft: ti.template(), weight: ti.template()):
+def activate_soft_inverse_extension(soft_num: int, max_grid: int, soft: ti.template(), weight: ti.template()):
     for sb, local in ti.ndrange(soft_num, max_grid):
         if local < soft[sb].gridNum:
             node = soft[sb].gridStart + local
@@ -163,7 +165,7 @@ def activate_soft_inverse_extension_(soft_num: int, max_grid: int, soft: ti.temp
 
 
 @ti.func
-def sample_soft_reference_sdf_(X, body_box, reference):
+def sample_soft_reference_sdf(X, body_box, reference):
     h = body_box.grid_space / body_box.scale
     xmin = body_box.xmin / body_box.scale
     xmax = body_box.xmax / body_box.scale
@@ -174,7 +176,7 @@ def sample_soft_reference_sdf_(X, body_box, reference):
     gradient = ti.Vector.zero(float, 3)
     for i, j, k in ti.static(ti.ndrange(2, 2, 2)):
         w = ti.Vector([f[0] if i else 1 - f[0], f[1] if j else 1 - f[1], f[2] if k else 1 - f[2]])
-        node = body_box.startGrid + linearize3D(base[0] + i, base[1] + j, base[2] + k, body_box.gnum)
+        node = body_box.startGrid + linearize3d(base[0] + i, base[1] + j, base[2] + k, body_box.gnum)
         value = reference[node]
         phi += w[0] * w[1] * w[2] * value
         gradient += (
@@ -188,7 +190,7 @@ def sample_soft_reference_sdf_(X, body_box, reference):
 
 
 @ti.kernel
-def reconstruct_soft_reference_sdf_(
+def reconstruct_soft_reference_sdf(
     soft_num: int,
     max_grid: int,
     monitor_band: float,
@@ -212,15 +214,15 @@ def reconstruct_soft_reference_sdf_(
             node = soft[sb].gridStart + local
             x = xmin + ti.cast(ijk, float) * h
             X = x + displacement[node]
-            phi, n0 = sample_soft_reference_sdf_(X, box[body], reference)
+            phi, n0 = sample_soft_reference_sdf(X, box[body], reference)
             B = ti.Matrix.identity(float, 3) + derivative[node]
-            if weight[node] > Threshold:
-                if B.determinant() <= Threshold and phi <= monitor_band * h:
+            if weight[node] > THRESHOLD:
+                if B.determinant() <= THRESHOLD and phi <= monitor_band * h:
                     ti.atomic_max(excess, 1.0e30)
-                if B.determinant() > Threshold and n0.norm() > Threshold:
+                if B.determinant() > THRESHOLD and n0.norm() > THRESHOLD:
                     # Local metric correction; exact for affine motion of a plane.
                     stretch = (B.transpose() @ (n0 / n0.norm())).norm()
-                    phi /= ti.max(stretch, Threshold)
+                    phi /= ti.max(stretch, THRESHOLD)
                 if ti.abs(phi) <= monitor_band * h:
                     for d in ti.static(range(3)):
                         ti.atomic_max(excess, ti.max(xmin[d] - X[d], X[d] - xmax[d]) / h)
@@ -233,7 +235,7 @@ def reconstruct_soft_reference_sdf_(
 
 
 @ti.kernel
-def audit_soft_inverse_halo_(
+def audit_soft_inverse_halo(
     soft_num: int, max_grid: int, soft: ti.template(), grid: ti.template(), box: ti.template(), weight: ti.template()
 ) -> int:
     missing = 0
@@ -242,13 +244,13 @@ def audit_soft_inverse_halo_(
             body = soft[sb].bodyID
             gnum = box[body].gnum
             node = soft[sb].gridStart + local
-            if weight[node] <= Threshold:
+            if weight[node] <= THRESHOLD:
                 ijk = ti.Vector([local % gnum[0], (local // gnum[0]) % gnum[1], local // (gnum[0] * gnum[1])])
                 for axis, side in ti.static(ti.ndrange(3, 2)):
                     other = ijk
                     other[axis] += -1 if side == 0 else 1
                     if 0 <= other[axis] < gnum[axis]:
-                        index = soft[sb].gridStart + linearize3D(other[0], other[1], other[2], gnum)
+                        index = soft[sb].gridStart + linearize3d(other[0], other[1], other[2], gnum)
                         if grid[index].distance_field < 0:
                             ti.atomic_add(missing, 1)
     return missing
@@ -274,40 +276,40 @@ def reconstruct_soft_levelset(
     box,
     reference,
 ):
-    reset_soft_levelset_velocity_projection_(soft_num, max_grid, soft, displacement, weight)
+    reset_soft_levelset_velocity_projection(soft_num, max_grid, soft, displacement, weight)
     derivative.fill(0)
-    invalid = project_soft_inverse_map_(
+    invalid = project_soft_inverse_map(
         point_num, shape_type, soft, points, rigid, box, displacement, derivative, weight, support_loss
     )
     if invalid:
-        raise RuntimeError(
+        raise NonfiniteStateError(
             f"LSMPM reference-map reconstruction encountered {invalid} nonfinite or nonpositive particle F determinants"
         )
-    normalize_soft_levelset_velocity_projection_(soft_num, max_grid, soft, displacement, weight)
-    normalize_soft_inverse_derivative_(soft_num, max_grid, soft, derivative, weight)
+    normalize_soft_levelset_velocity_projection(soft_num, max_grid, soft, displacement, weight)
+    normalize_soft_inverse_derivative(soft_num, max_grid, soft, derivative, weight)
     for _ in range(max(int(extension_iterations), 0)):
-        extend_soft_inverse_map_(soft_num, max_grid, soft, box, displacement, derivative, weight)
-        activate_soft_inverse_extension_(soft_num, max_grid, soft, weight)
+        extend_soft_inverse_map(soft_num, max_grid, soft, box, displacement, derivative, weight)
+        activate_soft_inverse_extension(soft_num, max_grid, soft, weight)
     excess = float(
-        reconstruct_soft_reference_sdf_(
+        reconstruct_soft_reference_sdf(
             soft_num, max_grid, monitor_band, soft, grid, box, reference, displacement, derivative, weight
         )
     )
     if excess >= 1.0e30:
-        raise RuntimeError(
+        raise SimulationStateError(
             "LSMPM reference map has missing support or a nonpositive inverse Jacobian near the interface"
         )
-    if audit_soft_inverse_halo_(soft_num, max_grid, soft, grid, box, weight):
-        raise RuntimeError(
+    if audit_soft_inverse_halo(soft_num, max_grid, soft, grid, box, weight):
+        raise SimulationStateError(
             "LSMPM reference-map support halo cuts the material interior; increase projection extension iterations"
         )
-    audit_soft_levelset_velocity_projection_(
+    audit_soft_levelset_velocity_projection(
         soft_num, max_grid, monitor_band, soft, grid, weight, band_nodes, uncovered_nodes, box
     )
     return excess
 
 
-def advect_soft_levelset_reference_map_(
+def advect_soft_levelset_reference_map(
     softNum,
     maxGridNum,
     pointNum,

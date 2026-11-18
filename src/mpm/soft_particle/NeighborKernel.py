@@ -1,15 +1,15 @@
 import taichi as ti
 
-from src.utils.GeometryFunction import intersectionOBBs
-from src.utils.Quaternion import SetToRotate
+from src.utils.GeometryFunction import intersection_ob_bs
+from src.utils.Quaternion import set_to_rotate
 from src.utils.ScalarFunction import sgn
-from src.utils.TypeDefination import vec3f
+from src.utils.TypeDefinition import vec3f
 import src.utils.GlobalVariable as GlobalVariable
 
 
 @ti.kernel
-def rebuild_lsmpm_contact_nodes_(
-    particleNum: int,
+def rebuild_lsmpm_contact_nodes(
+    particle_num: int,
     rigid: ti.template(),
     soft: ti.template(),
     soft_surface_point_id: ti.template(),
@@ -22,7 +22,7 @@ def rebuild_lsmpm_contact_nodes_(
 ):
     count = 0
     ti.loop_config(serialize=True)
-    for body in range(particleNum):
+    for body in range(particle_num):
         ls_contact_body_start[body] = count
         for node in range(rigid[body]._start_node(), rigid[body]._end_node()):
             global_node = rigid[body].local_node_to_global(node)
@@ -35,7 +35,7 @@ def rebuild_lsmpm_contact_nodes_(
 
 
 @ti.func
-def append_lsmpm_directed_lsparticle_contacts_(
+def append_lsmpm_directed_lsparticle_contacts(
     master,
     slave,
     potential_point_num,
@@ -72,8 +72,8 @@ def append_lsmpm_directed_lsparticle_contacts_(
 
 
 @ti.kernel
-def board_search_lsmpm_lsparticle_lsparticle_linked_cell_(
-    particleNum: int,
+def board_search_lsmpm_lsparticle_lsparticle_linked_cell(
+    particle_num: int,
     potential_point_num: int,
     verlet_distance: float,
     pplist: ti.template(),
@@ -92,10 +92,10 @@ def board_search_lsmpm_lsparticle_lsparticle_linked_cell_(
     ls_contact_count: ti.template(),
 ):
     point_particle.fill(0)
-    total_contact = particle_particle[particleNum]
+    total_contact = particle_particle[particle_num]
     for nc in range(total_contact):
         master, slave = pplist[nc].endID1, pplist[nc].endID2
-        rotate_matrix1, rotate_matrix2 = SetToRotate(rigid[master].q), SetToRotate(rigid[slave].q)
+        rotate_matrix1, rotate_matrix2 = set_to_rotate(rigid[master].q), set_to_rotate(rigid[slave].q)
         mass_center1, mass_center2 = rigid[master]._get_position(), rigid[slave]._get_position()
         aabb1, aabb2 = box[master]._get_shape_center(), box[slave]._get_shape_center()
 
@@ -113,13 +113,13 @@ def board_search_lsmpm_lsparticle_lsparticle_linked_cell_(
         obb2 = mass_center2 + rotate_matrix2 @ aabb2
         extent1 = box[master]._get_shape_dim() + 2.0 * verlet_distance * vec3f(1.0, 1.0, 1.0)
         extent2 = box[slave]._get_shape_dim() + 2.0 * verlet_distance * vec3f(1.0, 1.0, 1.0)
-        if intersectionOBBs(obb1, obb2, extent1, extent2, rotate_matrix1, rotate_matrix2):
+        if intersection_ob_bs(obb1, obb2, extent1, extent2, rotate_matrix1, rotate_matrix2):
             master_soft = int(rigid[master].is_soft)
             slave_soft = int(rigid[slave].is_soft)
             # RR uses the broad-phase direction, RS always uses the soft trace
             # against the rigid SDF, and SS retains both half-weighted passes.
             if master_soft == 1 or slave_soft == 0:
-                append_lsmpm_directed_lsparticle_contacts_(
+                append_lsmpm_directed_lsparticle_contacts(
                     master,
                     slave,
                     potential_point_num,
@@ -141,7 +141,7 @@ def board_search_lsmpm_lsparticle_lsparticle_linked_cell_(
                     mass_center2,
                 )
             if slave_soft == 1:
-                append_lsmpm_directed_lsparticle_contacts_(
+                append_lsmpm_directed_lsparticle_contacts(
                     slave,
                     master,
                     potential_point_num,
@@ -165,8 +165,8 @@ def board_search_lsmpm_lsparticle_lsparticle_linked_cell_(
 
 
 @ti.kernel
-def board_search_lsmpm_lsparticle_wall_linked_cell_(
-    particleNum: int,
+def board_search_lsmpm_lsparticle_wall_linked_cell(
+    particle_num: int,
     potential_point_num: int,
     verlet_distance: float,
     pwlist: ti.template(),
@@ -184,11 +184,11 @@ def board_search_lsmpm_lsparticle_wall_linked_cell_(
     ls_contact_body_end: ti.template(),
 ):
     point_wall.fill(0)
-    total_contact = particle_wall[particleNum]
+    total_contact = particle_wall[particle_num]
     for nc in range(total_contact):
         master, wall_id = pwlist[nc].endID1, pwlist[nc].endID2
         mass_center1 = rigid[master]._get_position()
-        rotate_matrix1 = SetToRotate(rigid[master].q)
+        rotate_matrix1 = set_to_rotate(rigid[master].q)
         scale = box[master].scale
         for contact_node in range(ls_contact_body_start[master], ls_contact_body_end[master]):
             global_node = ls_contact_ref[contact_node]

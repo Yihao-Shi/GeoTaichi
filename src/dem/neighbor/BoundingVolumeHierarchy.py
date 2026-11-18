@@ -1,7 +1,7 @@
-from src.dem.neighbor.neighbor_kernel import *
+from src.dem.neighbor.NeighborKernel import *
 from src.contact_detection.bounding_volume_hierarchy.MultiPatchLBVH import LBVH
 from src.dem.neighbor.NeighborBase import NeighborBase
-from src.dem.SceneManager import myScene
+from src.dem.SceneManager import SceneManager
 from src.utils.PrefixSum import PrefixSumExecutor
 from src.utils.linalg import no_operation
 
@@ -36,7 +36,7 @@ class BoundingVolumeHierarchy(NeighborBase):
         self.particle_wall_delete_vars()
         self.neighbor_initialze(scene, max(self.sims.domain), 0.0)
 
-    def neighbor_initialze(self, scene: myScene, min_bounding_rad, max_bounding_rad):
+    def neighbor_initialze(self, scene: SceneManager, min_bounding_rad, max_bounding_rad):
         rad_min, rad_max = scene.find_bounding_sphere_radius(self.sims)
         self.sims.set_max_bounding_sphere_radius(rad_max)
         self.sims.set_min_bounding_sphere_radius(rad_min)
@@ -60,7 +60,7 @@ class BoundingVolumeHierarchy(NeighborBase):
         print("Potental contact number per particle: ", self.sims.potential_particle_num)
         print("Potental contact wall per particle: ", self.sims.wall_coordination_number, "\n")
 
-    def pre_neighbor(self, scene: myScene):
+    def pre_neighbor(self, scene: SceneManager):
         self.active_aabbs = [scene.particleNum[0]]
         if self.sims.wall_type == 1 or self.sims.wall_type == 2:
             self.active_aabbs.append(scene.wallNum[0])
@@ -78,7 +78,7 @@ class BoundingVolumeHierarchy(NeighborBase):
         if self.sims.static_wall is True:
             self.place_wall_to_cells = no_operation
 
-    def update_verlet_table(self, scene: myScene):
+    def update_verlet_table(self, scene: SceneManager):
         active_aabbs = [int(scene.particleNum[0])]
         if self.sims.wall_type in (1, 2):
             active_aabbs.append(int(scene.wallNum[0]))
@@ -97,7 +97,7 @@ class BoundingVolumeHierarchy(NeighborBase):
         self.update_verlet_tables_particle_wall(scene)
         self.reset_verletDisp()
 
-    def place_particle_to_cell(self, scene: myScene):
+    def place_particle_to_cell(self, scene: SceneManager):
         if self.sims.scheme == "LSMPM":
             self.lbvh.aabb.set_lsmpm_body_aabbs(
                 int(scene.particleNum[0]),
@@ -123,13 +123,13 @@ class BoundingVolumeHierarchy(NeighborBase):
                 scene.particle,
             )
 
-    def place_wall_to_cell(self, scene: myScene):
+    def place_wall_to_cell(self, scene: SceneManager):
         self.lbvh.aabb.set_triangle_aabbs(
             int(scene.wallNum[0]), self.lbvh.aabb.prefix_current_batch_size[1], self.sims.verlet_distance, scene.wall
         )
 
-    def update_verlet_table_particle_particle(self, scene: myScene):
-        board_search_particle_particle_bvh_(
+    def update_verlet_table_particle_particle(self, scene: SceneManager):
+        board_search_particle_particle_bvh(
             0,
             int(scene.particleNum[0]),
             self.sims.potential_particle_num,
@@ -144,8 +144,8 @@ class BoundingVolumeHierarchy(NeighborBase):
         )
         self.particle_pse.run(self.particle_particle)
 
-    def update_verlet_table_particle_plane(self, scene: myScene):
-        board_search_particle_wall_brust_(
+    def update_verlet_table_particle_plane(self, scene: SceneManager):
+        board_search_particle_wall_brust(
             self.sims.wall_coordination_number,
             int(scene.particleNum[0]),
             int(scene.wallNum[0]),
@@ -157,8 +157,8 @@ class BoundingVolumeHierarchy(NeighborBase):
         )
         self.particle_pse.run(self.particle_wall)
 
-    def update_verlet_table_particle_triangle_wall(self, scene: myScene):
-        board_search_particle_wall_bvh_(
+    def update_verlet_table_particle_triangle_wall(self, scene: SceneManager):
+        board_search_particle_wall_bvh(
             0,
             1,
             int(scene.particleNum[0]),

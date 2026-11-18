@@ -1,3 +1,4 @@
+from src.utils.errors import CapacityError, ConfigurationError, SimulationStateError
 import numpy as np
 import taichi as ti
 from itertools import product
@@ -36,7 +37,7 @@ from src.mpm.elements.AdaptiveHexahedronKernel import (
 )
 from src.mpm.elements.HexahedronElement8Nodes import HexahedronElement8Nodes
 from src.utils.ObjectIO import DictIO
-from src.utils.TypeDefination import vec3f, vec3i
+from src.utils.TypeDefinition import vec3f, vec3i
 
 
 class AdaptiveHexahedronElement(HexahedronElement8Nodes):
@@ -47,49 +48,49 @@ class AdaptiveHexahedronElement(HexahedronElement8Nodes):
         self.adaptive = True
         self.refinement_ratio = 2
         self.max_level = int(
-            DictIO.GetAlternative(
+            DictIO.get_alternative(
                 adaptive_grid,
                 "MaxLevel",
-                DictIO.GetAlternative(adaptive_grid, "MaxRefinementLevel", 1),
+                DictIO.get_alternative(adaptive_grid, "MaxRefinementLevel", 1),
             )
         )
         self.finest_ratio = self.refinement_ratio**self.max_level
-        self.refine_interval = int(DictIO.GetAlternative(adaptive_grid, "RefineInterval", 50))
+        self.refine_interval = int(DictIO.get_alternative(adaptive_grid, "RefineInterval", 50))
         self.particle_split_interval = int(
-            DictIO.GetAlternative(adaptive_grid, "ParticleSplitInterval", self.refine_interval)
+            DictIO.get_alternative(adaptive_grid, "ParticleSplitInterval", self.refine_interval)
         )
-        self.refine_threshold = float(DictIO.GetAlternative(adaptive_grid, "RefineThreshold", 2e-3))
-        self.refine_criterion = str(DictIO.GetAlternative(adaptive_grid, "RefineCriterion", "Auto")).strip()
-        self.max_refined_ratio = float(DictIO.GetAlternative(adaptive_grid, "RefineRatio", 0.2))
-        self.refine_particles = bool(DictIO.GetAlternative(adaptive_grid, "RefineParticles", True))
-        self.follow_refined_particles = bool(DictIO.GetAlternative(adaptive_grid, "FollowRefinedParticles", True))
+        self.refine_threshold = float(DictIO.get_alternative(adaptive_grid, "RefineThreshold", 2e-3))
+        self.refine_criterion = str(DictIO.get_alternative(adaptive_grid, "RefineCriterion", "Auto")).strip()
+        self.max_refined_ratio = float(DictIO.get_alternative(adaptive_grid, "RefineRatio", 0.2))
+        self.refine_particles = bool(DictIO.get_alternative(adaptive_grid, "RefineParticles", True))
+        self.follow_refined_particles = bool(DictIO.get_alternative(adaptive_grid, "FollowRefinedParticles", True))
         self.follow_refined_particles_interval = int(
-            DictIO.GetAlternative(
+            DictIO.get_alternative(
                 adaptive_grid,
                 "FollowRefinedParticlesInterval",
                 min(self.refine_interval, 20),
             )
         )
-        self.particle_split_batch = int(DictIO.GetAlternative(adaptive_grid, "ParticleSplitBatch", 8192))
-        self.split_interior_only = bool(DictIO.GetAlternative(adaptive_grid, "SplitInteriorOnly", False))
+        self.particle_split_batch = int(DictIO.get_alternative(adaptive_grid, "ParticleSplitBatch", 8192))
+        self.split_interior_only = bool(DictIO.get_alternative(adaptive_grid, "SplitInteriorOnly", False))
         self.split_interior_volume_fraction = float(
-            DictIO.GetAlternative(adaptive_grid, "SplitInteriorVolumeFraction", 0.95)
+            DictIO.get_alternative(adaptive_grid, "SplitInteriorVolumeFraction", 0.95)
         )
-        self.buffer_cells = int(DictIO.GetAlternative(adaptive_grid, "BufferCells", 1))
-        self.penalty = float(DictIO.GetAlternative(adaptive_grid, "Penalty", 1.0))
-        self.penalty_iterations = int(DictIO.GetAlternative(adaptive_grid, "PenaltyIterations", 1))
-        self.penalty_beta = float(DictIO.GetAlternative(adaptive_grid, "PenaltyBeta", 10.0))
+        self.buffer_cells = int(DictIO.get_alternative(adaptive_grid, "BufferCells", 1))
+        self.penalty = float(DictIO.get_alternative(adaptive_grid, "Penalty", 1.0))
+        self.penalty_iterations = int(DictIO.get_alternative(adaptive_grid, "PenaltyIterations", 1))
+        self.penalty_beta = float(DictIO.get_alternative(adaptive_grid, "PenaltyBeta", 10.0))
         self.penalty_young = 0.0
         self.penalty_length = 0.0
         self.penalty_reference_volume = 0.0
-        self.bridging_domain = bool(DictIO.GetAlternative(adaptive_grid, "BridgingDomain", False))
-        self.bridging_cells = int(DictIO.GetAlternative(adaptive_grid, "BridgingCells", 1))
-        self.hanging_constraint_mode = str(DictIO.GetAlternative(adaptive_grid, "HangingConstraintMode", "Penalty"))
+        self.bridging_domain = bool(DictIO.get_alternative(adaptive_grid, "BridgingDomain", False))
+        self.bridging_cells = int(DictIO.get_alternative(adaptive_grid, "BridgingCells", 1))
+        self.hanging_constraint_mode = str(DictIO.get_alternative(adaptive_grid, "HangingConstraintMode", "Penalty"))
         self.strong_hanging_constraint = self.hanging_constraint_mode in (
             "Shape",
             "ShapeFunction",
         )
-        self.hanging_shape_capacity_factor = int(DictIO.GetAlternative(adaptive_grid, "HangingShapeCapacityFactor", 3))
+        self.hanging_shape_capacity_factor = int(DictIO.get_alternative(adaptive_grid, "HangingShapeCapacityFactor", 3))
 
         self.coarse_grid_size = vec3f(0.0, 0.0, 0.0)
         self.coarse_igrid_size = vec3f(0.0, 0.0, 0.0)
@@ -270,7 +271,7 @@ class AdaptiveHexahedronElement(HexahedronElement8Nodes):
             unsupported.append("particle traction disabled when RefineParticles is enabled")
         if unsupported:
             requirements = ", ".join(unsupported)
-            raise RuntimeError(f"AdaptiveGrid currently requires: {requirements}")
+            raise SimulationStateError(f"AdaptiveGrid currently requires: {requirements}")
 
     def create_nodes(self, sims: Simulation, grid_size):
         self.validate_solver(sims)
@@ -545,7 +546,7 @@ class AdaptiveHexahedronElement(HexahedronElement8Nodes):
             self.grad_shape_function,
         )
         if self.strong_hanging_constraint and int(self.hanging_shape_overflow[None]) != 0:
-            raise RuntimeError(
+            raise CapacityError(
                 "AdaptiveGrid/HangingShapeCapacityFactor is too small for "
                 f"{self.hanging_constraint_mode}. Current support capacity is "
                 f"{self.grid_nodes} nodes per particle "
@@ -582,7 +583,9 @@ class AdaptiveHexahedronElement(HexahedronElement8Nodes):
             return mark_refined_cells_stress
 
         if material_name == "LinearElasticModel":
-            raise RuntimeError("AdaptiveGrid/RefineCriterion for LinearElastic must be " "Auto or EquivalentStress")
+            raise ConfigurationError(
+                "AdaptiveGrid/RefineCriterion for LinearElastic must be " "Auto or EquivalentStress"
+            )
 
         if criterion in ("plasticstrain", "equivalentplasticstrain"):
             if material_name == "ElasticPerfectlyPlasticModel":
@@ -600,7 +603,7 @@ class AdaptiveHexahedronElement(HexahedronElement8Nodes):
             if material_name in ("DruckerPragerModel", "ModifiedCamClayModel"):
                 return mark_refined_cells_softening if is_soft else mark_refined_cells_epdstrain
 
-        raise RuntimeError(
+        raise SimulationStateError(
             f"AdaptiveGrid/RefineCriterion={self.refine_criterion} does not " f"support material {material_name}"
         )
 
@@ -676,7 +679,7 @@ class AdaptiveHexahedronElement(HexahedronElement8Nodes):
                 refined_ratio = refined_cells / self.cellSum
                 if refined_extra_cells > self.max_refined_extra_cells:
                     refined_extra_ratio = refined_extra_cells / (self.cellSum * self.refined_cell_expansion)
-                    raise RuntimeError(
+                    raise CapacityError(
                         f"AdaptiveGrid refined coarse-cell ratio "
                         f"{refined_ratio:.6f} "
                         f"(extra fine-cell ratio {refined_extra_ratio:.6f}) "
@@ -747,7 +750,7 @@ class AdaptiveHexahedronElement(HexahedronElement8Nodes):
                     break
                 required_particle_num = old_particle_num + 7 * candidate_split_parents
                 if required_particle_num > sims.max_particle_num:
-                    raise RuntimeError(
+                    raise SimulationStateError(
                         f"AdaptiveGrid particle refinement requires {required_particle_num} "
                         f"particles, but max_particle_number={sims.max_particle_num}. "
                         "Increase max_particle_number or disable RefineParticles."
@@ -758,7 +761,7 @@ class AdaptiveHexahedronElement(HexahedronElement8Nodes):
                     candidate_split_parents - split_parents,
                 )
                 if split_parents == 0:
-                    raise RuntimeError(
+                    raise CapacityError(
                         "AdaptiveGrid particle refinement requires additional "
                         "particle capacity, but max_particle_number has no room "
                         "for 1-to-8 splitting."
@@ -790,7 +793,7 @@ class AdaptiveHexahedronElement(HexahedronElement8Nodes):
                     self.particle_split_overflow,
                 )
                 if int(self.particle_split_overflow[None]) > 0:
-                    raise RuntimeError(
+                    raise CapacityError(
                         "AdaptiveGrid particle refinement exceeded "
                         f"max_particle_number={sims.max_particle_num}. "
                         "Increase max_particle_number or disable RefineParticles."

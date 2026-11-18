@@ -1,13 +1,15 @@
 """Hydrodynamic load must exclude the fictitious fluid inside the rigid body."""
 
+from src.dem.structs.BaseStruct import BoundingSphere
+
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
 import taichi as ti
 
-from src.dem.structs.BaseStruct import BoundingSphere, RigidBody
-from src.mpdem.fluid_dynamics.IncompressibleCoupling import TwoPhaseDoubleLayerLSDEMCoupling
+from src.dem.structs.RigidBody import RigidBody
+from src.mpdem.fluid_dynamics.TwoPhaseDoubleLayerLSDEMCoupling import TwoPhaseDoubleLayerLSDEMCoupling
 from src.mpdem.fluid_dynamics.IncompressibleCouplingKernel import kernel_apply_double_layer_lsdem_ibm
 from src.mpm.engines.TwoPhaseDoubleLayerKernel import kernel_correct_double_layer_velocity3d
 from tests.verification.mpdem.test_double_layer_ibm_rigid_exchange import Plane

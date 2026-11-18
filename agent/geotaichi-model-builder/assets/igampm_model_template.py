@@ -48,7 +48,7 @@ def build_and_run(contract: dict, output_directory: str | None = None) -> None:
     contact = dict(api.get("contact_model", {}))
     contact_name = contact.get(
         "contact_model",
-        api.get("configuration", {}).get("contact_model", "IPC"),
+        api.get("configuration", {}).get("contact_model", "BarrierIPC"),
     )
     # Explicit contact must select ParticleCoupling before MPM allocation.
     model = IGAMPM(

@@ -1,8 +1,8 @@
+from src.utils.TimeTicker import Timer
 from src.utils import GlobalVariable
 from math import fsum
 from types import SimpleNamespace
 
-from src.utils.TimeTicker import Timer, advance_time, has_remaining_time
 import src.utils.TimeTicker as time_ticker
 
 
@@ -62,9 +62,9 @@ def test_gpu_timer_section_preserves_body_error_when_sync_also_fails(monkeypatch
 
 
 def test_roundoff_remainder_does_not_create_a_tiny_terminal_step():
-    assert not has_remaining_time(0.65 - 3.9e-14, 0.65, 2.0e-4)
-    assert not has_remaining_time(50.0 - 2.0e-11, 50.0, 1.0e-3)
-    assert has_remaining_time(0.65 - 1.0e-6, 0.65, 2.0e-4)
+    assert not Timer.has_remaining_time(0.65 - 3.9e-14, 0.65, 2.0e-4)
+    assert not Timer.has_remaining_time(50.0 - 2.0e-11, 50.0, 1.0e-3)
+    assert Timer.has_remaining_time(0.65 - 1.0e-6, 0.65, 2.0e-4)
 
 
 def test_compensated_clock_keeps_whole_and_fractional_physical_steps():
@@ -72,10 +72,10 @@ def test_compensated_clock_keeps_whole_and_fractional_physical_steps():
     for target, expected_steps in ((0.12, 12000), (0.120003, 12001), (0.5, 50000)):
         sims = SimpleNamespace(current_time=0.0)
         steps = []
-        while has_remaining_time(sims.current_time, target, 1.0e-5):
+        while Timer.has_remaining_time(sims.current_time, target, 1.0e-5):
             step_dt = min(1.0e-5, target - sims.current_time)
             steps.append(step_dt)
-            advance_time(sims, step_dt)
+            Timer.advance_time(sims, step_dt)
         assert len(steps) == expected_steps
         assert min(steps) > 2.9e-6
         assert abs(sims.current_time - target) < 1.0e-14
@@ -85,8 +85,8 @@ def test_compensated_clock_handles_adaptive_steps_and_external_restart():
     sims = SimpleNamespace(current_time=0.0)
     steps = [1.0e-5, 3.0e-6, 7.0e-6] * 10000
     for step in steps:
-        advance_time(sims, step)
+        Timer.advance_time(sims, step)
     assert sims.current_time == fsum(steps)
     sims.current_time = 0.03
-    advance_time(sims, 2.0e-6)
+    Timer.advance_time(sims, 2.0e-6)
     assert sims.current_time == 0.03 + 2.0e-6

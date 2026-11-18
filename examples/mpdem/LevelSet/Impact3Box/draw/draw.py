@@ -43,7 +43,7 @@ color = [
 ]
 
 
-def SetToRotate(q):
+def set_to_rotate(q):
     qw, qx, qy, qz = q[3], q[0], q[1], q[2]
     return np.array(
         [
@@ -58,7 +58,7 @@ def get_data(path, start, end):
     t, rot = [], []
     for i in range(start, end):
         data = np.load(path + "/LSDEMRigid{0:06d}.npz".format(i))
-        dirs = SetToRotate(data["quanternion"][1]).T @ np.array([0, 0, 1])
+        dirs = set_to_rotate(data["quanternion"][1]).T @ np.array([0, 0, 1])
         dirs = dirs / np.linalg.norm(dirs)
         theta = 90 - np.arccos(np.dot(dirs, np.array([0, 0, 1]))) / math.pi * 180
         rot.append(theta)

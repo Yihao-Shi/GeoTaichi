@@ -1,12 +1,14 @@
+from src.utils.TypeDefinition import vec6f
+from src.utils.constants import ZEROVEC6F
 import taichi as ti
 
-from src.utils.constants import ZEROMAT3x3, ZEROVEC3f, SQRT3, PI, DBL_EPSILON, Threshold
+from src.utils.constants import ZEROMAT3X3, ZEROVEC3F, SQRT3, PI, DBL_EPSILON, THRESHOLD
 from src.utils.ScalarFunction import clamp
-from src.utils.TypeDefination import vec3f, mat3x3, mat4x4, mat2x2, mat3x4
+from src.utils.TypeDefinition import vec3f, mat3x3, mat4x4, mat2x2, mat3x4
 
 
 @ti.func
-def Diagonal(vec):
+def diagonal(vec):
     return mat3x3([[vec[0], 0, 0], [0, vec[1], 0], [0, 0, vec[2]]])
 
 
@@ -35,12 +37,12 @@ def matrix_form_3d_from_stress(stress):
 
 
 @ti.func
-def Eig3Symmetric(stress):
-    matrix = ZEROMAT3x3
-    directors = ZEROMAT3x3
-    xN1 = ZEROVEC3f
-    xN2 = ZEROVEC3f
-    xN3 = ZEROVEC3f
+def eig3_symmetric(stress):
+    matrix = ZEROMAT3X3
+    directors = ZEROMAT3X3
+    xN1 = ZEROVEC3F
+    xN2 = ZEROVEC3F
+    xN3 = ZEROVEC3F
 
     matrix[0, 0] = stress[0]
     matrix[0, 1] = stress[3]
@@ -155,11 +157,6 @@ def Eig3Symmetric(stress):
 
 
 @ti.func
-def Eig_3(stress):
-    return Eig3Symmetric(stress)
-
-
-@ti.func
 def inverse_matrix_2x2(matrix):
     det = matrix[0, 0] * matrix[1, 1] - matrix[1, 0] * matrix[0, 1]
     return 1.0 / det * mat2x2([matrix[1, 1], -matrix[0, 1]], [-matrix[1, 0], matrix[0, 0]])
@@ -229,7 +226,7 @@ def principal_sym_tensor(matrix):
 
     c = sqrt_p * ti.cos(phi)
     s = (1.0 / SQRT3) * sqrt_p * ti.sin(phi)
-    eigenvalues = ZEROVEC3f
+    eigenvalues = ZEROVEC3F
     eigenvalues[2] = (1.0 / 3.0) * (m - c)
     eigenvalues[1] = eigenvalues[2] + s
     eigenvalues[0] = eigenvalues[2] + c
@@ -266,7 +263,7 @@ def hessenberg(matrix):
 
 
 @ti.func
-def QR(matrix):
+def qr(matrix):
     assert matrix.n == matrix.m
     Q = ti.Matrix.zero(float, matrix.n, matrix.m)
     R = ti.Matrix.zero(float, matrix.n, matrix.m)
@@ -285,7 +282,7 @@ def QR(matrix):
 
 
 @ti.func
-def sortEigenValueDescending(value):
+def sort_eigen_value_descending(value):
     for i in ti.static(range(value.n - 1)):
         k = i
         for j in ti.static(range(i + 1, value.n)):
@@ -299,7 +296,7 @@ def sortEigenValueDescending(value):
 
 
 @ti.func
-def sortEigenValueAscending(value):
+def sort_eigen_value_ascending(value):
     for i in ti.static(range(value.n - 1)):
         k = i
         for j in ti.static(range(i + 1, value.n)):
@@ -318,26 +315,26 @@ def eigenvalue(matrix):
     temp = matrix
 
     for _ in range(50):
-        Q, R = QR(temp)
+        Q, R = qr(temp)
         temp = R @ Q
 
     for i in ti.static(range(matrix.n)):
         value[i] = temp[i, i]
 
-    value = sortEigenValueAscending(value)
+    value = sort_eigen_value_ascending(value)
     return value
 
 
 @ti.func
 def eigenvector(matrix, value):
-    eigenVector = ti.Matrix.zero(float, matrix.n, matrix.m)
+    eigen_vector = ti.Matrix.zero(float, matrix.n, matrix.m)
     temp = ti.Matrix.zero(float, matrix.n, matrix.m)
 
     for count in ti.static(range(matrix.m)):
-        eValue = value[count]
+        e_value = value[count]
         temp = matrix
         for i in ti.static(range(temp.n)):
-            temp[i, i] -= eValue
+            temp[i, i] -= e_value
         for i in ti.static(range(temp.n - 1)):
             coe = temp[i, i]
             for j in ti.static(range(i, temp.m)):
@@ -347,32 +344,27 @@ def eigenvector(matrix, value):
                 for n in ti.static(range(i, temp.m)):
                     temp[m, n] -= coe * temp[i, n]
 
-        sum1 = eigenVector[eigenVector.n - 1, count] = 1.0
+        sum1 = eigen_vector[eigen_vector.n - 1, count] = 1.0
         for m in ti.static(range(temp.n - 2, -1, -1)):
             sum2 = 0.0
             for n in ti.static(range(m + 1, temp.m)):
-                sum2 += temp[m, n] * eigenVector[n, count]
+                sum2 += temp[m, n] * eigen_vector[n, count]
             sum2 = -sum2 / temp[m, m]
             sum1 += sum2 * sum2
-            eigenVector[m, count] = sum2
+            eigen_vector[m, count] = sum2
 
         sum1 = ti.sqrt(sum1)
-        for i in ti.static(range(eigenVector.n)):
-            eigenVector[i, count] /= sum1
+        for i in ti.static(range(eigen_vector.n)):
+            eigen_vector[i, count] /= sum1
 
-    return eigenVector
-
-
-@ti.func
-def get_eigenvalue(matrix):
-    return eigenvalue(matrix)
+    return eigen_vector
 
 
 @ti.func
 def get_eigenvector(matrix):
-    value = get_eigenvalue(matrix)
-    eigenVector = eigenvector(matrix, value)
-    return value, eigenVector
+    value = eigenvalue(matrix)
+    eigen_vector = eigenvector(matrix, value)
+    return value, eigen_vector
 
 
 @ti.func
@@ -380,7 +372,7 @@ def eig(matrix):
     H, Qh = hessenberg(matrix)
     Q_tot = Qh
     for _ in range(50):
-        Q, R = QR(H)
+        Q, R = qr(H)
         H = R @ Q
         Q_tot = Q_tot @ Q
     eigenvalues = ti.Vector([H[i, i] for i in ti.static(range(matrix.n))])
@@ -390,7 +382,7 @@ def eig(matrix):
 
 @ti.func
 def get_eigenvalue_3x3(matrix):
-    value = ZEROVEC3f
+    value = ZEROVEC3F
     mean = matrix.trace() / 3.0
     deviator = matrix - mean * ti.Matrix.identity(float, 3)
     squared_norm = 0.0
@@ -430,7 +422,7 @@ def principal_tensor(matrix):
 
 
 @ti.func
-def getDeterminant(matrix):
+def determinant_recursive(matrix):
     value = 0.0
     ndim = ti.static(matrix.n)
     mdim = ti.static(matrix.m)
@@ -448,13 +440,13 @@ def getDeterminant(matrix):
                     if n != i:
                         sub_vector[m - 1, z] = matrix[m, n]
                         z += 1
-            value += sign * matrix[0, i] * getDeterminant(sub_vector)
+            value += sign * matrix[0, i] * determinant_recursive(sub_vector)
             sign = -sign
     return value
 
 
 @ti.func
-def getCofactor(matrix):
+def get_cofactor(matrix):
     ndim = ti.static(matrix.n)
     mdim = ti.static(matrix.m)
     solution = ti.Matrix.zero(ndim, mdim)
@@ -473,12 +465,12 @@ def getCofactor(matrix):
                     sub_vector[p, q] = matrix[x, y]
                     q += 1
                 p += 1
-            solution[i, j] = ti.pow(-1, i + j) * getDeterminant(sub_vector)
+            solution[i, j] = ti.pow(-1, i + j) * determinant_recursive(sub_vector)
     return solution
 
 
 @ti.func
-def getTranspose(matrix):
+def get_transpose(matrix):
     ndim = ti.static(matrix.n)
     mdim = ti.static(matrix.m)
     solution = ti.Matrix.zero(ndim, mdim)
@@ -488,19 +480,19 @@ def getTranspose(matrix):
 
 
 @ti.func
-def getInverse(matrix):
+def get_inverse(matrix):
     ndim = ti.static(matrix.n)
     mdim = ti.static(matrix.m)
-    d = 1.0 / getDeterminant(matrix)
+    d = 1.0 / determinant_recursive(matrix)
     solution = ti.Matrix.zero(ndim, mdim)
     for i in ti.static(range(ndim)):
         for j in ti.static(range(mdim)):
             solution[i, j] = matrix[i, j] * d
-    return getTranspose(getCofactor(solution))
+    return get_transpose(get_cofactor(solution))
 
 
 @ti.func
-def E(mat, i, j, n):
+def periodic_matrix_entry(mat, i, j, n):
     return mat[i % n, j % n]
 
 
@@ -569,28 +561,28 @@ def cofactor5x5(mat, excluded_row, excluded_column):
     minor = ti.Matrix(
         [
             [
-                E(mat, excluded_row + 1, excluded_column + 1, 5),
-                E(mat, excluded_row + 1, excluded_column + 2, 5),
-                E(mat, excluded_row + 1, excluded_column + 3, 5),
-                E(mat, excluded_row + 1, excluded_column + 4, 5),
+                periodic_matrix_entry(mat, excluded_row + 1, excluded_column + 1, 5),
+                periodic_matrix_entry(mat, excluded_row + 1, excluded_column + 2, 5),
+                periodic_matrix_entry(mat, excluded_row + 1, excluded_column + 3, 5),
+                periodic_matrix_entry(mat, excluded_row + 1, excluded_column + 4, 5),
             ],
             [
-                E(mat, excluded_row + 2, excluded_column + 1, 5),
-                E(mat, excluded_row + 2, excluded_column + 2, 5),
-                E(mat, excluded_row + 2, excluded_column + 3, 5),
-                E(mat, excluded_row + 2, excluded_column + 4, 5),
+                periodic_matrix_entry(mat, excluded_row + 2, excluded_column + 1, 5),
+                periodic_matrix_entry(mat, excluded_row + 2, excluded_column + 2, 5),
+                periodic_matrix_entry(mat, excluded_row + 2, excluded_column + 3, 5),
+                periodic_matrix_entry(mat, excluded_row + 2, excluded_column + 4, 5),
             ],
             [
-                E(mat, excluded_row + 3, excluded_column + 1, 5),
-                E(mat, excluded_row + 3, excluded_column + 2, 5),
-                E(mat, excluded_row + 3, excluded_column + 3, 5),
-                E(mat, excluded_row + 3, excluded_column + 4, 5),
+                periodic_matrix_entry(mat, excluded_row + 3, excluded_column + 1, 5),
+                periodic_matrix_entry(mat, excluded_row + 3, excluded_column + 2, 5),
+                periodic_matrix_entry(mat, excluded_row + 3, excluded_column + 3, 5),
+                periodic_matrix_entry(mat, excluded_row + 3, excluded_column + 4, 5),
             ],
             [
-                E(mat, excluded_row + 4, excluded_column + 1, 5),
-                E(mat, excluded_row + 4, excluded_column + 2, 5),
-                E(mat, excluded_row + 4, excluded_column + 3, 5),
-                E(mat, excluded_row + 4, excluded_column + 4, 5),
+                periodic_matrix_entry(mat, excluded_row + 4, excluded_column + 1, 5),
+                periodic_matrix_entry(mat, excluded_row + 4, excluded_column + 2, 5),
+                periodic_matrix_entry(mat, excluded_row + 4, excluded_column + 3, 5),
+                periodic_matrix_entry(mat, excluded_row + 4, excluded_column + 4, 5),
             ],
         ]
     )
@@ -638,7 +630,8 @@ def get_jacobian_inverse3(mat):
     return inv_determinant * ti.Matrix(
         [
             [
-                E(mat, i + 1, j + 1, 3) * E(mat, i + 2, j + 2, 3) - E(mat, i + 2, j + 1, 3) * E(mat, i + 1, j + 2, 3)
+                periodic_matrix_entry(mat, i + 1, j + 1, 3) * periodic_matrix_entry(mat, i + 2, j + 2, 3)
+                - periodic_matrix_entry(mat, i + 2, j + 1, 3) * periodic_matrix_entry(mat, i + 1, j + 2, 3)
                 for i in ti.static(range(3))
             ]
             for j in ti.static(range(3))
@@ -655,20 +648,20 @@ def get_jacobian_inverse4(mat):
                 (-1) ** (i + j)
                 * (
                     (
-                        E(mat, i + 1, j + 1, 4)
+                        periodic_matrix_entry(mat, i + 1, j + 1, 4)
                         * (
-                            E(mat, i + 2, j + 2, 4) * E(mat, i + 3, j + 3, 4)
-                            - E(mat, i + 3, j + 2, 4) * E(mat, i + 2, j + 3, 4)
+                            periodic_matrix_entry(mat, i + 2, j + 2, 4) * periodic_matrix_entry(mat, i + 3, j + 3, 4)
+                            - periodic_matrix_entry(mat, i + 3, j + 2, 4) * periodic_matrix_entry(mat, i + 2, j + 3, 4)
                         )
-                        - E(mat, i + 2, j + 1, 4)
+                        - periodic_matrix_entry(mat, i + 2, j + 1, 4)
                         * (
-                            E(mat, i + 1, j + 2, 4) * E(mat, i + 3, j + 3, 4)
-                            - E(mat, i + 3, j + 2, 4) * E(mat, i + 1, j + 3, 4)
+                            periodic_matrix_entry(mat, i + 1, j + 2, 4) * periodic_matrix_entry(mat, i + 3, j + 3, 4)
+                            - periodic_matrix_entry(mat, i + 3, j + 2, 4) * periodic_matrix_entry(mat, i + 1, j + 3, 4)
                         )
-                        + E(mat, i + 3, j + 1, 4)
+                        + periodic_matrix_entry(mat, i + 3, j + 1, 4)
                         * (
-                            E(mat, i + 1, j + 2, 4) * E(mat, i + 2, j + 3, 4)
-                            - E(mat, i + 2, j + 2, 4) * E(mat, i + 1, j + 3, 4)
+                            periodic_matrix_entry(mat, i + 1, j + 2, 4) * periodic_matrix_entry(mat, i + 2, j + 3, 4)
+                            - periodic_matrix_entry(mat, i + 2, j + 2, 4) * periodic_matrix_entry(mat, i + 1, j + 3, 4)
                         )
                     )
                 )
@@ -712,33 +705,33 @@ def truncation(mat):
 
 
 @ti.func
-def LUinverse(mat):
+def l_uinverse(mat):
     L, U = polar_decomposition(mat)
-    Linv = ti.Matrix.zero(float, mat.n, mat.m)
-    Uinv = ti.Matrix.zero(float, mat.n, mat.m)
+    linv = ti.Matrix.zero(float, mat.n, mat.m)
+    uinv = ti.Matrix.zero(float, mat.n, mat.m)
     for j in ti.static(range(mat.n)):
         for i in ti.static(range(j, mat.m)):
             if i == j:
-                Linv[i, j] = 1.0 / L[i, j]
+                linv[i, j] = 1.0 / L[i, j]
             elif i < j:
-                Linv[i, j] = 0.0
+                linv[i, j] = 0.0
             else:
                 s = 0.0
                 for k in ti.static(range(j, i)):
-                    s += L[i, k] * Linv[k, j]
-                Linv[i, j] = -Linv[j, j] * s
+                    s += L[i, k] * linv[k, j]
+                linv[i, j] = -linv[j, j] * s
     for j in ti.static(range(mat.n)):
         for i in ti.static(range(j, -1, -1)):
             if i == j:
-                Uinv[i, j] = 1 / U[i, j]
+                uinv[i, j] = 1 / U[i, j]
             elif i > j:
-                Uinv[i, j] = 0
+                uinv[i, j] = 0
             else:
                 s = 0.0
                 for k in ti.static(range(i + 1, j + 1)):
-                    s += U[i, k] * Uinv[k, j]
-                Uinv[i, j] = -1 / U[i, i] * s
-    return Uinv @ Linv
+                    s += U[i, k] * uinv[k, j]
+                uinv[i, j] = -1 / U[i, i] * s
+    return uinv @ linv
 
 
 @ti.func
@@ -884,7 +877,7 @@ def contraction(mat1, mat2):
 
 
 @ti.func
-def QRUnroll(matrix):
+def qr_unroll(matrix):
     assert matrix.n == matrix.m
     Q = ti.Matrix.zero(float, matrix.n, matrix.m)
     R = ti.Matrix.zero(float, matrix.n, matrix.m)
@@ -903,7 +896,7 @@ def QRUnroll(matrix):
 
 
 @ti.func
-def makePSD3x3(mat):
+def make_psd3x3(mat):
     S, V = ti.sym_eig(mat)
     lam = ti.Matrix.zero(float, S.n, S.n)
     for i in range(S.n):
@@ -917,7 +910,7 @@ def shifted_qr(matrix):
     for _ in range(100):
         mu = matrix[matrix.n - 1, matrix.m - 1]
         B = matrix - mu * ti.Matrix.identity(float, matrix.n)
-        Q, R = QRUnroll(B)
+        Q, R = qr_unroll(B)
         matrix = R @ Q + mu * ti.Matrix.identity(float, matrix.n)
         V = V @ Q
         real_off = 0.0
@@ -930,7 +923,7 @@ def shifted_qr(matrix):
 
 
 @ti.func
-def makePSD(mat):
+def make_psd(mat):
     lam, V = shifted_qr(mat)
     """ for i in range(lam.n):
         lam[i] = ti.max(0.0, lam[i]) """
@@ -968,8 +961,437 @@ def affine_velocity_matrix(Bp, Wp, grid_size):
         scaled_Wp[i, j] /= grid_size[i] * grid_size[j]
     result = Wp * 0.0
     # Test rank in grid units so mesh refinement cannot silently disable APIC.
-    if ti.abs(scaled_Wp.determinant()) > Threshold:
+    if ti.abs(scaled_Wp.determinant()) > THRESHOLD:
         result = scaled_Bp @ scaled_Wp.inverse()
         for i, j in ti.static(ti.ndrange(Bp.n, Bp.m)):
             result[i, j] /= grid_size[j]
     return truncation(result)
+
+
+@ti.func
+def _dense_block_matvec(h, x, dim: ti.template()):
+    y = ti.Vector.zero(float, dim)
+    for i in range(dim):
+        for j in range(dim):
+            y[i] += h[i * dim + j] * x[j]
+    return y
+
+
+@ti.func
+def _dense_block_transpose_matvec(h, x, dim: ti.template()):
+    y = ti.Vector.zero(float, dim)
+    for i in range(dim):
+        for j in range(dim):
+            y[i] += h[j * dim + i] * x[j]
+    return y
+
+
+@ti.func
+def _apply_dense_block_jacobi(h, r, dim: ti.template()):
+    """Dense counterpart of the scale-aware block-Jacobi solve above."""
+    z = r
+    scale = 0.0
+    finite_input = 1
+    for row in range(dim):
+        for column in range(dim):
+            value = h[row * dim + column]
+            if not (-ti.math.inf < value and value < ti.math.inf):
+                finite_input = 0
+            scale = ti.max(scale, ti.abs(value))
+
+    condition_tolerance = 1.0e-12
+    determinant_floor = 1.0e-30
+    if finite_input != 0 and scale > 0.0 and scale < ti.math.inf:
+        for row in ti.static(range(4)):
+            if ti.static(row < dim):
+                diagonal = h[row * dim + row]
+                denominator = scale
+                if ti.abs(diagonal) > condition_tolerance * scale:
+                    denominator = diagonal
+                value = r[row] / denominator
+                if -ti.math.inf < value and value < ti.math.inf:
+                    z[row] = value
+
+    if ti.static(dim == 1):
+        if finite_input != 0 and scale > 0.0 and scale < ti.math.inf:
+            z[0] = r[0] / h[0]
+    elif ti.static(dim == 2):
+        if finite_input != 0 and scale > 0.0 and scale < ti.math.inf:
+            a00, a01 = h[0] / scale, h[1] / scale
+            a10, a11 = h[2] / scale, h[3] / scale
+            det = a00 * a11 - a01 * a10
+            if ti.abs(det) > determinant_floor:
+                inverse00, inverse01 = a11 / det, -a01 / det
+                inverse10, inverse11 = -a10 / det, a00 / det
+                matrix_norm = ti.max(
+                    ti.abs(a00) + ti.abs(a01),
+                    ti.abs(a10) + ti.abs(a11),
+                )
+                inverse_norm = ti.max(
+                    ti.abs(inverse00) + ti.abs(inverse01),
+                    ti.abs(inverse10) + ti.abs(inverse11),
+                )
+                rcond = 0.0
+                if matrix_norm > 0.0 and inverse_norm > 0.0:
+                    rcond = 1.0 / (matrix_norm * inverse_norm)
+                if rcond > condition_tolerance:
+                    candidate0 = (inverse00 * r[0] + inverse01 * r[1]) / scale
+                    candidate1 = (inverse10 * r[0] + inverse11 * r[1]) / scale
+                    if (
+                        -ti.math.inf < candidate0
+                        and candidate0 < ti.math.inf
+                        and -ti.math.inf < candidate1
+                        and candidate1 < ti.math.inf
+                    ):
+                        z[0] = candidate0
+                        z[1] = candidate1
+    elif ti.static(dim == 3):
+        if finite_input != 0 and scale > 0.0 and scale < ti.math.inf:
+            a00, a01, a02 = h[0] / scale, h[1] / scale, h[2] / scale
+            a10, a11, a12 = h[3] / scale, h[4] / scale, h[5] / scale
+            a20, a21, a22 = h[6] / scale, h[7] / scale, h[8] / scale
+            c00 = a11 * a22 - a12 * a21
+            c01 = a02 * a21 - a01 * a22
+            c02 = a01 * a12 - a02 * a11
+            c10 = a12 * a20 - a10 * a22
+            c11 = a00 * a22 - a02 * a20
+            c12 = a02 * a10 - a00 * a12
+            c20 = a10 * a21 - a11 * a20
+            c21 = a01 * a20 - a00 * a21
+            c22 = a00 * a11 - a01 * a10
+            det = a00 * c00 + a01 * c10 + a02 * c20
+            if ti.abs(det) > determinant_floor:
+                inverse00, inverse01, inverse02 = c00 / det, c01 / det, c02 / det
+                inverse10, inverse11, inverse12 = c10 / det, c11 / det, c12 / det
+                inverse20, inverse21, inverse22 = c20 / det, c21 / det, c22 / det
+                matrix_norm = ti.max(
+                    ti.abs(a00) + ti.abs(a01) + ti.abs(a02),
+                    ti.abs(a10) + ti.abs(a11) + ti.abs(a12),
+                    ti.abs(a20) + ti.abs(a21) + ti.abs(a22),
+                )
+                inverse_norm = ti.max(
+                    ti.abs(inverse00) + ti.abs(inverse01) + ti.abs(inverse02),
+                    ti.abs(inverse10) + ti.abs(inverse11) + ti.abs(inverse12),
+                    ti.abs(inverse20) + ti.abs(inverse21) + ti.abs(inverse22),
+                )
+                rcond = 0.0
+                if matrix_norm > 0.0 and inverse_norm > 0.0:
+                    rcond = 1.0 / (matrix_norm * inverse_norm)
+                if rcond > condition_tolerance:
+                    candidate0 = (inverse00 * r[0] + inverse01 * r[1] + inverse02 * r[2]) / scale
+                    candidate1 = (inverse10 * r[0] + inverse11 * r[1] + inverse12 * r[2]) / scale
+                    candidate2 = (inverse20 * r[0] + inverse21 * r[1] + inverse22 * r[2]) / scale
+                    if (
+                        -ti.math.inf < candidate0
+                        and candidate0 < ti.math.inf
+                        and -ti.math.inf < candidate1
+                        and candidate1 < ti.math.inf
+                        and -ti.math.inf < candidate2
+                        and candidate2 < ti.math.inf
+                    ):
+                        z[0] = candidate0
+                        z[1] = candidate1
+                        z[2] = candidate2
+    else:
+        if finite_input != 0 and scale > 0.0 and scale < ti.math.inf:
+            A = ti.Matrix.zero(float, 4, 4)
+            for i in range(4):
+                for j in range(4):
+                    A[i, j] = h[i * 4 + j] / scale
+            det = A.determinant()
+            if ti.abs(det) > determinant_floor:
+                inverse = A.inverse()
+                matrix_norm = 0.0
+                inverse_norm = 0.0
+                finite_inverse = 1
+                for row in range(4):
+                    row_norm = 0.0
+                    inverse_row_norm = 0.0
+                    for column in range(4):
+                        row_norm += ti.abs(A[row, column])
+                        inverse_row_norm += ti.abs(inverse[row, column])
+                        if not (-ti.math.inf < inverse[row, column] and inverse[row, column] < ti.math.inf):
+                            finite_inverse = 0
+                    matrix_norm = ti.max(matrix_norm, row_norm)
+                    inverse_norm = ti.max(inverse_norm, inverse_row_norm)
+                rcond = 0.0
+                if matrix_norm > 0.0 and inverse_norm > 0.0:
+                    rcond = 1.0 / (matrix_norm * inverse_norm)
+                if finite_inverse != 0 and rcond > condition_tolerance:
+                    candidate = (inverse @ r) / scale
+                    finite_candidate = 1
+                    for row in ti.static(range(4)):
+                        if not (-ti.math.inf < candidate[row] and candidate[row] < ti.math.inf):
+                            finite_candidate = 0
+                    if finite_candidate != 0:
+                        z = candidate
+    return z
+
+
+@ti.func
+def diag_nd(vector):
+    matrix = ti.Matrix.zero(ti.f64, vector.n, vector.n)
+    for dimension in range(vector.n):
+        matrix[dimension, dimension] = vector[dimension]
+    return matrix
+
+
+@ti.func
+def symmetric_eigendecomposition_nd(matrix):
+    """Device-side eigendecomposition of a fixed-size symmetric matrix.
+
+    The input is symmetrized, matching IPC's local ``make_pd`` operation.
+    The 2x2 case uses a scale-stable closed form.  Every larger fixed block
+    uses cyclic Jacobi rotations and therefore never leaves the CUDA kernel.
+    Taichi 1.7's ``ti.sym_eig`` is intentionally not used for 3x3 blocks: on
+    rank-deficient matrices with a repeated positive eigenvalue (the exact
+    spectrum of sliding Coulomb friction), it can manufacture an eigenvalue
+    many orders of magnitude larger than the input.
+    """
+    symmetric = 0.5 * (matrix + matrix.transpose())
+    eigenvalues = ti.Vector.zero(ti.f64, matrix.n)
+    eigenvectors = ti.Matrix.identity(ti.f64, matrix.n)
+    if ti.static(matrix.n == 2):
+        a = symmetric[0, 0]
+        b = symmetric[0, 1]
+        d = symmetric[1, 1]
+        midpoint = 0.5 * (a + d)
+        half_difference = 0.5 * (a - d)
+
+        # Normalize the two coordinates of the spectral radius before taking
+        # their norm.  Besides avoiding overflow/underflow, this is homogeneous
+        # in the matrix entries: scaling the whole matrix cannot change the
+        # eigenvectors or trigger an absolute-epsilon branch.
+        spectral_scale = ti.max(ti.abs(half_difference), ti.abs(b))
+        radius = 0.0
+        cosine_twice = 1.0
+        sine_twice = 0.0
+        if spectral_scale > 0.0:
+            scaled_difference = half_difference / spectral_scale
+            scaled_off_diagonal = b / spectral_scale
+            scaled_radius = ti.sqrt(scaled_difference * scaled_difference + scaled_off_diagonal * scaled_off_diagonal)
+            radius = spectral_scale * scaled_radius
+            cosine_twice = scaled_difference / scaled_radius
+            sine_twice = scaled_off_diagonal / scaled_radius
+
+        lambda1 = midpoint + radius
+        lambda2 = midpoint - radius
+        cosine = ti.sqrt(ti.max(0.5 * (1.0 + cosine_twice), 0.0))
+        sine = ti.sqrt(ti.max(0.5 * (1.0 - cosine_twice), 0.0))
+        if sine_twice < 0.0:
+            sine = -sine
+        vector1 = ti.Vector([cosine, sine])
+        vector2 = ti.Vector([-vector1[1], vector1[0]])
+        eigenvalues = ti.Vector([lambda1, lambda2])
+        eigenvectors = ti.Matrix.cols([vector1, vector2])
+    else:
+        diagonalized = symmetric
+        # Twelve cyclic sweeps are normally sufficient for these small
+        # self-adjoint blocks; twenty-four gives a conservative f64 margin
+        # for clustered spectra without any CPU convergence check.  These
+        # loops intentionally remain serial because every Jacobi pivot reads
+        # the result of the previous pivot.  ``while`` prevents Taichi from
+        # statically expanding blocks larger than 3x3 while preserving that
+        # exact sweep/pivot order on the device.
+        sweep = 0
+        while sweep < 24:
+            p = 0
+            while p < matrix.n:
+                q = p + 1
+                while q < matrix.n:
+                    app = diagonalized[p, p]
+                    aqq = diagonalized[q, q]
+                    apq = diagonalized[p, q]
+                    pivot_scale = ti.max(ti.abs(app) + ti.abs(aqq), 1.0e-30)
+                    if ti.abs(apq) > 1.0e-14 * pivot_scale:
+                        tau = (aqq - app) / (2.0 * apq)
+                        sign_tau = 1.0
+                        if tau < 0.0:
+                            sign_tau = -1.0
+                        tangent = sign_tau / (ti.abs(tau) + ti.sqrt(1.0 + tau * tau))
+                        cosine = 1.0 / ti.sqrt(1.0 + tangent * tangent)
+                        sine = tangent * cosine
+
+                        k = 0
+                        while k < matrix.n:
+                            if k != p and k != q:
+                                akp = diagonalized[k, p]
+                                akq = diagonalized[k, q]
+                                rotated_kp = cosine * akp - sine * akq
+                                rotated_kq = sine * akp + cosine * akq
+                                diagonalized[k, p] = rotated_kp
+                                diagonalized[p, k] = rotated_kp
+                                diagonalized[k, q] = rotated_kq
+                                diagonalized[q, k] = rotated_kq
+                            k += 1
+
+                        diagonalized[p, p] = app - tangent * apq
+                        diagonalized[q, q] = aqq + tangent * apq
+                        diagonalized[p, q] = 0.0
+                        diagonalized[q, p] = 0.0
+
+                        k = 0
+                        while k < matrix.n:
+                            vkp = eigenvectors[k, p]
+                            vkq = eigenvectors[k, q]
+                            eigenvectors[k, p] = cosine * vkp - sine * vkq
+                            eigenvectors[k, q] = sine * vkp + cosine * vkq
+                            k += 1
+                    q += 1
+                p += 1
+            sweep += 1
+
+        eigenmode = 0
+        while eigenmode < matrix.n:
+            eigenvalues[eigenmode] = diagonalized[eigenmode, eigenmode]
+            eigenmode += 1
+    return eigenvalues, eigenvectors
+
+
+@ti.func
+def psd_project_nd(matrix):
+    """Spectrally clamp a fixed-size symmetric matrix on the device.
+
+    The returned matrix is ``V max(D, 0) V.T`` for complete local blocks.
+    """
+    eigenvalues, eigenvectors = symmetric_eigendecomposition_nd(matrix)
+    projected = ti.Matrix.zero(ti.f64, matrix.n, matrix.n)
+    row = 0
+    while row < matrix.n:
+        column = 0
+        while column < matrix.n:
+            value = 0.0
+            eigenmode = 0
+            while eigenmode < matrix.n:
+                eigenvalue = ti.max(eigenvalues[eigenmode], 0.0)
+                value += eigenvalue * eigenvectors[row, eigenmode] * eigenvectors[column, eigenmode]
+                eigenmode += 1
+            projected[row, column] = value
+            column += 1
+        row += 1
+    projected = 0.5 * (projected + projected.transpose())
+    return projected
+
+
+@ti.func
+def psd_project_gershgorin_nd(matrix):
+    """Cheap device PSD majorizer for large local contact blocks.
+
+    The symmetric matrix is kept off diagonal and receives one global diagonal
+    shift that dominates all Gershgorin radii.  The result is symmetric
+    diagonally dominant with non-negative diagonal, hence PSD, without the
+    cubic-size Jacobi eigendecomposition used by ``psd_project_nd``.  This is the same
+    device-local projection contract needed by FEM/IGA-style block assembly,
+    but keeps CUDA compilation bounded for 12x12 PT/EE contact blocks.
+    """
+    # Keep the dimensions compile-time constants.  A dynamic ``while`` over
+    # ``matrix.n`` makes CUDA instantiate the loop-control path for every
+    # caller; IGA's block assembly uses the same fixed-size device pattern.
+    symmetric = 0.5 * (matrix + matrix.transpose())
+    # Use one global diagonal shift instead of constructing a second matrix
+    # element-by-element.  It is the same Gershgorin PSD majorizer, but keeps
+    # the generated CUDA IR small for the 6x6 cloth material block.
+    lower_bound = 1.0e30
+    for row in ti.static(range(matrix.n)):
+        radius = 0.0
+        for column in ti.static(range(matrix.n)):
+            if ti.static(column != row):
+                radius += ti.abs(symmetric[row, column])
+        lower_bound = ti.min(lower_bound, symmetric[row, row] - radius)
+    shift = ti.max(-lower_bound, 0.0)
+    return symmetric + shift * ti.Matrix.identity(ti.f64, matrix.n)
+
+
+@ti.func
+def outer_product_nd(vector1, vector2):
+    """Dimension-generic outer product used by the NURBS derivatives."""
+    matrix = ti.Matrix.zero(ti.f64, vector1.n, vector2.n)
+    if ti.static(vector1.n * vector2.n <= 9):
+        for i in ti.static(range(vector1.n)):
+            for j in ti.static(range(vector2.n)):
+                matrix[i, j] = vector1[i] * vector2[j]
+    else:
+        flat = 0
+        while flat < vector1.n * vector2.n:
+            i = flat // vector2.n
+            j = flat - i * vector2.n
+            matrix[i, j] = vector1[i] * vector2[j]
+            flat += 1
+    return matrix
+
+
+@ti.func
+def _stress_increment_voigt(stress):
+    increment = ZEROVEC6F
+    if ti.static(stress.n == 6):
+        increment = stress
+    elif ti.static(stress.n == 2):
+        increment = vec6f(stress[0, 0], stress[1, 1], 0.0, 0.5 * (stress[0, 1] + stress[1, 0]), 0.0, 0.0)
+    else:
+        increment = vec6f(
+            stress[0, 0],
+            stress[1, 1],
+            stress[2, 2],
+            0.5 * (stress[0, 1] + stress[1, 0]),
+            0.5 * (stress[1, 2] + stress[2, 1]),
+            0.5 * (stress[0, 2] + stress[2, 0]),
+        )
+    return increment
+
+
+@ti.func
+def _stress_increment_mat3(stress):
+    increment = mat3x3([[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]])
+    if ti.static(stress.n == 6):
+        increment = mat3x3(
+            [stress[0], stress[3], stress[5]], [stress[3], stress[1], stress[4]], [stress[5], stress[4], stress[2]]
+        )
+    elif ti.static(stress.n == 2):
+        increment = mat3x3([stress[0, 0], stress[0, 1], 0.0], [stress[1, 0], stress[1, 1], 0.0], [0.0, 0.0, 0.0])
+    else:
+        increment = stress
+    return increment
+
+
+@ti.func
+def _stress_increment_mat2(stress):
+    increment = mat2x2([[0.0, 0.0], [0.0, 0.0]])
+    if ti.static(stress.n == 6):
+        increment = mat2x2([stress[0], stress[3]], [stress[3], stress[1]])
+    elif ti.static(stress.n == 2):
+        increment = stress
+    else:
+        increment = mat2x2([stress[0, 0], stress[0, 1]], [stress[1, 0], stress[1, 1]])
+    return increment
+
+
+@ti.func
+def _stress_increment_pressure(stress):
+    increment = _stress_increment_voigt(stress)
+    return 1.0 / 3.0 * (increment[0] + increment[1] + increment[2])
+
+
+@ti.func
+def matrix_cols(matrix, cols):
+    return ti.Vector([matrix[i, cols] for i in ti.static(range(matrix.n))])
+
+
+@ti.func
+def matrix2vigot(matrix):
+    return ti.Vector(
+        [
+            matrix[0, 0],
+            matrix[1, 1],
+            matrix[2, 2],
+            0.5 * (matrix[0, 1] + matrix[1, 0]),
+            0.5 * (matrix[1, 2] + matrix[2, 1]),
+            0.5 * (matrix[0, 2] + matrix[2, 0]),
+        ]
+    )
+
+
+@ti.func
+def vigot2matrix(tensor):
+    return ti.Matrix(
+        [[tensor[0], tensor[3], tensor[5]], [tensor[3], tensor[1], tensor[4]], [tensor[5], tensor[4], tensor[2]]]
+    )

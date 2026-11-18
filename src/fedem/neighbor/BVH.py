@@ -5,7 +5,7 @@ import taichi as ti
 from src.contact_detection.bounding_volume_hierarchy.AABB import AABB
 from src.contact_detection.bounding_volume_hierarchy.MultiPatchLBVH import LBVH
 from src.fedem.neighbor.NeighborBase import FEDEMNeighborBase
-from src.utils.GeometryFunction import DistanceFromPointToTriangle
+from src.utils.GeometryFunction import distance_from_point_to_triangle
 
 
 @ti.data_oriented
@@ -60,7 +60,7 @@ class FEDEMBVH(FEDEMNeighborBase):
                             face = self.bvh.primitive_index(morton_index)
                             ids = self.patch.faces[face]
                             distance = ti.abs(
-                                DistanceFromPointToTriangle(
+                                distance_from_point_to_triangle(
                                     position,
                                     self.patch.nodes[ids[0]],
                                     self.patch.nodes[ids[1]],

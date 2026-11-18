@@ -1,5 +1,7 @@
 """Export saved two-point MPM/LSDEM snapshots without rerunning the solver."""
 
+from src.mpm.PostPlot import write_vtk_file
+
 import argparse
 import json
 from pathlib import Path
@@ -14,7 +16,6 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 
 from src.dem.PostPlot import write_lsdem_vtk_file
-from src.mpm.PostPlot import write_vtk_file
 from src.mpm.Recorder import WriteFile
 import src.utils.GlobalVariable as GlobalVariable
 from tools.postprocessing.mpdem.reprocess_cfdem_vtk import digest
@@ -67,7 +68,7 @@ def export(folder):
     for frame in range(len(particles)):
         sims.current_print = frame
         with np.load(folder / "grids" / f"MPMGrid{frame:06d}.npz") as grid:
-            recorder.VisualizeGrid(
+            recorder.visualize_grid(
                 sims, grid["coords"], cell_data={k: grid[k] for k in grid.files if k.startswith("cell_")}
             )
     prefixes = ["GraphicMPMFluidParticle", "GraphicMPMSolidParticle", "GraphicMPMGrid"]

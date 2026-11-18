@@ -1,7 +1,7 @@
 import numpy as np
 import taichi as ti
 
-from src.dem.structs.Geometry import _GeometryDeviceState
+from src.dem.structs.GeometryDeviceState import GeometryDeviceState
 
 
 @ti.dataclass
@@ -38,7 +38,7 @@ def test_patch_rigid_body_step_keeps_resultant_and_state_on_device(
     wall = _PatchWall.field(shape=1)
     _initialize_wall(wall)
     vertices = np.asarray([[0.0, 0.0, 0.0]])
-    state = _GeometryDeviceState(
+    state = GeometryDeviceState(
         mass=2.0,
         mass_center=[0.0, 0.0, 0.0],
         orientation=np.eye(3),

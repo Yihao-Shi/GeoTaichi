@@ -5,13 +5,8 @@ import pytest
 
 pytestmark = [pytest.mark.unit, pytest.mark.ipc, pytest.mark.contact]
 
-from src.igampm.ContactManager import (
-    ContactManager,
-    _validate_iga_friction_configuration,
-)
-from src.mpdem.engines.SoftAffineIPCOperator import (
-    _validate_soft_affine_lagged_friction_configuration,
-)
+from src.igampm.ContactManager import ContactManager
+from src.mpdem.engines.SoftAffineIPCOperator import SoftAffineIPCOperator
 
 
 @pytest.mark.parametrize(
@@ -26,7 +21,7 @@ def test_soft_affine_accepts_lagged_iteration_aliases(attribute):
     sims = SimpleNamespace(affine_friction_mode="lag")
     setattr(sims, attribute, 1)
 
-    assert _validate_soft_affine_lagged_friction_configuration(sims) == ("lagged", 1)
+    assert SoftAffineIPCOperator._validate_soft_affine_lagged_friction_configuration(sims) == ("lagged", 1)
 
 
 @pytest.mark.parametrize(
@@ -38,7 +33,7 @@ def test_soft_affine_accepts_outer_fixed_point_iterations(iterations, expected):
         affine_friction_mode="lagged",
         affine_friction_iterations=iterations,
     )
-    assert _validate_soft_affine_lagged_friction_configuration(sims) == (
+    assert SoftAffineIPCOperator._validate_soft_affine_lagged_friction_configuration(sims) == (
         "lagged",
         expected,
     )
@@ -51,7 +46,7 @@ def test_soft_affine_rejects_invalid_outer_fixed_point_iterations(iterations):
         affine_friction_iterations=iterations,
     )
     with pytest.raises((RuntimeError, ValueError), match="must be an integer"):
-        _validate_soft_affine_lagged_friction_configuration(sims)
+        SoftAffineIPCOperator._validate_soft_affine_lagged_friction_configuration(sims)
 
 
 @pytest.mark.parametrize("mode", ("fully_implicit", "fullyimplicit", "fully-implicit"))
@@ -60,7 +55,7 @@ def test_soft_affine_accepts_fully_implicit_mode_aliases(mode):
         affine_friction_mode=mode,
         affine_friction_iterations=1,
     )
-    assert _validate_soft_affine_lagged_friction_configuration(sims) == (
+    assert SoftAffineIPCOperator._validate_soft_affine_lagged_friction_configuration(sims) == (
         "fully_implicit",
         0,
     )
@@ -69,7 +64,7 @@ def test_soft_affine_accepts_fully_implicit_mode_aliases(mode):
 @pytest.mark.parametrize("mode", ("implicit", "fully", "newton_friction"))
 def test_soft_affine_rejects_unknown_friction_mode(mode):
     with pytest.raises(ValueError, match="must be 'lagged' or 'fully_implicit'"):
-        _validate_soft_affine_lagged_friction_configuration(
+        SoftAffineIPCOperator._validate_soft_affine_lagged_friction_configuration(
             SimpleNamespace(
                 affine_friction_mode=mode,
                 affine_friction_iterations=1,
@@ -87,11 +82,11 @@ def test_soft_affine_rejects_unknown_friction_mode(mode):
 )
 def test_iga_accepts_iteration_aliases(monkeypatch, key, iterations, expected):
     contact_module = import_module("src.igampm.ContactManager")
-    monkeypatch.setattr(contact_module, "Barrier", lambda **kwargs: ("barrier", kwargs))
+    monkeypatch.setattr(contact_module.Barrier, "__init__", lambda self, **kwargs: None)
     monkeypatch.setattr(contact_module, "Friction", lambda **kwargs: ("friction", kwargs))
 
     manager = ContactManager(
-        contact_model="IPC",
+        contact_model="BarrierIPC",
         friction_mode="lag",
         **{key: iterations},
     )
@@ -103,16 +98,16 @@ def test_iga_accepts_iteration_aliases(monkeypatch, key, iterations, expected):
 @pytest.mark.parametrize("iterations", (1.5, "many"))
 def test_iga_rejects_invalid_outer_fixed_point_iterations(iterations):
     with pytest.raises(ValueError, match="must be an integer"):
-        ContactManager(contact_model="IPC", friction_iterations=iterations)
+        ContactManager(contact_model="BarrierIPC", friction_iterations=iterations)
 
 
 @pytest.mark.parametrize("mode", ("fully_implicit", "fullyimplicit", "fully-implicit"))
 def test_iga_accepts_fully_implicit_friction_mode(monkeypatch, mode):
     contact_module = import_module("src.igampm.ContactManager")
-    monkeypatch.setattr(contact_module, "Barrier", lambda **kwargs: ("barrier", kwargs))
+    monkeypatch.setattr(contact_module.Barrier, "__init__", lambda self, **kwargs: None)
     monkeypatch.setattr(contact_module, "Friction", lambda **kwargs: ("friction", kwargs))
     manager = ContactManager(
-        contact_model="IPC",
+        contact_model="BarrierIPC",
         friction_mode=mode,
         dynamic_friction=0.31,
         static_friction=0.57,
@@ -130,16 +125,16 @@ def test_iga_accepts_fully_implicit_friction_mode(monkeypatch, mode):
 
 
 def test_iga_lagged_iteration_default_is_one():
-    assert _validate_iga_friction_configuration({}) == ("lagged", 1)
+    assert ContactManager._validate_iga_friction_configuration({}) == ("lagged", 1)
 
 
 @pytest.mark.parametrize("tolerance", [float("nan"), float("inf"), -1.0])
 def test_iga_rejects_nonfinite_or_negative_friction_tolerance(tolerance):
     with pytest.raises(ValueError, match="friction_tolerance"):
-        ContactManager(contact_model="IPC", friction_tolerance=tolerance)
+        ContactManager(contact_model="BarrierIPC", friction_tolerance=tolerance)
 
 
 @pytest.mark.parametrize("maximum", [0, -1, 2.5, float("nan"), float("inf")])
 def test_iga_rejects_invalid_friction_iteration_cap(maximum):
     with pytest.raises(ValueError, match="friction_max_iterations"):
-        ContactManager(contact_model="IPC", friction_max_iterations=maximum)
+        ContactManager(contact_model="BarrierIPC", friction_max_iterations=maximum)

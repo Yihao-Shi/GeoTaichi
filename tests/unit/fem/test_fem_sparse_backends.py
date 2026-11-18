@@ -4,7 +4,7 @@ import pytest
 ti = pytest.importorskip("taichi")
 
 from src.fem import DirichletBoundary, FEM, NeumannBoundary
-from src.fem.engines.SparseMatrix import FEMSparseMatrix
+from src.fem.engines.FEMSparseMatrix import FEMSparseMatrix
 
 pytestmark = [
     pytest.mark.unit,
@@ -201,7 +201,7 @@ def test_pcg_rejects_unprojected_ipc_contact_tangents():
     fem.add_mesh(geometry="rectangle")
     fem.add_material("StVK", young_modulus=1.0e4, poisson_ratio=0.3, thickness=0.01)
     fem.add_contact(
-        "IPC",
+        "BarrierIPC",
         self_contact=False,
         planes=[((0.0, 0.0, -0.01), (0.0, 0.0, 1.0))],
         project_pd=False,

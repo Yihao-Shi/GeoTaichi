@@ -4,23 +4,21 @@ import numpy as np
 import pytest
 import taichi as ti
 
-from src.contact_detection.continuous_contact_detection import (
-    ccd_mode_parameters,
-    deformation_gradient_ccd,
-    edge_edge_accd,
-    edge_edge_ccd,
-    linear_gap_accd,
-    linear_gap_ccd,
-    point_edge_accd,
-    point_edge_ccd,
-    point_nurbs_accd_increment,
-    point_point_accd,
-    point_point_ccd,
-    point_point_quadratic_ccd,
-    point_triangle_ccd,
-    point_triangle_accd,
-    real_cubic_roots,
-)
+from src.contact_detection.continuous_contact_detection.CCD import ccd_mode_parameters
+from src.contact_detection.continuous_contact_detection.PolynomialCCD import deformation_gradient_ccd
+from src.contact_detection.continuous_contact_detection.AdditiveCCD import edge_edge_accd
+from src.contact_detection.continuous_contact_detection.CCD import edge_edge_ccd
+from src.contact_detection.continuous_contact_detection.AdditiveCCD import linear_gap_accd
+from src.contact_detection.continuous_contact_detection.CCD import linear_gap_ccd
+from src.contact_detection.continuous_contact_detection.AdditiveCCD import point_edge_accd
+from src.contact_detection.continuous_contact_detection.CCD import point_edge_ccd
+from src.contact_detection.continuous_contact_detection.AdditiveCCD import point_nurbs_accd_increment
+from src.contact_detection.continuous_contact_detection.AdditiveCCD import point_point_accd
+from src.contact_detection.continuous_contact_detection.CCD import point_point_ccd
+from src.contact_detection.continuous_contact_detection.PolynomialCCD import point_point_quadratic_ccd
+from src.contact_detection.continuous_contact_detection.CCD import point_triangle_ccd
+from src.contact_detection.continuous_contact_detection.AdditiveCCD import point_triangle_accd
+from src.contact_detection.continuous_contact_detection.PolynomialCCD import real_cubic_roots
 
 pytestmark = [
     pytest.mark.unit,

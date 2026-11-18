@@ -21,11 +21,11 @@ def set_from_triplets(bsr_matrix: ti.template(), rows: ti.template(), cols: ti.t
         rdata = values[idx]
 
         mask = ti.simt.warp.active_mask()
-        prev_endID1 = ti.simt.warp.shfl_up_i32(mask, row_ind, 1)
+        prev_end_id1 = ti.simt.warp.shfl_up_i32(mask, row_ind, 1)
         ti.simt.block.sync()
 
-        bBoundary = (lane_id == 0) or (row_ind != prev_endID1)
-        mark = ballot(bBoundary)
+        b_boundary = (lane_id == 0) or (row_ind != prev_end_id1)
+        mark = ballot(b_boundary)
         mark = brev(mark)
         interval = ti.min(clz(mark << (lane_id + 1)), 31 - lane_id)
         ti.simt.block.sync()
@@ -36,12 +36,12 @@ def set_from_triplets(bsr_matrix: ti.template(), rows: ti.template(), cols: ti.t
                 pass
             index <<= 1
 
-        if bBoundary == 1:
+        if b_boundary == 1:
             pass
 
 
 @ti.kernel
-def compute_Ap(
+def compute_ap(
     nnz: int, row: ti.template(), col: ti.template(), value: ti.template(), p: ti.template(), Ap: ti.template()
 ):
     for i in range(nnz):

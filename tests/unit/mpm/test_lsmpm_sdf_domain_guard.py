@@ -7,11 +7,11 @@ def test_soft_levelset_domain_margin_detects_deformed_body_escape(
     taichi_runtime,
 ):
     ti = taichi_runtime
-    from src.dem.structs.BaseStruct import BoundingBox
+    from src.dem.structs.BoundingBox import BoundingBox
     from src.mpm.soft_particle.SoftBodyKernel import (
-        min_soft_levelset_domain_margin_,
+        min_soft_levelset_domain_margin,
     )
-    from src.mpm.soft_particle.Structs import SoftBody
+    from src.mpm.soft_particle.SoftBody import SoftBody
 
     soft = SoftBody.field(shape=1)
     box = BoundingBox.field(shape=1)
@@ -30,14 +30,14 @@ def test_soft_levelset_domain_margin_detects_deformed_body_escape(
 
     set_bounds(-0.75, 0.75)
     np.testing.assert_allclose(
-        min_soft_levelset_domain_margin_(1, soft, box),
+        min_soft_levelset_domain_margin(1, soft, box),
         1.0,
         atol=1.0e-12,
     )
 
     set_bounds(-1.125, 0.75)
     np.testing.assert_allclose(
-        min_soft_levelset_domain_margin_(1, soft, box),
+        min_soft_levelset_domain_margin(1, soft, box),
         -0.5,
         atol=1.0e-12,
     )

@@ -1,8 +1,7 @@
+from src.linear_solver.Utilities import accepts_monotone_energy
 import math
 
 import pytest
-
-from src.utils.SolverRuntime import accepts_monotone_energy
 
 
 @pytest.mark.parametrize("scale", [1e-20, 1.0, 1e20])

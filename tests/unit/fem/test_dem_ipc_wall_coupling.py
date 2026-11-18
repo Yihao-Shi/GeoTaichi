@@ -6,7 +6,7 @@ import pytest
 import taichi as ti
 from geotaichi import DEM, polyhedron
 from src.fem import FEM
-from src.fem.generator import FEMMesh
+from src.fem.generator.Mesh import FEMMesh
 from src.fedem.mainFEDEM import FEDEM
 
 pytestmark = [
@@ -119,7 +119,7 @@ def test_dem_wall_servo_is_used_by_abd_and_coupled_fem(taichi_runtime, tmp_path,
                 "contact_coordination_number": 16,
             }
         )
-        coupling.choose_contact_model("IPC", dhat=0.1, kappa=100.0, friction_coefficient=0.0)
+        coupling.choose_contact_model("BarrierIPC", dhat=0.1, kappa=100.0, friction_coefficient=0.0)
         result = coupling.run(verbose=False)
         assert result["converged"]
         boundary = coupling.enginer.wall_boundary

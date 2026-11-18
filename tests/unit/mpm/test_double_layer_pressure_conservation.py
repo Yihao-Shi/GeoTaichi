@@ -5,7 +5,8 @@ import pytest
 import taichi as ti
 
 from src.mpm.engines import TwoPhaseDoubleLayerKernel as kernels
-from src.mpm.structs.GridNode import NodeTwoPhase, NodeTwoPhase2D
+from src.mpm.structs.NodeTwoPhase import NodeTwoPhase
+from src.mpm.structs.NodeTwoPhase2D import NodeTwoPhase2D
 
 
 @pytest.mark.parametrize("dimension", [2, 3])

@@ -10,6 +10,14 @@ device-resident numerical backends are documented in
 
 [Theory log and derivations](#fem-theory-log) | [Examples](../../examples/)
 
+Axisymmetric FEM uses per-radian reference volume `R*dA` and boundary area
+`R*ds`, matching Native/Direct MPM and IGA. Mass, energy, resultant loads and
+reactions are per radian; multiply by `2*pi` for full-revolution totals.
+Density, stress, pressure and kinematics retain their ordinary units.
+`add_traction` integrates pressure/traction density with `R*ds`; raw nodal
+forces must already be per radian. Older full-revolution state/output must
+not be mixed into a new per-radian run.
+
 ## Example-backed capabilities
 
 - Elastic volume FEM: [implicit cantilever](../../examples/fem/implicit_volume_cantilever/implicit_volume_cantilever.py) and [volume self-contact](../../examples/fem/implicit_volume_self_contact/implicit_volume_self_contact.py).
@@ -39,7 +47,7 @@ elastic volume FEM.
 | Embedded cloth surface | Explicit or implicit | Cloth ARAP or cloth Neo-Hookean, with optional bending/stitch/spring/SDF energies | No | Standalone IPC is implicit; explicit DEM contact and implicit AffineBody IPC are FEDEM routes. |
 
 Constitutive equations remain centralized in the
-[shared constitutive-model theory](../physics_model/consititutive_model/README.md).
+[shared constitutive-model theory](../physics_model/constitutive_model/README.md).
 
 ## Package layout
 
@@ -258,10 +266,18 @@ $`1/\sqrt{3}`$, with unit one-dimensional weights. The reference Jacobian,
 shape gradients, deformation gradient, and quadrature weight generally vary
 over the element.
 
+The incremental elastoplastic HEX8 assembler evaluates the equivalent
+displacement form $`\boldsymbol{F}=\boldsymbol{1}+\sum_a
+(\boldsymbol{x}_a-\boldsymbol{X}_a)\otimes\nabla_0 N_a`$.
+An undeformed mesh therefore has exactly $`\boldsymbol{F}=\boldsymbol{1}`$,
+preventing roundoff strain during initialization from seeding a spurious
+plastic-flow direction. The reference coordinates come from `mesh.rest_shape`,
+so configured initial prestrain is still integrated.
+
 ### 4. Constitutive material response
 
 Hyperelastic energy, stress, and tangent equations are maintained in the
-[shared constitutive-model theory](../physics_model/consititutive_model/README.md#hyperelastic-solid-laws).
+[shared constitutive-model theory](../physics_model/constitutive_model/README.md#hyperelastic-solid-laws).
 FEM supplies the quadrature-point deformation gradient and assembles the returned
 first Piola stress and algorithmic tangent through the element operators above.
 
@@ -271,9 +287,25 @@ first Piola stress and algorithmic tangent through the element operators above.
 
 Surface kinematics and the tension--compression ARAP and plane-stress
 Neo-Hookean membrane laws are defined in the
-[shared cloth constitutive theory](../physics_model/consititutive_model/README.md#surface-cloth-constitutive-laws).
+[shared cloth constitutive theory](../physics_model/constitutive_model/README.md#surface-cloth-constitutive-laws).
 The FEM triangle multiplies the returned surface density by reference area and
 thickness before assembling nodal forces and tangents.
+The membrane and local bending laws live in
+[`cloth_model/`](../physics_model/constitutive_model/cloth_model/);
+`cloth/ClothElement.py` builds reference topology and `cloth/ClothAssembler.py`
+owns device fields and global assembly. Bending is inactive when the default
+`bending_stiffness=0.0` is used.
+Membrane model names are exactly `ClothARAP` and `ClothNeoHookean`; bending
+names are exactly `Quadratic`, `Dihedral`, and `None`. Aliases, case variants,
+and misspellings raise `ValueError`. Cloth output Cauchy stress is evaluated
+on the device before its output snapshot is downloaded.
+Shared failure types are imported directly from `src/utils/errors.py`:
+`InvertedElementError` reports invalid element geometry,
+`RuntimeNotInitializedError` reports an uninitialized cloth runtime, and
+`LinearSolveError`, `LineSearchError`, and `NewtonConvergenceError` distinguish
+linear, search, and nonlinear solver failures. These types inherit
+`RuntimeError`; their distinct identities are preserved for catching failures
+and for the existing step rollback/retry policies.
 
 #### Quadratic hinge bending
 
@@ -738,7 +770,7 @@ rebuild unchanged contact or element state solely for reporting.
 
 ```python
 fem.add_contact(
-    "BarrierIPC",                 # strict barrier IPC (legacy name: "IPC")
+    "BarrierIPC",                 # strict barrier IPC
     self_contact=True,
     broad_phase="BVH",          # or "LinkedCell"
     planes=[{"point": (0, 0, 0), "normal": (0, 0, 1)}],
@@ -778,7 +810,7 @@ Pass one `cell_body_ids` value per cell, or let connected components define
 body IDs, then assign independent IPC parameters to unordered body pairs:
 
 ```python
-fem.add_contact("IPC", self_contact=False, broad_phase="LinkedCell")
+fem.add_contact("BarrierIPC", self_contact=False, broad_phase="LinkedCell")
 fem.add_contact_property(0, 1, dhat=2.0e-2, kappa=5.0e4,
                          friction_coefficient=0.2)
 fem.add_contact_property(1, 2, dhat=1.0e-2, kappa=2.0e5,
@@ -843,4 +875,4 @@ The shared `LinearSoft()` law is controlled solely by peak/residual strengths
 and plastic-strain endpoints. `SoftenParameter` is no longer normalized or
 consumed. To preserve a previously clipped scale `eta >= 1`, replace the end
 strain with `start + (old_end - start) / eta`; see the
-[shared constitutive documentation](../physics_model/consititutive_model/README.md#bounded-linear-softening).
+[shared constitutive documentation](../physics_model/constitutive_model/README.md#bounded-linear-softening).

@@ -1,9 +1,9 @@
 import taichi as ti
 
-from src.utils.constants import ZEROVEC3f, Threshold
-from src.utils.TypeDefination import real
+from src.utils.constants import ZEROVEC3F, THRESHOLD
+from src.utils.TypeDefinition import real
 import src.utils.GlobalVariable as GlobalVariable
-from src.utils.VectorFunction import Squared, Normalize
+from src.utils.VectorFunction import squared, normalize
 
 
 @ti.dataclass
@@ -44,7 +44,7 @@ class PenaltyProperty:
         pos1, pos2 = particle[end1].x, wall[end2]._get_center()
         particle_rad, norm = particle[end1].rad, wall[end2]._get_norm(pos1)
         distance = (pos1 - pos2).dot(norm)
-        fraction = ti.abs(wall[end2].processCircleShape(pos1, particle_rad, distance))
+        fraction = ti.abs(wall[end2].process_circle_shape(pos1, particle_rad, distance))
         return fraction * self.kn
 
     @ti.func
@@ -60,8 +60,8 @@ class PenaltyProperty:
         return normal_damping_force * vn
 
     @ti.func
-    def _elastic_tangential_energy(self, ks, tangOverTemp):
-        return 0.5 * Squared(tangOverTemp) * ks
+    def _elastic_tangential_energy(self, ks, tang_over_temp):
+        return 0.5 * squared(tang_over_temp) * ks
 
     @ti.func
     def _viscous_tangential_energy(self, tangential_damping_force, vs):
@@ -86,43 +86,43 @@ class PenaltyProperty:
         return normal_force, norm_elastic, norm_viscous_rate
 
     @ti.func
-    def _tangential_force(self, ks, sdratio, m_eff, vs, normal_force, norm, tangOverlapOld, dt):
-        tangOverlapRot = tangOverlapOld - tangOverlapOld.dot(norm) * norm
-        tangOverTemp = vs * dt[None] + tangOverlapOld.norm() * Normalize(tangOverlapRot)
-        tangOverlapTrial = tangOverTemp
-        trial_ft = -ks * tangOverTemp
+    def _tangential_force(self, ks, sdratio, m_eff, vs, normal_force, norm, tang_overlap_old, dt):
+        tang_overlap_rot = tang_overlap_old - tang_overlap_old.dot(norm) * norm
+        tang_over_temp = vs * dt[None] + tang_overlap_old.norm() * normalize(tang_overlap_rot)
+        tang_overlap_trial = tang_over_temp
+        trial_ft = -ks * tang_over_temp
 
         fric = self.mu * ti.abs(normal_force)
-        tangential_force = ZEROVEC3f
+        tangential_force = ZEROVEC3F
         tang_elastic, tang_viscous_rate, friction_energy = 0.0, 0.0, 0.0
         if trial_ft.norm() > fric:
             tangential_force = fric * trial_ft.normalized()
-            tangOverTemp = -tangential_force / ks
+            tang_over_temp = -tangential_force / ks
             if ti.static(GlobalVariable.TRACKENERGY):
-                tang_elastic = self._elastic_tangential_energy(ks, tangOverTemp)
-                friction_energy = self._friction_energy(tangOverlapTrial - tangOverTemp, tangential_force)
+                tang_elastic = self._elastic_tangential_energy(ks, tang_over_temp)
+                friction_energy = self._friction_energy(tang_overlap_trial - tang_over_temp, tangential_force)
         else:
             tang_damping_force = -2 * sdratio * ti.sqrt(m_eff * ks) * vs
             tangential_force = trial_ft + tang_damping_force
             if ti.static(GlobalVariable.TRACKENERGY):
-                tang_elastic = self._elastic_tangential_energy(ks, tangOverTemp)
+                tang_elastic = self._elastic_tangential_energy(ks, tang_over_temp)
                 tang_viscous_rate = self._viscous_tangential_energy(tang_damping_force, vs)
-        return tangential_force, tangOverTemp, tang_elastic, tang_viscous_rate, friction_energy
+        return tangential_force, tang_over_temp, tang_elastic, tang_viscous_rate, friction_energy
 
     @ti.func
-    def _force_assemble(self, m_eff, rad_eff, gapn, coeff, dgdx, v_rel, tangOverlapOld, dt):
+    def _force_assemble(self, m_eff, rad_eff, gapn, coeff, dgdx, v_rel, tang_overlap_old, dt):
         kn, ks = self.kn * coeff, self.ks * coeff
         ndratio, sdratio = self.ndratio, self.sdratio
         gradient_norm = dgdx.norm()
-        norm = dgdx.normalized(Threshold)
+        norm = dgdx.normalized(THRESHOLD)
         normal_velocity = v_rel.dot(norm)
         gap_rate = v_rel.dot(dgdx)
         vs = v_rel - normal_velocity * norm
 
         normal_force, norm_elastic, norm_viscous_rate = self._normal_force(kn, ndratio, m_eff, gapn, gap_rate)
         normal_force_magnitude = normal_force * gradient_norm
-        tangential_force, tangOverTemp, tang_elastic, tang_viscous_rate, friction_energy = self._tangential_force(
-            ks, sdratio, m_eff, vs, normal_force_magnitude, norm, tangOverlapOld, dt
+        tangential_force, tang_over_temp, tang_elastic, tang_viscous_rate, friction_energy = self._tangential_force(
+            ks, sdratio, m_eff, vs, normal_force_magnitude, norm, tang_overlap_old, dt
         )
         if ti.static(GlobalVariable.TRACKENERGY):
             self.elastic_energy += norm_elastic + tang_elastic
@@ -130,8 +130,8 @@ class PenaltyProperty:
                 self.friction_energy += friction_energy
                 self.damp_energy += (norm_viscous_rate + tang_viscous_rate) * dt[None]
         if dt[None] == 0.0:
-            tangOverTemp = tangOverlapOld
-        return normal_force * dgdx, tangential_force, tangOverTemp
+            tang_over_temp = tang_overlap_old
+        return normal_force * dgdx, tangential_force, tang_over_temp
 
     @ti.func
     def _force_assemble_work_conjugate(
@@ -143,7 +143,7 @@ class PenaltyProperty:
         coeff,
         dgdx,
         v_rel,
-        tangOverlapOld,
+        tang_overlap_old,
         dt,
     ):
         """Discrete-gradient penalty force for an advected soft SDF.
@@ -159,7 +159,7 @@ class PenaltyProperty:
         """
         kn, ks = self.kn * coeff, self.ks * coeff
         gradient_norm = dgdx.norm()
-        norm = dgdx.normalized(Threshold)
+        norm = dgdx.normalized(THRESHOLD)
         normal_velocity = v_rel.dot(norm)
         gap_rate = v_rel.dot(dgdx)
         vs = v_rel - normal_velocity * norm
@@ -168,7 +168,7 @@ class PenaltyProperty:
         next_energy = kn / self.theta * ti.pow(ti.max(next_penetration, 0.0), self.theta)
         work_displacement = gap_rate * dt[None]
         normal_contact_force = kn * ti.pow(ti.max(penetration, 0.0), self.theta - 1.0)
-        if ti.abs(work_displacement) > Threshold:
+        if ti.abs(work_displacement) > THRESHOLD:
             normal_contact_force = -(next_energy - current_energy) / work_displacement
 
         normal_damping_force = -2.0 * self.ndratio * ti.sqrt(m_eff * kn) * gap_rate
@@ -177,14 +177,14 @@ class PenaltyProperty:
             normal_damping_force = -normal_contact_force
             normal_force = 0.0
 
-        tangential_force, tangOverTemp, tang_elastic, tang_viscous_rate, friction_energy = self._tangential_force(
+        tangential_force, tang_over_temp, tang_elastic, tang_viscous_rate, friction_energy = self._tangential_force(
             ks,
             self.sdratio,
             m_eff,
             vs,
             normal_force * gradient_norm,
             norm,
-            tangOverlapOld,
+            tang_overlap_old,
             dt,
         )
         if ti.static(GlobalVariable.TRACKENERGY):
@@ -193,4 +193,4 @@ class PenaltyProperty:
             self.damp_energy += (
                 self._viscous_normal_energy_rate(normal_damping_force, gap_rate) + tang_viscous_rate
             ) * dt[None]
-        return normal_force * dgdx, tangential_force, tangOverTemp
+        return normal_force * dgdx, tangential_force, tang_over_temp

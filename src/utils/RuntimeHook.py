@@ -7,10 +7,10 @@ without making the solver depend on FastMCP or on the MCP package itself.
 """
 
 from __future__ import annotations
+from collections.abc import Mapping
 
 import threading
 from typing import Callable, Optional
-
 
 RuntimeCheckpoint = Callable[[], int]
 
@@ -42,3 +42,34 @@ def runtime_checkpoint() -> int:
     if callback is None:
         return 0
     return callback()
+
+
+def python_callback(function):
+    """Mark a solver callback to run in Python instead of as a Taichi kernel."""
+    if not callable(function):
+        raise TypeError("python_callback expects a callable")
+    function.__geotaichi_python_callback__ = True
+    return function
+
+
+def normalize_callbacks(functions, transform=None):
+    """Return one validated callback tuple from a public callback argument."""
+    if functions is None:
+        return ()
+    if isinstance(functions, Mapping):
+        selected = tuple(functions.values())
+    elif callable(functions):
+        selected = (functions,)
+    else:
+        try:
+            selected = tuple(functions)
+        except TypeError as exception:
+            raise TypeError("solver callbacks must be a callable, mapping, or iterable") from exception
+    if not all(callable(function) for function in selected):
+        raise TypeError("every solver callback must be callable")
+    if transform is not None:
+        selected = tuple(
+            function if getattr(function, "__geotaichi_python_callback__", False) else transform(function)
+            for function in selected
+        )
+    return selected

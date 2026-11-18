@@ -18,7 +18,7 @@ from src.mpm.elements.AdaptiveQuadrilateralKernel import (
     mark_refined_cells_epdstrain_2d,
     mark_refined_cells_softening_2d,
 )
-from src.utils.TypeDefination import vec2f, vec2i, vec3f, vec3i
+from src.utils.TypeDefinition import vec2f, vec2i, vec3f, vec3i
 
 
 @ti.dataclass

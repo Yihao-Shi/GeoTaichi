@@ -1,6 +1,7 @@
 """Time loop for explicit FEM--DEM coupling."""
 
 from __future__ import annotations
+from src.utils.RuntimeHook import normalize_callbacks
 
 import time
 
@@ -8,7 +9,6 @@ import taichi as ti
 
 from src.utils.RuntimeHook import runtime_checkpoint
 from src.utils.SolverConsole import print_save_file_info, print_simulation_start
-from src.utils.SolverRuntime import normalize_callbacks
 
 
 class Solver:
@@ -40,7 +40,7 @@ class Solver:
         self.dem.sims.current_print += 1
         self.last_save_time = self.simulation.current_time
 
-    def CouplingSolver(self, precalculated=False):
+    def coupling_solver(self, precalculated=False):
         print_simulation_start("FEDEM")
         if not precalculated:
             self.engine.pre_calculate()

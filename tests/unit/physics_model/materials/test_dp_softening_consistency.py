@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 import taichi as ti
 
-from src.physics_model.consititutive_model.infinitesimal_strain.DruckerPrager import DruckerPragerModel
+from src.physics_model.constitutive_model.infinitesimal_strain.DruckerPrager import DruckerPragerModel
 
 pytestmark = [pytest.mark.cpu, pytest.mark.materials]
 
@@ -42,8 +42,8 @@ def test_zero_friction_and_local_history_update(taichi_material_cpu):
     def evaluate():
         state[0].epdstrain = 0.05
         stress = ti.Vector([-60000.0, -80000.0, -70000.0, 10000.0, 0.0, 0.0])
-        initial = model.GetMaterialParameter(stress, state[0])
-        out[None] = model.UpdateMaterialParameter(stress, ti.Vector([0.15]), state[0], initial)
+        initial = model.get_material_parameter(stress, state[0])
+        out[None] = model.update_material_parameter(stress, ti.Vector([0.15]), state[0], initial)
 
     evaluate()
     assert out[None][7] == pytest.approx(12500.0)

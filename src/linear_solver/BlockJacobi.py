@@ -1,12 +1,11 @@
 """Device block Jacobi for an affine-control prefix and ordinary node blocks."""
 
+from src.utils.MatrixFunction import _apply_dense_block_jacobi
+
 import taichi as ti
 
-from src.linear_solver.BuildTriplet import _apply_dense_block_jacobi
-
-
-class BlockJacobiError(RuntimeError):
-    pass
+from src.linear_solver.BuildTriplet import BuildTriplet
+from src.utils.errors import BlockJacobiError
 
 
 @ti.data_oriented

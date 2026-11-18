@@ -7,6 +7,7 @@ input is rebuilt by the caller and verified through a topology fingerprint.
 """
 
 from __future__ import annotations
+from src.utils.errors import SimulationStateError
 
 from collections.abc import Mapping
 import hashlib
@@ -19,7 +20,6 @@ from typing import Any
 import numpy as np
 
 from src.utils.FieldIO import field_to_numpy_prefix
-
 
 SCHEMA_NAME = "geotaichi.fedem.checkpoint"
 SCHEMA_VERSION = 1
@@ -356,9 +356,9 @@ def _metadata(coupling, manifest) -> dict[str, Any]:
 def save_checkpoint(coupling, filename) -> Path:
     """Atomically save the initialized explicit coupled state to one NPZ."""
     if coupling.enginer is None or coupling.fem.engine is None:
-        raise RuntimeError("call FEDEM.add_essentials before saving a checkpoint")
+        raise SimulationStateError("call FEDEM.add_essentials before saving a checkpoint")
     if not coupling.contactor.initialized:
-        raise RuntimeError("initialize FEDEM contact before saving a checkpoint")
+        raise SimulationStateError("initialize FEDEM contact before saving a checkpoint")
     filename = Path(filename).expanduser().resolve()
     if filename.suffix.lower() != ".npz":
         filename = filename.with_suffix(".npz")
@@ -675,7 +675,7 @@ def _restore_wall_contacts(
 def load_checkpoint(coupling, filename) -> dict[str, Any]:
     """Restore an initialized model and return validated checkpoint metadata."""
     if coupling.enginer is None or coupling.fem.engine is None:
-        raise RuntimeError("call FEDEM.add_essentials before loading a checkpoint")
+        raise SimulationStateError("call FEDEM.add_essentials before loading a checkpoint")
     if not coupling.contactor.initialized:
         coupling.enginer.pre_calculate()
     filename = Path(filename).expanduser().resolve()

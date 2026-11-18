@@ -1,8 +1,6 @@
+from src.utils.ObjectIO import DictIO
 import numpy as np
 import taichi as ti
-
-from src.utils.linalg import read_dict_list
-from src.utils.ObjectIO import DictIO
 
 
 class ContactBase(object):
@@ -10,7 +8,7 @@ class ContactBase(object):
         self._name = None
         self.contact_phys = None
         self.polygon_vertices = None
-        self._friction = DictIO.GetAlternative(contact_phys, "friction", 0.0)
+        self._friction = DictIO.get_alternative(contact_phys, "friction", 0.0)
 
     def get_parameters(self, *arg, **kwargs):
         pass
@@ -46,13 +44,13 @@ class GeoContact(ContactBase):
             raise ValueError("GeoContact uses 'cut_off', not 'cutoff'; the misspelled key was silently ignored")
         super().__init__(contact_phys)
         self._name = "GeoContact"
-        penalty = DictIO.GetAlternative(contact_phys, "penalty", [1.0, 2.0])
-        cut_off = DictIO.GetAlternative(contact_phys, "cut_off", 1.5)
+        penalty = DictIO.get_alternative(contact_phys, "penalty", [1.0, 2.0])
+        cut_off = DictIO.get_alternative(contact_phys, "cut_off", 1.5)
         if isinstance(penalty, (tuple, list, np.ndarray)):
             if len(list(penalty)) != 2:
-                raise RuntimeError("The dimension of Keyword:: /Penalty/ should be 2")
+                raise ValueError("The dimension of Keyword:: /Penalty/ should be 2")
         if penalty[0] < 0.0 or penalty[0] > 1.0 or penalty[1] < 2.0:
-            raise RuntimeError("Keyword:: 0 <= /Penalty[0]/ <= 1 and /Penalty[1]/ >= 2")
+            raise ValueError("Keyword:: 0 <= /Penalty[0]/ <= 1 and /Penalty[1]/ >= 2")
         self._alpha = penalty[0]
         self._beta = penalty[1]
         self._cut_off = cut_off
@@ -102,10 +100,10 @@ class DEMContact(ContactBase):
             raise ValueError("DEMContact requires material contact parameter dictionaries")
 
     def get_parameters(self, contact_parameter):
-        stiffness = DictIO.GetAlternative(contact_parameter, "stiffness", [1e6, 1e6])
-        friction = DictIO.GetAlternative(contact_parameter, "friction", 0.0)
+        stiffness = DictIO.get_alternative(contact_parameter, "stiffness", [1e6, 1e6])
+        friction = DictIO.get_alternative(contact_parameter, "friction", 0.0)
         if len(list(stiffness)) != 2:
-            raise RuntimeError("The dimension of Keyword:: /stiffness/ should be 2")
+            raise ValueError("The dimension of Keyword:: /stiffness/ should be 2")
         return {"kn": stiffness[0], "kt": stiffness[1], "friction": friction}
 
     def generate_vertice_field(self, dim, size):
@@ -120,10 +118,10 @@ class DEMContact(ContactBase):
         self._velocity = velocity
 
     def print_contact_message(self):
-        read_dict_list(self.contact_phys, self.print_single_contact_message)
+        DictIO.read_dict_list(self.contact_phys, self.print_single_contact_message)
 
     def print_single_contact_message(self, phys):
-        print("Material ID: ", DictIO.GetEssential(phys, "materialID"))
+        print("Material ID: ", DictIO.get_essential(phys, "materialID"))
         cphys = self.get_parameters(phys)
         print("Stiffness Parameter = ", cphys["kn"], cphys["kt"])
         print("Friction Coefficient =", cphys["friction"], "\n")

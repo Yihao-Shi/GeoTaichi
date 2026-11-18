@@ -1,3 +1,4 @@
+from src.utils.errors import ConfigurationError
 import taichi as ti
 from taichi.lang.impl import current_cfg
 
@@ -31,7 +32,7 @@ class PrefixSumExecutor:
     def initialize(self, batch_length):
         batch_length = make_list(batch_length)
         if current_cfg().arch == ti.cuda:
-            self.run = self.runGPU
+            self.run = self.run_gpu
             self.ele_nums = []
             self.ele_nums_pos = []
             self.array_length = []
@@ -55,7 +56,7 @@ class PrefixSumExecutor:
                     self.array_length.append(batch_length[l])
                     self.run = serial if batch_length[l] == 2 else no_operation
         elif current_cfg().arch == ti.cpu:
-            self.run = self.runCPU
+            self.run = self.run_cpu
             self.npad = []
             for l in range(self.batch_size):
                 if batch_length[l] > 2:
@@ -66,15 +67,15 @@ class PrefixSumExecutor:
                     self.array_length.append(batch_length[l])
                     self.run = serial if batch_length[l] == 2 else no_operation
         elif current_cfg().arch == ti.metal:
-            self.run = self.runMetal
+            self.run = self.run_metal
             self.array_length = [int(length) for length in batch_length]
         else:
-            raise RuntimeError(f"{str(current_cfg().arch)} is not supported for prefix sum.")
+            raise ConfigurationError(f"{str(current_cfg().arch)} is not supported for prefix sum.")
 
     def get_length(self, batch_size=None):
         return sum(self.array_length) if batch_size is None else self.array_length[batch_size]
 
-    def runGPU(self, input_arr):
+    def run_gpu(self, input_arr):
         for batch_num in range(self.batch_size):
             ele_nums = self.ele_nums[batch_num]
             ele_nums_pos = self.ele_nums_pos[batch_num]
@@ -150,7 +151,7 @@ class PrefixSumExecutor:
         for i in range(offset + size, dst.shape[0]):
             dst[i] = 0
 
-    def runCPU(self, input_arr, nlevel=0):
+    def run_cpu(self, input_arr, nlevel=0):
         length = input_arr.shape[0]
         npad = self.npad[nlevel]
         self.blit_from_field_to_field(self.large_arr, input_arr, 0, length)
@@ -169,7 +170,7 @@ class PrefixSumExecutor:
             d <<= 1
         self.blit_from_field_to_field(input_arr, self.large_arr, 1, length)
 
-    def runMetal(self, input_arr, nlevel=0):
+    def run_metal(self, input_arr, nlevel=0):
         if nlevel < 0 or nlevel >= len(self.array_length):
             raise ValueError(f"Invalid prefix-sum batch index {nlevel}")
         start = sum(self.array_length[:nlevel])

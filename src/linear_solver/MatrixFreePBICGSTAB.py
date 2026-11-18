@@ -1,10 +1,10 @@
+from src.linear_solver.DeviceKrylov import DeviceKrylov
 from math import isfinite, sqrt
 
 import taichi as ti
 from taichi.lang.impl import current_cfg
 
 from src.linear_solver.LinearOperator import LinearOperator
-from src.linear_solver.DeviceKrylov import DeviceKrylov, device_krylov_enabled
 
 from src.linear_solver.MatrixFreeKrylovKernel import (
     bicgstab_reset as reset,
@@ -39,7 +39,7 @@ class MatrixFreePBICGSTAB(object):
             self.p, self.r, self.r_tld, self.s, self.y, self.z, self.h, self.Ay, self.Ax, self.Az
         )
         self.scalar_rest()
-        self.device_execution = device_krylov_enabled()
+        self.device_execution = DeviceKrylov.device_krylov_enabled()
         self._device_solver = None
 
         if current_cfg().arch == ti.cuda:
@@ -96,8 +96,8 @@ class MatrixFreePBICGSTAB(object):
         init(size, b, self.p, self.r, self.r_tld, self.Ay, self.Ax, self.Az)
         self.rho = self.reduce(size, self.r, self.r_tld)
         self.rho_1 = self.rho
-        initial_rTr = self.reduce(size, self.r, self.r)
-        initial_residual = sqrt(max(initial_rTr, 0.0))
+        initial_r_tr = self.reduce(size, self.r, self.r)
+        initial_residual = sqrt(max(initial_r_tr, 0.0))
         convergence_tol = max(tol, rel_tol * initial_residual)
         self.last_initial_residual = initial_residual
         self.last_residual = initial_residual
@@ -137,12 +137,12 @@ class MatrixFreePBICGSTAB(object):
                 copy(size, self.h, x)
                 A.matvec(x, self.Ax)
                 restart(size, b, self.p, self.r, self.Ay, self.Ax, self.Az)
-                verified_rTr = self.reduce(size, self.r, self.r)
-                if not isfinite(verified_rTr) or verified_rTr < 0.0:
+                verified_r_tr = self.reduce(size, self.r, self.r)
+                if not isfinite(verified_r_tr) or verified_r_tr < 0.0:
                     self.last_residual = float("inf")
                     self.last_breakdown_reason = "non_finite_residual"
                     break
-                self.last_residual = sqrt(verified_rTr)
+                self.last_residual = sqrt(verified_r_tr)
                 if self.last_residual <= convergence_tol:
                     self.last_converged = True
                     break
@@ -178,12 +178,12 @@ class MatrixFreePBICGSTAB(object):
             if self.last_residual <= convergence_tol or (i + 1) % reliable_update_interval == 0:
                 A.matvec(x, self.Ax)
                 restart(size, b, self.p, self.r, self.Ay, self.Ax, self.Az)
-                verified_rTr = self.reduce(size, self.r, self.r)
-                if not isfinite(verified_rTr) or verified_rTr < 0.0:
+                verified_r_tr = self.reduce(size, self.r, self.r)
+                if not isfinite(verified_r_tr) or verified_r_tr < 0.0:
                     self.last_residual = float("inf")
                     self.last_breakdown_reason = "non_finite_residual"
                     break
-                self.last_residual = sqrt(verified_rTr)
+                self.last_residual = sqrt(verified_r_tr)
                 if self.last_residual <= convergence_tol:
                     self.last_converged = True
                     break
@@ -207,9 +207,9 @@ class MatrixFreePBICGSTAB(object):
         if not self.last_converged:
             A.matvec(x, self.Ax)
             true_residual(size, b, self.r, self.Ax)
-            verified_rTr = self.reduce(size, self.r, self.r)
-            if isfinite(verified_rTr) and verified_rTr >= 0.0:
-                self.last_residual = sqrt(verified_rTr)
+            verified_r_tr = self.reduce(size, self.r, self.r)
+            if isfinite(verified_r_tr) and verified_r_tr >= 0.0:
+                self.last_residual = sqrt(verified_r_tr)
                 self.last_converged = self.last_residual <= convergence_tol
             else:
                 self.last_residual = float("inf")

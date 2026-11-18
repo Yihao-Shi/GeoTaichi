@@ -5,13 +5,63 @@ from types import MethodType
 import numpy as np
 import pytest
 
-
 pytestmark = [
     pytest.mark.unit,
     pytest.mark.cpu,
     pytest.mark.serial,
     pytest.mark.isolated_dimension(2),
 ]
+
+
+@pytest.mark.parametrize("axisymmetric", [False, True])
+def test_explicit_iga_force_and_energy_use_consistent_measure(taichi_runtime, tmp_path, axisymmetric):
+    from src.iga import ExplicitIGA, Primitives, Rectangle
+
+    rectangle = Rectangle()
+    rectangle.set_parameters(start_point=[0.75, 0.0], size=[1.0, 0.2])
+    rectangle.generate_knot_u(degree=1, num_ctrlpts=2)
+    rectangle.generate_knot_v(degree=1, num_ctrlpts=2)
+    rectangle.generate_ctrlpts()
+    rectangle.generate_weights()
+    primitives = Primitives()
+    primitives.append(rectangle, "annulus")
+    primitives.finialize()
+    engine = ExplicitIGA(
+        primitives=primitives,
+        degree=[1, 1],
+        axisymmetric=axisymmetric,
+        young_modulus=2e5,
+        poisson_ratio=0.3,
+        density=1800.0,
+        gravity=[0.0, 0.0],
+        dt=1e-4,
+        step=0,
+        track_energy=True,
+        path=str(tmp_path),
+    )
+    engine.precompute()
+    volume = 0.25 if axisymmetric else 0.2
+    assert engine.patch.volume.to_numpy().sum() == pytest.approx(volume, rel=1e-12)
+    rest = engine.patch.rest_control_points.to_numpy()
+    current = rest * [1.1, 0.9]
+    engine.patch.control_points.from_numpy(current)
+    engine.assemble_force()
+    force = engine.rhs.to_numpy().reshape(-1, 2)
+    stretches = np.array([1.1, 0.9, 1.1] if axisymmetric else [1.1, 0.9])
+    log_j = np.log(np.prod(stretches))
+    expected_energy = volume * (
+        0.5 * engine.material.shear * (np.sum(stretches**2) - len(stretches))
+        - engine.material.shear * log_j
+        + 0.5 * engine.material.lame_lambda * log_j**2
+    )
+    assert engine.material_energy[None] == pytest.approx(expected_energy, rel=1e-12)
+    direction = np.random.default_rng(20261114).normal(size=current.shape)
+    energies = []
+    for sign in (1, -1):
+        engine.patch.control_points.from_numpy(current + sign * 1e-6 * direction)
+        engine.assemble_force()
+        energies.append(engine.material_energy[None])
+    assert -np.sum(force * direction) == pytest.approx((energies[0] - energies[1]) / 2e-6, rel=1e-7)
 
 
 def test_igampm_step_preparation_and_abort_share_one_transaction():
@@ -43,15 +93,9 @@ def test_igampm_step_preparation_and_abort_share_one_transaction():
     probe._save_device_monolithic_entry_displacements = probe.save_displacements
     probe._prepare_implicit_ipc_step = probe.prepare
     probe._restore_implicit_physical_state_device = probe.restore
-    probe._restore_device_monolithic_entry_displacements = (
-        probe.restore_displacements
-    )
-    probe.begin_implicit_ipc_step = MethodType(
-        ImplicitEngineMixin.begin_implicit_ipc_step, probe
-    )
-    probe.abort_implicit_ipc_step = MethodType(
-        ImplicitEngineMixin.abort_implicit_ipc_step, probe
-    )
+    probe._restore_device_monolithic_entry_displacements = probe.restore_displacements
+    probe.begin_implicit_ipc_step = MethodType(ImplicitEngineMixin.begin_implicit_ipc_step, probe)
+    probe.abort_implicit_ipc_step = MethodType(ImplicitEngineMixin.abort_implicit_ipc_step, probe)
 
     with pytest.raises(RuntimeError, match="synthetic preparation failure"):
         probe.begin_implicit_ipc_step()
@@ -83,20 +127,14 @@ def test_axisymmetric_local_pullbacks_match_no_swirl_oracle(
     element.total_knot_range = support_count
 
     shape_field = ti.Vector.field(support_count, ti.f64, shape=())
-    shape_gradient_field = ti.Matrix.field(
-        support_count, 2, ti.f64, shape=()
-    )
-    reference_field = ti.Matrix.field(
-        support_count, 2, ti.f64, shape=()
-    )
+    shape_gradient_field = ti.Matrix.field(support_count, 2, ti.f64, shape=())
+    reference_field = ti.Matrix.field(support_count, 2, ti.f64, shape=())
     current_field = ti.Matrix.field(support_count, 2, ti.f64, shape=())
     stress_field = ti.Vector.field(9, ti.f64, shape=())
     tangent_field = ti.Matrix.field(9, 9, ti.f64, shape=())
     deformation_field = ti.Matrix.field(3, 3, ti.f64, shape=())
     gradient_field = ti.field(ti.f64, shape=2 * support_count)
-    hessian_field = ti.field(
-        ti.f64, shape=(2 * support_count, 2 * support_count)
-    )
+    hessian_field = ti.field(ti.f64, shape=(2 * support_count, 2 * support_count))
 
     axis_offset = 0.25
 
@@ -106,18 +144,13 @@ def test_axisymmetric_local_pullbacks_match_no_swirl_oracle(
         shape_gradients = shape_gradient_field[None]
         reference = reference_field[None]
         current = current_field[None]
-        reference_radius = (
-            element.interpolate_component(shape, reference, 0)
-            - ti.static(axis_offset)
-        )
-        deformation_field[None] = (
-            element.compute_axisymmetric_deformation_gradient(
-                shape,
-                shape_gradients,
-                reference,
-                current,
-                ti.static(axis_offset),
-            )
+        reference_radius = element.interpolate_component(shape, reference, 0) - ti.static(axis_offset)
+        deformation_field[None] = element.compute_axisymmetric_deformation_gradient(
+            shape,
+            shape_gradients,
+            reference,
+            current,
+            ti.static(axis_offset),
         )
         for support_i in range(support_count):
             local_gradient = element.compute_axisymmetric_local_gradient(
@@ -128,9 +161,7 @@ def test_axisymmetric_local_pullbacks_match_no_swirl_oracle(
                 reference_radius,
             )
             for component in ti.static(range(2)):
-                gradient_field[2 * support_i + component] = local_gradient[
-                    component
-                ]
+                gradient_field[2 * support_i + component] = local_gradient[component]
             for support_j in range(support_count):
                 block = element.compute_axisymmetric_local_hessian(
                     support_i,
@@ -187,9 +218,7 @@ def test_axisymmetric_local_pullbacks_match_no_swirl_oracle(
         for component in range(2):
             row = 2 * support + component
             for material_axis in range(2):
-                derivative[
-                    row, component + 3 * material_axis
-                ] = shape_gradients[support, material_axis]
+                derivative[row, component + 3 * material_axis] = shape_gradients[support, material_axis]
             if component == 0:
                 derivative[row, 8] = shape[support] / reference_radius
 
@@ -302,9 +331,7 @@ def test_igampm_reference_scan_checks_full_embedded_material_map(
             deformation = ti.Matrix.field(3, 3, ti.f64, shape=2)
             grid_type = ti.types.struct(m=ti.f64)
             grid = grid_type.field(shape=1)
-            self.iga = SimpleNamespace(
-                patch=SimpleNamespace(volume=volume)
-            )
+            self.iga = SimpleNamespace(patch=SimpleNamespace(volume=volume))
             self.mpm = SimpleNamespace(
                 particleNum=particle_num,
                 F0=deformation,
@@ -316,9 +343,7 @@ def test_igampm_reference_scan_checks_full_embedded_material_map(
             particle_num[0] = 2
 
     probe = ReferenceProbe()
-    deformation = np.array(
-        [np.eye(3), np.diag([1.0, 1.0, 0.0])], dtype=np.float64
-    )
+    deformation = np.array([np.eye(3), np.diag([1.0, 1.0, 0.0])], dtype=np.float64)
     probe.mpm.F0.from_numpy(deformation)
     probe._inspect_implicit_reference_state_device()
     status = probe.implicit_state_status.to_numpy()

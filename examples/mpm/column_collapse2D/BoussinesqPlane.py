@@ -12,100 +12,97 @@ init(dim=2)
 
 mpm = MPM()
 
-mpm.set_configuration(domain=ti.Vector([10, 11]),
-                      background_damping=0.05,
-                      gravity=ti.Vector([0., 0.]),
-                      alphaPIC=0.06,
-                      mapping="USL",
-                      shape_function="GIMP")
+mpm.set_configuration(
+    domain=ti.Vector([10, 11]),
+    background_damping=0.05,
+    gravity=ti.Vector([0.0, 0.0]),
+    alphaPIC=0.06,
+    mapping="USL",
+    shape_function="GIMP",
+)
 
-mpm.set_solver(solver={
-                           "Timestep":                   1e-5,
-                           "SimulationTime":             2,
-                           "SaveInterval":               0.1,
-                           "SavePath":                   'Bossinesq2DPlane'
-                      })
+mpm.set_solver(solver={"Timestep": 1e-5, "SimulationTime": 2, "SaveInterval": 0.1, "SavePath": "Bossinesq2DPlane"})
 
-mpm.memory_allocate(memory={
-                                "max_material_number":    1,
-                                "max_particle_number":    800000,
-                                "max_constraint_number":  {
-                                                               "max_velocity_constraint":     134474,
-                                                               "max_reflection_constraint":   0
-                                                          }
-                            })
-                            
-mpm.add_material(model="LinearElastic",
-                 material={
-                               "MaterialID":           1,
-                               "Density":              1500.,
-                               "YoungModulus":         1e7,
-                               "PoissonRatio":         0.30,
-                 })
+mpm.memory_allocate(
+    memory={
+        "max_material_number": 1,
+        "max_particle_number": 800000,
+        "max_constraint_number": {"max_velocity_constraint": 134474, "max_reflection_constraint": 0},
+    }
+)
 
-mpm.add_element(element={
-                             "ElementType":               "Q4N2D",
-                             "ElementSize":               ti.Vector([0.1, 0.1])
-                        })
+mpm.add_material(
+    model="LinearElastic",
+    material={
+        "MaterialID": 1,
+        "Density": 1500.0,
+        "YoungModulus": 1e7,
+        "PoissonRatio": 0.30,
+    },
+)
 
-mpm.add_region(region=[{
-                            "Name": "region1",
-                            "Type": "Rectangle2D",
-                            "BoundingBoxPoint": ti.Vector([0., 0.]),
-                            "BoundingBoxSize": ti.Vector([10., 10.]),
-                            
-                      },
-                      
-                      {
-                            "Name": "region2",
-                            "Type": "Rectangle2D",
-                            "BoundingBoxPoint": ti.Vector([0., 9.975]),
-                            "BoundingBoxSize": ti.Vector([1., 0.025]),
-                            
-                      },
-                      ])
+mpm.add_element(element={"ElementType": "Q4N2D", "ElementSize": ti.Vector([0.1, 0.1])})
 
-mpm.add_body(body={
-                       "Template": [{
-                                       "RegionName":         "region1",
-                                       "nParticlesPerCell":  5,
-                                       "BodyID":             0,
-                                       "MaterialID":         1,
-                                       "Traction":       [{"Pressure": ti.Vector([0, -1e6]),
-                                                           "RegionName": "region2"}],
-                                       "InitialVelocity":ti.Vector([0., 0.]),
-                                       "FixVelocity":    ["Free", "Free"]
-                                       
-                                   },]
-                   })
+mpm.add_region(
+    region=[
+        {
+            "Name": "region1",
+            "Type": "Rectangle2D",
+            "BoundingBoxPoint": ti.Vector([0.0, 0.0]),
+            "BoundingBoxSize": ti.Vector([10.0, 10.0]),
+        },
+        {
+            "Name": "region2",
+            "Type": "Rectangle2D",
+            "BoundingBoxPoint": ti.Vector([0.0, 9.975]),
+            "BoundingBoxSize": ti.Vector([1.0, 0.025]),
+        },
+    ]
+)
 
-mpm.add_boundary_condition(boundary=[
-                                        {
-                                             "BoundaryType":   "VelocityConstraint",
-                                             "Velocity":       [0., 0.],
-                                             "StartPoint":     [0., 0.],
-                                             "EndPoint":       [10., 0.],
-                                             "NLevel":         0
-                                        },
-                                        
-                                        {
-                                             "BoundaryType":   "VelocityConstraint",
-                                             "Velocity":       [0., None],
-                                             "StartPoint":     [0., 0.],
-                                             "EndPoint":       [0., 11.]
-                                        },
-                                        
-                                        {
-                                             "BoundaryType":   "VelocityConstraint",
-                                             "Velocity":       [0., None],
-                                             "StartPoint":     [10., 0.],
-                                             "EndPoint":       [10., 11.]
-                                        },
-                                    ])
+mpm.add_body(
+    body={
+        "Template": [
+            {
+                "RegionName": "region1",
+                "nParticlesPerCell": 5,
+                "BodyID": 0,
+                "MaterialID": 1,
+                "Traction": [{"Pressure": ti.Vector([0, -1e6]), "RegionName": "region2"}],
+                "InitialVelocity": ti.Vector([0.0, 0.0]),
+                "FixVelocity": ["Free", "Free"],
+            },
+        ]
+    }
+)
+
+mpm.add_boundary_condition(
+    boundary=[
+        {
+            "BoundaryType": "VelocityConstraint",
+            "Velocity": [0.0, 0.0],
+            "StartPoint": [0.0, 0.0],
+            "EndPoint": [10.0, 0.0],
+            "NLevel": 0,
+        },
+        {
+            "BoundaryType": "VelocityConstraint",
+            "Velocity": [0.0, None],
+            "StartPoint": [0.0, 0.0],
+            "EndPoint": [0.0, 11.0],
+        },
+        {
+            "BoundaryType": "VelocityConstraint",
+            "Velocity": [0.0, None],
+            "StartPoint": [10.0, 0.0],
+            "EndPoint": [10.0, 11.0],
+        },
+    ]
+)
 
 
 mpm.select_save_data(grid=True)
 
 mpm.run()
 
-mpm.postprocessing(read_path='Bossinesq2DPlane', write_background_grid=True)
+mpm.postprocessing(read_path="Bossinesq2DPlane", write_background_grid=True)

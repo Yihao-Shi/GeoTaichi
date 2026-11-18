@@ -1,12 +1,12 @@
+from src.utils.errors import SimulationStateError
 import math
 
 import taichi as ti
 
 from src.mpdem.fluid_dynamics.DragForceModel import DragForce
-from src.mpdem.fluid_dynamics.IncompressibleCoupling import cell_center_velocity_3d
 from src.utils.ObjectIO import DictIO
-from src.utils.ShapeFunctions import Guassian
-from src.utils.constants import PI, Threshold
+from src.utils.ShapeFunctions import guassian
+from src.utils.constants import PI, THRESHOLD
 
 
 from src.mpdem.fluid_dynamics.IncompressibleSemiResolvedKernel import (
@@ -31,9 +31,13 @@ from src.mpdem.fluid_dynamics.IncompressibleSemiResolvedKernel import (
 class IncompressibleDEMSphereCoupling:
     def __init__(self, sims, msims, dsims, mscene, dscene, mengine, drag_model):
         if msims.dimension != 3:
-            raise RuntimeError("Incompressible DEM-sphere semi-resolved coupling currently supports 3D FDM grids only")
+            raise SimulationStateError(
+                "Incompressible DEM-sphere semi-resolved coupling currently supports 3D FDM grids only"
+            )
         if msims.discretization != "FDM":
-            raise RuntimeError("Incompressible DEM-sphere semi-resolved coupling requires FDM incompressible MPM")
+            raise SimulationStateError(
+                "Incompressible DEM-sphere semi-resolved coupling requires FDM incompressible MPM"
+            )
         self.sims = sims
         self.msims = msims
         self.dsims = dsims
@@ -41,9 +45,9 @@ class IncompressibleDEMSphereCoupling:
         self.dscene = dscene
         self.mengine = mengine
         self.drag_model = DragForce(drag_model)
-        self.added_mass_coefficient = float(DictIO.GetAlternative(drag_model, "AddedMassCoefficient", 0.0))
-        self.wall_lubrication_cutoff = float(DictIO.GetAlternative(drag_model, "WallLubricationCutoff", 0.0))
-        self.wall_lubrication_minimum_gap = float(DictIO.GetAlternative(drag_model, "WallLubricationMinimumGap", 0.0))
+        self.added_mass_coefficient = float(DictIO.get_alternative(drag_model, "AddedMassCoefficient", 0.0))
+        self.wall_lubrication_cutoff = float(DictIO.get_alternative(drag_model, "WallLubricationCutoff", 0.0))
+        self.wall_lubrication_minimum_gap = float(DictIO.get_alternative(drag_model, "WallLubricationMinimumGap", 0.0))
         if not math.isfinite(self.added_mass_coefficient) or self.added_mass_coefficient < 0.0:
             raise ValueError("AddedMassCoefficient must be non-negative")
         if not math.isfinite(self.wall_lubrication_cutoff) or self.wall_lubrication_cutoff < 0.0:
@@ -56,7 +60,7 @@ class IncompressibleDEMSphereCoupling:
             ):
                 raise ValueError("WallLubricationMinimumGap must lie strictly between zero and WallLubricationCutoff")
             if self.dsims.wall_type != 0:
-                raise RuntimeError("Wall lubrication currently requires DEM Plane walls")
+                raise SimulationStateError("Wall lubrication currently requires DEM Plane walls")
         self.cell_solid_fraction = None
         self.previous_cell_solid_fraction = None
         self.cell_drag_force = None
@@ -164,7 +168,7 @@ class IncompressibleDEMSphereCoupling:
         if self.wall_lubrication_cutoff > 0.0:
             wall_num = int(self.dscene.wallNum[0])
             if wall_num <= 0:
-                raise RuntimeError("Wall lubrication requires at least one active DEM Plane wall")
+                raise SimulationStateError("Wall lubrication requires at least one active DEM Plane wall")
             kernel_apply_sphere_plane_wall_lubrication(
                 int(self.dscene.sphereNum[0]),
                 wall_num,

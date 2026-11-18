@@ -1,23 +1,23 @@
 """Contact engine responsibilities."""
 
+from src.utils.errors import CapacityError, LineSearchError, NonfiniteStateError, SimulationStateError
+from src.physics_model.contact_model.ipc.Utilities import curve_barrier_projected_metric
+from src.physics_model.contact_model.ipc.Utilities import curve_control_reduced_jacobian
+from src.physics_model.contact_model.ipc.Utilities import curve_point_reduced_jacobian
+from src.physics_model.contact_model.ipc.Utilities import evaluate_distance_to_curve_fixed_dim
+from src.physics_model.contact_model.ipc.Utilities import evaluate_distance_to_surface_fixed_dim
+from src.physics_model.contact_model.ipc.Utilities import get_distance_to_curve_fixed_dim
+from src.physics_model.contact_model.ipc.Utilities import get_distance_to_surface_fixed_dim
+from src.physics_model.contact_model.ipc.Utilities import surface_barrier_projected_metric
+from src.physics_model.contact_model.ipc.Utilities import surface_control_reduced_jacobian
+from src.physics_model.contact_model.ipc.Utilities import surface_point_reduced_jacobian
+
 import math
 
 import numpy as np
 import taichi as ti
 
 import src.igampm.config as config
-from src.physics_model.contact_model.ipc.NurbsContact import (
-    curve_barrier_projected_metric,
-    curve_control_reduced_jacobian,
-    curve_point_reduced_jacobian,
-    evaluate_distance_to_curve_fixed_dim,
-    evaluate_distance_to_surface_fixed_dim,
-    get_distance_to_curve_fixed_dim,
-    get_distance_to_surface_fixed_dim,
-    surface_barrier_projected_metric,
-    surface_control_reduced_jacobian,
-    surface_point_reduced_jacobian,
-)
 
 
 class ContactEngineMixin:
@@ -73,7 +73,7 @@ class ContactEngineMixin:
         active_dof = int(self.mpm.active_dof)
         capacity = int(self.mpm.degree_of_freedom)
         if active_dof < 0 or active_dof > capacity or active_dof % config.DIM != 0:
-            raise RuntimeError(
+            raise CapacityError(
                 "invalid active MPM degree-of-freedom count: "
                 f"active={active_dof}, capacity={capacity}, dim={config.DIM}"
             )
@@ -358,19 +358,19 @@ class ContactEngineMixin:
                 if distance >= self.barrier.activation_distance_term():
                     continue
                 num_ctrlpts_v = num_knot_v - basis.basis_v.degree - 1
-                span_u = basis.basis_u.FindSpan(
+                span_u = basis.basis_u.find_span(
                     prefix_num_knot_u,
                     num_ctrlpts_u,
                     uknot,
                     surface.knot_vector_u,
                 )
-                span_v = basis.basis_v.FindSpan(
+                span_v = basis.basis_v.find_span(
                     prefix_num_knot_v,
                     num_ctrlpts_v,
                     vknot,
                     surface.knot_vector_v,
                 )
-                nshape = basis.NurbsBasis2d(
+                nshape = basis.nurbs_basis2d(
                     prefix_num_knot_u,
                     prefix_num_knot_v,
                     prefix_num_ctrlpts,
@@ -382,7 +382,7 @@ class ContactEngineMixin:
                     surface.knot_vector_v,
                     surface.weights,
                 )
-                ddistance2_dpoint = self.derivative.Ddistance2_div_Dpoint(pointer)
+                ddistance2_dpoint = self.derivative.ddistance2_div_dpoint(pointer)
                 for i in range(span_v - basis.basis_v.degree, span_v + 1):
                     for j in range(span_u - basis.basis_u.degree, span_u + 1):
                         ctrlpt_offset = (j - span_u + basis.basis_u.degree) + (i - span_v + basis.basis_v.degree) * (
@@ -390,7 +390,7 @@ class ContactEngineMixin:
                         )
                         local_ctrlpt_id = prefix_num_ctrlpts + j + i * num_ctrlpts_u
                         global_ctrlpt_id = surface.control_points_id[local_ctrlpt_id]
-                        derivative = self.derivative.Ddistance2_div_Dctrlpt(pointer, nshape[ctrlpt_offset])
+                        derivative = self.derivative.ddistance2_div_dctrlpt(pointer, nshape[ctrlpt_offset])
                         gradient = self._normal_gradient(c, distance, derivative, measure)
                         for d in ti.static(range(config.DIM)):
                             self.barrier_grad[config.DIM * global_ctrlpt_id + d] -= gradient[d]
@@ -438,13 +438,13 @@ class ContactEngineMixin:
                 if distance >= self.barrier.activation_distance_term():
                     continue
                 num_ctrlpts = num_knot_u - basis.basis_u.degree - 1
-                span_u = basis.basis_u.FindSpan(
+                span_u = basis.basis_u.find_span(
                     prefix_num_knot_u,
                     num_ctrlpts,
                     uknot,
                     surface.knot_vector_u,
                 )
-                nshape = basis.NurbsBasis1d(
+                nshape = basis.nurbs_basis1d(
                     prefix_num_knot_u,
                     prefix_num_ctrlpts,
                     num_knot_u,
@@ -452,12 +452,12 @@ class ContactEngineMixin:
                     surface.knot_vector_u,
                     surface.weights,
                 )
-                ddistance2_dpoint = self.derivative.Ddistance2_div_Dpoint(pointer)
+                ddistance2_dpoint = self.derivative.ddistance2_div_dpoint(pointer)
                 for j in range(span_u - basis.basis_u.degree, span_u + 1):
                     ctrlpt_offset = j - span_u + basis.basis_u.degree
                     local_ctrlpt_id = prefix_num_ctrlpts + j
                     global_ctrlpt_id = surface.control_points_id[local_ctrlpt_id]
-                    derivative = self.derivative.Ddistance2_div_Dctrlpt(pointer, nshape[ctrlpt_offset])
+                    derivative = self.derivative.ddistance2_div_dctrlpt(pointer, nshape[ctrlpt_offset])
                     gradient = self._normal_gradient(c, distance, derivative, measure)
                     for d in ti.static(range(config.DIM)):
                         self.barrier_grad[config.DIM * global_ctrlpt_id + d] -= gradient[d]
@@ -522,7 +522,7 @@ class ContactEngineMixin:
                             curvature_uu,
                             curvature_vv,
                             curvature_uv,
-                        ) = basis.NurbsBasisHessian(
+                        ) = basis.nurbs_basis_hessian(
                             prefix_num_knot_u,
                             prefix_num_knot_v,
                             prefix_num_ctrlpts,
@@ -611,7 +611,7 @@ class ContactEngineMixin:
                 free_v = self.barrier_projection_free[c][1]
                 projected_metric = self.barrier_projection_metric[c]
                 projected_point_jacobian = self.barrier_projection_point_jacobian[c]
-                ddistance2_dpoint = self.derivative.Ddistance2_div_Dpoint(pointer)
+                ddistance2_dpoint = self.derivative.ddistance2_div_dpoint(pointer)
 
                 for i in range(span_v - basis.basis_v.degree, span_v + 1):
                     for j in range(span_u - basis.basis_u.degree, span_u + 1):
@@ -623,7 +623,7 @@ class ContactEngineMixin:
                         shape_1 = self.barrier_projection_shape[c, ctrlpt_offset_1]
                         derivative_u_1 = self.barrier_projection_derivative_u[c, ctrlpt_offset_1]
                         derivative_v_1 = self.barrier_projection_derivative_v[c, ctrlpt_offset_1]
-                        ddistance2_dctrlpt_1 = self.derivative.Ddistance2_div_Dctrlpt(pointer, shape_1)
+                        ddistance2_dctrlpt_1 = self.derivative.ddistance2_div_dctrlpt(pointer, shape_1)
                         grad_ctrl = self._normal_gradient(c, distance, ddistance2_dctrlpt_1, measure)
                         for component in ti.static(range(config.DIM)):
                             self.barrier_grad[config.DIM * global_ctrlpt_id_1 + component] -= grad_ctrl[component]
@@ -776,7 +776,7 @@ class ContactEngineMixin:
                     curvature_uu,
                     curvature_vv,
                     curvature_uv,
-                ) = basis.NurbsBasisHessian(
+                ) = basis.nurbs_basis_hessian(
                     prefix_num_knot_u,
                     prefix_num_knot_v,
                     prefix_num_ctrlpts,
@@ -801,12 +801,12 @@ class ContactEngineMixin:
                     free_u = 0
                 if vknot <= lower_v + parameter_tolerance or vknot >= upper_v - parameter_tolerance:
                     free_v = 0
-                ddistance2_dpoint = self.derivative.Ddistance2_div_Dpoint(pointer)
+                ddistance2_dpoint = self.derivative.ddistance2_div_dpoint(pointer)
                 # Keep the full IFT Hessian out of the common projected
                 # specialization; Taichi otherwise compiles it before replacing it.
                 d2distance_d2point = ti.Matrix.zero(ti.f64, config.DIM, config.DIM)
                 if ti.static(not self.project_lagged_hessians):
-                    d2distance_d2point = self.derivative.D2distance2_div_D2point_SurfaceActive(
+                    d2distance_d2point = self.derivative.d2distance2_div_d2point_surface_active(
                         pointer,
                         tangent_u,
                         tangent_v,
@@ -853,7 +853,7 @@ class ContactEngineMixin:
                             basis.basis_u.degree + 1
                         )
                         global_ctrlpt_id_1 = surface.control_points_id[local_ctrlpt_id_1]
-                        ddistance2_dctrlpt_1 = self.derivative.Ddistance2_div_Dctrlpt(pointer, nshape[ctrlpt_offset_1])
+                        ddistance2_dctrlpt_1 = self.derivative.ddistance2_div_dctrlpt(pointer, nshape[ctrlpt_offset_1])
                         grad_ctrl = self._normal_gradient(c, distance, ddistance2_dctrlpt_1, measure)
                         for d in ti.static(range(config.DIM)):
                             self.barrier_grad[config.DIM * global_ctrlpt_id_1 + d] -= grad_ctrl[d]
@@ -872,7 +872,7 @@ class ContactEngineMixin:
                                 free_v,
                             )
                         else:
-                            d2distance_dctrlpt_dpoint = self.derivative.D2distance2_div_DctrlptDpoint_SurfaceActive(
+                            d2distance_dctrlpt_dpoint = self.derivative.d2distance2_div_dctrlpt_dpoint_surface_active(
                                 pointer,
                                 tangent_u,
                                 tangent_v,
@@ -909,10 +909,10 @@ class ContactEngineMixin:
                                         projected_metric @ projected_ctrlpt_jacobian_2
                                     )
                                 else:
-                                    ddistance2_dctrlpt_2 = self.derivative.Ddistance2_div_Dctrlpt(
+                                    ddistance2_dctrlpt_2 = self.derivative.ddistance2_div_dctrlpt(
                                         pointer, nshape[ctrlpt_offset_2]
                                     )
-                                    d2distance_d2ctrlpt = self.derivative.D2distance2_div_D2ctrlpt_SurfaceActive(
+                                    d2distance_d2ctrlpt = self.derivative.d2distance2_div_d2ctrlpt_surface_active(
                                         pointer,
                                         tangent_u,
                                         tangent_v,
@@ -1063,7 +1063,7 @@ class ContactEngineMixin:
                 if distance >= self.barrier.activation_distance_term():
                     continue
 
-                span_u, nshape, derivative_u, tangent_u, curvature_uu = basis.NurbsBasisHessian(
+                span_u, nshape, derivative_u, tangent_u, curvature_uu = basis.nurbs_basis_hessian(
                     prefix_num_knot_u,
                     prefix_num_ctrlpts,
                     num_knot_u,
@@ -1078,10 +1078,10 @@ class ContactEngineMixin:
                 free_u = 1
                 if uknot <= lower_u + 1.0e-12 or uknot >= upper_u - 1.0e-12:
                     free_u = 0
-                ddistance2_dpoint = self.derivative.Ddistance2_div_Dpoint(pointer)
+                ddistance2_dpoint = self.derivative.ddistance2_div_dpoint(pointer)
                 d2distance_d2point = ti.Matrix.zero(ti.f64, config.DIM, config.DIM)
                 if ti.static(not self.project_lagged_hessians):
-                    d2distance_d2point = self.derivative.D2distance2_div_D2point_CurveActive(
+                    d2distance_d2point = self.derivative.d2distance2_div_d2point_curve_active(
                         pointer, tangent_u, curvature_uu, free_u
                     )
                 projected_metric = ti.Matrix.zero(ti.f64, config.DIM + 1, config.DIM + 1)
@@ -1107,7 +1107,7 @@ class ContactEngineMixin:
                     ctrlpt_offset_1 = j - span_u + basis.basis_u.degree
                     local_ctrlpt_id_1 = prefix_num_ctrlpts + j
                     global_ctrlpt_id_1 = surface.control_points_id[local_ctrlpt_id_1]
-                    ddistance2_dctrlpt_1 = self.derivative.Ddistance2_div_Dctrlpt(pointer, nshape[ctrlpt_offset_1])
+                    ddistance2_dctrlpt_1 = self.derivative.ddistance2_div_dctrlpt(pointer, nshape[ctrlpt_offset_1])
                     grad_ctrl = self._normal_gradient(c, distance, ddistance2_dctrlpt_1, measure)
                     for d in ti.static(range(config.DIM)):
                         self.barrier_grad[config.DIM * global_ctrlpt_id_1 + d] -= grad_ctrl[d]
@@ -1123,7 +1123,7 @@ class ContactEngineMixin:
                             free_u,
                         )
                     else:
-                        d2distance_dctrlpt_dpoint = self.derivative.D2distance2_div_DctrlptDpoint_CurveActive(
+                        d2distance_dctrlpt_dpoint = self.derivative.d2distance2_div_dctrlpt_dpoint_curve_active(
                             pointer,
                             tangent_u,
                             curvature_uu,
@@ -1149,10 +1149,10 @@ class ContactEngineMixin:
                                 projected_metric @ projected_ctrlpt_jacobian_2
                             )
                         else:
-                            ddistance2_dctrlpt_2 = self.derivative.Ddistance2_div_Dctrlpt(
+                            ddistance2_dctrlpt_2 = self.derivative.ddistance2_div_dctrlpt(
                                 pointer, nshape[ctrlpt_offset_2]
                             )
-                            d2distance_d2ctrlpt = self.derivative.D2distance2_div_D2ctrlpt_CurveActive(
+                            d2distance_d2ctrlpt = self.derivative.d2distance2_div_d2ctrlpt_curve_active(
                                 pointer,
                                 tangent_u,
                                 curvature_uu,
@@ -1311,7 +1311,7 @@ class ContactEngineMixin:
             minimum = self.minimum_contact_distance()
             required = float(self.barrier.minimum_distance) + self.strict_feasibility_tolerance
             if not math.isfinite(minimum) or minimum <= required:
-                raise RuntimeError(
+                raise LineSearchError(
                     "IGA-MPM IPC requires a strictly feasible positive contact "
                     f"distance (minimum={minimum:.6e}, "
                     f"dmin={float(self.barrier.minimum_distance):.6e}, "
@@ -1387,14 +1387,14 @@ class ContactEngineMixin:
                         basis,
                     )
         if need_matrix and self.project_lagged_hessians and int(self.barrier_projection_status[None]) != 0:
-            raise RuntimeError(
+            raise SimulationStateError(
                 "IGA-MPM IPC barrier PSD projection failed because the "
                 "active point--NURBS closest-point IFT system or its reduced "
                 "Jacobian is singular; refusing a frozen-coordinate or "
                 "blockwise approximation."
             )
         if need_matrix and (int(self.barrier_nnz_overflow[0]) != 0 or int(self.barrier_hash_matrix.overflow[0]) != 0):
-            raise RuntimeError(
+            raise CapacityError(
                 f"IGA-MPM barrier block buffer overflow: used {int(self.barrier_nnz_count[0])}, "
                 f"capacity {self.barrier_nnz_capacity}. Increase barrier_nnz."
             )
@@ -1571,10 +1571,12 @@ class ContactEngineMixin:
         if expected_pairs == 0:
             return math.inf
         if expected_pairs > int(self.contacts.shape[0]):
-            raise RuntimeError("IGA-MPM contact storage is smaller than the complete " "sample--surface pair set")
+            raise SimulationStateError(
+                "IGA-MPM contact storage is smaller than the complete " "sample--surface pair set"
+            )
         minimum = float(self._device_minimum_contact_distance_kernel(expected_pairs))
         if int(self.contact_query_status[None]) != 0:
-            raise RuntimeError("IGA-MPM IPC closest-point query produced an invalid or non-finite distance")
+            raise NonfiniteStateError("IGA-MPM IPC closest-point query produced an invalid or non-finite distance")
         return minimum
 
     @staticmethod

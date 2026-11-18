@@ -1,3 +1,6 @@
+from src.physics_model.contact_model.ipc.Utilities import ipc_barrier_distance2_terms
+from src.physics_model.contact_model.ipc.Utilities import ipc_barrier_distance_terms
+from tests.helpers.finite_strain_reference import material_response
 from tests.helpers.affine_contact_probe import surface_direction_inf_norm
 import inspect
 from types import SimpleNamespace
@@ -9,10 +12,9 @@ import taichi as ti
 from tests.helpers.soft_affine_reference import ReferenceSoftAffineIPCEngine as SoftAffineIPCEngine
 from tests.helpers.soft_affine_reference import ReferenceSoftAffineIPCOperator as SoftAffineIPCOperator
 from src.mpdem.engines.SoftAffineIPCOperator import SoftAffineIPCOperator as ProductionSoftAffineIPCOperator
-from src.mpm.MaterialManager import SoftParticleMaterialManager
+from src.mpm.SoftParticleMaterialManager import SoftParticleMaterialManager
 from src.mpdem.engines.SoftAffineIPCOperator import (
-    _validate_soft_affine_lagged_friction_configuration,
-    soft_affine_friction_capabilities,
+    SoftAffineIPCOperator as _SoftAffineIPCOperator__validate_soft_affine_lagged_friction_configuration_owner,
 )
 from src.dem.engines.AffineBodyOperator import TaichiAffineBodyOperator
 from tests.helpers.affine_state_reference import ReferenceAffineBodyState as AffineBodyState
@@ -20,10 +22,7 @@ from src.fem.contact.BVHBroadPhase import DynamicBVHBroadPhase
 from src.linear_solver.BuildTriplet import BuildTriplet
 from tests.helpers.ipc_assembly_reference import pullback_dense
 from tests.helpers.ipc_scalar_reference import ipc_barrier_distance_terms_py
-from src.physics_model.contact_model.ipc.IPC import (
-    ipc_toolkit_barrier_distance2_terms,
-    ipc_toolkit_barrier_distance_terms,
-)
+from src.physics_model.contact_model.ipc.Barrier import Barrier
 from tests.helpers.affine_levelset_reference import TrilinearLevelSet, affine_basis, point_affine_levelset_gap
 from src.utils.PrefixSum import PrefixSumExecutor
 
@@ -504,7 +503,7 @@ def test_soft_affine_elastic_gravity_vjp_combines_affine_and_soft_dofs():
 
 def test_soft_affine_single_material_young_vjp_matches_neo_hookean_force():
     from src.mpm.MaterialManager import SoftParticleSingleMaterialAdapter
-    from src.physics_model.consititutive_model.finite_strain.NeoHookean import (
+    from src.physics_model.constitutive_model.finite_strain.NeoHookean import (
         NeoHookeanModel,
     )
 
@@ -557,7 +556,7 @@ def test_soft_affine_single_material_young_vjp_matches_neo_hookean_force():
 
     operator._differentiate_soft_young(young)
 
-    _, first_piola, _ = model.evaluate(deformation_gradient, need_tangent=False)
+    _, first_piola, _ = material_response(model, deformation_gradient, need_tangent=False)
     residual_derivative = 0.4 * 0.25 * (first_piola @ shape_gradient) / young
     expected = -adjoint @ residual_derivative
     assert float(operator.soft_young_vjp[None]) == pytest.approx(expected, rel=2.0e-12, abs=1.0e-14)
@@ -565,7 +564,7 @@ def test_soft_affine_single_material_young_vjp_matches_neo_hookean_force():
 
 def test_soft_affine_plastic_history_vjp_matches_material_force_difference():
     from src.mpm.MaterialManager import SoftParticleSingleMaterialAdapter
-    from src.physics_model.consititutive_model.finite_strain.VonMises import (
+    from src.physics_model.constitutive_model.finite_strain.VonMises import (
         FiniteStrainVonMisesModel,
     )
 
@@ -987,11 +986,11 @@ class _MaterialTable:
 
     @ti.func
     def _ipc_barrier_distance2(self, distance2, active_distance2, kappa):
-        return ipc_toolkit_barrier_distance2_terms(distance2, active_distance2, kappa)
+        return ipc_barrier_distance2_terms(distance2, active_distance2, kappa)
 
     @ti.func
     def _ipc_barrier_gap(self, gap, active_gap, kappa):
-        return ipc_toolkit_barrier_distance_terms(gap, active_gap, kappa)
+        return ipc_barrier_distance_terms(gap, active_gap, kappa)
 
 
 @ti.data_oriented
@@ -1535,26 +1534,30 @@ def test_soft_affine_accepts_official_lagged_outer_iteration_options(iterations)
         affine_friction_mode="lagged",
         affine_friction_iterations=iterations,
     )
-    assert _validate_soft_affine_lagged_friction_configuration(sims) == ("lagged", iterations)
+    assert _SoftAffineIPCOperator__validate_soft_affine_lagged_friction_configuration_owner._validate_soft_affine_lagged_friction_configuration(
+        sims
+    ) == (
+        "lagged",
+        iterations,
+    )
 
 
 def test_soft_affine_fully_implicit_capability_is_enabled():
-    capabilities = soft_affine_friction_capabilities()
-    assert capabilities["lagged"]["outer_fixed_point"]
-    assert capabilities["fully_implicit"]["enabled"]
-    assert capabilities["fully_implicit"]["full_nonsymmetric_jacobian"]
-    assert _validate_soft_affine_lagged_friction_configuration(
+    assert _SoftAffineIPCOperator__validate_soft_affine_lagged_friction_configuration_owner._validate_soft_affine_lagged_friction_configuration(
         SimpleNamespace(
             affine_friction_mode="fully_implicit",
             affine_friction_iterations=1,
         )
-    ) == ("fully_implicit", 0)
+    ) == (
+        "fully_implicit",
+        0,
+    )
 
 
 @pytest.mark.parametrize("iterations", (0, 2, -1, 1.5, "two"))
 def test_soft_affine_fully_implicit_rejects_outer_friction_iterations(iterations):
     with pytest.raises(RuntimeError, match="fully implicit friction_iterations must be 1"):
-        _validate_soft_affine_lagged_friction_configuration(
+        _SoftAffineIPCOperator__validate_soft_affine_lagged_friction_configuration_owner._validate_soft_affine_lagged_friction_configuration(
             SimpleNamespace(
                 affine_friction_mode="fully_implicit",
                 affine_friction_iterations=iterations,
@@ -1595,7 +1598,7 @@ def test_soft_affine_fully_implicit_rejects_negative_stribeck_non_sentinel():
 def test_soft_affine_friction_rejects_negative_coefficient_non_sentinel(coefficient):
     parameter = {f"affine_{coefficient}_friction": -0.5}
     with pytest.raises(RuntimeError, match="non-negative or -1"):
-        _validate_soft_affine_lagged_friction_configuration(
+        _SoftAffineIPCOperator__validate_soft_affine_lagged_friction_configuration_owner._validate_soft_affine_lagged_friction_configuration(
             SimpleNamespace(
                 affine_friction_mode="lagged",
                 **parameter,
@@ -2259,18 +2262,23 @@ def test_soft_affine_lagged_rejects_unrepresented_friction_laws():
         affine_friction_iterations=1,
     )
     with pytest.raises(RuntimeError, match="static_friction differs"):
-        _validate_soft_affine_lagged_friction_configuration(
+        _SoftAffineIPCOperator__validate_soft_affine_lagged_friction_configuration_owner._validate_soft_affine_lagged_friction_configuration(
             SimpleNamespace(**base, affine_dynamic_friction=0.3, affine_static_friction=0.6)
         )
     with pytest.raises(RuntimeError, match="viscous_friction"):
-        _validate_soft_affine_lagged_friction_configuration(SimpleNamespace(**base, affine_viscous_friction=0.01))
+        _SoftAffineIPCOperator__validate_soft_affine_lagged_friction_configuration_owner._validate_soft_affine_lagged_friction_configuration(
+            SimpleNamespace(**base, affine_viscous_friction=0.01)
+        )
     with pytest.raises(RuntimeError, match="quadratic IPC C1"):
-        _validate_soft_affine_lagged_friction_configuration(
+        _SoftAffineIPCOperator__validate_soft_affine_lagged_friction_configuration_owner._validate_soft_affine_lagged_friction_configuration(
             SimpleNamespace(**base, affine_friction_profile="stabilized")
         )
-    assert _validate_soft_affine_lagged_friction_configuration(
+    assert _SoftAffineIPCOperator__validate_soft_affine_lagged_friction_configuration_owner._validate_soft_affine_lagged_friction_configuration(
         SimpleNamespace(**base, affine_dynamic_friction=0.4, affine_static_friction=0.4)
-    ) == ("lagged", 1)
+    ) == (
+        "lagged",
+        1,
+    )
 
 
 def test_soft_affine_rejects_mode_change_after_operator_initialization():

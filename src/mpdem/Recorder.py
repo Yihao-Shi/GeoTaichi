@@ -13,9 +13,9 @@ class WriteFile:
     physpp: ContactModelBase
     physpw: ContactModelBase
 
-    def __init__(self, sims, msims, dsims, drecorder: DEMWriteFile, mrecorder: MPMWriteFile, physpp, physpw, pcontact): 
+    def __init__(self, sims, msims, dsims, drecorder: DEMWriteFile, mrecorder: MPMWriteFile, physpp, physpw, pcontact):
         self.drecorder = drecorder
-        self.mrecorder  = mrecorder
+        self.mrecorder = mrecorder
         self.physpp = physpp
         self.physpw = physpw
         self.pcontact = pcontact
@@ -36,15 +36,15 @@ class WriteFile:
         if not os.path.exists(sims.path):
             os.makedirs(sims.path)
 
-        self.contact_path = sims.path + '/DEMPMcontacts'
+        self.contact_path = sims.path + "/DEMPMcontacts"
         if not os.path.exists(self.contact_path):
             os.makedirs(self.contact_path)
 
     def manage_function(self, sims: Simulation, dsims: DEMSimulation):
-        if sims.particle_interaction and dsims.max_particle_num > 0. and 'ppcontact' in sims.monitor_type:
-            self.save_ppcontact = self.MonitorPPContact
-        if sims.wall_interaction and dsims.max_wall_num > 0. and 'pwcontact' in sims.monitor_type:
-            self.save_pwcontact = self.MonitorPWContact
+        if sims.particle_interaction and dsims.max_particle_num > 0.0 and "ppcontact" in sims.monitor_type:
+            self.save_ppcontact = self.monitor_pp_contact
+        if sims.wall_interaction and dsims.max_wall_num > 0.0 and "pwcontact" in sims.monitor_type:
+            self.save_pwcontact = self.monitor_pw_contact
 
     def output(self, sims, msims, mscene, dsims, dscene):
         self.mrecorder.output(msims, mscene)
@@ -52,8 +52,12 @@ class WriteFile:
         self.save_ppcontact(sims, mscene)
         self.save_pwcontact(sims, mscene)
 
-    def MonitorPPContact(self, sims: Simulation, mscene): 
-        self.physpp.get_ppcontact_output(self.contact_path+'/DEMPMContactPP', sims.current_time, sims.current_print, mscene, self.pcontact)
+    def monitor_pp_contact(self, sims: Simulation, mscene):
+        self.physpp.get_ppcontact_output(
+            self.contact_path + "/DEMPMContactPP", sims.current_time, sims.current_print, mscene, self.pcontact
+        )
 
-    def MonitorPWContact(self, sims: Simulation, mscene): 
-        self.physpw.get_pwcontact_output(self.contact_path+'/DEMPMContactPW', sims.current_time, sims.current_print, mscene, self.pcontact)
+    def monitor_pw_contact(self, sims: Simulation, mscene):
+        self.physpw.get_pwcontact_output(
+            self.contact_path + "/DEMPMContactPW", sims.current_time, sims.current_print, mscene, self.pcontact
+        )

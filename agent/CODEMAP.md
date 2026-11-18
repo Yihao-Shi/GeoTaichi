@@ -38,11 +38,11 @@ coupling route before transferring an implementation from a neighboring solver.
 
 | Area | Implementation owner | Useful evidence |
 | --- | --- | --- |
-| Constitutive response and history | [constitutive models](../src/physics_model/consititutive_model/), plus the consuming solver's MaterialManager | [material coverage](../tests/unit/physics_model/materials/README.md); small-strain and finite-strain contracts differ |
+| Constitutive response and history | [constitutive models](../src/physics_model/constitutive_model/), plus the consuming solver's MaterialManager | [material coverage](../tests/unit/physics_model/materials/README.md); small-strain and finite-strain contracts differ |
 | Contact law and closest features | [shared contact models](../src/physics_model/contact_model/), [contact detection](../src/contact_detection/) | [contact guide](../src/physics_model/contact_model/README.md) and the nearest solver-specific contact test |
 | Sparse assembly and linear solves | [linear_solver](../src/linear_solver/) | [assembly equivalence tests](../tests/unit/linear_solver/test_assembly_backends.py) |
 | NURBS basis and geometry | [nurbs](../src/nurbs/) and [IGA patch](../src/iga/elements/Patch.py) | [basis/refinement tests](../tests/unit/iga/geometry/test_nurbs_basis_and_refinement.py), [VTU round trips](../tests/unit/iga/io/test_patch_vtu_output.py) |
-| Precision, field transfer, diagnostics | [TypeDefination.py](../src/utils/TypeDefination.py), [FieldIO.py](../src/utils/FieldIO.py), [SolverDiagnostics.py](../src/utils/SolverDiagnostics.py) | [test runtime isolation](../tests/README.md#runtime-and-dimension-isolation), [prefix-transfer tests](../tests/unit/utils/test_field_io_prefix.py) |
+| Precision, field transfer, diagnostics | [TypeDefinition.py](../src/utils/TypeDefinition.py), [FieldIO.py](../src/utils/FieldIO.py), [SolverDiagnostics.py](../src/utils/SolverDiagnostics.py) | [test runtime isolation](../tests/README.md#runtime-and-dimension-isolation), [prefix-transfer tests](../tests/unit/utils/test_field_io_prefix.py) |
 | MPM output and restart | [Recorder.py](../src/mpm/Recorder.py), [restart entry](../src/mpm/mainMPM.py), [BodyReader](../src/mpm/generator/LoadFromFile.py) | [two-phase restart tests](../tests/unit/mpm/test_two_phase_restart.py) |
 | Coupled FEM--DEM checkpoint | [Checkpoint.py](../src/fedem/Checkpoint.py) | [capacity/state restore tests](../tests/unit/fedem/test_checkpoint_capacity.py) |
 | Model resources and task execution | [shared resources](geotaichi-model-builder/assets/), [MCP core](geotaichi-mcp/src/geotaichi_mcp/core/), [execution](geotaichi-mcp/src/geotaichi_mcp/execution/) | [MCP guide](geotaichi-mcp/README.md); numerical loops use [RuntimeHook](../src/utils/RuntimeHook.py) |

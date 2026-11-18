@@ -8,7 +8,7 @@ from src.utils.ScalarFunction import linearize
 
 @ti.kernel
 def fill_object_bin(
-    particleNum: int,
+    particle_num: int,
     igrid_size: ti.template(),
     cnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     position: ti.template(),
@@ -16,10 +16,10 @@ def fill_object_bin(
 ):
     particle_count.fill(0)
     ti.block_local(particle_count)
-    for np in range(particleNum):
+    for np in range(particle_num):
         grid_idx = ti.floor(position[np] * igrid_size, int)
-        cellID = linearize(grid_idx, cnum)
-        ti.atomic_add(particle_count[cellID + 1], 1)
+        cell_id = linearize(grid_idx, cnum)
+        ti.atomic_add(particle_count[cell_id + 1], 1)
 
 
 @ti.kernel
@@ -28,29 +28,29 @@ def initialize_bin_cursor(
     particle_count: ti.template(),
     bin_cursor: ti.template(),
 ):
-    for cellID in range(cell_count):
-        bin_cursor[cellID] = particle_count[cellID]
+    for cell_id in range(cell_count):
+        bin_cursor[cell_id] = particle_count[cell_id]
 
 
 @ti.kernel
 def object_sorted(
-    particleNum: int,
+    particle_num: int,
     igrid_size: ti.template(),
     cnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     position: ti.template(),
     bin_cursor: ti.template(),
-    particleID: ti.template(),
+    particle_id: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         grid_idx = ti.floor(position[np] * igrid_size, int)
-        cellID = linearize(grid_idx, cnum)
-        grain_location = ti.atomic_add(bin_cursor[cellID], 1)
-        particleID[grain_location] = np
+        cell_id = linearize(grid_idx, cnum)
+        grain_location = ti.atomic_add(bin_cursor[cell_id], 1)
+        particle_id[grain_location] = np
 
 
 @ti.kernel
 def fill_object_bin_condition(
-    particleNum: int,
+    particle_num: int,
     igrid_size: ti.template(),
     cnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     condition: ti.template(),
@@ -59,28 +59,28 @@ def fill_object_bin_condition(
 ):
     particle_count.fill(0)
     ti.block_local(particle_count)
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(condition[np]) == 1:
             continue
         grid_idx = ti.floor(position[np] * igrid_size, int)
-        cellID = linearize(grid_idx, cnum)
-        ti.atomic_add(particle_count[cellID + 1], 1)
+        cell_id = linearize(grid_idx, cnum)
+        ti.atomic_add(particle_count[cell_id + 1], 1)
 
 
 @ti.kernel
 def object_sorted_condition(
-    particleNum: int,
+    particle_num: int,
     igrid_size: ti.template(),
     cnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     condition: ti.template(),
     position: ti.template(),
     bin_cursor: ti.template(),
-    particleID: ti.template(),
+    particle_id: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(condition[np]) == 1:
             continue
         grid_idx = ti.floor(position[np] * igrid_size, int)
-        cellID = linearize(grid_idx, cnum)
-        grain_location = ti.atomic_add(bin_cursor[cellID], 1)
-        particleID[grain_location] = np
+        cell_id = linearize(grid_idx, cnum)
+        grain_location = ti.atomic_add(bin_cursor[cell_id], 1)
+        particle_id[grain_location] = np

@@ -1,15 +1,16 @@
+from src.utils.RuntimeHook import normalize_callbacks
+from src.utils.errors import ConfigurationError, SimulationStateError
 from src.dem.contact.ContactModelBase import ContactModelBase
 from src.dem.ContactManager import ContactManager
 from src.dem.neighbor.NeighborBase import NeighborBase
 from src.dem.engines.EngineKernel import *
-from src.dem.SceneManager import myScene
+from src.dem.SceneManager import SceneManager
 from src.dem.Simulation import Simulation
-from src.utils.SolverRuntime import normalize_callbacks
 from src.utils.linalg import no_operation
 
 
 class ExplicitEngine(object):
-    scene: myScene
+    scene: SceneManager
     neighbor: NeighborBase
     physpp: ContactModelBase
     physpw: ContactModelBase
@@ -37,12 +38,12 @@ class ExplicitEngine(object):
     def _soft_particle_backend(self, scene):
         backend = getattr(scene, "soft_particle_backend", None)
         if backend is None:
-            raise RuntimeError(
+            raise SimulationStateError(
                 "LSMPM integration is an MPM soft-particle mode. Use MPDEM/MPM soft_particle so the coupling layer installs the backend."
             )
         return backend
 
-    def choose_engine(self, sims: Simulation, scene: myScene):
+    def choose_engine(self, sims: Simulation, scene: SceneManager):
         self.verlet_enabled = sims.engine == "VelocityVerlet" and sims.scheme != "LSMPM"
         self.verlet_force_ready = False
         self.verlet_load_fields = []
@@ -75,7 +76,7 @@ class ExplicitEngine(object):
 
         self.update_neighbor_lists = self.update_neighbor_list
         if (sims.scheme == "LSDEM" or sims.scheme == "LSMPM") and sims.max_particle_num > 0:
-            self.update_neighbor_lists = self.update_LSneighbor_list
+            self.update_neighbor_lists = self.update_l_sneighbor_list
 
         self.reset_particle_message = no_operation
         if sims.max_particle_num > 0:
@@ -125,7 +126,7 @@ class ExplicitEngine(object):
         elif sims.engine == "PredictCorrector":
             pass
         else:
-            raise RuntimeError("Engine Type is error")
+            raise SimulationStateError("Engine Type is error")
 
         if sims.max_wall_num > 0 and sims.static_wall is False:
             if sims.wall_type == 1:
@@ -183,28 +184,28 @@ class ExplicitEngine(object):
                 elif sims.scheme == "LSDEM" or sims.scheme == "LSMPM":
                     self.get_contact_stiffnesses = self.get_ls_contact_stiffness
                 else:
-                    raise RuntimeError(f"Servo wall is not supported under this scheme {sims.scheme}")
+                    raise ConfigurationError(f"Servo wall is not supported under this scheme {sims.scheme}")
 
-    def launch_calm1(self, current_step, calm_interval, scene: myScene):
+    def launch_calm1(self, current_step, calm_interval, scene: SceneManager):
         if current_step % calm_interval == 0:
             scene.particle_calm()
 
-    def launch_calm2(self, current_step, calm_interval, scene: myScene):
+    def launch_calm2(self, current_step, calm_interval, scene: SceneManager):
         if current_step % calm_interval == 0:
             scene.particle_calm()
             scene.clump_calm()
 
-    def launch_calm3(self, current_step, calm_interval, scene: myScene):
+    def launch_calm3(self, current_step, calm_interval, scene: SceneManager):
         if current_step % calm_interval == 0:
             scene.rigid_calm()
 
-    def reset_particle(self, scene: myScene):
+    def reset_particle(self, scene: SceneManager):
         self.verlet_force_ready = False
-        particle_force_reset_(int(scene.particleNum[0]), scene.particle)
+        particle_force_reset(int(scene.particleNum[0]), scene.particle)
 
-    def reset_level_set_particle(self, scene: myScene):
+    def reset_level_set_particle(self, scene: SceneManager):
         self.verlet_force_ready = False
-        particle_force_reset_(int(scene.particleNum[0]), scene.rigid)
+        particle_force_reset(int(scene.particleNum[0]), scene.rigid)
         if scene.soft_point is not None:
             # The reset precedes contact assembly.  Ensure newly inserted soft
             # bodies already expose their invariant TLMPM nodal mass here,
@@ -225,8 +226,8 @@ class ExplicitEngine(object):
         self.physpp.reset()
         self.physpw.reset()
 
-    def reset_wall(self, scene: myScene):
-        wall_force_reset_(int(scene.wallNum[0]), scene.wall)
+    def reset_wall(self, scene: SceneManager):
+        wall_force_reset(int(scene.wallNum[0]), scene.wall)
 
     def is_point_need_update_verlet_table(self, limit):
         return self.neighbor.is_particle_particle_point_need_update_verlet_table(
@@ -239,7 +240,7 @@ class ExplicitEngine(object):
     def is_point_wall_need_update_verlet_table(self, limit):
         return self.neighbor.is_particle_wall_point_need_update_verlet_table(limit, self.scene)
 
-    def pre_calculation(self, sims: Simulation, scene: myScene, neighbor: NeighborBase):
+    def pre_calculation(self, sims: Simulation, scene: SceneManager, neighbor: NeighborBase):
         scene.apply_boundary_conditions(sims)
         if sims.scheme == "LSDEM" or sims.scheme == "LSMPM":
             neighbor.pre_neighbor(scene)
@@ -261,7 +262,9 @@ class ExplicitEngine(object):
             self.system_resolve(sims, scene, neighbor)
             self.limit1 = sims.verlet_distance * sims.verlet_distance
 
-    def update_neighbor_list(self, sims: Simulation, scene: myScene, neighbor: NeighborBase, advance_history=False):
+    def update_neighbor_list(
+        self, sims: Simulation, scene: SceneManager, neighbor: NeighborBase, advance_history=False
+    ):
         sims.timer.begin("Others")
         need_verlet_update = self.is_verlet_update(self.limit1) == 1
         sims.timer.end("Others")
@@ -269,7 +272,7 @@ class ExplicitEngine(object):
             self.update_verlet_table(sims, scene, neighbor)
         self.system_resolve(sims, scene, neighbor, advance_history=advance_history)
 
-    def update_verlet_table(self, sims: Simulation, scene: myScene, neighbor: NeighborBase):
+    def update_verlet_table(self, sims: Simulation, scene: SceneManager, neighbor: NeighborBase):
         sims.timer.begin("Boundary condition")
         scene.apply_boundary_conditions(sims)
         sims.timer.end("Boundary condition")
@@ -283,22 +286,24 @@ class ExplicitEngine(object):
         neighbor.update_particle_wall_auxiliary_lists()
         sims.timer.end("Narrow search")
 
-    def update_LSneighbor_list(self, sims: Simulation, scene: myScene, neighbor: NeighborBase, advance_history=False):
+    def update_l_sneighbor_list(
+        self, sims: Simulation, scene: SceneManager, neighbor: NeighborBase, advance_history=False
+    ):
         sims.timer.begin("Others 1")
         need_particle_particle_verlet_update = self.is_verlet_update(self.limit1) == 1
         sims.timer.end("Others 1")
         if need_particle_particle_verlet_update:
-            self.update_LSDEM_verlet_table1(sims, scene, neighbor)
-            self.update_LSDEM_verlet_table2(sims, scene, neighbor)
+            self.update_lsdem_verlet_table1(sims, scene, neighbor)
+            self.update_lsdem_verlet_table2(sims, scene, neighbor)
         else:
             sims.timer.begin("Others 2")
             need_point_particle_verlet_update = self.is_verlet_update_point(self.limit2) == 1
             sims.timer.end("Others 2")
             if need_point_particle_verlet_update:
-                self.update_LSDEM_verlet_table2(sims, scene, neighbor)
+                self.update_lsdem_verlet_table2(sims, scene, neighbor)
         self.system_resolve(sims, scene, neighbor, advance_history=advance_history)
 
-    def update_LSDEM_verlet_table1(self, sims: Simulation, scene: myScene, neighbor: NeighborBase):
+    def update_lsdem_verlet_table1(self, sims: Simulation, scene: SceneManager, neighbor: NeighborBase):
         sims.timer.begin("Boundary condition")
         scene.apply_boundary_conditions(sims)
         sims.timer.end("Boundary condition")
@@ -310,7 +315,7 @@ class ExplicitEngine(object):
         self.physpw.update_verlet_particle_wall_tables(sims, scene, neighbor)
         sims.timer.end("Narrow search 1")
 
-    def update_LSDEM_verlet_table2(self, sims: Simulation, scene: myScene, neighbor: NeighborBase):
+    def update_lsdem_verlet_table2(self, sims: Simulation, scene: SceneManager, neighbor: NeighborBase):
         sims.timer.begin("Broad search 2")
         neighbor.update_point_verlet_table(scene)
         sims.timer.end("Broad search 2")
@@ -321,7 +326,7 @@ class ExplicitEngine(object):
         neighbor.update_particle_wall_auxiliary_lists()
         sims.timer.end("Narrow search 2")
 
-    def system_resolve(self, sims: Simulation, scene: myScene, neighbor: NeighborBase, advance_history=False):
+    def system_resolve(self, sims: Simulation, scene: SceneManager, neighbor: NeighborBase, advance_history=False):
         sims.timer.begin("Force calculate")
         probe = self.verlet_enabled and bool(self.verlet_load_fields) and not advance_history
         physical_dt = sims.dt
@@ -344,8 +349,8 @@ class ExplicitEngine(object):
                 subtract_dem_load_cache(int(count[0]), body, force, torque)
             self.verlet_force_ready = True
 
-    def get_contact_stiffness(self, sims: Simulation, scene: myScene, neighbor: NeighborBase):
-        get_contact_stiffness_(
+    def get_contact_stiffness(self, sims: Simulation, scene: SceneManager, neighbor: NeighborBase):
+        get_contact_stiffness(
             sims.max_material_num,
             int(scene.particleNum[0]),
             scene.particle,
@@ -355,9 +360,9 @@ class ExplicitEngine(object):
             neighbor.particle_wall,
         )
 
-    def get_ls_contact_stiffness(self, sims: Simulation, scene: myScene, neighbor: NeighborBase):
+    def get_ls_contact_stiffness(self, sims: Simulation, scene: SceneManager, neighbor: NeighborBase):
         if sims.scheme == "LSMPM":
-            get_LSMPM_contact_stiffness_(
+            get_lsmpm_contact_stiffness(
                 sims.max_material_num,
                 int(scene.lsContactNodeNum[0]),
                 scene.rigid,
@@ -372,7 +377,7 @@ class ExplicitEngine(object):
                 neighbor.lsparticle_wall,
             )
         else:
-            get_LScontact_stiffness_(
+            get_l_scontact_stiffness(
                 sims.max_material_num,
                 int(scene.surfaceNum[0]),
                 scene.surface,
@@ -385,15 +390,15 @@ class ExplicitEngine(object):
                 neighbor.lsparticle_wall,
             )
 
-    def get_wall_contact_force(self, scene: myScene, neighbor: NeighborBase):
-        get_wall_contact_force_(int(scene.particleNum[0]), scene.wall, self.physpw.cplist, neighbor.particle_wall)
+    def get_wall_contact_force(self, scene: SceneManager, neighbor: NeighborBase):
+        get_wall_contact_force(int(scene.particleNum[0]), scene.wall, self.physpw.cplist, neighbor.particle_wall)
 
-    def get_lsmpm_wall_contact_force(self, scene: myScene, neighbor: NeighborBase):
-        get_LSMPM_wall_contact_force_(
+    def get_lsmpm_wall_contact_force(self, scene: SceneManager, neighbor: NeighborBase):
+        get_lsmpm_wall_contact_force(
             int(scene.lsContactNodeNum[0]), scene.wall, self.physpw.cplist, neighbor.lsparticle_wall
         )
 
-    def update_servo_stiffness_control(self, sims: Simulation, scene: myScene, neighbor: NeighborBase):
+    def update_servo_stiffness_control(self, sims: Simulation, scene: SceneManager, neighbor: NeighborBase):
         sims.timer.begin("Servo wall")
         self.get_contact_stiffnesses(sims, scene, neighbor)
         self.callback()
@@ -401,14 +406,14 @@ class ExplicitEngine(object):
         servo(int(scene.servoNum[0]), scene.wall, scene.servo)
         sims.timer.end("Servo wall")
 
-    def update_servo_gain_control(self, sims: Simulation, scene: myScene, neighbor: NeighborBase):
+    def update_servo_gain_control(self, sims: Simulation, scene: SceneManager, neighbor: NeighborBase):
         sims.timer.begin("Servo wall")
         self.get_servo_wall_contact_forces(scene, neighbor)
         self.callback()
         servo(int(scene.servoNum[0]), scene.wall, scene.servo)
         sims.timer.end("Servo wall")
 
-    def integration(self, sims: Simulation, scene: myScene, neighbor: NeighborBase):
+    def integration(self, sims: Simulation, scene: SceneManager, neighbor: NeighborBase):
         self.update_servo_wall(sims, scene, neighbor)
         if sims.scheme == "LSMPM":
             self.calcu_sphere_position(sims, scene)
@@ -423,7 +428,9 @@ class ExplicitEngine(object):
         sims.timer.begin("Time integration")
         if self.verlet_enabled and self.verlet_load_fields:
             if not self.verlet_force_ready:
-                raise RuntimeError("VelocityVerlet requires current DEM contact-force assembly before integration")
+                raise SimulationStateError(
+                    "VelocityVerlet requires current DEM contact-force assembly before integration"
+                )
             # Preserve every non-DEM load added before OR after DEM assembly.
             # The coupled solver owns its sampling time; do not advance the
             # fluid/FEM/MPM a second time during the DEM correction.
@@ -441,103 +448,101 @@ class ExplicitEngine(object):
             self.transform_translational_load()
             if sims.scheme == "DEM":
                 if sims.max_sphere_num > 0:
-                    move_spheres_verlet_corrector_(
+                    move_spheres_verlet_corrector(
                         int(scene.sphereNum[0]), sims.dt, scene.sphere, scene.particle, scene.material, sims.gravity
                     )
                 if sims.max_clump_num > 0:
-                    move_clumps_verlet_corrector_(
+                    move_clumps_verlet_corrector(
                         int(scene.clumpNum[0]), sims.dt, scene.clump, scene.particle, scene.material, sims.gravity
                     )
             else:
-                move_level_set_verlet_corrector_(
+                move_level_set_verlet_corrector(
                     int(scene.particleNum[0]), sims.dt, scene.rigid, scene.material, sims.gravity
                 )
             self.verlet_force_ready = False
         self.get_wall_contact_forces(scene, neighbor)
         sims.timer.end("Time integration")
 
-    def euler_sphere_integration(self, sims: Simulation, scene: myScene):
-        move_spheres_euler_(
-            int(scene.sphereNum[0]), sims.dt, scene.sphere, scene.particle, scene.material, sims.gravity
-        )
+    def euler_sphere_integration(self, sims: Simulation, scene: SceneManager):
+        move_spheres_euler(int(scene.sphereNum[0]), sims.dt, scene.sphere, scene.particle, scene.material, sims.gravity)
 
-    def euler_clump_integration(self, sims: Simulation, scene: myScene):
-        move_clumps_euler_(int(scene.clumpNum[0]), sims.dt, scene.clump, scene.particle, scene.material, sims.gravity)
+    def euler_clump_integration(self, sims: Simulation, scene: SceneManager):
+        move_clumps_euler(int(scene.clumpNum[0]), sims.dt, scene.clump, scene.particle, scene.material, sims.gravity)
 
-    def euler_level_set_integration(self, sims: Simulation, scene: myScene):
-        move_level_set_euler_(
+    def euler_level_set_integration(self, sims: Simulation, scene: SceneManager):
+        move_level_set_euler(
             int(scene.particleNum[0]), sims.dt, scene.particle, scene.rigid, scene.material, sims.gravity
         )
 
-    def euler_lsmpm_integration(self, sims: Simulation, scene: myScene):
+    def euler_lsmpm_integration(self, sims: Simulation, scene: SceneManager):
         self.soft_particle_backend.euler_lsmpm_integration(self, sims, scene)
 
-    def wall_integration(self, sims: Simulation, scene: myScene):
-        move_walls_euler_(int(scene.wallNum[0]), sims.dt, scene.wall)
+    def wall_integration(self, sims: Simulation, scene: SceneManager):
+        move_walls_euler(int(scene.wallNum[0]), sims.dt, scene.wall)
 
-    def patch_integration(self, sims: Simulation, scene: myScene):
+    def patch_integration(self, sims: Simulation, scene: SceneManager):
         scene.geometry.go(sims.dt, sims.delta, scene.wall)
 
-    def verlet_sphere_integration(self, sims: Simulation, scene: myScene):
-        move_spheres_verlet_predictor_(
+    def verlet_sphere_integration(self, sims: Simulation, scene: SceneManager):
+        move_spheres_verlet_predictor(
             int(scene.sphereNum[0]), sims.dt, scene.sphere, scene.particle, scene.material, sims.gravity
         )
 
-    def verlet_clump_integration(self, sims: Simulation, scene: myScene):
-        move_clumps_verlet_predictor_(
+    def verlet_clump_integration(self, sims: Simulation, scene: SceneManager):
+        move_clumps_verlet_predictor(
             int(scene.clumpNum[0]), sims.dt, scene.clump, scene.particle, scene.material, sims.gravity
         )
 
-    def verlet_level_set_integration(self, sims: Simulation, scene: myScene):
-        move_level_set_verlet_predictor_(
+    def verlet_level_set_integration(self, sims: Simulation, scene: SceneManager):
+        move_level_set_verlet_predictor(
             int(scene.particleNum[0]), sims.dt, scene.particle, scene.rigid, scene.material, sims.gravity
         )
 
-    def compute_aratio(self, sims: Simulation, scene: myScene, neighbor: NeighborBase):
-        currF = 0.0
+    def compute_aratio(self, sims: Simulation, scene: SceneManager, neighbor: NeighborBase):
+        curr_f = 0.0
         if int(scene.sphereNum[0]) > 0:
-            currF += calculate_sphere_total_unbalance_force(
+            curr_f += calculate_sphere_total_unbalance_force(
                 sims.gravity, int(scene.sphereNum[0]), scene.sphere, scene.particle
             )
         if int(scene.clumpNum[0]) > 0:
-            currF += calculate_clump_total_unbalance_force(
+            curr_f += calculate_clump_total_unbalance_force(
                 sims.gravity, int(scene.clumpNum[0]), scene.clump, scene.particle
             )
 
-        contactF, contactC = calculate_total_contact_force(
+        contact_f, contact_c = calculate_total_contact_force(
             int(scene.particleNum[0]), neighbor.particle_particle, self.physpp.cplist
         )
         if sims.max_wall_num > 0:
-            contactFw, contactCw = calculate_total_contact_force(
+            contact_fw, contact_cw = calculate_total_contact_force(
                 int(scene.particleNum[0]), neighbor.particle_wall, self.physpw.cplist
             )
-            contactF += contactFw
-            contactC += contactCw
-        return currF * contactC / (contactF * (int(scene.sphereNum[0]) + int(scene.clumpNum[0])))
+            contact_f += contact_fw
+            contact_c += contact_cw
+        return curr_f * contact_c / (contact_f * (int(scene.sphereNum[0]) + int(scene.clumpNum[0])))
 
-    def compute_mratio(self, sims: Simulation, scene: myScene, neighbor: NeighborBase):
-        currF = 0.0
+    def compute_mratio(self, sims: Simulation, scene: SceneManager, neighbor: NeighborBase):
+        curr_f = 0.0
         if int(scene.sphereNum[0]) > 0:
-            currF += calculate_sphere_maximum_unbalance_force(
+            curr_f += calculate_sphere_maximum_unbalance_force(
                 sims.gravity, int(scene.sphereNum[0]), scene.sphere, scene.particle
             )
         if int(scene.clumpNum[0]) > 0:
-            currF += calculate_clump_maximum_unbalance_force(
+            curr_f += calculate_clump_maximum_unbalance_force(
                 sims.gravity, int(scene.clumpNum[0]), scene.clump, scene.particle
             )
 
-        contactF, contactC = calculate_total_contact_force(
+        contact_f, contact_c = calculate_total_contact_force(
             int(scene.particleNum[0]), neighbor.particle_particle, self.physpp.cplist
         )
         if sims.max_wall_num > 0:
-            contactFw, contactCw = calculate_total_contact_force(
+            contact_fw, contact_cw = calculate_total_contact_force(
                 int(scene.particleNum[0]), neighbor.particle_wall, self.physpw.cplist
             )
-            contactF += contactFw
-            contactC += contactCw
-        return currF * contactC / contactF
+            contact_f += contact_fw
+            contact_c += contact_cw
+        return curr_f * contact_c / contact_f
 
-    def adaptive_timestep(self, sims: Simulation, scene: myScene):
+    def adaptive_timestep(self, sims: Simulation, scene: SceneManager):
         if sims.adaptive_timestep > 0 and sims.current_step % sims.adaptive_timestep == 0:
             min_dt = scene.adaptive_timestep(sims)
             sims.set_timestep(min(sims.init_delta, sims.CFL * min_dt))

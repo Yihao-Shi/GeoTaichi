@@ -1,25 +1,38 @@
 """Soft-particle/affine-body IPC state and Taichi operators."""
 
+from src.physics_model.contact_model.ipc.Utilities import ipc_barrier_distance2_terms
+
+from src.utils.MatrixFunction import psd_project_nd
+
+from src.physics_model.contact_model.ipc.Utilities import ipc_friction_f0
+from src.physics_model.contact_model.ipc.Utilities import ipc_friction_f1_over_speed
+from src.physics_model.contact_model.ipc.Utilities import ipc_friction_hessian_term
+from src.utils.errors import (
+    BackendError,
+    CapacityError,
+    ConfigurationError,
+    NonfiniteStateError,
+    NonlinearSolveError,
+    SimulationStateError,
+    SparseAssemblyError,
+)
+from src.physics_model.contact_model.ipc.Utilities import ipc_fully_implicit_profile_over_speed
+from src.physics_model.contact_model.ipc.Utilities import ipc_fully_implicit_profile_over_speed_derivative
+from src.physics_model.contact_model.ipc.Utilities import ipc_stribeck_falloff
+from src.physics_model.contact_model.ipc.Utilities import ipc_stribeck_falloff_derivative
+
 import os
 import time
 import math
-
 import numpy as np
 import taichi as ti
 from src.physics_model.contact_model.ipc.ContactGeometry import aabb_overlap_with_clearance
-
-from src.contact_detection.continuous_contact_detection import (
-    ccd_mode_parameters,
-    point_point_accd,
-    point_point_ccd,
-    point_triangle_accd,
-    point_triangle_ccd,
-)
-from src.dem.engines.AffineBodyOperator import (
-    MATRIX_CONTACT_DAMPING,
-    MATRIX_HASH_TRIPLET,
-    TaichiAffineBodyOperator,
-)
+from src.contact_detection.continuous_contact_detection.CCD import ccd_mode_parameters
+from src.contact_detection.continuous_contact_detection.AdditiveCCD import point_point_accd
+from src.contact_detection.continuous_contact_detection.CCD import point_point_ccd
+from src.contact_detection.continuous_contact_detection.AdditiveCCD import point_triangle_accd
+from src.contact_detection.continuous_contact_detection.CCD import point_triangle_ccd
+from src.dem.engines.AffineBodyOperator import MATRIX_CONTACT_DAMPING, MATRIX_HASH_TRIPLET, TaichiAffineBodyOperator
 from src.dem.engines.AffineBodyState import AffineBodyState
 from src.fem.contact.BVHBroadPhase import DynamicBVHBroadPhase
 from src.physics_model.contact_model.ipc.ContactDistance import (
@@ -35,114 +48,83 @@ from src.physics_model.contact_model.ipc.ContactGeometry import (
     point_point_stencil_weights,
     point_triangle_contact_frame,
 )
-from src.physics_model.contact_model.ipc.ContactAssembly import (
-    psd_project_nd,
-    pullback_relative_gradient4,
-    pullback_relative_hessian4,
-)
+from src.physics_model.contact_model.ipc.ContactAssembly import pullback_relative_gradient4, pullback_relative_hessian4
 from src.physics_model.contact_model.ipc.ContactMeasure import symmetric_contact_measure
-from src.physics_model.contact_model.ipc.IPC import (
-    ipc_friction_f0,
-    ipc_friction_f1_over_speed,
-    ipc_friction_hessian_term,
-    ipc_fully_implicit_profile_over_speed,
-    ipc_fully_implicit_profile_over_speed_derivative,
-    ipc_stribeck_falloff,
-    ipc_stribeck_falloff_derivative,
-)
+from src.physics_model.contact_model.ipc.Friction import Friction
 from src.linear_solver.BuildTriplet import BuildTriplet
-from src.mpm.utils import add_field, copy_field
+from src.utils.VectorFunction import add_field, copy_field
 from src.utils.MatrixFunction import contraction, flatten_matrix, unflatten_matrix
 from src.utils.PrefixSum import PrefixSumExecutor
-from src.utils.Quaternion import SetToRotate
-from src.utils.ScalarFunction import linearize3D
-from src.utils.constants import Threshold, ZEROVEC3f
-from src.utils.TypeDefination import vec3f, mat3x3
-from third_party.pyevtk.hl import unstructuredGridToVTK
-from third_party.pyevtk.vtk import VtkTriangle
+from src.utils.Quaternion import set_to_rotate
+from src.utils.ScalarFunction import linearize3d
+from src.utils.constants import THRESHOLD, ZEROVEC3F
+from src.utils.TypeDefinition import vec3f, mat3x3
 
 
-def write_soft_affine_surface_vtu(vtk_path, snapshot):
-    """Write the affine half of a soft-affine snapshot as triangle VTU."""
-    vertices = np.asarray(snapshot["vertices"])
-    faces = np.asarray(snapshot["faces"])
-    if vertices.size == 0 or faces.size == 0:
-        return False
-    if vertices.ndim != 2 or vertices.shape[1] != 3:
-        raise ValueError("soft-affine VTU vertices must have shape (n, 3)")
-    if faces.ndim != 2 or faces.shape[1] != 3:
-        raise ValueError("soft-affine VTU faces must have shape (m, 3)")
-    point_body_ids = np.asarray(snapshot["bodyID"], dtype=np.int32)
-    point_group_ids = np.asarray(snapshot["groupID"], dtype=np.int32)
-    if point_body_ids.shape != (vertices.shape[0],) or point_group_ids.shape != (vertices.shape[0],):
-        raise ValueError("soft-affine VTU point labels must match the vertex count")
-    face_body_ids = np.asarray(snapshot["faceBodyID"], dtype=np.int32)
-    face_group_ids = np.asarray(snapshot["faceGroupID"], dtype=np.int32)
-    face_material_ids = np.asarray(snapshot["faceMaterialID"], dtype=np.int32)
-    face_count = faces.shape[0]
-    for values in (face_body_ids, face_group_ids, face_material_ids):
-        if values.shape != (face_count,):
-            raise ValueError("soft-affine VTU cell labels must match the face count")
-    unstructuredGridToVTK(
-        str(vtk_path),
-        np.ascontiguousarray(vertices[:, 0]),
-        np.ascontiguousarray(vertices[:, 1]),
-        np.ascontiguousarray(vertices[:, 2]),
-        connectivity=np.ascontiguousarray(faces.reshape(-1).astype(np.int32)),
-        offsets=np.ascontiguousarray(np.arange(3, 3 * face_count + 1, 3, dtype=np.int32)),
-        cell_types=np.ascontiguousarray(np.full(face_count, VtkTriangle.tid, dtype=np.uint8)),
-        pointData={
-            "bodyID": np.ascontiguousarray(point_body_ids),
-            "groupID": np.ascontiguousarray(point_group_ids),
-        },
-        cellData={
-            "bodyID": np.ascontiguousarray(face_body_ids),
-            "groupID": np.ascontiguousarray(face_group_ids),
-            "materialID": np.ascontiguousarray(face_material_ids),
-        },
-    )
-    return True
+@ti.data_oriented
+class SoftAffineIPCOperator(object):
 
+    @staticmethod
+    def _validate_soft_affine_lagged_friction_configuration(sims):
+        friction_mode = (
+            str(getattr(sims, "affine_friction_mode", getattr(sims, "friction_mode", "lagged")))
+            .strip()
+            .replace("-", "_")
+            .lower()
+        )
+        if friction_mode in ("fullyimplicit", "fully_implicit"):
+            value = getattr(
+                sims,
+                "affine_friction_iterations",
+                getattr(
+                    sims,
+                    "friction_iterations",
+                    getattr(sims, "friction_fixed_point_iterations", 1),
+                ),
+            )
+            try:
+                iterations = int(value)
+                exact_integer = float(value) == iterations
+            except (TypeError, ValueError, OverflowError):
+                iterations = None
+                exact_integer = False
+            if not exact_integer or iterations != 1:
+                raise ConfigurationError(
+                    "SoftAffineIPC fully implicit friction_iterations must be 1; "
+                    "the nonlinear friction law is solved inside the Newton system"
+                )
+            return "fully_implicit", 0
+        if friction_mode not in ("lag", "lagged"):
+            raise ValueError("SoftAffineIPC friction_mode must be 'lagged' or 'fully_implicit'")
 
-def soft_affine_friction_capabilities():
-    """Return the nonlinear friction modes implemented by this driver."""
-    return {
-        "lagged": {
-            "enabled": True,
-            "soft_soft_pp": True,
-            "mixed_point_triangle": True,
-            "affine_self": True,
-            "outer_fixed_point": True,
-        },
-        "fully_implicit": {
-            "enabled": True,
-            "soft_soft_pp": True,
-            "mixed_point_triangle": True,
-            "affine_self_pt_ee_wall": True,
-            "current_contact_state": True,
-            "full_nonsymmetric_jacobian": True,
-            "residual_armijo": True,
-            "taichi_device_hot_loop": True,
-        },
-    }
+        mu_dynamic = float(getattr(sims, "affine_dynamic_friction", -1.0))
+        mu_static = float(getattr(sims, "affine_static_friction", -1.0))
+        mu_viscous = float(getattr(sims, "affine_viscous_friction", 0.0))
+        profile = str(getattr(sims, "affine_friction_profile", "quadratic")).strip().replace("-", "_").lower()
+        if not all(np.isfinite(v) for v in (mu_dynamic, mu_static, mu_viscous)):
+            raise ConfigurationError("SoftAffineIPC friction coefficients must be finite")
+        if mu_viscous != 0.0:
+            raise SimulationStateError(
+                "SoftAffineIPC lagged friction does not support viscous_friction; " "use friction_mode='fully_implicit'"
+            )
+        if profile not in ("quadratic", "paper", "ipc", "c1"):
+            raise ConfigurationError(
+                "SoftAffineIPC lagged friction only supports the quadratic IPC C1 "
+                "profile; use friction_mode='fully_implicit' for stabilized friction"
+            )
+        if mu_static >= 0.0 and (mu_dynamic < 0.0 or mu_static != mu_dynamic):
+            raise ConfigurationError(
+                "SoftAffineIPC lagged friction only supports one Coulomb coefficient; "
+                "use friction_mode='fully_implicit' when static_friction differs "
+                "from dynamic_friction"
+            )
+        if (mu_dynamic < 0.0 and mu_dynamic != -1.0) or (mu_static < 0.0 and mu_static != -1.0):
+            raise ConfigurationError("SoftAffineIPC friction overrides must be non-negative or -1")
 
-
-def _validate_soft_affine_lagged_friction_configuration(sims):
-    friction_mode = (
-        str(getattr(sims, "affine_friction_mode", getattr(sims, "friction_mode", "lagged")))
-        .strip()
-        .replace("-", "_")
-        .lower()
-    )
-    if friction_mode in ("fullyimplicit", "fully_implicit"):
         value = getattr(
             sims,
             "affine_friction_iterations",
-            getattr(
-                sims,
-                "friction_iterations",
-                getattr(sims, "friction_fixed_point_iterations", 1),
-            ),
+            getattr(sims, "friction_iterations", getattr(sims, "friction_fixed_point_iterations", 1)),
         )
         try:
             iterations = int(value)
@@ -150,57 +132,9 @@ def _validate_soft_affine_lagged_friction_configuration(sims):
         except (TypeError, ValueError, OverflowError):
             iterations = None
             exact_integer = False
-        if not exact_integer or iterations != 1:
-            raise RuntimeError(
-                "SoftAffineIPC fully implicit friction_iterations must be 1; "
-                "the nonlinear friction law is solved inside the Newton system"
-            )
-        return "fully_implicit", 0
-    if friction_mode not in ("lag", "lagged"):
-        raise ValueError("SoftAffineIPC friction_mode must be 'lagged' or 'fully_implicit'")
-
-    mu_dynamic = float(getattr(sims, "affine_dynamic_friction", -1.0))
-    mu_static = float(getattr(sims, "affine_static_friction", -1.0))
-    mu_viscous = float(getattr(sims, "affine_viscous_friction", 0.0))
-    profile = str(getattr(sims, "affine_friction_profile", "quadratic")).strip().replace("-", "_").lower()
-    if not all(np.isfinite(v) for v in (mu_dynamic, mu_static, mu_viscous)):
-        raise RuntimeError("SoftAffineIPC friction coefficients must be finite")
-    if mu_viscous != 0.0:
-        raise RuntimeError(
-            "SoftAffineIPC lagged friction does not support viscous_friction; " "use friction_mode='fully_implicit'"
-        )
-    if profile not in ("quadratic", "paper", "ipc", "c1"):
-        raise RuntimeError(
-            "SoftAffineIPC lagged friction only supports the quadratic IPC C1 "
-            "profile; use friction_mode='fully_implicit' for stabilized friction"
-        )
-    if mu_static >= 0.0 and (mu_dynamic < 0.0 or mu_static != mu_dynamic):
-        raise RuntimeError(
-            "SoftAffineIPC lagged friction only supports one Coulomb coefficient; "
-            "use friction_mode='fully_implicit' when static_friction differs "
-            "from dynamic_friction"
-        )
-    if (mu_dynamic < 0.0 and mu_dynamic != -1.0) or (mu_static < 0.0 and mu_static != -1.0):
-        raise RuntimeError("SoftAffineIPC friction overrides must be non-negative or -1")
-
-    value = getattr(
-        sims,
-        "affine_friction_iterations",
-        getattr(sims, "friction_iterations", getattr(sims, "friction_fixed_point_iterations", 1)),
-    )
-    try:
-        iterations = int(value)
-        exact_integer = float(value) == iterations
-    except (TypeError, ValueError, OverflowError):
-        iterations = None
-        exact_integer = False
-    if not exact_integer:
-        raise RuntimeError("SoftAffineIPC friction_iterations must be an integer")
-    return "lagged", -1 if iterations <= 0 else iterations
-
-
-@ti.data_oriented
-class SoftAffineIPCOperator(object):
+        if not exact_integer:
+            raise ConfigurationError("SoftAffineIPC friction_iterations must be an integer")
+        return "lagged", -1 if iterations <= 0 else iterations
 
     def __init__(self, scene, sims, soft_material):
         self.scene = scene
@@ -214,7 +148,7 @@ class SoftAffineIPCOperator(object):
         self.affine_state = AffineBodyState.from_scene(scene, sims)
         self.affine = TaichiAffineBodyOperator(self.affine_state, sims, scene)
 
-        mode, _ = _validate_soft_affine_lagged_friction_configuration(sims)
+        mode, _ = SoftAffineIPCOperator._validate_soft_affine_lagged_friction_configuration(sims)
         self.friction_mode = mode
         self.fully_implicit = mode == "fully_implicit"
         # Every supported Taichi architecture uses the same device-resident
@@ -678,7 +612,7 @@ class SoftAffineIPCOperator(object):
         if int(self.hash_triplet.overflow[0]) != 0:
             used = int(self.hash_triplet.raw_non_diag_count[0])
             capacity = int(self.hash_triplet.non_diag.max_pairs_num)
-            raise RuntimeError(
+            raise CapacityError(
                 "SoftAffineIPC HashTriplet buffer overflow during " f"{stage}: used {used}, capacity {capacity}"
             )
 
@@ -691,18 +625,18 @@ class SoftAffineIPCOperator(object):
             or bool(self.hash_triplet.matrix_symmetric) != expected_matrix_symmetric
         ):
             matrix_kind = "full nonsymmetric" if self.fully_implicit else "symmetric"
-            raise RuntimeError(
+            raise BackendError(
                 "SoftAffineIPC device solve requires the " f"{matrix_kind} HashTriplet matrix and {expected_solver}"
             )
         if not self.cuda_hot_loop:
             return
         reducer = self.hash_triplet.non_diag
         if not reducer.device_reduction:
-            raise RuntimeError(
+            raise SparseAssemblyError(
                 "SoftAffineIPC requires HashTriplet device reduction; host " "sparse reduction is not a runtime backend"
             )
         if reducer.go.__func__ is not reducer.go_with_device_reduction.__func__:
-            raise RuntimeError("SoftAffineIPC HashTriplet reducer is bound to a " "host implementation")
+            raise SparseAssemblyError("SoftAffineIPC HashTriplet reducer is bound to a " "host implementation")
 
     def begin_step_device(self):
         """Initialize a step without transferring the affine state to host."""
@@ -826,7 +760,9 @@ class SoftAffineIPCOperator(object):
             else 1.0
         )
         if not math.isfinite(alpha) or alpha <= 0.0:
-            raise RuntimeError("SoftAffineIPC fully implicit predictor produced no feasible " "positive CCD step")
+            raise SimulationStateError(
+                "SoftAffineIPC fully implicit predictor produced no feasible " "positive CCD step"
+            )
         self.store_coupled_base_device()
         self.set_coupled_trial_device(min(float(alpha), 1.0))
 
@@ -845,12 +781,12 @@ class SoftAffineIPCOperator(object):
         soft_used = int(self.soft_friction_count[None])
         mixed_used = int(self.mixed_friction_count[None])
         if int(self.soft_friction_overflow[None]) != 0:
-            raise RuntimeError(
+            raise CapacityError(
                 "SoftAffineIPC soft-soft lagged-friction buffer overflow: "
                 f"used {soft_used}, capacity {self.soft_friction_capacity}"
             )
         if int(self.mixed_friction_overflow[None]) != 0:
-            raise RuntimeError(
+            raise CapacityError(
                 "SoftAffineIPC mixed lagged-friction buffer overflow: "
                 f"used {mixed_used}, capacity {self.mixed_friction_capacity}"
             )
@@ -1098,7 +1034,7 @@ class SoftAffineIPCOperator(object):
             self.hash_triplet.solver = forward_solver
         self.last_adjoint_result = result
         if not result["converged"]:
-            raise RuntimeError(
+            raise NonlinearSolveError(
                 "Soft-Affine equilibrium adjoint solve did not converge: "
                 f"residual={result['residual']:.6e}, iterations={result['iterations']}"
             )
@@ -1163,9 +1099,9 @@ class SoftAffineIPCOperator(object):
         for particle in range(self.soft_point_num):
             if int(self.scene.soft_point[particle].active) == 1:
                 material_id = self.scene.soft_point[particle].materialID
-                deformation_gradient = self._soft_point_trial_F(particle)
+                deformation_gradient = self._soft_point_trial_f(particle)
                 stress_derivative = (
-                    self.soft_material.matProps.dPsi_div_dF_at(
+                    self.soft_material.matProps.d_psi_div_d_f_at(
                         particle,
                         material_id,
                         deformation_gradient,
@@ -1209,7 +1145,7 @@ class SoftAffineIPCOperator(object):
                                 self.adjoint_solution[self.affine_dof + 3 * block + row] * gradient[column]
                             )
 
-                total_deformation = self._soft_point_trial_F(particle)
+                total_deformation = self._soft_point_trial_f(particle)
                 plastic_inverse = self.soft_material.matProps.model.plastic_deformation_inverse[particle]
                 elastic_trial = total_deformation @ plastic_inverse
                 elastic_stress = self.soft_material.matProps.model.first_piola_stress_at(particle, elastic_trial)
@@ -1287,7 +1223,7 @@ class SoftAffineIPCOperator(object):
                             adjoint_deformation[row, column] += (
                                 self.adjoint_solution[self.affine_dof + 3 * block + row] * gradient[column]
                             )
-                total_deformation = self._soft_point_trial_F(particle)
+                total_deformation = self._soft_point_trial_f(particle)
                 parameter_vjp = self.soft_material.matProps.model.total_first_piola_parameter_vjp_at(
                     particle, total_deformation, adjoint_deformation
                 )
@@ -1308,7 +1244,7 @@ class SoftAffineIPCOperator(object):
             self.plastic_commit_equivalent_vjp[particle] = 0.0
             self.plastic_commit_volumetric_vjp[particle] = 0.0
             if int(self.scene.soft_point[particle].active) == 1:
-                total_deformation = self._soft_point_trial_F(particle)
+                total_deformation = self._soft_point_trial_f(particle)
                 (
                     trial_vjp,
                     plastic_vjp,
@@ -1350,7 +1286,7 @@ class SoftAffineIPCOperator(object):
     def _differentiate_soft_material_commit_parameters(self):
         for particle in range(self.soft_point_num):
             if int(self.scene.soft_point[particle].active) == 1:
-                total_deformation = self._soft_point_trial_F(particle)
+                total_deformation = self._soft_point_trial_f(particle)
                 parameter_vjp = self.soft_material.matProps.model.commit_total_state_parameter_vjp(
                     particle,
                     total_deformation,
@@ -1463,7 +1399,7 @@ class SoftAffineIPCOperator(object):
                                     self._soft_surface_measure(p),
                                     self._soft_surface_measure(q),
                                 )
-                                _, first, second = self._ipc_barrier_distance2(
+                                _, first, second = ipc_barrier_distance2_terms(
                                     dist2,
                                     dhat * dhat,
                                     self._mat_pair_kappa(mat_p, mat_q),
@@ -1504,7 +1440,7 @@ class SoftAffineIPCOperator(object):
                 c = self.affine.x[tri[2]]
                 dist2, gradient, distance_hessian, unused_type = point_triangle_distance_grad_hess(point, a, b, c)
                 if dist2 < dhat * dhat:
-                    _, first, second = self._ipc_barrier_distance2(
+                    _, first, second = ipc_barrier_distance2_terms(
                         dist2,
                         dhat * dhat,
                         self._pp_kappa(material, ab),
@@ -1584,7 +1520,7 @@ class SoftAffineIPCOperator(object):
                 velocity = projection @ ((relative - reference) / self.dt_device[None])
                 force = (
                     self.soft_friction_coeff[contact]
-                    * self._friction_f1_div_vbarnorm(velocity.norm(), self.affine.epsv)
+                    * ipc_friction_f1_over_speed(velocity.norm(), self.affine.epsv)
                     * (projection @ velocity)
                 )
                 relative_adjoint = self._soft_point_adjoint(p) - self._soft_point_adjoint(q)
@@ -1615,7 +1551,7 @@ class SoftAffineIPCOperator(object):
                 velocity = projection @ ((relative - reference) / self.dt_device[None])
                 force = (
                     self.mixed_friction_coeff[contact]
-                    * self._friction_f1_div_vbarnorm(velocity.norm(), self.affine.epsv)
+                    * ipc_friction_f1_over_speed(velocity.norm(), self.affine.epsv)
                     * (projection @ velocity)
                 )
                 ti.atomic_add(
@@ -1912,7 +1848,7 @@ class SoftAffineIPCOperator(object):
             tick,
         )
         if not result["converged"]:
-            raise RuntimeError(
+            raise NonlinearSolveError(
                 "SoftAffineIPC HashTriplet "
                 f"{self.hash_triplet.solver} did not converge: "
                 f"residual={result['residual']:.6e}, "
@@ -1934,7 +1870,7 @@ class SoftAffineIPCOperator(object):
         if self.fully_implicit or scale != 1.0:
             self._scale_and_scatter_device_direction(int(self.total_dof), float(scale))
         if int(self.device_status[None]) != 0 or not math.isfinite(direction_norm):
-            raise RuntimeError("SoftAffineIPC CUDA Newton correction is non-finite")
+            raise NonfiniteStateError("SoftAffineIPC CUDA Newton correction is non-finite")
         result["unclamped_solution_inf_norm"] = float(unclamped_direction_norm)
         result["solution_inf_norm"] = float(direction_norm)
         self._profile_stage("device_direction_ready", tick)
@@ -1988,7 +1924,7 @@ class SoftAffineIPCOperator(object):
     def residual_inf_norm_device(self):
         value = float(self._device_residual_inf_norm(int(self.total_dof)))
         if int(self.device_status[None]) != 0 or not math.isfinite(value):
-            raise RuntimeError("SoftAffineIPC CUDA residual is non-finite")
+            raise NonfiniteStateError("SoftAffineIPC CUDA residual is non-finite")
         return value
 
     def residual_merit_device(self):
@@ -2159,8 +2095,8 @@ class SoftAffineIPCOperator(object):
 
     @ti.func
     def _soft_support_body(self, point):
-        bodyID = self.scene.soft_point[point].bodyID
-        return self.scene.rigid[bodyID].softID
+        body_id = self.scene.soft_point[point].bodyID
+        return self.scene.rigid[body_id].softID
 
     @ti.func
     def _soft_support_index(self, point):
@@ -2197,8 +2133,8 @@ class SoftAffineIPCOperator(object):
 
     @ti.func
     def _soft_surface_support_index(self, surface_node):
-        bodyID = self.scene.surface[surface_node]
-        sb = self.scene.rigid[bodyID].softID
+        body_id = self.scene.surface[surface_node]
+        sb = self.scene.rigid[body_id].softID
         return (
             sb,
             self.scene.soft[sb].templateSurfaceStart + surface_node - self.scene.soft[sb].startNode,
@@ -2219,13 +2155,13 @@ class SoftAffineIPCOperator(object):
                     ti.atomic_add(self.scene.soft_grid[node].m, w * m)
                     ti.atomic_add(self.scene.soft_grid[node].v, w * m * self.scene.soft_point[p].v)
         for node in range(self.soft_grid_num):
-            if self.scene.soft_grid[node].m > Threshold:
+            if self.scene.soft_grid[node].m > THRESHOLD:
                 if self.soft_node_fixed[node] == 0:
                     self.scene.soft_grid[node].v /= self.scene.soft_grid[node].m
                     self.soft_node2dof[node] = 1
                 else:
-                    self.scene.soft_grid[node].v = ZEROVEC3f
-                    self.scene.soft_grid[node].f = ZEROVEC3f
+                    self.scene.soft_grid[node].v = ZEROVEC3F
+                    self.scene.soft_grid[node].f = ZEROVEC3F
 
     @ti.kernel
     def _initialize_soft_fixed_nodes(self):
@@ -2241,7 +2177,7 @@ class SoftAffineIPCOperator(object):
         active = 0
         for node in range(self.soft_grid_num):
             dof = self.soft_node2dof[node]
-            if self.scene.soft_grid[node].m > Threshold and self.soft_node_fixed[node] == 0:
+            if self.scene.soft_grid[node].m > THRESHOLD and self.soft_node_fixed[node] == 0:
                 self.soft_dof2node[dof - 1] = node
                 ti.atomic_max(active, dof)
             else:
@@ -2324,7 +2260,7 @@ class SoftAffineIPCOperator(object):
         return disp
 
     @ti.func
-    def _soft_point_trial_F(self, p):
+    def _soft_point_trial_f(self, p):
         gradu = mat3x3([0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0])
         for n in range(self._soft_support_count(p)):
             node = self._soft_support_node(p, n)
@@ -2397,14 +2333,14 @@ class SoftAffineIPCOperator(object):
 
         for p in range(self.soft_point_num):
             if int(self.scene.soft_point[p].active) == 1:
-                F = self._soft_point_trial_F(p)
+                F = self._soft_point_trial_f(p)
                 vol = self.scene.soft_point[p].vol0
                 material_id = self.scene.soft_point[p].materialID
-                self.energy[None] += self.soft_material.matProps.Psi_at(p, material_id, F) * vol * scale
-                dPsi_dF = self.soft_material.matProps.dPsi_div_dF_at(p, material_id, F) * vol * scale
+                self.energy[None] += self.soft_material.matProps.psi_at(p, material_id, F) * vol * scale
+                dPsi_dF = self.soft_material.matProps.d_psi_div_d_f_at(p, material_id, F) * vol * scale
                 d2Psi_dF2 = ti.Matrix.zero(float, 9, 9)
                 if ti.static(need_matrix):
-                    d2Psi_dF2 = self.soft_material.matProps.d2Psi_div_d2F_at(p, material_id, F) * vol * scale
+                    d2Psi_dF2 = self.soft_material.matProps.d2_psi_div_d2_f_at(p, material_id, F) * vol * scale
                     # ipc-sim uses projectSPD=true for elasticity in the
                     # lagged minimization.  The fully implicit residual
                     # Jacobian deliberately retains the exact negative
@@ -2470,7 +2406,7 @@ class SoftAffineIPCOperator(object):
             )
         except RuntimeError as error:
             if "point-triangle broad-phase capacity" in str(error):
-                raise RuntimeError("SoftAffineIPC max_point_triangle_pairs is too small: " f"{error}") from None
+                raise SimulationStateError("SoftAffineIPC max_point_triangle_pairs is too small: " f"{error}") from None
             raise
         return count
 
@@ -2480,8 +2416,8 @@ class SoftAffineIPCOperator(object):
         for sb in range(self.soft_num):
             self.soft_min[sb] = vec3f(1.0e30, 1.0e30, 1.0e30)
             self.soft_max[sb] = vec3f(-1.0e30, -1.0e30, -1.0e30)
-            self.soft_center_disp[sb] = ZEROVEC3f
-            self.soft_center_direction[sb] = ZEROVEC3f
+            self.soft_center_disp[sb] = ZEROVEC3F
+            self.soft_center_direction[sb] = ZEROVEC3F
             self.soft_body_mass[sb] = 0.0
 
         for p in range(self.soft_point_num):
@@ -2510,7 +2446,7 @@ class SoftAffineIPCOperator(object):
                     ti.atomic_max(self.soft_max[sb][d], ti.max(pos0[d], pos1[d]) + r)
 
         for sb in range(self.soft_num):
-            if self.soft_body_mass[sb] > Threshold:
+            if self.soft_body_mass[sb] > THRESHOLD:
                 self.soft_center_disp[sb] /= self.soft_body_mass[sb]
                 self.soft_center_direction[sb] /= self.soft_body_mass[sb]
 
@@ -2599,28 +2535,24 @@ class SoftAffineIPCOperator(object):
         return self._mat_pair_mu(soft_mat, self.affine.body_material[affine_body])
 
     @ti.func
-    def _ipc_barrier_distance2(self, dist2, active_gap2, kappa):
-        return self.affine._ipc_barrier_distance2(dist2, active_gap2, kappa)
-
-    @ti.func
     def _ipc_barrier_gap(self, gap, active_gap, kappa):
         return self.affine._ipc_barrier_gap(gap, active_gap, kappa)
 
     @ti.func
     def _soft_levelset_distance_local(self, target_sb, local):
-        bodyID = self.scene.soft[target_sb].bodyID
-        return self.scene.box[bodyID].distance(local, self.scene.rigid_grid)
+        body_id = self.scene.soft[target_sb].bodyID
+        return self.scene.box[body_id].distance(local, self.scene.rigid_grid)
 
     @ti.func
     def _soft_levelset_distance_query(self, target_sb, query):
-        bodyID = self.scene.soft[target_sb].bodyID
-        rotate = SetToRotate(self.scene.rigid[bodyID].q)
-        local = rotate.transpose() @ (query - self.scene.rigid[bodyID]._get_position())
+        body_id = self.scene.soft[target_sb].bodyID
+        rotate = set_to_rotate(self.scene.rigid[body_id].q)
+        local = rotate.transpose() @ (query - self.scene.rigid[body_id]._get_position())
         return self._soft_levelset_distance_local(target_sb, local)
 
     @ti.func
-    def _soft_levelset_sample_gradient_hessian_local(self, bodyID, point):
-        body_box = self.scene.box[bodyID]
+    def _soft_levelset_sample_gradient_hessian_local(self, body_id, point):
+        body_box = self.scene.box[body_id]
         indices = body_box.closet_corner(point)
         x_ind, y_ind, z_ind = indices[0], indices[1], indices[2]
         spacing = ti.max(body_box.grid_space, 1.0e-12)
@@ -2643,7 +2575,7 @@ class SoftAffineIPCOperator(object):
                 for k in ti.static(range(2)):
                     wz = (1.0 - z_red) if k == 0 else z_red
                     dwz = -1.0 if k == 0 else 1.0
-                    idx = linearize3D(x_ind + i, y_ind + j, z_ind + k, body_box.gnum) + body_box.startGrid
+                    idx = linearize3d(x_ind + i, y_ind + j, z_ind + k, body_box.gnum) + body_box.startGrid
                     ls_val = self.scene.rigid_grid[idx].distance_field * body_box.scale
                     phi += ls_val * wx * wy * wz
                     grad_reduced[0] += ls_val * dwx * wy * wz
@@ -2661,10 +2593,10 @@ class SoftAffineIPCOperator(object):
 
     @ti.func
     def _soft_levelset_distance_gradient_hessian(self, target_sb, query):
-        bodyID = self.scene.soft[target_sb].bodyID
-        rotate = SetToRotate(self.scene.rigid[bodyID].q)
-        local = rotate.transpose() @ (query - self.scene.rigid[bodyID]._get_position())
-        phi, grad_local, hess_local = self._soft_levelset_sample_gradient_hessian_local(bodyID, local)
+        body_id = self.scene.soft[target_sb].bodyID
+        rotate = set_to_rotate(self.scene.rigid[body_id].q)
+        local = rotate.transpose() @ (query - self.scene.rigid[body_id]._get_position())
+        phi, grad_local, hess_local = self._soft_levelset_sample_gradient_hessian_local(body_id, local)
         grad = rotate @ grad_local
         hess = rotate @ hess_local @ rotate.transpose()
         return phi, grad, hess
@@ -2787,9 +2719,9 @@ class SoftAffineIPCOperator(object):
             vbarnorm = vbar.norm()
             ti.atomic_add(
                 self.energy[None],
-                coeff * self._friction_f0(vbarnorm, self.affine.epsv, self.dt_device[None]),
+                coeff * ipc_friction_f0(vbarnorm, self.affine.epsv, self.dt_device[None]),
             )
-            f1 = self._friction_f1_div_vbarnorm(vbarnorm, self.affine.epsv)
+            f1 = ipc_friction_f1_over_speed(vbarnorm, self.affine.epsv)
             relative_gradient = coeff * f1 * (P @ vbar)
             weights = point_point_stencil_weights()
             local_gradient = pullback_relative_gradient4(weights, relative_gradient)
@@ -2910,7 +2842,7 @@ class SoftAffineIPCOperator(object):
                                 )
                                 dist = ti.sqrt(ti.max(dist2, 1.0e-30))
                                 normal_force = 0.0
-                                _, db, _ = self._ipc_barrier_distance2(
+                                _, db, _ = ipc_barrier_distance2_terms(
                                     dist2,
                                     dhat * dhat,
                                     self._mat_pair_kappa(mat_p, mat_q),
@@ -2931,7 +2863,7 @@ class SoftAffineIPCOperator(object):
         self._finalize_soft_lagged_friction_count()
         required = int(self.soft_friction_count[None])
         if int(self.soft_friction_overflow[None]) != 0:
-            raise RuntimeError(
+            raise CapacityError(
                 "SoftAffineIPC soft-soft lagged-friction buffer overflow: "
                 f"required {required}, capacity "
                 f"{self.soft_friction_capacity}"
@@ -2961,7 +2893,7 @@ class SoftAffineIPCOperator(object):
                             dist2 = delta.dot(delta)
                             mu = self._mat_pair_mu(mat_p, mat_q)
                             if mu > 0.0 and dist2 < dhat * dhat:
-                                _, db, _ = self._ipc_barrier_distance2(
+                                _, db, _ = ipc_barrier_distance2_terms(
                                     dist2,
                                     dhat * dhat,
                                     self._mat_pair_kappa(mat_p, mat_q),
@@ -3011,7 +2943,7 @@ class SoftAffineIPCOperator(object):
         self._count_soft_barrier_contacts()
         required = int(self.soft_barrier_count[None])
         if required > self.soft_contact_capacity:
-            raise RuntimeError(
+            raise CapacityError(
                 "SoftAffineIPC soft-soft current-contact buffer overflow: "
                 f"required {required}, capacity {self.soft_contact_capacity}"
             )
@@ -3055,7 +2987,7 @@ class SoftAffineIPCOperator(object):
                                 )
                                 base_coeff = self.scale_device[None] * area
                                 weights = point_point_stencil_weights()
-                                energy, db, ddb = self._ipc_barrier_distance2(
+                                energy, db, ddb = ipc_barrier_distance2_terms(
                                     dist2,
                                     dhat * dhat,
                                     self._mat_pair_kappa(mat_p, mat_q),
@@ -3121,7 +3053,7 @@ class SoftAffineIPCOperator(object):
                             distance2 = delta.dot(delta)
                             dhat = self._mat_pair_dhat(mat_p, mat_q)
                             if distance2 < dhat * dhat:
-                                _, db, ddb = self._ipc_barrier_distance2(
+                                _, db, ddb = ipc_barrier_distance2_terms(
                                     distance2,
                                     dhat * dhat,
                                     self._mat_pair_kappa(mat_p, mat_q),
@@ -3226,12 +3158,8 @@ class SoftAffineIPCOperator(object):
         return barycentric[1], barycentric[2], normal
 
     @ti.func
-    def _closest_point_triangle(self, p, a, b, c):
-        return closest_point_triangle(p, a, b, c)
-
-    @ti.func
     def _point_triangle_distance_grad_compact(self, p, a, b, c):
-        closest, bary = self._closest_point_triangle(p, a, b, c)
+        closest, bary = closest_point_triangle(p, a, b, c)
         delta = p - closest
         dist2 = delta.dot(delta)
         grad_d = ti.Vector.zero(float, 12)
@@ -3356,14 +3284,6 @@ class SoftAffineIPCOperator(object):
                                     col_base // 3,
                                     coeff * hess,
                                 )
-
-    @ti.func
-    def _friction_f0(self, vbarnorm, epsv, hat_h):
-        return ipc_friction_f0(vbarnorm, epsv, hat_h)
-
-    @ti.func
-    def _friction_f1_div_vbarnorm(self, vbarnorm, epsv):
-        return ipc_friction_f1_over_speed(vbarnorm, epsv)
 
     @ti.func
     def _friction_hess_term(self, vbarnorm, epsv):
@@ -3629,9 +3549,9 @@ class SoftAffineIPCOperator(object):
             vbarnorm = vbar.norm()
             ti.atomic_add(
                 self.energy[None],
-                coeff * self._friction_f0(vbarnorm, self.affine.epsv, self.dt_device[None]),
+                coeff * ipc_friction_f0(vbarnorm, self.affine.epsv, self.dt_device[None]),
             )
-            f1 = self._friction_f1_div_vbarnorm(vbarnorm, self.affine.epsv)
+            f1 = ipc_friction_f1_over_speed(vbarnorm, self.affine.epsv)
             grad_f = coeff * f1 * (P @ vbar)
             local_grad = ti.Vector.zero(float, 12)
             for d in ti.static(range(3)):
@@ -3664,7 +3584,7 @@ class SoftAffineIPCOperator(object):
                 ab = self.affine.face2body[face]
                 dhat = self._pp_dhat(soft_mat, ab)
                 tri = self.affine.faces[face]
-                closest, _ = self._closest_point_triangle(
+                closest, _ = closest_point_triangle(
                     point,
                     self.affine.x[tri[0]],
                     self.affine.x[tri[1]],
@@ -3704,14 +3624,14 @@ class SoftAffineIPCOperator(object):
                     a = self.affine.x[tri[0]]
                     b = self.affine.x[tri[1]]
                     c = self.affine.x[tri[2]]
-                    closest, _ = self._closest_point_triangle(point, a, b, c)
+                    closest, _ = closest_point_triangle(point, a, b, c)
                     delta = point - closest
                     dist2 = delta.dot(delta)
                     contact_type = point_triangle_distance_type(point, a, b, c)
                     _, bary, normal = point_triangle_contact_frame(point, a, b, c, contact_type)
                     dist = ti.sqrt(ti.max(dist2, 1.0e-30))
                     normal_force = 0.0
-                    _, db, _ = self._ipc_barrier_distance2(
+                    _, db, _ = ipc_barrier_distance2_terms(
                         dist2,
                         dhat * dhat,
                         self._pp_kappa(soft_mat, ab),
@@ -3731,7 +3651,7 @@ class SoftAffineIPCOperator(object):
         self._finalize_mixed_lagged_friction_count()
         required = int(self.mixed_friction_count[None])
         if int(self.mixed_friction_overflow[None]) != 0:
-            raise RuntimeError(
+            raise CapacityError(
                 "SoftAffineIPC mixed lagged-friction buffer overflow: "
                 f"required {required}, capacity "
                 f"{self.mixed_friction_capacity}"
@@ -3794,7 +3714,7 @@ class SoftAffineIPCOperator(object):
                     point, a, b, c
                 )
                 if distance2 > 0.0 and distance2 < dhat * dhat:
-                    unused_energy, db, ddb = self._ipc_barrier_distance2(distance2, dhat * dhat, kappa)
+                    unused_energy, db, ddb = ipc_barrier_distance2_terms(distance2, dhat * dhat, kappa)
                     positions = ti.Vector.zero(float, 12)
                     hats = ti.Vector.zero(float, 12)
                     for component in ti.static(range(3)):
@@ -3825,7 +3745,7 @@ class SoftAffineIPCOperator(object):
             else:
                 distance2, distance_gradient, _ = point_triangle_distance_grad(point, a, b, c)
                 if distance2 > 0.0 and distance2 < dhat * dhat:
-                    unused_energy, db, unused_ddb = self._ipc_barrier_distance2(distance2, dhat * dhat, kappa)
+                    unused_energy, db, unused_ddb = ipc_barrier_distance2_terms(distance2, dhat * dhat, kappa)
                     positions = ti.Vector.zero(float, 12)
                     hats = ti.Vector.zero(float, 12)
                     for component in ti.static(range(3)):
@@ -3867,7 +3787,7 @@ class SoftAffineIPCOperator(object):
         if bool(need_matrix) and self.stable_lagged_contacts:
             required = int(self._mixed_active_contact_count())
             if required > self.mixed_contact_capacity:
-                raise RuntimeError(
+                raise CapacityError(
                     "SoftAffineIPC mixed current-contact buffer overflow: "
                     f"required {required}, capacity "
                     f"{self.mixed_contact_capacity}"
@@ -4109,7 +4029,7 @@ class SoftAffineIPCOperator(object):
             required = int(self.mixed_friction_count[None])
             if required > self.mixed_friction_capacity:
                 self.mixed_friction_overflow[None] = 1
-                raise RuntimeError(
+                raise CapacityError(
                     "SoftAffineIPC mixed Level Set lagged-friction buffer overflow: "
                     f"required {required}, capacity {self.mixed_friction_capacity}"
                 )
@@ -4277,9 +4197,9 @@ class SoftAffineIPCOperator(object):
                 coefficient = self.mixed_levelset_friction_coefficient[point_id]
                 ti.atomic_add(
                     self.energy[None],
-                    coefficient * self._friction_f0(speed, self.affine.epsv, self.dt_device[None]),
+                    coefficient * ipc_friction_f0(speed, self.affine.epsv, self.dt_device[None]),
                 )
-                f1_over_speed = self._friction_f1_div_vbarnorm(speed, self.affine.epsv)
+                f1_over_speed = ipc_friction_f1_over_speed(speed, self.affine.epsv)
                 local_gradient = coefficient * f1_over_speed * (projector @ tangential_velocity)
                 self._scatter_mixed_levelset_friction_gradient(
                     point_id,
@@ -4309,7 +4229,7 @@ class SoftAffineIPCOperator(object):
                 )
                 speed = tangential_velocity.norm()
                 coefficient = self.mixed_levelset_friction_coefficient[point_id]
-                f1_over_speed = self._friction_f1_div_vbarnorm(speed, self.affine.epsv)
+                f1_over_speed = ipc_friction_f1_over_speed(speed, self.affine.epsv)
                 inner = coefficient * f1_over_speed * ti.Matrix.identity(float, 3)
                 if speed > 1.0e-30:
                     inner += (
@@ -4352,7 +4272,7 @@ class SoftAffineIPCOperator(object):
             self._finalize_mixed_levelset_contact_normal_pair(pair_id)
             required = int(self.mixed_levelset_contact_count[None])
             if bool(need_matrix) and required > self.mixed_contact_capacity:
-                raise RuntimeError(
+                raise CapacityError(
                     "SoftAffineIPC mixed Level Set current-contact buffer overflow: "
                     f"required {required}, capacity {self.mixed_contact_capacity}"
                 )
@@ -4724,7 +4644,7 @@ class SoftAffineIPCOperator(object):
             a = self.affine.x[tri[0]]
             b = self.affine.x[tri[1]]
             c = self.affine.x[tri[2]]
-            closest, bary = self._closest_point_triangle(point, a, b, c)
+            closest, bary = closest_point_triangle(point, a, b, c)
             dist2 = (point - closest).dot(point - closest)
             if dist2 < dhat * dhat:
                 dtype = point_triangle_distance_type(point, a, b, c)
@@ -4779,7 +4699,7 @@ class SoftAffineIPCOperator(object):
                     energy = 0.0
                     local_grad = ti.Vector.zero(float, 12)
                     local_hessian = ti.Matrix.zero(float, 12, 12)
-                    energy, db, ddb = self._ipc_barrier_distance2(dist2, active_gap2, kappa)
+                    energy, db, ddb = ipc_barrier_distance2_terms(dist2, active_gap2, kappa)
                     local_grad = base_coeff * db * grad_d
                     local_hessian = base_coeff * (ddb * grad_d.outer_product(grad_d) + db * hess_d)
                     if ti.static(project_spd):
@@ -4793,7 +4713,7 @@ class SoftAffineIPCOperator(object):
                     base_coeff = self.scale_device[None] * area
                     energy = 0.0
                     local_grad = ti.Vector.zero(float, 12)
-                    energy, db, unused_second = self._ipc_barrier_distance2(dist2, active_gap2, kappa)
+                    energy, db, unused_second = ipc_barrier_distance2_terms(dist2, active_gap2, kappa)
                     local_grad = base_coeff * db * grad_d
                     ti.atomic_add(self.energy[None], base_coeff * energy)
                     self._scatter_contact_gradient(p, face, local_grad)
@@ -4936,7 +4856,7 @@ class SoftAffineIPCOperator(object):
             if block >= 0:
                 disp = self._soft_node_disp(node)
                 self.scene.soft_grid[node].v = disp / dt
-                self.scene.soft_grid[node].f = ZEROVEC3f
+                self.scene.soft_grid[node].f = ZEROVEC3F
 
         for p in range(self.soft_point_num):
             if int(self.scene.soft_point[p].active) == 1:
@@ -4967,14 +4887,14 @@ class SoftAffineIPCOperator(object):
                 self.scene.soft_point[p].stress = stress
 
         for sb in range(self.soft_num):
-            bodyID = self.scene.soft[sb].bodyID
+            body_id = self.scene.soft[sb].bodyID
             self.scene.soft[sb].previous_center = self.scene.soft[sb].mass_center
-            self.scene.soft[sb].mass_center = ZEROVEC3f
-            self.scene.soft[sb].v = ZEROVEC3f
+            self.scene.soft[sb].mass_center = ZEROVEC3F
+            self.scene.soft[sb].v = ZEROVEC3F
             self.soft_body_mass[sb] = 0.0
-            self.scene.box[bodyID].shape_min = vec3f(1.0e30, 1.0e30, 1.0e30)
-            self.scene.box[bodyID].shape_max = vec3f(-1.0e30, -1.0e30, -1.0e30)
-            self.scene.box[bodyID].shape_radius = 0.0
+            self.scene.box[body_id].shape_min = vec3f(1.0e30, 1.0e30, 1.0e30)
+            self.scene.box[body_id].shape_max = vec3f(-1.0e30, -1.0e30, -1.0e30)
+            self.scene.box[body_id].shape_radius = 0.0
 
         for p in range(self.soft_point_num):
             if int(self.scene.soft_point[p].active) == 1:
@@ -4991,46 +4911,46 @@ class SoftAffineIPCOperator(object):
                 ti.atomic_add(self.soft_body_mass[sb], mass)
 
         for sb in range(self.soft_num):
-            bodyID = self.scene.soft[sb].bodyID
-            if self.soft_body_mass[sb] > Threshold:
+            body_id = self.scene.soft[sb].bodyID
+            if self.soft_body_mass[sb] > THRESHOLD:
                 self.scene.soft[sb].mass_center /= self.soft_body_mass[sb]
                 self.scene.soft[sb].v /= self.soft_body_mass[sb]
-            self.scene.rigid[bodyID].mass_center = self.scene.soft[sb].mass_center
-            self.scene.rigid[bodyID].v = self.scene.soft[sb].v
+            self.scene.rigid[body_id].mass_center = self.scene.soft[sb].mass_center
+            self.scene.rigid[body_id].v = self.scene.soft[sb].v
 
         for p in range(self.soft_point_num):
             if int(self.scene.soft_point[p].active) == 1:
-                bodyID = self.scene.soft_point[p].bodyID
-                sb = self.scene.rigid[bodyID].softID
-                inv_rotate = SetToRotate(self.scene.rigid[bodyID].q).transpose()
+                body_id = self.scene.soft_point[p].bodyID
+                sb = self.scene.rigid[body_id].softID
+                inv_rotate = set_to_rotate(self.scene.rigid[body_id].q).transpose()
                 local_x = inv_rotate @ (self.scene.soft_point[p].x - self.scene.soft[sb].mass_center)
                 point_padding = 0.5 * ti.pow(self.scene.soft_point[p].vol0, 1.0 / 3.0)
                 for d in ti.static(range(3)):
                     ti.atomic_min(
-                        self.scene.box[bodyID].shape_min[d],
+                        self.scene.box[body_id].shape_min[d],
                         local_x[d] - point_padding,
                     )
                     ti.atomic_max(
-                        self.scene.box[bodyID].shape_max[d],
+                        self.scene.box[body_id].shape_max[d],
                         local_x[d] + point_padding,
                     )
                 ti.atomic_max(
-                    self.scene.box[bodyID].shape_radius,
+                    self.scene.box[body_id].shape_radius,
                     local_x.norm() + ti.sqrt(3.0) * point_padding,
                 )
 
         for ns in range(self.surface_num):
-            bodyID = self.scene.surface[ns]
-            if int(self.scene.rigid[bodyID].is_soft) == 1:
-                sb = self.scene.rigid[bodyID].softID
+            body_id = self.scene.surface[ns]
+            if int(self.scene.rigid[body_id].is_soft) == 1:
+                sb = self.scene.rigid[body_id].softID
                 support = self.scene.soft[sb].templateSurfaceStart + ns - self.scene.soft[sb].startNode
                 local_node = self.scene.soft[sb].global_node_to_local(ns)
-                rotate_matrix = SetToRotate(self.scene.rigid[bodyID].q)
-                scale = self.scene.box[bodyID].scale
+                rotate_matrix = set_to_rotate(self.scene.rigid[body_id].q)
+                scale = self.scene.box[body_id].scale
                 old_global = self.scene.soft[sb].previous_center + rotate_matrix @ (
                     scale * self.scene.vertice[local_node].x
                 )
-                node_disp = ZEROVEC3f
+                node_disp = ZEROVEC3F
                 for n in range(self.scene.surface_shape_count[support]):
                     node = self.scene.soft[sb].mpmGridStart + self.scene.surface_shape_node[support, n]
                     node_disp += self.scene.surface_shape[support, n] * self._soft_node_disp(node)
@@ -5039,28 +4959,20 @@ class SoftAffineIPCOperator(object):
                 self.scene.vertice[local_node]._update_kinematics(new_local, node_disp / dt)
                 new_local_scaled = scale * new_local
                 for d in ti.static(range(3)):
-                    ti.atomic_min(self.scene.box[bodyID].shape_min[d], new_local_scaled[d])
-                    ti.atomic_max(self.scene.box[bodyID].shape_max[d], new_local_scaled[d])
+                    ti.atomic_min(self.scene.box[body_id].shape_min[d], new_local_scaled[d])
+                    ti.atomic_max(self.scene.box[body_id].shape_max[d], new_local_scaled[d])
                 ti.atomic_max(
-                    self.scene.box[bodyID].shape_radius,
+                    self.scene.box[body_id].shape_radius,
                     new_local_scaled.norm(),
                 )
 
         for sb in range(self.soft_num):
-            bodyID = self.scene.soft[sb].bodyID
-            self.scene.particle[bodyID]._follow_deformed_shape(
+            body_id = self.scene.soft[sb].bodyID
+            self.scene.particle[body_id]._follow_deformed_shape(
                 self.scene.soft[sb].mass_center,
-                SetToRotate(self.scene.rigid[bodyID].q),
-                self.scene.box[bodyID].shape_min,
-                self.scene.box[bodyID].shape_max,
-                self.scene.box[bodyID].shape_radius,
-                self.scene.box[bodyID].grid_space,
+                set_to_rotate(self.scene.rigid[body_id].q),
+                self.scene.box[body_id].shape_min,
+                self.scene.box[body_id].shape_max,
+                self.scene.box[body_id].shape_radius,
+                self.scene.box[body_id].grid_space,
             )
-
-
-__all__ = [
-    "SoftAffineIPCOperator",
-    "_validate_soft_affine_lagged_friction_configuration",
-    "soft_affine_friction_capabilities",
-    "write_soft_affine_surface_vtu",
-]

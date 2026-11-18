@@ -1,5 +1,7 @@
 """LSMPM soft-particle integration and level-set maintenance."""
 
+from src.utils.errors import CapacityError, SimulationStateError
+
 import math
 
 import numpy as np
@@ -7,9 +9,9 @@ import numpy as np
 
 class SoftParticleExplicitEngineMixin(object):
     def initialize_soft_levelset_reference_map(self, sims, scene):
-        from src.mpm.soft_particle.ReferenceMap import initialize_soft_reference_sdf_
+        from src.mpm.soft_particle.ReferenceMap import initialize_soft_reference_sdf
 
-        initialize_soft_reference_sdf_(
+        initialize_soft_reference_sdf(
             int(scene.softNum[0]),
             scene.soft,
             scene.rigid_grid,
@@ -34,10 +36,10 @@ class SoftParticleExplicitEngineMixin(object):
             return
 
         from src.mpm.soft_particle.SoftBodyKernel import (
-            precompute_soft_grid_reference_mass_,
+            precompute_soft_grid_reference_mass,
         )
 
-        precompute_soft_grid_reference_mass_(
+        precompute_soft_grid_reference_mass(
             soft_num,
             grid_num,
             point_num,
@@ -66,10 +68,10 @@ class SoftParticleExplicitEngineMixin(object):
             return
 
         from src.mpm.soft_particle.SoftBodyKernel import (
-            initialize_soft_particle_constitutive_state_,
+            initialize_soft_particle_constitutive_state,
         )
 
-        initialize_soft_particle_constitutive_state_(
+        initialize_soft_particle_constitutive_state(
             point_num,
             scene.soft_point,
             self.soft_particle_material.matProps,
@@ -79,15 +81,15 @@ class SoftParticleExplicitEngineMixin(object):
 
     def audit_soft_levelset_domain(self, sims, scene):
         from src.mpm.soft_particle.SoftBodyKernel import (
-            min_soft_levelset_domain_margin_,
+            min_soft_levelset_domain_margin,
         )
 
-        margin = float(min_soft_levelset_domain_margin_(int(scene.softNum[0]), scene.soft, scene.box))
+        margin = float(min_soft_levelset_domain_margin(int(scene.softNum[0]), scene.soft, scene.box))
         sims.soft_levelset_domain_audit_count += 1
         sims.soft_levelset_domain_min_margin_cells = min(sims.soft_levelset_domain_min_margin_cells, margin)
         tolerance = sims.soft_levelset_domain_tolerance_cells
         if not np.isfinite(margin) or margin < -tolerance:
-            raise RuntimeError(
+            raise CapacityError(
                 "LSMPM soft-particle deformation exceeded the fixed SDF "
                 f"domain by {max(-margin, 0.0):.6e} grid cells at step "
                 f"{int(sims.current_step)}. Increase the template level-set "
@@ -99,12 +101,12 @@ class SoftParticleExplicitEngineMixin(object):
             return False
 
         from src.mpm.soft_particle.SoftBodyKernel import (
-            monitor_soft_levelset_signed_distance_error_,
-            reinitialize_soft_levelset_step_,
-            store_soft_levelset_reinit_reference_,
+            monitor_soft_levelset_signed_distance_error,
+            reinitialize_soft_levelset_step,
+            store_soft_levelset_reinit_reference,
         )
 
-        monitor_soft_levelset_signed_distance_error_(
+        monitor_soft_levelset_signed_distance_error(
             int(scene.softNum[0]),
             int(scene.softMaxLogicalGridNum[0]),
             sims.soft_levelset_reinit_monitor_band,
@@ -118,14 +120,14 @@ class SoftParticleExplicitEngineMixin(object):
             return False
         grad_error_before = sims.soft_levelset_max_grad_error
 
-        store_soft_levelset_reinit_reference_(
+        store_soft_levelset_reinit_reference(
             int(scene.softNum[0]), int(scene.softMaxLogicalGridNum[0]), scene.soft, scene.rigid_grid
         )
         iterations = sims.soft_levelset_reinit_iterations
         if iterations <= 0:
             iterations = max(1, int(math.ceil(sims.soft_levelset_reinit_band / sims.soft_levelset_reinit_cfl)))
         for _ in range(iterations):
-            reinitialize_soft_levelset_step_(
+            reinitialize_soft_levelset_step(
                 int(scene.softNum[0]),
                 int(scene.softMaxLogicalGridNum[0]),
                 sims.soft_levelset_reinit_band,
@@ -134,7 +136,7 @@ class SoftParticleExplicitEngineMixin(object):
                 scene.rigid_grid,
                 scene.box,
             )
-        monitor_soft_levelset_signed_distance_error_(
+        monitor_soft_levelset_signed_distance_error(
             int(scene.softNum[0]),
             int(scene.softMaxLogicalGridNum[0]),
             sims.soft_levelset_reinit_monitor_band,
@@ -166,29 +168,29 @@ class SoftParticleExplicitEngineMixin(object):
         if sims.soft_levelset_volume_reference_count >= soft_num:
             return
         from src.mpm.soft_particle.LevelSet import (
-            accumulate_soft_levelset_volume_integrals_,
-            accumulate_soft_material_volume_,
-            initialize_soft_levelset_volume_reference_,
-            reset_soft_levelset_material_volume_,
-            reset_soft_levelset_volume_integrals_,
+            accumulate_soft_levelset_volume_integrals,
+            accumulate_soft_material_volume,
+            initialize_soft_levelset_volume_reference,
+            reset_soft_levelset_material_volume,
+            reset_soft_levelset_volume_integrals,
         )
 
         soft_start = int(sims.soft_levelset_volume_reference_count)
         point_num = int(scene.softPointNum[0])
-        reset_soft_levelset_material_volume_(soft_num, scene.soft_levelset_material_volume)
-        accumulate_soft_material_volume_(
+        reset_soft_levelset_material_volume(soft_num, scene.soft_levelset_material_volume)
+        accumulate_soft_material_volume(
             soft_num,
             point_num,
             scene.soft_point,
             scene.rigid,
             scene.soft_levelset_material_volume,
         )
-        reset_soft_levelset_volume_integrals_(
+        reset_soft_levelset_volume_integrals(
             soft_num,
             scene.soft_levelset_current_volume,
             scene.soft_levelset_interface_measure,
         )
-        accumulate_soft_levelset_volume_integrals_(
+        accumulate_soft_levelset_volume_integrals(
             soft_num,
             int(scene.softMaxLogicalGridNum[0]),
             sims.soft_levelset_volume_epsilon_cells,
@@ -198,7 +200,7 @@ class SoftParticleExplicitEngineMixin(object):
             scene.soft_levelset_current_volume,
             scene.soft_levelset_interface_measure,
         )
-        initialize_soft_levelset_volume_reference_(
+        initialize_soft_levelset_volume_reference(
             soft_start,
             soft_num,
             scene.soft_levelset_reference_sdf_volume,
@@ -217,28 +219,28 @@ class SoftParticleExplicitEngineMixin(object):
 
     def correct_soft_levelset_volume(self, sims, scene):
         from src.mpm.soft_particle.LevelSet import (
-            accumulate_soft_levelset_volume_integrals_,
-            accumulate_soft_material_volume_,
-            apply_soft_levelset_volume_shift_,
-            compute_soft_levelset_safeguarded_shift_,
-            compute_soft_levelset_volume_shift_,
-            initialize_soft_levelset_volume_bracket_,
-            prepare_soft_levelset_target_volume_,
-            reset_soft_levelset_material_volume_,
-            reset_soft_levelset_volume_integrals_,
+            accumulate_soft_levelset_volume_integrals,
+            accumulate_soft_material_volume,
+            apply_soft_levelset_volume_shift,
+            compute_soft_levelset_safeguarded_shift,
+            compute_soft_levelset_volume_shift,
+            initialize_soft_levelset_volume_bracket,
+            prepare_soft_levelset_target_volume,
+            reset_soft_levelset_material_volume,
+            reset_soft_levelset_volume_integrals,
         )
 
         soft_num = int(scene.softNum[0])
         point_num = int(scene.softPointNum[0])
-        reset_soft_levelset_material_volume_(soft_num, scene.soft_levelset_material_volume)
-        accumulate_soft_material_volume_(
+        reset_soft_levelset_material_volume(soft_num, scene.soft_levelset_material_volume)
+        accumulate_soft_material_volume(
             soft_num,
             point_num,
             scene.soft_point,
             scene.rigid,
             scene.soft_levelset_material_volume,
         )
-        prepare_soft_levelset_target_volume_(
+        prepare_soft_levelset_target_volume(
             soft_num,
             scene.soft_levelset_reference_sdf_volume,
             scene.soft_levelset_reference_material_volume,
@@ -246,12 +248,12 @@ class SoftParticleExplicitEngineMixin(object):
             scene.soft_levelset_target_volume,
         )
 
-        reset_soft_levelset_volume_integrals_(
+        reset_soft_levelset_volume_integrals(
             soft_num,
             scene.soft_levelset_current_volume,
             scene.soft_levelset_interface_measure,
         )
-        accumulate_soft_levelset_volume_integrals_(
+        accumulate_soft_levelset_volume_integrals(
             soft_num,
             int(scene.softMaxLogicalGridNum[0]),
             sims.soft_levelset_volume_epsilon_cells,
@@ -261,7 +263,7 @@ class SoftParticleExplicitEngineMixin(object):
             scene.soft_levelset_current_volume,
             scene.soft_levelset_interface_measure,
         )
-        initialize_soft_levelset_volume_bracket_(
+        initialize_soft_levelset_volume_bracket(
             soft_num,
             sims.soft_levelset_volume_tolerance,
             sims.soft_levelset_volume_max_shift_cells,
@@ -274,7 +276,7 @@ class SoftParticleExplicitEngineMixin(object):
             scene.soft_levelset_volume_trial_shift,
             scene.soft_levelset_volume_shift,
         )
-        apply_soft_levelset_volume_shift_(
+        apply_soft_levelset_volume_shift(
             soft_num,
             int(scene.softMaxLogicalGridNum[0]),
             scene.soft,
@@ -284,12 +286,12 @@ class SoftParticleExplicitEngineMixin(object):
         )
 
         for _ in range(sims.soft_levelset_volume_iterations):
-            reset_soft_levelset_volume_integrals_(
+            reset_soft_levelset_volume_integrals(
                 soft_num,
                 scene.soft_levelset_current_volume,
                 scene.soft_levelset_interface_measure,
             )
-            accumulate_soft_levelset_volume_integrals_(
+            accumulate_soft_levelset_volume_integrals(
                 soft_num,
                 int(scene.softMaxLogicalGridNum[0]),
                 sims.soft_levelset_volume_epsilon_cells,
@@ -299,7 +301,7 @@ class SoftParticleExplicitEngineMixin(object):
                 scene.soft_levelset_current_volume,
                 scene.soft_levelset_interface_measure,
             )
-            compute_soft_levelset_safeguarded_shift_(
+            compute_soft_levelset_safeguarded_shift(
                 soft_num,
                 sims.soft_levelset_volume_tolerance,
                 scene.soft_levelset_target_volume,
@@ -315,7 +317,7 @@ class SoftParticleExplicitEngineMixin(object):
             max_error = float(scene.soft_levelset_volume_max_error[None])
             if max_error <= sims.soft_levelset_volume_tolerance:
                 break
-            apply_soft_levelset_volume_shift_(
+            apply_soft_levelset_volume_shift(
                 soft_num,
                 int(scene.softMaxLogicalGridNum[0]),
                 scene.soft,
@@ -324,12 +326,12 @@ class SoftParticleExplicitEngineMixin(object):
                 scene.soft_levelset_volume_cumulative_shift,
             )
 
-        reset_soft_levelset_volume_integrals_(
+        reset_soft_levelset_volume_integrals(
             soft_num,
             scene.soft_levelset_current_volume,
             scene.soft_levelset_interface_measure,
         )
-        accumulate_soft_levelset_volume_integrals_(
+        accumulate_soft_levelset_volume_integrals(
             soft_num,
             int(scene.softMaxLogicalGridNum[0]),
             sims.soft_levelset_volume_epsilon_cells,
@@ -339,7 +341,7 @@ class SoftParticleExplicitEngineMixin(object):
             scene.soft_levelset_current_volume,
             scene.soft_levelset_interface_measure,
         )
-        compute_soft_levelset_volume_shift_(
+        compute_soft_levelset_volume_shift(
             soft_num,
             sims.soft_levelset_volume_tolerance,
             sims.soft_levelset_volume_max_shift_cells,
@@ -357,7 +359,7 @@ class SoftParticleExplicitEngineMixin(object):
 
     def validate_soft_levelset_departure(self, sims, departure_excess):
         if not np.isfinite(departure_excess) or departure_excess > sims.soft_levelset_domain_tolerance_cells:
-            raise RuntimeError(
+            raise SimulationStateError(
                 "LSMPM SDF transport exceeded the fixed SDF domain by "
                 f"{float(departure_excess):.6e} grid cells at step "
                 f"{int(sims.current_step)}. Increase the template level-set "
@@ -426,23 +428,23 @@ class SoftParticleExplicitEngineMixin(object):
         self.correct_soft_levelset_volume_when_due(sims, scene, volume_correction_due, reinitialized)
 
     def euler_lsmpm_integration(self, sims, scene):
-        from src.mpm.MaterialManager import SoftParticleMaterialManager
+        from src.mpm.SoftParticleMaterialManager import SoftParticleMaterialManager
         from src.mpm.soft_particle.SoftBodyKernel import (
-            apply_soft_body_translation_constraint_,
-            finalize_soft_body_bounds_,
-            finalize_soft_body_rotation_,
-            prepare_soft_body_surface_frame_,
-            reduce_soft_body_kinematics_,
-            reduce_soft_body_surface_frame_,
-            remap_soft_grid_velocity_,
-            reset_soft_body_kinematic_reduction_,
-            reset_soft_grid_step_,
-            soft_body_force_p2g_,
-            soft_body_g2p_,
-            soft_surface_force_p2g_,
-            track_soft_surface_points_,
-            update_soft_grid_kinematic_,
-            update_soft_particle_stress_,
+            apply_soft_body_translation_constraint,
+            finalize_soft_body_bounds,
+            finalize_soft_body_rotation,
+            prepare_soft_body_surface_frame,
+            reduce_soft_body_kinematics,
+            reduce_soft_body_surface_frame,
+            remap_soft_grid_velocity,
+            reset_soft_body_kinematic_reduction,
+            reset_soft_grid_step,
+            soft_body_force_p2g,
+            soft_body_g2p,
+            soft_surface_force_p2g,
+            track_soft_surface_points,
+            update_soft_grid_kinematic,
+            update_soft_particle_stress,
         )
 
         sims.timer.begin("LSMPM Rigid integration")
@@ -471,11 +473,11 @@ class SoftParticleExplicitEngineMixin(object):
         sims.timer.end("LSMPM Setup")
 
         sims.timer.begin("LSMPM Grid reset")
-        reset_soft_grid_step_(grid_num, scene.soft_grid)
+        reset_soft_grid_step(grid_num, scene.soft_grid)
         sims.timer.end("LSMPM Grid reset")
 
         sims.timer.begin("LSMPM Force P2G")
-        soft_body_force_p2g_(
+        soft_body_force_p2g(
             point_num,
             scene.soft,
             scene.soft_point,
@@ -490,7 +492,7 @@ class SoftParticleExplicitEngineMixin(object):
         sims.timer.end("LSMPM Force P2G")
 
         sims.timer.begin("LSMPM Surface force P2G")
-        soft_surface_force_p2g_(
+        soft_surface_force_p2g(
             surface_num,
             scene.soft,
             scene.soft_grid,
@@ -504,7 +506,7 @@ class SoftParticleExplicitEngineMixin(object):
         sims.timer.end("LSMPM Surface force P2G")
 
         sims.timer.begin("LSMPM Grid kinematic")
-        update_soft_grid_kinematic_(
+        update_soft_grid_kinematic(
             soft_num,
             grid_num,
             fixed_grid_num,
@@ -520,7 +522,7 @@ class SoftParticleExplicitEngineMixin(object):
         sims.timer.end("LSMPM Grid kinematic")
 
         sims.timer.begin("LSMPM G2P")
-        soft_body_g2p_(
+        soft_body_g2p(
             point_num,
             sims.soft_pic_fraction,
             sims.dt,
@@ -535,8 +537,8 @@ class SoftParticleExplicitEngineMixin(object):
         sims.timer.end("LSMPM G2P")
 
         sims.timer.begin("LSMPM Body reduction")
-        reset_soft_body_kinematic_reduction_(soft_num, scene.soft)
-        reduce_soft_body_kinematics_(
+        reset_soft_body_kinematic_reduction(soft_num, scene.soft)
+        reduce_soft_body_kinematics(
             point_num,
             scene.soft,
             scene.soft_point,
@@ -545,7 +547,7 @@ class SoftParticleExplicitEngineMixin(object):
         sims.timer.end("LSMPM Body reduction")
 
         sims.timer.begin("LSMPM Constraint correction")
-        apply_soft_body_translation_constraint_(
+        apply_soft_body_translation_constraint(
             point_num,
             scene.soft,
             scene.soft_point,
@@ -554,7 +556,7 @@ class SoftParticleExplicitEngineMixin(object):
         sims.timer.end("LSMPM Constraint correction")
 
         sims.timer.begin("LSMPM Velocity remap P2G")
-        remap_soft_grid_velocity_(
+        remap_soft_grid_velocity(
             grid_num,
             fixed_grid_num,
             point_num,
@@ -570,7 +572,7 @@ class SoftParticleExplicitEngineMixin(object):
         sims.timer.end("LSMPM Velocity remap P2G")
 
         sims.timer.begin("LSMPM Stress update")
-        update_soft_particle_stress_(
+        update_soft_particle_stress(
             point_num,
             sims.dt,
             scene.soft,
@@ -586,13 +588,13 @@ class SoftParticleExplicitEngineMixin(object):
         sims.timer.end("LSMPM Stress update")
 
         sims.timer.begin("LSMPM Surface frame reduction")
-        prepare_soft_body_surface_frame_(
+        prepare_soft_body_surface_frame(
             soft_num,
             scene.soft,
             scene.rigid,
             scene.box,
         )
-        reduce_soft_body_surface_frame_(
+        reduce_soft_body_surface_frame(
             point_num,
             scene.soft,
             scene.soft_point,
@@ -601,7 +603,7 @@ class SoftParticleExplicitEngineMixin(object):
         sims.timer.end("LSMPM Surface frame reduction")
 
         sims.timer.begin("LSMPM Surface rotation")
-        finalize_soft_body_rotation_(
+        finalize_soft_body_rotation(
             soft_num,
             sims.dt,
             scene.soft,
@@ -610,7 +612,7 @@ class SoftParticleExplicitEngineMixin(object):
         sims.timer.end("LSMPM Surface rotation")
 
         sims.timer.begin("LSMPM Surface point tracking")
-        track_soft_surface_points_(
+        track_soft_surface_points(
             surface_num,
             sims.dt,
             scene.soft,
@@ -626,7 +628,7 @@ class SoftParticleExplicitEngineMixin(object):
         sims.timer.end("LSMPM Surface point tracking")
 
         sims.timer.begin("LSMPM Bounding volume finalize")
-        finalize_soft_body_bounds_(
+        finalize_soft_body_bounds(
             soft_num,
             scene.soft,
             scene.rigid,

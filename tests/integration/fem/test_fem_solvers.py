@@ -6,7 +6,7 @@ import pytest
 ti = pytest.importorskip("taichi")
 
 from src.fem import DirichletBoundary, FEM, NeumannBoundary
-from src.fem.engines import ArmijoLineSearch
+from src.fem.engines.LineSearch import ArmijoLineSearch
 
 pytestmark = [pytest.mark.integration, pytest.mark.fem, pytest.mark.cpu]
 

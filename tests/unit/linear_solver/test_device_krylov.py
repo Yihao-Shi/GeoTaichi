@@ -10,8 +10,8 @@ from src.linear_solver.MatrixFreeBICGSTAB import MatrixFreeBICGSTAB
 from src.linear_solver.MatrixFreePBICGSTAB import MatrixFreePBICGSTAB
 from src.linear_solver.LinearOperator import LinearOperator
 from src.linear_solver.MatrixFreeKrylovKernel import reduce_shared
-from src.linear_solver.MultiGridPCG_mixture import MGPCGMixPoissonSolver
-from src.linear_solver.MultiGridPCG_mixture_Axi import MGPCGMixPoissonSolver_Axi
+from src.linear_solver.MultiGridPCGMixture import MGPCGMixPoissonSolver
+from src.linear_solver.MultiGridPCGMixtureAxisymmetric import MGPCGMixPoissonSolverAxisymmetric
 
 
 @ti.data_oriented
@@ -119,7 +119,7 @@ def test_reduction_handles_partial_blocks_in_double_precision(taichi_runtime):
 )
 def test_mixture_multigrid_device_dispatch_retains_its_operator(taichi_runtime, dimension, axisymmetric, sign):
     shape = (8,) * dimension
-    cls = MGPCGMixPoissonSolver_Axi if axisymmetric else MGPCGMixPoissonSolver
+    cls = MGPCGMixPoissonSolverAxisymmetric if axisymmetric else MGPCGMixPoissonSolver
     kwargs = {"dr": 0.1} if axisymmetric else {}
     solver = cls(dimension, shape, n_mg_levels=2, bottom_smoothing=10, **kwargs)
     for level in range(2):

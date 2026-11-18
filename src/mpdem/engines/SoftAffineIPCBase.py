@@ -1,13 +1,15 @@
 """Driver loop and output scheduling for soft-affine IPC."""
 
+from src.utils.RuntimeHook import normalize_callbacks
+
+
 import time
 
 import taichi as ti
 
 from src.utils.RuntimeHook import runtime_checkpoint
 from src.utils.SolverConsole import print_save_file_info, print_simulation_start
-from src.utils.SolverRuntime import normalize_callbacks
-from src.utils.constants import Threshold
+from src.utils.constants import THRESHOLD
 
 
 class SoftAffineIPCSolver(object):
@@ -52,11 +54,11 @@ class SoftAffineIPCSolver(object):
         self.last_save_time = 1.0 * self.sims.current_time
         print("\n")
 
-    def Solver(self, scene):
+    def solve(self, scene):
         print_simulation_start("MPDEM")
         ti.sync()
         self.engine.initialize(self.sims, scene)
-        if self.sims.current_time < Threshold:
+        if self.sims.current_time < THRESHOLD:
             self.save_file(scene)
         start_time = time.time()
         target_time = float(self.sims.current_time + self.sims.time)

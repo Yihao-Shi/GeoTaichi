@@ -4,11 +4,8 @@ import numpy as np
 import pyvista as pv
 import pytest
 
-from src.igampm.GalleryRecorder import (
-    write_iga_frame,
-    write_mpm_particle_frame,
-)
-from src.nurbs.BasicVolume import Cube
+from src.igampm.GalleryRecorder import IGAMPMGalleryRecorder
+from src.nurbs.Cube import Cube
 
 
 def _unit_cube():
@@ -48,7 +45,7 @@ def test_host_gallery_writers_produce_aligned_vtu_frames(tmp_path):
     current[:, 2] += 0.04 * current[:, 0] * current[:, 1]
     stress = np.linspace(0.0, 1.0, cube.num_ctrlpts)
 
-    iga_path = write_iga_frame(
+    iga_path = IGAMPMGalleryRecorder.write_iga_frame(
         tmp_path,
         7,
         [(cube, current, initial, stress)],
@@ -62,7 +59,7 @@ def test_host_gallery_writers_produce_aligned_vtu_frames(tmp_path):
         [[0.1, 0.0, -0.2], [0.2, 0.0, -0.1], [0.3, 0.0, 0.0]],
         dtype=np.float64,
     )
-    mpm_path = write_mpm_particle_frame(
+    mpm_path = IGAMPMGalleryRecorder.write_mpm_particle_frame(
         tmp_path,
         7,
         positions,

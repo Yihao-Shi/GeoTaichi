@@ -2,10 +2,10 @@
 
 import taichi as ti
 
-from src.utils.GeometryFunction import SphereTriangleIntersectionArea
-from src.utils.Quaternion import SetToRotate
-from src.utils.VectorFunction import Normalize
-from src.utils.constants import PI, Threshold
+from src.utils.GeometryFunction import sphere_triangle_intersection_area
+from src.utils.Quaternion import set_to_rotate
+from src.utils.VectorFunction import normalize
+from src.utils.constants import PI, THRESHOLD
 
 
 @ti.func
@@ -20,7 +20,7 @@ def _contact_area_fraction(point, radius, distance, normal, first, second, third
         section_radius = ti.sqrt(radius * radius - distance * distance)
         section_area = PI * section_radius * section_radius
         projection = point - distance * normal
-        area = SphereTriangleIntersectionArea(projection, section_radius, first, second, third, normal)
+        area = sphere_triangle_intersection_area(projection, section_radius, first, second, third, normal)
         fraction = ti.abs(area / section_area)
     return fraction
 
@@ -361,7 +361,7 @@ def resolve_linear_facet_wall_contact(
             gapn = wall[wall_index]._get_norm_distance(point)
             projection = point - gapn * normal
             area_weight = node_area[node]
-            if gapn < 0.0 and area_weight > Threshold and wall[wall_index]._is_in_plane(projection) != 0:
+            if gapn < 0.0 and area_weight > THRESHOLD and wall[wall_index]._is_in_plane(projection) != 0:
                 material = ti.cast(wall[wall_index].materialID, ti.i32)
                 prop = properties[material, node_body[node]]
                 assert prop.active != 0, "FEM--DEM wall contact property is missing"
@@ -370,7 +370,7 @@ def resolve_linear_facet_wall_contact(
                 tangential_velocity = relative_velocity - normal_velocity * normal
                 normal_stiffness = area_weight * prop.kn
                 tangential_stiffness = area_weight * prop.ks
-                effective_mass = ti.max(fem_mass[node], Threshold)
+                effective_mass = ti.max(fem_mass[node], THRESHOLD)
                 normal_elastic_scalar = -normal_stiffness * gapn
                 trial_normal_damping_scalar = (
                     -2.0 * prop.normal_damping * ti.sqrt(effective_mass * normal_stiffness) * normal_velocity
@@ -385,7 +385,7 @@ def resolve_linear_facet_wall_contact(
                 normal_damping_scalar = normal_scalar - normal_elastic_scalar
                 normal_force = normal_scalar * normal
                 rotated = old - old.dot(normal) * normal
-                trial = tangential_velocity * dt + old.norm() * Normalize(rotated)
+                trial = tangential_velocity * dt + old.norm() * normalize(rotated)
                 current = trial
                 elastic_tangential_trial = -tangential_stiffness * current
                 tangential_force = elastic_tangential_trial
@@ -399,9 +399,9 @@ def resolve_linear_facet_wall_contact(
                 # the spring instantaneously when a dashpot alone reaches the
                 # Coulomb limit and creates non-conjugate stored energy.
                 if elastic_tangential_trial.norm() > limit:
-                    if elastic_tangential_trial.norm() > Threshold:
+                    if elastic_tangential_trial.norm() > THRESHOLD:
                         tangential_force = limit * elastic_tangential_trial.normalized()
-                    current = -tangential_force / ti.max(tangential_stiffness, Threshold)
+                    current = -tangential_force / ti.max(tangential_stiffness, THRESHOLD)
                     plastic_slip = trial - current
                     if ti.static(track_energy):
                         friction_increment = ti.max(-tangential_force.dot(plastic_slip), 0.0)
@@ -495,7 +495,7 @@ def resolve_barrier_facet_wall_contact(
             material = ti.cast(wall[wall_index].materialID, ti.i32)
             prop = properties[material, node_body[node]]
             assert prop.active != 0, "FEM--DEM wall barrier property is missing"
-            if gapn < prop.normal_cutoff and area_weight > Threshold and wall[wall_index]._is_in_plane(projection) != 0:
+            if gapn < prop.normal_cutoff and area_weight > THRESHOLD and wall[wall_index]._is_in_plane(projection) != 0:
                 relative_velocity = fem_velocity[node] - wall[wall_index].v
                 normal_velocity = relative_velocity.dot(normal)
                 tangential_velocity = relative_velocity - normal_velocity * normal
@@ -510,7 +510,7 @@ def resolve_barrier_facet_wall_contact(
                     prop,
                     gapn,
                     area_weight,
-                    ti.max(fem_mass[node], Threshold),
+                    ti.max(fem_mass[node], THRESHOLD),
                     normal,
                     normal_velocity,
                     tangential_velocity,
@@ -570,7 +570,7 @@ def accumulate_linear_facet_wall_elastic_energy(
             gap = wall[wall_index]._get_norm_distance(point)
             projection = point - gap * wall[wall_index].norm
             area = node_area[node]
-            if gap < 0.0 and area > Threshold and wall[wall_index]._is_in_plane(projection) != 0:
+            if gap < 0.0 and area > THRESHOLD and wall[wall_index]._is_in_plane(projection) != 0:
                 material = ti.cast(wall[wall_index].materialID, ti.i32)
                 prop = properties[material, node_body[node]]
                 if prop.active != 0:
@@ -583,9 +583,9 @@ def accumulate_linear_facet_wall_elastic_energy(
 
 @ti.func
 def _node_rigid_effective_mass(node, nodal_mass, rigid_mass):
-    inverse_mass = 1.0 / ti.max(rigid_mass, Threshold)
-    inverse_mass += 1.0 / ti.max(nodal_mass[node], Threshold)
-    return 1.0 / ti.max(inverse_mass, Threshold)
+    inverse_mass = 1.0 / ti.max(rigid_mass, THRESHOLD)
+    inverse_mass += 1.0 / ti.max(nodal_mass[node], THRESHOLD)
+    return 1.0 / ti.max(inverse_mass, THRESHOLD)
 
 
 @ti.func
@@ -633,14 +633,14 @@ def _barrier_contact_force(
     normal_force = normal_scalar * normal
 
     rotated = old_tangential_overlap - old_tangential_overlap.dot(normal) * normal
-    trial = tangential_velocity * dt + old_tangential_overlap.norm() * Normalize(rotated)
-    direction = Normalize(trial)
+    trial = tangential_velocity * dt + old_tangential_overlap.norm() * normalize(rotated)
+    direction = normalize(trial)
     cutoff = (
         prop.friction
         * normal_scalar
         / ti.max(
             prop.stiffness_ratio * prop.kappa * coefficient,
-            Threshold,
+            THRESHOLD,
         )
     )
     current = trial
@@ -649,13 +649,13 @@ def _barrier_contact_force(
     tangential_damping_power = 0.0
     if trial.norm() < cutoff:
         magnitude_ratio = 0.0
-        if cutoff > Threshold:
+        if cutoff > THRESHOLD:
             magnitude_ratio = (
-                trial.norm() * (2.0 * cutoff - trial.norm()) / ti.max(cutoff * cutoff, Threshold * Threshold)
+                trial.norm() * (2.0 * cutoff - trial.norm()) / ti.max(cutoff * cutoff, THRESHOLD * THRESHOLD)
             )
         tangential_force *= magnitude_ratio
         equivalent_stiffness = 0.0
-        if trial.norm() > Threshold:
+        if trial.norm() > THRESHOLD:
             equivalent_stiffness = tangential_force.norm() / trial.norm()
         tangential_damping_force = (
             -2.0
@@ -712,7 +712,7 @@ def resolve_barrier_levelset_contact(
         node = contacts[contact].node_id
         point = patch_nodes[node]
         center = rigid[rigid_id].mass_center
-        rotation = SetToRotate(rigid[rigid_id].q)
+        rotation = set_to_rotate(rigid[rigid_id].q)
         material = ti.cast(rigid[rigid_id].materialID, ti.i32)
         prop = properties[material, node_body[node]]
         assert prop.active != 0, "FEM--LSDEM barrier property is missing"
@@ -722,9 +722,9 @@ def resolve_barrier_levelset_contact(
             gapn = box[rigid_id].distance(local_point, grid)
             contacts[contact].normal_gap = gapn
             area_weight = node_area[node]
-            if gapn < prop.normal_cutoff and area_weight > Threshold:
+            if gapn < prop.normal_cutoff and area_weight > THRESHOLD:
                 gradient = rotation @ box[rigid_id].calculate_gradient(local_point, grid)
-                if gradient.norm_sqr() > Threshold * Threshold:
+                if gradient.norm_sqr() > THRESHOLD * THRESHOLD:
                     gradient_norm = gradient.norm()
                     normal = gradient / gradient_norm
                     rigid_velocity = rigid[rigid_id].v + rigid[rigid_id].w.cross(point - center)
@@ -799,7 +799,7 @@ def _resolve_linear_levelset_contact_with_energy(
         point = patch_nodes[node]
         area_weight = node_area[node]
         center = rigid[rigid_id].mass_center
-        rotation = SetToRotate(rigid[rigid_id].q)
+        rotation = set_to_rotate(rigid[rigid_id].q)
         material = ti.cast(rigid[rigid_id].materialID, ti.i32)
         prop = properties[material, node_body[node]]
         assert prop.active != 0, "FEM--LSDEM contact property is missing"
@@ -808,11 +808,11 @@ def _resolve_linear_levelset_contact_with_energy(
         if box[rigid_id]._in_box(local_point):
             gapn = box[rigid_id].distance(local_point, grid)
             contacts[contact].normal_gap = gapn
-            if area_weight > Threshold:
+            if area_weight > THRESHOLD:
                 gradient = rotation @ box[rigid_id].calculate_gradient(local_point, grid)
-                if gradient.norm_sqr() > Threshold * Threshold:
+                if gradient.norm_sqr() > THRESHOLD * THRESHOLD:
                     gradient_norm = gradient.norm()
-                    normal = gradient.normalized(Threshold)
+                    normal = gradient.normalized(THRESHOLD)
                     # Node-to-level-set contact applies the equal and opposite
                     # forces at the FEM surface node.  Evaluating the rigid
                     # velocity and torque at that same spatial point preserves
@@ -838,16 +838,16 @@ def _resolve_linear_levelset_contact_with_energy(
                         normal_scalar = ti.max(normal_scalar, 0.0)
                         normal_force = normal_scalar * normal
                         rotated = old - old.dot(normal) * normal
-                        trial = tangential_velocity * dt + old.norm() * Normalize(rotated)
+                        trial = tangential_velocity * dt + old.norm() * normalize(rotated)
                         current = trial
                         elastic_tangential_trial = -tangential_stiffness * current
                         tangential_force = elastic_tangential_trial
                         limit = prop.friction * normal_scalar
                         friction_increment = 0.0
                         if elastic_tangential_trial.norm() > limit:
-                            if elastic_tangential_trial.norm() > Threshold:
+                            if elastic_tangential_trial.norm() > THRESHOLD:
                                 tangential_force = limit * elastic_tangential_trial.normalized()
-                            current = -tangential_force / ti.max(tangential_stiffness, Threshold)
+                            current = -tangential_force / ti.max(tangential_stiffness, THRESHOLD)
                             plastic_slip = trial - current
                             if ti.static(track_energy):
                                 friction_increment = ti.max(
@@ -946,7 +946,7 @@ def resolve_hertz_mindlin_levelset_contact(
         point = patch_nodes[node]
         area_weight = node_area[node]
         center = rigid[rigid_id].mass_center
-        rotation = SetToRotate(rigid[rigid_id].q)
+        rotation = set_to_rotate(rigid[rigid_id].q)
         material = ti.cast(rigid[rigid_id].materialID, ti.i32)
         prop = properties[material, node_body[node]]
         assert prop.active != 0, "FEM--LSDEM contact property is missing"
@@ -954,18 +954,18 @@ def resolve_hertz_mindlin_levelset_contact(
         local_point = rotation.transpose() @ (point - center)
         if box[rigid_id]._in_box(local_point):
             gapn = box[rigid_id].distance(local_point, grid)
-            if gapn < 0.0 and area_weight > Threshold:
+            if gapn < 0.0 and area_weight > THRESHOLD:
                 gradient = rotation @ box[rigid_id].calculate_gradient(local_point, grid)
-                if gradient.norm_sqr() > Threshold * Threshold:
+                if gradient.norm_sqr() > THRESHOLD * THRESHOLD:
                     gradient_norm = gradient.norm()
-                    normal = gradient.normalized(Threshold)
+                    normal = gradient.normalized(THRESHOLD)
                     rigid_velocity = rigid[rigid_id].v + rigid[rigid_id].w.cross(point - center)
                     relative_velocity = fem_velocity[node] - rigid_velocity
                     normal_velocity = relative_velocity.dot(normal)
                     tangential_velocity = relative_velocity - normal_velocity * normal
                     effective_mass = _node_rigid_effective_mass(node, fem_mass, rigid[rigid_id].m)
                     radius = ti.sqrt(area_weight / PI)
-                    contact_radius = ti.sqrt(ti.max(-gapn * radius, Threshold))
+                    contact_radius = ti.sqrt(ti.max(-gapn * radius, THRESHOLD))
                     normal_stiffness = area_weight * 2.0 * prop.effective_young * contact_radius
                     tangential_stiffness = area_weight * 8.0 * prop.effective_shear * contact_radius
                     normal_scalar = -(
@@ -977,14 +977,14 @@ def resolve_hertz_mindlin_levelset_contact(
                     normal_scalar = ti.max(normal_scalar, 0.0)
                     normal_force = normal_scalar * normal
                     rotated = old - old.dot(normal) * normal
-                    current = tangential_velocity * dt + old.norm() * Normalize(rotated)
+                    current = tangential_velocity * dt + old.norm() * normalize(rotated)
                     elastic_tangential_trial = -tangential_stiffness * current
                     tangential_force = elastic_tangential_trial
                     limit = prop.friction * normal_scalar
                     if elastic_tangential_trial.norm() > limit:
-                        if elastic_tangential_trial.norm() > Threshold:
+                        if elastic_tangential_trial.norm() > THRESHOLD:
                             tangential_force = limit * elastic_tangential_trial.normalized()
-                        current = -tangential_force / ti.max(tangential_stiffness, Threshold)
+                        current = -tangential_force / ti.max(tangential_stiffness, THRESHOLD)
                     else:
                         tangential_force -= (
                             1.8257 * prop.damping * tangential_velocity * ti.sqrt(tangential_stiffness * effective_mass)
@@ -1073,7 +1073,7 @@ def resolve_linear_contact(
 
             old_overlap = contacts[contact].old_tangential_overlap
             rotated = old_overlap - old_overlap.dot(normal) * normal
-            overlap = tangential_velocity * dt + old_overlap.norm() * Normalize(rotated)
+            overlap = tangential_velocity * dt + old_overlap.norm() * normalize(rotated)
             trial_force = -prop.ks * overlap
             tangential_damping = (
                 -2.0 * prop.tangential_damping * ti.sqrt(particles[particle_id].m * prop.ks) * tangential_velocity
@@ -1160,7 +1160,7 @@ def resolve_hertz_mindlin_contact(
 
             old_overlap = contacts[contact].old_tangential_overlap
             rotated = old_overlap - old_overlap.dot(normal) * normal
-            overlap = tangential_velocity * dt + old_overlap.norm() * Normalize(rotated)
+            overlap = tangential_velocity * dt + old_overlap.norm() * normalize(rotated)
             trial_force = -ks * overlap
             tangential_damping = -1.8257 * prop.damping * tangential_velocity * ti.sqrt(ks * particles[particle_id].m)
             friction_limit = prop.friction * ti.abs(normal_elastic + normal_damping)
@@ -1218,7 +1218,7 @@ def _levelset_energy_terms(
         normal_elastic_energy = 0.5 * normal_stiffness * gapn * gapn
     else:
         radius = ti.sqrt(area_weight / PI)
-        contact_radius = ti.sqrt(ti.max(-gapn * radius, Threshold))
+        contact_radius = ti.sqrt(ti.max(-gapn * radius, THRESHOLD))
         normal_stiffness = area_weight * 2.0 * prop.effective_young * contact_radius
         tangential_stiffness = area_weight * 8.0 * prop.effective_shear * contact_radius
         normal_elastic_scalar = -(2.0 / 3.0) * normal_stiffness * gapn * gradient_norm
@@ -1235,8 +1235,8 @@ def _levelset_energy_terms(
     friction = 0.0
     friction_limit = prop.friction * normal_force.norm()
     elastic_tangential_magnitude = tangential_stiffness * tangential_overlap.norm()
-    sliding = friction_limit > Threshold and elastic_tangential_magnitude >= friction_limit - 1.0e-8 * ti.max(
-        friction_limit, Threshold
+    sliding = friction_limit > THRESHOLD and elastic_tangential_magnitude >= friction_limit - 1.0e-8 * ti.max(
+        friction_limit, THRESHOLD
     )
     if sliding:
         friction = ti.max(
@@ -1277,13 +1277,13 @@ def accumulate_linear_levelset_contact_energy(
             node = contacts[contact].node_id
             point = patch_nodes[node]
             center = rigid[rigid_id].mass_center
-            rotation = SetToRotate(rigid[rigid_id].q)
+            rotation = set_to_rotate(rigid[rigid_id].q)
             local_point = rotation.transpose() @ (point - center)
             gapn = box[rigid_id].distance(local_point, grid)
             gradient = rotation @ box[rigid_id].calculate_gradient(local_point, grid)
-            if gradient.norm_sqr() > Threshold * Threshold:
+            if gradient.norm_sqr() > THRESHOLD * THRESHOLD:
                 gradient_norm = gradient.norm()
-                normal = gradient.normalized(Threshold)
+                normal = gradient.normalized(THRESHOLD)
                 rigid_velocity = rigid[rigid_id].v + rigid[rigid_id].w.cross(point - center)
                 relative_velocity = fem_velocity[node] - rigid_velocity
                 material = ti.cast(rigid[rigid_id].materialID, ti.i32)
@@ -1330,13 +1330,13 @@ def accumulate_hertz_mindlin_levelset_contact_energy(
             node = contacts[contact].node_id
             point = patch_nodes[node]
             center = rigid[rigid_id].mass_center
-            rotation = SetToRotate(rigid[rigid_id].q)
+            rotation = set_to_rotate(rigid[rigid_id].q)
             local_point = rotation.transpose() @ (point - center)
             gapn = box[rigid_id].distance(local_point, grid)
             gradient = rotation @ box[rigid_id].calculate_gradient(local_point, grid)
-            if gradient.norm_sqr() > Threshold * Threshold:
+            if gradient.norm_sqr() > THRESHOLD * THRESHOLD:
                 gradient_norm = gradient.norm()
-                normal = gradient.normalized(Threshold)
+                normal = gradient.normalized(THRESHOLD)
                 rigid_velocity = rigid[rigid_id].v + rigid[rigid_id].w.cross(point - center)
                 relative_velocity = fem_velocity[node] - rigid_velocity
                 material = ti.cast(rigid[rigid_id].materialID, ti.i32)

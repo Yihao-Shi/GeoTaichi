@@ -1,3 +1,4 @@
+from src.dem.DEMBase import AffineBodySolver
 from types import SimpleNamespace
 import importlib
 
@@ -6,7 +7,6 @@ import pytest
 import taichi as ti
 import trimesh
 
-from src.dem.DEMBase import AffineBodySolver
 from src.dem.engines.AffineBodyEngine import AffineBodyEngine
 from src.dem.engines.AffineBodyOperator import TaichiAffineBodyOperator
 from src.dem.engines.AffineBodyState import AffineBodyState
@@ -298,7 +298,7 @@ def test_affine_solver_counts_accepted_steps_and_stops_at_requested_time(monkeyp
         solver.last_save_time = sims.current_time
 
     solver.save_file = save_file
-    solver.Solver(None)
+    solver.solve(None)
     assert sims.current_time == pytest.approx(0.15)
     assert sum(accepted) == pytest.approx(sims.current_time)
     assert sims.current_step == len(accepted)

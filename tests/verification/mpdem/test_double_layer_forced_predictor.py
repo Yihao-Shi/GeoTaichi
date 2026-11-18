@@ -5,7 +5,8 @@ import pytest
 import taichi as ti
 
 from src.mpm.engines.TwoPhaseDoubleLayerKernel import kernel_predict_double_layer2d, kernel_predict_double_layer3d
-from src.mpm.structs.GridNode import NodeTwoPhase, NodeTwoPhase2D
+from src.mpm.structs.NodeTwoPhase import NodeTwoPhase
+from src.mpm.structs.NodeTwoPhase2D import NodeTwoPhase2D
 
 
 @pytest.mark.parametrize("dimension", [2, 3])
@@ -109,8 +110,9 @@ def test_forced_predictor_preserves_coupled_momentum_and_slip(taichi_runtime, di
 @pytest.mark.parametrize("taichi_runtime", [{"fp": "f64"}], indirect=True)
 def test_small_mass_support_preserves_solid_velocity_gradient(taichi_runtime, dimension, affine):
     from src.mpm.engines import TwoPhaseDoubleLayerKernel as kernels
-    from src.mpm.structs.Particle import ParticleCloudTwoPhase, ParticleCloudTwoPhase2D
-    from src.utils.ShapeFunctions import ShapeBsplineQ, GShapeBsplineQ
+    from src.mpm.structs.ParticleCloudTwoPhase import ParticleCloudTwoPhase
+    from src.mpm.structs.ParticleCloudTwoPhase2D import ParticleCloudTwoPhase2D
+    from src.utils.ShapeFunctions import shape_bspline_q, g_shape_bspline_q
 
     dx, size, cutoff = 0.0025, 9, 3.6015625e-11
     particle = (ParticleCloudTwoPhase2D if dimension == 2 else ParticleCloudTwoPhase).field(shape=1)
@@ -143,8 +145,8 @@ def test_small_mass_support_preserves_solid_velocity_gradient(taichi_runtime, di
                 for axis in ti.static(range(dimension)):
                     ids[q] += index[axis] * size**axis
                     boundary = kernels._mac_bspline_boundary_type(index[axis], size)
-                    w[axis] = ShapeBsplineQ(particle[0].x[axis], index[axis] * dx, 1 / dx, boundary)
-                    g[axis] = GShapeBsplineQ(particle[0].x[axis], index[axis] * dx, 1 / dx, boundary)
+                    w[axis] = shape_bspline_q(particle[0].x[axis], index[axis] * dx, 1 / dx, boundary)
+                    g[axis] = g_shape_bspline_q(particle[0].x[axis], index[axis] * dx, 1 / dx, boundary)
                 weight = 1.0
                 for axis in ti.static(range(dimension)):
                     weight *= w[axis]

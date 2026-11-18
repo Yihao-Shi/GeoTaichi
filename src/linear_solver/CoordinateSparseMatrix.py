@@ -14,7 +14,7 @@ from src.utils.sorting.RadixSort import RadixSort
 
 from src.linear_solver.CoordinateSparseMatrixKernel import (
     set_from_triplets,
-    compute_Ap,
+    compute_ap,
     _copy_triplets_to_hash_reducer_impl,
 )
 
@@ -276,4 +276,4 @@ class COOOperator(object):
 
     def matvec(self, x, Ax):
         Ax.fill(0)
-        compute_Ap(self.nnz, self.row, self.col, self.value, x, Ax)
+        compute_ap(self.nnz, self.row, self.col, self.value, x, Ax)

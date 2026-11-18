@@ -1,5 +1,7 @@
 """Legacy device tape/replay adjoint for Soft-Affine IPC trajectories."""
 
+from src.utils.errors import RecordingError, SimulationStateError
+
 import numpy as np
 import taichi as ti
 
@@ -131,7 +133,7 @@ class DifferentiableSoftAffine:
 
     def step(self):
         if self.record_count >= self.capacity:
-            raise RuntimeError("differentiable Soft-Affine trajectory tape is full")
+            raise SimulationStateError("differentiable Soft-Affine trajectory tape is full")
         if float(self.sims.dt[None]) != self.dt or float(self.sims.delta) != self.dt:
             raise ValueError("time step changed during differentiable trajectory")
         if int(self.sims.current_step) != self.initial_step + self.record_count:
@@ -145,7 +147,7 @@ class DifferentiableSoftAffine:
 
     def backward(self, terminal_state_vjp):
         if self.record_count == 0:
-            raise RuntimeError("record at least one step before backward()")
+            raise RecordingError("record at least one step before backward()")
         if not isinstance(terminal_state_vjp, dict):
             raise TypeError("terminal_state_vjp must be a dictionary")
         affine_shape = (self.affine_count, 3)
@@ -195,7 +197,7 @@ class DifferentiableSoftAffine:
                 try:
                     self.engine.step(self.sims, self.scene)
                     if self.engine.last_elastic_differentiation is not True:
-                        raise RuntimeError("Soft-Affine replay completed without its adjoint")
+                        raise SimulationStateError("Soft-Affine replay completed without its adjoint")
                 finally:
                     self.engine.pending_elastic_adjoint_seed = None
                     self.engine.pending_adjoint_mode = None

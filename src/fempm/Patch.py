@@ -4,15 +4,16 @@ import numpy as np
 import taichi as ti
 
 
-def _modifier_value(mapping, name, default=None):
-    if mapping is None:
-        return default
-    normalized = {str(key).replace("_", "").lower(): value for key, value in mapping.items()}
-    return normalized.get(name.replace("_", "").lower(), default)
-
-
 @ti.data_oriented
 class FEMPMSurfacePatch:
+
+    @staticmethod
+    def _modifier_value(mapping, name, default=None):
+        if mapping is None:
+            return default
+        normalized = {str(key).replace("_", "").lower(): value for key, value in mapping.items()}
+        return normalized.get(name.replace("_", "").lower(), default)
+
     def __init__(self, node_count, faces, face_body, modifier=None):
         faces = np.ascontiguousarray(faces, dtype=np.int32)
         face_body = np.ascontiguousarray(face_body, dtype=np.int32)
@@ -46,7 +47,12 @@ class FEMPMSurfacePatch:
         padded_vertices[: self.surface_vertex_count] = surface_vertices
         self.surface_vertices.from_numpy(padded_vertices)
 
-        normalized = str(_modifier_value(modifier, "Orientation", "None")).replace("_", "").replace("-", "").lower()
+        normalized = (
+            str(FEMPMSurfacePatch._modifier_value(modifier, "Orientation", "None"))
+            .replace("_", "")
+            .replace("-", "")
+            .lower()
+        )
         self.orientation = {
             "none": 0,
             "parallel": 1,
@@ -56,11 +62,11 @@ class FEMPMSurfacePatch:
         }.get(normalized, -1)
         if self.orientation < 0:
             raise ValueError("FEMPM patch Orientation must be Parallel, " "Centripetal/Centrioetal, Inverse, or None")
-        direction = _modifier_value(modifier, "Direction", (0.0, 0.0, 1.0))
-        center = _modifier_value(modifier, "Center", (0.0, 0.0, 0.0))
+        direction = FEMPMSurfacePatch._modifier_value(modifier, "Direction", (0.0, 0.0, 1.0))
+        center = FEMPMSurfacePatch._modifier_value(modifier, "Center", (0.0, 0.0, 0.0))
         self.direction = tuple(float(value) for value in np.asarray(direction).reshape(3))
         self.center = tuple(float(value) for value in np.asarray(center).reshape(3))
-        self.offset = float(_modifier_value(modifier, "Value", 0.0))
+        self.offset = float(FEMPMSurfacePatch._modifier_value(modifier, "Value", 0.0))
         if abs(self.offset) > 0.0:
             self.offset_nodes = ti.Vector.field(3, dtype=float, shape=self.node_count)
             self.nodes = self.offset_nodes
@@ -194,6 +200,3 @@ class FEMPMSurfacePatch:
             float(self.minimum_bounding_radius[None]),
             float(self.maximum_bounding_radius[None]),
         )
-
-
-__all__ = ["FEMPMSurfacePatch"]

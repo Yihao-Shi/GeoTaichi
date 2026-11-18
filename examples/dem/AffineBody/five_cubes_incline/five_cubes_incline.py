@@ -1,5 +1,7 @@
 """Five free ABD cubes on one incline, with converged outer friction iterations."""
 
+from src.physics_model.contact_model.ipc.Utilities import ipc_barrier_distance_terms
+
 import argparse
 import json
 import os
@@ -33,7 +35,6 @@ def main():
     import trimesh
     from scipy.optimize import least_squares
     from scipy.spatial.transform import Rotation
-    from src.physics_model.contact_model.ipc.IPC import ipc_toolkit_barrier_distance_terms
 
     gt.init(arch=args.arch, default_fp="float64", cpu_max_num_threads=4, log=True)
     theta = np.pi / 6
@@ -45,7 +46,7 @@ def main():
 
     @ti.kernel
     def normal_force(gap: ti.f64) -> ti.f64:
-        _, derivative, _ = ipc_toolkit_barrier_distance_terms(gap, dhat, kappa)
+        _, derivative, _ = ipc_barrier_distance_terms(gap, dhat, kappa)
         return -3.0 * edge**2 * derivative
 
     # Start at normal equilibrium to avoid an artificial drop onto the ramp.

@@ -1,66 +1,91 @@
-import warnings
+from src.mpm.Contact import DEMContact
+from src.mpm.Contact import GeoContact
+from src.mpm.structs.GridNode import ImplicitNodes
+from src.mpm.structs.GridNode import ImplicitNodes2D
+from src.mpm.structs.GridNode import IncompressibleNodes2D
+from src.mpm.structs.GridNode import IncompressibleNodes3D
+from src.utils.errors import ConfigurationError, SimulationStateError
 
+import warnings
 import numpy as np
 import taichi as ti
 from taichi.lang.impl import current_cfg
-
 from src.mpm.BaseKernel import *
-from src.mpm.Contact import *
-from src.mpm.elements.StaggeredQuadrilateralElement import StaggeredQuadrilateralElement
-from src.mpm.elements.StaggeredHexahedronElement import StaggeredHexahedronElement
+from src.utils.errors import SimulationStateError
+from src.utils.ObjectIO import DictIO
+from src.mpm.Contact import MPMContact
 from src.mpm.elements.HexahedronElement8Nodes import HexahedronElement8Nodes
 from src.mpm.elements.AdaptiveHexahedronElement import AdaptiveHexahedronElement
 from src.mpm.elements.AdaptiveQuadrilateralElement import AdaptiveQuadrilateralElement
 from src.mpm.elements.QuadrilateralElement4Nodes import QuadrilateralElement4Nodes
-from src.mpm.MaterialManager import MaterialHandle
-from src.mpm.sparse_grid import BlockSparseGrid
+from src.mpm.MaterialHandle import MaterialHandle
+from src.mpm.sparse_grid.BlockSparseGrid import BlockSparseGrid
 from src.mpm.boundaries.BoundaryConstraint import BoundaryConstraints
 from src.mpm.Simulation import Simulation
-from src.mpm.structs import *
+from src.mpm.structs.StaggeredGrid import StaggeredGrid
+from src.mpm.structs.Nodes import Nodes
+from src.mpm.structs.Nodes2D import Nodes2D
+from src.mpm.structs.ContactNodes import ContactNodes
+from src.mpm.structs.ContactNodes2D import ContactNodes2D
+from src.mpm.structs.NodeTwoPhase import NodeTwoPhase
+from src.mpm.structs.NodeTwoPhase2D import NodeTwoPhase2D
+from src.mpm.structs.ParticleCloud import ParticleCloud
+from src.mpm.structs.ParticleCloud2D import ParticleCloud2D
+from src.mpm.structs.ParticleCloudTwoPhase import ParticleCloudTwoPhase
+from src.mpm.structs.ParticleCloudTwoPhase2D import ParticleCloudTwoPhase2D
+from src.mpm.structs.ParticleCloud2DAxisy import ParticleCloud2DAxisy
+from src.mpm.structs.ParticleCloudTwoPhase2DAxisy import ParticleCloudTwoPhase2DAxisy
+from src.mpm.structs.Particle import LargeScaleParticle
+from src.mpm.structs.ParticleCoupling import ParticleCoupling
+from src.mpm.structs.ImplicitParticle import ImplicitParticle
+from src.mpm.structs.ImplicitParticle2D import ImplicitParticle2D
+from src.mpm.structs.ImplicitParticleCoupling import ImplicitParticleCoupling
+from src.mpm.structs.ParticleCloudIncompressible2D import ParticleCloudIncompressible2D
+from src.mpm.structs.ParticleCloudIncompressible3D import ParticleCloudIncompressible3D
 from src.utils.FieldIO import field_to_numpy_prefix
 from src.utils.linalg import no_operation
 from src.utils.DomainBoundary import DomainBoundary
-from src.utils.ObjectIO import DictIO
 from src.utils.GeometryFunction import distance_along_direction_to_surface
-from src.utils.TypeDefination import vec2f, vec3f, vec4f, vec3u8, mat2x2, mat3x3
+from src.utils.TypeDefinition import vec2f, vec3f, vec3u8, mat2x2, mat3x3
 
 
-def _dtype_nbytes(dtype):
-    if dtype is float:
-        dtype = current_cfg().default_fp
-    elif dtype is int:
-        dtype = current_cfg().default_ip
-    dtype_name = str(dtype).lower()
-    if "64" in dtype_name:
-        return 8
-    if "16" in dtype_name:
-        return 2
-    if "8" in dtype_name:
-        return 1
-    return 4
+class SceneManager(object):
 
+    @staticmethod
+    def _dtype_nbytes(dtype):
+        if dtype is float:
+            dtype = current_cfg().default_fp
+        elif dtype is int:
+            dtype = current_cfg().default_ip
+        dtype_name = str(dtype).lower()
+        if "64" in dtype_name:
+            return 8
+        if "16" in dtype_name:
+            return 2
+        if "8" in dtype_name:
+            return 1
+        return 4
 
-def _member_nbytes(member):
-    if hasattr(member, "dtype"):
-        count = int(getattr(member, "n", 1)) * int(getattr(member, "m", 1))
-        return count * _dtype_nbytes(member.dtype)
-    return _dtype_nbytes(member)
+    @staticmethod
+    def _member_nbytes(member):
+        if hasattr(member, "dtype"):
+            count = int(getattr(member, "n", 1)) * int(getattr(member, "m", 1))
+            return count * SceneManager._dtype_nbytes(member.dtype)
+        return SceneManager._dtype_nbytes(member)
 
+    @staticmethod
+    def _struct_slot_nbytes(struct_type):
+        return sum(SceneManager._member_nbytes(member) for member in struct_type.members.values())
 
-def _struct_slot_nbytes(struct_type):
-    return sum(_member_nbytes(member) for member in struct_type.members.values())
+    @staticmethod
+    def _format_mib(nbytes):
+        return f"{nbytes / (1024 ** 2):.3f} MiB"
 
-
-def _format_mib(nbytes):
-    return f"{nbytes / (1024 ** 2):.3f} MiB"
-
-
-class myScene(object):
     def __init__(self) -> None:
         self.domain_boundary = None
         self.contact = None
-        self.mass_cut_off = Threshold
-        self.volume_cut_off = Threshold
+        self.mass_cut_off = THRESHOLD
+        self.volume_cut_off = THRESHOLD
         self.grid_level = 1
 
         self.element_type = "R8N3D"
@@ -172,7 +197,7 @@ class myScene(object):
             if sims.contact_detection == "DEMContact":
                 ptemp.members.update({"contact_traction": ti.types.vector(sims.dimension, float)})
         if ptemp is None:
-            raise RuntimeError("Wrong particle type!")
+            raise SimulationStateError("Wrong particle type!")
         return ptemp
 
     def activate_particle(self, sims: Simulation):
@@ -242,7 +267,7 @@ class myScene(object):
             mode = str(adaptive_grid.get("HangingConstraintMode", "Auto"))
             mode = mode.lower().replace("_", "").replace("-", "").replace(" ", "")
             if mode not in ("auto", "shape", "shapefunction") or adaptive_grid.get("BridgingDomain", False):
-                raise RuntimeError(
+                raise SimulationStateError(
                     "AdaptiveGrid contact requires HangingConstraintMode=ShapeFunction and BridgingDomain=False"
                 )
             adaptive_grid["HangingConstraintMode"] = "ShapeFunction"
@@ -255,11 +280,11 @@ class myScene(object):
         if sims.solver_type != "Implicit" or sims.material_type != "Solid":
             return adaptive_grid
 
-        mode = str(DictIO.GetAlternative(adaptive_grid, "HangingConstraintMode", "Auto"))
+        mode = str(DictIO.get_alternative(adaptive_grid, "HangingConstraintMode", "Auto"))
         normalized_mode = mode.lower().replace("_", "").replace("-", "").replace(" ", "")
-        bridging_domain = bool(DictIO.GetAlternative(adaptive_grid, "BridgingDomain", False))
+        bridging_domain = bool(DictIO.get_alternative(adaptive_grid, "BridgingDomain", False))
         if bridging_domain:
-            raise RuntimeError(
+            raise SimulationStateError(
                 "Implicit solid AdaptiveGrid does not support BridgingDomain=True "
                 "because hanging penalty stiffness is not assembled. Disable "
                 "BridgingDomain or use explicit MPM."
@@ -277,7 +302,7 @@ class myScene(object):
         elif normalized_mode in ("shape", "shapefunction"):
             adaptive_grid["HangingConstraintMode"] = "ShapeFunction"
         elif normalized_mode == "penalty":
-            raise RuntimeError(
+            raise ConfigurationError(
                 "Implicit solid AdaptiveGrid requires "
                 "HangingConstraintMode=ShapeFunction. Penalty mode is explicit-only "
                 "until hanging penalty stiffness is assembled."
@@ -288,7 +313,7 @@ class myScene(object):
         if adaptive_grid.get("HangingConstraintMode") == "ShapeFunction":
             minimum_capacity_factor = 4 if sims.dimension == 2 else 8
             capacity_factor = int(
-                DictIO.GetAlternative(adaptive_grid, "HangingShapeCapacityFactor", minimum_capacity_factor)
+                DictIO.get_alternative(adaptive_grid, "HangingShapeCapacityFactor", minimum_capacity_factor)
             )
             if capacity_factor < minimum_capacity_factor:
                 warnings.warn(
@@ -305,7 +330,7 @@ class myScene(object):
     def activate_element(self, sims: Simulation, element):
         if sims.sparse_grid and sims.contact_detection and not element.get("AdaptiveGrid"):
             if sims.solver_type != "Explicit" or sims.material_type != "Solid":
-                raise RuntimeError(
+                raise ConfigurationError(
                     "Ordinary BlockScan contact requires solver_type='Explicit' and material_type='Solid'"
                 )
         if sims.sparse_grid and sims.is_2DAxisy and not element.get("AdaptiveGrid"):
@@ -314,10 +339,10 @@ class myScene(object):
                 or sims.shape_function != "GIMP"
                 or sims.stabilize not in (None, "B-Bar Method")
             ):
-                raise RuntimeError(
+                raise ConfigurationError(
                     "Axisymmetric BlockScan requires Explicit GIMP with stabilization disabled or B-Bar Method"
                 )
-        self.element_type = DictIO.GetAlternative(element, "ElementType", "R8N3D")
+        self.element_type = DictIO.get_alternative(element, "ElementType", "R8N3D")
         if sims.max_particle_num > 0:
             grid_level = self.find_grid_level(sims)
 
@@ -328,30 +353,30 @@ class myScene(object):
                     if not self.element is None:
                         print("Warning: Previous elements will be override!")
                     adaptive_grid = self.configure_adaptive_grid_for_solver(
-                        sims, DictIO.GetAlternative(element, "AdaptiveGrid", None)
+                        sims, DictIO.get_alternative(element, "AdaptiveGrid", None)
                     )
                     if adaptive_grid:
                         if self.element_type != "Q4N2D":
-                            raise RuntimeError("AdaptiveGrid currently supports Q4N2D only")
+                            raise SimulationStateError("AdaptiveGrid currently supports Q4N2D only")
                         self.element = AdaptiveQuadrilateralElement(
                             self.element_type,
                             grid_level,
-                            DictIO.GetAlternative(element, "GhostCell", 1),
+                            DictIO.get_alternative(element, "GhostCell", 1),
                             adaptive_grid,
                         )
                     else:
                         self.element = QuadrilateralElement4Nodes(
                             self.element_type,
                             grid_level,
-                            DictIO.GetAlternative(element, "GhostCell", 1),
+                            DictIO.get_alternative(element, "GhostCell", 1),
                         )
                 else:
                     raise ValueError("Keyword:: /ElementType/ error!")
-                grid_size = vec2f(DictIO.GetEssential(element, "ElementSize"))
+                grid_size = vec2f(DictIO.get_essential(element, "ElementSize"))
                 if sims.isTHB:
                     if self.element_type != "Q4N2D":
-                        raise RuntimeError("THB MPM currently supports Q4N2D only")
-                    self.element.create_nodes_THB(sims, grid_size)
+                        raise SimulationStateError("THB MPM currently supports Q4N2D only")
+                    self.element.create_nodes_thb(sims, grid_size)
                 else:
                     self.element.create_nodes(sims, grid_size)
                 self.initialize_element(sims, grid_level)
@@ -362,24 +387,24 @@ class myScene(object):
                     if not self.element is None:
                         print("Warning: Previous elements will be override!")
                     adaptive_grid = self.configure_adaptive_grid_for_solver(
-                        sims, DictIO.GetAlternative(element, "AdaptiveGrid", None)
+                        sims, DictIO.get_alternative(element, "AdaptiveGrid", None)
                     )
                     if adaptive_grid:
                         if self.element_type != "R8N3D":
-                            raise RuntimeError("AdaptiveGrid currently supports R8N3D only")
+                            raise SimulationStateError("AdaptiveGrid currently supports R8N3D only")
                         self.element = AdaptiveHexahedronElement(
                             self.element_type,
                             grid_level,
-                            DictIO.GetAlternative(element, "GhostCell", 1),
+                            DictIO.get_alternative(element, "GhostCell", 1),
                             adaptive_grid,
                         )
                     else:
                         self.element = HexahedronElement8Nodes(
-                            self.element_type, grid_level, DictIO.GetAlternative(element, "GhostCell", 1)
+                            self.element_type, grid_level, DictIO.get_alternative(element, "GhostCell", 1)
                         )
                 else:
                     raise ValueError("Keyword:: /ElementType/ error!")
-                self.element.create_nodes(sims, vec3f(DictIO.GetEssential(element, "ElementSize")))
+                self.element.create_nodes(sims, vec3f(DictIO.get_essential(element, "ElementSize")))
                 self.initialize_element(sims, grid_level)
 
             if self.boundary is None:
@@ -427,7 +452,7 @@ class myScene(object):
                 elif sims.dimension == 3:
                     gtemp = NodeTwoPhase
             else:
-                raise RuntimeError("The contact is not supported in implicit MPM currently")
+                raise ConfigurationError("The contact is not supported in implicit MPM currently")
         else:
             if sims.solver_type == "Explicit":
                 if sims.dimension == 2:
@@ -436,14 +461,14 @@ class myScene(object):
                     elif sims.material_type == "TwoPhaseSingleLayer":
                         gtemp = NodeTwoPhase2D
                     elif sims.material_type == "TwoPhaseDoubleLayer":
-                        raise RuntimeError()
+                        raise SimulationStateError()
                 elif sims.dimension == 3:
                     if sims.material_type == "Solid" or sims.material_type == "Fluid":
                         gtemp = Nodes
                     elif sims.material_type == "TwoPhaseSingleLayer":
                         gtemp = NodeTwoPhase
                     else:
-                        raise RuntimeError()
+                        raise SimulationStateError()
             elif sims.solver_type == "Implicit":
                 if sims.material_type == "Solid":
                     if sims.dimension == 2:
@@ -462,7 +487,7 @@ class myScene(object):
                     elif sims.dimension == 3:
                         gtemp = NodeTwoPhase
         if gtemp is None:
-            raise RuntimeError("Wrong background node type!")
+            raise SimulationStateError("Wrong background node type!")
         return gtemp
 
     def activate_grid(self, sims: Simulation, grid_level):
@@ -513,7 +538,7 @@ class myScene(object):
                     gtemp.members.update({"pressure": float})
             if sims.particle_shifting is True:
                 gtemp.members.update({"vol": float})
-            self.node_slot_bytes = _struct_slot_nbytes(gtemp)
+            self.node_slot_bytes = SceneManager._struct_slot_nbytes(gtemp)
             self.node = gtemp.field()
             self.child.place(self.node)
             self.node.fill(0)
@@ -551,7 +576,7 @@ class myScene(object):
                 self.child = [self.child]
                 output_grid = self.find_grid_class(sims, grid_level)
                 if sims.sparse_grid:
-                    raise RuntimeError("BlockScan sparse_grid does not support mapping='G2P2G' yet.")
+                    raise SimulationStateError("BlockScan sparse_grid does not support mapping='G2P2G' yet.")
                 else:
                     self.child = ti.root.dense(ti.ij, (self.element.gridSum, grid_level))
                 self.grid = [self.node, self.child[1].place(output_grid)]
@@ -565,7 +590,7 @@ class myScene(object):
             if sims.contact_detection is False:
                 warnings.warn("The contact detection has not been activeted yet!")
         if grid_level == 1 and sims.contact_detection is True:
-            raise RuntimeError("The contact detection should be turned off!")
+            raise SimulationStateError("The contact detection should be turned off!")
 
     def print_grid_message(self, sims: Simulation, grid_level, cut_off=0.0):
         print(" Grid Information ".center(71, "-"))
@@ -583,9 +608,12 @@ class myScene(object):
             print("Sparse Allocated/Dense Node Slot Ratio = ", sparse_info["allocated_node_slot_ratio"])
             if self.node_slot_bytes > 0:
                 print("Node Slot Bytes = ", sparse_info["node_slot_bytes"])
-                print("Dense Node Memory Estimate = ", _format_mib(sparse_info["dense_node_bytes"]))
-                print("Sparse Allocated Memory Estimate = ", _format_mib(sparse_info["allocated_sparse_bytes"]))
-                print("Sparse Metadata Memory Estimate = ", _format_mib(sparse_info["metadata_bytes"]))
+                print("Dense Node Memory Estimate = ", SceneManager._format_mib(sparse_info["dense_node_bytes"]))
+                print(
+                    "Sparse Allocated Memory Estimate = ",
+                    SceneManager._format_mib(sparse_info["allocated_sparse_bytes"]),
+                )
+                print("Sparse Metadata Memory Estimate = ", SceneManager._format_mib(sparse_info["metadata_bytes"]))
                 print("Sparse/Dense Memory Estimate Ratio = ", sparse_info["allocated_sparse_byte_ratio"])
         elif sims.sparse_grid and getattr(self.element, "adaptive", False):
             print("Sparse Grid Backend =  AdaptiveNodeMap")
@@ -610,10 +638,10 @@ class myScene(object):
             raise ValueError("The MPM particles should be set as: ", self.particleNum[0] + particle_number)
 
     def find_min_z_position(self):
-        return find_min_z_position_(int(self.particleNum[0]), self.particle)
+        return find_min_z_position(int(self.particleNum[0]), self.particle)
 
     def find_min_y_position(self):
-        return find_min_y_position_(int(self.particleNum[0]), self.particle)
+        return find_min_y_position(int(self.particleNum[0]), self.particle)
 
     def find_bounding_sphere_radius(self):
         rad_max = self.find_particle_max_radius()
@@ -640,7 +668,7 @@ class myScene(object):
         else:
             radius = np.linalg.norm(psize, axis=1)
         radius = np.maximum(radius, 1.0e-12)
-        set_particle_radius_from_array_(
+        set_particle_radius_from_array(
             particle_num,
             self.particle,
             np.ascontiguousarray(radius, dtype=np.float64),
@@ -649,21 +677,21 @@ class myScene(object):
     def find_particle_min_radius(self):
         if not hasattr(self.particle, "rad"):
             return self._particle_size_radius_bounds()[0]
-        return find_particle_min_radius_(int(self.particleNum[0]), self.particle)
+        return find_particle_min_radius(int(self.particleNum[0]), self.particle)
 
     def find_particle_max_radius(self):
         if not hasattr(self.particle, "rad"):
             return self._particle_size_radius_bounds()[1]
-        return find_particle_max_radius_(int(self.particleNum[0]), self.particle)
+        return find_particle_max_radius(int(self.particleNum[0]), self.particle)
 
     def find_particle_min_mass(self):
-        return find_particle_min_mass_(int(self.particleNum[0]), self.particle)
+        return find_particle_min_mass(int(self.particleNum[0]), self.particle)
 
     def reset_verlet_disp(self):
-        reset_verlet_disp_(int(self.couplingNum[0]), self.particle)
+        reset_verlet_disp(int(self.couplingNum[0]), self.particle)
 
     def get_critical_timestep(self):
-        max_vel = find_max_velocity_(int(self.particleNum[0]), self.particle)
+        max_vel = find_max_velocity(int(self.particleNum[0]), self.particle)
         max_vel += self.material.find_max_sound_speed()
         return self.element.calc_critical_timestep(max_vel)
 
@@ -702,30 +730,30 @@ class myScene(object):
 
         factor = 1 if not override else 0
         if property_name == "bodyID":
-            modify_particle_bodyID_in_region(value, int(self.particleNum[0]), self.particle, is_in_region)
+            modify_particle_body_id_in_region(value, int(self.particleNum[0]), self.particle, is_in_region)
         elif property_name == "materialID":
-            modify_particle_materialID_in_region(
+            modify_particle_material_id_in_region(
                 value, int(self.particleNum[0]), self.particle, self.material.matProps, is_in_region
             )
         elif property_name == "position":
             if sims.dimension == 3:
                 modify_particle_position_in_region(factor, value, int(self.particleNum[0]), self.particle, is_in_region)
             elif sims.dimension == 2:
-                modify_particle_position_in_region_2D(
+                modify_particle_position_in_region_2d(
                     factor, value, int(self.particleNum[0]), self.particle, is_in_region
                 )
         elif property_name == "velocity":
             if sims.dimension == 3:
                 modify_particle_velocity_in_region(factor, value, int(self.particleNum[0]), self.particle, is_in_region)
             elif sims.dimension == 2:
-                modify_particle_velocity_in_region_2D(
+                modify_particle_velocity_in_region_2d(
                     factor, value, int(self.particleNum[0]), self.particle, is_in_region
                 )
         elif property_name == "stress":
             modify_particle_stress_in_region(factor, value, int(self.particleNum[0]), self.particle, is_in_region)
         elif property_name == "fix_velocity":
             FIX = {"Free": 0, "Fix": 1}
-            fix_v = vec3u8([DictIO.GetEssential(FIX, is_fix) for is_fix in value])
+            fix_v = vec3u8([DictIO.get_essential(FIX, is_fix) for is_fix in value])
             modify_particle_fix_v_in_region(fix_v, int(self.particleNum[0]), self.particle, is_in_region)
         else:
             valid_list = ["bodyID", "materialID", "position", "velocity", "traction", "stress", "fix_velocity"]
@@ -742,24 +770,24 @@ class myScene(object):
 
         factor = 1 if not override else 0
         if property_name == "bodyID":
-            modify_particle_bodyID(value, int(self.particleNum[0]), self.particle, bodyID)
+            modify_particle_body_id(value, int(self.particleNum[0]), self.particle, bodyID)
         elif property_name == "materialID":
-            modify_particle_materialID(value, int(self.particleNum[0]), self.particle, self.material.matProps, bodyID)
+            modify_particle_material_id(value, int(self.particleNum[0]), self.particle, self.material.matProps, bodyID)
         elif property_name == "position":
             if sims.dimension == 3:
                 modify_particle_position(factor, value, int(self.particleNum[0]), self.particle, bodyID)
             elif sims.dimension == 2:
-                modify_particle_position_2D(factor, value, int(self.particleNum[0]), self.particle, bodyID)
+                modify_particle_position_2d(factor, value, int(self.particleNum[0]), self.particle, bodyID)
         elif property_name == "velocity":
             if sims.dimension == 3:
                 modify_particle_velocity(factor, value, int(self.particleNum[0]), self.particle, bodyID)
             elif sims.dimension == 2:
-                modify_particle_velocity_2D(factor, value, int(self.particleNum[0]), self.particle, bodyID)
+                modify_particle_velocity_2d(factor, value, int(self.particleNum[0]), self.particle, bodyID)
         elif property_name == "stress":
             modify_particle_stress(factor, value, int(self.particleNum[0]), self.particle, bodyID)
         elif property_name == "fix_velocity":
             FIX = {"Free": 0, "Fix": 1}
-            fix_v = vec3u8([DictIO.GetEssential(FIX, is_fix) for is_fix in value])
+            fix_v = vec3u8([DictIO.get_essential(FIX, is_fix) for is_fix in value])
             modify_particle_fix_v(fix_v, int(self.particleNum[0]), self.particle, bodyID)
         else:
             valid_list = ["bodyID", "materialID", "position", "velocity", "traction", "stress", "fix_velocity"]
@@ -772,7 +800,7 @@ class myScene(object):
         active = field_to_numpy_prefix(self.particle.active, particle_num).astype(bool)
         if self.psize.shape[0] >= particle_num:
             self.psize = np.ascontiguousarray(self.psize[:particle_num][active])
-        remaining = update_particle_storage_(
+        remaining = update_particle_storage(
             particle_num,
             self.particle,
             self.material.stateVars,
@@ -803,12 +831,12 @@ class myScene(object):
 
     def check_in_domain(self, sims: Simulation):
         if sims.dimension == 2:
-            check_in_domain_2D(sims.domain, int(self.particleNum[0]), self.particle)
+            check_in_domain_2d(sims.domain, int(self.particleNum[0]), self.particle)
         else:
             check_in_domain(sims.domain, int(self.particleNum[0]), self.particle)
 
-    def check_in_domain_2D(self, sims: Simulation):
-        check_in_domain_2D(sims.domain, int(self.particleNum[0]), self.particle)
+    def check_in_domain_2d(self, sims: Simulation):
+        check_in_domain_2d(sims.domain, int(self.particleNum[0]), self.particle)
 
     def get_mass_center(self, bodyID=0):
         return kernel_compute_mass_center(int(self.particleNum[0]), self.particle, bodyID)
@@ -823,9 +851,9 @@ class myScene(object):
             coupling = field_to_numpy_prefix(self.particle.coupling, int(self.particleNum[0]))
             phase = field_to_numpy_prefix(self.particle.phase, int(self.particleNum[0]))
             if np.any(phase[coupling == 1] != 1):
-                raise RuntimeError("TwoPhaseDoubleLayer ordinary DEM contact may include solid points only")
+                raise SimulationStateError("TwoPhaseDoubleLayer ordinary DEM contact may include solid points only")
             if np.any(coupling[:need_coupling] != 1) or np.any(coupling[need_coupling:] != 0):
-                raise RuntimeError(
+                raise ConfigurationError(
                     "TwoPhaseDoubleLayer DEM contact points must be a leading particle prefix; "
                     "add the solid-phase body templates before the fluid-phase templates"
                 )
@@ -955,13 +983,13 @@ class myScene(object):
 
                     distances = distance_along_direction_to_surface(mesh, point_cloud, -directions, max_distance=np.inf)
             if get_dist:
-                for materialID in range(self.material.mapping.shape[0] - 1):
-                    start_index = self.material.mapping[materialID]
-                    end_index = self.material.mapping[materialID + 1]
-                    k0 = self.material.matProps[materialID + 1].get_lateral_coefficient(
+                for material_id in range(self.material.mapping.shape[0] - 1):
+                    start_index = self.material.mapping[material_id]
+                    end_index = self.material.mapping[material_id + 1]
+                    k0 = self.material.matProps[material_id + 1].get_lateral_coefficient(
                         start_index, end_index, self.material.materialID, self.material.stateVars
                     )
-                    kernel_apply_gravity_field_(
+                    kernel_apply_gravity_field(
                         start_index,
                         end_index,
                         sims.gravity,
@@ -969,11 +997,11 @@ class myScene(object):
                         distances,
                         self.particle,
                         self.material.materialID,
-                        self.material.matProps[materialID + 1],
+                        self.material.matProps[material_id + 1],
                         self.material.stateVars,
                     )
             else:
-                kernel_setting_gravity_field_(int(self.particleNum[0]), self.particle, gravity_field)
+                kernel_setting_gravity_field(int(self.particleNum[0]), self.particle, gravity_field)
 
     def adaptive_timestep(self, sims: Simulation):
         grid_size = self.element.grid_size

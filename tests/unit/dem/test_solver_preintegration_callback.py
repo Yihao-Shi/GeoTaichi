@@ -1,7 +1,7 @@
+from src.utils.RuntimeHook import python_callback
+from src.dem.DEMBase import AffineBodySolver
+from src.dem.DEMBase import Solver
 from types import SimpleNamespace
-
-from src.dem.DEMBase import AffineBodySolver, Solver
-from src.utils.SolverRuntime import python_callback
 
 
 class _Timer:
@@ -12,11 +12,7 @@ class _Timer:
         pass
 
 
-def test_preintegration_callback_runs_after_contact_and_before_integration(monkeypatch):
-    monkeypatch.setattr(
-        "src.dem.DEMBase.normalize_callbacks",
-        lambda functions, _transform: (functions,),
-    )
+def test_preintegration_callback_runs_after_contact_and_before_integration():
     events = []
 
     class _Engine:
@@ -41,7 +37,7 @@ def test_preintegration_callback_runs_after_contact_and_before_integration(monke
     sims = SimpleNamespace(timer=_Timer())
     contact = SimpleNamespace(neighbor=object())
     solver = Solver(sims, None, contact, _Engine(), None)
-    solver.set_preintegration_callback_function(lambda: events.append("diagnostic"))
+    solver.set_preintegration_callback_function(python_callback(lambda: events.append("diagnostic")))
 
     solver.core(object())
 

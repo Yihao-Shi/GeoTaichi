@@ -70,7 +70,7 @@ def particle_residual_and_jacobian(material, u_nodes, p_nodes, p_old_nodes, data
     for a in range(len(node_ids)):
         gi = gcur[a]
         base_force = (-sigma_total @ gi + N[a] * rho_mix * gravity) * vol
-        rloc[4 * a:4 * a + 3] = base_force
+        rloc[4 * a : 4 * a + 3] = base_force
 
         darcy = dt * mobility * gi.dot(q)
         mass = (N[a] * log_ratio + darcy) * vol
@@ -82,7 +82,7 @@ def particle_residual_and_jacobian(material, u_nodes, p_nodes, p_old_nodes, data
             Gj = Gref[b]
             gj = gcur[b]
             Kup = vol * N[b] * gi
-            Kloc[4 * a:4 * a + 3, 4 * b + 3] = Kup
+            Kloc[4 * a : 4 * a + 3, 4 * b + 3] = Kup
 
             Kpp = dt * mobility * gi.dot(gj) * vol
             if ppp:
@@ -96,17 +96,17 @@ def particle_residual_and_jacobian(material, u_nodes, p_nodes, p_old_nodes, data
                 dgi = -hcol * Gj.dot(gi)
                 dv = vol * eta
                 drho = coeff_rho * eta
-                dsigma = constitutive_tangent_apply(material, stress_old, F_old, F_new, J_new, grad_u, Gj, comp, eta, lam, mu)
+                dsigma = constitutive_tangent_apply(
+                    material, stress_old, F_old, F_new, J_new, grad_u, Gj, comp, eta, lam, mu
+                )
 
                 mech = (-dsigma @ gi - sigma_total @ dgi + N[a] * drho * gravity) * vol
                 mech += (-sigma_total @ gi + N[a] * rho_mix * gravity) * dv
-                Kloc[4 * a:4 * a + 3, col] = mech
+                Kloc[4 * a : 4 * a + 3, col] = mech
 
                 scalar_grad = (
-                    -Gj.dot(gi) * hcol.dot(q)
-                    - Gj.dot(q) * hcol.dot(gi)
-                    + gi.dot(q) * eta
-                ) * dt * mobility * vol
+                    (-Gj.dot(gi) * hcol.dot(q) - Gj.dot(q) * hcol.dot(gi) + gi.dot(q) * eta) * dt * mobility * vol
+                )
                 kpu = N[a] * (1.0 + log_ratio) * eta * vol + scalar_grad
                 if ppp:
                     kpu += tau * (N[a] - Navg[a]) * ppp_gap * dv
@@ -119,7 +119,7 @@ def pack_unknowns(u_nodes, p_nodes):
     n = len(p_nodes)
     x = np.zeros(4 * n)
     for i in range(n):
-        x[4 * i:4 * i + 3] = u_nodes[i]
+        x[4 * i : 4 * i + 3] = u_nodes[i]
         x[4 * i + 3] = p_nodes[i]
     return x
 
@@ -129,7 +129,7 @@ def unpack_unknowns(x):
     u = np.zeros((n, 3))
     p = np.zeros(n)
     for i in range(n):
-        u[i] = x[4 * i:4 * i + 3]
+        u[i] = x[4 * i : 4 * i + 3]
         p[i] = x[4 * i + 3]
     return u, p
 
@@ -140,7 +140,7 @@ def global_residual(material, x, p_old_nodes, particles, n_nodes):
     for data in particles:
         rloc, _ = particle_residual_and_jacobian(material, u_nodes, p_nodes, p_old_nodes, data)
         for a, node in enumerate(data["node_ids"]):
-            r[4 * node:4 * node + 4] += rloc[4 * a:4 * a + 4]
+            r[4 * node : 4 * node + 4] += rloc[4 * a : 4 * a + 4]
     return r
 
 
@@ -209,7 +209,7 @@ def random_particle(rng, n_nodes, ppp):
 
 
 def make_admissible_old_stress(material, particle, rng):
-    if material != "druckerPrager":
+    if material != "DruckerPrager":
         return
     eps0 = rng.uniform(-2.0e-3, 2.0e-3, size=(3, 3))
     eps0 = 0.5 * (eps0 + eps0.T)
@@ -253,6 +253,6 @@ def run_case(material, ppp, trials=10):
 
 
 if __name__ == "__main__":
-    for material in ("linearElastic", "neoHookean", "druckerPrager"):
+    for material in ("LinearElastic", "NeoHookean", "DruckerPrager"):
         for ppp in (False, True):
             run_case(material, ppp, trials=12)

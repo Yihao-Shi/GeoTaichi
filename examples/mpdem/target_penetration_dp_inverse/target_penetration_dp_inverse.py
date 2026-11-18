@@ -14,7 +14,7 @@ import math
 import numpy as np
 import taichi as ti
 
-from src.physics_model.consititutive_model.finite_strain.DruckerPrager import (
+from src.physics_model.constitutive_model.finite_strain.DruckerPrager import (
     FiniteStrainDruckerPragerModel,
 )
 

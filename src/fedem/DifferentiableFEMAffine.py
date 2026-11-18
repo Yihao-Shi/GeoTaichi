@@ -1,5 +1,9 @@
 """Device trajectory adjoint for elastic FEM--AffineBody BarrierIPC."""
 
+from src.physics_model.contact_model.ipc.Utilities import ipc_friction_f1_over_speed
+from src.physics_model.contact_model.ipc.Utilities import ipc_barrier_distance2_offset_terms
+from src.utils.errors import NonlinearSolveError, RecordingError, SimulationStateError
+
 import numpy as np
 import taichi as ti
 
@@ -15,10 +19,8 @@ from src.physics_model.contact_model.ipc.ContactMollifier import (
     edge_edge_mollifier,
     edge_edge_mollifier_threshold,
 )
-from src.physics_model.contact_model.ipc.IPC import (
-    ipc_friction_f1_over_speed,
-    ipc_toolkit_barrier_distance2_offset_terms,
-)
+from src.physics_model.contact_model.ipc.Friction import Friction
+from src.physics_model.contact_model.ipc.Barrier import Barrier
 
 from .AffineIPCEngine import FEMAffineIPCEngine
 
@@ -233,7 +235,7 @@ class DifferentiableFEMAffine:
                 mollifier = edge_edge_mollifier(p0, p1, q0, q1, threshold)
             if shifted > 0.0 and shifted < active_gap2 and mollifier >= 1.0 - 1.0e-12:
                 normalized_kappa = self.engine.contact.pair_kappa[affine_body, fem_body] / (active_gap2 * active_gap2)
-                unused_energy, first, unused_second = ipc_toolkit_barrier_distance2_offset_terms(
+                unused_energy, first, unused_second = ipc_barrier_distance2_offset_terms(
                     distance2,
                     dhat,
                     dmin,
@@ -243,7 +245,7 @@ class DifferentiableFEMAffine:
                 base_shifted = base_distance2 - dmin * dmin
                 base_force = 0.0
                 if base_shifted > 0.0 and base_shifted < active_gap2:
-                    unused_base_energy, base_first, unused_base_second = ipc_toolkit_barrier_distance2_offset_terms(
+                    unused_base_energy, base_first, unused_base_second = ipc_barrier_distance2_offset_terms(
                         base_distance2,
                         dhat,
                         dmin,
@@ -452,7 +454,7 @@ class DifferentiableFEMAffine:
                 "residual": float(solver.last_residual),
             }
         if not result["converged"]:
-            raise RuntimeError(
+            raise NonlinearSolveError(
                 "FEM--AffineBody coupled adjoint did not converge: "
                 f"residual={result['residual']:.6e}, iterations={result['iterations']}"
             )
@@ -460,13 +462,13 @@ class DifferentiableFEMAffine:
     def step(self):
         """Advance one fixed step and record the accepted state on device."""
         if self.record_count >= self.capacity:
-            raise RuntimeError("differentiable FEM--AffineBody trajectory tape is full")
+            raise SimulationStateError("differentiable FEM--AffineBody trajectory tape is full")
         if self.engine.dt != self.dt or self.engine.step_count != self.initial_step + self.record_count:
             raise ValueError("advance only fixed steps through DifferentiableFEMAffine.step()")
         converged = self.engine.step(verbose=False, record_history=False)
         automatic_friction = self.engine._friction_controls()[2]
         if not converged or (automatic_friction and not self.engine.last_friction_converged):
-            raise RuntimeError("cannot differentiate an unconverged FEM--AffineBody step")
+            raise NonlinearSolveError("cannot differentiate an unconverged FEM--AffineBody step")
         self.record_count += 1
         self._record_state(self.record_count)
         return self.fem.state.position, self.affine.y
@@ -482,7 +484,7 @@ class DifferentiableFEMAffine:
     ):
         """Reverse all recorded steps and return FEM/ABD state and parameter VJPs."""
         if self.record_count == 0:
-            raise RuntimeError("record at least one step before backward()")
+            raise RecordingError("record at least one step before backward()")
 
         def seed(value, shape, name):
             result = np.zeros(shape, dtype=np.float64) if value is None else np.asarray(value, dtype=np.float64)

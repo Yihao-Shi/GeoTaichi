@@ -133,11 +133,3 @@ class IPCWallBoundary:
             self.scene.wall[wall].vertice3 = self.vertex3[wall]
             self.scene.wall[wall].translation += self.offset[wall]
             self.scene.wall[wall].verletDisp += self.offset[wall]
-
-
-def ipc_wall_boundary(scene, sims):
-    boundary = getattr(scene, "ipc_wall_boundary", None)
-    if boundary is None:
-        boundary = IPCWallBoundary(scene, sims)
-        scene.ipc_wall_boundary = boundary
-    return boundary

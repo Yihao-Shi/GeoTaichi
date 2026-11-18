@@ -10,7 +10,7 @@ pytestmark = [pytest.mark.unit, pytest.mark.iga, pytest.mark.cpu]
 @pytest.mark.parametrize("solver", ["PCG", "BiCGSTAB"])
 def test_igampm_coo_scatter_and_krylov_remain_on_device(taichi_runtime, solver):
     import src.igampm.config as config
-    from src.igampm.engines import Engine
+    from src.igampm.engines.CoupledEngine import Engine
     from src.linear_solver.BuildTriplet import BuildTriplet
     from src.linear_solver.CoordinateSparseMatrix import CoordinateSparseMatrix
 

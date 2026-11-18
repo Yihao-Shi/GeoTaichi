@@ -73,7 +73,7 @@ def ComputeInvariantJ2(stress):
     return math.sqrt(3 * J2)
 
 
-def MeanStress(stress):
+def mean_stress(stress):
     sigma = (stress[0] + stress[1] + stress[2]) / 3.0
     return sigma
 

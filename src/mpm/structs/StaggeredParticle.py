@@ -1,7 +1,7 @@
 import taichi as ti
-
-from src.utils.TypeDefination import vec2f, vec3f, vec2u8, vec3u8, mat2x2, mat3x3
+from src.utils.TypeDefinition import vec2f, vec2u8, mat2x2
 import src.utils.GlobalVariable as GlobalVariable
+from src.utils.TypeDefinition import vec3f, vec3u8, mat3x3
 
 
 @ti.dataclass
@@ -19,9 +19,11 @@ class StaggeredParticle:
     fix_v: vec3u8
 
     @ti.func
-    def _restart(self, bodyID, materialID, active, mass, position, velocity, volume, pressure, velocity_gradient, fix_v):
-        self.bodyID = ti.u8(bodyID)
-        self.materialID = ti.u8(materialID)
+    def _restart(
+        self, body_id, material_id, active, mass, position, velocity, volume, pressure, velocity_gradient, fix_v
+    ):
+        self.bodyID = ti.u8(body_id)
+        self.materialID = ti.u8(material_id)
         self.active = ti.u8(active)
         self.m = float(mass)
         self.x = float(position)
@@ -32,11 +34,11 @@ class StaggeredParticle:
         self.fix_v = ti.cast(fix_v, ti.u8)
 
     @ti.func
-    def _set_essential(self, particleID, bodyID, materialID, density, particle_volume, position, init_v, fix_v):
-        self.particleID = particleID
+    def _set_essential(self, particle_id, body_id, material_id, density, particle_volume, position, init_v, fix_v):
+        self.particleID = particle_id
         self.active = ti.u8(1)
-        self.bodyID = ti.u8(bodyID)
-        self.materialID = ti.u8(materialID)
+        self.bodyID = ti.u8(body_id)
+        self.materialID = ti.u8(material_id)
         self.vol = float(particle_volume)
         self.m = float(particle_volume * density)
         self.x = float(position)
@@ -45,17 +47,17 @@ class StaggeredParticle:
 
     @ti.func
     def _add_gravity_field(self, gamma):
-        self.pressure += 1./3. * float(gamma[0, 0] + gamma[1, 1] + gamma[2, 2])
-    
+        self.pressure += 1.0 / 3.0 * float(gamma[0, 0] + gamma[1, 1] + gamma[2, 2])
+
     @ti.func
     def _compute_internal_force(self):
         pass
-    
+
     @ti.func
-    def _update_particle_state(self, dt, alpha, vPIC, vFLIP):
+    def _update_particle_state(self, dt, alpha, v_pic, input_v_flip):
         v0 = self.v
-        self.v = alpha * vPIC + (1 - alpha) * (vFLIP + v0)
-        self.x += vPIC * dt[None]
+        self.v = alpha * v_pic + (1 - alpha) * (input_v_flip + v0)
+        self.x += v_pic * dt[None]
         if ti.static(GlobalVariable.MPMXPBC):
             self.x[0] -= ti.floor(self.x[0] / GlobalVariable.MPMXSIZE) * GlobalVariable.MPMXSIZE
         if ti.static(GlobalVariable.MPMYPBC):
@@ -65,7 +67,7 @@ class StaggeredParticle:
 
     @ti.func
     def _update_stress(self, stress):
-        self.pressure += 1./3. * (stress[0] + stress[1] + stress[2])
+        self.pressure += 1.0 / 3.0 * (stress[0] + stress[1] + stress[2])
 
     @ti.func
     def _get_mean_stress(self):
@@ -92,9 +94,11 @@ class StaggeredParticle2D:
     unfix_v: vec2u8
 
     @ti.func
-    def _restart(self, bodyID, materialID, active, mass, position, velocity, volume, pressure, velocity_gradient, fix_v):
-        self.bodyID = ti.u8(bodyID)
-        self.materialID = ti.u8(materialID)
+    def _restart(
+        self, body_id, material_id, active, mass, position, velocity, volume, pressure, velocity_gradient, fix_v
+    ):
+        self.bodyID = ti.u8(body_id)
+        self.materialID = ti.u8(material_id)
         self.active = ti.u8(active)
         self.m = float(mass)
         self.x = float(position)
@@ -105,11 +109,11 @@ class StaggeredParticle2D:
         self.fix_v = ti.cast(fix_v, ti.u8)
 
     @ti.func
-    def _set_essential(self, particleID, bodyID, materialID, density, particle_volume, position, init_v, fix_v):
-        self.particleID = particleID
+    def _set_essential(self, particle_id, body_id, material_id, density, particle_volume, position, init_v, fix_v):
+        self.particleID = particle_id
         self.active = ti.u8(1)
-        self.bodyID = ti.u8(bodyID)
-        self.materialID = ti.u8(materialID)
+        self.bodyID = ti.u8(body_id)
+        self.materialID = ti.u8(material_id)
         self.vol = float(particle_volume)
         self.m = float(particle_volume * density)
         self.x = float(position)
@@ -118,17 +122,17 @@ class StaggeredParticle2D:
 
     @ti.func
     def _add_gravity_field(self, gamma):
-        self.pressure += 1./3. * float(gamma[0, 0] + gamma[1, 1] + gamma[2, 2])
-    
+        self.pressure += 1.0 / 3.0 * float(gamma[0, 0] + gamma[1, 1] + gamma[2, 2])
+
     @ti.func
     def _compute_internal_force(self):
         pass
-    
+
     @ti.func
-    def _update_particle_state(self, dt, alpha, vPIC, vFLIP):
+    def _update_particle_state(self, dt, alpha, v_pic, input_v_flip):
         v0 = self.v
-        self.v = alpha * vPIC + (1 - alpha) * (vFLIP + v0)
-        self.x += vPIC * dt[None]
+        self.v = alpha * v_pic + (1 - alpha) * (input_v_flip + v0)
+        self.x += v_pic * dt[None]
         if ti.static(GlobalVariable.MPMXPBC):
             self.x[0] -= ti.floor(self.x[0] / GlobalVariable.MPMXSIZE) * GlobalVariable.MPMXSIZE
         if ti.static(GlobalVariable.MPMYPBC):
@@ -136,7 +140,7 @@ class StaggeredParticle2D:
 
     @ti.func
     def _update_stress(self, stress):
-        self.pressure += 1./3. * (stress[0] + stress[1] + stress[2])
+        self.pressure += 1.0 / 3.0 * (stress[0] + stress[1] + stress[2])
 
     @ti.func
     def _get_mean_stress(self):

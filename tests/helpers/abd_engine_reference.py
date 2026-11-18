@@ -1,15 +1,14 @@
 """Host ABD Newton/line-search oracles for isolated tests only."""
 
+from src.linear_solver.Utilities import accepts_monotone_energy
+
+from src.dem.engines.Utilities import _normalize_affine_assemble_type
+
 import numpy as np
 
-from src.utils.SolverRuntime import accepts_monotone_energy
 
-from src.dem.engines.AffineBodyOperator import (
-    MATRIX_COO,
-    MATRIX_HASH_TRIPLET,
-    _normalize_affine_assemble_type,
-    _normalize_affine_friction_mode,
-)
+from src.dem.engines.AffineBodyOperator import MATRIX_COO, MATRIX_HASH_TRIPLET
+from src.dem.engines.AffineBodyOperator import TaichiAffineBodyOperator
 
 
 from src.dem.engines.AffineBodyEngine import AffineBodyEngine
@@ -32,7 +31,7 @@ class ReferenceAffineBodyEngine(AffineBodyEngine):
         self.step_line_search_max_backtracks = 0
         self.step_line_search_converged = True
         dt = float(sims.dt[None])
-        mode = _normalize_affine_friction_mode(sims.affine_friction_mode)
+        mode = TaichiAffineBodyOperator._normalize_affine_friction_mode(sims.affine_friction_mode)
         operator_fully_implicit = self.operator.fully_implicit
         if (mode == "fully_implicit") != operator_fully_implicit:
             raise RuntimeError(

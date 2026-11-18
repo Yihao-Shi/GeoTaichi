@@ -1,5 +1,8 @@
 """Replay one failed CUDA cube step; retain trial diagnostics only on the remote host."""
 
+from src.linear_solver.Utilities import accepts_monotone_energy
+
+
 import argparse
 import hashlib
 import json
@@ -42,7 +45,6 @@ def main():
 
     if args.armijo:
         import importlib
-        from src.utils.SolverRuntime import accepts_monotone_energy
 
         assert 0.0 < args.armijo < 0.5
         engine_module = importlib.import_module("src.dem.engines.AffineBodyEngine")

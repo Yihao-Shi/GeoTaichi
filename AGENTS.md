@@ -3,6 +3,12 @@
 GeoTaichi is a Python/Taichi simulation library. Start here, then read only the
 documents and source paths needed for the requested change.
 
+For coding and refactoring, read the installed `karpathy-guidelines` skill and
+apply its simplicity and focused-change rules alongside Ponytail. See
+[coding guidelines](agent/CODING_GUIDELINES.md#0-coding-agent-prerequisites).
+For source naming, follow the [naming conventions](agent/CODING_GUIDELINES.md#3-naming-and-formatting),
+including mathematical notation and public/state-schema exceptions.
+
 ## Find the owner
 
 1. Check `git status --short` and preserve existing edits and experiment data.
@@ -18,6 +24,7 @@ documents and source paths needed for the requested change.
 | Task | Read next |
 | --- | --- |
 | Library implementation or review | [Code paths](agent/CODEMAP.md), relevant [workflow](agent/WORKFLOWS.md), and the owning `src/<module>/README.md`; use [coding guidelines](agent/CODING_GUIDELINES.md) for detailed rules |
+| Structure refactor or code migration | Read [agreed boundaries and migration record](agent/CODE_STRUCTURE_REFACTOR.md) before moving code; preserve established names and keep small related classes together |
 | Model or public example | [Model-builder instructions](agent/geotaichi-model-builder/SKILL.md) and the nearest example using that solver path |
 | Materials, contact, or linear algebra | [Physics models](src/physics_model/README.md), [contact detection](src/contact_detection/README.md), or [linear solvers](src/linear_solver/README.md) |
 | Test selection and local commits | [Test guide](tests/README.md#local-commit-checks) and [partition definitions](tests/testing/test_partitions.json) |

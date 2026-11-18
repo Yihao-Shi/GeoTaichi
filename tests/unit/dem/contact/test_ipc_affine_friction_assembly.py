@@ -153,6 +153,51 @@ def _official_barrier_terms(distance, dhat, kappa):
     return energy, normal_force
 
 
+def test_mesh_friction_cache_pullback_matches_actual_cache_refresh(tmp_path):
+    ti.reset()
+    ti.init(arch=ti.cpu, default_fp=ti.f64, cpu_max_num_threads=1, offline_cache=False)
+    dem, hat = _build_affine_contact(tmp_path)
+    operator = dem.enginer.operator
+    rng = np.random.default_rng(512)
+    cache = hat + 0.003 * rng.normal(size=hat.shape)
+    current = hat + 0.002 * rng.normal(size=hat.shape)
+    direction = rng.normal(size=hat.shape)
+    adjoint = rng.normal(size=hat.shape)
+    source_positions = ti.Vector.field(3, ti.f64, shape=operator.vertex_num)
+    rhs = ti.field(ti.f64, shape=hat.size)
+
+    def refresh(values):
+        operator.initialize_contact_damping(values, hat)
+        count = int(operator.friction_contact_count[0])
+        vertices = operator.friction_contact_vertices.to_numpy()[:count]
+        return sorted(tuple(row) for row in vertices)
+
+    contacts = refresh(cache)
+    source_positions.from_numpy(operator.x.to_numpy())
+    operator.y.from_numpy(current.reshape(-1, 3))
+    operator.assemble_device(need_matrix=False, project_spd=False, solver_shift=False)
+    operator.linear_x.from_numpy(adjoint)
+    rhs.fill(0.0)
+    operator.device_propagate_mesh_friction_cache(source_positions, rhs)
+    analytic = np.dot(rhs.to_numpy(), direction)
+    assert abs(analytic) > 1e-8
+    count = int(operator.friction_contact_count[0])
+    bodies = operator.friction_contact_bodies.to_numpy()[:count]
+    assert np.any(bodies[:, 0] == bodies[:, 1])  # EE
+    assert np.any(bodies[:, 0] != bodies[:, 1])  # PT
+
+    def objective(shift):
+        assert refresh(cache + shift * direction) == contacts
+        operator.y.from_numpy(current.reshape(-1, 3))
+        operator.assemble_device(need_matrix=False, project_spd=False, solver_shift=False)
+        return -np.dot(operator.grad.to_numpy().ravel(), adjoint)
+
+    for step in (1e-6, 2e-7):
+        numerical = (objective(step) - objective(-step)) / (2 * step)
+        assert analytic == pytest.approx(numerical, rel=2e-5, abs=1e-9)
+    ti.reset()
+
+
 def _assert_official_collision_weights(dem, expected_kinds):
     from src.dem.engines.AffineBodyOperator import MATRIX_COO
 

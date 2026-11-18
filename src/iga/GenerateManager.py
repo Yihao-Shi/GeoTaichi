@@ -1,6 +1,9 @@
 from src.iga.generator.Primitives import Primitives
-from src.nurbs.BasicSurface import Rectangle, Ring
-from src.nurbs.BasicVolume import Cube, Tube, Cylinder
+from src.nurbs.Rectangle import Rectangle
+from src.nurbs.Ring import Ring
+from src.nurbs.Cube import Cube
+from src.nurbs.Cylinder import Cylinder
+from src.nurbs.Tube import Tube
 
 
 class IGAGenerateManager:

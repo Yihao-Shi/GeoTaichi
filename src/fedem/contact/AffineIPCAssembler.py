@@ -1,5 +1,11 @@
 """Mixed FEM-node/AffineBody-control IPC barrier/friction assembly."""
 
+from src.utils.MatrixFunction import psd_project_nd
+from src.physics_model.contact_model.ipc.Utilities import ipc_friction_f0
+from src.physics_model.contact_model.ipc.Utilities import ipc_friction_f1_over_speed
+from src.physics_model.contact_model.ipc.Utilities import ipc_barrier_distance2_offset_terms
+from src.utils.errors import CapacityError, SimulationStateError
+
 import numpy as np
 import taichi as ti
 
@@ -16,12 +22,11 @@ from src.fem.contact.CollisionCulling import FEMCollisionCulling
 from src.fem.contact.LinkedCellBroadPhase import (
     DynamicLinkedCellBroadPhase,
 )
-from src.physics_model.contact_model.ipc.ContactAssembly import psd_project_nd
 from src.physics_model.contact_model.ipc.ContactDistance import (
     edge_edge_distance_type,
-    g_EE,
-    g_PE3D,
-    g_PT,
+    g_ee,
+    g_pe3d,
+    g_pt,
     line_line_distance2,
     point_line_distance2,
     point_plane_distance2,
@@ -39,11 +44,8 @@ from src.physics_model.contact_model.ipc.ContactMollifier import (
     edge_edge_mollifier_terms,
     edge_edge_mollifier_threshold,
 )
-from src.physics_model.contact_model.ipc.IPC import (
-    ipc_friction_f0,
-    ipc_friction_f1_over_speed,
-    ipc_toolkit_barrier_distance2_offset_terms,
-)
+from src.physics_model.contact_model.ipc.Friction import Friction
+from src.physics_model.contact_model.ipc.Barrier import Barrier
 
 
 @ti.data_oriented
@@ -56,7 +58,7 @@ class FEMAffineIPCAssembler:
         self.model = model
         self.real_type = ti.lang.impl.current_cfg().default_fp
         if self.real_type != ti.f64:
-            raise RuntimeError("FEM--AffineBody IPC requires Taichi float64")
+            raise SimulationStateError("FEM--AffineBody IPC requires Taichi float64")
         self.fem_node_count = int(fem.mesh.number_of_nodes)
         self.affine_vertex_count = int(affine.vertex_num)
         self.affine_control_count = int(affine.control_num)
@@ -296,12 +298,12 @@ class FEMAffineIPCAssembler:
 
     def _ensure_friction_terms(self, pt_count, ee_count):
         if int(pt_count) > self.friction_pt_capacity:
-            raise RuntimeError(
+            raise CapacityError(
                 "FEM--AffineBody friction PT capacity is too small: "
                 f"need {pt_count}, allocated {self.friction_pt_capacity}"
             )
         if int(ee_count) > self.friction_ee_capacity:
-            raise RuntimeError(
+            raise CapacityError(
                 "FEM--AffineBody friction EE capacity is too small: "
                 f"need {ee_count}, allocated {self.friction_ee_capacity}"
             )
@@ -320,11 +322,11 @@ class FEMAffineIPCAssembler:
 
     def _ensure_local_terms(self, pt_count, ee_count):
         if int(pt_count) > self.pt_capacity:
-            raise RuntimeError(
+            raise CapacityError(
                 "FEM--AffineBody local PT capacity is too small: " f"need {pt_count}, allocated {self.pt_capacity}"
             )
         if int(ee_count) > self.ee_capacity:
-            raise RuntimeError(
+            raise CapacityError(
                 "FEM--AffineBody local EE capacity is too small: " f"need {ee_count}, allocated {self.ee_capacity}"
             )
 
@@ -519,7 +521,7 @@ class FEMAffineIPCAssembler:
                     active_gap2 = (2.0 * dmin + dhat) * dhat
                     if shifted > 0.0 and shifted < active_gap2:
                         normalized_kappa = self.pair_kappa[affine_body, fem_body] / (active_gap2 * active_gap2)
-                        _, first, _ = ipc_toolkit_barrier_distance2_offset_terms(
+                        _, first, _ = ipc_barrier_distance2_offset_terms(
                             distance2,
                             dhat,
                             dmin,
@@ -582,7 +584,7 @@ class FEMAffineIPCAssembler:
                     mollifier = edge_edge_mollifier(p0, p1, q0, q1, threshold)
                     if shifted > 0.0 and shifted < active_gap2 and mollifier >= 1.0 - 1.0e-12:
                         normalized_kappa = self.pair_kappa[affine_body, fem_body] / (active_gap2 * active_gap2)
-                        _, first, _ = ipc_toolkit_barrier_distance2_offset_terms(
+                        _, first, _ = ipc_barrier_distance2_offset_terms(
                             distance2,
                             dhat,
                             dmin,
@@ -741,7 +743,7 @@ class FEMAffineIPCAssembler:
                     first = self.position[stencil[first_site]]
                     second = self.position[stencil[second_site]]
                     self.pt_distance2[contact] = point_line_distance2(point, first, second)
-                    gradient = g_PE3D(point, first, second)
+                    gradient = g_pe3d(point, first, second)
                     self._store_pt_compact(contact, gradient, sites, 3)
             else:
                 if dtype == 6:
@@ -750,7 +752,7 @@ class FEMAffineIPCAssembler:
                     t1 = self.position[stencil[2]]
                     t2 = self.position[stencil[3]]
                     self.pt_distance2[contact] = point_plane_distance2(p, t0, t1, t2)
-                    gradient = g_PT(p, t0, t1, t2)
+                    gradient = g_pt(p, t0, t1, t2)
                     for row in range(12):
                         self.pt_gradient[contact, row] = gradient[row]
 
@@ -786,7 +788,7 @@ class FEMAffineIPCAssembler:
                     first = self.position[stencil[first_site]]
                     second = self.position[stencil[second_site]]
                     self.ee_distance2[contact] = point_line_distance2(point, first, second)
-                    gradient = g_PE3D(point, first, second)
+                    gradient = g_pe3d(point, first, second)
                     self._store_ee_compact(contact, gradient, sites, 3)
             else:
                 if dtype == 8:
@@ -795,7 +797,7 @@ class FEMAffineIPCAssembler:
                     q0 = self.position[stencil[2]]
                     q1 = self.position[stencil[3]]
                     self.ee_distance2[contact] = line_line_distance2(p0, p1, q0, q1)
-                    gradient = g_EE(p0, p1, q0, q1)
+                    gradient = g_ee(p0, p1, q0, q1)
                     for row in range(12):
                         self.ee_gradient[contact, row] = gradient[row]
 
@@ -1001,7 +1003,7 @@ class FEMAffineIPCAssembler:
                     )
                     if shifted < active_gap2:
                         normalized_kappa = self.pair_kappa[affine_body, fem_body] / (active_gap2 * active_gap2)
-                        energy, first, second = ipc_toolkit_barrier_distance2_offset_terms(
+                        energy, first, second = ipc_barrier_distance2_offset_terms(
                             distance2, dhat, dmin, normalized_kappa, 0
                         )
                         scale = self.culling.point_triangle_measure[contact] * dhat
@@ -1067,7 +1069,7 @@ class FEMAffineIPCAssembler:
                     )
                     if shifted < active_gap2:
                         normalized_kappa = self.pair_kappa[affine_body, fem_body] / (active_gap2 * active_gap2)
-                        barrier, first, second = ipc_toolkit_barrier_distance2_offset_terms(
+                        barrier, first, second = ipc_barrier_distance2_offset_terms(
                             distance2, dhat, dmin, normalized_kappa, 0
                         )
                         threshold = edge_edge_mollifier_threshold(

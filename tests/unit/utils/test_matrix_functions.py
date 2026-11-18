@@ -4,10 +4,24 @@ import numpy as np
 import pytest
 import taichi as ti
 
-from src.utils.MatrixFunction import get_eigenvalue_3x3, get_jacobian_inverse5
-
+from src.utils.MatrixFunction import get_eigenvalue_3x3, get_jacobian_inverse5, matrix_cols
 
 pytestmark = [pytest.mark.cpu, pytest.mark.linear_solver]
+
+
+@pytest.mark.parametrize("rows,columns", [(2, 3), (3, 2)])
+def test_matrix_column_preserves_rows_for_rectangular_matrices(taichi_runtime, rows, columns):
+    source = np.arange(rows * columns, dtype=float).reshape(rows, columns)
+    result = ti.Vector.field(rows, ti.f64, shape=columns)
+    matrix = ti.Matrix(source.tolist())
+
+    @ti.kernel
+    def columns_kernel():
+        for column in range(columns):
+            result[column] = matrix_cols(matrix, column)
+
+    columns_kernel()
+    np.testing.assert_array_equal(result.to_numpy(), source.T)
 
 
 @ti.kernel
@@ -76,20 +90,14 @@ def test_explicit_five_by_five_inverse_matches_numpy(taichi_runtime, matrix):
 
     _inverse_5x5(matrix, actual)
 
-    np.testing.assert_allclose(
-        actual, np.linalg.inv(matrix), rtol=2.0e-12, atol=2.0e-12
-    )
-    np.testing.assert_allclose(
-        actual @ matrix, np.eye(5), rtol=2.0e-12, atol=2.0e-12
-    )
+    np.testing.assert_allclose(actual, np.linalg.inv(matrix), rtol=2.0e-12, atol=2.0e-12)
+    np.testing.assert_allclose(actual @ matrix, np.eye(5), rtol=2.0e-12, atol=2.0e-12)
 
 
 @pytest.mark.parametrize(
     "matrix",
     [
-        np.asarray(
-            [[4.0, 0.8, -0.2], [0.8, 2.5, 0.4], [-0.2, 0.4, 1.25]]
-        ),
+        np.asarray([[4.0, 0.8, -0.2], [0.8, 2.5, 0.4], [-0.2, 0.4, 1.25]]),
         np.diag([3.0, 3.0, 3.0]),
     ],
     ids=("distinct", "isotropic"),
@@ -100,6 +108,4 @@ def test_symmetric_eigenvalues_match_numpy(taichi_runtime, matrix):
 
     _symmetric_eigenvalues(matrix, actual)
 
-    np.testing.assert_allclose(
-        np.sort(actual), np.linalg.eigvalsh(matrix), rtol=3.0e-7, atol=3.0e-7
-    )
+    np.testing.assert_allclose(np.sort(actual), np.linalg.eigvalsh(matrix), rtol=3.0e-7, atol=3.0e-7)

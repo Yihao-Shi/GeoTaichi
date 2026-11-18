@@ -6,6 +6,9 @@ the paper's particle-replenishing inlet is not available in the MPM solver.
 Use --crack-width for an independent discharge demonstration with a wider outlet.
 """
 
+from src.utils.RuntimeHook import python_callback
+
+
 import argparse
 import math
 import json
@@ -36,7 +39,6 @@ from examples.mmpm.GranularWaterLeakage3D.draw.evaluate_granular_water_leakage_3
 
 
 from geotaichi import MPM, init
-from src.utils.SolverRuntime import python_callback
 
 DX_DEFAULT = 0.005
 BED_HEIGHT = 0.06

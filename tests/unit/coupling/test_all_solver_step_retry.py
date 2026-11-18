@@ -3,19 +3,14 @@ import pytest
 pytest.importorskip("taichi")
 
 from src.dem.engines.AffineBodyEngine import AffineBodyEngine
-from src.fem.engines.ImplicitFEM import (
-    ImplicitFEM,
-    NewtonConvergenceError,
-)
-from src.iga.engines.ImplicitIGA import IGAConvergenceError, ImplicitIGA
+from src.fem.engines.ImplicitFEM import ImplicitFEM
+from src.iga.engines.ImplicitIGA import ImplicitIGA
 from src.igampm.engines.CoupledEngine import Engine as IGAMPMEngine
-from src.mpm.engines.direct.MPMSolver import (
-    MPMConvergenceError,
-    MPMSolver,
-)
+from src.mpm.engines.direct.MPMSolver import MPMSolver
 from src.mpdem.engines.SoftAffineIPCEngine import SoftAffineIPCEngine
 from src.utils.StepRetry import StepRetryPolicy
 from src.utils.SolverRuntime import StepSchedule
+from src.utils.errors import IGAConvergenceError, MPMConvergenceError, NewtonConvergenceError
 
 
 class _Scalar:

@@ -1,8 +1,9 @@
+from src.utils.errors import SimulationStateError
 import taichi as ti
 
 from src.utils.linalg import make_list
-from src.utils.Quaternion import SetToRotate
-from src.utils.TypeDefination import vec3f, vec4f
+from src.utils.Quaternion import set_to_rotate
+from src.utils.TypeDefinition import vec3f, vec4f
 
 AABB_MIN_EXTENT = 1.0e-6
 
@@ -18,7 +19,7 @@ class AABB(object):
 
     Attributes:
         n_aabbs (list/int): Number of AABBs per batch.
-        ti_aabb (taichi.dataclass): Taichi dataclass representing an individual AABB with min and max vectors.
+        TaichiAABB (taichi.dataclass): Taichi dataclass representing an individual AABB with min and max vectors.
         aabbs (taichi.field): Taichi field storing all AABBs in the specified batches.
 
     Args:
@@ -54,12 +55,12 @@ class AABB(object):
         else:
             self.current_batch_size = [int(x) for x in make_list(current_n_aabbs)]
         if len(self.current_batch_size) != self.n_batches:
-            raise RuntimeError("Active AABB batch count should match allocated batch count")
+            raise SimulationStateError("Active AABB batch count should match allocated batch count")
         for current_size, max_size in zip(self.current_batch_size, self.batch_size):
             if current_size <= 0:
-                raise RuntimeError("Each active AABB batch should contain at least one object")
+                raise SimulationStateError("Each active AABB batch should contain at least one object")
             if current_size > max_size:
-                raise RuntimeError("Active AABB batch size exceeds allocated batch size")
+                raise SimulationStateError("Active AABB batch size exceeds allocated batch size")
         self.current_n_aabbs = sum(self.current_batch_size)
         self.current_n_batches = len(self.current_batch_size)
 
@@ -74,7 +75,7 @@ class AABB(object):
         vector_type = self.vector_type
 
         @ti.dataclass
-        class ti_aabb:
+        class TaichiAABB:
             min: vector_type
             max: vector_type
 
@@ -103,12 +104,12 @@ class AABB(object):
                     and (self.min[2] - search_rad) <= point[2] <= (self.max[2] + search_rad)
                 )
 
-        self.ti_aabb = ti_aabb
+        self.TaichiAABB = TaichiAABB
 
         if oriented:
-            ti_aabb.members.update({"q": vec4f})  # Quaternion for orientation
+            TaichiAABB.members.update({"q": vec4f})  # Quaternion for orientation
 
-        self.aabbs = ti_aabb.field(
+        self.aabbs = TaichiAABB.field(
             shape=self.n_aabbs,
             needs_grad=False,
             layout=ti.Layout.SOA,
@@ -117,39 +118,44 @@ class AABB(object):
 
     @ti.kernel
     def set_sphere_aabbs(
-        self, particleNum: int, prefix_batch_size: int, verlet_distance: float, particle: ti.template()
+        self, particle_num: int, prefix_batch_size: int, verlet_distance: float, particle: ti.template()
     ):
-        for np in range(particleNum):
+        for np in range(particle_num):
             position = particle[np].x
             radius = particle[np].rad
             self.update_sphere_aabb(np, position, radius, verlet_distance, batch=prefix_batch_size)
 
     @ti.kernel
     def set_levelset_body_aabbs(
-        self, particleNum: int, prefix_batch_size: int, verlet_distance: float, rigid: ti.template(), box: ti.template()
+        self,
+        particle_num: int,
+        prefix_batch_size: int,
+        verlet_distance: float,
+        rigid: ti.template(),
+        box: ti.template(),
     ):
-        for np in range(particleNum):
+        for np in range(particle_num):
             self.update_levelset_body_aabb(np, rigid[np], box[np], verlet_distance, batch=prefix_batch_size)
 
     @ti.kernel
     def set_lsmpm_body_aabbs(
         self,
-        particleNum: int,
+        particle_num: int,
         prefix_batch_size: int,
         verlet_distance: float,
         particle: ti.template(),
         rigid: ti.template(),
         box: ti.template(),
     ):
-        for np in range(particleNum):
+        for np in range(particle_num):
             if int(rigid[np].is_soft) == 1:
                 self.update_lsmpm_soft_body_aabb(np, rigid[np], box[np], verlet_distance, batch=prefix_batch_size)
             else:
                 self.update_levelset_body_aabb(np, rigid[np], box[np], verlet_distance, batch=prefix_batch_size)
 
     @ti.kernel
-    def set_triangle_aabbs(self, triNum: int, prefix_batch_size: int, verlet_distance: float, triangle: ti.template()):
-        for np in range(triNum):
+    def set_triangle_aabbs(self, tri_num: int, prefix_batch_size: int, verlet_distance: float, triangle: ti.template()):
+        for np in range(tri_num):
             vertice1, vertice2, vertice3 = triangle[np].vertice1, triangle[np].vertice2, triangle[np].vertice3
             self.update_triangle_aabb(np, vertice1, vertice2, vertice3, verlet_distance, batch=prefix_batch_size)
 
@@ -169,7 +175,7 @@ class AABB(object):
 
     @ti.func
     def update_levelset_body_aabb(self, index, rigid, box, verlet_distance, batch=0):
-        rotate_matrix = SetToRotate(rigid.q)
+        rotate_matrix = set_to_rotate(rigid.q)
         center = rigid.mass_center + rotate_matrix @ box._get_shape_center()
         half_extent = 0.5 * box._get_shape_dim()
         world_half = ti.Vector.zero(float, self.dimension)
@@ -184,7 +190,7 @@ class AABB(object):
 
     @ti.func
     def update_lsmpm_soft_body_aabb(self, index, rigid, box, verlet_distance, batch=0):
-        rotate_matrix = SetToRotate(rigid.q)
+        rotate_matrix = set_to_rotate(rigid.q)
         center = rigid.mass_center + rotate_matrix @ box._get_shape_center()
         half_extent = 0.5 * ti.max(box._get_shape_dim(), vec3f(0.0, 0.0, 0.0))
         # |R| e is the exact axis-aligned half extent of a rotated OBB. It is

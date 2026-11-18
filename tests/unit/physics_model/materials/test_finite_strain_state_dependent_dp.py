@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 import taichi as ti
 
-from src.physics_model.consititutive_model.finite_strain.StateDependentDruckerPrager import (
+from src.physics_model.constitutive_model.finite_strain.StateDependentDruckerPrager import (
     StateDependentDruckerPragerModel,
 )
 

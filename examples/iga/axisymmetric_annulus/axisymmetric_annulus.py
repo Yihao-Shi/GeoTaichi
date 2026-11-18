@@ -2,7 +2,7 @@
 
 The NURBS patch represents an ``(r, z)`` meridian.  A small radial body
 acceleration exercises the three-dimensional no-swirl material map and the
-``2*pi*R`` quadrature measure; no response curve is used for acceptance.
+per-radian ``R`` quadrature measure; no response curve is used for acceptance.
 """
 
 import argparse
@@ -11,7 +11,6 @@ import sys
 from pathlib import Path
 
 import numpy as np
-
 
 ROOT = Path(__file__).resolve().parents[3]
 CASE_DIR = Path(__file__).resolve().parents[1]

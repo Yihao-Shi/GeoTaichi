@@ -57,7 +57,7 @@ ax1.invert_yaxis()
 # ax1.set_xlim([0, 160000])
 # ax1.set_ylim([0, 160000])
 
-"""ax2=plt.subplot(1,2,2)    
+"""ax2=plt.subplot(1,2,2)
 ax2.scatter(epslion, q, label='stress ratio')
 ax2.set_xlabel("Axial strain")
 ax2.set_ylabel("stress ratio")

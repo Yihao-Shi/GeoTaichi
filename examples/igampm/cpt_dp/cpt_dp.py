@@ -355,7 +355,7 @@ def axisymmetric_particle_count(grid_size, particles_per_cell=PARTICLES_PER_CELL
 
 
 def axisymmetric_surface_pressure_particles(points, grid_size):
-    """Return material-point IDs and reference annular areas for top pressure.
+    """Return material-point IDs and reference areas per radian for top pressure.
 
     Each point represents a reference annulus of radial width dx/ppc. The
     forces keep that reference area and follow the selected particle IDs;
@@ -365,7 +365,7 @@ def axisymmetric_surface_pressure_particles(points, grid_size):
     particle_spacing = float(grid_size) / PARTICLES_PER_CELL
     top_height = SOIL_ORIGIN[1] + SOIL_SIZE[1] - 0.5 * particle_spacing
     particle_ids = np.flatnonzero(np.isclose(points[:, 1], top_height, rtol=0.0, atol=1.0e-12)).astype(np.int32)
-    surface_area = 2.0 * np.pi * points[particle_ids, 0] * particle_spacing
+    surface_area = points[particle_ids, 0] * particle_spacing
     return particle_ids, surface_area
 
 
@@ -721,10 +721,18 @@ def main():
             raise ValueError("checkpoint configuration mismatch: shape_function; restart QuadBSpline from frame 0")
         if previous.get("small_mass_ratio", 0.0) != arguments.small_mass_ratio:
             raise ValueError("checkpoint configuration mismatch: small_mass_ratio")
+        if implicit and previous.get("axisymmetric_measure") != "per_radian":
+            raise ValueError(
+                "checkpoint configuration mismatch: axisymmetric_measure; restart per-radian IPC from frame 0"
+            )
     if not existing_run:
         (output_path / "parameters.json").write_text(
             json.dumps(
-                {**vars(arguments), "shape_function": "QuadBSpline" if implicit else SHAPE_FUNCTION},
+                {
+                    **vars(arguments),
+                    "shape_function": "QuadBSpline" if implicit else SHAPE_FUNCTION,
+                    "axisymmetric_measure": "per_radian" if implicit else "cartesian_3d",
+                },
                 default=str,
                 indent=2,
             )
@@ -759,7 +767,7 @@ def main():
             iga=iga,
             mpm=mpm,
             log=True,
-            contact_model="IPC",
+            contact_model="BarrierIPC",
             activate_friction=False,
             contact_all_mpm_particles=True,
             contact_surface_include=[(0, 0), (0, 1)],
@@ -816,7 +824,7 @@ def main():
     coupling.set_configuration(
         dimension=2 if implicit else 3,
         coupling_scheme="IGAMPM",
-        contact_model="IPC" if implicit else "Linear",
+        contact_model="BarrierIPC" if implicit else "Linear",
         activate_friction=False,
         axisymmetric=implicit,
         axis_offset=0.0,

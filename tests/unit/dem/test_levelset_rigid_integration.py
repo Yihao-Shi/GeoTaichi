@@ -1,13 +1,16 @@
+from src.dem.structs.BaseStruct import BoundingSphere
 import numpy as np
 import pytest
 import taichi as ti
 
 from src.dem.engines.EngineKernel import (
-    move_level_set_euler_,
-    move_level_set_verlet_predictor_,
-    move_level_set_verlet_corrector_,
+    move_level_set_euler,
+    move_level_set_verlet_predictor,
+    move_level_set_verlet_corrector,
 )
-from src.dem.structs.BaseStruct import BoundingSphere, Material, RigidBody
+
+from src.dem.structs.Material import Material
+from src.dem.structs.RigidBody import RigidBody
 
 pytestmark = [pytest.mark.unit, pytest.mark.dem, pytest.mark.cpu]
 
@@ -64,7 +67,7 @@ def _assert_constant_spin_state(sphere, rigid, expected_angle):
 
 def test_levelset_symplectic_euler_advects_existing_spin(taichi_runtime):
     dt, sphere, rigid, material = _make_rotating_body()
-    move_level_set_euler_(1, dt, sphere, rigid, material, ti.Vector([0.0, 0.0, 0.0]))
+    move_level_set_euler(1, dt, sphere, rigid, material, ti.Vector([0.0, 0.0, 0.0]))
 
     _assert_constant_spin_state(sphere, rigid, expected_angle=2.0 * np.arctan(0.1))
 
@@ -73,7 +76,7 @@ def test_levelset_velocity_verlet_keeps_world_momentum_consistent(
     taichi_runtime,
 ):
     dt, sphere, rigid, material = _make_rotating_body()
-    move_level_set_verlet_predictor_(1, dt, sphere, rigid, material, ti.Vector([0.0, 0.0, 0.0]))
-    move_level_set_verlet_corrector_(1, dt, rigid, material, ti.Vector([0.0, 0.0, 0.0]))
+    move_level_set_verlet_predictor(1, dt, sphere, rigid, material, ti.Vector([0.0, 0.0, 0.0]))
+    move_level_set_verlet_corrector(1, dt, rigid, material, ti.Vector([0.0, 0.0, 0.0]))
 
     _assert_constant_spin_state(sphere, rigid, expected_angle=0.2)

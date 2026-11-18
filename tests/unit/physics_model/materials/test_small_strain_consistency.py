@@ -5,15 +5,15 @@ import pytest
 import taichi as ti
 
 import src.utils.GlobalVariable as GlobalVariable
-from src.physics_model.consititutive_model.infinitesimal_strain.ElasticPerfectlyPlastic import (
+from src.physics_model.constitutive_model.infinitesimal_strain.ElasticPerfectlyPlastic import (
     ElasticPerfectlyPlasticModel,
 )
-from src.physics_model.consititutive_model.infinitesimal_strain.MaterialKernel import (
-    DeqepsilonqDepsilon,
-    EquivalentDeviatoricStrain,
+from src.physics_model.constitutive_model.infinitesimal_strain.MaterialKernel import (
+    deqepsilonq_depsilon,
+    equivalent_deviatoric_strain,
 )
-from src.physics_model.consititutive_model.infinitesimal_strain.MohrCoulomb import MohrCoulombModel
-from src.physics_model.consititutive_model.infinitesimal_strain.ModifiedCamClay import ModifiedCamClayModel
+from src.physics_model.constitutive_model.infinitesimal_strain.MohrCoulomb import MohrCoulombModel
+from src.physics_model.constitutive_model.infinitesimal_strain.ModifiedCamClay import ModifiedCamClayModel
 from src.utils.VectorFunction import voigt_tensor_dot
 
 pytestmark = [pytest.mark.materials, pytest.mark.cpu]
@@ -49,10 +49,10 @@ def test_tensor_history_gradient_matches_directional_difference(taichi_material_
     def evaluate():
         strain = ti.Vector([0.07, -0.02, -0.05, 0.04, 0.03, -0.02])
         direction = ti.Vector([0.1, -0.05, -0.05, 0.2, 0.1, -0.03])
-        out[0] = voigt_tensor_dot(DeqepsilonqDepsilon(strain), direction)
+        out[0] = voigt_tensor_dot(deqepsilonq_depsilon(strain), direction)
         out[1] = (
-            EquivalentDeviatoricStrain(strain + 1e-6 * direction)
-            - EquivalentDeviatoricStrain(strain - 1e-6 * direction)
+            equivalent_deviatoric_strain(strain + 1e-6 * direction)
+            - equivalent_deviatoric_strain(strain - 1e-6 * direction)
         ) / 2e-6
 
     evaluate()
@@ -69,14 +69,14 @@ def test_soft_strength_uses_local_history_without_committing(taichi_material_cpu
     def evaluate():
         state[0].strain = ti.Vector([0.0, 0.0, 0.0, 0.05 * ti.sqrt(1.5), 0.0, 0.0])
         value = ti.Vector([-60000.0, -80000.0, -70000.0, 10000.0, 0.0, 0.0])
-        params = model.GetMaterialParameter(value, state[0])
+        params = model.get_material_parameter(value, state[0])
         local = ti.Vector([0.0, 0.0, 0.0, 0.15 * ti.sqrt(1.5), 0.0, 0.0])
-        params = model.UpdateMaterialParameter(value, local, state[0], params)
+        params = model.update_material_parameter(value, local, state[0], params)
         if ti.static(kind == "mc"):
             out[0] = params[4]
         else:
             out[0] = params[2]
-        out[1] = EquivalentDeviatoricStrain(state[0].strain)
+        out[1] = equivalent_deviatoric_strain(state[0].strain)
 
     evaluate()
     assert out[0] == pytest.approx(15200.0)
@@ -104,25 +104,27 @@ def test_tensor_softening_modulus_matches_history_direction(taichi_material_cpu,
         state[0].strain = ti.Vector([0.07, -0.02, -0.05, 0.04, 0.03, -0.02])
         stress = ti.Vector([-60000.0, -80000.0, -70000.0, 10000.0, 1000.0, -3000.0])
         flow = ti.Vector([0.1, -0.05, -0.05, 0.2, 0.1, -0.03])
-        params = model.GetMaterialParameter(stress, state[0])
-        out[0] = model.ComputePlasticModulus(1, flow, stress, model.GetInternalVariables(state[0]), state[0], params)
+        params = model.get_material_parameter(stress, state[0])
+        out[0] = model.compute_plastic_modulus(
+            1, flow, stress, model.get_internal_variables(state[0]), state[0], params
+        )
         plus, minus = state[0], state[0]
         plus.strain += 1e-6 * flow
         minus.strain -= 1e-6 * flow
         fp, fm = 0.0, 0.0
         if ti.static(kind == "mc"):
-            fp, _ = model.ComputeYieldFunction(
-                stress, model.GetInternalVariables(plus), model.GetMaterialParameter(stress, plus)
+            fp, _ = model.compute_yield_function(
+                stress, model.get_internal_variables(plus), model.get_material_parameter(stress, plus)
             )
-            fm, _ = model.ComputeYieldFunction(
-                stress, model.GetInternalVariables(minus), model.GetMaterialParameter(stress, minus)
+            fm, _ = model.compute_yield_function(
+                stress, model.get_internal_variables(minus), model.get_material_parameter(stress, minus)
             )
         else:
-            fp = model.ComputeYieldFunction(
-                stress, model.GetInternalVariables(plus), model.GetMaterialParameter(stress, plus)
+            fp = model.compute_yield_function(
+                stress, model.get_internal_variables(plus), model.get_material_parameter(stress, plus)
             )
-            fm = model.ComputeYieldFunction(
-                stress, model.GetInternalVariables(minus), model.GetMaterialParameter(stress, minus)
+            fm = model.compute_yield_function(
+                stress, model.get_internal_variables(minus), model.get_material_parameter(stress, minus)
             )
         out[1] = (fp - fm) / 2e-6
 
@@ -139,10 +141,10 @@ def test_mc_elastic_interior_retains_negative_distance(taichi_material_cpu):
     @ti.kernel
     def evaluate():
         stress = ti.Vector([-60000.0, -80000.0, -70000.0, 1000.0, 0.0, 0.0])
-        params = model.GetMaterialParameter(stress, state[0])
-        internal = model.GetInternalVariables(state[0])
-        branch, out[0] = model.ComputeYieldState(stress, internal, params)
-        fs, ft = model.ComputeYieldFunction(stress, internal, params)
+        params = model.get_material_parameter(stress, state[0])
+        internal = model.get_internal_variables(state[0])
+        branch, out[0] = model.compute_yield_state(stress, internal, params)
+        fs, ft = model.compute_yield_function(stress, internal, params)
         out[1] = ti.max(fs, ft)
         assert branch == 0
 
@@ -179,21 +181,21 @@ def test_mcc_modulus_matches_local_history_rate(taichi_material_cpu, bonding, su
     def evaluate():
         state[0].pc, state[0].void_ratio = 200000.0, 0.7
         if ti.static(bonding):
-            state[0].chi, state[0].pcd, state[0].pcc = model.ComputeBondingParameters(0.8)
+            state[0].chi, state[0].pcd, state[0].pcc = model.compute_bonding_parameters(0.8)
         if ti.static(subloading):
             state[0].subloading_r = r0
         stress = ti.Vector([-60000.0, -100000.0, -80000.0, 12000.0, 1000.0, -3000.0])
-        params = model.GetMaterialParameter(stress, state[0])
-        internal = model.GetInternalVariables(state[0])
-        flow = model.ComputeDgDsigma(1, stress, internal, params)
-        out[2] = model.ComputeInternalVariables(0.0, flow, internal, params).norm()
-        out[0] = model.ComputePlasticModulus(1, flow, stress, internal, state[0], params)
+        params = model.get_material_parameter(stress, state[0])
+        internal = model.get_internal_variables(state[0])
+        flow = model.compute_dg_dsigma(1, stress, internal, params)
+        out[2] = model.compute_internal_variables(0.0, flow, internal, params).norm()
+        out[0] = model.compute_plastic_modulus(1, flow, stress, internal, state[0], params)
         h = 1e-11
-        shifted = internal + model.ComputeInternalVariables(h, flow, internal, params)
-        half_shifted = internal + model.ComputeInternalVariables(0.5 * h, flow, internal, params)
-        f0 = model.ComputeYieldFunction(stress, internal, params)
-        f1 = model.ComputeYieldFunction(stress, shifted, params)
-        fh = model.ComputeYieldFunction(stress, half_shifted, params)
+        shifted = internal + model.compute_internal_variables(h, flow, internal, params)
+        half_shifted = internal + model.compute_internal_variables(0.5 * h, flow, internal, params)
+        f0 = model.compute_yield_function(stress, internal, params)
+        f1 = model.compute_yield_function(stress, shifted, params)
+        fh = model.compute_yield_function(stress, half_shifted, params)
         # Forward differences avoid negative accumulated plastic strain; Richardson cancels O(h).
         out[1] = (4 * fh - f1 - 3 * f0) / h
 
@@ -217,7 +219,7 @@ def test_tensor_models_match_softening_shear_curve(taichi_material_cpu, kind, in
         ti.loop_config(serialize=True)
         for i in range(70):
             stress = model.core(0, stress, ti.Vector([0.0, 0.0, 0.0, 0.01, 0.0, 0.0]), ti.Vector.zero(ti.f64, 3), state)
-            result[i + 1] = ti.Vector([stress[3], EquivalentDeviatoricStrain(state[0].strain)])
+            result[i + 1] = ti.Vector([stress[3], equivalent_deviatoric_strain(state[0].strain)])
 
     integrate()
     gamma = np.arange(71) * 0.02

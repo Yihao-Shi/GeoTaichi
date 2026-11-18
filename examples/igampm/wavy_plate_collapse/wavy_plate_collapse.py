@@ -310,7 +310,7 @@ def build(p, output):
         elastic,
         mpm,
         log=False,
-        contact_model="IPC",
+        contact_model="BarrierIPC",
         activate_friction=False,
         dhat=dhat,
         dmin=p["dmin"],
@@ -327,7 +327,7 @@ def build(p, output):
         monolithic_linear_solver_max_iters=15000,
         **common,
     )
-    model.set_configuration(dimension=3, contact_model="IPC", activate_friction=False, log=False)
+    model.set_configuration(dimension=3, contact_model="BarrierIPC", activate_friction=False, log=False)
     engine = model.build()
     return model, engine, reference, fixed
 

@@ -1,5 +1,12 @@
 """Taichi point--triangle IPC assembly for implicit FEM--MPM coupling."""
 
+from src.utils.MatrixFunction import psd_project_nd
+from src.physics_model.contact_model.ipc.Utilities import ipc_friction_f0
+from src.physics_model.contact_model.ipc.Utilities import ipc_friction_f1_over_speed
+from src.physics_model.contact_model.ipc.Utilities import ipc_friction_hessian_term
+from src.physics_model.contact_model.ipc.Utilities import ipc_barrier_distance2_offset_terms
+from src.utils.errors import CapacityError, ConfigurationError, SimulationStateError
+
 import numpy as np
 import taichi as ti
 
@@ -17,18 +24,13 @@ from src.fem.contact.LinkedCellBroadPhase import (
     DynamicLinkedCellBroadPhase,
 )
 from src.fempm.contact.PlanarCulling import FEMPMPlanarCulling
-from src.physics_model.contact_model.ipc.ContactAssembly import psd_project_nd
 from src.physics_model.contact_model.ipc.ContactDistance import (
     point_edge_distance_grad_hess_2d,
     point_triangle_distance_grad,
     point_triangle_distance_grad_hess,
 )
-from src.physics_model.contact_model.ipc.IPC import (
-    ipc_friction_f0,
-    ipc_friction_f1_over_speed,
-    ipc_friction_hessian_term,
-    ipc_toolkit_barrier_distance2_offset_terms,
-)
+from src.physics_model.contact_model.ipc.Friction import Friction
+from src.physics_model.contact_model.ipc.Barrier import Barrier
 
 
 @ti.data_oriented
@@ -50,16 +52,16 @@ class FEMPMIPCAssembler:
         self.max_point_edge_pairs = int(simulation.max_point_edge_pairs)
         self.real_type = ti.lang.impl.current_cfg().default_fp
         if self.real_type != ti.f64:
-            raise RuntimeError("FEMPM IPC requires Taichi default_fp=ti.f64")
+            raise SimulationStateError("FEMPM IPC requires Taichi default_fp=ti.f64")
         self.fem_node_count = int(fem.mesh.number_of_nodes)
         self.dimension = int(getattr(mpm, "dimension", 3))
         if self.dimension not in (2, 3):
-            raise RuntimeError("FEMPM IPC requires dimension=2 or 3")
+            raise ConfigurationError("FEMPM IPC requires dimension=2 or 3")
         self.fem_site_count = 2 if self.dimension == 2 else 3
         self.stencil_size = self.fem_site_count + 1
         self.surface_count = int(mpm.total_surface_num)
         if self.surface_count <= 0:
-            raise RuntimeError("FEMPM IPC requires at least one MPM surface point")
+            raise SimulationStateError("FEMPM IPC requires at least one MPM surface point")
         self.combined_node_count = self.surface_count + self.fem_node_count
 
         faces = np.ascontiguousarray(faces, dtype=np.int32)
@@ -260,7 +262,7 @@ class FEMPMIPCAssembler:
 
     def _ensure_friction_capacity(self, required):
         if required > self.friction_capacity:
-            raise RuntimeError(
+            raise CapacityError(
                 "FEMPM friction contact capacity is too small: " f"need {required}, allocated {self.friction_capacity}"
             )
         # Fixed construction-time allocation: never create Taichi fields from
@@ -345,7 +347,7 @@ class FEMPMIPCAssembler:
                 active_gap2 = (2.0 * dmin + dhat) * dhat
                 if shifted > 0.0 and shifted < active_gap2:
                     normalized_kappa = self.pair_kappa[mpm_body, fem_body] / (active_gap2 * active_gap2)
-                    _, first, _ = ipc_toolkit_barrier_distance2_offset_terms(distance2, dhat, dmin, normalized_kappa, 0)
+                    _, first, _ = ipc_barrier_distance2_offset_terms(distance2, dhat, dmin, normalized_kappa, 0)
                     scale = self.mpm.surface_measure[sample] * dhat
                     normal_force = ti.max(0.0, -scale * first * 2.0 * distance)
             weights[contact_id] = weight
@@ -404,7 +406,7 @@ class FEMPMIPCAssembler:
                 active_gap2 = (2.0 * dmin + dhat) * dhat
                 if shifted > 0.0 and shifted < active_gap2:
                     normalized_kappa = self.pair_kappa[mpm_body, fem_body] / (active_gap2 * active_gap2)
-                    _, first, _ = ipc_toolkit_barrier_distance2_offset_terms(distance2, dhat, dmin, normalized_kappa, 0)
+                    _, first, _ = ipc_barrier_distance2_offset_terms(distance2, dhat, dmin, normalized_kappa, 0)
                     scale = self.mpm.surface_measure[sample] * dhat
                     normal_force = ti.max(0.0, -scale * first * 2.0 * distance)
             weights[contact_id] = weight
@@ -537,7 +539,7 @@ class FEMPMIPCAssembler:
                 active_gap2 = (2.0 * dmin + dhat) * dhat
                 if shifted < active_gap2:
                     normalized_kappa = self.pair_kappa[mpm_body, fem_body] / (active_gap2 * active_gap2)
-                    value, first, second = ipc_toolkit_barrier_distance2_offset_terms(
+                    value, first, second = ipc_barrier_distance2_offset_terms(
                         distance2, dhat, dmin, normalized_kappa, 0
                     )
                     scale = self.mpm.surface_measure[sample] * dhat
@@ -676,7 +678,7 @@ class FEMPMIPCAssembler:
                 active_gap2 = (2.0 * dmin + dhat) * dhat
                 if shifted < active_gap2:
                     normalized_kappa = self.pair_kappa[mpm_body, fem_body] / (active_gap2 * active_gap2)
-                    value, first, second = ipc_toolkit_barrier_distance2_offset_terms(
+                    value, first, second = ipc_barrier_distance2_offset_terms(
                         distance2, dhat, dmin, normalized_kappa, 0
                     )
                     scale = self.mpm.surface_measure[sample] * dhat

@@ -19,7 +19,8 @@ def parallel_sort(keys, start, length):
             ti.sync()
             k = int(k / 2)
         p = int(p * 2)
-    
+
+
 def parallel_sort_with_value(keys, values, start, length):
     """Odd-even merge sort
 
@@ -40,6 +41,7 @@ def parallel_sort_with_value(keys, values, start, length):
             k = int(k / 2)
         p = int(p * 2)
 
+
 def parallel_sort_with_two_values(keys, values0, values1, start, length):
     """Odd-even merge sort with two value arrays following the key swaps."""
 
@@ -54,6 +56,7 @@ def parallel_sort_with_two_values(keys, values0, values1, start, length):
             ti.sync()
             k = int(k / 2)
         p = int(p * 2)
+
 
 def parallel_sort_struct_with_value(keys, values, start, length):
     """Odd-even merge sort
@@ -75,6 +78,7 @@ def parallel_sort_struct_with_value(keys, values, start, length):
             k = int(k / 2)
         p = int(p * 2)
 
+
 @ti.kernel
 def sort_stage1(keys: ti.template(), N: int, p: int, k: int, start: int, invocations: int):
     for inv in range(invocations):
@@ -83,11 +87,12 @@ def sort_stage1(keys: ti.template(), N: int, p: int, k: int, start: int, invocat
             a = i + j
             b = i + j + k
             if int(a / (p * 2)) == int(b / (p * 2)):
-                key_a = keys[a+start]
-                key_b = keys[b+start]
+                key_a = keys[a + start]
+                key_b = keys[b + start]
                 if key_a > key_b:
-                    keys[a+start] = key_b
-                    keys[b+start] = key_a
+                    keys[a + start] = key_b
+                    keys[b + start] = key_a
+
 
 @ti.kernel
 def sort_stage2(keys: ti.template(), values: ti.template(), N: int, p: int, k: int, start: int, invocations: int):
@@ -97,12 +102,13 @@ def sort_stage2(keys: ti.template(), values: ti.template(), N: int, p: int, k: i
             a = i + j
             b = i + j + k
             if int(a / (p * 2)) == int(b / (p * 2)):
-                key_a = keys[a+start]
-                key_b = keys[b+start]
+                key_a = keys[a + start]
+                key_b = keys[b + start]
                 if key_a > key_b:
-                    keys[a+start] = key_b
-                    keys[b+start] = key_a
-                    values[a+start], values[b+start] = values[b+start], values[a+start]
+                    keys[a + start] = key_b
+                    keys[b + start] = key_a
+                    values[a + start], values[b + start] = values[b + start], values[a + start]
+
 
 @ti.kernel
 def sort_stage3(keys: ti.template(), values: ti.template(), N: int, p: int, k: int, start: int, invocations: int):
@@ -112,23 +118,33 @@ def sort_stage3(keys: ti.template(), values: ti.template(), N: int, p: int, k: i
             a = i + j
             b = i + j + k
             if int(a / (p * 2)) == int(b / (p * 2)):
-                key_a = keys[a+start]
-                key_b = keys[b+start]
+                key_a = keys[a + start]
+                key_b = keys[b + start]
                 if key_a > key_b:
-                    values[a+start], values[b+start] = values[b+start], values[a+start]
+                    values[a + start], values[b + start] = values[b + start], values[a + start]
+
 
 @ti.kernel
-def sort_stage4(keys: ti.template(), values0: ti.template(), values1: ti.template(), N: int, p: int, k: int, start: int, invocations: int):
+def sort_stage4(
+    keys: ti.template(),
+    values0: ti.template(),
+    values1: ti.template(),
+    N: int,
+    p: int,
+    k: int,
+    start: int,
+    invocations: int,
+):
     for inv in range(invocations):
         j = k % p + inv * 2 * k
         for i in range(0, ti.min(k, N - j - k)):
             a = i + j
             b = i + j + k
             if int(a / (p * 2)) == int(b / (p * 2)):
-                key_a = keys[a+start]
-                key_b = keys[b+start]
+                key_a = keys[a + start]
+                key_b = keys[b + start]
                 if key_a > key_b:
-                    keys[a+start] = key_b
-                    keys[b+start] = key_a
-                    values0[a+start], values0[b+start] = values0[b+start], values0[a+start]
-                    values1[a+start], values1[b+start] = values1[b+start], values1[a+start]
+                    keys[a + start] = key_b
+                    keys[b + start] = key_a
+                    values0[a + start], values0[b + start] = values0[b + start], values0[a + start]
+                    values1[a + start], values1[b + start] = values1[b + start], values1[a + start]

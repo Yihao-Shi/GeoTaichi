@@ -1,35 +1,31 @@
+from src.utils.errors import SimulationStateError
 import numpy as np
 import open3d as o3d
 import meshio
 import itertools, multiprocessing
 import time, math, warnings, types
-
 from functools import partial
 from multiprocessing.pool import ThreadPool
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import mpl_toolkits.mplot3d as Axes3D
-
 import src.sdf.progress as progress
 import src.sdf.mesh as mesh
 from src.sdf.LevelSetGrid import LocalGrid
 from src.sdf.BuildSurfaceNode import RayTracing
-from src.sdf.FastMarchingMethod import FastMarchingMethod
 from src.utils.linalg import heaviside_function, transformation_matrix_coordinate_system, generate_grid
-from src.utils.Root import newton
 import trimesh as tm
 import gmsh
 from third_party.pyevtk.hl import unstructuredGridToVTK, gridToVTK
 from third_party.pyevtk.vtk import VtkTriangle, VtkQuad
 
-
 WORKERS = multiprocessing.cpu_count()
 SAMPLES = 2**22
 BATCH_SIZE = 32
-LThreshold = 1e-9
-ILThreshold = 1e9
+L_THRESHOLD = 1e-9
+IL_THRESHOLD = 1e9
 DBL_EPSILON = 2.2204460492503131e-16
-Threshold = 1e-14
+THRESHOLD = 1e-14
 
 
 class BasicShape(object):
@@ -54,8 +50,8 @@ class BasicShape(object):
         self._eqradius = 0.0
         self._center = np.zeros(3)
         self._inertia = np.zeros(3)
-        self._lower_bound = np.zeros(3) - ILThreshold
-        self._higher_bound = np.zeros(3) + ILThreshold
+        self._lower_bound = np.zeros(3) - IL_THRESHOLD
+        self._higher_bound = np.zeros(3) + IL_THRESHOLD
         self._sphericity = 1.0
         self._use_analytic_distance = False
         self.calculate_distance = self._distance
@@ -117,7 +113,7 @@ class BasicShape(object):
         region_size = self.upper_bound - self.lower_bound
 
         if space >= np.min(region_size):
-            raise RuntimeError(f"/space/ is too large. The minimum bounding box extent is {region_size}")
+            raise SimulationStateError(f"/space/ is too large. The minimum bounding box extent is {region_size}")
 
         self.grid = LocalGrid()
         self.grid.read_grid(space=space, extent=int(extent))
@@ -159,8 +155,8 @@ class BasicShape(object):
     def smear(self):
         if self._is_bound is False:
             self._estimate_bounding_box()
-        (x0, y0, z0) = self._lower_bound
-        (x1, y1, z1) = self._higher_bound
+        x0, y0, z0 = self._lower_bound
+        x1, y1, z1 = self._higher_bound
         dx = (x1 - x0) / self._resolution
         dy = (y1 - y0) / self._resolution
         dz = (z1 - z0) / self._resolution
@@ -266,8 +262,8 @@ class BasicShape(object):
     def _estimate_volume(self):
         if self._is_bound is False:
             self._estimate_bounding_box()
-        (x0, y0, z0) = self._lower_bound
-        (x1, y1, z1) = self._higher_bound
+        x0, y0, z0 = self._lower_bound
+        x1, y1, z1 = self._higher_bound
         dx = (x1 - x0) / self._resolution
         dy = (y1 - y0) / self._resolution
         dz = (z1 - z0) / self._resolution
@@ -281,8 +277,8 @@ class BasicShape(object):
             self._estimate_bounding_box()
         if self._is_volume is False:
             self._estimate_volume()
-        (x0, y0, z0) = self._lower_bound
-        (x1, y1, z1) = self._higher_bound
+        x0, y0, z0 = self._lower_bound
+        x1, y1, z1 = self._higher_bound
         dx = (x1 - x0) / self._resolution
         dy = (y1 - y0) / self._resolution
         dz = (z1 - z0) / self._resolution
@@ -296,8 +292,8 @@ class BasicShape(object):
             self._estimate_bounding_box()
         if self._is_center is False:
             self._estimate_mass_center()
-        (x0, y0, z0) = self._lower_bound
-        (x1, y1, z1) = self._higher_bound
+        x0, y0, z0 = self._lower_bound
+        x1, y1, z1 = self._higher_bound
         dx = (x1 - x0) / self._resolution
         dy = (y1 - y0) / self._resolution
         dz = (z1 - z0) / self._resolution
@@ -333,10 +329,10 @@ class BasicShape(object):
         inertia_xz = -np.sum(h[:, 0] * (P[:, 0] - self._center[0]) * (P[:, 1] - self._center[1]), axis=0)
 
         inertia = np.array([inertia_xx, inertia_yy, inertia_zz, inertia_xy, inertia_yz, inertia_xz])
-        diagI = np.array([inertia_xx, inertia_yy, inertia_zz, 0.0, 0.0, 0.0])
-        ratio = np.linalg.norm(inertia - diagI) / np.linalg.norm(diagI)
+        diag_i = np.array([inertia_xx, inertia_yy, inertia_zz, 0.0, 0.0, 0.0])
+        ratio = np.linalg.norm(inertia - diag_i) / np.linalg.norm(diag_i)
         if ratio > 5e-3:
-            raise RuntimeError(
+            raise SimulationStateError(
                 f"Incorrect LevelSet input: local frame is non-inertial.",
                 f"Indeed, Ixx = {inertia[0]}; Iyy = {inertia[1]}; Izz = {inertia[1]}; Ixy = {inertia[3]}; Ixz = {inertia[4]}; Iyz = {inertia[5]}",
                 f" for inertia matrix I, making for a {ratio} non-diagonality ratio.",
@@ -368,10 +364,10 @@ class BasicShape(object):
         inertia_xz = moment_inertia[0, 2] + moment_inertia[2, 0]
         inertia_yz = moment_inertia[1, 2] + moment_inertia[2, 1]
         inertia = np.array([inertia_xx, inertia_yy, inertia_zz, inertia_xy, inertia_xz, inertia_yz])
-        diagI = np.array([inertia_xx, inertia_yy, inertia_zz, 0.0, 0.0, 0.0])
-        ratio = np.linalg.norm(inertia - diagI) / np.linalg.norm(diagI)
+        diag_i = np.array([inertia_xx, inertia_yy, inertia_zz, 0.0, 0.0, 0.0])
+        ratio = np.linalg.norm(inertia - diag_i) / np.linalg.norm(diag_i)
         if ratio > 1e-2:
-            raise RuntimeError(
+            raise SimulationStateError(
                 f"Incorrect LevelSet input: local frame is non-inertial.",
                 f"Indeed, Ixx = {inertia[0]}; Iyy = {inertia[1]}; Izz = {inertia[1]}; Ixy = {inertia[3]}; Ixz = {inertia[4]}; Iyz = {inertia[5]}",
                 f" for inertia matrix I, making for a {ratio} non-diagonality ratio.",
@@ -391,8 +387,7 @@ class BasicShape(object):
 
     def split(self, iteration=1):
         if self.mesh is None:
-            raise RuntimeError("Primitive should be generate first")
-        pass
+            raise SimulationStateError("Primitive should be generate first")
 
     def generate_sdf(self, estimate=False):
         if estimate:
@@ -431,11 +426,11 @@ class BasicShape(object):
         return meshs
 
     def ray_tracing(self, samples, ray_path):
-        rayTracing = RayTracing()
-        rayTracing.determine_node_path(ray_path)
-        rayTracing.add_essentials(samples, self.grid)
-        rayTracing.run(self.center, self.is_simple_shape, self)
-        points = np.array(rayTracing.surface_node.copy())
+        ray_tracing = RayTracing()
+        ray_tracing.determine_node_path(ray_path)
+        ray_tracing.add_essentials(samples, self.grid)
+        ray_tracing.run(self.center, self.is_simple_shape, self)
+        points = np.array(ray_tracing.surface_node.copy())
         meshs = self.construct_surface_mesh_from_point_cloud(points)
         self.mesh = tm.Trimesh(vertices=np.asarray(meshs.vertices), faces=np.asarray(meshs.triangles))
         self.prox = tm.proximity.ProximityQuery(self.mesh)
@@ -445,8 +440,8 @@ class BasicShape(object):
         start = time.time()
 
         region_size = self.upper_bound - self.lower_bound
-        (x0, y0, z0) = self.lower_bound - 0.1 * region_size
-        (x1, y1, z1) = self.upper_bound + 0.1 * region_size
+        x0, y0, z0 = self.lower_bound - 0.1 * region_size
+        x1, y1, z1 = self.upper_bound + 0.1 * region_size
 
         if step is None and samples is not None:
             volume = (x1 - x0) * (y1 - y0) * (z1 - z0)
@@ -527,7 +522,9 @@ class BasicShape(object):
         ray_path="Spiral",
     ):
         if self.grid is None:
-            raise RuntimeError("Local grid for SDF primitive has not been defined, Use objects.grids(space) first!")
+            raise SimulationStateError(
+                "Local grid for SDF primitive has not been defined, Use objects.grids(space) first!"
+            )
         if self.mesh is None:
             if self.ray is False:
                 self.marching_cube(step, samples, workers, batch_size, verbose, sparse)
@@ -677,359 +674,3 @@ class BasicShape(object):
         if self.tetramesh is None:
             gmsh.to_volume(self.mesh, "tetraObject.msh", max_length, algorithm, refine_number)
             self.tetramesh = meshio.read("tetraObject.msh")
-
-
-class pointcloud(BasicShape):
-    def __init__(self, points) -> None:
-        super().__init__(ray=False)
-        meshs = self.construct_surface_mesh_from_point_cloud(points, estimate_normals=True)
-        self.mesh = tm.Trimesh(vertices=np.asarray(meshs.vertices), faces=np.asarray(meshs.triangles))
-        self.prox = tm.proximity.ProximityQuery(self.mesh)
-
-    def generate(self, *args, **kwargs):
-        self.generate_sdf()
-        self.mesh_operation()
-
-
-class MeshBased(BasicShape):
-    def __init__(self):
-        super().__init__(ray=False)
-
-    def _estimate_bounding_box(self):
-        self._get_bounding_box()
-
-    def side(self, p):
-        p = self.transfer(p)
-        return self.mesh.contains(p)
-
-    def generate(self, *args, **kwargs):
-        self.mesh_operation()
-
-    def _normal(self, p):
-        pass
-
-
-class arbitrarily(MeshBased):
-    def __init__(self, start_point, region_size, distance_field, node_coordinate, vertices, faces) -> None:
-        super().__init__()
-        self.is_simple_shape = 1
-        self.mesh = tm.Trimesh(vertices=vertices, faces=faces)
-        self.prox = tm.proximity.ProximityQuery(self.mesh)
-        self.grid = LocalGrid()
-        self.grid.set_distance_field(
-            np.array(start_point),
-            np.array(region_size),
-            np.array(node_coordinate),
-            np.array(distance_field),
-            self.mesh.center_mass,
-        )
-
-
-class polyhedron(MeshBased):
-    def __init__(self, file: str) -> None:
-        super().__init__()
-        self.is_simple_shape = 1
-        self.mesh: tm.Trimesh = tm.load(file, force="mesh")
-        self.prox = tm.proximity.ProximityQuery(self.mesh)
-
-
-class Surface(BasicShape):
-    def __init__(self) -> None:
-        super().__init__(ray=True)
-        self.is_simple_shape = 2
-
-    def fx(self, p):
-        raise NotImplementedError
-
-    def dfx(self, p):
-        raise NotImplementedError
-
-    def radial(self, theta, phi):
-        raise NotImplementedError
-
-    def _normal(self, p):
-        return self.dfx(p)
-
-    def side(self, p):
-        p = self.transfer(p)
-        field = self.fx(p)
-        return np.select([field > Threshold, field < -Threshold], [math.inf, -math.inf], default=0.0)
-
-    def _approximate_distance(self, p):
-        # reference: Gabriel Taubin (1994). Distance approximations for rasterizing implicit curves. ACM Transactions on Graphics, 13(1), 3-42.
-        # First order approximation
-        fxyz = self.fx(p)
-        grad_f = self.dfx(p)
-        dnorm = np.select(
-            [np.linalg.norm(grad_f) > (self.upper_bound - self.lower_bound) * DBL_EPSILON],
-            [np.linalg.norm(grad_f)],
-            default=1.0,
-        )
-        returnVal = np.select([np.abs(fxyz) > DBL_EPSILON], [fxyz / dnorm], default=0.0)
-        return returnVal
-
-    def fast_marching(self):
-        nodal_coords = self.grid.node_coord.copy()
-        step = self.grid.grid_space
-        gnum = self.grid.gnum.copy()
-        fmm = FastMarchingMethod(step, gnum, nodal_coords)
-        fmm.phiIni(self)
-        fmm.phi()
-        self.grid.generate_sdf(fmm.phiField.copy().reshape(-1))
-        fmm.clear()
-
-
-class surfacefunction(Surface):
-    def __init__(self, f=None, df=None, radial=None, bounding_box=None) -> None:
-        super().__init__()
-        self.fx = types.MethodType(f, self)
-        self.dfx = types.MethodType(df, self)
-        self.radial = types.MethodType(radial, self)
-        self._estimate_bounding_box = types.MethodType(bounding_box, self)
-
-
-class SuperSurface(Surface):
-    def __init__(self, xrad1, yrad1, zrad1, xrad2=None, yrad2=None, zrad2=None) -> None:
-        super().__init__()
-        self.xrad1 = xrad1
-        self.yrad1 = yrad1
-        self.zrad1 = zrad1
-        self.xrad2 = xrad2 or xrad1
-        self.yrad2 = yrad2 or yrad1
-        self.zrad2 = zrad2 or zrad1
-
-    def _estimate_bounding_box(self):
-        self._lower_bound = -np.array([self.xrad1, self.yrad1, self.zrad1])
-        self._higher_bound = np.array([self.xrad2, self.yrad2, self.zrad2])
-        self._is_bound = True
-
-
-class polysuperellipsoid(SuperSurface):
-    def __init__(self, xrad1, yrad1, zrad1, epsilon_e, epsilon_n, xrad2=None, yrad2=None, zrad2=None) -> None:
-        super().__init__(xrad1, yrad1, zrad1, xrad2, yrad2, zrad2)
-        self.epsilon_e = epsilon_e
-        self.epsilon_n = epsilon_n
-        self.physical_parameter.update(
-            {
-                "xrad1": self.xrad1,
-                "yrad1": self.yrad1,
-                "zrad1": self.zrad1,
-                "epsilon_e": self.epsilon_e,
-                "epsilon_n": self.epsilon_n,
-                "xrad2": self.xrad2,
-                "yrad2": self.yrad2,
-                "zrad2": self.zrad2,
-            }
-        )
-
-        if epsilon_e == epsilon_n == 0:
-            raise ValueError("Please define non zero epsilons for superellipsoid shape.")
-        self._reset = False
-
-    def fx(self, p):
-        p = self.transfer(p)
-        x = p[:, 0]
-        y = p[:, 1]
-        z = p[:, 2]
-
-        funcs = np.array(
-            pow(
-                pow(abs(x / np.where(x < 0.0, self.xrad1, self.xrad2)), 2.0 / self.epsilon_e)
-                + pow(abs(y / np.where(y < 0.0, self.yrad1, self.yrad2)), 2.0 / self.epsilon_e),
-                self.epsilon_e / self.epsilon_n,
-            )
-            + pow(abs(z / np.where(z < 0.0, self.zrad1, self.zrad2)), 2.0 / self.epsilon_n)
-            - 1.0
-        )
-        return funcs.reshape(-1)
-
-    def dfx(self, p):
-        p = self.transfer(p)
-        x = p[:, 0]
-        y = p[:, 1]
-        z = p[:, 2]
-
-        xrad = np.where(x < 0.0, -1.0 / self.xrad1, 1.0 / self.xrad2)
-        yrad = np.where(y < 0.0, -1.0 / self.yrad1, 1.0 / self.yrad2)
-        zrad = np.where(z < 0.0, -1.0 / self.zrad1, 1.0 / self.zrad2)
-        mult = (
-            2.0
-            / self.epsilon_n
-            * pow(
-                pow(abs(x * xrad), 2.0 / self.epsilon_e) + pow(abs(y * yrad), 2.0 / self.epsilon_e),
-                self.epsilon_e / self.epsilon_n - 1.0,
-            )
-        )
-        grad_f = np.array(
-            [
-                mult * pow(abs(x * xrad), 2.0 / self.epsilon_e - 1.0) * xrad,
-                mult * pow(abs(y * yrad), 2.0 / self.epsilon_e - 1.0) * yrad,
-                2.0 / self.epsilon_n * pow(abs(z * zrad), 2.0 / self.epsilon_n - 1) * zrad,
-            ]
-        ).T
-        return (grad_f.T / np.linalg.norm(grad_f, axis=1)).T.reshape((-1, 3))
-
-    def radial(self, theta, phi):
-        para1 = np.sin(theta) * np.cos(phi)
-        para2 = np.sin(theta) * np.sin(phi)
-        para3 = np.cos(theta)
-
-        coeff1 = np.where(para1 < 0.0, -1.0 / self.xrad1, 1.0 / self.xrad2)
-        coeff2 = np.where(para2 < 0.0, -1.0 / self.yrad1, 1.0 / self.yrad2)
-        coeff3 = np.where(para3 < 0.0, -1.0 / self.zrad1, 1.0 / self.zrad2)
-        r_dist = 1.0 / (
-            (np.abs(para1 * coeff1) ** (2.0 / self.epsilon_e) + np.abs(para2 * coeff2) ** (2.0 / self.epsilon_e))
-            ** (self.epsilon_n / self.epsilon_e)
-            + np.abs(para3 * coeff3) ** (2.0 / self.epsilon_n)
-        )
-        return r_dist ** (0.5 * self.epsilon_n)
-
-
-class polysuperquadrics(SuperSurface):
-    def __init__(
-        self, xrad1, yrad1, zrad1, epsilon_x, epsilon_y, epsilon_z, xrad2=None, yrad2=None, zrad2=None
-    ) -> None:
-        super().__init__(xrad1, yrad1, zrad1, xrad2, yrad2, zrad2)
-        self.epsilon_x = epsilon_x
-        self.epsilon_y = epsilon_y
-        self.epsilon_z = epsilon_z
-        self.physical_parameter.update(
-            {
-                "xrad1": self.xrad1,
-                "yrad1": self.yrad1,
-                "zrad1": self.zrad1,
-                "epsilon_x": self.epsilon_x,
-                "epsilon_y": self.epsilon_y,
-                "epsilon_z": self.epsilon_z,
-                "xrad2": self.xrad2,
-                "yrad2": self.yrad2,
-                "zrad2": self.zrad2,
-            }
-        )
-
-        if epsilon_x == epsilon_y == epsilon_z == 0:
-            raise ValueError("Please define non zero epsilons for polysuperquadrics shape.")
-        self._reset = False
-
-    def _estimate_bounding_box(self):
-        self._lower_bound = -np.array([self.xrad1, self.yrad1, self.zrad1])
-        self._higher_bound = np.array([self.xrad2, self.yrad2, self.zrad2])
-        self._is_bound = True
-
-    def fx(self, p):
-        p = self.transfer(p)
-        x = p[:, 0]
-        y = p[:, 1]
-        z = p[:, 2]
-
-        funcs = np.array(
-            pow(abs(x / np.where(x < 0.0, self.xrad1, self.xrad2)), 2.0 / self.epsilon_x)
-            + pow(abs(y / np.where(y < 0.0, self.yrad1, self.yrad2)), 2.0 / self.epsilon_y)
-            + pow(abs(z / np.where(z < 0.0, self.zrad1, self.zrad2)), 2.0 / self.epsilon_z)
-            - 1.0
-        )
-        return funcs.reshape(-1)
-
-    def dfx(self, p):
-        p = self.transfer(p)
-        x = p[:, 0]
-        y = p[:, 1]
-        z = p[:, 2]
-
-        xrad = np.where(x < 0.0, -1.0 / self.xrad1, 1.0 / self.xrad2)
-        yrad = np.where(y < 0.0, -1.0 / self.yrad1, 1.0 / self.yrad2)
-        zrad = np.where(z < 0.0, -1.0 / self.zrad1, 1.0 / self.zrad2)
-        grad_f = np.array(
-            [
-                2 / self.epsilon_x * pow(abs(x * xrad), 2.0 / self.epsilon_x - 1.0) * xrad,
-                2 / self.epsilon_y * pow(abs(y * yrad), 2.0 / self.epsilon_y - 1.0) * yrad,
-                2 / self.epsilon_z * pow(abs(z * zrad), 2.0 / self.epsilon_z - 1.0) * zrad,
-            ]
-        ).T
-        return (grad_f.T / np.linalg.norm(grad_f, axis=1)).T.reshape((-1, 3))
-
-    def radial(self, theta, phi):
-        para1 = np.sin(theta) * np.cos(phi)
-        para2 = np.sin(theta) * np.sin(phi)
-        para3 = np.cos(theta)
-
-        coeff1 = pow(np.abs(para1 * np.where(para1 < 0.0, -1.0 / self.xrad1, 1.0 / self.xrad2)), 2.0 / self.epsilon_x)
-        coeff2 = pow(np.abs(para2 * np.where(para2 < 0.0, -1.0 / self.yrad1, 1.0 / self.yrad2)), 2.0 / self.epsilon_y)
-        coeff3 = pow(np.abs(para3 * np.where(para3 < 0.0, -1.0 / self.zrad1, 1.0 / self.zrad2)), 2.0 / self.epsilon_z)
-
-        def f(r, a, b, c, ex, ey, ez):
-            return a * pow(r, 2.0 / ex) + b * pow(r, 2.0 / ey) + c * pow(r, 2.0 / ez) - 1.0
-
-        def df(r, a, b, c, ex, ey, ez):
-            return (
-                a * (2.0 / ex) * pow(r, 2.0 / ex - 1)
-                + b * (2.0 / ey) * pow(r, 2.0 / ey - 1)
-                + c * (2.0 / ez) * pow(r, 2.0 / ez - 1)
-            )
-
-        start_value = min(self.xrad1, self.xrad2, self.yrad1, self.yrad2, self.zrad1, self.zrad2)
-        root = newton(
-            func=f,
-            x0=start_value,
-            args=(coeff1, coeff2, coeff3, self.epsilon_x, self.epsilon_y, self.epsilon_z),
-            fprime=df,
-        )
-        return root
-
-
-class SDF(BasicShape):
-    def __init__(self, ray=False):
-        super().__init__(ray)
-        self._smooth = 0.0
-        self.is_simple_shape = 3
-
-    @property
-    def smooth(self):
-        return self._smooth
-
-    @smooth.setter
-    def smooth(self, smooth):
-        self._smooth = smooth
-
-    def smooths(self, smooth):
-        self._smooth = smooth
-        return self
-
-    def _distance(self, p):
-        raise NotImplementedError
-
-    def _normal(self, p):
-        point = self.transfer(p)
-        space = np.min(self.upper_bound - self.lower_bound)
-        gapnx = self._distance(point + np.array([LThreshold * space, 0, 0])).reshape(-1)
-        gapny = self._distance(point + np.array([0, LThreshold * space, 0])).reshape(-1)
-        gapnz = self._distance(point + np.array([0, 0, LThreshold * space])).reshape(-1)
-        gapnx_ = self._distance(point - np.array([LThreshold * space, 0, 0])).reshape(-1)
-        gapny_ = self._distance(point - np.array([0, LThreshold * space, 0])).reshape(-1)
-        gapnz_ = self._distance(point - np.array([0, 0, LThreshold * space])).reshape(-1)
-        normals = 0.5 * ILThreshold * np.array([gapnx - gapnx_, gapny - gapny_, gapnz - gapnz_]).T / space
-        return np.where(np.linalg.norm(normals, axis=1) > 0.0, (normals.T / np.linalg.norm(normals, axis=1)), 0.0).T
-
-    def _estimate_bounding_box(self):
-        # TODO: raise exception if bound estimation fails
-        s = 31
-        (x0, y0, z0) = self._lower_bound
-        (x1, y1, z1) = self._higher_bound
-        prev = None
-        for _ in range(64):
-            X, Y, Z, P = generate_grid(x0, y0, z0, x1, y1, z1, s)
-            d = np.array([X[1] - X[0], Y[1] - Y[0], Z[1] - Z[0]])
-            threshold = np.linalg.norm(d) / 2
-            if threshold == prev:
-                break
-            prev = threshold
-            volume = self(P).reshape((len(X), len(Y), len(Z)))
-            where = np.argwhere(np.abs(volume) <= threshold)
-            x1, y1, z1 = (x0, y0, z0) + where.max(axis=0) * d + d / 2
-            x0, y0, z0 = (x0, y0, z0) + where.min(axis=0) * d - d / 2
-        self._lower_bound = np.array([x0, y0, z0])
-        self._higher_bound = np.array([x1, y1, z1])
-        self._is_bound = True
-
-    def radial(self, theta, phi):
-        pass

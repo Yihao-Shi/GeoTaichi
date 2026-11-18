@@ -51,7 +51,7 @@ start_num = 0
 end_num = 101
 
 
-def MeanStress(stress):
+def mean_stress(stress):
     return (stress[2] + stress[1] + stress[0]) / 3.0
 
 
@@ -88,7 +88,7 @@ def ComputeInvariantJ2(stress):
 
 
 def DeviatoricStress(stress):
-    sigma = MeanStress(stress)
+    sigma = mean_stress(stress)
 
     deviatoric_stress = stress
     for i in range(3):
@@ -108,7 +108,7 @@ def ComputeInvariantJ3(stress):
     return J3
 
 
-def ComputeLodeAngle(stress):
+def compute_lode_angle(stress):
     J2 = ComputeInvariantJ2(stress)
     J3 = ComputeInvariantJ3(stress)
 
@@ -130,14 +130,14 @@ def get_result(path):
 
         cos_fai = math.cos(fai)
         tan_fai = math.tan(fai)
-        lode = ComputeLodeAngle(data["stress"][pid])
+        lode = compute_lode_angle(data["stress"][pid])
         Rmc = (
             math.sin(lode + math.pi / 3.0) / (math.sqrt(3.0) * cos_fai) + math.cos(lode + math.pi / 3.0) * tan_fai / 3.0
         )
-        p.append(-MeanStress(data["stress"][pid]) / 1000)
+        p.append(-mean_stress(data["stress"][pid]) / 1000)
         Rq.append(Rmc * equistress(data["stress"][pid]) / 1000)
         q.append(equistress(data["stress"][pid]) / 1000)
-        ratio.append(equistress(data["stress"][pid]) / -MeanStress(data["stress"][pid]))
+        ratio.append(equistress(data["stress"][pid]) / -mean_stress(data["stress"][pid]))
         time.append(0.5 - data["position"][4][2] + data["position"][0][2])
     return p, q, Rq, ratio, time
 

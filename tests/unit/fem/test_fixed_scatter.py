@@ -1,10 +1,11 @@
 """Permanent FEM slots must represent the same operator as raw assembly."""
 
+from src.fem.elements.Utilities import create_element
+
 import numpy as np
 import pytest
 
-from src.fem.elements import create_element
-from src.fem.generator import FEMGenerateManager
+from src.fem.generator.MeshGenerator import FEMGenerateManager
 from src.fem.MaterialManager import FEMMaterialManager
 from src.fem.engines.ClassicalAssembler import ClassicalAssembler
 from src.linear_solver.BuildTriplet import BuildTriplet

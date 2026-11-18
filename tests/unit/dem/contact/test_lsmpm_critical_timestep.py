@@ -4,7 +4,7 @@ import pytest
 import taichi as ti
 
 import src.utils.GlobalVariable as GlobalVariable
-from src.dem.BaseKernel import find_lsmpm_contact_min_mass_
+from src.dem.BaseKernel import find_lsmpm_contact_min_mass
 from src.dem.contact.ContactKernel import (
     kernel_find_max_barrier_stiffness_lsmpm,
     kernel_find_max_hertz_stiffness_lsmpm,
@@ -17,7 +17,6 @@ from src.physics_model.contact_model.HertzMindlinModel import (
     HertzMindlinSurfaceProperty,
 )
 from src.physics_model.contact_model.LinearModel import LinearSurfaceProperty
-
 
 pytestmark = [pytest.mark.unit, pytest.mark.dem, pytest.mark.cpu]
 
@@ -95,26 +94,18 @@ def test_lsmpm_critical_mass_and_stiffness_match_contact_quadrature() -> None:
         box[1].scale = 1.0
         vertice[0].parameter = 0.2
         surface[0] = 0
-        linear[0].add_surface_property(
-            120.0, 80.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
-        )
+        linear[0].add_surface_property(120.0, 80.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
         penalty[0].add_surface_property(120.0, 80.0, 2.0, 0.0, 0.0, 0.0)
         hertz[0].add_surface_property(100.0, 30.0, 0.0, 0.0, 0.0, 0.0)
         barrier[0].add_surface_property(50.0, 0.04, 1.0, 0.0, 0.0, 0.0)
 
-        contact_mass = find_lsmpm_contact_min_mass_(2, rigid)
-        linear_stiffness = kernel_find_max_stiffness_lsmpm(
-            1, 1, rigid, surface, vertice, box, linear
-        )
+        contact_mass = find_lsmpm_contact_min_mass(2, rigid)
+        linear_stiffness = kernel_find_max_stiffness_lsmpm(1, 1, rigid, surface, vertice, box, linear)
         penalty_stiffness = kernel_find_max_penalty_stiffness_lsmpm(
             1, 1, 0.1, 1.2, rigid, surface, vertice, box, penalty
         )
-        hertz_stiffness = kernel_find_max_hertz_stiffness_lsmpm(
-            1, 1, 0.1, rigid, surface, vertice, box, hertz
-        )
-        barrier_stiffness = kernel_find_max_barrier_stiffness_lsmpm(
-            1, 1, 1.2, rigid, surface, vertice, box, barrier
-        )
+        hertz_stiffness = kernel_find_max_hertz_stiffness_lsmpm(1, 1, 0.1, rigid, surface, vertice, box, hertz)
+        barrier_stiffness = kernel_find_max_barrier_stiffness_lsmpm(1, 1, 1.2, rigid, surface, vertice, box, barrier)
 
         # A_i = 6 * 0.5^2 * 0.2 = 0.3; M_s = 10 / 5 = 2.
         assert float(contact_mass) == pytest.approx(1.5, rel=1.0e-6)
@@ -122,13 +113,10 @@ def test_lsmpm_critical_mass_and_stiffness_match_contact_quadrature() -> None:
         assert float(penalty_stiffness) == pytest.approx(43.2, rel=1.0e-6)
         assert float(hertz_stiffness) == pytest.approx(14.4, rel=1.0e-6)
         ratio = 0.04 / 0.4
-        expected_barrier = -50.0 * 0.3 * 1.2 * (
-            2.0 * math.log(ratio)
-            + ((ratio - 1.0) * (3.0 * ratio + 1.0)) / ratio**2
+        expected_barrier = (
+            -50.0 * 0.3 * 1.2 * (2.0 * math.log(ratio) + ((ratio - 1.0) * (3.0 * ratio + 1.0)) / ratio**2)
         )
-        assert float(barrier_stiffness) == pytest.approx(
-            expected_barrier, rel=1.0e-6
-        )
+        assert float(barrier_stiffness) == pytest.approx(expected_barrier, rel=1.0e-6)
     finally:
         GlobalVariable.ADAPTIVESTIFF = previous_adaptive
         ti.reset()

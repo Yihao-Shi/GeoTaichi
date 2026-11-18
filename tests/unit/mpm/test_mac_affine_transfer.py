@@ -14,7 +14,8 @@ from src.mpm.engines.EngineKernel import (
     kernel_kinemaitc_mac_cell_g2p,
     kernel_mass_momentum_mac_cell_p2g,
 )
-from src.mpm.structs.Particle import ParticleCloudIncompressible2D, ParticleCloudIncompressible3D
+from src.mpm.structs.ParticleCloudIncompressible2D import ParticleCloudIncompressible2D
+from src.mpm.structs.ParticleCloudIncompressible3D import ParticleCloudIncompressible3D
 from src.mpm.structs.StaggeredGrid import StaggeredGrid
 from src.mpm.Simulation import Simulation
 import src.utils.GlobalVariable as G

@@ -1,12 +1,13 @@
+from src.utils.errors import ConfigurationError, SimulationStateError
 import os, warnings
 import numpy as np
 
 from src.mpm.boundaries.BoundaryCore import *
-from src.mpm.boundaries.BoundaryStrcut import *
+from src.mpm.boundaries.BoundaryStruct import *
 from src.mpm.elements.ElementBase import ElementBase
 from src.mpm.Simulation import Simulation
 from src.utils.ObjectIO import DictIO
-from src.utils.TypeDefination import vec3i
+from src.utils.TypeDefinition import vec3i
 from src.utils.RegionFunction import RegionFunction
 
 
@@ -138,9 +139,9 @@ class BoundaryConstraints(object):
         domain = np.asarray(sims.domain, dtype=np.float64)[:dimension]
         tolerance = 1.0e-7 * np.maximum(1.0, np.abs(domain))
         if np.any(start < -tolerance):
-            raise RuntimeError(f"KeyWord:: /StartPoint/ {start_point} is out of domain {sims.domain}")
+            raise SimulationStateError(f"KeyWord:: /StartPoint/ {start_point} is out of domain {sims.domain}")
         if np.any(end > domain + tolerance):
-            raise RuntimeError(f"KeyWord:: /EndPoint/ {end_point} is out of domain {sims.domain}")
+            raise SimulationStateError(f"KeyWord:: /EndPoint/ {end_point} is out of domain {sims.domain}")
 
     def _expand_solid_cell_region(self, sims: Simulation, element: ElementBase, boundary, start_point, end_point):
         dim = sims.dimension
@@ -151,10 +152,10 @@ class BoundaryConstraints(object):
         domain = np.asarray(sims.domain, dtype=np.float64)[:dim]
         grid_size = np.asarray(element.grid_size, dtype=np.float64)[:dim]
         thickness = int(
-            DictIO.GetAlternative(boundary, "CellThickness", DictIO.GetAlternative(boundary, "SolidCellThickness", 3))
+            DictIO.get_alternative(boundary, "CellThickness", DictIO.get_alternative(boundary, "SolidCellThickness", 3))
         )
         thickness = max(1, thickness)
-        norm = DictIO.GetAlternative(boundary, "Norm", None)
+        norm = DictIO.get_alternative(boundary, "Norm", None)
         norm = None if norm is None else np.asarray(norm, dtype=np.float64)[:dim]
 
         eps = 1e-12
@@ -186,9 +187,9 @@ class BoundaryConstraints(object):
         return lower, upper
 
     def set_solid_cell_boundary(self, sims: Simulation, element: ElementBase, boundary, start_point, end_point):
-        boundary_type = DictIO.GetEssential(boundary, "BoundaryType")
+        boundary_type = DictIO.get_essential(boundary, "BoundaryType")
         if boundary_type != "SolidCell":
-            raise RuntimeError(
+            raise ConfigurationError(
                 f"Staggered incompressible elements only support SolidCell boundaries, got {boundary_type}"
             )
 
@@ -203,9 +204,9 @@ class BoundaryConstraints(object):
             or np.any(start > domain + tolerance)
             or np.any(end > domain + tolerance)
         ):
-            raise RuntimeError(f"Solid-cell boundary [{start}, {end}] is out of domain {domain}")
+            raise SimulationStateError(f"Solid-cell boundary [{start}, {end}] is out of domain {domain}")
         lower, upper = self._expand_solid_cell_region(sims, element, boundary, start_point, end_point)
-        normal = DictIO.GetAlternative(boundary, "Norm", None)
+        normal = DictIO.get_alternative(boundary, "Norm", None)
         if normal is None:
             flat_axes = np.flatnonzero(np.abs(end - start) <= tolerance)
             if len(flat_axes) == 1:
@@ -228,8 +229,8 @@ class BoundaryConstraints(object):
         print(
             "Cell thickness: ",
             int(
-                DictIO.GetAlternative(
-                    boundary, "CellThickness", DictIO.GetAlternative(boundary, "SolidCellThickness", 3)
+                DictIO.get_alternative(
+                    boundary, "CellThickness", DictIO.get_alternative(boundary, "SolidCellThickness", 3)
                 )
             ),
             "\n",
@@ -244,18 +245,18 @@ class BoundaryConstraints(object):
         upper = np.maximum(start, end)
         tolerance = max(1e-9, 1e-6 * float(np.max(domain)))
         if np.any(lower < -tolerance) or np.any(upper > domain + tolerance):
-            raise RuntimeError(f"Solid-plane cell boundary [{lower}, {upper}] is out of domain {domain}")
+            raise SimulationStateError(f"Solid-plane cell boundary [{lower}, {upper}] is out of domain {domain}")
         lower, upper = self._expand_solid_cell_region(sims, element, boundary, start_point, end_point)
 
-        point = DictIO.GetAlternative(boundary, "Point", DictIO.GetAlternative(boundary, "PlanePoint", start_point))
-        normal = DictIO.GetAlternative(boundary, "Norm", DictIO.GetAlternative(boundary, "PlaneNormal", None))
+        point = DictIO.get_alternative(boundary, "Point", DictIO.get_alternative(boundary, "PlanePoint", start_point))
+        normal = DictIO.get_alternative(boundary, "Norm", DictIO.get_alternative(boundary, "PlaneNormal", None))
         if normal is None:
-            raise RuntimeError("SolidPlaneCell requires /Norm/ or /PlaneNormal/")
+            raise SimulationStateError("SolidPlaneCell requires /Norm/ or /PlaneNormal/")
         point = np.asarray(point, dtype=np.float64)[:dim]
         normal = np.asarray(normal, dtype=np.float64)[:dim]
         norm = np.linalg.norm(normal)
         if norm <= 1.0e-14:
-            raise RuntimeError("SolidPlaneCell normal length must be positive")
+            raise ConfigurationError("SolidPlaneCell normal length must be positive")
         normal /= norm
 
         self.solid_cell_plane_regions.append((lower, upper, point, normal))
@@ -309,13 +310,13 @@ class BoundaryConstraints(object):
                 f"Keyword:: /Norm/ refers to outer normal direction towards to X or Y or Z axes. Input {norm} are not aligned with these three axes, thus using {default_norm} by default"
             )
         elif len(total_dofs) == 0:
-            raise RuntimeError("Invaid Keyword:: At least one component of /Norm/ needs to be nonzero")
+            raise SimulationStateError("Invaid Keyword:: At least one component of /Norm/ needs to be nonzero")
         return total_dofs[0]
 
     def get_norms(self, sims: Simulation, norm, sign):
         if isinstance(norm, (list, tuple, np.ndarray, ti.lang.matrix.Vector)):
             d = self.check_axial_norm(sims.dimension, list(norm))
-            dirs = DictIO.GetEssential(self.axis, d)
+            dirs = DictIO.get_essential(self.axis, d)
             sign = self.define_signs(norm[d], sign)
             norm = sign + " " + dirs
         elif isinstance(norm, (int, float)):
@@ -348,15 +349,15 @@ class BoundaryConstraints(object):
         values_repeated = np.tile(values, len(args[-1]) * len(args[0]))
         return dict(zip(map(tuple, keys), values_repeated))
 
-    def set_velocity_constraints_mac_cell_2D(self, sims: Simulation, boundary, start_point, end_point, face_map: dict):
+    def set_velocity_constraints_mac_cell_2d(self, sims: Simulation, boundary, start_point, end_point, face_map: dict):
         if self.velocity_boundary is None:
-            raise RuntimeError("Error:: /max_velocity_constraint/ is set as zero!")
+            raise SimulationStateError("Error:: /max_velocity_constraint/ is set as zero!")
 
-        xvelocity = DictIO.GetAlternative(boundary, "VelocityX", None)
-        yvelocity = DictIO.GetAlternative(boundary, "VelocityY", None)
-        zvelocity = DictIO.GetAlternative(boundary, "VelocityZ", None)
+        xvelocity = DictIO.get_alternative(boundary, "VelocityX", None)
+        yvelocity = DictIO.get_alternative(boundary, "VelocityY", None)
+        zvelocity = DictIO.get_alternative(boundary, "VelocityZ", None)
         default_val = [xvelocity, yvelocity, 0]
-        velocity = DictIO.GetAlternative(boundary, "Velocity", default_val)
+        velocity = DictIO.get_alternative(boundary, "Velocity", default_val)
         freedoms = self.get_freedoms(sims, velocity)
         dirs, values = zip(*freedoms)
 
@@ -380,13 +381,13 @@ class BoundaryConstraints(object):
 
     def set_velocity_constraints_mac_cell(self, sims: Simulation, boundary, start_point, end_point, face_map: dict):
         if self.velocity_boundary is None:
-            raise RuntimeError("Error:: /max_velocity_constraint/ is set as zero!")
+            raise SimulationStateError("Error:: /max_velocity_constraint/ is set as zero!")
 
-        xvelocity = DictIO.GetAlternative(boundary, "VelocityX", None)
-        yvelocity = DictIO.GetAlternative(boundary, "VelocityY", None)
-        zvelocity = DictIO.GetAlternative(boundary, "VelocityZ", None)
+        xvelocity = DictIO.get_alternative(boundary, "VelocityX", None)
+        yvelocity = DictIO.get_alternative(boundary, "VelocityY", None)
+        zvelocity = DictIO.get_alternative(boundary, "VelocityZ", None)
         default_val = [xvelocity, yvelocity, zvelocity]
-        velocity = DictIO.GetAlternative(boundary, "Velocity", default_val)
+        velocity = DictIO.get_alternative(boundary, "Velocity", default_val)
         freedoms = self.get_freedoms(sims, velocity)
         dirs, values = zip(*freedoms)
 
@@ -424,13 +425,13 @@ class BoundaryConstraints(object):
 
     def set_velocity_constraints(self, sims: Simulation, boundary, level, nlevel, start_point, end_point, inodes):
         if self.velocity_boundary is None:
-            raise RuntimeError("Error:: /max_velocity_constraint/ is set as zero!")
+            raise SimulationStateError("Error:: /max_velocity_constraint/ is set as zero!")
 
-        xvelocity = DictIO.GetAlternative(boundary, "VelocityX", None)
-        yvelocity = DictIO.GetAlternative(boundary, "VelocityY", None)
-        zvelocity = DictIO.GetAlternative(boundary, "VelocityZ", None)
+        xvelocity = DictIO.get_alternative(boundary, "VelocityX", None)
+        yvelocity = DictIO.get_alternative(boundary, "VelocityY", None)
+        zvelocity = DictIO.get_alternative(boundary, "VelocityZ", None)
         default_val = [xvelocity, yvelocity, zvelocity] if sims.dimension == 3 else [xvelocity, yvelocity, 0]
-        velocity = DictIO.GetAlternative(boundary, "Velocity", default_val)
+        velocity = DictIO.get_alternative(boundary, "Velocity", default_val)
         freedoms = self.get_freedoms(sims, velocity)
 
         dirs, values = zip(*freedoms)
@@ -449,10 +450,10 @@ class BoundaryConstraints(object):
 
     def set_reflection_constraints(self, sims: Simulation, boundary, level, nlevel, start_point, end_point, inodes):
         if self.reflection_boundary is None:
-            raise RuntimeError("Error:: /max_reflection_constraint/ is set as zero!")
+            raise SimulationStateError("Error:: /max_reflection_constraint/ is set as zero!")
 
-        norm = DictIO.GetEssential(boundary, "Norm")
-        sign = DictIO.GetAlternative(boundary, "Sign", None)
+        norm = DictIO.get_essential(boundary, "Norm")
+        sign = DictIO.get_alternative(boundary, "Sign", None)
         norms = self.get_norms(sims, norm, sign)
         dirs, signs = self.get_dirs_and_signs(norms)
         self.reflection_dict.update(
@@ -467,11 +468,11 @@ class BoundaryConstraints(object):
 
     def set_friction_constraints(self, sims: Simulation, boundary, level, nlevel, start_point, end_point, inodes):
         if self.friction_boundary is None:
-            raise RuntimeError("Error:: /max_friction_constraint/ is set as zero!")
+            raise SimulationStateError("Error:: /max_friction_constraint/ is set as zero!")
 
-        mu = DictIO.GetEssential(boundary, "Friction")
-        norm = DictIO.GetEssential(boundary, "Norm")
-        sign = DictIO.GetAlternative(boundary, "Sign", None)
+        mu = DictIO.get_essential(boundary, "Friction")
+        norm = DictIO.get_essential(boundary, "Norm")
+        sign = DictIO.get_alternative(boundary, "Sign", None)
         norms = self.get_norms(sims, norm, sign)
         dirs, signs = self.get_dirs_and_signs(norms)
         self.friction_dict.update(
@@ -487,23 +488,23 @@ class BoundaryConstraints(object):
 
     def set_absorbing_constraints(self, sims: Simulation, boundary, level, nlevel, start_point, end_point, inodes):
         if self.absorbing_boundary is None:
-            raise RuntimeError("Error:: /max_absorbing_constraint/ is set as zero!")
+            raise SimulationStateError("Error:: /max_absorbing_constraint/ is set as zero!")
 
         self.check_absorbing_constraint_num(sims, inodes.shape[0] * nlevel)
 
     def set_traction_constraints(self, sims: Simulation, boundary, level, nlevel, start_point, end_point, inodes):
         if self.traction_boundary is None:
-            raise RuntimeError("Error:: /max_traciton_constraint/ is set as zero!")
+            raise SimulationStateError("Error:: /max_traciton_constraint/ is set as zero!")
 
         for i in range(level, level + nlevel):
             if self.is_rigid[i] == 1:
                 raise ValueError(f"Traction boundary will be assigned on rigid body (bodyID = {i})")
 
-        xfext = DictIO.GetAlternative(boundary, "ExternalForceX", None)
-        yfext = DictIO.GetAlternative(boundary, "ExternalForceY", None)
-        zfext = DictIO.GetAlternative(boundary, "ExternalForceZ", None)
+        xfext = DictIO.get_alternative(boundary, "ExternalForceX", None)
+        yfext = DictIO.get_alternative(boundary, "ExternalForceY", None)
+        zfext = DictIO.get_alternative(boundary, "ExternalForceZ", None)
         default_val = [xfext, yfext, zfext] if sims.dimension == 3 else [xfext, yfext, 0]
-        fext = DictIO.GetAlternative(boundary, "ExternalForce", default_val)
+        fext = DictIO.get_alternative(boundary, "ExternalForce", default_val)
         freedoms = self.get_freedoms(sims, fext)
 
         dirs, values = zip(*freedoms)
@@ -522,18 +523,18 @@ class BoundaryConstraints(object):
 
     def set_displacement_constraints(self, sims: Simulation, boundary, level, nlevel, start_point, end_point, inodes):
         if sims.solver_type != "Implicit":
-            raise RuntimeError("Only Implicit solver can assign displacement boundary conditions")
+            raise SimulationStateError("Only Implicit solver can assign displacement boundary conditions")
 
         if self.displacement_boundary is None:
-            raise RuntimeError("Error:: dataclass /displacement_boundary/ is not activated!")
+            raise SimulationStateError("Error:: dataclass /displacement_boundary/ is not activated!")
 
-        xdisplacement = DictIO.GetAlternative(boundary, "DisplacementX", None)
-        ydisplacement = DictIO.GetAlternative(boundary, "DisplacementY", None)
-        zdisplacement = DictIO.GetAlternative(boundary, "DisplacementZ", None)
+        xdisplacement = DictIO.get_alternative(boundary, "DisplacementX", None)
+        ydisplacement = DictIO.get_alternative(boundary, "DisplacementY", None)
+        zdisplacement = DictIO.get_alternative(boundary, "DisplacementZ", None)
         default_val = (
             [xdisplacement, ydisplacement, zdisplacement] if sims.dimension == 3 else [xdisplacement, ydisplacement, 0]
         )
-        displacement = DictIO.GetAlternative(boundary, "Displacement", default_val)
+        displacement = DictIO.get_alternative(boundary, "Displacement", default_val)
         freedoms = self.get_freedoms(sims, displacement)
 
         dirs, values = zip(*freedoms)
@@ -565,10 +566,10 @@ class BoundaryConstraints(object):
             self.velocity_list[0] = 0
             self.check_velocity_constraint_num(sims, nvelocity)
             keys, values = self.split_dict_to_arrays(dict(sorted(self.velocity_dict.items(), key=lambda item: item)))
-            nodeID = np.ascontiguousarray(keys[:, 0])
+            node_id = np.ascontiguousarray(keys[:, 0])
             levels = np.ascontiguousarray(keys[:, 2])
             dirs = np.ascontiguousarray(keys[:, 1])
-            set_contraints(self.velocity_boundary, nodeID, levels, dirs, values)
+            set_contraints(self.velocity_boundary, node_id, levels, dirs, values)
             self.velocity_list[0] = nvelocity
 
         nreflection = len(self.reflection_dict)
@@ -576,11 +577,11 @@ class BoundaryConstraints(object):
             self.reflection_list[0] = 0
             self.check_reflection_constraint_num(sims, nreflection)
             keys, values = self.split_dict_to_arrays(dict(sorted(self.reflection_dict.items(), key=lambda item: item)))
-            nodeID = np.ascontiguousarray(keys[:, 0])
+            node_id = np.ascontiguousarray(keys[:, 0])
             levels = np.ascontiguousarray(keys[:, 3])
             dirs = np.ascontiguousarray(keys[:, 1])
             signs = np.ascontiguousarray(keys[:, 2])
-            set_reflection_constraint(self.reflection_boundary, nodeID, levels, dirs, signs)
+            set_reflection_constraint(self.reflection_boundary, node_id, levels, dirs, signs)
             self.reflection_list[0] = nreflection
 
         nfriction = len(self.friction_dict)
@@ -588,11 +589,11 @@ class BoundaryConstraints(object):
             self.friction_list[0] = 0
             self.check_friction_constraint_num(sims, nfriction)
             keys, values = self.split_dict_to_arrays(dict(sorted(self.friction_dict.items(), key=lambda item: item)))
-            nodeID = np.ascontiguousarray(keys[:, 0])
+            node_id = np.ascontiguousarray(keys[:, 0])
             levels = np.ascontiguousarray(keys[:, 3])
             dirs = np.ascontiguousarray(keys[:, 1])
             signs = np.ascontiguousarray(keys[:, 2])
-            set_friction_constraint(self.friction_boundary, nodeID, levels, dirs, signs, values)
+            set_friction_constraint(self.friction_boundary, node_id, levels, dirs, signs, values)
             self.friction_list[0] = nfriction
 
         ntraction = len(self.traction_dict)
@@ -600,10 +601,10 @@ class BoundaryConstraints(object):
             self.traction_list[0] = 0
             self.check_traction_constraint_num(sims, ntraction)
             keys, values = self.split_dict_to_arrays(dict(sorted(self.traction_dict.items(), key=lambda item: item)))
-            nodeID = np.ascontiguousarray(keys[:, 0])
+            node_id = np.ascontiguousarray(keys[:, 0])
             levels = np.ascontiguousarray(keys[:, 2])
             dirs = np.ascontiguousarray(keys[:, 1])
-            set_contraints(self.traction_boundary, nodeID, levels, dirs, values)
+            set_contraints(self.traction_boundary, node_id, levels, dirs, values)
             self.traction_list[0] = ntraction
 
         ndisplacement = len(self.displacement_dict)
@@ -613,32 +614,32 @@ class BoundaryConstraints(object):
             keys, values = self.split_dict_to_arrays(
                 dict(sorted(self.displacement_dict.items(), key=lambda item: item))
             )
-            nodeID = np.ascontiguousarray(keys[:, 0])
+            node_id = np.ascontiguousarray(keys[:, 0])
             levels = np.ascontiguousarray(keys[:, 2])
             dirs = np.ascontiguousarray(keys[:, 1])
-            set_contraints(self.displacement_boundary, nodeID, levels, dirs, values)
+            set_contraints(self.displacement_boundary, node_id, levels, dirs, values)
             self.displacement_list[0] = ndisplacement
 
     def set_particle_traction(
         self, sims: Simulation, boundary, particleNum, startNum, particle, psize, region: RegionFunction = None
     ):
         if sims.ptraction_method == "Virtual":
-            raise RuntimeError(
+            raise SimulationStateError(
                 "Please input virtual stress field from function /mainMPM -> MPM().add_virtual_stress_field/"
             )
-        traction_force = DictIO.GetEssential(boundary, "Pressure")
+        traction_force = DictIO.get_essential(boundary, "Pressure")
 
         if self.particle_traction is None:
-            raise RuntimeError("Error:: /max_particle_traction_constraint/ is set as zero!")
+            raise SimulationStateError("Error:: /max_particle_traction_constraint/ is set as zero!")
 
         region_function = None
         if not region is None:
             region_function = region.function
-        region_name = DictIO.GetAlternative(boundary, "RegionName", None)
+        region_name = DictIO.get_alternative(boundary, "RegionName", None)
         if region_name:
             traction_region: RegionFunction = self.get_region_ptr(region_name)
             region_function = traction_region.function
-        region_function = DictIO.GetAlternative(boundary, "RegionFunction", region_function)
+        region_function = DictIO.get_alternative(boundary, "RegionFunction", region_function)
         if region_function is None:
 
             @ti.func
@@ -648,7 +649,7 @@ class BoundaryConstraints(object):
             region_function = return_true
 
         if isinstance(traction_force, (int, float)):
-            traction_force *= DictIO.GetEssential(boundary, "OuterNormal")
+            traction_force *= DictIO.get_essential(boundary, "OuterNormal")
         elif isinstance(traction_force, (list, tuple)):
             if len(traction_force) == 2:
                 traction_force = vec2f(traction_force)
@@ -657,9 +658,9 @@ class BoundaryConstraints(object):
 
         fluid_traction = [0.0, 0.0, 0.0] if sims.dimension == 3 else [0.0, 0.0]
         if sims.material_type == "TwoPhaseSingleLayer" or sims.material_type == "TwoPhaseDoubleLayer":
-            fluid_traction = DictIO.GetAlternative(boundary, "FluidPressure", fluid_traction)
+            fluid_traction = DictIO.get_alternative(boundary, "FluidPressure", fluid_traction)
             if isinstance(fluid_traction, float):
-                fluid_traction *= DictIO.GetEssential(boundary, "OuterNormal")
+                fluid_traction *= DictIO.get_essential(boundary, "OuterNormal")
             elif isinstance(fluid_traction, (list, tuple)):
                 if len(fluid_traction) == 2:
                     fluid_traction = vec2f(fluid_traction)
@@ -699,7 +700,7 @@ class BoundaryConstraints(object):
                 )
         elif sims.dimension == 2:
             if sims.material_type == "TwoPhaseSingleLayer" or sims.material_type == "TwoPhaseDoubleLayer":
-                set_particle_traction_contraint_twophase_2D(
+                set_particle_traction_contraint_twophase_2d(
                     self.ptraction_list,
                     self.particle_traction,
                     startNum,
@@ -711,7 +712,7 @@ class BoundaryConstraints(object):
                     psize,
                 )
             else:
-                set_particle_traction_contraint_2D(
+                set_particle_traction_contraint_2d(
                     self.ptraction_list,
                     self.particle_traction,
                     startNum,
@@ -739,7 +740,7 @@ class BoundaryConstraints(object):
 
         virtual_stress = None
         if "ConfiningPressure" in boundary:
-            pressure = DictIO.GetEssential(boundary, "ConfiningPressure")
+            pressure = DictIO.get_essential(boundary, "ConfiningPressure")
             virtual_stress_field = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
             if isinstance(pressure, (int, float)):
                 virtual_stress_field = [-pressure, -pressure, -pressure, 0.0, 0.0, 0.0]
@@ -751,7 +752,7 @@ class BoundaryConstraints(object):
 
             virtual_stress = ti.func(get_virtual_field)
         else:
-            virtual_stress_field = DictIO.GetEssential(boundary, "VirtualStress")
+            virtual_stress_field = DictIO.get_essential(boundary, "VirtualStress")
             if not callable(virtual_stress_field):
                 raise ValueError("Keyword:: /VirtualStress/ should be a Python function")
             virtual_stress_field = ti.pyfunc(virtual_stress_field)
@@ -770,7 +771,7 @@ class BoundaryConstraints(object):
 
             virtual_force = ti.func(get_virtual_force)
         else:
-            virtual_force_field = DictIO.GetAlternative(boundary, "VirtualForce", None)
+            virtual_force_field = DictIO.get_alternative(boundary, "VirtualForce", None)
             zeros = [0.0 for _ in range(sims.dimension)]
             if virtual_force_field is None or isinstance(virtual_force_field, (list, tuple, np.ndarray)):
                 if virtual_force_field is None:
@@ -804,7 +805,7 @@ class BoundaryConstraints(object):
         if not self.myRegion is None:
             return self.myRegion[name]
         else:
-            raise RuntimeError("Region class should be activated first!")
+            raise SimulationStateError("Region class should be activated first!")
 
     def iterate_boundary_constraint(self, sims, element, boundary_constraint, mode):
         if mode == 0:
@@ -832,9 +833,9 @@ class BoundaryConstraints(object):
 
     def set_boundary_conditions(self, sims: Simulation, element: ElementBase, boundary):
         self.new_boundaries = True
-        start_point = DictIO.GetEssential(boundary, "StartPoint")
-        end_point = DictIO.GetEssential(boundary, "EndPoint")
-        boundary_type = DictIO.GetEssential(boundary, "BoundaryType")
+        start_point = DictIO.get_essential(boundary, "StartPoint")
+        end_point = DictIO.get_essential(boundary, "EndPoint")
+        boundary_type = DictIO.get_essential(boundary, "BoundaryType")
         if boundary_type == "SolidCell":
             self.set_solid_cell_boundary(sims, element, boundary, start_point, end_point)
         elif boundary_type == "SolidPlaneCell":
@@ -842,7 +843,7 @@ class BoundaryConstraints(object):
         elif element.element_type == "Staggered":
             self.set_solid_cell_boundary(sims, element, boundary, start_point, end_point)
         else:
-            level = DictIO.GetAlternative(boundary, "NLevel", "All")
+            level = DictIO.get_alternative(boundary, "NLevel", "All")
             self.check_boundary_domain(sims, start_point, end_point)
             inodes = element.get_boundary_nodes(start_point, end_point)
             level, nlevel = self.check_nlevel(level)
@@ -866,10 +867,10 @@ class BoundaryConstraints(object):
                 self.set_displacement_constraints(sims, boundary, level, nlevel, start_point, end_point, inodes)
 
     def clear_boundary_constraint(self, sims: Simulation, element: ElementBase, boundary):
-        boundary_type = DictIO.GetEssential(boundary, "BoundaryType")
-        level = DictIO.GetAlternative(boundary, "NLevel", "All")
-        start_point = DictIO.GetAlternative(boundary, "StartPoint", vec3f(0, 0, 0))
-        end_point = DictIO.GetEssential(boundary, "EndPoint", sims.domain)
+        boundary_type = DictIO.get_essential(boundary, "BoundaryType")
+        level = DictIO.get_alternative(boundary, "NLevel", "All")
+        start_point = DictIO.get_alternative(boundary, "StartPoint", vec3f(0, 0, 0))
+        end_point = DictIO.get_essential(boundary, "EndPoint", sims.domain)
         inodes = element.get_boundary_nodes(start_point, end_point)
         print("Start Point: ", start_point)
         print("End Point: ", end_point, "\n")
@@ -919,7 +920,7 @@ class BoundaryConstraints(object):
 
             elif line[0] == "VelocityConstraint":
                 if self.velocity_boundary is None:
-                    raise RuntimeError("Error:: /max_velocity_constraint/ is set as zero!")
+                    raise SimulationStateError("Error:: /max_velocity_constraint/ is set as zero!")
 
                 boundary_size = int(line[1])
                 self.check_velocity_constraint_num(sims, boundary_size)
@@ -935,7 +936,7 @@ class BoundaryConstraints(object):
 
             elif line[0] == "ReflectionConstraint":
                 if self.reflection_boundary is None:
-                    raise RuntimeError("Error:: /max_reflection_constraint/ is set as zero!")
+                    raise SimulationStateError("Error:: /max_reflection_constraint/ is set as zero!")
 
                 boundary_size = int(line[1])
                 self.check_reflection_constraint_num(sims, boundary_size)
@@ -952,7 +953,7 @@ class BoundaryConstraints(object):
 
             elif line[0] == "FrictionConstraint":
                 if self.friction_boundary is None:
-                    raise RuntimeError("Error:: /max_friction_constraint/ is set as zero!")
+                    raise SimulationStateError("Error:: /max_friction_constraint/ is set as zero!")
 
                 boundary_size = int(line[1])
                 self.check_friction_constraint_num(sims, boundary_size)
@@ -968,14 +969,14 @@ class BoundaryConstraints(object):
 
             elif line[0] == "AbsorbingConstraint":
                 if self.absorbing_boundary is None:
-                    raise RuntimeError("Error:: /max_absorbing_constraint/ is set as zero!")
+                    raise SimulationStateError("Error:: /max_absorbing_constraint/ is set as zero!")
 
                 boundary_size = int(line[1])
                 self.check_absorbing_constraint_num(sims, boundary_size)
 
             elif line[0] == "TractionConstraint":
                 if self.traction_boundary is None:
-                    raise RuntimeError("Error:: /max_traction_constraint/ is set as zero!")
+                    raise SimulationStateError("Error:: /max_traction_constraint/ is set as zero!")
 
                 boundary_size = int(line[1])
                 self.check_velocity_constraint_num(sims, boundary_size)

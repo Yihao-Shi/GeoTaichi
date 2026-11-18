@@ -11,7 +11,6 @@ from typing import Any, Iterable
 
 from common import build_error, build_ok, emit, find_repo_root, write_json
 
-
 CATEGORIES: dict[str, dict[str, Any]] = {
     "mpm": {
         "facade": "MPM",
@@ -24,7 +23,7 @@ CATEGORIES: dict[str, dict[str, Any]] = {
             "src/mpm/MaterialManager.py",
             "src/mpm/generator/*.py",
             "src/mpm/boundaries/*.py",
-            "src/physics_model/consititutive_model/**/*.py",
+            "src/physics_model/constitutive_model/**/*.py",
         ],
         "example_roots": ["examples/mpm"],
         "reference": "references/workflow-mpm.md",
@@ -88,8 +87,9 @@ CATEGORIES: dict[str, dict[str, Any]] = {
             "src/fem/contact/*.py",
             "src/fem/cloth/*.py",
             "src/fem/engines/*.py",
-            "src/physics_model/consititutive_model/finite_strain/*.py",
-            "src/physics_model/consititutive_model/infinitesimal_strain/*.py",
+            "src/physics_model/constitutive_model/finite_strain/*.py",
+            "src/physics_model/constitutive_model/cloth_model/*.py",
+            "src/physics_model/constitutive_model/infinitesimal_strain/*.py",
         ],
         "example_roots": ["examples/fem"],
         "reference": "references/workflow-fem.md",
@@ -151,7 +151,7 @@ CATEGORIES: dict[str, dict[str, Any]] = {
     },
 }
 
-DICT_READERS = {"GetEssential", "GetAlternative", "GetOptional", "GetSwitch"}
+DICT_READERS = {"get_essential", "get_alternative", "get_optional", "GetSwitch", "get_normalized"}
 MAPPING_READERS = {"get"}
 CONFIGURATION_MAPPING_NAMES = {
     "coupling_parameters",
@@ -206,11 +206,7 @@ def _facade_methods(repo: Path, relative_path: str, class_name: str) -> list[dic
                             "doc": ast.get_docstring(child) or "",
                         }
                     )
-            inherited_names = {
-                base.id
-                for base in node.bases
-                if isinstance(base, ast.Name)
-            }
+            inherited_names = {base.id for base in node.bases if isinstance(base, ast.Name)}
             if "SolverDiagnosticsMixin" in inherited_names:
                 methods.append(
                     {
@@ -229,11 +225,7 @@ def _expand_sources(repo: Path, patterns: Iterable[str]) -> list[Path]:
     paths: set[Path] = set()
     for pattern in patterns:
         if any(char in pattern for char in "*?["):
-            paths.update(
-                path
-                for path in repo.glob(pattern)
-                if path.is_file() and not path.name.startswith("._")
-            )
+            paths.update(path for path in repo.glob(pattern) if path.is_file() and not path.name.startswith("._"))
         else:
             path = repo / pattern
             if path.is_file():
@@ -279,9 +271,7 @@ def _examples(repo: Path, roots: Iterable[str]) -> list[str]:
         path = repo / root
         if path.is_dir():
             examples.extend(
-                item.relative_to(repo).as_posix()
-                for item in path.rglob("*.py")
-                if not item.name.startswith("._")
+                item.relative_to(repo).as_posix() for item in path.rglob("*.py") if not item.name.startswith("._")
             )
     return sorted(set(examples))
 
@@ -360,10 +350,7 @@ def main() -> int:
                 build_ok(
                     {
                         "output": output_label,
-                        "summary": {
-                            name: data["summary"]
-                            for name, data in index["categories"].items()
-                        },
+                        "summary": {name: data["summary"] for name, data in index["categories"].items()},
                     }
                 )
             )

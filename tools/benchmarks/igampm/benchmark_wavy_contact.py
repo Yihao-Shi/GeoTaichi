@@ -5,6 +5,8 @@ exclude compilation and synchronize Taichi. This measures contact kernels,
 not complete solver steps; checkpoint velocities provide CCD test directions.
 """
 
+from src.physics_model.contact_model.ipc.Utilities import get_distance_to_surface_fixed_dim
+
 import argparse
 import json
 from pathlib import Path
@@ -20,7 +22,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 import src.igampm.config as config
 from src.igampm.contact.ContactSurface import CouplingContactSurface
 from src.igampm.engines.ImplicitEngine import ImplicitEngineMixin
-from src.physics_model.contact_model.ipc.NurbsContact import get_distance_to_surface_fixed_dim
 
 
 @ti.data_oriented

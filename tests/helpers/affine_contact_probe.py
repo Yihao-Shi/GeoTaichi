@@ -1,5 +1,9 @@
 """Host adapters for testing production ABD contact laws."""
 
+from src.physics_model.contact_model.ipc.Utilities import ipc_barrier_distance2_terms
+
+from src.physics_model.contact_model.ipc.Utilities import ipc_fully_implicit_point_plane_stribeck_friction
+
 import numpy as np
 import taichi as ti
 from src.physics_model.contact_model.ipc.ContactDistance import (
@@ -13,7 +17,6 @@ from src.physics_model.contact_model.ipc.ContactMollifier import (
     edge_edge_mollifier_grad,
     edge_edge_mollifier_threshold,
 )
-from src.physics_model.contact_model.ipc.IPC import ipc_fully_implicit_point_plane_stribeck_friction
 
 
 def surface_direction_inf_norm(self, direction):
@@ -58,7 +61,7 @@ class AffineContactProbe:
         local_residual = ti.Vector.zero(float, 12)
         local_jacobian = ti.Matrix.zero(float, 12, 12)
         if dist2 > 0.0 and dist2 < dhat * dhat:
-            unused_energy, db, ddb = self.operator._ipc_barrier_distance2(dist2, dhat * dhat, kappa)
+            unused_energy, db, ddb = ipc_barrier_distance2_terms(dist2, dhat * dhat, kappa)
             mollifier_gradient = ti.Vector.zero(float, 12)
             local_residual, local_jacobian = self.operator._fully_implicit_local_friction_residual_jacobian(
                 positions,
@@ -111,7 +114,7 @@ class AffineContactProbe:
         local_residual = ti.Vector.zero(float, 12)
         local_jacobian = ti.Matrix.zero(float, 12, 12)
         if dist2 > 0.0 and dist2 < dhat * dhat:
-            unused_energy, db, ddb = self.operator._ipc_barrier_distance2(dist2, dhat * dhat, kappa)
+            unused_energy, db, ddb = ipc_barrier_distance2_terms(dist2, dhat * dhat, kappa)
             eps_x = edge_edge_mollifier_threshold(rp0, rp1, rq0, rq1)
             mollifier = edge_edge_mollifier(p0, p1, q0, q1, eps_x)
             mollifier_gradient = edge_edge_mollifier_grad(p0, p1, q0, q1, eps_x)
@@ -157,7 +160,7 @@ class AffineContactProbe:
         dist2, grad_d, unused_type = point_triangle_distance_grad(p, a, b, c)
         local_residual = ti.Vector.zero(float, 12)
         if dist2 > 0.0 and dist2 < dhat * dhat:
-            unused_energy, db, unused_ddb = self.operator._ipc_barrier_distance2(dist2, dhat * dhat, kappa)
+            unused_energy, db, unused_ddb = ipc_barrier_distance2_terms(dist2, dhat * dhat, kappa)
             local_residual = self.operator._fully_implicit_local_friction_residual(
                 positions,
                 hats,
@@ -202,7 +205,7 @@ class AffineContactProbe:
         dist2, grad_d, unused_type = edge_edge_distance_grad(p0, p1, q0, q1)
         local_residual = ti.Vector.zero(float, 12)
         if dist2 > 0.0 and dist2 < dhat * dhat:
-            unused_energy, db, unused_ddb = self.operator._ipc_barrier_distance2(dist2, dhat * dhat, kappa)
+            unused_energy, db, unused_ddb = ipc_barrier_distance2_terms(dist2, dhat * dhat, kappa)
             eps_x = edge_edge_mollifier_threshold(rp0, rp1, rq0, rq1)
             mollifier = edge_edge_mollifier(p0, p1, q0, q1, eps_x)
             local_residual = self.operator._fully_implicit_local_friction_residual(

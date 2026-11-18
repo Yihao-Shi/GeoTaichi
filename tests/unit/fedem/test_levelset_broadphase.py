@@ -6,12 +6,10 @@ import pytest
 
 ti = pytest.importorskip("taichi")
 
-from src.dem.structs.BaseStruct import (
-    BoundingBox,
-    FacetFamily,
-    LevelSetGrid,
-    RigidBody,
-)
+from src.dem.structs.BaseStruct import LevelSetGrid
+from src.dem.structs.BoundingBox import BoundingBox
+from src.dem.structs.FacetFamily import FacetFamily
+from src.dem.structs.RigidBody import RigidBody
 from src.fedem.Patch import FEMSurfacePatch
 from src.fedem.contact.ContactKernel import (
     _barrier_contact_force,
@@ -26,9 +24,10 @@ from src.fedem.contact.ContactKernel import (
 )
 from src.fedem.contact.Barrier import BarrierSurfaceProperty
 from src.fedem.contact.Linear import LinearSurfaceProperty
-from src.fedem.neighbor.LevelSet import FEMLevelSetBroadPhase
-from src.fedem.structs import FEMFacetWallContact, FEMLevelSetContact
-from src.utils.ScalarFunction import linearize3D
+from src.fedem.neighbor.FEMLevelSetBroadPhase import FEMLevelSetBroadPhase
+from src.fedem.structs.Contact import FEMFacetWallContact
+from src.fedem.structs.Contact import FEMLevelSetContact
+from src.utils.ScalarFunction import linearize3d
 
 pytestmark = [
     pytest.mark.unit,
@@ -927,7 +926,7 @@ def test_levelset_surface_node_contact_is_work_conjugate_and_preserves_action_re
         )
         box[0]._add_grid(0, 1.0, ti.Vector([2, 2, 2]), 1.0, 0)
         for i, j, k in ti.ndrange(2, 2, 2):
-            node = linearize3D(i, j, k, ti.Vector([2, 2, 2]))
+            node = linearize3d(i, j, k, ti.Vector([2, 2, 2]))
             # phi(z) = 2 z - 0.2 deliberately has a non-unit gradient.
             # The elastic force must equal -d(0.5 * kn * area * phi^2)/dz.
             grid[node].distance_field = 2.0 * ti.cast(k, ti.f64) - 0.2

@@ -2,13 +2,13 @@ import taichi as ti
 import numpy as np
 
 from src.utils.constants import PI
-from src.utils.TypeDefination import vec3f
+from src.utils.TypeDefinition import vec3f
 
 
 @ti.data_oriented
-class set_orientation:
+class Orientation:
     def __init__(self, orientation) -> None:
-        euler_angle = [0., 0., 0.]
+        euler_angle = [0.0, 0.0, 0.0]
         if orientation is None:
             self.particle_orientation = "constant"
         elif isinstance(orientation, str):
@@ -16,7 +16,7 @@ class set_orientation:
         elif isinstance(orientation, (list, tuple, np.ndarray)):
             self.particle_orientation = "constant"
             euler_angle = list(orientation)
-        
+
         self.get_orientation = None
         self.set_orientation()
         if not "uniform" in self.particle_orientation:
@@ -24,16 +24,16 @@ class set_orientation:
             self.record_orientation(vec3f(euler_angle))
 
     def set_orientation(self):
-        if self.particle_orientation == 'constant':
+        if self.particle_orientation == "constant":
             self.get_orientation = self.get_fixed_orientation
-        elif self.particle_orientation == 'uniform':
+        elif self.particle_orientation == "uniform":
             self.get_orientation = self.get_uniform_orientation
-        elif self.particle_orientation == 'uniformXY':
-            self.get_orientation = self.get_uniform_orientationXY
-        elif self.particle_orientation == 'uniformYZ':
-            self.get_orientation = self.get_uniform_orientationYZ
-        elif self.particle_orientation == 'uniformXZ':
-            self.get_orientation = self.get_uniform_orientationXZ
+        elif self.particle_orientation == "uniformXY":
+            self.get_orientation = self.get_uniform_orientation_xy
+        elif self.particle_orientation == "uniformYZ":
+            self.get_orientation = self.get_uniform_orientation_yz
+        elif self.particle_orientation == "uniformXZ":
+            self.get_orientation = self.get_uniform_orientation_xz
         else:
             raise ValueError("Orientation distribution error!")
 
@@ -43,20 +43,20 @@ class set_orientation:
 
     @ti.func
     def get_uniform_orientation(self):
-        return vec3f([2*PI*ti.random(float), 2*PI*ti.random(float), 2*PI*ti.random(float)])
+        return vec3f([2 * PI * ti.random(float), 2 * PI * ti.random(float), 2 * PI * ti.random(float)])
 
     @ti.func
-    def get_uniform_orientationXY(self):
-        return vec3f([2*PI*ti.random(float), 2*PI*ti.random(float), 0.])
+    def get_uniform_orientation_xy(self):
+        return vec3f([2 * PI * ti.random(float), 2 * PI * ti.random(float), 0.0])
 
     @ti.func
-    def get_uniform_orientationYZ(self):
-        return vec3f([0., 2*PI*ti.random(float), 2*PI*ti.random(float)])
+    def get_uniform_orientation_yz(self):
+        return vec3f([0.0, 2 * PI * ti.random(float), 2 * PI * ti.random(float)])
 
     @ti.func
-    def get_uniform_orientationXZ(self):
-        return vec3f([2*PI*ti.random(float), 0., 2*PI*ti.random(float)])
+    def get_uniform_orientation_xz(self):
+        return vec3f([2 * PI * ti.random(float), 0.0, 2 * PI * ti.random(float)])
 
     @ti.kernel
     def record_orientation(self, orient: ti.types.vector(3, float)):
-        self.fix_orient[None] = 2*PI*orient/360.
+        self.fix_orient[None] = 2 * PI * orient / 360.0

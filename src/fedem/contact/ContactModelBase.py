@@ -1,21 +1,8 @@
 """Shared contact-model allocation and property handling."""
 
 from __future__ import annotations
-
 import math
-
 import taichi as ti
-
-
-def property_value(mapping, name, *aliases, default=None, required=False):
-    normalized = {str(key).replace("_", "").replace("-", "").lower(): value for key, value in mapping.items()}
-    for candidate in (name, *aliases):
-        key = str(candidate).replace("_", "").replace("-", "").lower()
-        if key in normalized:
-            return normalized[key]
-    if required:
-        raise KeyError(f"FEDEM contact property {name!r} is required")
-    return default
 
 
 class ContactModelBase:
@@ -54,6 +41,3 @@ class ContactModelBase:
     def critical_timestep(self, minimum_mass, maximum_radius=None):
         del maximum_radius
         return math.inf
-
-
-__all__ = ["ContactModelBase", "property_value"]

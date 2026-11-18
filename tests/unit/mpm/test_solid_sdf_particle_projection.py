@@ -3,7 +3,8 @@ import pytest
 import taichi as ti
 from geotaichi import init
 from src.mpm.engines.EngineKernel import enforce_particle_solid_sdf_collision, interpolate_solid_sdf
-from src.mpm.structs.Particle import ParticleCloudIncompressible2D, ParticleCloudIncompressible3D
+from src.mpm.structs.ParticleCloudIncompressible2D import ParticleCloudIncompressible2D
+from src.mpm.structs.ParticleCloudIncompressible3D import ParticleCloudIncompressible3D
 from examples.mpm.IncompressibleFluid.dam_break_visible_sdf_2d.obstacle import VERTICES
 
 

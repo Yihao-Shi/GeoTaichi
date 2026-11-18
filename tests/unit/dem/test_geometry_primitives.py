@@ -4,12 +4,11 @@ import numpy as np
 import pytest
 import taichi as ti
 
-from src.dem.structs.BaseStruct import FacetFamily
+from src.dem.structs.FacetFamily import FacetFamily
 from src.utils.GeometryFunction import (
-    DistanceFromPointToTriangle2,
-    PointProjectionToRectangle,
+    distance_from_point_to_triangle2,
+    point_projection_to_rectangle,
 )
-
 
 pytestmark = [pytest.mark.unit, pytest.mark.dem, pytest.mark.geometry, pytest.mark.cpu]
 
@@ -19,7 +18,7 @@ def test_point_projection_to_axis_aligned_rectangle(taichi_runtime):
 
     @ti.kernel
     def project():
-        result[None] = PointProjectionToRectangle(
+        result[None] = point_projection_to_rectangle(
             ti.Vector([5.0, 0.0, 4.0]),
             ti.Vector([1.0, 2.0, 3.0]),
             ti.Vector([0.0, 0.0, 1.0]),
@@ -40,14 +39,12 @@ def test_point_projection_to_axis_aligned_rectangle(taichi_runtime):
         ((2.0, 2.0, 0.0), 3.0 / math.sqrt(2.0)),
     ],
 )
-def test_point_triangle_distance_matches_elementary_geometry(
-    taichi_runtime, point, expected
-):
+def test_point_triangle_distance_matches_elementary_geometry(taichi_runtime, point, expected):
     result = ti.field(dtype=ti.f64, shape=())
 
     @ti.kernel
     def distance(query: ti.types.vector(3, ti.f64)):
-        result[None] = DistanceFromPointToTriangle2(
+        result[None] = distance_from_point_to_triangle2(
             query,
             ti.Vector([0.0, 0.0, 0.0]),
             ti.Vector([1.0, 0.0, 0.0]),
@@ -65,7 +62,7 @@ def test_two_triangles_partition_an_interior_sphere_cross_section(taichi_runtime
     @ti.kernel
     def initialize():
         facets[0].add_wall_geometry(
-            wallID=0,
+            input_wall_id=0,
             vertice1=ti.Vector([0.0, 0.0, 1.1]),
             vertice2=ti.Vector([15.0, 0.0, 1.1]),
             vertice3=ti.Vector([15.0, 6.0, 1.1]),
@@ -73,7 +70,7 @@ def test_two_triangles_partition_an_interior_sphere_cross_section(taichi_runtime
             init_v=ti.Vector([0.0, 0.0, 0.0]),
         )
         facets[1].add_wall_geometry(
-            wallID=1,
+            input_wall_id=1,
             vertice1=ti.Vector([0.0, 0.0, 1.1]),
             vertice2=ti.Vector([15.0, 6.0, 1.1]),
             vertice3=ti.Vector([0.0, 6.0, 1.1]),
@@ -87,9 +84,7 @@ def test_two_triangles_partition_an_interior_sphere_cross_section(taichi_runtime
         radius = 1.6
         for index in ti.static(range(2)):
             distance = facets[index]._get_norm_distance(center)
-            fractions[None][index] = facets[index].processCircleShape(
-                center, radius, distance
-            )
+            fractions[None][index] = facets[index].process_circle_shape(center, radius, distance)
 
     initialize()
     evaluate()

@@ -1,27 +1,72 @@
 """Nonlinear solution policy for soft-particle/affine-body IPC."""
 
+from src.linear_solver.Utilities import accepts_monotone_energy
+
+from src.utils.errors import (
+    ConfigurationError,
+    LineSearchError,
+    NonfiniteStateError,
+    NonlinearSolveError,
+    SimulationStateError,
+)
+from src.dem.engines.Utilities import _normalize_affine_assemble_type
+from third_party.pyevtk.hl import unstructuredGridToVTK
+from third_party.pyevtk.vtk import VtkTriangle
+from src.utils.StepRetry import StepRetryPolicy
+
 import math
 import os
 
 import numpy as np
 
-from src.dem.engines.AffineBodyOperator import _normalize_affine_assemble_type
-from src.mpm.MaterialManager import SoftParticleMaterialManager
-from src.utils.SolverRuntime import accepts_monotone_energy
-from src.utils.StepRetry import (
-    StepRetryPolicy,
-    is_recoverable_nonlinear_failure,
-    nonlinear_failure_kind,
-)
+from src.mpm.SoftParticleMaterialManager import SoftParticleMaterialManager
 
-from .SoftAffineIPCOperator import (
-    SoftAffineIPCOperator,
-    _validate_soft_affine_lagged_friction_configuration,
-    write_soft_affine_surface_vtu,
-)
+from src.mpdem.engines.SoftAffineIPCOperator import SoftAffineIPCOperator
 
 
 class SoftAffineIPCEngine(object):
+    @staticmethod
+    def write_soft_affine_surface_vtu(vtk_path, snapshot):
+        """Write the affine half of a soft-affine snapshot as triangle VTU."""
+        vertices = np.asarray(snapshot["vertices"])
+        faces = np.asarray(snapshot["faces"])
+        if vertices.size == 0 or faces.size == 0:
+            return False
+        if vertices.ndim != 2 or vertices.shape[1] != 3:
+            raise ValueError("soft-affine VTU vertices must have shape (n, 3)")
+        if faces.ndim != 2 or faces.shape[1] != 3:
+            raise ValueError("soft-affine VTU faces must have shape (m, 3)")
+        point_body_ids = np.asarray(snapshot["bodyID"], dtype=np.int32)
+        point_group_ids = np.asarray(snapshot["groupID"], dtype=np.int32)
+        if point_body_ids.shape != (vertices.shape[0],) or point_group_ids.shape != (vertices.shape[0],):
+            raise ValueError("soft-affine VTU point labels must match the vertex count")
+        face_body_ids = np.asarray(snapshot["faceBodyID"], dtype=np.int32)
+        face_group_ids = np.asarray(snapshot["faceGroupID"], dtype=np.int32)
+        face_material_ids = np.asarray(snapshot["faceMaterialID"], dtype=np.int32)
+        face_count = faces.shape[0]
+        for values in (face_body_ids, face_group_ids, face_material_ids):
+            if values.shape != (face_count,):
+                raise ValueError("soft-affine VTU cell labels must match the face count")
+        unstructuredGridToVTK(
+            str(vtk_path),
+            np.ascontiguousarray(vertices[:, 0]),
+            np.ascontiguousarray(vertices[:, 1]),
+            np.ascontiguousarray(vertices[:, 2]),
+            connectivity=np.ascontiguousarray(faces.reshape(-1).astype(np.int32)),
+            offsets=np.ascontiguousarray(np.arange(3, 3 * face_count + 1, 3, dtype=np.int32)),
+            cell_types=np.ascontiguousarray(np.full(face_count, VtkTriangle.tid, dtype=np.uint8)),
+            pointData={
+                "bodyID": np.ascontiguousarray(point_body_ids),
+                "groupID": np.ascontiguousarray(point_group_ids),
+            },
+            cellData={
+                "bodyID": np.ascontiguousarray(face_body_ids),
+                "groupID": np.ascontiguousarray(face_group_ids),
+                "materialID": np.ascontiguousarray(face_material_ids),
+            },
+        )
+        return True
+
     def __init__(self):
         self.operator = None
         self.soft_material = None
@@ -49,11 +94,11 @@ class SoftAffineIPCEngine(object):
     def _fully_implicit_force_target(sims, initial_residual, dt):
         """Keep nonconservative force convergence separate from PN velocity."""
         if not math.isfinite(dt) or dt <= 0.0:
-            raise RuntimeError("SoftAffineIPC fully implicit convergence requires a finite positive time step")
+            raise NonlinearSolveError("SoftAffineIPC fully implicit convergence requires a finite positive time step")
         absolute = float(sims.affine_fully_implicit_force_atol)
         relative = float(sims.affine_fully_implicit_force_rtol)
         if not math.isfinite(absolute) or absolute < 0.0 or not math.isfinite(relative) or relative < 0.0:
-            raise RuntimeError("SoftAffineIPC fully implicit force tolerances must be " "finite and non-negative")
+            raise ConfigurationError("SoftAffineIPC fully implicit force tolerances must be " "finite and non-negative")
         alpha, beta, _ = getattr(sims, "affine_newmark", (1.0, 0.5, 1.0))
         return 2.0 * alpha * beta * float(dt) ** 2 * absolute + relative * float(initial_residual)
 
@@ -64,11 +109,11 @@ class SoftAffineIPCEngine(object):
         return
 
     def initialize(self, sims, scene):
-        mode, requested_outer = _validate_soft_affine_lagged_friction_configuration(sims)
+        mode, requested_outer = SoftAffineIPCOperator._validate_soft_affine_lagged_friction_configuration(sims)
         if int(scene.softNum[0]) <= 0:
-            raise RuntimeError("SoftAffineIPC requires at least one LSMPM soft body.")
+            raise SimulationStateError("SoftAffineIPC requires at least one LSMPM soft body.")
         if len(scene.affine_bodies) == 0:
-            raise RuntimeError("SoftAffineIPC requires at least one affine rigid body.")
+            raise SimulationStateError("SoftAffineIPC requires at least one affine rigid body.")
         if _normalize_affine_assemble_type(sims.affine_assemble_type) != "HashTriplet":
             sims.set_affine_body_parameters(assemble_type="HashTriplet")
         if self.soft_material is None:
@@ -77,7 +122,7 @@ class SoftAffineIPCEngine(object):
         if self.operator is None:
             self.operator = SoftAffineIPCOperator(scene, sims, self.soft_material)
         elif self.operator.friction_mode != mode:
-            raise RuntimeError(
+            raise SimulationStateError(
                 "SoftAffineIPC friction_mode cannot be changed after engine "
                 "initialization; configure it before add_essentials()"
             )
@@ -103,11 +148,11 @@ class SoftAffineIPCEngine(object):
             try:
                 result = self.advance(sims, self.requested_friction_iterations)
             except RuntimeError as exception:
-                if not is_recoverable_nonlinear_failure(exception):
+                if not StepRetryPolicy.is_recoverable_nonlinear_failure(exception):
                     raise
                 self.operator.rollback_step_device()
                 failure = {
-                    "kind": nonlinear_failure_kind(exception),
+                    "kind": StepRetryPolicy.nonlinear_failure_kind(exception),
                     "exception": type(exception).__name__,
                     "message": str(exception),
                     "attempt": int(attempt),
@@ -153,9 +198,9 @@ class SoftAffineIPCEngine(object):
 
     def _differentiate_step(self, sims, scene, loss_gradient, mode, plastic_state_vjp=None):
         if self.operator is None:
-            raise RuntimeError("SoftAffineIPCEngine must be initialized before differentiation")
+            raise ConfigurationError("SoftAffineIPCEngine must be initialized before differentiation")
         if self.pending_elastic_adjoint_seed is not None:
-            raise RuntimeError("A Soft-Affine differentiation step is already active")
+            raise SimulationStateError("A Soft-Affine differentiation step is already active")
         self.pending_elastic_adjoint_seed = loss_gradient
         self.pending_adjoint_mode = mode
         self.pending_plastic_state_vjp = plastic_state_vjp
@@ -163,7 +208,7 @@ class SoftAffineIPCEngine(object):
         try:
             self.step(sims, scene)
             if self.last_elastic_differentiation is None:
-                raise RuntimeError("Soft-Affine step completed without its pre-commit adjoint")
+                raise SimulationStateError("Soft-Affine step completed without its pre-commit adjoint")
             return self.last_elastic_differentiation
         finally:
             self.pending_elastic_adjoint_seed = None
@@ -222,10 +267,10 @@ class SoftAffineIPCEngine(object):
         self.last_linear_backend = "TaichiHashTripletPCG"
         max_outer = sims.affine_friction_max_iterations if requested_outer < 0 else requested_outer
         if max_outer <= 0:
-            raise RuntimeError("SoftAffineIPC friction_max_iterations must be a positive integer")
+            raise ConfigurationError("SoftAffineIPC friction_max_iterations must be a positive integer")
         tolerance = float(sims.affine_friction_tolerance)
         if not math.isfinite(tolerance) or tolerance < 0.0:
-            raise RuntimeError("SoftAffineIPC friction_tolerance must be finite and non-negative")
+            raise ConfigurationError("SoftAffineIPC friction_tolerance must be finite and non-negative")
         self._reset_nonlinear_diagnostics()
         self.operator.begin_step_device()
         self.operator.refresh_lagged_friction_device()
@@ -247,7 +292,7 @@ class SoftAffineIPCEngine(object):
                 break
         self.last_friction_terminated_by_cap = not self.last_friction_converged
         if requested_outer < 0 and not self.last_friction_converged:
-            raise RuntimeError(
+            raise NonlinearSolveError(
                 "SoftAffineIPC lagged IPC friction fixed-point iteration did "
                 f"not converge within safety cap {max_outer} "
                 f"(residual={self.last_friction_residual:.6e})"
@@ -292,7 +337,7 @@ class SoftAffineIPCEngine(object):
             initial_energy = self.operator.assemble_device(need_matrix=True)
             if not math.isfinite(initial_energy):
                 self.last_inner_failure_reason = "non_finite_energy"
-                raise RuntimeError("SoftAffineIPC fully implicit initial state has " "non-finite IPC energy")
+                raise NonfiniteStateError("SoftAffineIPC fully implicit initial state has " "non-finite IPC energy")
             iterations = self._solve_fully_implicit_newton_device(sims)
             self.last_newton_iterations = iterations
             self.last_friction_iterations = 1
@@ -319,10 +364,10 @@ class SoftAffineIPCEngine(object):
             direction_norm = float(result["solution_inf_norm"])
             if not math.isfinite(direction_norm):
                 self.last_inner_failure_reason = "non_finite_direction"
-                raise RuntimeError("SoftAffineIPC fully implicit Newton correction is non-finite")
+                raise NonfiniteStateError("SoftAffineIPC fully implicit Newton correction is non-finite")
             if direction_norm == 0.0:
                 self.last_inner_failure_reason = "newton_stagnation"
-                raise RuntimeError(
+                raise SimulationStateError(
                     "SoftAffineIPC fully implicit Newton solve stagnated "
                     f"with residual={residual_norm:.6e}, "
                     f"tolerance={tolerance:.6e}"
@@ -330,7 +375,7 @@ class SoftAffineIPCEngine(object):
             merit_slope = self.operator.residual_merit_directional_derivative_device()
             if not math.isfinite(merit_slope) or merit_slope >= 0.0:
                 self.last_inner_failure_reason = "non_descent_merit_direction"
-                raise RuntimeError(
+                raise LineSearchError(
                     "SoftAffineIPC fully implicit Newton direction is not " "a descent direction for 0.5 * ||R||^2"
                 )
             self._fully_implicit_line_search_device(sims, merit_slope)
@@ -341,7 +386,7 @@ class SoftAffineIPCEngine(object):
                 self.last_inner_failure_reason = ""
                 break
         if not self.last_inner_converged:
-            raise RuntimeError(
+            raise NonlinearSolveError(
                 "SoftAffineIPC fully implicit Newton solve did not converge "
                 f"(reason={self.last_inner_failure_reason}, "
                 f"iterations={iterations}, residual={residual_norm:.6e}, "
@@ -362,7 +407,7 @@ class SoftAffineIPCEngine(object):
         )
         if not math.isfinite(alpha) or alpha <= 0.0:
             self.last_inner_failure_reason = "ccd_step_size"
-            raise RuntimeError("SoftAffineIPC fully implicit CCD produced no feasible step")
+            raise SimulationStateError("SoftAffineIPC fully implicit CCD produced no feasible step")
         armijo = float(sims.affine_fully_implicit_armijo)
         contraction = float(sims.affine_fully_implicit_line_search_contraction)
         if not 0.0 < armijo < 1.0 or not 0.0 < contraction < 1.0:
@@ -370,10 +415,10 @@ class SoftAffineIPCEngine(object):
         base_merit = self.operator.residual_merit_device()
         if not math.isfinite(base_merit):
             self.last_inner_failure_reason = "non_finite_residual_merit"
-            raise RuntimeError("SoftAffineIPC fully implicit base residual merit is " "non-finite")
+            raise NonfiniteStateError("SoftAffineIPC fully implicit base residual merit is " "non-finite")
         if not math.isfinite(merit_slope) or merit_slope >= 0.0:
             self.last_inner_failure_reason = "non_descent_merit_direction"
-            raise RuntimeError(
+            raise SimulationStateError(
                 "SoftAffineIPC fully implicit Armijo requires a negative " "R^T (J p) directional derivative"
             )
         self.operator.store_coupled_base_device()
@@ -389,13 +434,15 @@ class SoftAffineIPCEngine(object):
                 accepted_energy = self.operator.assemble_device(need_matrix=True)
                 if not math.isfinite(accepted_energy):
                     self.last_inner_failure_reason = "non_finite_energy"
-                    raise RuntimeError("SoftAffineIPC fully implicit accepted state has " "non-finite IPC energy")
+                    raise NonfiniteStateError(
+                        "SoftAffineIPC fully implicit accepted state has " "non-finite IPC energy"
+                    )
                 return float(alpha)
             alpha *= contraction
         self.operator.restore_coupled_base_device()
         self.operator.assemble_device(need_matrix=True)
         self.last_inner_failure_reason = "residual_armijo_line_search"
-        raise RuntimeError("SoftAffineIPC fully implicit residual Armijo line search failed")
+        raise LineSearchError("SoftAffineIPC fully implicit residual Armijo line search failed")
 
     def _solve_lagged_inner_device(self, sims, energy):
         iterations = 0
@@ -408,7 +455,7 @@ class SoftAffineIPCEngine(object):
         for iteration in range(int(sims.affine_max_newton_iteration)):
             if not math.isfinite(energy):
                 self.last_inner_failure_reason = "non_finite_energy"
-                raise RuntimeError("SoftAffineIPC lagged initial/current state has " "non-finite IPC energy")
+                raise NonfiniteStateError("SoftAffineIPC lagged initial/current state has " "non-finite IPC energy")
             # Test represented motion/strain before max-step truncation.
             result = self.operator.solve_direction_device(sims)
             correction_velocity = float(result["unclamped_correction_velocity"])
@@ -424,7 +471,7 @@ class SoftAffineIPCEngine(object):
             energy = self._line_search_device(sims, energy)
             iterations = iteration + 1
         if not self.last_inner_converged:
-            raise RuntimeError(
+            raise NonlinearSolveError(
                 "SoftAffineIPC inner Newton solve did not converge "
                 f"(reason={self.last_inner_failure_reason}, "
                 f"iterations={iterations}, "
@@ -438,13 +485,15 @@ class SoftAffineIPCEngine(object):
         slope = self.operator.energy_directional_derivative_device()
         if not math.isfinite(slope):
             self.last_inner_failure_reason = "non_descent_direction"
-            raise RuntimeError("SoftAffineIPC lagged line-search direction has a non-finite " "energy derivative")
+            raise NonfiniteStateError(
+                "SoftAffineIPC lagged line-search direction has a non-finite " "energy derivative"
+            )
         if slope > 0.0:
             self.operator.negate_direction_device()
             slope = -slope
         if slope >= 0.0:
             self.last_inner_failure_reason = "non_descent_direction"
-            raise RuntimeError("SoftAffineIPC lagged line search requires a strict descent " "direction")
+            raise LineSearchError("SoftAffineIPC lagged line search requires a strict descent " "direction")
         alpha = (
             self.operator.init_step_size_device(
                 ccd_type=sims.affine_ccd_type,
@@ -457,7 +506,7 @@ class SoftAffineIPCEngine(object):
         )
         if not math.isfinite(alpha) or alpha <= 0.0:
             self.last_inner_failure_reason = "ccd_step_size"
-            raise RuntimeError("SoftAffineIPC lagged CCD produced no feasible step")
+            raise SimulationStateError("SoftAffineIPC lagged CCD produced no feasible step")
         self.operator.store_coupled_base_device()
         for _ in range(int(sims.affine_line_search_max_iteration)):
             self.operator.set_coupled_trial_device(alpha)
@@ -470,7 +519,7 @@ class SoftAffineIPCEngine(object):
         self.operator.restore_coupled_base_device()
         self.operator.assemble_device(need_matrix=True)
         self.last_inner_failure_reason = "monotone_line_search"
-        raise RuntimeError(
+        raise LineSearchError(
             "SoftAffineIPC lagged monotone line search failed to find a " "feasible non-increasing-potential step"
         )
 
@@ -478,12 +527,12 @@ class SoftAffineIPCEngine(object):
         """Return the positive step used to convert IPC corrections to m/s."""
         dt = float(self.operator.dt)
         if not np.isfinite(dt) or dt <= 0.0:
-            raise RuntimeError("SoftAffineIPC lagged stopping criterion requires a finite " "positive time step")
+            raise ConfigurationError("SoftAffineIPC lagged stopping criterion requires a finite " "positive time step")
         return dt
 
     def output_snapshot(self):
         if self.operator is None:
-            raise RuntimeError("SoftAffineIPCEngine has not been initialized.")
+            raise SimulationStateError("SoftAffineIPCEngine has not been initialized.")
         return self.operator.output_snapshot()
 
     def save_affine(self, sims):
@@ -497,7 +546,7 @@ class SoftAffineIPCEngine(object):
             t_current=sims.current_time,
             **snapshot,
         )
-        write_soft_affine_surface_vtu(
+        self.write_soft_affine_surface_vtu(
             os.path.join(sims.path, "vtks", f"GraphicAffineBody{sims.current_print:06d}"),
             snapshot,
         )

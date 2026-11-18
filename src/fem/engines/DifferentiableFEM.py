@@ -1,5 +1,7 @@
 """Device-resident trajectory adjoints for elastic implicit FEM/BarrierIPC."""
 
+from src.utils.errors import NonfiniteStateError, NonlinearSolveError, RecordingError, SimulationStateError
+
 import numpy as np
 import taichi as ti
 
@@ -218,15 +220,15 @@ class DifferentiableFEM:
         if solver.step_count != self.initial_step + self.record_count:
             raise ValueError("advance the solver only through DifferentiableFEM.step()")
         if self.record_count >= self.capacity:
-            raise RuntimeError("differentiable trajectory exceeded the configured FEM step count")
+            raise RecordingError("differentiable trajectory exceeded the configured FEM step count")
         converged = solver.substep()
         if not converged or not solver.last_friction_converged:
-            raise RuntimeError("cannot differentiate an unconverged FEM solve")
+            raise NonlinearSolveError("cannot differentiate an unconverged FEM solve")
         residual = solver.state.residual_norm()
         if not np.isfinite(residual):
-            raise RuntimeError("forward FEM residual is non-finite")
+            raise NonfiniteStateError("forward FEM residual is non-finite")
         if self.residual_tolerance is not None and residual > self.residual_tolerance:
-            raise RuntimeError(
+            raise SimulationStateError(
                 "forward residual is too large for the FEM adjoint: "
                 f"residual={residual:.6e}, tolerance={self.residual_tolerance:.6e}"
             )
@@ -237,7 +239,7 @@ class DifferentiableFEM:
     def backward(self, position_gradient, velocity_gradient=None, acceleration_gradient=None):
         """Return VJPs of a terminal-state objective through the recorded steps."""
         if self.record_count == 0:
-            raise RuntimeError("record at least one step before backward()")
+            raise RecordingError("record at least one step before backward()")
         shape = (self.node_count, 3)
 
         def seed(value):

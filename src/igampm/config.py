@@ -20,18 +20,6 @@ def get_dimension():
 
 
 def normalize_contact_model(contact_model):
-    """Return the canonical IGA--MPM contact backend name."""
-    key = str(contact_model).strip().replace("_", "").replace("-", "").replace(" ", "").upper()
-    aliases = {
-        "IPC": "IPC",
-        "BARRIERIPC": "IPC",
-        "LINEAR": "Linear",
-        "LINEARMODEL": "Linear",
-        "LINEARSPRING": "Linear",
-        "HERTZ": "HertzMindlin",
-        "HERTZMINDLIN": "HertzMindlin",
-        "HERTZMINDLINMODEL": "HertzMindlin",
-    }
-    if key not in aliases:
+    if contact_model not in ("BarrierIPC", "Linear", "HertzMindlin"):
         raise ValueError("IGA-MPM contact_model must be BarrierIPC, Linear, or HertzMindlin")
-    return aliases[key]
+    return contact_model

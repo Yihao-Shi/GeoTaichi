@@ -4,8 +4,9 @@ from math import sqrt
 
 import numpy as np
 
-from src.nurbs.NurbsBasis import NurbsBasis
-from src.nurbs.NurbsPrimitives import NurbsCurve, NurbsSurface
+from src.nurbs.NurbsBasis import nurbs_basis
+from src.nurbs.NurbsCurve import NurbsCurve
+from src.nurbs.NurbsSurface import NurbsSurface
 
 
 def _unit_circle_curve():
@@ -22,9 +23,7 @@ def _unit_circle_curve():
             [0.0, 1.0, 0.0],
         ]
     )
-    knot_vector = np.asarray(
-        [0.0, 0.0, 0.0, 0.25, 0.25, 0.5, 0.5, 0.75, 0.75, 1.0, 1.0, 1.0]
-    )
+    knot_vector = np.asarray([0.0, 0.0, 0.0, 0.25, 0.25, 0.5, 0.5, 0.75, 0.75, 1.0, 1.0, 1.0])
     weights = np.ones(9)
     weights[1::2] = sqrt(2.0) / 2.0
 
@@ -43,7 +42,7 @@ def test_rational_basis_is_partition_of_unity_with_zero_derivative_sum():
     for knot in sample_knots:
         values_and_derivatives = np.asarray(
             [
-                NurbsBasis(
+                nurbs_basis(
                     control_point,
                     curve.degree,
                     knot,
@@ -65,9 +64,7 @@ def test_rational_knot_refinement_preserves_curve_geometry():
     curve = NurbsCurve()
     curve.degree = 2
     curve.knot_vector = np.asarray([0.0, 0.0, 0.0, 1.0, 1.0, 1.0])
-    curve.control_points = np.asarray(
-        [[0.0, 1.0, 0.0], [0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]
-    )
+    curve.control_points = np.asarray([[0.0, 1.0, 0.0], [0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
     curve.weights = np.asarray([1.0, sqrt(2.0) / 2.0, 1.0])
 
     sample_knots = np.linspace(0.0, 1.0, 33)
@@ -89,9 +86,7 @@ def test_closed_unit_circle_distance_and_curvature_match_analytic_values():
 
     assert np.isclose(distance, 1.0 - sqrt(2.0) / 2.0, atol=2.0e-12)
     assert np.isclose(curve.curvature(0.5), 1.0, atol=2.0e-12)
-    np.testing.assert_allclose(
-        curve.single_point(0.5), [2.0, 1.0, 0.0], rtol=0.0, atol=2.0e-14
-    )
+    np.testing.assert_allclose(curve.single_point(0.5), [2.0, 1.0, 0.0], rtol=0.0, atol=2.0e-14)
 
 
 def test_planar_surface_projection_and_distance_match_analytic_values():
@@ -99,9 +94,7 @@ def test_planar_surface_projection_and_distance_match_analytic_values():
     surface.degree = [2, 2]
     surface.knot_vector_u = np.asarray([0.0, 0.0, 0.0, 1.0, 1.0, 1.0])
     surface.knot_vector_v = np.asarray([0.0, 0.0, 0.0, 1.0, 1.0, 1.0])
-    surface.control_points = np.asarray(
-        [[u, v, 0.0] for v in (0.0, 0.5, 1.0) for u in (0.0, 0.5, 1.0)]
-    )
+    surface.control_points = np.asarray([[u, v, 0.0] for v in (0.0, 0.5, 1.0) for u in (0.0, 0.5, 1.0)])
     surface.weights = np.ones(9)
     query = np.asarray([0.25, 0.75, 2.0])
 
@@ -112,4 +105,3 @@ def test_planar_surface_projection_and_distance_match_analytic_values():
         rtol=0.0,
         atol=2.0e-13,
     )
-

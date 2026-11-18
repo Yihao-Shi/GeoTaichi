@@ -1,5 +1,7 @@
 """Device checkpoint/replay adjoint for AffineBody trajectories."""
 
+from src.utils.errors import RecordingError, SimulationStateError
+
 import numpy as np
 import taichi as ti
 
@@ -90,7 +92,7 @@ class DifferentiableABD:
     def step(self):
         """Advance once and append the accepted device state to the tape."""
         if self.record_count >= self.capacity:
-            raise RuntimeError("differentiable ABD trajectory tape is full")
+            raise SimulationStateError("differentiable ABD trajectory tape is full")
         if float(self.sims.dt[None]) != self.dt or float(self.sims.delta) != self.dt:
             raise ValueError("time step changed during differentiable trajectory")
         if int(self.sims.current_step) != self.initial_step + self.record_count:
@@ -105,7 +107,7 @@ class DifferentiableABD:
     def backward(self, position_gradient, velocity_gradient=None):
         """Reverse all recorded steps and return state/parameter VJPs."""
         if self.record_count == 0:
-            raise RuntimeError("record at least one step before backward()")
+            raise RecordingError("record at least one step before backward()")
         shape = (self.control_num, 3)
 
         def seed(value):

@@ -107,7 +107,7 @@ Reject unsupported combinations before generating a long script.
   Cartesian 2D, and no-swirl axisymmetric 2D. The latter two use point--edge
   contact. Cartesian 2D DP/von Mises uses a 3D plane-strain material map and
   rejects `plane_strain=False`; axisymmetry requires a shared `axis_offset`, positive reference
-  radii, `F_theta_theta=r/R`, and `2*pi*R` reference measures.
+  radii, `F_theta_theta=r/R`, and `R` reference measures per radian.
 
 ## 5. FEM
 
@@ -177,7 +177,7 @@ LSMPM soft materials, and parameter/history adjoints are unsupported. See
   Axisymmetric IGA and Direct MPM children must share `axis_offset`; component
   zero is radius, both constitutive blocks use a 3D map with
   `F_theta_theta=r/R`, and reference volume/contact-ring measures include
-  `2*pi*R`.
+  `R` per radian.
 
 ## 7. Backends and precision
 

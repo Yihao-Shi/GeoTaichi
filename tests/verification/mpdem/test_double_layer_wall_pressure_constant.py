@@ -9,7 +9,8 @@ from src.mpm.engines.TwoPhaseDoubleLayerKernel import (
     kernel_project_double_layer_pressure_to_solid_nodes2d,
     kernel_project_double_layer_pressure_to_solid_nodes3d,
 )
-from src.mpm.structs.GridNode import NodeTwoPhase, NodeTwoPhase2D
+from src.mpm.structs.NodeTwoPhase import NodeTwoPhase
+from src.mpm.structs.NodeTwoPhase2D import NodeTwoPhase2D
 
 
 @pytest.mark.parametrize("shape_type", [2, 3])

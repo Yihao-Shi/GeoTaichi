@@ -4,7 +4,10 @@ import numpy as np
 import pytest
 import taichi as ti
 
-from src.mpm.structs.GridNode import ContactNodes, ContactNodes2D, Nodes, Nodes2D
+from src.mpm.structs.ContactNodes import ContactNodes
+from src.mpm.structs.ContactNodes2D import ContactNodes2D
+from src.mpm.structs.Nodes import Nodes
+from src.mpm.structs.Nodes2D import Nodes2D
 
 pytestmark = [pytest.mark.isolated_dimension(2), pytest.mark.cpu, pytest.mark.contact]
 

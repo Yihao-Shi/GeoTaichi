@@ -1,3 +1,4 @@
+from src.utils.errors import NonfiniteStateError, SimulationStateError
 from math import isfinite
 
 import taichi as ti
@@ -18,10 +19,10 @@ from src.mpm.engines.TwoPhaseDoubleLayerKernel import (
     MAC_SHAPE_GIMP,
     MAC_SHAPE_QUAD_BSPLINE,
     MAC_SHAPE_CUBIC_BSPLINE,
-    kernel_assemble_double_layer_pressure_A,
-    kernel_assemble_double_layer_pressure_A3d,
-    kernel_assemble_double_layer_pressure_mg_A,
-    kernel_assemble_double_layer_pressure_mg_A3d,
+    kernel_assemble_double_layer_pressure_a,
+    kernel_assemble_double_layer_pressure_a3d,
+    kernel_assemble_double_layer_pressure_mg_a,
+    kernel_assemble_double_layer_pressure_mg_a3d,
     kernel_assemble_double_layer_pressure_rhs,
     kernel_assemble_double_layer_pressure_rhs3d,
     kernel_build_double_layer_fluid_sdf2d,
@@ -89,13 +90,13 @@ from src.mpm.engines.TwoPhaseDoubleLayerKernel import (
     kernel_enforce_double_layer_solid_plane_nodes2d,
     kernel_enforce_double_layer_solid_plane_nodes3d,
 )
-from src.mpm.SceneManager import myScene
+from src.mpm.SceneManager import SceneManager
 from src.mpm.Simulation import Simulation
 from src.mpm.SpatialHashGrid import SpatialHashGrid
 from src.utils.linalg import no_operation
 
 
-class _DoubleLayerCellOutput:
+class DoubleLayerCellOutput:
     def __init__(self, cell_type, pressure, fluid_sdf):
         self.type = cell_type
         self.pressure = pressure
@@ -148,7 +149,7 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
             return MAC_SHAPE_QUAD_BSPLINE, 3
         if sims.shape_function == "CubicBSpline":
             return MAC_SHAPE_CUBIC_BSPLINE, 4
-        raise RuntimeError(
+        raise SimulationStateError(
             f"TwoPhaseDoubleLayer does not support MAC transfer for shape function {sims.shape_function}"
         )
 
@@ -157,12 +158,12 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
             return 0
         return int(sims.velocity_projection_scheme == "Affine")
 
-    def _single_twophase_matprop(self, scene: myScene):
+    def _single_twophase_matprop(self, scene: SceneManager):
         for material_id in range(1, scene.material.matProps.size()):
             return scene.material.matProps[material_id]
         return scene.material.matProps[0]
 
-    def _iter_twophase_materials(self, scene: myScene):
+    def _iter_twophase_materials(self, scene: SceneManager):
         mapping = getattr(scene.material, "mapping", None)
         if mapping is None:
             particle_num = int(scene.particleNum[0])
@@ -181,9 +182,9 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
 
     def choose_engine(self, sims: Simulation):
         if sims.is_2DAxisy:
-            raise RuntimeError("TwoPhaseDoubleLayer SemiImplicit does not support 2D axisymmetric mode")
+            raise SimulationStateError("TwoPhaseDoubleLayer SemiImplicit does not support 2D axisymmetric mode")
         if sims.dimension not in (2, 3):
-            raise RuntimeError("TwoPhaseDoubleLayer SemiImplicit currently supports 2D and 3D only")
+            raise SimulationStateError("TwoPhaseDoubleLayer SemiImplicit currently supports 2D and 3D only")
         if sims.velocity_projection_scheme != "Affine" and sims.mapping not in ["USL", "USF", "MUSL"]:
             raise ValueError(f"The mapping scheme {sims.mapping} is not supported for TwoPhaseDoubleLayer SemiImplicit")
         self.mac_shape_type, self.mac_influenced_node = self._mac_shape_settings(sims)
@@ -228,16 +229,16 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
         if sims.velocity_projection_scheme == "Affine":
             self.compute = self.affine_updating
 
-    def affine_updating(self, sims: Simulation, scene: myScene, neighbor=None):
+    def affine_updating(self, sims: Simulation, scene: SceneManager, neighbor=None):
         if sims.dimension == 3:
             self._semi_implicit_update_3d(sims, scene, neighbor)
         else:
             self._semi_implicit_update_2d(sims, scene, neighbor)
 
-    def reset_grid_message(self, scene: myScene):
+    def reset_grid_message(self, scene: SceneManager):
         kernel_reset_double_layer_grid(scene.node)
 
-    def _allocate_common_mac_fields(self, sims: Simulation, scene: myScene, dimension, grid_shape):
+    def _allocate_common_mac_fields(self, sims: Simulation, scene: SceneManager, dimension, grid_shape):
         node_shape = (int(scene.element.gridSum), int(scene.grid_level))
         self.shifting_reference_volume = ti.field(float, shape=node_shape)
         if sims.particle_shifting:
@@ -277,7 +278,7 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
         self._bind_cell_output_fields(scene)
         self.allocated = True
 
-    def _allocate_mac_fields2d(self, sims: Simulation, scene: myScene):
+    def _allocate_mac_fields2d(self, sims: Simulation, scene: SceneManager):
         if self.allocated:
             return
 
@@ -330,7 +331,7 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
         self.cell_grain_diameter = ti.field(float, shape=(nx, ny))
         self._allocate_common_mac_fields(sims, scene, 2, [nx, ny])
 
-    def _allocate_mac_fields3d(self, sims: Simulation, scene: myScene):
+    def _allocate_mac_fields3d(self, sims: Simulation, scene: SceneManager):
         if self.allocated:
             return
 
@@ -399,7 +400,7 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
         self.cell_grain_diameter = ti.field(float, shape=(nx, ny, nz))
         self._allocate_common_mac_fields(sims, scene, 3, [nx, ny, nz])
 
-    def _bind_cell_output_fields(self, scene: myScene):
+    def _bind_cell_output_fields(self, scene: SceneManager):
         cell = getattr(scene.element, "cell", None)
         if cell is not None and hasattr(cell, "set_ptr"):
             cell.set_ptr(
@@ -408,13 +409,13 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
                 fluid_sdf=self.cell_fluid_sdf,
             )
         else:
-            scene.element.cell = _DoubleLayerCellOutput(
+            scene.element.cell = DoubleLayerCellOutput(
                 self.cell_type,
                 self.cell_pressure,
                 self.cell_fluid_sdf,
             )
 
-    def pre_calculation(self, sims: Simulation, scene: myScene, neighbor: SpatialHashGrid):
+    def pre_calculation(self, sims: Simulation, scene: SceneManager, neighbor: SpatialHashGrid):
         self.fluid_volume_initialized = scene.two_phase_fluid_mass_initialized
         self.shifting_reference_ready = False
         scene.element.calculate_characteristic_length(sims, int(scene.particleNum[0]), scene.particle, scene.psize)
@@ -424,7 +425,7 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
         self._prepare_shifting_reference_volume(scene)
         self.limit = sims.verlet_distance * sims.verlet_distance
 
-    def _advect_double_layer_fluid_particles2d(self, sims: Simulation, scene: myScene):
+    def _advect_double_layer_fluid_particles2d(self, sims: Simulation, scene: SceneManager):
         kernel_advect_double_layer_fluid_particles2d(
             int(scene.particleNum[0]),
             sims.domain,
@@ -432,7 +433,7 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
             scene.particle,
         )
 
-    def _advect_double_layer_fluid_particles3d(self, sims: Simulation, scene: myScene):
+    def _advect_double_layer_fluid_particles3d(self, sims: Simulation, scene: SceneManager):
         kernel_advect_double_layer_fluid_particles3d(
             int(scene.particleNum[0]),
             sims.domain,
@@ -440,7 +441,7 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
             scene.particle,
         )
 
-    def _update_double_layer_fluid_volume2d(self, scene: myScene):
+    def _update_double_layer_fluid_volume2d(self, scene: SceneManager):
         initialize_mass = int(not self.fluid_volume_initialized)
         kernel_map_double_layer_phase_volume_support(
             int(scene.particleNum[0]),
@@ -470,7 +471,7 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
         scene.two_phase_fluid_mass_initialized = True
         return bool(initialize_mass)
 
-    def _update_double_layer_fluid_volume3d(self, scene: myScene):
+    def _update_double_layer_fluid_volume3d(self, scene: SceneManager):
         initialize_mass = int(not self.fluid_volume_initialized)
         kernel_map_double_layer_phase_volume_support(
             int(scene.particleNum[0]),
@@ -500,13 +501,13 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
         scene.two_phase_fluid_mass_initialized = True
         return bool(initialize_mass)
 
-    def _apply_external_mac_boundary(self, sims: Simulation, scene: myScene):
+    def _apply_external_mac_boundary(self, sims: Simulation, scene: SceneManager):
         if self.update_external_mac_boundary is not no_operation:
             self.shifting_reference_ready = False
         # A geometric callback may supply a capacity more precise than its solid-cell mask.
         self.update_external_mac_boundary(sims, scene)
 
-    def _prepare_shifting_reference_volume(self, scene: myScene):
+    def _prepare_shifting_reference_volume(self, scene: SceneManager):
         if not self.shifting_reference_ready:
             kernel_fdm_shifting_reference_volume(
                 0,
@@ -519,7 +520,7 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
             )
             self.shifting_reference_ready = True
 
-    def _shift_double_layer_fluid_particles2d(self, sims: Simulation, scene: myScene):
+    def _shift_double_layer_fluid_particles2d(self, sims: Simulation, scene: SceneManager):
         self._prepare_shifting_reference_volume(scene)
         kernel_remap_double_layer_shift_velocity2d(
             int(scene.particleNum[0]),
@@ -574,7 +575,7 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
             self.shifting_pic_residual,
         )
 
-    def _shift_double_layer_fluid_particles3d(self, sims: Simulation, scene: myScene):
+    def _shift_double_layer_fluid_particles3d(self, sims: Simulation, scene: SceneManager):
         self._prepare_shifting_reference_volume(scene)
         kernel_remap_double_layer_shift_velocity3d(
             int(scene.particleNum[0]),
@@ -629,7 +630,7 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
             self.shifting_pic_residual,
         )
 
-    def _constrain_particles_to_solid_cell_regions2d(self, sims: Simulation, scene: myScene):
+    def _constrain_particles_to_solid_cell_regions2d(self, sims: Simulation, scene: SceneManager):
         if scene.boundary is None:
             return
         for start_point, end_point in scene.boundary.solid_cell_regions:
@@ -654,7 +655,7 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
                 scene.particle,
             )
 
-    def _apply_solid_plane_node_boundaries2d(self, scene: myScene):
+    def _apply_solid_plane_node_boundaries2d(self, scene: SceneManager):
         if scene.boundary is None:
             return
         planes = getattr(scene.boundary, "solid_cell_plane_regions", []) + getattr(
@@ -672,7 +673,7 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
                 scene.node,
             )
 
-    def _constrain_particles_to_solid_cell_regions3d(self, sims: Simulation, scene: myScene):
+    def _constrain_particles_to_solid_cell_regions3d(self, sims: Simulation, scene: SceneManager):
         if scene.boundary is None:
             return
         for start_point, end_point in scene.boundary.solid_cell_regions:
@@ -697,7 +698,7 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
                 scene.particle,
             )
 
-    def _apply_solid_plane_node_boundaries3d(self, scene: myScene):
+    def _apply_solid_plane_node_boundaries3d(self, scene: SceneManager):
         if scene.boundary is None:
             return
         planes = getattr(scene.boundary, "solid_cell_plane_regions", []) + getattr(
@@ -842,7 +843,7 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
             self.node_drag_model,
         )
 
-    def _accumulate_material_fields2d(self, sims: Simulation, scene: myScene):
+    def _accumulate_material_fields2d(self, sims: Simulation, scene: SceneManager):
         mac_shape_type = self.mac_shape_type
         mac_influenced_node = self.mac_influenced_node
         for _, start_index, end_index, mat_prop in self._iter_twophase_materials(scene):
@@ -923,7 +924,7 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
             self.node_drag_model,
         )
 
-    def _accumulate_material_fields3d(self, sims: Simulation, scene: myScene):
+    def _accumulate_material_fields3d(self, sims: Simulation, scene: SceneManager):
         mac_shape_type = self.mac_shape_type
         mac_influenced_node = self.mac_influenced_node
         for _, start_index, end_index, mat_prop in self._iter_twophase_materials(scene):
@@ -1020,14 +1021,14 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
             self.node_drag_model,
         )
 
-    def _assemble_pressure_mg_levels2d(self, sims: Simulation, scene: myScene):
+    def _assemble_pressure_mg_levels2d(self, sims: Simulation, scene: SceneManager):
         for level in range(1, self.poisson_solver.n_mg_levels):
             factor = 2**level
             kernel_coarsen_double_layer_grid_type2d(
                 self.poisson_solver.grid_type[level - 1],
                 self.poisson_solver.grid_type[level],
             )
-            kernel_assemble_double_layer_pressure_mg_A(
+            kernel_assemble_double_layer_pressure_mg_a(
                 scene.element.grid_size,
                 sims.dt,
                 factor,
@@ -1042,14 +1043,14 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
                 self.cell_pressure_mobility,
             )
 
-    def _assemble_pressure_mg_levels3d(self, sims: Simulation, scene: myScene):
+    def _assemble_pressure_mg_levels3d(self, sims: Simulation, scene: SceneManager):
         for level in range(1, self.poisson_solver.n_mg_levels):
             factor = 2**level
             kernel_coarsen_double_layer_grid_type3d(
                 self.poisson_solver.grid_type[level - 1],
                 self.poisson_solver.grid_type[level],
             )
-            kernel_assemble_double_layer_pressure_mg_A3d(
+            kernel_assemble_double_layer_pressure_mg_a3d(
                 scene.element.grid_size,
                 sims.dt,
                 factor,
@@ -1084,7 +1085,7 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
         self.poisson_solver.reduce(self.projection_residual, self.projection_residual)
         residual = float(self.poisson_solver.sum[None])
         if not isfinite(residual) or residual < 0.0:
-            raise RuntimeError(f"TwoPhaseDoubleLayer non-finite actual projection residual: {residual}")
+            raise NonfiniteStateError(f"TwoPhaseDoubleLayer non-finite actual projection residual: {residual}")
         return residual
 
     def _apply_coupled_pressure_increment(self, sims, scene, dimension):
@@ -1145,7 +1146,7 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
             if residual <= tolerance:
                 break
             if iteration == self.poisson_iterations:
-                raise RuntimeError(
+                raise SimulationStateError(
                     "TwoPhaseDoubleLayer actual velocity projection failed: "
                     f"initial_rTr={initial:.6e}, final_rTr={residual:.6e}, tolerance={tolerance:.6e}"
                 )
@@ -1159,7 +1160,7 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
         self.enforce_external_mac_boundary_after_pressure(sims, scene)
         self.enforce_solid_cell_faces(sims)
 
-    def _solve_pressure2d(self, sims: Simulation, scene: myScene, reuse_operator=False):
+    def _solve_pressure2d(self, sims: Simulation, scene: SceneManager, reuse_operator=False):
         if not reuse_operator:
             self._build_fluid_sdf2d(sims, scene)
             self.poisson_solver.reinitialize(self.cell_type)
@@ -1178,7 +1179,7 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
         )
         # Geometry, densities and mobility stay fixed within one defect-correction loop.
         if not reuse_operator:
-            kernel_assemble_double_layer_pressure_A(
+            kernel_assemble_double_layer_pressure_a(
                 scene.element.grid_size,
                 sims.dt,
                 self.poisson_solver.grid_type[0],
@@ -1194,7 +1195,7 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
             self._assemble_pressure_mg_levels2d(sims, scene)
         solved = self.poisson_solver.solve(self.poisson_iterations, rel_tol=sims.residual_tolerance, abs_tol=1.0e-20)
         if not solved:
-            raise RuntimeError(
+            raise SimulationStateError(
                 "TwoPhaseDoubleLayer pressure solve failed: "
                 f"{self.poisson_solver.breakdown_reason}={self.poisson_solver.breakdown_value:.6e}, "
                 f"initial_rTr={self.poisson_solver.initial_residual:.6e}, "
@@ -1203,7 +1204,7 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
             )
         self.cell_pressure.copy_from(self.poisson_solver.x)
 
-    def _solve_pressure3d(self, sims: Simulation, scene: myScene, reuse_operator=False):
+    def _solve_pressure3d(self, sims: Simulation, scene: SceneManager, reuse_operator=False):
         if not reuse_operator:
             self._build_fluid_sdf3d(sims, scene)
             self.poisson_solver.reinitialize(self.cell_type)
@@ -1225,7 +1226,7 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
         )
         # Geometry, densities and mobility stay fixed within one defect-correction loop.
         if not reuse_operator:
-            kernel_assemble_double_layer_pressure_A3d(
+            kernel_assemble_double_layer_pressure_a3d(
                 scene.element.grid_size,
                 sims.dt,
                 self.poisson_solver.grid_type[0],
@@ -1242,7 +1243,7 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
             self._assemble_pressure_mg_levels3d(sims, scene)
         solved = self.poisson_solver.solve(self.poisson_iterations, rel_tol=sims.residual_tolerance, abs_tol=1.0e-20)
         if not solved:
-            raise RuntimeError(
+            raise SimulationStateError(
                 "TwoPhaseDoubleLayer pressure solve failed: "
                 f"{self.poisson_solver.breakdown_reason}={self.poisson_solver.breakdown_value:.6e}, "
                 f"initial_rTr={self.poisson_solver.initial_residual:.6e}, "
@@ -1251,7 +1252,7 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
             )
         self.cell_pressure.copy_from(self.poisson_solver.x)
 
-    def _sample_pressure_to_solid_particles2d(self, sims: Simulation, scene: myScene):
+    def _sample_pressure_to_solid_particles2d(self, sims: Simulation, scene: SceneManager):
         kernel_extend_double_layer_wall_pressure(self.cell_type, self.cell_pressure, self.mac_influenced_node - 1)
         kernel_project_double_layer_pressure_to_solid_nodes2d(
             scene.mass_cut_off,
@@ -1279,7 +1280,7 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
                 scene.element.node_size,
             )
 
-    def _sample_pressure_to_solid_particles3d(self, sims: Simulation, scene: myScene):
+    def _sample_pressure_to_solid_particles3d(self, sims: Simulation, scene: SceneManager):
         kernel_extend_double_layer_wall_pressure(self.cell_type, self.cell_pressure, self.mac_influenced_node - 1)
         kernel_project_double_layer_pressure_to_solid_nodes3d(
             scene.mass_cut_off,
@@ -1307,7 +1308,7 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
                 scene.element.node_size,
             )
 
-    def _correct_solid_velocity_paper2d(self, sims: Simulation, scene: myScene):
+    def _correct_solid_velocity_paper2d(self, sims: Simulation, scene: SceneManager):
         for _, start_index, end_index, _ in self._iter_twophase_materials(scene):
             kernel_correct_double_layer_solid_velocity_paper2d(
                 scene.element.grid_nodes,
@@ -1325,7 +1326,7 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
                 self.solid_pressure_factor,
             )
 
-    def _correct_solid_velocity_paper3d(self, sims: Simulation, scene: myScene):
+    def _correct_solid_velocity_paper3d(self, sims: Simulation, scene: SceneManager):
         for _, start_index, end_index, _ in self._iter_twophase_materials(scene):
             kernel_correct_double_layer_solid_velocity_paper3d(
                 scene.element.grid_nodes,
@@ -1343,7 +1344,7 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
                 self.solid_pressure_factor,
             )
 
-    def _build_fluid_sdf2d(self, sims: Simulation, scene: myScene):
+    def _build_fluid_sdf2d(self, sims: Simulation, scene: SceneManager):
         kernel_build_double_layer_fluid_sdf2d(
             scene.element.grid_size,
             self.cell_fluid_mass,
@@ -1353,7 +1354,7 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
             self.cell_fluid_sdf,
         )
 
-    def _build_fluid_sdf3d(self, sims: Simulation, scene: myScene):
+    def _build_fluid_sdf3d(self, sims: Simulation, scene: SceneManager):
         kernel_build_double_layer_fluid_sdf3d(
             scene.element.grid_size,
             self.cell_fluid_mass,
@@ -1363,7 +1364,7 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
             self.cell_fluid_sdf,
         )
 
-    def _mark_solid_cell_boundaries2d(self, sims: Simulation, scene: myScene):
+    def _mark_solid_cell_boundaries2d(self, sims: Simulation, scene: SceneManager):
         if scene.boundary is None:
             return
         for start_point, end_point in scene.boundary.solid_cell_regions:
@@ -1385,7 +1386,7 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
                 self.cell_type,
             )
 
-    def _mark_solid_cell_boundaries3d(self, sims: Simulation, scene: myScene):
+    def _mark_solid_cell_boundaries3d(self, sims: Simulation, scene: SceneManager):
         if scene.boundary is None:
             return
         for start_point, end_point in scene.boundary.solid_cell_regions:
@@ -1432,11 +1433,11 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
             self.solid_velocity_z,
         )
 
-    def _apply_solid_cell_boundaries(self, sims: Simulation, scene: myScene):
+    def _apply_solid_cell_boundaries(self, sims: Simulation, scene: SceneManager):
         self.mark_solid_cell_boundaries(sims, scene)
         self.enforce_solid_cell_faces(sims)
 
-    def _semi_implicit_update_2d(self, sims: Simulation, scene: myScene, neighbor: SpatialHashGrid):
+    def _semi_implicit_update_2d(self, sims: Simulation, scene: SceneManager, neighbor: SpatialHashGrid):
         default_mat_prop = self._single_twophase_matprop(scene)
         mac_shape_type = self.mac_shape_type
         mac_influenced_node = self.mac_influenced_node
@@ -1705,7 +1706,7 @@ class ULSemiImplicitTwoPhaseDoubleLayerEngine(ULExplicitEngine):
         self.shift_double_layer_fluid_particles(sims, scene)
         self.constrain_particles_to_solid_cell_regions(sims, scene)
 
-    def _semi_implicit_update_3d(self, sims: Simulation, scene: myScene, neighbor: SpatialHashGrid = None):
+    def _semi_implicit_update_3d(self, sims: Simulation, scene: SceneManager, neighbor: SpatialHashGrid = None):
         default_mat_prop = self._single_twophase_matprop(scene)
         mac_shape_type = self.mac_shape_type
         mac_influenced_node = self.mac_influenced_node

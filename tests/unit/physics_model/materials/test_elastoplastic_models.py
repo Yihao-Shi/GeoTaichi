@@ -11,13 +11,13 @@ import pytest
 import taichi as ti
 
 import src.utils.GlobalVariable as GlobalVariable
-from src.physics_model.consititutive_model.infinitesimal_strain.DruckerPrager import (
+from src.physics_model.constitutive_model.infinitesimal_strain.DruckerPrager import (
     DruckerPragerModel,
 )
-from src.physics_model.consititutive_model.infinitesimal_strain.ElasticPerfectlyPlastic import (
+from src.physics_model.constitutive_model.infinitesimal_strain.ElasticPerfectlyPlastic import (
     ElasticPerfectlyPlasticModel,
 )
-from src.physics_model.consititutive_model.infinitesimal_strain.MohrCoulomb import (
+from src.physics_model.constitutive_model.infinitesimal_strain.MohrCoulomb import (
     MohrCoulombModel,
 )
 
@@ -175,9 +175,9 @@ def _evaluate_von_mises(
             )
             stress[sample] = sigma
             tangent[sample] = model.compute_stiffness_tensor(sample, sigma, state)
-            internal = model.GetInternalVariables(state[sample])
-            parameters = model.GetMaterialParameter(sigma, state[sample])
-            branch, value = model.ComputeYieldState(sigma, internal, parameters)
+            internal = model.get_internal_variables(state[sample])
+            parameters = model.get_material_parameter(sigma, state[sample])
+            branch, value = model.compute_yield_state(sigma, internal, parameters)
             final_yield_state[sample] = branch
             final_yield_value[sample] = value
 
@@ -234,9 +234,9 @@ def _evaluate_frictional(
             )
             stress[sample] = sigma
             tangent[sample] = model.compute_stiffness_tensor(sample, sigma, state)
-            internal = model.GetInternalVariables(state[sample])
-            parameters = model.GetMaterialParameter(sigma, state[sample])
-            branch, value = model.ComputeYieldState(sigma, internal, parameters)
+            internal = model.get_internal_variables(state[sample])
+            parameters = model.get_material_parameter(sigma, state[sample])
+            branch, value = model.compute_yield_state(sigma, internal, parameters)
             final_yield_state[sample] = branch
             final_yield_value[sample] = value
 

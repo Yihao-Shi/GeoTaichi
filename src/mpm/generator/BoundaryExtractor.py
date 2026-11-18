@@ -2,9 +2,7 @@ import numpy as np
 from scipy.spatial import ConvexHull
 import alphashape
 
-import numpy as np
 import matplotlib.pyplot as plt
-from scipy.spatial import ConvexHull
 
 
 class BoundaryExtractor:

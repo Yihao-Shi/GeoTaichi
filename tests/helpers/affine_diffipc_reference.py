@@ -19,7 +19,7 @@ from tests.helpers.affine_levelset_reference import (
     _project_psd,
     continued_ipc_barrier_distance_terms,
 )
-from src.physics_model.contact_model.ipc.LevelSetAffine import _as_float_array, _as_positive_scalar
+from src.physics_model.contact_model.ipc.LevelSetAffine import TrilinearLevelSet
 
 
 @dataclass
@@ -236,10 +236,10 @@ def affine_edge_edge_gap(
     parallel-edge degeneracy remains the responsibility of IPC's edge-edge
     mollifier and is deliberately not hidden by this oracle.
     """
-    controls0 = _as_float_array(controls0, (4, 3), "controls0")
-    controls1 = _as_float_array(controls1, (4, 3), "controls1")
-    edge0_basis = _as_float_array(edge0_basis, (2, 4), "edge0_basis")
-    edge1_basis = _as_float_array(edge1_basis, (2, 4), "edge1_basis")
+    controls0 = TrilinearLevelSet._as_float_array(controls0, (4, 3), "controls0")
+    controls1 = TrilinearLevelSet._as_float_array(controls1, (4, 3), "controls1")
+    edge0_basis = TrilinearLevelSet._as_float_array(edge0_basis, (2, 4), "edge0_basis")
+    edge1_basis = TrilinearLevelSet._as_float_array(edge1_basis, (2, 4), "edge1_basis")
     packed = np.concatenate((controls0.reshape(-1), controls1.reshape(-1)))
     variables = [_SecondOrder.variable(value, index, 24) for index, value in enumerate(packed)]
 
@@ -299,10 +299,10 @@ def affine_point_triangle_gap(
     rejected because neither standard IPC nor DiffIPC is differentiable
     there.
     """
-    source_controls = _as_float_array(source_controls, (4, 3), "source_controls")
-    target_controls = _as_float_array(target_controls, (4, 3), "target_controls")
-    source_basis = _as_float_array(source_basis, (4,), "source_basis")
-    target_triangle_basis = _as_float_array(target_triangle_basis, (3, 4), "target_triangle_basis")
+    source_controls = TrilinearLevelSet._as_float_array(source_controls, (4, 3), "source_controls")
+    target_controls = TrilinearLevelSet._as_float_array(target_controls, (4, 3), "target_controls")
+    source_basis = TrilinearLevelSet._as_float_array(source_basis, (4,), "source_basis")
+    target_triangle_basis = TrilinearLevelSet._as_float_array(target_triangle_basis, (3, 4), "target_triangle_basis")
     packed = np.concatenate((source_controls.reshape(-1), target_controls.reshape(-1)))
     variables = [_SecondOrder.variable(value, index, 24) for index, value in enumerate(packed)]
     source = [
@@ -360,7 +360,7 @@ class AffineTriangleBody:
     faces: np.ndarray
 
     def __post_init__(self):
-        self.controls = _as_float_array(self.controls, (4, 3), "controls")
+        self.controls = TrilinearLevelSet._as_float_array(self.controls, (4, 3), "controls")
         basis = np.asarray(self.surface_basis, dtype=np.float64)
         if basis.ndim != 2 or basis.shape[1] != 4:
             raise ValueError("surface_basis must have shape (vertex_count, 4)")
@@ -394,9 +394,9 @@ class AffineTriangleIPC:
             raise ValueError("at least one triangle affine body is required")
         if not all(isinstance(body, AffineTriangleBody) for body in self.bodies):
             raise TypeError("bodies must contain AffineTriangleBody values")
-        self.dhat = _as_positive_scalar(dhat, "dhat")
-        self.kappa = _as_positive_scalar(kappa, "kappa")
-        self.time_scale = _as_positive_scalar(time_scale, "time_scale")
+        self.dhat = TrilinearLevelSet._as_positive_scalar(dhat, "dhat")
+        self.kappa = TrilinearLevelSet._as_positive_scalar(kappa, "kappa")
+        self.time_scale = TrilinearLevelSet._as_positive_scalar(time_scale, "time_scale")
         mode = str(hessian_mode).strip().replace("-", "_").lower()
         aliases = {
             "exact": "exact",
@@ -414,7 +414,7 @@ class AffineTriangleIPC:
         return np.concatenate([body.controls.reshape(-1) for body in self.bodies])
 
     def set_controls(self, packed):
-        packed = _as_float_array(packed, (self.dof,), "packed controls")
+        packed = TrilinearLevelSet._as_float_array(packed, (self.dof,), "packed controls")
         for body_id, body in enumerate(self.bodies):
             body.controls = packed[12 * body_id : 12 * (body_id + 1)].reshape(4, 3).copy()
 
@@ -429,7 +429,7 @@ class AffineTriangleIPC:
     ):
         if controls is not None:
             self.set_controls(controls)
-        barrier_kappa = self.kappa if kappa is None else _as_positive_scalar(kappa, "kappa")
+        barrier_kappa = self.kappa if kappa is None else TrilinearLevelSet._as_positive_scalar(kappa, "kappa")
         energy = 0.0
         gradient = np.zeros(self.dof, dtype=np.float64)
         hessian = np.zeros((self.dof, self.dof), dtype=np.float64)
@@ -533,10 +533,10 @@ class DiffIPCAffineEquilibrium:
         self.dof = int(contact.dof)
         stiffness = np.asarray(anchor_stiffness, dtype=np.float64)
         if stiffness.ndim == 0:
-            value = _as_positive_scalar(stiffness, "anchor_stiffness")
+            value = TrilinearLevelSet._as_positive_scalar(stiffness, "anchor_stiffness")
             self.anchor_matrix = value * np.eye(self.dof)
         else:
-            self.anchor_matrix = _as_float_array(stiffness, (self.dof, self.dof), "anchor_stiffness")
+            self.anchor_matrix = TrilinearLevelSet._as_float_array(stiffness, (self.dof, self.dof), "anchor_stiffness")
             eigenvalues = np.linalg.eigvalsh(0.5 * (self.anchor_matrix + self.anchor_matrix.T))
             if eigenvalues.min() <= 0.0:
                 raise ValueError("anchor_stiffness must be positive definite")
@@ -551,7 +551,7 @@ class DiffIPCAffineEquilibrium:
         from scipy.optimize import minimize
 
         if anchor is not None:
-            self.anchor = _as_float_array(anchor, (self.dof,), "anchor")
+            self.anchor = TrilinearLevelSet._as_float_array(anchor, (self.dof,), "anchor")
         initial = self.initial_controls.copy()
 
         def objective(controls):
@@ -603,11 +603,11 @@ class DiffIPCAffineEquilibrium:
     def adjoint_anchor_gradient(self, loss_control_gradient, *, direct_anchor_gradient=None):
         if self.residual_jacobian is None or self.last_result is None:
             raise RuntimeError("solve() must be called before the adjoint")
-        loss_gradient = _as_float_array(loss_control_gradient, (self.dof,), "loss_control_gradient")
+        loss_gradient = TrilinearLevelSet._as_float_array(loss_control_gradient, (self.dof,), "loss_control_gradient")
         direct = (
             np.zeros(self.dof, dtype=np.float64)
             if direct_anchor_gradient is None
-            else _as_float_array(
+            else TrilinearLevelSet._as_float_array(
                 direct_anchor_gradient,
                 (self.dof,),
                 "direct_anchor_gradient",

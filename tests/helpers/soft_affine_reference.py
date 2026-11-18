@@ -1,12 +1,14 @@
 """Legacy host soft--ABD reference iterations for isolated tests only."""
 
+from src.linear_solver.Utilities import accepts_monotone_energy
+
+
 from tests.helpers.affine_contact_probe import surface_direction_inf_norm
-from src.contact_detection.continuous_contact_detection import ccd_mode_parameters
+from src.contact_detection.continuous_contact_detection.CCD import ccd_mode_parameters
 
 import math
 import taichi as ti
 import numpy as np
-from src.utils.SolverRuntime import accepts_monotone_energy
 from src.mpdem.engines.SoftAffineIPCOperator import SoftAffineIPCOperator
 from src.mpdem.engines.SoftAffineIPCEngine import SoftAffineIPCEngine
 
@@ -330,11 +332,7 @@ class ReferenceSoftAffineIPCEngine(SoftAffineIPCEngine):
 
 
 import time
-import math
-import numpy as np
-import taichi as ti
 from src.utils.MatrixFunction import contraction
-from src.mpdem.engines.SoftAffineIPCOperator import SoftAffineIPCOperator
 
 
 @ti.data_oriented

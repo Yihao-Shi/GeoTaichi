@@ -1,3 +1,6 @@
+from src.utils.MatrixFunction import psd_project_gershgorin_nd
+from src.utils.MatrixFunction import psd_project_nd
+from src.physics_model.contact_model.ipc.Utilities import ipc_barrier_distance2_terms
 import numpy as np
 import pytest
 import taichi as ti
@@ -5,13 +8,11 @@ import taichi as ti
 pytestmark = [pytest.mark.unit, pytest.mark.ipc, pytest.mark.contact]
 
 from tests.helpers.ipc_assembly_reference import project_to_psd_dense
-from src.physics_model.contact_model.ipc.ContactAssembly import psd_project_gershgorin_nd, psd_project_nd
+
 from src.physics_model.contact_model.ipc.ContactDistance import (
     point_triangle_distance_grad_hess,
 )
-from src.physics_model.contact_model.ipc.IPC import (
-    ipc_toolkit_barrier_distance2_terms,
-)
+from src.physics_model.contact_model.ipc.Barrier import Barrier
 
 
 def setup_module():
@@ -68,9 +69,7 @@ class _OfficialPTBarrierHarness:
             self.positions[2],
             self.positions[3],
         )
-        unused_energy, first, second = ipc_toolkit_barrier_distance2_terms(
-            distance2, active_distance * active_distance, kappa
-        )
+        unused_energy, first, second = ipc_barrier_distance2_terms(distance2, active_distance * active_distance, kappa)
         hessian = ti.Matrix.zero(ti.f64, 12, 12)
         for row, column in ti.ndrange(12, 12):
             hessian[row, column] = second * gradient[row] * gradient[column] + first * distance_hessian[row, column]

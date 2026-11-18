@@ -4,7 +4,7 @@ import taichi as ti
 
 
 @ti.func
-def A_get(A, ij, i, j):
+def a_get(A, ij, i, j):
     target_j = 0
     for j0 in range(ij[i][0]):
         if ij[i][j0 + 1] == j:
@@ -13,13 +13,13 @@ def A_get(A, ij, i, j):
 
 
 @ti.kernel
-def M_init(M: ti.template(), A: ti.template(), ij: ti.template()):
+def m_init(M: ti.template(), A: ti.template(), ij: ti.template()):
     for i in M:
-        M[i] = 1.0 / A_get(A, ij, i, i)
+        M[i] = 1.0 / a_get(A, ij, i, i)
 
 
 @ti.kernel
-def compute_Ad(A: ti.template(), ij: ti.template(), d: ti.template(), Ad: ti.template()):
+def compute_ad(A: ti.template(), ij: ti.template(), d: ti.template(), Ad: ti.template()):
     for i in A:
         Ad[i] = 0.0
         for j0 in range(ij[i][0]):
@@ -43,7 +43,7 @@ def rmax(r: ti.template()) -> float:
 
 
 @ti.kernel
-def compute_rMr(r: ti.template(), M: ti.template()) -> float:
+def compute_r_mr(r: ti.template(), M: ti.template()) -> float:
     result = 0.0
     for i in r:
         result += r[i] * M[i] * r[i]

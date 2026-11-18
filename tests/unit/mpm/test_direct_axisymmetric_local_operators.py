@@ -11,6 +11,62 @@ pytestmark = [
 ]
 
 
+@pytest.mark.parametrize("axis_offset", [0.0, 0.25])
+def test_direct_particle_measures_match_native_per_radian(taichi_runtime, axis_offset):
+    import taichi as ti
+    from types import SimpleNamespace
+
+    from src.mpm.engines.direct.MPMSolver import MPMSolver
+    from src.mpm.generator.Body import Body
+    from src.mpm.structs.ParticleCloud2DAxisy import ParticleCloud2DAxisy
+
+    radii = np.array([0.5, 1.5], dtype=np.float64)
+    areas = np.array([0.02, 0.03], dtype=np.float64)
+    positions = np.column_stack((radii + axis_offset, np.zeros(2)))
+    native = ParticleCloud2DAxisy.field(shape=2)
+    engine = object.__new__(MPMSolver)
+    engine.is_axisymmetric = True
+    engine.axis_offset = axis_offset
+    engine.material = SimpleNamespace(density=1374.0)
+    engine.particleNum = ti.field(ti.i32, shape=1)
+    engine.particle = ti.Struct.field(
+        dict(
+            bodyID=ti.i32,
+            x=ti.types.vector(2, ti.f64),
+            vol0=ti.f64,
+            m=ti.f64,
+            v=ti.types.vector(2, ti.f64),
+            a=ti.types.vector(2, ti.f64),
+        ),
+        shape=2,
+    )
+
+    @ti.kernel
+    def initialize_native(points: ti.types.ndarray(), weights: ti.types.ndarray()):
+        for p in range(2):
+            native[p]._set_essential(
+                p,
+                0,
+                1,
+                1374.0,
+                weights[p],
+                ti.Vector([points[p, 0], points[p, 1]]),
+                ti.Vector([0.0, 0.0]),
+                ti.Vector([ti.u8(0), ti.u8(0)]),
+            )
+
+    # Native coordinates measure radius from zero; Direct subtracts axis_offset.
+    initialize_native(np.column_stack((radii, np.zeros(2))), areas)
+    engine.add_particle(0, areas, [0.0, 0.0], [0.0, 0.0], positions)
+    engine.bodies = Body()
+    engine.bodies.add_particles(positions, volume=areas, boundary_ids=[0, 1], surface_measure=[0.1, 0.2])
+    engine.build_surface_node()
+    np.testing.assert_allclose(engine.particle.vol0.to_numpy(), radii * areas, rtol=1e-12)
+    np.testing.assert_allclose(engine.particle.vol0.to_numpy(), native.vol.to_numpy(), rtol=1e-12)
+    np.testing.assert_allclose(engine.particle.m.to_numpy(), native.m.to_numpy(), rtol=1e-12)
+    np.testing.assert_allclose(engine.surface_measure.to_numpy(), radii * [0.1, 0.2], rtol=1e-12)
+
+
 def test_finite_strain_plastic_stiffness_projects_forward_but_not_exact_reverse():
     from src.mpm.engines.direct.ImplicitTLMPM import ImplicitTLMPM
     from src.mpm.engines.direct.ImplicitULMPM import ImplicitULMPM
@@ -60,10 +116,10 @@ def test_axisymmetric_and_plane_strain_derivatives_match_oracles(
     @ti.kernel
     def evaluate():
         for local_id, component in ti.static(ti.ndrange(support_count, 2)):
-            derivative = engine.axisymmetric_dF_du(0, local_id, component)
+            derivative = engine.axisymmetric_d_f_du(0, local_id, component)
             for column, row in ti.static(ti.ndrange(3, 3)):
                 derivative_field[2 * local_id + component, row + 3 * column] = derivative[row, column]
-            plane_derivative = engine.plane_strain_dF_du(0, local_id, component)
+            plane_derivative = engine.plane_strain_d_f_du(0, local_id, component)
             for column, row in ti.static(ti.ndrange(3, 3)):
                 plane_derivative_field[2 * local_id + component, row + 3 * column] = plane_derivative[row, column]
         for local_i, local_j in ti.static(ti.ndrange(support_count, support_count)):

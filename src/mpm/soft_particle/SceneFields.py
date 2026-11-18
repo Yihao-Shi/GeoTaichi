@@ -1,22 +1,27 @@
+from src.dem.structs.BaseStruct import BoundingSphere
+from src.mpm.soft_particle.Structs import DeformableGrid
+from src.mpm.soft_particle.Structs import SoftMaterialPoint
+from src.utils.errors import SimulationStateError
 import taichi as ti
 import numpy as np
 
-from src.dem.structs.BaseStruct import BoundingBox, BoundingSphere, DeformableBoundingSphere
-from src.mpm.soft_particle.Structs import DeformableGrid, SoftBody, SoftMaterialPoint
+from src.dem.structs.BoundingBox import BoundingBox
+from src.dem.structs.DeformableBoundingSphere import DeformableBoundingSphere
+from src.mpm.soft_particle.SoftBody import SoftBody
 from src.utils.FieldIO import runtime_float_numpy_dtype
-from src.utils.constants import Threshold
+from src.utils.constants import THRESHOLD
 
 
 @ti.kernel
-def count_soft_grid_allocated_slots_(soft_grid_num: int) -> int:
+def count_soft_grid_allocated_slots(soft_grid_num: int) -> int:
     return soft_grid_num
 
 
 @ti.kernel
-def count_soft_grid_mass_nodes_(soft_grid_num: int, soft_grid: ti.template()) -> int:
+def count_soft_grid_mass_nodes(soft_grid_num: int, soft_grid: ti.template()) -> int:
     count = 0
     for node in range(soft_grid_num):
-        if soft_grid[node].m > Threshold:
+        if soft_grid[node].m > THRESHOLD:
             count += 1
     return count
 
@@ -50,14 +55,14 @@ def activate_soft_body(scene, sims):
         return
     scene.soft = SoftBody.field(shape=sims.max_soft_body_num)
     if sims.max_level_grid_num <= 0:
-        raise RuntimeError("Keyword:: /max_levelset_grid_num/ should be larger than 0")
+        raise SimulationStateError("Keyword:: /max_levelset_grid_num/ should be larger than 0")
 
 
 def activate_soft_material_points(scene, sims):
     if scene.soft_point is not None:
         return
     if sims.max_material_point_num <= 0:
-        raise RuntimeError("Keyword:: /max_material_point_number/ should be larger than 0")
+        raise SimulationStateError("Keyword:: /max_material_point_number/ should be larger than 0")
     scene.soft_point = SoftMaterialPoint.field(shape=sims.max_material_point_num)
     scene.soft_support_shared = True
     soft_shape_nodes = sims.soft_shape_nodes
@@ -113,7 +118,7 @@ def activate_soft_material_points(scene, sims):
 
 
 @ti.kernel
-def upload_soft_point_support_(
+def upload_soft_point_support(
     start: int,
     node: ti.types.ndarray(),
     shape: ti.types.ndarray(),
@@ -133,7 +138,7 @@ def upload_soft_point_support_(
 
 
 @ti.kernel
-def upload_soft_trace_support_(
+def upload_soft_trace_support(
     start: int,
     node: ti.types.ndarray(),
     shape: ti.types.ndarray(),
@@ -177,7 +182,7 @@ def register_soft_template_support(scene, support):
     point_shape = np.ascontiguousarray(support.point_shape, dtype=float_dtype)
     point_dshape = np.ascontiguousarray(support.point_dshape, dtype=float_dtype)
     point_count = np.ascontiguousarray(support.point_count, dtype=np.int32)
-    upload_soft_point_support_(
+    upload_soft_point_support(
         point_start,
         point_node,
         point_shape,
@@ -188,7 +193,7 @@ def register_soft_template_support(scene, support):
         scene.soft_dshape,
         scene.soft_shape_count,
     )
-    upload_soft_trace_support_(
+    upload_soft_trace_support(
         surface_start,
         np.ascontiguousarray(support.surface_node, dtype=np.int32),
         np.ascontiguousarray(support.surface_shape, dtype=float_dtype),
@@ -197,7 +202,7 @@ def register_soft_template_support(scene, support):
         scene.surface_shape,
         scene.surface_shape_count,
     )
-    upload_soft_trace_support_(
+    upload_soft_trace_support(
         sdf_start,
         np.ascontiguousarray(support.sdf_node, dtype=np.int32),
         np.ascontiguousarray(support.sdf_shape, dtype=float_dtype),

@@ -1,7 +1,7 @@
 """Axisymmetric FEM annulus with explicit or implicit time integration.
 
 The stored coordinates are the meridional ``(r, z)`` section.  A small radial
-body acceleration exercises the hoop stretch and revolved volume without
+body acceleration exercises the hoop stretch and volume per radian without
 turning this capability example into a response-curve benchmark.
 """
 

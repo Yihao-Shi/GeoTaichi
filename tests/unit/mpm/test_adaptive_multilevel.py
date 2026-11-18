@@ -1,5 +1,8 @@
 """Mixed 0/1/2 grids must reproduce affine fields and retain split scheduling."""
 
+from src.mpm.elements.Utilities import build_bridging_node_weights
+from src.mpm.elements.Utilities import build_hanging_constraint_table
+
 from types import SimpleNamespace
 
 import numpy as np
@@ -9,11 +12,7 @@ import taichi as ti
 from src.mpm.Simulation import Simulation
 from src.mpm.elements.AdaptiveQuadrilateralElement import AdaptiveQuadrilateralElement
 from src.mpm.elements.AdaptiveHexahedronElement import AdaptiveHexahedronElement
-from src.mpm.elements.AdaptiveNodeMap import (
-    AdaptiveNodeMap,
-    build_bridging_node_weights,
-    build_hanging_constraint_table,
-)
+from src.mpm.elements.AdaptiveNodeMap import AdaptiveNodeMap
 
 DIMS = [
     pytest.param(2, marks=pytest.mark.isolated_dimension(2)),
@@ -529,7 +528,7 @@ def test_3d_split_workspace_uses_parent_capacity_bound(taichi_runtime, refine_pa
     "material_ids", [[0, 2, 1, 1, 2, 1, 2, 1], [0, 2, 2, 2, 2, 2, 2, 2], [index % 3 for index in range(600)]]
 )
 def test_split_material_mapping_stays_on_device(taichi_runtime, monkeypatch, material_ids):
-    from src.mpm.MaterialManager import MaterialHandle
+    from src.mpm.MaterialHandle import MaterialHandle
 
     sims = Simulation()
     sims.max_particle_num, sims.max_material_num = max(12, len(material_ids)), 3
@@ -670,7 +669,7 @@ def test_successive_split_preserves_particle_traction_force(taichi_runtime, axis
         build_particle_traction_linked_list_2d,
         split_refined_particles_with_traction_2d,
     )
-    from src.mpm.boundaries.BoundaryStrcut import ParticleLoad2D, ParticleLoadNanson2D
+    from src.mpm.boundaries.BoundaryStruct import ParticleLoad2D, ParticleLoadNanson2D
 
     particle = ti.Struct.field(
         dict(

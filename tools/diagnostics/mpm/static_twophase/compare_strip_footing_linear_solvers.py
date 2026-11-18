@@ -22,9 +22,7 @@ from src.mpm.boundaries.BoundaryCondition import DirichletBoundary, NeumannBound
 
 def top_strip_nodes(coords, y_top, x_min, x_max):
     return np.where(
-        np.isclose(coords[:, 1], y_top)
-        & (coords[:, 0] >= x_min - 1.0e-12)
-        & (coords[:, 0] <= x_max + 1.0e-12)
+        np.isclose(coords[:, 1], y_top) & (coords[:, 0] >= x_min - 1.0e-12) & (coords[:, 0] <= x_max + 1.0e-12)
     )[0]
 
 
@@ -122,7 +120,7 @@ def make_case(
         dirichlet=dirichlet,
         neumann=neumann,
         gravity=[0.0, 0.0],
-        material="druckerPrager",
+        material="DruckerPrager",
         young_modulus=2.0e4,
         poisson_ratio=0.3,
         density=2.0,

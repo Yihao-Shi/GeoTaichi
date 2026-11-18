@@ -35,7 +35,7 @@ def test_device_block_solve_reuses_transpose_and_initial_guess(taichi_runtime, d
         for device in (False, True):
             system.device_execution = device
             system.rhs.from_numpy(rhs.reshape(nodes, dimension))
-            method = system.BiCGSTABSolver if nonsymmetric else system.PCGSolver
+            method = system.bi_cgstab_solver if nonsymmetric else system.pcg_solver
             options = {"transpose": transpose} if nonsymmetric else {}
             result = method(x=initial, active_nodes=nodes, tol=1e-11, maxiter=100, return_solution=False, **options)
             assert result["converged"], result

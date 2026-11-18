@@ -7,10 +7,9 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 import taichi as ti
-import importlib
 
-from src.igampm.engines import Engine
-from src.igampm.ContactManager import _validate_iga_friction_configuration
+from src.igampm.engines.CoupledEngine import Engine
+from src.igampm.ContactManager import ContactManager
 from tests.helpers.igampm_fully_implicit_friction_reference import (
     point_nurbs_friction_residual_jacobian,
 )
@@ -18,8 +17,7 @@ from tests.helpers.igampm_fully_implicit_friction_reference import (
 
 def test_exact_point_nurbs_fully_implicit_device_path_requires_full_bicgstab_state():
     """Never route device FI through a symmetric or incomplete approximation."""
-    engine_module = importlib.import_module("src.igampm.engines")
-    engine = object.__new__(engine_module.Engine)
+    engine = object.__new__(Engine)
     engine.friction_mode = "fully_implicit"
     engine.monolithic_solver_name = "BiCGSTAB"
     engine.monolithic_matrix_symmetric = False
@@ -60,10 +58,10 @@ def test_fully_implicit_device_hot_loop_has_no_full_vector_host_transfer():
 
 
 from src.nurbs.NurbsBasis import (
-    NurbsBasis2ndDers1d,
-    NurbsBasis2ndDers2d,
-    NurbsBasisInterpolations2ndDers1d,
-    NurbsBasisInterpolations2ndDers2d,
+    nurbs_basis2nd_ders1d,
+    nurbs_basis2nd_ders2d,
+    nurbs_basis_interpolations2nd_ders1d,
+    nurbs_basis_interpolations2nd_ders2d,
 )
 from tests.helpers.ipc_nurbs_reference import closest_curve_point_py
 
@@ -96,7 +94,7 @@ def _fd_jacobian(function, value, step=2.0e-7):
 def _refine_curve_parameter(knots, weights, control, point, seed):
     parameter = float(seed)
     for _ in range(20):
-        position, tangent, curvature = NurbsBasisInterpolations2ndDers1d(parameter, 2, knots, control, weights)
+        position, tangent, curvature = nurbs_basis_interpolations2nd_ders1d(parameter, 2, knots, control, weights)
         residual = position - point
         tangent = tangent[0]
         curvature = curvature[0]
@@ -125,7 +123,7 @@ def test_curve_fully_implicit_jacobian_differentiates_closest_parameter():
         point = reference_point + value[6:]
         seed, _ = closest_curve_point_py(2, knots, control, weights, point)
         parameter = _refine_curve_parameter(knots, weights, control, point, seed)
-        shape, derivative, second = NurbsBasis2ndDers1d(parameter, 2, knots, weights)
+        shape, derivative, second = nurbs_basis2nd_ders1d(parameter, 2, knots, weights)
         force, matrix, diagnostics = point_nurbs_friction_residual_jacobian(
             control_positions=control,
             point_position=point,
@@ -155,7 +153,7 @@ def test_curve_fully_implicit_jacobian_differentiates_closest_parameter():
 def _refine_surface_parameter(knots, weights, control, point, seed):
     parameter = np.asarray(seed, dtype=np.float64).copy()
     for _ in range(30):
-        position, tangent, curvature = NurbsBasisInterpolations2ndDers2d(
+        position, tangent, curvature = nurbs_basis_interpolations2nd_ders2d(
             parameter[0], parameter[1], 2, 2, knots, knots, control, weights
         )
         residual = position - point
@@ -205,7 +203,7 @@ def test_surface_fully_implicit_jacobian_differentiates_two_parameters():
         current_control = reference_control + value[:27].reshape((9, 3))
         point = reference_point + value[27:]
         parameter = _refine_surface_parameter(knots, weights, current_control, point, [0.6, 0.42])
-        shape_data = NurbsBasis2ndDers2d(parameter[0], parameter[1], 2, 2, knots, knots, weights)
+        shape_data = nurbs_basis2nd_ders2d(parameter[0], parameter[1], 2, 2, knots, knots, weights)
         shape, derivative_u, derivative_v, second_uu, second_vv, second_uv = shape_data
         first = np.column_stack([derivative_u, derivative_v])
         second = np.empty((9, 2, 2))
@@ -620,12 +618,12 @@ def test_fully_implicit_solver_has_no_host_numerical_fallback():
 )
 def test_iga_lagged_mode_rejects_fully_implicit_law_parameters(parameters):
     with pytest.raises(RuntimeError, match="requires friction_mode"):
-        _validate_iga_friction_configuration({"friction_mode": "lagged", **parameters})
+        ContactManager._validate_iga_friction_configuration({"friction_mode": "lagged", **parameters})
 
 
 def test_iga_fully_implicit_mode_requires_positive_stribeck_transition():
     with pytest.raises(RuntimeError, match="positive stribeck_velocity"):
-        _validate_iga_friction_configuration(
+        ContactManager._validate_iga_friction_configuration(
             {
                 "friction_mode": "fully_implicit",
                 "dynamic_friction": 0.3,
@@ -638,7 +636,7 @@ def test_iga_fully_implicit_mode_requires_positive_stribeck_transition():
 @pytest.mark.parametrize("iterations", (0, -1, 2))
 def test_iga_fully_implicit_mode_rejects_lagged_outer_iterations(iterations):
     with pytest.raises(RuntimeError, match="only defined for lagged"):
-        _validate_iga_friction_configuration(
+        ContactManager._validate_iga_friction_configuration(
             {
                 "friction_mode": "fully_implicit",
                 "friction_iterations": iterations,

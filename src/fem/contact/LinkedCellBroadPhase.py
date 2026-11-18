@@ -1,19 +1,10 @@
 """Dynamic linked-cell broad phase for deforming FEM contact surfaces."""
 
-import math
+from src.utils.errors import CapacityError
 
 import numpy as np
 import taichi as ti
-
 from src.utils.PrefixSum import PrefixSumExecutor
-
-
-def _grown_capacity(required, current):
-    required = max(int(required), 1)
-    current = max(int(current), 1)
-    if required <= current:
-        return current
-    return 1 << (required - 1).bit_length()
 
 
 @ti.data_oriented
@@ -25,6 +16,14 @@ class DynamicLinkedCellBroadPhase:
     Only scalar required-size values are read by Python when a global compact
     buffer has to grow; primitive data and contact pairs never leave Taichi.
     """
+
+    @staticmethod
+    def _grown_capacity(required, current):
+        required = max(int(required), 1)
+        current = max(int(current), 1)
+        if required <= current:
+            return current
+        return 1 << (required - 1).bit_length()
 
     def __init__(
         self,
@@ -292,15 +291,15 @@ class DynamicLinkedCellBroadPhase:
         face_required = int(self.face_prefix[self.cell_count])
         vertex_required = int(self.vertex_prefix[self.cell_count])
         edge_required = int(self.edge_prefix[self.cell_count])
-        new_capacity = _grown_capacity(face_required, self.face_member_capacity)
+        new_capacity = DynamicLinkedCellBroadPhase._grown_capacity(face_required, self.face_member_capacity)
         if new_capacity != self.face_member_capacity:
             self.face_member_capacity = new_capacity
             self.face_members = ti.field(dtype=ti.i32, shape=new_capacity)
-        new_capacity = _grown_capacity(vertex_required, self.vertex_member_capacity)
+        new_capacity = DynamicLinkedCellBroadPhase._grown_capacity(vertex_required, self.vertex_member_capacity)
         if new_capacity != self.vertex_member_capacity:
             self.vertex_member_capacity = new_capacity
             self.vertex_members = ti.field(dtype=ti.i32, shape=new_capacity)
-        new_capacity = _grown_capacity(edge_required, self.edge_member_capacity)
+        new_capacity = DynamicLinkedCellBroadPhase._grown_capacity(edge_required, self.edge_member_capacity)
         if new_capacity != self.edge_member_capacity:
             self.edge_member_capacity = new_capacity
             self.edge_members = ti.field(dtype=ti.i32, shape=new_capacity)
@@ -456,20 +455,20 @@ class DynamicLinkedCellBroadPhase:
         pt_required = int(self.pt_prefix[self.cell_count])
         ee_required = int(self.ee_prefix[self.cell_count])
         if self.fixed_pt_capacity and pt_required > self.pt_capacity:
-            raise RuntimeError(
+            raise CapacityError(
                 "point-triangle broad-phase capacity is too small: " f"need {pt_required}, allocated {self.pt_capacity}"
             )
         if self.fixed_ee_capacity and ee_required > self.ee_capacity:
-            raise RuntimeError(
+            raise CapacityError(
                 "edge-edge broad-phase capacity is too small: " f"need {ee_required}, allocated {self.ee_capacity}"
             )
-        new_capacity = _grown_capacity(pt_required, self.pt_capacity)
+        new_capacity = DynamicLinkedCellBroadPhase._grown_capacity(pt_required, self.pt_capacity)
         if new_capacity != self.pt_capacity:
             self.pt_capacity = new_capacity
             self.point_triangle = ti.Vector.field(4, dtype=ti.i32, shape=new_capacity)
             self.point_triangle_primitive = ti.Vector.field(2, dtype=ti.i32, shape=new_capacity)
             self.point_triangle_measure = ti.field(dtype=self.real_type, shape=new_capacity)
-        new_capacity = _grown_capacity(ee_required, self.ee_capacity)
+        new_capacity = DynamicLinkedCellBroadPhase._grown_capacity(ee_required, self.ee_capacity)
         if new_capacity != self.ee_capacity:
             self.ee_capacity = new_capacity
             self.edge_edge = ti.Vector.field(4, dtype=ti.i32, shape=new_capacity)
@@ -579,6 +578,3 @@ class DynamicLinkedCellBroadPhase:
         )
         self._set_candidate_counts()
         return int(self.point_triangle_count[None]), int(self.edge_edge_count[None])
-
-
-__all__ = ["DynamicLinkedCellBroadPhase"]

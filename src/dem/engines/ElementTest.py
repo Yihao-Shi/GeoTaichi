@@ -2,7 +2,7 @@ from src.dem.ContactManager import ContactManager
 from src.dem.engines.EngineKernel import *
 from src.dem.engines.ExplicitEngine import ExplicitEngine
 from src.dem.neighbor.NeighborBase import NeighborBase
-from src.dem.SceneManager import myScene
+from src.dem.SceneManager import SceneManager
 from src.dem.Simulation import Simulation
 from src.utils.ObjectIO import DictIO
 
@@ -23,12 +23,12 @@ class ElementTest(ExplicitEngine):
         else:
             self.update_servo_wall = self.no_operation_other
 
-    def check(self, scene: myScene, option):
-        self.compression = DictIO.GetAlternative(option, "CompressionType", "HydroCompression")
-        self.container = DictIO.GetAlternative(option, "Container", "Cube")
-        self.status = DictIO.GetEssential(option, "Status")
+    def check(self, scene: SceneManager, option):
+        self.compression = DictIO.get_alternative(option, "CompressionType", "HydroCompression")
+        self.container = DictIO.get_alternative(option, "Container", "Cube")
+        self.status = DictIO.get_essential(option, "Status")
 
-    def update_servo_motion(self, sims: Simulation, scene: myScene, neighbor: NeighborBase):
+    def update_servo_motion(self, sims: Simulation, scene: SceneManager, neighbor: NeighborBase):
         get_contact_stiffness(
             sims.max_material_num,
             scene.particleNum[0],
@@ -41,6 +41,3 @@ class ElementTest(ExplicitEngine):
         self.get_area()
         get_gain(sims.dt, int(scene.servoNum[0]), scene.servo, scene.wall)
         servo(int(scene.servoNum[0]), scene.wall, scene.servo)
-
-    def integration(self, sims: Simulation, scene: myScene, neighbor: NeighborBase):
-        super().integration(sims, scene, neighbor)

@@ -24,7 +24,7 @@ def main():
     sys.path.insert(0, str(root))
     os.environ["GEOTAICHI_REAL_DTYPE"] = "float64"
     import taichi as ti
-    from src.dem.neighbor.AffineBodyNeighbor import AffineBodyBoundingVolumeHierarchy
+    from src.dem.neighbor.AffineBodyBoundingVolumeHierarchy import AffineBodyBoundingVolumeHierarchy
     from src.utils.FieldIO import field_to_numpy_prefix
 
     ti.init(arch=ti.cuda, default_fp=ti.f64, offline_cache=False)

@@ -1,13 +1,15 @@
 """Numerical contact checks independent of a full MPM solve."""
 
+from src.mpm.Contact import DEMContact
+from src.mpm.Contact import GeoContact
+
 import numpy as np
 import pytest
 import taichi as ti
 
-from src.mpm.Contact import DEMContact, GeoContact
-from src.mpm.SceneManager import myScene
+from src.mpm.SceneManager import SceneManager
 from src.mpm.Simulation import Simulation
-from src.mpm.engines.EngineKernel import kernel_calc_geocontact, kernel_calc_demcontact_2D
+from src.mpm.engines.EngineKernel import kernel_calc_geocontact, kernel_calc_demcontact_2d
 
 pytestmark = pytest.mark.isolated_dimension(2)
 
@@ -164,7 +166,7 @@ def test_demcontact_refined_radius_and_tangential_history(taichi_runtime):
 
     def contact():
         nodes.contact_force.fill(0)
-        kernel_calc_demcontact_2D(
+        kernel_calc_demcontact_2d(
             1,
             0,
             1,
@@ -213,7 +215,7 @@ def test_dem_contact_parameters_are_flat(parameters):
 def test_adaptive_contact_validation(taichi_runtime):
     sims = Simulation()
     sims.dimension, sims.solver_type, sims.contact_detection = 2, "Explicit", "MPMContact"
-    scene = myScene()
+    scene = SceneManager()
     result = scene.configure_adaptive_grid_for_solver(sims, {"RefineRatio": 1.0})
     assert result["HangingConstraintMode"] == "ShapeFunction"
     assert result["HangingShapeCapacityFactor"] >= 4

@@ -7,7 +7,7 @@ from src.mpm.engines.TwoPhaseDoubleLayerKernel import (
     kernel_classify_double_layer_fluid_cells2d,
     kernel_classify_double_layer_fluid_cells3d,
 )
-from src.utils.TypeDefination import vec2f, vec3f
+from src.utils.TypeDefinition import vec2f, vec3f
 
 
 @ti.dataclass

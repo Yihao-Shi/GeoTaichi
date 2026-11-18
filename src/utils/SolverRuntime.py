@@ -1,76 +1,19 @@
-"""Small setup-time policies shared by solver drivers."""
+"""Validated accepted-step scheduling for diagnostics, Jacobians, and history."""
 
 from __future__ import annotations
-
-from collections.abc import Mapping
 from dataclasses import dataclass
-import math
-
-
-def accepts_monotone_energy(initial, trial, step, slope):
-    """Allow reduction roundoff only when the predicted decrease is also unresolved."""
-    if not all(math.isfinite(value) for value in (initial, trial, step, slope)) or step <= 0.0 or slope >= 0.0:
-        return False
-    # Match f64 IPC reduction accuracy without an absolute, unit-dependent energy floor.
-    roundoff = 1.0e-12 * max(abs(initial), abs(trial))
-    return trial <= initial or (-step * slope <= roundoff and trial - initial <= roundoff)
-
-
-def inexact_newton_relative_tolerance(residual, previous_residual, minimum=1.0e-7):
-    """Bound the adaptive Krylov forcing term without relaxing Newton convergence."""
-    if previous_residual is None or previous_residual <= 0.0:
-        return 1.0e-2
-    return min(1.0e-2, max(minimum, 0.9 * (residual / previous_residual) ** 1.5))
-
-
-def inexact_newton_absolute_tolerance(residual, forcing, absolute_tolerance):
-    """Scale the linear error by physical force, before Dirichlet elimination."""
-    if not all(math.isfinite(value) and value >= 0.0 for value in (residual, forcing, absolute_tolerance)):
-        raise ValueError("Inexact Newton residual and tolerances must be finite and nonnegative")
-    return max(absolute_tolerance, forcing * residual)
-
-
-def python_callback(function):
-    """Mark a solver callback to run in Python instead of as a Taichi kernel."""
-    if not callable(function):
-        raise TypeError("python_callback expects a callable")
-    function.__geotaichi_python_callback__ = True
-    return function
-
-
-def normalize_callbacks(functions, transform=None):
-    """Return one validated callback tuple from a public callback argument."""
-    if functions is None:
-        return ()
-    if isinstance(functions, Mapping):
-        selected = tuple(functions.values())
-    elif callable(functions):
-        selected = (functions,)
-    else:
-        try:
-            selected = tuple(functions)
-        except TypeError as exception:
-            raise TypeError("solver callbacks must be a callable, mapping, or iterable") from exception
-    if not all(callable(function) for function in selected):
-        raise TypeError("every solver callback must be callable")
-    if transform is not None:
-        selected = tuple(
-            function if getattr(function, "__geotaichi_python_callback__", False) else transform(function)
-            for function in selected
-        )
-    return selected
-
-
-def _positive_interval(value, name):
-    value = int(value)
-    if value <= 0:
-        raise ValueError(f"{name} must be positive")
-    return value
 
 
 @dataclass(frozen=True)
 class StepSchedule:
     """Accepted-step schedule for diagnostics, safety checks, and history."""
+
+    @staticmethod
+    def _positive_interval(value, name):
+        value = int(value)
+        if value <= 0:
+            raise ValueError(f"{name} must be positive")
+        return value
 
     diagnostic_interval: int = 1
     jacobian_interval: int = 1
@@ -81,17 +24,17 @@ class StepSchedule:
         object.__setattr__(
             self,
             "diagnostic_interval",
-            _positive_interval(self.diagnostic_interval, "diagnostic_interval"),
+            StepSchedule._positive_interval(self.diagnostic_interval, "diagnostic_interval"),
         )
         object.__setattr__(
             self,
             "jacobian_interval",
-            _positive_interval(self.jacobian_interval, "jacobian_interval"),
+            StepSchedule._positive_interval(self.jacobian_interval, "jacobian_interval"),
         )
         object.__setattr__(
             self,
             "history_interval",
-            _positive_interval(self.history_interval, "history_interval"),
+            StepSchedule._positive_interval(self.history_interval, "history_interval"),
         )
         if self.max_history_entries is not None:
             capacity = int(self.max_history_entries)
@@ -109,10 +52,6 @@ class StepSchedule:
             max_history_entries=options.get("max_history_entries"),
         )
 
-    @staticmethod
-    def _due(step, interval):
-        return int(step) % interval == 0
-
     def diagnostics_due(
         self,
         step,
@@ -121,25 +60,15 @@ class StepSchedule:
         callback_requires_diagnostics=False,
         final=False,
     ):
-        return bool(output or callback_requires_diagnostics or final or self._due(step, self.diagnostic_interval))
+        return bool(output or callback_requires_diagnostics or final or int(step) % self.diagnostic_interval == 0)
 
     def jacobian_due(self, step, *, output=False, final=False):
-        return bool(output or final or self._due(step, self.jacobian_interval))
+        return bool(output or final or int(step) % self.jacobian_interval == 0)
 
     def history_due(self, step, *, output=False, final=False):
-        return bool(output or final or self._due(step, self.history_interval))
+        return bool(output or final or int(step) % self.history_interval == 0)
 
     def append_history(self, history, record):
         history.append(record)
         if self.max_history_entries is not None and len(history) > self.max_history_entries:
             del history[: len(history) - self.max_history_entries]
-
-
-__all__ = [
-    "accepts_monotone_energy",
-    "StepSchedule",
-    "inexact_newton_absolute_tolerance",
-    "inexact_newton_relative_tolerance",
-    "normalize_callbacks",
-    "python_callback",
-]

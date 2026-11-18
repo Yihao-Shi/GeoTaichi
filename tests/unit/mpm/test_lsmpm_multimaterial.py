@@ -5,7 +5,7 @@ import numpy as np
 
 def test_neohookean_soft_material_table_uses_material_id(taichi_runtime):
     ti = taichi_runtime
-    from src.mpm.MaterialManager import SoftParticleNeoHookeanMaterialTable
+    from src.mpm.SoftParticleNeoHookeanMaterialTable import SoftParticleNeoHookeanMaterialTable
 
     models = {
         0: SimpleNamespace(shear=2.0, lame_lambda=3.0),
@@ -22,9 +22,9 @@ def test_neohookean_soft_material_table_uses_material_id(taichi_runtime):
         deformation = ti.Matrix([[1.1, 0.05, 0.0], [0.0, 0.95, 0.02], [0.0, 0.0, 1.03]])
         for material_id in range(2):
             stress[material_id] = table.soft_particle_pk1(material_id, deformation)
-            energy[material_id] = table.Psi(material_id, deformation)
-            energy_gradient[material_id] = table.dPsi_div_dF(material_id, deformation)
-            energy_hessian[material_id] = table.d2Psi_div_d2F(material_id, deformation)
+            energy[material_id] = table.psi(material_id, deformation)
+            energy_gradient[material_id] = table.d_psi_div_d_f(material_id, deformation)
+            energy_hessian[material_id] = table.d2_psi_div_d2_f(material_id, deformation)
 
     evaluate()
     ti.sync()

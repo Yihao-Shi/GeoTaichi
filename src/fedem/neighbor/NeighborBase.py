@@ -1,8 +1,11 @@
 """Shared compact contact-list storage for FEM--DEM broad phases."""
 
+from src.utils.errors import CapacityError, SimulationStateError
+
 import taichi as ti
 
-from src.fedem.structs import FEDEMContact, FEDEMHistoryContact
+from src.fedem.structs.Contact import FEDEMContact
+from src.fedem.structs.Contact import FEDEMHistoryContact
 from src.utils.PrefixSum import PrefixSumExecutor
 
 
@@ -64,11 +67,11 @@ class FEDEMNeighborBase:
         overflow = int(self.overflow[None])
         if overflow != 0:
             reason = "BVH traversal stack" if overflow == 2 else "contact_coordination_number"
-            raise RuntimeError(f"FEDEM {reason} capacity is too small")
+            raise CapacityError(f"FEDEM {reason} capacity is too small")
         self.particle_scan.run(self.particle_offsets)
         self.contact_count = int(self.particle_offsets[particle_count])
         if self.contact_count > self.simulation.max_contact_pairs:
-            raise RuntimeError(
+            raise SimulationStateError(
                 "FEDEM max_contact_pairs/compaction_ratio is too small: "
                 f"need {self.contact_count}, allocated "
                 f"{self.simulation.max_contact_pairs}"

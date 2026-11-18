@@ -442,7 +442,7 @@ def _build(
         }
         for packing_id in rigid_ids
     )
-    from src.fem.generator import FEMMesh
+    from src.fem.generator.Mesh import FEMMesh
 
     fem.add_soft_particle(FEMMesh.concatenate(soft_meshes))
     fem.add_material("NeoHookean", density=SOFT_DENSITY, young_modulus=YOUNG, poisson_ratio=POISSON)

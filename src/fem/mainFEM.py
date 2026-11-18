@@ -1,16 +1,17 @@
 """Public FEM facade following the MPM/IGA construction workflow."""
 
 from __future__ import annotations
-
+from src.utils.errors import RuntimeNotInitializedError, SimulationStateError
 import numpy as np
-
 from src.fem.MaterialManager import FEMMaterialManager
 from src.fem.SceneManager import FEMScene
 from src.fem.Simulation import FEMSimulation
-from src.fem.boundaries import DirichletBoundary, NeumannBoundary
-from src.fem.contact import FEMContact
-from src.fem.generator import FEMGenerateManager, FEMMesh
-from src.fem.soft_particle import FEMSoftParticleContactModel
+from src.fem.boundaries.DirichletBoundary import DirichletBoundary
+from src.fem.boundaries.NeumannBoundary import NeumannBoundary
+from src.fem.contact.ContactModel import FEMContact
+from src.fem.generator.MeshGenerator import FEMGenerateManager
+from src.fem.generator.Mesh import FEMMesh
+from src.fem.soft_particle.ContactModel import FEMSoftParticleContactModel
 from src.utils.SolverDiagnostics import SolverDiagnosticsMixin
 from src.utils.SolverConsole import (
     print_material_info,
@@ -21,60 +22,62 @@ from src.utils.SolverConsole import (
 from src.utils.StepRetry import StepRetryPolicy
 
 
-def _key(mapping, *names, default=None):
-    normalized = {
-        str(name).replace("_", "").replace("-", "").replace(" ", "").lower(): value for name, value in mapping.items()
-    }
-    for name in names:
-        candidate = str(name).replace("_", "").replace("-", "").replace(" ", "").lower()
-        if candidate in normalized:
-            return normalized[candidate]
-    return default
-
-
-def _canonical_parameters(parameters):
-    aliases = {
-        "size": "size",
-        "divisions": "divisions",
-        "elementtype": "element_type",
-        "celltype": "cell_type",
-        "origin": "origin",
-        "center": "center",
-        "plane": "plane",
-        "name": "name",
-        "radius": "radius",
-        "height": "height",
-        "length": "length",
-        "width": "width",
-        "nx": "nx",
-        "ny": "ny",
-        "nz": "nz",
-        "radialdivisions": "radial_divisions",
-        "circumferentialdivisions": "circumferential_divisions",
-        "angulardivisions": "circumferential_divisions",
-        "heightdivisions": "height_divisions",
-        "file": "file",
-        "filename": "filename",
-        "path": "path",
-        "restshape": "rest_shape",
-    }
-    canonical = {}
-    for name, value in parameters.items():
-        normalized = str(name).replace("_", "").replace("-", "").replace(" ", "").lower()
-        canonical[aliases.get(normalized, name)] = value
-    return canonical
-
-
-def _taichi_is_initialized():
-    try:
-        import taichi as ti
-
-        return ti.lang.impl.get_runtime().prog is not None
-    except (ImportError, AttributeError):
-        return False
-
-
 class FEM(SolverDiagnosticsMixin):
+
+    @staticmethod
+    def _key(mapping, *names, default=None):
+        normalized = {
+            str(name).replace("_", "").replace("-", "").replace(" ", "").lower(): value
+            for name, value in mapping.items()
+        }
+        for name in names:
+            candidate = str(name).replace("_", "").replace("-", "").replace(" ", "").lower()
+            if candidate in normalized:
+                return normalized[candidate]
+        return default
+
+    @staticmethod
+    def _canonical_parameters(parameters):
+        aliases = {
+            "size": "size",
+            "divisions": "divisions",
+            "elementtype": "element_type",
+            "celltype": "cell_type",
+            "origin": "origin",
+            "center": "center",
+            "plane": "plane",
+            "name": "name",
+            "radius": "radius",
+            "height": "height",
+            "length": "length",
+            "width": "width",
+            "nx": "nx",
+            "ny": "ny",
+            "nz": "nz",
+            "radialdivisions": "radial_divisions",
+            "circumferentialdivisions": "circumferential_divisions",
+            "angulardivisions": "circumferential_divisions",
+            "heightdivisions": "height_divisions",
+            "file": "file",
+            "filename": "filename",
+            "path": "path",
+            "restshape": "rest_shape",
+        }
+        canonical = {}
+        for name, value in parameters.items():
+            normalized = str(name).replace("_", "").replace("-", "").replace(" ", "").lower()
+            canonical[aliases.get(normalized, name)] = value
+        return canonical
+
+    @staticmethod
+    def _taichi_is_initialized():
+        try:
+            import taichi as ti
+
+            return ti.lang.impl.get_runtime().prog is not None
+        except (ImportError, AttributeError):
+            return False
+
     def __init__(self, title="Finite Element Analysis Engine", log=True):
         self.title = title
         self.log = bool(log)
@@ -101,7 +104,7 @@ class FEM(SolverDiagnosticsMixin):
             print()
 
     def create_mesh(self, geometry=None, **kwargs):
-        kwargs = _canonical_parameters(kwargs)
+        kwargs = FEM._canonical_parameters(kwargs)
         rest_shape = kwargs.pop("rest_shape", None)
 
         def apply_rest_shape(generated):
@@ -132,9 +135,9 @@ class FEM(SolverDiagnosticsMixin):
             return apply_rest_shape(self.generator.create_box(**kwargs))
         if normalized in ("rectangle", "rect", "plane"):
             requested = kwargs.pop("element_type", kwargs.pop("cell_type", "TRI3"))
-            from src.fem.generator import normalize_cell_type
+            from src.fem.generator.Mesh import FEMMesh as _FEMMesh_normalize_cell_type_owner
 
-            if normalize_cell_type(requested) != "triangle":
+            if _FEMMesh_normalize_cell_type_owner.normalize_cell_type(requested) != "triangle":
                 raise ValueError("rectangle membrane generation requires element_type='TRI3'")
             if "size" not in kwargs and all(key in kwargs for key in ("length", "width")):
                 kwargs["size"] = [kwargs.pop("length"), kwargs.pop("width")]
@@ -143,16 +146,16 @@ class FEM(SolverDiagnosticsMixin):
             return apply_rest_shape(self.generator.create_rectangle(**kwargs))
         if normalized in ("circle", "disk", "disc"):
             requested = kwargs.pop("element_type", kwargs.pop("cell_type", "TRI3"))
-            from src.fem.generator import normalize_cell_type
+            from src.fem.generator.Mesh import FEMMesh as _FEMMesh_normalize_cell_type_owner
 
-            if normalize_cell_type(requested) != "triangle":
+            if _FEMMesh_normalize_cell_type_owner.normalize_cell_type(requested) != "triangle":
                 raise ValueError("circle membrane generation requires element_type='TRI3'")
             return apply_rest_shape(self.generator.create_circle(**kwargs))
         if normalized in ("cylinder", "cylindrical"):
             requested = kwargs.pop("element_type", kwargs.pop("cell_type", "TET4"))
-            from src.fem.generator import normalize_cell_type
+            from src.fem.generator.Mesh import FEMMesh as _FEMMesh_normalize_cell_type_owner
 
-            if normalize_cell_type(requested) != "tetra":
+            if _FEMMesh_normalize_cell_type_owner.normalize_cell_type(requested) != "tetra":
                 raise ValueError("cylinder volume generation currently requires element_type='TET4'")
             return apply_rest_shape(self.generator.create_cylinder(**kwargs))
         if normalized in ("file", "mesh", "obj", "gmsh"):
@@ -163,7 +166,7 @@ class FEM(SolverDiagnosticsMixin):
         raise ValueError(f"Unknown FEM primitive geometry {geometry!r}")
 
     def add_mesh(self, mesh=None, **kwargs):
-        kwargs = _canonical_parameters(kwargs)
+        kwargs = FEM._canonical_parameters(kwargs)
         rest_shape = kwargs.pop("rest_shape", None)
         if isinstance(mesh, FEMMesh):
             generated = mesh
@@ -173,15 +176,15 @@ class FEM(SolverDiagnosticsMixin):
                 parameters["cell_type"] = parameters.pop("element_type")
             generated = self.generator.read(mesh, **parameters)
         elif isinstance(mesh, dict):
-            geometry = _key(mesh, "geometry", "type", "primitive")
-            filename = _key(mesh, "file", "filename", "path")
+            geometry = FEM._key(mesh, "geometry", "type", "primitive")
+            filename = FEM._key(mesh, "file", "filename", "path")
             parameters = dict(mesh)
             for candidate in list(parameters):
                 normalized = str(candidate).replace("_", "").replace("-", "").lower()
                 if normalized in ("geometry", "type", "primitive", "file", "filename", "path"):
                     parameters.pop(candidate)
             parameters.update(kwargs)
-            parameters = _canonical_parameters(parameters)
+            parameters = FEM._canonical_parameters(parameters)
             rest_shape = parameters.pop("rest_shape", rest_shape)
             if filename is not None:
                 if "element_type" in parameters and "cell_type" not in parameters:
@@ -207,13 +210,13 @@ class FEM(SolverDiagnosticsMixin):
 
     def add_soft_particle(self, mesh=None, **kwargs):
         """Append one compatible volume mesh as an independent soft particle."""
-        kwargs = _canonical_parameters(kwargs)
+        kwargs = FEM._canonical_parameters(kwargs)
         rest_shape = kwargs.pop("rest_shape", None)
         if isinstance(mesh, FEMMesh):
             generated = mesh
         elif isinstance(mesh, dict):
-            geometry = _key(mesh, "geometry", "type", "primitive")
-            filename = _key(mesh, "file", "filename", "path")
+            geometry = FEM._key(mesh, "geometry", "type", "primitive")
+            filename = FEM._key(mesh, "file", "filename", "path")
             parameters = dict(mesh)
             for candidate in list(parameters):
                 normalized = str(candidate).replace("_", "").replace("-", "").lower()
@@ -227,7 +230,7 @@ class FEM(SolverDiagnosticsMixin):
                 ):
                     parameters.pop(candidate)
             parameters.update(kwargs)
-            parameters = _canonical_parameters(parameters)
+            parameters = FEM._canonical_parameters(parameters)
             rest_shape = parameters.pop("rest_shape", rest_shape)
             if filename is not None:
                 if "element_type" in parameters and "cell_type" not in parameters:
@@ -259,8 +262,8 @@ class FEM(SolverDiagnosticsMixin):
         if isinstance(model, dict):
             parameters = dict(model)
             parameters.update(kwargs)
-            model = _key(parameters, "model", "type", default="StVK")
-            material = _key(parameters, "material", default=material)
+            model = FEM._key(parameters, "model", "type", default="StVK")
+            material = FEM._key(parameters, "material", default=material)
             for candidate in list(parameters):
                 if str(candidate).replace("_", "").lower() in ("model", "type", "material"):
                     parameters.pop(candidate)
@@ -289,20 +292,20 @@ class FEM(SolverDiagnosticsMixin):
         dirichlet = self.scene.dirichlet or DirichletBoundary()
         neumann = self.scene.neumann or NeumannBoundary()
         for entry in entries:
-            kind = str(_key(entry, "type", "boundary_type", default="Dirichlet"))
+            kind = str(FEM._key(entry, "type", "boundary_type", default="Dirichlet"))
             normalized = kind.replace("_", "").replace("-", "").replace(" ", "").lower()
-            nodes = _key(entry, "nodes", "node_ids", "node_set")
-            value = _key(entry, "value", "force", "traction", "pressure", default=0.0)
+            nodes = FEM._key(entry, "nodes", "node_ids", "node_set")
+            value = FEM._key(entry, "value", "force", "traction", "pressure", default=0.0)
             if normalized in ("dirichlet", "displacement", "fixed", "fix"):
-                dirichlet.add(nodes, _key(entry, "components", "component", default="all"), value)
+                dirichlet.add(nodes, FEM._key(entry, "components", "component", default="all"), value)
             elif normalized in ("neumann", "nodal", "nodalforce", "force"):
-                neumann.add_nodal_force(nodes, value, total=bool(_key(entry, "total", default=False)))
+                neumann.add_nodal_force(nodes, value, total=bool(FEM._key(entry, "total", default=False)))
             elif normalized in ("traction", "surfacetraction"):
-                neumann.add_traction(value, selector=_key(entry, "selector"))
+                neumann.add_traction(value, selector=FEM._key(entry, "selector"))
             elif normalized in ("pressure", "surfacepressure"):
-                neumann.add_pressure(value, selector=_key(entry, "selector"))
+                neumann.add_pressure(value, selector=FEM._key(entry, "selector"))
             elif normalized in ("edge", "edgetraction"):
-                neumann.add_edge_traction(value, selector=_key(entry, "selector"))
+                neumann.add_edge_traction(value, selector=FEM._key(entry, "selector"))
             else:
                 raise ValueError(f"Unsupported FEM boundary type {kind!r}")
         return dirichlet, neumann
@@ -316,7 +319,7 @@ class FEM(SolverDiagnosticsMixin):
         self.engine = None
         self.enginer = None
 
-    def add_contact(self, model="IPC", **kwargs):
+    def add_contact(self, model="BarrierIPC", **kwargs):
         """Attach ``BarrierIPC`` contact."""
         dem_walls = kwargs.pop("dem_walls", None)
         self.scene.ipc_dem_walls = dem_walls
@@ -337,7 +340,7 @@ class FEM(SolverDiagnosticsMixin):
     def add_soft_particle_property(self, body_id1, body_id2, property=None, **kwargs):
         """Set one explicit FEM soft-particle body-pair contact law."""
         if self.scene.soft_particle_contact is None:
-            raise RuntimeError("call FEM.add_soft_particle_contact(...) before adding pair properties")
+            raise SimulationStateError("call FEM.add_soft_particle_contact(...) before adding pair properties")
         created = self.scene.soft_particle_contact.add_property(body_id1, body_id2, property, **kwargs)
         self.engine = None
         self.enginer = None
@@ -346,7 +349,7 @@ class FEM(SolverDiagnosticsMixin):
     def add_contact_property(self, body_id1, body_id2, property=None, **kwargs):
         """Set IPC parameters for one unordered FEM body pair."""
         if self.scene.contact is None:
-            raise RuntimeError("call FEM.add_contact('IPC', ...) before adding pair properties")
+            raise SimulationStateError("call FEM.add_contact('BarrierIPC', ...) before adding pair properties")
         created = self.scene.contact.add_property(body_id1, body_id2, property, **kwargs)
         self.engine = None
         self.enginer = None
@@ -354,9 +357,9 @@ class FEM(SolverDiagnosticsMixin):
 
     def set_bending_model(self, model="Quadratic"):
         """Select ``Quadratic``, ``Dihedral`` or ``None`` cloth bending."""
-        from src.fem.cloth.ClothEnergy import normalize_bending_model
+        from src.physics_model.constitutive_model.cloth_model.ClothBending import ClothBending
 
-        self.solver_kwargs["bending_model"] = normalize_bending_model(model)
+        self.solver_kwargs["bending_model"] = ClothBending.validate_model(model)
         self.engine = None
         self.enginer = None
 
@@ -422,11 +425,11 @@ class FEM(SolverDiagnosticsMixin):
     def add_element(self, element=None, **kwargs):
         """Compatibility hook; the element formulation is selected by mesh cells."""
         if element is not None and self.scene.mesh is not None:
-            requested = element if isinstance(element, str) else _key(element, "type", "element_type")
+            requested = element if isinstance(element, str) else FEM._key(element, "type", "element_type")
             if requested is not None:
-                from src.fem.generator import normalize_cell_type
+                from src.fem.generator.Mesh import FEMMesh as _FEMMesh_normalize_cell_type_owner
 
-                if normalize_cell_type(requested) != self.scene.mesh.cell_type:
+                if _FEMMesh_normalize_cell_type_owner.normalize_cell_type(requested) != self.scene.mesh.cell_type:
                     raise ValueError("requested FEM element does not match the current mesh cell type")
         if "linear_solver_tolerance" in kwargs:
             kwargs.setdefault("linear_solver_relative_tolerance", 0.0)
@@ -445,14 +448,14 @@ class FEM(SolverDiagnosticsMixin):
             "max_iteration_number": "max_iterations",
         }
         for source, target in aliases.items():
-            value = _key(kwargs, source)
+            value = FEM._key(kwargs, source)
             if value is not None and target not in kwargs:
                 kwargs[target] = value
         retry_policy = StepRetryPolicy(
-            enabled=_key(kwargs, "enable_step_retry", default=False),
-            maximum_retries=_key(kwargs, "step_retry_max_retries", default=2),
-            reduction=_key(kwargs, "step_retry_reduction", default=0.5),
-            minimum_timestep=_key(kwargs, "step_retry_minimum_timestep", default=0.0),
+            enabled=FEM._key(kwargs, "enable_step_retry", default=False),
+            maximum_retries=FEM._key(kwargs, "step_retry_max_retries", default=2),
+            reduction=FEM._key(kwargs, "step_retry_reduction", default=0.5),
+            minimum_timestep=FEM._key(kwargs, "step_retry_minimum_timestep", default=0.0),
         )
         kwargs.update(
             enable_step_retry=retry_policy.enabled,
@@ -489,13 +492,13 @@ class FEM(SolverDiagnosticsMixin):
             "FEM",
             "Solver Information",
             [
-                ("Simulation Time", _key(self.solver_kwargs, "simulation_time", "time")),
-                ("Time Step", _key(self.solver_kwargs, "dt", "time_step", default="Automatic")),
-                ("Requested Steps", _key(self.solver_kwargs, "steps", "step")),
-                ("Output Interval (steps)", _key(self.solver_kwargs, "output_interval", "interval", default=1)),
-                ("Save Path", _key(self.solver_kwargs, "path", "save_path")),
-                ("Assembly Type", _key(self.solver_kwargs, "assemble_type", "assembly", default="MatrixFree")),
-                ("Linear Solver", _key(self.solver_kwargs, "linear_solver")),
+                ("Simulation Time", FEM._key(self.solver_kwargs, "simulation_time", "time")),
+                ("Time Step", FEM._key(self.solver_kwargs, "dt", "time_step", default="Automatic")),
+                ("Requested Steps", FEM._key(self.solver_kwargs, "steps", "step")),
+                ("Output Interval (steps)", FEM._key(self.solver_kwargs, "output_interval", "interval", default=1)),
+                ("Save Path", FEM._key(self.solver_kwargs, "path", "save_path")),
+                ("Assembly Type", FEM._key(self.solver_kwargs, "assemble_type", "assembly", default="MatrixFree")),
+                ("Linear Solver", FEM._key(self.solver_kwargs, "linear_solver")),
             ],
         )
 
@@ -545,9 +548,9 @@ class FEM(SolverDiagnosticsMixin):
 
     def build(self):
         if self.scene.mesh is None:
-            raise RuntimeError("FEM mesh has not been set")
+            raise SimulationStateError("FEM mesh has not been set")
         if self.scene.material is None:
-            raise RuntimeError("FEM material has not been set")
+            raise SimulationStateError("FEM material has not been set")
         if self.scene.mesh.is_volume and self.sims.dimension != 3:
             raise ValueError("TET4/HEX8 volume FEM requires dimension=3")
         if self.sims.dimension == 2:
@@ -576,8 +579,10 @@ class FEM(SolverDiagnosticsMixin):
             )
         if requested_backend not in ("auto", "taichi", "device", "gpu"):
             raise ValueError("FEM backend must be 'auto' or 'taichi'")
-        if not _taichi_is_initialized():
-            raise RuntimeError("FEM requires initialized Taichi; call geotaichi.init(...) " "before FEM.build()")
+        if not FEM._taichi_is_initialized():
+            raise RuntimeNotInitializedError(
+                "FEM requires initialized Taichi; call geotaichi.init(...) " "before FEM.build()"
+            )
         backend = "taichi"
         if is_cloth and not self.scene.mesh.is_membrane:
             raise ValueError("cloth constitutive models require a TRI3 surface mesh")
@@ -658,6 +663,3 @@ class FEM(SolverDiagnosticsMixin):
         from src.fem.engines.DifferentiableFEM import DifferentiableFEM
 
         return DifferentiableFEM(self.engine, steps=steps)
-
-
-__all__ = ["FEM"]

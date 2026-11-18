@@ -146,7 +146,6 @@ markers = [
 ]
 
 [project.scripts]
-gs = "geotaichi._main:main"
 geotaichi-mcp = "geotaichi_mcp.server:main"
 geotaichi-job = "geotaichi_mcp.job_cli:main"
 

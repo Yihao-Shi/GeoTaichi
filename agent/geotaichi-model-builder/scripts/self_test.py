@@ -17,8 +17,7 @@ from validate_model_contract import validate_contract
 from geotaichi_mcp.core.resources import load_physics_validation_rubric
 from geotaichi_mcp.knowledge.physics_validation import score_physics_validation
 
-
-SMOKE_EXAMPLE = '''\
+SMOKE_EXAMPLE = """\
 import os
 
 os.environ["GEOTAICHI_REAL_DTYPE"] = "float64"
@@ -31,9 +30,9 @@ model.set_configuration({"domain": [1.0, 1.0]})
 model.set_solver({"Timestep": 1.0e-4, "SimulationTime": 1.0e-3, "SaveInterval": 1.0e-3})
 model.memory_allocate({"max_material_number": 1, "max_particle_number": 100})
 model.run()
-'''
+"""
 
-MEMORY_EXAMPLE = '''\
+MEMORY_EXAMPLE = """\
 import os
 
 from geotaichi import init
@@ -44,13 +43,13 @@ def env_float(name, default):
     return float(os.environ.get(PREFIX + name, str(default)))
 
 init(arch=os.environ.get(PREFIX + "ARCH", "gpu"), device_memory_GB=env_float("DEVICE_GIB", 4.5))
-'''
+"""
 
-FRACTION_EXAMPLE = '''\
+FRACTION_EXAMPLE = """\
 import taichi as ti
 
 ti.init(arch=ti.cuda, device_memory_fraction=0.25)
-'''
+"""
 
 
 def require(condition: bool, message: str) -> None:
@@ -77,14 +76,15 @@ def run(repo: Path) -> dict:
         "category set",
     )
     require(all(item["summary"]["method_count"] > 0 for item in index["categories"].values()), "method extraction")
-    fedem_keys = {
-        item["name"]: item for item in index["categories"]["fedem"]["configuration_keys"]
-    }
+    fedem_keys = {item["name"]: item for item in index["categories"]["fedem"]["configuration_keys"]}
     require("max_levelset_cell_pairs" in fedem_keys, "mapping.get configuration extraction")
     require(
+        any(location["reader"] == "get_normalized" for location in fedem_keys["NormalStiffness"]["locations"]),
+        "shared normalized property reader extraction",
+    )
+    require(
         any(
-            location["source"] == "src/fedem/Simulation.py"
-            and location["reader"] == "get"
+            location["source"] == "src/fedem/Simulation.py" and location["reader"] == "get"
             for location in fedem_keys["max_levelset_cell_pairs"]["locations"]
         ),
         "mapping.get configuration source",
@@ -203,9 +203,7 @@ def run(repo: Path) -> dict:
         "igampm_model_template.py",
     }
     available_templates = {
-        path.name
-        for path in asset_root.glob("*_model_template.py")
-        if not path.name.startswith("._")
+        path.name for path in asset_root.glob("*_model_template.py") if not path.name.startswith("._")
     }
     require(required_templates <= available_templates, "facade template coverage")
     for template_name in sorted(available_templates):

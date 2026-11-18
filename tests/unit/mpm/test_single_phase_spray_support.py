@@ -9,7 +9,8 @@ import pytest
 import taichi as ti
 from geotaichi import init
 from src.mpm.engines.EngineKernel import kernel_find_fluid_domain_by_volume
-from src.mpm.structs.Particle import ParticleCloudIncompressible2D, ParticleCloudIncompressible3D
+from src.mpm.structs.ParticleCloudIncompressible2D import ParticleCloudIncompressible2D
+from src.mpm.structs.ParticleCloudIncompressible3D import ParticleCloudIncompressible3D
 
 
 @pytest.mark.parametrize("dimension", [2, pytest.param(3, marks=pytest.mark.isolated_dimension(3))])

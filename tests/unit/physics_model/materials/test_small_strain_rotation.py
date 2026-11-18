@@ -4,15 +4,15 @@ import numpy as np
 import pytest
 import taichi as ti
 
-from src.physics_model.consititutive_model.infinitesimal_strain.MaterialKernel import (
-    Sigrot,
+from src.physics_model.constitutive_model.infinitesimal_strain.MaterialKernel import (
+    sigrot,
     calculate_vorticity_increment,
-    calculate_vorticity_increment2D,
+    calculate_vorticity_increment2d,
 )
-from src.physics_model.consititutive_model.infinitesimal_strain.MohrCoulomb import MohrCoulombModel
-from src.physics_model.consititutive_model.infinitesimal_strain.NorSandModel import NorSandModel
-from src.physics_model.consititutive_model.infinitesimal_strain.LinearElastic import LinearElasticModel
-from src.utils.VectorFunction import outer_product, outer_product2D
+from src.physics_model.constitutive_model.infinitesimal_strain.MohrCoulomb import MohrCoulombModel
+from src.physics_model.constitutive_model.infinitesimal_strain.NorSandModel import NorSandModel
+from src.physics_model.constitutive_model.infinitesimal_strain.LinearElastic import LinearElasticModel
+from src.utils.VectorFunction import outer_product, outer_product2d
 
 pytestmark = [pytest.mark.materials, pytest.mark.cpu]
 
@@ -47,13 +47,13 @@ def test_material_entry_follows_a_rigidly_rotating_stress(taichi_material_cpu, m
             basis = ti.Vector([float(d == k) for d in range(dimension)])
             velocity = ti.Matrix(w[:dimension, :dimension]) @ basis
             if ti.static(dimension == 2):
-                gradient += outer_product2D(velocity, basis)
+                gradient += outer_product2d(velocity, basis)
             else:
                 gradient += outer_product(velocity, basis)
         if ti.static(dimension == 2):
-            out[None] = model.ComputeStress2D(0, sigma, gradient, state, dt)
+            out[None] = model.compute_stress2d(0, sigma, gradient, state, dt)
         else:
-            out[None] = model.ComputeStress(0, sigma, gradient, state, dt)
+            out[None] = model.compute_stress(0, sigma, gradient, state, dt)
 
     evaluate()
     rotation = np.eye(3)
@@ -78,12 +78,12 @@ def test_spin_matches_rigid_rotation_commutator(taichi_material_cpu, dimension, 
         sigma = ti.Vector([STRESS[i, j] for i, j in zip(*VOIGT)])
         if ti.static(dimension == 2):
             gradient = ti.Matrix(w[:2, :2])
-            spin = calculate_vorticity_increment2D(gradient, dt)
-            out[None] = Sigrot(sigma, spin)
+            spin = calculate_vorticity_increment2d(gradient, dt)
+            out[None] = sigrot(sigma, spin)
         else:
             gradient = ti.Matrix(w)
             spin = calculate_vorticity_increment(gradient, dt)
-            out[None] = Sigrot(sigma, spin)
+            out[None] = sigrot(sigma, spin)
 
     evaluate()
     expected = 0.001 * (w @ STRESS - STRESS @ w)
@@ -98,7 +98,7 @@ def test_material_rotation_uses_the_objective_direction(taichi_material_cpu, mod
     @ti.kernel
     def evaluate():
         sigma = ti.Vector([STRESS[i, j] for i, j in zip(*VOIGT)])
-        out[None] = model.ComputeSigrotStress(ti.Vector([0.001, 0.0, 0.0]), sigma)
+        out[None] = model.compute_sigrot_stress(ti.Vector([0.001, 0.0, 0.0]), sigma)
 
     evaluate()
     w = np.array([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 0.0]])

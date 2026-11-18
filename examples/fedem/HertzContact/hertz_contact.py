@@ -129,7 +129,7 @@ def _locally_refined_sphere_mesh(
     contact_spacing_over_radius: float,
     surface_spacing_over_radius: float,
 ):
-    from src.fem.generator import FEMMesh
+    from src.fem.generator.Mesh import FEMMesh
     from scipy.spatial import Delaunay
 
     vertices, faces = _read_obj(surface)
@@ -219,7 +219,7 @@ def _gmsh_locally_refined_sphere_mesh(
     """Generate a quality-controlled sphere with a refined lower contact cap."""
 
     import gmsh
-    from src.fem.generator import FEMMesh
+    from src.fem.generator.Mesh import FEMMesh
 
     gmsh.initialize()
     try:
@@ -598,7 +598,7 @@ def main() -> int:
 
     import taichi as ti
     import geotaichi as gt
-    from src.fem.boundaries import NeumannBoundary
+    from src.fem.boundaries.NeumannBoundary import NeumannBoundary
 
     gt.init(
         arch=args.arch,

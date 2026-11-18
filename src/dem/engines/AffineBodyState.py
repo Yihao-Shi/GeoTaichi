@@ -1,8 +1,10 @@
 """Authoritative host state for affine-body dynamics."""
 
-import numpy as np
+from src.utils.linalg import _euler_to_matrix
+from src.dem.engines.Utilities import _asarray3
+from src.dem.engines.Utilities import _field_scalar
 
-from .AffineBodyOperator import _asarray3, _euler_to_matrix, _field_scalar
+import numpy as np
 
 
 class AffineBodyState(object):

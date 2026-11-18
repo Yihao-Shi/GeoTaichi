@@ -1,16 +1,13 @@
 """Lifecycle manager for FEM--DEM, FEM--LSDEM, and affine IPC contact."""
 
 from __future__ import annotations
-
+from src.utils.errors import CapacityError, ConfigurationError, SimulationStateError
 import numpy as np
 import taichi as ti
-
-from src.fedem.contact import (
-    AffineIPCModel,
-    BarrierModel,
-    HertzMindlinModel,
-    LinearModel,
-)
+from src.fedem.contact.AffineIPC import AffineIPCModel
+from src.fedem.contact.Barrier import BarrierModel
+from src.fedem.contact.HertzMindlin import HertzMindlinModel
+from src.fedem.contact.Linear import LinearModel
 from src.fedem.contact.ContactKernel import (
     _resolve_linear_levelset_contact_with_energy,
     accumulate_linear_facet_wall_elastic_energy,
@@ -32,22 +29,21 @@ from src.fedem.contact.ContactKernel import (
     resolve_linear_contact,
     resolve_linear_facet_wall_contact,
 )
-from src.fedem.neighbor import (
-    FEDEMBVH,
-    FEDEMLinkedCell,
-    FEMLevelSetBroadPhase,
-)
-from src.fedem.structs import FEMFacetWallContact
+from src.fedem.neighbor.BVH import FEDEMBVH
+from src.fedem.neighbor.LinkedCell import FEDEMLinkedCell
+from src.fedem.neighbor.FEMLevelSetBroadPhase import FEMLevelSetBroadPhase
+from src.fedem.structs.Contact import FEMFacetWallContact
 from src.utils.FieldIO import field_to_numpy_prefix
 from src.utils.linalg import no_operation
 
 
-def _power_of_two(value):
-    value = max(int(value), 1)
-    return 1 << (value - 1).bit_length()
-
-
 class ContactManager:
+
+    @staticmethod
+    def _power_of_two(value):
+        value = max(int(value), 1)
+        return 1 << (value - 1).bit_length()
+
     def __init__(self, simulation):
         self.simulation = simulation
         self.patch = None
@@ -90,14 +86,14 @@ class ContactManager:
         self.read_energy_diagnostics = self._zero_energy_diagnostics
 
     def choose_contact_model(self, model, **kwargs):
-        normalized = str(model).replace("_", "").replace("-", "").replace(" ", "").lower()
-        if normalized in ("linear", "linearmodel", "linearspring"):
+        normalized = model
+        if normalized in ("Linear",):
             self.model = LinearModel(self.simulation)
-        elif normalized in ("hertz", "hertzmindlin", "hertzmindlinmodel"):
+        elif normalized in ("HertzMindlin",):
             self.model = HertzMindlinModel(self.simulation)
-        elif normalized in ("barrier", "barriermodel"):
+        elif normalized in ("Barrier",):
             self.model = BarrierModel(self.simulation)
-        elif normalized in ("ipc", "incrementalpotentialcontact", "barrieripc"):
+        elif normalized in ("BarrierIPC",):
             kwargs.setdefault(
                 "ipc_model",
                 "BarrierIPC",
@@ -109,12 +105,12 @@ class ContactManager:
 
     def add_property(self, dem_material, fem_body, parameters):
         if self.model is None:
-            raise RuntimeError("choose the FEDEM contact model before adding properties")
+            raise SimulationStateError("choose the FEDEM contact model before adding properties")
         self.model.add_property(dem_material, fem_body, parameters)
 
     def initialize(self, patch, fem_engine, dem_sims, dem_scene):
         if self.model is None:
-            raise RuntimeError("FEDEM contact model has not been selected")
+            raise SimulationStateError("FEDEM contact model has not been selected")
         self.patch = patch
         self.level_set = dem_sims.scheme == "LSDEM"
         self.patch.update(fem_engine.position_field, update_normals=not self.level_set)
@@ -124,7 +120,7 @@ class ContactManager:
             particle_radius_min = float(dem_scene.find_particle_min_radius(dem_sims))
             particle_radius_max = float(dem_scene.find_particle_max_radius(dem_sims))
             if particle_radius_min <= 0.0 or particle_radius_max <= 0.0:
-                raise RuntimeError("FEDEM contains a non-positive-radius DEM particle")
+                raise SimulationStateError("FEDEM contains a non-positive-radius DEM particle")
             if self.simulation.verlet_distance <= 0.0:
                 self.simulation.verlet_distance = self.simulation.verlet_distance_multiplier * min(
                     particle_radius_min, face_radius_min
@@ -159,7 +155,7 @@ class ContactManager:
             self.simulation.verlet_distance = self.simulation.verlet_distance_multiplier * face_radius_min
         if dem_sims.wall_type == 1 and int(dem_scene.wallNum[0]) > 0:
             if not isinstance(self.model, (LinearModel, BarrierModel)):
-                raise RuntimeError(
+                raise ConfigurationError(
                     "FEM contact with DEM facet walls currently requires " "the Linear or Barrier contact model"
                 )
             self.wall_count = int(dem_scene.wallNum[0])
@@ -193,7 +189,7 @@ class ContactManager:
                 self.wall_dense_pair_count,
                 int(self.simulation.max_fem_wall_history_pairs),
             )
-            self.wall_history_capacity = _power_of_two(4 * self.wall_history_entry_capacity)
+            self.wall_history_capacity = ContactManager._power_of_two(4 * self.wall_history_entry_capacity)
             self.wall_history_state = ti.field(dtype=ti.i32, shape=self.wall_history_capacity)
             self.wall_history_key = ti.field(dtype=ti.i64, shape=self.wall_history_capacity)
             self.wall_history_gap = ti.field(dtype=real_type, shape=self.wall_history_capacity)
@@ -246,7 +242,7 @@ class ContactManager:
             elif isinstance(self.model, HertzMindlinModel):
                 self.resolve_contact_kernel = resolve_hertz_mindlin_contact
             else:
-                raise RuntimeError("explicit Barrier contact currently requires LSDEM")
+                raise SimulationStateError("explicit Barrier contact currently requires LSDEM")
 
         if self.wall_contacts is not None:
             self.reset_wall_contact_step = self._reset_wall_contacts
@@ -279,7 +275,7 @@ class ContactManager:
 
     def _levelset_surface_requires_rebuild(self, dem_scene):
         if dem_scene is None:
-            raise RuntimeError("FEM--LSDEM rebuild detection requires the DEM scene")
+            raise SimulationStateError("FEM--LSDEM rebuild detection requires the DEM scene")
         return self.neighbor.requires_rebuild(dem_scene.rigid)
 
     def _facet_surface_requires_rebuild(self, _dem_scene):
@@ -290,7 +286,7 @@ class ContactManager:
 
     def _rebuild_levelset(self, dem_scene, fem_engine):
         if fem_engine is None:
-            raise RuntimeError("FEM--LSDEM rebuild requires the FEM engine")
+            raise SimulationStateError("FEM--LSDEM rebuild requires the FEM engine")
         return self.neighbor.rebuild(fem_engine.position_field, dem_scene.rigid, dem_scene.box)
 
     def _rebuild_facets(self, dem_scene, _fem_engine):
@@ -339,7 +335,7 @@ class ContactManager:
             )
             entries = int(self.wall_history_entry_count[None])
             if entries > self.wall_history_entry_capacity:
-                raise RuntimeError(
+                raise CapacityError(
                     "FEM--facet wall max_fem_wall_history_pairs is too "
                     f"small: need {entries}, allocated "
                     f"{self.wall_history_entry_capacity}"
@@ -361,7 +357,7 @@ class ContactManager:
                 self.wall_history_overflow,
             )
             if int(self.wall_history_overflow[None]) != 0:
-                raise RuntimeError("FEM--facet wall contact-history hash overflow")
+                raise CapacityError("FEM--facet wall contact-history hash overflow")
         build_compact_facet_wall_candidates(
             self.patch.surface_vertex_count,
             self.wall_count,
@@ -381,7 +377,7 @@ class ContactManager:
         )
         self.wall_candidate_count = int(self.wall_candidate_count_device[None])
         if self.wall_candidate_count > self.wall_contact_count:
-            raise RuntimeError("FEM--facet wall candidate capacity was exceeded")
+            raise CapacityError("FEM--facet wall candidate capacity was exceeded")
         self.commit_wall_search_step(wall)
         return self.wall_candidate_count
 
@@ -512,7 +508,7 @@ class ContactManager:
         if self.wall_contacts is None:
             return 0.0
         if not isinstance(self.model, LinearModel):
-            raise RuntimeError("facet-wall elastic-energy accounting requires Linear contact")
+            raise SimulationStateError("facet-wall elastic-energy accounting requires Linear contact")
         accumulate_linear_facet_wall_elastic_energy(
             self.wall_candidate_count,
             self.wall_count,
@@ -545,6 +541,3 @@ class ContactManager:
             "friction_dissipation": 0.0,
             "damping_dissipation": 0.0,
         }
-
-
-__all__ = ["ContactManager"]

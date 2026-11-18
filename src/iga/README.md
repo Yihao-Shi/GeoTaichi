@@ -18,7 +18,7 @@ Implicit HashTriplet assembly caches reference basis values, gradients, physical
 quadrature weights and radii until `precompute()` refreshes reference geometry.
 Gauss contributions share one raw block per element/node pair. In IGA--MPM the
 same blocks accumulate directly into permanent reduced slots; moving contact and
-MPM mappings remain dynamic. Axisymmetric weights still include the full $`2\pi R`$.
+MPM mappings remain dynamic. Axisymmetric weights include the reference radius $`R`$ per radian.
 Direct fixed-slot assembly skips absent off-diagonal slots before computing the
 local Hessian block; diagonal blocks and every represented slot remain unchanged.
 
@@ -293,7 +293,7 @@ A boundary traction density produces the generalized force
 ```
 
 The energy, stress, and tangent of each supported material are defined in the
-[shared constitutive-model theory](../physics_model/consititutive_model/README.md#hyperelastic-solid-laws).
+[shared constitutive-model theory](../physics_model/constitutive_model/README.md#hyperelastic-solid-laws).
 IGA contributes the rational basis gradients and quadrature measure; the
 constitutive law is independent of the spline discretization.
 
@@ -328,12 +328,20 @@ The hoop stretch and reference volume measure are
 ```math
 \lambda_\theta=\frac{r}{R},
 \qquad
-\mathrm dV_0=2\pi R\,\mathrm dA_0.
+\mathrm dV_0=R\,\mathrm dA_0.
 ```
 
 Thus every energy, force, tangent, and mass quadrature weight is multiplied by
-$`2\pi R`$. The direct meridian formulation requires positive reference radius
+$`R`$. The direct meridian formulation requires positive reference radius
 at every quadrature point.
+
+All integrated axisymmetric quantities are per radian, matching FEM and both
+MPM backends. Multiply mass, energy, resultant loads and reactions by `2*pi`
+for full-revolution totals. Density, stress, pressure and kinematics do not
+change. Raw control-point loads must be integrated per radian with `R*ds`.
+Older full-revolution state/output must not be mixed into a new per-radian run.
+Explicit internal-force and energy assembly use the same no-swirl map and
+radius weight as implicit assembly, including the hoop-stress contribution.
 
 ### 7. Semi-discrete dynamics
 
@@ -510,7 +518,7 @@ See `examples/iga/` for complete boundary selection and output setup.
 For axisymmetric analysis, configure `dimension=2`, `axisymmetric=True`, and
 one finite `axis_offset`.  The material map remains three-dimensional with
 `F_theta_theta=r/R`, while inertia, internal energy, residual and Hessian use
-the revolved `2*pi*R` quadrature measure.  All participating quadrature points
+the per-radian `R` quadrature measure.  All participating quadrature points
 must have `R > 0`.  Both integrators are exercised by
 `examples/iga/axisymmetric_annulus/axisymmetric_annulus.py --solver explicit|implicit`.
 
@@ -554,7 +562,7 @@ energy.
 `NeumannBoundary.append(dof_id, dof_val)` stores already-integrated generalized
 forces at control-point degrees of freedom. It does not integrate a traction
 density over a NURBS boundary. In axisymmetric analysis the supplied value must
-therefore already contain any required `2*pi*R` boundary measure.
+therefore already contain any required `R` boundary measure.
 
 Implicit `DirichletBoundary.append_velocity(dof_id, velocity)` prescribes a
 constant velocity. The solver converts it to `velocity * current_dt` whenever
@@ -578,6 +586,9 @@ Implicit IGA supports coordinate and hash assembly. PCG requires
 default numerical path keeps state, assembly, matrix-vector products,
 preconditioning, and Krylov iterations in Taichi. Host arrays are used for
 NURBS preprocessing, explicit output, and user-selected SciPy solves only.
+After an explicitly selected SciPy solve, the uploaded correction's Newton
+convergence norm is reduced on device. Non-finite corrections raise
+`LinearSolveError`.
 Material CCD dispatches each patch with the element count owned by that patch;
 the prefix table is not interpreted as a previous-patch count.
 

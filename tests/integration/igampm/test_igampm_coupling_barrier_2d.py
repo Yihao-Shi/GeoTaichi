@@ -5,7 +5,6 @@ import pytest
 
 import src.igampm.config as config
 
-
 pytestmark = [pytest.mark.integration, pytest.mark.slow, pytest.mark.serial]
 
 
@@ -75,7 +74,7 @@ def _build_mpm_particle(output_path, axisymmetric=False):
         axis_offset=0.0,
         path=str(output_path),
     )
-    mpm.init_F0()
+    mpm.init_f0()
     mpm.mass_vec.fill(0.0)
     mpm.grid_reset()
     mpm.compute_shapefn()
@@ -150,7 +149,7 @@ def test_igampm_coupling_barrier_2d_assembles_symmetric_system(
     assert monolithic_rhs.shape == (total_active,)
 
 
-def test_igampm_axisymmetric_ipc_uses_revolved_measure_and_symmetric_system(
+def test_igampm_axisymmetric_ipc_uses_per_radian_measure_and_symmetric_system(
     taichi_runtime,
     tmp_path,
 ):
@@ -171,9 +170,10 @@ def test_igampm_axisymmetric_ipc_uses_revolved_measure_and_symmetric_system(
     )
 
     iga.precompute()
-    expected_iga_volume = np.pi * (1.5**2 - 0.5**2) * 0.2
+    expected_iga_volume = 0.5 * (1.5**2 - 0.5**2) * 0.2
     assert np.sum(iga.patch.volume.to_numpy()) == pytest.approx(expected_iga_volume, rel=2.0e-12)
-    assert mpm.particle.vol0.to_numpy()[0] == pytest.approx(2.0 * np.pi * 1.0e-3, rel=2.0e-12)
+    assert mpm.particle.vol0.to_numpy()[0] == pytest.approx(1.0e-3, rel=2.0e-12)
+    assert mpm.particle.m.to_numpy()[0] == pytest.approx(1.0, rel=2.0e-12)
     initial_F = iga.initial_deformation_gradients.to_numpy().reshape(-1, 3, 3)
     assert np.allclose(initial_F, np.eye(3), rtol=0.0, atol=2.0e-12)
 
@@ -188,7 +188,7 @@ def test_igampm_axisymmetric_ipc_uses_revolved_measure_and_symmetric_system(
     assert maximum_body_error < 1.0e-7
 
     coupling.initialize_barrier()
-    assert mpm.surface_measure.to_numpy()[0] > 0.0
+    assert mpm.surface_measure.to_numpy()[0] == pytest.approx(np.sqrt(1.0e-3), rel=2.0e-12)
     assert coupling.curr_barrier_contact_num > 0
     coupling.assemble_barrier_system()
     matrix = coupling.barrier_matrix()

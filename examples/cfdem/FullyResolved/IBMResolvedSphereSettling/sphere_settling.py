@@ -1,5 +1,8 @@
 """Ten Cate E3 sphere settling with fully resolved LSDEM--IBM."""
 
+from src.utils.RuntimeHook import python_callback
+
+
 import argparse
 import json
 import math
@@ -67,7 +70,6 @@ def run(config, args):
     os.environ.setdefault("GEOTAICHI_REAL_DTYPE", "float64")
     from geotaichi import DEMPM, init, polyhedron
     from src.mpdem.fluid_dynamics.IncompressibleCouplingKernel import kernel_ibm_velocity_l2_error
-    from src.utils.SolverRuntime import python_callback
 
     output = args.output_dir.resolve()
     output.mkdir(parents=True, exist_ok=True)

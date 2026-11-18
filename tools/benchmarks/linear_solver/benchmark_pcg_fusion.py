@@ -4,6 +4,9 @@ Each sample synchronizes Taichi; compilation and solution downloads are excluded
 This measures a linear solve, not a complete coupled timestep.
 """
 
+from src.utils.MatrixFunction import _dense_block_matvec
+
+
 import argparse
 import json
 from pathlib import Path
@@ -15,16 +18,16 @@ import taichi as ti
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from src.linear_solver.BuildTriplet import BuildTriplet, _dense_block_matvec
+from src.linear_solver.BuildTriplet import BuildTriplet
 
 
 @ti.data_oriented
 class SplitPCG(BuildTriplet):
     """Reference launch/transfer layout, with the same PCG stopping rules."""
 
-    def PCGSolver(self, *args, **kwargs):
+    def pcg_solver(self, *args, **kwargs):
         self._solver_reset(kwargs["active_nodes"])
-        return super().PCGSolver(*args, **kwargs)
+        return super().pcg_solver(*args, **kwargs)
 
     @ti.kernel
     def _split_init(self, active_nodes: int):
@@ -84,7 +87,7 @@ def main():
             system.rhs.from_numpy(rhs)
 
         def solve(index):
-            result = systems[index].PCGSolver(
+            result = systems[index].pcg_solver(
                 active_nodes=nodes, tol=1e-9, rel_tol=1e-10, maxiter=400, return_solution=False
             )
             ti.sync()

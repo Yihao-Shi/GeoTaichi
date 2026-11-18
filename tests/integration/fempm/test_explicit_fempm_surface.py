@@ -3,7 +3,7 @@ import pytest
 
 ti = pytest.importorskip("taichi")
 
-from src.fem.generator import FEMMesh
+from src.fem.generator.Mesh import FEMMesh
 from src.fem.mainFEM import FEM
 from src.fempm.mainFEMPM import FEMPM
 from src.mpm.mainMPM import MPM

@@ -1,12 +1,10 @@
 """Verification of projected-Newton point/NURBS barrier metrics."""
 
+from src.physics_model.contact_model.ipc.Utilities import curve_barrier_projected_metric
+from src.physics_model.contact_model.ipc.Utilities import surface_barrier_projected_metric
+
 import numpy as np
 import taichi as ti
-
-from src.physics_model.contact_model.ipc.NurbsContact import (
-    curve_barrier_projected_metric,
-    surface_barrier_projected_metric,
-)
 
 
 def _project_psd(matrix):
@@ -19,9 +17,7 @@ def _project_psd(matrix):
     assert np.isfinite(eigenvalues).all()
     assert np.isfinite(eigenvectors).all()
     with np.errstate(all="ignore"):
-        projected = (
-            eigenvectors * np.maximum(eigenvalues, 0.0)
-        ) @ eigenvectors.T
+        projected = (eigenvectors * np.maximum(eigenvalues, 0.0)) @ eigenvectors.T
     assert np.isfinite(projected).all()
     return projected
 
@@ -54,20 +50,14 @@ def _curve_reduced_system(
     jacobians.append(point_jacobian)
 
     alpha = 0.5 * barrier_gradient / distance
-    beta = 0.25 * (
-        barrier_hessian / distance**2
-        - barrier_gradient / distance**3
-    )
+    beta = 0.25 * (barrier_hessian / distance**2 - barrier_gradient / distance**3)
     reduced_hessian = np.zeros((reduced_dimension, reduced_dimension))
     reduced_hessian[:dimension, :dimension] = measure * (
-        2.0 * alpha * np.eye(dimension)
-        + 4.0 * beta * np.outer(pointer, pointer)
+        2.0 * alpha * np.eye(dimension) + 4.0 * beta * np.outer(pointer, pointer)
     )
     if free:
         coefficient = np.dot(tangent, tangent) + np.dot(pointer, curvature)
-        reduced_hessian[dimension, dimension] = (
-            -2.0 * alpha * measure / coefficient
-        )
+        reduced_hessian[dimension, dimension] = -2.0 * alpha * measure / coefficient
     return jacobians, reduced_hessian
 
 
@@ -108,28 +98,20 @@ def _surface_reduced_system(
     jacobians.append(point_jacobian)
 
     alpha = 0.5 * barrier_gradient / distance
-    beta = 0.25 * (
-        barrier_hessian / distance**2
-        - barrier_gradient / distance**3
-    )
+    beta = 0.25 * (barrier_hessian / distance**2 - barrier_gradient / distance**3)
     reduced_hessian = np.zeros((reduced_dimension, reduced_dimension))
     reduced_hessian[:dimension, :dimension] = measure * (
-        2.0 * alpha * np.eye(dimension)
-        + 4.0 * beta * np.outer(pointer, pointer)
+        2.0 * alpha * np.eye(dimension) + 4.0 * beta * np.outer(pointer, pointer)
     )
     coefficient = np.asarray(
         [
             [
-                np.dot(tangent_u, tangent_u)
-                + np.dot(pointer, curvature_uu),
-                np.dot(tangent_u, tangent_v)
-                + np.dot(pointer, curvature_uv),
+                np.dot(tangent_u, tangent_u) + np.dot(pointer, curvature_uu),
+                np.dot(tangent_u, tangent_v) + np.dot(pointer, curvature_uv),
             ],
             [
-                np.dot(tangent_v, tangent_u)
-                + np.dot(pointer, curvature_uv),
-                np.dot(tangent_v, tangent_v)
-                + np.dot(pointer, curvature_vv),
+                np.dot(tangent_v, tangent_u) + np.dot(pointer, curvature_uv),
+                np.dot(tangent_v, tangent_v) + np.dot(pointer, curvature_vv),
             ],
         ]
     )
@@ -138,15 +120,11 @@ def _surface_reduced_system(
         inverse = np.linalg.inv(coefficient[np.ix_(active, active)])
         parameter_block = np.zeros((2, 2))
         parameter_block[np.ix_(active, active)] = inverse
-        reduced_hessian[dimension:, dimension:] = (
-            -2.0 * alpha * measure * parameter_block
-        )
+        reduced_hessian[dimension:, dimension:] = -2.0 * alpha * measure * parameter_block
     return jacobians, reduced_hessian
 
 
-def _assert_reduced_metric_is_full_euclidean_projection(
-    jacobians, reduced_hessian, metric
-):
+def _assert_reduced_metric_is_full_euclidean_projection(jacobians, reduced_hessian, metric):
     reduced_jacobian = np.concatenate(jacobians, axis=1)
     exact = reduced_jacobian.T @ reduced_hessian @ reduced_jacobian
     expected = _project_psd(exact)
@@ -165,9 +143,7 @@ def _assert_reduced_metric_is_full_euclidean_projection(
     contact_dofs = (control_count + 1) * dimension
     nodal_dofs = (control_count + mpm_weights.size) * dimension
     pullback = np.zeros((contact_dofs, nodal_dofs))
-    pullback[: control_count * dimension, : control_count * dimension] = (
-        np.eye(control_count * dimension)
-    )
+    pullback[: control_count * dimension, : control_count * dimension] = np.eye(control_count * dimension)
     point_row = control_count * dimension
     point_column = control_count * dimension
     for node, weight in enumerate(mpm_weights):
@@ -180,9 +156,7 @@ def _assert_reduced_metric_is_full_euclidean_projection(
         pulled_expected = pullback.T @ expected @ pullback
     assert np.isfinite(pulled_actual).all()
     assert np.isfinite(pulled_expected).all()
-    np.testing.assert_allclose(
-        pulled_actual, pulled_expected, rtol=2.0e-8, atol=2.0e-8
-    )
+    np.testing.assert_allclose(pulled_actual, pulled_expected, rtol=2.0e-8, atol=2.0e-8)
     assert np.linalg.eigvalsh(0.5 * (pulled_actual + pulled_actual.T)).min() >= -2.0e-8
 
 
@@ -288,9 +262,7 @@ def test_curve_projected_metric_matches_full_numpy_eigendecomposition(
     harness.shapes[None] = shapes
     harness.derivatives[None] = derivatives
     for free in (0, 1):
-        harness.run(
-            free, distance, barrier_gradient, barrier_hessian, measure
-        )
+        harness.run(free, distance, barrier_gradient, barrier_hessian, measure)
         assert int(harness.valid[None]) == 1
         jacobians, reduced_hessian = _curve_reduced_system(
             pointer,
@@ -304,9 +276,7 @@ def test_curve_projected_metric_matches_full_numpy_eigendecomposition(
             barrier_hessian,
             measure,
         )
-        _assert_reduced_metric_is_full_euclidean_projection(
-            jacobians, reduced_hessian, harness.metric.to_numpy()
-        )
+        _assert_reduced_metric_is_full_euclidean_projection(jacobians, reduced_hessian, harness.metric.to_numpy())
 
 
 def test_surface_projected_metric_matches_full_numpy_eigendecomposition(
@@ -363,6 +333,4 @@ def test_surface_projected_metric_matches_full_numpy_eigendecomposition(
             barrier_hessian,
             measure,
         )
-        _assert_reduced_metric_is_full_euclidean_projection(
-            jacobians, reduced_hessian, harness.metric.to_numpy()
-        )
+        _assert_reduced_metric_is_full_euclidean_projection(jacobians, reduced_hessian, harness.metric.to_numpy())

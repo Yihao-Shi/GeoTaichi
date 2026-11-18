@@ -1,19 +1,21 @@
-import math
+from src.utils.errors import ConfigurationError, GeometryError, SimulationStateError
+from src.mpm.soft_particle.Utilities import normalize_soft_grid_type
 
+import math
 import taichi as ti
 import warnings
-
 from src.utils.ObjectIO import DictIO
-from src.utils.TypeDefination import vec2f, vec3i, vec3f
+from src.utils.TypeDefinition import vec2f, vec3f
 import src.utils.GlobalVariable as GlobalVariable
 from src.utils.TimeTicker import Timer
 
 
-def _normalize_solver_keyword(value):
-    return str(value).strip().replace("_", "").replace("-", "").replace(" ", "").lower()
-
-
 class Simulation(object):
+
+    @staticmethod
+    def _normalize_solver_keyword(value):
+        return str(value).strip().replace("_", "").replace("-", "").replace(" ", "").lower()
+
     def __init__(self) -> None:
         self.dimension = 3
         self.is_2DAxisy = False
@@ -167,7 +169,7 @@ class Simulation(object):
     def set_dimension(self):
         self.dimension = GlobalVariable.DIMENSION
 
-    def set_is_2DAxisy(self, is_2DAxisy):
+    def set_is_2d_axisy(self, is_2DAxisy):
         self.is_2DAxisy = is_2DAxisy
 
     def set_mode(self, mode):
@@ -183,15 +185,15 @@ class Simulation(object):
         mode = aliases.get(key)
         valid_list = ["Normal", "Lightweight", "SoftParticle"]
         if mode not in valid_list:
-            raise RuntimeError(f"Keyword:: /mode/ must be {valid_list}")
+            raise ConfigurationError(f"Keyword:: /mode/ must be {valid_list}")
         self.mode = mode
         if self.mode == "SoftParticle":
             self.soft_particle = True
 
     def set_soft_particle_mode(self, soft_particle=False, backend="LevelSetTLMPM"):
         if isinstance(soft_particle, dict):
-            backend = DictIO.GetAlternative(soft_particle, "Backend", backend)
-            soft_particle = DictIO.GetAlternative(soft_particle, "Enabled", True)
+            backend = DictIO.get_alternative(soft_particle, "Backend", backend)
+            soft_particle = DictIO.get_alternative(soft_particle, "Enabled", True)
         self.soft_particle = bool(soft_particle)
         if self.soft_particle:
             self.mode = "SoftParticle"
@@ -266,7 +268,7 @@ class Simulation(object):
         self.max_particle_num += int(soft_body_num)
 
         if soft_body_num > 0 and (getattr(self, "max_sphere_num", 0) > 0 or getattr(self, "max_clump_num", 0) > 0):
-            raise RuntimeError("Sphere/Multisphere particles are not supported when using level set method")
+            raise ConfigurationError("Sphere/Multisphere particles are not supported when using level set method")
 
     def set_material_point_num(self, material_point_num):
         if material_point_num < 0:
@@ -299,7 +301,9 @@ class Simulation(object):
             "cubicbspline": "CubicBSpline",
         }
         if key not in aliases:
-            raise RuntimeError("LSMPM soft shape_function must be one of ['Linear', 'QuadBSpline', 'CubicBSpline']")
+            raise ConfigurationError(
+                "LSMPM soft shape_function must be one of ['Linear', 'QuadBSpline', 'CubicBSpline']"
+            )
         self.soft_shape_function = aliases[key]
         if self.soft_shape_function == "Linear":
             self.soft_shape_function_type = 0
@@ -329,15 +333,12 @@ class Simulation(object):
             "fixedsparse": "Compact",
         }
         if key not in aliases:
-            raise RuntimeError("LSMPM soft_grid_storage must be one of ['Dense', 'Compact']")
+            raise ConfigurationError("LSMPM soft_grid_storage must be one of ['Dense', 'Compact']")
         self.soft_grid_storage = aliases[key]
         self.soft_grid_compact = self.soft_grid_storage == "Compact"
 
     def set_soft_grid_type(self, grid_type="Hexahedron"):
-        from src.mpm.soft_particle.TemplateSupport import (
-            TETRAHEDRON,
-            normalize_soft_grid_type,
-        )
+        from src.mpm.soft_particle.TemplateSupport import TETRAHEDRON
 
         name, grid_type_id = normalize_soft_grid_type(grid_type)
         self.soft_grid_type = name
@@ -410,7 +411,7 @@ class Simulation(object):
                 "maccormack": "MacCormack",
             }
             if key not in aliases:
-                raise RuntimeError(
+                raise ConfigurationError(
                     "LSMPM soft level-set /advection_scheme/ must be 'ReferenceMap', 'WENO5' or 'MacCormack'"
                 )
             self.soft_levelset_advection_scheme = aliases[key]
@@ -420,61 +421,69 @@ class Simulation(object):
                 self.soft_levelset_advection_cfl = 0.20 if self.soft_levelset_advection_scheme == "WENO5" else 1.0
         if advection_cfl is not None:
             if not math.isfinite(advection_cfl) or advection_cfl <= 0.0:
-                raise RuntimeError("LSMPM soft level-set /advection_cfl/ should be positive")
+                raise SimulationStateError("LSMPM soft level-set /advection_cfl/ should be positive")
             self.soft_levelset_advection_cfl = float(advection_cfl)
         if advection_interval is not None:
             if advection_interval < 1:
-                raise RuntimeError("LSMPM soft level-set /advection_interval/ should be larger than 0")
+                raise SimulationStateError("LSMPM soft level-set /advection_interval/ should be larger than 0")
             self.soft_levelset_advection_interval = int(advection_interval)
         if grad_threshold is not None:
             if grad_threshold < 0.0:
-                raise RuntimeError("LSMPM soft level-set reinitialization /grad_threshold/ should be non-negative")
+                raise SimulationStateError(
+                    "LSMPM soft level-set reinitialization /grad_threshold/ should be non-negative"
+                )
             self.soft_levelset_reinit_grad_threshold = float(grad_threshold)
         if check_interval is not None:
             if check_interval < 1:
-                raise RuntimeError("LSMPM soft level-set reinitialization /check_interval/ should be larger than 0")
+                raise SimulationStateError(
+                    "LSMPM soft level-set reinitialization /check_interval/ should be larger than 0"
+                )
             self.soft_levelset_reinit_check_interval = int(check_interval)
         if monitor_band is not None:
             if monitor_band < 1.0:
-                raise RuntimeError("LSMPM soft level-set reinitialization /monitor_band/ should be at least 1 cell")
+                raise SimulationStateError(
+                    "LSMPM soft level-set reinitialization /monitor_band/ should be at least 1 cell"
+                )
             self.soft_levelset_reinit_monitor_band = float(monitor_band)
         if reinit_band is not None:
             if reinit_band < 2.0:
-                raise RuntimeError("LSMPM soft level-set reinitialization /reinit_band/ should be at least 2 cells")
+                raise SimulationStateError(
+                    "LSMPM soft level-set reinitialization /reinit_band/ should be at least 2 cells"
+                )
             self.soft_levelset_reinit_band = float(reinit_band)
         if cfl is not None:
             if cfl <= 0.0:
-                raise RuntimeError("LSMPM soft level-set reinitialization /cfl/ should be positive")
+                raise SimulationStateError("LSMPM soft level-set reinitialization /cfl/ should be positive")
             self.soft_levelset_reinit_cfl = float(cfl)
         if iterations is not None:
             if iterations < 0:
-                raise RuntimeError("LSMPM soft level-set reinitialization /iterations/ should be non-negative")
+                raise SimulationStateError("LSMPM soft level-set reinitialization /iterations/ should be non-negative")
             self.soft_levelset_reinit_iterations = int(iterations)
         if volume_epsilon_cells is not None:
             if volume_epsilon_cells <= 0.0:
-                raise RuntimeError("LSMPM soft level-set /volume_epsilon_cells/ should be positive")
+                raise SimulationStateError("LSMPM soft level-set /volume_epsilon_cells/ should be positive")
             self.soft_levelset_volume_epsilon_cells = float(volume_epsilon_cells)
         if volume_tolerance is not None:
             if volume_tolerance < 0.0:
-                raise RuntimeError("LSMPM soft level-set /volume_tolerance/ should be non-negative")
+                raise GeometryError("LSMPM soft level-set /volume_tolerance/ should be non-negative")
             self.soft_levelset_volume_tolerance = float(volume_tolerance)
         if volume_max_shift_cells is not None:
             if volume_max_shift_cells <= 0.0:
-                raise RuntimeError("LSMPM soft level-set /volume_max_shift_cells/ should be positive")
+                raise SimulationStateError("LSMPM soft level-set /volume_max_shift_cells/ should be positive")
             self.soft_levelset_volume_max_shift_cells = float(volume_max_shift_cells)
         if volume_iterations is not None:
             if volume_iterations < 1:
-                raise RuntimeError("LSMPM soft level-set /volume_iterations/ should be at least 1")
+                raise SimulationStateError("LSMPM soft level-set /volume_iterations/ should be at least 1")
             self.soft_levelset_volume_iterations = int(volume_iterations)
         if volume_interval is not None:
             if volume_interval < 1:
-                raise RuntimeError("LSMPM soft level-set /volume_interval/ should be at least 1")
+                raise SimulationStateError("LSMPM soft level-set /volume_interval/ should be at least 1")
             self.soft_levelset_volume_interval = int(volume_interval)
         if domain_check is not None:
             self.soft_levelset_domain_check = bool(domain_check)
         if domain_tolerance_cells is not None:
             if domain_tolerance_cells < 0.0:
-                raise RuntimeError("LSMPM soft level-set /domain_tolerance_cells/ should " "be non-negative")
+                raise SimulationStateError("LSMPM soft level-set /domain_tolerance_cells/ should " "be non-negative")
             self.soft_levelset_domain_tolerance_cells = float(domain_tolerance_cells)
         if self.soft_levelset_reinit_band < self.soft_levelset_reinit_monitor_band + 2.0:
             self.soft_levelset_reinit_band = self.soft_levelset_reinit_monitor_band + 2.0
@@ -497,11 +506,11 @@ class Simulation(object):
     def validate_soft_particle_configuration(self, require_memory=False):
         if require_memory and getattr(self, "scheme", None) == "LSMPM":
             if self.max_soft_body_num <= 0:
-                raise RuntimeError("LSMPM requires /max_soft_body_number/ larger than 0")
+                raise SimulationStateError("LSMPM requires /max_soft_body_number/ larger than 0")
             if self.max_material_point_num <= 0:
-                raise RuntimeError("LSMPM requires /max_material_point_number/ larger than 0")
+                raise SimulationStateError("LSMPM requires /max_material_point_number/ larger than 0")
             if self.max_soft_grid_num <= 0:
-                raise RuntimeError("LSMPM requires /soft_grid_number/ larger than 0")
+                raise SimulationStateError("LSMPM requires /soft_grid_number/ larger than 0")
 
     def soft_particle_contact_list_length(self):
         particle_contact_list_length = int(math.ceil(self.compaction_ratio[2] * self.potential_contact_points_particle))
@@ -522,7 +531,7 @@ class Simulation(object):
         }
         key = str(backend).strip().replace(" ", "").lower()
         if key not in aliases:
-            raise RuntimeError("Keyword:: /mpm_backend/ must be 'Native' or 'Direct'")
+            raise ConfigurationError("Keyword:: /mpm_backend/ must be 'Native' or 'Direct'")
         self.mpm_backend = aliases[key]
 
     def is_direct_backend(self):
@@ -546,7 +555,7 @@ class Simulation(object):
 
     def set_boundary(self, boundary):
         BOUNDARY = {None: -1, "Reflect": 0, "Destroy": 1, "Period": 2}
-        self.boundary = [DictIO.GetEssential(BOUNDARY, b) for b in boundary]
+        self.boundary = [DictIO.get_essential(BOUNDARY, b) for b in boundary]
         if self.boundary[0] == 2:
             self.xpbc = True
             GlobalVariable.MPMXPBC = True
@@ -577,7 +586,7 @@ class Simulation(object):
     def set_stabilize_technique(self, stabilize):
         typelist = [None, "B-Bar Method", "F-Bar Method", "Displacement F-Bar Method"]
         if not stabilize in typelist:
-            raise RuntimeError(
+            raise SimulationStateError(
                 f"KeyWord:: /stabilize: {stabilize}/ is invalid. The valid type are given as follows: {typelist}"
             )
         self.stabilize = stabilize
@@ -590,7 +599,7 @@ class Simulation(object):
     def set_pressure_stabilize_technique(self, stabilize):
         typelist = [None, "FIC"]
         if not stabilize in typelist:
-            raise RuntimeError(
+            raise SimulationStateError(
                 f"KeyWord:: /stabilize: {stabilize}/ is invalid. The valid type are given as follows: {typelist}"
             )
         self.pressure_stabilize = stabilize
@@ -608,13 +617,13 @@ class Simulation(object):
     def set_configuration(self, configuration):
         config = ["TLMPM", "ULMPM"]
         if not configuration in config:
-            raise RuntimeError(f"Keyword:: /configuration/ error. Only {config} is valid!")
+            raise SimulationStateError(f"Keyword:: /configuration/ error. Only {config} is valid!")
         self.configuration = configuration
 
     def set_material_type(self, material_type):
         valid_list = ["Solid", "Fluid", "TwoPhaseSingleLayer", "TwoPhaseDoubleLayer"]
         if not material_type in valid_list:
-            raise RuntimeError(f"Keyword:: /material_type/ error. Only {valid_list} is valid!")
+            raise SimulationStateError(f"Keyword:: /material_type/ error. Only {valid_list} is valid!")
         self.material_type = material_type
 
         if self.material_type == "TwoPhaseSingleLayer":
@@ -623,7 +632,7 @@ class Simulation(object):
     def set_visualize(self, visualize):
         self.visualize = visualize
 
-    def set_THB(self, THBparameter):
+    def set_thb(self, THBparameter):
         if THBparameter:
             self.isTHB = True
             self.THBparameter = THBparameter
@@ -637,36 +646,36 @@ class Simulation(object):
 
         self.sparse_grid = True
         if isinstance(sparse_grid, dict):
-            enabled = DictIO.GetAlternative(sparse_grid, "Enabled", True)
+            enabled = DictIO.get_alternative(sparse_grid, "Enabled", True)
             if not enabled:
                 self.sparse_grid = False
                 self.sparse_grid_visualize_active_blocks = False
                 return
-            backend = DictIO.GetAlternative(sparse_grid, "Backend", "BlockScan")
+            backend = DictIO.get_alternative(sparse_grid, "Backend", "BlockScan")
             backend_key = str(backend).strip().replace("_", "").replace("-", "").replace(" ", "").lower()
             if backend_key not in ("blockscan", "scan", "parallelblockscan"):
-                raise RuntimeError(
+                raise SimulationStateError(
                     "MPM sparse_grid now uses the block-level scan backend. "
                     "Valid sparse_grid/Backend values are 'BlockScan' or 'Scan'."
                 )
             self.sparse_grid_backend = "BlockScan"
-            block_size = int(DictIO.GetAlternative(sparse_grid, "BlockSize", self.sparse_grid_block_size))
+            block_size = int(DictIO.get_alternative(sparse_grid, "BlockSize", self.sparse_grid_block_size))
             if block_size <= 1:
                 raise ValueError("sparse_grid/BlockSize must be larger than 1")
             self.sparse_grid_block_size = block_size
             capacity_factor = float(
-                DictIO.GetAlternative(sparse_grid, "CapacityFactor", self.sparse_grid_capacity_factor)
+                DictIO.get_alternative(sparse_grid, "CapacityFactor", self.sparse_grid_capacity_factor)
             )
             if capacity_factor <= 0.0:
                 raise ValueError("sparse_grid/CapacityFactor must be positive")
             self.sparse_grid_capacity_factor = capacity_factor
             self.sparse_grid_max_blocks = int(
-                DictIO.GetAlternative(sparse_grid, "MaxActiveBlocks", self.sparse_grid_max_blocks)
+                DictIO.get_alternative(sparse_grid, "MaxActiveBlocks", self.sparse_grid_max_blocks)
             )
             if self.sparse_grid_max_blocks < 0:
                 raise ValueError("sparse_grid/MaxActiveBlocks must be non-negative")
             self.sparse_grid_visualize_active_blocks = bool(
-                DictIO.GetAlternative(
+                DictIO.get_alternative(
                     sparse_grid,
                     "VisualizeActiveBlocks",
                     self.sparse_grid_visualize_active_blocks,
@@ -706,7 +715,7 @@ class Simulation(object):
     def set_stress_integration(self, stress_integration):
         typelist = ["ReturnMapping", "ImplicitIntegration", "ImplicitIntegrationAL", "SubStepping"]
         if not stress_integration in typelist:
-            raise RuntimeError(
+            raise SimulationStateError(
                 f"KeyWord:: /stress_integration: {stress_integration}/ is invalid. The valid type are given as follows: {typelist}"
             )
         self.stress_integration = stress_integration
@@ -714,7 +723,7 @@ class Simulation(object):
     def set_discretization(self, discretization):
         typelist = ["FEM", "FDM"]
         if not discretization in typelist:
-            raise RuntimeError(
+            raise SimulationStateError(
                 f"KeyWord:: /discretization: {discretization}/ is invalid. The valid type are given as follows: {typelist}"
             )
         self.discretization = discretization
@@ -729,7 +738,7 @@ class Simulation(object):
     def set_mapping_scheme(self, mapping):
         typelist = ["USL", "USF", "MUSL", "G2P2G"]
         if not mapping in typelist:
-            raise RuntimeError(
+            raise SimulationStateError(
                 f"KeyWord:: /mapping: {mapping}/ is invalid. The valid type are given as follows: {typelist}"
             )
         self.mapping = mapping
@@ -737,7 +746,7 @@ class Simulation(object):
     def set_shape_function(self, shape_function):
         typelist = ["Linear", "SmoothLinear", "GIMP", "QuadBSpline", "CubicBSpline"]
         if not shape_function in typelist:
-            raise RuntimeError(
+            raise SimulationStateError(
                 f"KeyWord:: /mapping: {shape_function}/ is invalid. The valid type are given as follows: {typelist}"
             )
         self.shape_function = shape_function
@@ -755,7 +764,7 @@ class Simulation(object):
     def set_mpm_coupling(self, coupling):
         typelist = ["Lagrangian", "Eulerian", False]
         if not coupling in typelist:
-            raise RuntimeError(
+            raise SimulationStateError(
                 f"KeyWord:: /coupling: {coupling}/ is invalid. The valid type are given as follows: {typelist}"
             )
         self.coupling = coupling
@@ -785,7 +794,7 @@ class Simulation(object):
     def set_solver_type(self, solver_type):
         typelist = ["Explicit", "Implicit", "SemiImplicit", "SemiImplicit_u_p"]
         if not solver_type in typelist:
-            raise RuntimeError(
+            raise SimulationStateError(
                 f"KeyWord:: /solver_type: {solver_type}/ is invalid. The valid type are given as follows: {typelist}"
             )
         self.solver_type = solver_type
@@ -814,7 +823,7 @@ class Simulation(object):
     def set_simulation_time(self, time):
         self.time = time
 
-    def set_CFL(self, CFL):
+    def set_cfl(self, CFL):
         self.CFL = CFL
 
     def set_adaptive_timestep(self, adaptive_timestep):
@@ -859,7 +868,7 @@ class Simulation(object):
 
     def set_coupling_particles(self, coupling_particles):
         if coupling_particles == 0:
-            raise RuntimeError(
+            raise SimulationStateError(
                 "It is unnecessary to using coupling modules because no material points are considered in coupling process"
             )
         self.max_coupling_particle_num = coupling_particles
@@ -867,7 +876,9 @@ class Simulation(object):
     def set_velocity_projection_scheme(self, velocity_projection_scheme):
         valid_type = [None, "Affine", "Taylor"]
         if velocity_projection_scheme not in valid_type:
-            raise RuntimeError(f"Keyword:: /velocity_projection_scheme/ is error, followings are valid {valid_type}.")
+            raise SimulationStateError(
+                f"Keyword:: /velocity_projection_scheme/ is error, followings are valid {valid_type}."
+            )
 
         self.velocity_projection_scheme = velocity_projection_scheme
         GlobalVariable.Affine = False
@@ -878,34 +889,34 @@ class Simulation(object):
             GlobalVariable.Taylor = True
 
     def set_window_parameters(self, windows):
-        self.visualize_interval = DictIO.GetAlternative(windows, "VisualizeInterval", self.save_interval)
-        self.window_size = DictIO.GetAlternative(windows, "WindowSize", self.window_size)
-        self.camera_up = DictIO.GetAlternative(windows, "CameraUp", self.camera_up)
-        self.look_at = DictIO.GetAlternative(windows, "LookAt", self.look_at)
-        self.look_from = DictIO.GetAlternative(
+        self.visualize_interval = DictIO.get_alternative(windows, "VisualizeInterval", self.save_interval)
+        self.window_size = DictIO.get_alternative(windows, "WindowSize", self.window_size)
+        self.camera_up = DictIO.get_alternative(windows, "CameraUp", self.camera_up)
+        self.look_at = DictIO.get_alternative(windows, "LookAt", self.look_at)
+        self.look_from = DictIO.get_alternative(
             windows, "LookFrom", (0.7 * self.domain[0], -0.4 * self.domain[1], 1.5 * self.domain[2])
         )
-        self.particle_color = DictIO.GetAlternative(windows, "ParticleColor", (1, 1, 1))
-        self.background_color = DictIO.GetAlternative(windows, "BackgroundColor", (0, 0, 0))
-        self.point_light = DictIO.GetAlternative(
+        self.particle_color = DictIO.get_alternative(windows, "ParticleColor", (1, 1, 1))
+        self.background_color = DictIO.get_alternative(windows, "BackgroundColor", (0, 0, 0))
+        self.point_light = DictIO.get_alternative(
             windows, "PointLight", (0.5 * self.domain[0], 0.5 * self.domain[1], 1.0 * self.domain[2])
         )
-        self.view_angle = DictIO.GetAlternative(windows, "ViewAngle", 45.0)
-        self.move_velocity = DictIO.GetAlternative(
+        self.view_angle = DictIO.get_alternative(windows, "ViewAngle", 45.0)
+        self.move_velocity = DictIO.get_alternative(
             windows, "MoveVelocity", 0.01 * (self.domain[0] + self.domain[1] + self.domain[2])
         )
 
     def set_constraint_num(self, constraint):
-        self.nvelocity = int(DictIO.GetAlternative(constraint, "max_velocity_constraint", 0))
-        self.nreflection = int(DictIO.GetAlternative(constraint, "max_reflection_constraint", 0))
-        self.nfriction = int(DictIO.GetAlternative(constraint, "max_friction_constraint", 0))
-        self.nabsorbing = int(DictIO.GetAlternative(constraint, "max_absorbing_constraint", 0))
-        self.ntraction = int(DictIO.GetAlternative(constraint, "max_traction_constraint", 0))
+        self.nvelocity = int(DictIO.get_alternative(constraint, "max_velocity_constraint", 0))
+        self.nreflection = int(DictIO.get_alternative(constraint, "max_reflection_constraint", 0))
+        self.nfriction = int(DictIO.get_alternative(constraint, "max_friction_constraint", 0))
+        self.nabsorbing = int(DictIO.get_alternative(constraint, "max_absorbing_constraint", 0))
+        self.ntraction = int(DictIO.get_alternative(constraint, "max_traction_constraint", 0))
         if not self.ptraction_method == "Virtual":
-            self.nptraction = int(DictIO.GetAlternative(constraint, "max_particle_traction_constraint", 0))
+            self.nptraction = int(DictIO.get_alternative(constraint, "max_particle_traction_constraint", 0))
         if self.solver_type == "Implicit":
-            self.ndisplacement = int(DictIO.GetAlternative(constraint, "max_displacement_constraint", 0))
-        npressure = int(DictIO.GetAlternative(constraint, "max_node_pressure_constraint", 0))
+            self.ndisplacement = int(DictIO.get_alternative(constraint, "max_displacement_constraint", 0))
+        npressure = int(DictIO.get_alternative(constraint, "max_node_pressure_constraint", 0))
         if self.solver_type == "SemiImplicit" and npressure >= 1:
             self.npressure = ti.field(dtype=ti.i32, shape=())
             self.npressure[None] = npressure
@@ -924,7 +935,7 @@ class Simulation(object):
     def set_particle_traction_update_area(self, update_area):
         self.particle_traction_update_area = bool(update_area)
 
-    def set_AOSOA(self, AOSOA):
+    def set_aosoa(self, AOSOA):
         if AOSOA:
             self.AOSOA = True
             if isinstance(AOSOA, (list, tuple)):
@@ -967,9 +978,9 @@ class Simulation(object):
         self.contact_detection = contact_detection
         if contact_detection and not contact_detection in ["MPMContact", "GeoContact", "DEMContact"]:
             valid = ["MPMContact", "GeoContact", "DEMContact"]
-            raise RuntimeError(f"Keyword:: /contact_detection/ is wrong. Only the following is valid: {valid}")
+            raise SimulationStateError(f"Keyword:: /contact_detection/ is wrong. Only the following is valid: {valid}")
         if self.dimension == 3 and contact_detection == "DEMContact":
-            raise RuntimeError("Three-dimension model do not support DEMContact!")
+            raise SimulationStateError("Three-dimension model do not support DEMContact!")
 
     def set_calculate_reaction_force(self, calculate_reaction_force):
         self.calculate_reaction_force = calculate_reaction_force
@@ -1014,7 +1025,7 @@ class Simulation(object):
     def set_newmark_parameter(self, newmark_parameter):
         newmark_parameter = list(newmark_parameter)
         if len(newmark_parameter) != 2:
-            raise RuntimeError("The size of newmark parameter should follow [gamma, beta]")
+            raise SimulationStateError("The size of newmark parameter should follow [gamma, beta]")
         self.newmark_gamma = newmark_parameter[0]
         self.newmark_beta = newmark_parameter[1]
 
@@ -1032,7 +1043,7 @@ class Simulation(object):
 
         valid_list = ["CG", "PCG", "BiCG", "MGPCG"]
         if linear_solver not in valid_list:
-            raise RuntimeError(f"Keyword:: /linear_solver/ is error, followings are valid {valid_list}")
+            raise SimulationStateError(f"Keyword:: /linear_solver/ is error, followings are valid {valid_list}")
         if self.solver_type in ("SemiImplicit", "SemiImplicit_u_p") and linear_solver == "MGPCG":
             self.pressure_solver = "MGPCG"
 
@@ -1046,10 +1057,10 @@ class Simulation(object):
             "mgpcg": "MGPCG",
             "matrixfreemgpcg": "MGPCG",
         }
-        solver = aliases.get(_normalize_solver_keyword(pressure_solver))
+        solver = aliases.get(Simulation._normalize_solver_keyword(pressure_solver))
         if solver is None:
             valid_list = ["PCG", "MGPCG"]
-            raise RuntimeError(f"Keyword:: /pressure_solver/ is error, followings are valid {valid_list}")
+            raise SimulationStateError(f"Keyword:: /pressure_solver/ is error, followings are valid {valid_list}")
         self.pressure_solver = solver
 
     def use_mgpcg_pressure_solver(self):
@@ -1074,14 +1085,14 @@ class Simulation(object):
             "matrixfreemgpcg": "MatrixFreeMGPCG",
         }
         self.assemble_type_input = assemble_type
-        canonical = aliases.get(_normalize_solver_keyword(assemble_type))
+        canonical = aliases.get(Simulation._normalize_solver_keyword(assemble_type))
         if canonical is None:
             valid_list = ["MatrixFree", "COO", "HashTriplet", "MatrixFreeMGPCG"]
-            raise RuntimeError(f"Keyword:: /assemble_type/ is error, followings are valid {valid_list}")
+            raise SimulationStateError(f"Keyword:: /assemble_type/ is error, followings are valid {valid_list}")
 
         if canonical == "MatrixFreeMGPCG":
             if self.solver_type not in ("SemiImplicit", "SemiImplicit_u_p"):
-                raise RuntimeError(
+                raise SimulationStateError(
                     "assemble_type='MatrixFreeMGPCG' is a legacy SemiImplicit pressure-solver alias. "
                     "Use assemble_type='MatrixFree', 'COO', or 'HashTriplet' for Implicit solid MPM."
                 )
@@ -1092,14 +1103,14 @@ class Simulation(object):
         if self.solver_type == "Implicit" and self.material_type == "Solid":
             valid_list = ["MatrixFree", "COO", "HashTriplet"]
             if canonical not in valid_list:
-                raise RuntimeError(
+                raise SimulationStateError(
                     f"Implicit solid MPM supports assemble_type {valid_list}; "
                     "use COO or HashTriplet for assembled matrices."
                 )
         elif self.solver_type in ("SemiImplicit", "SemiImplicit_u_p"):
             valid_list = ["MatrixFree", "COO"]
             if canonical not in valid_list:
-                raise RuntimeError(
+                raise SimulationStateError(
                     f"{self.solver_type} MPM supports assemble_type {valid_list}; "
                     "use pressure_solver='MGPCG' for the multigrid pressure path."
                 )
@@ -1114,11 +1125,11 @@ class Simulation(object):
         return self.solver_type == "Implicit" and self.material_type == "Fluid" and self.discretization == "FDM"
 
     def _raise_unsupported(self, feature, requirements):
-        raise RuntimeError(f"{feature} currently requires: {', '.join(requirements)}")
+        raise SimulationStateError(f"{feature} currently requires: {', '.join(requirements)}")
 
     def validate_configuration(self, require_solver_parameters=True):
         if self.dimension not in (2, 3):
-            raise RuntimeError("MPM currently supports dimension=2 or dimension=3")
+            raise SimulationStateError("MPM currently supports dimension=2 or dimension=3")
         if self.pressure_stabilize == "FIC" and (
             self.solver_type != "SemiImplicit" or self.material_type != "TwoPhaseSingleLayer"
         ):
@@ -1224,7 +1235,7 @@ class Simulation(object):
         if self.solid_sdf_cut_cell:
             incompressible_fdm_features.append("solid_sdf_cut_cell")
         if self.fluid_wall_no_slip and not self.solid_sdf_cut_cell:
-            raise RuntimeError("fluid_wall_no_slip requires solid_sdf_cut_cell=True")
+            raise SimulationStateError("fluid_wall_no_slip requires solid_sdf_cut_cell=True")
         if incompressible_fdm_features and not self.is_incompressible_fluid_fdm():
             self._raise_unsupported(
                 ", ".join(incompressible_fdm_features),

@@ -20,15 +20,888 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from examples.fedem.IsotropicCompaction.draw.output_audit import collect_native_output
-from examples.fedem.IsotropicCompaction import isotropic_setup as base
 
 DEFAULT_OUTPUT = Path(__file__).resolve().parent / "OutputData/soft_050"
 
+IRREGULAR_SURFACE = REPO_ROOT / "assets/mesh/LSDEM/sand.stl"
+SEED = 20260816
+PARTICLE_COUNT = 125
+SOFT_COUNT = 63
+RIGID_COUNT = PARTICLE_COUNT - SOFT_COUNT
+RADIUS = 0.022
+SOFT_DENSITY = 1200.0
+RIGID_DENSITY = 2500.0
+YOUNG = 2.0e4
+POISSON = 0.30
+FRICTION = 0.35
+WALL_FRICTION = 0.0
+NORMAL_STIFFNESS = 1.0e7
+TANGENTIAL_STIFFNESS = 5.0e6
+FEM_WALL_NORMAL_STIFFNESS = 1.0e8
+FEM_WALL_TANGENTIAL_STIFFNESS = 5.0e7
+DT = 1.0e-5
+LEFT, RIGHT = 0.124, 0.346
+FRONT, BACK = 0.124, 0.346
+BOTTOM, TOP = 0.124, 0.346
+WIDTH0, DEPTH0, HEIGHT0 = RIGHT - LEFT, BACK - FRONT, TOP - BOTTOM
+WALL_BODY_NAMES = ("left", "right", "front", "back", "bottom", "top")
+WALL_EXTENSION = 0.10
+IRREGULAR_LEVELSET_SPACING = 5.0
+MINIMUM_TETRA_MEAN_RATIO = 0.05
+SOFT_CONTACT_THICKNESS = 1.0e-3
+SOFT_PT_CAPACITY = 1048576
+SOFT_EE_CAPACITY = 4194304
+SOFT_HISTORY_CAPACITY = 2097152
+FEM_WALL_PAIR_CAPACITY = 262144
+FEM_WALL_HISTORY_CAPACITY = 65536
+BARRIER_CUTOFF = 0.01 * RADIUS
+
+
+def _clear_fresh_run_output(output: Path) -> None:
+    """Remove stale trajectory artifacts before a non-restart run."""
+
+    native_root = output / "native"
+    if native_root.is_dir():
+        for path in native_root.rglob("*"):
+            if path.is_file() or path.is_symlink():
+                path.unlink()
+    for name in (
+        "history.csv",
+        "config.json",
+        "metrics.json",
+        "state.json",
+        "performance.json",
+    ):
+        path = output / name
+        if path.is_file() or path.is_symlink():
+            path.unlink()
+
+
+def _facet_wall_specs(axial_strain: float, compression_time: float):
+    """Return six extended DEM polygon walls with inward normals."""
+
+    ex = WALL_EXTENSION
+    x0, x1 = LEFT, RIGHT
+    y0, y1 = FRONT, BACK
+    z0, z1 = BOTTOM, TOP
+    dx, dy, dz = WIDTH0, DEPTH0, HEIGHT0
+    xlo, xhi = x0 - ex * dx, x1 + ex * dx
+    ylo, yhi = y0 - ex * dy, y1 + ex * dy
+    zlo, zhi = z0 - ex * dz, z1 + ex * dz
+    fixed = [0.0, 0.0, 0.0]
+    top_speed = -axial_strain * HEIGHT0 / compression_time
+    return (
+        ("left", ([x0, ylo, zlo], [x0, yhi, zlo], [x0, yhi, zhi], [x0, ylo, zhi]), [1.0, 0.0, 0.0], fixed),
+        ("right", ([x1, ylo, zlo], [x1, yhi, zlo], [x1, yhi, zhi], [x1, ylo, zhi]), [-1.0, 0.0, 0.0], fixed),
+        ("front", ([xlo, y0, zlo], [xhi, y0, zlo], [xhi, y0, zhi], [xlo, y0, zhi]), [0.0, 1.0, 0.0], fixed),
+        ("back", ([xlo, y1, zlo], [xhi, y1, zlo], [xhi, y1, zhi], [xlo, y1, zhi]), [0.0, -1.0, 0.0], fixed),
+        ("bottom", ([xlo, ylo, z0], [xhi, ylo, z0], [xhi, yhi, z0], [xlo, yhi, z0]), [0.0, 0.0, 1.0], fixed),
+        (
+            "top",
+            ([xlo, ylo, z1], [xhi, ylo, z1], [xhi, yhi, z1], [xlo, yhi, z1]),
+            [0.0, 0.0, -1.0],
+            [0.0, 0.0, top_speed],
+        ),
+    )
+
+
+def _packing(minimum_surface_gap: float | None = None):
+    if minimum_surface_gap is None:
+        margin = 1.05 * RADIUS
+        jitter_amplitude = 2.5e-4
+    else:
+        minimum_surface_gap = float(minimum_surface_gap)
+        if minimum_surface_gap < 0.0:
+            raise ValueError("minimum particle surface gap cannot be negative")
+        margin = RADIUS + minimum_surface_gap
+        minimum_spacing = min(
+            (RIGHT - LEFT - 2.0 * margin) / 4.0,
+            (BACK - FRONT - 2.0 * margin) / 4.0,
+            (TOP - BOTTOM - 2.0 * margin) / 4.0,
+        )
+        excess_gap = minimum_spacing - 2.0 * RADIUS
+        if excess_gap < minimum_surface_gap:
+            raise ValueError(
+                "triaxial box cannot place the barrier packing without " "crossing the requested initial surface gap"
+            )
+        jitter_amplitude = min(
+            2.5e-4,
+            0.25 * (excess_gap - minimum_surface_gap),
+        )
+    axes = (
+        np.linspace(LEFT + margin, RIGHT - margin, 5),
+        np.linspace(FRONT + margin, BACK - margin, 5),
+        np.linspace(BOTTOM + margin, TOP - margin, 5),
+    )
+    centers = np.stack(np.meshgrid(*axes, indexing="ij"), axis=-1).reshape(-1, 3)
+    rng = np.random.default_rng(SEED)
+    centers += rng.uniform(-jitter_amplitude, jitter_amplitude, centers.shape)
+    permutation = rng.permutation(PARTICLE_COUNT)
+    soft_ids = np.sort(permutation[:SOFT_COUNT])
+    rigid_ids = np.sort(permutation[SOFT_COUNT:])
+    orientations = rng.uniform(0.0, 360.0, (PARTICLE_COUNT, 3))
+    return centers, soft_ids, rigid_ids, orientations
+
+
+def _build(
+    gt,
+    output: Path,
+    dt: float,
+    simulation_time: float,
+    axial_strain: float,
+    output_interval: float,
+    contact_model: str = "linear",
+    barrier_cutoff: float = BARRIER_CUTOFF,
+    fem_verlet_distance_multiplier: float = 0.12,
+    dem_local_damping: float = 0.08,
+    rigid_shape: str = "irregular",
+    packing_override=None,
+):
+    use_barrier = str(contact_model).lower() == "barrier"
+    if packing_override is None:
+        centers, soft_ids, rigid_ids, orientations = _packing(barrier_cutoff if use_barrier else None)
+        packing_radii = np.full(PARTICLE_COUNT, RADIUS)
+    else:
+        (
+            centers,
+            packing_radii,
+            soft_ids,
+            rigid_ids,
+            orientations,
+        ) = packing_override
+        centers = np.asarray(centers, dtype=np.float64)
+        packing_radii = np.asarray(packing_radii, dtype=np.float64)
+        soft_ids = np.asarray(soft_ids, dtype=np.int64)
+        rigid_ids = np.asarray(rigid_ids, dtype=np.int64)
+        orientations = np.asarray(orientations, dtype=np.float64)
+        if centers.shape != (PARTICLE_COUNT, 3):
+            raise ValueError("packing centers must have shape (N, 3)")
+        if packing_radii.shape != (PARTICLE_COUNT,):
+            raise ValueError("packing radii must have shape (N,)")
+    wall_specs = _facet_wall_specs(axial_strain, simulation_time)
+
+    dem = gt.DEM(log=False)
+    dem.set_configuration(
+        domain=[0.47, 0.47, 0.47],
+        scheme="LSDEM",
+        engine="SymplecticEuler",
+        search="LinkedCell",
+        gravity=[0.0, 0.0, 0.0],
+        track_energy=True,
+        log=False,
+    )
+    dem.memory_allocate(
+        {
+            "max_material_number": 2,
+            "max_rigid_body_number": RIGID_COUNT,
+            "max_rigid_template_number": 1,
+            "levelset_grid_number": 100000,
+            "surface_node_number": 512,
+            "max_sphere_number": 0,
+            "max_clump_number": 0,
+            "max_plane_number": 0,
+            "max_facet_number": 12,
+            "body_coordination_number": 128,
+            "wall_coordination_number": 12,
+            "verlet_distance_multiplier": [0.1, 0.1],
+            "compaction_ratio": [1.0, 1.0],
+        },
+        log=False,
+    )
+    for material_id in (0, 1):
+        dem.add_attribute(
+            materialID=material_id,
+            attribute={
+                "Density": RIGID_DENSITY,
+                "ForceLocalDamping": dem_local_damping,
+                "TorqueLocalDamping": dem_local_damping,
+            },
+        )
+    if RIGID_COUNT > 0:
+        template_name = "triaxial_irregular_grain"
+        template = {
+            "Name": template_name,
+            "Object": gt.polyhedron(file=str(IRREGULAR_SURFACE)).grids(space=IRREGULAR_LEVELSET_SPACING, extent=3),
+            "WriteFile": False,
+        }
+        if rigid_shape == "sphere":
+            sphere_object = gt.sphere(1.0)
+            sphere_object.analytical_distance(sphere_object._distance)
+            template_name = "triaxial_sphere"
+            template = {
+                "Name": template_name,
+                "Object": sphere_object.grids(space=0.1, extent=3),
+                "SurfaceResolution": 1728,
+                "WriteFile": False,
+            }
+        dem.add_template(template)
+        dem.create_body_batch(
+            {
+                "BodyType": "RigidBody",
+                "Template": {
+                    "Name": template_name,
+                    "GroupID": 0,
+                    "MaterialID": 0,
+                    "BodyPoints": centers[rigid_ids],
+                    "BoundingRadii": packing_radii[rigid_ids],
+                    "CoordinatesAreMassCenters": False,
+                    "BodyOrientationsRadians": np.deg2rad(orientations[rigid_ids]),
+                    "InitialVelocity": [0.0, 0.0, 0.0],
+                    "InitialAngularVelocity": [0.0, 0.0, 0.0],
+                    "FixMotion": ["Free", "Free", "Free"],
+                },
+            }
+        )
+    walls_to_create = []
+    for wall_id, (name, vertices, normal, velocity) in enumerate(wall_specs):
+        walls_to_create.append(
+            {
+                "WallID": wall_id,
+                "WallType": "Facet",
+                "WallShape": "Polygon",
+                "MaterialID": 1,
+                "WallVertice": {f"vertice{index + 1}": np.asarray(vertex) for index, vertex in enumerate(vertices)},
+                "OuterNormal": np.asarray(normal),
+                "InitialVelocity": velocity,
+            }
+        )
+    dem.add_wall(body=walls_to_create)
+    wall_id_values = dem.scene.wall.wallID.to_numpy()[: int(dem.scene.wallNum[0])]
+    wall_facet_ids = {
+        name: np.flatnonzero(wall_id_values == wall_id).tolist() for wall_id, (name, _, _, _) in enumerate(wall_specs)
+    }
+    if any(len(ids) != 2 for ids in wall_facet_ids.values()):
+        raise RuntimeError(f"triaxial DEM wall triangulation is incomplete: {wall_facet_ids}")
+    dem.choose_contact_model(
+        "Barrier Model" if use_barrier else "Linear Model",
+        "Barrier Model" if use_barrier else "Linear Model",
+    )
+    dem.select_save_data(
+        particle=True,
+        surface=True,
+        wall=True,
+        particle_particle_contact=True,
+        particle_wall_contact=True,
+    )
+    contact_parameters = (
+        {
+            "Stiffness": NORMAL_STIFFNESS,
+            "NormalCutOff": barrier_cutoff,
+            "StiffnessRatio": 1.0,
+            "Friction": FRICTION,
+            "NormalViscousDamping": 0.20,
+            "TangentialViscousDamping": 0.10,
+        }
+        if use_barrier
+        else {
+            "NormalStiffness": NORMAL_STIFFNESS,
+            "TangentialStiffness": TANGENTIAL_STIFFNESS,
+            "Friction": FRICTION,
+            "NormalViscousDamping": 0.20,
+            "TangentialViscousDamping": 0.10,
+        }
+    )
+    dem.add_property(
+        materialID1=0,
+        materialID2=0,
+        property=contact_parameters,
+        dType="particle-particle",
+    )
+    dem.add_property(
+        materialID1=0,
+        materialID2=1,
+        property={**contact_parameters, "Friction": WALL_FRICTION},
+        dType="particle-wall",
+    )
+
+    fem = gt.FEM(log=False)
+    fem.set_configuration(dimension=3, solver_type="Explicit", log=False)
+    sphere_reference, mesh_quality = tetrahedralize_primitive_reference(
+        "sphere",
+        minimum_element_count=1000,
+        minimum_mean_ratio=MINIMUM_TETRA_MEAN_RATIO,
+    )
+    if mesh_quality["connected_body_count"] != 1:
+        raise RuntimeError("generated FEM sphere reference must contain exactly one body")
+    if mesh_quality["minimum_tetra_mean_ratio"] < MINIMUM_TETRA_MEAN_RATIO:
+        raise RuntimeError(
+            "FEM sphere reference mesh failed the tetrahedron quality gate: "
+            f"{mesh_quality['minimum_tetra_mean_ratio']:.6g} < "
+            f"{MINIMUM_TETRA_MEAN_RATIO:.6g}"
+        )
+    reference_mesh_root = output / "mesh"
+    reference_mesh_root.mkdir(parents=True, exist_ok=True)
+    sphere_reference.write(reference_mesh_root / "fem_sphere_reference.msh")
+    sphere_reference.write(reference_mesh_root / "fem_sphere_reference.vtu")
+    np.savez_compressed(
+        reference_mesh_root / "fem_sphere_reference.npz",
+        points=sphere_reference.points,
+        cells=sphere_reference.cells,
+        cell_type=np.asarray("TET4"),
+    )
+    (reference_mesh_root / "fem_sphere_reference_quality.json").write_text(
+        json.dumps(mesh_quality, indent=2) + os.linesep,
+        encoding="utf-8",
+    )
+    body_ranges = []
+    body_roles = []
+    node_offset = 0
+    soft_meshes = []
+    for body_id, packing_id in enumerate(soft_ids):
+        mesh = place_reference(
+            sphere_reference,
+            centers[packing_id],
+            packing_radii[packing_id],
+            [0.0, 0.0, 0.0],
+            name=f"triaxial_soft_sphere_{body_id:04d}",
+        )
+        soft_meshes.append(mesh)
+        body_ranges.append((node_offset, node_offset + mesh.number_of_nodes))
+        body_roles.append({"role": "soft", "packing_id": int(packing_id), "shape": "sphere"})
+        node_offset += mesh.number_of_nodes
+    body_roles.extend(
+        {
+            "role": "rigid",
+            "packing_id": int(packing_id),
+            "shape": "irregular sand morphology",
+        }
+        for packing_id in rigid_ids
+    )
+    from src.fem.generator.Mesh import FEMMesh
+
+    fem.add_soft_particle(FEMMesh.concatenate(soft_meshes))
+    fem.add_material("NeoHookean", density=SOFT_DENSITY, young_modulus=YOUNG, poisson_ratio=POISSON)
+    contact_property = (
+        {
+            "Stiffness": NORMAL_STIFFNESS,
+            "NormalCutOff": barrier_cutoff,
+            "StiffnessRatio": 1.0,
+            "Friction": FRICTION,
+            "NormalViscousDamping": 0.20,
+            "TangentialViscousDamping": 0.10,
+        }
+        if use_barrier
+        else {
+            "NormalStiffness": NORMAL_STIFFNESS,
+            "TangentialStiffness": TANGENTIAL_STIFFNESS,
+            "Friction": FRICTION,
+            "NormalViscousDamping": 0.20,
+            "TangentialViscousDamping": 0.10,
+        }
+    )
+    fem.add_soft_particle_contact(
+        "Barrier" if use_barrier else "Linear",
+        search="BVH",
+        verlet_distance_multiplier=fem_verlet_distance_multiplier,
+        ContactThickness=(barrier_cutoff if use_barrier else SOFT_CONTACT_THICKNESS),
+        max_point_triangle_pairs=SOFT_PT_CAPACITY,
+        max_edge_edge_pairs=SOFT_EE_CAPACITY,
+        contact_history_capacity=SOFT_HISTORY_CAPACITY,
+        **contact_property,
+    )
+    wall_contact_property = dict(contact_property)
+    wall_contact_property["Friction"] = WALL_FRICTION
+    if use_barrier:
+        wall_contact_property["Stiffness"] = FEM_WALL_NORMAL_STIFFNESS
+    else:
+        wall_contact_property["NormalStiffness"] = FEM_WALL_NORMAL_STIFFNESS
+        wall_contact_property["TangentialStiffness"] = FEM_WALL_TANGENTIAL_STIFFNESS
+
+    coupling = gt.FEDEM(dem=dem, fem=fem, log=False)
+    coupling.set_configuration(
+        domain=[0.47, 0.47, 0.47],
+        gravity=[0.0, 0.0, 0.0],
+        search="BVH",
+        contact_work_mode="Explicit",
+        log=False,
+    )
+    coupling.set_solver(
+        {
+            "Timestep": dt,
+            "SimulationTime": simulation_time,
+            "SaveInterval": output_interval,
+            "SavePath": str(output / "native"),
+            "damping": 0.04,
+        },
+        log=False,
+    )
+    coupling.select_save_data(contact=True, checkpoint=True)
+    coupling.add_surface(body_ids=list(range(SOFT_COUNT)))
+    coupling.memory_allocate(
+        {
+            # Keep one inert coupled-table slot for the 100%-soft endpoint;
+            # ContactManager still reads the realized DEM particle count (0).
+            "max_particle_number": max(RIGID_COUNT, 1),
+            "contact_coordination_number": 256,
+            "max_contact_pairs": 1048576 if RIGID_COUNT > 0 else 16,
+            "max_levelset_cell_pairs": 4194304 if RIGID_COUNT > 0 else 16,
+            # FEM--wall candidates are independent of the number of LSDEM
+            # bodies.  In particular, the all-soft endpoint must not inherit
+            # the inert 16-entry FEM--LSDEM capacity.
+            "max_fem_wall_pairs": FEM_WALL_PAIR_CAPACITY,
+            "max_fem_wall_history_pairs": FEM_WALL_HISTORY_CAPACITY,
+            "verlet_distance_multiplier": fem_verlet_distance_multiplier,
+        }
+    )
+    coupling.choose_contact_model("Barrier" if use_barrier else "Linear")
+    for body_id in range(SOFT_COUNT):
+        coupling.add_property(
+            DEMmaterial=0,
+            FEMbody=body_id,
+            property=contact_property,
+        )
+        coupling.add_property(
+            DEMmaterial=1,
+            FEMbody=body_id,
+            property=wall_contact_property,
+        )
+    coupling.add_essentials()
+    coupling.enginer.pre_calculate()
+    coupling.check_critical_timestep()
+    coupling.initial_packing_radii = packing_radii.copy()
+    coupling.realized_wall_geometry = _dem_wall_geometry(coupling, wall_facet_ids)
+    return (
+        coupling,
+        centers,
+        soft_ids,
+        rigid_ids,
+        body_ranges,
+        wall_facet_ids,
+        body_roles,
+        mesh_quality,
+        sphere_reference.number_of_nodes,
+        sphere_reference.number_of_cells,
+    )
+
+
+def _soft_centers(coupling, body_ranges):
+    positions = coupling.enginer.fem_engine.state.position.to_numpy()
+    mass = coupling.enginer.fem_engine.state.mass.to_numpy()
+    result = []
+    for start, end in body_ranges[:SOFT_COUNT]:
+        result.append(np.sum(mass[start:end, None] * positions[start:end], axis=0) / np.sum(mass[start:end]))
+    return np.asarray(result)
+
+
+def _soft_volume(coupling, positions: np.ndarray) -> float:
+    cells = np.asarray(coupling.enginer.fem_engine.mesh.cells, dtype=np.int64)
+    tetrahedra = positions[cells]
+    determinants = np.linalg.det(
+        np.stack(
+            (
+                tetrahedra[:, 1] - tetrahedra[:, 0],
+                tetrahedra[:, 2] - tetrahedra[:, 0],
+                tetrahedra[:, 3] - tetrahedra[:, 0],
+            ),
+            axis=2,
+        )
+    )
+    return float(np.sum(np.abs(determinants)) / 6.0)
+
+
+def _rigid_particle_contact_pairs(dem, rigid_ids):
+    from src.utils.FieldIO import field_to_numpy_prefix
+
+    pairs: set[tuple[int, int]] = set()
+    rigid_ids = np.asarray(rigid_ids, dtype=np.int64)
+    if rigid_ids.size <= 1:
+        return pairs
+    scene = dem.scene
+    neighbor = dem.contactor.neighbor
+    surface_count = int(scene.surfaceNum[0])
+    contact_count = int(neighbor.lsparticle_lsparticle[surface_count])
+    if contact_count <= 0:
+        return pairs
+    model = dem.contactor.physpp
+    first_nodes = field_to_numpy_prefix(model.cplist.endID1, contact_count)
+    second_bodies = field_to_numpy_prefix(model.cplist.endID2, contact_count)
+    normal_force = field_to_numpy_prefix(model.cplist.cnforce, contact_count)
+    active = np.linalg.norm(normal_force, axis=1) > 0.0
+    surface_body = field_to_numpy_prefix(scene.surface, surface_count)
+    for node, second in zip(first_nodes[active], second_bodies[active]):
+        first = int(rigid_ids[int(surface_body[int(node)])])
+        second = int(rigid_ids[int(second)])
+        if first != second:
+            pairs.add((min(first, second), max(first, second)))
+    return pairs
+
+
+def _particle_contact_pairs(coupling, soft_ids, rigid_ids):
+    """Return active particle pairs after collapsing nodal contacts."""
+
+    from src.utils.FieldIO import field_to_numpy_prefix
+
+    pairs: set[tuple[int, int]] = set()
+    soft_ids = np.asarray(soft_ids, dtype=np.int64)
+    rigid_ids = np.asarray(rigid_ids, dtype=np.int64)
+
+    def insert(first, second):
+        first = int(first)
+        second = int(second)
+        if first != second:
+            pairs.add((min(first, second), max(first, second)))
+
+    soft_contact = coupling.enginer.fem_engine.soft_particle_contact
+    node_body = np.asarray(soft_contact.mesh.node_body_ids, dtype=np.int64)
+    if soft_contact.pt_count > 0:
+        active = field_to_numpy_prefix(soft_contact.pt_active, soft_contact.pt_count).astype(bool)
+        stencils = field_to_numpy_prefix(soft_contact.culling.point_triangle, soft_contact.pt_count)[active]
+        for stencil in stencils:
+            insert(
+                soft_ids[node_body[int(stencil[0])]],
+                soft_ids[node_body[int(stencil[1])]],
+            )
+    if soft_contact.ee_count > 0:
+        active = field_to_numpy_prefix(soft_contact.ee_active, soft_contact.ee_count).astype(bool)
+        stencils = field_to_numpy_prefix(soft_contact.culling.edge_edge, soft_contact.ee_count)[active]
+        for stencil in stencils:
+            insert(
+                soft_ids[node_body[int(stencil[0])]],
+                soft_ids[node_body[int(stencil[2])]],
+            )
+
+    cross = coupling.contactor.neighbor
+    if cross is not None and cross.contact_count > 0:
+        active = field_to_numpy_prefix(cross.contacts.active, cross.contact_count).astype(bool)
+        nodes = field_to_numpy_prefix(cross.contacts.node_id, cross.contact_count)[active]
+        rigids = field_to_numpy_prefix(cross.contacts.rigid_id, cross.contact_count)[active]
+        patch_body = field_to_numpy_prefix(coupling.patch.node_body, coupling.patch.node_count)
+        for node, rigid in zip(nodes, rigids):
+            insert(
+                soft_ids[int(patch_body[int(node)])],
+                rigid_ids[int(rigid)],
+            )
+
+    pairs.update(_rigid_particle_contact_pairs(coupling.dem, rigid_ids))
+    return pairs
+
+
+def _dem_wall_geometry(coupling, wall_facet_ids):
+    scene = coupling.dem.scene
+    count = int(scene.wallNum[0])
+    wall_id = scene.wall.wallID.to_numpy()[:count]
+    point1 = scene.wall.vertice1.to_numpy()[:count]
+    point2 = scene.wall.vertice2.to_numpy()[:count]
+    point3 = scene.wall.vertice3.to_numpy()[:count]
+    normal = scene.wall.norm.to_numpy()[:count]
+    geometry = {}
+    for name, facet_ids in wall_facet_ids.items():
+        points = np.concatenate((point1[facet_ids], point2[facet_ids], point3[facet_ids]), axis=0)
+        geometry[name] = {
+            "wall_id": int(wall_id[facet_ids[0]]),
+            "facet_ids": [int(value) for value in facet_ids],
+            "normal": np.mean(normal[facet_ids], axis=0).tolist(),
+            "bounds": np.stack((points.min(axis=0), points.max(axis=0))).tolist(),
+        }
+    return geometry
+
+
+def _surface_clearances(coupling, wall_facet_ids, body_ranges):
+    """Measure wall penetration and detect centroid or complete-body crossing."""
+
+    scene = coupling.dem.scene
+    wall_count = int(scene.wallNum[0])
+    point1 = scene.wall.vertice1.to_numpy()[:wall_count]
+    point2 = scene.wall.vertice2.to_numpy()[:wall_count]
+    point3 = scene.wall.vertice3.to_numpy()[:wall_count]
+    normals = scene.wall.norm.to_numpy()[:wall_count]
+    fem_points = coupling.patch.nodes.to_numpy()
+    fem_body = coupling.patch.node_body.to_numpy()
+    fem_surface = fem_body >= 0
+    fem_points = fem_points[fem_surface]
+    fem_body = fem_body[fem_surface].astype(np.int64, copy=False)
+    if np.unique(fem_body).size != len(body_ranges):
+        raise RuntimeError("wall-crossing audit requires surface nodes for every FEM body")
+    fem_centers = _soft_centers(coupling, body_ranges)
+    if RIGID_COUNT > 0:
+        _, rigid_points = scene.visualize_surface(coupling.dem.sims)
+        rigid_points = rigid_points[: int(scene.surfaceNum[0])]
+    else:
+        rigid_points = np.empty((0, 3), dtype=np.float64)
+    result = {}
+    for name, facet_ids in wall_facet_ids.items():
+        facet_id = facet_ids[0]
+        center = (point1[facet_id] + point2[facet_id] + point3[facet_id]) / 3.0
+        normal = normals[facet_id]
+        fem_gap = (fem_points - center) @ normal
+        rigid_gap = (rigid_points - center) @ normal
+        centroid_gap = (fem_centers - center) @ normal
+        fully_crossed = 0
+        maximum_outside_fraction = 0.0
+        for body_id in range(len(body_ranges)):
+            body_gap = fem_gap[fem_body == body_id]
+            if body_gap.size == 0:
+                raise RuntimeError(f"FEM body {body_id} has no registered surface nodes")
+            fully_crossed += int(float(np.max(body_gap)) < 0.0)
+            maximum_outside_fraction = max(
+                maximum_outside_fraction,
+                float(np.mean(body_gap < 0.0)),
+            )
+        result[name] = {
+            "minimum_fem_surface_gap": float(np.min(fem_gap)),
+            "minimum_lsdem_surface_gap": (float(np.min(rigid_gap)) if rigid_gap.size else math.inf),
+            "minimum_fem_body_centroid_gap": float(np.min(centroid_gap)),
+            "fem_body_centroid_crossing_count": int(np.count_nonzero(centroid_gap < 0.0)),
+            "fem_fully_crossed_body_count": int(fully_crossed),
+            "maximum_fem_body_surface_fraction_outside": (maximum_outside_fraction),
+        }
+    diagnostics = {
+        "maximum_fem_surface_penetration": max(
+            max(0.0, -values["minimum_fem_surface_gap"]) for values in result.values()
+        ),
+        "maximum_lsdem_surface_penetration": max(
+            max(0.0, -values["minimum_lsdem_surface_gap"]) for values in result.values()
+        ),
+        "fem_body_centroid_wall_crossing_pair_count": sum(
+            values["fem_body_centroid_crossing_count"] for values in result.values()
+        ),
+        "fem_fully_crossed_wall_pair_count": sum(values["fem_fully_crossed_body_count"] for values in result.values()),
+    }
+    diagnostics["maximum_surface_penetration"] = max(
+        diagnostics["maximum_fem_surface_penetration"],
+        diagnostics["maximum_lsdem_surface_penetration"],
+    )
+    return result, diagnostics
+
+
+def tetra_quality(points: np.ndarray, cells: np.ndarray) -> dict[str, float]:
+    points = np.asarray(points, dtype=np.float64)
+    cells = np.asarray(cells, dtype=np.int32)
+    tetra = points[cells]
+    edge_pairs = ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3))
+    edge_square_sum = sum(np.sum((tetra[:, first] - tetra[:, second]) ** 2, axis=1) for first, second in edge_pairs)
+    determinants = np.linalg.det(
+        np.stack(
+            (
+                tetra[:, 1] - tetra[:, 0],
+                tetra[:, 2] - tetra[:, 0],
+                tetra[:, 3] - tetra[:, 0],
+            ),
+            axis=2,
+        )
+    )
+    volumes = np.abs(determinants) / 6.0
+    mean_ratio = 12.0 * np.power(3.0 * volumes, 2.0 / 3.0) / np.maximum(edge_square_sum, 1.0e-30)
+    return {
+        "minimum_tetra_mean_ratio": float(np.min(mean_ratio)),
+        "mean_tetra_mean_ratio": float(np.mean(mean_ratio)),
+        "minimum_tetra_volume": float(np.min(volumes)),
+        "maximum_tetra_volume": float(np.max(volumes)),
+    }
+
+
+def _volume_centroid(points: np.ndarray, cells: np.ndarray) -> np.ndarray:
+    tetra = points[cells]
+    determinants = np.linalg.det(
+        np.stack(
+            (
+                tetra[:, 1] - tetra[:, 0],
+                tetra[:, 2] - tetra[:, 0],
+                tetra[:, 3] - tetra[:, 0],
+            ),
+            axis=2,
+        )
+    )
+    volumes = np.abs(determinants) / 6.0
+    return np.sum(volumes[:, None] * np.mean(tetra, axis=1), axis=0) / np.sum(volumes)
+
+
+def normalize_reference(mesh):
+    """Center a tetra mesh at its volume centroid and set bounding radius to one."""
+
+    from src.fem.generator.Mesh import FEMMesh
+
+    points = np.asarray(mesh.points, dtype=np.float64)
+    cells = np.asarray(mesh.cells, dtype=np.int32)
+    points = points - _volume_centroid(points, cells)[None, :]
+    radius = float(np.max(np.linalg.norm(points, axis=1)))
+    if not math.isfinite(radius) or radius <= 0.0:
+        raise ValueError("reference FEM particle has an invalid bounding radius")
+    normalized = FEMMesh(
+        points / radius,
+        cells.copy(),
+        "TET4",
+        name=f"{mesh.name}_unit_reference",
+    )
+    quality = tetra_quality(normalized.points, normalized.cells)
+    quality["connected_body_count"] = int(normalized.body_ids.size)
+    return normalized, quality
+
+
+def tetrahedralize_primitive_reference(
+    shape: str,
+    *,
+    minimum_element_count: int = 1000,
+    minimum_mean_ratio: float = 0.05,
+):
+    """Generate a quality-controlled unit sphere or cube TET4 reference.
+
+    The mesher is deliberately count-gated instead of relying on a nominal
+    spacing: Gmsh versions may realize different counts for the same target
+    size.  Successive sizes are attempted until both the element-count and
+    tetrahedral-quality gates pass.
+    """
+
+    import gmsh
+    from src.fem.generator.Mesh import FEMMesh
+
+    normalized_shape = str(shape).strip().lower()
+    if normalized_shape not in ("sphere", "cube"):
+        raise ValueError("primitive FEM reference must be 'sphere' or 'cube'")
+    minimum_element_count = int(minimum_element_count)
+    if minimum_element_count < 1:
+        raise ValueError("minimum_element_count must be positive")
+
+    attempts = []
+    for maximum_size in (0.18, 0.15, 0.12, 0.10, 0.08):
+        gmsh.initialize()
+        try:
+            gmsh.option.setNumber("General.Terminal", 0)
+            gmsh.model.add(f"llm_assist_{normalized_shape}_fem_reference")
+            if normalized_shape == "sphere":
+                gmsh.model.occ.addSphere(0.0, 0.0, 0.0, 1.0)
+            else:
+                gmsh.model.occ.addBox(-0.5, -0.5, -0.5, 1.0, 1.0, 1.0)
+            gmsh.model.occ.synchronize()
+            gmsh.option.setNumber("Mesh.MeshSizeMin", 0.55 * maximum_size)
+            gmsh.option.setNumber("Mesh.MeshSizeMax", maximum_size)
+            gmsh.option.setNumber("Mesh.MeshSizeFromPoints", 0)
+            gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", 1)
+            gmsh.option.setNumber("Mesh.MeshSizeExtendFromBoundary", 1)
+            gmsh.option.setNumber("Mesh.ElementOrder", 1)
+            gmsh.option.setNumber("Mesh.Algorithm3D", 10)
+            gmsh.model.mesh.generate(3)
+            gmsh.model.mesh.optimize("Netgen")
+
+            node_tags, coordinates, _ = gmsh.model.mesh.getNodes()
+            points = np.asarray(coordinates, dtype=np.float64).reshape(-1, 3)
+            tag_to_local = {int(tag): index for index, tag in enumerate(np.asarray(node_tags))}
+            blocks = []
+            element_types, _, element_nodes = gmsh.model.mesh.getElements(dim=3)
+            for element_type, flattened in zip(element_types, element_nodes):
+                properties = gmsh.model.mesh.getElementProperties(element_type)
+                node_count = int(properties[3])
+                primary_count = int(properties[5])
+                if primary_count != 4:
+                    continue
+                tags = np.asarray(flattened, dtype=np.int64).reshape(-1, node_count)[:, :4]
+                blocks.append(
+                    np.asarray(
+                        [[tag_to_local[int(tag)] for tag in row] for row in tags],
+                        dtype=np.int32,
+                    )
+                )
+            if not blocks:
+                raise RuntimeError("Gmsh generated no first-order tetrahedra")
+            cells = np.vstack(blocks)
+            used = np.unique(cells)
+            inverse = np.full(points.shape[0], -1, dtype=np.int32)
+            inverse[used] = np.arange(used.size, dtype=np.int32)
+            cells = inverse[cells]
+            points = points[used]
+            tetra = points[cells]
+            determinants = np.linalg.det(
+                np.stack(
+                    (
+                        tetra[:, 1] - tetra[:, 0],
+                        tetra[:, 2] - tetra[:, 0],
+                        tetra[:, 3] - tetra[:, 0],
+                    ),
+                    axis=2,
+                )
+            )
+            negative = determinants < 0.0
+            cells[negative, 1], cells[negative, 2] = (
+                cells[negative, 2].copy(),
+                cells[negative, 1].copy(),
+            )
+            candidate, quality = normalize_reference(
+                FEMMesh(
+                    points,
+                    cells,
+                    "TET4",
+                    name=f"gmsh_{normalized_shape}_reference",
+                )
+            )
+            quality.update(
+                node_count=int(candidate.number_of_nodes),
+                dof_count=int(3 * candidate.number_of_nodes),
+                element_count=int(candidate.number_of_cells),
+                requested_minimum_element_count=minimum_element_count,
+                requested_minimum_mean_ratio=float(minimum_mean_ratio),
+                maximum_size_fraction=float(maximum_size),
+            )
+            quality["passed"] = bool(
+                quality["element_count"] >= minimum_element_count
+                and quality["minimum_tetra_volume"] > 0.0
+                and quality["minimum_tetra_mean_ratio"] >= float(minimum_mean_ratio)
+            )
+            attempts.append(dict(quality))
+            if quality["passed"]:
+                quality["attempts"] = attempts
+                return candidate, quality
+        finally:
+            gmsh.finalize()
+    raise RuntimeError(
+        f"unable to generate a {normalized_shape} FEM reference with at least "
+        f"{minimum_element_count} TET4 elements and mean ratio >= "
+        f"{minimum_mean_ratio}; attempts={attempts}"
+    )
+
+
+def euler_rotation(angles_degrees) -> np.ndarray:
+    x, y, z = np.deg2rad(np.asarray(angles_degrees, dtype=np.float64))
+    rx = np.asarray([[1.0, 0.0, 0.0], [0.0, math.cos(x), -math.sin(x)], [0.0, math.sin(x), math.cos(x)]])
+    ry = np.asarray([[math.cos(y), 0.0, math.sin(y)], [0.0, 1.0, 0.0], [-math.sin(y), 0.0, math.cos(y)]])
+    rz = np.asarray([[math.cos(z), -math.sin(z), 0.0], [math.sin(z), math.cos(z), 0.0], [0.0, 0.0, 1.0]])
+    return rz @ ry @ rx
+
+
+def place_reference(reference, center, radius: float, angles_degrees, *, name: str):
+    from src.fem.generator.Mesh import FEMMesh
+
+    radius = float(radius)
+    if radius <= 0.0:
+        raise ValueError("particle radius must be positive")
+    rotation = euler_rotation(angles_degrees)
+    points = (
+        radius * (np.asarray(reference.points, dtype=np.float64) @ rotation.T)
+        + np.asarray(center, dtype=np.float64)[None, :]
+    )
+    return FEMMesh(points, reference.cells.copy(), "TET4", name=name)
+
+
+def collect_native_output(
+    root: Path,
+    expected_frames: int,
+    required_families: tuple[str, ...] | None = None,
+) -> dict[str, object]:
+    """Count native artifacts and report completeness for present body types."""
+
+    root = Path(root)
+    patterns = {
+        "fem_vtu_count": "vtks/FEM*.vtu",
+        "lsdem_surface_vtu_count": "vtks/GraphicLSDEMSurface*.vtu",
+        "lsdem_body_npz_count": "particles/LSDEMRigid*.npz",
+        "lsdem_surface_npz_count": "particles/LSDEMSurface*.npz",
+        "coupled_contact_npz_count": "FEDEMcontacts/FEDEMContact*.npz",
+        "checkpoint_npz_count": "checkpoints/FEDEMCheckpoint*.npz",
+    }
+    evidence: dict[str, object] = {name: len(list(root.glob(pattern))) for name, pattern in patterns.items()}
+    required = tuple(patterns) if required_families is None else required_families
+    unknown = tuple(name for name in required if name not in patterns)
+    if unknown:
+        raise ValueError(f"unknown native-output families: {unknown}")
+    evidence["expected_frame_count"] = int(expected_frames)
+    evidence["required_families"] = list(required)
+    evidence["complete"] = all(int(evidence[name]) >= int(expected_frames) for name in required)
+    evidence["root"] = str(root)
+    return evidence
+
 
 def _default_fem_relaxation_damping() -> float:
-    particle_mass = (4.0 / 3.0) * math.pi * base.RADIUS**3 * base.SOFT_DENSITY
-    characteristic_stiffness = base.YOUNG * base.RADIUS
+    particle_mass = (4.0 / 3.0) * math.pi * RADIUS**3 * SOFT_DENSITY
+    characteristic_stiffness = YOUNG * RADIUS
     damping_ratio = 0.70
     return 2.0 * damping_ratio * math.sqrt(characteristic_stiffness / particle_mass)
 
@@ -117,17 +990,18 @@ def _initial_jamming_definition(args) -> dict:
 
 
 def _set_composition(soft_percent: float) -> tuple[int, int]:
-    soft_count = int(math.floor(base.PARTICLE_COUNT * soft_percent / 100.0 + 0.5))
-    rigid_count = base.PARTICLE_COUNT - soft_count
-    base.SOFT_COUNT = soft_count
-    base.RIGID_COUNT = rigid_count
+    global SOFT_COUNT, RIGID_COUNT
+    soft_count = int(math.floor(PARTICLE_COUNT * soft_percent / 100.0 + 0.5))
+    rigid_count = PARTICLE_COUNT - soft_count
+    SOFT_COUNT = soft_count
+    RIGID_COUNT = rigid_count
     return soft_count, rigid_count
 
 
 def _initial_bounding_clearance(centers, radii=None) -> dict[str, float]:
     centers = np.asarray(centers, dtype=np.float64)
     if radii is None:
-        radii = np.full(len(centers), base.RADIUS)
+        radii = np.full(len(centers), RADIUS)
     radii = np.asarray(radii, dtype=np.float64)
     delta = centers[:, None, :] - centers[None, :, :]
     distance = np.linalg.norm(delta, axis=2)
@@ -137,12 +1011,12 @@ def _initial_bounding_clearance(centers, radii=None) -> dict[str, float]:
         np.min(
             np.column_stack(
                 (
-                    centers[:, 0] - base.LEFT - radii,
-                    base.RIGHT - centers[:, 0] - radii,
-                    centers[:, 1] - base.FRONT - radii,
-                    base.BACK - centers[:, 1] - radii,
-                    centers[:, 2] - base.BOTTOM - radii,
-                    base.TOP - centers[:, 2] - radii,
+                    centers[:, 0] - LEFT - radii,
+                    RIGHT - centers[:, 0] - radii,
+                    centers[:, 1] - FRONT - radii,
+                    BACK - centers[:, 1] - radii,
+                    centers[:, 2] - BOTTOM - radii,
+                    TOP - centers[:, 2] - radii,
                 )
             )
         )
@@ -158,16 +1032,14 @@ def _randomized_spherical_packing(args):
 
     from scipy.optimize import minimize
 
-    count = base.PARTICLE_COUNT
+    count = PARTICLE_COUNT
     rng = np.random.default_rng(args.packing_seed)
     spread = float(args.diameter_polydispersity)
-    radii = base.RADIUS * rng.uniform(1.0 - spread, 1.0 + spread, count)
-    radii *= (count * base.RADIUS**3 / np.sum(radii**3)) ** (1.0 / 3.0)
+    radii = RADIUS * rng.uniform(1.0 - spread, 1.0 + spread, count)
+    radii *= (count * RADIUS**3 / np.sum(radii**3)) ** (1.0 / 3.0)
     clearance = args.barrier_cutoff if args.contact_model == "barrier" else 0.0
-    lower = np.column_stack(
-        [np.full(count, bound) + radii + clearance for bound in (base.LEFT, base.FRONT, base.BOTTOM)]
-    )
-    upper = np.column_stack([np.full(count, bound) - radii - clearance for bound in (base.RIGHT, base.BACK, base.TOP)])
+    lower = np.column_stack([np.full(count, bound) + radii + clearance for bound in (LEFT, FRONT, BOTTOM)])
+    upper = np.column_stack([np.full(count, bound) - radii - clearance for bound in (RIGHT, BACK, TOP)])
     pair_i, pair_j = np.triu_indices(count, 1)
     required_distance = radii[pair_i] + radii[pair_j] + clearance
 
@@ -221,8 +1093,8 @@ def _randomized_spherical_packing(args):
         )
 
     permutation = rng.permutation(count)
-    soft_ids = np.sort(permutation[: base.SOFT_COUNT])
-    rigid_ids = np.sort(permutation[base.SOFT_COUNT :])
+    soft_ids = np.sort(permutation[:SOFT_COUNT])
+    rigid_ids = np.sort(permutation[SOFT_COUNT:])
     orientations = rng.uniform(0.0, 360.0, (count, 3))
     metadata = {
         "type": "random weakly polydisperse packing",
@@ -281,7 +1153,7 @@ def _wall_observation(dem, wall_facet_ids):
         "top": 2,
     }
     wall_stress = {
-        name: abs(float(forces[name][components[name]])) / max(areas[name], 1.0e-30) for name in base.WALL_BODY_NAMES
+        name: abs(float(forces[name][components[name]])) / max(areas[name], 1.0e-30) for name in WALL_BODY_NAMES
     }
     sigma_x = 0.5 * (wall_stress["left"] + wall_stress["right"])
     sigma_y = 0.5 * (wall_stress["front"] + wall_stress["back"])
@@ -333,7 +1205,7 @@ def _make_six_wall_servo(
 ):
     """Return a device-resident stress controller for all six wall groups."""
 
-    groups = tuple(tuple(int(value) for value in wall_facet_ids[name]) for name in base.WALL_BODY_NAMES)
+    groups = tuple(tuple(int(value) for value in wall_facet_ids[name]) for name in WALL_BODY_NAMES)
     if any(len(group) != 2 for group in groups):
         raise RuntimeError(f"six-wall servo requires two facets per wall: {groups}")
 
@@ -398,7 +1270,7 @@ def _make_six_wall_servo(
 def _make_isotropic_wall_velocity(ti, wall, wall_facet_ids):
     """Return a device kernel assigning one inward normal speed to six walls."""
 
-    groups = tuple(tuple(int(value) for value in wall_facet_ids[name]) for name in base.WALL_BODY_NAMES)
+    groups = tuple(tuple(int(value) for value in wall_facet_ids[name]) for name in WALL_BODY_NAMES)
     facet_ids = tuple(value for group in groups for value in group)
     if len(facet_ids) != 12:
         raise RuntimeError(f"isotropic compression requires twelve facets: {groups}")
@@ -446,15 +1318,15 @@ def _mixed_observation(
     velocity = fem_engine.state.velocity.to_numpy()
     mass = fem_engine.state.mass.to_numpy()
     soft_kinetic = float(0.5 * np.sum(mass[:, None] * velocity * velocity))
-    rigid_translational, rigid_rotational, rigid_finite = _rigid_kinetic(coupling.dem, base.RIGID_COUNT)
+    rigid_translational, rigid_rotational, rigid_finite = _rigid_kinetic(coupling.dem, RIGID_COUNT)
     wall = _wall_observation(coupling.dem, wall_facet_ids)
-    soft_volume = base._soft_volume(coupling, positions)
-    if base.RIGID_COUNT > 0:
-        rigid_mass = coupling.dem.scene.rigid.m.to_numpy()[: base.RIGID_COUNT]
-        rigid_volume = float(np.sum(rigid_mass) / base.RIGID_DENSITY)
+    soft_volume = _soft_volume(coupling, positions)
+    if RIGID_COUNT > 0:
+        rigid_mass = coupling.dem.scene.rigid.m.to_numpy()[:RIGID_COUNT]
+        rigid_volume = float(np.sum(rigid_mass) / RIGID_DENSITY)
     else:
         rigid_volume = 0.0
-    pairs = base._particle_contact_pairs(coupling, soft_ids, rigid_ids)
+    pairs = _particle_contact_pairs(coupling, soft_ids, rigid_ids)
     soft_particles = set(int(value) for value in soft_ids)
     soft_soft_pairs = 0
     soft_rigid_pairs = 0
@@ -468,10 +1340,8 @@ def _mixed_observation(
             soft_rigid_pairs += 1
         else:
             rigid_rigid_pairs += 1
-    soft_coordination = (2.0 * soft_soft_pairs + soft_rigid_pairs) / base.SOFT_COUNT if base.SOFT_COUNT > 0 else 0.0
-    rigid_coordination = (
-        (2.0 * rigid_rigid_pairs + soft_rigid_pairs) / base.RIGID_COUNT if base.RIGID_COUNT > 0 else 0.0
-    )
+    soft_coordination = (2.0 * soft_soft_pairs + soft_rigid_pairs) / SOFT_COUNT if SOFT_COUNT > 0 else 0.0
+    rigid_coordination = (2.0 * rigid_rigid_pairs + soft_rigid_pairs) / RIGID_COUNT if RIGID_COUNT > 0 else 0.0
     pressure_scale = float(target_pressure) if target_pressure is not None else wall["mean_pressure"]
     wall_error = max(
         abs(value - pressure_scale) / max(abs(pressure_scale), 1.0e-30) for value in wall["wall_stress"].values()
@@ -491,7 +1361,7 @@ def _mixed_observation(
         "rigid_solid_volume": rigid_volume,
         "solid_fraction": solid_fraction,
         "particle_contact_pair_count": len(pairs),
-        "coordination_number": 2.0 * len(pairs) / base.PARTICLE_COUNT,
+        "coordination_number": 2.0 * len(pairs) / PARTICLE_COUNT,
         "soft_soft_contact_pair_count": soft_soft_pairs,
         "soft_rigid_contact_pair_count": soft_rigid_pairs,
         "rigid_rigid_contact_pair_count": rigid_rigid_pairs,
@@ -580,7 +1450,7 @@ def _build_mixed(gt, args, output: Path, total_time: float):
     packing_metadata = {"type": "near-lattice monodisperse packing"}
     if args.randomized_packing:
         packing_override, packing_metadata = _randomized_spherical_packing(args)
-    coupling_and_metadata = base._build(
+    coupling_and_metadata = _build(
         gt,
         output,
         args.dt,
@@ -705,14 +1575,12 @@ def _run_mixed(gt, ti, args, output: Path, reduced_young) -> int:
     initial_pressure = args.initial_pressure_ratio * reduced_young
     compression_steps = int(
         math.ceil(
-            args.maximum_isotropic_strain
-            * min(base.WIDTH0, base.DEPTH0, base.HEIGHT0)
-            / (2.0 * args.compression_velocity * args.dt)
+            args.maximum_isotropic_strain * min(WIDTH0, DEPTH0, HEIGHT0) / (2.0 * args.compression_velocity * args.dt)
         )
     )
     maximum_steps = args.max_consolidation_steps + compression_steps
     total_time = max(maximum_steps * args.dt, args.dt)
-    base._clear_fresh_run_output(output)
+    _clear_fresh_run_output(output)
     started = time.perf_counter()
     (
         coupling,
@@ -734,7 +1602,7 @@ def _run_mixed(gt, ti, args, output: Path, reduced_young) -> int:
     packing_metadata = coupling.initial_packing_metadata
     coupling.contactor.fixed_facet_walls = False
     coupling.contactor.rebuild_wall_candidates(coupling.dem.scene.wall)
-    initial_surface_clearances, _ = base._surface_clearances(coupling, wall_facet_ids, body_ranges)
+    initial_surface_clearances, _ = _surface_clearances(coupling, wall_facet_ids, body_ranges)
     initial_minimum_surface_clearance = min(
         min(
             values["minimum_fem_surface_gap"],
@@ -775,7 +1643,7 @@ def _run_mixed(gt, ti, args, output: Path, reduced_young) -> int:
     compression_steps = int(
         math.ceil(
             args.maximum_isotropic_strain
-            * min(base.WIDTH0, base.DEPTH0, base.HEIGHT0)
+            * min(WIDTH0, DEPTH0, HEIGHT0)
             / (2.0 * args.compression_velocity * effective_dt)
         )
     )
@@ -786,8 +1654,8 @@ def _run_mixed(gt, ti, args, output: Path, reduced_young) -> int:
     initial_wall = reference_initial_wall
     if restart_checkpoint is not None:
         initial_wall = _restart_initial_wall(restart_checkpoint, initial_wall)
-    initial_dimensions = (base.WIDTH0, base.DEPTH0, base.HEIGHT0)
-    inertial_number = args.compression_velocity * math.sqrt(base.SOFT_DENSITY / base.YOUNG)
+    initial_dimensions = (WIDTH0, DEPTH0, HEIGHT0)
+    inertial_number = args.compression_velocity * math.sqrt(SOFT_DENSITY / YOUNG)
 
     if args.preflight:
         engine.reset_message()
@@ -829,8 +1697,8 @@ def _run_mixed(gt, ti, args, output: Path, reduced_young) -> int:
             **_initial_bounding_clearance(packing_centers, packing_radii),
             "initial_packing": packing_metadata,
             "wall_velocity": velocity.tolist(),
-            "soft_particle_count": base.SOFT_COUNT,
-            "rigid_particle_count": base.RIGID_COUNT,
+            "soft_particle_count": SOFT_COUNT,
+            "rigid_particle_count": RIGID_COUNT,
             "fem_nodes_per_particle": nodes_per_soft_particle,
             "fem_elements_per_particle": elements_per_soft_particle,
             "mesh_quality": mesh_quality,
@@ -1186,7 +2054,7 @@ def _run_mixed(gt, ti, args, output: Path, reduced_young) -> int:
         "coupled_contact_npz_count",
         "checkpoint_npz_count",
     ]
-    if base.RIGID_COUNT > 0:
+    if RIGID_COUNT > 0:
         required_output_families.extend(
             (
                 "lsdem_surface_vtu_count",
@@ -1210,13 +2078,13 @@ def _run_mixed(gt, ti, args, output: Path, reduced_young) -> int:
         "schema_version": 1,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "units": "SI",
-        "seed": base.SEED,
+        "seed": SEED,
         "loading_protocol": {
             "type": "velocity-controlled isotropic compaction",
-            "controlled_walls": list(base.WALL_BODY_NAMES),
+            "controlled_walls": list(WALL_BODY_NAMES),
             "initialization": _initialization_description(args),
             "loading": "constant inward normal velocity on all six walls",
-            "particle_wall_friction": base.WALL_FRICTION,
+            "particle_wall_friction": WALL_FRICTION,
             "initial_pressure_over_reduced_young": args.initial_pressure_ratio,
             "compression_velocity": args.compression_velocity,
             "inertial_number": inertial_number,
@@ -1233,17 +2101,17 @@ def _run_mixed(gt, ti, args, output: Path, reduced_young) -> int:
             "initial_jamming_definition": _initial_jamming_definition(args),
         },
         "parameters": {
-            "particle_count": base.PARTICLE_COUNT,
-            "soft_particle_count": base.SOFT_COUNT,
-            "rigid_particle_count": base.RIGID_COUNT,
+            "particle_count": PARTICLE_COUNT,
+            "soft_particle_count": SOFT_COUNT,
+            "rigid_particle_count": RIGID_COUNT,
             "requested_soft_percent": args.soft_percent,
             "soft_particle_shape": "sphere",
             "rigid_particle_shape": args.rigid_shape,
-            "young_modulus": base.YOUNG,
-            "poisson_ratio": base.POISSON,
+            "young_modulus": YOUNG,
+            "poisson_ratio": POISSON,
             "reduced_young_modulus": reduced_young,
-            "particle_particle_friction": base.FRICTION,
-            "particle_wall_friction": base.WALL_FRICTION,
+            "particle_particle_friction": FRICTION,
+            "particle_wall_friction": WALL_FRICTION,
             "requested_dt": args.dt,
             "effective_dt": effective_dt,
             "servo_velocity_limit": args.servo_velocity_limit,
@@ -1284,8 +2152,8 @@ def _run_mixed(gt, ti, args, output: Path, reduced_young) -> int:
         "path_sample_count": len(history_rows),
         "compression_step_count": compression_step_count,
         "final_consolidation": (consolidation_rows[-1] if consolidation_rows else None),
-        "soft_particle_count": base.SOFT_COUNT,
-        "rigid_particle_count": base.RIGID_COUNT,
+        "soft_particle_count": SOFT_COUNT,
+        "rigid_particle_count": RIGID_COUNT,
         "native_output": output_evidence,
         "final": history_rows[-1] if history_rows else None,
     }
@@ -1327,8 +2195,8 @@ def _run_mixed(gt, ti, args, output: Path, reduced_young) -> int:
 
 def _build_rigid(gt, args, output: Path, total_time: float):
     use_barrier = args.contact_model == "barrier"
-    centers, _, rigid_ids, orientations = base._packing(args.barrier_cutoff if use_barrier else None)
-    wall_specs = base._facet_wall_specs(0.0, total_time)
+    centers, _, rigid_ids, orientations = _packing(args.barrier_cutoff if use_barrier else None)
+    wall_specs = _facet_wall_specs(0.0, total_time)
     dem = gt.DEM(log=False)
     dem.set_configuration(
         domain=[0.47, 0.47, 0.47],
@@ -1342,7 +2210,7 @@ def _build_rigid(gt, args, output: Path, total_time: float):
     dem.memory_allocate(
         {
             "max_material_number": 2,
-            "max_rigid_body_number": base.PARTICLE_COUNT,
+            "max_rigid_body_number": PARTICLE_COUNT,
             "max_rigid_template_number": 1,
             "levelset_grid_number": 100000,
             "surface_node_number": 512,
@@ -1361,7 +2229,7 @@ def _build_rigid(gt, args, output: Path, total_time: float):
         dem.add_attribute(
             materialID=material_id,
             attribute={
-                "Density": base.RIGID_DENSITY,
+                "Density": RIGID_DENSITY,
                 "ForceLocalDamping": args.dem_loading_local_damping,
                 "TorqueLocalDamping": args.dem_loading_local_damping,
             },
@@ -1369,9 +2237,7 @@ def _build_rigid(gt, args, output: Path, total_time: float):
     template_name = "isotropic_irregular_grain"
     template = {
         "Name": template_name,
-        "Object": gt.polyhedron(file=str(base.IRREGULAR_SURFACE)).grids(
-            space=base.IRREGULAR_LEVELSET_SPACING, extent=3
-        ),
+        "Object": gt.polyhedron(file=str(IRREGULAR_SURFACE)).grids(space=IRREGULAR_LEVELSET_SPACING, extent=3),
         "WriteFile": False,
     }
     if args.rigid_shape == "sphere":
@@ -1393,7 +2259,7 @@ def _build_rigid(gt, args, output: Path, total_time: float):
                 "GroupID": 0,
                 "MaterialID": 0,
                 "BodyPoints": centers,
-                "BoundingRadii": np.full(base.PARTICLE_COUNT, base.RADIUS),
+                "BoundingRadii": np.full(PARTICLE_COUNT, RADIUS),
                 "CoordinatesAreMassCenters": False,
                 "BodyOrientationsRadians": np.deg2rad(orientations),
                 "InitialVelocity": [0.0, 0.0, 0.0],
@@ -1426,18 +2292,18 @@ def _build_rigid(gt, args, output: Path, total_time: float):
     )
     particle_property = (
         {
-            "Stiffness": base.NORMAL_STIFFNESS,
+            "Stiffness": NORMAL_STIFFNESS,
             "NormalCutOff": args.barrier_cutoff,
             "StiffnessRatio": 1.0,
-            "Friction": base.FRICTION,
+            "Friction": FRICTION,
             "NormalViscousDamping": 0.20,
             "TangentialViscousDamping": 0.10,
         }
         if use_barrier
         else {
-            "NormalStiffness": base.NORMAL_STIFFNESS,
-            "TangentialStiffness": base.TANGENTIAL_STIFFNESS,
-            "Friction": base.FRICTION,
+            "NormalStiffness": NORMAL_STIFFNESS,
+            "TangentialStiffness": TANGENTIAL_STIFFNESS,
+            "Friction": FRICTION,
             "NormalViscousDamping": 0.20,
             "TangentialViscousDamping": 0.10,
         }
@@ -1451,7 +2317,7 @@ def _build_rigid(gt, args, output: Path, total_time: float):
     dem.add_property(
         materialID1=0,
         materialID2=1,
-        property={**particle_property, "Friction": base.WALL_FRICTION},
+        property={**particle_property, "Friction": WALL_FRICTION},
         dType="particle-wall",
     )
     dem.set_solver(
@@ -1486,10 +2352,10 @@ def _rigid_observation(
     initial_wall,
 ):
     wall = _wall_observation(dem, wall_facet_ids)
-    rigid_mass = dem.scene.rigid.m.to_numpy()[: base.PARTICLE_COUNT]
-    rigid_volume = float(np.sum(rigid_mass) / base.RIGID_DENSITY)
-    rigid_translational, rigid_rotational, rigid_finite = _rigid_kinetic(dem, base.PARTICLE_COUNT)
-    pairs = base._rigid_particle_contact_pairs(dem, rigid_ids)
+    rigid_mass = dem.scene.rigid.m.to_numpy()[:PARTICLE_COUNT]
+    rigid_volume = float(np.sum(rigid_mass) / RIGID_DENSITY)
+    rigid_translational, rigid_rotational, rigid_finite = _rigid_kinetic(dem, PARTICLE_COUNT)
+    pairs = _rigid_particle_contact_pairs(dem, rigid_ids)
     kinetic = rigid_translational + rigid_rotational
     pressure_scale = float(target_pressure) if target_pressure is not None else wall["mean_pressure"]
     wall_error = max(
@@ -1506,7 +2372,7 @@ def _rigid_observation(
         "rigid_solid_volume": rigid_volume,
         "solid_fraction": rigid_volume / max(wall["box_volume"], 1.0e-30),
         "particle_contact_pair_count": len(pairs),
-        "coordination_number": 2.0 * len(pairs) / base.PARTICLE_COUNT,
+        "coordination_number": 2.0 * len(pairs) / PARTICLE_COUNT,
         "soft_kinetic_energy": 0.0,
         "rigid_translational_kinetic_energy": rigid_translational,
         "rigid_rotational_kinetic_energy": rigid_rotational,
@@ -1526,14 +2392,12 @@ def _run_rigid(gt, ti, args, output: Path, reduced_young) -> int:
     initial_pressure = args.initial_pressure_ratio * reduced_young
     compression_steps = int(
         math.ceil(
-            args.maximum_isotropic_strain
-            * min(base.WIDTH0, base.DEPTH0, base.HEIGHT0)
-            / (2.0 * args.compression_velocity * args.dt)
+            args.maximum_isotropic_strain * min(WIDTH0, DEPTH0, HEIGHT0) / (2.0 * args.compression_velocity * args.dt)
         )
     )
     maximum_steps = args.max_consolidation_steps + compression_steps
     total_time = max(maximum_steps * args.dt, args.dt)
-    base._clear_fresh_run_output(output)
+    _clear_fresh_run_output(output)
     started = time.perf_counter()
     dem, engine, centers, rigid_ids, wall_facet_ids = _build_rigid(gt, args, output, total_time)
     initial_minimum_surface_clearance = _minimum_lsdem_wall_clearance(dem, wall_facet_ids)
@@ -1561,7 +2425,7 @@ def _run_rigid(gt, ti, args, output: Path, reduced_young) -> int:
     compression_steps = int(
         math.ceil(
             args.maximum_isotropic_strain
-            * min(base.WIDTH0, base.DEPTH0, base.HEIGHT0)
+            * min(WIDTH0, DEPTH0, HEIGHT0)
             / (2.0 * args.compression_velocity * effective_dt)
         )
     )
@@ -1569,8 +2433,8 @@ def _run_rigid(gt, ti, args, output: Path, reduced_young) -> int:
     total_time = max(maximum_steps * effective_dt, effective_dt)
     dem.sims.time = total_time
     initial_wall = _wall_observation(dem, wall_facet_ids)["positions"]
-    initial_dimensions = (base.WIDTH0, base.DEPTH0, base.HEIGHT0)
-    inertial_number = args.compression_velocity * math.sqrt(base.RIGID_DENSITY / base.YOUNG)
+    initial_dimensions = (WIDTH0, DEPTH0, HEIGHT0)
+    inertial_number = args.compression_velocity * math.sqrt(RIGID_DENSITY / YOUNG)
 
     def resolve(check_rebuild):
         engine.reset_wall_message(dem.scene)
@@ -1579,10 +2443,10 @@ def _run_rigid(gt, ti, args, output: Path, reduced_young) -> int:
         dem.contactor.neighbor.accumulate_point_relative_displacement(dem.scene)
         if check_rebuild:
             if engine.is_verlet_update(engine.limit1) == 1:
-                engine.update_LSDEM_verlet_table1(dem.sims, dem.scene, dem.contactor.neighbor)
-                engine.update_LSDEM_verlet_table2(dem.sims, dem.scene, dem.contactor.neighbor)
+                engine.update_lsdem_verlet_table1(dem.sims, dem.scene, dem.contactor.neighbor)
+                engine.update_lsdem_verlet_table2(dem.sims, dem.scene, dem.contactor.neighbor)
             elif engine.is_verlet_update_point(engine.limit2) == 1:
-                engine.update_LSDEM_verlet_table2(dem.sims, dem.scene, dem.contactor.neighbor)
+                engine.update_lsdem_verlet_table2(dem.sims, dem.scene, dem.contactor.neighbor)
         engine.system_resolve(dem.sims, dem.scene, dem.contactor.neighbor)
 
     if args.preflight:
@@ -1610,7 +2474,7 @@ def _run_rigid(gt, ti, args, output: Path, reduced_young) -> int:
             **_initial_bounding_clearance(centers),
             "wall_velocity": velocity.tolist(),
             "soft_particle_count": 0,
-            "rigid_particle_count": base.PARTICLE_COUNT,
+            "rigid_particle_count": PARTICLE_COUNT,
             "setup_seconds": setup_seconds,
         }
         _write_json(output / "preflight.json", report)
@@ -1873,10 +2737,10 @@ def _run_rigid(gt, ti, args, output: Path, reduced_young) -> int:
         "schema_version": 1,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "units": "SI",
-        "seed": base.SEED,
+        "seed": SEED,
         "loading_protocol": {
             "type": "velocity-controlled isotropic compaction",
-            "controlled_walls": list(base.WALL_BODY_NAMES),
+            "controlled_walls": list(WALL_BODY_NAMES),
             "initialization": _initialization_description(args),
             "loading": "constant inward normal velocity on all six walls",
             "initial_pressure_over_reduced_young": args.initial_pressure_ratio,
@@ -1885,16 +2749,16 @@ def _run_rigid(gt, ti, args, output: Path, reduced_young) -> int:
             "initial_jamming_definition": _initial_jamming_definition(args),
         },
         "parameters": {
-            "particle_count": base.PARTICLE_COUNT,
+            "particle_count": PARTICLE_COUNT,
             "soft_particle_count": 0,
-            "rigid_particle_count": base.PARTICLE_COUNT,
+            "rigid_particle_count": PARTICLE_COUNT,
             "requested_soft_percent": args.soft_percent,
             "soft_particle_shape": "sphere",
             "rigid_particle_shape": args.rigid_shape,
-            "young_modulus_reference": base.YOUNG,
+            "young_modulus_reference": YOUNG,
             "reduced_young_modulus_reference": reduced_young,
-            "particle_particle_friction": base.FRICTION,
-            "particle_wall_friction": base.WALL_FRICTION,
+            "particle_particle_friction": FRICTION,
+            "particle_wall_friction": WALL_FRICTION,
             "requested_dt": args.dt,
             "effective_dt": effective_dt,
             "dem_loading_local_damping": loading_dem_damping,
@@ -1925,7 +2789,7 @@ def _run_rigid(gt, ti, args, output: Path, reduced_young) -> int:
         "compression_step_count": compression_step_count,
         "final_consolidation": (consolidation_rows[-1] if consolidation_rows else None),
         "soft_particle_count": 0,
-        "rigid_particle_count": base.PARTICLE_COUNT,
+        "rigid_particle_count": PARTICLE_COUNT,
         "final": history_rows[-1] if history_rows else None,
     }
     performance = {
@@ -1986,7 +2850,7 @@ def main() -> int:
         default=0.20,
         help="relative half-width of the uniform diameter distribution",
     )
-    parser.add_argument("--dt", type=float, default=base.DT)
+    parser.add_argument("--dt", type=float, default=DT)
     parser.add_argument(
         "--contact-model",
         choices=("linear", "barrier"),
@@ -1995,7 +2859,7 @@ def main() -> int:
     parser.add_argument(
         "--barrier-cutoff",
         type=float,
-        default=base.BARRIER_CUTOFF,
+        default=BARRIER_CUTOFF,
     )
     parser.add_argument(
         "--fem-verlet-distance-multiplier",
@@ -2181,7 +3045,7 @@ def main() -> int:
         debug=False,
         offline_cache=False,
     )
-    reduced_young = base.YOUNG / (2.0 * (1.0 - base.POISSON**2))
+    reduced_young = YOUNG / (2.0 * (1.0 - POISSON**2))
     if soft_count == 0:
         return _run_rigid(gt, ti, args, output, reduced_young)
     return _run_mixed(gt, ti, args, output, reduced_young)

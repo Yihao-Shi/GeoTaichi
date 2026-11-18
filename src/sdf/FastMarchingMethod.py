@@ -1,9 +1,10 @@
+from src.utils.errors import NonfiniteStateError, SimulationStateError
 import copy, math
 import numpy as np
 from functools import partial
 from multiprocessing.pool import ThreadPool as Pool
 
-from src.utils.linalg import Certesian2Sphere, linearize, vectorize
+from src.utils.linalg import certesian2_sphere, linearize, vectorize
 
 
 class FastMarchingMethod(object):
@@ -28,235 +29,293 @@ class FastMarchingMethod(object):
     def clear(self):
         del self.gpStates, self.trials, self.known, self.phiField, self.grid_space, self.coords, self.gnum, self.gridSum
 
-    def phiIni(self, objects):
+    def phi_ini(self, objects):
         sides = objects.side(self.coords)
-        self.phiField = np.select([sides > 0., sides < 0.], [math.inf, -math.inf], default=0.)
+        self.phiField = np.select([sides > 0.0, sides < 0.0], [math.inf, -math.inf], default=0.0)
 
         for side in range(2):
             for i in range(self.gridSum):
                 self.find_neighbors(i, side, objects)
 
     def find_neighbor(self, i, xyz, xInd, yInd, zInd, otherVal):
-        nGPx, nGPy, nGPz = self.gnum
+        n_g_px, n_g_py, n_g_pz = self.gnum
         if xyz == 0:
-            otherVal = self.phiField[i] if xInd == 0 else self.phiField[linearize(xInd-1, yInd, zInd, nGPx, nGPy)]
+            otherVal = self.phiField[i] if xInd == 0 else self.phiField[linearize(xInd - 1, yInd, zInd, n_g_px, n_g_py)]
         elif xyz == 1:
-            otherVal = self.phiField[i] if xInd == nGPx - 1 else self.phiField[linearize(xInd+1, yInd, zInd, nGPx, nGPy)]
+            otherVal = (
+                self.phiField[i]
+                if xInd == n_g_px - 1
+                else self.phiField[linearize(xInd + 1, yInd, zInd, n_g_px, n_g_py)]
+            )
         elif xyz == 2:
-            otherVal = self.phiField[i] if yInd == 0 else self.phiField[linearize(xInd, yInd-1, zInd, nGPx, nGPy)]
+            otherVal = self.phiField[i] if yInd == 0 else self.phiField[linearize(xInd, yInd - 1, zInd, n_g_px, n_g_py)]
         elif xyz == 3:
-            otherVal = self.phiField[i] if yInd == nGPy - 1 else self.phiField[linearize(xInd, yInd+1, zInd, nGPx, nGPy)]
+            otherVal = (
+                self.phiField[i]
+                if yInd == n_g_py - 1
+                else self.phiField[linearize(xInd, yInd + 1, zInd, n_g_px, n_g_py)]
+            )
         elif xyz == 4:
-            otherVal = self.phiField[i] if zInd == 0 else self.phiField[linearize(xInd, yInd, zInd-1, nGPx, nGPy)]
+            otherVal = self.phiField[i] if zInd == 0 else self.phiField[linearize(xInd, yInd, zInd - 1, n_g_px, n_g_py)]
         elif xyz == 5:
-            otherVal = self.phiField[i] if zInd == nGPz - 1 else self.phiField[linearize(xInd, yInd, zInd+1, nGPx, nGPy)]
+            otherVal = (
+                self.phiField[i]
+                if zInd == n_g_pz - 1
+                else self.phiField[linearize(xInd, yInd, zInd + 1, n_g_px, n_g_py)]
+            )
         return otherVal
-    
-    def find_neighbors(self, i, exterior, objects):
-        xInd, yInd, zInd = vectorize(i, self.gnum[0], self.gnum[1])
-        otherVal = 0.
-        if (self.phiField[i] < 0. and exterior == 0) or (self.phiField[i] > 0. and exterior == 1): 
-            for xyz in range(6):
-                otherVal = self.find_neighbor(i, xyz, xInd, yInd, zInd, otherVal)
 
-                if (otherVal < 0. and exterior == 1) or (otherVal > 0. and exterior == 0):
+    def find_neighbors(self, i, exterior, objects):
+        x_ind, y_ind, z_ind = vectorize(i, self.gnum[0], self.gnum[1])
+        other_val = 0.0
+        if (self.phiField[i] < 0.0 and exterior == 0) or (self.phiField[i] > 0.0 and exterior == 1):
+            for xyz in range(6):
+                other_val = self.find_neighbor(i, xyz, x_ind, y_ind, z_ind, other_val)
+
+                if (other_val < 0.0 and exterior == 1) or (other_val > 0.0 and exterior == 0):
                     self.phiField[i] = objects._approximate_distance(self.coords[i])
-                    if (self.phiField[i] < 0. and exterior == 1) or (self.phiField[i] > 0. and exterior == 0):
-                        raise RuntimeError("Not on the good side !")
-    
+                    if (self.phiField[i] < 0.0 and exterior == 1) or (self.phiField[i] > 0.0 and exterior == 0):
+                        raise SimulationStateError("Not on the good side !")
+
     # =============================================================================================================================== #
-    def fioRose(self, grid_point):
-        gp = Certesian2Sphere(grid_point)
+    def fio_rose(self, grid_point):
+        gp = certesian2_sphere(grid_point)
         r, theta, phi = gp[0], gp[1], gp[2]
         return r - 3 - 1.5 * np.sin(5 * theta) * np.sin(4 * phi)
 
-    def grad_fioRose(self, grid_point):
-        gp = Certesian2Sphere(grid_point)
+    def grad_fio_rose(self, grid_point):
+        gp = certesian2_sphere(grid_point)
         r, theta, phi = gp[0], gp[1], gp[2]
         if np.sin(gp[1]) == 0:
-            raise RuntimeError("theta = 0 [pi], gradient of rose fction not defined for its z component")
-        return np.array(1, -7.5 / r * np.cos(5 * theta) * np.sin(4 * phi), -6 / r * np.sin(5 * theta) / np.sin(theta) * np.cos(4 * phi))
+            raise SimulationStateError("theta = 0 [pi], gradient of rose fction not defined for its z component")
+        return np.array(
+            1,
+            -7.5 / r * np.cos(5 * theta) * np.sin(4 * phi),
+            -6 / r * np.sin(5 * theta) / np.sin(theta) * np.cos(4 * phi),
+        )
 
-    def iniFront(self, exterior, phiField, i):
-        returnVal = -1
-        phiVal = phiField[i]
-        if math.isfinite(phiVal):
-            if (phiVal >= 0 and exterior == 1) or (phiVal <= 0 and exterior == 0):
-                returnVal = i
-        return returnVal
-    
-    def iniStates(self, exterior, phiField, gpStates, i):
-        returnVal = gpStates[i]
-        phiVal = phiField[i]
-        if math.isfinite(phiVal):
-            if (phiVal >= 0 and exterior == 1) or (phiVal <= 0 and exterior == 0):
-                returnVal = 0
-        return int(returnVal)
-    
-    def trializeFromKnown(self, i, exterior):
-        nGPx, nGPy, nGPz = self.gnum
-        xInd, yInd, zInd = vectorize(i, nGPx, nGPy)
-        if xInd > 0:   self.trialize(linearize(xInd - 1, yInd, zInd, nGPx, nGPy), exterior)                 # looking at the x- neighbor, if possible test whether that gp actually needs to be trialized will be performed therein
-        if xInd < nGPx - 1: self.trialize(linearize(xInd + 1, yInd, zInd, nGPx, nGPy), exterior)            # the x+ neighbor, if possible
-        if yInd > 0: self.trialize(linearize(xInd, yInd-1, zInd, nGPx, nGPy), exterior)                     # y- neighbor if possible
-        if yInd < nGPy - 1: self.trialize(linearize(xInd, yInd+1, zInd, nGPx, nGPy), exterior)              # y+
-        if zInd > 0: self.trialize(linearize(xInd, yInd, zInd-1, nGPx, nGPy), exterior)                     # z-
-        if zInd < nGPz - 1: self.trialize(linearize(xInd, yInd, zInd+1, nGPx, nGPy), exterior)              # z+
+    def ini_front(self, exterior, phiField, i):
+        return_val = -1
+        phi_val = phiField[i]
+        if math.isfinite(phi_val):
+            if (phi_val >= 0 and exterior == 1) or (phi_val <= 0 and exterior == 0):
+                return_val = i
+        return return_val
+
+    def ini_states(self, exterior, phiField, gpStates, i):
+        return_val = gpStates[i]
+        phi_val = phiField[i]
+        if math.isfinite(phi_val):
+            if (phi_val >= 0 and exterior == 1) or (phi_val <= 0 and exterior == 0):
+                return_val = 0
+        return int(return_val)
+
+    def trialize_from_known(self, i, exterior):
+        n_g_px, n_g_py, n_g_pz = self.gnum
+        x_ind, y_ind, z_ind = vectorize(i, n_g_px, n_g_py)
+        if x_ind > 0:
+            self.trialize(
+                linearize(x_ind - 1, y_ind, z_ind, n_g_px, n_g_py), exterior
+            )  # looking at the x- neighbor, if possible test whether that gp actually needs to be trialized will be performed therein
+        if x_ind < n_g_px - 1:
+            self.trialize(linearize(x_ind + 1, y_ind, z_ind, n_g_px, n_g_py), exterior)  # the x+ neighbor, if possible
+        if y_ind > 0:
+            self.trialize(linearize(x_ind, y_ind - 1, z_ind, n_g_px, n_g_py), exterior)  # y- neighbor if possible
+        if y_ind < n_g_py - 1:
+            self.trialize(linearize(x_ind, y_ind + 1, z_ind, n_g_px, n_g_py), exterior)  # y+
+        if z_ind > 0:
+            self.trialize(linearize(x_ind, y_ind, z_ind - 1, n_g_px, n_g_py), exterior)  # z-
+        if z_ind < n_g_pz - 1:
+            self.trialize(linearize(x_ind, y_ind, z_ind + 1, n_g_px, n_g_py), exterior)  # z+
 
     def trialize(self, i, exterior):
-        if self.gpStates[i] != 0 and ((exterior == 1 and self.phiField[i] > 0) or (exterior == 0 and self.phiField[i] < 0)):
+        if self.gpStates[i] != 0 and (
+            (exterior == 1 and self.phiField[i] > 0) or (exterior == 0 and self.phiField[i] < 0)
+        ):
             if self.gpStates[i] != 1:
                 self.gpStates[i] = 1
                 self.trials = np.append(self.trials, int(i))
-            self.updateFastMarchingMethod(i, exterior)
+            self.update_fast_marching_method(i, exterior)
 
-    def phiWhenKnown(self, i, exterior):
-        ret = 0.
+    def phi_when_known(self, i, exterior):
+        ret = 0.0
         if self.gpStates[i] == 0:
             ret = self.phiField[i]
         else:
             ret = math.inf if exterior == 1 else -math.inf
         return ret
-    
-    def eikDiscr2(self, space, m0, m1):
+
+    def eik_discr2(self, space, m0, m1):
         return 2 * space * space - math.pow(m0 - m1, 2)
-    
-    def eikDiscr3(self, space, m0, m1, m2):
+
+    def eik_discr3(self, space, m0, m1, m2):
         return 3 * space * space - (math.pow(m0 - m1, 2) + math.pow(m0 - m2, 2) + math.pow(m1 - m2, 2))
-    
+
     def surroundings(self, i, exterior):
-        knownSurrVal = []
+        known_surr_val = []
         neigh = np.zeros(3)
 
-        nGPx, nGPy, nGPz = self.gnum
-        xInd, yInd, zInd = vectorize(i, nGPx, nGPy)
+        n_g_px, n_g_py, n_g_pz = self.gnum
+        x_ind, y_ind, z_ind = vectorize(i, n_g_px, n_g_py)
 
-        if xInd == 0:
-            neigh[0] = self.phiWhenKnown(linearize(xInd + 1, yInd, zInd, nGPx, nGPy), exterior)
-        elif xInd == nGPx - 1:
-            neigh[0] = self.phiWhenKnown(linearize(xInd - 1, yInd, zInd, nGPx, nGPy), exterior)
+        if x_ind == 0:
+            neigh[0] = self.phi_when_known(linearize(x_ind + 1, y_ind, z_ind, n_g_px, n_g_py), exterior)
+        elif x_ind == n_g_px - 1:
+            neigh[0] = self.phi_when_known(linearize(x_ind - 1, y_ind, z_ind, n_g_px, n_g_py), exterior)
         else:
-            neigh[0] = min(self.phiWhenKnown(linearize(xInd - 1, yInd, zInd, nGPx, nGPy), exterior), 
-                           self.phiWhenKnown(linearize(xInd + 1, yInd, zInd, nGPx, nGPy), exterior)) if exterior == 1 else \
-                       max(self.phiWhenKnown(linearize(xInd - 1, yInd, zInd, nGPx, nGPy), exterior), 
-                           self.phiWhenKnown(linearize(xInd + 1, yInd, zInd, nGPx, nGPy), exterior))
-            
-        if yInd == 0:
-            neigh[1] = self.phiWhenKnown(linearize(xInd, yInd+1, zInd, nGPx, nGPy), exterior)
-        elif yInd == nGPy - 1:
-            neigh[1] = self.phiWhenKnown(linearize(xInd, yInd-1, zInd, nGPx, nGPy), exterior)
+            neigh[0] = (
+                min(
+                    self.phi_when_known(linearize(x_ind - 1, y_ind, z_ind, n_g_px, n_g_py), exterior),
+                    self.phi_when_known(linearize(x_ind + 1, y_ind, z_ind, n_g_px, n_g_py), exterior),
+                )
+                if exterior == 1
+                else max(
+                    self.phi_when_known(linearize(x_ind - 1, y_ind, z_ind, n_g_px, n_g_py), exterior),
+                    self.phi_when_known(linearize(x_ind + 1, y_ind, z_ind, n_g_px, n_g_py), exterior),
+                )
+            )
+
+        if y_ind == 0:
+            neigh[1] = self.phi_when_known(linearize(x_ind, y_ind + 1, z_ind, n_g_px, n_g_py), exterior)
+        elif y_ind == n_g_py - 1:
+            neigh[1] = self.phi_when_known(linearize(x_ind, y_ind - 1, z_ind, n_g_px, n_g_py), exterior)
         else:
-            neigh[1] = min(self.phiWhenKnown(linearize(xInd, yInd-1, zInd, nGPx, nGPy), exterior), 
-                           self.phiWhenKnown(linearize(xInd, yInd+1, zInd, nGPx, nGPy), exterior)) if exterior == 1 else \
-                       max(self.phiWhenKnown(linearize(xInd, yInd-1, zInd, nGPx, nGPy), exterior), 
-                           self.phiWhenKnown(linearize(xInd, yInd+1, zInd, nGPx, nGPy), exterior))
-            
-        if zInd == 0:
-            neigh[2] = self.phiWhenKnown(linearize(xInd, yInd, zInd+1, nGPx, nGPy), exterior)
-        elif zInd == nGPz - 1:
-            neigh[2] = self.phiWhenKnown(linearize(xInd, yInd, zInd-1, nGPx, nGPy), exterior)
+            neigh[1] = (
+                min(
+                    self.phi_when_known(linearize(x_ind, y_ind - 1, z_ind, n_g_px, n_g_py), exterior),
+                    self.phi_when_known(linearize(x_ind, y_ind + 1, z_ind, n_g_px, n_g_py), exterior),
+                )
+                if exterior == 1
+                else max(
+                    self.phi_when_known(linearize(x_ind, y_ind - 1, z_ind, n_g_px, n_g_py), exterior),
+                    self.phi_when_known(linearize(x_ind, y_ind + 1, z_ind, n_g_px, n_g_py), exterior),
+                )
+            )
+
+        if z_ind == 0:
+            neigh[2] = self.phi_when_known(linearize(x_ind, y_ind, z_ind + 1, n_g_px, n_g_py), exterior)
+        elif z_ind == n_g_pz - 1:
+            neigh[2] = self.phi_when_known(linearize(x_ind, y_ind, z_ind - 1, n_g_px, n_g_py), exterior)
         else:
-            neigh[2] = min(self.phiWhenKnown(linearize(xInd, yInd, zInd-1, nGPx, nGPy), exterior), 
-                           self.phiWhenKnown(linearize(xInd, yInd, zInd+1, nGPx, nGPy), exterior)) if exterior == 1 else \
-                       max(self.phiWhenKnown(linearize(xInd, yInd, zInd-1, nGPx, nGPy), exterior), 
-                           self.phiWhenKnown(linearize(xInd, yInd, zInd+1, nGPx, nGPy), exterior))
-            
+            neigh[2] = (
+                min(
+                    self.phi_when_known(linearize(x_ind, y_ind, z_ind - 1, n_g_px, n_g_py), exterior),
+                    self.phi_when_known(linearize(x_ind, y_ind, z_ind + 1, n_g_px, n_g_py), exterior),
+                )
+                if exterior == 1
+                else max(
+                    self.phi_when_known(linearize(x_ind, y_ind, z_ind - 1, n_g_px, n_g_py), exterior),
+                    self.phi_when_known(linearize(x_ind, y_ind, z_ind + 1, n_g_px, n_g_py), exterior),
+                )
+            )
+
         for cpt in range(3):
             if math.isfinite(neigh[cpt]):
-                knownSurrVal.append(neigh[cpt])
+                known_surr_val.append(neigh[cpt])
 
-        deltaPr = 0.
-        space = self.grid_space if self.speed == 1 else self.grid_space * np.linalg.norm(self.grad_fioRose(self.coords[i]))
-        if len(knownSurrVal) == 1:
-            deltaPr = -1                         # no need for a discriminant in 1D propagation anyway
-        elif len(knownSurrVal) == 2:
-            deltaPr = self.eikDiscr2(space, knownSurrVal[0], knownSurrVal[1])
-        elif len(knownSurrVal) == 3:
-            deltaPr = self.eikDiscr3(space, knownSurrVal[0], knownSurrVal[1], knownSurrVal[2])
-        return np.array(knownSurrVal), deltaPr, space
+        delta_pr = 0.0
+        space = (
+            self.grid_space if self.speed == 1 else self.grid_space * np.linalg.norm(self.grad_fio_rose(self.coords[i]))
+        )
+        if len(known_surr_val) == 1:
+            delta_pr = -1  # no need for a discriminant in 1D propagation anyway
+        elif len(known_surr_val) == 2:
+            delta_pr = self.eik_discr2(space, known_surr_val[0], known_surr_val[1])
+        elif len(known_surr_val) == 3:
+            delta_pr = self.eik_discr3(space, known_surr_val[0], known_surr_val[1], known_surr_val[2])
+        return np.array(known_surr_val), delta_pr, space
 
-    def updateFastMarchingMethod(self, i, exterior):
-        knownPhi, deltaPr, space = self.surroundings(i, exterior)
-        nKnown = knownPhi.shape[0]
-        if nKnown == 0: raise RuntimeError(f"Gridpoint {i} goes through updateFastMarchingMethod no any known gp")
-        elif nKnown == 1:
-            self.phiField[i] = knownPhi[0] + space if exterior == 1 else knownPhi[0] - space
-        elif nKnown == 2:
-            m0, m1 = knownPhi[0], knownPhi[1]
-            if deltaPr >= 0:
-                self.phiField[i] = self.phiFromEik2(m0, m1, deltaPr, exterior)
+    def update_fast_marching_method(self, i, exterior):
+        known_phi, delta_pr, space = self.surroundings(i, exterior)
+        n_known = known_phi.shape[0]
+        if n_known == 0:
+            raise SimulationStateError(f"Gridpoint {i} goes through updateFastMarchingMethod no any known gp")
+        elif n_known == 1:
+            self.phiField[i] = known_phi[0] + space if exterior == 1 else known_phi[0] - space
+        elif n_known == 2:
+            m0, m1 = known_phi[0], known_phi[1]
+            if delta_pr >= 0:
+                self.phiField[i] = self.phi_from_eik2(m0, m1, delta_pr, exterior)
             else:
                 self.phiField[i] = min(m0, m1) + space if exterior == 1 else max(m0, m1) - space
-        elif nKnown == 3:
-            m0, m1, m2 = knownPhi[0], knownPhi[1], knownPhi[2]
-            if deltaPr >= 0.:
-                self.phiField[i] = self.phiFromEik3(m0, m1, m2, deltaPr, exterior)
+        elif n_known == 3:
+            m0, m1, m2 = known_phi[0], known_phi[1], known_phi[2]
+            if delta_pr >= 0.0:
+                self.phiField[i] = self.phi_from_eik3(m0, m1, m2, delta_pr, exterior)
             else:
-                twoDdiscr = np.array([self.eikDiscr2(space, m0, m1), self.eikDiscr2(space, m0, m2), self.eikDiscr2(space, m1, m2)])
-                possiblePhi = np.array([])
-                for iBis in range(3):
-                    if twoDdiscr[iBis] >= 0:
-                        secondInd = 2 if iBis > 1 else iBis + 1
-                        possiblePhi = np.append(possiblePhi, self.phiFromEik3(knownPhi[iBis / 2.], knownPhi[secondInd], twoDdiscr[iBis], exterior))
-                if possiblePhi.shape[0] > 0:
-                    self.phiField[i] = np.min(possiblePhi) if exterior == 1 else np.max(possiblePhi)
+                two_ddiscr = np.array(
+                    [self.eik_discr2(space, m0, m1), self.eik_discr2(space, m0, m2), self.eik_discr2(space, m1, m2)]
+                )
+                possible_phi = np.array([])
+                for i_bis in range(3):
+                    if two_ddiscr[i_bis] >= 0:
+                        second_ind = 2 if i_bis > 1 else i_bis + 1
+                        possible_phi = np.append(
+                            possible_phi,
+                            self.phi_from_eik3(
+                                known_phi[i_bis / 2.0], known_phi[second_ind], two_ddiscr[i_bis], exterior
+                            ),
+                        )
+                if possible_phi.shape[0] > 0:
+                    self.phiField[i] = np.min(possible_phi) if exterior == 1 else np.max(possible_phi)
                 else:
-                    self.phiField[i] = np.min(possiblePhi) + space if exterior == 1 else np.max(possiblePhi) - space
+                    self.phiField[i] = np.min(possible_phi) + space if exterior == 1 else np.max(possible_phi) - space
         else:
-            raise RuntimeError(f"Unexpected case of {nKnown} known neighbors around gp {i}")
-        
+            raise SimulationStateError(f"Unexpected case of {n_known} known neighbors around gp {i}")
+
         if (self.phiField[i] < 0 and exterior == 1) or (self.phiField[i] > 0 and exterior == 0):
             strings = "exterior" if exterior else "interior"
-            raise RuntimeError(f"We finally assigned phi = {self.phiField[i]} to {i} supposed to be in the {strings}.")
-        
-    def phiFromEik2(self, m0, m1, disc, exterior):
+            raise SimulationStateError(
+                f"We finally assigned phi = {self.phiField[i]} to {i} supposed to be in the {strings}."
+            )
+
+    def phi_from_eik2(self, m0, m1, disc, exterior):
         return (m0 + m1 + np.sqrt(disc)) / 2 if exterior else (m0 + m1 - np.sqrt(disc)) / 2
-    
-    def phiFromEik3(self, m0, m1, m2, disc, exterior):
+
+    def phi_from_eik3(self, m0, m1, m2, disc, exterior):
         return (m0 + m1 + m2 + np.sqrt(disc)) / 3 if exterior else (m0 + m1 + m2 - np.sqrt(disc)) / 3
 
     def confirm(self, i, phiVal, exterior, checkState=True):
         if checkState and self.gpStates[i] != 1:
-            raise RuntimeError(f"How comes ?? Current status is {self.gpStates[i]}")
+            raise SimulationStateError(f"How comes ?? Current status is {self.gpStates[i]}")
         self.phiField[i] = phiVal
         self.gpStates[i] = 0
-        self.trializeFromKnown(i, exterior)
+        self.trialize_from_known(i, exterior)
 
-    def loopTrials(self, exterior):
-        trialGP = np.zeros(3, dtype=np.int32)
+    def loop_trials(self, exterior):
+        trial_gp = np.zeros(3, dtype=np.int32)
         closest = np.zeros(3, dtype=np.int32)
         while self.trials.shape[0] != 0:
-            closestIt = 0
-            closestPhi = self.phiField[int(self.trials[0])]
-            currPhiValue = copy.deepcopy(closestPhi)
+            closest_it = 0
+            closest_phi = self.phiField[int(self.trials[0])]
+            curr_phi_value = copy.deepcopy(closest_phi)
             for i in range(self.trials.shape[0]):
-                trialGP = int(self.trials[i])
-                currPhiValue = self.phiField[trialGP]
-                if (exterior == 1 and currPhiValue == math.inf) or (exterior == 0 and currPhiValue == -math.inf):
-                    raise RuntimeError(f"Skipping GP {trialGP} in the loop because it still carries an +/- infinite value")
-                if (exterior == 1 and currPhiValue < closestPhi) or (exterior == 0 and currPhiValue > closestPhi):
-                    closestIt  = i
-                    closestPhi = currPhiValue
-            closest = int(self.trials[closestIt])
-            self.trials = np.delete(self.trials, closestIt)
-            self.confirm(closest, closestPhi, exterior)
+                trial_gp = int(self.trials[i])
+                curr_phi_value = self.phiField[trial_gp]
+                if (exterior == 1 and curr_phi_value == math.inf) or (exterior == 0 and curr_phi_value == -math.inf):
+                    raise NonfiniteStateError(
+                        f"Skipping GP {trial_gp} in the loop because it still carries an +/- infinite value"
+                    )
+                if (exterior == 1 and curr_phi_value < closest_phi) or (exterior == 0 and curr_phi_value > closest_phi):
+                    closest_it = i
+                    closest_phi = curr_phi_value
+            closest = int(self.trials[closest_it])
+            self.trials = np.delete(self.trials, closest_it)
+            self.confirm(closest, closest_phi, exterior)
 
     def phi(self):
         for side in range(2):
-            func1 = partial(self.iniStates, side, self.phiField, self.gpStates)
+            func1 = partial(self.ini_states, side, self.phiField, self.gpStates)
             self.gpStates = np.array(self.pool.map(func1, range(self.gridSum)))
-            func2 = partial(self.iniFront, side, self.phiField)
-            knownTmp = np.array(self.pool.map(func2, range(self.gridSum)))
-            knownTmp = knownTmp[knownTmp > -1]
+            func2 = partial(self.ini_front, side, self.phiField)
+            known_tmp = np.array(self.pool.map(func2, range(self.gridSum)))
+            known_tmp = known_tmp[known_tmp > -1]
 
-            for gpKnown in range(knownTmp.shape[0]):
-                self.trializeFromKnown(knownTmp[gpKnown], side)
-            self.loopTrials(side)
+            for gp_known in range(known_tmp.shape[0]):
+                self.trialize_from_known(known_tmp[gp_known], side)
+            self.loop_trials(side)
 
-            self.known = np.append(self.known, knownTmp)
-            del knownTmp
+            self.known = np.append(self.known, known_tmp)
+            del known_tmp
         self.pool.close()
         self.pool.join()
-
-        
-

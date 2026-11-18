@@ -1,5 +1,7 @@
 """Public IGA--MPM engine composed from focused responsibility mixins."""
 
+from src.utils.errors import BackendError
+
 import numpy as np
 import taichi as ti
 
@@ -38,7 +40,7 @@ class Engine(
         self.axis_offset = float(self.iga.axis_offset)
         mpm_config.set_dimension(config.DIM)
         self.contactor = contactor if contactor is not None else ContactManager(**kwargs)
-        if self.contactor.contact_model != "IPC":
+        if self.contactor.contact_model != "BarrierIPC":
             raise ValueError("IGA-MPM Engine supports only implicit IPC contact")
         self.barrier = self.contactor.barrier
         self.friction = self.contactor.friction
@@ -489,7 +491,7 @@ class Engine(
         if self.mpm_has_plastic_history:
             history_state_size = int(self.mpm.material.history_state_size)
             if history_state_size <= 0:
-                raise RuntimeError(
+                raise BackendError(
                     "IGA-MPM finite-strain plasticity requires a material-owned " "device history-state interface"
                 )
             self.implicit_snapshot_mpm_plastic_history = ti.Vector.field(

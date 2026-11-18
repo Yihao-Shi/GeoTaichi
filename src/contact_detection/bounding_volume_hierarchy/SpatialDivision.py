@@ -32,14 +32,14 @@ class SpatialDivision:
             self.merge_num_condition(max_prim)
         self.merge_equal_condition(max_prim)
 
-        #scan
+        # scan
         # input     : 0 0 0 1 0 1 1 0 0 1
         # scan      : 0 0 0 1 1 2 3 3 3 4
         # scatter   ：3 2 1 3 1
         self.hillis_scan_for_merge_host()
         self.scatter_for_merge()
 
-        #construct
+        # construct
         # motorn    : 3 4 5 6 7
         # scan      ：0 3 5 6 9  start index of prim
         # count     ：3 2 1 3 1  num of same prim
@@ -47,9 +47,9 @@ class SpatialDivision:
         self.merge_construct()
 
     @ti.kernel
-    def merge_num_condition(self, max_prim:int):
+    def merge_num_condition(self, max_prim: int):
         for i in self.sort.data_out:
-            if i%max_prim == 0:
+            if i % max_prim == 0:
                 self.sort.data_out[i, 0] = 1
                 self.sort.data_out[i, 1] = 1
             else:
@@ -57,13 +57,13 @@ class SpatialDivision:
                 self.sort.data_out[i, 1] = 0
 
     @ti.kernel
-    def merge_equal_condition(self, max_prim:int):
+    def merge_equal_condition(self, max_prim: int):
         for i in self.sort.data_out:
             if i == 0:
                 self.sort.data_out[i, 0] = 0
                 self.sort.data_out[i, 1] = 0
             else:
-                if(self.sort.data_in[i, 0] == self.sort.data_in[i-1, 0]):
+                if self.sort.data_in[i, 0] == self.sort.data_in[i - 1, 0]:
                     self.sort.data_out[i, 0] = 0
                     self.sort.data_out[i, 1] = 0
                 elif max_prim == 1:
@@ -85,20 +85,20 @@ class SpatialDivision:
 
         for i in self.sort.data_out:
             self.sort.data_out[i, 0] = self.sort.data_out[i, 1]
-    
+
     @ti.kernel
     def scatter_for_merge(self):
         for i in self.sort.data_out:
             pos = self.sort.data_out[i, 0]
-            self.morton_code[pos, 1]  = 0
-            self.morton_code[pos, 2]  += 1
-            
+            self.morton_code[pos, 1] = 0
+            self.morton_code[pos, 2] += 1
+
         for i in self.sort.data_out:
-            self.sort.data_out[i, 0] = self.morton_code[i, 2] 
-            self.sort.data_out[i, 1] = self.morton_code[i, 2] 
+            self.sort.data_out[i, 0] = self.morton_code[i, 2]
+            self.sort.data_out[i, 1] = self.morton_code[i, 2]
             if self.morton_code[i, 2] > 0:
                 self.leaf_count[0] += 1
-   
+
     @ti.kernel
     def merge_construct(self):
         for i in self.sort.data_out:

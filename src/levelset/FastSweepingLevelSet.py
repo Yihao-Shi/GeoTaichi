@@ -7,7 +7,17 @@ from src.utils.ScalarFunction import sgn
 # H. Zhao. A fast sweeping method for Eikonal equations. Math. Comp., 74:603–627, 2005.
 @ti.data_oriented
 class FastSweepingLevelSet(LevelSet):
-    def __init__(self, dimension, grid_size, resolution, iteration_num=2, ghost_cell=0, local_band=None, visualize=False, place=True):
+    def __init__(
+        self,
+        dimension,
+        grid_size,
+        resolution,
+        iteration_num=2,
+        ghost_cell=0,
+        local_band=None,
+        visualize=False,
+        place=True,
+    ):
         super().__init__(dimension, grid_size, resolution, ghost_cell, local_band, visualize, place)
         self.repeat_times = iteration_num
 
@@ -15,7 +25,7 @@ class FastSweepingLevelSet(LevelSet):
     def propagate_update(self, I):
         if self.valid[I] == -1:
             d = self.update_from_neighbor(I)
-            if ti.abs(d) < ti.abs(self.distance_field_temp[I]): 
+            if ti.abs(d) < ti.abs(self.distance_field_temp[I]):
                 self.distance_field_temp[I] = d * sgn(self.distance_field[I])
 
     @ti.kernel
@@ -29,7 +39,7 @@ class FastSweepingLevelSet(LevelSet):
                 for i in range(self.begins[0], self.ends[0]):
                     for j in range(self.ends[1] - self.begins[1]):
                         self.propagate_update([i, self.ends[1] - 1 - j])
-            
+
                 for j in range(self.begins[1], self.ends[1]):
                     for i in range(self.begins[0], self.ends[0]):
                         self.propagate_update([i, j])

@@ -4,11 +4,8 @@ import numpy as np
 import pytest
 import taichi as ti
 
-from src.nurbs.core.NurbsGeometry import (
-    NurbsBasisFunction2d,
-    NurbsBasisFunction3d,
-)
-
+from src.nurbs.core.NurbsBasisFunction2d import NurbsBasisFunction2d
+from src.nurbs.core.NurbsBasisFunction3d import NurbsBasisFunction3d
 
 pytestmark = [pytest.mark.unit, pytest.mark.geometry]
 
@@ -44,15 +41,13 @@ class _TensorBasisHarness:
                 dtype=np.float64,
             )
         )
-        self.knots3.from_numpy(
-            np.asarray([0.0, 0.0, 0.0, 1.0, 1.0, 1.0], dtype=np.float64)
-        )
+        self.knots3.from_numpy(np.asarray([0.0, 0.0, 0.0, 1.0, 1.0, 1.0], dtype=np.float64))
         self.weights2.fill(1.0)
         self.weights3.fill(1.0)
 
     @ti.kernel
     def evaluate_2d(self, u: ti.f64, v: ti.f64):
-        shape, first, second = self.basis2.NurbsBasis2ndDers2d(
+        shape, first, second = self.basis2.nurbs_basis2nd_ders2d(
             0,
             0,
             0,
@@ -67,13 +62,11 @@ class _TensorBasisHarness:
         for index in range(16):
             self.shape2[index] = shape[index]
             self.first2[index] = ti.Vector([first[index, 0], first[index, 1]])
-            self.second2[index] = ti.Vector(
-                [second[index, 0], second[index, 1], second[index, 2]]
-            )
+            self.second2[index] = ti.Vector([second[index, 0], second[index, 1], second[index, 2]])
 
     @ti.kernel
     def evaluate_3d(self, u: ti.f64, v: ti.f64, w: ti.f64):
-        shape, first, second = self.basis3.NurbsBasis2ndDers3d(
+        shape, first, second = self.basis3.nurbs_basis2nd_ders3d(
             0,
             0,
             0,
@@ -91,9 +84,7 @@ class _TensorBasisHarness:
         )
         for index in range(27):
             self.shape3[index] = shape[index]
-            self.first3[index] = ti.Vector(
-                [first[index, 0], first[index, 1], first[index, 2]]
-            )
+            self.first3[index] = ti.Vector([first[index, 0], first[index, 1], first[index, 2]])
             self.second3[index] = ti.Vector(
                 [
                     second[index, 0],
@@ -107,9 +98,7 @@ class _TensorBasisHarness:
 
 
 def _quadratic_bernstein(value):
-    basis = np.asarray(
-        [(1.0 - value) ** 2, 2.0 * value * (1.0 - value), value**2]
-    )
+    basis = np.asarray([(1.0 - value) ** 2, 2.0 * value * (1.0 - value), value**2])
     first = np.asarray([2.0 * (value - 1.0), 2.0 - 4.0 * value, 2.0 * value])
     second = np.asarray([2.0, -4.0, 2.0])
     return basis, first, second
@@ -169,18 +158,14 @@ def test_tensor_second_derivatives_populate_every_support_entry():
     )
     np.testing.assert_allclose(harness.shape2.to_numpy(), expected_shape2, atol=2e-14)
     np.testing.assert_allclose(harness.first2.to_numpy(), expected_first2, atol=2e-13)
-    np.testing.assert_allclose(
-        harness.second2.to_numpy(), expected_second2, atol=2e-12
-    )
+    np.testing.assert_allclose(harness.second2.to_numpy(), expected_second2, atol=2e-12)
 
     harness.evaluate_3d(u, v, w)
     bu, du, ddu = _quadratic_bernstein(u)
     bv, dv, ddv = _quadratic_bernstein(v)
     tensor = lambda a, b, c: np.einsum("i,j,k->ijk", c, b, a).reshape(-1)
     expected_shape3 = tensor(bu, bv, bw)
-    expected_first3 = np.stack(
-        [tensor(du, bv, bw), tensor(bu, dv, bw), tensor(bu, bv, dw)], axis=1
-    )
+    expected_first3 = np.stack([tensor(du, bv, bw), tensor(bu, dv, bw), tensor(bu, bv, dw)], axis=1)
     expected_second3 = np.stack(
         [
             tensor(ddu, bv, bw),
@@ -194,6 +179,4 @@ def test_tensor_second_derivatives_populate_every_support_entry():
     )
     np.testing.assert_allclose(harness.shape3.to_numpy(), expected_shape3, atol=3e-14)
     np.testing.assert_allclose(harness.first3.to_numpy(), expected_first3, atol=3e-13)
-    np.testing.assert_allclose(
-        harness.second3.to_numpy(), expected_second3, atol=4e-12
-    )
+    np.testing.assert_allclose(harness.second3.to_numpy(), expected_second3, atol=4e-12)

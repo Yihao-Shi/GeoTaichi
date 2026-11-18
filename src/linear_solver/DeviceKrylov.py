@@ -4,20 +4,23 @@ Matvec stays a Python callback so existing matrix-free operators still work.
 Only convergence/breakdown status crosses the host boundary inside iterations.
 """
 
-from math import isfinite, sqrt
+from src.utils.MatrixFunction import _dense_block_matvec
+from src.utils.MatrixFunction import _dense_block_transpose_matvec
+
 import os
 
+
+from math import isfinite, sqrt
 import taichi as ti
-
 from src.linear_solver.LinearOperator import LinearOperator
-
-
-def device_krylov_enabled():
-    return ti.lang.impl.current_cfg().arch == ti.cuda and os.environ.get("GEOTAICHI_KRYLOV_DEVICE", "1") != "0"
 
 
 @ti.data_oriented
 class DeviceKrylov:
+    @staticmethod
+    def device_krylov_enabled():
+        return ti.lang.impl.current_cfg().arch == ti.cuda and os.environ.get("GEOTAICHI_KRYLOV_DEVICE", "1") != "0"
+
     def __init__(self, owner, bicgstab=False, block=False):
         self.owner = owner
         self.block = block
@@ -35,7 +38,6 @@ class DeviceKrylov:
             self.phat = owner.p_hat if block else getattr(owner, "y", self.p)
             self.shat = owner.s_hat if block else (owner.z if hasattr(owner, "y") else self.s)
         if block:
-            from src.linear_solver.BuildTriplet import _dense_block_matvec, _dense_block_transpose_matvec
 
             self.block_apply = _dense_block_matvec
             self.block_apply_transpose = _dense_block_transpose_matvec

@@ -13,7 +13,8 @@ DIMS = [pytest.param(dim, marks=pytest.mark.isolated_dimension(dim)) for dim in 
 @pytest.mark.parametrize("kind", ["velocity", "reflection"])
 def test_contact_boundaries_follow_block_map(taichi_runtime, dimension, kind):
     from src.mpm.boundaries.BoundaryCore import apply_contact_velocity_constraint, apply_contact_reflection_constraint
-    from src.mpm.structs.GridNode import ContactNodes, ContactNodes2D
+    from src.mpm.structs.ContactNodes import ContactNodes
+    from src.mpm.structs.ContactNodes2D import ContactNodes2D
     from src.mpm.sparse_grid.BlockSparseGrid import BlockSparseGrid
 
     constraints = ti.Struct.field(dict(node=int, level=int, dirs=int, signs=int), shape=3)
@@ -62,7 +63,7 @@ def test_contact_boundaries_follow_block_map(taichi_runtime, dimension, kind):
 def test_blockscan_contact_keeps_unsupported_guards(
     taichi_runtime, contact, solver, material, axisymmetric, shape, stabilize
 ):
-    from src.mpm.SceneManager import myScene
+    from src.mpm.SceneManager import SceneManager
     from src.mpm.Simulation import Simulation
 
     sims = Simulation()
@@ -70,4 +71,4 @@ def test_blockscan_contact_keeps_unsupported_guards(
     sims.solver_type, sims.material_type, sims.is_2DAxisy = solver, material, axisymmetric
     sims.shape_function, sims.stabilize = shape, stabilize
     with pytest.raises(RuntimeError, match="[Bb]lockScan"):
-        myScene().activate_element(sims, {"ElementType": "Q4N2D"})
+        SceneManager().activate_element(sims, {"ElementType": "Q4N2D"})

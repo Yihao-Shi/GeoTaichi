@@ -38,7 +38,7 @@ def build_problem(
     mesh.rest_shape[:, 2] += 0.025
     fem.add_material("StVK", young_modulus=young, poisson_ratio=0.3, density=1000.0)
     fem.add_contact(
-        "IPC",
+        "BarrierIPC",
         self_contact=False,
         planes=[((0, 0, 0), (0, 0, 1))],
         dhat=0.05,

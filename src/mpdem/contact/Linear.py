@@ -1,12 +1,13 @@
+from src.utils.errors import SimulationStateError
 import taichi as ti
 import math
 
 from src.physics_model.contact_model.LinearModel import LinearSurfaceProperty
 from src.dem.Simulation import Simulation as DEMSimulation
-from src.dem.SceneManager import myScene as DEMScene
+from src.dem.SceneManager import SceneManager as DEMScene
 from src.dem.contact.ContactKernel import *
 from src.mpdem.contact.ContactModelBase import ContactModelBase
-from src.mpm.SceneManager import myScene as MPMScene
+from src.mpm.SceneManager import SceneManager as MPMScene
 from src.utils.ObjectIO import DictIO
 
 
@@ -23,46 +24,47 @@ class LinearModel(ContactModelBase):
         return ti.sqrt(mass / stiffness)
 
     def find_max_stiffness(self, max_material_num, mscene: MPMScene, dsims: DEMSimulation, dscene: DEMScene):
-        maxstiff = 0.
+        maxstiff = 0.0
         radius = max(mscene.find_particle_max_radius(), dscene.find_particle_max_radius(dsims))
-        for materialID1 in range(max_material_num):
-            for materialID2 in range(max_material_num):
-                componousID = self.get_componousID(max_material_num, materialID1, materialID2)
+        for material_id1 in range(max_material_num):
+            for material_id2 in range(max_material_num):
+                componous_id = self.get_componous_id(max_material_num, material_id1, material_id2)
                 if not GlobalVariable.ADAPTIVESTIFF:
-                    if self.surfaceProps[componousID].kn > 0.:
-                        maxstiff = ti.max(ti.max(maxstiff, self.surfaceProps[componousID].kn), self.surfaceProps[componousID].ks)
+                    if self.surfaceProps[componous_id].kn > 0.0:
+                        maxstiff = ti.max(
+                            ti.max(maxstiff, self.surfaceProps[componous_id].kn), self.surfaceProps[componous_id].ks
+                        )
                 else:
-                    if self.surfaceProps[componousID].kratio > 0.:
-                        kn = math.pi * 0.5 * radius * self.surfaceProps[componousID].emod
-                        maxstiff = ti.max(ti.max(maxstiff, kn), kn / self.surfaceProps[componousID].kratio)
+                    if self.surfaceProps[componous_id].kratio > 0.0:
+                        kn = math.pi * 0.5 * radius * self.surfaceProps[componous_id].emod
+                        maxstiff = ti.max(ti.max(maxstiff, kn), kn / self.surfaceProps[componous_id].kratio)
         return maxstiff
-    
+
     def add_surface_property(self, max_material_num, materialID1, materialID2, property):
-        kn = DictIO.GetAlternative(property, 'NormalStiffness', 0.)
-        ks = DictIO.GetAlternative(property, 'TangentialStiffness', 0.)
-        emod = DictIO.GetAlternative(property, 'EffectiveModulus', 0.)
-        kratio = DictIO.GetAlternative(property, 'NormalToShearRatio', 0.)
+        kn = DictIO.get_alternative(property, "NormalStiffness", 0.0)
+        ks = DictIO.get_alternative(property, "TangentialStiffness", 0.0)
+        emod = DictIO.get_alternative(property, "EffectiveModulus", 0.0)
+        kratio = DictIO.get_alternative(property, "NormalToShearRatio", 0.0)
 
-        if kn == 0. and ks == 0. and emod == 0. and kratio == 0.:
-            raise RuntimeError("Input error")
-        if emod > 0. and kratio > 0.:
+        if kn == 0.0 and ks == 0.0 and emod == 0.0 and kratio == 0.0:
+            raise SimulationStateError("Input error")
+        if emod > 0.0 and kratio > 0.0:
             GlobalVariable.ADAPTIVESTIFF = True
-        if GlobalVariable.ADAPTIVESTIFF and (kn > 0. or ks > 0.):
-            raise RuntimeError("Using Effective Modulus and NormalToShearRatio instead")
-            
-        mus = DictIO.GetEssential(property, 'StaticFriction', 'Friction')
-        mud = DictIO.GetEssential(property, 'DynamicFriction', 'Friction')
-        rmu = DictIO.GetAlternative(property, 'RollingFriction', 0.)
-        ndratio = DictIO.GetEssential(property, 'NormalViscousDamping')
-        sdratio = DictIO.GetEssential(property, 'TangentialViscousDamping')
-        componousID = 0
-        if materialID1 == materialID2:
-            componousID = self.get_componousID(max_material_num, materialID1, materialID2)
-            self.surfaceProps[componousID].add_surface_property(kn, ks, emod, kratio, mus, mud, rmu, ndratio, sdratio)
-        else:
-            componousID = self.get_componousID(max_material_num, materialID1, materialID2)
-            self.surfaceProps[componousID].add_surface_property(kn, ks, emod, kratio, mus, mud, rmu, ndratio, sdratio)
-            componousID = self.get_componousID(max_material_num, materialID2, materialID1)
-            self.surfaceProps[componousID].add_surface_property(kn, ks, emod, kratio, mus, mud, rmu, ndratio, sdratio)
-        return componousID
+        if GlobalVariable.ADAPTIVESTIFF and (kn > 0.0 or ks > 0.0):
+            raise SimulationStateError("Using Effective Modulus and NormalToShearRatio instead")
 
+        mus = DictIO.get_essential(property, "StaticFriction", "Friction")
+        mud = DictIO.get_essential(property, "DynamicFriction", "Friction")
+        rmu = DictIO.get_alternative(property, "RollingFriction", 0.0)
+        ndratio = DictIO.get_essential(property, "NormalViscousDamping")
+        sdratio = DictIO.get_essential(property, "TangentialViscousDamping")
+        componous_id = 0
+        if materialID1 == materialID2:
+            componous_id = self.get_componous_id(max_material_num, materialID1, materialID2)
+            self.surfaceProps[componous_id].add_surface_property(kn, ks, emod, kratio, mus, mud, rmu, ndratio, sdratio)
+        else:
+            componous_id = self.get_componous_id(max_material_num, materialID1, materialID2)
+            self.surfaceProps[componous_id].add_surface_property(kn, ks, emod, kratio, mus, mud, rmu, ndratio, sdratio)
+            componous_id = self.get_componous_id(max_material_num, materialID2, materialID1)
+            self.surfaceProps[componous_id].add_surface_property(kn, ks, emod, kratio, mus, mud, rmu, ndratio, sdratio)
+        return componous_id

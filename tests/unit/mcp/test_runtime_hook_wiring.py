@@ -23,7 +23,7 @@ def test_every_supported_step_loop_has_a_cooperative_runtime_checkpoint():
         # the regular loop, so both accepted-step branches need a safe point.
         "src/fempm/ImplicitEngine.py": 2,
         "src/fedem/AffineIPCEngine.py": 2,
-        "src/visualization/realtime.py": 1,
+        "src/visualization/RealtimeViewer.py": 1,
     }
 
     for relative_path, expected in expected_calls.items():

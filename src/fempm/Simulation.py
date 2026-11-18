@@ -1,6 +1,8 @@
 """Shared configuration state for explicit and implicit FEM--MPM coupling."""
 
 from __future__ import annotations
+from src.utils.errors import SimulationStateError
+from src.contact_detection.bounding_volume_hierarchy.Utilities import validate_bvh_rebuild_interval
 
 import math
 from pathlib import Path
@@ -10,7 +12,6 @@ import taichi as ti
 
 from src.utils.TimeTicker import Timer
 from src.utils.SolverRuntime import StepSchedule
-from src.contact_detection.bounding_volume_hierarchy.MultiPatchLBVH import validate_bvh_rebuild_interval
 
 
 class FEMPMSimulation:
@@ -143,11 +144,11 @@ class FEMPMSimulation:
         if self.search not in ("LinkedCell", "BVH"):
             raise ValueError("FEMPM search must be 'LinkedCell' or 'BVH'")
         if self.max_particle_num <= 0:
-            raise RuntimeError("allocate MPM particle memory before FEMPM")
+            raise SimulationStateError("allocate MPM particle memory before FEMPM")
         if self.max_surface_facet_num <= 0:
-            raise RuntimeError("FEMPM coupled surface contains no facets")
+            raise SimulationStateError("FEMPM coupled surface contains no facets")
         if self.max_mpm_material_num <= 0:
-            raise RuntimeError("allocate MPM material memory before FEMPM")
+            raise SimulationStateError("allocate MPM material memory before FEMPM")
         if self.max_contact_pairs <= 0:
             raise ValueError("FEMPM max_contact_pairs must be positive")
         if self.max_point_triangle_pairs <= 0:

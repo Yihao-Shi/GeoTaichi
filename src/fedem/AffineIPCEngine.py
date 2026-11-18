@@ -1,45 +1,45 @@
 """Monolithic implicit FEM--AffineBody solver with mixed IPC and friction."""
 
+from src.utils.errors import CapacityError, NonfiniteStateError, SimulationStateError
+from src.utils.StepRetry import StepRetryPolicy
+
 import math
 import time
-
 import numpy as np
 import taichi as ti
-
 from src.dem.engines.AffineBodyOperator import MATRIX_HASH_TRIPLET
 from src.fedem.contact.AffineIPCAssembler import FEMAffineIPCAssembler
-from src.fem.engines.ImplicitFEM import NewtonConvergenceError
 from src.fem.engines.LineSearch import ArmijoLineSearch
 from src.linear_solver.BuildTriplet import BuildTriplet
 from src.linear_solver.BlockJacobi import BlockJacobi
 from src.linear_solver.LinearOperator import LinearOperator
 from src.linear_solver.CoordinateSparseMatrix import CoordinateSparseMatrix
 from src.utils.RuntimeHook import runtime_checkpoint
-from src.utils.StepRetry import StepRetryPolicy, nonlinear_failure_kind
 from src.utils.linalg import no_operation
-
-
-def _assembly_name(value):
-    key = str(value).replace("_", "").replace("-", "").lower()
-    if key in ("hash", "hashtriplet", "triplet", "buildtriplet"):
-        return "HashTriplet"
-    if key in ("coo", "coordinate", "coordinatesparse"):
-        return "COO"
-    raise ValueError("FEM--AffineBody assemble_type must be COO or HashTriplet")
-
-
-def _solver_name(value):
-    key = str(value).replace("_", "").replace("-", "").lower()
-    if key in ("pcg", "cg", "taichipcg"):
-        return "PCG"
-    if key in ("scipy", "spsolve", "cpu", "direct"):
-        return "Scipy"
-    raise ValueError("FEM--AffineBody linear_solver must be PCG or Scipy")
+from src.utils.errors import NewtonConvergenceError
 
 
 @ti.data_oriented
 class FEMAffineIPCEngine:
     """Projected Newton solve over affine controls and FEM nodal DOFs."""
+
+    @staticmethod
+    def _assembly_name(value):
+        key = str(value).replace("_", "").replace("-", "").lower()
+        if key in ("hash", "hashtriplet", "triplet", "buildtriplet"):
+            return "HashTriplet"
+        if key in ("coo", "coordinate", "coordinatesparse"):
+            return "COO"
+        raise ValueError("FEM--AffineBody assemble_type must be COO or HashTriplet")
+
+    @staticmethod
+    def _solver_name(value):
+        key = str(value).replace("_", "").replace("-", "").lower()
+        if key in ("pcg", "cg", "taichipcg"):
+            return "PCG"
+        if key in ("scipy", "spsolve", "cpu", "direct"):
+            return "Scipy"
+        raise ValueError("FEM--AffineBody linear_solver must be PCG or Scipy")
 
     def __init__(
         self,
@@ -60,10 +60,12 @@ class FEMAffineIPCEngine:
         self.affine_acceleration_initialized = False
         self.dem_engine.last_device_nonlinear_path = True
         if self.affine.fully_implicit:
-            raise RuntimeError("FEM--AffineBody IPC currently requires AffineBody " "self-friction_mode='lagged'")
+            raise SimulationStateError(
+                "FEM--AffineBody IPC currently requires AffineBody " "self-friction_mode='lagged'"
+            )
         requested_friction_iterations = int(getattr(dem.sims, "affine_friction_iterations", 1))
         if requested_friction_iterations != 1:
-            raise RuntimeError("FEM--AffineBody IPC currently requires AffineBody " "friction_iterations=1")
+            raise SimulationStateError("FEM--AffineBody IPC currently requires AffineBody " "friction_iterations=1")
         self.contact_model = contact_model
         self.dt = float(simulation.delta)
         self.time = float(simulation.current_time)
@@ -92,8 +94,8 @@ class FEMAffineIPCEngine:
             reduction=kwargs.get("step_retry_reduction", 0.5),
             minimum_timestep=kwargs.get("step_retry_minimum_timestep", 0.0),
         )
-        self.assemble_type = _assembly_name(kwargs.get("assemble_type", self.fem.assemble_type))
-        self.linear_solver = _solver_name(kwargs.get("linear_solver", self.fem.linear_solver))
+        self.assemble_type = FEMAffineIPCEngine._assembly_name(kwargs.get("assemble_type", self.fem.assemble_type))
+        self.linear_solver = FEMAffineIPCEngine._solver_name(kwargs.get("linear_solver", self.fem.linear_solver))
         self.linear_solver_tolerance = float(kwargs.get("linear_solver_tolerance", 1.0e-12))
         self.linear_solver_relative_tolerance = float(
             kwargs.get("linear_solver_relative_tolerance", 0.0 if "linear_solver_tolerance" in kwargs else 1.0e-12)
@@ -163,7 +165,7 @@ class FEMAffineIPCEngine:
         if self.wall_boundary is not None and self.fem.dem_wall_contact is None:
             from dataclasses import replace
             from src.fem.contact.DEMWallContact import DEMWallContactAssembler
-            from src.fem.contact.ContactAssembler import FEMMultiContactAssembler
+            from src.fem.contact.FEMMultiContactAssembler import FEMMultiContactAssembler
 
             settings = replace(contact_model.contact, self_contact=False, planes=(), pair_contacts=[], body_pair=None)
             self.fem.dem_wall_contact = DEMWallContactAssembler(
@@ -276,7 +278,7 @@ class FEMAffineIPCEngine:
             getattr(self.fem, "cloth_assembler", None),
         )
         if assembler is None:
-            raise RuntimeError("FEM--AffineBody IPC requires a Taichi FEM assembler")
+            raise SimulationStateError("FEM--AffineBody IPC requires a Taichi FEM assembler")
         return assembler
 
     def _build_fem_source_matrix(self):
@@ -353,13 +355,13 @@ class FEMAffineIPCEngine:
         pt_count = int(pt_count)
         ee_count = int(ee_count)
         if pt_count > int(self.simulation.max_point_triangle_pairs):
-            raise RuntimeError(
+            raise SimulationStateError(
                 "FEM--AffineBody max_point_triangle_pairs is too small: "
                 f"need {pt_count}, allocated "
                 f"{self.simulation.max_point_triangle_pairs}"
             )
         if ee_count > int(self.simulation.max_edge_edge_pairs):
-            raise RuntimeError(
+            raise SimulationStateError(
                 "FEM--AffineBody max_edge_edge_pairs is too small: "
                 f"need {ee_count}, allocated "
                 f"{self.simulation.max_edge_edge_pairs}"
@@ -369,7 +371,7 @@ class FEMAffineIPCEngine:
             return
         configured_capacity = self._configured_contact_raw_capacity()
         if required > configured_capacity:
-            raise RuntimeError(
+            raise CapacityError(
                 "FEM--AffineBody contact block capacity is too small: "
                 f"need {required}, configured bound {configured_capacity}"
             )
@@ -466,7 +468,7 @@ class FEMAffineIPCEngine:
         )
         if need_matrix:
             if stiffness.values.size:
-                raise RuntimeError("FEM--AffineBody cannot consume host FEM triplets")
+                raise SimulationStateError("FEM--AffineBody cannot consume host FEM triplets")
             self.fem_hash.reset_system()
             if stiffness.base_assembler is not None:
                 stiffness.base_assembler.scatter_stiffness_to_hash(self.fem_hash)
@@ -690,7 +692,7 @@ class FEMAffineIPCEngine:
             else:
                 self._eliminate_coo_constraints()
                 if int(self.coo_overflow[None]) != 0:
-                    raise RuntimeError("FEM--AffineBody COO capacity exceeded")
+                    raise CapacityError("FEM--AffineBody COO capacity exceeded")
                 matrix.linear_operator.update_active_dofs(self.dof_count)
                 matrix.linear_operator.update_nnz(int(self.coo_count[None]))
         self.fem.state.reduce_dynamic_potential(
@@ -728,7 +730,7 @@ class FEMAffineIPCEngine:
 
             solution = np.asarray(spsolve(matrix, self.rhs.to_numpy()), dtype=np.float64)
             if not np.all(np.isfinite(solution)):
-                raise RuntimeError("FEM--AffineBody Scipy solve returned non-finite values")
+                raise NonfiniteStateError("FEM--AffineBody Scipy solve returned non-finite values")
             self._load_host_solution(solution)
             result = {
                 "converged": True,
@@ -957,7 +959,7 @@ class FEMAffineIPCEngine:
         except Exception as diagnostic_error:
             contact = {"unavailable": str(diagnostic_error)}
         return {
-            "kind": nonlinear_failure_kind(exception),
+            "kind": StepRetryPolicy.nonlinear_failure_kind(exception),
             "exception": type(exception).__name__,
             "message": str(exception),
             "attempt": int(attempt),
@@ -1384,6 +1386,3 @@ class FEMAffineIPCEngine:
             "step": self.step_count,
             "history": list(self.history),
         }
-
-
-__all__ = ["FEMAffineIPCEngine"]

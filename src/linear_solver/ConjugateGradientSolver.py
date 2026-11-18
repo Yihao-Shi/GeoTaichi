@@ -1,9 +1,9 @@
 import taichi as ti
 
 from src.linear_solver.ConjugateGradientSolverKernel import (
-    M_init as _M_init,
-    compute_Ad as _compute_Ad,
-    compute_rMr as _compute_rMr,
+    m_init as _M_init,
+    compute_ad as _compute_Ad,
+    compute_r_mr as _compute_rMr,
     dot_product as _dot_product,
     r_d_init as _r_d_init,
     rmax as _rmax,
@@ -14,7 +14,7 @@ from src.linear_solver.ConjugateGradientSolverKernel import (
 
 
 @ti.data_oriented
-class ConjugateGradientSolver_rowMajor:
+class ConjugateGradientSolverRowMajor:
 
     def __init__(
         self,
@@ -31,7 +31,7 @@ class ConjugateGradientSolver_rowMajor:
         self.r = ti.field(float, b.shape[0])  # the residual
         self.d = ti.field(float, b.shape[0])  # the direction of change of x
         self.M = ti.field(float, b.shape[0])
-        self.M_init()  # the inverse of precondition diagonal matrix, M^(-1) actually
+        self.m_init()  # the inverse of precondition diagonal matrix, M^(-1) actually
 
         self.Ad = ti.field(float, b.shape[0])  # A multiply d
         self.eps = eps
@@ -44,7 +44,7 @@ class ConjugateGradientSolver_rowMajor:
         self.r.fill(0.0)
         self.d.fill(0.0)
         self.M.fill(0.0)
-        self.M_init()
+        self.m_init()
         self.Ad.fill(0.0)
 
     def solve(
@@ -55,12 +55,12 @@ class ConjugateGradientSolver_rowMajor:
         print("\033[32;1m the initial residual scale is {} \033[0m".format(r0))
 
         for i in range(self.b.shape[0]):  # CG will converge within at most b.shape[0] loops
-            self.compute_Ad()
-            rMr = self.compute_rMr()
+            self.compute_ad()
+            rMr = self.compute_r_mr()
             alpha = rMr / self.dot_product(self.d, self.Ad)
             self.update_x(alpha)
             self.update_r(alpha)
-            beta = self.compute_rMr() / rMr
+            beta = self.compute_r_mr() / rMr
             self.update_d(beta)
 
             rmax = self.rmax()  # the infinite norm of residual, shold be modified latter to the reduce max
@@ -68,10 +68,10 @@ class ConjugateGradientSolver_rowMajor:
             if rmax < self.eps * r0:  # converge?
                 break
 
-    def M_init(self):
+    def m_init(self):
         _M_init(self.M, self.A, self.ij)
 
-    def compute_Ad(self):
+    def compute_ad(self):
         _compute_Ad(self.A, self.ij, self.d, self.Ad)
 
     def r_d_init(self):
@@ -80,7 +80,7 @@ class ConjugateGradientSolver_rowMajor:
     def rmax(self):
         return _rmax(self.r)
 
-    def compute_rMr(self):
+    def compute_r_mr(self):
         return _compute_rMr(self.r, self.M)
 
     def update_x(self, alpha):

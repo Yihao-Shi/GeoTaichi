@@ -3,7 +3,8 @@ import numpy as np
 
 import src.mpm.config as config
 from src.mpm.engines.direct.MPMSolver import MPMSolver
-from src.mpm.utils import RodriguesRotationMatrix, mat3x3, vec3f, vectorize_id
+from src.utils.Quaternion import rodrigues_rotation_matrix
+from src.utils.ScalarFunction import vectorize_id
 from src.utils.linalg import no_operation
 
 
@@ -21,10 +22,10 @@ class ExplicitMPM(MPMSolver):
                 "axisymmetric kinematics; use Direct implicit ULMPM or the "
                 "standard axisymmetric MPM backend"
             )
-        stateVariable = self.material.get_state_vars()
-        if "deformation_gradient" in stateVariable:
-            stateVariable.update({"deformation_gradient": ti.types.matrix(config.DIM, config.DIM, ti.f64)})
-        self.stateVars = ti.Struct.field(stateVariable, shape=self.n_particles)
+        state_variable = self.material.get_state_vars()
+        if "deformation_gradient" in state_variable:
+            state_variable.update({"deformation_gradient": ti.types.matrix(config.DIM, config.DIM, ti.f64)})
+        self.stateVars = ti.Struct.field(state_variable, shape=self.n_particles)
         if kwargs.get("volumetric_smooth", False):
             self.gvol = ti.field(dtype=ti.f64, shape=self.total_grid_num)
             self.gjacobian = ti.field(dtype=ti.f64, shape=self.total_grid_num)
@@ -32,45 +33,45 @@ class ExplicitMPM(MPMSolver):
     def handle_material(self, **kwargs):
         constitutive_model = kwargs.get("material", "LinearElastic")
         if constitutive_model == "HenckyElastic":
-            from src.physics_model.consititutive_model.finite_strain.HenckyElastic import HenckyElasticModel
+            from src.physics_model.constitutive_model.finite_strain.HenckyElastic import HenckyElasticModel
 
             self.material_type = 0
             self.material = HenckyElasticModel(
                 material_type="Solid", configuration=self.configuration, solver_type="Explicit"
             )
         elif constitutive_model == "NeoHookean":
-            from src.physics_model.consititutive_model.finite_strain.NeoHookean import NeoHookeanModel
+            from src.physics_model.constitutive_model.finite_strain.NeoHookean import NeoHookeanModel
 
             self.material_type = 0
             self.material = NeoHookeanModel(
                 material_type="Solid", configuration=self.configuration, solver_type="Explicit"
             )
         elif constitutive_model == "MooneyRivlin":
-            from src.physics_model.consititutive_model.finite_strain.MooneyRivlin import MooneyRivlin
+            from src.physics_model.constitutive_model.finite_strain.MooneyRivlin import MooneyRivlin
 
             self.material_type = 0
             self.material = MooneyRivlin(
                 material_type="Solid", configuration=self.configuration, solver_type="Explicit"
             )
         elif constitutive_model == "Gent":
-            from src.physics_model.consititutive_model.finite_strain.Gent import Gent
+            from src.physics_model.constitutive_model.finite_strain.Gent import Gent
 
             self.material_type = 0
             self.material = Gent(material_type="Solid", configuration=self.configuration, solver_type="Explicit")
         elif constitutive_model == "Hydrogel":
-            from src.physics_model.consititutive_model.finite_strain.Hydrogel import Hydrogel
+            from src.physics_model.constitutive_model.finite_strain.Hydrogel import Hydrogel
 
             self.material_type = 0
             self.material = Hydrogel(material_type="Solid", configuration=self.configuration, solver_type="Explicit")
         elif constitutive_model == "LinearElastic":
-            from src.physics_model.consititutive_model.infinitesimal_strain.LinearElastic import LinearElasticModel
+            from src.physics_model.constitutive_model.infinitesimal_strain.LinearElastic import LinearElasticModel
 
             self.material_type = 1
             self.material = LinearElasticModel(
                 material_type="Solid", configuration=self.configuration, solver_type="Explicit"
             )
         elif constitutive_model == "ElasticPerfectlyPlastic":
-            from src.physics_model.consititutive_model.infinitesimal_strain.ElasticPerfectlyPlastic import (
+            from src.physics_model.constitutive_model.infinitesimal_strain.ElasticPerfectlyPlastic import (
                 ElasticPerfectlyPlasticModel,
             )
 
@@ -83,7 +84,7 @@ class ExplicitMPM(MPMSolver):
                 stress_integration=stress_integration,
             )
         elif constitutive_model == "MohrCoulomb":
-            from src.physics_model.consititutive_model.infinitesimal_strain.MohrCoulomb import MohrCoulombModel
+            from src.physics_model.constitutive_model.infinitesimal_strain.MohrCoulomb import MohrCoulombModel
 
             stress_integration = kwargs.get("stress_integration", "ReturnMapping")
             self.material_type = 1
@@ -94,7 +95,7 @@ class ExplicitMPM(MPMSolver):
                 stress_integration=stress_integration,
             )
         elif constitutive_model == "StateDependentMohrCoulomb":
-            from src.physics_model.consititutive_model.infinitesimal_strain.StateDependentMohrCoulomb import (
+            from src.physics_model.constitutive_model.infinitesimal_strain.StateDependentMohrCoulomb import (
                 StateDependentMohrCoulombModel,
             )
 
@@ -107,7 +108,7 @@ class ExplicitMPM(MPMSolver):
                 stress_integration=stress_integration,
             )
         elif constitutive_model == "DruckerPrager":
-            from src.physics_model.consititutive_model.infinitesimal_strain.DruckerPrager import DruckerPragerModel
+            from src.physics_model.constitutive_model.infinitesimal_strain.DruckerPrager import DruckerPragerModel
 
             stress_integration = kwargs.get("stress_integration", "ReturnMapping")
             self.material_type = 1
@@ -118,7 +119,7 @@ class ExplicitMPM(MPMSolver):
                 stress_integration=stress_integration,
             )
         elif constitutive_model == "ModifiedCamClay":
-            from src.physics_model.consititutive_model.infinitesimal_strain.ModifiedCamClay import ModifiedCamClayModel
+            from src.physics_model.constitutive_model.infinitesimal_strain.ModifiedCamClay import ModifiedCamClayModel
 
             stress_integration = kwargs.get("stress_integration", "ReturnMapping")
             self.material_type = 1
@@ -129,14 +130,14 @@ class ExplicitMPM(MPMSolver):
                 stress_integration=stress_integration,
             )
         elif constitutive_model == "Newtonian":
-            from src.physics_model.consititutive_model.strain_rate.Newtonian import NewtonianModel
+            from src.physics_model.constitutive_model.strain_rate.Newtonian import NewtonianModel
 
             self.material_type = 2
             self.material = NewtonianModel(
                 material_type="Solid", configuration=self.configuration, solver_type="Explicit"
             )
         elif constitutive_model == "Bingham":
-            from src.physics_model.consititutive_model.strain_rate.Bingham import BinghamModel
+            from src.physics_model.constitutive_model.strain_rate.Bingham import BinghamModel
 
             self.material_type = 2
             self.material = BinghamModel(
@@ -174,8 +175,10 @@ class ExplicitMPM(MPMSolver):
             for i in range(self.particleNum[0]):
                 direction = gravity.normalized()
                 gamma = self.material.density * distance[i] * gravity.norm()
-                initial_gravity_stress = mat3x3([k0[i] * gamma, 0.0, 0.0], [0.0, k0[i] * gamma, 0.0], [0.0, 0.0, gamma])
-                rotation_matrix = RodriguesRotationMatrix(-direction, vec3f(0.0, 0.0, 1.0))
+                initial_gravity_stress = ti.Matrix(
+                    [[k0[i] * gamma, 0.0, 0.0], [0.0, k0[i] * gamma, 0.0], [0.0, 0.0, gamma]], dt=ti.f64
+                )
+                rotation_matrix = rodrigues_rotation_matrix(-direction, ti.Vector([0.0, 0.0, 1.0], dt=ti.f64), ti.f64)
                 gravity_field = rotation_matrix.transpose() @ initial_gravity_stress @ rotation_matrix
                 self.particle[i].stress += gravity_field
 
@@ -198,7 +201,7 @@ class ExplicitMPM(MPMSolver):
             external_force = pmass * gravity
             internal_force = -p_vol * p_stress
             for j in range(self.offset[i]):
-                nodeID = self.LnID[i, j]
+                node_id = self.LnID[i, j]
                 shape_grad = self.dshape[i, j]
                 BTsigma = ti.Vector.zero(ti.f64, config.DIM)
                 if ti.static(config.DIM == 2):
@@ -211,16 +214,16 @@ class ExplicitMPM(MPMSolver):
                 else:
                     BTsigma = internal_force @ shape_grad
                 force = BTsigma + external_force * self.shape[i, j]
-                self.grid[nodeID].a += force
+                self.grid[node_id].a += force
 
     @ti.kernel
     def volumertic_smooth_p2g(self):
         for i in range(self.particleNum[0]):
             p_vol = self.particle[i].vol
             for j in range(self.offset[i]):
-                nodeID = self.LnID[i, j]
+                node_id = self.LnID[i, j]
                 shape_fn = self.shape[i, j]
-                self.gvol[nodeID] += shape_fn * p_vol
+                self.gvol[node_id] += shape_fn * p_vol
 
     @ti.kernel
     def traction_p2g(self):
@@ -228,10 +231,10 @@ class ExplicitMPM(MPMSolver):
             pid = self.traction[i].particleID
             traction = self.particle_traction_force(i)
             for j in range(self.offset[pid]):
-                nodeID = self.LnID[pid, j]
+                node_id = self.LnID[pid, j]
                 shape_fn = self.shape[pid, j]
                 force = traction * shape_fn
-                self.grid[nodeID].a += force
+                self.grid[node_id].a += force
 
     @ti.kernel
     def grid_kinematics(self, damping: ti.f64):
@@ -247,14 +250,14 @@ class ExplicitMPM(MPMSolver):
                 self.grid[i].v += self.grid[i].a * dt
 
     @ti.kernel
-    def advent_particles(self, coeffPIC: float):
+    def advent_particles(self, coeff_pic: float):
         dt = self.TIdt[None]
         for i in range(self.particleNum[0]):
-            bodyID = self.particle[i].bodyID
-            goffset = self.body[bodyID].goffset
-            grid_num = self.body[bodyID].grid_num
-            grid_size = self.body[bodyID].grid_size
-            xmin = self.body[bodyID].xmin
+            body_id = self.particle[i].bodyID
+            goffset = self.body[body_id].goffset
+            grid_num = self.body[body_id].grid_num
+            grid_size = self.body[body_id].grid_size
+            xmin = self.body[body_id].xmin
 
             p_pos = self.affine_transfer_position(i)
             acc = ti.Vector.zero(ti.f64, config.DIM)
@@ -272,7 +275,7 @@ class ExplicitMPM(MPMSolver):
                     dpos = xmin + grid_size * ti.Vector(vectorize_id(grid_id - goffset, grid_num)) - p_pos
                     Bp += shape_fn * grid_v.outer_product(dpos)
                     Dp += shape_fn * dpos.outer_product(dpos)
-            v1 = (1.0 - coeffPIC) * (v0 + acc * dt) + coeffPIC * vel
+            v1 = (1.0 - coeff_pic) * (v0 + acc * dt) + coeff_pic * vel
             self.particle[i].v = v1
             self.particle[i].x += vel * dt
             if ti.static(self.velocity_proj):

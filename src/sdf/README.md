@@ -188,11 +188,12 @@ d_{rev}(x,y,z)
 
 | Path | Responsibility |
 | --- | --- |
-| `BasicShape.py` | Base shape state, mesh-backed geometry, normals, mass properties, and bounds |
-| `SDFs.py` | `SDF2D`/`SDF3D` boolean and transform APIs |
+| `BasicShape.py` | Base shape state, normals, mass properties, and bounds |
+| `MeshBased.py`, `pointcloud.py`, `Surface.py` | Mesh-backed, point-cloud, and sampled surface geometry |
+| `SDF.py`, `SDF2D.py`, `SDF3D.py` | SDF base and 2D/3D boolean and transform APIs |
 | `SDFs2D.py`, `SDFs3D.py` | Analytic primitives |
 | `MultiSDF.py` | Boolean and smooth composition functions |
-| `utils2D.py`, `utils3D.py`, `utils23D.py` | Geometric transforms |
+| `utils_2d.py`, `utils_3d.py`, `utils_2d_3d.py` | Geometric transforms |
 | `LevelSetGrid.py` | Sampled distance-grid representation |
 | `BuildSurfaceNode.py` | Surface sampling for level-set bodies |
 | `mesh.py`, `FastMarchingMethod.py` | Mesh extraction and distance propagation |
@@ -226,6 +227,10 @@ Analytic SDF evaluation is vectorized NumPy geometry and is primarily used
 during scene/template preprocessing. Solver modules transfer sampled geometry
 or compact primitive parameters into Taichi fields before stepping. Do not
 call Python SDF evaluation inside a device time-step loop.
+
+Mesh extraction requires finite samples. Blocks without a zero isosurface
+produce no triangles; extraction failures, including allocation failures,
+propagate to the caller rather than being treated as empty geometry.
 
 Normals are evaluated through the existing `_normal()` interface. Although
 the leading underscore is historical, it is currently the shared interface

@@ -2,6 +2,7 @@
 """Settle a pile of AffineBody bunnies, then remove its right wall."""
 
 from __future__ import annotations
+from src.utils.RuntimeHook import python_callback
 
 import argparse
 import json
@@ -81,7 +82,6 @@ def main():
     if args.arch == "cpu":
         os.environ["GEOTAICHI_FORCE_CPU"] = "1"
     import geotaichi as gt
-    from src.utils.SolverRuntime import python_callback
 
     gt.init(arch=args.arch, default_fp="float64", device_memory_GB=1.0, log=True, offline_cache=False)
     bounds = container_bounds(args.count)

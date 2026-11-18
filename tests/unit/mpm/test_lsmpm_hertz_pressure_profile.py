@@ -1,7 +1,7 @@
 from pathlib import Path
 import numpy as np
 
-from src.mpm.generator.Body import sample_solid_hemisphere_halton
+from src.mpm.generator.Body import Body
 
 from research.LSMPM.scripts import run_v2_sphere_compression as MODULE
 from research.LSMPM.scripts import analyze_v2_hertz_fem_reference as ANALYZER
@@ -11,7 +11,7 @@ SCRIPT_DIR = Path(MODULE.__file__).resolve().parent
 
 def test_lower_hemisphere_halton_points_use_mass_center_coordinates():
     radius = 2.0
-    points = sample_solid_hemisphere_halton(
+    points = Body.sample_solid_hemisphere_halton(
         [0.0, 0.0, 0.0],
         radius,
         16384,

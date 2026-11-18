@@ -245,7 +245,7 @@ dempm.mpm.add_body(
                                         "StartPoint":     [0., 0., 0.],
                                         "EndPoint":       [0.5, 0.0, 0.3]
                                     },
-                                    
+
                                     {
                                         "BoundaryType":   "VelocityConstraint",
                                         "Velocity":       [None, 0., None],

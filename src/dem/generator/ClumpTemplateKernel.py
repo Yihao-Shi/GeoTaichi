@@ -2,12 +2,12 @@
 
 import taichi as ti
 
-from src.utils.constants import PI, ZEROMAT3x3, ZEROVEC3f
-from src.utils.TypeDefination import vec4f, vec3f
+from src.utils.constants import PI, ZEROMAT3X3, ZEROVEC3F
+from src.utils.TypeDefinition import vec4f, vec3f
 
 
 @ti.kernel
-def _kernel_get_max_radius_(nspheres: int, rad_pebble: ti.types.ndarray()) -> float:
+def _kernel_get_max_radius(nspheres: int, rad_pebble: ti.types.ndarray()) -> float:
     max_radius = 0.0
     ti.loop_config(serialize=True)
     for pebble in range(nspheres):
@@ -17,7 +17,7 @@ def _kernel_get_max_radius_(nspheres: int, rad_pebble: ti.types.ndarray()) -> fl
 
 
 @ti.kernel
-def _kernel_get_min_radius_(nspheres: int, rad_pebble: ti.types.ndarray()) -> float:
+def _kernel_get_min_radius(nspheres: int, rad_pebble: ti.types.ndarray()) -> float:
     min_radius = 1e15
     ti.loop_config(serialize=True)
     for pebble in range(nspheres):
@@ -27,10 +27,10 @@ def _kernel_get_min_radius_(nspheres: int, rad_pebble: ti.types.ndarray()) -> fl
 
 
 @ti.kernel
-def _kernel_bounding_box_left_limit_(
+def _kernel_bounding_box_left_limit(
     nspheres: int, x_pebble: ti.types.ndarray(), rad_pebble: ti.types.ndarray()
 ) -> ti.types.vector(3, float):
-    xmin = ZEROVEC3f + 1e15
+    xmin = ZEROVEC3F + 1e15
     ti.loop_config(serialize=True)
     for pebble in range(nspheres):
         if x_pebble[pebble, 0] - rad_pebble[pebble] < xmin[0]:
@@ -43,10 +43,10 @@ def _kernel_bounding_box_left_limit_(
 
 
 @ti.kernel
-def _kernel_bounding_box_right_limit_(
+def _kernel_bounding_box_right_limit(
     nspheres: int, x_pebble: ti.types.ndarray(), rad_pebble: ti.types.ndarray()
 ) -> ti.types.vector(3, float):
-    xmax = ZEROVEC3f - 1e15
+    xmax = ZEROVEC3F - 1e15
     ti.loop_config(serialize=True)
     for pebble in range(nspheres):
         if x_pebble[pebble, 0] + rad_pebble[pebble] > xmax[0]:
@@ -62,7 +62,7 @@ def _kernel_bounding_box_right_limit_(
 def _kernel_bounding_sphere_1(
     nspheres: int, visit: ti.template(), x_pebble: ti.types.ndarray(), rad_pebble: ti.types.ndarray()
 ) -> ti.types.vector(4, float):
-    x_bound, r_bound = ZEROVEC3f, 1e15
+    x_bound, r_bound = ZEROVEC3F, 1e15
     ti.loop_config(serialize=True)
     for _ in range(200):
         for pebble in range(nspheres):
@@ -115,7 +115,7 @@ def _kernel_bounding_sphere_2(
 
 
 @ti.kernel
-def _kernel_bounding_radius_(
+def _kernel_bounding_radius(
     nspheres: int,
     bounding_center: ti.types.vector(3, float),
     x_pebble: ti.types.ndarray(),
@@ -132,7 +132,7 @@ def _kernel_bounding_radius_(
 
 
 @ti.kernel
-def _kernel_check_bounding_sphere_(
+def _kernel_check_bounding_sphere(
     nspheres: int, x_bound: ti.types.vector(3, float), r_bound: float, x_pebble: ti.types.ndarray()
 ):
     ti.loop_config(serialize=True)
@@ -154,28 +154,28 @@ def _kernel_center_of_mass_1(
     x_pebble: ti.types.ndarray(),
     rad_pebble: ti.types.ndarray(),
 ) -> float:
-    nsuccess, x_try = 0, ZEROVEC3f
+    nsuccess, x_try = 0, ZEROVEC3F
     ti.loop_config(serialize=True)
     for _ in range(ntry):
         x_try[0] = xmin[0] + (xmax[0] - xmin[0]) * ti.random()
         x_try[1] = xmin[1] + (xmax[1] - xmin[1]) * ti.random()
         x_try[2] = xmin[2] + (xmax[2] - xmin[2]) * ti.random()
 
-        alreadyChecked = False
+        already_checked = False
         for pebble in range(nspheres):
             dist_j_sqr = (
                 (x_try[0] - x_pebble[pebble, 0]) * (x_try[0] - x_pebble[pebble, 0])
                 + (x_try[1] - x_pebble[pebble, 1]) * (x_try[1] - x_pebble[pebble, 1])
                 + (x_try[2] - x_pebble[pebble, 2]) * (x_try[2] - x_pebble[pebble, 2])
             )
-            if alreadyChecked:
+            if already_checked:
                 break
             if dist_j_sqr < rad_pebble[pebble] * rad_pebble[pebble]:
                 xcm[0] = (xcm[0] * nsuccess + x_try[0]) / (nsuccess + 1)
                 xcm[1] = (xcm[1] * nsuccess + x_try[1]) / (nsuccess + 1)
                 xcm[2] = (xcm[2] * nsuccess + x_try[2]) / (nsuccess + 1)
                 nsuccess += 1
-                alreadyChecked = True
+                already_checked = True
 
     # transform into a system with center of mass=0/0/0
     for pebble in range(nspheres):
@@ -194,10 +194,10 @@ def _kernel_center_of_mass_2(
     rad_pebble: ti.types.ndarray(),
 ) -> ti.types.vector(4, float):
     gnum = ti.ceil((xmax - xmin) / grid_size, int)
-    gridSum = ti.cast(gnum[0] * gnum[1] * gnum[2], int)
+    grid_sum = ti.cast(gnum[0] * gnum[1] * gnum[2], int)
     volume = 0.0
     volume_center = vec3f(0, 0, 0)
-    for ng in range(gridSum):
+    for ng in range(grid_sum):
         i = (ng % (gnum[0] * gnum[1])) % gnum[0]
         j = (ng % (gnum[0] * gnum[1])) // gnum[0]
         k = ng // (gnum[0] * gnum[1])
@@ -232,16 +232,16 @@ def _kernel_inertia_moment_1(
     x_pebble: ti.types.ndarray(),
     rad_pebble: ti.types.ndarray(),
 ) -> ti.types.matrix(3, 3, float):
-    x_try, moi_vol = ZEROVEC3f, ZEROMAT3x3
+    x_try, moi_vol = ZEROVEC3F, ZEROMAT3X3
     ti.loop_config(serialize=True)
     for _ in range(ntry):
         x_try[0] = xmin[0] + (xmax[0] - xmin[0]) * ti.random()
         x_try[1] = xmin[1] + (xmax[1] - xmin[1]) * ti.random()
         x_try[2] = xmin[2] + (xmax[2] - xmin[2]) * ti.random()
 
-        alreadyChecked = False
+        already_checked = False
         for pebble in range(nspheres):
-            if alreadyChecked:
+            if already_checked:
                 break
             dist_j_sqr = (
                 (x_try[0] - x_pebble[pebble, 0]) * (x_try[0] - x_pebble[pebble, 0])
@@ -259,7 +259,7 @@ def _kernel_inertia_moment_1(
                 moi_vol[2, 0] -= (x_try[2] - xcm[2]) * (x_try[0] - xcm[0])
                 moi_vol[2, 1] -= (x_try[2] - xcm[2]) * (x_try[1] - xcm[1])
                 moi_vol[2, 2] += (x_try[0] - xcm[0]) * (x_try[0] - xcm[0]) + (x_try[1] - xcm[1]) * (x_try[1] - xcm[1])
-                alreadyChecked = True
+                already_checked = True
     return moi_vol
 
 
@@ -274,9 +274,9 @@ def _kernel_inertia_moment_2(
     rad_pebble: ti.types.ndarray(),
 ) -> ti.types.matrix(3, 3, float):
     gnum = ti.ceil((xmax - xmin) / grid_size, int)
-    gridSum = ti.cast(gnum[0] * gnum[1] * gnum[2], int)
-    moi_vol = ZEROMAT3x3
-    for ng in range(gridSum):
+    grid_sum = ti.cast(gnum[0] * gnum[1] * gnum[2], int)
+    moi_vol = ZEROMAT3X3
+    for ng in range(grid_sum):
         i = (ng % (gnum[0] * gnum[1])) % gnum[0]
         j = (ng % (gnum[0] * gnum[1])) // gnum[0]
         k = ng // (gnum[0] * gnum[1])
@@ -304,10 +304,10 @@ def _kernel_inertia_moment_2(
 
 
 @ti.kernel
-def _kernel_jacobi_(moi: ti.types.matrix(3, 3, float), evectors: ti.template()) -> ti.types.vector(3, float):
+def _kernel_jacobi(moi: ti.types.matrix(3, 3, float), evectors: ti.template()) -> ti.types.vector(3, float):
     error = 1
-    evalues, b, z = ZEROVEC3f, ZEROVEC3f, ZEROVEC3f
-    matrix = ZEROMAT3x3
+    evalues, b, z = ZEROVEC3F, ZEROVEC3F, ZEROVEC3F
+    matrix = ZEROMAT3X3
 
     for i, j in ti.static(ti.ndrange(3, 3)):
         matrix[i, j] = moi[i, j]
@@ -391,7 +391,7 @@ def _kernel_jacobi_(moi: ti.types.matrix(3, 3, float), evectors: ti.template()) 
 
 
 @ti.kernel
-def _kernel_pebble_cartesian_coosys_to_local_(
+def _kernel_pebble_cartesian_coosys_to_local(
     nspheres: int,
     x_pebble: ti.types.ndarray(),
     ex_space: ti.types.vector(3, float),
@@ -400,7 +400,7 @@ def _kernel_pebble_cartesian_coosys_to_local_(
 ):
     ti.loop_config(serialize=True)
     for pebble in range(nspheres):
-        x_copy = ZEROVEC3f
+        x_copy = ZEROVEC3F
         for d in ti.static(range(3)):
             x_copy[d] = x_pebble[pebble, d]
 

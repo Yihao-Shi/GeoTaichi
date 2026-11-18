@@ -1,10 +1,12 @@
 """Hertz--Mindlin FEM--DEM surface contact."""
 
+from src.utils.ObjectIO import DictIO
+
 import math
 
 import taichi as ti
 
-from src.fedem.contact.ContactModelBase import ContactModelBase, property_value
+from src.fedem.contact.ContactModelBase import ContactModelBase
 
 
 @ti.dataclass
@@ -32,20 +34,30 @@ class HertzMindlinModel(ContactModelBase):
 
     def add_property(self, dem_material, fem_body, parameters):
         dem_material, fem_body = self.property_index(dem_material, fem_body)
-        modulus = float(property_value(parameters, "ShearModulus", "Modulus", required=True))
-        poisson = float(property_value(parameters, "Poisson", "PoissonRatio", required=True))
+        modulus = float(
+            DictIO.get_normalized(
+                parameters, "ShearModulus", "Modulus", required=True, context="FEDEM contact property"
+            )
+        )
+        poisson = float(
+            DictIO.get_normalized(
+                parameters, "Poisson", "PoissonRatio", required=True, context="FEDEM contact property"
+            )
+        )
         if modulus <= 0.0 or not -1.0 < poisson < 0.5:
             raise ValueError("invalid Hertz--Mindlin modulus/Poisson ratio")
         effective_shear = 0.5 * modulus / (2.0 - poisson)
         effective_young = (4.0 * effective_shear - 2.0 * effective_shear * poisson) / (1.0 - poisson)
-        restitution = float(property_value(parameters, "Restitution", required=True))
+        restitution = float(
+            DictIO.get_normalized(parameters, "Restitution", required=True, context="FEDEM contact property")
+        )
         if not 0.0 <= restitution <= 1.0:
             raise ValueError("FEDEM restitution must be in [0, 1]")
         damping = 0.0
         if restitution >= 1.0e-16:
             logarithm = math.log(restitution)
             damping = -logarithm / math.sqrt(math.pi * math.pi + logarithm * logarithm)
-        friction = float(property_value(parameters, "Friction", "mu", default=0.0))
+        friction = float(DictIO.get_normalized(parameters, "Friction", "mu", default=0.0))
         if friction < 0.0:
             raise ValueError("FEDEM friction must be non-negative")
         self.surface_properties[dem_material, fem_body] = {

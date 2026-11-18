@@ -1,3 +1,10 @@
+from src.utils.MatrixFunction import psd_project_nd
+from src.utils.VectorFunction import _isfinite_vector
+
+from src.physics_model.contact_model.ipc.Utilities import get_distance_to_curve_fixed_dim
+from src.physics_model.contact_model.ipc.Utilities import get_distance_to_curve_moving_fixed_dim
+from src.physics_model.contact_model.ipc.Utilities import get_distance_to_surface_fixed_dim
+from src.physics_model.contact_model.ipc.Utilities import get_distance_to_surface_moving_fixed_dim
 from types import SimpleNamespace
 
 import numpy as np
@@ -6,15 +13,10 @@ import taichi as ti
 
 pytestmark = [pytest.mark.unit, pytest.mark.ipc, pytest.mark.contact, pytest.mark.usefixtures("taichi_runtime")]
 
-from src.nurbs.core.NurbsGeometry import NurbsBasisFunction1d, NurbsBasisFunction2d
-from src.physics_model.contact_model.ipc.ContactAssembly import psd_project_nd
-from src.physics_model.contact_model.ipc.NurbsContact import (
-    PointNurbsDerivative,
-    get_distance_to_curve_fixed_dim,
-    get_distance_to_curve_moving_fixed_dim,
-    get_distance_to_surface_fixed_dim,
-    get_distance_to_surface_moving_fixed_dim,
-)
+from src.nurbs.core.NurbsBasisFunction1d import NurbsBasisFunction1d
+from src.nurbs.core.NurbsBasisFunction2d import NurbsBasisFunction2d
+
+from src.physics_model.contact_model.ipc.NurbsContact import PointNurbsDerivative
 from tests.helpers.ipc_nurbs_reference import closest_curve_point_py, eval_curve_py
 
 
@@ -94,17 +96,17 @@ class _DerivativeProjectionHarness:
         pointer = ti.Vector([0.0, -0.25])
         tangent = ti.Vector([1.0, 0.0])
         curvature = ti.Vector([0.0, 0.0])
-        self.point_gradient2[None] = self.derivative2.Ddistance2_div_Dpoint(pointer)
-        self.ctrl_gradient2[None] = self.derivative2.Ddistance2_div_Dctrlpt(pointer, 0.25)
-        self.point_hessian2[None] = self.derivative2.D2distance2_div_D2point_Curve(pointer, tangent, curvature)
-        self.ctrl_hessian2[None] = self.derivative2.D2distance2_div_D2ctrlpt_Curve(
+        self.point_gradient2[None] = self.derivative2.ddistance2_div_dpoint(pointer)
+        self.ctrl_gradient2[None] = self.derivative2.ddistance2_div_dctrlpt(pointer, 0.25)
+        self.point_hessian2[None] = self.derivative2.d2distance2_div_d2point_curve(pointer, tangent, curvature)
+        self.ctrl_hessian2[None] = self.derivative2.d2distance2_div_d2ctrlpt_curve(
             pointer, tangent, curvature, 0.25, 0.0, 0.25, 0.0
         )
-        self.cross_hessian2[None] = self.derivative2.D2distance2_div_DctrlptDpoint_Curve(
+        self.cross_hessian2[None] = self.derivative2.d2distance2_div_dctrlpt_dpoint_curve(
             pointer, tangent, curvature, 0.25, 0.0
         )
-        self.velocity_point2[None] = self.derivative2.Dvelocity_div_Dpoint()
-        self.velocity_ctrl2[None] = self.derivative2.Dvelocity_div_Dctrlpt(0.25)
+        self.velocity_point2[None] = self.derivative2.dvelocity_div_dpoint()
+        self.velocity_ctrl2[None] = self.derivative2.dvelocity_div_dctrlpt(0.25)
 
     @ti.kernel
     def evaluate_surface_derivatives(self):
@@ -112,12 +114,12 @@ class _DerivativeProjectionHarness:
         tangent_u = ti.Vector([1.0, 0.0, 0.0])
         tangent_v = ti.Vector([0.0, 1.0, 0.0])
         zero = ti.Vector([0.0, 0.0, 0.0])
-        self.point_gradient3[None] = self.derivative3.Ddistance2_div_Dpoint(pointer)
-        self.ctrl_gradient3[None] = self.derivative3.Ddistance2_div_Dctrlpt(pointer, 0.25)
-        self.point_hessian3[None] = self.derivative3.D2distance2_div_D2point_Surface(
+        self.point_gradient3[None] = self.derivative3.ddistance2_div_dpoint(pointer)
+        self.ctrl_gradient3[None] = self.derivative3.ddistance2_div_dctrlpt(pointer, 0.25)
+        self.point_hessian3[None] = self.derivative3.d2distance2_div_d2point_surface(
             pointer, tangent_u, tangent_v, zero, zero, zero
         )
-        self.ctrl_hessian3[None] = self.derivative3.D2distance2_div_D2ctrlpt_Surface(
+        self.ctrl_hessian3[None] = self.derivative3.d2distance2_div_d2ctrlpt_surface(
             pointer,
             tangent_u,
             tangent_v,
@@ -131,7 +133,7 @@ class _DerivativeProjectionHarness:
             0.0,
             0.0,
         )
-        self.cross_hessian3[None] = self.derivative3.D2distance2_div_DctrlptDpoint_Surface(
+        self.cross_hessian3[None] = self.derivative3.d2distance2_div_dctrlpt_dpoint_surface(
             pointer,
             tangent_u,
             tangent_v,
@@ -148,13 +150,13 @@ class _DerivativeProjectionHarness:
         pointer2 = ti.Vector([0.0, -0.25])
         tangent2 = ti.Vector([1.0, 0.0])
         zero2 = ti.Vector([0.0, 0.0])
-        self.point_hessian2[None] = self.derivative2.D2distance2_div_D2point_CurveActive(
+        self.point_hessian2[None] = self.derivative2.d2distance2_div_d2point_curve_active(
             pointer2, tangent2, zero2, free_u
         )
-        self.ctrl_hessian2[None] = self.derivative2.D2distance2_div_D2ctrlpt_CurveActive(
+        self.ctrl_hessian2[None] = self.derivative2.d2distance2_div_d2ctrlpt_curve_active(
             pointer2, tangent2, zero2, 0.25, 0.0, 0.25, 0.0, free_u
         )
-        self.cross_hessian2[None] = self.derivative2.D2distance2_div_DctrlptDpoint_CurveActive(
+        self.cross_hessian2[None] = self.derivative2.d2distance2_div_dctrlpt_dpoint_curve_active(
             pointer2, tangent2, zero2, 0.25, 0.0, free_u
         )
 
@@ -162,7 +164,7 @@ class _DerivativeProjectionHarness:
         tangent_u = ti.Vector([1.0, 0.0, 0.0])
         tangent_v = ti.Vector([0.0, 1.0, 0.0])
         zero3 = ti.Vector([0.0, 0.0, 0.0])
-        self.point_hessian3[None] = self.derivative3.D2distance2_div_D2point_SurfaceActive(
+        self.point_hessian3[None] = self.derivative3.d2distance2_div_d2point_surface_active(
             pointer3,
             tangent_u,
             tangent_v,
@@ -248,7 +250,7 @@ class _SurfaceDistanceHarness:
 
     @ti.kernel
     def evaluate_hessian_basis(self, u: ti.f64, v: ti.f64):
-        _, _, shape, derivative_u, derivative_v, _, _, _, _, _ = self.basis.NurbsBasisHessian(
+        _, _, shape, derivative_u, derivative_v, _, _, _, _, _ = self.basis.nurbs_basis_hessian(
             0,
             0,
             0,
@@ -268,7 +270,7 @@ class _SurfaceDistanceHarness:
 
     @ti.kernel
     def evaluate_shape(self, u: ti.f64, v: ti.f64):
-        _, _, shape = self.basis.NurbsBasisShape(
+        _, _, shape = self.basis.nurbs_basis_shape(
             0,
             0,
             0,
@@ -509,7 +511,7 @@ def test_span_pruning_certifies_pairs_inside_the_whole_surface_box():
 
 
 def test_surface_projection_attempts_tensor_hint_seeds(monkeypatch):
-    from src.physics_model.contact_model.ipc import NurbsContact
+    import src.physics_model.contact_model.ipc.Utilities as contact_geometry
 
     harness = _SurfaceDistanceHarness()
     attempts = ti.field(ti.i32, shape=())
@@ -541,7 +543,7 @@ def test_surface_projection_attempts_tensor_hint_seeds(monkeypatch):
         seeds[index] = ti.Vector([seed_u, seed_v])
         return seed_u, seed_v, 1.0, ti.Vector.zero(ti.f64, point.n), 1
 
-    monkeypatch.setattr(NurbsContact, "_surface_projected_newton_candidate", record_candidate)
+    monkeypatch.setattr(contact_geometry, "_surface_projected_newton_candidate", record_candidate)
 
     @ti.kernel
     def query(hint: ti.types.vector(2, ti.f64), kind: ti.template()):
@@ -861,10 +863,10 @@ def test_psd_projection_is_dimension_generic():
 
 @pytest.mark.isolated_dimension(3)
 def test_surface_projection_uses_field_parameter_seed(taichi_runtime, monkeypatch):
-    from src.physics_model.contact_model.ipc import NurbsContact
+    import src.physics_model.contact_model.ipc.Utilities as contact_geometry
 
     checked_seed = ti.field(ti.i32, shape=())
-    original_finite = NurbsContact._isfinite_vector
+    original_finite = _isfinite_vector
 
     @ti.func
     def trace_finite(vector):
@@ -873,7 +875,7 @@ def test_surface_projection_uses_field_parameter_seed(taichi_runtime, monkeypatc
                 ti.atomic_add(checked_seed[None], 1)
         return original_finite(vector)
 
-    monkeypatch.setattr(NurbsContact, "_isfinite_vector", trace_finite)
+    monkeypatch.setattr(contact_geometry, "_isfinite_vector", trace_finite)
     controls = np.array([[0.0, u, v] for v in (0.0, 1.0) for u in (0.0, 1.0)])
     knots = np.array([0.0, 0.0, 1.0, 1.0])
     harness = _CachedSurfaceDistanceHarness(controls, np.ones(4), knots, knots, (1, 1), np.array([[0.1, 0.4, 0.4]]))
@@ -906,7 +908,7 @@ def test_moving_surface_homogeneous_derivatives_match_rational_basis(degree):
 
     @ti.kernel
     def evaluate(u: ti.f64, v: ti.f64, alpha: ti.f64):
-        p, pu, pv, puu, pvv, puv = basis.NurbsBasisMovingInterpolations2ndDers2d(
+        p, pu, pv, puu, pvv, puv = basis.nurbs_basis_moving_interpolations2nd_ders2d(
             0,
             0,
             0,
@@ -923,7 +925,7 @@ def test_moving_surface_homogeneous_derivatives_match_rational_basis(degree):
         )
         actual[0], actual[1], actual[2] = p, pu, pv
         actual[3], actual[4], actual[5] = puu, pvv, puv
-        shape, gradient, hessian = basis.NurbsBasis2ndDers2d(
+        shape, gradient, hessian = basis.nurbs_basis2nd_ders2d(
             0,
             0,
             0,

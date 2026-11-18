@@ -116,7 +116,7 @@ Every commit formats staged Python files, checks their syntax, and tests an
 isolated copy of the staged content using CPU/f64. Partially staged Python files are rejected
 before formatting; unstaged work and the active environment are preserved.
 
-- Ordinary messages run the `pre-commit` partition: test-runner contracts,
+- Ordinary messages run the `pre-commit` partition: test-runner and source-naming contracts,
   analytical quadrature, ENO/WENO accuracy, and two CPU IPC barrier/friction
   checks, plus small VTU write/read round trips. This gate has a 60-second
   test timeout.

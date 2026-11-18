@@ -19,8 +19,8 @@ def test_volume_safeguard_brackets_and_accepts_interior_newton_step(
 ):
     ti = taichi_runtime
     from src.mpm.soft_particle.LevelSet import (
-        compute_soft_levelset_safeguarded_shift_,
-        initialize_soft_levelset_volume_bracket_,
+        compute_soft_levelset_safeguarded_shift,
+        initialize_soft_levelset_volume_bracket,
     )
 
     soft, box, fields = _make_scalar_fields(ti)
@@ -39,7 +39,7 @@ def test_volume_safeguard_brackets_and_accepts_interior_newton_step(
     current[0] = 1.1
     interface[0] = 1.0
 
-    initialize_soft_levelset_volume_bracket_(
+    initialize_soft_levelset_volume_bracket(
         1,
         1.0e-9,
         0.25,
@@ -61,7 +61,7 @@ def test_volume_safeguard_brackets_and_accepts_interior_newton_step(
     )
 
     current[0] = 0.9
-    compute_soft_levelset_safeguarded_shift_(
+    compute_soft_levelset_safeguarded_shift(
         1,
         1.0e-9,
         target,
@@ -88,7 +88,7 @@ def test_volume_safeguard_falls_back_to_bracket_midpoint(
 ):
     ti = taichi_runtime
     from src.mpm.soft_particle.LevelSet import (
-        compute_soft_levelset_safeguarded_shift_,
+        compute_soft_levelset_safeguarded_shift,
     )
 
     _, _, fields = _make_scalar_fields(ti)
@@ -110,7 +110,7 @@ def test_volume_safeguard_falls_back_to_bracket_midpoint(
     upper[0] = 0.25
     trial[0] = 0.25
 
-    compute_soft_levelset_safeguarded_shift_(
+    compute_soft_levelset_safeguarded_shift(
         1,
         1.0e-9,
         target,

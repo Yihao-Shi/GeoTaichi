@@ -1,55 +1,53 @@
 """Configuration objects for FEM contact."""
 
 from __future__ import annotations
-
 from dataclasses import dataclass, field
-
 import numpy as np
-
-
-def _positive(name, value, *, allow_zero=False):
-    value = float(value)
-    valid = value >= 0.0 if allow_zero else value > 0.0
-    if not np.isfinite(value) or not valid:
-        relation = "non-negative" if allow_zero else "positive"
-        raise ValueError(f"{name} must be finite and {relation}")
-    return value
-
-
-def _integer(name, value):
-    try:
-        numeric = float(value)
-        integer = int(numeric)
-    except (TypeError, ValueError, OverflowError) as exc:
-        raise ValueError(f"{name} must be an integer") from exc
-    if not np.isfinite(numeric) or numeric != integer:
-        raise ValueError(f"{name} must be an integer")
-    return integer
-
-
-def _normalize_plane(entry):
-    if isinstance(entry, dict):
-        point = entry.get("point", entry.get("origin", (0.0, 0.0, 0.0)))
-        normal = entry.get("normal")
-    elif isinstance(entry, (tuple, list)) and len(entry) == 2:
-        point, normal = entry
-    else:
-        raise TypeError("a contact plane must be {'point': ..., 'normal': ...} or (point, normal)")
-    point = np.asarray(point, dtype=np.float64).reshape(-1)
-    normal = np.asarray(normal, dtype=np.float64).reshape(-1)
-    if point.size != 3 or normal.size != 3 or not np.all(np.isfinite(point)) or not np.all(np.isfinite(normal)):
-        raise ValueError("contact plane point and normal must be finite three-vectors")
-    length = float(np.linalg.norm(normal))
-    if length <= 0.0:
-        raise ValueError("contact plane normal cannot be zero")
-    return point, normal / length
 
 
 @dataclass
 class FEMContact:
     """Validated FEM IPC contact settings."""
 
-    model: str = "IPC"
+    @staticmethod
+    def _positive(name, value, *, allow_zero=False):
+        value = float(value)
+        valid = value >= 0.0 if allow_zero else value > 0.0
+        if not np.isfinite(value) or not valid:
+            relation = "non-negative" if allow_zero else "positive"
+            raise ValueError(f"{name} must be finite and {relation}")
+        return value
+
+    @staticmethod
+    def _integer(name, value):
+        try:
+            numeric = float(value)
+            integer = int(numeric)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError(f"{name} must be an integer") from exc
+        if not np.isfinite(numeric) or numeric != integer:
+            raise ValueError(f"{name} must be an integer")
+        return integer
+
+    @staticmethod
+    def _normalize_plane(entry):
+        if isinstance(entry, dict):
+            point = entry.get("point", entry.get("origin", (0.0, 0.0, 0.0)))
+            normal = entry.get("normal")
+        elif isinstance(entry, (tuple, list)) and len(entry) == 2:
+            point, normal = entry
+        else:
+            raise TypeError("a contact plane must be {'point': ..., 'normal': ...} or (point, normal)")
+        point = np.asarray(point, dtype=np.float64).reshape(-1)
+        normal = np.asarray(normal, dtype=np.float64).reshape(-1)
+        if point.size != 3 or normal.size != 3 or not np.all(np.isfinite(point)) or not np.all(np.isfinite(normal)):
+            raise ValueError("contact plane point and normal must be finite three-vectors")
+        length = float(np.linalg.norm(normal))
+        if length <= 0.0:
+            raise ValueError("contact plane normal cannot be zero")
+        return point, normal / length
+
+    model: str = "BarrierIPC"
     broad_phase: str = "LinkedCell"
     dhat: float | None = None
     dmin: float | None = None
@@ -72,16 +70,8 @@ class FEMContact:
     pair_contacts: list = field(default_factory=list, repr=False)
 
     def __post_init__(self):
-        key = str(self.model).strip().replace("_", "").replace("-", "").replace(" ", "").lower()
-        aliases = {
-            "ipc": "IPC",
-            "barrier": "IPC",
-            "barrieripc": "IPC",
-            "incrementalpotentialcontact": "IPC",
-        }
-        if key not in aliases:
+        if self.model != "BarrierIPC":
             raise ValueError("FEM contact model must be 'BarrierIPC'")
-        self.model = aliases[key]
         broad_phase_key = str(self.broad_phase).strip().replace("_", "").replace("-", "").replace(" ", "").lower()
         broad_phase_aliases = {
             "linkedcell": "LinkedCell",
@@ -94,15 +84,15 @@ class FEMContact:
             raise ValueError("FEM broad_phase must be 'LinkedCell' or 'BVH'")
         self.broad_phase = broad_phase_aliases[broad_phase_key]
         if self.dhat is not None:
-            self.dhat = _positive("dhat", self.dhat)
+            self.dhat = FEMContact._positive("dhat", self.dhat)
         if self.dmin is not None:
-            self.dmin = _positive("dmin", self.dmin, allow_zero=True)
-        self.kappa = _positive("kappa", self.kappa)
-        self.point_triangle_coordination_number = _positive(
+            self.dmin = FEMContact._positive("dmin", self.dmin, allow_zero=True)
+        self.kappa = FEMContact._positive("kappa", self.kappa)
+        self.point_triangle_coordination_number = FEMContact._positive(
             "point_triangle_coordination_number",
             self.point_triangle_coordination_number,
         )
-        self.edge_edge_coordination_number = _positive(
+        self.edge_edge_coordination_number = FEMContact._positive(
             "edge_edge_coordination_number",
             self.edge_edge_coordination_number,
         )
@@ -113,22 +103,24 @@ class FEMContact:
                 if value <= 0:
                     raise ValueError(f"{name} must be positive")
                 setattr(self, name, value)
-        self.friction_coefficient = _positive("friction_coefficient", self.friction_coefficient, allow_zero=True)
-        self.epsv = _positive("epsv", self.epsv)
-        self.friction_iterations = _integer("friction_iterations", self.friction_iterations)
+        self.friction_coefficient = FEMContact._positive(
+            "friction_coefficient", self.friction_coefficient, allow_zero=True
+        )
+        self.epsv = FEMContact._positive("epsv", self.epsv)
+        self.friction_iterations = FEMContact._integer("friction_iterations", self.friction_iterations)
         if self.friction_iterations != -1 and self.friction_iterations <= 0:
             raise ValueError("friction_iterations must be -1 or a positive integer")
-        self.friction_max_iterations = _integer("friction_max_iterations", self.friction_max_iterations)
+        self.friction_max_iterations = FEMContact._integer("friction_max_iterations", self.friction_max_iterations)
         if self.friction_max_iterations <= 0:
             raise ValueError("friction_max_iterations must be positive")
-        self.friction_tolerance = _positive("friction_tolerance", self.friction_tolerance, allow_zero=True)
-        self.ccd_safety = _positive("ccd_safety", self.ccd_safety)
+        self.friction_tolerance = FEMContact._positive("friction_tolerance", self.friction_tolerance, allow_zero=True)
+        self.ccd_safety = FEMContact._positive("ccd_safety", self.ccd_safety)
         if self.ccd_safety > 1.0:
             raise ValueError("ccd_safety must not exceed one")
         self.ccd_max_iterations = int(self.ccd_max_iterations)
         if self.ccd_max_iterations <= 0:
             raise ValueError("contact iteration counts must be positive")
-        self.planes = tuple(_normalize_plane(entry) for entry in (self.planes or ()))
+        self.planes = tuple(FEMContact._normalize_plane(entry) for entry in (self.planes or ()))
         if self.body_pair is not None:
             if len(self.body_pair) != 2:
                 raise ValueError("FEM contact body_pair must contain two IDs")
@@ -136,11 +128,11 @@ class FEMContact:
             if first < 0 or second < 0:
                 raise ValueError("FEM contact body IDs must be non-negative")
             self.body_pair = tuple(sorted((first, second)))
-        if self.model not in ("IPC",) and self.pair_contacts:
+        if self.model not in ("BarrierIPC",) and self.pair_contacts:
             raise ValueError("per-body contact parameters require FEM IPC contact")
 
     @classmethod
-    def create(cls, model="IPC", **kwargs):
+    def create(cls, model="BarrierIPC", **kwargs):
         if isinstance(model, cls):
             if kwargs:
                 raise TypeError("contact keyword arguments cannot accompany an FEMContact object")
@@ -148,7 +140,7 @@ class FEMContact:
         if isinstance(model, dict):
             parameters = dict(model)
             parameters.update(kwargs)
-            model = "IPC"
+            model = "BarrierIPC"
             for name in list(parameters):
                 key = str(name).replace("_", "").replace("-", "").replace(" ", "").lower()
                 if key in ("model", "type"):
@@ -188,7 +180,7 @@ class FEMContact:
 
     def add_property(self, body_id1, body_id2, property=None, **kwargs):
         """Add one IPC parameter set for an unordered FEM body pair."""
-        if self.model not in ("IPC",):
+        if self.model not in ("BarrierIPC",):
             raise ValueError("per-body contact parameters require FEM IPC contact")
         parameters = dict(property or {})
         parameters.update(kwargs)
@@ -244,7 +236,7 @@ class FEMContact:
         if self.planes:
             selected.append(
                 type(self).create(
-                    "IPC",
+                    "BarrierIPC",
                     broad_phase=self.broad_phase,
                     dhat=self.dhat,
                     dmin=self.dmin,
@@ -266,6 +258,3 @@ class FEMContact:
                 )
             )
         return tuple(selected)
-
-
-__all__ = ["FEMContact"]

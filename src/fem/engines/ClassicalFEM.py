@@ -2,7 +2,7 @@
 
 from src.fem.engines.ExplicitFEM import ExplicitFEM
 from src.fem.engines.ImplicitFEM import ImplicitFEM
-from src.fem.engines.SparseMatrix import normalize_assemble_type, normalize_linear_solver
+from src.fem.engines.FEMSparseMatrix import FEMSparseMatrix
 from src.fem.engines.ClassicalAssembler import ClassicalAssembler
 from src.fem.engines.HexahedronElastoPlasticAssembler import (
     HexahedronElastoPlasticAssembler,
@@ -10,7 +10,7 @@ from src.fem.engines.HexahedronElastoPlasticAssembler import (
 from src.utils.linalg import no_operation
 
 
-class _ClassicalAssemblyMixin:
+class ClassicalAssemblyMixin:
     def _create_classical_assembler(self, kwargs):
         self.backend = "taichi"
         if bool(getattr(self.material, "is_fem_elastoplastic", False)):
@@ -27,8 +27,10 @@ class _ClassicalAssemblyMixin:
             self.classical_assembler.advance_state(self.state.position, self.state.velocity, self.dt)
             self._bind_classical_assembly_functions()
             return
-        self.assemble_type = normalize_assemble_type(kwargs.get("assemble_type", kwargs.get("assembly", "Hash")))
-        self.linear_solver = normalize_linear_solver(kwargs.get("linear_solver", "PCG"))
+        self.assemble_type = FEMSparseMatrix.normalize_assemble_type(
+            kwargs.get("assemble_type", kwargs.get("assembly", "Hash"))
+        )
+        self.linear_solver = FEMSparseMatrix.normalize_linear_solver(kwargs.get("linear_solver", "PCG"))
         self.project_pd = bool(
             kwargs.get(
                 "project_pd",
@@ -140,7 +142,7 @@ class _ClassicalAssemblyMixin:
         self.classical_assembler.advance_state(self.state.position, self.state.velocity, self.dt)
 
 
-class ClassicalExplicitFEM(_ClassicalAssemblyMixin, ExplicitFEM):
+class ClassicalExplicitFEM(ClassicalAssemblyMixin, ExplicitFEM):
     def __init__(self, mesh, material, dirichlet=None, neumann=None, **kwargs):
         super().__init__(mesh, material, dirichlet, neumann, **kwargs)
         self._create_classical_assembler(kwargs)
@@ -148,7 +150,7 @@ class ClassicalExplicitFEM(_ClassicalAssemblyMixin, ExplicitFEM):
         self.bind_runtime_functions()
 
 
-class ClassicalImplicitFEM(_ClassicalAssemblyMixin, ImplicitFEM):
+class ClassicalImplicitFEM(ClassicalAssemblyMixin, ImplicitFEM):
     def __init__(self, mesh, material, dirichlet=None, neumann=None, **kwargs):
         super().__init__(mesh, material, dirichlet, neumann, **kwargs)
         self._create_classical_assembler(kwargs)

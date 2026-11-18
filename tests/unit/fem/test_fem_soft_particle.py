@@ -5,8 +5,8 @@ ti = pytest.importorskip("taichi")
 
 from src.fem.engines.FEMState import FEMState
 from src.fem import FEM
-from src.fem.generator import FEMMesh
-from src.fem.soft_particle import FEMSoftParticleContactModel
+from src.fem.generator.Mesh import FEMMesh
+from src.fem.soft_particle.ContactModel import FEMSoftParticleContactModel
 from src.fem.soft_particle.ContactKernel import _contact_force
 from src.fem.soft_particle.ContactManager import FEMSoftParticleContactManager
 from src.fem.soft_particle.ContactModel import FEMSoftParticleProperty

@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 import taichi as ti
 
-from src.physics_model.consititutive_model.infinitesimal_strain.SanisandMS import SanisandMSModel
+from src.physics_model.constitutive_model.infinitesimal_strain.SanisandMS import SanisandMSModel
 
 pytestmark = [pytest.mark.materials, pytest.mark.cpu]
 
@@ -18,19 +18,19 @@ class _HandoffProbe(SanisandMSModel):
         self.rk_strain = ti.Vector.field(6, ti.f64, shape=())
 
     @ti.func
-    def GetF(self, stress, alpha):
+    def get_f(self, stress, alpha):
         return ti.abs(stress[3]) - 1.0
 
     @ti.func
-    def GetElasticModuli(self, sigma, en, ElastFlag):
+    def get_elastic_moduli(self, sigma, en, elast_flag):
         return 1.0, 2.0
 
     @ti.func
-    def GetNormalToYield(self, stress, alpha):
+    def get_normal_to_yield(self, stress, alpha):
         return ti.Vector([0.0, 0.0, 0.0, 1.0, 0.0, 0.0])
 
     @ti.func
-    def RungeKutta4(self, stress, strain, void_ratio, alpha, alpha_m, mm_plus, mm_minus, alpha_in):
+    def runge_kutta4(self, stress, strain, void_ratio, alpha, alpha_m, mm_plus, mm_minus, alpha_in):
         self.rk_calls[None] += 1
         self.rk_stress[None] = stress
         self.rk_strain[None] = strain

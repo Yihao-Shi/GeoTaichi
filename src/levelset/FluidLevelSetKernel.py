@@ -1,6 +1,6 @@
 import taichi as ti
 
-from src.utils.constants import Threshold
+from src.utils.constants import THRESHOLD
 import src.utils.GlobalVariable as GlobalVariable
 
 
@@ -14,7 +14,7 @@ def min_grid_spacing(grid_size):
 
 @ti.func
 def grid_cell_volume(grid_size):
-    volume = 1.
+    volume = 1.0
     for d in ti.static(range(GlobalVariable.DIMENSION)):
         volume *= grid_size[d]
     return volume
@@ -22,11 +22,11 @@ def grid_cell_volume(grid_size):
 
 @ti.func
 def equivalent_particle_radius(volume):
-    radius = 0.
+    radius = 0.0
     if ti.static(GlobalVariable.DIMENSION == 2):
-        radius = 0.5 * ti.sqrt(2. * ti.max(volume, 0.))
+        radius = 0.5 * ti.sqrt(2.0 * ti.max(volume, 0.0))
     elif ti.static(GlobalVariable.DIMENSION == 3):
-        radius = 0.5 * ti.sqrt(3.) * ti.pow(ti.max(volume, 0.), 1. / 3.)
+        radius = 0.5 * ti.sqrt(3.0) * ti.pow(ti.max(volume, 0.0), 1.0 / 3.0)
     return radius
 
 
@@ -34,14 +34,14 @@ def equivalent_particle_radius(volume):
 def free_surface_theta_from_phi_with_default(phi_f, phi_a, default_theta: float):
     theta = default_theta
     denom = phi_f - phi_a
-    if phi_f < 0. and phi_a > 0. and ti.abs(denom) > Threshold:
+    if phi_f < 0.0 and phi_a > 0.0 and ti.abs(denom) > THRESHOLD:
         theta = phi_f / denom
-    return ti.min(1., ti.max(0.01, theta))
+    return ti.min(1.0, ti.max(0.01, theta))
 
 
 @ti.func
 def free_surface_theta_from_phi(phi_f, phi_a):
-    return free_surface_theta_from_phi_with_default(phi_f, phi_a, 1.)
+    return free_surface_theta_from_phi_with_default(phi_f, phi_a, 1.0)
 
 
 @ti.func
@@ -56,9 +56,9 @@ def free_surface_theta(fluid_cell, air_cell, fluid_sdf: ti.template()):
 
 @ti.func
 def smoothed_heaviside(phi, eps):
-    value = 0.
+    value = 0.0
     if phi <= -eps:
-        value = 1.
+        value = 1.0
     elif phi < eps:
         ratio = phi / eps
         value = 0.5 - 0.75 * ratio + 0.25 * ratio * ratio * ratio
@@ -74,15 +74,21 @@ def clamp_cell_index(index, ghost_cell: int, cnum: ti.types.vector(GlobalVariabl
 
 
 @ti.func
-def sample_cell_centered_sdf(position, ghost_cell: int, cnum: ti.types.vector(GlobalVariable.DIMENSION, int), grid_size: ti.types.vector(GlobalVariable.DIMENSION, float), sdf: ti.template()):
+def sample_cell_centered_sdf(
+    position,
+    ghost_cell: int,
+    cnum: ti.types.vector(GlobalVariable.DIMENSION, int),
+    grid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
+    sdf: ti.template(),
+):
     base = ti.floor(position / grid_size - 0.5).cast(int)
     local = position / grid_size - base.cast(float) - 0.5
-    phi = 0.
+    phi = 0.0
     if ti.static(GlobalVariable.DIMENSION == 2):
         for i, j in ti.static(ti.ndrange(2, 2)):
             node = clamp_cell_index(base + ti.Vector([i, j]), ghost_cell, cnum)
-            wx = 1. - local[0]
-            wy = 1. - local[1]
+            wx = 1.0 - local[0]
+            wy = 1.0 - local[1]
             if ti.static(i == 1):
                 wx = local[0]
             if ti.static(j == 1):
@@ -91,9 +97,9 @@ def sample_cell_centered_sdf(position, ghost_cell: int, cnum: ti.types.vector(Gl
     elif ti.static(GlobalVariable.DIMENSION == 3):
         for i, j, k in ti.static(ti.ndrange(2, 2, 2)):
             node = clamp_cell_index(base + ti.Vector([i, j, k]), ghost_cell, cnum)
-            wx = 1. - local[0]
-            wy = 1. - local[1]
-            wz = 1. - local[2]
+            wx = 1.0 - local[0]
+            wy = 1.0 - local[1]
+            wz = 1.0 - local[2]
             if ti.static(i == 1):
                 wx = local[0]
             if ti.static(j == 1):
@@ -105,23 +111,41 @@ def sample_cell_centered_sdf(position, ghost_cell: int, cnum: ti.types.vector(Gl
 
 
 @ti.func
-def sdf_normal(index, ghost_cell: int, cnum: ti.types.vector(GlobalVariable.DIMENSION, int), grid_size: ti.types.vector(GlobalVariable.DIMENSION, float), sdf: ti.template()):
+def sdf_normal(
+    index,
+    ghost_cell: int,
+    cnum: ti.types.vector(GlobalVariable.DIMENSION, int),
+    grid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
+    sdf: ti.template(),
+):
     grad = ti.Vector.zero(float, GlobalVariable.DIMENSION)
     for d in ti.static(range(GlobalVariable.DIMENSION)):
         direction = ti.Vector.unit(GlobalVariable.DIMENSION, d)
-        grad[d] = 0.5 * (sdf[clamp_cell_index(index + direction, ghost_cell, cnum)] -
-                         sdf[clamp_cell_index(index - direction, ghost_cell, cnum)]) / grid_size[d]
+        grad[d] = (
+            0.5
+            * (
+                sdf[clamp_cell_index(index + direction, ghost_cell, cnum)]
+                - sdf[clamp_cell_index(index - direction, ghost_cell, cnum)]
+            )
+            / grid_size[d]
+        )
 
     normal = ti.Vector.zero(float, GlobalVariable.DIMENSION)
     norm = grad.norm()
-    if norm > Threshold:
+    if norm > THRESHOLD:
         normal = grad / norm
     return normal
 
 
 @ti.func
-def surface_curvature(index, ghost_cell: int, cnum: ti.types.vector(GlobalVariable.DIMENSION, int), grid_size: ti.types.vector(GlobalVariable.DIMENSION, float), sdf: ti.template()):
-    curvature = 0.
+def surface_curvature(
+    index,
+    ghost_cell: int,
+    cnum: ti.types.vector(GlobalVariable.DIMENSION, int),
+    grid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
+    sdf: ti.template(),
+):
+    curvature = 0.0
     for d in ti.static(range(GlobalVariable.DIMENSION)):
         direction = ti.Vector.unit(GlobalVariable.DIMENSION, d)
         normal_r = sdf_normal(index + direction, ghost_cell, cnum, grid_size, sdf)

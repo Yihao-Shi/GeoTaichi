@@ -8,24 +8,29 @@ import pytest
 
 
 def test_closed_domain_pressure_output_uses_zero_mean_gauge():
-    from src.mpm.Recorder import _normalize_closed_domain_pressure
+    from src.mpm.Recorder import WriteFile as _WriteFile__normalize_closed_domain_pressure_owner
 
     pressure = np.array([100.0, 200.0, 300.0])
     cell_type = np.array([1, 2, 1])
 
-    normalized = _normalize_closed_domain_pressure(pressure, cell_type)
+    normalized = _WriteFile__normalize_closed_domain_pressure_owner._normalize_closed_domain_pressure(
+        pressure, cell_type
+    )
 
     np.testing.assert_allclose(normalized, [-100.0, 200.0, 100.0])
     np.testing.assert_allclose(pressure, [100.0, 200.0, 300.0])
 
 
 def test_free_surface_pressure_output_keeps_atmospheric_gauge():
-    from src.mpm.Recorder import _normalize_closed_domain_pressure
+    from src.mpm.Recorder import WriteFile as _WriteFile__normalize_closed_domain_pressure_owner
 
     pressure = np.array([100.0, 0.0, 300.0])
     cell_type = np.array([1, 0, 1])
 
-    np.testing.assert_array_equal(_normalize_closed_domain_pressure(pressure, cell_type), pressure)
+    np.testing.assert_array_equal(
+        _WriteFile__normalize_closed_domain_pressure_owner._normalize_closed_domain_pressure(pressure, cell_type),
+        pressure,
+    )
 
 
 def test_particle_boundary_is_reapplied_only_when_shifting_runs():

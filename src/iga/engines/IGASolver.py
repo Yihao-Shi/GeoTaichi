@@ -6,17 +6,13 @@ from src.iga.generator.Primitives import Primitives
 from src.iga.elements.ContactSurface import ContactSurface
 from src.iga.elements.Patch import Patch
 from src.iga.elements.Element import Element
-from src.physics_model.consititutive_model.finite_strain.NeoHookean import NeoHookeanModel
+from src.physics_model.constitutive_model.finite_strain.NeoHookean import NeoHookeanModel
 from src.utils.SolverConsole import print_save_file_info
 from src.utils.SolverRuntime import StepSchedule
 from src.utils.TimeTicker import Timer
 from src.iga.boundaries.BoundaryCondition import DirichletBoundary, NeumannBoundary
-from src.iga.engines.EngineUtils import (
-    jacobian2parent2parametric1d,
-    jacobian2parent2parametric2d,
-    linearize,
-    vectorize_id,
-)
+from src.utils.ShapeFunctions import jacobian2parent2parametric1d, jacobian2parent2parametric2d
+from src.utils.ScalarFunction import linearize, vectorize_id
 
 
 @ti.data_oriented
@@ -129,7 +125,7 @@ class IGASolver:
         self,
         N,
         dNdnat,
-        dnatdX,
+        dnatd_x,
         rest_ctrl_coords,
         current_ctrl_coords,
     ):
@@ -137,7 +133,7 @@ class IGASolver:
         if ti.static(self.is_axisymmetric):
             reference_radius = self.element.interpolate_component(N, rest_ctrl_coords, 0) - ti.static(self.axis_offset)
             self.require_positive_reference_radius(reference_radius)
-            shape_gradients = self.element.compute_shape_gradients(dNdnat, dnatdX)
+            shape_gradients = self.element.compute_shape_gradients(dNdnat, dnatd_x)
             deformation_gradient = self.element.compute_axisymmetric_deformation_gradient(
                 N,
                 shape_gradients,
@@ -146,7 +142,7 @@ class IGASolver:
                 ti.static(self.axis_offset),
             )
         else:
-            deformation_gradient = self.element.compute_deformation_gradient(dNdnat, dnatdX, current_ctrl_coords)
+            deformation_gradient = self.element.compute_deformation_gradient(dNdnat, dnatd_x, current_ctrl_coords)
         return deformation_gradient
 
     @ti.kernel
@@ -171,10 +167,10 @@ class IGASolver:
 
             rest_ctrl_coords = ti.Matrix.zero(ti.f64, self.element.total_knot_range, config.DIM)
             current_ctrl_coords = ti.Matrix.zero(ti.f64, self.element.total_knot_range, config.DIM)
-            for nodeID in ti.grouped(ti.ndrange(*self.element.knot_range)):
-                global_nodeID = nodeID + eleid
-                local_offset = linearize(nodeID, self.element.knot_range)
-                global_offset = linearize(global_nodeID, num_ctrlpts)
+            for node_id in ti.grouped(ti.ndrange(*self.element.knot_range)):
+                global_node_id = node_id + eleid
+                local_offset = linearize(node_id, self.element.knot_range)
+                global_offset = linearize(global_node_id, num_ctrlpts)
                 for j in ti.static(range(config.DIM)):
                     rest_ctrl_coords[local_offset, j] = self.patch.rest_control_points[
                         prefix_num_ctrlpts + global_offset
@@ -189,11 +185,11 @@ class IGASolver:
                 )
                 jacobian = self.calculate_jacobian(dNdnat, rest_ctrl_coords)
                 self.require_positive_reference_jacobian(jacobian)
-                dnatdX = jacobian.inverse()
+                dnatd_x = jacobian.inverse()
                 deformation_gradient[ele, gauss_id] = self._deformation_gradient(
                     N,
                     dNdnat,
-                    dnatdX,
+                    dnatd_x,
                     rest_ctrl_coords,
                     current_ctrl_coords,
                 )
@@ -278,10 +274,10 @@ class IGASolver:
                 j2 *= jacobian2parent2parametric1d(elrange_w)
 
             rest_ctrl_coords = ti.Matrix.zero(ti.f64, self.element.total_knot_range, config.DIM)
-            for nodeID in ti.grouped(ti.ndrange(*self.element.knot_range)):
-                global_nodeID = nodeID + eleid
-                local_offset = linearize(nodeID, self.element.knot_range)
-                global_offset = linearize(global_nodeID, num_ctrlpts)
+            for node_id in ti.grouped(ti.ndrange(*self.element.knot_range)):
+                global_node_id = node_id + eleid
+                local_offset = linearize(node_id, self.element.knot_range)
+                global_offset = linearize(global_node_id, num_ctrlpts)
                 for j in ti.static(range(config.DIM)):
                     rest_ctrl_coords[local_offset, j] = self.patch.rest_control_points[
                         prefix_num_ctrlpts + global_offset
@@ -299,12 +295,12 @@ class IGASolver:
                         self.axis_offset
                     )
                     reference_radius = self.require_positive_reference_radius(reference_radius)
-                    volume *= 2.0 * ti.math.pi * reference_radius
+                    volume *= reference_radius
 
-                for nodeID in ti.grouped(ti.ndrange(*self.element.knot_range)):
-                    global_nodeID = nodeID + eleid
-                    local_offset = linearize(nodeID, self.element.knot_range)
-                    global_offset = linearize(global_nodeID, num_ctrlpts)
+                for node_id in ti.grouped(ti.ndrange(*self.element.knot_range)):
+                    global_node_id = node_id + eleid
+                    local_offset = linearize(node_id, self.element.knot_range)
+                    global_offset = linearize(global_node_id, num_ctrlpts)
                     self.patch.volume[prefix_num_ctrlpts + global_offset] += N[local_offset] * volume
 
     @ti.kernel
@@ -330,10 +326,10 @@ class IGASolver:
 
             rest_ctrl_coords = ti.Matrix.zero(ti.f64, self.element.total_knot_range, config.DIM)
             current_ctrl_coords = ti.Matrix.zero(ti.f64, self.element.total_knot_range, config.DIM)
-            for nodeID in ti.grouped(ti.ndrange(*self.element.knot_range)):
-                global_nodeID = nodeID + eleid
-                offset = linearize(nodeID, self.element.knot_range)
-                global_offset = linearize(global_nodeID, num_ctrlpts)
+            for node_id in ti.grouped(ti.ndrange(*self.element.knot_range)):
+                global_node_id = node_id + eleid
+                offset = linearize(node_id, self.element.knot_range)
+                global_offset = linearize(global_node_id, num_ctrlpts)
                 for j in ti.static(range(config.DIM)):
                     rest_ctrl_coords[offset, j] = self.patch.rest_control_points[
                         prefix_total_num_ctrlpts + global_offset
@@ -355,27 +351,27 @@ class IGASolver:
                 )
                 jacobian = self.calculate_jacobian(dNdnat, rest_ctrl_coords)
                 j1 = self.require_positive_reference_jacobian(jacobian)
-                dnatdX = jacobian.inverse()
+                dnatd_x = jacobian.inverse()
                 deformation_gradient = self._deformation_gradient(
                     N,
                     dNdnat,
-                    dnatdX,
+                    dnatd_x,
                     rest_ctrl_coords,
                     current_ctrl_coords,
                 )
-                stress = self.material.VonMises(deformation_gradient)
+                stress = self.material.von_mises(deformation_gradient)
                 volume = j1 * j2 * self.element.gauss_weights[gauss_id]
                 if ti.static(self.is_axisymmetric):
                     reference_radius = self.element.interpolate_component(N, rest_ctrl_coords, 0) - ti.static(
                         self.axis_offset
                     )
                     reference_radius = self.require_positive_reference_radius(reference_radius)
-                    volume *= 2.0 * ti.math.pi * reference_radius
+                    volume *= reference_radius
 
-                for nodeID in ti.grouped(ti.ndrange(*self.element.knot_range)):
-                    global_nodeID = nodeID + eleid
-                    local_offset = linearize(nodeID, self.element.knot_range)
-                    global_offset = linearize(global_nodeID, num_ctrlpts)
+                for node_id in ti.grouped(ti.ndrange(*self.element.knot_range)):
+                    global_node_id = node_id + eleid
+                    local_offset = linearize(node_id, self.element.knot_range)
+                    global_offset = linearize(global_node_id, num_ctrlpts)
                     self.patch.stress[prefix_total_num_ctrlpts + global_offset] += N[local_offset] * stress * volume
 
     @ti.kernel

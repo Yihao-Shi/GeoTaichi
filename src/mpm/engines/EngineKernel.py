@@ -1,14 +1,15 @@
+from src.mpm.sparse_grid.Utilities import compact_node_grid_coord
 import taichi as ti
 
-from src.physics_model.consititutive_model.MaterialKernel import get_angular_velocity
+from src.physics_model.constitutive_model.MaterialKernel import get_angular_velocity
 from src.utils.constants import (
-    Threshold,
-    ZEROMAT4x4,
-    ZEROMAT6x3,
-    ZEROVEC2f,
-    ZEROVEC3f,
-    ZEROMAT2x2,
-    ZEROMAT3x3,
+    THRESHOLD,
+    ZEROMAT4X4,
+    ZEROMAT6X3,
+    ZEROVEC2F,
+    ZEROVEC3F,
+    ZEROMAT2X2,
+    ZEROMAT3X3,
     DELTA2D,
     DELTA,
     EYE,
@@ -16,19 +17,19 @@ from src.utils.constants import (
 from src.utils.MatrixFunction import affine_velocity_matrix, truncation, trace
 from src.utils.ScalarFunction import vectorize_id, linearize, sgn
 from src.utils.ShapeFunctions import (
-    ShapeLinear,
-    GShapeLinear,
-    ShapeLinearCenter,
-    ShapeGIMP,
-    GShapeGIMP,
-    ShapeGIMPCenter,
-    ShapeBsplineQ,
-    GShapeBsplineQ,
-    ShapeBsplineC,
-    GShapeBsplineC,
+    shape_linear,
+    g_shape_linear,
+    shape_linear_center,
+    shape_gimp,
+    g_shape_gimp,
+    shape_gimp_center,
+    shape_bspline_q,
+    g_shape_bspline_q,
+    shape_bspline_c,
+    g_shape_bspline_c,
 )
-from src.utils.Quaternion import SetDQ, SetToRotate
-from src.utils.TypeDefination import (
+from src.utils.Quaternion import set_dq, set_to_rotate
+from src.utils.TypeDefinition import (
     real,
     vec2f,
     vec3f,
@@ -44,8 +45,7 @@ from src.utils.TypeDefination import (
     vec4i,
     vec8i,
 )
-from src.utils.VectorFunction import Normalize, outer_product, MeanValue, Squared, outer_product2D, dot2
-from src.mpm.sparse_grid.BlockSparseGrid import compact_node_grid_coord
+from src.utils.VectorFunction import normalize, outer_product, mean_value, squared, outer_product2d, dot2
 from src.levelset.FluidLevelSetKernel import (
     min_grid_spacing,
     grid_cell_volume,
@@ -87,7 +87,7 @@ def gradshape_scalar_mapping(bmatrix, scalar):
 
 
 @ti.func
-def MeanStress(stress):
+def mean_stress(stress):
     return (stress[0] + stress[1] + stress[2]) / 3.0
 
 
@@ -95,7 +95,7 @@ def MeanStress(stress):
 def bbar_velocity_gradient_2d(grid_velocity, dshape_fn, dshape_fnc):
     temp_dshape = 0.5 * (dshape_fnc - dshape_fn)
     average_bmatrix = temp_dshape.dot(grid_velocity)
-    velocity_gradient = outer_product2D(grid_velocity, dshape_fn)
+    velocity_gradient = outer_product2d(grid_velocity, dshape_fn)
     velocity_gradient[0, 0] += average_bmatrix
     velocity_gradient[1, 1] += average_bmatrix
     return velocity_gradient
@@ -155,32 +155,32 @@ def gauss_cell_reset(cell: ti.template(), sub_cell: ti.template()):
 
 
 @ti.kernel
-def contact_force_reset(particleNum: int, particle: ti.template()):
-    for np in range(particleNum):
+def contact_force_reset(particle_num: int, particle: ti.template()):
+    for np in range(particle_num):
         particle[np]._reset_contact_force()
 
 
 @ti.kernel
-def particle_mass_density_reset(particleNum: int, particle: ti.template()):
-    for np in range(particleNum):
+def particle_mass_density_reset(particle_num: int, particle: ti.template()):
+    for np in range(particle_num):
         particle[np]._reset_mass_density()
 
 
 @ti.func
-def contact_normal(ng, bodyID1, bodyID2, node):
-    norm1, norm2 = node[ng, bodyID1].gradm, node[ng, bodyID2].gradm
+def contact_normal(ng, body_id1, body_id2, node):
+    norm1, norm2 = node[ng, body_id1].gradm, node[ng, body_id2].gradm
     temp_norm = norm1 - norm2
-    norm = Normalize(temp_norm)
+    norm = normalize(temp_norm)
     return norm
 
 
 @ti.kernel
 def sdf_constraint(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
     sdf: ti.template(),
@@ -191,7 +191,7 @@ def sdf_constraint(
 # ======================================== Explicit MPM ======================================== #
 @ti.kernel
 def lightweight_p2g(
-    particleNum: int,
+    particle_num: int,
     gnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     grid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
     igrid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
@@ -206,14 +206,14 @@ def lightweight_p2g(
         ti.block_local(node.momentum.get_scalar_field(d))
     for d in ti.static(range(GlobalVariable.DIMENSION)):
         ti.block_local(node.force.get_scalar_field(d))
-    for np in range(particleNum):
-        bodyID = int(particle[np].bodyID)
+    for np in range(particle_num):
+        body_id = int(particle[np].bodyID)
         position = particle[np].x
         velocity = particle[np].v
         p_mass = particle[np].m
         velocity_gradient = particle[np].velocity_gradient
         previous_stress, volume = particle[np].stress, particle[np].vol
-        psize = particle_lengths[bodyID]
+        psize = particle_lengths[body_id]
 
         internal_force = -volume * previous_stress
         external_force = particle[np]._compute_external_force(gravity)
@@ -221,7 +221,7 @@ def lightweight_p2g(
             base = ti.floor((position - psize) * igrid_size).cast(int)
             grid_id = base + offset
             if all(grid_id >= 0) and all(grid_id < gnum):
-                nodeID = linearize(grid_id, gnum)
+                node_id = linearize(grid_id, gnum)
                 grid_pos = grid_id * grid_size
                 shape_fn, dshape_fn = ti.Vector.zero(float, GlobalVariable.DIMENSION), ti.Vector.zero(
                     float, GlobalVariable.DIMENSION
@@ -229,28 +229,28 @@ def lightweight_p2g(
                 shape_fnc = ti.Vector.zero(float, GlobalVariable.DIMENSION)
                 if ti.static(GlobalVariable.SHAPEFUNCTION == 0):
                     for d in ti.static(range(GlobalVariable.DIMENSION)):
-                        shape_fn[d] = ShapeLinear(position[d], grid_pos[d], igrid_size[d], 0)
-                        dshape_fn[d] = GShapeLinear(position[d], grid_pos[d], igrid_size[d], 0)
+                        shape_fn[d] = shape_linear(position[d], grid_pos[d], igrid_size[d], 0)
+                        dshape_fn[d] = g_shape_linear(position[d], grid_pos[d], igrid_size[d], 0)
                         if ti.static(GlobalVariable.BBAR):
-                            shape_fnc[d] = ShapeLinearCenter(position[d], grid_pos[d], igrid_size[d], 0)
+                            shape_fnc[d] = shape_linear_center(position[d], grid_pos[d], igrid_size[d], 0)
                 elif ti.static(GlobalVariable.SHAPEFUNCTION == 1):
                     for d in ti.static(range(GlobalVariable.DIMENSION)):
-                        shape_fn[d] = ShapeGIMP(position[d], grid_pos[d], igrid_size[d], psize[d])
-                        dshape_fn[d] = GShapeGIMP(position[d], grid_pos[d], igrid_size[d], psize[d])
+                        shape_fn[d] = shape_gimp(position[d], grid_pos[d], igrid_size[d], psize[d])
+                        dshape_fn[d] = g_shape_gimp(position[d], grid_pos[d], igrid_size[d], psize[d])
                         if ti.static(GlobalVariable.BBAR):
-                            shape_fnc[d] = ShapeGIMPCenter(position[d], grid_pos[d], igrid_size[d], psize[d])
+                            shape_fnc[d] = shape_gimp_center(position[d], grid_pos[d], igrid_size[d], psize[d])
                 elif ti.static(GlobalVariable.SHAPEFUNCTION == 2):
-                    boundary_type = boundary_types[nodeID, bodyID]
+                    boundary_type = boundary_types[node_id, body_id]
                     for d in ti.static(range(GlobalVariable.DIMENSION)):
                         btypes = int(boundary_type[d])
-                        shape_fn[d] = ShapeBsplineQ(position[d], grid_pos[d], igrid_size[d], btypes)
-                        dshape_fn[d] = GShapeBsplineQ(position[d], grid_pos[d], igrid_size[d], btypes)
+                        shape_fn[d] = shape_bspline_q(position[d], grid_pos[d], igrid_size[d], btypes)
+                        dshape_fn[d] = g_shape_bspline_q(position[d], grid_pos[d], igrid_size[d], btypes)
                 elif ti.static(GlobalVariable.SHAPEFUNCTION == 3):
-                    boundary_type = boundary_types[nodeID, bodyID]
+                    boundary_type = boundary_types[node_id, body_id]
                     for d in ti.static(range(GlobalVariable.DIMENSION)):
                         btypes = int(boundary_type[d])
-                        shape_fn[d] = ShapeBsplineC(position[d], grid_pos[d], igrid_size[d], btypes)
-                        dshape_fn[d] = GShapeBsplineC(position[d], grid_pos[d], igrid_size[d], btypes)
+                        shape_fn[d] = shape_bspline_c(position[d], grid_pos[d], igrid_size[d], btypes)
+                        dshape_fn[d] = g_shape_bspline_c(position[d], grid_pos[d], igrid_size[d], btypes)
 
                 dpos = grid_pos - position
                 weight = 1.0
@@ -336,14 +336,14 @@ def lightweight_p2g(
                 momentum = nmass * velocity
                 if ti.static(GlobalVariable.Affine or GlobalVariable.Taylor):
                     momentum += nmass * velocity_gradient @ dpos
-                node[nodeID, bodyID].m += nmass
-                node[nodeID, bodyID].momentum += momentum
-                node[nodeID, bodyID].force += pforce
+                node[node_id, body_id].m += nmass
+                node[node_id, body_id].momentum += momentum
+                node[node_id, body_id].force += pforce
 
 
 @ti.kernel
 def lightweight_g2p(
-    particleNum: int,
+    particle_num: int,
     alpha: float,
     cutoff: float,
     fraction: float,
@@ -355,22 +355,22 @@ def lightweight_g2p(
     boundary_types: ti.template(),
     node: ti.template(),
     particle: ti.template(),
-    matProps: ti.template(),
-    stateVars: ti.template(),
+    mat_props: ti.template(),
+    state_variables: ti.template(),
 ):
     for d in ti.static(range(GlobalVariable.DIMENSION)):
         ti.block_local(node.momentum.get_scalar_field(d))
     for d in ti.static(range(GlobalVariable.DIMENSION)):
         ti.block_local(node.force.get_scalar_field(d))
-    for np in range(particleNum):
+    for np in range(particle_num):
         # np = particleID[pid]
-        bodyID = int(particle[np].bodyID)
-        materialID = int(particle[np].materialID)
+        body_id = int(particle[np].bodyID)
+        material_id = int(particle[np].materialID)
         position = particle[np].x
-        vFLIP = particle[np].v
-        psize = particle_lengths[bodyID]
+        v_flip = particle[np].v
+        psize = particle_lengths[body_id]
 
-        vPIC = ti.Vector.zero(float, GlobalVariable.DIMENSION)
+        v_pic = ti.Vector.zero(float, GlobalVariable.DIMENSION)
         Wp = ti.Matrix.zero(float, GlobalVariable.DIMENSION, GlobalVariable.DIMENSION)
         velocity_gradient = ti.Matrix.zero(float, GlobalVariable.DIMENSION, GlobalVariable.DIMENSION)
         velocity_gradient_bar = ti.Matrix.zero(float, GlobalVariable.DIMENSION, GlobalVariable.DIMENSION)
@@ -378,7 +378,7 @@ def lightweight_g2p(
             base = ti.floor((position - psize) * igrid_size).cast(int)
             grid_id = base + offset
             if all(grid_id >= 0) and all(grid_id < gnum):
-                nodeID = linearize(grid_id, gnum)
+                node_id = linearize(grid_id, gnum)
                 grid_pos = grid_id * grid_size
                 shape_fn, dshape_fn = ti.Vector.zero(float, GlobalVariable.DIMENSION), ti.Vector.zero(
                     float, GlobalVariable.DIMENSION
@@ -386,46 +386,46 @@ def lightweight_g2p(
                 shape_fnc = ti.Vector.zero(float, GlobalVariable.DIMENSION)
                 if ti.static(GlobalVariable.SHAPEFUNCTION == 0):
                     for d in ti.static(range(GlobalVariable.DIMENSION)):
-                        shape_fn[d] = ShapeLinear(position[d], grid_pos[d], igrid_size[d], 0)
+                        shape_fn[d] = shape_linear(position[d], grid_pos[d], igrid_size[d], 0)
                         if ti.static(not GlobalVariable.Affine or GlobalVariable.BBAR):
-                            dshape_fn[d] = GShapeLinear(position[d], grid_pos[d], igrid_size[d], 0)
+                            dshape_fn[d] = g_shape_linear(position[d], grid_pos[d], igrid_size[d], 0)
                         if ti.static(GlobalVariable.BBAR):
-                            shape_fnc[d] = ShapeLinearCenter(position[d], grid_pos[d], igrid_size[d], 0)
+                            shape_fnc[d] = shape_linear_center(position[d], grid_pos[d], igrid_size[d], 0)
                 elif ti.static(GlobalVariable.SHAPEFUNCTION == 1):
                     for d in ti.static(range(GlobalVariable.DIMENSION)):
-                        shape_fn[d] = ShapeGIMP(position[d], grid_pos[d], igrid_size[d], psize[d])
+                        shape_fn[d] = shape_gimp(position[d], grid_pos[d], igrid_size[d], psize[d])
                         if ti.static(not GlobalVariable.Affine or GlobalVariable.BBAR):
-                            dshape_fn[d] = GShapeGIMP(position[d], grid_pos[d], igrid_size[d], psize[d])
+                            dshape_fn[d] = g_shape_gimp(position[d], grid_pos[d], igrid_size[d], psize[d])
                         if ti.static(GlobalVariable.BBAR):
-                            shape_fnc[d] = ShapeGIMPCenter(position[d], grid_pos[d], igrid_size[d], psize[d])
+                            shape_fnc[d] = shape_gimp_center(position[d], grid_pos[d], igrid_size[d], psize[d])
                 elif ti.static(GlobalVariable.SHAPEFUNCTION == 2):
-                    boundary_type = boundary_types[nodeID, bodyID]
+                    boundary_type = boundary_types[node_id, body_id]
                     for d in ti.static(range(GlobalVariable.DIMENSION)):
                         btypes = int(boundary_type[d])
-                        shape_fn[d] = ShapeBsplineQ(position[d], grid_pos[d], igrid_size[d], btypes)
+                        shape_fn[d] = shape_bspline_q(position[d], grid_pos[d], igrid_size[d], btypes)
                         if ti.static(not GlobalVariable.Affine or GlobalVariable.BBAR):
-                            dshape_fn[d] = GShapeBsplineQ(position[d], grid_pos[d], igrid_size[d], btypes)
+                            dshape_fn[d] = g_shape_bspline_q(position[d], grid_pos[d], igrid_size[d], btypes)
                 elif ti.static(GlobalVariable.SHAPEFUNCTION == 3):
-                    boundary_type = boundary_types[nodeID, bodyID]
+                    boundary_type = boundary_types[node_id, body_id]
                     for d in ti.static(range(GlobalVariable.DIMENSION)):
                         btypes = int(boundary_type[d])
-                        shape_fn[d] = ShapeBsplineC(position[d], grid_pos[d], igrid_size[d], btypes)
+                        shape_fn[d] = shape_bspline_c(position[d], grid_pos[d], igrid_size[d], btypes)
                         if ti.static(not GlobalVariable.Affine or GlobalVariable.BBAR):
-                            dshape_fn[d] = GShapeBsplineC(position[d], grid_pos[d], igrid_size[d], btypes)
+                            dshape_fn[d] = g_shape_bspline_c(position[d], grid_pos[d], igrid_size[d], btypes)
 
-                velocity = node[nodeID, bodyID].momentum
-                acceleration = node[nodeID, bodyID].force
+                velocity = node[node_id, body_id].momentum
+                acceleration = node[node_id, body_id].force
                 weight = 1.0
                 for d in ti.static(range(GlobalVariable.DIMENSION)):
                     weight *= shape_fn[d]
-                vPIC += weight * velocity
-                vFLIP += weight * acceleration * dt[None]
+                v_pic += weight * velocity
+                v_flip += weight * acceleration * dt[None]
 
                 if ti.static(GlobalVariable.Affine):
                     dpos = grid_pos - position
                     if ti.static(GlobalVariable.DIMENSION == 2):
-                        Wp += weight * outer_product2D(dpos, dpos)
-                        velocity_gradient += weight * outer_product2D(velocity, dpos)
+                        Wp += weight * outer_product2d(dpos, dpos)
+                        velocity_gradient += weight * outer_product2d(velocity, dpos)
                     elif ti.static(GlobalVariable.DIMENSION == 3):
                         Wp += weight * outer_product(dpos, dpos)
                         velocity_gradient += weight * outer_product(velocity, dpos)
@@ -443,7 +443,7 @@ def lightweight_g2p(
                 else:
                     if ti.static(GlobalVariable.DIMENSION == 2):
                         weight_grad = ti.Vector([dshape_fn[0] * shape_fn[1], shape_fn[0] * dshape_fn[1]])
-                        velocity_gradient_increment = outer_product2D(velocity, weight_grad)
+                        velocity_gradient_increment = outer_product2d(velocity, weight_grad)
                         velocity_gradient += velocity_gradient_increment
                         if ti.static(GlobalVariable.BBAR):
                             weight_gradc = vec2f([dshape_fn[0] * shape_fnc[1], shape_fnc[0] * dshape_fn[1]])
@@ -492,31 +492,35 @@ def lightweight_g2p(
         particle[np].velocity_gradient = velocity_gradient_bar
         if ti.static(GlobalVariable.Affine):
             particle[np].velocity_gradient = velocity_gradient
-        particle[np].v = alpha * vPIC + (1.0 - alpha) * vFLIP
+        particle[np].v = alpha * v_pic + (1.0 - alpha) * v_flip
         if ti.static(not (GlobalVariable.Affine and GlobalVariable.FBAR)):
-            particle[np].x += vPIC * dt[None]
+            particle[np].x += v_pic * dt[None]
 
         if ti.static(not GlobalVariable.FBAR):
             previous_stress, volume = particle[np].stress, particle[np].vol
             volume *= (ti.Matrix.identity(float, GlobalVariable.DIMENSION) + dt[None] * velocity_gradient).determinant()
             stress = ti.Vector.zero(float, 6)
-            for matID in ti.static(range(1, matProps.shape[0])):
-                if materialID == matID:
+            for mat_id in ti.static(range(1, mat_props.shape[0])):
+                if material_id == mat_id:
                     if ti.static(GlobalVariable.DIMENSION == 2):
-                        stress = matProps[1].ComputeStress2D(np, previous_stress, velocity_gradient_bar, stateVars, dt)
+                        stress = mat_props[1].compute_stress2d(
+                            np, previous_stress, velocity_gradient_bar, state_variables, dt
+                        )
                     elif ti.static(GlobalVariable.DIMENSION == 3):
-                        stress = matProps[1].ComputeStress(np, previous_stress, velocity_gradient_bar, stateVars, dt)
+                        stress = mat_props[1].compute_stress(
+                            np, previous_stress, velocity_gradient_bar, state_variables, dt
+                        )
             particle[np].stress = stress
             particle[np].vol = volume
 
     if ti.static(GlobalVariable.FBAR):
         node.jacobian.fill(0)
-        for np in range(particleNum):
-            bodyID = int(particle[np].bodyID)
+        for np in range(particle_num):
+            body_id = int(particle[np].bodyID)
             mass = particle[np].m
             position = particle[np].x
             velocity_gradient_bar = particle[np].velocity_gradient
-            psize = particle_lengths[bodyID]
+            psize = particle_lengths[body_id]
             djacobian = (
                 ti.Matrix.identity(float, GlobalVariable.DIMENSION) + dt[None] * velocity_gradient_bar
             ).determinant()
@@ -527,7 +531,7 @@ def lightweight_g2p(
                 base = ti.floor((position - psize) * igrid_size).cast(int)
                 grid_id = base + offset
                 if all(grid_id >= 0) and all(grid_id < gnum):
-                    nodeID = linearize(grid_id, gnum)
+                    node_id = linearize(grid_id, gnum)
                     grid_pos = grid_id * grid_size
                     shape_fn, dshape_fn = ti.Vector.zero(float, GlobalVariable.DIMENSION), ti.Vector.zero(
                         float, GlobalVariable.DIMENSION
@@ -535,49 +539,49 @@ def lightweight_g2p(
                     shape_fnc = ti.Vector.zero(float, GlobalVariable.DIMENSION)
                     if ti.static(GlobalVariable.SHAPEFUNCTION == 0):
                         for d in ti.static(range(GlobalVariable.DIMENSION)):
-                            shape_fn[d] = ShapeLinear(position[d], grid_pos[d], igrid_size[d], 0)
+                            shape_fn[d] = shape_linear(position[d], grid_pos[d], igrid_size[d], 0)
                             if ti.static(not GlobalVariable.Affine or GlobalVariable.BBAR):
-                                dshape_fn[d] = GShapeLinear(position[d], grid_pos[d], igrid_size[d], 0)
+                                dshape_fn[d] = g_shape_linear(position[d], grid_pos[d], igrid_size[d], 0)
                             if ti.static(GlobalVariable.BBAR):
-                                shape_fnc[d] = ShapeLinearCenter(position[d], grid_pos[d], igrid_size[d], 0)
+                                shape_fnc[d] = shape_linear_center(position[d], grid_pos[d], igrid_size[d], 0)
                     elif ti.static(GlobalVariable.SHAPEFUNCTION == 1):
                         for d in ti.static(range(GlobalVariable.DIMENSION)):
-                            shape_fn[d] = ShapeGIMP(position[d], grid_pos[d], igrid_size[d], psize[d])
+                            shape_fn[d] = shape_gimp(position[d], grid_pos[d], igrid_size[d], psize[d])
                             if ti.static(not GlobalVariable.Affine or GlobalVariable.BBAR):
-                                dshape_fn[d] = GShapeGIMP(position[d], grid_pos[d], igrid_size[d], psize[d])
+                                dshape_fn[d] = g_shape_gimp(position[d], grid_pos[d], igrid_size[d], psize[d])
                             if ti.static(GlobalVariable.BBAR):
-                                shape_fnc[d] = ShapeGIMPCenter(position[d], grid_pos[d], igrid_size[d], psize[d])
+                                shape_fnc[d] = shape_gimp_center(position[d], grid_pos[d], igrid_size[d], psize[d])
                     elif ti.static(GlobalVariable.SHAPEFUNCTION == 2):
-                        boundary_type = boundary_types[nodeID, bodyID]
+                        boundary_type = boundary_types[node_id, body_id]
                         for d in ti.static(range(GlobalVariable.DIMENSION)):
                             btypes = int(boundary_type[d])
-                            shape_fn[d] = ShapeBsplineQ(position[d], grid_pos[d], igrid_size[d], btypes)
+                            shape_fn[d] = shape_bspline_q(position[d], grid_pos[d], igrid_size[d], btypes)
                             if ti.static(not GlobalVariable.Affine or GlobalVariable.BBAR):
-                                dshape_fn[d] = GShapeBsplineQ(position[d], grid_pos[d], igrid_size[d], btypes)
+                                dshape_fn[d] = g_shape_bspline_q(position[d], grid_pos[d], igrid_size[d], btypes)
                     elif ti.static(GlobalVariable.SHAPEFUNCTION == 3):
-                        boundary_type = boundary_types[nodeID, bodyID]
+                        boundary_type = boundary_types[node_id, body_id]
                         for d in ti.static(range(GlobalVariable.DIMENSION)):
                             btypes = int(boundary_type[d])
-                            shape_fn[d] = ShapeBsplineC(position[d], grid_pos[d], igrid_size[d], btypes)
+                            shape_fn[d] = shape_bspline_c(position[d], grid_pos[d], igrid_size[d], btypes)
                             if ti.static(not GlobalVariable.Affine or GlobalVariable.BBAR):
-                                dshape_fn[d] = GShapeBsplineC(position[d], grid_pos[d], igrid_size[d], btypes)
+                                dshape_fn[d] = g_shape_bspline_c(position[d], grid_pos[d], igrid_size[d], btypes)
 
                     weight = 1.0
                     for d in ti.static(range(GlobalVariable.DIMENSION)):
                         weight *= shape_fn[d]
-                    node[nodeID, bodyID].jacobian += weight * transfer_var
+                    node[node_id, body_id].jacobian += weight * transfer_var
 
         for ng in range(node.shape[0]):
             for nb in range(node.shape[1]):
                 if node[ng, nb].m > cutoff:
                     node[ng, nb].jacobian /= node[ng, nb].m
 
-        for np in range(particleNum):
-            bodyID = int(particle[np].bodyID)
+        for np in range(particle_num):
+            body_id = int(particle[np].bodyID)
             mass = particle[np].m
             position = particle[np].x
             velocity_gradient_bar = particle[np].velocity_gradient
-            psize = particle_lengths[bodyID]
+            psize = particle_lengths[body_id]
             djacobian = (
                 ti.Matrix.identity(float, GlobalVariable.DIMENSION) + dt[None] * velocity_gradient_bar
             ).determinant()
@@ -589,7 +593,7 @@ def lightweight_g2p(
                 base = ti.floor((position - psize) * igrid_size).cast(int)
                 grid_id = base + offset
                 if all(grid_id >= 0) and all(grid_id < gnum):
-                    nodeID = linearize(grid_id, gnum)
+                    node_id = linearize(grid_id, gnum)
                     grid_pos = grid_id * grid_size
                     shape_fn, dshape_fn = ti.Vector.zero(float, GlobalVariable.DIMENSION), ti.Vector.zero(
                         float, GlobalVariable.DIMENSION
@@ -597,34 +601,34 @@ def lightweight_g2p(
                     shape_fnc = ti.Vector.zero(float, GlobalVariable.DIMENSION)
                     if ti.static(GlobalVariable.SHAPEFUNCTION == 0):
                         for d in ti.static(range(GlobalVariable.DIMENSION)):
-                            shape_fn[d] = ShapeLinear(position[d], grid_pos[d], igrid_size[d], 0)
+                            shape_fn[d] = shape_linear(position[d], grid_pos[d], igrid_size[d], 0)
                             if ti.static(not GlobalVariable.Affine or GlobalVariable.BBAR):
-                                dshape_fn[d] = GShapeLinear(position[d], grid_pos[d], igrid_size[d], 0)
+                                dshape_fn[d] = g_shape_linear(position[d], grid_pos[d], igrid_size[d], 0)
                             if ti.static(GlobalVariable.BBAR):
-                                shape_fnc[d] = ShapeLinearCenter(position[d], grid_pos[d], igrid_size[d], 0)
+                                shape_fnc[d] = shape_linear_center(position[d], grid_pos[d], igrid_size[d], 0)
                     elif ti.static(GlobalVariable.SHAPEFUNCTION == 1):
                         for d in ti.static(range(GlobalVariable.DIMENSION)):
-                            shape_fn[d] = ShapeGIMP(position[d], grid_pos[d], igrid_size[d], psize[d])
+                            shape_fn[d] = shape_gimp(position[d], grid_pos[d], igrid_size[d], psize[d])
                             if ti.static(not GlobalVariable.Affine or GlobalVariable.BBAR):
-                                dshape_fn[d] = GShapeGIMP(position[d], grid_pos[d], igrid_size[d], psize[d])
+                                dshape_fn[d] = g_shape_gimp(position[d], grid_pos[d], igrid_size[d], psize[d])
                             if ti.static(GlobalVariable.BBAR):
-                                shape_fnc[d] = ShapeGIMPCenter(position[d], grid_pos[d], igrid_size[d], psize[d])
+                                shape_fnc[d] = shape_gimp_center(position[d], grid_pos[d], igrid_size[d], psize[d])
                     elif ti.static(GlobalVariable.SHAPEFUNCTION == 2):
-                        boundary_type = boundary_types[nodeID, bodyID]
+                        boundary_type = boundary_types[node_id, body_id]
                         for d in ti.static(range(GlobalVariable.DIMENSION)):
                             btypes = int(boundary_type[d])
-                            shape_fn[d] = ShapeBsplineQ(position[d], grid_pos[d], igrid_size[d], btypes)
+                            shape_fn[d] = shape_bspline_q(position[d], grid_pos[d], igrid_size[d], btypes)
                             if ti.static(not GlobalVariable.Affine or GlobalVariable.BBAR):
-                                dshape_fn[d] = GShapeBsplineQ(position[d], grid_pos[d], igrid_size[d], btypes)
+                                dshape_fn[d] = g_shape_bspline_q(position[d], grid_pos[d], igrid_size[d], btypes)
                     elif ti.static(GlobalVariable.SHAPEFUNCTION == 3):
-                        boundary_type = boundary_types[nodeID, bodyID]
+                        boundary_type = boundary_types[node_id, body_id]
                         for d in ti.static(range(GlobalVariable.DIMENSION)):
                             btypes = int(boundary_type[d])
-                            shape_fn[d] = ShapeBsplineC(position[d], grid_pos[d], igrid_size[d], btypes)
+                            shape_fn[d] = shape_bspline_c(position[d], grid_pos[d], igrid_size[d], btypes)
                             if ti.static(not GlobalVariable.Affine or GlobalVariable.BBAR):
-                                dshape_fn[d] = GShapeBsplineC(position[d], grid_pos[d], igrid_size[d], btypes)
+                                dshape_fn[d] = g_shape_bspline_c(position[d], grid_pos[d], igrid_size[d], btypes)
 
-                    jacobian = node[nodeID, bodyID].jacobian
+                    jacobian = node[node_id, body_id].jacobian
                     weight = 1.0
                     for d in ti.static(range(GlobalVariable.DIMENSION)):
                         weight *= shape_fn[d]
@@ -644,16 +648,16 @@ def lightweight_g2p(
             ] + multiplier * velocity_gradient
 
             if ti.static(GlobalVariable.Affine):
-                materialID = int(particle[np].materialID)
-                for matID in ti.static(range(1, matProps.shape[0])):
-                    if materialID == matID:
+                material_id = int(particle[np].materialID)
+                for mat_id in ti.static(range(1, mat_props.shape[0])):
+                    if material_id == mat_id:
                         if ti.static(GlobalVariable.DIMENSION == 2):
-                            particle[np].stress = matProps[matID].ComputeStress2D(
-                                np, particle[np].stress, updated_velocity_gradient, stateVars, dt
+                            particle[np].stress = mat_props[mat_id].compute_stress2d(
+                                np, particle[np].stress, updated_velocity_gradient, state_variables, dt
                             )
                         else:
-                            particle[np].stress = matProps[matID].ComputeStress(
-                                np, particle[np].stress, updated_velocity_gradient, stateVars, dt
+                            particle[np].stress = mat_props[mat_id].compute_stress(
+                                np, particle[np].stress, updated_velocity_gradient, state_variables, dt
                             )
                 particle[np].vol *= (
                     ti.Matrix.identity(float, GlobalVariable.DIMENSION) + dt[None] * updated_velocity_gradient
@@ -683,7 +687,7 @@ def lightweight_grid_operation(cutoff: float, damp: float, node: ti.template(), 
 
 @ti.kernel
 def g2p2g(
-    particleNum: int,
+    particle_num: int,
     p_mass: float,
     grid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
     igrid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
@@ -692,12 +696,12 @@ def g2p2g(
     node_in: ti.template(),
     node_out: ti.template(),
     particle: ti.template(),
-    matProps: ti.template(),
-    stateVars: ti.template(),
-    particleID: ti.template(),
+    mat_props: ti.template(),
+    state_variables: ti.template(),
+    particle_id: ti.template(),
 ):
-    for np in range(particleNum):
-        pid = particleID[np]
+    for np in range(particle_num):
+        pid = particle_id[np]
         position = particle[pid].x
         velocity = particle[pid].v
         base = ti.floor(position * igrid_size - 0.5).cast(int)
@@ -725,12 +729,12 @@ def g2p2g(
         volume *= (ti.Matrix.identity(float, GlobalVariable.DIMENSION) + dt[None] * velocity).determinant()
         stress = ti.Vector.zero(float, 6)
         if ti.static(GlobalVariable.DIMENSION == 2):
-            stress = matProps[1].ComputeStress2D(np, previous_stress, velocity_gradient, stateVars, dt)
+            stress = mat_props[1].compute_stress2d(np, previous_stress, velocity_gradient, state_variables, dt)
         elif ti.static(GlobalVariable.DIMENSION == 3):
-            stress = matProps[1].ComputeStress(np, previous_stress, velocity_gradient, stateVars, dt)
+            stress = mat_props[1].compute_stress(np, previous_stress, velocity_gradient, state_variables, dt)
         particle[np].stress = stress
         particle[np].vol = volume
-        fInt = volume * stress
+        f_int = volume * stress
         # Loop over 3x3 grid node neighborhood
         for offset in ti.static(ti.grouped(ti.ndrange(*((3,) * GlobalVariable.DIMENSION)))):
             dpos = (offset.cast(float) - fx) * grid_size
@@ -746,8 +750,8 @@ def g2p2g(
                 )
                 pforce += vec2f(
                     [
-                        weight_grad[0] * fInt[0] + weight_grad[1] * fInt[3],
-                        weight_grad[1] * fInt[1] + weight_grad[0] * fInt[3],
+                        weight_grad[0] * f_int[0] + weight_grad[1] * f_int[3],
+                        weight_grad[1] * f_int[1] + weight_grad[0] * f_int[3],
                     ]
                 ) + p_mass * vec2f(gravity[0], gravity[1])
             elif ti.static(GlobalVariable.DIMENSION == 3):
@@ -764,9 +768,9 @@ def g2p2g(
                 pforce += (
                     vec3f(
                         [
-                            weight_grad[0] * fInt[0] + weight_grad[1] * fInt[3] + weight_grad[2] * fInt[5],
-                            weight_grad[1] * fInt[1] + weight_grad[0] * fInt[3] + weight_grad[2] * fInt[4],
-                            weight_grad[2] * fInt[2] + weight_grad[1] * fInt[4] + weight_grad[0] * fInt[5],
+                            weight_grad[0] * f_int[0] + weight_grad[1] * f_int[3] + weight_grad[2] * f_int[5],
+                            weight_grad[1] * f_int[1] + weight_grad[0] * f_int[3] + weight_grad[2] * f_int[4],
+                            weight_grad[2] * f_int[2] + weight_grad[1] * f_int[4] + weight_grad[0] * f_int[5],
                         ]
                     )
                     + p_mass * gravity
@@ -784,7 +788,7 @@ def polynomial(position):
 
 
 @ti.func
-def iMomentMatrix(xp, xg, igrid_size, kernel_function: ti.template()):
+def i_moment_matrix(xp, xg, igrid_size, kernel_function: ti.template()):
     w = kernel_function(xp, xg, igrid_size)
     return (
         w
@@ -805,227 +809,227 @@ def iMomentMatrix(xp, xg, igrid_size, kernel_function: ti.template()):
 @ti.kernel
 def kernel_angular_velocity_p2c(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             mass = particle[np].m
             angular_velocity = get_angular_velocity(particle[np].velocity_gradient)
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 nmass = shape_mapping(shapefn[ln], mass)
-                node[nodeID, bodyID]._update_nodal_angular_velocity(nmass * angular_velocity)
+                node[node_id, body_id]._update_nodal_angular_velocity(nmass * angular_velocity)
 
 
 @ti.kernel
 def kernel_volume_p2c(
     cnum: ti.types.vector(3, int),
     inv_dx: ti.types.vector(3, float),
-    particleNum: int,
+    particle_num: int,
     cell: ti.template(),
     particle: ti.template(),
 ):
     ti.block_local(cell.volume)
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
-            cellID = ti.floor(particle[np].x * inv_dx, int)
-            linear_cellID = linearize(cellID, cnum)
-            cell[linear_cellID, bodyID]._update_cell_volume(particle[np].vol)
+            body_id = int(particle[np].bodyID)
+            cell_id = ti.floor(particle[np].x * inv_dx, int)
+            linear_cell_id = linearize(cell_id, cnum)
+            cell[linear_cell_id, body_id]._update_cell_volume(particle[np].vol)
 
 
 @ti.kernel
-def kernel_volume_p2c_2D(
+def kernel_volume_p2c_2d(
     cnum: ti.types.vector(2, int),
     inv_dx: ti.types.vector(2, float),
-    particleNum: int,
+    particle_num: int,
     cell: ti.template(),
     particle: ti.template(),
 ):
     ti.block_local(cell.volume)
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
-            cellID = ti.floor(particle[np].x * inv_dx, int)
-            linear_cellID = linearize(cellID, cnum)
-            cell[linear_cellID, bodyID]._update_cell_volume(particle[np].vol)
+            body_id = int(particle[np].bodyID)
+            cell_id = ti.floor(particle[np].x * inv_dx, int)
+            linear_cell_id = linearize(cell_id, cnum)
+            cell[linear_cell_id, body_id]._update_cell_volume(particle[np].vol)
 
 
 @ti.kernel
 def kernel_mass_p2g(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     gnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
 ):
     ti.block_local(node.m)
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             mass = particle[np].m
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 nmass = shape_mapping(shapefn[ln], mass)
-                node[nodeID, bodyID]._update_nodal_mass(nmass)
+                node[node_id, body_id]._update_nodal_mass(nmass)
                 if (
                     ti.static(GlobalVariable.MPMXPBC)
                     or ti.static(GlobalVariable.MPMYPBC)
                     or ti.static(GlobalVariable.MPMZPBC)
                 ):
-                    index = ti.Vector([vectorize_id(nodeID, gnum)])
+                    index = ti.Vector([vectorize_id(node_id, gnum)])
                     if ti.static(GlobalVariable.MPMXPBC):
                         xindex = -index[0] + gnum[0]
                         if xindex == 0 or xindex == gnum[0]:
                             temp_index = index
                             temp_index[0] = xindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_mass(nmass)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_mass(nmass)
                     if ti.static(GlobalVariable.MPMYPBC):
                         yindex = -index[1] + gnum[1]
                         if yindex == 0 or yindex == gnum[1]:
                             temp_index = index
                             temp_index[1] = yindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_mass(nmass)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_mass(nmass)
                     if ti.static(GlobalVariable.MPMZPBC):
                         zindex = -index[2] + gnum[2]
                         if zindex == 0 or zindex == gnum[2]:
                             temp_index = index
                             temp_index[2] = zindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_mass(nmass)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_mass(nmass)
 
 
 @ti.kernel
 def kernel_momentum_p2g(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     gnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
 ):
     for d in ti.static(range(GlobalVariable.DIMENSION)):
         ti.block_local(node.momentum.get_scalar_field(d))
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             mass = particle[np].m
             velocity = particle[np].v
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 nmass = shape_mapping(shapefn[ln], mass)
-                node[nodeID, bodyID]._update_nodal_momentum(nmass * velocity)
+                node[node_id, body_id]._update_nodal_momentum(nmass * velocity)
                 if (
                     ti.static(GlobalVariable.MPMXPBC)
                     or ti.static(GlobalVariable.MPMYPBC)
                     or ti.static(GlobalVariable.MPMZPBC)
                 ):
-                    index = ti.Vector([vectorize_id(nodeID, gnum)])
+                    index = ti.Vector([vectorize_id(node_id, gnum)])
                     if ti.static(GlobalVariable.MPMXPBC):
                         xindex = -index[0] + gnum[0]
                         if xindex == 0 or xindex == gnum[0]:
                             temp_index = index
                             temp_index[0] = xindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_momentum(nmass * velocity)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_momentum(nmass * velocity)
                     if ti.static(GlobalVariable.MPMYPBC):
                         yindex = -index[1] + gnum[1]
                         if yindex == 0 or yindex == gnum[1]:
                             temp_index = index
                             temp_index[1] = yindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_momentum(nmass * velocity)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_momentum(nmass * velocity)
                     if ti.static(GlobalVariable.MPMZPBC):
                         zindex = -index[2] + gnum[2]
                         if zindex == 0 or zindex == gnum[2]:
                             temp_index = index
                             temp_index[2] = zindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_momentum(nmass * velocity)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_momentum(nmass * velocity)
 
 
 @ti.kernel
 def kernel_mass_momentum_p2g(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     gnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
 ):
     ti.block_local(node.m)
     for d in ti.static(range(GlobalVariable.DIMENSION)):
         ti.block_local(node.momentum.get_scalar_field(d))
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             mass = particle[np].m
             velocity = particle[np].v
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 nmass = shape_mapping(shapefn[ln], mass)
-                node[nodeID, bodyID]._update_nodal_mass(nmass)
-                node[nodeID, bodyID]._update_nodal_momentum(nmass * velocity)
+                node[node_id, body_id]._update_nodal_mass(nmass)
+                node[node_id, body_id]._update_nodal_momentum(nmass * velocity)
                 if (
                     ti.static(GlobalVariable.MPMXPBC)
                     or ti.static(GlobalVariable.MPMYPBC)
                     or ti.static(GlobalVariable.MPMZPBC)
                 ):
-                    index = ti.Vector([vectorize_id(nodeID, gnum)])
+                    index = ti.Vector([vectorize_id(node_id, gnum)])
                     if ti.static(GlobalVariable.MPMXPBC):
                         xindex = -index[0] + gnum[0]
                         if xindex == 0 or xindex == gnum[0]:
                             temp_index = index
                             temp_index[0] = xindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_mass(nmass)
-                            node[tideID, bodyID]._update_nodal_momentum(nmass * velocity)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_mass(nmass)
+                            node[tide_id, body_id]._update_nodal_momentum(nmass * velocity)
                     if ti.static(GlobalVariable.MPMYPBC):
                         yindex = -index[1] + gnum[1]
                         if yindex == 0 or yindex == gnum[1]:
                             temp_index = index
                             temp_index[1] = yindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_mass(nmass)
-                            node[tideID, bodyID]._update_nodal_momentum(nmass * velocity)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_mass(nmass)
+                            node[tide_id, body_id]._update_nodal_momentum(nmass * velocity)
                     if ti.static(GlobalVariable.MPMZPBC):
                         zindex = -index[2] + gnum[2]
                         if zindex == 0 or zindex == gnum[2]:
                             temp_index = index
                             temp_index[2] = zindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_mass(nmass)
-                            node[tideID, bodyID]._update_nodal_momentum(nmass * velocity)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_mass(nmass)
+                            node[tide_id, body_id]._update_nodal_momentum(nmass * velocity)
 
 
 @ti.kernel
 def kernel_mass_momentum_taylor_p2g(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     gnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     grid_size: ti.types.vector(GlobalVariable.DIMENSION, real),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
     reference: ti.template(),
@@ -1034,16 +1038,16 @@ def kernel_mass_momentum_taylor_p2g(
     ti.block_local(node.m)
     for d in ti.static(range(GlobalVariable.DIMENSION)):
         ti.block_local(node.momentum.get_scalar_field(d))
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             xp = particle[np].x
             if ti.static(reference):
                 xp = ti.Vector.zero(float, GlobalVariable.DIMENSION)
                 weight_sum = 0.0
                 for ln in range(offset, offset + int(node_size[np])):
-                    xp += shapefn[ln] * grid_size * ti.cast(ti.Vector(vectorize_id(LnID[ln], gnum)), float)
+                    xp += shapefn[ln] * grid_size * ti.cast(ti.Vector(vectorize_id(ln_id[ln], gnum)), float)
                     weight_sum += shapefn[ln]
                 if weight_sum > 0.0:
                     xp /= weight_sum
@@ -1051,52 +1055,52 @@ def kernel_mass_momentum_taylor_p2g(
             velocity = particle[np].v
             gradv = particle[np].velocity_gradient
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
-                nodal_coord = grid_size * ti.Vector(vectorize_id(nodeID, gnum))
+                node_id = ln_id[ln]
+                nodal_coord = grid_size * ti.Vector(vectorize_id(node_id, gnum))
                 nmass = shape_mapping(shapefn[ln], mass)
                 if ti.static(update_mass):
-                    node[nodeID, bodyID]._update_nodal_mass(nmass)
-                node[nodeID, bodyID]._update_nodal_momentum(nmass * (velocity + gradv @ (nodal_coord - xp)))
+                    node[node_id, body_id]._update_nodal_mass(nmass)
+                node[node_id, body_id]._update_nodal_momentum(nmass * (velocity + gradv @ (nodal_coord - xp)))
                 if (
                     ti.static(GlobalVariable.MPMXPBC)
                     or ti.static(GlobalVariable.MPMYPBC)
                     or ti.static(GlobalVariable.MPMZPBC)
                 ):
-                    index = ti.Vector([vectorize_id(nodeID, gnum)])
+                    index = ti.Vector([vectorize_id(node_id, gnum)])
                     if ti.static(GlobalVariable.MPMXPBC):
                         xindex = -index[0] + gnum[0]
                         if xindex == 0 or xindex == gnum[0]:
                             temp_index = index
                             temp_index[0] = xindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_mass(nmass)
-                            node[tideID, bodyID]._update_nodal_momentum(nmass * velocity)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_mass(nmass)
+                            node[tide_id, body_id]._update_nodal_momentum(nmass * velocity)
                     if ti.static(GlobalVariable.MPMYPBC):
                         yindex = -index[1] + gnum[1]
                         if yindex == 0 or yindex == gnum[1]:
                             temp_index = index
                             temp_index[1] = yindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_mass(nmass)
-                            node[tideID, bodyID]._update_nodal_momentum(nmass * velocity)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_mass(nmass)
+                            node[tide_id, body_id]._update_nodal_momentum(nmass * velocity)
                     if ti.static(GlobalVariable.MPMZPBC):
                         zindex = -index[2] + gnum[2]
                         if zindex == 0 or zindex == gnum[2]:
                             temp_index = index
                             temp_index[2] = zindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_mass(nmass)
-                            node[tideID, bodyID]._update_nodal_momentum(nmass * velocity)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_mass(nmass)
+                            node[tide_id, body_id]._update_nodal_momentum(nmass * velocity)
 
 
 @ti.kernel
 def kernel_mass_momentum_taylor_p2g_sparse(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     grid_size: ti.types.vector(GlobalVariable.DIMENSION, real),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
     block_count: ti.template(),
@@ -1109,9 +1113,9 @@ def kernel_mass_momentum_taylor_p2g_sparse(
     ti.block_local(node.m)
     for d in ti.static(range(GlobalVariable.DIMENSION)):
         ti.block_local(node.momentum.get_scalar_field(d))
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             xp = particle[np].x
             if ti.static(reference):
@@ -1124,7 +1128,7 @@ def kernel_mass_momentum_taylor_p2g_sparse(
                         * ti.cast(
                             ti.Vector(
                                 compact_node_grid_coord(
-                                    LnID[ln], block_count, block_size, block_volume, active_block_ids
+                                    ln_id[ln], block_count, block_size, block_volume, active_block_ids
                                 )
                             ),
                             float,
@@ -1137,34 +1141,34 @@ def kernel_mass_momentum_taylor_p2g_sparse(
             velocity = particle[np].v
             gradv = particle[np].velocity_gradient
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 nodal_coord = grid_size * ti.cast(
-                    compact_node_grid_coord(nodeID, block_count, block_size, block_volume, active_block_ids), float
+                    compact_node_grid_coord(node_id, block_count, block_size, block_volume, active_block_ids), float
                 )
                 nmass = shape_mapping(shapefn[ln], mass)
                 if ti.static(update_mass):
-                    node[nodeID, bodyID]._update_nodal_mass(nmass)
-                node[nodeID, bodyID]._update_nodal_momentum(nmass * (velocity + gradv @ (nodal_coord - xp)))
+                    node[node_id, body_id]._update_nodal_mass(nmass)
+                node[node_id, body_id]._update_nodal_momentum(nmass * (velocity + gradv @ (nodal_coord - xp)))
 
 
 @ti.kernel
-def kernel_mass_momentum_taylor_p2g_2DAxisy(
+def kernel_mass_momentum_taylor_p2g_2d_axisy(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     gnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     grid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
 ):
     ti.block_local(node.m)
     for d in ti.static(range(GlobalVariable.DIMENSION)):
         ti.block_local(node.momentum.get_scalar_field(d))
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             xp = particle[np].x
             mass = particle[np].m
@@ -1174,48 +1178,48 @@ def kernel_mass_momentum_taylor_p2g_2DAxisy(
                 [velocity_gradient[0, 0], velocity_gradient[0, 1]], [velocity_gradient[1, 0], velocity_gradient[1, 1]]
             )
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
-                nodal_coord = grid_size * ti.Vector(vectorize_id(nodeID, gnum))
+                node_id = ln_id[ln]
+                nodal_coord = grid_size * ti.Vector(vectorize_id(node_id, gnum))
                 nmass = shape_mapping(shapefn[ln], mass)
-                node[nodeID, bodyID]._update_nodal_mass(nmass)
-                node[nodeID, bodyID]._update_nodal_momentum(nmass * (velocity + gradv @ (nodal_coord - xp)))
+                node[node_id, body_id]._update_nodal_mass(nmass)
+                node[node_id, body_id]._update_nodal_momentum(nmass * (velocity + gradv @ (nodal_coord - xp)))
                 if (
                     ti.static(GlobalVariable.MPMXPBC)
                     or ti.static(GlobalVariable.MPMYPBC)
                     or ti.static(GlobalVariable.MPMZPBC)
                 ):
-                    index = ti.Vector([vectorize_id(nodeID, gnum)])
+                    index = ti.Vector([vectorize_id(node_id, gnum)])
                     if ti.static(GlobalVariable.MPMXPBC):
                         xindex = -index[0] + gnum[0]
                         if xindex == 0 or xindex == gnum[0]:
                             temp_index = index
                             temp_index[0] = xindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_mass(nmass)
-                            node[tideID, bodyID]._update_nodal_momentum(nmass * velocity)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_mass(nmass)
+                            node[tide_id, body_id]._update_nodal_momentum(nmass * velocity)
                     if ti.static(GlobalVariable.MPMYPBC):
                         yindex = -index[1] + gnum[1]
                         if yindex == 0 or yindex == gnum[1]:
                             temp_index = index
                             temp_index[1] = yindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_mass(nmass)
-                            node[tideID, bodyID]._update_nodal_momentum(nmass * velocity)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_mass(nmass)
+                            node[tide_id, body_id]._update_nodal_momentum(nmass * velocity)
 
 
 @ti.kernel
 def kernel_mass_momentum_p2g_phasefield(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             mass = particle[np].m
             velocity = particle[np].v
@@ -1223,30 +1227,30 @@ def kernel_mass_momentum_p2g_phasefield(
             viscous = particle[np].viscous
             vol = particle[np].vol
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 nmass = shape_mapping(shapefn[ln], mass)
                 nviscous = shape_mapping(shapefn[ln], viscous)
-                node[nodeID, bodyID]._update_nodal_scale_pf(nmass, pf * nmass, nviscous * vol)
-                node[nodeID, bodyID]._update_nodal_momentum(nmass * velocity)
+                node[node_id, body_id]._update_nodal_scale_pf(nmass, pf * nmass, nviscous * vol)
+                node[node_id, body_id]._update_nodal_momentum(nmass * velocity)
 
 
 @ti.kernel
 def kernel_mass_momentum_p2g_twophase(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     gnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
 ):
     ti.block_local(node.m)
     for d in ti.static(range(GlobalVariable.DIMENSION)):
         ti.block_local(node.momentum.get_scalar_field(d))
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             mass = particle[np].m
             mass_s = particle[np].ms
@@ -1255,12 +1259,12 @@ def kernel_mass_momentum_p2g_twophase(
             velocity_s = particle[np].vs
             velocity_f = particle[np].vf
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 nmass = shape_mapping(shapefn[ln], mass)
                 nmass_s = shape_mapping(shapefn[ln], mass_s)
                 nmass_f = shape_mapping(shapefn[ln], mass_f)
-                node[nodeID, bodyID]._update_nodal_mass(nmass, nmass_s, nmass_f)
-                node[nodeID, bodyID]._update_nodal_momentum(
+                node[node_id, body_id]._update_nodal_mass(nmass, nmass_s, nmass_f)
+                node[node_id, body_id]._update_nodal_momentum(
                     nmass * velocity, nmass_s * velocity_s, nmass_f * velocity_f
                 )
                 if (
@@ -1268,15 +1272,15 @@ def kernel_mass_momentum_p2g_twophase(
                     or ti.static(GlobalVariable.MPMYPBC)
                     or ti.static(GlobalVariable.MPMZPBC)
                 ):
-                    index = ti.Vector([vectorize_id(nodeID, gnum)])
+                    index = ti.Vector([vectorize_id(node_id, gnum)])
                     if ti.static(GlobalVariable.MPMXPBC):
                         xindex = -index[0] + gnum[0]
                         if xindex == 0 or xindex == gnum[0]:
                             temp_index = index
                             temp_index[0] = xindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_mass(nmass, nmass_s, nmass_f)
-                            node[tideID, bodyID]._update_nodal_momentum(
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_mass(nmass, nmass_s, nmass_f)
+                            node[tide_id, body_id]._update_nodal_momentum(
                                 nmass * velocity, nmass_s * velocity_s, nmass_f * velocity_f
                             )
                     if ti.static(GlobalVariable.MPMYPBC):
@@ -1284,9 +1288,9 @@ def kernel_mass_momentum_p2g_twophase(
                         if yindex == 0 or yindex == gnum[1]:
                             temp_index = index
                             temp_index[1] = yindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_mass(nmass, nmass_s, nmass_f)
-                            node[tideID, bodyID]._update_nodal_momentum(
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_mass(nmass, nmass_s, nmass_f)
+                            node[tide_id, body_id]._update_nodal_momentum(
                                 nmass * velocity, nmass_s * velocity_s, nmass_f * velocity_f
                             )
                     if ti.static(GlobalVariable.MPMZPBC):
@@ -1294,9 +1298,9 @@ def kernel_mass_momentum_p2g_twophase(
                         if zindex == 0 or zindex == gnum[2]:
                             temp_index = index
                             temp_index[2] = zindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_mass(nmass, nmass_s, nmass_f)
-                            node[tideID, bodyID]._update_nodal_momentum(
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_mass(nmass, nmass_s, nmass_f)
+                            node[tide_id, body_id]._update_nodal_momentum(
                                 nmass * velocity, nmass_s * velocity_s, nmass_f * velocity_f
                             )
 
@@ -1304,21 +1308,21 @@ def kernel_mass_momentum_p2g_twophase(
 @ti.kernel
 def kernel_mass_momentum_taylor_p2g_twophase(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     gnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     grid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
 ):
     ti.block_local(node.m)
     for d in ti.static(range(GlobalVariable.DIMENSION)):
         ti.block_local(node.momentum.get_scalar_field(d))
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             mass = particle[np].m
             mass_s = particle[np].ms
@@ -1330,14 +1334,14 @@ def kernel_mass_momentum_taylor_p2g_twophase(
             gradv = particle[np].velocity_gradient
             grdv_f = particle[np].velocity_gradientf
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
-                nodal_coord = grid_size * vectorize_id(nodeID, gnum)
+                node_id = ln_id[ln]
+                nodal_coord = grid_size * vectorize_id(node_id, gnum)
                 xip = nodal_coord - xp
                 nmass = shape_mapping(shapefn[ln], mass)
                 nmass_s = shape_mapping(shapefn[ln], mass_s)
                 nmass_f = shape_mapping(shapefn[ln], mass_f)
-                node[nodeID, bodyID]._update_nodal_mass(nmass, nmass_s, nmass_f)
-                node[nodeID, bodyID]._update_nodal_momentum(
+                node[node_id, body_id]._update_nodal_mass(nmass, nmass_s, nmass_f)
+                node[node_id, body_id]._update_nodal_momentum(
                     nmass * (velocity + gradv @ xip),
                     nmass_s * (velocity_s + gradv @ xip),
                     nmass_f * (velocity_f + grdv_f @ xip),
@@ -1347,45 +1351,45 @@ def kernel_mass_momentum_taylor_p2g_twophase(
 @ti.kernel
 def kernel_assemble_dem_contact_force(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     gnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
 ):
     for d in ti.static(range(GlobalVariable.DIMENSION)):
         ti.block_local(node.force.get_scalar_field(d))
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             fex = particle[np].contact_traction
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 cforce = shape_mapping(shapefn[ln], fex)
-                node[nodeID, bodyID]._update_contact_force(cforce)
+                node[node_id, body_id]._update_contact_force(cforce)
                 if (
                     ti.static(GlobalVariable.MPMXPBC)
                     or ti.static(GlobalVariable.MPMYPBC)
                     or ti.static(GlobalVariable.MPMZPBC)
                 ):
-                    index = ti.Vector([vectorize_id(nodeID, gnum)])
+                    index = ti.Vector([vectorize_id(node_id, gnum)])
                     if ti.static(GlobalVariable.MPMXPBC):
                         xindex = -index[0] + gnum[0]
                         if xindex == 0 or xindex == gnum[0]:
                             temp_index = index
                             temp_index[0] = xindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_contact_force(cforce)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_contact_force(cforce)
                     if ti.static(GlobalVariable.MPMYPBC):
                         yindex = -index[1] + gnum[1]
                         if yindex == 0 or yindex == gnum[1]:
                             temp_index = index
                             temp_index[1] = yindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_contact_force(cforce)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_contact_force(cforce)
 
 
 @ti.kernel
@@ -1393,164 +1397,167 @@ def kernel_external_force_p2g(
     total_nodes: int,
     gnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     gravity: ti.types.vector(3, float),
-    particleNum: int,
+    particle_num: int,
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
 ):
     for d in ti.static(range(GlobalVariable.DIMENSION)):
         ti.block_local(node.force.get_scalar_field(d))
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             fex = particle[np]._compute_external_force(gravity)
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 external_force = shape_mapping(shapefn[ln], fex)
-                node[nodeID, bodyID]._update_external_force(external_force)
+                node[node_id, body_id]._update_external_force(external_force)
                 if (
                     ti.static(GlobalVariable.MPMXPBC)
                     or ti.static(GlobalVariable.MPMYPBC)
                     or ti.static(GlobalVariable.MPMZPBC)
                 ):
-                    index = ti.Vector([vectorize_id(nodeID, gnum)])
+                    index = ti.Vector([vectorize_id(node_id, gnum)])
                     if ti.static(GlobalVariable.MPMXPBC):
                         xindex = -index[0] + gnum[0]
                         if xindex == 0 or xindex == gnum[0]:
                             temp_index = index
                             temp_index[0] = xindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_external_force(external_force)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_external_force(external_force)
                     if ti.static(GlobalVariable.MPMYPBC):
                         yindex = -index[1] + gnum[1]
                         if yindex == 0 or yindex == gnum[1]:
                             temp_index = index
                             temp_index[1] = yindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_external_force(external_force)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_external_force(external_force)
                     if ti.static(GlobalVariable.MPMZPBC):
                         zindex = -index[2] + gnum[2]
                         if zindex == 0 or zindex == gnum[2]:
                             temp_index = index
                             temp_index[2] = zindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_external_force(external_force)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_external_force(external_force)
 
 
 @ti.kernel
 def kernel_force_p2g(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     gnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     gravity: ti.types.vector(3, float),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
 ):
     for d in ti.static(range(GlobalVariable.DIMENSION)):
         ti.block_local(node.force.get_scalar_field(d))
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             fex = particle[np]._compute_external_force(gravity)
-            fInt = particle[np]._compute_internal_force()
+            f_int = particle[np]._compute_internal_force()
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 dshape_fn = dshapefn[ln]
                 external_force = shape_mapping(shapefn[ln], fex)
                 internal_force = vec3f(
                     [
-                        dshape_fn[0] * fInt[0] + dshape_fn[1] * fInt[3] + dshape_fn[2] * fInt[5],
-                        dshape_fn[1] * fInt[1] + dshape_fn[0] * fInt[3] + dshape_fn[2] * fInt[4],
-                        dshape_fn[2] * fInt[2] + dshape_fn[1] * fInt[4] + dshape_fn[0] * fInt[5],
+                        dshape_fn[0] * f_int[0] + dshape_fn[1] * f_int[3] + dshape_fn[2] * f_int[5],
+                        dshape_fn[1] * f_int[1] + dshape_fn[0] * f_int[3] + dshape_fn[2] * f_int[4],
+                        dshape_fn[2] * f_int[2] + dshape_fn[1] * f_int[4] + dshape_fn[0] * f_int[5],
                     ]
                 )
-                node[nodeID, bodyID]._update_nodal_force(external_force + internal_force)
+                node[node_id, body_id]._update_nodal_force(external_force + internal_force)
                 if (
                     ti.static(GlobalVariable.MPMXPBC)
                     or ti.static(GlobalVariable.MPMYPBC)
                     or ti.static(GlobalVariable.MPMZPBC)
                 ):
-                    index = ti.Vector([vectorize_id(nodeID, gnum)])
+                    index = ti.Vector([vectorize_id(node_id, gnum)])
                     if ti.static(GlobalVariable.MPMXPBC):
                         xindex = -index[0] + gnum[0]
                         if xindex == 0 or xindex == gnum[0]:
                             temp_index = index
                             temp_index[0] = xindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_force(external_force + internal_force)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_force(external_force + internal_force)
                     if ti.static(GlobalVariable.MPMYPBC):
                         yindex = -index[1] + gnum[1]
                         if yindex == 0 or yindex == gnum[1]:
                             temp_index = index
                             temp_index[1] = yindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_force(external_force + internal_force)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_force(external_force + internal_force)
                     if ti.static(GlobalVariable.MPMZPBC):
                         zindex = -index[2] + gnum[2]
                         if zindex == 0 or zindex == gnum[2]:
                             temp_index = index
                             temp_index[2] = zindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_force(external_force + internal_force)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_force(external_force + internal_force)
 
 
 @ti.kernel
-def kernel_force_p2g_2D(
+def kernel_force_p2g_2d(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     gnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     gravity: ti.types.vector(3, float),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
 ):
     for d in ti.static(range(GlobalVariable.DIMENSION)):
         ti.block_local(node.force.get_scalar_field(d))
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             fex = particle[np]._compute_external_force(gravity)
-            fInt = particle[np]._compute_internal_force()
+            f_int = particle[np]._compute_internal_force()
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 dshape_fn = dshapefn[ln]
                 external_force = shape_mapping(shapefn[ln], fex)
                 internal_force = vec2f(
-                    [dshape_fn[0] * fInt[0] + dshape_fn[1] * fInt[3], dshape_fn[1] * fInt[1] + dshape_fn[0] * fInt[3]]
+                    [
+                        dshape_fn[0] * f_int[0] + dshape_fn[1] * f_int[3],
+                        dshape_fn[1] * f_int[1] + dshape_fn[0] * f_int[3],
+                    ]
                 )
-                node[nodeID, bodyID]._update_nodal_force(external_force + internal_force)
+                node[node_id, body_id]._update_nodal_force(external_force + internal_force)
                 if (
                     ti.static(GlobalVariable.MPMXPBC)
                     or ti.static(GlobalVariable.MPMYPBC)
                     or ti.static(GlobalVariable.MPMZPBC)
                 ):
-                    index = ti.Vector([vectorize_id(nodeID, gnum)])
+                    index = ti.Vector([vectorize_id(node_id, gnum)])
                     if ti.static(GlobalVariable.MPMXPBC):
                         xindex = -index[0] + gnum[0]
                         if xindex == 0 or xindex == gnum[0]:
                             temp_index = index
                             temp_index[0] = xindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_force(external_force + internal_force)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_force(external_force + internal_force)
                     if ti.static(GlobalVariable.MPMYPBC):
                         yindex = -index[1] + gnum[1]
                         if yindex == 0 or yindex == gnum[1]:
                             temp_index = index
                             temp_index[1] = yindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_force(external_force + internal_force)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_force(external_force + internal_force)
 
 
 @ti.kernel
@@ -1562,62 +1569,62 @@ def kernel_viscous_force_p2g(
     dt: ti.template(),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
-    matProps: ti.template(),
+    mat_props: ti.template(),
 ):
     for d in ti.static(range(GlobalVariable.DIMENSION)):
         ti.block_local(node.momentum.get_scalar_field(d))
     for np in range(start_index, end_index):
         if int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             velocity_gradient = particle[np].velocity_gradient
-            viscous_stress = matProps.ComputeShearStress(velocity_gradient)
-            fInt = particle[np].vol * viscous_stress
+            viscous_stress = mat_props.compute_shear_stress(velocity_gradient)
+            f_int = particle[np].vol * viscous_stress
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 dshape_fn = dshapefn[ln]
                 internal_force = vec3f(
                     [
-                        dshape_fn[0] * fInt[0] + dshape_fn[1] * fInt[3] + dshape_fn[2] * fInt[5],
-                        dshape_fn[1] * fInt[1] + dshape_fn[0] * fInt[3] + dshape_fn[2] * fInt[4],
-                        dshape_fn[2] * fInt[2] + dshape_fn[1] * fInt[4] + dshape_fn[0] * fInt[5],
+                        dshape_fn[0] * f_int[0] + dshape_fn[1] * f_int[3] + dshape_fn[2] * f_int[5],
+                        dshape_fn[1] * f_int[1] + dshape_fn[0] * f_int[3] + dshape_fn[2] * f_int[4],
+                        dshape_fn[2] * f_int[2] + dshape_fn[1] * f_int[4] + dshape_fn[0] * f_int[5],
                     ]
                 )
-                node[nodeID, bodyID].momentum += internal_force * dt[None]
+                node[node_id, body_id].momentum += internal_force * dt[None]
                 if (
                     ti.static(GlobalVariable.MPMXPBC)
                     or ti.static(GlobalVariable.MPMYPBC)
                     or ti.static(GlobalVariable.MPMZPBC)
                 ):
-                    index = ti.Vector([vectorize_id(nodeID, gnum)])
+                    index = ti.Vector([vectorize_id(node_id, gnum)])
                     if ti.static(GlobalVariable.MPMXPBC):
                         xindex = -index[0] + gnum[0]
                         if xindex == 0 or xindex == gnum[0]:
                             temp_index = index
                             temp_index[0] = xindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID].momentum += internal_force * dt[None]
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id].momentum += internal_force * dt[None]
                     if ti.static(GlobalVariable.MPMYPBC):
                         yindex = -index[1] + gnum[1]
                         if yindex == 0 or yindex == gnum[1]:
                             temp_index = index
                             temp_index[1] = yindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID].momentum += internal_force * dt[None]
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id].momentum += internal_force * dt[None]
                     if ti.static(GlobalVariable.MPMZPBC):
                         zindex = -index[2] + gnum[2]
                         if zindex == 0 or zindex == gnum[2]:
                             temp_index = index
                             temp_index[2] = zindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID].momentum += internal_force * dt[None]
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id].momentum += internal_force * dt[None]
 
 
 @ti.kernel
-def kernel_viscous_force_p2g_2D(
+def kernel_viscous_force_p2g_2d(
     total_nodes: int,
     start_index: int,
     end_index: int,
@@ -1625,114 +1632,117 @@ def kernel_viscous_force_p2g_2D(
     dt: ti.template(),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
-    matProps: ti.template(),
+    mat_props: ti.template(),
 ):
     for d in ti.static(range(GlobalVariable.DIMENSION)):
         ti.block_local(node.momentum.get_scalar_field(d))
     for np in range(start_index, end_index):
         if int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             velocity_gradient = particle[np].velocity_gradient
-            viscous_stress = matProps.ComputeShearStress2D(velocity_gradient)
-            fInt = particle[np].vol * viscous_stress
+            viscous_stress = mat_props.compute_shear_stress2d(velocity_gradient)
+            f_int = particle[np].vol * viscous_stress
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 dshape_fn = dshapefn[ln]
                 internal_force = vec2f(
-                    [dshape_fn[0] * fInt[0] + dshape_fn[1] * fInt[3], dshape_fn[1] * fInt[1] + dshape_fn[0] * fInt[3]]
+                    [
+                        dshape_fn[0] * f_int[0] + dshape_fn[1] * f_int[3],
+                        dshape_fn[1] * f_int[1] + dshape_fn[0] * f_int[3],
+                    ]
                 )
-                node[nodeID, bodyID].momentum += internal_force * dt[None]
+                node[node_id, body_id].momentum += internal_force * dt[None]
                 if (
                     ti.static(GlobalVariable.MPMXPBC)
                     or ti.static(GlobalVariable.MPMYPBC)
                     or ti.static(GlobalVariable.MPMZPBC)
                 ):
-                    index = ti.Vector([vectorize_id(nodeID, gnum)])
+                    index = ti.Vector([vectorize_id(node_id, gnum)])
                     if ti.static(GlobalVariable.MPMXPBC):
                         xindex = -index[0] + gnum[0]
                         if xindex == 0 or xindex == gnum[0]:
                             temp_index = index
                             temp_index[0] = xindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID].momentum += internal_force * dt[None]
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id].momentum += internal_force * dt[None]
                     if ti.static(GlobalVariable.MPMYPBC):
                         yindex = -index[1] + gnum[1]
                         if yindex == 0 or yindex == gnum[1]:
                             temp_index = index
                             temp_index[1] = yindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID].momentum += internal_force * dt[None]
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id].momentum += internal_force * dt[None]
 
 
 @ti.kernel
-def kernel_force_p2g_2DAxisy(
+def kernel_force_p2g_2d_axisy(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     gnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     gravity: ti.types.vector(3, float),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
 ):
     for d in ti.static(range(GlobalVariable.DIMENSION)):
         ti.block_local(node.force.get_scalar_field(d))
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             position = particle[np].x
             fex = particle[np]._compute_external_force(gravity)
-            fInt = particle[np]._compute_internal_force()
+            f_int = particle[np]._compute_internal_force()
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 shape_fn = shapefn[ln]
                 dshape_fn = dshapefn[ln]
                 external_force = shape_mapping(shapefn[ln], fex)
                 internal_force = vec2f(
                     [
-                        dshape_fn[0] * fInt[0] + dshape_fn[1] * fInt[3] + fInt[2] * shape_fn / position[0],
-                        dshape_fn[1] * fInt[1] + dshape_fn[0] * fInt[3],
+                        dshape_fn[0] * f_int[0] + dshape_fn[1] * f_int[3] + f_int[2] * shape_fn / position[0],
+                        dshape_fn[1] * f_int[1] + dshape_fn[0] * f_int[3],
                     ]
                 )
-                node[nodeID, bodyID]._update_nodal_force(external_force + internal_force)
+                node[node_id, body_id]._update_nodal_force(external_force + internal_force)
                 if (
                     ti.static(GlobalVariable.MPMXPBC)
                     or ti.static(GlobalVariable.MPMYPBC)
                     or ti.static(GlobalVariable.MPMZPBC)
                 ):
-                    index = ti.Vector([vectorize_id(nodeID, gnum)])
+                    index = ti.Vector([vectorize_id(node_id, gnum)])
                     if ti.static(GlobalVariable.MPMXPBC):
                         xindex = -index[0] + gnum[0]
                         if xindex == 0 or xindex == gnum[0]:
                             temp_index = index
                             temp_index[0] = xindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_force(external_force + internal_force)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_force(external_force + internal_force)
                     if ti.static(GlobalVariable.MPMYPBC):
                         yindex = -index[1] + gnum[1]
                         if yindex == 0 or yindex == gnum[1]:
                             temp_index = index
                             temp_index[1] = yindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_force(external_force + internal_force)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_force(external_force + internal_force)
 
 
 @ti.kernel
-def kernel_force_bbar_p2g_2DAxisy(
+def kernel_force_bbar_p2g_2d_axisy(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     gnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     gravity: ti.types.vector(3, float),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     shapefnc: ti.template(),
     dshapefn: ti.template(),
@@ -1741,15 +1751,15 @@ def kernel_force_bbar_p2g_2DAxisy(
 ):
     for d in ti.static(range(GlobalVariable.DIMENSION)):
         ti.block_local(node.force.get_scalar_field(d))
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             position = particle[np].x
             fex = particle[np]._compute_external_force(gravity)
-            fInt = particle[np]._compute_internal_force()
+            f_int = particle[np]._compute_internal_force()
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 shape_fn = shapefn[ln]
                 shape_fnc = shapefnc[ln]
                 dshape_fn = dshapefn[ln]
@@ -1768,266 +1778,266 @@ def kernel_force_bbar_p2g_2DAxisy(
                     / 3.0
                     * vec2f(
                         [
-                            (B1bar + 2.0 * B1 + B0bar - B0) * fInt[0]
-                            + (B1bar - B1 + B0bar - B0) * fInt[1]
-                            + (B1bar - B1 + B0bar + 2.0 * B0) * fInt[2]
-                            + 3.0 * B2 * fInt[3],
-                            (B2bar - B2) * fInt[0]
-                            + (B2bar + 2.0 * B2) * fInt[1]
-                            + (B2bar - B2) * fInt[2]
-                            + 3.0 * B1 * fInt[3],
+                            (B1bar + 2.0 * B1 + B0bar - B0) * f_int[0]
+                            + (B1bar - B1 + B0bar - B0) * f_int[1]
+                            + (B1bar - B1 + B0bar + 2.0 * B0) * f_int[2]
+                            + 3.0 * B2 * f_int[3],
+                            (B2bar - B2) * f_int[0]
+                            + (B2bar + 2.0 * B2) * f_int[1]
+                            + (B2bar - B2) * f_int[2]
+                            + 3.0 * B1 * f_int[3],
                         ]
                     )
                 )
-                node[nodeID, bodyID]._update_nodal_force(external_force + internal_force)
+                node[node_id, body_id]._update_nodal_force(external_force + internal_force)
                 if (
                     ti.static(GlobalVariable.MPMXPBC)
                     or ti.static(GlobalVariable.MPMYPBC)
                     or ti.static(GlobalVariable.MPMZPBC)
                 ):
-                    index = ti.Vector([vectorize_id(nodeID, gnum)])
+                    index = ti.Vector([vectorize_id(node_id, gnum)])
                     if ti.static(GlobalVariable.MPMXPBC):
                         xindex = -index[0] + gnum[0]
                         if xindex == 0 or xindex == gnum[0]:
                             temp_index = index
                             temp_index[0] = xindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_force(external_force + internal_force)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_force(external_force + internal_force)
                     if ti.static(GlobalVariable.MPMYPBC):
                         yindex = -index[1] + gnum[1]
                         if yindex == 0 or yindex == gnum[1]:
                             temp_index = index
                             temp_index[1] = yindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_force(external_force + internal_force)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_force(external_force + internal_force)
                     if ti.static(GlobalVariable.MPMZPBC):
                         zindex = -index[2] + gnum[2]
                         if zindex == 0 or zindex == gnum[2]:
                             temp_index = index
                             temp_index[2] = zindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_force(external_force + internal_force)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_force(external_force + internal_force)
 
 
 @ti.kernel
 def kernel_force_mls_p2g(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     gravity: ti.types.vector(3, float),
     gnum: ti.types.vector(3, int),
     grid_size: ti.types.vector(3, float),
     inertia_tensor: ti.types.vector(3, float),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
 ):
     for d in ti.static(range(GlobalVariable.DIMENSION)):
         ti.block_local(node.force.get_scalar_field(d))
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             position = particle[np].x
             fex = particle[np]._compute_external_force(gravity)
-            fInt = particle[np]._compute_internal_force()
+            f_int = particle[np]._compute_internal_force()
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 shape_fn = shapefn[ln]
-                pointer = grid_size * ti.Vector([*vectorize_id(nodeID, gnum)]) - position
+                pointer = grid_size * ti.Vector([*vectorize_id(node_id, gnum)]) - position
                 internal_force = vec3f(
-                    fInt[0] * inertia_tensor[0] * pointer[0]
-                    + fInt[3] * inertia_tensor[1] * pointer[1]
-                    + fInt[5] * inertia_tensor[2] * pointer[2],
-                    fInt[3] * inertia_tensor[0] * pointer[0]
-                    + fInt[1] * inertia_tensor[1] * pointer[1]
-                    + fInt[4] * inertia_tensor[2] * pointer[2],
-                    fInt[5] * inertia_tensor[0] * pointer[0]
-                    + fInt[4] * inertia_tensor[1] * pointer[1]
-                    + fInt[2] * inertia_tensor[2] * pointer[2],
+                    f_int[0] * inertia_tensor[0] * pointer[0]
+                    + f_int[3] * inertia_tensor[1] * pointer[1]
+                    + f_int[5] * inertia_tensor[2] * pointer[2],
+                    f_int[3] * inertia_tensor[0] * pointer[0]
+                    + f_int[1] * inertia_tensor[1] * pointer[1]
+                    + f_int[4] * inertia_tensor[2] * pointer[2],
+                    f_int[5] * inertia_tensor[0] * pointer[0]
+                    + f_int[4] * inertia_tensor[1] * pointer[1]
+                    + f_int[2] * inertia_tensor[2] * pointer[2],
                 )
-                node[nodeID, bodyID]._update_nodal_force(shape_fn * (fex + internal_force))
+                node[node_id, body_id]._update_nodal_force(shape_fn * (fex + internal_force))
                 if (
                     ti.static(GlobalVariable.MPMXPBC)
                     or ti.static(GlobalVariable.MPMYPBC)
                     or ti.static(GlobalVariable.MPMZPBC)
                 ):
-                    index = ti.Vector([vectorize_id(nodeID, gnum)])
+                    index = ti.Vector([vectorize_id(node_id, gnum)])
                     if ti.static(GlobalVariable.MPMXPBC):
                         xindex = -index[0] + gnum[0]
                         if xindex == 0 or xindex == gnum[0]:
                             temp_index = index
                             temp_index[0] = xindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_force(shape_fn * (fex + internal_force))
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_force(shape_fn * (fex + internal_force))
                     if ti.static(GlobalVariable.MPMYPBC):
                         yindex = -index[1] + gnum[1]
                         if yindex == 0 or yindex == gnum[1]:
                             temp_index = index
                             temp_index[1] = yindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_force(shape_fn * (fex + internal_force))
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_force(shape_fn * (fex + internal_force))
                     if ti.static(GlobalVariable.MPMZPBC):
                         zindex = -index[2] + gnum[2]
                         if zindex == 0 or zindex == gnum[2]:
                             temp_index = index
                             temp_index[2] = zindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_force(shape_fn * (fex + internal_force))
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_force(shape_fn * (fex + internal_force))
 
 
 @ti.kernel
-def kernel_force_mls_p2g_2D(
+def kernel_force_mls_p2g_2d(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     gravity: ti.types.vector(3, float),
     gnum: ti.types.vector(2, int),
     grid_size: ti.types.vector(2, float),
     inertia_tensor: ti.types.vector(2, float),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
 ):
     for d in ti.static(range(GlobalVariable.DIMENSION)):
         ti.block_local(node.force.get_scalar_field(d))
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             position = particle[np].x
             fex = particle[np]._compute_external_force(gravity)
-            fInt = particle[np]._compute_internal_force()
+            f_int = particle[np]._compute_internal_force()
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 shape_fn = shapefn[ln]
-                pointer = grid_size * ti.Vector([*vectorize_id(nodeID, gnum)]) - position
+                pointer = grid_size * ti.Vector([*vectorize_id(node_id, gnum)]) - position
                 internal_force = vec2f(
-                    fInt[0] * inertia_tensor[0] * pointer[0] + fInt[3] * inertia_tensor[1] * pointer[1],
-                    fInt[3] * inertia_tensor[0] * pointer[0] + fInt[1] * inertia_tensor[1] * pointer[1],
+                    f_int[0] * inertia_tensor[0] * pointer[0] + f_int[3] * inertia_tensor[1] * pointer[1],
+                    f_int[3] * inertia_tensor[0] * pointer[0] + f_int[1] * inertia_tensor[1] * pointer[1],
                 )
-                node[nodeID, bodyID]._update_nodal_force(shape_fn * (fex + internal_force))
+                node[node_id, body_id]._update_nodal_force(shape_fn * (fex + internal_force))
                 if (
                     ti.static(GlobalVariable.MPMXPBC)
                     or ti.static(GlobalVariable.MPMYPBC)
                     or ti.static(GlobalVariable.MPMZPBC)
                 ):
-                    index = ti.Vector([vectorize_id(nodeID, gnum)])
+                    index = ti.Vector([vectorize_id(node_id, gnum)])
                     if ti.static(GlobalVariable.MPMXPBC):
                         xindex = -index[0] + gnum[0]
                         if xindex == 0 or xindex == gnum[0]:
                             temp_index = index
                             temp_index[0] = xindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_force(shape_fn * (fex + internal_force))
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_force(shape_fn * (fex + internal_force))
                     if ti.static(GlobalVariable.MPMYPBC):
                         yindex = -index[1] + gnum[1]
                         if yindex == 0 or yindex == gnum[1]:
                             temp_index = index
                             temp_index[1] = yindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_force(shape_fn * (fex + internal_force))
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_force(shape_fn * (fex + internal_force))
 
 
 @ti.kernel
 def kernel_reference_force_p2g(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     gnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     gravity: ti.types.vector(3, float),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
 ):
     for d in ti.static(range(GlobalVariable.DIMENSION)):
         ti.block_local(node.force.get_scalar_field(d))
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             fex = particle[np]._compute_external_force(gravity)
-            fInt = -particle[np].vol * particle[np].stress
+            f_int = -particle[np].vol * particle[np].stress
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 external_force = shape_mapping(shapefn[ln], fex)
-                internal_force = fInt @ dshapefn[ln]
-                node[nodeID, bodyID]._update_nodal_force(external_force + internal_force)
+                internal_force = f_int @ dshapefn[ln]
+                node[node_id, body_id]._update_nodal_force(external_force + internal_force)
                 if (
                     ti.static(GlobalVariable.MPMXPBC)
                     or ti.static(GlobalVariable.MPMYPBC)
                     or ti.static(GlobalVariable.MPMZPBC)
                 ):
-                    index = ti.Vector([vectorize_id(nodeID, gnum)])
+                    index = ti.Vector([vectorize_id(node_id, gnum)])
                     if ti.static(GlobalVariable.MPMXPBC):
                         xindex = -index[0] + gnum[0]
                         if xindex == 0 or xindex == gnum[0]:
                             temp_index = index
                             temp_index[0] = xindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_force(external_force + internal_force)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_force(external_force + internal_force)
                     if ti.static(GlobalVariable.MPMYPBC):
                         yindex = -index[1] + gnum[1]
                         if yindex == 0 or yindex == gnum[1]:
                             temp_index = index
                             temp_index[1] = yindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_force(external_force + internal_force)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_force(external_force + internal_force)
                     if ti.static(GlobalVariable.MPMZPBC):
                         zindex = -index[2] + gnum[2]
                         if zindex == 0 or zindex == gnum[2]:
                             temp_index = index
                             temp_index[2] = zindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_force(external_force + internal_force)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_force(external_force + internal_force)
 
 
 @ti.kernel
-def kernel_reference_force_p2g_2D(
+def kernel_reference_force_p2g_2d(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     gnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     gravity: ti.types.vector(3, float),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
 ):
     for d in ti.static(range(2)):
         ti.block_local(node.force.get_scalar_field(d))
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             fex = particle[np]._compute_external_force(gravity)
-            fInt = -particle[np].vol * particle[np].stress
+            f_int = -particle[np].vol * particle[np].stress
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 external_force = shape_mapping(shapefn[ln], fex)
-                internal_force = fInt @ dshapefn[ln]
-                node[nodeID, bodyID]._update_nodal_force(external_force + internal_force)
+                internal_force = f_int @ dshapefn[ln]
+                node[node_id, body_id]._update_nodal_force(external_force + internal_force)
                 if ti.static(GlobalVariable.MPMXPBC) or ti.static(GlobalVariable.MPMYPBC):
-                    index = ti.Vector([vectorize_id(nodeID, gnum)])
+                    index = ti.Vector([vectorize_id(node_id, gnum)])
                     if ti.static(GlobalVariable.MPMXPBC):
                         xindex = -index[0] + gnum[0]
                         if xindex == 0 or xindex == gnum[0]:
                             temp_index = index
                             temp_index[0] = xindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_force(external_force + internal_force)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_force(external_force + internal_force)
                     if ti.static(GlobalVariable.MPMYPBC):
                         yindex = -index[1] + gnum[1]
                         if yindex == 0 or yindex == gnum[1]:
                             temp_index = index
                             temp_index[1] = yindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_force(external_force + internal_force)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_force(external_force + internal_force)
 
 
 @ti.kernel
@@ -2035,66 +2045,66 @@ def kernel_external_force_p2g_twophase(
     total_nodes: int,
     gnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     gravity: ti.types.vector(3, float),
-    particleNum: int,
+    particle_num: int,
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
 ):
     for d in ti.static(range(GlobalVariable.DIMENSION)):
         ti.block_local(node.force.get_scalar_field(d))
         ti.block_local(node.forcef.get_scalar_field(d))
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             fex, fexf = particle[np]._compute_external_force(gravity)
             drag = particle[np]._compute_drag_force()
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 external_force = shape_mapping(shapefn[ln], fex)
                 external_forcef = shape_mapping(shapefn[ln], fexf)
                 drag_force = shape_mapping(shapefn[ln], drag)
-                node[nodeID, bodyID]._update_external_force(external_force, external_forcef + drag_force)
+                node[node_id, body_id]._update_external_force(external_force, external_forcef + drag_force)
                 if (
                     ti.static(GlobalVariable.MPMXPBC)
                     or ti.static(GlobalVariable.MPMYPBC)
                     or ti.static(GlobalVariable.MPMZPBC)
                 ):
-                    index = ti.Vector([vectorize_id(nodeID, gnum)])
+                    index = ti.Vector([vectorize_id(node_id, gnum)])
                     if ti.static(GlobalVariable.MPMXPBC):
                         xindex = -index[0] + gnum[0]
                         if xindex == 0 or xindex == gnum[0]:
                             temp_index = index
                             temp_index[0] = xindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_external_force(external_force, external_forcef + drag_force)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_external_force(external_force, external_forcef + drag_force)
                     if ti.static(GlobalVariable.MPMYPBC):
                         yindex = -index[1] + gnum[1]
                         if yindex == 0 or yindex == gnum[1]:
                             temp_index = index
                             temp_index[1] = yindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_external_force(external_force, external_forcef + drag_force)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_external_force(external_force, external_forcef + drag_force)
                     if ti.static(GlobalVariable.MPMZPBC):
                         zindex = -index[2] + gnum[2]
                         if zindex == 0 or zindex == gnum[2]:
                             temp_index = index
                             temp_index[2] = zindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_external_force(external_force, external_forcef + drag_force)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_external_force(external_force, external_forcef + drag_force)
 
 
 @ti.kernel
 def kernel_force_p2g_twophase(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     gnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     gravity: ti.types.vector(3, float),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
@@ -2102,15 +2112,15 @@ def kernel_force_p2g_twophase(
     for d in ti.static(range(GlobalVariable.DIMENSION)):
         ti.block_local(node.force.get_scalar_field(d))
         ti.block_local(node.forcef.get_scalar_field(d))
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             fex, fexf = particle[np]._compute_external_force(gravity)
-            fInt, fintf = particle[np]._compute_internal_force()
+            f_int, fintf = particle[np]._compute_internal_force()
             drag = particle[np]._compute_drag_force()
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 shape_fn = shapefn[ln]
                 dshape_fn = dshapefn[ln]
                 external_force = shape_mapping(shape_fn, fex)
@@ -2118,13 +2128,13 @@ def kernel_force_p2g_twophase(
                 drag_force = shape_mapping(shape_fn, drag)
                 internal_force = vec3f(
                     [
-                        dshape_fn[0] * fInt[0] + dshape_fn[1] * fInt[3] + dshape_fn[2] * fInt[5],
-                        dshape_fn[1] * fInt[1] + dshape_fn[0] * fInt[3] + dshape_fn[2] * fInt[4],
-                        dshape_fn[2] * fInt[2] + dshape_fn[1] * fInt[4] + dshape_fn[0] * fInt[5],
+                        dshape_fn[0] * f_int[0] + dshape_fn[1] * f_int[3] + dshape_fn[2] * f_int[5],
+                        dshape_fn[1] * f_int[1] + dshape_fn[0] * f_int[3] + dshape_fn[2] * f_int[4],
+                        dshape_fn[2] * f_int[2] + dshape_fn[1] * f_int[4] + dshape_fn[0] * f_int[5],
                     ]
                 )
                 internal_forcef = vec3f([dshape_fn[0] * fintf[0], dshape_fn[1] * fintf[1], dshape_fn[2] * fintf[2]])
-                node[nodeID, bodyID]._update_nodal_force(
+                node[node_id, body_id]._update_nodal_force(
                     external_force + internal_force, external_forcef + drag_force + internal_forcef
                 )
                 if (
@@ -2132,14 +2142,14 @@ def kernel_force_p2g_twophase(
                     or ti.static(GlobalVariable.MPMYPBC)
                     or ti.static(GlobalVariable.MPMZPBC)
                 ):
-                    index = ti.Vector([vectorize_id(nodeID, gnum)])
+                    index = ti.Vector([vectorize_id(node_id, gnum)])
                     if ti.static(GlobalVariable.MPMXPBC):
                         xindex = -index[0] + gnum[0]
                         if xindex == 0 or xindex == gnum[0]:
                             temp_index = index
                             temp_index[0] = xindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_force(
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_force(
                                 external_force + internal_force, external_forcef + drag_force + internal_forcef
                             )
                     if ti.static(GlobalVariable.MPMYPBC):
@@ -2147,8 +2157,8 @@ def kernel_force_p2g_twophase(
                         if yindex == 0 or yindex == gnum[1]:
                             temp_index = index
                             temp_index[1] = yindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_force(
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_force(
                                 external_force + internal_force, external_forcef + drag_force + internal_forcef
                             )
                     if ti.static(GlobalVariable.MPMZPBC):
@@ -2156,21 +2166,21 @@ def kernel_force_p2g_twophase(
                         if zindex == 0 or zindex == gnum[2]:
                             temp_index = index
                             temp_index[2] = zindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_force(
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_force(
                                 external_force + internal_force, external_forcef + drag_force + internal_forcef
                             )
 
 
 @ti.kernel
-def kernel_force_p2g_twophase2D(
+def kernel_force_p2g_twophase2d(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     gnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     gravity: ti.types.vector(3, float),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
@@ -2178,25 +2188,28 @@ def kernel_force_p2g_twophase2D(
     for d in ti.static(range(GlobalVariable.DIMENSION)):
         ti.block_local(node.force.get_scalar_field(d))
         ti.block_local(node.forcef.get_scalar_field(d))
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             fex, fexf = particle[np]._compute_external_force(gravity)
-            fInt, fintf = particle[np]._compute_internal_force()
+            f_int, fintf = particle[np]._compute_internal_force()
             drag = particle[np]._compute_drag_force()
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 shape_fn = shapefn[ln]
                 dshape_fn = dshapefn[ln]
                 external_force = shape_mapping(shape_fn, fex)
                 external_forcef = shape_mapping(shape_fn, fexf)
                 drag_force = shape_mapping(shape_fn, drag)
                 internal_force = vec2f(
-                    [dshape_fn[0] * fInt[0] + dshape_fn[1] * fInt[3], dshape_fn[1] * fInt[1] + dshape_fn[0] * fInt[3]]
+                    [
+                        dshape_fn[0] * f_int[0] + dshape_fn[1] * f_int[3],
+                        dshape_fn[1] * f_int[1] + dshape_fn[0] * f_int[3],
+                    ]
                 )
                 internal_forcef = vec2f([dshape_fn[0] * fintf[0], dshape_fn[1] * fintf[1]])
-                node[nodeID, bodyID]._update_nodal_force(
+                node[node_id, body_id]._update_nodal_force(
                     external_force + internal_force, external_forcef + drag_force + internal_forcef
                 )
                 if (
@@ -2204,14 +2217,14 @@ def kernel_force_p2g_twophase2D(
                     or ti.static(GlobalVariable.MPMYPBC)
                     or ti.static(GlobalVariable.MPMZPBC)
                 ):
-                    index = ti.Vector([vectorize_id(nodeID, gnum)])
+                    index = ti.Vector([vectorize_id(node_id, gnum)])
                     if ti.static(GlobalVariable.MPMXPBC):
                         xindex = -index[0] + gnum[0]
                         if xindex == 0 or xindex == gnum[0]:
                             temp_index = index
                             temp_index[0] = xindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_force(
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_force(
                                 external_force + internal_force, external_forcef + drag_force + internal_forcef
                             )
                     if ti.static(GlobalVariable.MPMYPBC):
@@ -2219,21 +2232,21 @@ def kernel_force_p2g_twophase2D(
                         if yindex == 0 or yindex == gnum[1]:
                             temp_index = index
                             temp_index[1] = yindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_force(
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_force(
                                 external_force + internal_force, external_forcef + drag_force + internal_forcef
                             )
 
 
 @ti.kernel
-def kernel_force_bbar_p2g_twophase2D(
+def kernel_force_bbar_p2g_twophase2d(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     gnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     gravity: ti.types.vector(3, float),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     dshapefn: ti.template(),
     dshapefnc: ti.template(),
@@ -2242,24 +2255,24 @@ def kernel_force_bbar_p2g_twophase2D(
     for d in ti.static(range(GlobalVariable.DIMENSION)):
         ti.block_local(node.force.get_scalar_field(d))
         ti.block_local(node.forcef.get_scalar_field(d))
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             fex, fexf = particle[np]._compute_external_force(gravity)
-            fInt, fintf = particle[np]._compute_internal_force()
+            f_int, fintf = particle[np]._compute_internal_force()
             drag = particle[np]._compute_drag_force()
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 shape_fn = shapefn[ln]
                 dshape_fn = dshapefn[ln]
                 dshape_fnc = dshapefnc[ln]
                 external_force = shape_mapping(shape_fn, fex)
                 external_forcef = shape_mapping(shape_fn, fexf)
                 drag_force = shape_mapping(shape_fn, drag)
-                internal_force = bbar_internal_force_2d(dshape_fn, dshape_fnc, fInt)
+                internal_force = bbar_internal_force_2d(dshape_fn, dshape_fnc, f_int)
                 internal_forcef = vec2f([dshape_fn[0] * fintf[0], dshape_fn[1] * fintf[1]])
-                node[nodeID, bodyID]._update_nodal_force(
+                node[node_id, body_id]._update_nodal_force(
                     external_force + internal_force, external_forcef + drag_force + internal_forcef
                 )
                 if (
@@ -2267,14 +2280,14 @@ def kernel_force_bbar_p2g_twophase2D(
                     or ti.static(GlobalVariable.MPMYPBC)
                     or ti.static(GlobalVariable.MPMZPBC)
                 ):
-                    index = ti.Vector([vectorize_id(nodeID, gnum)])
+                    index = ti.Vector([vectorize_id(node_id, gnum)])
                     if ti.static(GlobalVariable.MPMXPBC):
                         xindex = -index[0] + gnum[0]
                         if xindex == 0 or xindex == gnum[0]:
                             temp_index = index
                             temp_index[0] = xindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_force(
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_force(
                                 external_force + internal_force, external_forcef + drag_force + internal_forcef
                             )
                     if ti.static(GlobalVariable.MPMYPBC):
@@ -2282,21 +2295,21 @@ def kernel_force_bbar_p2g_twophase2D(
                         if yindex == 0 or yindex == gnum[1]:
                             temp_index = index
                             temp_index[1] = yindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_force(
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_force(
                                 external_force + internal_force, external_forcef + drag_force + internal_forcef
                             )
 
 
 @ti.kernel
-def kernel_force_p2g_twophase_2DAxisy(
+def kernel_force_p2g_twophase_2d_axisy(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     gnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     gravity: ti.types.vector(3, float),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
@@ -2304,16 +2317,16 @@ def kernel_force_p2g_twophase_2DAxisy(
     for d in ti.static(range(GlobalVariable.DIMENSION)):
         ti.block_local(node.force.get_scalar_field(d))
         ti.block_local(node.forcef.get_scalar_field(d))
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             position = particle[np].x
             fex, fexf = particle[np]._compute_external_force(gravity)
-            fInt, fintf = particle[np]._compute_internal_force()
+            f_int, fintf = particle[np]._compute_internal_force()
             drag = particle[np]._compute_drag_force()
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 shape_fn = shapefn[ln]
                 dshape_fn = dshapefn[ln]
 
@@ -2322,12 +2335,12 @@ def kernel_force_p2g_twophase_2DAxisy(
                 drag_force = shape_mapping(shape_fn, drag)
                 internal_force = vec2f(
                     [
-                        dshape_fn[0] * fInt[0] + dshape_fn[1] * fInt[3] + fInt[2] * shape_fn / position[0],
-                        dshape_fn[1] * fInt[1] + dshape_fn[0] * fInt[3],
+                        dshape_fn[0] * f_int[0] + dshape_fn[1] * f_int[3] + f_int[2] * shape_fn / position[0],
+                        dshape_fn[1] * f_int[1] + dshape_fn[0] * f_int[3],
                     ]
                 )
                 internal_forcef = vec2f([dshape_fn[0] * fintf[0], dshape_fn[1] * fintf[1]])
-                node[nodeID, bodyID]._update_nodal_force(
+                node[node_id, body_id]._update_nodal_force(
                     external_force + internal_force, external_forcef + drag_force + internal_forcef
                 )
                 if (
@@ -2335,14 +2348,14 @@ def kernel_force_p2g_twophase_2DAxisy(
                     or ti.static(GlobalVariable.MPMYPBC)
                     or ti.static(GlobalVariable.MPMZPBC)
                 ):
-                    index = ti.Vector([vectorize_id(nodeID, gnum)])
+                    index = ti.Vector([vectorize_id(node_id, gnum)])
                     if ti.static(GlobalVariable.MPMXPBC):
                         xindex = -index[0] + gnum[0]
                         if xindex == 0 or xindex == gnum[0]:
                             temp_index = index
                             temp_index[0] = xindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_force(
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_force(
                                 external_force + internal_force, external_forcef + drag_force + internal_forcef
                             )
                     if ti.static(GlobalVariable.MPMYPBC):
@@ -2350,21 +2363,21 @@ def kernel_force_p2g_twophase_2DAxisy(
                         if yindex == 0 or yindex == gnum[1]:
                             temp_index = index
                             temp_index[1] = yindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_force(
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_force(
                                 external_force + internal_force, external_forcef + drag_force + internal_forcef
                             )
 
 
 @ti.kernel
-def kernel_force_bbar_p2g_twophase_2DAxisy(
+def kernel_force_bbar_p2g_twophase_2d_axisy(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     gnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     gravity: ti.types.vector(3, float),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     shapefnc: ti.template(),
     dshapefn: ti.template(),
@@ -2374,16 +2387,16 @@ def kernel_force_bbar_p2g_twophase_2DAxisy(
     for d in ti.static(range(GlobalVariable.DIMENSION)):
         ti.block_local(node.force.get_scalar_field(d))
         ti.block_local(node.forcef.get_scalar_field(d))
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             position = particle[np].x
             fex, fexf = particle[np]._compute_external_force(gravity)
-            fInt, fintf = particle[np]._compute_internal_force()
+            f_int, fintf = particle[np]._compute_internal_force()
             drag = particle[np]._compute_drag_force()
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 shape_fn = shapefn[ln]
                 shape_fnc = shapefnc[ln]
                 dshape_fn = dshapefn[ln]
@@ -2404,19 +2417,19 @@ def kernel_force_bbar_p2g_twophase_2DAxisy(
                     / 3.0
                     * vec2f(
                         [
-                            (B1bar + 2.0 * B1 + B0bar - B0) * fInt[0]
-                            + (B1bar - B1 + B0bar - B0) * fInt[1]
-                            + (B1bar - B1 + B0bar + 2.0 * B0) * fInt[2]
-                            + 3.0 * B2 * fInt[3],
-                            (B2bar - B2) * fInt[0]
-                            + (B2bar + 2.0 * B2) * fInt[1]
-                            + (B2bar - B2) * fInt[2]
-                            + 3.0 * B1 * fInt[3],
+                            (B1bar + 2.0 * B1 + B0bar - B0) * f_int[0]
+                            + (B1bar - B1 + B0bar - B0) * f_int[1]
+                            + (B1bar - B1 + B0bar + 2.0 * B0) * f_int[2]
+                            + 3.0 * B2 * f_int[3],
+                            (B2bar - B2) * f_int[0]
+                            + (B2bar + 2.0 * B2) * f_int[1]
+                            + (B2bar - B2) * f_int[2]
+                            + 3.0 * B1 * f_int[3],
                         ]
                     )
                 )
                 internal_forcef = vec2f([dshape_fn[0] * fintf[0], dshape_fn[1] * fintf[1]])
-                node[nodeID, bodyID]._update_nodal_force(
+                node[node_id, body_id]._update_nodal_force(
                     external_force + internal_force, external_forcef + drag_force + internal_forcef
                 )
                 if (
@@ -2424,14 +2437,14 @@ def kernel_force_bbar_p2g_twophase_2DAxisy(
                     or ti.static(GlobalVariable.MPMYPBC)
                     or ti.static(GlobalVariable.MPMZPBC)
                 ):
-                    index = ti.Vector([vectorize_id(nodeID, gnum)])
+                    index = ti.Vector([vectorize_id(node_id, gnum)])
                     if ti.static(GlobalVariable.MPMXPBC):
                         xindex = -index[0] + gnum[0]
                         if xindex == 0 or xindex == gnum[0]:
                             temp_index = index
                             temp_index[0] = xindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_force(
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_force(
                                 external_force + internal_force, external_forcef + drag_force + internal_forcef
                             )
                     if ti.static(GlobalVariable.MPMYPBC):
@@ -2439,8 +2452,8 @@ def kernel_force_bbar_p2g_twophase_2DAxisy(
                         if yindex == 0 or yindex == gnum[1]:
                             temp_index = index
                             temp_index[1] = yindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_force(
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_force(
                                 external_force + internal_force, external_forcef + drag_force + internal_forcef
                             )
 
@@ -2451,7 +2464,7 @@ def kernel_sum_cell_stress(
     dx: ti.types.vector(3, float),
     inv_dx: ti.types.vector(3, float),
     cnum: ti.types.vector(3, int),
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
     cell: ti.template(),
     sub_cell: ti.template(),
@@ -2460,30 +2473,30 @@ def kernel_sum_cell_stress(
     for d in ti.static(range(6)):
         ti.block_local(sub_cell.stress.get_scalar_field(d))
     ti.block_local(sub_cell.vol)
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             element_id = ti.floor(particle[np].x * inv_dx, int)
             linear_element_id = int(element_id[0] + element_id[1] * cnum[0] + element_id[2] * cnum[0] * cnum[1])
-            if int(cell[linear_element_id, bodyID].active) == 1:
+            if int(cell[linear_element_id, body_id].active) == 1:
                 volume = particle[np].vol
                 sub_element_id = ti.floor((particle[np].x - element_id * dx) * inv_dx * gauss_num, int)
                 sub_linear_element_id = (
                     sub_element_id[0] + sub_element_id[1] * gauss_num + sub_element_id[2] * gauss_num * gauss_num
                 )
-                sub_cell[linear_element_id * gauss_point_num + sub_linear_element_id, bodyID].stress += (
+                sub_cell[linear_element_id * gauss_point_num + sub_linear_element_id, body_id].stress += (
                     particle[np].stress * volume
                 )
-                sub_cell[linear_element_id * gauss_point_num + sub_linear_element_id, bodyID].vol += volume
+                sub_cell[linear_element_id * gauss_point_num + sub_linear_element_id, body_id].vol += volume
 
 
 @ti.kernel
-def kernel_sum_cell_stress_2D(
+def kernel_sum_cell_stress_2d(
     gauss_num: int,
     dx: ti.types.vector(2, float),
     inv_dx: ti.types.vector(2, float),
     cnum: ti.types.vector(2, int),
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
     cell: ti.template(),
     sub_cell: ti.template(),
@@ -2492,19 +2505,19 @@ def kernel_sum_cell_stress_2D(
     for d in ti.static(range(6)):
         ti.block_local(sub_cell.stress.get_scalar_field(d))
     ti.block_local(sub_cell.vol)
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             element_id = ti.floor(particle[np].x * inv_dx, int)
             linear_element_id = int(element_id[0] + element_id[1] * cnum[0])
-            if int(cell[linear_element_id, bodyID].active) == 1:
+            if int(cell[linear_element_id, body_id].active) == 1:
                 volume = particle[np].vol
                 sub_element_id = ti.floor((particle[np].x - element_id * dx) * inv_dx * gauss_num, int)
                 sub_linear_element_id = sub_element_id[0] + sub_element_id[1] * gauss_num
-                sub_cell[linear_element_id * gauss_point_num + sub_linear_element_id, bodyID].stress += (
+                sub_cell[linear_element_id * gauss_point_num + sub_linear_element_id, body_id].stress += (
                     particle[np].stress * volume
                 )
-                sub_cell[linear_element_id * gauss_point_num + sub_linear_element_id, bodyID].vol += volume
+                sub_cell[linear_element_id * gauss_point_num + sub_linear_element_id, body_id].vol += volume
 
 
 @ti.kernel
@@ -2530,56 +2543,56 @@ def kernel_internal_force_on_gauss_point_p2g(
                 volume = dx[0] * dx[1] * dx[2] / gauss_point_num
                 for ngp in range(gauss_point_num):
                     gp = 0.5 * dx * (gauss_point[ngp] + 1) + base * dx
-                    fInt = -weight[ngp] * sub_cell[nc * gauss_point_num + ngp, nb].stress * volume
+                    f_int = -weight[ngp] * sub_cell[nc * gauss_point_num + ngp, nb].stress * volume
                     for i, j, k in ti.static(ti.ndrange(2, 2, 2)):
                         nx, ny, nz = base[0] + i, base[1] + j, base[2] + k
-                        nodeID = nx + ny * gnum[0] + nz * gnum[0] * gnum[1]
-                        sx = ShapeLinear(gp[0], nx * dx[0], inv_dx[0], 0)
-                        sy = ShapeLinear(gp[1], ny * dx[1], inv_dx[1], 0)
-                        sz = ShapeLinear(gp[2], nz * dx[2], inv_dx[2], 0)
-                        gsx = GShapeLinear(gp[0], nx * dx[0], inv_dx[0], 0)
-                        gsy = GShapeLinear(gp[1], ny * dx[1], inv_dx[1], 0)
-                        gsz = GShapeLinear(gp[2], nz * dx[2], inv_dx[2], 0)
+                        node_id = nx + ny * gnum[0] + nz * gnum[0] * gnum[1]
+                        sx = shape_linear(gp[0], nx * dx[0], inv_dx[0], 0)
+                        sy = shape_linear(gp[1], ny * dx[1], inv_dx[1], 0)
+                        sz = shape_linear(gp[2], nz * dx[2], inv_dx[2], 0)
+                        gsx = g_shape_linear(gp[0], nx * dx[0], inv_dx[0], 0)
+                        gsy = g_shape_linear(gp[1], ny * dx[1], inv_dx[1], 0)
+                        gsz = g_shape_linear(gp[2], nz * dx[2], inv_dx[2], 0)
                         dshape_fn = vec3f(gsx * sy * sz, gsy * sx * sz, gsz * sx * sy)
                         internal_force = vec3f(
                             [
-                                dshape_fn[0] * fInt[0] + dshape_fn[1] * fInt[3] + dshape_fn[2] * fInt[5],
-                                dshape_fn[1] * fInt[1] + dshape_fn[0] * fInt[3] + dshape_fn[2] * fInt[4],
-                                dshape_fn[2] * fInt[2] + dshape_fn[1] * fInt[4] + dshape_fn[0] * fInt[5],
+                                dshape_fn[0] * f_int[0] + dshape_fn[1] * f_int[3] + dshape_fn[2] * f_int[5],
+                                dshape_fn[1] * f_int[1] + dshape_fn[0] * f_int[3] + dshape_fn[2] * f_int[4],
+                                dshape_fn[2] * f_int[2] + dshape_fn[1] * f_int[4] + dshape_fn[0] * f_int[5],
                             ]
                         )
-                        node[nodeID, nb]._update_nodal_force(internal_force)
+                        node[node_id, nb]._update_nodal_force(internal_force)
                         if (
                             ti.static(GlobalVariable.MPMXPBC)
                             or ti.static(GlobalVariable.MPMYPBC)
                             or ti.static(GlobalVariable.MPMZPBC)
                         ):
-                            index = ti.Vector([vectorize_id(nodeID, gnum)])
+                            index = ti.Vector([vectorize_id(node_id, gnum)])
                             if ti.static(GlobalVariable.MPMXPBC):
                                 xindex = -index[0] + gnum[0]
                                 if xindex == 0 or xindex == gnum[0]:
                                     temp_index = index
                                     temp_index[0] = xindex
-                                    tideID = linearize(temp_index, gnum)
-                                    node[tideID, nb]._update_nodal_force(internal_force)
+                                    tide_id = linearize(temp_index, gnum)
+                                    node[tide_id, nb]._update_nodal_force(internal_force)
                             if ti.static(GlobalVariable.MPMYPBC):
                                 yindex = -index[1] + gnum[1]
                                 if yindex == 0 or yindex == gnum[1]:
                                     temp_index = index
                                     temp_index[1] = yindex
-                                    tideID = linearize(temp_index, gnum)
-                                    node[tideID, nb]._update_nodal_force(internal_force)
+                                    tide_id = linearize(temp_index, gnum)
+                                    node[tide_id, nb]._update_nodal_force(internal_force)
                             if ti.static(GlobalVariable.MPMZPBC):
                                 zindex = -index[2] + gnum[2]
                                 if zindex == 0 or zindex == gnum[2]:
                                     temp_index = index
                                     temp_index[2] = zindex
-                                    tideID = linearize(temp_index, gnum)
-                                    node[tideID, nb]._update_nodal_force(internal_force)
+                                    tide_id = linearize(temp_index, gnum)
+                                    node[tide_id, nb]._update_nodal_force(internal_force)
 
 
 @ti.kernel
-def kernel_internal_force_on_gauss_point_p2g_2D(
+def kernel_internal_force_on_gauss_point_p2g_2d(
     gauss_num: int,
     cnum: ti.types.vector(2, int),
     gnum: ti.types.vector(2, int),
@@ -2601,42 +2614,42 @@ def kernel_internal_force_on_gauss_point_p2g_2D(
                 volume = dx[0] * dx[1] / gauss_point_num
                 for ngp in range(gauss_point_num):
                     gp = 0.5 * dx * (gauss_point[ngp] + 1) + base * dx
-                    fInt = -weight[ngp] * sub_cell[nc * gauss_point_num + ngp, nb].stress * volume
+                    f_int = -weight[ngp] * sub_cell[nc * gauss_point_num + ngp, nb].stress * volume
                     for i, j in ti.static(ti.ndrange(2, 2)):
                         nx, ny = base[0] + i, base[1] + j
-                        nodeID = nx + ny * gnum[0]
-                        sx = ShapeLinear(gp[0], nx * dx[0], inv_dx[0], 0)
-                        sy = ShapeLinear(gp[1], ny * dx[1], inv_dx[1], 0)
-                        gsx = GShapeLinear(gp[0], nx * dx[0], inv_dx[0], 0)
-                        gsy = GShapeLinear(gp[1], ny * dx[1], inv_dx[1], 0)
+                        node_id = nx + ny * gnum[0]
+                        sx = shape_linear(gp[0], nx * dx[0], inv_dx[0], 0)
+                        sy = shape_linear(gp[1], ny * dx[1], inv_dx[1], 0)
+                        gsx = g_shape_linear(gp[0], nx * dx[0], inv_dx[0], 0)
+                        gsy = g_shape_linear(gp[1], ny * dx[1], inv_dx[1], 0)
                         dshape_fn = vec2f(gsx * sy, gsy * sx)
                         internal_force = vec2f(
                             [
-                                dshape_fn[0] * fInt[0] + dshape_fn[1] * fInt[3],
-                                dshape_fn[1] * fInt[1] + dshape_fn[0] * fInt[3],
+                                dshape_fn[0] * f_int[0] + dshape_fn[1] * f_int[3],
+                                dshape_fn[1] * f_int[1] + dshape_fn[0] * f_int[3],
                             ]
                         )
-                        node[nodeID, nb]._update_nodal_force(internal_force)
+                        node[node_id, nb]._update_nodal_force(internal_force)
                         if (
                             ti.static(GlobalVariable.MPMXPBC)
                             or ti.static(GlobalVariable.MPMYPBC)
                             or ti.static(GlobalVariable.MPMZPBC)
                         ):
-                            index = ti.Vector([vectorize_id(nodeID, gnum)])
+                            index = ti.Vector([vectorize_id(node_id, gnum)])
                             if ti.static(GlobalVariable.MPMXPBC):
                                 xindex = -index[0] + gnum[0]
                                 if xindex == 0 or xindex == gnum[0]:
                                     temp_index = index
                                     temp_index[0] = xindex
-                                    tideID = linearize(temp_index, gnum)
-                                    node[tideID, nb]._update_nodal_force(internal_force)
+                                    tide_id = linearize(temp_index, gnum)
+                                    node[tide_id, nb]._update_nodal_force(internal_force)
                             if ti.static(GlobalVariable.MPMYPBC):
                                 yindex = -index[1] + gnum[1]
                                 if yindex == 0 or yindex == gnum[1]:
                                     temp_index = index
                                     temp_index[1] = yindex
-                                    tideID = linearize(temp_index, gnum)
-                                    node[tideID, nb]._update_nodal_force(internal_force)
+                                    tide_id = linearize(temp_index, gnum)
+                                    node[tide_id, nb]._update_nodal_force(internal_force)
 
 
 @ti.kernel
@@ -2645,242 +2658,245 @@ def kernel_internal_force_on_material_point_p2g(
     gnum: ti.types.vector(3, int),
     dx: ti.types.vector(3, float),
     inv_dx: ti.types.vector(3, float),
-    particleNum: int,
+    particle_num: int,
     node: ti.template(),
     particle: ti.template(),
     cell: ti.template(),
 ):
     for d in ti.static(range(GlobalVariable.DIMENSION)):
         ti.block_local(node.force.get_scalar_field(d))
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             element_id = ti.floor(particle[np].x * inv_dx, int)
             linear_element_id = element_id[0] + element_id[1] * cnum[0] + element_id[2] * cnum[0] * cnum[1]
-            if int(cell[linear_element_id, bodyID].active) == 0:
-                fInt = particle[np]._compute_internal_force()
+            if int(cell[linear_element_id, body_id].active) == 0:
+                f_int = particle[np]._compute_internal_force()
                 position = particle[np].x
                 for i, j, k in ti.static(ti.ndrange(2, 2, 2)):
                     nx, ny, nz = element_id[0] + i, element_id[1] + j, element_id[2] + k
-                    nodeID = nx + ny * gnum[0] + nz * gnum[0] * gnum[1]
-                    sx = ShapeLinear(position[0], nx * dx[0], inv_dx[0], 0)
-                    sy = ShapeLinear(position[1], ny * dx[1], inv_dx[1], 0)
-                    sz = ShapeLinear(position[2], nz * dx[2], inv_dx[2], 0)
-                    gsx = GShapeLinear(position[0], nx * dx[0], inv_dx[0], 0)
-                    gsy = GShapeLinear(position[1], ny * dx[1], inv_dx[1], 0)
-                    gsz = GShapeLinear(position[2], nz * dx[2], inv_dx[2], 0)
+                    node_id = nx + ny * gnum[0] + nz * gnum[0] * gnum[1]
+                    sx = shape_linear(position[0], nx * dx[0], inv_dx[0], 0)
+                    sy = shape_linear(position[1], ny * dx[1], inv_dx[1], 0)
+                    sz = shape_linear(position[2], nz * dx[2], inv_dx[2], 0)
+                    gsx = g_shape_linear(position[0], nx * dx[0], inv_dx[0], 0)
+                    gsy = g_shape_linear(position[1], ny * dx[1], inv_dx[1], 0)
+                    gsz = g_shape_linear(position[2], nz * dx[2], inv_dx[2], 0)
                     dshape_fn = vec3f(gsx * sy * sz, gsy * sx * sz, gsz * sx * sy)
                     internal_force = vec3f(
                         [
-                            dshape_fn[0] * fInt[0] + dshape_fn[1] * fInt[3] + dshape_fn[2] * fInt[5],
-                            dshape_fn[1] * fInt[1] + dshape_fn[0] * fInt[3] + dshape_fn[2] * fInt[4],
-                            dshape_fn[2] * fInt[2] + dshape_fn[1] * fInt[4] + dshape_fn[0] * fInt[5],
+                            dshape_fn[0] * f_int[0] + dshape_fn[1] * f_int[3] + dshape_fn[2] * f_int[5],
+                            dshape_fn[1] * f_int[1] + dshape_fn[0] * f_int[3] + dshape_fn[2] * f_int[4],
+                            dshape_fn[2] * f_int[2] + dshape_fn[1] * f_int[4] + dshape_fn[0] * f_int[5],
                         ]
                     )
-                    node[nodeID, bodyID]._update_nodal_force(internal_force)
+                    node[node_id, body_id]._update_nodal_force(internal_force)
                     if (
                         ti.static(GlobalVariable.MPMXPBC)
                         or ti.static(GlobalVariable.MPMYPBC)
                         or ti.static(GlobalVariable.MPMZPBC)
                     ):
-                        index = ti.Vector([vectorize_id(nodeID, gnum)])
+                        index = ti.Vector([vectorize_id(node_id, gnum)])
                         if ti.static(GlobalVariable.MPMXPBC):
                             xindex = -index[0] + gnum[0]
                             if xindex == 0 or xindex == gnum[0]:
                                 temp_index = index
                                 temp_index[0] = xindex
-                                tideID = linearize(temp_index, gnum)
-                                node[tideID, bodyID]._update_nodal_force(internal_force)
+                                tide_id = linearize(temp_index, gnum)
+                                node[tide_id, body_id]._update_nodal_force(internal_force)
                         if ti.static(GlobalVariable.MPMYPBC):
                             yindex = -index[1] + gnum[1]
                             if yindex == 0 or yindex == gnum[1]:
                                 temp_index = index
                                 temp_index[1] = yindex
-                                tideID = linearize(temp_index, gnum)
-                                node[tideID, bodyID]._update_nodal_force(internal_force)
+                                tide_id = linearize(temp_index, gnum)
+                                node[tide_id, body_id]._update_nodal_force(internal_force)
                         if ti.static(GlobalVariable.MPMZPBC):
                             zindex = -index[2] + gnum[2]
                             if zindex == 0 or zindex == gnum[2]:
                                 temp_index = index
                                 temp_index[2] = zindex
-                                tideID = linearize(temp_index, gnum)
-                                node[tideID, bodyID]._update_nodal_force(internal_force)
+                                tide_id = linearize(temp_index, gnum)
+                                node[tide_id, body_id]._update_nodal_force(internal_force)
 
 
 @ti.kernel
-def kernel_internal_force_on_material_point_p2g_2D(
+def kernel_internal_force_on_material_point_p2g_2d(
     cnum: ti.types.vector(2, int),
     gnum: ti.types.vector(2, int),
     dx: ti.types.vector(2, float),
     inv_dx: ti.types.vector(2, float),
-    particleNum: int,
+    particle_num: int,
     node: ti.template(),
     particle: ti.template(),
     cell: ti.template(),
 ):
     for d in ti.static(range(GlobalVariable.DIMENSION)):
         ti.block_local(node.force.get_scalar_field(d))
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             element_id = ti.floor(particle[np].x * inv_dx, int)
             linear_element_id = element_id[0] + element_id[1] * cnum[0]
-            if int(cell[linear_element_id, bodyID].active) == 0:
-                fInt = particle[np]._compute_internal_force()
+            if int(cell[linear_element_id, body_id].active) == 0:
+                f_int = particle[np]._compute_internal_force()
                 position = particle[np].x
                 for i, j in ti.static(ti.ndrange(2, 2)):
                     nx, ny = element_id[0] + i, element_id[1] + j
-                    nodeID = nx + ny * gnum[0]
-                    sx = ShapeLinear(position[0], nx * dx[0], inv_dx[0], 0)
-                    sy = ShapeLinear(position[1], ny * dx[1], inv_dx[1], 0)
-                    gsx = GShapeLinear(position[0], nx * dx[0], inv_dx[0], 0)
-                    gsy = GShapeLinear(position[1], ny * dx[1], inv_dx[1], 0)
+                    node_id = nx + ny * gnum[0]
+                    sx = shape_linear(position[0], nx * dx[0], inv_dx[0], 0)
+                    sy = shape_linear(position[1], ny * dx[1], inv_dx[1], 0)
+                    gsx = g_shape_linear(position[0], nx * dx[0], inv_dx[0], 0)
+                    gsy = g_shape_linear(position[1], ny * dx[1], inv_dx[1], 0)
                     dshape_fn = vec2f(gsx * sy, gsy * sx)
                     internal_force = vec2f(
                         [
-                            dshape_fn[0] * fInt[0] + dshape_fn[1] * fInt[3],
-                            dshape_fn[1] * fInt[1] + dshape_fn[0] * fInt[3],
+                            dshape_fn[0] * f_int[0] + dshape_fn[1] * f_int[3],
+                            dshape_fn[1] * f_int[1] + dshape_fn[0] * f_int[3],
                         ]
                     )
-                    node[nodeID, bodyID]._update_nodal_force(internal_force)
+                    node[node_id, body_id]._update_nodal_force(internal_force)
                     if (
                         ti.static(GlobalVariable.MPMXPBC)
                         or ti.static(GlobalVariable.MPMYPBC)
                         or ti.static(GlobalVariable.MPMZPBC)
                     ):
-                        index = ti.Vector([vectorize_id(nodeID, gnum)])
+                        index = ti.Vector([vectorize_id(node_id, gnum)])
                         if ti.static(GlobalVariable.MPMXPBC):
                             xindex = -index[0] + gnum[0]
                             if xindex == 0 or xindex == gnum[0]:
                                 temp_index = index
                                 temp_index[0] = xindex
-                                tideID = linearize(temp_index, gnum)
-                                node[tideID, bodyID]._update_nodal_force(internal_force)
+                                tide_id = linearize(temp_index, gnum)
+                                node[tide_id, body_id]._update_nodal_force(internal_force)
                         if ti.static(GlobalVariable.MPMYPBC):
                             yindex = -index[1] + gnum[1]
                             if yindex == 0 or yindex == gnum[1]:
                                 temp_index = index
                                 temp_index[1] = yindex
-                                tideID = linearize(temp_index, gnum)
-                                node[tideID, bodyID]._update_nodal_force(internal_force)
+                                tide_id = linearize(temp_index, gnum)
+                                node[tide_id, body_id]._update_nodal_force(internal_force)
 
 
 @ti.kernel
-def kernel_internal_force_p2g_twophase2D(
+def kernel_internal_force_p2g_twophase2d(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     gnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
 ):
     for d in ti.static(range(GlobalVariable.DIMENSION)):
         ti.block_local(node.force.get_scalar_field(d))
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
-            fInt, fintf = particle[np]._compute_internal_force()
+            f_int, fintf = particle[np]._compute_internal_force()
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 dshape_fn = dshapefn[ln]
                 internal_force = vec2f(
-                    [dshape_fn[0] * fInt[0] + dshape_fn[1] * fInt[3], dshape_fn[1] * fInt[1] + dshape_fn[0] * fInt[3]]
+                    [
+                        dshape_fn[0] * f_int[0] + dshape_fn[1] * f_int[3],
+                        dshape_fn[1] * f_int[1] + dshape_fn[0] * f_int[3],
+                    ]
                 )
                 internal_forcef = vec2f([dshape_fn[0] * fintf[0], dshape_fn[1] * fintf[1]])
-                node[nodeID, bodyID]._update_internal_force(internal_force, internal_forcef)
+                node[node_id, body_id]._update_internal_force(internal_force, internal_forcef)
                 if (
                     ti.static(GlobalVariable.MPMXPBC)
                     or ti.static(GlobalVariable.MPMYPBC)
                     or ti.static(GlobalVariable.MPMZPBC)
                 ):
-                    index = ti.Vector([vectorize_id(nodeID, gnum)])
+                    index = ti.Vector([vectorize_id(node_id, gnum)])
                     if ti.static(GlobalVariable.MPMXPBC):
                         xindex = -index[0] + gnum[0]
                         if xindex == 0 or xindex == gnum[0]:
                             temp_index = index
                             temp_index[0] = xindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_internal_force(internal_force, internal_forcef)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_internal_force(internal_force, internal_forcef)
                     if ti.static(GlobalVariable.MPMYPBC):
                         yindex = -index[1] + gnum[1]
                         if yindex == 0 or yindex == gnum[1]:
                             temp_index = index
                             temp_index[1] = yindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_internal_force(internal_force, internal_forcef)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_internal_force(internal_force, internal_forcef)
 
 
 @ti.kernel
 def kernel_internal_force_p2g_twophase(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     gnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
 ):
     for d in ti.static(range(GlobalVariable.DIMENSION)):
         ti.block_local(node.force.get_scalar_field(d))
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
-            fInt, fintf = particle[np]._compute_internal_force()
+            f_int, fintf = particle[np]._compute_internal_force()
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 dshape_fn = dshapefn[ln]
                 internal_force = vec3f(
                     [
-                        dshape_fn[0] * fInt[0] + dshape_fn[1] * fInt[3] + dshape_fn[2] * fInt[5],
-                        dshape_fn[1] * fInt[1] + dshape_fn[0] * fInt[3] + dshape_fn[2] * fInt[4],
-                        dshape_fn[2] * fInt[2] + dshape_fn[1] * fInt[4] + dshape_fn[0] * fInt[5],
+                        dshape_fn[0] * f_int[0] + dshape_fn[1] * f_int[3] + dshape_fn[2] * f_int[5],
+                        dshape_fn[1] * f_int[1] + dshape_fn[0] * f_int[3] + dshape_fn[2] * f_int[4],
+                        dshape_fn[2] * f_int[2] + dshape_fn[1] * f_int[4] + dshape_fn[0] * f_int[5],
                     ]
                 )
                 internal_forcef = vec3f([dshape_fn[0] * fintf[0], dshape_fn[1] * fintf[1], dshape_fn[2] * fintf[2]])
-                node[nodeID, bodyID]._update_internal_force(internal_force, internal_forcef)
+                node[node_id, body_id]._update_internal_force(internal_force, internal_forcef)
                 if (
                     ti.static(GlobalVariable.MPMXPBC)
                     or ti.static(GlobalVariable.MPMYPBC)
                     or ti.static(GlobalVariable.MPMZPBC)
                 ):
-                    index = ti.Vector([vectorize_id(nodeID, gnum)])
+                    index = ti.Vector([vectorize_id(node_id, gnum)])
                     if ti.static(GlobalVariable.MPMXPBC):
                         xindex = -index[0] + gnum[0]
                         if xindex == 0 or xindex == gnum[0]:
                             temp_index = index
                             temp_index[0] = xindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_internal_force(internal_force, internal_forcef)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_internal_force(internal_force, internal_forcef)
                     if ti.static(GlobalVariable.MPMYPBC):
                         yindex = -index[1] + gnum[1]
                         if yindex == 0 or yindex == gnum[1]:
                             temp_index = index
                             temp_index[1] = yindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_internal_force(internal_force, internal_forcef)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_internal_force(internal_force, internal_forcef)
                     if ti.static(GlobalVariable.MPMZPBC):
                         zindex = -index[2] + gnum[2]
                         if zindex == 0 or zindex == gnum[2]:
                             temp_index = index
                             temp_index[2] = zindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_internal_force(internal_force, internal_forcef)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_internal_force(internal_force, internal_forcef)
 
 
 @ti.kernel
 def kernel_force_bbar_p2g(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     gnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     gravity: ti.types.vector(3, float),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     dshapefn: ti.template(),
     dshapefnc: ti.template(),
@@ -2888,76 +2904,76 @@ def kernel_force_bbar_p2g(
 ):
     for d in ti.static(range(GlobalVariable.DIMENSION)):
         ti.block_local(node.force.get_scalar_field(d))
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             fex = particle[np]._compute_external_force(gravity)
-            fInt = particle[np]._compute_internal_force()
+            f_int = particle[np]._compute_internal_force()
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 dshape_fn = dshapefn[ln]
                 dshape_fnc = dshapefnc[ln]
                 temp_dshape = (dshape_fnc - dshape_fn) / 3.0
                 external_force = shape_mapping(shapefn[ln], fex)
                 internal_force = vec3f(
                     [
-                        (dshape_fn[0] + temp_dshape[0]) * fInt[0]
-                        + temp_dshape[0] * fInt[1]
-                        + temp_dshape[0] * fInt[2]
-                        + dshape_fn[1] * fInt[3]
-                        + dshape_fn[2] * fInt[5],
-                        temp_dshape[1] * fInt[0]
-                        + (dshape_fn[1] + temp_dshape[1]) * fInt[1]
-                        + temp_dshape[1] * fInt[2]
-                        + dshape_fn[0] * fInt[3]
-                        + dshape_fn[2] * fInt[4],
-                        temp_dshape[2] * fInt[0]
-                        + temp_dshape[2] * fInt[1]
-                        + (dshape_fn[2] + temp_dshape[2]) * fInt[2]
-                        + dshape_fn[1] * fInt[4]
-                        + dshape_fn[0] * fInt[5],
+                        (dshape_fn[0] + temp_dshape[0]) * f_int[0]
+                        + temp_dshape[0] * f_int[1]
+                        + temp_dshape[0] * f_int[2]
+                        + dshape_fn[1] * f_int[3]
+                        + dshape_fn[2] * f_int[5],
+                        temp_dshape[1] * f_int[0]
+                        + (dshape_fn[1] + temp_dshape[1]) * f_int[1]
+                        + temp_dshape[1] * f_int[2]
+                        + dshape_fn[0] * f_int[3]
+                        + dshape_fn[2] * f_int[4],
+                        temp_dshape[2] * f_int[0]
+                        + temp_dshape[2] * f_int[1]
+                        + (dshape_fn[2] + temp_dshape[2]) * f_int[2]
+                        + dshape_fn[1] * f_int[4]
+                        + dshape_fn[0] * f_int[5],
                     ]
                 )
-                node[nodeID, bodyID]._update_nodal_force(external_force + internal_force)
+                node[node_id, body_id]._update_nodal_force(external_force + internal_force)
                 if (
                     ti.static(GlobalVariable.MPMXPBC)
                     or ti.static(GlobalVariable.MPMYPBC)
                     or ti.static(GlobalVariable.MPMZPBC)
                 ):
-                    index = ti.Vector([vectorize_id(nodeID, gnum)])
+                    index = ti.Vector([vectorize_id(node_id, gnum)])
                     if ti.static(GlobalVariable.MPMXPBC):
                         xindex = -index[0] + gnum[0]
                         if xindex == 0 or xindex == gnum[0]:
                             temp_index = index
                             temp_index[0] = xindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_force(external_force + internal_force)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_force(external_force + internal_force)
                     if ti.static(GlobalVariable.MPMYPBC):
                         yindex = -index[1] + gnum[1]
                         if yindex == 0 or yindex == gnum[1]:
                             temp_index = index
                             temp_index[1] = yindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_force(external_force + internal_force)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_force(external_force + internal_force)
                     if ti.static(GlobalVariable.MPMZPBC):
                         zindex = -index[2] + gnum[2]
                         if zindex == 0 or zindex == gnum[2]:
                             temp_index = index
                             temp_index[2] = zindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_force(external_force + internal_force)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_force(external_force + internal_force)
 
 
 @ti.kernel
-def kernel_force_bbar_p2g_2D(
+def kernel_force_bbar_p2g_2d(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     gnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     gravity: ti.types.vector(3, float),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     dshapefn: ti.template(),
     dshapefnc: ti.template(),
@@ -2965,164 +2981,167 @@ def kernel_force_bbar_p2g_2D(
 ):
     for d in ti.static(range(GlobalVariable.DIMENSION)):
         ti.block_local(node.force.get_scalar_field(d))
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             fex = particle[np]._compute_external_force(gravity)
-            fInt = particle[np]._compute_internal_force()
+            f_int = particle[np]._compute_internal_force()
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 dshape_fn = dshapefn[ln]
                 dshape_fnc = dshapefnc[ln]
                 external_force = shape_mapping(shapefn[ln], fex)
-                internal_force = bbar_internal_force_2d(dshape_fn, dshape_fnc, fInt)
-                node[nodeID, bodyID]._update_nodal_force(external_force + internal_force)
+                internal_force = bbar_internal_force_2d(dshape_fn, dshape_fnc, f_int)
+                node[node_id, body_id]._update_nodal_force(external_force + internal_force)
                 if (
                     ti.static(GlobalVariable.MPMXPBC)
                     or ti.static(GlobalVariable.MPMYPBC)
                     or ti.static(GlobalVariable.MPMZPBC)
                 ):
-                    index = ti.Vector([vectorize_id(nodeID, gnum)])
+                    index = ti.Vector([vectorize_id(node_id, gnum)])
                     if ti.static(GlobalVariable.MPMXPBC):
                         xindex = -index[0] + gnum[0]
                         if xindex == 0 or xindex == gnum[0]:
                             temp_index = index
                             temp_index[0] = xindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_force(external_force + internal_force)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_force(external_force + internal_force)
                     if ti.static(GlobalVariable.MPMYPBC):
                         yindex = -index[1] + gnum[1]
                         if yindex == 0 or yindex == gnum[1]:
                             temp_index = index
                             temp_index[1] = yindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_force(external_force + internal_force)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_force(external_force + internal_force)
                     if ti.static(GlobalVariable.MPMZPBC):
                         zindex = -index[2] + gnum[2]
                         if zindex == 0 or zindex == gnum[2]:
                             temp_index = index
                             temp_index[2] = zindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_force(external_force + internal_force)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_force(external_force + internal_force)
 
 
 @ti.kernel
-def kernel_internal_force_bbar_p2g_twophase2D(
+def kernel_internal_force_bbar_p2g_twophase2d(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     gnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     dshapefn: ti.template(),
     dshapefnc: ti.template(),
     node_size: ti.template(),
 ):
     for d in ti.static(range(GlobalVariable.DIMENSION)):
         ti.block_local(node.force.get_scalar_field(d))
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
-            fInt, fintf = particle[np]._compute_internal_force()
+            f_int, fintf = particle[np]._compute_internal_force()
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 dshape_fn = dshapefn[ln]
                 dshape_fnc = dshapefnc[ln]
                 internal_force = vec2f(
-                    [dshape_fn[0] * fInt[0] + dshape_fn[1] * fInt[3], dshape_fn[1] * fInt[1] + dshape_fn[0] * fInt[3]]
+                    [
+                        dshape_fn[0] * f_int[0] + dshape_fn[1] * f_int[3],
+                        dshape_fn[1] * f_int[1] + dshape_fn[0] * f_int[3],
+                    ]
                 )
                 internal_forcef = vec2f([dshape_fn[0] * fintf[0], dshape_fn[1] * fintf[1]])
-                node[nodeID, bodyID]._update_internal_force(internal_force, internal_forcef)
+                node[node_id, body_id]._update_internal_force(internal_force, internal_forcef)
                 if (
                     ti.static(GlobalVariable.MPMXPBC)
                     or ti.static(GlobalVariable.MPMYPBC)
                     or ti.static(GlobalVariable.MPMZPBC)
                 ):
-                    index = ti.Vector([vectorize_id(nodeID, gnum)])
+                    index = ti.Vector([vectorize_id(node_id, gnum)])
                     if ti.static(GlobalVariable.MPMXPBC):
                         xindex = -index[0] + gnum[0]
                         if xindex == 0 or xindex == gnum[0]:
                             temp_index = index
                             temp_index[0] = xindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_internal_force(internal_force, internal_forcef)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_internal_force(internal_force, internal_forcef)
                     if ti.static(GlobalVariable.MPMYPBC):
                         yindex = -index[1] + gnum[1]
                         if yindex == 0 or yindex == gnum[1]:
                             temp_index = index
                             temp_index[1] = yindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_internal_force(internal_force, internal_forcef)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_internal_force(internal_force, internal_forcef)
 
 
 @ti.kernel
 def kernel_volume_p2g(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     gnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
 ):
     ti.block_local(node.vol)
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             volume = particle[np].vol
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 nvol = shape_mapping(shapefn[ln], volume)
-                node[nodeID, bodyID].vol += nvol
+                node[node_id, body_id].vol += nvol
                 if (
                     ti.static(GlobalVariable.MPMXPBC)
                     or ti.static(GlobalVariable.MPMYPBC)
                     or ti.static(GlobalVariable.MPMZPBC)
                 ):
-                    index = ti.Vector([vectorize_id(nodeID, gnum)])
+                    index = ti.Vector([vectorize_id(node_id, gnum)])
                     if ti.static(GlobalVariable.MPMXPBC):
                         xindex = -index[0] + gnum[0]
                         if xindex == 0 or xindex == gnum[0]:
                             temp_index = index
                             temp_index[0] = xindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID].vol += nvol
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id].vol += nvol
                     if ti.static(GlobalVariable.MPMYPBC):
                         yindex = -index[1] + gnum[1]
                         if yindex == 0 or yindex == gnum[1]:
                             temp_index = index
                             temp_index[1] = yindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID].vol += nvol
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id].vol += nvol
                     if ti.static(GlobalVariable.MPMZPBC):
                         zindex = -index[2] + gnum[2]
                         if zindex == 0 or zindex == gnum[2]:
                             temp_index = index
                             temp_index[2] = zindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID].vol += nvol
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id].vol += nvol
 
 
 @ti.kernel
 def kernel_jacobian_p2g(
     total_nodes: int,
     dt: ti.template(),
-    particleNum: int,
+    particle_num: int,
     gnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
 ):
     ti.block_local(node.jacobian)
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             mass = particle[np].m
             velocity_gradient = particle[np].velocity_gradient
             djacobian = (
@@ -3131,84 +3150,84 @@ def kernel_jacobian_p2g(
             transfer_var = mass * djacobian
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
-                node[nodeID, bodyID].jacobian += shape_mapping(shapefn[ln], transfer_var)
+                node_id = ln_id[ln]
+                node[node_id, body_id].jacobian += shape_mapping(shapefn[ln], transfer_var)
                 if (
                     ti.static(GlobalVariable.MPMXPBC)
                     or ti.static(GlobalVariable.MPMYPBC)
                     or ti.static(GlobalVariable.MPMZPBC)
                 ):
-                    index = ti.Vector([vectorize_id(nodeID, gnum)])
+                    index = ti.Vector([vectorize_id(node_id, gnum)])
                     if ti.static(GlobalVariable.MPMXPBC):
                         xindex = -index[0] + gnum[0]
                         if xindex == 0 or xindex == gnum[0]:
                             temp_index = index
                             temp_index[0] = xindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID].jacobian += shape_mapping(shapefn[ln], transfer_var)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id].jacobian += shape_mapping(shapefn[ln], transfer_var)
                     if ti.static(GlobalVariable.MPMYPBC):
                         yindex = -index[1] + gnum[1]
                         if yindex == 0 or yindex == gnum[1]:
                             temp_index = index
                             temp_index[1] = yindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID].jacobian += shape_mapping(shapefn[ln], transfer_var)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id].jacobian += shape_mapping(shapefn[ln], transfer_var)
                     if ti.static(GlobalVariable.MPMZPBC):
                         zindex = -index[2] + gnum[2]
                         if zindex == 0 or zindex == gnum[2]:
                             temp_index = index
                             temp_index[2] = zindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID].jacobian += shape_mapping(shapefn[ln], transfer_var)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id].jacobian += shape_mapping(shapefn[ln], transfer_var)
 
 
 @ti.kernel
 def kernel_pressure_p2g(
-    particleNum: int,
+    particle_num: int,
     total_nodes: int,
     gnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
 ):
     ti.block_local(node.pressure)
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             pressure = particle[np].m * particle[np]._get_mean_stress()
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
-                node[nodeID, bodyID].pressure += shape_mapping(shapefn[ln], pressure)
+                node_id = ln_id[ln]
+                node[node_id, body_id].pressure += shape_mapping(shapefn[ln], pressure)
                 if (
                     ti.static(GlobalVariable.MPMXPBC)
                     or ti.static(GlobalVariable.MPMYPBC)
                     or ti.static(GlobalVariable.MPMZPBC)
                 ):
-                    index = ti.Vector([vectorize_id(nodeID, gnum)])
+                    index = ti.Vector([vectorize_id(node_id, gnum)])
                     if ti.static(GlobalVariable.MPMXPBC):
                         xindex = -index[0] + gnum[0]
                         if xindex == 0 or xindex == gnum[0]:
                             temp_index = index
                             temp_index[0] = xindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID].pressure += shape_mapping(shapefn[ln], pressure)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id].pressure += shape_mapping(shapefn[ln], pressure)
                     if ti.static(GlobalVariable.MPMYPBC):
                         yindex = -index[1] + gnum[1]
                         if yindex == 0 or yindex == gnum[1]:
                             temp_index = index
                             temp_index[1] = yindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID].pressure += shape_mapping(shapefn[ln], pressure)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id].pressure += shape_mapping(shapefn[ln], pressure)
                     if ti.static(GlobalVariable.MPMZPBC):
                         zindex = -index[2] + gnum[2]
                         if zindex == 0 or zindex == gnum[2]:
                             temp_index = index
                             temp_index[2] = zindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID].pressure += shape_mapping(shapefn[ln], pressure)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id].pressure += shape_mapping(shapefn[ln], pressure)
 
 
 # ========================================================= #
@@ -3236,7 +3255,7 @@ def kernel_compute_gauss_average_stress(gauss_num: int, cut_off: float, cell: ti
 
 
 @ti.kernel
-def kernel_compute_gauss_average_stress_2D(
+def kernel_compute_gauss_average_stress_2d(
     gauss_num: int, cut_off: float, cell: ti.template(), sub_cell: ti.template()
 ):
     gauss_number = gauss_num * gauss_num
@@ -3266,7 +3285,7 @@ def kernel_average_pressure(gauss_num: int, cell: ti.template(), sub_cell: ti.te
 
 
 @ti.kernel
-def kernel_average_pressure_2D(gauss_num: int, cell: ti.template(), sub_cell: ti.template()):
+def kernel_average_pressure_2d(gauss_num: int, cell: ti.template(), sub_cell: ti.template()):
     gauss_number = gauss_num * gauss_num
     for nc in range(cell.shape[0]):
         for nb in range(cell.shape[1]):
@@ -3372,55 +3391,55 @@ def kernel_kinemaitc_g2p(
     total_nodes: int,
     alpha: float,
     dt: ti.template(),
-    particleNum: int,
+    particle_num: int,
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
 ):
     ti.block_local(node.momentum)
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
-            vPIC, vFLIP = ti.Vector.zero(float, GlobalVariable.DIMENSION), ti.Vector.zero(
+            v_pic, v_flip = ti.Vector.zero(float, GlobalVariable.DIMENSION), ti.Vector.zero(
                 float, GlobalVariable.DIMENSION
             )
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 shape_fn = shapefn[ln]
-                velocity = node[nodeID, bodyID].momentum
-                accleration = node[nodeID, bodyID].force
-                vPIC += shape_mapping(shape_fn, velocity)
-                vFLIP += shape_mapping(shape_fn, accleration)
-            particle[np]._update_particle_state(dt, alpha, vPIC, vFLIP)
+                velocity = node[node_id, body_id].momentum
+                accleration = node[node_id, body_id].force
+                v_pic += shape_mapping(shape_fn, velocity)
+                v_flip += shape_mapping(shape_fn, accleration)
+            particle[np]._update_particle_state(dt, alpha, v_pic, v_flip)
 
 
 @ti.kernel
-def kernel_compute_particle_Gpf(
+def kernel_compute_particle_gpf(
     total_nodes: int,
     cut_off: float,
     dt: ti.template(),
-    particleNum: int,
+    particle_num: int,
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
 ):
     ti.block_local(node.m)
     ti.block_local(node.pf)
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
             Gpf = ti.Vector.zero(float, GlobalVariable.DIMENSION)
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 dshape_fn = dshapefn[ln]
-                pf = node[nodeID, bodyID].pf
-                m = node[nodeID, bodyID].m
+                pf = node[node_id, body_id].pf
+                m = node[node_id, body_id].m
                 if m > cut_off:
                     Gpf += shape_mapping(dshape_fn, pf / m)
             particle[np].gpf = Gpf
@@ -3431,36 +3450,36 @@ def kernel_kinemaitc_g2p_twophase(
     total_nodes: int,
     alpha: float,
     dt: ti.template(),
-    particleNum: int,
+    particle_num: int,
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
 ):
     # ti.block_local(dt)
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
-            vPICs, vFLIPs = ti.Vector.zero(float, GlobalVariable.DIMENSION), ti.Vector.zero(
+            v_pi_cs, v_fli_ps = ti.Vector.zero(float, GlobalVariable.DIMENSION), ti.Vector.zero(
                 float, GlobalVariable.DIMENSION
             )
-            vPICf, vFLIPf = ti.Vector.zero(float, GlobalVariable.DIMENSION), ti.Vector.zero(
+            v_pi_cf, v_fli_pf = ti.Vector.zero(float, GlobalVariable.DIMENSION), ti.Vector.zero(
                 float, GlobalVariable.DIMENSION
             )
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 shape_fn = shapefn[ln]
-                velocitys = node[nodeID, bodyID].momentums
-                velocityf = node[nodeID, bodyID].momentumf
-                acclerations = node[nodeID, bodyID].forces
-                acclerationf = node[nodeID, bodyID].forcef
-                vPICs += shape_mapping(shape_fn, velocitys)
-                vFLIPs += shape_mapping(shape_fn, acclerations) * dt[None]
-                vPICf += shape_mapping(shape_fn, velocityf)
-                vFLIPf += shape_mapping(shape_fn, acclerationf) * dt[None]
-            particle[np]._update_particle_state(dt, alpha, vPICs, vFLIPs, vPICs, vFLIPs, vPICf, vFLIPf)
+                velocitys = node[node_id, body_id].momentums
+                velocityf = node[node_id, body_id].momentumf
+                acclerations = node[node_id, body_id].forces
+                acclerationf = node[node_id, body_id].forcef
+                v_pi_cs += shape_mapping(shape_fn, velocitys)
+                v_fli_ps += shape_mapping(shape_fn, acclerations) * dt[None]
+                v_pi_cf += shape_mapping(shape_fn, velocityf)
+                v_fli_pf += shape_mapping(shape_fn, acclerationf) * dt[None]
+            particle[np]._update_particle_state(dt, alpha, v_pi_cs, v_fli_ps, v_pi_cs, v_fli_ps, v_pi_cf, v_fli_pf)
 
 
 @ti.kernel
@@ -3468,43 +3487,43 @@ def kernel_mass_g2p(
     total_nodes: int,
     cell_volume: float,
     node_size: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node: ti.template(),
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             mdensity = 0.0
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
-                mass_density = shape_mapping(shapefn[ln], node[nodeID, bodyID].m / cell_volume)
+                node_id = ln_id[ln]
+                mass_density = shape_mapping(shapefn[ln], node[node_id, body_id].m / cell_volume)
                 mdensity += mass_density
             particle[np].mass_density = mdensity
 
 
 @ti.kernel
 def kernel_pressure_g2p(
-    particleNum: int,
+    particle_num: int,
     total_nodes: int,
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             pressure = 0.0
             mean_stress = particle[np]._get_mean_stress()
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
-                pressure += shape_mapping(shapefn[ln], node[nodeID, bodyID].pressure)
+                node_id = ln_id[ln]
+                pressure += shape_mapping(shapefn[ln], node[node_id, body_id].pressure)
             particle[np]._update_stress(-(mean_stress - pressure) * EYE)
 
 
@@ -3512,9 +3531,9 @@ def kernel_pressure_g2p(
 #                 Apply Constitutive Model                  #
 # ========================================================= #
 @ti.kernel
-def kernel_find_sound_speed(start_index: int, end_index: int, particle: ti.template(), matProps: ti.template()):
+def kernel_find_sound_speed(start_index: int, end_index: int, particle: ti.template(), mat_props: ti.template()):
     for np in range(start_index, end_index):
-        matProps._set_modulus(Squared(particle[np].v))
+        mat_props._set_modulus(squared(particle[np].v))
 
 
 @ti.kernel
@@ -3523,42 +3542,42 @@ def kernel_compute_reference_stress_strain(
     end_index: int,
     dt: ti.template(),
     particle: ti.template(),
-    materialID: ti.template(),
-    matProps: ti.template(),
-    stateVars: ti.template(),
+    material_id: ti.template(),
+    mat_props: ti.template(),
+    state_variables: ti.template(),
 ):
     # ti.block_local(dt)
     for i in range(start_index, end_index):
-        np = materialID[i]
+        np = material_id[i]
         if int(particle[np].active) == 1:
             velocity_gradient = particle[np].velocity_gradient.transpose()
-            stateVars[np].deformation_gradient += velocity_gradient * dt[None]
-            deformation_gradient = stateVars[np].deformation_gradient
+            state_variables[np].deformation_gradient += velocity_gradient * dt[None]
+            deformation_gradient = state_variables[np].deformation_gradient
             velocity_gradient = velocity_gradient @ deformation_gradient.inverse()
             stress = particle[np].stress
-            particle[np].stress = matProps.ComputePKStress(np, stress, velocity_gradient, stateVars, dt)
+            particle[np].stress = mat_props.compute_pk_stress(np, stress, velocity_gradient, state_variables, dt)
 
 
 @ti.kernel
-def kernel_compute_reference_stress_strain_2D(
+def kernel_compute_reference_stress_strain_2d(
     start_index: int,
     end_index: int,
     dt: ti.template(),
     particle: ti.template(),
-    materialID: ti.template(),
-    matProps: ti.template(),
-    stateVars: ti.template(),
+    material_id: ti.template(),
+    mat_props: ti.template(),
+    state_variables: ti.template(),
 ):
     # ti.block_local(dt)
     for i in range(start_index, end_index):
-        np = materialID[i]
+        np = material_id[i]
         if int(particle[np].active) == 1:
             velocity_gradient = particle[np].velocity_gradient.transpose()
-            stateVars[np].deformation_gradient += velocity_gradient * dt[None]
-            deformation_gradient = stateVars[np].deformation_gradient
+            state_variables[np].deformation_gradient += velocity_gradient * dt[None]
+            deformation_gradient = state_variables[np].deformation_gradient
             velocity_gradient = velocity_gradient @ deformation_gradient.inverse()
             stress = particle[np].stress
-            particle[np].stress = matProps.ComputePKStress2D(np, stress, velocity_gradient, stateVars, dt)
+            particle[np].stress = mat_props.compute_pk_stress2d(np, stress, velocity_gradient, state_variables, dt)
 
 
 @ti.kernel
@@ -3567,36 +3586,38 @@ def kernel_compute_stress_strain(
     end_index: int,
     dt: ti.template(),
     particle: ti.template(),
-    materialID: ti.template(),
-    matProps: ti.template(),
-    stateVars: ti.template(),
+    material_id: ti.template(),
+    mat_props: ti.template(),
+    state_variables: ti.template(),
 ):
     # ti.block_local(dt)
     for i in range(start_index, end_index):
-        np = materialID[i]
+        np = material_id[i]
         if int(particle[np].active) == 1:
             velocity_gradient = particle[np].velocity_gradient
             previous_stress = particle[np].stress
-            particle[np].stress = matProps.ComputeStress(np, previous_stress, velocity_gradient, stateVars, dt)
+            particle[np].stress = mat_props.compute_stress(np, previous_stress, velocity_gradient, state_variables, dt)
 
 
 @ti.kernel
-def kernel_compute_stress_strain_2D(
+def kernel_compute_stress_strain_2d(
     start_index: int,
     end_index: int,
     dt: ti.template(),
     particle: ti.template(),
-    materialID: ti.template(),
-    matProps: ti.template(),
-    stateVars: ti.template(),
+    material_id: ti.template(),
+    mat_props: ti.template(),
+    state_variables: ti.template(),
 ):
     # ti.block_local(dt)
     for i in range(start_index, end_index):
-        np = materialID[i]
+        np = material_id[i]
         if int(particle[np].active) == 1:
             velocity_gradient = particle[np].velocity_gradient
             previous_stress = particle[np].stress
-            particle[np].stress = matProps.ComputeStress2D(np, previous_stress, velocity_gradient, stateVars, dt)
+            particle[np].stress = mat_props.compute_stress2d(
+                np, previous_stress, velocity_gradient, state_variables, dt
+            )
 
 
 @ti.kernel
@@ -3605,48 +3626,52 @@ def kernel_compute_stress_strain_twophase(
     end_index: int,
     dt: ti.template(),
     particle: ti.template(),
-    materialID: ti.template(),
-    matProps: ti.template(),
-    stateVars: ti.template(),
+    material_id: ti.template(),
+    mat_props: ti.template(),
+    state_variables: ti.template(),
 ):
     # ti.block_local(dt)
     for i in range(start_index, end_index):
-        np = materialID[i]
+        np = material_id[i]
         if int(particle[np].active) == 1:
             solid_velocity_gradient, fluid_velocity_gradient = (
                 particle[np].solid_velocity_gradient,
                 particle[np].fluid_velocity_gradient,
             )
             previous_stress, porosity = particle[np].stress, particle[np].porosity
-            particle[np].pressure -= matProps.ComputePressure(
+            particle[np].pressure -= mat_props.compute_pressure(
                 solid_velocity_gradient, fluid_velocity_gradient, porosity, dt
             )
-            particle[np].stress = matProps.ComputeStress(np, previous_stress, solid_velocity_gradient, stateVars, dt)
+            particle[np].stress = mat_props.compute_stress(
+                np, previous_stress, solid_velocity_gradient, state_variables, dt
+            )
 
 
 @ti.kernel
-def kernel_compute_stress_strain_twophase2D(
+def kernel_compute_stress_strain_twophase2d(
     start_index: int,
     end_index: int,
     dt: ti.template(),
     particle: ti.template(),
-    materialID: ti.template(),
-    matProps: ti.template(),
-    stateVars: ti.template(),
+    material_id: ti.template(),
+    mat_props: ti.template(),
+    state_variables: ti.template(),
 ):
     # ti.block_local(dt)
     for i in range(start_index, end_index):
-        np = materialID[i]
+        np = material_id[i]
         if int(particle[np].active) == 1:
             solid_velocity_gradient, fluid_velocity_gradient = (
                 particle[np].solid_velocity_gradient,
                 particle[np].fluid_velocity_gradient,
             )
             previous_stress, porosity = particle[np].stress, particle[np].porosity
-            particle[np].pressure -= matProps.ComputePressure(
+            particle[np].pressure -= mat_props.compute_pressure(
                 solid_velocity_gradient, fluid_velocity_gradient, porosity, dt
             )
-            particle[np].stress = matProps.ComputeStress2D(np, previous_stress, solid_velocity_gradient, stateVars, dt)
+            particle[np].stress = mat_props.compute_stress2d(
+                np, previous_stress, solid_velocity_gradient, state_variables, dt
+            )
 
 
 # ========================================================= #
@@ -3658,24 +3683,24 @@ def kernel_update_velocity_gradient_fbar(
     cutoff: float,
     total_nodes: int,
     dt: ti.template(),
-    particleNum: int,
+    particle_num: int,
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
 ):
     # ti.block_local(dt)
-    for np in range(particleNum):
-        materialID = int(particle[np].materialID)
-        if materialID > 0 and int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+    for np in range(particle_num):
+        material_id = int(particle[np].materialID)
+        if material_id > 0 and int(particle[np].active) == 1:
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             djacobian_bar = 0.0
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 shape_fn = shapefn[ln]
-                djacobian_bar += shape_mapping(shape_fn, node[nodeID, bodyID].jacobian)
+                djacobian_bar += shape_mapping(shape_fn, node[node_id, body_id].jacobian)
 
             velocity_gradient = particle[np].velocity_gradient
             ddeformation_gradient = ti.Matrix.identity(float, GlobalVariable.DIMENSION) + dt[None] * velocity_gradient
@@ -3686,11 +3711,11 @@ def kernel_update_velocity_gradient_fbar(
             multiplier = (djacobian_bar_new / djacobian) ** (1.0 / GlobalVariable.DIMENSION)
             # === split into volumetric + deviatoric ===
             trL = velocity_gradient.trace() / GlobalVariable.DIMENSION
-            devL = velocity_gradient - trL * ti.Matrix.identity(float, GlobalVariable.DIMENSION)
+            dev_l = velocity_gradient - trL * ti.Matrix.identity(float, GlobalVariable.DIMENSION)
 
             # adjust only volumetric part
-            trL_new = (multiplier - 1.0) / dt[None] + multiplier * trL
-            updated_velocity_gradient = devL + trL_new * ti.Matrix.identity(float, GlobalVariable.DIMENSION)
+            tr_l_new = (multiplier - 1.0) / dt[None] + multiplier * trL
+            updated_velocity_gradient = dev_l + tr_l_new * ti.Matrix.identity(float, GlobalVariable.DIMENSION)
 
             particle[np].velocity_gradient = updated_velocity_gradient
 
@@ -3703,61 +3728,61 @@ def kernel_update_velocity_gradient(
     dt: ti.template(),
     node: ti.template(),
     particle: ti.template(),
-    materialID: ti.template(),
-    matProps: ti.template(),
-    stateVars: ti.template(),
-    LnID: ti.template(),
+    material_id: ti.template(),
+    mat_props: ti.template(),
+    state_variables: ti.template(),
+    ln_id: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
 ):
     for i in range(start_index, end_index):
-        np = materialID[i]
+        np = material_id[i]
         if int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
-            velocity_gradient = ZEROMAT3x3
+            body_id = int(particle[np].bodyID)
+            velocity_gradient = ZEROMAT3X3
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
-                gv = node[nodeID, bodyID].momentum
+                node_id = ln_id[ln]
+                gv = node[node_id, body_id].momentum
                 dshape_fn = dshapefn[ln]
                 velocity_gradient += outer_product(gv, dshape_fn)
             particle[np].velocity_gradient = truncation(velocity_gradient)
-            particle[np].vol *= matProps.update_particle_volume(np, velocity_gradient, stateVars, dt)
+            particle[np].vol *= mat_props.update_particle_volume(np, velocity_gradient, state_variables, dt)
 
 
 @ti.kernel
 def kernel_update_velocity_gradient_affine(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     gnum: ti.types.vector(3, int),
     grid_size: ti.types.vector(3, real),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
     reference: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
-            Wp = ZEROMAT3x3
-            Bp = ZEROMAT3x3
+            body_id = int(particle[np].bodyID)
+            Wp = ZEROMAT3X3
+            Bp = ZEROMAT3X3
             offset = np * total_nodes
             position = particle[np].x
             if ti.static(reference):
                 position = ti.Vector.zero(float, 3)
                 weight_sum = 0.0
                 for ln in range(offset, offset + int(node_size[np])):
-                    position += shapefn[ln] * grid_size * ti.cast(ti.Vector(vectorize_id(LnID[ln], gnum)), float)
+                    position += shapefn[ln] * grid_size * ti.cast(ti.Vector(vectorize_id(ln_id[ln], gnum)), float)
                     weight_sum += shapefn[ln]
                 if weight_sum > 0.0:
                     position /= weight_sum
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
-                grid_coord = grid_size * vec3f(vectorize_id(nodeID, gnum))
+                node_id = ln_id[ln]
+                grid_coord = grid_size * vec3f(vectorize_id(node_id, gnum))
                 pointer = grid_coord - position
-                gv = node[nodeID, bodyID].momentum
+                gv = node[node_id, body_id].momentum
                 shape_fn = shapefn[ln]
 
                 Wp += shape_fn * outer_product(pointer, pointer)
@@ -3769,11 +3794,11 @@ def kernel_update_velocity_gradient_affine(
 @ti.kernel
 def kernel_update_velocity_gradient_affine_sparse(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     grid_size: ti.types.vector(3, real),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
     block_count: ti.template(),
@@ -3782,11 +3807,11 @@ def kernel_update_velocity_gradient_affine_sparse(
     active_block_ids: ti.template(),
     reference: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
-            Wp = ZEROMAT3x3
-            Bp = ZEROMAT3x3
+            body_id = int(particle[np].bodyID)
+            Wp = ZEROMAT3X3
+            Bp = ZEROMAT3X3
             offset = np * total_nodes
             position = particle[np].x
             if ti.static(reference):
@@ -3799,7 +3824,7 @@ def kernel_update_velocity_gradient_affine_sparse(
                         * ti.cast(
                             ti.Vector(
                                 compact_node_grid_coord(
-                                    LnID[ln], block_count, block_size, block_volume, active_block_ids
+                                    ln_id[ln], block_count, block_size, block_volume, active_block_ids
                                 )
                             ),
                             float,
@@ -3809,12 +3834,12 @@ def kernel_update_velocity_gradient_affine_sparse(
                 if weight_sum > 0.0:
                     position /= weight_sum
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 grid_coord = grid_size * vec3f(
-                    compact_node_grid_coord(nodeID, block_count, block_size, block_volume, active_block_ids)
+                    compact_node_grid_coord(node_id, block_count, block_size, block_volume, active_block_ids)
                 )
                 pointer = grid_coord - position
-                gv = node[nodeID, bodyID].momentum
+                gv = node[node_id, body_id].momentum
                 shape_fn = shapefn[ln]
 
                 Wp += shape_fn * outer_product(pointer, pointer)
@@ -3831,24 +3856,24 @@ def kernel_update_velocity_gradient_bbar(
     dt: ti.template(),
     node: ti.template(),
     particle: ti.template(),
-    materialID: ti.template(),
-    matProps: ti.template(),
-    stateVars: ti.template(),
-    LnID: ti.template(),
+    material_id: ti.template(),
+    mat_props: ti.template(),
+    state_variables: ti.template(),
+    ln_id: ti.template(),
     dshapefn: ti.template(),
     dshapefnc: ti.template(),
     node_size: ti.template(),
 ):
     for i in range(start_index, end_index):
-        np = materialID[i]
+        np = material_id[i]
         if int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
-            velocity_gradient = ZEROMAT3x3
-            strain_rate_trace = ZEROVEC3f
+            body_id = int(particle[np].bodyID)
+            velocity_gradient = ZEROMAT3X3
+            strain_rate_trace = ZEROVEC3F
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
-                gv = node[nodeID, bodyID].momentum
+                node_id = ln_id[ln]
+                gv = node[node_id, body_id].momentum
                 dshape_fn = dshapefn[ln]
                 dshape_fnc = dshapefnc[ln]
                 temp_dshape = (dshape_fnc - dshape_fn) / 3.0
@@ -3863,87 +3888,87 @@ def kernel_update_velocity_gradient_bbar(
                 strain_rate_trace[1] += dshape_fn[1] * gv[1]
                 strain_rate_trace[2] += dshape_fn[2] * gv[2]
             particle[np].velocity_gradient = truncation(velocity_gradient)
-            particle[np].vol *= matProps.update_particle_volume_bbar(np, strain_rate_trace, stateVars, dt)
+            particle[np].vol *= mat_props.update_particle_volume_bbar(np, strain_rate_trace, state_variables, dt)
 
 
 @ti.kernel
-def kernel_update_velocity_gradient_2D(
+def kernel_update_velocity_gradient_2d(
     total_nodes: int,
     start_index: int,
     end_index: int,
     dt: ti.template(),
     node: ti.template(),
     particle: ti.template(),
-    materialID: ti.template(),
-    matProps: ti.template(),
-    stateVars: ti.template(),
-    LnID: ti.template(),
+    material_id: ti.template(),
+    mat_props: ti.template(),
+    state_variables: ti.template(),
+    ln_id: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
 ):
     for i in range(start_index, end_index):
-        np = materialID[i]
+        np = material_id[i]
         if int(particle[np].active) == 1:
-            velocity_gradient = ZEROMAT2x2
-            bodyID = int(particle[np].bodyID)
+            velocity_gradient = ZEROMAT2X2
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
-                gv = node[nodeID, bodyID].momentum
+                node_id = ln_id[ln]
+                gv = node[node_id, body_id].momentum
                 dshape_fn = dshapefn[ln]
-                velocity_gradient += outer_product2D(gv, dshape_fn)
+                velocity_gradient += outer_product2d(gv, dshape_fn)
             particle[np].velocity_gradient = truncation(velocity_gradient)
-            particle[np].vol *= matProps.update_particle_volume_2D(np, velocity_gradient, stateVars, dt)
+            particle[np].vol *= mat_props.update_particle_volume_2d(np, velocity_gradient, state_variables, dt)
 
 
 @ti.kernel
-def kernel_update_velocity_gradient_affine_2D(
+def kernel_update_velocity_gradient_affine_2d(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     gnum: ti.types.vector(2, int),
     grid_size: ti.types.vector(2, real),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
     reference: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
-            Wp = ZEROMAT2x2
-            Bp = ZEROMAT2x2
+            body_id = int(particle[np].bodyID)
+            Wp = ZEROMAT2X2
+            Bp = ZEROMAT2X2
             offset = np * total_nodes
             position = particle[np].x
             if ti.static(reference):
                 position = ti.Vector.zero(float, 2)
                 weight_sum = 0.0
                 for ln in range(offset, offset + int(node_size[np])):
-                    position += shapefn[ln] * grid_size * ti.cast(ti.Vector(vectorize_id(LnID[ln], gnum)), float)
+                    position += shapefn[ln] * grid_size * ti.cast(ti.Vector(vectorize_id(ln_id[ln], gnum)), float)
                     weight_sum += shapefn[ln]
                 if weight_sum > 0.0:
                     position /= weight_sum
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
-                grid_coord = grid_size * vec2f(vectorize_id(nodeID, gnum))
+                node_id = ln_id[ln]
+                grid_coord = grid_size * vec2f(vectorize_id(node_id, gnum))
                 pointer = grid_coord - position
-                gv = node[nodeID, bodyID].momentum
+                gv = node[node_id, body_id].momentum
                 shape_fn = shapefn[ln]
-                Wp += shape_fn * outer_product2D(pointer, pointer)
-                Bp += shape_fn * outer_product2D(gv, pointer)
+                Wp += shape_fn * outer_product2d(pointer, pointer)
+                Bp += shape_fn * outer_product2d(gv, pointer)
             velocity_gradient = affine_velocity_matrix(Bp, Wp, grid_size)
             particle[np].velocity_gradient = velocity_gradient
 
 
 @ti.kernel
-def kernel_update_velocity_gradient_affine_2D_sparse(
+def kernel_update_velocity_gradient_affine_2d_sparse(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     grid_size: ti.types.vector(2, real),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
     block_count: ti.template(),
@@ -3952,11 +3977,11 @@ def kernel_update_velocity_gradient_affine_2D_sparse(
     active_block_ids: ti.template(),
     reference: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
-            Wp = ZEROMAT2x2
-            Bp = ZEROMAT2x2
+            body_id = int(particle[np].bodyID)
+            Wp = ZEROMAT2X2
+            Bp = ZEROMAT2X2
             offset = np * total_nodes
             position = particle[np].x
             if ti.static(reference):
@@ -3969,7 +3994,7 @@ def kernel_update_velocity_gradient_affine_2D_sparse(
                         * ti.cast(
                             ti.Vector(
                                 compact_node_grid_coord(
-                                    LnID[ln], block_count, block_size, block_volume, active_block_ids
+                                    ln_id[ln], block_count, block_size, block_volume, active_block_ids
                                 )
                             ),
                             float,
@@ -3979,48 +4004,48 @@ def kernel_update_velocity_gradient_affine_2D_sparse(
                 if weight_sum > 0.0:
                     position /= weight_sum
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 grid_coord = grid_size * ti.cast(
-                    compact_node_grid_coord(nodeID, block_count, block_size, block_volume, active_block_ids), float
+                    compact_node_grid_coord(node_id, block_count, block_size, block_volume, active_block_ids), float
                 )
                 pointer = grid_coord - position
-                gv = node[nodeID, bodyID].momentum
+                gv = node[node_id, body_id].momentum
                 shape_fn = shapefn[ln]
-                Wp += shape_fn * outer_product2D(pointer, pointer)
-                Bp += shape_fn * outer_product2D(gv, pointer)
+                Wp += shape_fn * outer_product2d(pointer, pointer)
+                Bp += shape_fn * outer_product2d(gv, pointer)
             velocity_gradient = affine_velocity_matrix(Bp, Wp, grid_size)
             particle[np].velocity_gradient = velocity_gradient
 
 
 @ti.kernel
-def kernel_update_velocity_gradient_2DAxisy(
+def kernel_update_velocity_gradient_2d_axisy(
     total_nodes: int,
     start_index: int,
     end_index: int,
     dt: ti.template(),
     node: ti.template(),
     particle: ti.template(),
-    materialID: ti.template(),
-    matProps: ti.template(),
-    stateVars: ti.template(),
-    LnID: ti.template(),
+    material_id: ti.template(),
+    mat_props: ti.template(),
+    state_variables: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
 ):
     for i in range(start_index, end_index):
-        np = materialID[i]
+        np = material_id[i]
         if int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
-            velocity_gradient = ZEROMAT3x3
+            body_id = int(particle[np].bodyID)
+            velocity_gradient = ZEROMAT3X3
             offset = np * total_nodes
             position = particle[np].x
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
-                gv = node[nodeID, bodyID].momentum
+                node_id = ln_id[ln]
+                gv = node[node_id, body_id].momentum
                 shape_fn = shapefn[ln]
                 dshape_fn = dshapefn[ln]
-                velocity_gradient0 = outer_product2D(gv, dshape_fn)
+                velocity_gradient0 = outer_product2d(gv, dshape_fn)
                 velocity_gradient += mat3x3(
                     [
                         [velocity_gradient0[0, 0], velocity_gradient0[0, 1], 0],
@@ -4029,53 +4054,53 @@ def kernel_update_velocity_gradient_2DAxisy(
                     ]
                 )
             particle[np].velocity_gradient = truncation(velocity_gradient)
-            particle[np].vol *= matProps.update_particle_volume(np, velocity_gradient, stateVars, dt)
+            particle[np].vol *= mat_props.update_particle_volume(np, velocity_gradient, state_variables, dt)
 
 
 @ti.kernel
-def kernel_update_velocity_gradient_bbar_2D(
+def kernel_update_velocity_gradient_bbar_2d(
     total_nodes: int,
     start_index: int,
     end_index: int,
     dt: ti.template(),
     node: ti.template(),
     particle: ti.template(),
-    materialID: ti.template(),
-    matProps: ti.template(),
-    stateVars: ti.template(),
-    LnID: ti.template(),
+    material_id: ti.template(),
+    mat_props: ti.template(),
+    state_variables: ti.template(),
+    ln_id: ti.template(),
     dshapefn: ti.template(),
     dshapefnc: ti.template(),
     node_size: ti.template(),
 ):
     for i in range(start_index, end_index):
-        np = materialID[i]
+        np = material_id[i]
         if int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
-            velocity_gradient = ZEROMAT2x2
+            body_id = int(particle[np].bodyID)
+            velocity_gradient = ZEROMAT2X2
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
-                gv = node[nodeID, bodyID].momentum
+                node_id = ln_id[ln]
+                gv = node[node_id, body_id].momentum
                 dshape_fn = dshapefn[ln]
                 dshape_fnc = dshapefnc[ln]
                 velocity_gradient += bbar_velocity_gradient_2d(gv, dshape_fn, dshape_fnc)
             particle[np].velocity_gradient = truncation(velocity_gradient)
-            particle[np].vol *= matProps.update_particle_volume_bbar_2D(np, velocity_gradient, stateVars, dt)
+            particle[np].vol *= mat_props.update_particle_volume_bbar_2d(np, velocity_gradient, state_variables, dt)
 
 
 @ti.kernel
-def kernel_update_velocity_gradient_bbar_2DAxisy(
+def kernel_update_velocity_gradient_bbar_2d_axisy(
     total_nodes: int,
     start_index: int,
     end_index: int,
     dt: ti.template(),
     node: ti.template(),
     particle: ti.template(),
-    materialID: ti.template(),
-    matProps: ti.template(),
-    stateVars: ti.template(),
-    LnID: ti.template(),
+    material_id: ti.template(),
+    mat_props: ti.template(),
+    state_variables: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     shapefnc: ti.template(),
     dshapefn: ti.template(),
@@ -4083,17 +4108,17 @@ def kernel_update_velocity_gradient_bbar_2DAxisy(
     node_size: ti.template(),
 ):
     for i in range(start_index, end_index):
-        np = materialID[i]
+        np = material_id[i]
         if int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             one_three = 1.0 / 3.0
-            velocity_gradient = ZEROMAT3x3
-            strain_rate_trace = ZEROVEC3f
+            velocity_gradient = ZEROMAT3X3
+            strain_rate_trace = ZEROVEC3F
             offset = np * total_nodes
             position = particle[np].x
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
-                gv = node[nodeID, bodyID].momentum
+                node_id = ln_id[ln]
+                gv = node[node_id, body_id].momentum
                 shape_fn = shapefn[ln]
                 shape_fnc = shapefnc[ln]
                 dshape_fn = dshapefn[ln]
@@ -4113,7 +4138,7 @@ def kernel_update_velocity_gradient_bbar_2DAxisy(
                 )
                 strain_rate_trace += vec3f(B1 * gv[0], B2 * gv[1], B0 * gv[0])
             particle[np].velocity_gradient = truncation(velocity_gradient)
-            particle[np].vol *= matProps.update_particle_volume_bbar(np, strain_rate_trace, stateVars, dt)
+            particle[np].vol *= mat_props.update_particle_volume_bbar(np, strain_rate_trace, state_variables, dt)
 
 
 @ti.kernel
@@ -4124,31 +4149,31 @@ def kernel_update_velocity_gradient_twophase(
     dt: ti.template(),
     node: ti.template(),
     particle: ti.template(),
-    materialID: ti.template(),
-    matProps: ti.template(),
-    stateVars: ti.template(),
-    LnID: ti.template(),
+    material_id: ti.template(),
+    mat_props: ti.template(),
+    state_variables: ti.template(),
+    ln_id: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
 ):
     for i in range(start_index, end_index):
-        np = materialID[i]
+        np = material_id[i]
         if int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             solid_velocity_gradient = ti.Matrix.zero(float, GlobalVariable.DIMENSION, GlobalVariable.DIMENSION)
             fluid_velocity_gradient = ti.Matrix.zero(float, GlobalVariable.DIMENSION, GlobalVariable.DIMENSION)
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
-                gvs = node[nodeID, bodyID].momentums
-                gvf = node[nodeID, bodyID].momentumf
+                node_id = ln_id[ln]
+                gvs = node[node_id, body_id].momentums
+                gvf = node[node_id, body_id].momentumf
                 dshape_fn = dshapefn[ln]
                 solid_velocity_gradient += outer_product(gvs, dshape_fn)
                 fluid_velocity_gradient += outer_product(gvf, dshape_fn)
             porosity, pvolume = particle[np].porosity, particle[np].vol
-            pvolume *= matProps.update_particle_volume(np, solid_velocity_gradient, stateVars, dt)
-            porosity = matProps.update_particle_porosity(solid_velocity_gradient, porosity, dt)
-            particle[np].mf = matProps.update_particle_fluid_mass(pvolume, porosity)
+            pvolume *= mat_props.update_particle_volume(np, solid_velocity_gradient, state_variables, dt)
+            porosity = mat_props.update_particle_porosity(solid_velocity_gradient, porosity, dt)
+            particle[np].mf = mat_props.update_particle_fluid_mass(pvolume, porosity)
             particle[np].m = particle[np].ms + particle[np].mf
             particle[np].vol, particle[np].porosity = pvolume, porosity
             particle[np].solid_velocity_gradient = solid_velocity_gradient
@@ -4156,38 +4181,38 @@ def kernel_update_velocity_gradient_twophase(
 
 
 @ti.kernel
-def kernel_update_velocity_gradient_twophase_2D(
+def kernel_update_velocity_gradient_twophase_2d(
     total_nodes: int,
     start_index: int,
     end_index: int,
     dt: ti.template(),
     node: ti.template(),
     particle: ti.template(),
-    materialID: ti.template(),
-    matProps: ti.template(),
-    stateVars: ti.template(),
-    LnID: ti.template(),
+    material_id: ti.template(),
+    mat_props: ti.template(),
+    state_variables: ti.template(),
+    ln_id: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
 ):
     for i in range(start_index, end_index):
-        np = materialID[i]
+        np = material_id[i]
         if int(particle[np].active) == 1:
-            solid_velocity_gradient = ZEROMAT2x2
-            fluid_velocity_gradient = ZEROMAT2x2
-            bodyID = int(particle[np].bodyID)
+            solid_velocity_gradient = ZEROMAT2X2
+            fluid_velocity_gradient = ZEROMAT2X2
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
-                gvs = node[nodeID, bodyID].momentums
-                gvf = node[nodeID, bodyID].momentumf
+                node_id = ln_id[ln]
+                gvs = node[node_id, body_id].momentums
+                gvf = node[node_id, body_id].momentumf
                 dshape_fn = dshapefn[ln]
-                solid_velocity_gradient += outer_product2D(gvs, dshape_fn)
-                fluid_velocity_gradient += outer_product2D(gvf, dshape_fn)
+                solid_velocity_gradient += outer_product2d(gvs, dshape_fn)
+                fluid_velocity_gradient += outer_product2d(gvf, dshape_fn)
             porosity, pvolume = particle[np].porosity, particle[np].vol
-            pvolume *= matProps.update_particle_volume_2D(np, solid_velocity_gradient, stateVars, dt)
-            porosity = matProps.update_particle_porosity(solid_velocity_gradient, porosity, dt)
-            particle[np].mf = matProps.update_particle_fluid_mass(pvolume, porosity)
+            pvolume *= mat_props.update_particle_volume_2d(np, solid_velocity_gradient, state_variables, dt)
+            porosity = mat_props.update_particle_porosity(solid_velocity_gradient, porosity, dt)
+            particle[np].mf = mat_props.update_particle_fluid_mass(pvolume, porosity)
             particle[np].m = particle[np].ms + particle[np].mf
             particle[np].vol, particle[np].porosity = pvolume, porosity
             particle[np].solid_velocity_gradient = truncation(solid_velocity_gradient)
@@ -4195,40 +4220,40 @@ def kernel_update_velocity_gradient_twophase_2D(
 
 
 @ti.kernel
-def kernel_update_velocity_gradient_bbar_twophase_2D(
+def kernel_update_velocity_gradient_bbar_twophase_2d(
     total_nodes: int,
     start_index: int,
     end_index: int,
     dt: ti.template(),
     node: ti.template(),
     particle: ti.template(),
-    materialID: ti.template(),
-    matProps: ti.template(),
-    stateVars: ti.template(),
-    LnID: ti.template(),
+    material_id: ti.template(),
+    mat_props: ti.template(),
+    state_variables: ti.template(),
+    ln_id: ti.template(),
     dshapefn: ti.template(),
     dshapefnc: ti.template(),
     node_size: ti.template(),
 ):
     for i in range(start_index, end_index):
-        np = materialID[i]
+        np = material_id[i]
         if int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
-            solid_velocity_gradient = ZEROMAT2x2
-            fluid_velocity_gradient = ZEROMAT2x2
+            body_id = int(particle[np].bodyID)
+            solid_velocity_gradient = ZEROMAT2X2
+            fluid_velocity_gradient = ZEROMAT2X2
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
-                gvs = node[nodeID, bodyID].momentums
-                gvf = node[nodeID, bodyID].momentumf
+                node_id = ln_id[ln]
+                gvs = node[node_id, body_id].momentums
+                gvf = node[node_id, body_id].momentumf
                 dshape_fn = dshapefn[ln]
                 dshape_fnc = dshapefnc[ln]
                 solid_velocity_gradient += bbar_velocity_gradient_2d(gvs, dshape_fn, dshape_fnc)
                 fluid_velocity_gradient += mat2x2([[dshape_fnc[0] * gvf[0], 0], [0, dshape_fnc[1] * gvf[1]]])
             porosity, pvolume = particle[np].porosity, particle[np].vol
-            pvolume *= matProps.update_particle_volume_bbar_2D(np, solid_velocity_gradient, stateVars, dt)
-            porosity = matProps.update_particle_porosity(solid_velocity_gradient, porosity, dt)
-            particle[np].mf = matProps.update_particle_fluid_mass(pvolume, porosity)
+            pvolume *= mat_props.update_particle_volume_bbar_2d(np, solid_velocity_gradient, state_variables, dt)
+            porosity = mat_props.update_particle_porosity(solid_velocity_gradient, porosity, dt)
+            particle[np].mf = mat_props.update_particle_fluid_mass(pvolume, porosity)
             particle[np].m = particle[np].ms + particle[np].mf
             particle[np].vol, particle[np].porosity = pvolume, porosity
             particle[np].solid_velocity_gradient = solid_velocity_gradient
@@ -4239,13 +4264,13 @@ def kernel_update_velocity_gradient_bbar_twophase_2D(
 #                     Update Rotation                       #
 # ========================================================= #
 @ti.kernel
-def update_coupling_quanternion(particleNum: int, particle: ti.template(), dt: ti.template()):
-    for np in range(particleNum):
+def update_coupling_quanternion(particle_num: int, particle: ti.template(), dt: ti.template()):
+    for np in range(particle_num):
         old_q = particle[np].q
         omega = get_angular_velocity(particle[np].velocity_gradient)
-        rotation_matrix = SetToRotate(old_q)
-        dq = SetDQ(old_q, rotation_matrix.transpose() @ omega) * dt[None]
-        q = Normalize(old_q + dq)
+        rotation_matrix = set_to_rotate(old_q)
+        dq = set_dq(old_q, rotation_matrix.transpose() @ omega) * dt[None]
+        q = normalize(old_q + dq)
         particle[np].q = q
 
 
@@ -4258,7 +4283,7 @@ def kernel_reset_grid_velocity(node: ti.template()):
 
 
 @ti.kernel
-def kernel_reset_grid_velocity_twophase2D(node: ti.template()):
+def kernel_reset_grid_velocity_twophase2d(node: ti.template()):
     node.momentum.fill(0)
     node.momentums.fill(0)
     node.momentumf.fill(0)
@@ -4267,72 +4292,72 @@ def kernel_reset_grid_velocity_twophase2D(node: ti.template()):
 @ti.kernel
 def kernel_postmapping_kinemaitc(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     gnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 nmass = shape_mapping(shapefn[ln], particle[np].m)
-                node[nodeID, bodyID]._update_nodal_momentum(nmass * particle[np].v)
+                node[node_id, body_id]._update_nodal_momentum(nmass * particle[np].v)
                 if (
                     ti.static(GlobalVariable.MPMXPBC)
                     or ti.static(GlobalVariable.MPMYPBC)
                     or ti.static(GlobalVariable.MPMZPBC)
                 ):
-                    index = ti.Vector([vectorize_id(nodeID, gnum)])
+                    index = ti.Vector([vectorize_id(node_id, gnum)])
                     if ti.static(GlobalVariable.MPMXPBC):
                         xindex = -index[0] + gnum[0]
                         if xindex == 0 or xindex == gnum[0]:
                             temp_index = index
                             temp_index[0] = xindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_momentum(nmass * particle[np].v)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_momentum(nmass * particle[np].v)
                     if ti.static(GlobalVariable.MPMYPBC):
                         yindex = -index[1] + gnum[1]
                         if yindex == 0 or yindex == gnum[1]:
                             temp_index = index
                             temp_index[1] = yindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_momentum(nmass * particle[np].v)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_momentum(nmass * particle[np].v)
                     if ti.static(GlobalVariable.MPMZPBC):
                         zindex = -index[2] + gnum[2]
                         if zindex == 0 or zindex == gnum[2]:
                             temp_index = index
                             temp_index[2] = zindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_momentum(nmass * particle[np].v)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_momentum(nmass * particle[np].v)
 
 
 @ti.kernel
-def kernel_postmapping_kinemaitc_twophase2D(
+def kernel_postmapping_kinemaitc_twophase2d(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     gnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 nmass = shape_mapping(shapefn[ln], particle[np].m)
                 nmass_s = shape_mapping(shapefn[ln], particle[np].ms)
                 nmass_f = shape_mapping(shapefn[ln], particle[np].mf)
-                node[nodeID, bodyID]._update_nodal_momentum(
+                node[node_id, body_id]._update_nodal_momentum(
                     nmass * particle[np].v, nmass_s * particle[np].vs, nmass_f * particle[np].vf
                 )
                 if (
@@ -4340,14 +4365,14 @@ def kernel_postmapping_kinemaitc_twophase2D(
                     or ti.static(GlobalVariable.MPMYPBC)
                     or ti.static(GlobalVariable.MPMZPBC)
                 ):
-                    index = ti.Vector([vectorize_id(nodeID, gnum)])
+                    index = ti.Vector([vectorize_id(node_id, gnum)])
                     if ti.static(GlobalVariable.MPMXPBC):
                         xindex = -index[0] + gnum[0]
                         if xindex == 0 or xindex == gnum[0]:
                             temp_index = index
                             temp_index[0] = xindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_momentum(
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_momentum(
                                 nmass * particle[np].v, nmass_s * particle[np].vs, nmass_f * particle[np].vf
                             )
                     if ti.static(GlobalVariable.MPMYPBC):
@@ -4355,8 +4380,8 @@ def kernel_postmapping_kinemaitc_twophase2D(
                         if yindex == 0 or yindex == gnum[1]:
                             temp_index = index
                             temp_index[1] = yindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_momentum(
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_momentum(
                                 nmass * particle[np].v, nmass_s * particle[np].vs, nmass_f * particle[np].vf
                             )
                     if ti.static(GlobalVariable.MPMZPBC):
@@ -4364,60 +4389,60 @@ def kernel_postmapping_kinemaitc_twophase2D(
                         if zindex == 0 or zindex == gnum[2]:
                             temp_index = index
                             temp_index[2] = zindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_momentum(
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_momentum(
                                 nmass * particle[np].v, nmass_s * particle[np].vs, nmass_f * particle[np].vf
                             )
 
 
 @ti.kernel
-def kernel_calc_contact_normal_2DAxisy(
+def kernel_calc_contact_normal_2d_axisy(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     gnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
             position = particle[np].x
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 grad_domain = dshapefn[ln] * particle[np].vol / position[0]
-                node[nodeID, bodyID]._update_nodal_grad_domain(grad_domain)
+                node[node_id, body_id]._update_nodal_grad_domain(grad_domain)
                 if (
                     ti.static(GlobalVariable.MPMXPBC)
                     or ti.static(GlobalVariable.MPMYPBC)
                     or ti.static(GlobalVariable.MPMZPBC)
                 ):
-                    index = ti.Vector([vectorize_id(nodeID, gnum)])
+                    index = ti.Vector([vectorize_id(node_id, gnum)])
                     if ti.static(GlobalVariable.MPMXPBC):
                         xindex = -index[0] + gnum[0]
                         if xindex == 0 or xindex == gnum[0]:
                             temp_index = index
                             temp_index[0] = xindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_grad_domain(grad_domain)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_grad_domain(grad_domain)
                     if ti.static(GlobalVariable.MPMYPBC):
                         yindex = -index[1] + gnum[1]
                         if yindex == 0 or yindex == gnum[1]:
                             temp_index = index
                             temp_index[1] = yindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_grad_domain(grad_domain)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_grad_domain(grad_domain)
 
 
 # ========================================================= #
 #                   Compute B Matrix                        #
 # ========================================================= #
 @ti.func
-def compute_Bmatrix(GS):
-    temp = ZEROMAT6x3
+def compute_bmatrix(GS):
+    temp = ZEROMAT6X3
     temp[0, 0] = GS[0]
     temp[1, 1] = GS[1]
     temp[2, 2] = GS[2]
@@ -4431,8 +4456,8 @@ def compute_Bmatrix(GS):
 #               Anti-Locking (B-Bar Method)                 #
 # ========================================================= #
 @ti.func
-def compute_Bmatrix_bbar(GS, GSC):
-    temp = ZEROMAT6x3
+def compute_bmatrix_bbar(GS, GSC):
+    temp = ZEROMAT6X3
     temp[0, 0] = GS[0] + (GSC[0] - GS[0]) / 3.0
     temp[0, 1] = (GSC[1] - GS[1]) / 3.0
     temp[0, 2] = (GSC[2] - GS[2]) / 3.0
@@ -4452,14 +4477,14 @@ def compute_Bmatrix_bbar(GS, GSC):
 #                          F bar                            #
 # ========================================================= #
 @ti.func
-def calc_deformation_grad_rate(np, total_nodes, node, particle, LnID, dshapefn, node_size, dt):
-    deformation_gradient_rate = ZEROMAT3x3
-    bodyID = int(particle[np].bodyID)
+def calc_deformation_grad_rate(np, total_nodes, node, particle, ln_id, dshapefn, node_size, dt):
+    deformation_gradient_rate = ZEROMAT3X3
+    body_id = int(particle[np].bodyID)
     offset = np * total_nodes
     for ln in range(offset, offset + int(node_size[np])):
-        nodeID = LnID[ln]
+        node_id = ln_id[ln]
         dshape_fn = dshapefn[ln]
-        gv = node[nodeID, bodyID].momentum
+        gv = node[node_id, body_id].momentum
         deformation_gradient_rate[0, 0] += gv[0] * dshape_fn[0] * dt[None]
         deformation_gradient_rate[0, 1] += gv[0] * dshape_fn[1] * dt[None]
         deformation_gradient_rate[0, 2] += gv[0] * dshape_fn[2] * dt[None]
@@ -4478,112 +4503,112 @@ def calc_deformation_grad_rate(np, total_nodes, node, particle, LnID, dshapefn, 
 @ti.kernel
 def kernel_dilatational_velocity_p2g(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     gnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
 ):
-    for np in range(particleNum):
-        bodyID = int(particle[np].bodyID)
+    for np in range(particle_num):
+        body_id = int(particle[np].bodyID)
         dil_gradv = trace(particle[np].velocity_gradient)
         volume = particle[np].vol
         offset = np * total_nodes
         for ln in range(offset, offset + int(node_size[np])):
-            nodeID = LnID[ln]
+            node_id = ln_id[ln]
             shape_fn = shapefn[ln]
-            node[nodeID, bodyID].vol += shape_mapping(shape_fn, volume)
-            node[nodeID, bodyID].jacobian += shape_mapping(shape_fn, dil_gradv * volume)
+            node[node_id, body_id].vol += shape_mapping(shape_fn, volume)
+            node[node_id, body_id].jacobian += shape_mapping(shape_fn, dil_gradv * volume)
             if (
                 ti.static(GlobalVariable.MPMXPBC)
                 or ti.static(GlobalVariable.MPMYPBC)
                 or ti.static(GlobalVariable.MPMZPBC)
             ):
-                index = ti.Vector([vectorize_id(nodeID, gnum)])
+                index = ti.Vector([vectorize_id(node_id, gnum)])
                 if ti.static(GlobalVariable.MPMXPBC):
                     xindex = -index[0] + gnum[0]
                     if xindex == 0 or xindex == gnum[0]:
                         temp_index = index
                         temp_index[0] = xindex
-                        tideID = linearize(temp_index, gnum)
-                        node[tideID, bodyID].vol += shape_mapping(shape_fn, volume)
-                        node[tideID, bodyID].jacobian += shape_mapping(shape_fn, dil_gradv * volume)
+                        tide_id = linearize(temp_index, gnum)
+                        node[tide_id, body_id].vol += shape_mapping(shape_fn, volume)
+                        node[tide_id, body_id].jacobian += shape_mapping(shape_fn, dil_gradv * volume)
                 if ti.static(GlobalVariable.MPMYPBC):
                     yindex = -index[1] + gnum[1]
                     if yindex == 0 or yindex == gnum[1]:
                         temp_index = index
                         temp_index[1] = yindex
-                        tideID = linearize(temp_index, gnum)
-                        node[tideID, bodyID].vol += shape_mapping(shape_fn, volume)
-                        node[tideID, bodyID].jacobian += shape_mapping(shape_fn, dil_gradv * volume)
+                        tide_id = linearize(temp_index, gnum)
+                        node[tide_id, body_id].vol += shape_mapping(shape_fn, volume)
+                        node[tide_id, body_id].jacobian += shape_mapping(shape_fn, dil_gradv * volume)
                 if ti.static(GlobalVariable.MPMZPBC):
                     zindex = -index[2] + gnum[2]
                     if zindex == 0 or zindex == gnum[2]:
                         temp_index = index
                         temp_index[2] = zindex
-                        tideID = linearize(temp_index, gnum)
-                        node[tideID, bodyID].vol += shape_mapping(shape_fn, volume)
-                        node[tideID, bodyID].jacobian += shape_mapping(shape_fn, dil_gradv * volume)
+                        tide_id = linearize(temp_index, gnum)
+                        node[tide_id, body_id].vol += shape_mapping(shape_fn, volume)
+                        node[tide_id, body_id].jacobian += shape_mapping(shape_fn, dil_gradv * volume)
 
 
 @ti.kernel
-def kernel_gradient_velocity_projection_correction_2D(
+def kernel_gradient_velocity_projection_correction_2d(
     total_nodes: int,
     start_index: int,
     end_index: int,
     gnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     node: ti.template(),
     particle: ti.template(),
-    materialID: ti.template(),
-    LnID: ti.template(),
+    material_id: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
-    matProps: ti.template(),
-    stateVars: ti.template(),
+    mat_props: ti.template(),
+    state_variables: ti.template(),
     dt: ti.template(),
 ):
     for i in range(start_index, end_index):
-        np = materialID[i]
-        bodyID = int(particle[np].bodyID)
+        np = material_id[i]
+        body_id = int(particle[np].bodyID)
         velocity_gradient = particle[np].velocity_gradient
         volume = particle[np].vol
 
         dil_gradv_bar = 0.0
         offset = np * total_nodes
         for ln in range(offset, offset + int(node_size[np])):
-            nodeID = LnID[ln]
+            node_id = ln_id[ln]
             shape_fn = shapefn[ln]
-            dil_gradv_bar += shape_fn * node[nodeID, bodyID].jacobian
+            dil_gradv_bar += shape_fn * node[node_id, body_id].jacobian
         velocity_gradient += 1.0 / 2.0 * (dil_gradv_bar - trace(velocity_gradient)) * DELTA2D
-        pressureAV = matProps.ComputePressure2D(np, stateVars, velocity_gradient, dt)
-        particle[np].stress = matProps.ComputeShearStress2D(velocity_gradient)
+        pressure_av = mat_props.compute_pressure2d(np, state_variables, velocity_gradient, dt)
+        particle[np].stress = mat_props.compute_shear_stress2d(velocity_gradient)
 
         for ln in range(offset, offset + int(node_size[np])):
-            nodeID = LnID[ln]
+            node_id = ln_id[ln]
             shape_fn = shapefn[ln]
-            node[nodeID, bodyID].pressure += shape_fn * pressureAV * volume
+            node[node_id, body_id].pressure += shape_fn * pressure_av * volume
             if (
                 ti.static(GlobalVariable.MPMXPBC)
                 or ti.static(GlobalVariable.MPMYPBC)
                 or ti.static(GlobalVariable.MPMZPBC)
             ):
-                index = ti.Vector([vectorize_id(nodeID, gnum)])
+                index = ti.Vector([vectorize_id(node_id, gnum)])
                 if ti.static(GlobalVariable.MPMXPBC):
                     xindex = -index[0] + gnum[0]
                     if xindex == 0 or xindex == gnum[0]:
                         temp_index = index
                         temp_index[0] = xindex
-                        tideID = linearize(temp_index, gnum)
-                        node[tideID, bodyID].pressure += shape_fn * pressureAV * volume
+                        tide_id = linearize(temp_index, gnum)
+                        node[tide_id, body_id].pressure += shape_fn * pressure_av * volume
                 if ti.static(GlobalVariable.MPMYPBC):
                     yindex = -index[1] + gnum[1]
                     if yindex == 0 or yindex == gnum[1]:
                         temp_index = index
                         temp_index[1] = yindex
-                        tideID = linearize(temp_index, gnum)
-                        node[tideID, bodyID].pressure += shape_fn * pressureAV * volume
+                        tide_id = linearize(temp_index, gnum)
+                        node[tide_id, body_id].pressure += shape_fn * pressure_av * volume
 
 
 @ti.kernel
@@ -4594,82 +4619,82 @@ def kernel_gradient_velocity_projection_correction(
     gnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     node: ti.template(),
     particle: ti.template(),
-    materialID: ti.template(),
-    LnID: ti.template(),
+    material_id: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
-    matProps: ti.template(),
-    stateVars: ti.template(),
+    mat_props: ti.template(),
+    state_variables: ti.template(),
     dt: ti.template(),
 ):
     for i in range(start_index, end_index):
-        np = materialID[i]
-        bodyID = int(particle[np].bodyID)
+        np = material_id[i]
+        body_id = int(particle[np].bodyID)
         velocity_gradient = particle[np].velocity_gradient
         volume = particle[np].vol
 
         dil_gradv_bar = 0.0
         offset = np * total_nodes
         for ln in range(offset, offset + int(node_size[np])):
-            nodeID = LnID[ln]
+            node_id = ln_id[ln]
             shape_fn = shapefn[ln]
-            dil_gradv_bar += shape_fn * node[nodeID, bodyID].jacobian
+            dil_gradv_bar += shape_fn * node[node_id, body_id].jacobian
         velocity_gradient += 1.0 / 3.0 * (dil_gradv_bar - trace(velocity_gradient)) * DELTA
-        pressureAV = matProps.ComputePressure(np, stateVars, velocity_gradient, dt)
-        particle[np].stress = matProps.ComputeShearStress(velocity_gradient)
+        pressure_av = mat_props.compute_pressure(np, state_variables, velocity_gradient, dt)
+        particle[np].stress = mat_props.compute_shear_stress(velocity_gradient)
 
         offset = np * total_nodes
         for ln in range(offset, offset + int(node_size[np])):
-            nodeID = LnID[ln]
+            node_id = ln_id[ln]
             shape_fn = shapefn[ln]
-            node[nodeID, bodyID].pressure += shape_fn * pressureAV * volume
+            node[node_id, body_id].pressure += shape_fn * pressure_av * volume
             if (
                 ti.static(GlobalVariable.MPMXPBC)
                 or ti.static(GlobalVariable.MPMYPBC)
                 or ti.static(GlobalVariable.MPMZPBC)
             ):
-                index = ti.Vector([vectorize_id(nodeID, gnum)])
+                index = ti.Vector([vectorize_id(node_id, gnum)])
                 if ti.static(GlobalVariable.MPMXPBC):
                     xindex = -index[0] + gnum[0]
                     if xindex == 0 or xindex == gnum[0]:
                         temp_index = index
                         temp_index[0] = xindex
-                        tideID = linearize(temp_index, gnum)
-                        node[tideID, bodyID].pressure += shape_fn * pressureAV * volume
+                        tide_id = linearize(temp_index, gnum)
+                        node[tide_id, body_id].pressure += shape_fn * pressure_av * volume
                 if ti.static(GlobalVariable.MPMYPBC):
                     yindex = -index[1] + gnum[1]
                     if yindex == 0 or yindex == gnum[1]:
                         temp_index = index
                         temp_index[1] = yindex
-                        tideID = linearize(temp_index, gnum)
-                        node[tideID, bodyID].pressure += shape_fn * pressureAV * volume
+                        tide_id = linearize(temp_index, gnum)
+                        node[tide_id, body_id].pressure += shape_fn * pressure_av * volume
                 if ti.static(GlobalVariable.MPMZPBC):
                     zindex = -index[2] + gnum[2]
                     if zindex == 0 or zindex == gnum[2]:
                         temp_index = index
                         temp_index[2] = zindex
-                        tideID = linearize(temp_index, gnum)
-                        node[tideID, bodyID].pressure += shape_fn * pressureAV * volume
+                        tide_id = linearize(temp_index, gnum)
+                        node[tide_id, body_id].pressure += shape_fn * pressure_av * volume
 
 
 @ti.kernel
 def kernel_pressure_correction(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
 ):
-    for np in range(particleNum):
-        bodyID = int(particle[np].bodyID)
+    for np in range(particle_num):
+        body_id = int(particle[np].bodyID)
         offset = np * total_nodes
         pressure_bar = 0.0
         for ln in range(offset, offset + int(node_size[np])):
-            nodeID = LnID[ln]
+            node_id = ln_id[ln]
             shape_fn = shapefn[ln]
-            pressure_bar += shape_fn * node[nodeID, bodyID].pressure
+            pressure_bar += shape_fn * node[node_id, body_id].pressure
         particle[np].stress -= pressure_bar * EYE
 
 
@@ -4679,60 +4704,60 @@ def kernel_pressure_correction(
 @ti.kernel
 def kernel_calc_contact_normal(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     gnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 grad_domain = dshapefn[ln] * particle[np].vol
-                node[nodeID, bodyID]._update_nodal_grad_domain(grad_domain)
+                node[node_id, body_id]._update_nodal_grad_domain(grad_domain)
                 if (
                     ti.static(GlobalVariable.MPMXPBC)
                     or ti.static(GlobalVariable.MPMYPBC)
                     or ti.static(GlobalVariable.MPMZPBC)
                 ):
-                    index = ti.Vector([vectorize_id(nodeID, gnum)])
+                    index = ti.Vector([vectorize_id(node_id, gnum)])
                     if ti.static(GlobalVariable.MPMXPBC):
                         xindex = -index[0] + gnum[0]
                         if xindex == 0 or xindex == gnum[0]:
                             temp_index = index
                             temp_index[0] = xindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_grad_domain(grad_domain)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_grad_domain(grad_domain)
                     if ti.static(GlobalVariable.MPMYPBC):
                         yindex = -index[1] + gnum[1]
                         if yindex == 0 or yindex == gnum[1]:
                             temp_index = index
                             temp_index[1] = yindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_grad_domain(grad_domain)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_grad_domain(grad_domain)
                     if ti.static(GlobalVariable.MPMZPBC):
                         zindex = -index[2] + gnum[2]
                         if zindex == 0 or zindex == gnum[2]:
                             temp_index = index
                             temp_index[2] = zindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID]._update_nodal_grad_domain(grad_domain)
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id]._update_nodal_grad_domain(grad_domain)
 
 
 @ti.kernel
 def kernel_calc_contact_displacement(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     cutoff: float,
     gnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
     element: ti.template(),
@@ -4743,44 +4768,44 @@ def kernel_calc_contact_displacement(
                 node[ng, nb].contact_pos.fill(0)
                 node[ng, nb].contact_length = 0.0
 
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 contact_pos = shapefn[ln] * particle[np].x * particle[np].m
-                node[nodeID, bodyID].contact_pos += contact_pos
+                node[node_id, body_id].contact_pos += contact_pos
                 if ti.static(getattr(element, "adaptive", False)):
-                    length = MeanValue(element.coarse_grid_size) / (1 << int(element.particle_level[np]))
-                    node[nodeID, bodyID].contact_length += shapefn[ln] * particle[np].m * length
+                    length = mean_value(element.coarse_grid_size) / (1 << int(element.particle_level[np]))
+                    node[node_id, body_id].contact_length += shapefn[ln] * particle[np].m * length
                 if (
                     ti.static(GlobalVariable.MPMXPBC)
                     or ti.static(GlobalVariable.MPMYPBC)
                     or ti.static(GlobalVariable.MPMZPBC)
                 ):
-                    index = ti.Vector([vectorize_id(nodeID, gnum)])
+                    index = ti.Vector([vectorize_id(node_id, gnum)])
                     if ti.static(GlobalVariable.MPMXPBC):
                         xindex = -index[0] + gnum[0]
                         if xindex == 0 or xindex == gnum[0]:
                             temp_index = index
                             temp_index[0] = xindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID].contact_pos += contact_pos
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id].contact_pos += contact_pos
                     if ti.static(GlobalVariable.MPMYPBC):
                         yindex = -index[1] + gnum[1]
                         if yindex == 0 or yindex == gnum[1]:
                             temp_index = index
                             temp_index[1] = yindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID].contact_pos += contact_pos
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id].contact_pos += contact_pos
                     if ti.static(GlobalVariable.MPMZPBC):
                         zindex = -index[2] + gnum[2]
                         if zindex == 0 or zindex == gnum[2]:
                             temp_index = index
                             temp_index[2] = zindex
-                            tideID = linearize(temp_index, gnum)
-                            node[tideID, bodyID].contact_pos += contact_pos
+                            tide_id = linearize(temp_index, gnum)
+                            node[tide_id, body_id].contact_pos += contact_pos
 
 
 # ========================================================= #
@@ -4806,30 +4831,30 @@ def kernel_calc_friction_contact(
 ):
     # ti.block_local(dt)
     for ng in range(node.shape[0]):
-        for bodyID1 in range(node.shape[1] - 1):
-            for bodyID2 in range(bodyID1 + 1, node.shape[1]):
-                m1, m2 = node[ng, bodyID1].m, node[ng, bodyID2].m
+        for body_id1 in range(node.shape[1] - 1):
+            for body_id2 in range(body_id1 + 1, node.shape[1]):
+                m1, m2 = node[ng, body_id1].m, node[ng, body_id2].m
                 if m1 > cut_off and m2 > cut_off:
-                    mv1, mv2 = m1 * node[ng, bodyID1].momentum, m2 * node[ng, bodyID2].momentum
-                    norm1, norm2 = node[ng, bodyID1].grad_domain, node[ng, bodyID2].grad_domain
+                    mv1, mv2 = m1 * node[ng, body_id1].momentum, m2 * node[ng, body_id2].momentum
+                    norm1, norm2 = node[ng, body_id1].grad_domain, node[ng, body_id2].grad_domain
 
                     norm, g_mass = ti.Vector.zero(float, GlobalVariable.DIMENSION), 0.0
-                    if is_rigid[bodyID1] == 0 and is_rigid[bodyID2] == 0:
-                        norm = Normalize(norm1 - norm2)
+                    if is_rigid[body_id1] == 0 and is_rigid[body_id2] == 0:
+                        norm = normalize(norm1 - norm2)
                         g_mass = (m1 + m2) * dt[None]
-                    elif is_rigid[bodyID1] == 1:
-                        norm = Normalize(norm1)
+                    elif is_rigid[body_id1] == 1:
+                        norm = normalize(norm1)
                         g_mass = m1 * dt[None]
-                    elif is_rigid[bodyID2] == 1:
-                        norm = -Normalize(norm2)
+                    elif is_rigid[body_id2] == 1:
+                        norm = -normalize(norm2)
                         g_mass = m2 * dt[None]
 
                     is_penetrate = (mv1 * m2 - m1 * mv2).dot(norm)
-                    if is_penetrate > Threshold:
+                    if is_penetrate > THRESHOLD:
                         inv_gmass = 1.0 / g_mass
                         cforce = (mv1 * m2 - m1 * mv2) * inv_gmass
                         norm_force = is_penetrate * inv_gmass
-                        if mu > Threshold:
+                        if mu > THRESHOLD:
                             trial_ft = cforce - norm_force * norm
                             fstick = trial_ft.norm()
                             fslip = mu * ti.abs(norm_force)
@@ -4837,8 +4862,8 @@ def kernel_calc_friction_contact(
                                 cforce = norm_force * norm + fslip * (trial_ft / fstick)
                         else:
                             cforce = norm_force * norm
-                        node[ng, bodyID1]._update_contact_force(-cforce)
-                        node[ng, bodyID2]._update_contact_force(cforce)
+                        node[ng, body_id1]._update_contact_force(-cforce)
+                        node[ng, body_id2]._update_contact_force(cforce)
 
                         if (
                             ti.static(GlobalVariable.MPMXPBC)
@@ -4851,25 +4876,25 @@ def kernel_calc_friction_contact(
                                 if xindex == 0 or xindex == gnum[0]:
                                     temp_index = index
                                     temp_index[0] = xindex
-                                    tideID = linearize(temp_index, gnum)
-                                    node[tideID, bodyID1]._update_contact_force(-cforce)
-                                    node[tideID, bodyID2]._update_contact_force(cforce)
+                                    tide_id = linearize(temp_index, gnum)
+                                    node[tide_id, body_id1]._update_contact_force(-cforce)
+                                    node[tide_id, body_id2]._update_contact_force(cforce)
                             if ti.static(GlobalVariable.MPMYPBC):
                                 yindex = -index[1] + gnum[1]
                                 if yindex == 0 or yindex == gnum[1]:
                                     temp_index = index
                                     temp_index[1] = yindex
-                                    tideID = linearize(temp_index, gnum)
-                                    node[tideID, bodyID1]._update_contact_force(-cforce)
-                                    node[tideID, bodyID2]._update_contact_force(cforce)
+                                    tide_id = linearize(temp_index, gnum)
+                                    node[tide_id, body_id1]._update_contact_force(-cforce)
+                                    node[tide_id, body_id2]._update_contact_force(cforce)
                             if ti.static(GlobalVariable.MPMZPBC):
                                 zindex = -index[2] + gnum[2]
                                 if zindex == 0 or zindex == gnum[2]:
                                     temp_index = index
                                     temp_index[2] = zindex
-                                    tideID = linearize(temp_index, gnum)
-                                    node[tideID, bodyID1]._update_contact_force(-cforce)
-                                    node[tideID, bodyID2]._update_contact_force(cforce)
+                                    tide_id = linearize(temp_index, gnum)
+                                    node[tide_id, body_id1]._update_contact_force(-cforce)
+                                    node[tide_id, body_id2]._update_contact_force(cforce)
 
 
 ################## Geo contact ##################
@@ -4890,39 +4915,42 @@ def kernel_calc_geocontact(
 ):
     # ti.block_local(dt)
     for ng in range(node.shape[0]):
-        for bodyID1 in range(node.shape[1] - 1):
-            for bodyID2 in range(bodyID1 + 1, node.shape[1]):
-                m1, m2 = node[ng, bodyID1].m, node[ng, bodyID2].m
+        for body_id1 in range(node.shape[1] - 1):
+            for body_id2 in range(body_id1 + 1, node.shape[1]):
+                m1, m2 = node[ng, body_id1].m, node[ng, body_id2].m
                 if m1 > cut_off and m2 > cut_off:
-                    contact_pos1, contact_pos2 = node[ng, bodyID1].contact_pos / m1, node[ng, bodyID2].contact_pos / m2
-                    mv1, mv2 = m1 * node[ng, bodyID1].momentum, m2 * node[ng, bodyID2].momentum
-                    norm1, norm2 = node[ng, bodyID1].grad_domain, node[ng, bodyID2].grad_domain
+                    contact_pos1, contact_pos2 = (
+                        node[ng, body_id1].contact_pos / m1,
+                        node[ng, body_id2].contact_pos / m2,
+                    )
+                    mv1, mv2 = m1 * node[ng, body_id1].momentum, m2 * node[ng, body_id2].momentum
+                    norm1, norm2 = node[ng, body_id1].grad_domain, node[ng, body_id2].grad_domain
 
                     norm, g_mass, xm = (
                         ti.Vector.zero(float, GlobalVariable.DIMENSION),
                         0.0,
                         ti.Vector.zero(float, GlobalVariable.DIMENSION),
                     )
-                    if is_rigid[bodyID1] == 1:
-                        norm = Normalize(norm1)
+                    if is_rigid[body_id1] == 1:
+                        norm = normalize(norm1)
                         g_mass = m1 * dt[None]
                         xm = contact_pos1
-                    elif is_rigid[bodyID2] == 1:
-                        norm = -Normalize(norm2)
+                    elif is_rigid[body_id2] == 1:
+                        norm = -normalize(norm2)
                         g_mass = m2 * dt[None]
                         xm = contact_pos2
 
                     is_penetrate = (mv1 * m2 - m1 * mv2).dot(norm)
-                    gsize = MeanValue(grid_size)
+                    gsize = mean_value(grid_size)
                     rigid_size = gsize
                     node_coord = grid_size * ti.Vector(vectorize_id(ng, gnum))
                     if ti.static(getattr(element, "adaptive", False)):
-                        gsize = ti.min(node[ng, bodyID1].contact_length / m1, node[ng, bodyID2].contact_length / m2)
+                        gsize = ti.min(node[ng, body_id1].contact_length / m1, node[ng, body_id2].contact_length / m2)
                         # xm and the normal use the rigid body's stencil, which may mix refinement levels.
-                        if is_rigid[bodyID1] == 1:
-                            rigid_size = node[ng, bodyID1].contact_length / m1
-                        elif is_rigid[bodyID2] == 1:
-                            rigid_size = node[ng, bodyID2].contact_length / m2
+                        if is_rigid[body_id1] == 1:
+                            rigid_size = node[ng, body_id1].contact_length / m1
+                        elif is_rigid[body_id2] == 1:
+                            rigid_size = node[ng, body_id2].contact_length / m2
                         node_coord = element.fine_grid_size * ti.Vector(
                             vectorize_id(element.compact_to_logical[ng], gnum)
                         )
@@ -4935,7 +4963,7 @@ def kernel_calc_geocontact(
                             sparse_grid.active_block_ids,
                         )
                     is_contact = (contact_pos2 - contact_pos1).dot(norm) < offset * gsize
-                    if is_penetrate > Threshold and is_contact:
+                    if is_penetrate > THRESHOLD and is_contact:
                         inv_gmass = 1.0 / g_mass
                         cforce = (mv1 * m2 - m1 * mv2) * inv_gmass
 
@@ -4953,17 +4981,17 @@ def kernel_calc_geocontact(
                         factor = (1.0 - alpha * dist**beta) / (1.0 + alpha * dist**beta)
 
                         norm_force = factor * is_penetrate * inv_gmass
-                        if mu > Threshold:
+                        if mu > THRESHOLD:
                             trial_ft = cforce - cforce.dot(norm) * norm
                             fstick = trial_ft.norm()
                             fslip = mu * ti.abs(norm_force)
                             cforce = norm_force * norm
-                            if fstick > Threshold:
+                            if fstick > THRESHOLD:
                                 cforce += ti.min(fslip, fstick) * (trial_ft / fstick)
                         else:
                             cforce = norm_force * norm
-                        node[ng, bodyID1]._update_contact_force(-cforce)
-                        node[ng, bodyID2]._update_contact_force(cforce)
+                        node[ng, body_id1]._update_contact_force(-cforce)
+                        node[ng, body_id2]._update_contact_force(cforce)
 
                         if (
                             ti.static(GlobalVariable.MPMXPBC)
@@ -4976,30 +5004,30 @@ def kernel_calc_geocontact(
                                 if xindex == 0 or xindex == gnum[0]:
                                     temp_index = index
                                     temp_index[0] = xindex
-                                    tideID = linearize(temp_index, gnum)
-                                    node[tideID, bodyID1]._update_contact_force(-cforce)
-                                    node[tideID, bodyID2]._update_contact_force(cforce)
+                                    tide_id = linearize(temp_index, gnum)
+                                    node[tide_id, body_id1]._update_contact_force(-cforce)
+                                    node[tide_id, body_id2]._update_contact_force(cforce)
                             if ti.static(GlobalVariable.MPMYPBC):
                                 yindex = -index[1] + gnum[1]
                                 if yindex == 0 or yindex == gnum[1]:
                                     temp_index = index
                                     temp_index[1] = yindex
-                                    tideID = linearize(temp_index, gnum)
-                                    node[tideID, bodyID1]._update_contact_force(-cforce)
-                                    node[tideID, bodyID2]._update_contact_force(cforce)
+                                    tide_id = linearize(temp_index, gnum)
+                                    node[tide_id, body_id1]._update_contact_force(-cforce)
+                                    node[tide_id, body_id2]._update_contact_force(cforce)
                             if ti.static(GlobalVariable.MPMZPBC):
                                 zindex = -index[2] + gnum[2]
                                 if zindex == 0 or zindex == gnum[2]:
                                     temp_index = index
                                     temp_index[2] = zindex
-                                    tideID = linearize(temp_index, gnum)
-                                    node[tideID, bodyID1]._update_contact_force(-cforce)
-                                    node[tideID, bodyID2]._update_contact_force(cforce)
+                                    tide_id = linearize(temp_index, gnum)
+                                    node[tide_id, body_id1]._update_contact_force(-cforce)
+                                    node[tide_id, body_id2]._update_contact_force(cforce)
 
 
 ################## DEM contact ##################
 @ti.kernel
-def kernel_calc_demcontact_2D(
+def kernel_calc_demcontact_2d(
     total_nodes: int,
     start_index: int,
     end_index: int,
@@ -5007,30 +5035,30 @@ def kernel_calc_demcontact_2D(
     grid_size: ti.types.vector(2, float),
     velocity: ti.types.vector(2, float),
     particle: ti.template(),
-    materialID: ti.template(),
-    matProps: ti.template(),
+    material_id: ti.template(),
+    mat_props: ti.template(),
     dt: ti.template(),
     polygon_vertices: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
     node: ti.template(),
     element: ti.template(),
 ):
     # ti.block_local(dt)
-    v1, v2 = velocity, ZEROVEC2f
-    normal, tangential = ZEROVEC2f, ZEROVEC2f
+    v1, v2 = velocity, ZEROVEC2F
+    normal, tangential = ZEROVEC2F, ZEROVEC2F
 
     for i in range(start_index, end_index):
-        np = materialID[i]
+        np = material_id[i]
         if int(particle[np].active) == 1:
-            circle_radius = MeanValue(grid_size) * 0.75
+            circle_radius = mean_value(grid_size) * 0.75
             if ti.static(getattr(element, "adaptive", False)):
-                circle_radius = MeanValue(element.coarse_grid_size) * 0.75 / (1 << int(element.particle_refined[np]))
+                circle_radius = mean_value(element.coarse_grid_size) * 0.75 / (1 << int(element.particle_refined[np]))
             circle_center = particle[np].x
             v2 = particle[np].v
             m2 = particle[np].m
-            k_normal, k_tangential, mu = matProps.kn, matProps.kt, matProps.friction
+            k_normal, k_tangential, mu = mat_props.kn, mat_props.kt, mat_props.friction
             # Calculate the minimum distance and normal vector
             distance, normal = circle_polygon_distance(circle_center, polygon_vertices)
             # Calculate the particle traction using linear relationship-------------
@@ -5038,55 +5066,55 @@ def kernel_calc_demcontact_2D(
                 particle[np].contact_traction = vec2f([0.0, 0.0])
             else:
                 delta = circle_radius - distance
-                normal = Normalize(normal)
+                normal = normalize(normal)
                 relative_velocity = v1 - v2
                 normal_force = ti.max(
                     0.0, delta * k_normal + 2.0 * ti.sqrt(m2 * k_normal) * relative_velocity.dot(normal)
                 )
                 cforce = normal_force * normal
-                if mu > Threshold:
+                if mu > THRESHOLD:
                     previous = particle[np].contact_traction
                     tangential = previous - previous.dot(normal) * normal
                     tangential += k_tangential * dt[None] * (relative_velocity - relative_velocity.dot(normal) * normal)
                     trial = tangential.norm()
-                    if trial > Threshold:
+                    if trial > THRESHOLD:
                         cforce += ti.min(mu * normal_force / trial, 1.0) * tangential
                 particle[np].contact_traction = cforce
 
-                bodyID = int(particle[np].bodyID)
+                body_id = int(particle[np].bodyID)
                 offset = np * total_nodes
                 for ln in range(offset, offset + int(node_size[np])):
-                    nodeID = LnID[ln]
+                    node_id = ln_id[ln]
                     extf = shape_mapping(shapefn[ln], cforce)
-                    node[nodeID, bodyID]._update_contact_force(extf)
+                    node[node_id, body_id]._update_contact_force(extf)
 
                     if (
                         ti.static(GlobalVariable.MPMXPBC)
                         or ti.static(GlobalVariable.MPMYPBC)
                         or ti.static(GlobalVariable.MPMZPBC)
                     ):
-                        index = ti.Vector([vectorize_id(nodeID, gnum)])
+                        index = ti.Vector([vectorize_id(node_id, gnum)])
                         if ti.static(GlobalVariable.MPMXPBC):
                             xindex = -index[0] + gnum[0]
                             if xindex == 0 or xindex == gnum[0]:
                                 temp_index = index
                                 temp_index[0] = xindex
-                                tideID = linearize(temp_index, gnum)
-                                node[tideID, bodyID]._update_contact_force(extf)
+                                tide_id = linearize(temp_index, gnum)
+                                node[tide_id, body_id]._update_contact_force(extf)
                         if ti.static(GlobalVariable.MPMYPBC):
                             yindex = -index[1] + gnum[1]
                             if yindex == 0 or yindex == gnum[1]:
                                 temp_index = index
                                 temp_index[1] = yindex
-                                tideID = linearize(temp_index, gnum)
-                                node[tideID, bodyID]._update_contact_force(extf)
+                                tide_id = linearize(temp_index, gnum)
+                                node[tide_id, body_id]._update_contact_force(extf)
                         if ti.static(GlobalVariable.MPMZPBC):
                             zindex = -index[2] + gnum[2]
                             if zindex == 0 or zindex == gnum[2]:
                                 temp_index = index
                                 temp_index[2] = zindex
-                                tideID = linearize(temp_index, gnum)
-                                node[tideID, bodyID]._update_contact_force(extf)
+                                tide_id = linearize(temp_index, gnum)
+                                node[tide_id, body_id]._update_contact_force(extf)
 
 
 @ti.kernel
@@ -5101,8 +5129,8 @@ def kernel_move_contact_polygon(
 def circle_polygon_distance(circle_center, polygon_vertices):
     num_vertices = polygon_vertices.shape[0]
     min_distance = 1.0e10
-    normal_vector, closest_point = ZEROVEC2f, ZEROVEC2f
-    p1, p2 = ZEROVEC2f, ZEROVEC2f
+    normal_vector, closest_point = ZEROVEC2F, ZEROVEC2F
+    p1, p2 = ZEROVEC2F, ZEROVEC2F
     for i in range(num_vertices):
         p1[0] = polygon_vertices[i][0]
         p1[1] = polygon_vertices[i][1]
@@ -5157,11 +5185,11 @@ def circle_polygon_distance(circle_center, polygon_vertices):
 @ti.kernel
 def kernel_particle_shifting_delta_correction(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     grid_size: ti.types.vector(3, float),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
 ):
@@ -5169,49 +5197,49 @@ def kernel_particle_shifting_delta_correction(
     E2 = 0.0
     for ng in range(node.shape[0]):
         for nb in range(node.shape[1]):
-            if node[ng, nb].vol > Threshold:
+            if node[ng, nb].vol > THRESHOLD:
                 EI = ti.max(0, -grid_size[0] * grid_size[1] * grid_size[2] + node[ng, nb].vol)
                 E2 += EI * EI
 
     den = 0.0
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             grad_E2 = vec3f(0.0, 0.0, 0.0)
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 dshape_fn = dshapefn[ln]
-                EI = ti.max(0, -grid_size[0] * grid_size[1] * grid_size[2] + node[nodeID, bodyID].vol)
+                EI = ti.max(0, -grid_size[0] * grid_size[1] * grid_size[2] + node[node_id, body_id].vol)
                 grad_E2 += dshape_fn * EI
             grad_E2 *= 2.0 * particle[np].vol
             den += grad_E2.dot(grad_E2)
             particle[np].grad_E2 = grad_E2
 
     if den > 0.0:
-        for np in range(particleNum):
+        for np in range(particle_num):
             particle[np].x -= E2 / den * particle[np].grad_E2
 
 
 @ti.kernel
 def kernel_volume_p2g_fdm_mac_shifting(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     node_volume: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
 ):
     node_volume.fill(0)
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             volume = particle[np].vol
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
-                node_volume[nodeID, bodyID] += shape_mapping(shapefn[ln], volume)
+                node_id = ln_id[ln]
+                node_volume[node_id, body_id] += shape_mapping(shapefn[ln], volume)
 
 
 @ti.func
@@ -5231,7 +5259,7 @@ def kernel_compute_particle_shifting_energy(node_volume: ti.template(), referenc
     E2 = 0.0
     for ng in range(node_volume.shape[0]):
         for nb in range(node_volume.shape[1]):
-            if node_volume[ng, nb] > Threshold:
+            if node_volume[ng, nb] > THRESHOLD:
                 EI = ti.max(0.0, -reference_volume[ng, nb] + node_volume[ng, nb])
                 E2 += EI * EI
     return E2
@@ -5275,7 +5303,7 @@ def particle_shifting_node_residual(
 @ti.kernel
 def kernel_compute_particle_shifting_gradient_fdm_mac(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     ghost_cell: int,
     cnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     grid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
@@ -5283,7 +5311,7 @@ def kernel_compute_particle_shifting_gradient_fdm_mac(
     node_volume: ti.template(),
     cell_type: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
     compute_curvature: ti.template(),
@@ -5296,21 +5324,23 @@ def kernel_compute_particle_shifting_gradient_fdm_mac(
                 node_id, body_id, ghost_cell, cnum, cell_type, node_volume, reference_volume
             )
     den = 0.0
-    for np in range(particleNum):
+    for np in range(particle_num):
         grad_E2 = ti.Vector.zero(float, GlobalVariable.DIMENSION)
         if (
             int(particle[np].materialID) > 0
             and int(particle[np].active) == 1
             and particle_shifting_is_active_fluid(particle[np].x, ghost_cell, cnum, grid_size, cell_type)
         ):
-            bodyID = int(particle[np].bodyID)
+            particle_body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                support_node_id = ln_id[ln]
                 if ti.static(compute_curvature):
-                    node_volume[nodeID, bodyID] += particle[np].vol * dshapefn[ln].dot(particle[np].grad_E2)
+                    node_volume[support_node_id, particle_body_id] += particle[np].vol * dshapefn[ln].dot(
+                        particle[np].grad_E2
+                    )
                 else:
-                    grad_E2 += dshapefn[ln] * node_volume[nodeID, bodyID]
+                    grad_E2 += dshapefn[ln] * node_volume[support_node_id, particle_body_id]
             if ti.static(not compute_curvature):
                 grad_E2 *= 2.0 * particle[np].vol
                 den += grad_E2.dot(grad_E2)
@@ -5324,7 +5354,7 @@ def kernel_compute_particle_shifting_gradient_fdm_mac(
 
 @ti.kernel
 def kernel_apply_particle_shifting_gradient(
-    particleNum: int,
+    particle_num: int,
     ghost_cell: int,
     cnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     grid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
@@ -5337,7 +5367,7 @@ def kernel_apply_particle_shifting_gradient(
     for d in ti.static(range(GlobalVariable.DIMENSION)):
         max_shift = ti.min(max_shift, max_shift_ratio * grid_size[d])
 
-    for np in range(particleNum):
+    for np in range(particle_num):
         if (
             int(particle[np].materialID) > 0
             and int(particle[np].active) == 1
@@ -5355,17 +5385,17 @@ def fdm_regular_axis_shape_grad(position, node_coord, inv_grid_size, psize, btyp
     shape = 0.0
     dshape = 0.0
     if ti.static(GlobalVariable.SHAPEFUNCTION == 0):
-        shape = ShapeLinear(position, node_coord, inv_grid_size, 0)
-        dshape = GShapeLinear(position, node_coord, inv_grid_size, 0)
+        shape = shape_linear(position, node_coord, inv_grid_size, 0)
+        dshape = g_shape_linear(position, node_coord, inv_grid_size, 0)
     elif ti.static(GlobalVariable.SHAPEFUNCTION == 1):
-        shape = ShapeGIMP(position, node_coord, inv_grid_size, psize)
-        dshape = GShapeGIMP(position, node_coord, inv_grid_size, psize)
+        shape = shape_gimp(position, node_coord, inv_grid_size, psize)
+        dshape = g_shape_gimp(position, node_coord, inv_grid_size, psize)
     elif ti.static(GlobalVariable.SHAPEFUNCTION == 2):
-        shape = ShapeBsplineQ(position, node_coord, inv_grid_size, btype)
-        dshape = GShapeBsplineQ(position, node_coord, inv_grid_size, btype)
+        shape = shape_bspline_q(position, node_coord, inv_grid_size, btype)
+        dshape = g_shape_bspline_q(position, node_coord, inv_grid_size, btype)
     elif ti.static(GlobalVariable.SHAPEFUNCTION == 3):
-        shape = ShapeBsplineC(position, node_coord, inv_grid_size, btype)
-        dshape = GShapeBsplineC(position, node_coord, inv_grid_size, btype)
+        shape = shape_bspline_c(position, node_coord, inv_grid_size, btype)
+        dshape = g_shape_bspline_c(position, node_coord, inv_grid_size, btype)
     return shape, dshape
 
 
@@ -5496,7 +5526,7 @@ def kernel_fdm_box_shifting_reference_volume3d(
 @ti.kernel
 def kernel_compute_particle_shifting_gradient_fdm_on_the_fly_3d(
     influenced_node: int,
-    particleNum: int,
+    particle_num: int,
     ghost_cell: int,
     cnum: ti.types.vector(3, int),
     grid_size: ti.types.vector(3, float),
@@ -5517,15 +5547,15 @@ def kernel_compute_particle_shifting_gradient_fdm_on_the_fly_3d(
                 node_id, body_id, ghost_cell, cnum, cell_type, node_volume, reference_volume
             )
     den = 0.0
-    for np in range(particleNum):
+    for np in range(particle_num):
         grad_E2 = vec3f(0.0, 0.0, 0.0)
         if (
             int(particle[np].materialID) > 0
             and int(particle[np].active) == 1
             and particle_shifting_is_active_fluid(particle[np].x, ghost_cell, cnum, grid_size, cell_type)
         ):
-            bodyID = int(particle[np].bodyID)
-            position, psize = particle[np].x, particle_lengths[bodyID]
+            particle_body_id = int(particle[np].bodyID)
+            position, psize = particle[np].x, particle_lengths[particle_body_id]
             base_bound = ti.floor((position - psize) * igrid_size, int)
             axis_shape = ti.Matrix.zero(float, 3, GlobalVariable.INFLUENCENODE)
             axis_dshape = ti.Matrix.zero(float, 3, GlobalVariable.INFLUENCENODE)
@@ -5598,16 +5628,20 @@ def kernel_compute_particle_shifting_gradient_fdm_on_the_fly_3d(
                             dshape[d] = axis_dshape[d, local_id]
                             inside = inside and axis_valid[d, local_id] == 1
                 if inside:
-                    nodeID = int(mapped_index[0] + mapped_index[1] * gnum[0] + mapped_index[2] * gnum[0] * gnum[1])
+                    support_node_id = int(
+                        mapped_index[0] + mapped_index[1] * gnum[0] + mapped_index[2] * gnum[0] * gnum[1]
+                    )
                     dshape_fn = vec3f(
                         dshape[0] * shape[1] * shape[2],
                         shape[0] * dshape[1] * shape[2],
                         shape[0] * shape[1] * dshape[2],
                     )
                     if ti.static(compute_curvature):
-                        node_volume[nodeID, bodyID] += particle[np].vol * dshape_fn.dot(particle[np].grad_E2)
+                        node_volume[support_node_id, particle_body_id] += particle[np].vol * dshape_fn.dot(
+                            particle[np].grad_E2
+                        )
                     else:
-                        grad_E2 += dshape_fn * node_volume[nodeID, bodyID]
+                        grad_E2 += dshape_fn * node_volume[support_node_id, particle_body_id]
             if ti.static(not compute_curvature):
                 grad_E2 *= 2.0 * particle[np].vol
                 den += grad_E2.dot(grad_E2)
@@ -5625,20 +5659,20 @@ def fdm_regular_node_shape_grad_2d(position, node_coords, igrid_size, psize, bty
     dshape_fn = vec2f(0.0, 0.0)
     if ti.static(GlobalVariable.SHAPEFUNCTION == 0):
         for d in ti.static(range(2)):
-            shape_fn[d] = ShapeLinear(position[d], node_coords[d], igrid_size[d], 0)
-            dshape_fn[d] = GShapeLinear(position[d], node_coords[d], igrid_size[d], 0)
+            shape_fn[d] = shape_linear(position[d], node_coords[d], igrid_size[d], 0)
+            dshape_fn[d] = g_shape_linear(position[d], node_coords[d], igrid_size[d], 0)
     elif ti.static(GlobalVariable.SHAPEFUNCTION == 1):
         for d in ti.static(range(2)):
-            shape_fn[d] = ShapeGIMP(position[d], node_coords[d], igrid_size[d], psize[d])
-            dshape_fn[d] = GShapeGIMP(position[d], node_coords[d], igrid_size[d], psize[d])
+            shape_fn[d] = shape_gimp(position[d], node_coords[d], igrid_size[d], psize[d])
+            dshape_fn[d] = g_shape_gimp(position[d], node_coords[d], igrid_size[d], psize[d])
     elif ti.static(GlobalVariable.SHAPEFUNCTION == 2):
         for d in ti.static(range(2)):
-            shape_fn[d] = ShapeBsplineQ(position[d], node_coords[d], igrid_size[d], int(btype[d]))
-            dshape_fn[d] = GShapeBsplineQ(position[d], node_coords[d], igrid_size[d], int(btype[d]))
+            shape_fn[d] = shape_bspline_q(position[d], node_coords[d], igrid_size[d], int(btype[d]))
+            dshape_fn[d] = g_shape_bspline_q(position[d], node_coords[d], igrid_size[d], int(btype[d]))
     elif ti.static(GlobalVariable.SHAPEFUNCTION == 3):
         for d in ti.static(range(2)):
-            shape_fn[d] = ShapeBsplineC(position[d], node_coords[d], igrid_size[d], int(btype[d]))
-            dshape_fn[d] = GShapeBsplineC(position[d], node_coords[d], igrid_size[d], int(btype[d]))
+            shape_fn[d] = shape_bspline_c(position[d], node_coords[d], igrid_size[d], int(btype[d]))
+            dshape_fn[d] = g_shape_bspline_c(position[d], node_coords[d], igrid_size[d], int(btype[d]))
     weight = shape_fn[0] * shape_fn[1]
     grad = vec2f([dshape_fn[0] * shape_fn[1], shape_fn[0] * dshape_fn[1]])
     return weight, grad
@@ -5650,20 +5684,20 @@ def fdm_regular_node_shape_grad_3d(position, node_coords, igrid_size, psize, bty
     dshape_fn = vec3f(0.0, 0.0, 0.0)
     if ti.static(GlobalVariable.SHAPEFUNCTION == 0):
         for d in ti.static(range(3)):
-            shape_fn[d] = ShapeLinear(position[d], node_coords[d], igrid_size[d], 0)
-            dshape_fn[d] = GShapeLinear(position[d], node_coords[d], igrid_size[d], 0)
+            shape_fn[d] = shape_linear(position[d], node_coords[d], igrid_size[d], 0)
+            dshape_fn[d] = g_shape_linear(position[d], node_coords[d], igrid_size[d], 0)
     elif ti.static(GlobalVariable.SHAPEFUNCTION == 1):
         for d in ti.static(range(3)):
-            shape_fn[d] = ShapeGIMP(position[d], node_coords[d], igrid_size[d], psize[d])
-            dshape_fn[d] = GShapeGIMP(position[d], node_coords[d], igrid_size[d], psize[d])
+            shape_fn[d] = shape_gimp(position[d], node_coords[d], igrid_size[d], psize[d])
+            dshape_fn[d] = g_shape_gimp(position[d], node_coords[d], igrid_size[d], psize[d])
     elif ti.static(GlobalVariable.SHAPEFUNCTION == 2):
         for d in ti.static(range(3)):
-            shape_fn[d] = ShapeBsplineQ(position[d], node_coords[d], igrid_size[d], int(btype[d]))
-            dshape_fn[d] = GShapeBsplineQ(position[d], node_coords[d], igrid_size[d], int(btype[d]))
+            shape_fn[d] = shape_bspline_q(position[d], node_coords[d], igrid_size[d], int(btype[d]))
+            dshape_fn[d] = g_shape_bspline_q(position[d], node_coords[d], igrid_size[d], int(btype[d]))
     elif ti.static(GlobalVariable.SHAPEFUNCTION == 3):
         for d in ti.static(range(3)):
-            shape_fn[d] = ShapeBsplineC(position[d], node_coords[d], igrid_size[d], int(btype[d]))
-            dshape_fn[d] = GShapeBsplineC(position[d], node_coords[d], igrid_size[d], int(btype[d]))
+            shape_fn[d] = shape_bspline_c(position[d], node_coords[d], igrid_size[d], int(btype[d]))
+            dshape_fn[d] = g_shape_bspline_c(position[d], node_coords[d], igrid_size[d], int(btype[d]))
     weight = shape_fn[0] * shape_fn[1] * shape_fn[2]
     grad = vec3f(
         [
@@ -5678,7 +5712,7 @@ def fdm_regular_node_shape_grad_3d(position, node_coords, igrid_size, psize, bty
 @ti.kernel
 def kernel_volume_p2g_fdm_shifting_on_the_fly_2d(
     influenced_node: int,
-    particleNum: int,
+    particle_num: int,
     ghost_cell: int,
     grid_size: ti.types.vector(2, float),
     igrid_size: ti.types.vector(2, float),
@@ -5689,10 +5723,10 @@ def kernel_volume_p2g_fdm_shifting_on_the_fly_2d(
     boundtype: ti.template(),
 ):
     node_volume.fill(0)
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
-            position, psize = particle[np].x, particle_lengths[bodyID]
+            body_id = int(particle[np].bodyID)
+            position, psize = particle[np].x, particle_lengths[body_id]
             base_bound = ti.floor((position - psize) * igrid_size, int)
             volume = particle[np].vol
             for j in range(base_bound[1], base_bound[1] + influenced_node):
@@ -5703,24 +5737,24 @@ def kernel_volume_p2g_fdm_shifting_on_the_fly_2d(
                     ip, valid_i = fdm_regular_axis_mapped_index(i, gnum[0], ghost_cell, GlobalVariable.MPMXPBC)
                     if not valid_i:
                         continue
-                    nodeID = int(ip + jp * gnum[0])
+                    node_id = int(ip + jp * gnum[0])
                     node_coords = vec2i(i, j) * grid_size
                     btype = vec2i(0, 0)
                     if ti.static(GlobalVariable.SHAPEFUNCTION == 2 or GlobalVariable.SHAPEFUNCTION == 3):
-                        btype = ti.cast(boundtype[nodeID, bodyID], ti.i32)
+                        btype = ti.cast(boundtype[node_id, body_id], ti.i32)
                         if ti.static(GlobalVariable.MPMXPBC):
                             btype[0] = 0
                         if ti.static(GlobalVariable.MPMYPBC):
                             btype[1] = 0
                     weight, _ = fdm_regular_node_shape_grad_2d(position, node_coords, igrid_size, psize, btype)
-                    if weight > Threshold:
-                        node_volume[nodeID, bodyID] += shape_mapping(weight, volume)
+                    if weight > THRESHOLD:
+                        node_volume[node_id, body_id] += shape_mapping(weight, volume)
 
 
 @ti.kernel
 def kernel_particle_shifting_delta_correction_fdm_on_the_fly_2d(
     influenced_node: int,
-    particleNum: int,
+    particle_num: int,
     ghost_cell: int,
     cnum: ti.types.vector(2, int),
     grid_size: ti.types.vector(2, float),
@@ -5742,14 +5776,14 @@ def kernel_particle_shifting_delta_correction_fdm_on_the_fly_2d(
         )
 
     den = 0.0
-    for np in range(particleNum):
+    for np in range(particle_num):
         if (
             int(particle[np].materialID) > 0
             and int(particle[np].active) == 1
             and particle_shifting_is_active_fluid(particle[np].x, ghost_cell, cnum, grid_size, cell_type)
         ):
-            bodyID = int(particle[np].bodyID)
-            position, psize = particle[np].x, particle_lengths[bodyID]
+            particle_body_id = int(particle[np].bodyID)
+            position, psize = particle[np].x, particle_lengths[particle_body_id]
             base_bound = ti.floor((position - psize) * igrid_size, int)
             grad_E2 = vec2f(0.0, 0.0)
             for j in range(base_bound[1], base_bound[1] + influenced_node):
@@ -5760,17 +5794,17 @@ def kernel_particle_shifting_delta_correction_fdm_on_the_fly_2d(
                     ip, valid_i = fdm_regular_axis_mapped_index(i, gnum[0], ghost_cell, GlobalVariable.MPMXPBC)
                     if not valid_i:
                         continue
-                    nodeID = int(ip + jp * gnum[0])
+                    support_node_id = int(ip + jp * gnum[0])
                     node_coords = vec2i(i, j) * grid_size
                     btype = vec2i(0, 0)
                     if ti.static(GlobalVariable.SHAPEFUNCTION == 2 or GlobalVariable.SHAPEFUNCTION == 3):
-                        btype = ti.cast(boundtype[nodeID, bodyID], ti.i32)
+                        btype = ti.cast(boundtype[support_node_id, particle_body_id], ti.i32)
                         if ti.static(GlobalVariable.MPMXPBC):
                             btype[0] = 0
                         if ti.static(GlobalVariable.MPMYPBC):
                             btype[1] = 0
                     _, dshape_fn = fdm_regular_node_shape_grad_2d(position, node_coords, igrid_size, psize, btype)
-                    EI = node_volume[nodeID, bodyID]
+                    EI = node_volume[support_node_id, particle_body_id]
                     grad_E2 += dshape_fn * EI
             grad_E2 *= 2.0 * particle[np].vol
             den += grad_E2.dot(grad_E2)
@@ -5778,14 +5812,14 @@ def kernel_particle_shifting_delta_correction_fdm_on_the_fly_2d(
 
     for ng, nb in node_volume:
         node_volume[ng, nb] = 0.0
-    for np in range(particleNum):
+    for np in range(particle_num):
         if (
             int(particle[np].materialID) > 0
             and int(particle[np].active) == 1
             and particle_shifting_is_active_fluid(particle[np].x, ghost_cell, cnum, grid_size, cell_type)
         ):
-            bodyID = int(particle[np].bodyID)
-            position, psize = particle[np].x, particle_lengths[bodyID]
+            particle_body_id = int(particle[np].bodyID)
+            position, psize = particle[np].x, particle_lengths[particle_body_id]
             base_bound = ti.floor((position - psize) * igrid_size, int)
             for j in range(base_bound[1], base_bound[1] + influenced_node):
                 jp, valid_j = fdm_regular_axis_mapped_index(j, gnum[1], ghost_cell, GlobalVariable.MPMYPBC)
@@ -5795,17 +5829,19 @@ def kernel_particle_shifting_delta_correction_fdm_on_the_fly_2d(
                     ip, valid_i = fdm_regular_axis_mapped_index(i, gnum[0], ghost_cell, GlobalVariable.MPMXPBC)
                     if not valid_i:
                         continue
-                    nodeID = int(ip + jp * gnum[0])
+                    support_node_id = int(ip + jp * gnum[0])
                     node_coords = vec2i(i, j) * grid_size
                     btype = vec2i(0, 0)
                     if ti.static(GlobalVariable.SHAPEFUNCTION == 2 or GlobalVariable.SHAPEFUNCTION == 3):
-                        btype = ti.cast(boundtype[nodeID, bodyID], ti.i32)
+                        btype = ti.cast(boundtype[support_node_id, particle_body_id], ti.i32)
                         if ti.static(GlobalVariable.MPMXPBC):
                             btype[0] = 0
                         if ti.static(GlobalVariable.MPMYPBC):
                             btype[1] = 0
                     _, dshape_fn = fdm_regular_node_shape_grad_2d(position, node_coords, igrid_size, psize, btype)
-                    node_volume[nodeID, bodyID] += particle[np].vol * dshape_fn.dot(particle[np].grad_E2)
+                    node_volume[support_node_id, particle_body_id] += particle[np].vol * dshape_fn.dot(
+                        particle[np].grad_E2
+                    )
 
     curvature = 0.0
     for ng, nb in node_volume:
@@ -5813,7 +5849,7 @@ def kernel_particle_shifting_delta_correction_fdm_on_the_fly_2d(
 
     if den > 0.0 and curvature > 0.0:
         step_scale = den / (2.0 * curvature)
-        for np in range(particleNum):
+        for np in range(particle_num):
             if (
                 int(particle[np].materialID) > 0
                 and int(particle[np].active) == 1
@@ -5829,7 +5865,7 @@ def kernel_particle_shifting_delta_correction_fdm_on_the_fly_2d(
 @ti.kernel
 def kernel_volume_p2g_fdm_shifting_on_the_fly_3d(
     influenced_node: int,
-    particleNum: int,
+    particle_num: int,
     ghost_cell: int,
     grid_size: ti.types.vector(3, float),
     igrid_size: ti.types.vector(3, float),
@@ -5840,10 +5876,10 @@ def kernel_volume_p2g_fdm_shifting_on_the_fly_3d(
     boundtype: ti.template(),
 ):
     node_volume.fill(0)
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
-            position, psize = particle[np].x, particle_lengths[bodyID]
+            body_id = int(particle[np].bodyID)
+            position, psize = particle[np].x, particle_lengths[body_id]
             base_bound = ti.floor((position - psize) * igrid_size, int)
             volume = particle[np].vol
             for k in range(base_bound[2], base_bound[2] + influenced_node):
@@ -5858,11 +5894,11 @@ def kernel_volume_p2g_fdm_shifting_on_the_fly_3d(
                         ip, valid_i = fdm_regular_axis_mapped_index(i, gnum[0], ghost_cell, GlobalVariable.MPMXPBC)
                         if not valid_i:
                             continue
-                        nodeID = int(ip + jp * gnum[0] + kp * gnum[0] * gnum[1])
+                        node_id = int(ip + jp * gnum[0] + kp * gnum[0] * gnum[1])
                         node_coords = vec3i(i, j, k) * grid_size
                         btype = vec3i(0, 0, 0)
                         if ti.static(GlobalVariable.SHAPEFUNCTION == 2 or GlobalVariable.SHAPEFUNCTION == 3):
-                            btype = ti.cast(boundtype[nodeID, bodyID], ti.i32)
+                            btype = ti.cast(boundtype[node_id, body_id], ti.i32)
                             if ti.static(GlobalVariable.MPMXPBC):
                                 btype[0] = 0
                             if ti.static(GlobalVariable.MPMYPBC):
@@ -5870,8 +5906,8 @@ def kernel_volume_p2g_fdm_shifting_on_the_fly_3d(
                             if ti.static(GlobalVariable.MPMZPBC):
                                 btype[2] = 0
                         weight, _ = fdm_regular_node_shape_grad_3d(position, node_coords, igrid_size, psize, btype)
-                        if weight > Threshold:
-                            node_volume[nodeID, bodyID] += shape_mapping(weight, volume)
+                        if weight > THRESHOLD:
+                            node_volume[node_id, body_id] += shape_mapping(weight, volume)
 
 
 # ======================================== Implicit MPM ======================================== #
@@ -5879,12 +5915,12 @@ def kernel_volume_p2g_fdm_shifting_on_the_fly_3d(
 #                    Preprocess dofs                        #
 # ========================================================= #
 @ti.kernel
-def find_active_node(gridSum: int, cutoff: float, node: ti.template(), flag: ti.template()):
+def find_active_node(grid_sum: int, cutoff: float, node: ti.template(), flag: ti.template()):
     flag.fill(0)
     for ng in range(node.shape[0]):
         for nb in range(node.shape[1]):
             if node[ng, nb].m > cutoff:
-                flag[ng + nb * gridSum] = 1
+                flag[ng + nb * grid_sum] = 1
 
 
 @ti.kernel
@@ -5898,13 +5934,13 @@ def estimate_active_grid_dofs(cutoff: float, node: ti.template()) -> int:
 
 
 @ti.kernel
-def set_active_dofs(gridSum: int, cutoff: float, node: ti.template(), flag: ti.template()) -> int:
+def set_active_dofs(grid_sum: int, cutoff: float, node: ti.template(), flag: ti.template()) -> int:
     total_dof = GlobalVariable.DIMENSION * flag[flag.shape[0] - 1]
     for ng in range(node.shape[0]):
         for nb in range(node.shape[1]):
             if node[ng, nb].m > cutoff:
-                dofs = GlobalVariable.DIMENSION * (flag[ng + nb * gridSum] - 1)
-                flag[ng + nb * gridSum] = dofs
+                dofs = GlobalVariable.DIMENSION * (flag[ng + nb * grid_sum] - 1)
+                flag[ng + nb * grid_sum] = dofs
     return total_dof
 
 
@@ -5914,11 +5950,11 @@ def set_active_dofs(gridSum: int, cutoff: float, node: ti.template(), flag: ti.t
 @ti.kernel
 def kernel_mass_momentum_acceleration_force_ip2g(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     gravity: ti.types.vector(3, real),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
     gnum: ti.types.vector(GlobalVariable.DIMENSION, int),
@@ -5930,27 +5966,27 @@ def kernel_mass_momentum_acceleration_force_ip2g(
         ti.block_local(node.momentum.get_scalar_field(d))
         ti.block_local(node.inertia.get_scalar_field(d))
         ti.block_local(node.ext_force.get_scalar_field(d))
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             mass = particle[np].m
             velocity = particle[np].v
             acceleration = particle[np].a
             fex = particle[np]._compute_external_force(gravity)
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 shape_fn = shapefn[ln]
                 nmass = shape_mapping(shape_fn, mass)
                 external_force = shape_mapping(shapefn[ln], fex)
-                node[nodeID, bodyID]._update_nodal_mass(nmass)
+                node[node_id, body_id]._update_nodal_mass(nmass)
                 nodal_velocity = velocity
                 if ti.static(GlobalVariable.Affine):
-                    nodal_coord = grid_size * ti.Vector(vectorize_id(nodeID, gnum))
+                    nodal_coord = grid_size * ti.Vector(vectorize_id(node_id, gnum))
                     if ti.static(hasattr(sparse_grid, "active_block_ids")):
                         nodal_coord = grid_size * ti.cast(
                             compact_node_grid_coord(
-                                nodeID,
+                                node_id,
                                 sparse_grid.block_count,
                                 sparse_grid.block_size,
                                 sparse_grid.block_volume,
@@ -5959,61 +5995,64 @@ def kernel_mass_momentum_acceleration_force_ip2g(
                             real,
                         )
                     nodal_velocity += particle[np].velocity_gradient @ (nodal_coord - particle[np].x)
-                node[nodeID, bodyID]._update_nodal_momentum(nmass * nodal_velocity)
-                node[nodeID, bodyID]._update_nodal_acceleration(nmass * acceleration)
-                node[nodeID, bodyID]._update_external_force(external_force)
+                node[node_id, body_id]._update_nodal_momentum(nmass * nodal_velocity)
+                node[node_id, body_id]._update_nodal_acceleration(nmass * acceleration)
+                node[node_id, body_id]._update_external_force(external_force)
 
 
 @ti.kernel
 def kernel_internal_force_p2g(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
-            fInt = particle[np]._compute_internal_force()
+            f_int = particle[np]._compute_internal_force()
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 dshape_fn = dshapefn[ln]
                 internal_force = vec3f(
                     [
-                        dshape_fn[0] * fInt[0] + dshape_fn[1] * fInt[3] + dshape_fn[2] * fInt[5],
-                        dshape_fn[1] * fInt[1] + dshape_fn[0] * fInt[3] + dshape_fn[2] * fInt[4],
-                        dshape_fn[2] * fInt[2] + dshape_fn[1] * fInt[4] + dshape_fn[0] * fInt[5],
+                        dshape_fn[0] * f_int[0] + dshape_fn[1] * f_int[3] + dshape_fn[2] * f_int[5],
+                        dshape_fn[1] * f_int[1] + dshape_fn[0] * f_int[3] + dshape_fn[2] * f_int[4],
+                        dshape_fn[2] * f_int[2] + dshape_fn[1] * f_int[4] + dshape_fn[0] * f_int[5],
                     ]
                 )
-                node[nodeID, bodyID]._update_internal_force(internal_force)
+                node[node_id, body_id]._update_internal_force(internal_force)
 
 
 @ti.kernel
-def kernel_internal_force_p2g_2D(
+def kernel_internal_force_p2g_2d(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
-            fInt = particle[np]._compute_internal_force()
+            f_int = particle[np]._compute_internal_force()
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 dshape_fn = dshapefn[ln]
                 internal_force = vec2f(
-                    [dshape_fn[0] * fInt[0] + dshape_fn[1] * fInt[3], dshape_fn[1] * fInt[1] + dshape_fn[0] * fInt[3]]
+                    [
+                        dshape_fn[0] * f_int[0] + dshape_fn[1] * f_int[3],
+                        dshape_fn[1] * f_int[1] + dshape_fn[0] * f_int[3],
+                    ]
                 )
-                node[nodeID, bodyID]._update_internal_force(internal_force)
+                node[node_id, body_id]._update_internal_force(internal_force)
 
 
 # ========================================================= #
@@ -6040,24 +6079,24 @@ def kernel_compute_nodal_kinematics_newmark(
 
 @ti.kernel
 def kernel_update_nodal_disp(
-    gridSum: int, cutoff: float, node: ti.template(), flag: ti.template(), unknown_vector: ti.template()
+    grid_sum: int, cutoff: float, node: ti.template(), flag: ti.template(), unknown_vector: ti.template()
 ):
     for ng in range(node.shape[0]):
         for nb in range(node.shape[1]):
             if node[ng, nb].m > cutoff:
-                dof0 = flag[ng + nb * gridSum]
+                dof0 = flag[ng + nb * grid_sum]
                 disp = vec3f(unknown_vector[dof0], unknown_vector[dof0 + 1], unknown_vector[dof0 + 2])
                 node[ng, nb]._update_nodal_disp(disp)
 
 
 @ti.kernel
-def kernel_update_nodal_disp_2D(
-    gridSum: int, cutoff: float, node: ti.template(), flag: ti.template(), unknown_vector: ti.template()
+def kernel_update_nodal_disp_2d(
+    grid_sum: int, cutoff: float, node: ti.template(), flag: ti.template(), unknown_vector: ti.template()
 ):
     for ng in range(node.shape[0]):
         for nb in range(node.shape[1]):
             if node[ng, nb].m > cutoff:
-                dof0 = flag[ng + nb * gridSum]
+                dof0 = flag[ng + nb * grid_sum]
                 disp = vec2f(unknown_vector[dof0], unknown_vector[dof0 + 1])
                 node[ng, nb]._update_nodal_disp(disp)
 
@@ -6070,27 +6109,27 @@ def kernel_kinemaitc_ig2p(
     total_nodes: int,
     alpha: float,
     dt: ti.template(),
-    particleNum: int,
+    particle_num: int,
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
 ):
     # ti.block_local(dt)
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
             accleration = ti.Vector.zero(float, GlobalVariable.DIMENSION)
             velocity = ti.Vector.zero(float, GlobalVariable.DIMENSION)
             displacement = ti.Vector.zero(float, GlobalVariable.DIMENSION)
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 shape_fn = shapefn[ln]
-                velocity += shape_mapping(shape_fn, node[nodeID, bodyID].momentum)
-                accleration += shape_mapping(shape_fn, node[nodeID, bodyID].inertia)
-                displacement += shape_mapping(shape_fn, node[nodeID, bodyID].displacement)
+                velocity += shape_mapping(shape_fn, node[node_id, body_id].momentum)
+                accleration += shape_mapping(shape_fn, node[node_id, body_id].inertia)
+                displacement += shape_mapping(shape_fn, node[node_id, body_id].displacement)
             particle[np]._update_particle_state(dt, alpha, velocity, accleration, displacement)
 
 
@@ -6098,45 +6137,45 @@ def kernel_kinemaitc_ig2p(
 #                 Grid to Particle (G2P)                    #
 # ========================================================= #
 @ti.kernel
-def kernel_compute_stress_strain_newmark_2D(
+def kernel_compute_stress_strain_newmark_2d(
     dt: ti.template(),
     start_index: int,
     end_index: int,
     particle: ti.template(),
-    materialID: ti.template(),
-    matProps: ti.template(),
-    stateVars: ti.template(),
+    material_id: ti.template(),
+    mat_props: ti.template(),
+    state_variables: ti.template(),
     stiffness_matrix: ti.template(),
 ):
     # ti.block_local(dt)
     for i in range(start_index, end_index):
-        np = materialID[i]
+        np = material_id[i]
         if int(particle[np].active) == 1:
             velocity_gradient = particle[np].velocity_gradient
             previous_stress = particle[np].stress0
-            stress = matProps.ComputeStress2D(np, previous_stress, velocity_gradient, stateVars, dt)
-            stiffness_matrix[np] = matProps.compute_stiffness_tensor(np, stress, stateVars)
+            stress = mat_props.compute_stress2d(np, previous_stress, velocity_gradient, state_variables, dt)
+            stiffness_matrix[np] = mat_props.compute_stiffness_tensor(np, stress, state_variables)
             particle[np].stress = stress
 
 
 @ti.kernel
-def kernel_compute_stress_strain_newmark_elastic_tangent_2D(
+def kernel_compute_stress_strain_newmark_elastic_tangent_2d(
     dt: ti.template(),
     start_index: int,
     end_index: int,
     particle: ti.template(),
-    materialID: ti.template(),
-    matProps: ti.template(),
-    stateVars: ti.template(),
+    material_id: ti.template(),
+    mat_props: ti.template(),
+    state_variables: ti.template(),
     stiffness_matrix: ti.template(),
 ):
     for i in range(start_index, end_index):
-        np = materialID[i]
+        np = material_id[i]
         if int(particle[np].active) == 1:
             velocity_gradient = particle[np].velocity_gradient
             previous_stress = particle[np].stress0
-            stress = matProps.ComputeStress2D(np, previous_stress, velocity_gradient, stateVars, dt)
-            stiffness_matrix[np] = matProps.compute_elastic_tensor(np, stress, stateVars)
+            stress = mat_props.compute_stress2d(np, previous_stress, velocity_gradient, state_variables, dt)
+            stiffness_matrix[np] = mat_props.compute_elastic_tensor(np, stress, state_variables)
             particle[np].stress = stress
 
 
@@ -6146,19 +6185,19 @@ def kernel_compute_stress_strain_newmark(
     start_index: int,
     end_index: int,
     particle: ti.template(),
-    materialID: ti.template(),
-    matProps: ti.template(),
-    stateVars: ti.template(),
+    material_id: ti.template(),
+    mat_props: ti.template(),
+    state_variables: ti.template(),
     stiffness_matrix: ti.template(),
 ):
     # ti.block_local(dt)
     for i in range(start_index, end_index):
-        np = materialID[i]
+        np = material_id[i]
         if int(particle[np].active) == 1:
             velocity_gradient = particle[np].velocity_gradient
             previous_stress = particle[np].stress0
-            stress = matProps.ComputeStress(np, previous_stress, velocity_gradient, stateVars, dt)
-            stiffness_matrix[np] = matProps.compute_stiffness_tensor(np, stress, stateVars)
+            stress = mat_props.compute_stress(np, previous_stress, velocity_gradient, state_variables, dt)
+            stiffness_matrix[np] = mat_props.compute_stiffness_tensor(np, stress, state_variables)
             particle[np].stress = stress
 
 
@@ -6168,27 +6207,27 @@ def kernel_compute_stress_strain_newmark_elastic_tangent(
     start_index: int,
     end_index: int,
     particle: ti.template(),
-    materialID: ti.template(),
-    matProps: ti.template(),
-    stateVars: ti.template(),
+    material_id: ti.template(),
+    mat_props: ti.template(),
+    state_variables: ti.template(),
     stiffness_matrix: ti.template(),
 ):
     for i in range(start_index, end_index):
-        np = materialID[i]
+        np = material_id[i]
         if int(particle[np].active) == 1:
             velocity_gradient = particle[np].velocity_gradient
             previous_stress = particle[np].stress0
-            stress = matProps.ComputeStress(np, previous_stress, velocity_gradient, stateVars, dt)
-            stiffness_matrix[np] = matProps.compute_elastic_tensor(np, stress, stateVars)
+            stress = mat_props.compute_stress(np, previous_stress, velocity_gradient, state_variables, dt)
+            stiffness_matrix[np] = mat_props.compute_elastic_tensor(np, stress, state_variables)
             particle[np].stress = stress
 
 
 @ti.kernel
-def kernel_update_stress_strain_newmark(particleNum: int, particle: ti.template(), dt: ti.template()):
+def kernel_update_stress_strain_newmark(particle_num: int, particle: ti.template(), dt: ti.template()):
     # ti.block_local(dt)
-    for np in range(particleNum):
-        materialID = int(particle[np].materialID)
-        if materialID > 0 and int(particle[np].active) == 1:
+    for np in range(particle_num):
+        material_id = int(particle[np].materialID)
+        if material_id > 0 and int(particle[np].active) == 1:
             particle[np].stress0 = particle[np].stress
             particle[np].vol0 = particle[np].vol
 
@@ -6201,61 +6240,63 @@ def kernel_update_displacement_gradient(
     dt: ti.template(),
     node: ti.template(),
     particle: ti.template(),
-    materialID: ti.template(),
-    matProps: ti.template(),
-    stateVars: ti.template(),
-    LnID: ti.template(),
+    material_id: ti.template(),
+    mat_props: ti.template(),
+    state_variables: ti.template(),
+    ln_id: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
 ):
     for i in range(start_index, end_index):
-        np = materialID[i]
+        np = material_id[i]
         if int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
-            displacement_gradient = ZEROMAT3x3
+            displacement_gradient = ZEROMAT3X3
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
-                gu = node[nodeID, bodyID].displacement
+                node_id = ln_id[ln]
+                gu = node[node_id, body_id].displacement
                 dshape_fn = dshapefn[ln]
                 displacement_gradient += outer_product(gu, dshape_fn)
             velocity_gradient = displacement_gradient / dt[None]
             particle[np].velocity_gradient = truncation(velocity_gradient)
 
             previous_volume = particle[np].vol0
-            particle[np].vol = previous_volume * matProps.update_particle_volume(np, velocity_gradient, stateVars, dt)
+            particle[np].vol = previous_volume * mat_props.update_particle_volume(
+                np, velocity_gradient, state_variables, dt
+            )
 
 
 @ti.kernel
 def kernel_update_displacement_gradient_affine(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     gnum: ti.types.vector(3, int),
     grid_size: ti.types.vector(3, float),
     dt: ti.template(),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
-            Wp = ZEROMAT3x3
-            Bp = ZEROMAT3x3
+            body_id = int(particle[np].bodyID)
+            Wp = ZEROMAT3X3
+            Bp = ZEROMAT3X3
             offset = np * total_nodes
             position = particle[np].x
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
-                grid_coord = grid_size * vec3f(vectorize_id(nodeID, gnum))
+                node_id = ln_id[ln]
+                grid_coord = grid_size * vec3f(vectorize_id(node_id, gnum))
                 pointer = grid_coord - position
-                gu = node[nodeID, bodyID].displacement
+                gu = node[node_id, body_id].displacement
                 shape_fn = shapefn[ln]
 
                 Wp += shape_fn * outer_product(pointer, pointer)
                 Bp += shape_fn * outer_product(gu, pointer)
-            velocity_gradient = truncation(Bp @ Wp.inverse()) / dt[None] if Wp.determinant() > Threshold else ZEROMAT3x3
+            velocity_gradient = truncation(Bp @ Wp.inverse()) / dt[None] if Wp.determinant() > THRESHOLD else ZEROMAT3X3
             particle[np].velocity_gradient = velocity_gradient
 
 
@@ -6267,24 +6308,24 @@ def kernel_update_displacement_gradient_bbar(
     dt: ti.template(),
     node: ti.template(),
     particle: ti.template(),
-    materialID: ti.template(),
-    matProps: ti.template(),
-    stateVars: ti.template(),
-    LnID: ti.template(),
+    material_id: ti.template(),
+    mat_props: ti.template(),
+    state_variables: ti.template(),
+    ln_id: ti.template(),
     dshapefn: ti.template(),
     dshapefnc: ti.template(),
     node_size: ti.template(),
 ):
     for i in range(start_index, end_index):
-        np = materialID[i]
+        np = material_id[i]
         if int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
-            displacement_gradient = ZEROMAT3x3
-            strain_incre_trace = ZEROVEC3f
+            body_id = int(particle[np].bodyID)
+            displacement_gradient = ZEROMAT3X3
+            strain_incre_trace = ZEROVEC3F
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
-                gv = node[nodeID, bodyID].displacement
+                node_id = ln_id[ln]
+                gv = node[node_id, body_id].displacement
                 dshape_fn = dshapefn[ln]
                 dshape_fnc = dshapefnc[ln]
                 temp_dshape = (dshape_fnc - dshape_fn) / 3.0
@@ -6301,103 +6342,103 @@ def kernel_update_displacement_gradient_bbar(
             particle[np].velocity_gradient = truncation(displacement_gradient) / dt[None]
 
             previous_volume = particle[np].vol0
-            particle[np].vol = previous_volume * matProps.update_particle_volume_bbar(
-                np, strain_incre_trace / dt[None], stateVars, dt
+            particle[np].vol = previous_volume * mat_props.update_particle_volume_bbar(
+                np, strain_incre_trace / dt[None], state_variables, dt
             )
 
 
 @ti.kernel
-def kernel_update_displacement_gradient_2D(
+def kernel_update_displacement_gradient_2d(
     total_nodes: int,
     start_index: int,
     end_index: int,
     dt: ti.template(),
     node: ti.template(),
     particle: ti.template(),
-    materialID: ti.template(),
-    matProps: ti.template(),
-    stateVars: ti.template(),
-    LnID: ti.template(),
+    material_id: ti.template(),
+    mat_props: ti.template(),
+    state_variables: ti.template(),
+    ln_id: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
 ):
     for i in range(start_index, end_index):
-        np = materialID[i]
+        np = material_id[i]
         if int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
-            displacement_gradient = ZEROMAT2x2
+            displacement_gradient = ZEROMAT2X2
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
-                gu = node[nodeID, bodyID].displacement
+                node_id = ln_id[ln]
+                gu = node[node_id, body_id].displacement
                 dshape_fn = dshapefn[ln]
-                displacement_gradient += outer_product2D(gu, dshape_fn)
+                displacement_gradient += outer_product2d(gu, dshape_fn)
             velocity_gradient = displacement_gradient / dt[None]
             particle[np].velocity_gradient = truncation(velocity_gradient)
 
             previous_volume = particle[np].vol0
-            particle[np].vol = previous_volume * matProps.update_particle_volume_2D(
-                np, velocity_gradient, stateVars, dt
+            particle[np].vol = previous_volume * mat_props.update_particle_volume_2d(
+                np, velocity_gradient, state_variables, dt
             )
 
 
 @ti.kernel
-def kernel_update_displacement_gradient_affine_2D(
+def kernel_update_displacement_gradient_affine_2d(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     gnum: ti.types.vector(2, int),
     grid_size: ti.types.vector(2, float),
     dt: ti.template(),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
-            Wp = ZEROMAT2x2
-            Bp = ZEROMAT2x2
+            body_id = int(particle[np].bodyID)
+            Wp = ZEROMAT2X2
+            Bp = ZEROMAT2X2
             offset = np * total_nodes
             position = particle[np].x
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
-                grid_coord = grid_size * vec2f(vectorize_id(nodeID, gnum))
+                node_id = ln_id[ln]
+                grid_coord = grid_size * vec2f(vectorize_id(node_id, gnum))
                 pointer = grid_coord - position
-                gu = node[nodeID, bodyID].displacement
+                gu = node[node_id, body_id].displacement
                 shape_fn = shapefn[ln]
-                Wp += shape_fn * outer_product2D(pointer, pointer)
-                Bp += shape_fn * outer_product2D(gu, pointer)
-            velocity_gradient = truncation(Bp @ Wp.inverse()) / dt[None] if Wp.determinant() > Threshold else ZEROMAT2x2
+                Wp += shape_fn * outer_product2d(pointer, pointer)
+                Bp += shape_fn * outer_product2d(gu, pointer)
+            velocity_gradient = truncation(Bp @ Wp.inverse()) / dt[None] if Wp.determinant() > THRESHOLD else ZEROMAT2X2
             particle[np].velocity_gradient = velocity_gradient
 
 
 @ti.kernel
-def kernel_update_displacement_gradient_bbar_2D(
+def kernel_update_displacement_gradient_bbar_2d(
     total_nodes: int,
     start_index: int,
     end_index: int,
     dt: ti.template(),
     node: ti.template(),
     particle: ti.template(),
-    materialID: ti.template(),
-    matProps: ti.template(),
-    stateVars: ti.template(),
-    LnID: ti.template(),
+    material_id: ti.template(),
+    mat_props: ti.template(),
+    state_variables: ti.template(),
+    ln_id: ti.template(),
     dshapefn: ti.template(),
     dshapefnc: ti.template(),
     node_size: ti.template(),
 ):
     for i in range(start_index, end_index):
-        np = materialID[i]
+        np = material_id[i]
         if int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
-            displacement_gradient = ZEROMAT2x2
+            body_id = int(particle[np].bodyID)
+            displacement_gradient = ZEROMAT2X2
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
-                displacement = node[nodeID, bodyID].displacement
+                node_id = ln_id[ln]
+                displacement = node[node_id, body_id].displacement
                 dshape_fn = dshapefn[ln]
                 dshape_fnc = dshapefnc[ln]
                 displacement_gradient += bbar_velocity_gradient_2d(displacement, dshape_fn, dshape_fnc)
@@ -6405,8 +6446,8 @@ def kernel_update_displacement_gradient_bbar_2D(
             particle[np].velocity_gradient = truncation(velocity_gradient)
 
             previous_volume = particle[np].vol0
-            particle[np].vol = previous_volume * matProps.update_particle_volume_bbar_2D(
-                np, velocity_gradient, stateVars, dt
+            particle[np].vol = previous_volume * mat_props.update_particle_volume_bbar_2d(
+                np, velocity_gradient, state_variables, dt
             )
 
 
@@ -6417,7 +6458,7 @@ def kernel_update_displacement_gradient_bbar_2D(
 @ti.kernel
 def find_active_fdm_cell(
     ghost_cell: int,
-    cellSum: int,
+    cell_sum: int,
     cnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     cell_type: ti.template(),
     flag: ti.template(),
@@ -6426,13 +6467,13 @@ def find_active_fdm_cell(
     if ti.static(GlobalVariable.DIMENSION == 2):
         for I in ti.grouped(ti.ndrange((0, cnum[0] - 2 * ghost_cell), (0, cnum[1] - 2 * ghost_cell))):
             linear_cell_id = linearize(I, cnum - 2 * ghost_cell)
-            flag[linear_cell_id + 0 * cellSum] = is_fluid(cell_type[I])
+            flag[linear_cell_id + 0 * cell_sum] = is_fluid(cell_type[I])
     elif ti.static(GlobalVariable.DIMENSION == 3):
         for I in ti.grouped(
             ti.ndrange((0, cnum[0] - 2 * ghost_cell), (0, cnum[1] - 2 * ghost_cell), (0, cnum[2] - 2 * ghost_cell))
         ):
             linear_cell_id = linearize(I, cnum - 2 * ghost_cell)
-            flag[linear_cell_id + 0 * cellSum] = is_fluid(cell_type[I])
+            flag[linear_cell_id + 0 * cell_sum] = is_fluid(cell_type[I])
 
 
 @ti.kernel
@@ -6456,7 +6497,7 @@ def estimate_active_fdm_cell_dofs(
 @ti.kernel
 def set_active_fdm_cell_dofs(
     ghost_cell: int,
-    cellSum: int,
+    cell_sum: int,
     cnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     cell_type: ti.template(),
     flag: ti.template(),
@@ -6465,22 +6506,22 @@ def set_active_fdm_cell_dofs(
     if ti.static(GlobalVariable.DIMENSION == 2):
         for I in ti.grouped(ti.ndrange((0, cnum[0] - 2 * ghost_cell), (0, cnum[1] - 2 * ghost_cell))):
             linear_cell_id = linearize(I, cnum - 2 * ghost_cell)
-            dofs = flag[linear_cell_id + 0 * cellSum] - 1
-            flag[linear_cell_id + 0 * cellSum] = dofs
+            dofs = flag[linear_cell_id + 0 * cell_sum] - 1
+            flag[linear_cell_id + 0 * cell_sum] = dofs
     elif ti.static(GlobalVariable.DIMENSION == 3):
         for I in ti.grouped(
             ti.ndrange((0, cnum[0] - 2 * ghost_cell), (0, cnum[1] - 2 * ghost_cell), (0, cnum[2] - 2 * ghost_cell))
         ):
             linear_cell_id = linearize(I, cnum - 2 * ghost_cell)
-            dofs = flag[linear_cell_id + 0 * cellSum] - 1
-            flag[linear_cell_id + 0 * cellSum] = dofs
+            dofs = flag[linear_cell_id + 0 * cell_sum] - 1
+            flag[linear_cell_id + 0 * cell_sum] = dofs
     return total_dof
 
 
 @ti.kernel
 def find_active_density_projection_cell(
     ghost_cell: int,
-    cellSum: int,
+    cell_sum: int,
     cnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     cell_type: ti.template(),
     interior_only: ti.template(),
@@ -6491,13 +6532,13 @@ def find_active_density_projection_cell(
     if ti.static(GlobalVariable.DIMENSION == 2):
         for I in ti.grouped(ti.ndrange((0, active_cnum[0]), (0, active_cnum[1]))):
             linear_cell_id = linearize(I, active_cnum)
-            flag[linear_cell_id + 0 * cellSum] = density_projection_cell_is_active(
+            flag[linear_cell_id + 0 * cell_sum] = density_projection_cell_is_active(
                 I, ghost_cell, cnum, cell_type, interior_only
             )
     elif ti.static(GlobalVariable.DIMENSION == 3):
         for I in ti.grouped(ti.ndrange((0, active_cnum[0]), (0, active_cnum[1]), (0, active_cnum[2]))):
             linear_cell_id = linearize(I, active_cnum)
-            flag[linear_cell_id + 0 * cellSum] = density_projection_cell_is_active(
+            flag[linear_cell_id + 0 * cell_sum] = density_projection_cell_is_active(
                 I, ghost_cell, cnum, cell_type, interior_only
             )
 
@@ -6505,7 +6546,7 @@ def find_active_density_projection_cell(
 @ti.kernel
 def set_active_density_projection_cell_dofs(
     ghost_cell: int,
-    cellSum: int,
+    cell_sum: int,
     cnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     cell_type: ti.template(),
     interior_only: ti.template(),
@@ -6517,16 +6558,16 @@ def set_active_density_projection_cell_dofs(
         for I in ti.grouped(ti.ndrange((0, active_cnum[0]), (0, active_cnum[1]))):
             linear_cell_id = linearize(I, active_cnum)
             if density_projection_cell_is_active(I, ghost_cell, cnum, cell_type, interior_only):
-                flag[linear_cell_id + 0 * cellSum] = flag[linear_cell_id + 0 * cellSum] - 1
+                flag[linear_cell_id + 0 * cell_sum] = flag[linear_cell_id + 0 * cell_sum] - 1
             else:
-                flag[linear_cell_id + 0 * cellSum] = -1
+                flag[linear_cell_id + 0 * cell_sum] = -1
     elif ti.static(GlobalVariable.DIMENSION == 3):
         for I in ti.grouped(ti.ndrange((0, active_cnum[0]), (0, active_cnum[1]), (0, active_cnum[2]))):
             linear_cell_id = linearize(I, active_cnum)
             if density_projection_cell_is_active(I, ghost_cell, cnum, cell_type, interior_only):
-                flag[linear_cell_id + 0 * cellSum] = flag[linear_cell_id + 0 * cellSum] - 1
+                flag[linear_cell_id + 0 * cell_sum] = flag[linear_cell_id + 0 * cell_sum] - 1
             else:
-                flag[linear_cell_id + 0 * cellSum] = -1
+                flag[linear_cell_id + 0 * cell_sum] = -1
     return total_dof
 
 
@@ -6666,22 +6707,22 @@ def mac_face_mass_momentum(
     shape_fn = ti.Vector.zero(real, GlobalVariable.DIMENSION)
     if ti.static(GlobalVariable.SHAPEFUNCTION == 0):
         for axis in ti.static(range(GlobalVariable.DIMENSION)):
-            shape_fn[axis] = ShapeLinear(position[axis], grid_pos[axis], igrid_size[axis], 0)
+            shape_fn[axis] = shape_linear(position[axis], grid_pos[axis], igrid_size[axis], 0)
     elif ti.static(GlobalVariable.SHAPEFUNCTION == 1):
         for axis in ti.static(range(GlobalVariable.DIMENSION)):
-            shape_fn[axis] = ShapeGIMP(position[axis], grid_pos[axis], igrid_size[axis], psize[axis])
+            shape_fn[axis] = shape_gimp(position[axis], grid_pos[axis], igrid_size[axis], psize[axis])
     elif ti.static(GlobalVariable.SHAPEFUNCTION == 2):
         for axis in ti.static(range(GlobalVariable.DIMENSION)):
             boundary_type = 0
             if axis == normal_dir:
                 boundary_type = mac_boundary_type_1d(grid_id[axis], face_count[axis])
-            shape_fn[axis] = ShapeBsplineQ(position[axis], grid_pos[axis], igrid_size[axis], boundary_type)
+            shape_fn[axis] = shape_bspline_q(position[axis], grid_pos[axis], igrid_size[axis], boundary_type)
     elif ti.static(GlobalVariable.SHAPEFUNCTION == 3):
         for axis in ti.static(range(GlobalVariable.DIMENSION)):
             boundary_type = 0
             if axis == normal_dir:
                 boundary_type = mac_boundary_type_1d(grid_id[axis], face_count[axis])
-            shape_fn[axis] = ShapeBsplineC(position[axis], grid_pos[axis], igrid_size[axis], boundary_type)
+            shape_fn[axis] = shape_bspline_c(position[axis], grid_pos[axis], igrid_size[axis], boundary_type)
 
     weight = 1.0
     for axis in ti.static(range(GlobalVariable.DIMENSION)):
@@ -6700,7 +6741,7 @@ def mac_face_mass_momentum(
 @ti.kernel
 def kernel_mass_momentum_mac_cell_p2g(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     ghost_cell: int,
     cnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     grid_size: ti.types.vector(GlobalVariable.DIMENSION, real),
@@ -6716,14 +6757,14 @@ def kernel_mass_momentum_mac_cell_p2g(
     for d in ti.static(range(GlobalVariable.DIMENSION)):
         ti.block_local(node.velocity[d])
         ti.block_local(node.m[d])
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             p_mass = particle[np].m
             position = particle[np].x
             velocity = particle[np].v
             velocity_gradient = particle[np].velocity_gradient
-            psize = particle_lengths[bodyID]
+            psize = particle_lengths[body_id]
             cell_base = ti.floor(position / grid_size - 0.5).cast(int)
             if ti.static(GlobalVariable.DIMENSION == 2):
                 for i, j in ti.static(ti.ndrange(2, 2)):
@@ -6787,22 +6828,22 @@ def kernel_mass_momentum_mac_cell_p2g(
                         shape_fn = ti.Vector.zero(float, GlobalVariable.DIMENSION)
                         if ti.static(GlobalVariable.SHAPEFUNCTION == 0):
                             for d1 in ti.static(range(GlobalVariable.DIMENSION)):
-                                shape_fn[d1] = ShapeLinear(position[d1], grid_pos[d1], igrid_size[d1], 0)
+                                shape_fn[d1] = shape_linear(position[d1], grid_pos[d1], igrid_size[d1], 0)
                         elif ti.static(GlobalVariable.SHAPEFUNCTION == 1):
                             for d1 in ti.static(range(GlobalVariable.DIMENSION)):
-                                shape_fn[d1] = ShapeGIMP(position[d1], grid_pos[d1], igrid_size[d1], psize[d1])
+                                shape_fn[d1] = shape_gimp(position[d1], grid_pos[d1], igrid_size[d1], psize[d1])
                         elif ti.static(GlobalVariable.SHAPEFUNCTION == 2):
                             for d1 in ti.static(range(GlobalVariable.DIMENSION)):
                                 btypes = 0
                                 if ti.static(d1 == d):
                                     btypes = mac_boundary_type_1d(grid_id[d1], face_count[d1])
-                                shape_fn[d1] = ShapeBsplineQ(position[d1], grid_pos[d1], igrid_size[d1], btypes)
+                                shape_fn[d1] = shape_bspline_q(position[d1], grid_pos[d1], igrid_size[d1], btypes)
                         elif ti.static(GlobalVariable.SHAPEFUNCTION == 3):
                             for d1 in ti.static(range(GlobalVariable.DIMENSION)):
                                 btypes = 0
                                 if ti.static(d1 == d):
                                     btypes = mac_boundary_type_1d(grid_id[d1], face_count[d1])
-                                shape_fn[d1] = ShapeBsplineC(position[d1], grid_pos[d1], igrid_size[d1], btypes)
+                                shape_fn[d1] = shape_bspline_c(position[d1], grid_pos[d1], igrid_size[d1], btypes)
 
                         weight = 1.0
                         for d0 in ti.static(range(GlobalVariable.DIMENSION)):
@@ -6839,7 +6880,7 @@ def kernel_mass_momentum_mac_cell_p2g(
 @ti.kernel
 def kernel_mass_momentum_mac_cell_p2g_cell_reduced(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     ghost_cell: int,
     cnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     grid_size: ti.types.vector(GlobalVariable.DIMENSION, real),
@@ -6920,7 +6961,7 @@ def kernel_mass_momentum_mac_cell_p2g_cell_reduced(
 @ti.kernel
 def kernel_mass_momentum_mac_cell_p2g_shared(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     ghost_cell: int,
     cnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     grid_size: ti.types.vector(GlobalVariable.DIMENSION, real),
@@ -7021,7 +7062,7 @@ def kernel_mass_momentum_mac_cell_p2g_shared(
 def interpolate_mac_particle_kinematics(position, psize, ghost_cell, cnum, grid_size, igrid_size, node: ti.template()):
     active_cnum = cnum - 2 * ghost_cell
     velocity_gradient = ti.Matrix.zero(float, GlobalVariable.DIMENSION, GlobalVariable.DIMENSION)
-    vPIC, vFLIP = ti.Vector.zero(float, GlobalVariable.DIMENSION), ti.Vector.zero(float, GlobalVariable.DIMENSION)
+    v_pic, v_flip = ti.Vector.zero(float, GlobalVariable.DIMENSION), ti.Vector.zero(float, GlobalVariable.DIMENSION)
     for d in ti.static(range(GlobalVariable.DIMENSION)):
         Bp = ti.Matrix.zero(float, GlobalVariable.DIMENSION, GlobalVariable.DIMENSION)
         Dp = ti.Matrix.zero(float, GlobalVariable.DIMENSION, GlobalVariable.DIMENSION)
@@ -7053,26 +7094,26 @@ def interpolate_mac_particle_kinematics(position, psize, ghost_cell, cnum, grid_
                 )
                 if ti.static(GlobalVariable.SHAPEFUNCTION == 0):
                     for d1 in ti.static(range(GlobalVariable.DIMENSION)):
-                        shape_fn[d1] = ShapeLinear(position[d1], grid_pos[d1], igrid_size[d1], 0)
-                        dshape_fn[d1] = GShapeLinear(position[d1], grid_pos[d1], igrid_size[d1], 0)
+                        shape_fn[d1] = shape_linear(position[d1], grid_pos[d1], igrid_size[d1], 0)
+                        dshape_fn[d1] = g_shape_linear(position[d1], grid_pos[d1], igrid_size[d1], 0)
                 elif ti.static(GlobalVariable.SHAPEFUNCTION == 1):
                     for d1 in ti.static(range(GlobalVariable.DIMENSION)):
-                        shape_fn[d1] = ShapeGIMP(position[d1], grid_pos[d1], igrid_size[d1], psize[d1])
-                        dshape_fn[d1] = GShapeGIMP(position[d1], grid_pos[d1], igrid_size[d1], psize[d1])
+                        shape_fn[d1] = shape_gimp(position[d1], grid_pos[d1], igrid_size[d1], psize[d1])
+                        dshape_fn[d1] = g_shape_gimp(position[d1], grid_pos[d1], igrid_size[d1], psize[d1])
                 elif ti.static(GlobalVariable.SHAPEFUNCTION == 2):
                     for d1 in ti.static(range(GlobalVariable.DIMENSION)):
                         btypes = 0
                         if ti.static(d1 == d):
                             btypes = mac_boundary_type_1d(grid_id[d1], face_count[d1])
-                        shape_fn[d1] = ShapeBsplineQ(position[d1], grid_pos[d1], igrid_size[d1], btypes)
-                        dshape_fn[d1] = GShapeBsplineQ(position[d1], grid_pos[d1], igrid_size[d1], btypes)
+                        shape_fn[d1] = shape_bspline_q(position[d1], grid_pos[d1], igrid_size[d1], btypes)
+                        dshape_fn[d1] = g_shape_bspline_q(position[d1], grid_pos[d1], igrid_size[d1], btypes)
                 elif ti.static(GlobalVariable.SHAPEFUNCTION == 3):
                     for d1 in ti.static(range(GlobalVariable.DIMENSION)):
                         btypes = 0
                         if ti.static(d1 == d):
                             btypes = mac_boundary_type_1d(grid_id[d1], face_count[d1])
-                        shape_fn[d1] = ShapeBsplineC(position[d1], grid_pos[d1], igrid_size[d1], btypes)
-                        dshape_fn[d1] = GShapeBsplineC(position[d1], grid_pos[d1], igrid_size[d1], btypes)
+                        shape_fn[d1] = shape_bspline_c(position[d1], grid_pos[d1], igrid_size[d1], btypes)
+                        dshape_fn[d1] = g_shape_bspline_c(position[d1], grid_pos[d1], igrid_size[d1], btypes)
 
                 weight = 1.0
                 for d0 in ti.static(range(GlobalVariable.DIMENSION)):
@@ -7080,8 +7121,8 @@ def interpolate_mac_particle_kinematics(position, psize, ghost_cell, cnum, grid_
 
                 velocity = node.velocity[d][grid_id]
                 accleration = node.force[d][grid_id]
-                vPIC[d] += shape_mapping(weight, velocity)
-                vFLIP[d] += shape_mapping(weight, accleration)
+                v_pic[d] += shape_mapping(weight, velocity)
+                v_flip[d] += shape_mapping(weight, accleration)
 
                 if ti.static(GlobalVariable.Affine):
                     # Each MAC component has its own staggered support and moment.
@@ -7107,7 +7148,7 @@ def interpolate_mac_particle_kinematics(position, psize, ghost_cell, cnum, grid_
             affine_matrix = affine_velocity_matrix(Bp, Dp, grid_size)
             for k in ti.static(range(GlobalVariable.DIMENSION)):
                 velocity_gradient[d, k] = affine_matrix[d, k]
-    return vPIC, vFLIP, velocity_gradient
+    return v_pic, v_flip, velocity_gradient
 
 
 @ti.func
@@ -7145,14 +7186,14 @@ def interpolate_mac_transport_velocity(position, ghost_cell, cnum, grid_size, no
                     if ti.static(not periodic[axis]):
                         linear_boundary = coordinate[axis] < 0.5 or coordinate[axis] > active[axis] - 0.5
                     if linear_boundary:
-                        weight *= ShapeLinear(coordinate[axis], index[axis], 1.0, 0)
+                        weight *= shape_linear(coordinate[axis], index[axis], 1.0, 0)
                     else:
-                        weight *= ShapeBsplineQ(coordinate[axis], index[axis], 1.0, 0)
+                        weight *= shape_bspline_q(coordinate[axis], index[axis], 1.0, 0)
                 else:
-                    weight *= ShapeLinear(coordinate[axis], index[axis], 1.0, 0)
+                    weight *= shape_linear(coordinate[axis], index[axis], 1.0, 0)
                 if ti.static(periodic[axis]):
                     index[axis] %= active[axis]
-            if weight > Threshold:
+            if weight > THRESHOLD:
                 velocity[d] += weight * node.velocity[d][index]
     return velocity
 
@@ -7162,7 +7203,7 @@ def kernel_kinemaitc_mac_cell_g2p(
     total_nodes: int,
     alpha: float,
     dt: ti.template(),
-    particleNum: int,
+    particle_num: int,
     ghost_cell: int,
     cnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     grid_size: ti.types.vector(GlobalVariable.DIMENSION, real),
@@ -7174,11 +7215,11 @@ def kernel_kinemaitc_mac_cell_g2p(
     for d in ti.static(range(GlobalVariable.DIMENSION)):
         ti.block_local(node.velocity[d])
         ti.block_local(node.force[d])
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
             position = particle[np].x
             psize = particle_lengths[int(particle[np].bodyID)]
-            vPIC, vFLIP, velocity_gradient = interpolate_mac_particle_kinematics(
+            v_pic, v_flip, velocity_gradient = interpolate_mac_particle_kinematics(
                 position, psize, ghost_cell, cnum, grid_size, igrid_size, node
             )
             # Euler trajectories expand even a rigid rotation (det(I+dt*C)>1).
@@ -7188,7 +7229,7 @@ def kernel_kinemaitc_mac_cell_g2p(
             transport_velocity = interpolate_mac_transport_velocity(position, ghost_cell, cnum, grid_size, node)
             midpoint = position + 0.5 * dt[None] * (transport_velocity * (1.0 - fixed) + particle[np].v * fixed)
             transport_velocity = interpolate_mac_transport_velocity(midpoint, ghost_cell, cnum, grid_size, node)
-            particle[np]._update_incompressible_particle_state(dt, alpha, vPIC, vFLIP, transport_velocity)
+            particle[np]._update_incompressible_particle_state(dt, alpha, v_pic, v_flip, transport_velocity)
             particle[np].velocity_gradient = velocity_gradient
 
 
@@ -7430,7 +7471,7 @@ def mac_cell_center_velocity(cell, node: ti.template()):
 @ti.func
 def ibm_mixed_density(phi_s: float, rho_f: float, rho_s: float):
     solid_density = rho_s
-    if solid_density <= Threshold:
+    if solid_density <= THRESHOLD:
         solid_density = rho_f
     return (1.0 - phi_s) * rho_f + phi_s * solid_density
 
@@ -7474,7 +7515,7 @@ def ibm_cell_pressure_acceleration(
                         theta = free_surface_theta(cell, neighbor, fluid_sdf)
                     jump = atmospheric_pressure + surface_tension[neighbor] - pressure[cell]
                 acceleration[direction] -= (
-                    0.5 * side * jump / (ti.max(density, Threshold) * grid_size[direction] * theta)
+                    0.5 * side * jump / (ti.max(density, THRESHOLD) * grid_size[direction] * theta)
                 )
     return acceleration
 
@@ -7514,7 +7555,7 @@ def coupled_mac_face_material_3d(
                 local_fraction = ti.max(0.05, 1.0 - phi_s)
             elif ti.static(mode == 2):
                 rho_s = solid_density[cell]
-                if rho_s <= Threshold:
+                if rho_s <= THRESHOLD:
                     rho_s = rho_f
                 local_density = (1.0 - phi_s) * rho_f + phi_s * rho_s
             fluid_fraction += local_fraction
@@ -7530,7 +7571,7 @@ def kernel_compute_mac_viscous_delta(
     cnum: ti.template(),
     grid_size: ti.template(),
     dt: ti.template(),
-    matProps: ti.template(),
+    mat_props: ti.template(),
     cell_type: ti.template(),
     solid_fraction: ti.template(),
     solid_density: ti.template(),
@@ -7553,10 +7594,10 @@ def kernel_compute_mac_viscous_delta(
                 left_type = int(cell_type[I - ti.Vector.unit(GlobalVariable.DIMENSION, direction)])
                 right_type = int(cell_type[I])
                 if node.m[direction][I] > cutoff and (left_type == 1 or right_type == 1):
-                    center_fraction, center_density = 1.0, matProps.density
+                    center_fraction, center_density = 1.0, mat_props.density
                     if ti.static(mode > 0):
                         center_fraction, center_density = coupled_mac_face_material_3d(
-                            I, direction, active_cnum, matProps.density, mode, solid_fraction, solid_density
+                            I, direction, active_cnum, mat_props.density, mode, solid_fraction, solid_density
                         )
                     diffusion = 0.0
                     center_velocity = node.velocity[direction][I]
@@ -7572,10 +7613,10 @@ def kernel_compute_mac_viscous_delta(
                         left_fraction, right_fraction = 1.0, 1.0
                         if ti.static(mode > 0):
                             left_fraction, _ = coupled_mac_face_material_3d(
-                                left, direction, active_cnum, matProps.density, mode, solid_fraction, solid_density
+                                left, direction, active_cnum, mat_props.density, mode, solid_fraction, solid_density
                             )
                             right_fraction, _ = coupled_mac_face_material_3d(
-                                right, direction, active_cnum, matProps.density, mode, solid_fraction, solid_density
+                                right, direction, active_cnum, mat_props.density, mode, solid_fraction, solid_density
                             )
                         diffusion += (
                             0.5 * (center_fraction + left_fraction) * (node.velocity[direction][left] - center_velocity)
@@ -7584,7 +7625,7 @@ def kernel_compute_mac_viscous_delta(
                             * (node.velocity[direction][right] - center_velocity)
                         ) / (grid_size[d] * grid_size[d])
                     delta = (
-                        dt[None] * matProps.viscosity * diffusion / ti.max(center_fraction * center_density, Threshold)
+                        dt[None] * mat_props.viscosity * diffusion / ti.max(center_fraction * center_density, THRESHOLD)
                     )
             if ti.static(direction == 0):
                 delta0[I] = delta
@@ -7632,7 +7673,7 @@ def kernel_apply_incompressible_ibm_mac_source(
     ghost_cell: int,
     cnum: ti.template(),
     dt: ti.template(),
-    matProps: ti.template(),
+    mat_props: ti.template(),
     cell_type: ti.template(),
     solid_fraction: ti.template(),
     solid_density: ti.template(),
@@ -7646,25 +7687,25 @@ def kernel_apply_incompressible_ibm_mac_source(
     use_free_surface_theta: ti.template(),
 ):
     active_cnum = cnum - 2 * ghost_cell
-    rho_f = matProps.density
+    rho_f = mat_props.density
     ibm_force_cell.fill(0.0)
 
     if ti.static(GlobalVariable.DIMENSION == 2):
         for I in ti.grouped(ti.ndrange((0, active_cnum[0]), (0, active_cnum[1]))):
             phi_s = ti.min(1.0, ti.max(0.0, solid_fraction[I]))
-            if phi_s > Threshold and int(cell_type[I]) == 1:
+            if phi_s > THRESHOLD and int(cell_type[I]) == 1:
                 rho = ibm_mixed_density(phi_s, rho_f, solid_density[I])
                 rho_s = solid_density[I]
-                if rho_s <= Threshold:
+                if rho_s <= THRESHOLD:
                     rho_s = rho_f
-                varphi_s = ti.min(1.0, ti.max(0.0, phi_s * rho_s / ti.max(rho, Threshold)))
+                varphi_s = ti.min(1.0, ti.max(0.0, phi_s * rho_s / ti.max(rho, THRESHOLD)))
                 fluid_velocity = mac_cell_center_velocity(I, node)
                 fluid_velocity += dt[None] * ibm_cell_pressure_acceleration(
                     I,
                     active_cnum,
                     grid_size,
                     rho_f,
-                    matProps.atmospheric_pressure,
+                    mat_props.atmospheric_pressure,
                     solid_fraction,
                     solid_density,
                     pressure,
@@ -7674,24 +7715,24 @@ def kernel_apply_incompressible_ibm_mac_source(
                     use_free_surface_theta,
                 )
                 ibm_force_cell[I] = (
-                    rho * varphi_s * (solid_velocity_cell[I] - fluid_velocity) / ti.max(dt[None], Threshold)
+                    rho * varphi_s * (solid_velocity_cell[I] - fluid_velocity) / ti.max(dt[None], THRESHOLD)
                 )
     elif ti.static(GlobalVariable.DIMENSION == 3):
         for I in ti.grouped(ti.ndrange((0, active_cnum[0]), (0, active_cnum[1]), (0, active_cnum[2]))):
             phi_s = ti.min(1.0, ti.max(0.0, solid_fraction[I]))
-            if phi_s > Threshold and int(cell_type[I]) == 1:
+            if phi_s > THRESHOLD and int(cell_type[I]) == 1:
                 rho = ibm_mixed_density(phi_s, rho_f, solid_density[I])
                 rho_s = solid_density[I]
-                if rho_s <= Threshold:
+                if rho_s <= THRESHOLD:
                     rho_s = rho_f
-                varphi_s = ti.min(1.0, ti.max(0.0, phi_s * rho_s / ti.max(rho, Threshold)))
+                varphi_s = ti.min(1.0, ti.max(0.0, phi_s * rho_s / ti.max(rho, THRESHOLD)))
                 fluid_velocity = mac_cell_center_velocity(I, node)
                 fluid_velocity += dt[None] * ibm_cell_pressure_acceleration(
                     I,
                     active_cnum,
                     grid_size,
                     rho_f,
-                    matProps.atmospheric_pressure,
+                    mat_props.atmospheric_pressure,
                     solid_fraction,
                     solid_density,
                     pressure,
@@ -7701,7 +7742,7 @@ def kernel_apply_incompressible_ibm_mac_source(
                     use_free_surface_theta,
                 )
                 ibm_force_cell[I] = (
-                    rho * varphi_s * (solid_velocity_cell[I] - fluid_velocity) / ti.max(dt[None], Threshold)
+                    rho * varphi_s * (solid_velocity_cell[I] - fluid_velocity) / ti.max(dt[None], THRESHOLD)
                 )
 
     for k in ti.static(range(GlobalVariable.DIMENSION)):
@@ -7718,7 +7759,7 @@ def kernel_apply_incompressible_ibm_mac_source(
                         phi_s = ti.min(1.0, ti.max(0.0, solid_fraction[cell]))
                         if int(cell_type[cell]) == 1:
                             rho = ibm_mixed_density(phi_s, rho_f, solid_density[cell])
-                            acceleration = dt[None] * ibm_force_cell[cell][k] / ti.max(rho, Threshold)
+                            acceleration = dt[None] * ibm_force_cell[cell][k] / ti.max(rho, THRESHOLD)
                             # The adjoint of cell-center velocity averaging uses physical fluid mass.
                             delta_velocity += (1.0 - phi_s) * acceleration
                             weight += 1.0 - phi_s
@@ -7740,7 +7781,7 @@ def kernel_apply_incompressible_ibm_mac_source(
                         phi_s = ti.min(1.0, ti.max(0.0, solid_fraction[cell]))
                         if int(cell_type[cell]) == 1:
                             rho = ibm_mixed_density(phi_s, rho_f, solid_density[cell])
-                            acceleration = dt[None] * ibm_force_cell[cell][k] / ti.max(rho, Threshold)
+                            acceleration = dt[None] * ibm_force_cell[cell][k] / ti.max(rho, THRESHOLD)
                             delta_velocity += (1.0 - phi_s) * acceleration
                             weight += 1.0 - phi_s
                             solid_delta += acceleration
@@ -7995,7 +8036,7 @@ def fluid_sdf_normal(
 
     normal = ti.Vector.zero(float, GlobalVariable.DIMENSION)
     norm = grad.norm()
-    if norm > Threshold:
+    if norm > THRESHOLD:
         normal = grad / norm
     return normal
 
@@ -8101,7 +8142,7 @@ def solid_face_open_fraction(
         elif phi_l > 0.0 or phi_r > 0.0:
             positive_phi = ti.max(phi_l, phi_r)
             denom = ti.abs(phi_l) + ti.abs(phi_r)
-            if denom > Threshold:
+            if denom > THRESHOLD:
                 fraction = ti.max(min_fraction, ti.min(1.0, positive_phi / denom))
     return fraction
 
@@ -8279,7 +8320,7 @@ def kernel_build_solid_face_open_fraction_direction(
 
 @ti.kernel
 def kernel_find_fluid_domain(
-    particleNum: int,
+    particle_num: int,
     ghost_cell: int,
     cnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     igrid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
@@ -8290,7 +8331,7 @@ def kernel_find_fluid_domain(
     for I in ti.grouped(cell_type):
         if not is_solid(cell_type[I]):
             cell_type[I] = 0
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
             idx, inside_active = particle_cell_in_closed_domain(particle[np].x, active_cnum, igrid_size)
             if inside_active and not is_solid(cell_type[idx]):
@@ -8299,7 +8340,7 @@ def kernel_find_fluid_domain(
 
 @ti.kernel
 def kernel_find_fluid_domain_by_volume(
-    particleNum: int,
+    particle_num: int,
     ghost_cell: int,
     cnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     igrid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
@@ -8323,7 +8364,7 @@ def kernel_find_fluid_domain_by_volume(
                 cell_type[I] = 1
 
     # Keep attached surface support; detached sub-cell spray stays pressure-free.
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
             idx, inside_active = particle_cell_in_closed_domain(particle[np].x, active_cnum, igrid_size)
             if inside_active and not is_solid(cell_type[idx]):
@@ -8372,7 +8413,7 @@ def kernel_fill_enclosed_fluid_cells(
 
 @ti.kernel
 def kernel_build_fluid_sdf_from_particles(
-    particleNum: int,
+    particle_num: int,
     ghost_cell: int,
     cnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     grid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
@@ -8386,7 +8427,7 @@ def kernel_build_fluid_sdf_from_particles(
         fluid_sdf[I] = max_distance
 
     if ti.static(GlobalVariable.DIMENSION == 2):
-        for np in range(particleNum):
+        for np in range(particle_num):
             if int(particle[np].active) == 1:
                 position = particle[np].x
                 radius = equivalent_particle_radius(particle[np].vol)
@@ -8401,7 +8442,7 @@ def kernel_build_fluid_sdf_from_particles(
                     phi = (center - position).norm() - radius
                     ti.atomic_min(fluid_sdf[cell], phi)
     elif ti.static(GlobalVariable.DIMENSION == 3):
-        for np in range(particleNum):
+        for np in range(particle_num):
             if int(particle[np].active) == 1:
                 position = particle[np].x
                 radius = equivalent_particle_radius(particle[np].vol)
@@ -8419,7 +8460,7 @@ def kernel_build_fluid_sdf_from_particles(
 
 @ti.kernel
 def kernel_find_fluid_sdf_bounds(
-    particleNum: int,
+    particle_num: int,
     ghost_cell: int,
     cnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     grid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
@@ -8433,7 +8474,7 @@ def kernel_find_fluid_sdf_bounds(
         bounds[0, d] = active_cnum[d] + ghost_cell
         bounds[1, d] = -ghost_cell
 
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
             position = particle[np].x
             radius = equivalent_particle_radius(particle[np].vol)
@@ -8449,7 +8490,7 @@ def kernel_find_fluid_sdf_bounds(
 
 @ti.kernel
 def kernel_build_fluid_sdf_from_particles_bounded(
-    particleNum: int,
+    particle_num: int,
     ghost_cell: int,
     cnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     grid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
@@ -8477,7 +8518,7 @@ def kernel_build_fluid_sdf_from_particles_bounded(
                 fluid_sdf[ti.Vector([i, j, k])] = max_distance
 
         if ti.static(GlobalVariable.DIMENSION == 2):
-            for np in range(particleNum):
+            for np in range(particle_num):
                 if int(particle[np].active) == 1:
                     position = particle[np].x
                     radius = equivalent_particle_radius(particle[np].vol)
@@ -8492,7 +8533,7 @@ def kernel_build_fluid_sdf_from_particles_bounded(
                         phi = (center - position).norm() - radius
                         ti.atomic_min(fluid_sdf[cell], phi)
         elif ti.static(GlobalVariable.DIMENSION == 3):
-            for np in range(particleNum):
+            for np in range(particle_num):
                 if int(particle[np].active) == 1:
                     position = particle[np].x
                     radius = equivalent_particle_radius(particle[np].vol)
@@ -8510,7 +8551,7 @@ def kernel_build_fluid_sdf_from_particles_bounded(
 
 @ti.kernel
 def kernel_build_fluid_sdf_from_interface_particles(
-    particleNum: int,
+    particle_num: int,
     ghost_cell: int,
     cnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     grid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
@@ -8524,7 +8565,7 @@ def kernel_build_fluid_sdf_from_interface_particles(
     interface_band = 0.5 * min_dx
 
     if ti.static(GlobalVariable.DIMENSION == 2):
-        for np in range(particleNum):
+        for np in range(particle_num):
             if int(particle[np].active) == 1 and particle_near_fluid_interface(
                 particle[np].x, ghost_cell, cnum, grid_size, cell_type
             ):
@@ -8545,7 +8586,7 @@ def kernel_build_fluid_sdf_from_interface_particles(
                         phi = ti.max(phi, interface_band)
                     ti.atomic_min(fluid_sdf[cell], phi)
     elif ti.static(GlobalVariable.DIMENSION == 3):
-        for np in range(particleNum):
+        for np in range(particle_num):
             if int(particle[np].active) == 1 and particle_near_fluid_interface(
                 particle[np].x, ghost_cell, cnum, grid_size, cell_type
             ):
@@ -8700,7 +8741,7 @@ def kernel_mark_fluid_cells_from_sdf_bounded(
 
 @ti.kernel
 def kernel_mark_fluid_sdf_particle_band(
-    particleNum: int,
+    particle_num: int,
     step_tag: int,
     ghost_cell: int,
     cnum: ti.types.vector(GlobalVariable.DIMENSION, int),
@@ -8714,7 +8755,7 @@ def kernel_mark_fluid_sdf_particle_band(
     max_distance = 3.0 * min_dx
 
     if ti.static(GlobalVariable.DIMENSION == 2):
-        for np in range(particleNum):
+        for np in range(particle_num):
             if int(particle[np].active) == 1:
                 position = particle[np].x
                 radius = equivalent_particle_radius(particle[np].vol)
@@ -8729,7 +8770,7 @@ def kernel_mark_fluid_sdf_particle_band(
                         fluid_sdf[cell] = max_distance
                         fluid_sdf_stamp[cell] = step_tag
     elif ti.static(GlobalVariable.DIMENSION == 3):
-        for np in range(particleNum):
+        for np in range(particle_num):
             if int(particle[np].active) == 1:
                 position = particle[np].x
                 radius = equivalent_particle_radius(particle[np].vol)
@@ -8747,7 +8788,7 @@ def kernel_mark_fluid_sdf_particle_band(
 
 @ti.kernel
 def kernel_build_fluid_sdf_from_particles_tagged(
-    particleNum: int,
+    particle_num: int,
     step_tag: int,
     ghost_cell: int,
     cnum: ti.types.vector(GlobalVariable.DIMENSION, int),
@@ -8761,7 +8802,7 @@ def kernel_build_fluid_sdf_from_particles_tagged(
     max_distance = 3.0 * min_dx
 
     if ti.static(GlobalVariable.DIMENSION == 2):
-        for np in range(particleNum):
+        for np in range(particle_num):
             if int(particle[np].active) == 1:
                 position = particle[np].x
                 radius = equivalent_particle_radius(particle[np].vol)
@@ -8777,7 +8818,7 @@ def kernel_build_fluid_sdf_from_particles_tagged(
                         phi = (center - position).norm() - radius
                         ti.atomic_min(fluid_sdf[cell], phi)
     elif ti.static(GlobalVariable.DIMENSION == 3):
-        for np in range(particleNum):
+        for np in range(particle_num):
             if int(particle[np].active) == 1:
                 position = particle[np].x
                 radius = equivalent_particle_radius(particle[np].vol)
@@ -8848,13 +8889,13 @@ def kernel_compute_fluid_surface_tension(
     ghost_cell: int,
     cnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     grid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
-    matProps: ti.template(),
+    mat_props: ti.template(),
     cell_type: ti.template(),
     fluid_sdf: ti.template(),
     surface_tension: ti.template(),
 ):
     surface_tension.fill(0.0)
-    sigma = ti.max(0.0, matProps.surface_tension)
+    sigma = ti.max(0.0, mat_props.surface_tension)
     min_dx = min_grid_spacing(grid_size)
     curvature_limit = 2.0 / min_dx
     if ti.static(GlobalVariable.DIMENSION == 3):
@@ -8954,7 +8995,7 @@ def kernel_assemble_density_projection_rhs(
     cell_type: ti.template(),
     cell_density: ti.template(),
     cell_fraction: ti.template(),
-    matProps: ti.template(),
+    mat_props: ti.template(),
     tolerance: float,
     error_clamp: float,
     interior_only: ti.template(),
@@ -8963,7 +9004,7 @@ def kernel_assemble_density_projection_rhs(
 ):
     right_hand_vector.fill(0.0)
     active_cnum = cnum - 2 * ghost_cell
-    scale = matProps.density / (dt[None] * dt[None])
+    scale = mat_props.density / (dt[None] * dt[None])
     if ti.static(GlobalVariable.DIMENSION == 2):
         for I in ti.grouped(ti.ndrange((0, active_cnum[0]), (0, active_cnum[1]))):
             if density_projection_cell_is_active(I, ghost_cell, cnum, cell_type, interior_only):
@@ -8972,7 +9013,7 @@ def kernel_assemble_density_projection_rhs(
                     volume_fraction = 1.0
                     if ti.static(use_fluid_fraction):
                         volume_fraction = cell_fraction[I]
-                    reference_density = matProps.density * ti.max(volume_fraction, 1.0e-4)
+                    reference_density = mat_props.density * ti.max(volume_fraction, 1.0e-4)
                     density_error = rho / reference_density - 1.0
                     if ti.abs(density_error) < tolerance:
                         density_error = 0.0
@@ -8987,7 +9028,7 @@ def kernel_assemble_density_projection_rhs(
                     volume_fraction = 1.0
                     if ti.static(use_fluid_fraction):
                         volume_fraction = cell_fraction[I]
-                    reference_density = matProps.density * ti.max(volume_fraction, 1.0e-4)
+                    reference_density = mat_props.density * ti.max(volume_fraction, 1.0e-4)
                     density_error = rho / reference_density - 1.0
                     if ti.abs(density_error) < tolerance:
                         density_error = 0.0
@@ -9033,7 +9074,7 @@ def kernel_assemble_density_projection_mg_b(
     cell_type: ti.template(),
     cell_density: ti.template(),
     cell_fraction: ti.template(),
-    matProps: ti.template(),
+    mat_props: ti.template(),
     tolerance: float,
     error_clamp: float,
     interior_only: ti.template(),
@@ -9049,7 +9090,7 @@ def kernel_assemble_density_projection_mg_b(
                 volume_fraction = 1.0
                 if ti.static(use_fluid_fraction):
                     volume_fraction = cell_fraction[I]
-                reference_density = matProps.density * ti.max(volume_fraction, 1.0e-4)
+                reference_density = mat_props.density * ti.max(volume_fraction, 1.0e-4)
                 density_error = rho / reference_density - 1.0
                 if ti.abs(density_error) < tolerance:
                     density_error = 0.0
@@ -9065,7 +9106,7 @@ def density_projection_face_displacement(
     cnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     grid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
     dt: ti.template(),
-    matProps: ti.template(),
+    mat_props: ti.template(),
     pressure: ti.template(),
     cell_type: ti.template(),
     fluid_sdf: ti.template(),
@@ -9089,7 +9130,7 @@ def density_projection_face_displacement(
         if ti.static(use_free_surface_theta):
             theta = free_surface_theta(right, left, fluid_sdf)
         gradient = (pressure[right] - 0.0) / (theta * grid_size[direction])
-    return -dt[None] * dt[None] / matProps.density * gradient
+    return -dt[None] * dt[None] / mat_props.density * gradient
 
 
 @ti.kernel
@@ -9098,7 +9139,7 @@ def kernel_compute_density_projection_face_displacement(
     cnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     grid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
     dt: ti.template(),
-    matProps: ti.template(),
+    mat_props: ti.template(),
     pressure: ti.template(),
     cell_type: ti.template(),
     fluid_sdf: ti.template(),
@@ -9126,7 +9167,7 @@ def kernel_compute_density_projection_face_displacement(
                         cnum,
                         grid_size,
                         dt,
-                        matProps,
+                        mat_props,
                         pressure,
                         cell_type,
                         fluid_sdf,
@@ -9150,7 +9191,7 @@ def kernel_compute_density_projection_face_displacement(
                         cnum,
                         grid_size,
                         dt,
-                        matProps,
+                        mat_props,
                         pressure,
                         cell_type,
                         fluid_sdf,
@@ -9174,7 +9215,7 @@ def kernel_compute_density_projection_face_displacement(
                         cnum,
                         grid_size,
                         dt,
-                        matProps,
+                        mat_props,
                         pressure,
                         cell_type,
                         fluid_sdf,
@@ -9190,19 +9231,19 @@ def density_projection_face_shape_1d(
 ):
     value = 0.0
     if ti.static(GlobalVariable.SHAPEFUNCTION == 0):
-        value = ShapeLinear(pos, grid_pos, inv_dx, 0)
+        value = shape_linear(pos, grid_pos, inv_dx, 0)
     elif ti.static(GlobalVariable.SHAPEFUNCTION == 1):
-        value = ShapeGIMP(pos, grid_pos, inv_dx, psize)
+        value = shape_gimp(pos, grid_pos, inv_dx, psize)
     elif ti.static(GlobalVariable.SHAPEFUNCTION == 2):
         btypes = 0
         if ti.static(normal_axis):
             btypes = mac_boundary_type_1d(grid_index, face_count)
-        value = ShapeBsplineQ(pos, grid_pos, inv_dx, btypes)
+        value = shape_bspline_q(pos, grid_pos, inv_dx, btypes)
     elif ti.static(GlobalVariable.SHAPEFUNCTION == 3):
         btypes = 0
         if ti.static(normal_axis):
             btypes = mac_boundary_type_1d(grid_index, face_count)
-        value = ShapeBsplineC(pos, grid_pos, inv_dx, btypes)
+        value = shape_bspline_c(pos, grid_pos, inv_dx, btypes)
     return value
 
 
@@ -9226,12 +9267,12 @@ def cached_density_projection_face_displacement(
 
 @ti.kernel
 def kernel_apply_density_projection_position_correction_cached(
-    particleNum: int,
+    particle_num: int,
     ghost_cell: int,
     cnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     grid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
     igrid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
-    matProps: ti.template(),
+    mat_props: ti.template(),
     max_shift_ratio: float,
     cell_type: ti.template(),
     interior_only: ti.template(),
@@ -9243,13 +9284,13 @@ def kernel_apply_density_projection_position_correction_cached(
 ):
     active_cnum = cnum - 2 * ghost_cell
     max_shift = max_shift_ratio * min_grid_spacing(grid_size)
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1 and particle_cell_is_active_fluid(
             particle[np].x, ghost_cell, cnum, grid_size, cell_type, interior_only
         ):
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             pos = particle[np].x
-            psize = particle_lengths[bodyID]
+            psize = particle_lengths[body_id]
             delta_x = ti.Vector.zero(float, GlobalVariable.DIMENSION)
             for d in ti.static(range(GlobalVariable.DIMENSION)):
                 stagger = 0.5 * (1 - ti.Vector.unit(GlobalVariable.DIMENSION, d))
@@ -9297,13 +9338,13 @@ def kernel_apply_density_projection_position_correction_cached(
                                 if offset[d0] == local_id:
                                     axis_shape = shape_cache[d0, local_id]
                             weight *= axis_shape
-                        if weight > Threshold:
+                        if weight > THRESHOLD:
                             delta_x[d] += weight * cached_density_projection_face_displacement(
                                 d, grid_id, face_displacement0, face_displacement1, face_displacement2
                             )
 
             delta_norm = delta_x.norm()
-            if delta_norm > max_shift and delta_norm > Threshold:
+            if delta_norm > max_shift and delta_norm > THRESHOLD:
                 delta_x *= max_shift / delta_norm
             shift_incompressible_particle(np, delta_x, particle)
 
@@ -9311,13 +9352,13 @@ def kernel_apply_density_projection_position_correction_cached(
 @ti.kernel
 def kernel_apply_density_projection_position_correction(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     ghost_cell: int,
     cnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     grid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
     igrid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
     dt: ti.template(),
-    matProps: ti.template(),
+    mat_props: ti.template(),
     max_shift_ratio: float,
     pressure: ti.template(),
     cell_type: ti.template(),
@@ -9329,13 +9370,13 @@ def kernel_apply_density_projection_position_correction(
 ):
     active_cnum = cnum - 2 * ghost_cell
     max_shift = max_shift_ratio * min_grid_spacing(grid_size)
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1 and particle_cell_is_active_fluid(
             particle[np].x, ghost_cell, cnum, grid_size, cell_type, interior_only
         ):
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             pos = particle[np].x
-            psize = particle_lengths[bodyID]
+            psize = particle_lengths[body_id]
             delta_x = ti.Vector.zero(float, GlobalVariable.DIMENSION)
             for d in ti.static(range(GlobalVariable.DIMENSION)):
                 stagger = 0.5 * (1 - ti.Vector.unit(GlobalVariable.DIMENSION, d))
@@ -9366,22 +9407,22 @@ def kernel_apply_density_projection_position_correction(
                         shape_fn = ti.Vector.zero(float, GlobalVariable.DIMENSION)
                         if ti.static(GlobalVariable.SHAPEFUNCTION == 0):
                             for d1 in ti.static(range(GlobalVariable.DIMENSION)):
-                                shape_fn[d1] = ShapeLinear(pos[d1], grid_pos[d1], igrid_size[d1], 0)
+                                shape_fn[d1] = shape_linear(pos[d1], grid_pos[d1], igrid_size[d1], 0)
                         elif ti.static(GlobalVariable.SHAPEFUNCTION == 1):
                             for d1 in ti.static(range(GlobalVariable.DIMENSION)):
-                                shape_fn[d1] = ShapeGIMP(pos[d1], grid_pos[d1], igrid_size[d1], psize[d1])
+                                shape_fn[d1] = shape_gimp(pos[d1], grid_pos[d1], igrid_size[d1], psize[d1])
                         elif ti.static(GlobalVariable.SHAPEFUNCTION == 2):
                             for d1 in ti.static(range(GlobalVariable.DIMENSION)):
                                 btypes = 0
                                 if ti.static(d1 == d):
                                     btypes = mac_boundary_type_1d(grid_id[d1], face_count[d1])
-                                shape_fn[d1] = ShapeBsplineQ(pos[d1], grid_pos[d1], igrid_size[d1], btypes)
+                                shape_fn[d1] = shape_bspline_q(pos[d1], grid_pos[d1], igrid_size[d1], btypes)
                         elif ti.static(GlobalVariable.SHAPEFUNCTION == 3):
                             for d1 in ti.static(range(GlobalVariable.DIMENSION)):
                                 btypes = 0
                                 if ti.static(d1 == d):
                                     btypes = mac_boundary_type_1d(grid_id[d1], face_count[d1])
-                                shape_fn[d1] = ShapeBsplineC(pos[d1], grid_pos[d1], igrid_size[d1], btypes)
+                                shape_fn[d1] = shape_bspline_c(pos[d1], grid_pos[d1], igrid_size[d1], btypes)
 
                         weight = 1.0
                         for d0 in ti.static(range(GlobalVariable.DIMENSION)):
@@ -9393,7 +9434,7 @@ def kernel_apply_density_projection_position_correction(
                             cnum,
                             grid_size,
                             dt,
-                            matProps,
+                            mat_props,
                             pressure,
                             cell_type,
                             fluid_sdf,
@@ -9401,14 +9442,14 @@ def kernel_apply_density_projection_position_correction(
                         )
 
             delta_norm = delta_x.norm()
-            if delta_norm > max_shift and delta_norm > Threshold:
+            if delta_norm > max_shift and delta_norm > THRESHOLD:
                 delta_x *= max_shift / delta_norm
             shift_incompressible_particle(np, delta_x, particle)
 
 
 @ti.kernel
 def kernel_deactivate_particles_in_solid_cells(
-    particleNum: int,
+    particle_num: int,
     ghost_cell: int,
     cnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     igrid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
@@ -9416,7 +9457,7 @@ def kernel_deactivate_particles_in_solid_cells(
     particle: ti.template(),
 ) -> int:
     deactivated = 0
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
             if not particle_position_is_valid(particle[np].x):
                 particle[np].active = ti.u8(0)
@@ -9431,7 +9472,7 @@ def kernel_deactivate_particles_in_solid_cells(
 
 @ti.kernel
 def kernel_deactivate_particles_in_solid_sdf(
-    particleNum: int,
+    particle_num: int,
     ghost_cell: int,
     cnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     grid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
@@ -9439,7 +9480,7 @@ def kernel_deactivate_particles_in_solid_sdf(
     particle: ti.template(),
 ) -> int:
     deactivated = 0
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
             if not particle_position_is_valid(particle[np].x):
                 particle[np].active = ti.u8(0)
@@ -9456,10 +9497,10 @@ def kernel_deactivate_particles_in_solid_sdf(
 
 
 @ti.kernel
-def kernel_update_incompressible_particle_storage(particleNum: int, particle: ti.template()) -> int:
+def kernel_update_incompressible_particle_storage(particle_num: int, particle: ti.template()) -> int:
     remaining_particle = 0
     ti.loop_config(serialize=True)
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
             particle[remaining_particle] = particle[np]
             remaining_particle += 1
@@ -9468,7 +9509,7 @@ def kernel_update_incompressible_particle_storage(particleNum: int, particle: ti
 
 @ti.kernel
 def kernel_initialize_fdm_cell_pressure_from_particles(
-    particleNum: int,
+    particle_num: int,
     ghost_cell: int,
     cnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     igrid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
@@ -9479,7 +9520,7 @@ def kernel_initialize_fdm_cell_pressure_from_particles(
 ):
     pressure.fill(0)
     pressure_weight.fill(0)
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
             cell = ti.floor(particle[np].x * igrid_size, int)
             if get_offset_cell_type(cell, ghost_cell, cnum, cell_type) == 1:
@@ -9520,13 +9561,13 @@ def kernel_prepare_incompressible_mg_level0(
     surface_tension: ti.template(),
     cell_type: ti.template(),
     fluid_sdf: ti.template(),
-    matProps: ti.template(),
+    mat_props: ti.template(),
     use_free_surface_theta: ti.template(),
     grid_type: ti.template(),
     b: ti.template(),
 ):
     active_cnum = cnum - 2 * ghost_cell
-    scale_A = dt[None] / matProps.density * igrid_size * igrid_size
+    scale_A = dt[None] / mat_props.density * igrid_size * igrid_size
     scale_b = igrid_size
     for I in ti.grouped(grid_type):
         inside = True
@@ -9557,7 +9598,7 @@ def kernel_prepare_incompressible_mg_level0(
                         theta = 1.0
                         if ti.static(use_free_surface_theta):
                             theta = free_surface_theta(I, neighbor, fluid_sdf)
-                        b[I] += scale_A[d] / theta * (matProps.atmospheric_pressure + surface_tension[neighbor])
+                        b[I] += scale_A[d] / theta * (mat_props.atmospheric_pressure + surface_tension[neighbor])
 
 
 @ti.kernel
@@ -9570,12 +9611,12 @@ def kernel_assemble_incompressible_mg_b(
     node: ti.template(),
     surface_tension: ti.template(),
     cell_type: ti.template(),
-    matProps: ti.template(),
+    mat_props: ti.template(),
     grid_type: ti.template(),
     b: ti.template(),
 ):
     b.fill(0)
-    scale_A = dt[None] / matProps.density * igrid_size * igrid_size
+    scale_A = dt[None] / mat_props.density * igrid_size * igrid_size
     scale_b = igrid_size
     for I in ti.grouped(grid_type):
         if grid_type[I] == 1:
@@ -9596,7 +9637,7 @@ def kernel_assemble_incompressible_mg_b(
                         else:
                             b[I] += scale_b[d] * node.velocity[d][I + offset]
                     elif neighbor_type == 0:
-                        b[I] += scale_A[d] * (matProps.atmospheric_pressure + surface_tension[neighbor])
+                        b[I] += scale_A[d] * (mat_props.atmospheric_pressure + surface_tension[neighbor])
 
 
 @ti.kernel
@@ -9616,13 +9657,13 @@ def kernel_prepare_incompressible_mg_level0_cut_cell(
     solid_velocity0: ti.template(),
     solid_velocity1: ti.template(),
     solid_velocity2: ti.template(),
-    matProps: ti.template(),
+    mat_props: ti.template(),
     use_free_surface_theta: ti.template(),
     grid_type: ti.template(),
     b: ti.template(),
 ):
     active_cnum = cnum - 2 * ghost_cell
-    scale_A = dt[None] / matProps.density * igrid_size * igrid_size
+    scale_A = dt[None] / mat_props.density * igrid_size * igrid_size
     scale_b = igrid_size
     for I in ti.grouped(grid_type):
         inside = True
@@ -9666,7 +9707,7 @@ def kernel_prepare_incompressible_mg_level0_cut_cell(
                             face_fraction
                             * scale_A[d]
                             / theta
-                            * (matProps.atmospheric_pressure + surface_tension[neighbor])
+                            * (mat_props.atmospheric_pressure + surface_tension[neighbor])
                         )
 
 
@@ -9686,7 +9727,7 @@ def mg_coupled_cell_density_3d(
     if ti.static(mode == 2):
         phi_s = ti.min(1.0, ti.max(0.0, solid_fraction[cell]))
         rho_s = solid_density[cell]
-        if rho_s <= Threshold:
+        if rho_s <= THRESHOLD:
             rho_s = rho_f
         density = (1.0 - phi_s) * rho_f + phi_s * rho_s
     return density
@@ -9707,7 +9748,7 @@ def mg_coupled_face_terms_3d(
     if int(cell_type[neighbor]) == 1:
         flux_fraction = 0.5 * (flux_fraction + mg_coupled_cell_fraction_3d(neighbor, mode, solid_fraction))
         density = 0.5 * (density + mg_coupled_cell_density_3d(neighbor, rho_f, mode, solid_fraction, solid_density))
-    return flux_fraction, flux_fraction / ti.max(density, Threshold)
+    return flux_fraction, flux_fraction / ti.max(density, THRESHOLD)
 
 
 @ti.func
@@ -9744,7 +9785,7 @@ def kernel_prepare_incompressible_mg_level0_coupled_3d(
     solid_fraction: ti.template(),
     previous_solid_fraction: ti.template(),
     solid_density: ti.template(),
-    matProps: ti.template(),
+    mat_props: ti.template(),
     mode: ti.template(),
     use_cut_cell: ti.template(),
     use_free_surface_theta: ti.template(),
@@ -9765,10 +9806,10 @@ def kernel_prepare_incompressible_mg_level0_coupled_3d(
                 left_neighbor = I - unit
                 right_neighbor = I + unit
                 left_fraction, _ = mg_coupled_face_terms_3d(
-                    I, left_neighbor, matProps.density, mode, cell_type, solid_fraction, solid_density
+                    I, left_neighbor, mat_props.density, mode, cell_type, solid_fraction, solid_density
                 )
                 right_fraction, _ = mg_coupled_face_terms_3d(
-                    I, right_neighbor, matProps.density, mode, cell_type, solid_fraction, solid_density
+                    I, right_neighbor, mat_props.density, mode, cell_type, solid_fraction, solid_density
                 )
                 left_open = mg_coupled_open_fraction_3d(
                     d, I, use_cut_cell, face_fraction0, face_fraction1, face_fraction2
@@ -9795,7 +9836,7 @@ def kernel_prepare_incompressible_mg_level0_coupled_3d(
             if ti.static(mode == 1):
                 current_fraction = mg_coupled_cell_fraction_3d(I, mode, solid_fraction)
                 previous_fraction = mg_coupled_cell_fraction_3d(I, mode, previous_solid_fraction)
-                b[I] += (previous_fraction - current_fraction) / ti.max(dt[None], Threshold)
+                b[I] += (previous_fraction - current_fraction) / ti.max(dt[None], THRESHOLD)
 
             for d in ti.static(range(3)):
                 for side in ti.static((-1, 1)):
@@ -9808,7 +9849,7 @@ def kernel_prepare_incompressible_mg_level0_coupled_3d(
                         d, face, use_cut_cell, face_fraction0, face_fraction1, face_fraction2
                     )
                     _, coefficient = mg_coupled_face_terms_3d(
-                        I, neighbor, matProps.density, mode, cell_type, solid_fraction, solid_density
+                        I, neighbor, mat_props.density, mode, cell_type, solid_fraction, solid_density
                     )
                     if int(cell_type[neighbor]) == 0 and face_open > 0.0:
                         theta = 1.0
@@ -9821,15 +9862,15 @@ def kernel_prepare_incompressible_mg_level0_coupled_3d(
                             * igrid_size[d]
                             * igrid_size[d]
                             / theta
-                            * (matProps.atmospheric_pressure + surface_tension[neighbor])
+                            * (mat_props.atmospheric_pressure + surface_tension[neighbor])
                         )
 
 
 @ti.kernel
-def kernel_assemble_incompressible_mg_A_level0_coupled_3d(
+def kernel_assemble_incompressible_mg_a_level0_coupled_3d(
     dt: ti.template(),
     igrid_size: ti.types.vector(3, float),
-    matProps: ti.template(),
+    mat_props: ti.template(),
     grid_type: ti.template(),
     cell_type: ti.template(),
     fluid_sdf: ti.template(),
@@ -9841,11 +9882,11 @@ def kernel_assemble_incompressible_mg_A_level0_coupled_3d(
     mode: ti.template(),
     use_cut_cell: ti.template(),
     use_free_surface_theta: ti.template(),
-    Adiag: ti.template(),
+    adiag: ti.template(),
     Ax: ti.template(),
 ):
     for I in ti.grouped(grid_type):
-        Adiag[I] = 0.0
+        adiag[I] = 0.0
         Ax[I] = ti.zero(Ax[I])
         if int(grid_type[I]) == 1:
             for d in ti.static(range(3)):
@@ -9860,35 +9901,35 @@ def kernel_assemble_incompressible_mg_A_level0_coupled_3d(
                         d, face, use_cut_cell, face_fraction0, face_fraction1, face_fraction2
                     )
                     _, coefficient = mg_coupled_face_terms_3d(
-                        I, neighbor, matProps.density, mode, cell_type, solid_fraction, solid_density
+                        I, neighbor, mat_props.density, mode, cell_type, solid_fraction, solid_density
                     )
                     coefficient *= dt[None] * face_open * igrid_size[d] * igrid_size[d]
                     if neighbor_type == 1:
-                        Adiag[I] += coefficient
+                        adiag[I] += coefficient
                         if ti.static(side > 0):
                             Ax[I][d] = -coefficient
                     elif neighbor_type == 0:
                         theta = 1.0
                         if ti.static(use_free_surface_theta):
                             theta = free_surface_theta(I, neighbor, fluid_sdf)
-                        Adiag[I] += coefficient / theta
-            if Adiag[I] <= 0.0:
-                Adiag[I] = 1.0
+                        adiag[I] += coefficient / theta
+            if adiag[I] <= 0.0:
+                adiag[I] = 1.0
 
 
 @ti.kernel
-def kernel_assemble_incompressible_mg_A(
+def kernel_assemble_incompressible_mg_a(
     dt: ti.template(),
     grid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
     igrid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
-    matProps: ti.template(),
+    mat_props: ti.template(),
     grid_type: ti.template(),
-    Adiag: ti.template(),
+    adiag: ti.template(),
     Ax: ti.template(),
 ):
-    scale_A = dt[None] / matProps.density * igrid_size * igrid_size
+    scale_A = dt[None] / mat_props.density * igrid_size * igrid_size
     for I in ti.grouped(grid_type):
-        Adiag[I] = 0.0
+        adiag[I] = 0.0
         Ax[I] = ti.zero(Ax[I])
         if grid_type[I] == 1:
             for d in ti.static(range(GlobalVariable.DIMENSION)):
@@ -9896,33 +9937,33 @@ def kernel_assemble_incompressible_mg_A(
                     offset = ti.Vector.unit(GlobalVariable.DIMENSION, d) * s
                     neighbor_type = get_mg_cell_type(I + offset, grid_type)
                     if neighbor_type == 1:
-                        Adiag[I] += scale_A[d]
+                        adiag[I] += scale_A[d]
                         if ti.static(s > 0):
                             Ax[I][d] = -scale_A[d]
                     elif neighbor_type == 0:
-                        Adiag[I] += scale_A[d]
-            if Adiag[I] <= 0.0:
-                Adiag[I] = 1.0
+                        adiag[I] += scale_A[d]
+            if adiag[I] <= 0.0:
+                adiag[I] = 1.0
 
 
 @ti.kernel
-def kernel_assemble_incompressible_mg_A_level0(
+def kernel_assemble_incompressible_mg_a_level0(
     ghost_cell: int,
     cnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     dt: ti.template(),
     grid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
     igrid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
-    matProps: ti.template(),
+    mat_props: ti.template(),
     grid_type: ti.template(),
     cell_type: ti.template(),
     fluid_sdf: ti.template(),
     use_free_surface_theta: ti.template(),
-    Adiag: ti.template(),
+    adiag: ti.template(),
     Ax: ti.template(),
 ):
-    scale_A = dt[None] / matProps.density * igrid_size * igrid_size
+    scale_A = dt[None] / mat_props.density * igrid_size * igrid_size
     for I in ti.grouped(grid_type):
-        Adiag[I] = 0.0
+        adiag[I] = 0.0
         Ax[I] = ti.zero(Ax[I])
         if grid_type[I] == 1:
             for d in ti.static(range(GlobalVariable.DIMENSION)):
@@ -9931,26 +9972,26 @@ def kernel_assemble_incompressible_mg_A_level0(
                     neighbor = I + offset
                     neighbor_type = get_offset_cell_type(neighbor, ghost_cell, cnum, cell_type)
                     if neighbor_type == 1:
-                        Adiag[I] += scale_A[d]
+                        adiag[I] += scale_A[d]
                         if ti.static(s > 0):
                             Ax[I][d] = -scale_A[d]
                     elif neighbor_type == 0:
                         theta = 1.0
                         if ti.static(use_free_surface_theta):
                             theta = free_surface_theta(I, neighbor, fluid_sdf)
-                        Adiag[I] += scale_A[d] / theta
-            if Adiag[I] <= 0.0:
-                Adiag[I] = 1.0
+                        adiag[I] += scale_A[d] / theta
+            if adiag[I] <= 0.0:
+                adiag[I] = 1.0
 
 
 @ti.kernel
-def kernel_assemble_incompressible_mg_A_level0_cut_cell(
+def kernel_assemble_incompressible_mg_a_level0_cut_cell(
     ghost_cell: int,
     cnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     dt: ti.template(),
     grid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
     igrid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
-    matProps: ti.template(),
+    mat_props: ti.template(),
     grid_type: ti.template(),
     cell_type: ti.template(),
     fluid_sdf: ti.template(),
@@ -9959,12 +10000,12 @@ def kernel_assemble_incompressible_mg_A_level0_cut_cell(
     face_fraction0: ti.template(),
     face_fraction1: ti.template(),
     face_fraction2: ti.template(),
-    Adiag: ti.template(),
+    adiag: ti.template(),
     Ax: ti.template(),
 ):
-    scale_A = dt[None] / matProps.density * igrid_size * igrid_size
+    scale_A = dt[None] / mat_props.density * igrid_size * igrid_size
     for I in ti.grouped(grid_type):
-        Adiag[I] = 0.0
+        adiag[I] = 0.0
         Ax[I] = ti.zero(Ax[I])
         if grid_type[I] == 1:
             for d in ti.static(range(GlobalVariable.DIMENSION)):
@@ -9979,16 +10020,16 @@ def kernel_assemble_incompressible_mg_A_level0_cut_cell(
                     if face_fraction > 0.0:
                         if neighbor_type == 1:
                             coefficient = face_fraction * scale_A[d]
-                            Adiag[I] += coefficient
+                            adiag[I] += coefficient
                             if ti.static(s > 0):
                                 Ax[I][d] = -coefficient
                         elif neighbor_type == 0 and solid_sdf[neighbor] >= 0.0:
                             theta = 1.0
                             if ti.static(use_free_surface_theta):
                                 theta = free_surface_theta(I, neighbor, fluid_sdf)
-                            Adiag[I] += face_fraction * scale_A[d] / theta
-            if Adiag[I] <= 0.0:
-                Adiag[I] = 1.0
+                            adiag[I] += face_fraction * scale_A[d] / theta
+            if adiag[I] <= 0.0:
+                adiag[I] = 1.0
 
 
 @ti.kernel
@@ -10005,7 +10046,7 @@ def kernel_correct_velocity_coupled_3d(
     cnum: ti.types.vector(3, int),
     grid_size: ti.types.vector(3, float),
     dt: ti.template(),
-    matProps: ti.template(),
+    mat_props: ti.template(),
     pressure: ti.template(),
     surface_tension: ti.template(),
     cell_type: ti.template(),
@@ -10035,7 +10076,7 @@ def kernel_correct_velocity_coupled_3d(
                 face_open = mg_coupled_open_fraction_3d(
                     direction, I, use_cut_cell, face_fraction0, face_fraction1, face_fraction2
                 )
-                if face_open <= Threshold or left_type == 2 or right_type == 2:
+                if face_open <= THRESHOLD or left_type == 2 or right_type == 2:
                     wall_velocity = 0.0
                     if ti.static(use_cut_cell):
                         wall_velocity = select_solid_face_velocity(
@@ -10052,23 +10093,23 @@ def kernel_correct_velocity_coupled_3d(
                     flux_fraction, pressure_coefficient = mg_coupled_face_terms_3d(
                         fluid_cell,
                         other_cell,
-                        matProps.density,
+                        mat_props.density,
                         mode,
                         cell_type,
                         solid_fraction,
                         solid_density,
                     )
-                    inverse_density = pressure_coefficient / ti.max(flux_fraction, Threshold)
+                    inverse_density = pressure_coefficient / ti.max(flux_fraction, THRESHOLD)
                     pressure_jump = 0.0
                     theta = 1.0
                     if right_type == 0:
                         if ti.static(use_free_surface_theta):
                             theta = free_surface_theta(left, right, fluid_sdf)
-                        pressure_jump = matProps.atmospheric_pressure + surface_tension[right] - pressure[left]
+                        pressure_jump = mat_props.atmospheric_pressure + surface_tension[right] - pressure[left]
                     elif left_type == 0:
                         if ti.static(use_free_surface_theta):
                             theta = free_surface_theta(right, left, fluid_sdf)
-                        pressure_jump = pressure[right] - matProps.atmospheric_pressure - surface_tension[left]
+                        pressure_jump = pressure[right] - mat_props.atmospheric_pressure - surface_tension[left]
                     else:
                         pressure_jump = pressure[right] - pressure[left]
                     node.velocity[direction][I] -= (
@@ -10082,7 +10123,7 @@ def kernel_update_pressure_and_correct_velocity_from_mg(
     cnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     grid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
     dt: ti.template(),
-    matProps: ti.template(),
+    mat_props: ti.template(),
     x: ti.template(),
     grid_type: ti.template(),
     pressure: ti.template(),
@@ -10098,8 +10139,8 @@ def kernel_update_pressure_and_correct_velocity_from_mg(
             pressure[I] = x[I]
 
     active_cnum = cnum - 2 * ghost_cell
-    scale = dt[None] / (matProps.density * grid_size)
-    atmospheric_pressure = matProps.atmospheric_pressure
+    scale = dt[None] / (mat_props.density * grid_size)
+    atmospheric_pressure = mat_props.atmospheric_pressure
     for k in ti.static(range(GlobalVariable.DIMENSION)):
         face_count = active_cnum + ti.Vector.unit(GlobalVariable.DIMENSION, k)
         if ti.static(GlobalVariable.DIMENSION == 2):
@@ -10183,7 +10224,7 @@ def correct_velocity_cut_cell_face(
         face_fraction = select_solid_face_fraction(k, I, face_fraction0, face_fraction1, face_fraction2)
         immersed_1 = cell_1 == 0 and solid_sdf[I_1] < 0.0
         immersed_2 = cell_2 == 0 and solid_sdf[I] < 0.0
-        if face_fraction <= Threshold or cell_1 == 2 or cell_2 == 2:
+        if face_fraction <= THRESHOLD or cell_1 == 2 or cell_2 == 2:
             node.velocity[k][I] = select_solid_face_velocity(k, I, solid_velocity0, solid_velocity1, solid_velocity2)
             node.force[k][I] = 0
         elif immersed_1 or immersed_2:
@@ -10209,7 +10250,7 @@ def kernel_update_pressure_and_correct_velocity_from_mg_cut_cell(
     cnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     grid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
     dt: ti.template(),
-    matProps: ti.template(),
+    mat_props: ti.template(),
     x: ti.template(),
     grid_type: ti.template(),
     pressure: ti.template(),
@@ -10232,8 +10273,8 @@ def kernel_update_pressure_and_correct_velocity_from_mg_cut_cell(
             pressure[I] = x[I]
 
     active_cnum = cnum - 2 * ghost_cell
-    scale = dt[None] / (matProps.density * grid_size)
-    atmospheric_pressure = matProps.atmospheric_pressure
+    scale = dt[None] / (mat_props.density * grid_size)
+    atmospheric_pressure = mat_props.atmospheric_pressure
     for k in ti.static(range(GlobalVariable.DIMENSION)):
         face_count = active_cnum + ti.Vector.unit(GlobalVariable.DIMENSION, k)
         if ti.static(GlobalVariable.DIMENSION == 2):
@@ -10290,7 +10331,7 @@ def kernel_correct_velocity(
     cnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     grid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
     dt: ti.template(),
-    matProps: ti.template(),
+    mat_props: ti.template(),
     pressure: ti.template(),
     surface_tension: ti.template(),
     cell_type: ti.template(),
@@ -10299,8 +10340,8 @@ def kernel_correct_velocity(
     node: ti.template(),
 ):
     active_cnum = cnum - 2 * ghost_cell
-    scale = dt[None] / (matProps.density * grid_size)
-    atmospheric_pressure = matProps.atmospheric_pressure
+    scale = dt[None] / (mat_props.density * grid_size)
+    atmospheric_pressure = mat_props.atmospheric_pressure
     for k in ti.static(range(GlobalVariable.DIMENSION)):
         face_count = active_cnum + ti.Vector.unit(GlobalVariable.DIMENSION, k)
         if ti.static(GlobalVariable.DIMENSION == 2):
@@ -10361,7 +10402,7 @@ def kernel_correct_velocity_cut_cell(
     cnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     grid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
     dt: ti.template(),
-    matProps: ti.template(),
+    mat_props: ti.template(),
     pressure: ti.template(),
     surface_tension: ti.template(),
     cell_type: ti.template(),
@@ -10377,8 +10418,8 @@ def kernel_correct_velocity_cut_cell(
     node: ti.template(),
 ):
     active_cnum = cnum - 2 * ghost_cell
-    scale = dt[None] / (matProps.density * grid_size)
-    atmospheric_pressure = matProps.atmospheric_pressure
+    scale = dt[None] / (mat_props.density * grid_size)
+    atmospheric_pressure = mat_props.atmospheric_pressure
     for k in ti.static(range(GlobalVariable.DIMENSION)):
         face_count = active_cnum + ti.Vector.unit(GlobalVariable.DIMENSION, k)
         if ti.static(GlobalVariable.DIMENSION == 2):
@@ -10431,7 +10472,7 @@ def kernel_correct_velocity_cut_cell(
 
 @ti.kernel
 def enforce_particle_domain_collision(
-    particleNum: int,
+    particle_num: int,
     ghost_cell: int,
     cnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     grid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
@@ -10439,7 +10480,7 @@ def enforce_particle_domain_collision(
     particle: ti.template(),
 ):
     active_cnum = cnum - 2 * ghost_cell
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
             pos = particle[np].x
             pv = particle[np].v
@@ -10550,7 +10591,7 @@ def nearest_solid_face_velocity(
 
 @ti.kernel
 def enforce_particle_solid_sdf_collision(
-    particleNum: int,
+    particle_num: int,
     ghost_cell: int,
     cnum: ti.types.vector(GlobalVariable.DIMENSION, int),
     grid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
@@ -10563,7 +10604,7 @@ def enforce_particle_solid_sdf_collision(
     clearance = 1.0e-4 * min_grid_spacing(grid_size)
     active_cnum = cnum - 2 * ghost_cell
     domain_upper = active_cnum.cast(float) * grid_size
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
             pos = particle[np].x
             pv = particle[np].v
@@ -10578,7 +10619,7 @@ def enforce_particle_solid_sdf_collision(
                         break
                     gradient = solid_sdf_position_gradient(pos, ghost_cell, cnum, grid_size, solid_sdf)
                     gradient_norm = gradient.norm()
-                    if gradient_norm <= Threshold:
+                    if gradient_norm <= THRESHOLD:
                         break
                     normal = gradient / gradient_norm
                     distance = ti.min((clearance - phi) / gradient_norm, min_grid_spacing(grid_size))
@@ -10637,43 +10678,43 @@ def cell_volume_reset(cell_volumefrac: ti.template()):
 @ti.kernel
 def kernel_mass_p2g_twophase(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             mass = particle[np].m
             mass_s = particle[np].ms
             mass_f = particle[np].mf
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 nmass = shape_mapping(shapefn[ln], mass)
                 nmass_s = shape_mapping(shapefn[ln], mass_s)
                 nmass_f = shape_mapping(shapefn[ln], mass_f)
-                node[nodeID, bodyID]._update_nodal_mass(nmass, nmass_s, nmass_f)
+                node[node_id, body_id]._update_nodal_mass(nmass, nmass_s, nmass_f)
 
 
 @ti.kernel
 def kernel_mass_momentum_p2g_semitwophase(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
     istep: int,
     is_rigid: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             mass = particle[np].m
             mass_s = particle[np].ms
@@ -10682,7 +10723,7 @@ def kernel_mass_momentum_p2g_semitwophase(
             velocity_s = particle[np].vs
             velocity_f = particle[np].vf
             pressure = particle[np].pressure
-            if is_rigid[bodyID] == 1:
+            if is_rigid[body_id] == 1:
                 if istep < 1000:
                     velocity = particle[np].v * istep / 1000
                     velocity_s = velocity
@@ -10690,24 +10731,24 @@ def kernel_mass_momentum_p2g_semitwophase(
                     velocity = particle[np].v
                     velocity_s = velocity
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 nmass = shape_mapping(shapefn[ln], mass)
                 nmass_s = shape_mapping(shapefn[ln], mass_s)
                 nmass_f = shape_mapping(shapefn[ln], mass_f)
-                node[nodeID, bodyID]._update_nodal_mass(nmass, nmass_s, nmass_f)
-                node[nodeID, bodyID]._update_nodal_pressure_(nmass_s * pressure)
-                node[nodeID, bodyID]._update_nodal_momentum(
+                node[node_id, body_id]._update_nodal_mass(nmass, nmass_s, nmass_f)
+                node[node_id, body_id]._update_nodal_pressure(nmass_s * pressure)
+                node[node_id, body_id]._update_nodal_momentum(
                     nmass * velocity, nmass_s * velocity_s, nmass_f * velocity_f
                 )
 
 
 @ti.kernel
-def kernel_mass_momentum_p2g_twophase_APIC(
+def kernel_mass_momentum_p2g_twophase_apic(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
     istep: int,
@@ -10715,9 +10756,9 @@ def kernel_mass_momentum_p2g_twophase_APIC(
     grid_size: ti.types.vector(2, real),
     gnum: ti.types.vector(2, int),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             mass = particle[np].m
             mass_s = particle[np].ms
@@ -10730,24 +10771,24 @@ def kernel_mass_momentum_p2g_twophase_APIC(
             gradv = particle[np].solid_velocity_gradient
             grdv_f = particle[np].fluid_velocity_gradient
             # -- Linear loading--
-            if is_rigid[bodyID] == 1:
+            if is_rigid[body_id] == 1:
                 if istep < 1000:
                     velocity = particle[np].v * istep / 1000
                     velocity_s = velocity
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
-                nodal_coord = grid_size * vec2f(vectorize_id(nodeID, gnum))
+                node_id = ln_id[ln]
+                nodal_coord = grid_size * vec2f(vectorize_id(node_id, gnum))
                 xip = nodal_coord - xp
                 nmass = shape_mapping(shapefn[ln], mass)
                 nmass_s = shape_mapping(shapefn[ln], mass_s)
                 nmass_f = shape_mapping(shapefn[ln], mass_f)
-                affine_s, affine_f = ZEROVEC2f, ZEROVEC2f
+                affine_s, affine_f = ZEROVEC2F, ZEROVEC2F
                 for i, j in ti.static(ti.ndrange(2, 2)):
                     affine_s[i] += gradv[i, j] * xip[j]
                     affine_f[i] += grdv_f[i, j] * xip[j]
-                node[nodeID, bodyID]._update_nodal_mass(nmass, nmass_s, nmass_f)
-                node[nodeID, bodyID]._update_nodal_pressure_(nmass_s * pressure)
-                node[nodeID, bodyID]._update_nodal_momentum(
+                node[node_id, body_id]._update_nodal_mass(nmass, nmass_s, nmass_f)
+                node[node_id, body_id]._update_nodal_pressure(nmass_s * pressure)
+                node[node_id, body_id]._update_nodal_momentum(
                     nmass * (velocity + affine_s),
                     nmass_s * (velocity_s + affine_s),
                     nmass_f * (velocity_f + affine_f),
@@ -10757,18 +10798,18 @@ def kernel_mass_momentum_p2g_twophase_APIC(
 @ti.kernel
 def kernel_mass_momentum_p2g_twophase_u_p(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
     step: int,
     is_rigid: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             mass = particle[np].m
             mass_s = particle[np].ms
@@ -10778,93 +10819,93 @@ def kernel_mass_momentum_p2g_twophase_u_p(
             velocity_f = particle[np].vf
             pressure = particle[np].pressure
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 nmass = shape_mapping(shapefn[ln], mass)
                 nmass_s = shape_mapping(shapefn[ln], mass_s)
                 nmass_f = shape_mapping(shapefn[ln], mass_f)
-                node[nodeID, bodyID]._update_nodal_mass(nmass, nmass_s, nmass_f)
-                node[nodeID, bodyID]._update_nodal_pressure_(nmass_s * pressure)
-                node[nodeID, bodyID]._update_nodal_momentum(
+                node[node_id, body_id]._update_nodal_mass(nmass, nmass_s, nmass_f)
+                node[node_id, body_id]._update_nodal_pressure(nmass_s * pressure)
+                node[node_id, body_id]._update_nodal_momentum(
                     nmass * velocity, nmass_s * velocity_s, nmass_f * velocity_f
                 )
 
 
 @ti.kernel
-def kernel_pressure_tpic_p2g_correction_2D(
+def kernel_pressure_tpic_p2g_correction_2d(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     grid_size: ti.types.vector(2, float),
     gnum: ti.types.vector(2, int),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1 and int(particle[np].materialID) > 0:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
-                node_position = grid_size * vec2f(vectorize_id(nodeID, gnum))
+                node_id = ln_id[ln]
+                node_position = grid_size * vec2f(vectorize_id(node_id, gnum))
                 correction = particle[np].pressure_gradient.dot(node_position - particle[np].x)
-                node[nodeID, bodyID]._update_nodal_pressure_(shapefn[ln] * particle[np].ms * correction)
+                node[node_id, body_id]._update_nodal_pressure(shapefn[ln] * particle[np].ms * correction)
 
 
 @ti.kernel
-def kernel_update_particle_pressure_gradient_2D(
+def kernel_update_particle_pressure_gradient_2d(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     beta: float,
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1 and int(particle[np].materialID) > 0:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
-            gradient = ZEROVEC2f
+            gradient = ZEROVEC2F
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
-                pressure = beta * node[nodeID, bodyID].pressure + node[nodeID, bodyID].dpressure
+                node_id = ln_id[ln]
+                pressure = beta * node[node_id, body_id].pressure + node[node_id, body_id].dpressure
                 gradient += dshapefn[ln] * pressure
             particle[np].pressure_gradient = gradient
 
 
 @ti.func
-def single_point_nodal_pressure_gradient_2D(offset, size, bodyID, node, LnID, dshapefn):
-    gradient = ZEROVEC2f
+def single_point_nodal_pressure_gradient_2d(offset, size, body_id, node, ln_id, dshapefn):
+    gradient = ZEROVEC2F
     for ln in range(offset, offset + size):
-        gradient += dshapefn[ln] * node[LnID[ln], bodyID].pressure
+        gradient += dshapefn[ln] * node[ln_id[ln], body_id].pressure
     return gradient
 
 
 @ti.kernel
-def kernel_force_p2g_semitwophase2D(
+def kernel_force_p2g_semitwophase2d(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     gravity: ti.types.vector(3, float),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
     beta: float,
     nodal_pressure_gradient: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             fex, fexf = particle[np]._compute_external_force(gravity)
             fin, fintf = particle[np]._compute_internal_force_semi(beta)
             drag = particle[np]._compute_drag_force_semi()
             offset = np * total_nodes
-            pressure_force = ZEROVEC2f
+            pressure_force = ZEROVEC2F
             if ti.static(nodal_pressure_gradient):
                 # The FEM predictor and pressure-increment correction must use
                 # the same gradient, including on partially filled cells.
@@ -10872,10 +10913,12 @@ def kernel_force_p2g_semitwophase2D(
                 pressure_force = (
                     -beta
                     * particle[np].vol
-                    * single_point_nodal_pressure_gradient_2D(offset, int(node_size[np]), bodyID, node, LnID, dshapefn)
+                    * single_point_nodal_pressure_gradient_2d(
+                        offset, int(node_size[np]), body_id, node, ln_id, dshapefn
+                    )
                 )
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 shape_fn = shapefn[ln]
                 dshape_fn = dshapefn[ln]
                 external_force = shape_mapping(shape_fn, fex)
@@ -10888,34 +10931,34 @@ def kernel_force_p2g_semitwophase2D(
                 if ti.static(nodal_pressure_gradient):
                     internal_force += shape_fn * pressure_force
                     internal_forcef += shape_fn * particle[np].porosity * pressure_force
-                node[nodeID, bodyID]._update_nodal_dragval(drag_)
-                node[nodeID, bodyID]._update_nodal_force(
+                node[node_id, body_id]._update_nodal_dragval(drag_)
+                node[node_id, body_id]._update_nodal_force(
                     external_force + internal_force, external_forcef + internal_forcef
                 )
 
 
 @ti.kernel
-def kernel_force_p2g_semitwophase3D(
+def kernel_force_p2g_semitwophase3d(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     gravity: ti.types.vector(3, float),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
     beta: float,
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             fex, fexf = particle[np]._compute_external_force(gravity)
             fin, fintf = particle[np]._compute_internal_force_semi(beta)
             drag = particle[np]._compute_drag_force_semi()
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 shape_fn = shapefn[ln]
                 dshape_fn = dshapefn[ln]
                 external_force = shape_mapping(shape_fn, fex)
@@ -10929,71 +10972,71 @@ def kernel_force_p2g_semitwophase3D(
                     ]
                 )
                 internal_forcef = vec3f([dshape_fn[0] * fintf[0], dshape_fn[1] * fintf[1], dshape_fn[2] * fintf[2]])
-                node[nodeID, bodyID]._update_nodal_dragval(drag_)
-                node[nodeID, bodyID]._update_nodal_force(
+                node[node_id, body_id]._update_nodal_dragval(drag_)
+                node[node_id, body_id]._update_nodal_force(
                     external_force + internal_force, external_forcef + internal_forcef
                 )
 
 
 @ti.kernel
-def kernel_force_p2g_semitwophase2D_u_p(
+def kernel_force_p2g_semitwophase2d_u_p(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     gravity: ti.types.vector(3, float),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
     beta: float,
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             fex, fexf = particle[np]._compute_external_force(gravity)
             fin, fintf = particle[np]._compute_internal_force_semi(0.0)
             offset = np * total_nodes
             pressure_force = (
                 -beta
                 * particle[np].vol
-                * single_point_nodal_pressure_gradient_2D(offset, int(node_size[np]), bodyID, node, LnID, dshapefn)
+                * single_point_nodal_pressure_gradient_2d(offset, int(node_size[np]), body_id, node, ln_id, dshapefn)
             )
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 shape_fn = shapefn[ln]
                 dshape_fn = dshapefn[ln]
                 external_force = shape_mapping(shape_fn, fex)
                 internal_force = vec2f(
                     [dshape_fn[0] * fin[0] + dshape_fn[1] * fin[3], dshape_fn[1] * fin[1] + dshape_fn[0] * fin[3]]
                 )
-                node[nodeID, bodyID].force += external_force + internal_force + shape_fn * pressure_force
+                node[node_id, body_id].force += external_force + internal_force + shape_fn * pressure_force
 
 
 @ti.kernel
-def kernel_force_p2g_semitwophase_2DAxisy(
+def kernel_force_p2g_semitwophase_2d_axisy(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     gravity: ti.types.vector(3, float),
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
     beta: float,
     axis_offset: float,
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             position = particle[np].x - vec2f([axis_offset, 0.0])
             fex, fexf = particle[np]._compute_external_force(gravity)
             fint, fintf = particle[np]._compute_internal_force_semi(beta)
             drag = particle[np]._compute_drag_force_semi()
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 shape_fn = shapefn[ln]
                 dshape_fn = dshapefn[ln]
                 external_force = shape_mapping(shape_fn, fex)
@@ -11008,8 +11051,8 @@ def kernel_force_p2g_semitwophase_2DAxisy(
                 internal_forcef = vec2f(
                     [dshape_fn[0] * fintf[0] + fintf[2] * shape_fn / position[0], dshape_fn[1] * fintf[1]]
                 )
-                node[nodeID, bodyID]._update_nodal_dragval(drag_)
-                node[nodeID, bodyID]._update_nodal_force(
+                node[node_id, body_id]._update_nodal_dragval(drag_)
+                node[node_id, body_id]._update_nodal_force(
                     external_force + internal_force, external_forcef + internal_forcef
                 )
 
@@ -11017,71 +11060,71 @@ def kernel_force_p2g_semitwophase_2DAxisy(
 @ti.kernel
 def kernel_single_point_porosity_p2g(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
     node: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
 ):
     # Reuse nodal scratch fields; do not overwrite the old pressure predictor.
     node.porosity.fill(0.0)
     node.weight.fill(0.0)
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1 and int(particle[np].materialID) > 0:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 volume = shapefn[ln] * particle[np].vol
-                node[nodeID, bodyID].weight += volume
-                node[nodeID, bodyID].porosity += volume * particle[np].porosity
+                node[node_id, body_id].weight += volume
+                node[node_id, body_id].porosity += volume * particle[np].porosity
     for ng, nb in node:
         if node[ng, nb].weight > 0.0:
             node[ng, nb].porosity /= node[ng, nb].weight
 
 
 @ti.kernel
-def kernel_pressure_p2g_twophase_2D(
-    particleNum: int,
+def kernel_pressure_p2g_twophase_2d(
+    particle_num: int,
     extra_node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     total_nodes: int,
     node_size: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
-            scale = particle[np].m * MeanStress(particle[np].stress)  # particle[np].porosity / particle[np].pressure
+            scale = particle[np].m * mean_stress(particle[np].stress)  # particle[np].porosity / particle[np].pressure
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
-                extra_node[nodeID, bodyID]._update_nodal_pressure(shape_mapping(shapefn[ln], scale))
+                node_id = ln_id[ln]
+                extra_node[node_id, body_id]._update_nodal_pressure(shape_mapping(shapefn[ln], scale))
 
 
 @ti.kernel
 def kernel_porosity_p2g(
-    particleNum: int,
+    particle_num: int,
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     total_nodes: int,
     node_size: ti.template(),
 ):
     node.pressure.fill(0.0)
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             poro = particle[np].m * particle[np].porosity
             pressure = particle[np].m * particle[np].pressure
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
-                node[nodeID, bodyID].porosity += shape_mapping(shapefn[ln], poro)
-                node[nodeID, bodyID].pressure += shape_mapping(shapefn[ln], pressure)
+                node_id = ln_id[ln]
+                node[node_id, body_id].porosity += shape_mapping(shapefn[ln], poro)
+                node[node_id, body_id].pressure += shape_mapping(shapefn[ln], pressure)
 
 
 @ti.kernel
@@ -11096,7 +11139,7 @@ def kernel_assemble_bc_map(
     cell_porosity: ti.template(),
     is_rigid: ti.template(),
 ):
-    bodyID = 0 if is_rigid[0] == 0 else 1
+    body_id = 0 if is_rigid[0] == 0 else 1
     right_hand_vector.fill(0)
     for I in ti.grouped(cell_type):
         if cell_type[I] == 1:
@@ -11105,53 +11148,53 @@ def kernel_assemble_bc_map(
             psize = vec2f(0, 0)
             base_bound = ti.floor((position - psize) / element_size, int)
             influenced_node = 2
-            LnID = vec4i([0, 0, 0, 0])
+            ln_id = vec4i([0, 0, 0, 0])
             shape_fn = vec4f([0.0, 0.0, 0.0, 0.0])
             dxshape_fn = vec4f([0.0, 0.0, 0.0, 0.0])
             dyshape_fn = vec4f([0.0, 0.0, 0.0, 0.0])
-            localID = 0
+            local_id = 0
             for lj in range(base_bound[1], base_bound[1] + influenced_node):
                 if lj < 0 or lj >= gnum[1]:
                     continue
                 for li in range(base_bound[0], base_bound[0] + influenced_node):
                     if li < 0 or li >= gnum[0]:
                         continue
-                    nodeID = int(li + lj * gnum[0])
+                    node_id = int(li + lj * gnum[0])
                     node_coords = vec2i(li, lj) * element_size
                     shapen0 = shape_function(position[0], node_coords[0], 1.0 / element_size[0], psize[0])
                     shapen1 = shape_function(position[1], node_coords[1], 1.0 / element_size[1], psize[1])
                     shapeval = shapen0 * shapen1
-                    if shapeval > Threshold:
+                    if shapeval > THRESHOLD:
                         dshapen0 = grad_shape_function(position[0], node_coords[0], 1.0 / element_size[0], psize[0])
                         dshapen1 = grad_shape_function(position[1], node_coords[1], 1.0 / element_size[1], psize[1])
                         grad_shapeval = vec2f([dshapen0 * shapen1, shapen0 * dshapen1])
-                        LnID[localID] = nodeID
-                        shape_fn[localID] = shapeval
-                        dxshape_fn[localID] = grad_shapeval[0]
-                        dyshape_fn[localID] = grad_shapeval[1]
-                        localID += 1
+                        ln_id[local_id] = node_id
+                        shape_fn[local_id] = shapeval
+                        dxshape_fn[local_id] = grad_shapeval[0]
+                        dyshape_fn[local_id] = grad_shapeval[1]
+                        local_id += 1
             porosity = cell_porosity[I]
             total_nodes = influenced_node * influenced_node
             B1, B2 = 0.0, 0.0
             jdshape = vec2f([0.0, 0.0])
             for lnj in range(total_nodes):
-                nodeIDj = LnID[lnj]
+                node_i_dj = ln_id[lnj]
                 jshape = shape_fn[lnj]
                 jdshape[0] = dxshape_fn[lnj]
                 jdshape[1] = dyshape_fn[lnj]
                 B1 += (
-                    jdshape[0] * (1.0 - porosity) * node[nodeIDj, bodyID].momentums[0]
-                    + jdshape[1] * (1.0 - porosity) * node[nodeIDj, bodyID].momentums[1]
+                    jdshape[0] * (1.0 - porosity) * node[node_i_dj, body_id].momentums[0]
+                    + jdshape[1] * (1.0 - porosity) * node[node_i_dj, body_id].momentums[1]
                 )
                 B2 += (
-                    jdshape[0] * porosity * node[nodeIDj, bodyID].momentumf[0]
-                    + jdshape[1] * porosity * node[nodeIDj, bodyID].momentumf[1]
+                    jdshape[0] * porosity * node[node_i_dj, body_id].momentumf[0]
+                    + jdshape[1] * porosity * node[node_i_dj, body_id].momentumf[1]
                 )
             right_hand_vector[I] += B1 + B2
 
 
 @ti.kernel
-def kernel_assemble_bc_map_3D(
+def kernel_assemble_bc_map_3d(
     node: ti.template(),
     element_size: ti.types.vector(3, float),
     shape_function: ti.template(),
@@ -11162,7 +11205,7 @@ def kernel_assemble_bc_map_3D(
     cell_porosity: ti.template(),
     is_rigid: ti.template(),
 ):
-    bodyID = 0 if is_rigid[0] == 0 else 1
+    body_id = 0 if is_rigid[0] == 0 else 1
     right_hand_vector.fill(0)
     for I in ti.grouped(cell_type):
         if cell_type[I] == 1:
@@ -11171,12 +11214,12 @@ def kernel_assemble_bc_map_3D(
             psize = vec3f(0, 0, 0)
             base_bound = ti.floor((position - psize) / element_size, int)
             influenced_node = 2
-            LnID = vec8i([0, 0, 0, 0, 0, 0, 0, 0])
+            ln_id = vec8i([0, 0, 0, 0, 0, 0, 0, 0])
             shape_fn = vec8f([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
             dxshape_fn = vec8f([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
             dyshape_fn = vec8f([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
             dzshape_fn = vec8f([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-            localID = 0
+            local_id = 0
             for lk in range(base_bound[2], base_bound[2] + influenced_node):
                 if lk < 0 or lk >= gnum[2]:
                     continue
@@ -11186,46 +11229,46 @@ def kernel_assemble_bc_map_3D(
                     for li in range(base_bound[0], base_bound[0] + influenced_node):
                         if li < 0 or li >= gnum[0]:
                             continue
-                        nodeID = linearize(vec3i(li, lj, lk), gnum)
+                        node_id = linearize(vec3i(li, lj, lk), gnum)
                         node_coords = vec3f(li, lj, lk) * element_size
                         shapen0 = shape_function(position[0], node_coords[0], 1.0 / element_size[0], psize[0])
                         shapen1 = shape_function(position[1], node_coords[1], 1.0 / element_size[1], psize[1])
                         shapen2 = shape_function(position[2], node_coords[2], 1.0 / element_size[2], psize[2])
                         shapeval = shapen0 * shapen1 * shapen2
-                        if shapeval > Threshold:
+                        if shapeval > THRESHOLD:
                             dshapen0 = grad_shape_function(position[0], node_coords[0], 1.0 / element_size[0], psize[0])
                             dshapen1 = grad_shape_function(position[1], node_coords[1], 1.0 / element_size[1], psize[1])
                             dshapen2 = grad_shape_function(position[2], node_coords[2], 1.0 / element_size[2], psize[2])
-                            LnID[localID] = nodeID
-                            shape_fn[localID] = shapeval
-                            dxshape_fn[localID] = dshapen0 * shapen1 * shapen2
-                            dyshape_fn[localID] = shapen0 * dshapen1 * shapen2
-                            dzshape_fn[localID] = shapen0 * shapen1 * dshapen2
-                            localID += 1
+                            ln_id[local_id] = node_id
+                            shape_fn[local_id] = shapeval
+                            dxshape_fn[local_id] = dshapen0 * shapen1 * shapen2
+                            dyshape_fn[local_id] = shapen0 * dshapen1 * shapen2
+                            dzshape_fn[local_id] = shapen0 * shapen1 * dshapen2
+                            local_id += 1
             porosity = cell_porosity[I]
             B1, B2 = 0.0, 0.0
             total_nodes = influenced_node * influenced_node * influenced_node
             jdshape = vec3f([0.0, 0.0, 0.0])
             for lnj in range(total_nodes):
-                nodeIDj = LnID[lnj]
+                node_i_dj = ln_id[lnj]
                 jdshape[0] = dxshape_fn[lnj]
                 jdshape[1] = dyshape_fn[lnj]
                 jdshape[2] = dzshape_fn[lnj]
                 B1 += (
-                    jdshape[0] * (1.0 - porosity) * node[nodeIDj, bodyID].momentums[0]
-                    + jdshape[1] * (1.0 - porosity) * node[nodeIDj, bodyID].momentums[1]
-                    + jdshape[2] * (1.0 - porosity) * node[nodeIDj, bodyID].momentums[2]
+                    jdshape[0] * (1.0 - porosity) * node[node_i_dj, body_id].momentums[0]
+                    + jdshape[1] * (1.0 - porosity) * node[node_i_dj, body_id].momentums[1]
+                    + jdshape[2] * (1.0 - porosity) * node[node_i_dj, body_id].momentums[2]
                 )
                 B2 += (
-                    jdshape[0] * porosity * node[nodeIDj, bodyID].momentumf[0]
-                    + jdshape[1] * porosity * node[nodeIDj, bodyID].momentumf[1]
-                    + jdshape[2] * porosity * node[nodeIDj, bodyID].momentumf[2]
+                    jdshape[0] * porosity * node[node_i_dj, body_id].momentumf[0]
+                    + jdshape[1] * porosity * node[node_i_dj, body_id].momentumf[1]
+                    + jdshape[2] * porosity * node[node_i_dj, body_id].momentumf[2]
                 )
             right_hand_vector[I] += B1 + B2
 
 
 @ti.kernel
-def kernel_assemble_bc_2DAxisy_map_(
+def kernel_assemble_bc_2d_axisy_map(
     node: ti.template(),
     element_size: ti.types.vector(2, float),
     shape_function: ti.template(),
@@ -11237,7 +11280,7 @@ def kernel_assemble_bc_2DAxisy_map_(
     is_rigid: ti.template(),
     axis_offset: float,
 ):
-    bodyID = 0 if is_rigid[0] == 0 else 1
+    body_id = 0 if is_rigid[0] == 0 else 1
     right_hand_vector.fill(0)
     for I in ti.grouped(cell_type):
         if cell_type[I] == 1:
@@ -11246,31 +11289,31 @@ def kernel_assemble_bc_2DAxisy_map_(
             psize = vec2f(0, 0)
             base_bound = ti.floor((position - psize) / element_size, int)
             influenced_node = 2
-            LnID = vec4i([0, 0, 0, 0])
+            ln_id = vec4i([0, 0, 0, 0])
             shape_fn = vec4f([0.0, 0.0, 0.0, 0.0])
             dxshape_fn = vec4f([0.0, 0.0, 0.0, 0.0])
             dyshape_fn = vec4f([0.0, 0.0, 0.0, 0.0])
-            localID = 0
+            local_id = 0
             for lj in range(base_bound[1], base_bound[1] + influenced_node):
                 if lj < 0 or lj >= gnum[1]:
                     continue
                 for li in range(base_bound[0], base_bound[0] + influenced_node):
                     if li < 0 or li >= gnum[0]:
                         continue
-                    nodeID = int(li + lj * gnum[0])
+                    node_id = int(li + lj * gnum[0])
                     node_coords = vec2i(li, lj) * element_size
                     shapen0 = shape_function(position[0], node_coords[0], 1.0 / element_size[0], psize[0])
                     shapen1 = shape_function(position[1], node_coords[1], 1.0 / element_size[1], psize[1])
                     shapeval = shapen0 * shapen1
-                    if shapeval > Threshold:
+                    if shapeval > THRESHOLD:
                         dshapen0 = grad_shape_function(position[0], node_coords[0], 1.0 / element_size[0], psize[0])
                         dshapen1 = grad_shape_function(position[1], node_coords[1], 1.0 / element_size[1], psize[1])
                         grad_shapeval = vec2f([dshapen0 * shapen1, shapen0 * dshapen1])
-                        LnID[localID] = nodeID
-                        shape_fn[localID] = shapeval
-                        dxshape_fn[localID] = grad_shapeval[0]
-                        dyshape_fn[localID] = grad_shapeval[1]
-                        localID += 1
+                        ln_id[local_id] = node_id
+                        shape_fn[local_id] = shapeval
+                        dxshape_fn[local_id] = grad_shapeval[0]
+                        dyshape_fn[local_id] = grad_shapeval[1]
+                        local_id += 1
             porosity = cell_porosity[I]
             total_nodes = influenced_node * influenced_node
             B1, B2 = 0.0, 0.0
@@ -11278,26 +11321,26 @@ def kernel_assemble_bc_2DAxisy_map_(
             rc = position[0] - axis_offset
             rc_ = (position[0] - axis_offset) / element_size[0]
             for lnj in range(total_nodes):
-                nodeIDj = LnID[lnj]
+                node_i_dj = ln_id[lnj]
                 jshape = shape_fn[lnj]
                 jdshape[0] = dxshape_fn[lnj]
                 jdshape[1] = dyshape_fn[lnj]
                 B1 += (
-                    jdshape[0] * (1.0 - porosity) * node[nodeIDj, bodyID].momentums[0]
-                    + jdshape[1] * (1.0 - porosity) * node[nodeIDj, bodyID].momentums[1]
-                    + jshape / rc * (1.0 - porosity) * node[nodeIDj, bodyID].momentums[0]
+                    jdshape[0] * (1.0 - porosity) * node[node_i_dj, body_id].momentums[0]
+                    + jdshape[1] * (1.0 - porosity) * node[node_i_dj, body_id].momentums[1]
+                    + jshape / rc * (1.0 - porosity) * node[node_i_dj, body_id].momentums[0]
                 )
                 B2 += (
-                    jdshape[0] * porosity * node[nodeIDj, bodyID].momentumf[0]
-                    + jdshape[1] * porosity * node[nodeIDj, bodyID].momentumf[1]
-                    + jshape / rc * porosity * node[nodeIDj, bodyID].momentumf[0]
+                    jdshape[0] * porosity * node[node_i_dj, body_id].momentumf[0]
+                    + jdshape[1] * porosity * node[node_i_dj, body_id].momentumf[1]
+                    + jshape / rc * porosity * node[node_i_dj, body_id].momentumf[0]
                 )
             right_hand_vector[I] += (B1 + B2) * rc_
 
 
 @ti.kernel
-def kernel_assemble_FIC_bc_map(
-    matProp: ti.template(),
+def kernel_assemble_fic_bc_map(
+    mat_prop: ti.template(),
     node: ti.template(),
     element_size: ti.types.vector(2, float),
     shape_function: ti.template(),
@@ -11308,11 +11351,11 @@ def kernel_assemble_FIC_bc_map(
     cell_porosity: ti.template(),
 ):
     right_hand_vector.fill(0)
-    density_s, density_f = matProp.solid_density, matProp.fluid_density
-    young, poisson = matProp.young, matProp.poisson
-    Gmod = young / (1.0 + poisson) / 2.0
-    Kmod = young / (1.0 - 2.0 * poisson) / 3.0
-    tau_ = element_size[0] / ti.sqrt((Kmod + 4.0 * Gmod / 3.0) / density_s) * 10.0
+    density_s, density_f = mat_prop.solid_density, mat_prop.fluid_density
+    young, poisson = mat_prop.young, mat_prop.poisson
+    gmod = young / (1.0 + poisson) / 2.0
+    kmod = young / (1.0 - 2.0 * poisson) / 3.0
+    tau_ = element_size[0] / ti.sqrt((kmod + 4.0 * gmod / 3.0) / density_s) * 10.0
     # tau_ = 0.0
 
     for I in ti.grouped(cell_type):
@@ -11322,32 +11365,32 @@ def kernel_assemble_FIC_bc_map(
             psize = vec2f(0, 0)
             base_bound = ti.floor((position - psize) / element_size, int)
             influenced_node = 2
-            LnID = vec4i([0, 0, 0, 0])
+            ln_id = vec4i([0, 0, 0, 0])
             shape_fn = vec4f([0.0, 0.0, 0.0, 0.0])
             dxshape_fn = vec4f([0.0, 0.0, 0.0, 0.0])
             dyshape_fn = vec4f([0.0, 0.0, 0.0, 0.0])
-            localID = 0
+            local_id = 0
             for lj in range(base_bound[1], base_bound[1] + influenced_node):
                 if lj < 0 or lj >= gnum[1]:
                     continue
                 for li in range(base_bound[0], base_bound[0] + influenced_node):
                     if li < 0 or li >= gnum[0]:
                         continue
-                    nodeID = int(li + lj * gnum[0])
+                    node_id = int(li + lj * gnum[0])
                     node_coords = vec2i(li, lj) * element_size
                     shapen0 = shape_function(position[0], node_coords[0], 1.0 / element_size[0], psize[0])
                     shapen1 = shape_function(position[1], node_coords[1], 1.0 / element_size[1], psize[1])
                     shapeval = shapen0 * shapen1
-                    if shapeval > Threshold:
+                    if shapeval > THRESHOLD:
                         dshapen0 = grad_shape_function(position[0], node_coords[0], 1.0 / element_size[0], psize[0])
                         dshapen1 = grad_shape_function(position[1], node_coords[1], 1.0 / element_size[1], psize[1])
                         grad_shapeval = vec2f([dshapen0 * shapen1, shapen0 * dshapen1])
-                        LnID[localID] = nodeID
-                        shape_fn[localID] = shapeval
-                        dxshape_fn[localID] = grad_shapeval[0]
-                        dyshape_fn[localID] = grad_shapeval[1]
-                        localID += 1
-            bodyID = 0
+                        ln_id[local_id] = node_id
+                        shape_fn[local_id] = shapeval
+                        dxshape_fn[local_id] = grad_shapeval[0]
+                        dyshape_fn[local_id] = grad_shapeval[1]
+                        local_id += 1
+            body_id = 0
             porosity = cell_porosity[I]
             H = tau_ * (porosity / density_f + (1.0 - porosity) / density_s)
             total_nodes = influenced_node * influenced_node
@@ -11355,48 +11398,48 @@ def kernel_assemble_FIC_bc_map(
             jdshape = vec2f([0.0, 0.0])
             idshape = vec2f([0.0, 0.0])
             for lnj in range(total_nodes):
-                nodeIDj = LnID[lnj]
+                node_i_dj = ln_id[lnj]
                 jshape = shape_fn[lnj]
                 jdshape[0] = dxshape_fn[lnj]
                 jdshape[1] = dyshape_fn[lnj]
                 B1 += (
-                    jdshape[0] * (1.0 - porosity) * node[nodeIDj, bodyID].momentums[0]
-                    + jdshape[1] * (1.0 - porosity) * node[nodeIDj, bodyID].momentums[1]
+                    jdshape[0] * (1.0 - porosity) * node[node_i_dj, body_id].momentums[0]
+                    + jdshape[1] * (1.0 - porosity) * node[node_i_dj, body_id].momentums[1]
                 )
                 B2 += (
-                    jdshape[0] * porosity * node[nodeIDj, bodyID].momentumf[0]
-                    + jdshape[1] * porosity * node[nodeIDj, bodyID].momentumf[1]
+                    jdshape[0] * porosity * node[node_i_dj, body_id].momentumf[0]
+                    + jdshape[1] * porosity * node[node_i_dj, body_id].momentumf[1]
                 )
                 for lni in range(total_nodes):
-                    nodeIDi = LnID[lni]
+                    node_i_di = ln_id[lni]
                     ishape = shape_fn[lni]
                     idshape[0] = dxshape_fn[lni]
                     idshape[1] = dyshape_fn[lni]
                     B3 -= (
-                        jdshape[0] * idshape[0] * H * node[nodeIDi, bodyID].pressure
-                        + jdshape[1] * idshape[1] * H * node[nodeIDi, bodyID].pressure
+                        jdshape[0] * idshape[0] * H * node[node_i_di, body_id].pressure
+                        + jdshape[1] * idshape[1] * H * node[node_i_di, body_id].pressure
                     )
                     B4 -= (
-                        jdshape[0] * ishape * tau_ * node[nodeIDi, bodyID].extra_stabilize[0]
-                        + jdshape[1] * ishape * tau_ * node[nodeIDi, bodyID].extra_stabilize[1]
+                        jdshape[0] * ishape * tau_ * node[node_i_di, body_id].extra_stabilize[0]
+                        + jdshape[1] * ishape * tau_ * node[node_i_di, body_id].extra_stabilize[1]
                     )
             right_hand_vector[I] += B1 + B2 + B3 + B4
 
 
 @ti.kernel
-def kernel_assemble_A(
+def kernel_assemble_a(
     level: int,
     dt: ti.template(),
-    matProp: ti.template(),
+    mat_prop: ti.template(),
     element_size: ti.template(),
     cell_porosity: ti.template(),
     cell_phi: ti.template(),
     grid_type: ti.template(),
-    Adiag: ti.template(),
+    adiag: ti.template(),
     Ax: ti.template(),
 ):
     dimension = ti.static(GlobalVariable.DIMENSION)
-    density_s, density_f = matProp.solid_density, matProp.fluid_density
+    density_s, density_f = mat_prop.solid_density, mat_prop.fluid_density
     cnum = ti.Vector.zero(int, dimension)
     for d in ti.static(range(dimension)):
         cnum[d] = grid_type.shape[d]
@@ -11414,32 +11457,32 @@ def kernel_assemble_A(
                     # it contributes a no-flux face and never consumes a physical cell.
                     if is_mg_valid_cell(neighbor, cnum):
                         if grid_type[neighbor] == 1:
-                            Adiag[I] -= scale_A
+                            adiag[I] -= scale_A
                             if ti.static(s > 0):
                                 Ax[I][k] = scale_A
                         elif grid_type[neighbor] == 0:
                             theta = 0.5
                             if level == 0:
                                 theta = free_surface_theta(I, neighbor, cell_phi)
-                            Adiag[I] -= scale_A / theta
+                            adiag[I] -= scale_A / theta
 
 
 @ti.kernel
-def kernel_assemble_A_2DAxisy_multi(
+def kernel_assemble_a_2d_axisy_multi(
     dt: ti.template(),
-    matProp: ti.template(),
+    mat_prop: ti.template(),
     element_size: ti.types.vector(2, float),
     cell_porosity: ti.template(),
     cell_phi: ti.template(),
     grid_type: ti.template(),
-    Adiag: ti.template(),
+    adiag: ti.template(),
     Ax: ti.template(),
-    Ax_neg: ti.template(),
+    ax_neg: ti.template(),
     axis_offset: float,
     level: int,
 ):
     dimension = ti.static(2)
-    density_s, density_f = matProp.solid_density, matProp.fluid_density
+    density_s, density_f = mat_prop.solid_density, mat_prop.fluid_density
     scale_A_ = dt[None] / (element_size[0] * element_size[1])
     factor = 2.0**level
 
@@ -11456,41 +11499,41 @@ def kernel_assemble_A_2DAxisy_multi(
                         if k == 1:
                             if ti.static(s > 0):
                                 Ax[I][k] = scale_A * (rc + 0.5) * factor
-                                Adiag[I] -= scale_A * (rc + 0.5) * factor
+                                adiag[I] -= scale_A * (rc + 0.5) * factor
                             else:
-                                Ax_neg[I][k] = scale_A * (rc + 0.5) * factor
-                                Adiag[I] -= scale_A * (rc + 0.5) * factor
+                                ax_neg[I][k] = scale_A * (rc + 0.5) * factor
+                                adiag[I] -= scale_A * (rc + 0.5) * factor
                         elif k == 0:  # r-direction
                             if rc > 0.5:
                                 if ti.static(s > 0):
                                     Ax[I][k] = scale_A * (rc + 1.0) * factor
-                                    Adiag[I] -= scale_A * (rc + 1.0) * factor
+                                    adiag[I] -= scale_A * (rc + 1.0) * factor
                                 else:
-                                    Ax_neg[I][k] = scale_A * rc * factor
-                                    Adiag[I] -= scale_A * rc * factor
+                                    ax_neg[I][k] = scale_A * rc * factor
+                                    adiag[I] -= scale_A * rc * factor
                             else:
                                 if ti.static(s > 0):
                                     Ax[I][k] = scale_A * (rc + 1.0) * factor
-                                    Adiag[I] -= scale_A * (rc + 1.0) * factor
+                                    adiag[I] -= scale_A * (rc + 1.0) * factor
                                 else:
-                                    Ax_neg[I][k] = 0.0
+                                    ax_neg[I][k] = 0.0
                     elif neighbor_type == 0:
                         if k == 0:
                             if rc > 0.5:
                                 if ti.static(s > 0):
-                                    Adiag[I] -= scale_A * (rc + 1.0) * factor
+                                    adiag[I] -= scale_A * (rc + 1.0) * factor
                                 else:
-                                    Adiag[I] -= scale_A * rc * factor
+                                    adiag[I] -= scale_A * rc * factor
                             else:
                                 if ti.static(s > 0):
-                                    Adiag[I] -= scale_A * (rc + 1.0) * factor
+                                    adiag[I] -= scale_A * (rc + 1.0) * factor
                         elif k == 1:
-                            Adiag[I] -= scale_A * (rc + 0.5) * factor
+                            adiag[I] -= scale_A * (rc + 0.5) * factor
 
 
 @ti.kernel
-def kernel_assemble_spare_A(
-    grid_type: ti.template(), Adiag: ti.template(), Ax: ti.template(), Ax_: ti.template(), sparse_matrix: ti.template()
+def kernel_assemble_spare_a(
+    grid_type: ti.template(), adiag: ti.template(), Ax: ti.template(), Ax_: ti.template(), sparse_matrix: ti.template()
 ):
     infnode = 5
     # epsilon = 1e-14
@@ -11509,7 +11552,7 @@ def kernel_assemble_spare_A(
                 index = infnode * idx
                 sparse_matrix.rows[index] = idx
                 sparse_matrix.cols[index] = idx
-                sparse_matrix.data[index] = Adiag[i, j]
+                sparse_matrix.data[index] = adiag[i, j]
                 # if Adiag[i, j] < epsilon:
                 #     sparse_matrix.data[index] += epsilon
 
@@ -11546,22 +11589,22 @@ def kernel_assemble_spare_A(
 
 
 @ti.kernel
-def kernel_assemble_A_FIC(
+def kernel_assemble_a_fic(
     dt: ti.template(),
-    matProp: ti.template(),
+    mat_prop: ti.template(),
     element_size: ti.types.vector(2, float),
     cell_porosity: ti.template(),
     cell_phi: ti.template(),
     grid_type: ti.template(),
-    Adiag: ti.template(),
+    adiag: ti.template(),
     Ax: ti.template(),
 ):
     dimension = ti.static(2)
-    density_s, density_f = matProp.solid_density, matProp.fluid_density
-    young, poisson = matProp.young, matProp.poisson
-    Gmod = young / (1.0 + poisson) / 2.0
-    Kmod = young / (1.0 - 2.0 * poisson) / 3.0
-    tau_ = element_size[0] / ti.sqrt((Kmod + 4.0 * Gmod / 3.0) / density_s) * 10.0
+    density_s, density_f = mat_prop.solid_density, mat_prop.fluid_density
+    young, poisson = mat_prop.young, mat_prop.poisson
+    gmod = young / (1.0 + poisson) / 2.0
+    kmod = young / (1.0 - 2.0 * poisson) / 3.0
+    tau_ = element_size[0] / ti.sqrt((kmod + 4.0 * gmod / 3.0) / density_s) * 10.0
     # tau_ = 0.0
     scale_A_ = (dt[None] + tau_) / (element_size[0] * element_size[1])
 
@@ -11574,15 +11617,15 @@ def kernel_assemble_A_FIC(
                     offset = ti.Vector.unit(dimension, k) * s
                     neighbor_type = get_mg_cell_type(I + offset, grid_type)
                     if neighbor_type == 1:
-                        Adiag[I] -= scale_A
+                        adiag[I] -= scale_A
                         if ti.static(s > 0):
                             Ax[I][k] = scale_A
                     elif neighbor_type == 0:
-                        Adiag[I] -= scale_A
+                        adiag[I] -= scale_A
                         phi_fluid = cell_phi[I]
                         phi_air = cell_phi[I + offset]
                         """theta = ti.abs(phi_fluid) / (ti.abs(phi_fluid) + ti.abs(phi_air))
-                        theta = ti.max(0.001, ti.min(0.999, theta))                        
+                        theta = ti.max(0.001, ti.min(0.999, theta))
                         Adiag[I] += -scale_A - scale_A * (1.0 - theta) / theta    # 公式：-scale_A - (scale_A(1-θ)/θ)"""
                         """coeff_ratio  = ti.abs(phi_air) / ti.abs(phi_fluid)
                         coeff_ratio  = ti.max(0.001, ti.min(1000., coeff_ratio))
@@ -11612,14 +11655,14 @@ def kernel_reset_cell_infor(
 @ti.kernel  # MGPCG
 def kernel_update_cell_infor(
     istep: int,
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
     element_size: ti.template(),
     cell_volume: ti.template(),
     cell_porosity: ti.template(),
     cell_pressure: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         position = particle[np].x
         volume = particle[np].vol
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
@@ -11647,7 +11690,7 @@ def kernel_update_cell_porosity(
     gnum: ti.template(),
     is_rigid: ti.template(),
 ):
-    bodyID = 0 if is_rigid[0] == 0 else 1
+    body_id = 0 if is_rigid[0] == 0 else 1
     for I in ti.grouped(cell_type):
         if cell_type[I] == 1:
             poro = 0.0
@@ -11655,8 +11698,8 @@ def kernel_update_cell_porosity(
             count = 0.0
             for offset in ti.static(ti.grouped(ti.ndrange(*((0, 2),) * GlobalVariable.DIMENSION))):
                 node_id = linearize(I + offset, gnum)
-                poro += node[node_id, bodyID].porosity
-                pressure += node[node_id, bodyID].pressure
+                poro += node[node_id, body_id].porosity
+                pressure += node[node_id, body_id].pressure
                 count += 1.0
             cell_porosity[I] = poro / count
             cell_pressure[I] = pressure / count
@@ -11726,14 +11769,14 @@ def kernel_compute_grid_kinematic_semitwophase(
                     rhs_total = node[ng, nb].force[d]
                     rhs_fluid = node[ng, nb].forcef[d] - q * (node[ng, nb].momentumf[d] - node[ng, nb].momentums[d])
                     det = ms * (mf + delta_t * q) + delta_t * q * mf
-                    if ti.abs(det) > Threshold:
+                    if ti.abs(det) > THRESHOLD:
                         accs[d] = ((mf + delta_t * q) * rhs_total - mf * rhs_fluid) / det
                         accf[d] = (delta_t * q * rhs_total + ms * rhs_fluid) / det
                 node[ng, nb]._compute_nodal_kinematic_semi(damp, dt, accs, accf)
 
 
 @ti.kernel
-def kernel_compute_grid_kinematic_semitwophase_(
+def kernel_compute_grid_kinematic_drained_twophase(
     cutoff: float, damp: float, node: ti.template(), dt: ti.template(), nodal_coords: ti.template()
 ):
     delta_t = dt[None]
@@ -11750,77 +11793,77 @@ def kernel_compute_grid_kinematic_semitwophase_(
 @ti.kernel
 def kernel_correct_grid_kinematic_semitwophase(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
     node_size: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     node: ti.template(),
     dshapefn: ti.template(),
     shapefn: ti.template(),
     dt: ti.template(),
     cutoff: float,
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 0:
             continue
-        bodyID = int(particle[np].bodyID)
+        body_id = int(particle[np].bodyID)
         offset = np * total_nodes
         volume = particle[np].vol
         porosity = particle[np].porosity
         for lni in range(offset, offset + int(node_size[np])):
-            nodeIDi = LnID[lni]
+            node_i_di = ln_id[lni]
             ishape = shapefn[lni]
-            Bs, Bf = ZEROVEC2f, ZEROVEC2f
-            ms, mf = node[nodeIDi, bodyID].ms, node[nodeIDi, bodyID].mf
+            Bs, Bf = ZEROVEC2F, ZEROVEC2F
+            ms, mf = node[node_i_di, body_id].ms, node[node_i_di, body_id].mf
             for lnj in range(offset, offset + int(node_size[np])):
-                nodeIDj = LnID[lnj]
+                node_i_dj = ln_id[lnj]
                 jdshape = dshapefn[lnj]
-                Bs -= ishape * jdshape * node[nodeIDj, bodyID].dpressure * volume * (1.0 - porosity)
-                Bf -= ishape * jdshape * node[nodeIDj, bodyID].dpressure * volume * porosity
-            if node[nodeIDi, bodyID].ms > cutoff and node[nodeIDi, bodyID].mf > cutoff:
-                node[nodeIDi, bodyID].forces += Bs / ms
-                node[nodeIDi, bodyID].forcef += Bf / mf
-                node[nodeIDi, bodyID]._correct_nodal_kinematic_semi(dt, Bs / ms, Bf / mf)
+                Bs -= ishape * jdshape * node[node_i_dj, body_id].dpressure * volume * (1.0 - porosity)
+                Bf -= ishape * jdshape * node[node_i_dj, body_id].dpressure * volume * porosity
+            if node[node_i_di, body_id].ms > cutoff and node[node_i_di, body_id].mf > cutoff:
+                node[node_i_di, body_id].forces += Bs / ms
+                node[node_i_di, body_id].forcef += Bf / mf
+                node[node_i_di, body_id]._correct_nodal_kinematic_semi(dt, Bs / ms, Bf / mf)
 
 
 @ti.kernel
-def kernel_correct_grid_kinematic_semitwophase_2DAxisy(
+def kernel_correct_grid_kinematic_semitwophase_2d_axisy(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
     node_size: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     node: ti.template(),
     dshapefn: ti.template(),
     shapefn: ti.template(),
     dt: ti.template(),
     cutoff: float,
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 0:
             continue
-        bodyID = int(particle[np].bodyID)
+        body_id = int(particle[np].bodyID)
         offset = np * total_nodes
         volume = particle[np].vol
         porosity = particle[np].porosity
         position = particle[np].x
         for lni in range(offset, offset + int(node_size[np])):
-            nodeIDi = LnID[lni]
+            node_i_di = ln_id[lni]
             ishape = shapefn[lni]
-            Bs, Bf = ZEROVEC2f, ZEROVEC2f
-            ms, mf = node[nodeIDi, bodyID].ms, node[nodeIDi, bodyID].mf
+            Bs, Bf = ZEROVEC2F, ZEROVEC2F
+            ms, mf = node[node_i_di, body_id].ms, node[node_i_di, body_id].mf
             for lnj in range(offset, offset + int(node_size[np])):
-                nodeIDj = LnID[lnj]
+                node_i_dj = ln_id[lnj]
                 jshape = shapefn[lnj]
                 jdshape = dshapefn[lnj]
-                Bs -= ishape * jdshape * node[nodeIDj, bodyID].dpressure * volume * (1.0 - porosity)
-                Bs[0] -= ishape * jshape / position[0] * node[nodeIDj, bodyID].dpressure * volume * (1.0 - porosity)
-                Bf -= ishape * jdshape * node[nodeIDj, bodyID].dpressure * volume * porosity
-                Bf[0] -= ishape * jshape / position[0] * node[nodeIDj, bodyID].dpressure * volume * porosity
-            if node[nodeIDi, bodyID].ms > cutoff and node[nodeIDi, bodyID].mf > cutoff:
-                node[nodeIDi, bodyID].forces += Bs / ms
-                node[nodeIDi, bodyID].forcef += Bf / mf
-                node[nodeIDi, bodyID]._correct_nodal_kinematic_semi(dt, Bs / ms, Bf / mf)
+                Bs -= ishape * jdshape * node[node_i_dj, body_id].dpressure * volume * (1.0 - porosity)
+                Bs[0] -= ishape * jshape / position[0] * node[node_i_dj, body_id].dpressure * volume * (1.0 - porosity)
+                Bf -= ishape * jdshape * node[node_i_dj, body_id].dpressure * volume * porosity
+                Bf[0] -= ishape * jshape / position[0] * node[node_i_dj, body_id].dpressure * volume * porosity
+            if node[node_i_di, body_id].ms > cutoff and node[node_i_di, body_id].mf > cutoff:
+                node[node_i_di, body_id].forces += Bs / ms
+                node[node_i_di, body_id].forcef += Bf / mf
+                node[node_i_di, body_id]._correct_nodal_kinematic_semi(dt, Bs / ms, Bf / mf)
 
 
 @ti.kernel
@@ -11832,7 +11875,7 @@ def kernel_project_fic_pressure_gradient(
     mat_prop: ti.template(),
     particle: ti.template(),
     node_size: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     node: ti.template(),
     dshapefn: ti.template(),
     shapefn: ti.template(),
@@ -11844,23 +11887,23 @@ def kernel_project_fic_pressure_gradient(
         np = material_mapping[i]
         if int(particle[np].active) == 0 or int(particle[np].materialID) == 0:
             continue
-        bodyID = int(particle[np].bodyID)
+        body_id = int(particle[np].bodyID)
         offset = np * total_nodes
         volume = particle[np].vol
         porosity = particle[np].porosity
         mobility = porosity / mat_prop.fluid_density + (1.0 - porosity) / mat_prop.solid_density
-        gradient = single_point_nodal_pressure_gradient_2D(
+        gradient = single_point_nodal_pressure_gradient_2d(
             offset,
             int(node_size[np]),
-            bodyID,
+            body_id,
             node,
-            LnID,
+            ln_id,
             dshapefn,
         )
         for lni in range(offset, offset + int(node_size[np])):
-            nodeIDi = LnID[lni]
+            node_i_di = ln_id[lni]
             ishape = shapefn[lni]
-            node[nodeIDi, bodyID].extra_stabilize -= ishape * volume * mobility * gradient
+            node[node_i_di, body_id].extra_stabilize -= ishape * volume * mobility * gradient
 
 
 @ti.kernel
@@ -11873,38 +11916,38 @@ def kernel_normalize_fic_pressure_projection(node: ti.template()):
 @ti.kernel
 def kernel_correct_grid_kinematic_semitwophase_u_p(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
     node_size: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     node: ti.template(),
     dshapefn: ti.template(),
     shapefn: ti.template(),
     dt: ti.template(),
     cutoff: float,
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 0:
             continue
-        bodyID = int(particle[np].bodyID)
+        body_id = int(particle[np].bodyID)
         offset = np * total_nodes
         volume = particle[np].vol
         porosity = particle[np].porosity
         for lni in range(offset, offset + int(node_size[np])):
-            nodeIDi = LnID[lni]
+            node_i_di = ln_id[lni]
             ishape = shapefn[lni]
             idshape = dshapefn[lni]
-            Bm = ZEROVEC2f
-            m = node[nodeIDi, bodyID].m
+            Bm = ZEROVEC2F
+            m = node[node_i_di, body_id].m
             for lnj in range(offset, offset + int(node_size[np])):
-                nodeIDj = LnID[lnj]
+                node_i_dj = ln_id[lnj]
                 jshape = shapefn[lnj]
                 jdshape = dshapefn[lnj]
-                Bm -= ishape * jdshape * node[nodeIDj, bodyID].dpressure * volume
+                Bm -= ishape * jdshape * node[node_i_dj, body_id].dpressure * volume
                 # Bm -= idshape * jshape * node[nodeIDj, bodyID].dpressure * volume
-            if node[nodeIDi, bodyID].m > cutoff:
-                node[nodeIDi, bodyID].force += Bm / m
-                node[nodeIDi, bodyID].momentum += Bm / m * dt[None]
+            if node[node_i_di, body_id].m > cutoff:
+                node[node_i_di, body_id].force += Bm / m
+                node[node_i_di, body_id].momentum += Bm / m * dt[None]
 
 
 @ti.kernel
@@ -11919,14 +11962,14 @@ def kernel_correct_grid_kinematic_semitwophase_mg(
     cell_porosity: ti.template(),
     cell_dpressure: ti.template(),
     cell_phi: ti.template(),
-    matProp: ti.template(),
+    mat_prop: ti.template(),
     is_rigid: ti.template(),
 ):
     p0 = 0.0
     dimension = ti.static(2)
     inv_spacing = 1.0 / element_size
-    bodyID = 0 if is_rigid[0] == 0 else 1
-    density_s, density_f = matProp.solid_density, matProp.fluid_density
+    body_id = 0 if is_rigid[0] == 0 else 1
+    density_s, density_f = mat_prop.solid_density, mat_prop.fluid_density
     pressure_cnum = ti.Vector([cell_type.shape[0], cell_type.shape[1]])
     for I in ti.grouped(cell_type):
         for k in ti.static(range(dimension)):
@@ -11938,7 +11981,7 @@ def kernel_correct_grid_kinematic_semitwophase_mg(
                     and not is_mg_solid_cell(I_1, cell_type)
                 ):
                     i, j = I
-                    nodeID = int(i + j * gnum[0])
+                    node_id = int(i + j * gnum[0])
                     Bs, Bf = 0.0, 0.0
                     if is_mg_air_cell(I, cell_type):
                         theta = free_surface_theta(I_1, I, cell_phi)
@@ -11966,32 +12009,32 @@ def kernel_correct_grid_kinematic_semitwophase_mg(
                             w1, w2 = 1.0, 0.5
                         elif get_mg_cell_type(I + ti.Vector.unit(dimension, 1), cell_type) == 2:
                             w1, w2 = 0.5, 1.0
-                        node[nodeID, bodyID].forces[k] += Bs * w1
-                        node[nodeID, bodyID].forcef[k] += Bf * w1
-                        node[nodeID, bodyID].momentums[k] += Bs * dt[None] * w1
-                        node[nodeID, bodyID].momentumf[k] += Bf * dt[None] * w1
-                        node[nodeID + gnum[0], bodyID].forces[k] += Bs * w2
-                        node[nodeID + gnum[0], bodyID].forcef[k] += Bf * w2
-                        node[nodeID + gnum[0], bodyID].momentums[k] += Bs * dt[None] * w2
-                        node[nodeID + gnum[0], bodyID].momentumf[k] += Bf * dt[None] * w2
+                        node[node_id, body_id].forces[k] += Bs * w1
+                        node[node_id, body_id].forcef[k] += Bf * w1
+                        node[node_id, body_id].momentums[k] += Bs * dt[None] * w1
+                        node[node_id, body_id].momentumf[k] += Bf * dt[None] * w1
+                        node[node_id + gnum[0], body_id].forces[k] += Bs * w2
+                        node[node_id + gnum[0], body_id].forcef[k] += Bf * w2
+                        node[node_id + gnum[0], body_id].momentums[k] += Bs * dt[None] * w2
+                        node[node_id + gnum[0], body_id].momentumf[k] += Bf * dt[None] * w2
                     else:
                         w1, w2 = 0.5, 0.5
                         if get_mg_cell_type(I - ti.Vector.unit(dimension, 0), cell_type) == 2:
                             w1, w2 = 1.0, 0.5
                         elif get_mg_cell_type(I + ti.Vector.unit(dimension, 0), cell_type) == 2:
                             w1, w2 = 0.5, 1.0
-                        node[nodeID, bodyID].forces[k] += Bs * w1
-                        node[nodeID, bodyID].forcef[k] += Bf * w1
-                        node[nodeID, bodyID].momentums[k] += Bs * dt[None] * w1
-                        node[nodeID, bodyID].momentumf[k] += Bf * dt[None] * w1
-                        node[nodeID + 1, bodyID].forces[k] += Bs * w2
-                        node[nodeID + 1, bodyID].forcef[k] += Bf * w2
-                        node[nodeID + 1, bodyID].momentums[k] += Bs * dt[None] * w2
-                        node[nodeID + 1, bodyID].momentumf[k] += Bf * dt[None] * w2
+                        node[node_id, body_id].forces[k] += Bs * w1
+                        node[node_id, body_id].forcef[k] += Bf * w1
+                        node[node_id, body_id].momentums[k] += Bs * dt[None] * w1
+                        node[node_id, body_id].momentumf[k] += Bf * dt[None] * w1
+                        node[node_id + 1, body_id].forces[k] += Bs * w2
+                        node[node_id + 1, body_id].forcef[k] += Bf * w2
+                        node[node_id + 1, body_id].momentums[k] += Bs * dt[None] * w2
+                        node[node_id + 1, body_id].momentumf[k] += Bf * dt[None] * w2
 
 
 @ti.kernel
-def kernel_correct_grid_kinematic_semitwophase_mg_3D(
+def kernel_correct_grid_kinematic_semitwophase_mg_3d(
     istep: int,
     node: ti.template(),
     dt: ti.template(),
@@ -12002,14 +12045,14 @@ def kernel_correct_grid_kinematic_semitwophase_mg_3D(
     cell_porosity: ti.template(),
     cell_dpressure: ti.template(),
     cell_phi: ti.template(),
-    matProp: ti.template(),
+    mat_prop: ti.template(),
     is_rigid: ti.template(),
 ):
     p0 = 0.0
     dimension = ti.static(3)
     inv_spacing = 1.0 / element_size
-    bodyID = 0 if is_rigid[0] == 0 else 1
-    density_s, density_f = matProp.solid_density, matProp.fluid_density
+    body_id = 0 if is_rigid[0] == 0 else 1
+    density_s, density_f = mat_prop.solid_density, mat_prop.fluid_density
     cnum = ti.Vector([cell_type.shape[0], cell_type.shape[1], cell_type.shape[2]])
     for I in ti.grouped(cell_type):
         for k in ti.static(range(dimension)):
@@ -12035,16 +12078,16 @@ def kernel_correct_grid_kinematic_semitwophase_mg_3D(
                     for offset in ti.static(ti.grouped(ti.ndrange((0, 2), (0, 2), (0, 2)))):
                         if offset[k] == 0:
                             node_index = I + offset
-                            nodeID = linearize(node_index, gnum)
+                            node_id = linearize(node_index, gnum)
                             weight = 0.25
-                            node[nodeID, bodyID].forces[k] += Bs * weight
-                            node[nodeID, bodyID].forcef[k] += Bf * weight
-                            node[nodeID, bodyID].momentums[k] += Bs * dt[None] * weight
-                            node[nodeID, bodyID].momentumf[k] += Bf * dt[None] * weight
+                            node[node_id, body_id].forces[k] += Bs * weight
+                            node[node_id, body_id].forcef[k] += Bf * weight
+                            node[node_id, body_id].momentums[k] += Bs * dt[None] * weight
+                            node[node_id, body_id].momentumf[k] += Bf * dt[None] * weight
 
 
 @ti.kernel
-def kernel_correct_grid_kinematic_semitwophase_2DAxi_mg_fdm(
+def kernel_correct_grid_kinematic_semitwophase_2_d_axi_mg_fdm(
     istep: int,
     node: ti.template(),
     dt: ti.template(),
@@ -12055,7 +12098,7 @@ def kernel_correct_grid_kinematic_semitwophase_2DAxi_mg_fdm(
     cell_porosity: ti.template(),
     cell_dpressure: ti.template(),
     cell_phi: ti.template(),
-    matProp: ti.template(),
+    mat_prop: ti.template(),
     is_rigid: ti.template(),
     axi_offset: float,
 ):
@@ -12063,8 +12106,8 @@ def kernel_correct_grid_kinematic_semitwophase_2DAxi_mg_fdm(
     dimension = ti.static(2)
     dx = element_size[0]
     inv_spacing = 1.0 / element_size
-    bodyID = 0 if is_rigid[0] == 0 else 1
-    density_s, density_f = matProp.solid_density, matProp.fluid_density
+    body_id = 0 if is_rigid[0] == 0 else 1
+    density_s, density_f = mat_prop.solid_density, mat_prop.fluid_density
     pressure_cnum = ti.Vector([cell_type.shape[0], cell_type.shape[1]])
     for I in ti.grouped(cell_type):
         for k in ti.static(range(dimension)):
@@ -12076,7 +12119,7 @@ def kernel_correct_grid_kinematic_semitwophase_2DAxi_mg_fdm(
                     and not is_mg_solid_cell(I_1, cell_type)
                 ):
                     i, j = I
-                    nodeID = int(i + j * gnum[0])
+                    node_id = int(i + j * gnum[0])
                     Bs, Bf = 0.0, 0.0
                     if is_mg_air_cell(I, cell_type):
                         theta = free_surface_theta(I_1, I, cell_phi)
@@ -12104,32 +12147,32 @@ def kernel_correct_grid_kinematic_semitwophase_2DAxi_mg_fdm(
                             w1, w2 = 1.0, 0.5
                         elif get_mg_cell_type(I + ti.Vector.unit(dimension, 1), cell_type) == 2:
                             w1, w2 = 0.5, 1.0
-                        node[nodeID, bodyID].forces[k] += Bs * w1
-                        node[nodeID, bodyID].forcef[k] += Bf * w1
-                        node[nodeID, bodyID].momentums[k] += Bs * dt[None] * w1
-                        node[nodeID, bodyID].momentumf[k] += Bf * dt[None] * w1
-                        node[nodeID + gnum[0], bodyID].forces[k] += Bs * w2
-                        node[nodeID + gnum[0], bodyID].forcef[k] += Bf * w2
-                        node[nodeID + gnum[0], bodyID].momentums[k] += Bs * dt[None] * w2
-                        node[nodeID + gnum[0], bodyID].momentumf[k] += Bf * dt[None] * w2
+                        node[node_id, body_id].forces[k] += Bs * w1
+                        node[node_id, body_id].forcef[k] += Bf * w1
+                        node[node_id, body_id].momentums[k] += Bs * dt[None] * w1
+                        node[node_id, body_id].momentumf[k] += Bf * dt[None] * w1
+                        node[node_id + gnum[0], body_id].forces[k] += Bs * w2
+                        node[node_id + gnum[0], body_id].forcef[k] += Bf * w2
+                        node[node_id + gnum[0], body_id].momentums[k] += Bs * dt[None] * w2
+                        node[node_id + gnum[0], body_id].momentumf[k] += Bf * dt[None] * w2
                     else:
                         w1, w2 = 0.5, 0.5
                         if get_mg_cell_type(I - ti.Vector.unit(dimension, 0), cell_type) == 2:
                             w1, w2 = 1.0, 0.5
                         elif get_mg_cell_type(I + ti.Vector.unit(dimension, 0), cell_type) == 2:
                             w1, w2 = 0.5, 1.0
-                        node[nodeID, bodyID].forces[k] += Bs * w1
-                        node[nodeID, bodyID].forcef[k] += Bf * w1
-                        node[nodeID, bodyID].momentums[k] += Bs * dt[None] * w1
-                        node[nodeID, bodyID].momentumf[k] += Bf * dt[None] * w1
-                        node[nodeID + 1, bodyID].forces[k] += Bs * w2
-                        node[nodeID + 1, bodyID].forcef[k] += Bf * w2
-                        node[nodeID + 1, bodyID].momentums[k] += Bs * dt[None] * w2
-                        node[nodeID + 1, bodyID].momentumf[k] += Bf * dt[None] * w2
+                        node[node_id, body_id].forces[k] += Bs * w1
+                        node[node_id, body_id].forcef[k] += Bf * w1
+                        node[node_id, body_id].momentums[k] += Bs * dt[None] * w1
+                        node[node_id, body_id].momentumf[k] += Bf * dt[None] * w1
+                        node[node_id + 1, body_id].forces[k] += Bs * w2
+                        node[node_id + 1, body_id].forcef[k] += Bf * w2
+                        node[node_id + 1, body_id].momentums[k] += Bs * dt[None] * w2
+                        node[node_id + 1, body_id].momentumf[k] += Bf * dt[None] * w2
 
 
 @ti.kernel
-def kernel_correct_grid_kinematic_semitwophase_FIC_mg_fdm(
+def kernel_correct_grid_kinematic_semitwophase_fic_mg_fdm(
     istep: int,
     node: ti.template(),
     dt: ti.template(),
@@ -12141,14 +12184,14 @@ def kernel_correct_grid_kinematic_semitwophase_FIC_mg_fdm(
     cell_pressure: ti.template(),
     cell_dpressure: ti.template(),
     cell_phi: ti.template(),
-    matProp: ti.template(),
+    mat_prop: ti.template(),
 ):
     p0 = 0.0
-    bodyID = 0
+    body_id = 0
     dimension = ti.static(2)
     inv_spacing = 1.0 / element_size
-    density_s = matProp.solid_density
-    density_f = matProp.fluid_density
+    density_s = mat_prop.solid_density
+    density_f = mat_prop.fluid_density
     for I in ti.grouped(cell_type):
         for k in ti.static(range(dimension)):
             I_1 = I - ti.Vector.unit(dimension, k)
@@ -12159,7 +12202,7 @@ def kernel_correct_grid_kinematic_semitwophase_FIC_mg_fdm(
                     and not is_mg_solid_cell(I_1, cell_type)
                 ):
                     i, j = I
-                    nodeID = int(i + j * gnum[0])
+                    node_id = int(i + j * gnum[0])
                     porosity = cell_porosity[I]
                     Bs, Bf, fai = 0.0, 0.0, 0.0
                     if is_mg_air_cell(I, cell_type):
@@ -12190,32 +12233,32 @@ def kernel_correct_grid_kinematic_semitwophase_FIC_mg_fdm(
                             w1, w2 = 1.0, 0.5
                         elif get_mg_cell_type(I + ti.Vector.unit(dimension, 1), cell_type) == 2:
                             w1, w2 = 0.5, 1.0
-                        node[nodeID, bodyID].forces[k] += Bs * w1
-                        node[nodeID, bodyID].forcef[k] += Bf * w1
-                        node[nodeID, bodyID].momentums[k] += Bs * dt[None] * w1
-                        node[nodeID, bodyID].momentumf[k] += Bf * dt[None] * w1
-                        node[nodeID + gnum[0], bodyID].forces[k] += Bs * w2
-                        node[nodeID + gnum[0], bodyID].forcef[k] += Bf * w2
-                        node[nodeID + gnum[0], bodyID].momentums[k] += Bs * dt[None] * w2
-                        node[nodeID + gnum[0], bodyID].momentumf[k] += Bf * dt[None] * w2
-                        node[nodeID, bodyID].extra_stabilize[k] += fai * w1
-                        node[nodeID + gnum[0], bodyID].extra_stabilize[k] += fai * w2
+                        node[node_id, body_id].forces[k] += Bs * w1
+                        node[node_id, body_id].forcef[k] += Bf * w1
+                        node[node_id, body_id].momentums[k] += Bs * dt[None] * w1
+                        node[node_id, body_id].momentumf[k] += Bf * dt[None] * w1
+                        node[node_id + gnum[0], body_id].forces[k] += Bs * w2
+                        node[node_id + gnum[0], body_id].forcef[k] += Bf * w2
+                        node[node_id + gnum[0], body_id].momentums[k] += Bs * dt[None] * w2
+                        node[node_id + gnum[0], body_id].momentumf[k] += Bf * dt[None] * w2
+                        node[node_id, body_id].extra_stabilize[k] += fai * w1
+                        node[node_id + gnum[0], body_id].extra_stabilize[k] += fai * w2
                     else:
                         w1, w2 = 0.5, 0.5
                         if get_mg_cell_type(I - ti.Vector.unit(dimension, 0), cell_type) == 2:
                             w1, w2 = 1.0, 0.5
                         elif get_mg_cell_type(I + ti.Vector.unit(dimension, 0), cell_type) == 2:
                             w1, w2 = 0.5, 1.0
-                        node[nodeID, bodyID].forces[k] += Bs * w1
-                        node[nodeID, bodyID].forcef[k] += Bf * w1
-                        node[nodeID, bodyID].momentums[k] += Bs * dt[None] * w1
-                        node[nodeID, bodyID].momentumf[k] += Bf * dt[None] * w1
-                        node[nodeID + 1, bodyID].forces[k] += Bs * w2
-                        node[nodeID + 1, bodyID].forcef[k] += Bf * w2
-                        node[nodeID + 1, bodyID].momentums[k] += Bs * dt[None] * w2
-                        node[nodeID + 1, bodyID].momentumf[k] += Bf * dt[None] * w2
-                        node[nodeID, bodyID].extra_stabilize[k] += fai * w1
-                        node[nodeID + 1, bodyID].extra_stabilize[k] += fai * w2
+                        node[node_id, body_id].forces[k] += Bs * w1
+                        node[node_id, body_id].forcef[k] += Bf * w1
+                        node[node_id, body_id].momentums[k] += Bs * dt[None] * w1
+                        node[node_id, body_id].momentumf[k] += Bf * dt[None] * w1
+                        node[node_id + 1, body_id].forces[k] += Bs * w2
+                        node[node_id + 1, body_id].forcef[k] += Bf * w2
+                        node[node_id + 1, body_id].momentums[k] += Bs * dt[None] * w2
+                        node[node_id + 1, body_id].momentumf[k] += Bf * dt[None] * w2
+                        node[node_id, body_id].extra_stabilize[k] += fai * w1
+                        node[node_id + 1, body_id].extra_stabilize[k] += fai * w2
                         """if cell_type[I - ti.Vector.unit(dimension, 1)] == 2:
                             node[nodeID, bodyID].extra_stabilize[k] = 0.0
                             node[nodeID + 1, bodyID].extra_stabilize[k] = 0.0
@@ -12236,14 +12279,14 @@ def kernel_grid_porosity(cutoff: float, is_rigid: ti.template(), node: ti.templa
 
 
 @ti.kernel
-def kernel_kinemaitc_g2p_twophase2D(
+def kernel_kinemaitc_g2p_twophase2d(
     total_nodes: int,
     alpha: float,
     dt: ti.template(),
-    particleNum: int,
+    particle_num: int,
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
 ):
@@ -12251,173 +12294,173 @@ def kernel_kinemaitc_g2p_twophase2D(
     # for ng in range(node.shape[0]):
     #     for nb in range(node.shape[1]):
     #         print(ng, node[ng, nb].forcef)
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
-            vPICs, vFLIPs = ZEROVEC2f, ZEROVEC2f
-            vPICf, vFLIPf = ZEROVEC2f, ZEROVEC2f
-            bodyID = int(particle[np].bodyID)
+            v_pi_cs, v_fli_ps = ZEROVEC2F, ZEROVEC2F
+            v_pi_cf, v_fli_pf = ZEROVEC2F, ZEROVEC2F
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 shape_fn = shapefn[ln]
-                velocitys = node[nodeID, bodyID].momentums
-                velocityf = node[nodeID, bodyID].momentumf
-                acclerations = node[nodeID, bodyID].forces
-                acclerationf = node[nodeID, bodyID].forcef
-                vPICs += shape_mapping(shape_fn, velocitys)
-                vFLIPs += shape_mapping(shape_fn, acclerations) * dt[None]
-                vPICf += shape_mapping(shape_fn, velocityf)
-                vFLIPf += shape_mapping(shape_fn, acclerationf) * dt[None]
-            particle[np]._update_particle_state(dt, alpha, vPICs, vFLIPs, vPICs, vFLIPs, vPICf, vFLIPf)
+                velocitys = node[node_id, body_id].momentums
+                velocityf = node[node_id, body_id].momentumf
+                acclerations = node[node_id, body_id].forces
+                acclerationf = node[node_id, body_id].forcef
+                v_pi_cs += shape_mapping(shape_fn, velocitys)
+                v_fli_ps += shape_mapping(shape_fn, acclerations) * dt[None]
+                v_pi_cf += shape_mapping(shape_fn, velocityf)
+                v_fli_pf += shape_mapping(shape_fn, acclerationf) * dt[None]
+            particle[np]._update_particle_state(dt, alpha, v_pi_cs, v_fli_ps, v_pi_cs, v_fli_ps, v_pi_cf, v_fli_pf)
 
 
 @ti.kernel
-def kernel_kinemaitc_g2p_semitwophase2D(
+def kernel_kinemaitc_g2p_semitwophase2d(
     total_nodes: int,
     alpha: float,
     beta: float,
     dt: ti.template(),
-    particleNum: int,
+    particle_num: int,
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
 ):
     # ti.block_local(dt)
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
-            vPICs, vFLIPs = ZEROVEC2f, ZEROVEC2f
-            vPICf, vFLIPf = ZEROVEC2f, ZEROVEC2f
+            v_pi_cs, v_fli_ps = ZEROVEC2F, ZEROVEC2F
+            v_pi_cf, v_fli_pf = ZEROVEC2F, ZEROVEC2F
             dpressure = 0.0
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 shape_fn = shapefn[ln]
-                velocitys = node[nodeID, bodyID].momentums
-                velocityf = node[nodeID, bodyID].momentumf
-                acclerations = node[nodeID, bodyID].forces
-                acclerationf = node[nodeID, bodyID].forcef
-                ndpressure = beta * node[nodeID, bodyID].pressure + node[nodeID, bodyID].dpressure
-                vPICs += shape_mapping(shape_fn, velocitys)
-                vFLIPs += shape_mapping(shape_fn, acclerations) * dt[None]
-                vPICf += shape_mapping(shape_fn, velocityf)
-                vFLIPf += shape_mapping(shape_fn, acclerationf) * dt[None]
+                velocitys = node[node_id, body_id].momentums
+                velocityf = node[node_id, body_id].momentumf
+                acclerations = node[node_id, body_id].forces
+                acclerationf = node[node_id, body_id].forcef
+                ndpressure = beta * node[node_id, body_id].pressure + node[node_id, body_id].dpressure
+                v_pi_cs += shape_mapping(shape_fn, velocitys)
+                v_fli_ps += shape_mapping(shape_fn, acclerations) * dt[None]
+                v_pi_cf += shape_mapping(shape_fn, velocityf)
+                v_fli_pf += shape_mapping(shape_fn, acclerationf) * dt[None]
                 dpressure += shape_mapping(shape_fn, ndpressure)
-            particle[np]._update_particle_state(dt, alpha, vPICs, vFLIPs, vPICs, vFLIPs, vPICf, vFLIPf)
+            particle[np]._update_particle_state(dt, alpha, v_pi_cs, v_fli_ps, v_pi_cs, v_fli_ps, v_pi_cf, v_fli_pf)
             # Reconstruct the solved nodal pressure; incremental particle
             # accumulation retains pressure modes invisible to the grid.
             particle[np]._update_particle_pressure(0.0, dpressure)
 
 
 @ti.kernel
-def kernel_kinemaitc_g2p_semitwophase3D(
+def kernel_kinemaitc_g2p_semitwophase3d(
     total_nodes: int,
     alpha: float,
     beta: float,
     dt: ti.template(),
-    particleNum: int,
+    particle_num: int,
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
-            vPICs = ti.Vector.zero(float, 3)
-            vFLIPs = ti.Vector.zero(float, 3)
-            vPICf = ti.Vector.zero(float, 3)
-            vFLIPf = ti.Vector.zero(float, 3)
+            v_pi_cs = ti.Vector.zero(float, 3)
+            v_fli_ps = ti.Vector.zero(float, 3)
+            v_pi_cf = ti.Vector.zero(float, 3)
+            v_fli_pf = ti.Vector.zero(float, 3)
             dpressure = 0.0
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 shape_fn = shapefn[ln]
-                velocitys = node[nodeID, bodyID].momentums
-                velocityf = node[nodeID, bodyID].momentumf
-                acclerations = node[nodeID, bodyID].forces
-                acclerationf = node[nodeID, bodyID].forcef
-                ndpressure = beta * node[nodeID, bodyID].pressure + node[nodeID, bodyID].dpressure
-                vPICs += shape_mapping(shape_fn, velocitys)
-                vFLIPs += shape_mapping(shape_fn, acclerations) * dt[None]
-                vPICf += shape_mapping(shape_fn, velocityf)
-                vFLIPf += shape_mapping(shape_fn, acclerationf) * dt[None]
+                velocitys = node[node_id, body_id].momentums
+                velocityf = node[node_id, body_id].momentumf
+                acclerations = node[node_id, body_id].forces
+                acclerationf = node[node_id, body_id].forcef
+                ndpressure = beta * node[node_id, body_id].pressure + node[node_id, body_id].dpressure
+                v_pi_cs += shape_mapping(shape_fn, velocitys)
+                v_fli_ps += shape_mapping(shape_fn, acclerations) * dt[None]
+                v_pi_cf += shape_mapping(shape_fn, velocityf)
+                v_fli_pf += shape_mapping(shape_fn, acclerationf) * dt[None]
                 dpressure += shape_mapping(shape_fn, ndpressure)
-            particle[np]._update_particle_state(dt, alpha, vPICs, vFLIPs, vPICs, vFLIPs, vPICf, vFLIPf)
+            particle[np]._update_particle_state(dt, alpha, v_pi_cs, v_fli_ps, v_pi_cs, v_fli_ps, v_pi_cf, v_fli_pf)
             particle[np]._update_particle_pressure(0.0, dpressure)
 
 
 @ti.kernel
-def kernel_kinemaitc_g2p_semitwophase2D_FIC(
+def kernel_kinemaitc_g2p_semitwophase2d_fic(
     total_nodes: int,
     alpha: float,
     beta: float,
     dt: ti.template(),
-    particleNum: int,
+    particle_num: int,
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
 ):
     # ti.block_local(dt)
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
-            vPICs, vFLIPs = ZEROVEC2f, ZEROVEC2f
-            vPICf, vFLIPf = ZEROVEC2f, ZEROVEC2f
+            v_pi_cs, v_fli_ps = ZEROVEC2F, ZEROVEC2F
+            v_pi_cf, v_fli_pf = ZEROVEC2F, ZEROVEC2F
             dpressure = 0.0
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 shape_fn = shapefn[ln]
-                velocitys = node[nodeID, bodyID].momentums
-                velocityf = node[nodeID, bodyID].momentumf
-                acclerations = node[nodeID, bodyID].forces
-                acclerationf = node[nodeID, bodyID].forcef
-                ndpressure = beta * node[nodeID, bodyID].pressure + node[nodeID, bodyID].dpressure
-                vPICs += shape_mapping(shape_fn, velocitys)
-                vFLIPs += shape_mapping(shape_fn, acclerations) * dt[None]
-                vPICf += shape_mapping(shape_fn, velocityf)
-                vFLIPf += shape_mapping(shape_fn, acclerationf) * dt[None]
+                velocitys = node[node_id, body_id].momentums
+                velocityf = node[node_id, body_id].momentumf
+                acclerations = node[node_id, body_id].forces
+                acclerationf = node[node_id, body_id].forcef
+                ndpressure = beta * node[node_id, body_id].pressure + node[node_id, body_id].dpressure
+                v_pi_cs += shape_mapping(shape_fn, velocitys)
+                v_fli_ps += shape_mapping(shape_fn, acclerations) * dt[None]
+                v_pi_cf += shape_mapping(shape_fn, velocityf)
+                v_fli_pf += shape_mapping(shape_fn, acclerationf) * dt[None]
                 dpressure += shape_mapping(shape_fn, ndpressure)
-            particle[np]._update_particle_state(dt, alpha, vPICs, vFLIPs, vPICs, vFLIPs, vPICf, vFLIPf)
+            particle[np]._update_particle_state(dt, alpha, v_pi_cs, v_fli_ps, v_pi_cs, v_fli_ps, v_pi_cf, v_fli_pf)
             particle[np]._update_particle_pressure(0.0, dpressure)
 
 
 @ti.kernel
-def kernel_kinemaitc_g2p_semitwophase2D_u_p(
+def kernel_kinemaitc_g2p_semitwophase2d_u_p(
     total_nodes: int,
     alpha: float,
     beta: float,
     dt: ti.template(),
-    particleNum: int,
+    particle_num: int,
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
 ):
     # ti.block_local(dt)
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
-            vPIC, vFLIP = ZEROVEC2f, ZEROVEC2f
+            v_pic, v_flip = ZEROVEC2F, ZEROVEC2F
             dpressure = 0.0
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
+                node_id = ln_id[ln]
                 shape_fn = shapefn[ln]
-                velocity = node[nodeID, bodyID].momentum
-                accleration = node[nodeID, bodyID].force
-                ndpressure = beta * node[nodeID, bodyID].pressure + node[nodeID, bodyID].dpressure
-                vPIC += shape_mapping(shape_fn, velocity)
-                vFLIP += shape_mapping(shape_fn, accleration) * dt[None]
+                velocity = node[node_id, body_id].momentum
+                accleration = node[node_id, body_id].force
+                ndpressure = beta * node[node_id, body_id].pressure + node[node_id, body_id].dpressure
+                v_pic += shape_mapping(shape_fn, velocity)
+                v_flip += shape_mapping(shape_fn, accleration) * dt[None]
                 dpressure += shape_mapping(shape_fn, ndpressure)
-            particle[np]._update_particle_state_u_p(dt, alpha, vPIC, vFLIP)
+            particle[np]._update_particle_state_u_p(dt, alpha, v_pic, v_flip)
             particle[np].vs = particle[np].v
             particle[np].vf = particle[np].v
             # The storage RHS already retains the old particle pressure.
@@ -12447,94 +12490,94 @@ def kernel_mass_g2p_poisson(
     total_nodes: int,
     cell_volume: float,
     node_size: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node: ti.template(),
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             mdensity = 0.0
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
-                mass_density = shape_mapping(shapefn[ln], node[nodeID, bodyID].ms / cell_volume)
+                node_id = ln_id[ln]
+                mass_density = shape_mapping(shapefn[ln], node[node_id, body_id].ms / cell_volume)
                 mdensity += mass_density
             particle[np].mass_density = mdensity
 
 
 @ti.kernel
-def kernel_pressure_g2p_twophase_2D(
+def kernel_pressure_g2p_twophase_2d(
     extra_node: ti.template(),
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     total_nodes: int,
     node_size: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             scale = 0.0
             for ln in range(offset, offset + int(node_size[np])):
-                nodeID = LnID[ln]
-                scale += shape_mapping(shapefn[ln], extra_node[nodeID, bodyID].pressure)
+                node_id = ln_id[ln]
+                scale += shape_mapping(shapefn[ln], extra_node[node_id, body_id].pressure)
             # particle[np].porosity = scale
             stress = particle[np].stress
-            particle[np].stress = stress + (scale - MeanStress(stress)) * EYE
+            particle[np].stress = stress + (scale - mean_stress(stress)) * EYE
 
 
 @ti.func
-def update_velocity_gradient_affine_twophase2D(
-    np, total_nodes, gnum, grid_size, node, particle, LnID, shapefn, node_size, mixture: ti.template() = False
+def update_velocity_gradient_affine_twophase2d(
+    np, total_nodes, gnum, grid_size, node, particle, ln_id, shapefn, node_size, mixture: ti.template() = False
 ):
-    Wp = ZEROMAT2x2
-    Bps = ZEROMAT2x2
-    Bpf = ZEROMAT2x2
-    bodyID = int(particle[np].bodyID)
+    Wp = ZEROMAT2X2
+    Bps = ZEROMAT2X2
+    Bpf = ZEROMAT2X2
+    body_id = int(particle[np].bodyID)
     offset = np * total_nodes
     position = particle[np].x
     for ln in range(offset, offset + int(node_size[np])):
-        nodeID = LnID[ln]
-        grid_coord = grid_size * vec2f(vectorize_id(nodeID, gnum))
+        node_id = ln_id[ln]
+        grid_coord = grid_size * vec2f(vectorize_id(node_id, gnum))
         pointer = grid_coord - position
-        gvs = node[nodeID, bodyID].momentums
-        gvf = node[nodeID, bodyID].momentumf
+        gvs = node[node_id, body_id].momentums
+        gvf = node[node_id, body_id].momentumf
         if ti.static(mixture):
-            gvs = node[nodeID, bodyID].momentum
+            gvs = node[node_id, body_id].momentum
             gvf = gvs
         shape_fn = shapefn[ln]
 
-        Wp += shape_fn * outer_product2D(pointer, pointer)
-        Bps += shape_fn * outer_product2D(gvs, pointer)
-        Bpf += shape_fn * outer_product2D(gvf, pointer)
+        Wp += shape_fn * outer_product2d(pointer, pointer)
+        Bps += shape_fn * outer_product2d(gvs, pointer)
+        Bpf += shape_fn * outer_product2d(gvf, pointer)
     return affine_velocity_matrix(Bps, Wp, grid_size), affine_velocity_matrix(Bpf, Wp, grid_size)
 
 
 @ti.func
-def update_velocity_gradient_affine_twophase2DAxisy(
-    np, total_nodes, gnum, grid_size, node, particle, LnID, shapefn, node_size, axis_offset
+def update_velocity_gradient_affine_twophase2d_axisy(
+    np, total_nodes, gnum, grid_size, node, particle, ln_id, shapefn, node_size, axis_offset
 ):
-    Wp, Bps, Bpf = ZEROMAT2x2, ZEROMAT2x2, ZEROMAT2x2
-    bodyID = int(particle[np].bodyID)
+    Wp, Bps, Bpf = ZEROMAT2X2, ZEROMAT2X2, ZEROMAT2X2
+    body_id = int(particle[np].bodyID)
     offset = np * total_nodes
     position = particle[np].x
     vr = 0.0
     for ln in range(offset, offset + int(node_size[np])):
-        nodeID = LnID[ln]
-        grid_coord = grid_size * vec2f(vectorize_id(nodeID, gnum))
+        node_id = ln_id[ln]
+        grid_coord = grid_size * vec2f(vectorize_id(node_id, gnum))
         pointer = grid_coord - position
-        gvs = node[nodeID, bodyID].momentums
-        gvf = node[nodeID, bodyID].momentumf
+        gvs = node[node_id, body_id].momentums
+        gvf = node[node_id, body_id].momentumf
         shape_fn = shapefn[ln]
 
-        Wp += shape_fn * outer_product2D(pointer, pointer)
-        Bps += shape_fn * outer_product2D(gvs, pointer)
-        Bpf += shape_fn * outer_product2D(gvf, pointer)
+        Wp += shape_fn * outer_product2d(pointer, pointer)
+        Bps += shape_fn * outer_product2d(gvs, pointer)
+        Bpf += shape_fn * outer_product2d(gvf, pointer)
         vr += shape_fn * gvs[0]
     velocity_gradient0 = affine_velocity_matrix(Bps, Wp, grid_size)
     velocity_gradients = mat3x3(
@@ -12556,49 +12599,49 @@ def update_velocity_gradient_affine_twophase2DAxisy(
 
 
 @ti.func
-def update_velocity_gradient_2D(np, total_nodes, node, particle, LnID, dshapefn, node_size):
-    velocity_gradient = ZEROMAT2x2
-    bodyID = int(particle[np].bodyID)
+def update_velocity_gradient_2d(np, total_nodes, node, particle, ln_id, dshapefn, node_size):
+    velocity_gradient = ZEROMAT2X2
+    body_id = int(particle[np].bodyID)
     offset = np * total_nodes
     for ln in range(offset, offset + int(node_size[np])):
-        nodeID = LnID[ln]
-        gv = node[nodeID, bodyID].momentum
+        node_id = ln_id[ln]
+        gv = node[node_id, body_id].momentum
         dshape_fn = dshapefn[ln]
-        velocity_gradient += outer_product2D(dshape_fn, gv)
+        velocity_gradient += outer_product2d(dshape_fn, gv)
     return truncation(velocity_gradient)
 
 
 @ti.func
-def update_velocity_gradient_twophase2D(np, total_nodes, node, particle, LnID, dshapefn, node_size):
-    velocity_gradients = ZEROMAT2x2
-    velocity_gradientf = ZEROMAT2x2
-    bodyID = int(particle[np].bodyID)
+def update_velocity_gradient_twophase2d(np, total_nodes, node, particle, ln_id, dshapefn, node_size):
+    velocity_gradients = ZEROMAT2X2
+    velocity_gradientf = ZEROMAT2X2
+    body_id = int(particle[np].bodyID)
     offset = np * total_nodes
     for ln in range(offset, offset + int(node_size[np])):
-        nodeID = LnID[ln]
-        gvs = node[nodeID, bodyID].momentums
-        gvf = node[nodeID, bodyID].momentumf
+        node_id = ln_id[ln]
+        gvs = node[node_id, body_id].momentums
+        gvf = node[node_id, body_id].momentumf
         dshape_fn = dshapefn[ln]
-        velocity_gradients += outer_product2D(dshape_fn, gvs)
-        velocity_gradientf += outer_product2D(dshape_fn, gvf)
+        velocity_gradients += outer_product2d(dshape_fn, gvs)
+        velocity_gradientf += outer_product2d(dshape_fn, gvf)
     return truncation(velocity_gradients), truncation(velocity_gradientf)
 
 
 @ti.func
-def update_velocity_gradient_twophase2DAxisy(
-    np, total_nodes, node, particle, LnID, shapefn, dshapefn, node_size, position
+def update_velocity_gradient_twophase2d_axisy(
+    np, total_nodes, node, particle, ln_id, shapefn, dshapefn, node_size, position
 ):
-    velocity_gradients = ZEROMAT3x3
-    velocity_gradientf = ZEROMAT3x3
-    bodyID = int(particle[np].bodyID)
+    velocity_gradients = ZEROMAT3X3
+    velocity_gradientf = ZEROMAT3X3
+    body_id = int(particle[np].bodyID)
     offset = np * total_nodes
     for ln in range(offset, offset + int(node_size[np])):
-        nodeID = LnID[ln]
-        gvs = node[nodeID, bodyID].momentums
-        gvf = node[nodeID, bodyID].momentumf
+        node_id = ln_id[ln]
+        gvs = node[node_id, body_id].momentums
+        gvf = node[node_id, body_id].momentumf
         shape_fn = shapefn[ln]
         dshape_fn = dshapefn[ln]
-        velocity_gradient0 = outer_product2D(dshape_fn, gvs)
+        velocity_gradient0 = outer_product2d(dshape_fn, gvs)
         velocity_gradients += mat3x3(
             [
                 [velocity_gradient0[0, 0], velocity_gradient0[0, 1], 0],
@@ -12606,7 +12649,7 @@ def update_velocity_gradient_twophase2DAxisy(
                 [0, 0, shape_fn * gvs[0] / position[0]],
             ]
         )
-        velocity_gradient0 = outer_product2D(dshape_fn, gvf)
+        velocity_gradient0 = outer_product2d(dshape_fn, gvf)
         velocity_gradientf += mat3x3(
             [
                 [velocity_gradient0[0, 0], velocity_gradient0[0, 1], 0],
@@ -12618,7 +12661,7 @@ def update_velocity_gradient_twophase2DAxisy(
 
 
 @ti.kernel
-def kernel_compute_stress_strain_semitwophase2D(
+def kernel_compute_stress_strain_semitwophase2d(
     total_nodes: int,
     dt: ti.template(),
     start_index: int,
@@ -12626,39 +12669,39 @@ def kernel_compute_stress_strain_semitwophase2D(
     node: ti.template(),
     particle: ti.template(),
     material_mapping: ti.template(),
-    matProp: ti.template(),
-    stateVars: ti.template(),
-    LnID: ti.template(),
+    mat_prop: ti.template(),
+    state_variables: ti.template(),
+    ln_id: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
 ):
     for i in range(start_index, end_index):
         np = material_mapping[i]
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            velocity_gradients, velocity_gradientf = update_velocity_gradient_twophase2D(
-                np, total_nodes, node, particle, LnID, dshapefn, node_size
+            velocity_gradients, velocity_gradientf = update_velocity_gradient_twophase2d(
+                np, total_nodes, node, particle, ln_id, dshapefn, node_size
             )
             previous_stress = particle[np].stress
-            particle[np].vol *= matProp.update_particle_volume_2D(np, velocity_gradients, stateVars, dt)
-            matProp.update_particle_porosity_2D(np, velocity_gradients, stateVars, particle, dt)
-            matProp.update_particle_massf(np, stateVars, particle)
-            particle[np].stress = matProp.compute_single_layer_effective_stress_2d(
-                np, previous_stress, velocity_gradients, particle[np].porosity, stateVars, dt
+            particle[np].vol *= mat_prop.update_particle_volume_2d(np, velocity_gradients, state_variables, dt)
+            mat_prop.update_particle_porosity_2d(np, velocity_gradients, state_variables, particle, dt)
+            mat_prop.update_particle_massf(np, state_variables, particle)
+            particle[np].stress = mat_prop.compute_single_layer_effective_stress_2d(
+                np, previous_stress, velocity_gradients, particle[np].porosity, state_variables, dt
             )
             particle[np].solid_velocity_gradient = velocity_gradients
             particle[np].fluid_velocity_gradient = velocity_gradientf
 
 
 @ti.func
-def update_velocity_gradient_twophase3D(np, total_nodes, node, particle, LnID, dshapefn, node_size):
-    velocity_gradients = ZEROMAT3x3
-    velocity_gradientf = ZEROMAT3x3
-    bodyID = int(particle[np].bodyID)
+def update_velocity_gradient_twophase3d(np, total_nodes, node, particle, ln_id, dshapefn, node_size):
+    velocity_gradients = ZEROMAT3X3
+    velocity_gradientf = ZEROMAT3X3
+    body_id = int(particle[np].bodyID)
     offset = np * total_nodes
     for ln in range(offset, offset + int(node_size[np])):
-        nodeID = LnID[ln]
-        gvs = node[nodeID, bodyID].momentums
-        gvf = node[nodeID, bodyID].momentumf
+        node_id = ln_id[ln]
+        gvs = node[node_id, body_id].momentums
+        gvf = node[node_id, body_id].momentumf
         dshape_fn = dshapefn[ln]
         velocity_gradients += outer_product(dshape_fn, gvs)
         velocity_gradientf += outer_product(dshape_fn, gvf)
@@ -12666,7 +12709,7 @@ def update_velocity_gradient_twophase3D(np, total_nodes, node, particle, LnID, d
 
 
 @ti.kernel
-def kernel_compute_stress_strain_semitwophase3D(
+def kernel_compute_stress_strain_semitwophase3d(
     total_nodes: int,
     dt: ti.template(),
     start_index: int,
@@ -12674,31 +12717,31 @@ def kernel_compute_stress_strain_semitwophase3D(
     node: ti.template(),
     particle: ti.template(),
     material_mapping: ti.template(),
-    matProp: ti.template(),
-    stateVars: ti.template(),
-    LnID: ti.template(),
+    mat_prop: ti.template(),
+    state_variables: ti.template(),
+    ln_id: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
 ):
     for i in range(start_index, end_index):
         np = material_mapping[i]
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            velocity_gradients, velocity_gradientf = update_velocity_gradient_twophase3D(
-                np, total_nodes, node, particle, LnID, dshapefn, node_size
+            velocity_gradients, velocity_gradientf = update_velocity_gradient_twophase3d(
+                np, total_nodes, node, particle, ln_id, dshapefn, node_size
             )
             previous_stress = particle[np].stress
-            particle[np].vol *= matProp.update_particle_volume(np, velocity_gradients, stateVars, dt)
-            particle[np].porosity = matProp.update_particle_porosity(velocity_gradients, particle[np].porosity, dt)
-            matProp.update_particle_massf(np, stateVars, particle)
-            particle[np].stress = matProp.compute_single_layer_effective_stress(
-                np, previous_stress, velocity_gradients, particle[np].porosity, stateVars, dt
+            particle[np].vol *= mat_prop.update_particle_volume(np, velocity_gradients, state_variables, dt)
+            particle[np].porosity = mat_prop.update_particle_porosity(velocity_gradients, particle[np].porosity, dt)
+            mat_prop.update_particle_massf(np, state_variables, particle)
+            particle[np].stress = mat_prop.compute_single_layer_effective_stress(
+                np, previous_stress, velocity_gradients, particle[np].porosity, state_variables, dt
             )
             particle[np].solid_velocity_gradient = velocity_gradients
             particle[np].fluid_velocity_gradient = velocity_gradientf
 
 
 @ti.kernel
-def kernel_compute_stress_strain_APIC_twophase2D(
+def kernel_compute_stress_strain_apic_twophase2d(
     total_nodes: int,
     dt: ti.template(),
     start_index: int,
@@ -12706,9 +12749,9 @@ def kernel_compute_stress_strain_APIC_twophase2D(
     node: ti.template(),
     particle: ti.template(),
     material_mapping: ti.template(),
-    matProp: ti.template(),
-    stateVars: ti.template(),
-    LnID: ti.template(),
+    mat_prop: ti.template(),
+    state_variables: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
     grid_size: ti.types.vector(2, float),
@@ -12721,21 +12764,21 @@ def kernel_compute_stress_strain_APIC_twophase2D(
             # velocity_gradients, velocity_gradientf = update_velocity_gradient_affine_twophase2D(np, total_nodes, gnum, grid_size, node, particle, LnID, shapefn, node_size)
             velocity_gradients = particle[np].solid_velocity_gradient
             previous_stress = particle[np].stress
-            particle[np].vol *= matProp.update_particle_volume_2D(np, velocity_gradients, stateVars, dt)
-            matProp.update_particle_porosity_2D(np, velocity_gradients, stateVars, particle, dt)
-            matProp.update_particle_massf(np, stateVars, particle)
-            particle[np].stress = matProp.compute_single_layer_effective_stress_2d(
-                np, previous_stress, velocity_gradients, particle[np].porosity, stateVars, dt
+            particle[np].vol *= mat_prop.update_particle_volume_2d(np, velocity_gradients, state_variables, dt)
+            mat_prop.update_particle_porosity_2d(np, velocity_gradients, state_variables, particle, dt)
+            mat_prop.update_particle_massf(np, state_variables, particle)
+            particle[np].stress = mat_prop.compute_single_layer_effective_stress_2d(
+                np, previous_stress, velocity_gradients, particle[np].porosity, state_variables, dt
             )
 
 
 @ti.kernel
-def kernel_compute_affine_matrix_APIC_twophase2D(
+def kernel_compute_affine_matrix_apic_twophase2d(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
     grid_size: ti.types.vector(2, real),
@@ -12743,18 +12786,18 @@ def kernel_compute_affine_matrix_APIC_twophase2D(
     mixture: ti.template(),
 ):
     # ti.block_local(dt)
-    for np in range(particleNum):
-        materialID = int(particle[np].materialID)
-        if materialID > 0 and int(particle[np].active) == 1:
-            velocity_gradients, velocity_gradientf = update_velocity_gradient_affine_twophase2D(
-                np, total_nodes, gnum, grid_size, node, particle, LnID, shapefn, node_size, mixture
+    for np in range(particle_num):
+        material_id = int(particle[np].materialID)
+        if material_id > 0 and int(particle[np].active) == 1:
+            velocity_gradients, velocity_gradientf = update_velocity_gradient_affine_twophase2d(
+                np, total_nodes, gnum, grid_size, node, particle, ln_id, shapefn, node_size, mixture
             )
             particle[np].solid_velocity_gradient = velocity_gradients
             particle[np].fluid_velocity_gradient = velocity_gradientf
 
 
 @ti.kernel
-def kernel_compute_stress_strain_twophase2D_u_p(
+def kernel_compute_stress_strain_twophase2d_u_p(
     total_nodes: int,
     dt: ti.template(),
     start_index: int,
@@ -12762,9 +12805,9 @@ def kernel_compute_stress_strain_twophase2D_u_p(
     node: ti.template(),
     particle: ti.template(),
     material_mapping: ti.template(),
-    matProp: ti.template(),
-    stateVars: ti.template(),
-    LnID: ti.template(),
+    mat_prop: ti.template(),
+    state_variables: ti.template(),
+    ln_id: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
 ):
@@ -12773,19 +12816,19 @@ def kernel_compute_stress_strain_twophase2D_u_p(
         np = material_mapping[i]
         # print(np, particle[np].free_surface)
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
-            velocity_gradient = update_velocity_gradient_2D(np, total_nodes, node, particle, LnID, dshapefn, node_size)
+            velocity_gradient = update_velocity_gradient_2d(np, total_nodes, node, particle, ln_id, dshapefn, node_size)
             previous_stress = particle[np].stress
-            particle[np].vol *= matProp.update_particle_volume_2D(np, velocity_gradient, stateVars, dt)
-            matProp.update_particle_porosity_2D_u_p(np, velocity_gradient, stateVars, particle, dt)
-            matProp.update_particle_massf(np, stateVars, particle)
-            particle[np].stress = matProp.compute_single_layer_effective_stress_2d(
-                np, previous_stress, velocity_gradient, particle[np].porosity, stateVars, dt
+            particle[np].vol *= mat_prop.update_particle_volume_2d(np, velocity_gradient, state_variables, dt)
+            mat_prop.update_particle_porosity_2d_u_p(np, velocity_gradient, state_variables, particle, dt)
+            mat_prop.update_particle_massf(np, state_variables, particle)
+            particle[np].stress = mat_prop.compute_single_layer_effective_stress_2d(
+                np, previous_stress, velocity_gradient, particle[np].porosity, state_variables, dt
             )
             particle[np].solid_velocity_gradient = velocity_gradient
 
 
 @ti.kernel
-def kernel_compute_stress_strain_twophase2DAxisy(
+def kernel_compute_stress_strain_twophase2d_axisy(
     total_nodes: int,
     dt: ti.template(),
     start_index: int,
@@ -12793,9 +12836,9 @@ def kernel_compute_stress_strain_twophase2DAxisy(
     node: ti.template(),
     particle: ti.template(),
     material_mapping: ti.template(),
-    matProp: ti.template(),
-    stateVars: ti.template(),
-    LnID: ti.template(),
+    mat_prop: ti.template(),
+    state_variables: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
@@ -12805,21 +12848,21 @@ def kernel_compute_stress_strain_twophase2DAxisy(
         np = material_mapping[i]
         if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
             position = particle[np].x - vec2f([axis_offset, 0.0])
-            velocity_gradients, velocity_gradientf = update_velocity_gradient_twophase2DAxisy(
-                np, total_nodes, node, particle, LnID, shapefn, dshapefn, node_size, position
+            velocity_gradients, velocity_gradientf = update_velocity_gradient_twophase2d_axisy(
+                np, total_nodes, node, particle, ln_id, shapefn, dshapefn, node_size, position
             )
             previous_stress = particle[np].stress
-            particle[np].vol *= matProp.update_particle_volume(np, velocity_gradients, stateVars, dt)
-            matProp.update_particle_porosity_axisy(np, velocity_gradients, stateVars, particle, dt)
-            matProp.update_particle_massf(np, stateVars, particle)
-            particle[np].stress = matProp.compute_single_layer_effective_stress(
-                np, previous_stress, velocity_gradients, particle[np].porosity, stateVars, dt
+            particle[np].vol *= mat_prop.update_particle_volume(np, velocity_gradients, state_variables, dt)
+            mat_prop.update_particle_porosity_axisy(np, velocity_gradients, state_variables, particle, dt)
+            mat_prop.update_particle_massf(np, state_variables, particle)
+            particle[np].stress = mat_prop.compute_single_layer_effective_stress(
+                np, previous_stress, velocity_gradients, particle[np].porosity, state_variables, dt
             )
             particle[np].velocity_gradient = velocity_gradients
 
 
 @ti.kernel
-def kernel_compute_stress_strain_APIC_twophase2DAxisy(
+def kernel_compute_stress_strain_apic_twophase2d_axisy(
     total_nodes: int,
     dt: ti.template(),
     start_index: int,
@@ -12827,9 +12870,9 @@ def kernel_compute_stress_strain_APIC_twophase2DAxisy(
     node: ti.template(),
     particle: ti.template(),
     material_mapping: ti.template(),
-    matProp: ti.template(),
-    stateVars: ti.template(),
-    LnID: ti.template(),
+    mat_prop: ti.template(),
+    state_variables: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
@@ -12844,25 +12887,25 @@ def kernel_compute_stress_strain_APIC_twophase2DAxisy(
             # velocity_gradients, velocity_gradientf = update_velocity_gradient_affine_twophase2DAxisy(np, total_nodes, gnum, grid_size, node, particle, LnID, shapefn, node_size, axis_offset)
             # velocity_gradients = particle[np].velocity_gradient
             position = particle[np].x - vec2f([axis_offset, 0.0])
-            velocity_gradients, velocity_gradientf = update_velocity_gradient_twophase2DAxisy(
-                np, total_nodes, node, particle, LnID, shapefn, dshapefn, node_size, position
+            velocity_gradients, velocity_gradientf = update_velocity_gradient_twophase2d_axisy(
+                np, total_nodes, node, particle, ln_id, shapefn, dshapefn, node_size, position
             )
             previous_stress = particle[np].stress
-            particle[np].vol *= matProp.update_particle_volume(np, velocity_gradients, stateVars, dt)
-            matProp.update_particle_porosity_axisy(np, velocity_gradients, stateVars, particle, dt)
-            matProp.update_particle_massf(np, stateVars, particle)
-            particle[np].stress = matProp.compute_single_layer_effective_stress(
-                np, previous_stress, velocity_gradients, particle[np].porosity, stateVars, dt
+            particle[np].vol *= mat_prop.update_particle_volume(np, velocity_gradients, state_variables, dt)
+            mat_prop.update_particle_porosity_axisy(np, velocity_gradients, state_variables, particle, dt)
+            mat_prop.update_particle_massf(np, state_variables, particle)
+            particle[np].stress = mat_prop.compute_single_layer_effective_stress(
+                np, previous_stress, velocity_gradients, particle[np].porosity, state_variables, dt
             )
 
 
 @ti.kernel
-def kernel_compute_affine_matrix_APIC_twophase2DAxisy(
+def kernel_compute_affine_matrix_apic_twophase2d_axisy(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
     grid_size: ti.types.vector(2, float),
@@ -12870,11 +12913,11 @@ def kernel_compute_affine_matrix_APIC_twophase2DAxisy(
     axis_offset: float,
 ):
     # ti.block_local(dt)
-    for np in range(particleNum):
-        materialID = int(particle[np].materialID)
-        if materialID > 0 and int(particle[np].active) == 1:
-            velocity_gradients, velocity_gradientf = update_velocity_gradient_affine_twophase2DAxisy(
-                np, total_nodes, gnum, grid_size, node, particle, LnID, shapefn, node_size, axis_offset
+    for np in range(particle_num):
+        material_id = int(particle[np].materialID)
+        if material_id > 0 and int(particle[np].active) == 1:
+            velocity_gradients, velocity_gradientf = update_velocity_gradient_affine_twophase2d_axisy(
+                np, total_nodes, gnum, grid_size, node, particle, ln_id, shapefn, node_size, axis_offset
             )
             particle[np].velocity_gradient = velocity_gradients
             particle[np].velocity_gradientf = velocity_gradientf
@@ -12883,41 +12926,41 @@ def kernel_compute_affine_matrix_APIC_twophase2DAxisy(
 @ti.kernel
 def kernel_calc_contact_normal_twophase(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
                 grad_domain = dshapefn[ln] * particle[np].vol  # ms
-                node[LnID[ln], bodyID]._update_nodal_grad_domain(grad_domain)
+                node[ln_id[ln], body_id]._update_nodal_grad_domain(grad_domain)
 
 
 @ti.kernel
-def kernel_calc_contact_normal_twophase_2DAxisy(
+def kernel_calc_contact_normal_twophase_2d_axisy(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     node: ti.template(),
     particle: ti.template(),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     dshapefn: ti.template(),
     node_size: ti.template(),
     axis_offset: float,
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             position = particle[np].x
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
                 grad_domain = dshapefn[ln] * particle[np].vol / (position[0] - axis_offset)
-                node[LnID[ln], bodyID]._update_nodal_grad_domain(grad_domain)
+                node[ln_id[ln], body_id]._update_nodal_grad_domain(grad_domain)
 
 
 @ti.kernel
@@ -12929,7 +12972,7 @@ def kernel_assemble_contact_force_solid(cutoff: float, dt: ti.template(), node: 
 
 
 @ti.kernel
-def kernel_calc_friction_contact_semi_2D(
+def kernel_calc_friction_contact_semi_2d(
     cut_off: float,
     mu: float,
     dt: ti.template(),
@@ -12941,22 +12984,22 @@ def kernel_calc_friction_contact_semi_2D(
     # ti.block_local(dt)
     cut_off_ = cut_off * 0.1
     for ng in range(node.shape[0]):
-        bodyID1, bodyID2 = 0, 1
+        body_id1, body_id2 = 0, 1
 
-        m1, m2 = node[ng, bodyID1].m, node[ng, bodyID2].mf
+        m1, m2 = node[ng, body_id1].m, node[ng, body_id2].mf
         if m1 > cut_off_ and m2 > cut_off_:  # bodyID1 as rigid
-            mv1, mv2 = m1 * node[ng, bodyID1].momentum, m2 * node[ng, bodyID2].momentumf
-            norm1, norm2 = node[ng, bodyID1].grad_domain, node[ng, bodyID2].grad_domain
+            mv1, mv2 = m1 * node[ng, body_id1].momentum, m2 * node[ng, body_id2].momentumf
+            norm1, norm2 = node[ng, body_id1].grad_domain, node[ng, body_id2].grad_domain
 
-            norm, g_mass = ZEROVEC2f, 0.0
-            if is_rigid[bodyID1] == 0 and is_rigid[bodyID2] == 0:
-                norm = Normalize(norm1 - norm2)
+            norm, g_mass = ZEROVEC2F, 0.0
+            if is_rigid[body_id1] == 0 and is_rigid[body_id2] == 0:
+                norm = normalize(norm1 - norm2)
                 g_mass = (m1 + m2) * dt[None]
-            elif is_rigid[bodyID1] == 1:
-                norm = Normalize(norm1)
+            elif is_rigid[body_id1] == 1:
+                norm = normalize(norm1)
                 g_mass = m1 * dt[None]
-            elif is_rigid[bodyID2] == 1:
-                norm = -Normalize(norm2)
+            elif is_rigid[body_id2] == 1:
+                norm = -normalize(norm2)
                 g_mass = m2 * dt[None]
 
             if nodal_coords[ng][0] <= 1.0e-5 + axis_offset:
@@ -12964,12 +13007,12 @@ def kernel_calc_friction_contact_semi_2D(
                 norm[1] = -1.0
 
             is_penetrate = (mv1 * m2 - m1 * mv2).dot(norm)
-            if is_penetrate > Threshold:
+            if is_penetrate > THRESHOLD:
                 # print(ng, 'fluid contact')
                 inv_gmass = 1.0 / g_mass
                 cforce = (mv1 * m2 - m1 * mv2) * inv_gmass
                 norm_force = is_penetrate * inv_gmass
-                if mu > Threshold:  # 0.87 and norm[0] < 0.90
+                if mu > THRESHOLD:  # 0.87 and norm[0] < 0.90
                     trial_ft = cforce - norm_force * norm
                     fstick = trial_ft.norm()
                     fslip = mu * ti.abs(norm_force)
@@ -12977,25 +13020,25 @@ def kernel_calc_friction_contact_semi_2D(
                         cforce = norm_force * norm + fslip * (trial_ft / fstick)
                 else:
                     cforce = norm_force * norm
-                node[ng, bodyID1]._update_contact_force_fluid(-norm_force * norm)
-                node[ng, bodyID2]._update_contact_force_fluid(norm_force * norm)
-                node[ng, bodyID2].forcef += cforce / node[ng, bodyID2].mf
-                node[ng, bodyID2].momentumf += cforce / node[ng, bodyID2].mf * dt[None]
+                node[ng, body_id1]._update_contact_force_fluid(-norm_force * norm)
+                node[ng, body_id2]._update_contact_force_fluid(norm_force * norm)
+                node[ng, body_id2].forcef += cforce / node[ng, body_id2].mf
+                node[ng, body_id2].momentumf += cforce / node[ng, body_id2].mf * dt[None]
 
-        m1, m2 = node[ng, bodyID1].m, node[ng, bodyID2].ms
+        m1, m2 = node[ng, body_id1].m, node[ng, body_id2].ms
         if m1 > cut_off_ and m2 > cut_off_:  # bodyID1 as rigid
-            mv1, mv2 = m1 * node[ng, bodyID1].momentum, m2 * node[ng, bodyID2].momentums
-            norm1, norm2 = node[ng, bodyID1].grad_domain, node[ng, bodyID2].grad_domain
+            mv1, mv2 = m1 * node[ng, body_id1].momentum, m2 * node[ng, body_id2].momentums
+            norm1, norm2 = node[ng, body_id1].grad_domain, node[ng, body_id2].grad_domain
 
-            norm, g_mass = ZEROVEC2f, 0.0
-            if is_rigid[bodyID1] == 0 and is_rigid[bodyID2] == 0:
-                norm = Normalize(norm1 - norm2)
+            norm, g_mass = ZEROVEC2F, 0.0
+            if is_rigid[body_id1] == 0 and is_rigid[body_id2] == 0:
+                norm = normalize(norm1 - norm2)
                 g_mass = (m1 + m2) * dt[None]
-            elif is_rigid[bodyID1] == 1:
-                norm = Normalize(norm1)
+            elif is_rigid[body_id1] == 1:
+                norm = normalize(norm1)
                 g_mass = m1 * dt[None]
-            elif is_rigid[bodyID2] == 1:
-                norm = -Normalize(norm2)
+            elif is_rigid[body_id2] == 1:
+                norm = -normalize(norm2)
                 g_mass = m2 * dt[None]
 
             if nodal_coords[ng][0] <= 1.0e-5 + axis_offset:
@@ -13003,11 +13046,11 @@ def kernel_calc_friction_contact_semi_2D(
                 norm[1] = -1.0
 
             is_penetrate = (mv1 * m2 - m1 * mv2).dot(norm)
-            if is_penetrate > Threshold:
+            if is_penetrate > THRESHOLD:
                 inv_gmass = 1.0 / g_mass
                 cforce = (mv1 * m2 - m1 * mv2) * inv_gmass
                 norm_force = is_penetrate * inv_gmass
-                if mu > Threshold:  # 0.87 and norm[0] < 0.90
+                if mu > THRESHOLD:  # 0.87 and norm[0] < 0.90
                     trial_ft = cforce - norm_force * norm
                     fstick = trial_ft.norm()
                     fslip = mu * ti.abs(norm_force)
@@ -13015,32 +13058,32 @@ def kernel_calc_friction_contact_semi_2D(
                         cforce = norm_force * norm + fslip * (trial_ft / fstick)
                 else:
                     cforce = norm_force * norm
-                node[ng, bodyID1]._update_contact_force_solid(-cforce)
-                node[ng, bodyID2]._update_contact_force_solid(cforce)
-                node[ng, bodyID2].forces += cforce / node[ng, bodyID2].ms
-                node[ng, bodyID2].momentums += cforce / node[ng, bodyID2].ms * dt[None]
+                node[ng, body_id1]._update_contact_force_solid(-cforce)
+                node[ng, body_id2]._update_contact_force_solid(cforce)
+                node[ng, body_id2].forces += cforce / node[ng, body_id2].ms
+                node[ng, body_id2].momentums += cforce / node[ng, body_id2].ms * dt[None]
 
 
 @ti.kernel
-def kernel_calc_normal_demcontact_semi_2D(
+def kernel_calc_normal_demcontact_semi_2d(
     total_nodes: int,
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
-    matProps: ti.template(),
+    mat_props: ti.template(),
     grid_size: ti.types.vector(2, float),
     node: ti.template(),
     polygon_vertices: ti.template(),
     velocity: ti.types.vector(2, float),
-    LnID: ti.template(),
+    ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
 ):
-    v1, v2 = ZEROVEC2f, ZEROVEC2f
-    normal, tangential = ZEROVEC2f, ZEROVEC2f
-    gsize = MeanValue(grid_size)
-    for np in range(particleNum):
+    v1, v2 = ZEROVEC2F, ZEROVEC2F
+    normal, tangential = ZEROVEC2F, ZEROVEC2F
+    gsize = mean_value(grid_size)
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
-            bodyID = int(particle[np].bodyID)
+            body_id = int(particle[np].bodyID)
             circle_center = particle[np].x
             # Calculate minimum distance and normal vector
             distance, normal = circle_polygon_distance(circle_center, polygon_vertices)
@@ -13053,19 +13096,19 @@ def kernel_calc_normal_demcontact_semi_2D(
                 bulk = 40.0e6 / (3.0 * (1 - 2.0 * 0.3))
                 vol = particle[np].vol
                 beta = (bulk + 4.0 / 3.0 * shear) / gsize * ti.sqrt(vol)
-                normal = Normalize(normal)
+                normal = normalize(normal)
                 nomforce = -distance * beta * normal * 100.0
                 cforce = nomforce
 
                 offset = np * total_nodes
                 for ln in range(offset, offset + int(node_size[np])):
-                    nodeID = LnID[ln]
+                    node_id = ln_id[ln]
                     extf = shape_mapping(shapefn[ln], cforce)
-                    node[nodeID, bodyID]._update_contact_force_solid(extf)
+                    node[node_id, body_id]._update_contact_force_solid(extf)
 
 
 @ti.kernel
-def kernel_calc_tangential_demcontact_semi_2D(
+def kernel_calc_tangential_demcontact_semi_2d(
     cut_off: float,
     mu: float,
     velocity: ti.types.vector(2, float),
@@ -13075,17 +13118,17 @@ def kernel_calc_tangential_demcontact_semi_2D(
     particle: ti.template(),
 ):
     # ti.block_local(dt)
-    bodyID = bodyID = int(particle[0].bodyID)
+    body_id = body_id = int(particle[0].bodyID)
     vr = velocity
     for ng in range(node.shape[0]):
-        if node[ng, bodyID].m > cut_off:
-            vd = node[ng, bodyID].momentums
-            g_mass = node[ng, bodyID].ms / dt[None]
-            norm_force = node[ng, bodyID].contact_force_s
-            if norm_force.norm() > Threshold:
-                cforce = ZEROVEC2f
-                if mu > Threshold:
-                    norm = Normalize(norm_force)
+        if node[ng, body_id].m > cut_off:
+            vd = node[ng, body_id].momentums
+            g_mass = node[ng, body_id].ms / dt[None]
+            norm_force = node[ng, body_id].contact_force_s
+            if norm_force.norm() > THRESHOLD:
+                cforce = ZEROVEC2F
+                if mu > THRESHOLD:
+                    norm = normalize(norm_force)
                     v_re = vr - vd
                     stick_force = g_mass * (v_re - v_re.dot(norm) * norm)
                     fstick = ti.sqrt(dot2(stick_force))
@@ -13094,7 +13137,7 @@ def kernel_calc_tangential_demcontact_semi_2D(
                         cforce = fslip * (stick_force / fstick)
                     else:
                         cforce = stick_force
-                    node[ng, bodyID]._update_contact_force_solid(cforce)
+                    node[ng, body_id]._update_contact_force_solid(cforce)
 
 
 @ti.kernel
@@ -13104,22 +13147,22 @@ def kernel_apply_displacement_mixture(
     # ti.block_local(dt)
     v_constraint = vec2f([0.0, -0.05])
     for ng in range(node.shape[0]):
-        bodyID = 0
+        body_id = 0
         node_coord = nodal_coords[ng]
         if node_coord[0] <= 1.0 and node_coord[1] >= 9.99 and node_coord[1] <= 10.01:
-            mf, vf = node[ng, bodyID].mf, node[ng, bodyID].momentumf
+            mf, vf = node[ng, body_id].mf, node[ng, body_id].momentumf
             if mf > cut_off:
                 cforce = (v_constraint - vf) / dt[None]
-                node[ng, bodyID]._update_contact_force_fluid(cforce)
-                node[ng, bodyID].forcef += cforce
-                node[ng, bodyID].momentumf += cforce * dt[None]
+                node[ng, body_id]._update_contact_force_fluid(cforce)
+                node[ng, body_id].forcef += cforce
+                node[ng, body_id].momentumf += cforce * dt[None]
 
-            ms, vs = node[ng, bodyID].ms, node[ng, bodyID].momentums
+            ms, vs = node[ng, body_id].ms, node[ng, body_id].momentums
             if ms > cut_off:
                 cforce = (v_constraint - vs) / dt[None]
-                node[ng, bodyID]._update_contact_force_solid(cforce)
-                node[ng, bodyID].forces += cforce
-                node[ng, bodyID].momentums += cforce * dt[None]
+                node[ng, body_id]._update_contact_force_solid(cforce)
+                node[ng, body_id].forces += cforce
+                node[ng, body_id].momentums += cforce * dt[None]
 
 
 @ti.kernel
@@ -13127,15 +13170,15 @@ def kernel_apply_node_traction(cut_off: float, dt: ti.template(), node: ti.templ
     # ti.block_local(dt)
     traction = vec2f([0.0, -1e4])
     for ng in range(node.shape[0]):
-        bodyID = 0
+        body_id = 0
         node_coord = nodal_coords[ng]
         if node_coord[0] <= 1.0 and node_coord[1] >= 9.99 and node_coord[1] <= 10.01:
-            node[ng, bodyID].forces += traction * 0.1 * 0.5
-            node[ng, bodyID].force += traction * 0.1 * 0.5
+            node[ng, body_id].forces += traction * 0.1 * 0.5
+            node[ng, body_id].force += traction * 0.1 * 0.5
 
 
 @ti.kernel
-def kernel_update_nodal_pressure_2D(
+def kernel_update_nodal_pressure_2d(
     cutoff: float,
     beta: float,
     boundary_pressure: float,
@@ -13202,7 +13245,7 @@ def single_point_ghost_air_pressure(air_cell, cell_type, cell_pressure, cell_phi
 
 
 @ti.kernel
-def kernel_update_nodal_dpressure_2D(
+def kernel_update_nodal_dpressure_2d(
     node: ti.template(),
     element_size: ti.types.vector(2, float),
     shape_function: ti.template(),
@@ -13216,7 +13259,7 @@ def kernel_update_nodal_dpressure_2D(
 ):
     node.weight.fill(0.0)
     node.dpressure.fill(0.0)
-    bodyID = 0 if is_rigid[0] == 0 else 1
+    body_id = 0 if is_rigid[0] == 0 else 1
     for I in ti.grouped(cell_volume):
         # if cell_volume[I] > Threshold:
         if cell_type[I] == 1 or is_free_surface[I] == 1:
@@ -13225,24 +13268,24 @@ def kernel_update_nodal_dpressure_2D(
             psize = vec2f(0, 0)
             base_bound = ti.floor((position - psize) / element_size, int)
             influenced_node = 2
-            LnID = vec4i([0, 0, 0, 0])
+            ln_id = vec4i([0, 0, 0, 0])
             shape_fn = vec4f([0.0, 0.0, 0.0, 0.0])
-            localID = 0
+            local_id = 0
             for lj in range(base_bound[1], base_bound[1] + influenced_node):
                 if lj < 0 or lj >= gnum[1]:
                     continue
                 for li in range(base_bound[0], base_bound[0] + influenced_node):
                     if li < 0 or li >= gnum[0]:
                         continue
-                    nodeID = int(li + lj * gnum[0])
+                    node_id = int(li + lj * gnum[0])
                     node_coords = vec2i(li, lj) * element_size
                     shapen0 = shape_function(position[0], node_coords[0], 1.0 / element_size[0], psize[0])
                     shapen1 = shape_function(position[1], node_coords[1], 1.0 / element_size[1], psize[1])
                     shapeval = shapen0 * shapen1
-                    if shapeval > Threshold:
-                        LnID[localID] = nodeID
-                        shape_fn[localID] = shapeval
-                        localID += 1
+                    if shapeval > THRESHOLD:
+                        ln_id[local_id] = node_id
+                        shape_fn[local_id] = shapeval
+                        local_id += 1
             # vol = cell_volume[I]
             vol = element_size[0] * element_size[1]
             total_nodes = influenced_node * influenced_node
@@ -13250,14 +13293,14 @@ def kernel_update_nodal_dpressure_2D(
             if cell_type[I] == 0:
                 dpressure = single_point_ghost_air_pressure(I, cell_type, cell_dpressure, cell_phi)
             for lnj in range(total_nodes):
-                nodeIDj = LnID[lnj]
+                node_i_dj = ln_id[lnj]
                 jshape = shape_fn[lnj]
-                node[nodeIDj, bodyID].weight += vol * jshape
-                node[nodeIDj, bodyID].dpressure += dpressure * vol * jshape
+                node[node_i_dj, body_id].weight += vol * jshape
+                node[node_i_dj, body_id].dpressure += dpressure * vol * jshape
 
 
 @ti.kernel
-def kernel_update_nodal_dpressure_2D_(cutoff: float, node: ti.template()):
+def kernel_normalize_nodal_dpressure_2d(cutoff: float, node: ti.template()):
     for ng in range(node.shape[0]):
         for nb in range(node.shape[1]):
             if node[ng, nb].weight > cutoff:
@@ -13265,7 +13308,7 @@ def kernel_update_nodal_dpressure_2D_(cutoff: float, node: ti.template()):
 
 
 @ti.kernel
-def kernel_update_nodal_dpressure_3D(
+def kernel_update_nodal_dpressure_3d(
     node: ti.template(),
     element_size: ti.types.vector(3, float),
     shape_function: ti.template(),
@@ -13279,7 +13322,7 @@ def kernel_update_nodal_dpressure_3D(
 ):
     node.weight.fill(0.0)
     node.dpressure.fill(0.0)
-    bodyID = 0 if is_rigid[0] == 0 else 1
+    body_id = 0 if is_rigid[0] == 0 else 1
     for I in ti.grouped(cell_volume):
         if cell_type[I] == 1 or is_free_surface[I] == 1:
             i, j, k = I
@@ -13287,9 +13330,9 @@ def kernel_update_nodal_dpressure_3D(
             psize = vec3f(0, 0, 0)
             base_bound = ti.floor((position - psize) / element_size, int)
             influenced_node = 2
-            LnID = vec8i([0, 0, 0, 0, 0, 0, 0, 0])
+            ln_id = vec8i([0, 0, 0, 0, 0, 0, 0, 0])
             shape_fn = vec8f([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-            localID = 0
+            local_id = 0
             for lk in range(base_bound[2], base_bound[2] + influenced_node):
                 if lk < 0 or lk >= gnum[2]:
                     continue
@@ -13299,39 +13342,39 @@ def kernel_update_nodal_dpressure_3D(
                     for li in range(base_bound[0], base_bound[0] + influenced_node):
                         if li < 0 or li >= gnum[0]:
                             continue
-                        nodeID = linearize(vec3i(li, lj, lk), gnum)
+                        node_id = linearize(vec3i(li, lj, lk), gnum)
                         node_coords = vec3f(li, lj, lk) * element_size
                         shapeval = (
                             shape_function(position[0], node_coords[0], 1.0 / element_size[0], psize[0])
                             * shape_function(position[1], node_coords[1], 1.0 / element_size[1], psize[1])
                             * shape_function(position[2], node_coords[2], 1.0 / element_size[2], psize[2])
                         )
-                        if shapeval > Threshold:
-                            LnID[localID] = nodeID
-                            shape_fn[localID] = shapeval
-                            localID += 1
+                        if shapeval > THRESHOLD:
+                            ln_id[local_id] = node_id
+                            shape_fn[local_id] = shapeval
+                            local_id += 1
             vol = element_size[0] * element_size[1] * element_size[2]
             dpressure = cell_dpressure[I]
             if cell_type[I] == 0:
                 dpressure = single_point_ghost_air_pressure(I, cell_type, cell_dpressure, cell_phi)
             for lnj in range(influenced_node * influenced_node * influenced_node):
-                nodeIDj = LnID[lnj]
+                node_i_dj = ln_id[lnj]
                 jshape = shape_fn[lnj]
-                node[nodeIDj, bodyID].weight += vol * jshape
-                node[nodeIDj, bodyID].dpressure += dpressure * vol * jshape
+                node[node_i_dj, body_id].weight += vol * jshape
+                node[node_i_dj, body_id].dpressure += dpressure * vol * jshape
 
 
 @ti.kernel
 def calculate_cell_volume(
     cell_volumefrac: ti.template(),
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
     cell_volume: float,
     grid_size: ti.template(),
     cnum: ti.template(),
     is_2DAxisy: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
             vol = particle[np].vol
             position = particle[np].x
@@ -13352,7 +13395,7 @@ def calculate_cell_volume(
 @ti.kernel
 def calculate_cell_volume_weighted(
     cell_volumefrac: ti.template(),
-    particleNum: int,
+    particle_num: int,
     ghost_cell: int,
     particle: ti.template(),
     cell_volume: float,
@@ -13361,7 +13404,7 @@ def calculate_cell_volume_weighted(
     is_2DAxisy: ti.template(),
 ):
     active_cnum = cnum - 2 * ghost_cell
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
             position = particle[np].x
             base = ti.floor(position / grid_size - 0.5).cast(int)
@@ -13397,7 +13440,7 @@ def calculate_cell_volume_weighted(
 @ti.kernel
 def calculate_cell_volume_fraction(
     cell_volumefrac: ti.template(),
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
     cell_volume: float,
     grid_size: ti.template(),
@@ -13405,7 +13448,7 @@ def calculate_cell_volume_fraction(
     cell_rigid: ti.template(),
 ):
     cell_rigid.fill(0)
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
             position = particle[np].x
             ic = ti.floor((position / grid_size), int)
@@ -13423,9 +13466,9 @@ def calculate_cell_volume_fraction(
 
 
 @ti.kernel
-def calculate_cell_volume_fraction_2DAxisy_plane(
+def calculate_cell_volume_fraction_2d_axisy_plane(
     cell_volumefrac: ti.template(),
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
     cell_volume: float,
     grid_size: ti.types.vector(2, float),
@@ -13434,7 +13477,7 @@ def calculate_cell_volume_fraction_2DAxisy_plane(
     axis_offset: float,
 ):
     cell_rigid.fill(0)
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
             position = particle[np].x
             ic = ti.floor((position / grid_size), int)

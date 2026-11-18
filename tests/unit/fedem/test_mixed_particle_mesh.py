@@ -3,7 +3,7 @@ import numpy as np
 from examples.fedem.MixedFunnel.mesh_reference import (
     normalize_reference,
 )
-from src.fem.generator import FEMMesh
+from src.fem.generator.Mesh import FEMMesh
 
 
 def test_reference_quality_reports_disconnected_volume_count():

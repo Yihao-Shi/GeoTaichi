@@ -10,7 +10,21 @@ import taichi as ti
 pytestmark = [pytest.mark.unit, pytest.mark.cpu, pytest.mark.serial, pytest.mark.isolated_dimension(2)]
 
 
-def test_quad_cpt_rejects_linear_checkpoint_before_runtime_initialization(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    "shape_function,measure,error",
+    [
+        ("Linear", "per_radian", "shape_function"),
+        ("QuadBSpline", None, "axisymmetric_measure"),
+        ("QuadBSpline", "full_ring", "axisymmetric_measure"),
+    ],
+)
+def test_cpt_rejects_incompatible_checkpoint_before_runtime_initialization(
+    tmp_path,
+    monkeypatch,
+    shape_function,
+    measure,
+    error,
+):
     import geotaichi as gt
     from examples.igampm.cpt_dp import cpt_dp
 
@@ -24,7 +38,8 @@ def test_quad_cpt_rejects_linear_checkpoint_before_runtime_initialization(tmp_pa
                 dilation_angle=0.0,
                 resolution_scale=25.0,
                 save_interval=0.001,
-                shape_function="Linear",
+                shape_function=shape_function,
+                axisymmetric_measure=measure,
             )
         )
     )
@@ -45,7 +60,7 @@ def test_quad_cpt_rejects_linear_checkpoint_before_runtime_initialization(tmp_pa
     )
     monkeypatch.setattr(cpt_dp, "parse_arguments", lambda: arguments)
     monkeypatch.setattr(gt, "init", lambda **kwargs: pytest.fail("legacy interpolation must be rejected before init"))
-    with pytest.raises(ValueError, match="shape_function; restart QuadBSpline from frame 0"):
+    with pytest.raises(ValueError, match=error):
         cpt_dp.main()
     assert not (tmp_path / "new_quad" / "parameters.json").exists()
 
@@ -59,7 +74,7 @@ def _terms(barrier: ti.template(), distance: ti.f64) -> ti.types.vector(3, ti.f6
 def test_iga_cpt_pressure_barrier_matches_fem_normalization(taichi_runtime, tmp_path, monkeypatch):
     import geotaichi as gt
     from examples.igampm.cpt_dp import cpt_dp
-    from src.physics_model.contact_model.ipc.IPC import Barrier
+    from src.physics_model.contact_model.ipc.Barrier import Barrier
     from tests.helpers.ipc_scalar_reference import ipc_barrier_distance_terms_py
 
     monkeypatch.setattr(gt, "init", lambda **kwargs: None)

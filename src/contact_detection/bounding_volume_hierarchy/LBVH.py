@@ -21,10 +21,10 @@ class LBvh(Bvh):
         self.node_count = self.leaf_count * 2 - 1
         self.build_bvh()
         done_prev = 0
-        done_num  = 0
+        done_num = 0
         while done_num < self.leaf_count - 1:
             self.gen_aabb()
-            done_num  = self.bvh_done.to_numpy()
+            done_num = self.bvh_done.to_numpy()
             if done_num == done_prev:
                 break
             done_prev = done_num
@@ -33,10 +33,10 @@ class LBvh(Bvh):
     def refit(self, current_primitive_count):
         self.refit_leaf()
         done_prev = 0
-        done_num  = 0
+        done_num = 0
         while done_num < self.leaf_count - 1:
             self.gen_aabb()
-            done_num  = self.bvh_done.to_numpy()
+            done_num = self.bvh_done.to_numpy()
             if done_num == done_prev:
                 break
             done_prev = done_num
@@ -74,49 +74,49 @@ class LBvh(Bvh):
             delta = -1
             i_tmp = idx + d * l_max
 
-            if ((0 <= i_tmp) & (i_tmp < self.spatial.leaf_count[0])):
+            if (0 <= i_tmp) & (i_tmp < self.spatial.leaf_count[0]):
                 delta = self.common_upper_bits(self_code, self.spatial.morton_code[i_tmp, 0])
 
             while delta > delta_min:
                 l_max <<= 1
                 i_tmp = idx + d * l_max
                 delta = -1
-                if ( (0 <= i_tmp) & (i_tmp < self.spatial.leaf_count[0])):
+                if (0 <= i_tmp) & (i_tmp < self.spatial.leaf_count[0]):
                     delta = self.common_upper_bits(self_code, self.spatial.morton_code[i_tmp, 0])
 
             l = 0
             t = l_max >> 1
 
-            while(t > 0):
+            while t > 0:
                 i_tmp = idx + (l + t) * d
                 delta = -1
-                if ( (0 <= i_tmp) & (i_tmp < self.spatial.leaf_count[0])):
+                if (0 <= i_tmp) & (i_tmp < self.spatial.leaf_count[0]):
                     delta = self.common_upper_bits(self_code, self.spatial.morton_code[i_tmp, 0])
-                if(delta > delta_min):
+                if delta > delta_min:
                     l += t
                 t >>= 1
 
             l_r_range[0] = idx
             l_r_range[1] = idx + l * d
-            if(d < 0):
+            if d < 0:
                 tmp = l_r_range[0]
                 l_r_range[0] = l_r_range[1]
-                l_r_range[1] = tmp 
+                l_r_range[1] = tmp
         return l_r_range
-        
+
     @ti.func
     def find_split(self, first, last):
         first_code = self.spatial.morton_code[first, 0]
-        last_code  = self.spatial.morton_code[last, 0]
+        last_code = self.spatial.morton_code[last, 0]
         delta_node = self.common_upper_bits(first_code, last_code)
         split = first
         stride = last - first
         while 1:
             stride = (stride + 1) >> 1
             middle = split + stride
-            if (middle < last):
+            if middle < last:
                 delta = self.common_upper_bits(first_code, self.spatial.morton_code[middle, 0])
-                if (delta > delta_node):
+                if delta > delta_node:
                     split = middle
             if stride <= 1:
                 break
@@ -125,43 +125,43 @@ class LBvh(Bvh):
     @ti.kernel
     def build_bvh(self):
         for i in self.bvh_node:
-            self.init_bvh_node( i)
+            self.init_bvh_node(i)
             self.bvh_done[0] = 0
 
         for i in self.bvh_node:
-            if i >= self.spatial.leaf_count[0]-1:
+            if i >= self.spatial.leaf_count[0] - 1:
                 self.set_node_type(i, IS_LEAF)
                 leaf_index = self.spatial.morton_code[i - self.spatial.leaf_count[0] + 1, 1]
                 leaf_count = self.spatial.morton_code[i - self.spatial.leaf_count[0] + 1, 2]
 
                 self.set_node_leaf_index(i, leaf_index)
                 self.set_node_leaf_count(i, leaf_count)
-                min_v3 =ti.Vector([DBL_MAX, DBL_MAX, DBL_MAX])
-                max_v3 =ti.Vector([-DBL_MAX, -DBL_MAX, -DBL_MAX])
+                min_v3 = ti.Vector([DBL_MAX, DBL_MAX, DBL_MAX])
+                max_v3 = ti.Vector([-DBL_MAX, -DBL_MAX, -DBL_MAX])
 
                 count = 0
                 while count < leaf_count:
                     prim_index = self.spatial.sort.data_out[leaf_index + count, 1]
                     min_tmp, max_tmp = self.spatial.aabb.get_aabb(prim_index)
-                    for l in  ti.static(range(3)):
+                    for l in ti.static(range(3)):
                         min_v3[l] = ti.min(min_v3[l], min_tmp[l])
                         max_v3[l] = ti.max(max_v3[l], max_tmp[l])
-                    count +=1
-                self.set_node_min_max(i, min_v3,max_v3)
+                    count += 1
+                self.set_node_min_max(i, min_v3, max_v3)
             else:
-                self.set_node_type( i, 1-IS_LEAF)
-                l_r_range   = self.determine_range(i)
-                spilt       = self.find_split(l_r_range[0], l_r_range[1])
-                left_node   = spilt
-                right_node  = spilt + 1
+                self.set_node_type(i, 1 - IS_LEAF)
+                l_r_range = self.determine_range(i)
+                spilt = self.find_split(l_r_range[0], l_r_range[1])
+                left_node = spilt
+                right_node = spilt + 1
 
                 assert l_r_range[0] != l_r_range[1], f"{l_r_range}, {spilt}, {left_node}, {right_node}, wrong"
 
-                if min(l_r_range[0], l_r_range[1]) == spilt :
-                    left_node  += self.spatial.leaf_count[0] - 1
-            
+                if min(l_r_range[0], l_r_range[1]) == spilt:
+                    left_node += self.spatial.leaf_count[0] - 1
+
                 if max(l_r_range[0], l_r_range[1]) == spilt + 1:
-                    right_node  += self.spatial.leaf_count[0] - 1
+                    right_node += self.spatial.leaf_count[0] - 1
 
                 self.set_node_left(i, left_node)
                 self.set_node_right(i, right_node)
@@ -187,26 +187,32 @@ class LBvh(Bvh):
 
     @ti.kernel
     def gen_aabb(self):
-        for j in range(self.spatial.leaf_count[0] - 1): 
+        for j in range(self.spatial.leaf_count[0] - 1):
             i = self.spatial.leaf_count[0] - 2 - j
-            if (self.get_node_has_box(i) == 0):
-                left_node, right_node = self.get_node_child(i) 
-                
-                is_left_rdy  = self.get_node_has_box(left_node)
+            if self.get_node_has_box(i) == 0:
+                left_node, right_node = self.get_node_child(i)
+
+                is_left_rdy = self.get_node_has_box(left_node)
                 is_right_rdy = self.get_node_has_box(right_node)
 
                 if (is_left_rdy and is_right_rdy) > 0:
-                    l_min,l_max = self.get_node_min_max(left_node)  
-                    r_min,r_max = self.get_node_min_max(right_node)  
-                    self.set_node_min_max(i, min(l_min, r_min),max(l_max, r_max))
+                    l_min, l_max = self.get_node_min_max(left_node)
+                    r_min, r_max = self.get_node_min_max(right_node)
+                    self.set_node_min_max(i, min(l_min, r_min), max(l_max, r_max))
                     self.bvh_done[0] += 1
 
     @ti.func
     def get_node_prim_index(self, leaf_index, count):
         return self.spatial.sort.data_out[count + leaf_index, 1]
-    
+
     @ti.kernel
-    def query_all_aabbs(self, query_min_list: ti.template(), query_max_list: ti.template(), result: ti.template(), result_counts: ti.template()):
+    def query_all_aabbs(
+        self,
+        query_min_list: ti.template(),
+        query_max_list: ti.template(),
+        result: ti.template(),
+        result_counts: ti.template(),
+    ):
         for q in query_min_list:
             query_min = query_min_list[q]
             query_max = query_max_list[q]

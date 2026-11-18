@@ -289,7 +289,7 @@ def build(p, output):
         }
     )
     model.choose_contact_model(
-        "IPC", dhat=dhat, dmin=p["dmin"], kappa=p["kappa"], friction_coefficient=0.0, project_pd=True
+        "BarrierIPC", dhat=dhat, dmin=p["dmin"], kappa=p["kappa"], friction_coefficient=0.0, project_pd=True
     )
     model.add_essentials()
     engine = model.enginer

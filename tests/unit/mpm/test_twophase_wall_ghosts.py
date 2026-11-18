@@ -18,9 +18,11 @@ from src.mpm.engines.TwoPhaseDoubleLayerKernel import (
     kernel_g2p_double_layer2d,
     kernel_g2p_double_layer3d,
 )
-from src.mpm.structs.GridNode import NodeTwoPhase, NodeTwoPhase2D
-from src.mpm.structs.Particle import ParticleCloudTwoPhase, ParticleCloudTwoPhase2D
-from src.physics_model.consititutive_model.infinitesimal_strain.LinearElastic import LinearElasticModel
+from src.mpm.structs.NodeTwoPhase import NodeTwoPhase
+from src.mpm.structs.NodeTwoPhase2D import NodeTwoPhase2D
+from src.mpm.structs.ParticleCloudTwoPhase import ParticleCloudTwoPhase
+from src.mpm.structs.ParticleCloudTwoPhase2D import ParticleCloudTwoPhase2D
+from src.physics_model.constitutive_model.infinitesimal_strain.LinearElastic import LinearElasticModel
 
 
 @ti.dataclass
@@ -263,17 +265,19 @@ def test_ghosts_preserve_tangential_affine_velocity_when_acceleration_is_zero(di
 
 
 def test_closed_pressure_gauge_does_not_switch_for_one_cell_wall_void():
-    from src.mpm.Recorder import _closed_domain_pressure_offset
+    from src.mpm.Recorder import WriteFile as _WriteFile__closed_domain_pressure_offset_owner
 
     types = np.full((5, 5, 5, 1), 2, dtype=np.int32)
     types[1:-1, 1:-1, 1:-1] = 1
     types[1, 1, 2] = 0
     pressure = np.full(types.shape, -73.5)
-    assert _closed_domain_pressure_offset(pressure, types) == pytest.approx(-73.5)
+    assert _WriteFile__closed_domain_pressure_offset_owner._closed_domain_pressure_offset(
+        pressure, types
+    ) == pytest.approx(-73.5)
     types[1, 1, 3] = 0
-    assert _closed_domain_pressure_offset(pressure, types) == 0
+    assert _WriteFile__closed_domain_pressure_offset_owner._closed_domain_pressure_offset(pressure, types) == 0
     types[0, 1, 2] = 0
-    assert _closed_domain_pressure_offset(pressure, types) == 0
+    assert _WriteFile__closed_domain_pressure_offset_owner._closed_domain_pressure_offset(pressure, types) == 0
 
 
 @pytest.mark.parametrize("dimension", [2, 3])

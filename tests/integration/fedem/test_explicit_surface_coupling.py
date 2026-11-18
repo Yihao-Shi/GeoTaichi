@@ -1,3 +1,4 @@
+from src.sdf.polyhedron import polyhedron
 from pathlib import Path
 
 import numpy as np
@@ -7,9 +8,8 @@ ti = pytest.importorskip("taichi")
 
 from src.dem.mainDEM import DEM
 from src.fem.mainFEM import FEM
-from src.fem.generator import FEMMesh
+from src.fem.generator.Mesh import FEMMesh
 from src.fedem.mainFEDEM import FEDEM
-from src.sdf.BasicShape import polyhedron
 
 pytestmark = [
     pytest.mark.integration,

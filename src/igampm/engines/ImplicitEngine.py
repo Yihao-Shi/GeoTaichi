@@ -1,5 +1,25 @@
 """Implicit engine responsibilities."""
 
+from src.linear_solver.Utilities import inexact_newton_absolute_tolerance
+from src.linear_solver.Utilities import inexact_newton_relative_tolerance
+from src.utils.RuntimeHook import normalize_callbacks
+
+from src.utils.errors import (
+    BackendError,
+    CapacityError,
+    ConfigurationError,
+    GeometryError,
+    LineSearchError,
+    LinearSolveError,
+    NonfiniteStateError,
+    NonlinearSolveError,
+    SimulationStateError,
+    SparseAssemblyError,
+)
+from src.physics_model.contact_model.ipc.Utilities import get_distance_to_curve_moving_fixed_dim
+from src.physics_model.contact_model.ipc.Utilities import get_distance_to_surface_moving_fixed_dim
+from src.utils.StepRetry import StepRetryPolicy
+
 import math
 import time
 
@@ -8,22 +28,9 @@ import taichi as ti
 
 import src.igampm.config as config
 from src.contact_detection.continuous_contact_detection.AdditiveCCD import point_nurbs_accd_increment
-from src.physics_model.contact_model.ipc.NurbsContact import (
-    get_distance_to_curve_moving_fixed_dim,
-    get_distance_to_surface_moving_fixed_dim,
-)
 from src.mpm.engines.direct.Convergence import particle_correction_measure
 from src.utils.FieldIO import field_to_numpy_prefix
 from src.utils.RuntimeHook import runtime_checkpoint
-from src.utils.SolverRuntime import (
-    inexact_newton_absolute_tolerance,
-    inexact_newton_relative_tolerance,
-    normalize_callbacks,
-)
-from src.utils.StepRetry import (
-    is_recoverable_nonlinear_failure,
-    nonlinear_failure_kind,
-)
 
 
 class ImplicitEngineMixin:
@@ -107,41 +114,43 @@ class ImplicitEngineMixin:
         if self.implicit_initialized:
             return
         if self.monolithic_hash_matrix is None and self.monolithic_coo_matrix is None:
-            raise RuntimeError("implicit IGA-MPM runtime requires a device COO or " "HashTriplet monolithic backend")
+            raise BackendError("implicit IGA-MPM runtime requires a device COO or " "HashTriplet monolithic backend")
 
         self._inspect_implicit_reference_state_device()
         if int(self.implicit_state_status[0]) != 0:
-            raise RuntimeError("IGA nodal volumes contain non-finite values")
+            raise NonfiniteStateError("IGA nodal volumes contain non-finite values")
         if int(self.implicit_state_status[1]) == 0:
             self.iga.patch.volume.fill(0.0)
             self.iga.precompute()
             self._inspect_implicit_reference_state_device()
             if int(self.implicit_state_status[0]) != 0 or int(self.implicit_state_status[1]) == 0:
-                raise RuntimeError("IGA nodal-volume precomputation failed")
+                raise SimulationStateError("IGA nodal-volume precomputation failed")
 
         particle_num = int(self.mpm.particleNum[0])
         if particle_num > 0:
             if int(self.implicit_state_status[2]) != 0:
-                raise RuntimeError("MPM reference deformation gradients contain non-finite values")
+                raise NonfiniteStateError("MPM reference deformation gradients contain non-finite values")
             # A newly constructed direct implicit backend leaves F0 at zero;
             # never overwrite a valid (possibly already deformed) state.
             if int(self.implicit_state_status[3]) == 0:
-                self.mpm.init_F0()
+                self.mpm.init_f0()
             elif int(self.implicit_state_status[6]) != 0:
-                raise RuntimeError("MPM reference deformation gradients must have finite " "positive determinants")
+                raise NonfiniteStateError(
+                    "MPM reference deformation gradients must have finite " "positive determinants"
+                )
 
         # TLMPM keeps its reference interpolation and nodal masses fixed.  Its
         # constructor computes those masses, but the compact active mapping and
         # inertia diagonal are normally initialized by initial_simulation().
         if self.total_lagrangian_mpm:
             if int(self.implicit_state_status[4]) != 0:
-                raise RuntimeError("TLMPM nodal masses contain non-finite values")
+                raise NonfiniteStateError("TLMPM nodal masses contain non-finite values")
             if particle_num > 0 and int(self.implicit_state_status[5]) == 0:
                 self.mpm.compute_shapefn()
                 self.mpm.mass_p2g()
                 self._inspect_implicit_reference_state_device()
                 if int(self.implicit_state_status[4]) != 0:
-                    raise RuntimeError("TLMPM nodal-mass precomputation produced non-finite values")
+                    raise NonfiniteStateError("TLMPM nodal-mass precomputation produced non-finite values")
             self.mpm.find_active_node()
             self.mpm.prefix_sum_executor.run(self.mpm.node2dof)
             self.mpm.active_dof = self.mpm.set_active_dof()
@@ -160,7 +169,7 @@ class ImplicitEngineMixin:
     def begin_implicit_ipc_step(self):
         """Prepare one coupled solve as an all-or-nothing device transaction."""
         if self.implicit_step_in_progress:
-            raise RuntimeError("an IGA-MPM implicit step is already in progress")
+            raise SimulationStateError("an IGA-MPM implicit step is already in progress")
         self._snapshot_implicit_physical_state_device()
         self._save_device_monolithic_entry_displacements()
         try:
@@ -233,7 +242,7 @@ class ImplicitEngineMixin:
         transfer here.
         """
         if not self.implicit_step_in_progress:
-            raise RuntimeError("no IGA-MPM implicit step is in progress")
+            raise SimulationStateError("no IGA-MPM implicit step is in progress")
         self.initialize_barrier(self.mpm.grid_disp, self.iga.grid_disp)
         iga_increment = None
         mpm_increment = None
@@ -649,7 +658,7 @@ class ImplicitEngineMixin:
         if solution.size != active_dof:
             raise ValueError("selected host linear solver returned " f"{solution.size} values, expected {active_dof}")
         if not np.all(np.isfinite(solution)):
-            raise RuntimeError("selected host linear solver returned a non-finite increment")
+            raise NonfiniteStateError("selected host linear solver returned a non-finite increment")
         self._load_host_linear_solution(active_dof, solution)
         return {
             "converged": True,
@@ -947,7 +956,7 @@ class ImplicitEngineMixin:
         include_friction = bool(include_friction)
         need_matrix = bool(need_matrix)
         if not self._device_monolithic_available(include_friction):
-            raise RuntimeError(
+            raise BackendError(
                 "Taichi monolithic assembly requires a device COO or "
                 "HashTriplet backend and a supported friction law"
             )
@@ -984,7 +993,7 @@ class ImplicitEngineMixin:
 
         active_mpm_dof = int(self.mpm.active_dof)
         if active_mpm_dof < 0 or active_mpm_dof % config.DIM != 0:
-            raise RuntimeError(
+            raise ConfigurationError(
                 "active MPM degrees of freedom must be a non-negative " "multiple of the spatial dimension"
             )
         prepared_material = hasattr(self.mpm, "prepare_material_response")
@@ -1075,7 +1084,7 @@ class ImplicitEngineMixin:
                 matrix.finalize_taichi_assembly()
             else:
                 if int(self.monolithic_coo_overflow[None]) != 0:
-                    raise RuntimeError(
+                    raise CapacityError(
                         "IGA-MPM COO Hessian capacity exceeded; increase the "
                         "assembly capacity by rebuilding the coupled engine"
                     )
@@ -1163,11 +1172,11 @@ class ImplicitEngineMixin:
         self._prepare_point_nurbs_accd(max_step)
         query_status = int(self.contact_query_status[None])
         if query_status == 1:
-            raise RuntimeError(
+            raise ConfigurationError(
                 "conservative point-NURBS contact stepping requires finite " "strictly positive NURBS weights"
             )
         if query_status != 0:
-            raise RuntimeError("point-NURBS CCD requires finite motion directions")
+            raise SimulationStateError("point-NURBS CCD requires finite motion directions")
         self.contact_surface.update_swept_bounds(max_step)
 
         for basis_group, basis in enumerate(self.contact_surface.accd_basis):
@@ -1200,10 +1209,10 @@ class ImplicitEngineMixin:
 
         query_status = int(self.contact_query_status[None])
         if query_status != 0:
-            raise RuntimeError("point-NURBS ACCD found an invalid contact pair, distance, " "or initial clearance")
+            raise GeometryError("point-NURBS ACCD found an invalid contact pair, distance, " "or initial clearance")
         alpha = float(self.contact_step_alpha[None])
         if not math.isfinite(alpha) or alpha < 0.0 or alpha > max_step:
-            raise RuntimeError("point-NURBS ACCD produced an invalid step")
+            raise GeometryError("point-NURBS ACCD produced an invalid step")
 
         if verify and alpha > 0.0:
             self._set_device_trial_displacements(alpha)
@@ -1213,7 +1222,7 @@ class ImplicitEngineMixin:
                     self.iga.grid_disp_temp,
                 )
                 if self.minimum_contact_distance() <= clearance:
-                    raise RuntimeError("point-NURBS ACCD accepted a non-feasible trial state")
+                    raise SimulationStateError("point-NURBS ACCD accepted a non-feasible trial state")
             finally:
                 self._synchronize_device_trial_state_with_accepted()
 
@@ -1237,7 +1246,7 @@ class ImplicitEngineMixin:
         if not math.isfinite(directional_derivative):
             raise ValueError("directional_derivative must be finite")
         if directional_derivative >= 0.0:
-            raise RuntimeError("contact-aware Armijo requires a strict descent direction")
+            raise LineSearchError("contact-aware Armijo requires a strict descent direction")
         c1 = self.armijo_c1 if c1 is None else float(c1)
         max_backtracks = self.armijo_max_backtracks if max_backtracks is None else int(max_backtracks)
         if not 0.0 < c1 < 1.0:
@@ -1263,7 +1272,7 @@ class ImplicitEngineMixin:
             else:
                 previous_energy = float(energy_function(self))
             if not math.isfinite(previous_energy):
-                raise RuntimeError("current coupled potential energy is not finite")
+                raise NonfiniteStateError("current coupled potential energy is not finite")
             energy_tolerance = self.line_search_energy_atol + self.line_search_energy_rtol * max(
                 1.0, abs(previous_energy)
             )
@@ -1410,7 +1419,7 @@ class ImplicitEngineMixin:
             solve_result = self._solve_monolithic_linear_system(last_system, linear_solve=linear_solve)
             previous_force_residual = force_residual
             if not solve_result["converged"]:
-                raise RuntimeError(
+                raise NonfiniteStateError(
                     f"IGA-MPM Taichi {self.monolithic_solver_name} did not "
                     "converge: "
                     f"residual={solve_result['residual']:.6e}, "
@@ -1429,7 +1438,9 @@ class ImplicitEngineMixin:
             self.last_monolithic_residual = residual
             last_system["linear_solve"] = solve_result
             if not math.isfinite(residual):
-                raise RuntimeError(f"IGA-MPM Taichi {self.monolithic_solver_name} returned " "a non-finite correction")
+                raise NonfiniteStateError(
+                    f"IGA-MPM Taichi {self.monolithic_solver_name} returned " "a non-finite correction"
+                )
             if (
                 inexact
                 and residual <= tolerance
@@ -1441,7 +1452,7 @@ class ImplicitEngineMixin:
                 last_system.pop("linear_residual_reference", None)
                 solve_result = self._solve_monolithic_linear_system(last_system, linear_solve=linear_solve)
                 if not solve_result["converged"]:
-                    raise RuntimeError("IGA-MPM terminal Newton linear solve did not converge")
+                    raise LinearSolveError("IGA-MPM terminal Newton linear solve did not converge")
                 self._split_device_monolithic_correction(last_system["active_mpm_dof"])
                 residual = float(
                     self._device_monolithic_correction_residual(
@@ -1451,7 +1462,7 @@ class ImplicitEngineMixin:
                 self.last_monolithic_residual = residual
                 last_system["linear_solve"] = solve_result
                 if not math.isfinite(residual):
-                    raise RuntimeError("IGA-MPM terminal Newton correction is non-finite")
+                    raise NonfiniteStateError("IGA-MPM terminal Newton correction is non-finite")
             if (
                 residual <= tolerance
                 and (not self.nonassociated_newton or force_residual <= force_tolerance)
@@ -1535,7 +1546,7 @@ class ImplicitEngineMixin:
         if include_friction is None:
             include_friction = self.activate_fric
         if bool(include_friction) and self.friction_mode == "fully_implicit":
-            raise RuntimeError(
+            raise SimulationStateError(
                 "solve_monolithic_newton() is the conservative/lagged-friction "
                 "solver and cannot solve fully implicit friction; use "
                 "solve_fully_implicit_friction_newton() instead"
@@ -1555,7 +1566,7 @@ class ImplicitEngineMixin:
                 verbose=verbose,
                 linear_solve=linear_solve,
             )
-        raise RuntimeError(
+        raise SparseAssemblyError(
             "monolithic IGA-MPM requires a COO or HashTriplet device assembly; "
             "a SciPy/custom solver changes only the finalized linear-system "
             "boundary and never enables host assembly"
@@ -1564,7 +1575,9 @@ class ImplicitEngineMixin:
     @staticmethod
     def _require_converged_implicit_result(result, label):
         if not bool(result.get("converged", False)):
-            raise RuntimeError(f"{label} did not converge " f"(residual={float(result.get('residual', math.inf)):.6e})")
+            raise NonlinearSolveError(
+                f"{label} did not converge " f"(residual={float(result.get('residual', math.inf)):.6e})"
+            )
         return result
 
     def _solve_configured_conservative_system(
@@ -1641,7 +1654,7 @@ class ImplicitEngineMixin:
                 result["material_lagged_iterations"] = self.mpm.last_material_lagged_iterations
                 result["material_lagged_error"] = self.mpm.last_material_lagged_error
                 return result
-        raise RuntimeError(
+        raise NonlinearSolveError(
             "IGA-MPM lagged material state did not converge: "
             f"error={self.mpm.last_material_lagged_error:.6e} after "
             f"{self.mpm.material_lagged_max_iterations} iterations"
@@ -1758,7 +1771,7 @@ class ImplicitEngineMixin:
 
     def _implicit_failure_diagnostics(self, exception, attempt, timestep):
         return {
-            "kind": nonlinear_failure_kind(exception),
+            "kind": StepRetryPolicy.nonlinear_failure_kind(exception),
             "exception": type(exception).__name__,
             "message": str(exception),
             "attempt": int(attempt),
@@ -1843,7 +1856,7 @@ class ImplicitEngineMixin:
                     verbose=verbose,
                 )
             except RuntimeError as exception:
-                if not is_recoverable_nonlinear_failure(exception):
+                if not StepRetryPolicy.is_recoverable_nonlinear_failure(exception):
                     raise
                 failure = self._implicit_failure_diagnostics(exception, attempt, attempt_timestep)
                 attempts.append(failure)

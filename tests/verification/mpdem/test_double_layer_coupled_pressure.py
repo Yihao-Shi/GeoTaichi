@@ -7,7 +7,8 @@ import pytest
 import taichi as ti
 
 from src.mpm.engines import TwoPhaseDoubleLayerKernel as kernels
-from src.mpm.structs.GridNode import NodeTwoPhase, NodeTwoPhase2D
+from src.mpm.structs.NodeTwoPhase import NodeTwoPhase
+from src.mpm.structs.NodeTwoPhase2D import NodeTwoPhase2D
 
 
 @pytest.mark.parametrize("dimension", [2, 3])
@@ -44,9 +45,9 @@ def test_coupled_pressure_operator_and_phase_correctors(taichi_runtime, dimensio
     diag = field(shape)
     offdiag = ti.Vector.field(dimension, ti.f64, shape=shape)
     assembly = (
-        kernels.kernel_assemble_double_layer_pressure_A
+        kernels.kernel_assemble_double_layer_pressure_a
         if dimension == 2
-        else kernels.kernel_assemble_double_layer_pressure_A3d
+        else kernels.kernel_assemble_double_layer_pressure_a3d
     )
     assembly(
         ti.Vector([dx] * dimension),
@@ -68,9 +69,9 @@ def test_coupled_pressure_operator_and_phase_correctors(taichi_runtime, dimensio
     coarse_diag = field((3,) * dimension)
     coarse_offdiag = ti.Vector.field(dimension, ti.f64, shape=(3,) * dimension)
     assembly_mg = (
-        kernels.kernel_assemble_double_layer_pressure_mg_A
+        kernels.kernel_assemble_double_layer_pressure_mg_a
         if dimension == 2
-        else kernels.kernel_assemble_double_layer_pressure_mg_A3d
+        else kernels.kernel_assemble_double_layer_pressure_mg_a3d
     )
     assembly_mg(
         ti.Vector([dx] * dimension),

@@ -1,30 +1,29 @@
+from src.utils.errors import ConfigurationError, LinearSolveError, SimulationStateError
 from src.mpm.boundaries.BoundaryCore import *
 from src.mpm.engines.ULExplicitEngine import ULExplicitEngine
 from src.mpm.engines.EngineKernel import *
 from src.mpm.engines.PoissonEquation import MatrixFree
 from src.mpm.engines.FreeSurfaceDetection import *
-from src.mpm.SceneManager import myScene
+from src.mpm.SceneManager import SceneManager
 from src.mpm.Simulation import Simulation
 from src.mpm.SpatialHashGrid import SpatialHashGrid
 from src.utils.linalg import no_operation
-from src.linear_solver.MultiGridPCG_mixture import MGPCGMixPoissonSolver
-from src.linear_solver.MultiGridPCG_mixture_Axi import MGPCGMixPoissonSolver_Axi
+from src.linear_solver.MultiGridPCGMixture import MGPCGMixPoissonSolver
+from src.linear_solver.MultiGridPCGMixtureAxisymmetric import MGPCGMixPoissonSolverAxisymmetric
 
 
 class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
-    def __init__(self, sims) -> None:
-        super().__init__(sims)
 
-    def _single_twophase_matprop(self, scene: myScene):
+    def _single_twophase_matprop(self, scene: SceneManager):
         active_materials = list(self._iter_twophase_materials(scene))
         if len(active_materials) != 1:
-            raise RuntimeError(
+            raise SimulationStateError(
                 "This SemiImplicit operation requires exactly one active "
                 f"TwoPhase material, found {len(active_materials)}"
             )
         return active_materials[0][3]
 
-    def _iter_twophase_materials(self, scene: myScene):
+    def _iter_twophase_materials(self, scene: SceneManager):
         mapping = getattr(scene.material, "mapping", None)
         if mapping is None:
             particle_num = int(scene.particleNum[0])
@@ -41,7 +40,7 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
             if end_index > start_index:
                 yield material_id, start_index, end_index, scene.material.matProps[material_id]
 
-    def clamp_particle_pressure(self, scene: myScene):
+    def clamp_particle_pressure(self, scene: SceneManager):
         for _, start_index, end_index, mat_prop in self._iter_twophase_materials(scene):
             kernel_clamp_twophase_particle_pressure(
                 start_index,
@@ -51,7 +50,7 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
                 scene.particle,
             )
 
-    def limit_nodal_pressure_increment(self, sims: Simulation, scene: myScene):
+    def limit_nodal_pressure_increment(self, sims: Simulation, scene: SceneManager):
         minimum_pressure = max(
             mat_prop.cavitation_pressure for _, _, _, mat_prop in self._iter_twophase_materials(scene)
         )
@@ -62,7 +61,7 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
             scene.node,
         )
 
-    def limit_cell_pressure_increment(self, sims: Simulation, scene: myScene):
+    def limit_cell_pressure_increment(self, sims: Simulation, scene: SceneManager):
         minimum_pressure = max(
             mat_prop.cavitation_pressure for _, _, _, mat_prop in self._iter_twophase_materials(scene)
         )
@@ -98,113 +97,121 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
         self.update_tpic_pressure_gradient = no_operation
         if sims.use_mgpcg_pressure_solver():
             if sims.is_2DAxisy:
-                self.free_surface_detections = self.free_surface_detection_poisson_byMGPCG_2DAxisy
+                self.free_surface_detections = self.free_surface_detection_poisson_by_mgpcg_2d_axisy
             else:
-                self.free_surface_detections = self.free_surface_detection_poisson_byMGPCG
+                self.free_surface_detections = self.free_surface_detection_poisson_by_mgpcg
         elif sims.free_surface_detection:
             self.free_surface_detections = self.free_surface_detection_poisson
         else:
             self.free_surface_detections = self.calculate_pressure_domain_volume_fraction
 
         if sims.dimension == 2:
-            self.update_nodal_pressure = self.update_nodal_pressure_2D
-            self.compute_particle_kinematic = self.compute_particle_kinematics_twophase2D
+            self.update_nodal_pressure = self.update_nodal_pressure_2d
+            self.compute_particle_kinematic = self.compute_particle_kinematics_twophase2d
             if sims.pressure_smoothing:
-                self.pressure_smoothing_ = self.pressure_smoothing_twophase_2D
+                self.pressure_smoothing_ = self.pressure_smoothing_twophase_2d
 
             if sims.pressure_stabilize == "FIC":
-                self.compute_nodal_kinematics = self.compute_nodal_kinematics_FIC
-                self.compute_particle_kinematic = self.compute_particle_kinematics_twophase2D_FIC
+                self.compute_nodal_kinematics = self.compute_nodal_kinematics_fic
+                self.compute_particle_kinematic = self.compute_particle_kinematics_twophase2d_fic
                 # self.compute_grid_velcity = self.compute_grid_velcity_FIC
             if not sims.is_2DAxisy:
                 if not sims.use_mgpcg_pressure_solver() and sims.free_surface_detection and sims.pressure_beta > 0.0:
-                    self.map_tpic_pressure = self.map_tpic_pressure_2D
-                    self.update_tpic_pressure_gradient = self.update_tpic_pressure_gradient_2D
+                    self.map_tpic_pressure = self.map_tpic_pressure_2d
+                    self.update_tpic_pressure_gradient = self.update_tpic_pressure_gradient_2d
                 if sims.stabilize == "B-Bar Method":
                     self.compute_internal_forces = no_operation
                     self.compute_stress_strains = no_operation
                 else:
-                    self.compute_forces = self.compute_force_2D
+                    self.compute_forces = self.compute_force_2d
                     self.compute_stress_strains = self.compute_stress_strain
                     if sims.use_mgpcg_pressure_solver():
-                        self.compute_Poisson_equation_implicit = self.compute_Poisson_equation_2D_byMGPCG
-                        self.compute_correction_grid_kinematics = self.compute_correction_grid_kinematic_byMGPCG
+                        self.compute_Poisson_equation_implicit = self.compute_poisson_equation_2d_by_mgpcg
+                        self.compute_correction_grid_kinematics = self.compute_correction_grid_kinematic_by_mgpcg
                         if sims.pressure_stabilize == "FIC":
-                            self.compute_Poisson_equation_implicit = self.compute_Poisson_equation_FIC_2D_byMGPCG
-                            self.compute_correction_grid_kinematics = self.compute_correction_grid_kinematic_FIC_byMGPCG
+                            self.compute_Poisson_equation_implicit = self.compute_poisson_equation_fic_2d_by_mgpcg
+                            self.compute_correction_grid_kinematics = (
+                                self.compute_correction_grid_kinematic_fic_by_mgpcg
+                            )
                     else:
-                        self.compute_Poisson_equation_implicit = self.compute_Poisson_equation_2D
+                        self.compute_Poisson_equation_implicit = self.compute_poisson_equation_2d
                         self.compute_correction_grid_kinematics = self.compute_correction_grid_kinematic
 
                 if sims.contact_detection:
                     self.pre_contact_calculate = self.calculate_precontact
                     if sims.contact_detection == "MPMContact":
-                        self.compute_contact_force_prediction = self.compute_contact_force_semi_2D
-                        self.compute_contact_force_correction = self.compute_contact_force_semi_2D
+                        self.compute_contact_force_prediction = self.compute_contact_force_semi_2d
+                        self.compute_contact_force_correction = self.compute_contact_force_semi_2d
                     elif sims.contact_detection == "GeoContact":
                         self.compute_contact_force_ = self.compute_geocontact_force_2D
                     elif sims.contact_detection == "DEMContact":
                         pass
                     else:
-                        raise RuntimeError("Wrong contact type!")
+                        raise SimulationStateError("Wrong contact type!")
 
             elif sims.is_2DAxisy:
                 if sims.stabilize == "B-Bar Method":
                     self.compute_internal_forces = no_operation
                     self.compute_stress_strains = no_operation
                 else:
-                    self.compute_forces = self.compute_force_2DAxisy
-                    self.compute_stress_strains = self.compute_stress_strain_2DAxisy
+                    self.compute_forces = self.compute_force_2d_axisy
+                    self.compute_stress_strains = self.compute_stress_strain_2d_axisy
                     if sims.use_mgpcg_pressure_solver():
-                        self.compute_Poisson_equation_implicit = self.compute_Poisson_equation_2DAxisy_byMGPCG
-                        self.compute_correction_grid_kinematics = self.compute_correction_grid_kinematic_2DAxisy_byMGPCG
+                        self.compute_Poisson_equation_implicit = self.compute_poisson_equation_2d_axisy_by_mgpcg
+                        self.compute_correction_grid_kinematics = (
+                            self.compute_correction_grid_kinematic_2d_axisy_by_mgpcg
+                        )
                         if sims.pressure_stabilize == "FIC":
                             self.compute_Poisson_equation_implicit = no_operation
                             self.compute_correction_grid_kinematics = no_operation
                     else:
-                        self.compute_Poisson_equation_implicit = self.compute_Poisson_equation_2D
-                        self.compute_correction_grid_kinematics = self.compute_correction_grid_kinematic_2DAxisy
+                        self.compute_Poisson_equation_implicit = self.compute_poisson_equation_2d
+                        self.compute_correction_grid_kinematics = self.compute_correction_grid_kinematic_2d_axisy
                         if sims.pressure_stabilize == "FIC":
                             self.compute_Poisson_equation_implicit = no_operation
                             self.compute_correction_grid_kinematics = no_operation
 
                 if sims.contact_detection:
-                    self.pre_contact_calculate = self.calculate_precontact_2DAxisy
+                    self.pre_contact_calculate = self.calculate_precontact_2d_axisy
                     if sims.contact_detection == "MPMContact":
-                        self.compute_contact_force_prediction = self.compute_contact_force_semi_2D
-                        self.compute_contact_force_correction = self.compute_contact_force_semi_2D
+                        self.compute_contact_force_prediction = self.compute_contact_force_semi_2d
+                        self.compute_contact_force_correction = self.compute_contact_force_semi_2d
                     elif sims.contact_detection == "GeoContact":
                         self.compute_contact_force_ = no_operation
                     elif sims.contact_detection == "DEMContact":
                         self.pre_contact_calculate = no_operation
-                        self.compute_contact_force_prediction = self.compute_ndemcontact_force_semi_2D
+                        self.compute_contact_force_prediction = self.compute_ndemcontact_force_semi_2d
                         self.compute_contact_force_correction = no_operation
 
             if sims.velocity_projection_scheme == "Affine":
-                self.compute_nodal_kinematics = self.compute_nodal_kinematics_APIC
+                self.compute_nodal_kinematics = self.compute_nodal_kinematics_apic
                 if not sims.is_2DAxisy:
-                    self.compute_stress_strains = self.compute_stress_strain_APIC_2D
-                    self.compute_affine_matrix = self.compute_affine_matrix_APIC_2D
+                    self.compute_stress_strains = self.compute_stress_strain_apic_2d
+                    self.compute_affine_matrix = self.compute_affine_matrix_apic_2d
                 elif sims.is_2DAxisy:
-                    self.compute_stress_strains = self.compute_stress_strain_APIC_2DAxisy
-                    self.compute_affine_matrix = self.compute_affine_matrix_APIC_2DAxisy
+                    self.compute_stress_strains = self.compute_stress_strain_apic_2d_axisy
+                    self.compute_affine_matrix = self.compute_affine_matrix_apic_2d_axisy
 
         elif sims.dimension == 3:
             if not sims.use_mgpcg_pressure_solver():
-                raise RuntimeError("3D SemiImplicit TwoPhaseSingleLayer currently requires pressure_solver='MGPCG'")
+                raise ConfigurationError(
+                    "3D SemiImplicit TwoPhaseSingleLayer currently requires pressure_solver='MGPCG'"
+                )
             if sims.pressure_stabilize == "FIC":
-                raise RuntimeError(
+                raise SimulationStateError(
                     "3D SemiImplicit TwoPhaseSingleLayer does not support FIC pressure stabilization yet"
                 )
             if sims.velocity_projection_scheme == "Affine":
-                raise RuntimeError("3D SemiImplicit TwoPhaseSingleLayer does not support Affine/APIC projection yet")
-            self.compute_forces = self.compute_force_3D
-            self.compute_stress_strains = self.compute_stress_strain_3D
-            self.compute_particle_kinematic = self.compute_particle_kinematics_twophase3D
-            self.compute_Poisson_equation_implicit = self.compute_Poisson_equation_3D_byMGPCG
-            self.compute_correction_grid_kinematics = self.compute_correction_grid_kinematic_byMGPCG_3D
+                raise SimulationStateError(
+                    "3D SemiImplicit TwoPhaseSingleLayer does not support Affine/APIC projection yet"
+                )
+            self.compute_forces = self.compute_force_3d
+            self.compute_stress_strains = self.compute_stress_strain_3d
+            self.compute_particle_kinematic = self.compute_particle_kinematics_twophase3d
+            self.compute_Poisson_equation_implicit = self.compute_poisson_equation_3d_by_mgpcg
+            self.compute_correction_grid_kinematics = self.compute_correction_grid_kinematic_by_mgpcg_3d
 
-    def compute_nodal_kinematics(self, sims: Simulation, scene: myScene):
+    def compute_nodal_kinematics(self, sims: Simulation, scene: SceneManager):
         kernel_mass_momentum_p2g_semitwophase(
             scene.element.grid_nodes,
             int(scene.particleNum[0]),
@@ -218,8 +225,8 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
         )
         self.map_tpic_pressure(scene)
 
-    def compute_nodal_kinematics_APIC(self, sims: Simulation, scene: myScene):
-        kernel_mass_momentum_p2g_twophase_APIC(
+    def compute_nodal_kinematics_apic(self, sims: Simulation, scene: SceneManager):
+        kernel_mass_momentum_p2g_twophase_apic(
             scene.element.grid_nodes,
             int(scene.particleNum[0]),
             scene.node,
@@ -234,7 +241,7 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
         )
         self.map_tpic_pressure(scene)
 
-    def compute_nodal_kinematics_FIC(self, sims: Simulation, scene: myScene):
+    def compute_nodal_kinematics_fic(self, sims: Simulation, scene: SceneManager):
         kernel_mass_momentum_p2g_twophase_u_p(
             scene.element.grid_nodes,
             int(scene.particleNum[0]),
@@ -248,8 +255,8 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
         )
         self.map_tpic_pressure(scene)
 
-    def map_tpic_pressure_2D(self, scene: myScene):
-        kernel_pressure_tpic_p2g_correction_2D(
+    def map_tpic_pressure_2d(self, scene: SceneManager):
+        kernel_pressure_tpic_p2g_correction_2d(
             scene.element.grid_nodes,
             int(scene.particleNum[0]),
             scene.element.grid_size,
@@ -261,8 +268,8 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
             scene.element.node_size,
         )
 
-    def update_tpic_pressure_gradient_2D(self, sims: Simulation, scene: myScene):
-        kernel_update_particle_pressure_gradient_2D(
+    def update_tpic_pressure_gradient_2d(self, sims: Simulation, scene: SceneManager):
+        kernel_update_particle_pressure_gradient_2d(
             scene.element.grid_nodes,
             int(scene.particleNum[0]),
             sims.pressure_beta,
@@ -273,10 +280,10 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
             scene.element.node_size,
         )
 
-    def compute_grid_velcity(self, sims: Simulation, scene: myScene):
+    def compute_grid_velcity(self, sims: Simulation, scene: SceneManager):
         kernel_compute_grid_velocity_twophase(scene.mass_cut_off, scene.node)
 
-    def compute_particle_kinematics(self, sims: Simulation, scene: myScene):
+    def compute_particle_kinematics(self, sims: Simulation, scene: SceneManager):
         kernel_kinemaitc_g2p_twophase(
             scene.element.grid_nodes,
             sims.alphaPIC,
@@ -289,8 +296,8 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
             scene.element.node_size,
         )
 
-    def compute_particle_kinematics_2D(self, sims: Simulation, scene: myScene):
-        kernel_kinemaitc_g2p_twophase2D(
+    def compute_particle_kinematics_2d(self, sims: Simulation, scene: SceneManager):
+        kernel_kinemaitc_g2p_twophase2d(
             scene.element.grid_nodes,
             sims.alphaPIC,
             sims.dt,
@@ -302,13 +309,13 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
             scene.element.node_size,
         )
 
-    def apply_dirichlet_constraints(self, sims: Simulation, scene: myScene):
+    def apply_dirichlet_constraints(self, sims: Simulation, scene: SceneManager):
         # self.apply_reflection_constraints(sims, scene)
         self.apply_velocity_constraints(sims, scene)
 
-    def compute_stress_strain(self, sims: Simulation, scene: myScene):
+    def compute_stress_strain(self, sims: Simulation, scene: SceneManager):
         for _, start_index, end_index, mat_prop in self._iter_twophase_materials(scene):
-            kernel_compute_stress_strain_semitwophase2D(
+            kernel_compute_stress_strain_semitwophase2d(
                 scene.element.grid_nodes,
                 sims.dt,
                 start_index,
@@ -323,9 +330,9 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
                 scene.element.node_size,
             )
 
-    def compute_stress_strain_3D(self, sims: Simulation, scene: myScene):
+    def compute_stress_strain_3d(self, sims: Simulation, scene: SceneManager):
         for _, start_index, end_index, mat_prop in self._iter_twophase_materials(scene):
-            kernel_compute_stress_strain_semitwophase3D(
+            kernel_compute_stress_strain_semitwophase3d(
                 scene.element.grid_nodes,
                 sims.dt,
                 start_index,
@@ -340,9 +347,9 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
                 scene.element.node_size,
             )
 
-    def compute_stress_strain_APIC_2D(self, sims: Simulation, scene: myScene):
+    def compute_stress_strain_apic_2d(self, sims: Simulation, scene: SceneManager):
         for _, start_index, end_index, mat_prop in self._iter_twophase_materials(scene):
-            kernel_compute_stress_strain_APIC_twophase2D(
+            kernel_compute_stress_strain_apic_twophase2d(
                 scene.element.grid_nodes,
                 sims.dt,
                 start_index,
@@ -359,9 +366,9 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
                 scene.element.gnum,
             )
 
-    def compute_stress_strain_2DAxisy(self, sims: Simulation, scene: myScene):
+    def compute_stress_strain_2d_axisy(self, sims: Simulation, scene: SceneManager):
         for _, start_index, end_index, mat_prop in self._iter_twophase_materials(scene):
-            kernel_compute_stress_strain_twophase2DAxisy(
+            kernel_compute_stress_strain_twophase2d_axisy(
                 scene.element.grid_nodes,
                 sims.dt,
                 start_index,
@@ -378,9 +385,9 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
                 sims.axis_offset,
             )
 
-    def compute_stress_strain_APIC_2DAxisy(self, sims: Simulation, scene: myScene):
+    def compute_stress_strain_apic_2d_axisy(self, sims: Simulation, scene: SceneManager):
         for _, start_index, end_index, mat_prop in self._iter_twophase_materials(scene):
-            kernel_compute_stress_strain_APIC_twophase2DAxisy(
+            kernel_compute_stress_strain_apic_twophase2d_axisy(
                 scene.element.grid_nodes,
                 sims.dt,
                 start_index,
@@ -399,8 +406,8 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
                 sims.axis_offset,
             )
 
-    def compute_affine_matrix_APIC_2D(self, sims: Simulation, scene: myScene):
-        kernel_compute_affine_matrix_APIC_twophase2D(
+    def compute_affine_matrix_apic_2d(self, sims: Simulation, scene: SceneManager):
+        kernel_compute_affine_matrix_apic_twophase2d(
             scene.element.grid_nodes,
             int(scene.particleNum[0]),
             scene.node,
@@ -413,8 +420,8 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
             False,
         )
 
-    def compute_affine_matrix_APIC_2DAxisy(self, sims: Simulation, scene: myScene):
-        kernel_compute_affine_matrix_APIC_twophase2DAxisy(
+    def compute_affine_matrix_apic_2d_axisy(self, sims: Simulation, scene: SceneManager):
+        kernel_compute_affine_matrix_apic_twophase2d_axisy(
             scene.element.grid_nodes,
             int(scene.particleNum[0]),
             scene.node,
@@ -427,8 +434,8 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
             sims.axis_offset,
         )
 
-    def compute_force_2D(self, sims: Simulation, scene: myScene):
-        kernel_force_p2g_semitwophase2D(
+    def compute_force_2d(self, sims: Simulation, scene: SceneManager):
+        kernel_force_p2g_semitwophase2d(
             scene.element.grid_nodes,
             int(scene.particleNum[0]),
             sims.gravity,
@@ -442,8 +449,8 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
             not sims.use_mgpcg_pressure_solver(),
         )
 
-    def compute_force_3D(self, sims: Simulation, scene: myScene):
-        kernel_force_p2g_semitwophase3D(
+    def compute_force_3d(self, sims: Simulation, scene: SceneManager):
+        kernel_force_p2g_semitwophase3d(
             scene.element.grid_nodes,
             int(scene.particleNum[0]),
             sims.gravity,
@@ -456,8 +463,8 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
             sims.pressure_beta,
         )
 
-    def compute_force_bbar_2D(self, sims: Simulation, scene: myScene):
-        kernel_force_bbar_p2g_twophase2D(
+    def compute_force_bbar_2d(self, sims: Simulation, scene: SceneManager):
+        kernel_force_bbar_p2g_twophase2d(
             scene.element.grid_nodes,
             int(scene.particleNum[0]),
             sims.gravity,
@@ -470,8 +477,8 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
             scene.element.node_size,
         )
 
-    def compute_force_2DAxisy(self, sims: Simulation, scene: myScene):
-        kernel_force_p2g_semitwophase_2DAxisy(
+    def compute_force_2d_axisy(self, sims: Simulation, scene: SceneManager):
+        kernel_force_p2g_semitwophase_2d_axisy(
             scene.element.grid_nodes,
             int(scene.particleNum[0]),
             sims.gravity,
@@ -485,8 +492,8 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
             sims.axis_offset,
         )
 
-    def compute_force_bbar_2DAxisy(self, sims: Simulation, scene: myScene):
-        kernel_force_bbar_p2g_twophase_2DAxisy(
+    def compute_force_bbar_2d_axisy(self, sims: Simulation, scene: SceneManager):
+        kernel_force_bbar_p2g_twophase_2d_axisy(
             scene.element.grid_nodes,
             int(scene.particleNum[0]),
             sims.gravity,
@@ -498,17 +505,17 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
             scene.element.node_size,
         )
 
-    def compute_prediction_grid_kinematic(self, sims: Simulation, scene: myScene):
+    def compute_prediction_grid_kinematic(self, sims: Simulation, scene: SceneManager):
         kernel_compute_grid_kinematic_semitwophase(
             scene.mass_cut_off, sims.background_damping, scene.node, sims.dt, scene.element.ti_nodal_coords
         )
 
-    def compute_prediction_grid_kinematic_(self, sims: Simulation, scene: myScene):
-        kernel_compute_grid_kinematic_semitwophase_(
+    def compute_prediction_grid_kinematic_drained(self, sims: Simulation, scene: SceneManager):
+        kernel_compute_grid_kinematic_drained_twophase(
             scene.mass_cut_off, sims.background_damping, scene.node, sims.dt, scene.element.ti_nodal_coords
         )
 
-    def compute_correction_grid_kinematic(self, sims: Simulation, scene: myScene):
+    def compute_correction_grid_kinematic(self, sims: Simulation, scene: SceneManager):
         kernel_correct_grid_kinematic_semitwophase(
             scene.element.grid_nodes,
             int(scene.particleNum[0]),
@@ -522,8 +529,8 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
             scene.mass_cut_off,
         )
 
-    def compute_correction_grid_kinematic_2DAxisy(self, sims: Simulation, scene: myScene):
-        kernel_correct_grid_kinematic_semitwophase_2DAxisy(
+    def compute_correction_grid_kinematic_2d_axisy(self, sims: Simulation, scene: SceneManager):
+        kernel_correct_grid_kinematic_semitwophase_2d_axisy(
             scene.element.grid_nodes,
             int(scene.particleNum[0]),
             scene.particle,
@@ -536,7 +543,7 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
             scene.mass_cut_off,
         )
 
-    def project_fic_pressure_gradient(self, scene: myScene):
+    def project_fic_pressure_gradient(self, scene: SceneManager):
         # Rebuild from the mapped old pressure on the current particle support.
         # This also initializes new nodes and restart runs, without stale grid
         # history or a different first-step stabilization equation.
@@ -557,7 +564,7 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
             )
         kernel_normalize_fic_pressure_projection(scene.node)
 
-    def compute_correction_grid_kinematic_byMGPCG(self, sims: Simulation, scene: myScene):
+    def compute_correction_grid_kinematic_by_mgpcg(self, sims: Simulation, scene: SceneManager):
         kernel_correct_grid_kinematic_semitwophase_mg(
             sims.current_step,
             scene.node,
@@ -573,8 +580,8 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
             scene.is_rigid,
         )
 
-    def compute_correction_grid_kinematic_byMGPCG_3D(self, sims: Simulation, scene: myScene):
-        kernel_correct_grid_kinematic_semitwophase_mg_3D(
+    def compute_correction_grid_kinematic_by_mgpcg_3d(self, sims: Simulation, scene: SceneManager):
+        kernel_correct_grid_kinematic_semitwophase_mg_3d(
             sims.current_step,
             scene.node,
             sims.dt,
@@ -589,9 +596,9 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
             scene.is_rigid,
         )
 
-    def compute_correction_grid_kinematic_2DAxisy_byMGPCG(self, sims: Simulation, scene: myScene):
+    def compute_correction_grid_kinematic_2d_axisy_by_mgpcg(self, sims: Simulation, scene: SceneManager):
         # kernel_correct_grid_kinematic_semitwophase_2DAxi_mg_map(scene.material.matProps, scene.node, scene.element.grid_size, scene.element.extra_function, scene.element.extra_grad_function, scene.element.gnum, sims.dt, scene.node_type, scene.cell_dpressure, scene.cell_free_surface, scene.is_rigid, sims.axis_offset)
-        kernel_correct_grid_kinematic_semitwophase_2DAxi_mg_fdm(
+        kernel_correct_grid_kinematic_semitwophase_2_d_axi_mg_fdm(
             sims.current_step,
             scene.node,
             sims.dt,
@@ -607,10 +614,10 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
             sims.axis_offset,
         )
 
-    def compute_correction_grid_kinematic_FIC_byMGPCG(self, sims: Simulation, scene: myScene):
+    def compute_correction_grid_kinematic_fic_by_mgpcg(self, sims: Simulation, scene: SceneManager):
         scene.node.extra_stabilize.fill(0)
         # kernel_correct_grid_kinematic_semitwophase_FIC_mg_map(scene.material.matProps, scene.node, scene.element.grid_size, scene.element.extra_function, scene.element.extra_grad_function, scene.element.gnum, sims.dt, scene.node_type, scene.cell_porosity)
-        kernel_correct_grid_kinematic_semitwophase_FIC_mg_fdm(
+        kernel_correct_grid_kinematic_semitwophase_fic_mg_fdm(
             sims.current_step,
             scene.node,
             sims.dt,
@@ -625,8 +632,8 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
             self._single_twophase_matprop(scene),
         )
 
-    def update_nodal_pressure_2D(self, sims: Simulation, scene: myScene):
-        kernel_update_nodal_pressure_2D(
+    def update_nodal_pressure_2d(self, sims: Simulation, scene: SceneManager):
+        kernel_update_nodal_pressure_2d(
             scene.mass_cut_off,
             sims.pressure_beta,
             0.0,  # Atmospheric gauge pressure, not the material's cavitation limit.
@@ -634,8 +641,8 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
             self.matrix_free.unknow_vector,
         )
 
-    def compute_particle_kinematics_twophase2D(self, sims: Simulation, scene: myScene):
-        kernel_kinemaitc_g2p_semitwophase2D(
+    def compute_particle_kinematics_twophase2d(self, sims: Simulation, scene: SceneManager):
+        kernel_kinemaitc_g2p_semitwophase2d(
             scene.element.grid_nodes,
             sims.alphaPIC,
             sims.pressure_beta,
@@ -650,8 +657,8 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
         self.update_tpic_pressure_gradient(sims, scene)
         self.clamp_particle_pressure(scene)
 
-    def compute_particle_kinematics_twophase3D(self, sims: Simulation, scene: myScene):
-        kernel_kinemaitc_g2p_semitwophase3D(
+    def compute_particle_kinematics_twophase3d(self, sims: Simulation, scene: SceneManager):
+        kernel_kinemaitc_g2p_semitwophase3d(
             scene.element.grid_nodes,
             sims.alphaPIC,
             sims.pressure_beta,
@@ -665,8 +672,8 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
         )
         self.clamp_particle_pressure(scene)
 
-    def compute_particle_kinematics_twophase2D_FIC(self, sims: Simulation, scene: myScene):
-        kernel_kinemaitc_g2p_semitwophase2D_FIC(
+    def compute_particle_kinematics_twophase2d_fic(self, sims: Simulation, scene: SceneManager):
+        kernel_kinemaitc_g2p_semitwophase2d_fic(
             scene.element.grid_nodes,
             sims.alphaPIC,
             sims.pressure_beta,
@@ -681,7 +688,7 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
         self.update_tpic_pressure_gradient(sims, scene)
         self.clamp_particle_pressure(scene)
 
-    def compute_nodal_mass(self, sims: Simulation, scene: myScene):
+    def compute_nodal_mass(self, sims: Simulation, scene: SceneManager):
         kernel_mass_p2g_twophase(
             scene.element.grid_nodes,
             int(scene.particleNum[0]),
@@ -692,7 +699,7 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
             scene.element.node_size,
         )
 
-    def find_free_surface_by_density_poisson(self, sims, scene: myScene):
+    def find_free_surface_by_density_poisson(self, sims, scene: SceneManager):
         kernel_mass_g2p_poisson(
             scene.element.grid_nodes,
             scene.element.cell_volume,
@@ -705,7 +712,7 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
         )
         assign_particle_free_surface_poisson(int(scene.particleNum[0]), scene.particle, scene.material.matProps)
 
-    def calculate_pressure_domain_volume_fraction(self, sims, scene: myScene, neighbor=None):
+    def calculate_pressure_domain_volume_fraction(self, sims, scene: SceneManager, neighbor=None):
         cell_volume_reset(scene.element.cell_volumefrac)
         calculate_cell_volume(
             scene.element.cell_volumefrac,
@@ -717,11 +724,11 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
             sims.is_2DAxisy,
         )
 
-    def find_free_surface_by_volume_fraction(self, sims, scene: myScene):
+    def find_free_surface_by_volume_fraction(self, sims, scene: SceneManager):
         self.calculate_pressure_domain_volume_fraction(sims, scene)
         self.assign_particle_free_surface_by_volume_fraction(scene)
 
-    def assign_particle_free_surface_by_volume_fraction(self, scene: myScene):
+    def assign_particle_free_surface_by_volume_fraction(self, scene: SceneManager):
         assign_particle_free_surface_by_volume_multilayer(
             int(scene.particleNum[0]),
             scene.particle,
@@ -730,8 +737,8 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
             scene.element.cnum,
         )
 
-    def record_free_surface_particles(self, sims: Simulation, scene: myScene):
-        record_free_surface_particle_2D(
+    def record_free_surface_particles(self, sims: Simulation, scene: SceneManager):
+        record_free_surface_particle_2d(
             sims.domain,
             scene.element.grid_size,
             int(scene.particleNum[0]),
@@ -740,8 +747,8 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
             scene.free_particle_list,
         )
 
-    def free_surface_detection_poisson(self, sims: Simulation, scene: myScene, neighbor: SpatialHashGrid):
-        scene.check_in_domain_2D(sims)
+    def free_surface_detection_poisson(self, sims: Simulation, scene: SceneManager, neighbor: SpatialHashGrid):
+        scene.check_in_domain_2d(sims)
         self.find_free_surface_by_volume_fraction(sims, scene)
         """self.find_free_surface_by_density_poisson(sims, scene)"""
         """neighbor.place_particles(scene)  # sph -- update Hash Table
@@ -749,7 +756,7 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
         self.free_surface_by_geometry(scene, neighbor)    # sph -- identify free surface particle ID
         self.record_free_surface_particles(sims, scene)"""
 
-    def free_surface_detection_poisson_byMGPCG(self, sims: Simulation, scene: myScene, neighbor: SpatialHashGrid):
+    def free_surface_detection_poisson_by_mgpcg(self, sims: Simulation, scene: SceneManager, neighbor: SpatialHashGrid):
         cell_volume_reset(scene.element.cell_volumefrac)
         calculate_cell_volume_fraction(
             scene.element.cell_volumefrac,
@@ -762,11 +769,11 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
         )
         self.assign_particle_free_surface_by_volume_fraction(scene)
 
-    def free_surface_detection_poisson_byMGPCG_2DAxisy(
-        self, sims: Simulation, scene: myScene, neighbor: SpatialHashGrid
+    def free_surface_detection_poisson_by_mgpcg_2d_axisy(
+        self, sims: Simulation, scene: SceneManager, neighbor: SpatialHashGrid
     ):
         cell_volume_reset(scene.element.cell_volumefrac)
-        calculate_cell_volume_fraction_2DAxisy_plane(
+        calculate_cell_volume_fraction_2d_axisy_plane(
             scene.element.cell_volumefrac,
             int(scene.particleNum[0]),
             scene.particle,
@@ -778,7 +785,7 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
         )
         self.assign_particle_free_surface_by_volume_fraction(scene)
 
-    def pre_calculation(self, sims: Simulation, scene: myScene, neighbor: SpatialHashGrid):
+    def pre_calculation(self, sims: Simulation, scene: SceneManager, neighbor: SpatialHashGrid):
         scene.element.calculate_characteristic_length(sims, int(scene.particleNum[0]), scene.particle, scene.psize)
         if scene.element.cell_volumefrac is None:
             scene.element.create_element_volume_fraction()
@@ -799,7 +806,7 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
             print(scene.element.cnum)
             dr = scene.element.grid_size[0]
             if sims.is_2DAxisy:
-                self.poisson_solver = MGPCGMixPoissonSolver_Axi(
+                self.poisson_solver = MGPCGMixPoissonSolverAxisymmetric(
                     sims.dimension,
                     scene.element.cnum,
                     dr,
@@ -825,7 +832,7 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
             else:
                 raise ValueError(f"Unsupported semi-implicit Poisson assemble_type: {sims.assemble_type}")
 
-    def reset_iterative_grid_message(self, scene: myScene):
+    def reset_iterative_grid_message(self, scene: SceneManager):
         grid_internal_force_reset(scene.mass_cut_off, scene.node)
 
     def solve_pressure_mgpcg(self, sims: Simulation):
@@ -835,7 +842,7 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
             abs_tol=1.0e-10,
         )
         if not solved:
-            raise RuntimeError(
+            raise LinearSolveError(
                 "TwoPhaseSingleLayer pressure MGPCG failed: "
                 f"{self.poisson_solver.breakdown_reason}={self.poisson_solver.breakdown_value:.6e}, "
                 f"initial_rTr={self.poisson_solver.initial_residual:.6e}, "
@@ -843,7 +850,7 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
                 f"iterations={self.poisson_solver.last_iterations}"
             )
 
-    def compute_Poisson_equation_2D(self, sims: Simulation, scene: myScene):
+    def compute_poisson_equation_2d(self, sims: Simulation, scene: SceneManager):
         kernel_single_point_porosity_p2g(
             scene.element.grid_nodes,
             int(scene.particleNum[0]),
@@ -873,7 +880,7 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
         self.update_nodal_pressure(sims, scene)
         self.limit_nodal_pressure_increment(sims, scene)
 
-    def compute_Poisson_equation_2D_byMGPCG(self, sims: Simulation, scene: myScene):
+    def compute_poisson_equation_2d_by_mgpcg(self, sims: Simulation, scene: SceneManager):
         # self.element.set_node_type(scene.node, scene.node_type)
         scene.element.set_cell_type(
             scene.element.cell_volumefrac,
@@ -886,31 +893,31 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
         self.update_signed_distance_phi(sims, scene)
         self.poisson_solver.reinitialize(scene.node_type)
         self.build_b(sims, scene)
-        self.build_A(0, sims, scene)
+        self.build_a(0, sims, scene)
         for l in range(1, self.n_mg_levels):
             self.poisson_solver.init_gridtype(self.poisson_solver.grid_type[l - 1], self.poisson_solver.grid_type[l])
-            self.build_A(l, sims, scene)
+            self.build_a(l, sims, scene)
         self.solve_pressure_mgpcg(sims)
         scene.cell_dpressure.copy_from(self.poisson_solver.x)
         self.limit_cell_pressure_increment(sims, scene)
         self.update_nodal_dpressure(scene)
 
-    def compute_Poisson_equation_3D_byMGPCG(self, sims: Simulation, scene: myScene):
+    def compute_poisson_equation_3d_by_mgpcg(self, sims: Simulation, scene: SceneManager):
         scene.element.set_cell_type(scene.element.cell_volumefrac, scene.cell_rigid, scene.node_type)
         self.update_cell_information(sims, scene)
         self.update_signed_distance_phi(sims, scene)
         self.poisson_solver.reinitialize(scene.node_type)
-        self.build_b_3D(sims, scene)
-        self.build_A(0, sims, scene)
+        self.build_b_3d(sims, scene)
+        self.build_a(0, sims, scene)
         for l in range(1, self.n_mg_levels):
             self.poisson_solver.init_gridtype(self.poisson_solver.grid_type[l - 1], self.poisson_solver.grid_type[l])
-            self.build_A(l, sims, scene)
+            self.build_a(l, sims, scene)
         self.solve_pressure_mgpcg(sims)
         scene.cell_dpressure.copy_from(self.poisson_solver.x)
         self.limit_cell_pressure_increment(sims, scene)
-        self.update_nodal_dpressure_3D(scene)
+        self.update_nodal_dpressure_3d(scene)
 
-    def compute_Poisson_equation_2DAxisy_byMGPCG(self, sims: Simulation, scene: myScene):
+    def compute_poisson_equation_2d_axisy_by_mgpcg(self, sims: Simulation, scene: SceneManager):
         scene.element.set_cell_type(
             scene.element.cell_volumefrac,
             scene.cell_rigid,
@@ -921,33 +928,33 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
         self.update_cell_information(sims, scene)
         self.update_signed_distance_phi(sims, scene)
         self.poisson_solver.reinitialize(scene.node_type)
-        self.build_b_2DAxisy(sims, scene)
-        self.build_A_2DAxisy(0, sims, scene)
+        self.build_b_2d_axisy(sims, scene)
+        self.build_a_2d_axisy(0, sims, scene)
         for l in range(1, self.n_mg_levels):
             self.poisson_solver.init_gridtype(self.poisson_solver.grid_type[l - 1], self.poisson_solver.grid_type[l])
-            self.build_A_2DAxisy(l, sims, scene)
+            self.build_a_2d_axisy(l, sims, scene)
         self.solve_pressure_mgpcg(sims)
         scene.cell_dpressure.copy_from(self.poisson_solver.x)
         self.limit_cell_pressure_increment(sims, scene)
         self.update_nodal_dpressure(scene)
 
-    def compute_Poisson_equation_FIC_2D_byMGPCG(self, sims: Simulation, scene: myScene):
+    def compute_poisson_equation_fic_2d_by_mgpcg(self, sims: Simulation, scene: SceneManager):
         scene.element.set_cell_type(scene.element.cell_volumefrac, scene.cell_rigid, scene.node_type)
         self.update_cell_information(sims, scene)
         # self.update_signed_distance_phi(sims, scene)
         self.poisson_solver.reinitialize(scene.node_type)
-        self.build_b_FIC(sims, scene)
-        self.build_A_FIC(0, sims, scene)
+        self.build_b_fic(sims, scene)
+        self.build_a_fic(0, sims, scene)
         for l in range(1, self.n_mg_levels):
             self.poisson_solver.init_gridtype(self.poisson_solver.grid_type[l - 1], self.poisson_solver.grid_type[l])
-            self.build_A_FIC(l, sims, scene)
+            self.build_a_fic(l, sims, scene)
         self.solve_pressure_mgpcg(sims)
         scene.cell_dpressure.copy_from(self.poisson_solver.x)
         self.limit_cell_pressure_increment(sims, scene)
         self.update_nodal_dpressure(scene)
 
-    def update_nodal_dpressure(self, scene: myScene):
-        kernel_update_nodal_dpressure_2D(
+    def update_nodal_dpressure(self, scene: SceneManager):
+        kernel_update_nodal_dpressure_2d(
             scene.node,
             scene.element.grid_size,
             scene.element.extra_function,
@@ -959,10 +966,10 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
             scene.cell_phi,
             scene.is_rigid,
         )
-        kernel_update_nodal_dpressure_2D_(scene.mass_cut_off, scene.node)
+        kernel_normalize_nodal_dpressure_2d(scene.mass_cut_off, scene.node)
 
-    def update_nodal_dpressure_3D(self, scene: myScene):
-        kernel_update_nodal_dpressure_3D(
+    def update_nodal_dpressure_3d(self, scene: SceneManager):
+        kernel_update_nodal_dpressure_3d(
             scene.node,
             scene.element.grid_size,
             scene.element.shape_function,
@@ -974,11 +981,11 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
             scene.cell_phi,
             scene.is_rigid,
         )
-        kernel_update_nodal_dpressure_2D_(scene.mass_cut_off, scene.node)
+        kernel_normalize_nodal_dpressure_2d(scene.mass_cut_off, scene.node)
 
-    def postmapping_grid_velocity(self, sims: Simulation, scene: myScene):
-        kernel_reset_grid_velocity_twophase2D(scene.node)
-        kernel_postmapping_kinemaitc_twophase2D(
+    def postmapping_grid_velocity(self, sims: Simulation, scene: SceneManager):
+        kernel_reset_grid_velocity_twophase2d(scene.node)
+        kernel_postmapping_kinemaitc_twophase2d(
             scene.element.grid_nodes,
             int(scene.particleNum[0]),
             scene.element.gnum,
@@ -989,7 +996,7 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
             scene.element.node_size,
         )
 
-    def calculate_precontact(self, sims: Simulation, scene: myScene):
+    def calculate_precontact(self, sims: Simulation, scene: SceneManager):
         kernel_calc_contact_normal_twophase(
             scene.element.grid_nodes,
             int(scene.particleNum[0]),
@@ -1000,8 +1007,8 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
             scene.element.node_size,
         )
 
-    def calculate_precontact_2DAxisy(self, sims: Simulation, scene: myScene):
-        kernel_calc_contact_normal_twophase_2DAxisy(
+    def calculate_precontact_2d_axisy(self, sims: Simulation, scene: SceneManager):
+        kernel_calc_contact_normal_twophase_2d_axisy(
             scene.element.grid_nodes,
             int(scene.particleNum[0]),
             scene.node,
@@ -1012,8 +1019,8 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
             sims.axis_offset,
         )
 
-    def compute_contact_force_semi_2D(self, sims: Simulation, scene: myScene):
-        kernel_calc_friction_contact_semi_2D(
+    def compute_contact_force_semi_2d(self, sims: Simulation, scene: SceneManager):
+        kernel_calc_friction_contact_semi_2d(
             scene.mass_cut_off,
             scene.contact.friction,
             sims.dt,
@@ -1023,8 +1030,8 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
             sims.axis_offset,
         )
 
-    def compute_ndemcontact_force_semi_2D(self, sims: Simulation, scene: myScene):
-        kernel_calc_normal_demcontact_semi_2D(
+    def compute_ndemcontact_force_semi_2d(self, sims: Simulation, scene: SceneManager):
+        kernel_calc_normal_demcontact_semi_2d(
             scene.element.grid_nodes,
             int(scene.particleNum[0]),
             scene.particle,
@@ -1037,7 +1044,7 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
             scene.element.shape_fn,
             scene.element.node_size,
         )
-        kernel_calc_tangential_demcontact_semi_2D(
+        kernel_calc_tangential_demcontact_semi_2d(
             scene.mass_cut_off,
             self._single_twophase_matprop(scene).friction,
             scene.contact.velocity,
@@ -1048,16 +1055,16 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
         )
         kernel_assemble_contact_force_solid(scene.mass_cut_off, sims.dt, scene.node)
 
-    def apply_displacement_constraints(self, sims: Simulation, scene: myScene):
+    def apply_displacement_constraints(self, sims: Simulation, scene: SceneManager):
         kernel_apply_displacement_mixture(scene.mass_cut_off, sims.dt, scene.node, scene.element.ti_nodal_coords)
 
-    def apply_node_traction_constraints(self, sims: Simulation, scene: myScene):
+    def apply_node_traction_constraints(self, sims: Simulation, scene: SceneManager):
         kernel_apply_node_traction(scene.mass_cut_off, sims.dt, scene.node, scene.element.ti_nodal_coords)
 
-    def calculate_interpolations(self, sims: Simulation, scene: myScene):
+    def calculate_interpolations(self, sims: Simulation, scene: SceneManager):
         scene.element.calculate(scene.particleNum, scene.particle)
 
-    def update_cell_information(self, sims: Simulation, scene: myScene):
+    def update_cell_information(self, sims: Simulation, scene: SceneManager):
         kernel_reset_cell_infor(
             scene.node_type,
             scene.cell_volume,
@@ -1095,7 +1102,7 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
             scene.is_rigid,
         )
 
-    def update_signed_distance_phi(self, sims: Simulation, scene: myScene):
+    def update_signed_distance_phi(self, sims: Simulation, scene: SceneManager):
         kernel_build_fluid_sdf_from_cell_type(
             0,
             scene.element.cnum,
@@ -1106,8 +1113,8 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
         )
         kernel_pre_update_phi(sims.current_step, scene.element.cnum, scene.node_type, scene.cell_free_surface)
 
-    def build_A(self, level, sims, scene):
-        kernel_assemble_A(
+    def build_a(self, level, sims, scene):
+        kernel_assemble_a(
             level,
             sims.dt,
             self._single_twophase_matprop(scene),
@@ -1119,10 +1126,10 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
             self.poisson_solver.Ax[level],
         )
 
-    def build_A_2DAxisy(self, level, sims, scene):
+    def build_a_2d_axisy(self, level, sims, scene):
         # kernel_assemble_A_2DAxisy(sims.dt, scene.material.matProps, scene.element.grid_size, scene.cell_porosity, scene.cell_phi, self.poisson_solver.grid_type[level], self.poisson_solver.Adiag[level], self.poisson_solver.Ax[level], self.poisson_solver.Ax_neg[level], sims.axis_offset)
         # kernel_assemble_A_2DAxisy_(sims.dt, scene.material.matProps, scene.element.grid_size, scene.cell_porosity, scene.cell_phi, self.poisson_solver.grid_type[level], self.poisson_solver.Adiag[level], self.poisson_solver.Ax[level], self.poisson_solver.Ax_neg[level], sims.axis_offset)
-        kernel_assemble_A_2DAxisy_multi(
+        kernel_assemble_a_2d_axisy_multi(
             sims.dt,
             self._single_twophase_matprop(scene),
             scene.element.grid_size,
@@ -1136,7 +1143,7 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
             level,
         )
 
-    def build_b(self, sims: Simulation, scene: myScene):
+    def build_b(self, sims: Simulation, scene: SceneManager):
         # kernel_assemble_bn(scene.element.grid_nodes, int(scene.particleNum[0]), scene.particle, scene.element.node_size, scene.element.LnID, scene.node,
         #                    scene.element.dshape_fn, scene.element.shape_fn, scene.element.gnum, self.poisson_solver.b)
         kernel_assemble_bc_map(
@@ -1152,8 +1159,8 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
         )
         # kernel_assemble_bc_fdm(sims.current_step, scene.node, scene.element.grid_size, scene.element.gnum, self.poisson_solver.b, scene.node_type, scene.cell_porosity, sims.dt, scene.material.matProps)
 
-    def build_b_3D(self, sims: Simulation, scene: myScene):
-        kernel_assemble_bc_map_3D(
+    def build_b_3d(self, sims: Simulation, scene: SceneManager):
+        kernel_assemble_bc_map_3d(
             scene.node,
             scene.element.grid_size,
             scene.element.shape_function,
@@ -1165,9 +1172,9 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
             scene.is_rigid,
         )
 
-    def build_b_2DAxisy(self, sims: Simulation, scene: myScene):
+    def build_b_2d_axisy(self, sims: Simulation, scene: SceneManager):
         # kernel_assemble_bc_2DAxisy_map(scene.node, scene.element.grid_size, scene.element.extra_function, scene.element.extra_grad_function, scene.element.gnum, self.poisson_solver.b, scene.node_type, scene.cell_porosity, scene.is_rigid, sims.axis_offset)
-        kernel_assemble_bc_2DAxisy_map_(
+        kernel_assemble_bc_2d_axisy_map(
             scene.node,
             scene.element.grid_size,
             scene.element.extra_function,
@@ -1181,8 +1188,8 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
         )
         # kernel_assemble_bc_2DAxisy_fdm(sims.current_step, scene.node, scene.element.grid_size, scene.element.gnum, self.poisson_solver.b, scene.node_type, scene.cell_porosity, sims.dt, scene.material.matProps, sims.axis_offset)
 
-    def build_A_FIC(self, level, sims, scene):
-        kernel_assemble_A_FIC(
+    def build_a_fic(self, level, sims, scene):
+        kernel_assemble_a_fic(
             sims.dt,
             self._single_twophase_matprop(scene),
             scene.element.grid_size,
@@ -1193,8 +1200,8 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
             self.poisson_solver.Ax[level],
         )
 
-    def build_b_FIC(self, sims: Simulation, scene: myScene):
-        kernel_assemble_FIC_bc_map(
+    def build_b_fic(self, sims: Simulation, scene: SceneManager):
+        kernel_assemble_fic_bc_map(
             self._single_twophase_matprop(scene),
             scene.node,
             scene.element.grid_size,
@@ -1207,12 +1214,12 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
         )
         # kernel_assemble_FIC_bc_fdm(sims.current_step, scene.node, scene.element.grid_size, scene.element.gnum, self.poisson_solver.b, scene.node_type, scene.cell_porosity, sims.dt, scene.material.matProps, scene.cell_pressure, scene.cell_dpressure)
 
-    def pressure_smoothing_twophase_2D(self, sims, scene: myScene):
+    def pressure_smoothing_twophase_2d(self, sims, scene: SceneManager):
         scene.extra_node.fill(0)
         # kernel_pressure_p2g_twophase_2D_linear(scene.element.gnum, scene.element.igrid_size, int(scene.particleNum[0]), scene.extra_node, scene.particle)
         # kernel_grid_pressure(scene.mass_cut_off, scene.is_rigid, scene.node, scene.extra_node)
         # kernel_pressure_g2p_twophase_2D_linear(scene.element.gnum, scene.element.igrid_size, scene.extra_node, int(scene.particleNum[0]), scene.particle)
-        kernel_pressure_p2g_twophase_2D(
+        kernel_pressure_p2g_twophase_2d(
             int(scene.particleNum[0]),
             scene.extra_node,
             scene.particle,
@@ -1222,7 +1229,7 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
             scene.element.node_size,
         )
         kernel_grid_pressure(scene.mass_cut_off, scene.is_rigid, scene.node, scene.extra_node)
-        kernel_pressure_g2p_twophase_2D(
+        kernel_pressure_g2p_twophase_2d(
             scene.extra_node,
             int(scene.particleNum[0]),
             scene.particle,
@@ -1233,7 +1240,7 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
         )
 
     # -------------------------------------------------------
-    def affine_updating(self, sims: Simulation, scene: myScene, neighbor=None):
+    def affine_updating(self, sims: Simulation, scene: SceneManager, neighbor=None):
         self.calculate_interpolation(sims, scene)
         self.compute_nodal_kinematics(sims, scene)
         self.free_surface_detections(sims, scene, neighbor)
@@ -1255,7 +1262,7 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
         self.compute_stress_strains(sims, scene)
         self.compute_particle_kinematic(sims, scene)
 
-    def usl_updating(self, sims: Simulation, scene: myScene, neighbor: SpatialHashGrid):
+    def usl_updating(self, sims: Simulation, scene: SceneManager, neighbor: SpatialHashGrid):
         self.calculate_interpolation(sims, scene)
         self.compute_nodal_kinematics(sims, scene)
         self.free_surface_detections(sims, scene, neighbor)
@@ -1277,7 +1284,7 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
         self.compute_stress_strains(sims, scene)
         self.compute_particle_kinematic(sims, scene)
 
-    def usf_updating(self, sims: Simulation, scene: myScene, neighbor: SpatialHashGrid):
+    def usf_updating(self, sims: Simulation, scene: SceneManager, neighbor: SpatialHashGrid):
         self.calculate_interpolation(sims, scene)
         self.compute_nodal_kinematics(sims, scene)
         self.free_surface_detections(sims, scene, neighbor)
@@ -1304,7 +1311,7 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
         self.compute_particle_kinematic(sims, scene)
 
     # drained updating scheme, without Poisson & correction step
-    def usf_updating_(self, sims: Simulation, scene: myScene, neighbor: SpatialHashGrid):
+    def usf_updating_drained(self, sims: Simulation, scene: SceneManager, neighbor: SpatialHashGrid):
         self.calculate_interpolation(sims, scene)
         self.compute_nodal_kinematics(sims, scene)
         # self.free_surface_detections(sims, scene, neighbor)
@@ -1316,7 +1323,7 @@ class ULSemiImplicitTwoPhaseEngine(ULExplicitEngine):
         self.apply_particle_traction_constraints(sims, scene)
         self.apply_traction_constraints(sims, scene)  # node
         self.apply_absorbing_constraints(sims, scene)
-        self.compute_prediction_grid_kinematic_(sims, scene)
+        self.compute_prediction_grid_kinematic_drained(sims, scene)
         self.apply_kinematic_constraints(sims, scene)
         self.pre_contact_calculate(sims, scene)
         self.compute_contact_force_prediction(sims, scene)

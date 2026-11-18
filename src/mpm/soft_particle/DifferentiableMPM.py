@@ -1,5 +1,7 @@
 """Device checkpoint/replay adjoint for Direct IPC ULMPM trajectories."""
 
+from src.utils.errors import RecordingError, SimulationStateError
+
 import numpy as np
 import taichi as ti
 
@@ -9,17 +11,14 @@ from src.mpm.soft_particle.IPCULMPM import IPCULMPM
 
 @ti.data_oriented
 class DifferentiableMPM:
-    """Differentiate a fixed-step DP/VM Direct-ULMPM trajectory."""
+    """Differentiate fixed-step DP/VM Direct ULMPM or coupled physical MCC."""
 
     def __init__(self, simulation, steps=None):
         if not isinstance(simulation, IPCULMPM):
             raise ValueError("DifferentiableMPM requires Direct IPCULMPM")
         mpm = simulation.mpm
-        if type(mpm.material).__name__ not in {
-            "FiniteStrainDruckerPragerModel",
-            "FiniteStrainVonMisesModel",
-        }:
-            raise ValueError("DifferentiableMPM requires DP or von Mises")
+        if not simulation.ipc.supports_plastic_adjoint():
+            raise ValueError("DifferentiableMPM requires DP, von Mises or coupled physical MCC")
         if not config.DYNAMIC or mpm.step_retry.enabled:
             raise ValueError("DifferentiableMPM requires dynamic fixed-step Newmark")
         if mpm.is_axisymmetric or mpm.velocity_proj:
@@ -58,7 +57,7 @@ class DifferentiableMPM:
         self.terminal_grid_mass = ti.field(ti.f64, shape=mpm.total_background_grid_num)
         self.terminal_grid_displacement = ti.field(ti.f64, shape=mpm.degree_of_freedom)
         self.gravity_vjp = ti.Vector.field(config.DIM, ti.f64, shape=())
-        self.material_parameter_vjp = ti.Vector.field(4, ti.f64, shape=())
+        self.material_parameter_vjp = ti.Vector.field(ipc.material_parameter_count, ti.f64, shape=())
         self.friction_vjp = ti.field(ti.f64, shape=())
         # ponytail: this is a full O(steps*particles) tape; add interval
         # checkpoint/recompute only when production trajectory memory demands it.
@@ -104,7 +103,7 @@ class DifferentiableMPM:
     @ti.kernel
     def _clear_parameter_vjp(self):
         self.gravity_vjp[None] = ti.Vector.zero(ti.f64, config.DIM)
-        self.material_parameter_vjp[None] = ti.Vector.zero(ti.f64, 4)
+        self.material_parameter_vjp[None] = ti.Vector.zero(ti.f64, self.ipc.material_parameter_count)
         self.friction_vjp[None] = 0.0
 
     @ti.kernel
@@ -125,7 +124,7 @@ class DifferentiableMPM:
     def step(self, verbose=True):
         """Advance one step and append its accepted particle state to tape."""
         if self.record_count >= self.capacity:
-            raise RuntimeError("differentiable MPM trajectory tape is full")
+            raise SimulationStateError("differentiable MPM trajectory tape is full")
         if float(self.mpm.dt) != self.dt:
             raise ValueError("time step changed during differentiable trajectory")
         if int(self.mpm.step_count) != self.initial_step + self.record_count:
@@ -143,7 +142,7 @@ class DifferentiableMPM:
     def backward(self, terminal_state_vjp, verbose=False):
         """Reverse all recorded steps and return initial-state/parameter VJPs."""
         if self.record_count == 0:
-            raise RuntimeError("record at least one step before backward()")
+            raise RecordingError("record at least one step before backward()")
         if not isinstance(terminal_state_vjp, dict):
             raise TypeError("terminal_state_vjp must be a dictionary")
         ipc = self.ipc
@@ -167,7 +166,7 @@ class DifferentiableMPM:
                 try:
                     self.simulation.step(verbose=verbose, record_history=False)
                     if ipc.last_elastic_differentiation is not True:
-                        raise RuntimeError("Direct IPC-MPM replay completed without its " "device adjoint")
+                        raise SimulationStateError("Direct IPC-MPM replay completed without its " "device adjoint")
                 finally:
                     ipc.pending_adjoint_seed = None
                     ipc.pending_adjoint_mode = None
@@ -184,6 +183,11 @@ class DifferentiableMPM:
         if self.initial_step == 0:
             # Direct MPM initializes every particle acceleration from gravity.
             self._accumulate_initial_acceleration_gravity_vjp()
+        return self.parameter_and_state_vjps()
+
+    def parameter_and_state_vjps(self):
+        """Download the accumulated trajectory VJPs, including coupled uses."""
+        ipc = self.ipc
         position_vjp = ipc.particle_position_vjp.to_numpy()[: self.particle_count].copy()
         velocity_vjp = ipc.particle_velocity_vjp.to_numpy()[: self.particle_count].copy()
         acceleration_vjp = ipc.particle_acceleration_vjp.to_numpy()[: self.particle_count].copy()
@@ -194,12 +198,19 @@ class DifferentiableMPM:
                 "cohesion": float(material_parameters[2]),
                 "friction_angle_degrees": float(material_parameters[3]),
             }
+        elif type(self.mpm.material).__name__ == "FiniteStrainModifiedCamClayModel":
+            material_parameter_names = dict(
+                zip(
+                    ("poisson_ratio", "stress_ratio", "lambda_star", "kappa_star", "initial_pressure"),
+                    map(float, material_parameters),
+                )
+            )
         else:
             material_parameter_names = {
                 "yield_stress": float(material_parameters[2]),
                 "hardening_modulus": float(material_parameters[3]),
             }
-        return {
+        result = {
             "initial_position": position_vjp,
             "initial_velocity": velocity_vjp,
             "initial_acceleration": acceleration_vjp,
@@ -220,6 +231,13 @@ class DifferentiableMPM:
             **material_parameter_names,
             "friction_coefficient": float(self.friction_vjp[None]),
         }
+        if type(self.mpm.material).__name__ == "FiniteStrainModifiedCamClayModel":
+            for name in ("young_modulus", "dp_cohesion_or_vm_yield_stress", "dp_friction_angle_or_vm_hardening"):
+                result.pop(name)
+            result["initial_preconsolidation_pressure"] = ipc.plastic_pressure_vjp.to_numpy()[
+                : self.particle_count
+            ].copy()
+        return result
 
 
 __all__ = ["DifferentiableMPM"]

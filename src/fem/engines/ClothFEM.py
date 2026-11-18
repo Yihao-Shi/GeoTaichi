@@ -5,14 +5,16 @@ import numpy as np
 from src.fem.cloth.ClothAssembler import ClothAssembler
 from src.fem.engines.ExplicitFEM import ExplicitFEM
 from src.fem.engines.ImplicitFEM import ImplicitFEM
-from src.fem.engines.SparseMatrix import normalize_assemble_type, normalize_linear_solver
+from src.fem.engines.FEMSparseMatrix import FEMSparseMatrix
 
 
-class _ClothAssemblyMixin:
+class ClothAssemblyMixin:
     def _create_cloth_assembler(self, kwargs):
         self.backend = "taichi"
-        self.assemble_type = normalize_assemble_type(kwargs.get("assemble_type", kwargs.get("assembly", "Hash")))
-        self.linear_solver = normalize_linear_solver(kwargs.get("linear_solver", "PCG"))
+        self.assemble_type = FEMSparseMatrix.normalize_assemble_type(
+            kwargs.get("assemble_type", kwargs.get("assembly", "Hash"))
+        )
+        self.linear_solver = FEMSparseMatrix.normalize_linear_solver(kwargs.get("linear_solver", "PCG"))
         self.project_pd = bool(
             kwargs.get(
                 "project_pd",
@@ -116,7 +118,7 @@ class _ClothAssemblyMixin:
         return self.cloth_assembler.minimum_jacobian_ratio_device(positions)
 
 
-class ClothExplicitFEM(_ClothAssemblyMixin, ExplicitFEM):
+class ClothExplicitFEM(ClothAssemblyMixin, ExplicitFEM):
     def __init__(self, mesh, material, dirichlet=None, neumann=None, **kwargs):
         if mesh.cell_type != "triangle":
             raise ValueError("ClothFEM requires a TRI3 mesh")
@@ -143,7 +145,7 @@ class ClothExplicitFEM(_ClothAssemblyMixin, ExplicitFEM):
         return min(membrane_step, bending_step)
 
 
-class ClothImplicitFEM(_ClothAssemblyMixin, ImplicitFEM):
+class ClothImplicitFEM(ClothAssemblyMixin, ImplicitFEM):
     def __init__(self, mesh, material, dirichlet=None, neumann=None, **kwargs):
         if mesh.cell_type != "triangle":
             raise ValueError("ClothFEM requires a TRI3 mesh")

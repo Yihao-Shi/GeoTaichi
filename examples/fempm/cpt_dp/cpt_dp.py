@@ -1,7 +1,7 @@
 """Self-contained FEM--MPM CPT with explicit DEM contact or monolithic IPC.
 
 The IPC route is a two-dimensional axisymmetric meridian calculation with
-revolved material/contact measures. Drucker--Prager substitutes for the
+per-radian material/contact measures. Drucker--Prager substitutes for the
 standard SDMC soil because it is the available implicit coupling material.
 The legacy explicit route remains a thin three-dimensional capability check.
 """
@@ -299,7 +299,7 @@ def axisymmetric_particle_count(grid_size, particles_per_cell=PARTICLES_PER_CELL
 
 
 def axisymmetric_surface_pressure_particles(points, grid_size):
-    """Return material-point IDs and reference annular areas for top pressure.
+    """Return material-point IDs and reference areas per radian for top pressure.
 
     Each point represents a reference annulus of radial width dx/ppc. The
     forces keep that reference area and follow the selected particle IDs;
@@ -309,7 +309,7 @@ def axisymmetric_surface_pressure_particles(points, grid_size):
     particle_spacing = float(grid_size) / PARTICLES_PER_CELL
     top_height = SOIL_ORIGIN[1] + SOIL_SIZE[1] - 0.5 * particle_spacing
     particle_ids = np.flatnonzero(np.isclose(points[:, 1], top_height, rtol=0.0, atol=1.0e-12)).astype(np.int32)
-    surface_area = 2.0 * np.pi * points[particle_ids, 0] * particle_spacing
+    surface_area = points[particle_ids, 0] * particle_spacing
     return particle_ids, surface_area
 
 
@@ -690,7 +690,7 @@ def main():
     )
     if implicit:
         model.choose_contact_model(
-            "IPC",
+            "BarrierIPC",
             **ipc_contact_parameters(grid_size),
             friction_mode="lagged",
             friction_iterations=1,

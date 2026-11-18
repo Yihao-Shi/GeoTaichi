@@ -1,14 +1,18 @@
 """Contact-model lifecycle for explicit and implicit FEM--MPM coupling."""
 
 from __future__ import annotations
+from src.utils.errors import ConfigurationError, SimulationStateError
 
-from src.fempm.contact import HertzMindlinModel, IPCModel, LinearModel
+from src.fempm.contact.HertzMindlin import HertzMindlinModel
+from src.fempm.contact.IPC import IPCModel
+from src.fempm.contact.Linear import LinearModel
 from src.fempm.contact.ContactKernel import (
     reset_contact_force,
     resolve_hertz_mindlin_contact,
     resolve_linear_contact,
 )
-from src.fempm.neighbor import FEMPMBVH, FEMPMLinkedCell
+from src.fempm.neighbor.BVH import FEMPMBVH
+from src.fempm.neighbor.LinkedCell import FEMPMLinkedCell
 from src.utils.linalg import no_operation
 
 
@@ -22,12 +26,12 @@ class ContactManager:
         self.resolve_contact_step = no_operation
 
     def choose_contact_model(self, model, **kwargs):
-        normalized = str(model).replace("_", "").replace("-", "").replace(" ", "").lower()
-        if normalized in ("linear", "linearmodel", "linearspring"):
+        normalized = model
+        if normalized in ("Linear",):
             self.model = LinearModel(self.simulation)
-        elif normalized in ("hertz", "hertzmindlin", "hertzmindlinmodel"):
+        elif normalized in ("HertzMindlin",):
             self.model = HertzMindlinModel(self.simulation)
-        elif normalized in ("ipc", "incrementalpotentialcontact", "barrier", "barrieripc"):
+        elif normalized in ("BarrierIPC",):
             kwargs.setdefault(
                 "ipc_model",
                 "BarrierIPC",
@@ -39,21 +43,21 @@ class ContactManager:
 
     def add_property(self, mpm_material, fem_body, parameters):
         if self.model is None:
-            raise RuntimeError("choose the FEMPM contact model before properties")
+            raise SimulationStateError("choose the FEMPM contact model before properties")
         self.model.add_property(mpm_material, fem_body, parameters)
 
     def initialize(self, patch, fem_engine, mpm_scene):
         if self.model is None:
-            raise RuntimeError("FEMPM contact model has not been selected")
+            raise SimulationStateError("FEMPM contact model has not been selected")
         if isinstance(self.model, IPCModel):
-            raise RuntimeError("implicit FEMPM IPC is initialized by its monolithic engine")
+            raise SimulationStateError("implicit FEMPM IPC is initialized by its monolithic engine")
         self.patch = patch
         self.patch.update(fem_engine.position_field)
         face_radius_min, face_radius_max = self.patch.bounding_radii()
         particle_radius_min = float(mpm_scene.find_particle_min_radius())
         particle_radius_max = float(mpm_scene.find_particle_max_radius())
         if particle_radius_min <= 0.0 or particle_radius_max <= 0.0:
-            raise RuntimeError("FEMPM requires positive-radius MPM material points")
+            raise ConfigurationError("FEMPM requires positive-radius MPM material points")
         if self.simulation.verlet_distance <= 0.0:
             self.simulation.verlet_distance = self.simulation.verlet_distance_multiplier * min(
                 particle_radius_min, face_radius_min

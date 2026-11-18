@@ -5,7 +5,6 @@ import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib import style
 
-
 p = []
 q = []
 Rq = []
@@ -16,7 +15,7 @@ c = 2500
 fai = 30 / 180 * math.pi
 
 
-def SphericalTensor(stress):
+def spherical_tensor(stress):
     return (stress[2] + stress[1] + stress[0]) / 3.0
 
 
@@ -37,7 +36,7 @@ def equistress(stress):
     )
 
 
-def ComputeStressInvariantJ2(stress):
+def compute_stress_invariant_j2(stress):
     J2 = (
         (
             (stress[0] - stress[1]) * (stress[0] - stress[1])
@@ -52,8 +51,8 @@ def ComputeStressInvariantJ2(stress):
     return J2
 
 
-def DeviatoricTensor(stress):
-    sigma = SphericalTensor(stress)
+def deviatoric_tensor(stress):
+    sigma = spherical_tensor(stress)
 
     deviatoric_stress = stress
     for i in range(3):
@@ -61,8 +60,8 @@ def DeviatoricTensor(stress):
     return deviatoric_stress
 
 
-def ComputeStressInvariantJ3(stress):
-    deviatoric_stress = DeviatoricTensor(stress)
+def compute_stress_invariant_j3(stress):
+    deviatoric_stress = deviatoric_tensor(stress)
     J3 = (
         deviatoric_stress[0] * deviatoric_stress[1] * deviatoric_stress[2]
         - deviatoric_stress[2] * deviatoric_stress[3] * deviatoric_stress[3]
@@ -73,9 +72,9 @@ def ComputeStressInvariantJ3(stress):
     return J3
 
 
-def ComputeLodeAngle(stress):
-    J2 = ComputeStressInvariantJ2(stress)
-    J3 = ComputeStressInvariantJ3(stress)
+def compute_lode_angle(stress):
+    J2 = compute_stress_invariant_j2(stress)
+    J3 = compute_stress_invariant_j3(stress)
 
     load_angle = 0.0
     if abs(J2) > 1e-12:
@@ -91,12 +90,12 @@ for printNum in range(start_num, end_num):
 
     cos_fai = math.cos(fai)
     tan_fai = math.tan(fai)
-    lode = ComputeLodeAngle(data["stress"][pid])
+    lode = compute_lode_angle(data["stress"][pid])
     Rmc = math.sin(lode + math.pi / 3.0) / (math.sqrt(3.0) * cos_fai) + math.cos(lode + math.pi / 3.0) * tan_fai / 3.0
-    p.append(-SphericalTensor(data["stress"][pid]))
+    p.append(-spherical_tensor(data["stress"][pid]))
     Rq.append(Rmc * equistress(data["stress"][pid]))
     q.append(equistress(data["stress"][pid]))
-    ratio.append(equistress(data["stress"][pid]) / -SphericalTensor(data["stress"][pid]))
+    ratio.append(equistress(data["stress"][pid]) / -spherical_tensor(data["stress"][pid]))
     time.append(0.5 - data["position"][4][2] + data["position"][0][2])
 
 p0 = np.linspace(0, 1000000, 200)

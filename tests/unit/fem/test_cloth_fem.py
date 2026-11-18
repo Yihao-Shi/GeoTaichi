@@ -7,12 +7,12 @@ from src.fem import DirichletBoundary, FEM, NeumannBoundary
 from src.fem.cloth.ClothAssembler import ClothAssembler
 from src.fem.engines.FEMSolver import FEMSolver
 from src.fem.engines.ClassicalAssembler import ClassicalAssembler
-from src.fem.generator import FEMGenerateManager
-from src.physics_model.consititutive_model.finite_strain import (
-    ClothARAP,
-    ClothNeoHookean,
-)
+from src.fem.generator.MeshGenerator import FEMGenerateManager
+from src.physics_model.constitutive_model.cloth_model.ClothARAP import ClothARAP
+from src.physics_model.constitutive_model.cloth_model.ClothNeoHookean import ClothNeoHookean
 from src.fem.MaterialManager import FEMMaterialManager
+from tests.helpers.cloth_reference import cloth_response
+from src.utils.errors import InvertedElementError
 
 
 def create_material(model, **parameters):
@@ -60,7 +60,9 @@ def test_cloth_assembler_matches_energy_and_force_differences(material):
     assert reference_solver.element.formulation == "surface_cloth"
     assert reference_solver.element.deformation_gradients(positions).shape[-2:] == (3, 2)
 
-    device_energy, device_force, device_stiffness, _ = assembler.assemble_system(positions, need_stiffness=True)
+    device_energy, device_force, device_stiffness, device_stress = assembler.assemble_system(
+        positions, need_stiffness=True, need_stress=True
+    )
     assert np.isfinite(device_energy)
     np.testing.assert_allclose(device_stiffness.toarray(), device_stiffness.toarray().T, atol=2.0e-8)
     np.testing.assert_allclose(
@@ -68,6 +70,12 @@ def test_cloth_assembler_matches_energy_and_force_differences(material):
         reference_solver.element.deformation_gradients(positions)[:, 0],
         atol=2.0e-14,
     )
+    reference_stress = []
+    for deformation in assembler.deformation_gradient.to_numpy():
+        _, piola, _ = cloth_response(material, deformation, need_tangent=False)
+        jacobian = np.sqrt(np.linalg.det(deformation.T @ deformation))
+        reference_stress.append(piola @ deformation.T / jacobian)
+    np.testing.assert_allclose(device_stress, reference_stress, rtol=2.0e-12, atol=1.0e-9)
     direction = np.random.default_rng(81).normal(size=positions.shape)
     epsilon = 2.0e-7
     plus_energy = assembler.assemble_system(positions + epsilon * direction)[0]
@@ -82,6 +90,15 @@ def test_cloth_assembler_matches_energy_and_force_differences(material):
     finite_difference = (plus_force - minus_force) / (2.0 * epsilon)
     tangent_product = (device_stiffness @ direction.reshape(-1)).reshape(positions.shape)
     np.testing.assert_allclose(tangent_product, finite_difference, rtol=3.0e-5, atol=3.0e-5)
+
+
+@pytest.mark.parametrize("coordinate", [0.0, np.nan, np.inf])
+def test_cloth_output_rejects_collapsed_and_nonfinite_geometry(coordinate):
+    mesh = FEMGenerateManager().create_rectangle(size=(1.0, 1.0), divisions=(1, 1))
+    assembler = ClothAssembler(mesh, ClothARAP(1.0e3))
+    positions = np.full_like(mesh.points, coordinate)
+    with pytest.raises(InvertedElementError, match="collapsed"):
+        assembler.assemble_system(positions, need_stress=True)
 
 
 def test_taichi_quadratic_bending_force_matches_energy_difference():

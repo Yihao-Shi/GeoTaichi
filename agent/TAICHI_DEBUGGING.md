@@ -19,7 +19,7 @@ standalone `ti.init` call can select different configurations. Inspect
 The pytest `--taichi-arch` and `--taichi-fp` options configure only tests using
 the shared `taichi_runtime` fixture; other tests can own or override initialization.
 
-Set `GEOTAICHI_REAL_DTYPE` before importing [TypeDefination.py](../src/utils/TypeDefination.py).
+Set `GEOTAICHI_REAL_DTYPE` before importing [TypeDefinition.py](../src/utils/TypeDefinition.py).
 Configure all dimension-sensitive imports before loading their annotations;
 reuse [dimension isolation](../tests/README.md#runtime-and-dimension-isolation)
 for a maintained test. A late `ti.reset()` does not re-import Python modules.

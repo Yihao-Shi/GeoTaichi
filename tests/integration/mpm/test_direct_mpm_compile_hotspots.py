@@ -3,7 +3,6 @@ import os
 import numpy as np
 import pytest
 
-
 pytestmark = pytest.mark.serial
 
 
@@ -64,7 +63,7 @@ def test_mpmsolver_runtime_27_point_stencil_preserves_partition(taichi_runtime, 
     from src.mpm.engines.direct.ImplicitULMPM import ImplicitULMPM
 
     solver = ImplicitULMPM(
-        material="neoHookean",
+        material="NeoHookean",
         **_direct_kwargs(tmp_path, "bspline"),
     )
     _assert_shape_contract(solver, 27)
@@ -83,7 +82,7 @@ def test_static_twophase_runtime_stencils_and_assembly_are_finite(taichi_runtime
         ("bspline", 27),
     ):
         solver = StaticTwoPhaseULMPM(
-            material="linearElastic",
+            material="LinearElastic",
             fluid_density=1.0,
             porosity=0.4,
             mobility=1.0e-6,
@@ -140,7 +139,7 @@ def test_static_twophase_bound_line_search_converges_without_mode_redispatch(tai
     options = _direct_kwargs(tmp_path, "linear")
     options["line_search"] = True
     solver = StaticTwoPhaseULMPM(
-        material="linearElastic",
+        material="LinearElastic",
         fluid_density=1.0,
         porosity=0.4,
         mobility=1.0e-6,

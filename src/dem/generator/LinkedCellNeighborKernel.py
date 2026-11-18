@@ -2,14 +2,14 @@
 
 import taichi as ti
 
-from src.utils.constants import Threshold
-from src.utils.GeometryFunction import intersectionOBBs
-from src.utils.Quaternion import SetToRotate, SetFromEuler
+from src.utils.constants import THRESHOLD
+from src.utils.GeometryFunction import intersection_ob_bs
+from src.utils.Quaternion import set_to_rotate, set_from_euler
 
 
 @ti.kernel
 def kernel_pre_neighbor_sphere(
-    bodyNum: int,
+    body_num: int,
     offset: ti.template(),
     particle: ti.template(),
     sphere: ti.template(),
@@ -22,7 +22,7 @@ def kernel_pre_neighbor_sphere(
     check_in_region: ti.template(),
     start_point: ti.types.vector(3, float),
 ):
-    for nb in range(bodyNum):
+    for nb in range(body_num):
         index = sphere[nb].sphereIndex
         position = particle[index].x
         radius = particle[index].rad
@@ -43,7 +43,7 @@ def kernel_pre_neighbor_sphere(
 
 @ti.kernel
 def kernel_pre_neighbor_clump(
-    bodyNum: int,
+    body_num: int,
     offset: ti.template(),
     particle: ti.template(),
     clump: ti.template(),
@@ -56,7 +56,7 @@ def kernel_pre_neighbor_clump(
     check_in_region: ti.template(),
     start_point: ti.types.vector(3, float),
 ):
-    for nb in range(bodyNum):
+    for nb in range(body_num):
         start, end = clump[nb].startIndex, clump[nb].endIndex
         is_in_region = 1
         for npebble in range(start, end):
@@ -85,7 +85,7 @@ def kernel_pre_neighbor_clump(
 
 @ti.kernel
 def kernel_pre_neighbor_bounding_sphere(
-    bodyNum: int,
+    body_num: int,
     offset: ti.template(),
     bounding_sphere: ti.template(),
     cell_num: ti.types.vector(3, int),
@@ -97,7 +97,7 @@ def kernel_pre_neighbor_bounding_sphere(
     check_in_region: ti.template(),
     start_point: ti.types.vector(3, float),
 ):
-    for nb in range(bodyNum):
+    for nb in range(body_num):
         position = bounding_sphere[nb].x
         radius = bounding_sphere[nb].rad
         if check_in_region(position, radius):
@@ -200,7 +200,7 @@ def overlap(cell_num, cell_size, pos, rad, offset, position, radius, num_particl
             dist_vec = slave_pos - pos
             dist = dist_vec.norm()
             delta = -dist + slave_rad + rad
-            if delta > Threshold:
+            if delta > THRESHOLD:
                 isoverlap = 1
                 break
         if isoverlap == 1:
@@ -222,8 +222,8 @@ def overlap_rigid(
     particle_neighbor,
     template_xbound,
     template_rbound,
-    minBox,
-    maxBox,
+    min_box,
+    max_box,
     ori,
 ):
     isoverlap = 0
@@ -235,11 +235,11 @@ def overlap_rigid(
     z_begin = ti.cast(ti.max(cell_index[2] - 1, 0), int)
     z_end = ti.cast(ti.min(cell_index[2] + 2, cell_num[2]), int)
     scale_factor1 = rad / template_rbound
-    rotation_matrix1 = SetToRotate(SetFromEuler(*ori))
+    rotation_matrix1 = set_to_rotate(set_from_euler(*ori))
     obb1 = (
         pos
         - scale_factor1 * rotation_matrix1 @ template_xbound
-        + rotation_matrix1 @ (scale_factor1 * 0.5 * (minBox + maxBox))
+        + rotation_matrix1 @ (scale_factor1 * 0.5 * (min_box + max_box))
     )
     for i, j, k in ti.ndrange((x_begin, x_end), (y_begin, y_end), (z_begin, z_end)):
         cell_id = get_cell_id(i, j, k, cell_num)
@@ -249,17 +249,17 @@ def overlap_rigid(
             slave_rad = radius[pid]
             slave_ori = orient[pid]
             scale_factor2 = slave_rad / template_rbound
-            rotation_matrix2 = SetToRotate(SetFromEuler(*slave_ori))
+            rotation_matrix2 = set_to_rotate(set_from_euler(*slave_ori))
             obb2 = (
                 slave_pos
                 - scale_factor2 * rotation_matrix2 @ template_xbound
-                + rotation_matrix2 @ (scale_factor2 * 0.5 * (minBox + maxBox))
+                + rotation_matrix2 @ (scale_factor2 * 0.5 * (min_box + max_box))
             )
-            if intersectionOBBs(
+            if intersection_ob_bs(
                 obb1,
                 obb2,
-                scale_factor1 * (maxBox - minBox),
-                scale_factor2 * (maxBox - minBox),
+                scale_factor1 * (max_box - min_box),
+                scale_factor2 * (max_box - min_box),
                 rotation_matrix1,
                 rotation_matrix2,
             ):

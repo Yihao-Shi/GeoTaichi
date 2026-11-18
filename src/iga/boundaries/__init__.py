@@ -1,3 +1,1 @@
-from src.iga.boundaries.BoundaryCondition import DirichletBoundary, NeumannBoundary
-
-__all__ = ["DirichletBoundary", "NeumannBoundary"]
+"""src.iga.boundaries package. Import implementation modules directly."""

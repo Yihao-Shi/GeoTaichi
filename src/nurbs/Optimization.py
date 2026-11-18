@@ -1,3 +1,4 @@
+from src.utils.errors import NonlinearSolveError
 import numpy as np
 from scipy.sparse.linalg import cg
 
@@ -8,15 +9,15 @@ from src.nurbs.element.Element import Element
 def surface_optimize_surface_energy(
     element: Element, fix_dofs=[], tol=1e-5, epsilon=1e-12, iteration=100, verbose=False
 ):
-    DdeformationDx = element.compute_ddeformation_dx()
+    ddeformation_dx = element.compute_ddeformation_dx()
     deformation_gradient = element.compute_deformation_gradient(element.vertice)
     energy = element.surface_energy(deformation_gradient)
 
     iter = 0
     err = 1.0
     while iter < iteration and err > tol:
-        constraint_grad = element.surface_energy_gradient(deformation_gradient, DdeformationDx)
-        constraint_hess = element.surface_energy_hessian(deformation_gradient, DdeformationDx)
+        constraint_grad = element.surface_energy_gradient(deformation_gradient, ddeformation_dx)
+        constraint_hess = element.surface_energy_hessian(deformation_gradient, ddeformation_dx)
         constraint_hess[fix_dofs, :] = 0.0
         constraint_hess[:, fix_dofs] = 0.0
         constraint_hess[fix_dofs, fix_dofs] = 1.0
@@ -50,5 +51,5 @@ def surface_optimize_surface_energy(
             break
 
         if iter == iteration:
-            raise RuntimeError(f"Convergence failed, the residual error is {err}")
+            raise NonlinearSolveError(f"Convergence failed, the residual error is {err}")
     return element

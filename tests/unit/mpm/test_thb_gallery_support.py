@@ -1,14 +1,14 @@
+from src.mpm.elements.Utilities import elem_nodes_gen
 from types import SimpleNamespace
 
 import numpy as np
 
 from src.mpm.Recorder import WriteFile
-from src.mpm.elements.ElementNodesTHB_Generate import ElemNodesGen
 from src.mpm.elements.QuadrilateralElement4Nodes import QuadrilateralElement4Nodes
 
 
 def test_thb_generator_uses_problem_sized_storage():
-    node_count, element_count, elements, nodes = ElemNodesGen(
+    node_count, element_count, elements, nodes = elem_nodes_gen(
         1.0,
         np.asarray([[0.0, 4.0], [0.0, 3.0]], dtype=np.float64),
         1,
@@ -65,7 +65,7 @@ def test_thb_grid_writer_emits_gallery_fields(tmp_path):
         Ntype=np.asarray([[1, 1], [2, 1], [3, 3], [5, 4]], dtype=np.int32),
     )
 
-    writer.MonitorTHBGrid(sims, SimpleNamespace(element=element))
+    writer.monitor_thb_grid(sims, SimpleNamespace(element=element))
 
     vtk_file = tmp_path / "GraphicMPMGrid000007.vtu"
     assert vtk_file.is_file()

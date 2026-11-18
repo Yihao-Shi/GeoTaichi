@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Triaxial shear of mixed MPM-soft and level-set DEM particles."""
 
+from src.utils.RuntimeHook import python_callback
+
+
 import argparse
 import json
 import math
@@ -64,7 +67,6 @@ def main():
         sys.path.insert(0, str(ROOT))
     import geotaichi as gt
     import taichi as ti
-    from src.utils.SolverRuntime import python_callback
 
     gt.init(arch=args.arch, default_fp="float64", log=True, offline_cache=False)
     coupling = gt.MPDEM(log=True)

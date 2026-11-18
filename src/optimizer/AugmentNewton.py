@@ -1,3 +1,4 @@
+from src.utils.errors import ConfigurationError
 import taichi as ti
 import numpy as np
 
@@ -51,7 +52,7 @@ class AugmentedLagrangianNewton:
             self.constraints_hess = [ti.func(constraint_hess) for constraint_hess in constraints_hess]
 
         if self.n_vars > 20:
-            raise RuntimeError("Only support variables less than 20.")
+            raise ConfigurationError("Only support variables less than 20.")
 
         self.rho = 10.0
         self.lambda_k = np.zeros(self.n_constraints)

@@ -2,6 +2,8 @@
 
 import numpy as np
 import pytest
+
+from src.utils.errors import BlockJacobiError
 import taichi as ti
 from scipy.sparse import csr_matrix
 
@@ -34,9 +36,9 @@ def test_grouped_principal_inverse_scales_and_reuses_active_prefix(taichi_runtim
     for nodes, scale in [(8, 1e-12), (4, 1e12), (8, 1.0)]:
         active = scale * matrix[: nodes * 3, : nodes * 3]
         system.load_from_scipy_blocks(csr_matrix(active), active_nodes=nodes)
-        system._build_group_jacobi(nodes, int(system.non_diag.element_pair_num[0]))
+        system.group_preconditioner.build_triplet(system, nodes, int(system.non_diag.element_pair_num[0]))
         assert system.group_preconditioner.error[None] == 0
-        system._apply_group_jacobi(nodes, system.rhs, system.z)
+        system.group_preconditioner.apply(nodes, system.rhs, system.z)
         actual = scale * system.z.to_numpy()[:nodes].ravel()
         expected = np.concatenate(
             [np.linalg.solve(matrix[i : i + 12, i : i + 12], rhs.ravel()[i : i + 12]) for i in range(0, nodes * 3, 12)]
@@ -74,7 +76,7 @@ def test_grouped_pcg_rejects_invalid_principal_block(taichi_runtime, diagonal):
     system = grouped_system(4)
     system.load_from_scipy_blocks(csr_matrix(matrix))
     system.rhs.from_numpy(np.ones((4, 3)))
-    with pytest.raises(RuntimeError, match="Cholesky pivot"):
+    with pytest.raises(BlockJacobiError, match="Cholesky pivot"):
         system.solve(tol=1e-12, maxiter=10, return_solution=False)
 
 
@@ -220,6 +222,6 @@ def test_mixed_lu_rejects_singular_or_nonfinite_body_without_updating_solution(t
     system.load_from_scipy_blocks(csr_matrix(matrix))
     system.rhs.fill(1.0)
     before = system.x.to_numpy().copy()
-    with pytest.raises(RuntimeError, match="LU pivot"):
+    with pytest.raises(BlockJacobiError, match="LU pivot"):
         system.solve(tol=1e-12, return_solution=False)
     np.testing.assert_array_equal(system.x.to_numpy(), before)

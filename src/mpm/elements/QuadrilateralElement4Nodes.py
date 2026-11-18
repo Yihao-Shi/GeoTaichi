@@ -1,22 +1,27 @@
+from src.utils.errors import SimulationStateError
+from src.mpm.elements.Utilities import elem_nodes_gen
 from itertools import product
 
 import numpy as np
 import taichi as ti
 
 from src.mpm.elements.QuadrilateralKernel import *
-from src.mpm.structs import HexahedronGuassCell, HexahedronCell, ParticleCPDI, IncompressibleCell
-from src.mpm.elements.ElementNodesTHB_Generate import ElemNodesGen, THB_MAX_INFLUENCE_NODES
+from src.mpm.structs.Cell import HexahedronGuassCell
+from src.mpm.structs.Cell import HexahedronCell
+from src.mpm.structs.Particle import ParticleCPDI
+from src.mpm.structs.Cell import IncompressibleCell
+from src.mpm.elements.ElementNodesTHBGenerate import THB_MAX_INFLUENCE_NODES
 from src.mpm.elements.ElementBase import ElementBase
 from src.mpm.Simulation import Simulation
-from src.mesh.GaussPoint import GaussPointInRectangle
+from src.mesh.GaussPointInRectangle import GaussPointInRectangle
 from src.mesh.QuadMesh import QuadrilateralMesh
 from src.utils.PrefixSum import PrefixSumExecutor
 from src.utils.linalg import round32, flip2d_linear
 from src.utils.ShapeFunctions import *
-from src.utils.TypeDefination import u1, vec2f, vec2i
+from src.utils.TypeDefinition import u1, vec2f, vec2i
 import src.utils.GlobalVariable as GlobalVariable
 
-Threshold = 1e-12
+THRESHOLD = 1e-12
 
 
 class QuadrilateralElement4Nodes(ElementBase):
@@ -95,7 +100,7 @@ class QuadrilateralElement4Nodes(ElementBase):
             self.ti_nodal_coords = ti.Vector.field(2, float, shape=self.nodal_coords.shape[0])
             self.ti_nodal_coords.from_numpy(self.nodal_coords)
 
-    def create_nodes_THB(self, sims: Simulation, grid_size):
+    def create_nodes_thb(self, sims: Simulation, grid_size):
         domain = np.array(sims.domain, dtype=np.float64)
         grid_size_np = np.array(grid_size, dtype=np.float64)
         self.grid_size = vec2f(grid_size_np)
@@ -105,7 +110,7 @@ class QuadrilateralElement4Nodes(ElementBase):
         self.cnum = vec2i(cnum)
         self.gnum = vec2i(cnum + 1)
         self.cellSum = int(cnum[0] * cnum[1])
-        modelRange = np.array(
+        model_range = np.array(
             [
                 [
                     0.0,
@@ -114,17 +119,17 @@ class QuadrilateralElement4Nodes(ElementBase):
                 domain,
             ]
         )
-        modelRange = modelRange.T
+        model_range = model_range.T
         THBparameter = sims.THBparameter
         self.grid_layer = THBparameter["grid_layer"]
         subdomain = THBparameter["subdomain"]
         print("Debug THB information:")
-        nbNode, nbElem, ElemList, nodeList = ElemNodesGen(grid_size[0], modelRange, self.grid_layer, subdomain)
-        print(f"Numbers of Element and Node: {nbElem}, {nbNode}")
-        self.gridSum = nbNode
-        self.nodal_coords = np.asarray([nodeList[i].coord for i in range(1, nbNode + 1)], dtype=np.float64)
-        self.Nlevel = np.asarray([nodeList[i].level for i in range(1, nbNode + 1)], dtype=np.int32)
-        self.Ntype = np.asarray([nodeList[i].Ntype for i in range(1, nbNode + 1)], dtype=np.int32)
+        nb_node, nb_elem, elem_list, node_list = elem_nodes_gen(grid_size[0], model_range, self.grid_layer, subdomain)
+        print(f"Numbers of Element and Node: {nb_elem}, {nb_node}")
+        self.gridSum = nb_node
+        self.nodal_coords = np.asarray([node_list[i].coord for i in range(1, nb_node + 1)], dtype=np.float64)
+        self.Nlevel = np.asarray([node_list[i].level for i in range(1, nb_node + 1)], dtype=np.int32)
+        self.Ntype = np.asarray([node_list[i].Ntype for i in range(1, nb_node + 1)], dtype=np.int32)
         self.ti_nodal_coords = ti.Vector.field(2, float, shape=self.nodal_coords.shape[0])
         self.ti_Nlevels = ti.field(int, shape=self.Nlevel.shape)
         self.ti_Ntype = ti.field(int, shape=self.Ntype.shape)
@@ -132,10 +137,12 @@ class QuadrilateralElement4Nodes(ElementBase):
         self.ti_Nlevels.from_numpy(self.Nlevel)
         self.ti_Ntype.from_numpy(self.Ntype)
         # Element
-        self.ElemNode = np.asarray([ElemList[i].includeNode[:4] for i in range(1, nbElem + 1)], dtype=np.int32)
-        self.ElemList_childElem = np.asarray([ElemList[i].childElem for i in range(1, nbElem + 1)], dtype=np.int32)
-        self.ElemList_nbInfNode = np.asarray([ElemList[i].nbInfNode for i in range(1, nbElem + 1)], dtype=np.int32)
-        self.ElemList_influenNode = np.asarray([ElemList[i].influenNode for i in range(1, nbElem + 1)], dtype=np.int32)
+        self.ElemNode = np.asarray([elem_list[i].includeNode[:4] for i in range(1, nb_elem + 1)], dtype=np.int32)
+        self.ElemList_childElem = np.asarray([elem_list[i].childElem for i in range(1, nb_elem + 1)], dtype=np.int32)
+        self.ElemList_nbInfNode = np.asarray([elem_list[i].nbInfNode for i in range(1, nb_elem + 1)], dtype=np.int32)
+        self.ElemList_influenNode = np.asarray(
+            [elem_list[i].influenNode for i in range(1, nb_elem + 1)], dtype=np.int32
+        )
         self.ti_elem_childElem = ti.field(int, shape=self.ElemList_childElem.shape)
         self.ti_elem_nbInfNode = ti.field(int, shape=self.ElemList_nbInfNode.shape)
         self.ti_elem_influenNode = ti.field(int, shape=self.ElemList_influenNode.shape)
@@ -163,7 +170,7 @@ class QuadrilateralElement4Nodes(ElementBase):
             is_bbar = True
 
             if sims.shape_function == "QuadBSpline" or sims.shape_function == "CubicBSpline":
-                raise RuntimeError("B bar method can only used at [Linear, GIMP] Shape Function")
+                raise SimulationStateError("B bar method can only used at [Linear, GIMP] Shape Function")
 
         if sims.max_particle_num > 0:
             if sims.gauss_number > 0:
@@ -207,9 +214,9 @@ class QuadrilateralElement4Nodes(ElementBase):
             self.grid_nodes = 4
             self.ifnum = vec2i(2, 2)
 
-            self.shape_function = ShapeLinear
-            self.grad_shape_function = GShapeLinear
-            self.shape_function_center = ShapeLinearCenter
+            self.shape_function = shape_linear
+            self.grad_shape_function = g_shape_linear
+            self.shape_function_center = shape_linear_center
 
         elif sims.shape_function == "GIMP":
             if not sims.is_2DAxisy:
@@ -217,33 +224,33 @@ class QuadrilateralElement4Nodes(ElementBase):
                 self.grid_nodes = 9
                 self.ifnum = vec2i(3, 3)
 
-                self.shape_function = ShapeGIMP
-                self.grad_shape_function = GShapeGIMP
-                self.shape_function_center = ShapeGIMPCenter
+                self.shape_function = shape_gimp
+                self.grad_shape_function = g_shape_gimp
+                self.shape_function_center = shape_gimp_center
             elif sims.is_2DAxisy:
                 self.influenced_node = 3
                 self.grid_nodes = 9
                 self.ifnum = vec2i(3, 3)
 
-                self.shape_function_r = ShapeAxisyGIMP
-                self.shape_function_z = ShapeGIMP
-                self.grad_shape_function_r = GShapeAxisyGIMP
-                self.grad_shape_function_z = GShapeGIMP
-                self.shape_function_center_r = ShapeAixGIMPCenter
-                self.shape_function_center_z = ShapeGIMPCenter
+                self.shape_function_r = shape_axisy_gimp
+                self.shape_function_z = shape_gimp
+                self.grad_shape_function_r = g_shape_axisy_gimp
+                self.grad_shape_function_z = g_shape_gimp
+                self.shape_function_center_r = shape_aix_gimp_center
+                self.shape_function_center_z = shape_gimp_center
 
         elif sims.shape_function == "QuadBSpline":
             self.influenced_node = 3
             self.grid_nodes = 9
             self.ifnum = vec2i(3, 3)
 
-            self.shape_function = ShapeBsplineQ
-            self.grad_shape_function = GShapeBsplineQ
+            self.shape_function = shape_bspline_q
+            self.grad_shape_function = g_shape_bspline_q
             if sims.stabilize == "Displacement F-Bar Method":
                 self.influenced_node_lower_order = 2
                 self.grid_nodes_lower_order = 4
-                self.lower_shape_function = ShapeLinear
-                self.lower_grad_shape_function = GShapeLinear
+                self.lower_shape_function = shape_linear
+                self.lower_grad_shape_function = g_shape_linear
 
         elif sims.shape_function == "CubicBSpline":
             if not sims.isTHB:
@@ -251,26 +258,26 @@ class QuadrilateralElement4Nodes(ElementBase):
                 self.grid_nodes = 16
                 self.ifnum = vec2i(4, 4)
 
-                self.shape_function = ShapeBsplineC
-                self.grad_shape_function = GShapeBsplineC
+                self.shape_function = shape_bspline_c
+                self.grad_shape_function = g_shape_bspline_c
                 if sims.stabilize == "Displacement F-Bar Method":
                     self.influenced_node_lower_order = 3
                     self.grid_nodes_lower_order = 9
-                    self.lower_shape_function = ShapeBsplineQ
-                    self.lower_grad_shape_function = GShapeBsplineQ
+                    self.lower_shape_function = shape_bspline_q
+                    self.lower_grad_shape_function = g_shape_bspline_q
             elif sims.isTHB:
                 self.influenced_node = int(np.ceil(np.sqrt(THB_MAX_INFLUENCE_NODES)))
                 self.grid_nodes = THB_MAX_INFLUENCE_NODES
-                self.shape_function = ShapeBsplineC_THB
-                self.grad_shape_function = GShapeBsplineC_THB
+                self.shape_function = shape_bspline_c_thb
+                self.grad_shape_function = g_shape_bspline_c_thb
         else:
             raise KeyError(f"The shape function type {sims.shape_function} is not exist!")
 
         GlobalVariable.INFLUENCENODE = self.influenced_node
         if sims.solver_type == "SemiImplicit" or sims.solver_type == "SemiImplicit_u_p":
             self.influenced_dofs = self.grid_nodes
-            self.extra_function = ShapeLinear
-            self.extra_grad_function = GShapeLinear
+            self.extra_function = shape_linear
+            self.extra_grad_function = g_shape_linear
         else:
             self.influenced_dofs = 2 * self.grid_nodes
 
@@ -307,14 +314,14 @@ class QuadrilateralElement4Nodes(ElementBase):
                     if sims.shape_function == "QuadBSpline" or sims.shape_function == "CubicBSpline":
                         self.calculate = self.calc_shape_fn_spline
                 elif sims.isTHB:
-                    self.calculate = self.calc_shape_fn_THB
+                    self.calculate = self.calc_shape_fn_thb
             elif sims.is_2DAxisy:
                 if not sims.isTHB:
                     self.calculate = self.calc_shape_fn_axisy
                     if sims.shape_function == "QuadBSpline" or sims.shape_function == "CubicBSpline":
                         self.calculate = self.calc_shape_fn_spline
                 elif sims.isTHB:
-                    self.calculate = self.calc_shape_fn_axisy_THB
+                    self.calculate = self.calc_shape_fn_axisy_thb
 
             self.LnID = ti.field(int)
             self.shape_fn = ti.field(float)
@@ -511,8 +518,8 @@ class QuadrilateralElement4Nodes(ElementBase):
             self.grad_shape_function,
         )
 
-    def calc_shape_fn_THB(self, particleNum, particle):
-        global_update_THB(
+    def calc_shape_fn_thb(self, particleNum, particle):
+        global_update_thb(
             self.ti_elem_nbInfNode,
             self.ti_elem_influenNode,
             self.grid_size,
@@ -534,7 +541,7 @@ class QuadrilateralElement4Nodes(ElementBase):
         )
 
     def calc_shape_fn_axisy(self, particleNum, particle):
-        global_update_2DAxisy(
+        global_update_2d_axisy(
             self.grid_nodes,
             self.influenced_node,
             self.grid_size,
@@ -553,8 +560,8 @@ class QuadrilateralElement4Nodes(ElementBase):
             self.grad_shape_function_z,
         )
 
-    def calc_shape_fn_axisy_THB(self, particleNum, particle):
-        global_update_2DAxisy_THB(
+    def calc_shape_fn_axisy_thb(self, particleNum, particle):
+        global_update_2d_axisy_thb(
             self.ti_elem_nbInfNode,
             self.ti_elem_influenNode,
             self.grid_size,

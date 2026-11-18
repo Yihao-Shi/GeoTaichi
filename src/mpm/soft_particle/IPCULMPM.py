@@ -1,12 +1,12 @@
+from src.utils.RuntimeHook import normalize_callbacks
 import taichi as ti
 
 import src.mpm.config as config
 from src.mpm.engines.direct.ImplicitULMPM import ImplicitULMPM
-from src.mpm.engines.direct.MPMSolver import MPMConvergenceError
 from src.mpm.soft_particle.IPCMPM import IPCMPM
 from src.mpm.generator.Ground import Ground
 from src.utils.RuntimeHook import runtime_checkpoint
-from src.utils.SolverRuntime import normalize_callbacks
+from src.utils.errors import MPMConvergenceError
 
 
 @ti.data_oriented

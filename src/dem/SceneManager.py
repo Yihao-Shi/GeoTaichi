@@ -1,53 +1,51 @@
+from src.dem.structs.BaseStruct import BoundingSphere
+from src.dem.structs.BaseStruct import SphereFamily
+from src.dem.structs.BaseStruct import VerticeNode
+from src.utils.errors import ConfigurationError, SimulationStateError
 import taichi as ti
 import numpy as np
 import warnings
 
-from src.dem.structs.BaseStruct import (
-    BoundingBox,
-    BoundingSphere,
-    ClumpFamily,
-    DigitalElevationModel,
-    FacetFamily,
-    ImplicitSurfaceParticle,
-    LevelSetGrid,
-    Material,
-    ParticleFamily,
-    PatchFamily,
-    PlaneFamily,
-    PolySuperEllipsoid,
-    PolySuperQuadrics,
-    RigidBody,
-    ServoWall,
-    SphereFamily,
-    VerticeNode,
-)
+from src.dem.structs.BaseStruct import DigitalElevationModel, LevelSetGrid
+from src.dem.structs.BoundingBox import BoundingBox
+from src.dem.structs.ClumpFamily import ClumpFamily
+from src.dem.structs.FacetFamily import FacetFamily
+from src.dem.structs.ImplicitSurfaceParticle import ImplicitSurfaceParticle
+from src.dem.structs.Material import Material
+from src.dem.structs.ParticleFamily import ParticleFamily
+from src.dem.structs.PatchFamily import PatchFamily
+from src.dem.structs.PlaneFamily import PlaneFamily
+from src.dem.structs.PolySuperEllipsoid import PolySuperEllipsoid
+from src.dem.structs.PolySuperQuadrics import PolySuperQuadrics
+from src.dem.structs.RigidBody import RigidBody
+from src.dem.structs.ServoWall import ServoWall
 from src.dem.structs.Geometry import Geometry
 from src.dem.Simulation import Simulation
 from src.dem.BaseKernel import (
-    GetConnectivity,
-    check_radius_,
-    create_level_set_grids_,
+    get_connectivity,
+    check_radius,
+    create_level_set_grids,
     create_level_set_surface,
-    find_expect_extent_,
-    find_left_bottom_scene_,
-    find_lsmpm_contact_min_mass_,
-    find_min_extent_,
-    find_min_grid_space_,
-    find_particle_max_radius_,
-    find_particle_min_mass_,
-    find_particle_min_radius_,
-    find_particle_total_mass_,
-    find_patch_max_radius_,
-    find_patch_min_radius_,
-    find_right_top_scene_,
+    find_expect_extent,
+    find_left_bottom_scene,
+    find_lsmpm_contact_min_mass,
+    find_min_extent,
+    find_min_grid_space,
+    find_particle_max_radius,
+    find_particle_min_mass,
+    find_particle_min_radius,
+    find_particle_total_mass,
+    find_patch_max_radius,
+    find_patch_min_radius,
+    find_right_top_scene,
     kernel_adaptive_timestep,
     kernel_add_polysuperellipsoid_parameter,
     kernel_add_polysuperquadrics_parameter,
     kernel_delete_particles,
     kernel_delete_particles_in_region,
-    kernel_visualize_implicit_surface_,
-    kernel_visualize_levelset_surface_,
-    modify_levelset_groupID_in_region,
+    kernel_visualize_implicit_surface,
+    kernel_visualize_levelset_surface,
+    modify_levelset_group_id_in_region,
     modify_material_density,
     modify_material_fdamp,
     modify_material_tdamp,
@@ -55,16 +53,16 @@ from src.dem.BaseKernel import (
     modify_plane_position,
     modify_sphere_angular_velocity,
     modify_sphere_angular_velocity_in_region,
-    modify_sphere_bodyID,
-    modify_sphere_bodyID_in_region,
+    modify_sphere_body_id,
+    modify_sphere_body_id_in_region,
     modify_sphere_fix_v,
     modify_sphere_fix_v_in_region,
     modify_sphere_fix_w,
     modify_sphere_fix_w_in_region,
-    modify_sphere_groupID,
-    modify_sphere_groupID_in_region,
-    modify_sphere_materialID,
-    modify_sphere_materialID_in_region,
+    modify_sphere_group_id,
+    modify_sphere_group_id_in_region,
+    modify_sphere_material_id,
+    modify_sphere_material_id_in_region,
     modify_sphere_orientation,
     modify_sphere_orientation_in_region,
     modify_sphere_position,
@@ -77,33 +75,33 @@ from src.dem.BaseKernel import (
     modify_triangle_position,
     modify_triangle_velocity,
     modify_wall_activate_status,
-    modify_wall_materialID,
+    modify_wall_material_id,
     object_calm,
-    reset_verlet_disp_,
-    update_ISparticle_storage_,
-    update_LSparticle_storage_,
-    update_LSsurface_storage_,
-    update_particle_storage_,
-    update_servo_storage_,
-    update_wall_storage_,
-    validate_deformable_bounding_sphere_,
-    validate_displacement_,
+    reset_verlet_disp,
+    update_i_sparticle_storage,
+    update_l_sparticle_storage,
+    update_l_ssurface_storage,
+    update_particle_storage,
+    update_servo_storage,
+    update_wall_storage,
+    validate_deformable_bounding_sphere,
+    validate_displacement,
 )
 from src.sdf.BasicShape import BasicShape
-from src.levelset.SemiLagrangian import SemiLagrangianMultiGrid
+from src.levelset.SemiLagrangianMultiGrid import SemiLagrangianMultiGrid
 from src.utils.DomainBoundary import DomainBoundary
-from src.utils.constants import MThreshold
+from src.utils.constants import M_THRESHOLD
 from src.utils.linalg import no_operation, remove_connectivity_by_inactive_faces
 from src.utils.FieldIO import runtime_float_numpy_dtype
 from src.utils.ObjectIO import DictIO
-from src.utils.TypeDefination import vec3f, vec3u8
+from src.utils.TypeDefinition import vec3f, vec3u8
 import src.utils.GlobalVariable as GlobalVariable
 
 from functools import partial
 from multiprocessing.pool import ThreadPool as Pool
 
 
-class myScene(object):
+class SceneManager(object):
     domain_boundary: DomainBoundary
     clump: ClumpFamily
     particle: ParticleFamily
@@ -204,7 +202,7 @@ class myScene(object):
     def _soft_particle_backend(self):
         backend = getattr(self, "soft_particle_backend", None)
         if backend is None:
-            raise RuntimeError(
+            raise SimulationStateError(
                 "SoftBody/LSMPM is an MPM soft-particle mode. Use MPDEM/MPM soft_particle so the coupling layer installs the backend."
             )
         return backend
@@ -222,7 +220,7 @@ class myScene(object):
 
         if sims.scheme == "AffineBody":
             if sims.max_particle_num <= 0:
-                raise RuntimeError("Keyword:: /max_affine_body_number/ should be larger than 0")
+                raise SimulationStateError("Keyword:: /max_affine_body_number/ should be larger than 0")
 
         if sims.scheme == "LSDEM" or sims.scheme == "LSMPM":
             if sims.max_level_grid_num > 0:
@@ -258,7 +256,7 @@ class myScene(object):
                     ptemp.members.update({"damp_energy": float})
                 self.particle = ptemp.field(shape=max(sims.max_particle_num, 1))
             else:
-                raise RuntimeError(f"KeyWord:: /max_particle_num/ should be larger than 0")
+                raise SimulationStateError(f"KeyWord:: /max_particle_num/ should be larger than 0")
 
     def activate_sphere(self, sims: Simulation):
         if self.sphere is None:
@@ -284,7 +282,7 @@ class myScene(object):
                     self._soft_particle_backend().activate_soft_levelset_grid(self, sims)
                 if sims.max_rigid_template_num <= 0 and sims.max_soft_body_num <= 0.0:
                     if sims.scheme == "LSDEM":
-                        raise RuntimeError("Keyword:: /max_template_number/ must be larger than 0")
+                        raise ConfigurationError("Keyword:: /max_template_number/ must be larger than 0")
 
     def activate_levelset_body(self, sims: Simulation):
         level_body_num = (
@@ -297,13 +295,13 @@ class myScene(object):
             self.rigid = ptemp.field(shape=max(level_body_num, 1))
 
             if self.rigid_grid is None:
-                raise RuntimeError("Level set grid has not been set!")
+                raise SimulationStateError("Level set grid has not been set!")
 
             if self.soft_grid is None and sims.scheme == "LSMPM":
-                raise RuntimeError("Deformable level set grid has not been set!")
+                raise SimulationStateError("Deformable level set grid has not been set!")
 
             if sims.max_level_grid_num <= 0:
-                raise RuntimeError("Keyword:: /max_levelset_grid_num/ should be larger than 0")
+                raise SimulationStateError("Keyword:: /max_levelset_grid_num/ should be larger than 0")
 
             if self.vertice is None:
                 if sims.max_rigid_template_num > 0:
@@ -313,7 +311,7 @@ class myScene(object):
                         self.vertice = VerticeNode.field(shape=max(template_nodes + instance_nodes, 1))
                         self.surface = ti.field(int, shape=max(instance_nodes, 1))
                     else:
-                        raise RuntimeError("Keyword:: /max_surface_node_num/ should be larger than 0")
+                        raise SimulationStateError("Keyword:: /max_surface_node_num/ should be larger than 0")
 
         if sims.scheme == "LSMPM":
             self._soft_particle_backend().activate_soft_body(self, sims)
@@ -347,7 +345,7 @@ class myScene(object):
             if force or ("surface" in sims.monitor_type and sims.visualize and sims.max_particle_num > 0):
                 if sims.scheme == "LSDEM" or sims.scheme == "LSMPM":
                     if self.vertice is None:
-                        raise RuntimeError("Surface node should be activated first")
+                        raise SimulationStateError("Surface node should be activated first")
                 self.visualzie_surface_node = ti.Vector.field(
                     3,
                     float,
@@ -369,7 +367,7 @@ class myScene(object):
                 elif sims.scheme == "PolySuperQuadrics":
                     self.surface = PolySuperQuadrics.field(shape=sims.max_rigid_template_num)
                 else:
-                    raise RuntimeError("Error shape template!")
+                    raise SimulationStateError("Error shape template!")
 
     def active_boundings(self, sims: Simulation):
         self.activate_bounding_sphere(sims)
@@ -382,7 +380,9 @@ class myScene(object):
             self.particle = BoundingSphere.field(shape=sims.max_rigid_body_num)
 
         if sims.max_sphere_num > 0.0 or sims.max_clump_num > 0.0:
-            raise RuntimeError("Level set DEM cannot run. Bacause spheres or clumps are included in the simulation")
+            raise SimulationStateError(
+                "Level set DEM cannot run. Bacause spheres or clumps are included in the simulation"
+            )
 
     def activate_bounding_box(self, sims: Simulation):
         if sims.scheme == "LSMPM":
@@ -506,7 +506,7 @@ class myScene(object):
 
     def add_attribute(self, sims: Simulation, materialID, attribute_dict):
         if materialID > sims.max_material_num - 1:
-            raise RuntimeError("Material ID is out of the scope!")
+            raise SimulationStateError("Material ID is out of the scope!")
         else:
             self.material[materialID].add_attribute(attribute_dict)
             self.material_parameters[int(materialID)] = dict(attribute_dict)
@@ -546,50 +546,50 @@ class myScene(object):
         return mindensity
 
     def reset_verlet_disp(self):
-        reset_verlet_disp_(int(self.particleNum[0]), self.particle)
-        reset_verlet_disp_(int(self.wallNum[0]), self.wall)
+        reset_verlet_disp(int(self.particleNum[0]), self.particle)
+        reset_verlet_disp(int(self.wallNum[0]), self.wall)
 
     def reset_particle_verlet_disp(self):
-        reset_verlet_disp_(int(self.particleNum[0]), self.particle)
+        reset_verlet_disp(int(self.particleNum[0]), self.particle)
 
     def reset_wall_verlet_disp(self):
-        reset_verlet_disp_(int(self.wallNum[0]), self.wall)
+        reset_verlet_disp(int(self.wallNum[0]), self.wall)
 
     def is_need_update_verlet_table(self, limit):
-        is_update = validate_displacement_(limit, int(self.particleNum[0]), self.particle)
+        is_update = validate_displacement(limit, int(self.particleNum[0]), self.particle)
         if not is_update:
-            is_update = validate_displacement_(limit, int(self.wallNum[0]), self.wall)
+            is_update = validate_displacement(limit, int(self.wallNum[0]), self.wall)
         return is_update
 
     def is_wall_need_update_verlet_table(self, limit):
-        return validate_displacement_(limit, int(self.wallNum[0]), self.wall)
+        return validate_displacement(limit, int(self.wallNum[0]), self.wall)
 
     def is_particle_need_update_verlet_table(self, limit):
-        return validate_displacement_(limit, int(self.particleNum[0]), self.particle)
+        return validate_displacement(limit, int(self.particleNum[0]), self.particle)
 
     def is_deformable_particle_need_update_verlet_table(self, limit):
-        return validate_deformable_bounding_sphere_(limit, int(self.particleNum[0]), self.particle)
+        return validate_deformable_bounding_sphere(limit, int(self.particleNum[0]), self.particle)
 
     def is_deformable_need_update_verlet_table(self, limit):
         is_update = self.is_deformable_particle_need_update_verlet_table(limit)
         if not is_update:
-            is_update = validate_displacement_(limit, int(self.wallNum[0]), self.wall)
+            is_update = validate_displacement(limit, int(self.wallNum[0]), self.wall)
         return is_update
 
     def find_expect_extent(self, sims: Simulation, distance):
         if (sims.scheme == "LSDEM" or sims.scheme == "LSMPM") and sims.max_particle_num > 0:
-            temp = find_expect_extent_(distance, int(self.particleNum[0]), self.box)
+            temp = find_expect_extent(distance, int(self.particleNum[0]), self.box)
             return temp[0], temp[1]
         return 0, 0.0
 
     def find_min_grid_space(self, sims: Simulation):
         if (sims.scheme == "LSDEM" or sims.scheme == "LSMPM") and sims.max_particle_num > 0:
-            return find_min_grid_space_(int(self.particleNum[0]), self.box)
+            return find_min_grid_space(int(self.particleNum[0]), self.box)
         return 0.0
 
     def find_min_extent(self, sims: Simulation):
         if (sims.scheme == "LSDEM" or sims.scheme == "LSMPM") and sims.max_particle_num > 0:
-            return find_min_extent_(int(self.particleNum[0]), self.box)
+            return find_min_extent(int(self.particleNum[0]), self.box)
         return 0.0
 
     def find_particle_radius(self, sims: Simulation):
@@ -597,33 +597,29 @@ class myScene(object):
 
     def find_particle_min_radius(self, sims: Simulation):
         if sims.scheme == "DEM":
-            return (
-                find_particle_min_radius_(int(self.particleNum[0]), self.particle) if sims.max_particle_num > 0 else 0
-            )
+            return find_particle_min_radius(int(self.particleNum[0]), self.particle) if sims.max_particle_num > 0 else 0
         else:
-            return find_particle_min_radius_(int(self.particleNum[0]), self.rigid) if sims.max_particle_num > 0 else 0
+            return find_particle_min_radius(int(self.particleNum[0]), self.rigid) if sims.max_particle_num > 0 else 0
 
     def find_particle_max_radius(self, sims: Simulation):
         if sims.scheme == "DEM":
-            return (
-                find_particle_max_radius_(int(self.particleNum[0]), self.particle) if sims.max_particle_num > 0 else 0
-            )
+            return find_particle_max_radius(int(self.particleNum[0]), self.particle) if sims.max_particle_num > 0 else 0
         else:
-            return find_particle_max_radius_(int(self.particleNum[0]), self.rigid) if sims.max_particle_num > 0 else 0
+            return find_particle_max_radius(int(self.particleNum[0]), self.rigid) if sims.max_particle_num > 0 else 0
 
     def find_bounding_sphere_radius(self, sims: Simulation):
         return self.find_bounding_sphere_min_radius(sims), self.find_bounding_sphere_max_radius(sims)
 
     def find_bounding_sphere_min_radius(self, sims: Simulation):
-        particle_rad_min = MThreshold
-        wall_rad_min = MThreshold
+        particle_rad_min = M_THRESHOLD
+        wall_rad_min = M_THRESHOLD
 
         if self.particleNum[0] > 0:
-            particle_rad_min = find_particle_min_radius_(int(self.particleNum[0]), self.particle)
+            particle_rad_min = find_particle_min_radius(int(self.particleNum[0]), self.particle)
 
         if sims is not None:
             if sims.wall_type == 2 and self.wallNum[0] > 0:
-                wall_rad_min = find_patch_min_radius_(int(self.wallNum[0]), self.wall)
+                wall_rad_min = find_patch_min_radius(int(self.wallNum[0]), self.wall)
         return min(particle_rad_min, wall_rad_min)
 
     def find_bounding_sphere_max_radius(self, sims: Simulation):
@@ -631,24 +627,24 @@ class myScene(object):
         wall_rad_max = 0.0
 
         if self.particleNum[0] > 0:
-            particle_rad_max = find_particle_max_radius_(int(self.particleNum[0]), self.particle)
+            particle_rad_max = find_particle_max_radius(int(self.particleNum[0]), self.particle)
 
         if sims is not None:
             if sims.wall_type == 2 and self.wallNum[0] > 0:
-                wall_rad_max = find_patch_max_radius_(int(self.wallNum[0]), self.wall)
+                wall_rad_max = find_patch_max_radius(int(self.wallNum[0]), self.wall)
         return max(particle_rad_max, wall_rad_max)
 
     def find_particle_min_mass(self, sims: Simulation):
         if sims.scheme == "LSMPM":
             return (
-                find_lsmpm_contact_min_mass_(int(self.particleNum[0]), self.rigid)
+                find_lsmpm_contact_min_mass(int(self.particleNum[0]), self.rigid)
                 if sims.max_particle_num > 0
-                else MThreshold
+                else M_THRESHOLD
             )
         elif sims.scheme == "LSDEM" or sims.scheme == "PolySuperEllipsoid" or sims.scheme == "PolySuperQuadrics":
-            return find_particle_min_mass_(int(self.particleNum[0]), self.rigid) if sims.max_particle_num > 0 else 0
+            return find_particle_min_mass(int(self.particleNum[0]), self.rigid) if sims.max_particle_num > 0 else 0
         elif sims.scheme == "DEM":
-            return find_particle_min_mass_(int(self.particleNum[0]), self.particle) if sims.max_particle_num > 0 else 0
+            return find_particle_min_mass(int(self.particleNum[0]), self.particle) if sims.max_particle_num > 0 else 0
 
     def find_left_bottom_scene(self, sims: Simulation):
         if (
@@ -657,9 +653,9 @@ class myScene(object):
             or sims.scheme == "PolySuperEllipsoid"
             or sims.scheme == "PolySuperQuadrics"
         ):
-            return find_left_bottom_scene_(int(self.particleNum[0]), self.rigid) if sims.max_particle_num > 0 else 0
+            return find_left_bottom_scene(int(self.particleNum[0]), self.rigid) if sims.max_particle_num > 0 else 0
         elif sims.scheme == "DEM":
-            return find_left_bottom_scene_(int(self.particleNum[0]), self.particle) if sims.max_particle_num > 0 else 0
+            return find_left_bottom_scene(int(self.particleNum[0]), self.particle) if sims.max_particle_num > 0 else 0
 
     def find_right_top_scene(self, sims: Simulation):
         if (
@@ -668,9 +664,9 @@ class myScene(object):
             or sims.scheme == "PolySuperEllipsoid"
             or sims.scheme == "PolySuperQuadrics"
         ):
-            return find_right_top_scene_(int(self.particleNum[0]), self.rigid) if sims.max_particle_num > 0 else 0
+            return find_right_top_scene(int(self.particleNum[0]), self.rigid) if sims.max_particle_num > 0 else 0
         elif sims.scheme == "DEM":
-            return find_right_top_scene_(int(self.particleNum[0]), self.particle) if sims.max_particle_num > 0 else 0
+            return find_right_top_scene(int(self.particleNum[0]), self.particle) if sims.max_particle_num > 0 else 0
 
     def find_bounding_box(self, sims):
         return self.find_left_bottom_scene(sims), self.find_right_top_scene(sims)
@@ -682,9 +678,9 @@ class myScene(object):
             or sims.scheme == "PolySuperEllipsoid"
             or sims.scheme == "PolySuperQuadrics"
         ):
-            return find_particle_total_mass_(int(self.particleNum[0]), self.rigid)
+            return find_particle_total_mass(int(self.particleNum[0]), self.rigid)
         elif sims.scheme == "DEM":
-            return find_particle_total_mass_(int(self.particleNum[0]), self.particle)
+            return find_particle_total_mass(int(self.particleNum[0]), self.particle)
 
     def print_delete_particles(self, sphere_num, clump_num):
         if sphere_num > 0:
@@ -720,11 +716,11 @@ class myScene(object):
 
         factor = 1 if not override else 0
         if property_name == "bodyID":
-            modify_sphere_bodyID(value, int(self.particleNum[0]), self.particle, bodyID)
+            modify_sphere_body_id(value, int(self.particleNum[0]), self.particle, bodyID)
         elif property_name == "groupID":
-            modify_sphere_groupID(value, int(self.particleNum[0]), self.particle, bodyID)
+            modify_sphere_group_id(value, int(self.particleNum[0]), self.particle, bodyID)
         elif property_name == "materialID":
-            modify_sphere_materialID(value, int(self.particleNum[0]), self.particle, self.material, bodyID)
+            modify_sphere_material_id(value, int(self.particleNum[0]), self.particle, self.material, bodyID)
         elif property_name == "radius":
             modify_sphere_radius(value, int(self.particleNum[0]), self.particle, bodyID)
         elif property_name == "position":
@@ -737,11 +733,11 @@ class myScene(object):
             modify_sphere_orientation(factor, value, int(self.particleNum[0]), self.particle, bodyID)
         elif property_name == "fix_velocity":
             FIX = {"Free": 0, "Fix": 1}
-            fix_v = vec3u8([DictIO.GetEssential(FIX, is_fix) for is_fix in value])
+            fix_v = vec3u8([DictIO.get_essential(FIX, is_fix) for is_fix in value])
             modify_sphere_fix_v(fix_v, int(self.particleNum[0]), self.particle, bodyID)
         elif property_name == "fix_angular_velocity":
             FIX = {"Free": 0, "Fix": 1}
-            fix_v = vec3u8([DictIO.GetEssential(FIX, is_fix) for is_fix in value])
+            fix_v = vec3u8([DictIO.get_essential(FIX, is_fix) for is_fix in value])
             modify_sphere_fix_w(fix_v, int(self.particleNum[0]), self.particle, bodyID)
         else:
             valid_list = ["bodyID", "materialID", "position", "velocity", "traction", "stress", "fix_velocity"]
@@ -757,16 +753,16 @@ class myScene(object):
 
         factor = 1 if not override else 0
         if property_name == "bodyID":
-            modify_sphere_bodyID_in_region(value, int(self.particleNum[0]), self.particle, is_in_region)
+            modify_sphere_body_id_in_region(value, int(self.particleNum[0]), self.particle, is_in_region)
         elif property_name == "groupID":
             if sims.scheme == "DEM":
-                modify_sphere_groupID_in_region(
+                modify_sphere_group_id_in_region(
                     value, int(self.particleNum[0]), self.sphere, self.particle, is_in_region
                 )
             elif sims.scheme == "LSDEM" or sims.scheme == "LSMPM":
-                modify_levelset_groupID_in_region(value, int(self.rigidNum[0]), self.rigid, is_in_region)
+                modify_levelset_group_id_in_region(value, int(self.rigidNum[0]), self.rigid, is_in_region)
         elif property_name == "materialID":
-            modify_sphere_materialID_in_region(
+            modify_sphere_material_id_in_region(
                 value, int(self.particleNum[0]), self.particle, self.material, is_in_region
             )
         elif property_name == "radius":
@@ -783,11 +779,11 @@ class myScene(object):
             modify_sphere_orientation_in_region(factor, value, int(self.particleNum[0]), self.particle, is_in_region)
         elif property_name == "fix_velocity":
             FIX = {"Free": 0, "Fix": 1}
-            fix_v = vec3u8([DictIO.GetEssential(FIX, is_fix) for is_fix in value])
+            fix_v = vec3u8([DictIO.get_essential(FIX, is_fix) for is_fix in value])
             modify_sphere_fix_v_in_region(fix_v, int(self.particleNum[0]), self.particle, is_in_region)
         elif property_name == "fix_angular_velocity":
             FIX = {"Free": 0, "Fix": 1}
-            fix_v = vec3u8([DictIO.GetEssential(FIX, is_fix) for is_fix in value])
+            fix_v = vec3u8([DictIO.get_essential(FIX, is_fix) for is_fix in value])
             modify_sphere_fix_w_in_region(fix_v, int(self.particleNum[0]), self.particle, is_in_region)
         else:
             valid_list = ["bodyID", "materialID", "position", "velocity", "traction", "stress", "fix_velocity"]
@@ -807,7 +803,7 @@ class myScene(object):
             value = 1 if value == "On" else 0
             modify_wall_activate_status(wallID, value, int(self.wallNum[0]), self.wall)
         elif property_name == "MaterialID":
-            modify_wall_materialID(wallID, value, int(self.wallNum[0]), self.wall)
+            modify_wall_material_id(wallID, value, int(self.wallNum[0]), self.wall)
 
         if sims.wall_type == 0:
             if property_name == "Position":
@@ -825,8 +821,8 @@ class myScene(object):
                 rotation_center = vec3f(0, 0, 0)
                 if isinstance(value, dict):
                     mode = 0
-                    new_direction = vec3f(DictIO.GetEssential(value, "Orientation"))
-                    rotation_center = vec3f(DictIO.GetEssential(value, "RotateCenter"))
+                    new_direction = vec3f(DictIO.get_essential(value, "Orientation"))
+                    rotation_center = vec3f(DictIO.get_essential(value, "RotateCenter"))
                 elif isinstance(value, np.ndarray, tuple, list, ti.types.vector):
                     mode = 1
                     new_direction = vec3f(value)
@@ -852,14 +848,14 @@ class myScene(object):
         elif property_name == "AngularVelocity":
             self.geometry.modify(
                 wallID,
-                rotate_center=DictIO.GetEssential(value, "RotateCenter"),
-                angular_velocity=DictIO.GetEssential(value, "AngularVelocity"),
+                rotate_center=DictIO.get_essential(value, "RotateCenter"),
+                angular_velocity=DictIO.get_essential(value, "AngularVelocity"),
                 wall=self.wall,
             )
 
     def add_rigid_levelset_template(self, name, distance_field, vertice, parameter):
-        currID = len(self.distance_field)
-        DictIO.append(self.prefixID, name, currID)
+        curr_id = len(self.distance_field)
+        DictIO.append(self.prefixID, name, curr_id)
         dtype = runtime_float_numpy_dtype()
         self.distance_field.append(np.ascontiguousarray(distance_field, dtype=dtype))
         self.vertice_paras.append(
@@ -951,7 +947,7 @@ class myScene(object):
             "particlewall": ["particle-wall"],
         }
         if dtype_key not in aliases:
-            raise RuntimeError(
+            raise ConfigurationError(
                 "AffineBody contact property dType must be one of ['all', 'particle-particle', 'particle-wall']"
             )
         dtypes = aliases[dtype_key]
@@ -963,27 +959,27 @@ class myScene(object):
     def add_rigid_template_grid_field(self, sims):
         self.gridID = []
         self.verticeID = []
-        gridSums, nodeSums = 0, 0
+        grid_sums, node_sums = 0, 0
         for name in self.prefixID:
-            index = DictIO.GetEssential(self.prefixID, name)
+            index = DictIO.get_essential(self.prefixID, name)
             distance_field = self.distance_field[index]
             vertice, parameter = self.vertice_paras[index]
             assert vertice.shape[0] == parameter.shape[0], "The dimension of vertice and parameter is wrong!"
             # NumPy shape scalars may otherwise be inferred as u64 kernel
             # arguments, which is unsupported by the Metal backend.
-            gridSum = int(distance_field.shape[0])
-            nodeSum = int(parameter.shape[0])
-            self.check_grid_number(sims, gridSum)
-            self.check_surface_node_number(sims, nodeSum)
-            create_level_set_grids_(int(gridSums), gridSum, self.rigid_grid, distance_field)
-            create_level_set_surface(int(nodeSums), nodeSum, self.vertice, vertice, parameter)
-            self.gridID.append(gridSums)
-            self.verticeID.append(nodeSums)
-            gridSums += gridSum
-            nodeSums += nodeSum
-        self.gridID.append(gridSums)
-        self.verticeID.append(nodeSums)
-        self.gridNum[0] = gridSums
+            grid_sum = int(distance_field.shape[0])
+            node_sum = int(parameter.shape[0])
+            self.check_grid_number(sims, grid_sum)
+            self.check_surface_node_number(sims, node_sum)
+            create_level_set_grids(int(grid_sums), grid_sum, self.rigid_grid, distance_field)
+            create_level_set_surface(int(node_sums), node_sum, self.vertice, vertice, parameter)
+            self.gridID.append(grid_sums)
+            self.verticeID.append(node_sums)
+            grid_sums += grid_sum
+            node_sums += node_sum
+        self.gridID.append(grid_sums)
+        self.verticeID.append(node_sums)
+        self.gridNum[0] = grid_sums
         self.check_rigid_template_number(sims, len(self.prefixID))
 
     def add_rigid_implicit_surface_parameter(self, sims: Simulation):
@@ -1020,7 +1016,7 @@ class myScene(object):
 
     def add_connectivity(self, body_count, surface_node_number, objects: BasicShape):
         pool = Pool()
-        func = partial(GetConnectivity, surface_node_number, objects.mesh.faces)
+        func = partial(get_connectivity, surface_node_number, objects.mesh.faces)
         faces = np.array(pool.map(func, range(body_count)), dtype=np.int32).reshape(-1, 3)
         pool.terminate()
         pool.join()
@@ -1040,18 +1036,18 @@ class myScene(object):
 
     def visualize_surface(self, sims: Simulation):
         if sims.scheme == "LSDEM" or sims.scheme == "LSMPM":
-            bodyID = np.ascontiguousarray(self.surface.to_numpy()[0 : int(self.surfaceNum[0])])
-            groupID = np.repeat(
+            body_id = np.ascontiguousarray(self.surface.to_numpy()[0 : int(self.surfaceNum[0])])
+            group_id = np.repeat(
                 np.ascontiguousarray(self.rigid.groupID.to_numpy()[0 : int(self.rigidNum[0])]), self.vertice_index
             )
-            kernel_visualize_levelset_surface_(
+            kernel_visualize_levelset_surface(
                 int(self.particleNum[0]), self.vertice, self.visualzie_surface_node, self.rigid, self.box
             )
-            return {"bodyID": bodyID, "groupID": groupID}, self.visualzie_surface_node.to_numpy()
+            return {"bodyID": body_id, "groupID": group_id}, self.visualzie_surface_node.to_numpy()
         elif sims.scheme == "PolySuperEllipsoid" or sims.scheme == "PolySuperQuadrics":
             template_vertice_num = np.array([element[0].shape[0] for element in self.vertice_paras], dtype=np.int32)
-            bodyID = np.repeat(np.arange(0, self.rigidNum[0], 1), self.vertice_index)
-            groupID = np.repeat(
+            body_id = np.repeat(np.arange(0, self.rigidNum[0], 1), self.vertice_index)
+            group_id = np.repeat(
                 np.ascontiguousarray(self.rigid.groupID.to_numpy()[0 : int(self.rigidNum[0])]), self.vertice_index
             )
             np.cumsum(template_vertice_num, out=template_vertice_num)
@@ -1059,7 +1055,7 @@ class myScene(object):
             total_vertice_num = np.cumsum(self.vertice_index)
             total_vertice_num = np.insert(total_vertice_num, 0, 0)
             stacked_vertices = np.stack([element[0] for element in self.vertice_paras], axis=0)[0]
-            kernel_visualize_implicit_surface_(
+            kernel_visualize_implicit_surface(
                 int(self.rigidNum[0]),
                 template_vertice_num,
                 stacked_vertices,
@@ -1067,12 +1063,12 @@ class myScene(object):
                 self.visualzie_surface_node,
                 self.rigid,
             )
-            return {"bodyID": bodyID, "groupID": groupID}, self.visualzie_surface_node.to_numpy()
+            return {"bodyID": body_id, "groupID": group_id}, self.visualzie_surface_node.to_numpy()
 
     def check_radius(self):
-        check = check_radius_(int(self.particleNum[0]), self.rigid)
+        check = check_radius(int(self.particleNum[0]), self.rigid)
         if check is False:
-            raise RuntimeError(
+            raise SimulationStateError(
                 "The equivalent radius should be sorted in ascending order. Please double check create_body and add_body"
             )
 
@@ -1080,13 +1076,13 @@ class myScene(object):
         initial_particle = self.particleNum[0]
         if sims.scheme == "DEM":
             kernel_delete_particles(int(self.particleNum[0]), self.particle, bodyID)
-            update_particle_storage_(
+            update_particle_storage(
                 self.particleNum, self.sphereNum, self.clumpNum, self.particle, self.sphere, self.clump
             )
         elif sims.scheme == "LSDEM":
-            raise RuntimeError("The feature is not supported")
+            raise ConfigurationError("The feature is not supported")
         elif sims.scheme == "PolySuperEllipsoid" or sims.scheme == "PolySuperQuadrics":
-            raise RuntimeError("The feature is not supported")
+            raise ConfigurationError("The feature is not supported")
         finial_particle = self.particleNum[0]
         print(f"Total {-finial_particle + initial_particle} particles has been deleted", "\n")
 
@@ -1094,14 +1090,14 @@ class myScene(object):
         initial_wall = self.wallNum[0]
         modify_wall_activate_status(wallID, 0, int(self.wallNum[0]), self.wall)
         if sims.max_servo_wall_num > 0:
-            update_servo_storage_(self.servoNum, self.wall, self.servo)
-        update_wall_storage_(self.wallNum, self.wall)
+            update_servo_storage(self.servoNum, self.wall, self.servo)
+        update_wall_storage(self.wallNum, self.wall)
         finial_wall = self.wallNum[0]
         print(f"Total {-finial_wall + initial_wall} walls has been deleted", "\n")
 
     def update_current_storage(self, sims: Simulation):
         if sims.scheme == "DEM":
-            update_particle_storage_(
+            update_particle_storage(
                 self.particleNum, self.sphereNum, self.clumpNum, self.particle, self.sphere, self.clump
             )
         elif sims.scheme == "LSDEM":
@@ -1109,16 +1105,16 @@ class myScene(object):
             self.connectivity, self.face_index, self.vertice_index = remove_connectivity_by_inactive_faces(
                 self.connectivity, self.face_index, self.vertice_index, active
             )
-            update_LSparticle_storage_(
+            update_l_sparticle_storage(
                 self.particleNum, self.rigidNum, self.surfaceNum, self.particle, self.box, self.rigid
             )
-            update_LSsurface_storage_(int(self.rigidNum[0]), self.rigid, self.surface)
+            update_l_ssurface_storage(int(self.rigidNum[0]), self.rigid, self.surface)
         elif sims.scheme == "PolySuperEllipsoid" or sims.scheme == "PolySuperQuadrics":
             active = np.ascontiguousarray(self.particle.active.to_numpy()[0 : self.particleNum[0]])
             self.connectivity, self.face_index, self.vertice_index = remove_connectivity_by_inactive_faces(
                 self.connectivity, self.face_index, self.vertice_index, active
             )
-            update_ISparticle_storage_(self.particleNum, self.rigidNum, self.particle, self.rigid)
+            update_i_sparticle_storage(self.particleNum, self.rigidNum, self.particle, self.rigid)
             self.surfaceNum[0] = sum(self.vertice_index)
 
     def delete_particles_in_region(self, sims: Simulation, is_in_region):

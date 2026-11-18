@@ -1,10 +1,13 @@
 """Sub-cutoff deposits belong to one assembly, never to the next timestep."""
 
+from src.mpm.structs.GridNode import ImplicitNodes2D
+
 import numpy as np
 import pytest
 
 from src.mpm.engines.EngineKernel import grid_internal_force_reset, grid_mass_reset, grid_reset, tlgrid_reset
-from src.mpm.structs.GridNode import ContactNodes2D, ImplicitNodes2D
+
+from src.mpm.structs.ContactNodes2D import ContactNodes2D
 
 pytestmark = pytest.mark.isolated_dimension(2)
 

@@ -1,2 +1,1 @@
-from src.nurbs.element.LinearQuadrilateralElement import LinearQuadrilateralElement
-from src.nurbs.element.LinearTriangleElement import LinearTriangleElement
+"""src.nurbs.element package. Import implementation modules directly."""

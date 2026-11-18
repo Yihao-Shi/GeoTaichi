@@ -1,99 +1,98 @@
 import taichi as ti
 import numpy as np
-from math import prod
 from third_party.pyevtk.hl import unstructuredGridToVTK
 from third_party.pyevtk.vtk import VtkHexahedron, VtkQuad
-
 import src.iga.config as config
 from src.iga.generator.Primitives import Primitives
 
 
-def _sampled_grid_connectivity(resolution):
-    """Build VTK cells for a sampled tensor-product grid.
-
-    pyevtk serializes multidimensional point arrays in Fortran order, so the
-    first parametric direction is the fastest-varying point index here too.
-    """
-    if len(resolution) == 2:
-        nu, nv = resolution
-        cell_count = max(nu - 1, 0) * max(nv - 1, 0)
-        connectivity = np.empty((cell_count, 4), dtype=np.int64)
-        cursor = 0
-        for j in range(nv - 1):
-            for i in range(nu - 1):
-                n0 = i + nu * j
-                connectivity[cursor] = (n0, n0 + 1, n0 + nu + 1, n0 + nu)
-                cursor += 1
-        vtk_cell_type = VtkQuad.tid
-    elif len(resolution) == 3:
-        nu, nv, nw = resolution
-        cell_count = max(nu - 1, 0) * max(nv - 1, 0) * max(nw - 1, 0)
-        connectivity = np.empty((cell_count, 8), dtype=np.int64)
-        cursor = 0
-        for k in range(nw - 1):
-            for j in range(nv - 1):
-                for i in range(nu - 1):
-                    n0 = i + nu * (j + nv * k)
-                    n1 = n0 + 1
-                    n3 = n0 + nu
-                    n2 = n3 + 1
-                    layer_stride = nu * nv
-                    connectivity[cursor] = (
-                        n0,
-                        n1,
-                        n2,
-                        n3,
-                        n0 + layer_stride,
-                        n1 + layer_stride,
-                        n2 + layer_stride,
-                        n3 + layer_stride,
-                    )
-                    cursor += 1
-        vtk_cell_type = VtkHexahedron.tid
-    else:
-        raise ValueError("IGA visualization supports only 2D and 3D sampled grids")
-
-    nodes_per_cell = connectivity.shape[1]
-    offsets = np.arange(
-        nodes_per_cell,
-        (cell_count + 1) * nodes_per_cell,
-        nodes_per_cell,
-        dtype=np.int64,
-    )
-    cell_types = np.full(cell_count, vtk_cell_type, dtype=np.uint8)
-    return (
-        np.ascontiguousarray(connectivity.reshape(-1)),
-        offsets,
-        cell_types,
-    )
-
-
-def _sampled_grid_vtu_data(sampled_points, displacement, stress):
-    resolution = sampled_points.shape[:-1]
-    dimension = sampled_points.shape[-1]
-    if dimension not in (2, 3) or displacement.shape != sampled_points.shape:
-        raise ValueError("IGA VTU point and displacement arrays must describe a 2D or 3D grid")
-    if stress.shape != resolution:
-        raise ValueError("IGA VTU stress array must match the sampled-grid resolution")
-
-    points = [np.ascontiguousarray(sampled_points[..., d].reshape(-1, order="F")) for d in range(dimension)]
-    displacement_components = [
-        np.ascontiguousarray(displacement[..., d].reshape(-1, order="F")) for d in range(dimension)
-    ]
-    if dimension == 2:
-        points.append(np.zeros(sampled_points[..., 0].size, dtype=sampled_points.dtype))
-        displacement_components.append(np.zeros(displacement[..., 0].size, dtype=displacement.dtype))
-
-    connectivity, offsets, cell_types = _sampled_grid_connectivity(resolution)
-    point_data = {
-        "displacement": tuple(displacement_components),
-        "stress": np.ascontiguousarray(stress.reshape(-1, order="F")),
-    }
-    return points, connectivity, offsets, cell_types, point_data
-
-
 @ti.data_oriented
 class Patch:
+
+    @staticmethod
+    def _sampled_grid_connectivity(resolution):
+        """Build VTK cells for a sampled tensor-product grid.
+
+        pyevtk serializes multidimensional point arrays in Fortran order, so the
+        first parametric direction is the fastest-varying point index here too.
+        """
+        if len(resolution) == 2:
+            nu, nv = resolution
+            cell_count = max(nu - 1, 0) * max(nv - 1, 0)
+            connectivity = np.empty((cell_count, 4), dtype=np.int64)
+            cursor = 0
+            for j in range(nv - 1):
+                for i in range(nu - 1):
+                    n0 = i + nu * j
+                    connectivity[cursor] = (n0, n0 + 1, n0 + nu + 1, n0 + nu)
+                    cursor += 1
+            vtk_cell_type = VtkQuad.tid
+        elif len(resolution) == 3:
+            nu, nv, nw = resolution
+            cell_count = max(nu - 1, 0) * max(nv - 1, 0) * max(nw - 1, 0)
+            connectivity = np.empty((cell_count, 8), dtype=np.int64)
+            cursor = 0
+            for k in range(nw - 1):
+                for j in range(nv - 1):
+                    for i in range(nu - 1):
+                        n0 = i + nu * (j + nv * k)
+                        n1 = n0 + 1
+                        n3 = n0 + nu
+                        n2 = n3 + 1
+                        layer_stride = nu * nv
+                        connectivity[cursor] = (
+                            n0,
+                            n1,
+                            n2,
+                            n3,
+                            n0 + layer_stride,
+                            n1 + layer_stride,
+                            n2 + layer_stride,
+                            n3 + layer_stride,
+                        )
+                        cursor += 1
+            vtk_cell_type = VtkHexahedron.tid
+        else:
+            raise ValueError("IGA visualization supports only 2D and 3D sampled grids")
+
+        nodes_per_cell = connectivity.shape[1]
+        offsets = np.arange(
+            nodes_per_cell,
+            (cell_count + 1) * nodes_per_cell,
+            nodes_per_cell,
+            dtype=np.int64,
+        )
+        cell_types = np.full(cell_count, vtk_cell_type, dtype=np.uint8)
+        return (
+            np.ascontiguousarray(connectivity.reshape(-1)),
+            offsets,
+            cell_types,
+        )
+
+    @staticmethod
+    def _sampled_grid_vtu_data(sampled_points, displacement, stress):
+        resolution = sampled_points.shape[:-1]
+        dimension = sampled_points.shape[-1]
+        if dimension not in (2, 3) or displacement.shape != sampled_points.shape:
+            raise ValueError("IGA VTU point and displacement arrays must describe a 2D or 3D grid")
+        if stress.shape != resolution:
+            raise ValueError("IGA VTU stress array must match the sampled-grid resolution")
+
+        points = [np.ascontiguousarray(sampled_points[..., d].reshape(-1, order="F")) for d in range(dimension)]
+        displacement_components = [
+            np.ascontiguousarray(displacement[..., d].reshape(-1, order="F")) for d in range(dimension)
+        ]
+        if dimension == 2:
+            points.append(np.zeros(sampled_points[..., 0].size, dtype=sampled_points.dtype))
+            displacement_components.append(np.zeros(displacement[..., 0].size, dtype=displacement.dtype))
+
+        connectivity, offsets, cell_types = Patch._sampled_grid_connectivity(resolution)
+        point_data = {
+            "displacement": tuple(displacement_components),
+            "stress": np.ascontiguousarray(stress.reshape(-1, order="F")),
+        }
+        return points, connectivity, offsets, cell_types, point_data
+
     def __init__(self, primitive: Primitives):
         self.current_print = 0
         self.num_patch = 0
@@ -242,7 +241,7 @@ class Patch:
         if not os.path.exists(path):
             os.makedirs(path)
 
-        from src.nurbs.NurbsBasis import NurbsBasisInterpolations2d, NurbsBasisInterpolations3d
+        from src.nurbs.NurbsBasis import nurbs_basis_interpolations2d, nurbs_basis_interpolations3d
 
         current_ctrlpts = self.control_points.to_numpy()
         current_stress = self.stress.to_numpy()
@@ -267,7 +266,7 @@ class Patch:
             for idx in np.ndindex(*resolution):
                 coords = [xi[d][idx[d]] for d in range(config.DIM)]
                 if primitive.dimension == 2:
-                    samp_pts[idx] = NurbsBasisInterpolations2d(
+                    samp_pts[idx] = nurbs_basis_interpolations2d(
                         *coords,
                         *primitive.degree,
                         primitive.knot_vector_u,
@@ -275,7 +274,7 @@ class Patch:
                         current_ctrlpts,
                         primitive.weights,
                     )
-                    disp[idx] = NurbsBasisInterpolations2d(
+                    disp[idx] = nurbs_basis_interpolations2d(
                         *coords,
                         *primitive.degree,
                         primitive.knot_vector_u,
@@ -283,7 +282,7 @@ class Patch:
                         current_ctrlpts - primitive.control_points,
                         primitive.weights,
                     )
-                    von_mises[idx] = NurbsBasisInterpolations2d(
+                    von_mises[idx] = nurbs_basis_interpolations2d(
                         *coords,
                         *primitive.degree,
                         primitive.knot_vector_u,
@@ -292,7 +291,7 @@ class Patch:
                         primitive.weights,
                     )
                 else:
-                    samp_pts[idx] = NurbsBasisInterpolations3d(
+                    samp_pts[idx] = nurbs_basis_interpolations3d(
                         *coords,
                         *primitive.degree,
                         primitive.knot_vector_u,
@@ -301,7 +300,7 @@ class Patch:
                         current_ctrlpts,
                         primitive.weights,
                     )
-                    disp[idx] = NurbsBasisInterpolations3d(
+                    disp[idx] = nurbs_basis_interpolations3d(
                         *coords,
                         *primitive.degree,
                         primitive.knot_vector_u,
@@ -310,7 +309,7 @@ class Patch:
                         current_ctrlpts - primitive.control_points,
                         primitive.weights,
                     )
-                    von_mises[idx] = NurbsBasisInterpolations3d(
+                    von_mises[idx] = nurbs_basis_interpolations3d(
                         *coords,
                         *primitive.degree,
                         primitive.knot_vector_u,
@@ -322,7 +321,7 @@ class Patch:
 
             # Emit one representation per frame; the sampled VTU keeps the
             # same tensor-product cells, positions, displacement and stress.
-            vtu_points, connectivity, offsets, cell_types, vtu_point_data = _sampled_grid_vtu_data(
+            vtu_points, connectivity, offsets, cell_types, vtu_point_data = Patch._sampled_grid_vtu_data(
                 samp_pts, disp, von_mises
             )
             unstructuredGridToVTK(

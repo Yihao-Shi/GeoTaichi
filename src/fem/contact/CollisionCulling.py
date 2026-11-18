@@ -1,5 +1,7 @@
 """Device collision-culling pipeline for deforming FEM contact surfaces."""
 
+from src.utils.errors import CapacityError, SimulationStateError
+
 import numpy as np
 import taichi as ti
 
@@ -11,7 +13,7 @@ from src.contact_detection.continuous_contact_detection.AdditiveCCD import (
     edge_edge_accd,
     point_triangle_accd,
 )
-from src.fem.contact.LinkedCellBroadPhase import _grown_capacity
+from src.fem.contact.LinkedCellBroadPhase import DynamicLinkedCellBroadPhase
 from src.fem.contact.ExplicitGeometry import signed_point_triangle_gap
 from src.physics_model.contact_model.ipc.ContactDistance import (
     edge_edge_distance2,
@@ -154,7 +156,7 @@ class FEMCollisionCulling:
             prefix[first + 1] += 1
         np.cumsum(prefix, out=prefix)
         required = max(len(ordered), 1)
-        capacity = _grown_capacity(required, self.stitch_neighbor_capacity)
+        capacity = DynamicLinkedCellBroadPhase._grown_capacity(required, self.stitch_neighbor_capacity)
         if capacity != self.stitch_neighbor_capacity:
             self.stitch_neighbor_capacity = capacity
             self.stitch_neighbors = ti.field(dtype=ti.i32, shape=capacity)
@@ -166,13 +168,13 @@ class FEMCollisionCulling:
 
     def _resize_filter_scratch(self, raw_pt_count, raw_ee_count):
         required = max(int(raw_pt_count), 1)
-        capacity = _grown_capacity(required, self.filter_pt_capacity)
+        capacity = DynamicLinkedCellBroadPhase._grown_capacity(required, self.filter_pt_capacity)
         if capacity != self.filter_pt_capacity:
             self.filter_pt_capacity = capacity
             self.pt_scan = PrefixSumExecutor(capacity + 1)
             self.pt_prefix = ti.field(dtype=ti.i32, shape=self.pt_scan.get_length())
         required = max(int(raw_ee_count), 1)
-        capacity = _grown_capacity(required, self.filter_ee_capacity)
+        capacity = DynamicLinkedCellBroadPhase._grown_capacity(required, self.filter_ee_capacity)
         if capacity != self.filter_ee_capacity:
             self.filter_ee_capacity = capacity
             self.ee_scan = PrefixSumExecutor(capacity + 1)
@@ -180,24 +182,24 @@ class FEMCollisionCulling:
 
     def _resize_active(self, active_pt_count, active_ee_count):
         if self.fixed_pt_capacity and active_pt_count > self.active_pt_capacity:
-            raise RuntimeError(
+            raise CapacityError(
                 "point-triangle culling capacity is too small: "
                 f"need {active_pt_count}, allocated {self.active_pt_capacity}"
             )
         if self.fixed_ee_capacity and active_ee_count > self.active_ee_capacity:
-            raise RuntimeError(
+            raise CapacityError(
                 "edge-edge culling capacity is too small: "
                 f"need {active_ee_count}, allocated {self.active_ee_capacity}"
             )
         required = max(int(active_pt_count), 1)
-        capacity = _grown_capacity(required, self.active_pt_capacity)
+        capacity = DynamicLinkedCellBroadPhase._grown_capacity(required, self.active_pt_capacity)
         if capacity != self.active_pt_capacity:
             self.active_pt_capacity = capacity
             self.point_triangle = ti.Vector.field(4, dtype=ti.i32, shape=capacity)
             self.point_triangle_measure = ti.field(dtype=self.real_type, shape=capacity)
 
         required = max(int(active_ee_count), 1)
-        capacity = _grown_capacity(required, self.active_ee_capacity)
+        capacity = DynamicLinkedCellBroadPhase._grown_capacity(required, self.active_ee_capacity)
         if capacity != self.active_ee_capacity:
             self.active_ee_capacity = capacity
             self.edge_edge = ti.Vector.field(4, dtype=ti.i32, shape=capacity)
@@ -205,17 +207,17 @@ class FEMCollisionCulling:
 
     def _resize_ccd(self, raw_pt_count, raw_ee_count):
         if not self.enable_ccd:
-            raise RuntimeError("CCD storage is disabled for this explicit contact pipeline")
+            raise SimulationStateError("CCD storage is disabled for this explicit contact pipeline")
         if self.fixed_pt_capacity and raw_pt_count > self.ccd_pt_capacity:
-            raise RuntimeError(
+            raise CapacityError(
                 "point-triangle CCD capacity is too small: " f"need {raw_pt_count}, allocated {self.ccd_pt_capacity}"
             )
         if self.fixed_ee_capacity and raw_ee_count > self.ccd_ee_capacity:
-            raise RuntimeError(
+            raise CapacityError(
                 "edge-edge CCD capacity is too small: " f"need {raw_ee_count}, allocated {self.ccd_ee_capacity}"
             )
         required = max(int(raw_pt_count), 1)
-        capacity = _grown_capacity(required, self.ccd_pt_capacity)
+        capacity = DynamicLinkedCellBroadPhase._grown_capacity(required, self.ccd_pt_capacity)
         if capacity != self.ccd_pt_capacity:
             self.ccd_pt_capacity = capacity
             self.ccd_point_triangle = ti.Vector.field(4, dtype=ti.i32, shape=capacity)
@@ -225,7 +227,7 @@ class FEMCollisionCulling:
             self.ccd_pt_prefix = ti.field(dtype=ti.i32, shape=self.ccd_pt_scan.get_length())
 
         required = max(int(raw_ee_count), 1)
-        capacity = _grown_capacity(required, self.ccd_ee_capacity)
+        capacity = DynamicLinkedCellBroadPhase._grown_capacity(required, self.ccd_ee_capacity)
         if capacity != self.ccd_ee_capacity:
             self.ccd_ee_capacity = capacity
             self.ccd_edge_edge = ti.Vector.field(4, dtype=ti.i32, shape=capacity)
@@ -615,7 +617,7 @@ class FEMCollisionCulling:
         max_iterations,
     ):
         if not self.enable_ccd:
-            raise RuntimeError("CCD storage is disabled for this explicit contact pipeline")
+            raise SimulationStateError("CCD storage is disabled for this explicit contact pipeline")
         raw_pt_count, raw_ee_count = self.broad_phase.rebuild(
             positions,
             float(search_distance),

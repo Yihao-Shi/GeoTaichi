@@ -1,9 +1,9 @@
-from PIL import Image, ImageFont, ImageDraw
-import scipy.ndimage as nd
-import numpy as np
+from src.sdf.Utilities import _sdf
 
-from src.sdf.SDFs import SDF2D
-from src.sdf.SDFs2D import rectangle
+from PIL import Image, ImageFont, ImageDraw
+import numpy as np
+from src.sdf.SDF2D import SDF2D
+
 
 class text(SDF2D):
     def __init__(self, texts: str, font_name="Arial", width=None, height=None, pixels=2**22, points=512):
@@ -22,7 +22,7 @@ class text(SDF2D):
         th = y1 - y0 + 1 + py * 2
 
         # render text to image
-        im = Image.new('L', (tw, th))
+        im = Image.new("L", (tw, th))
         draw = ImageDraw.Draw(im)
         draw.text((px - x0, py - y0), texts, font=font, fill=255)
         self.calculate_distance = _sdf(width, height, pixels, px, py, im)
@@ -38,6 +38,7 @@ class text(SDF2D):
         if height is None:
             height = width / aspect
         return (width, height)
+
 
 class image(SDF2D):
     def __init__(self, file: str, width=None, height=None, pixels=2**22):
@@ -65,84 +66,3 @@ class image(SDF2D):
         if height is None:
             height = width / aspect
         return width, height
-
-def _sdf(width, height, pixels, px, py, im):
-    tw, th = im.size
-
-    # downscale image if necessary
-    factor = (pixels / (tw * th)) ** 0.5
-    if factor < 1:
-        tw, th = int(round(tw * factor)), int(round(th * factor))
-        px, py = int(round(px * factor)), int(round(py * factor))
-        im = im.resize((tw, th))
-
-    # convert to numpy array and apply distance transform
-    im = im.convert('1')
-    a = np.array(im)
-    inside = -nd.distance_transform_edt(a)
-    outside = nd.distance_transform_edt(~a)
-    texture = np.zeros(a.shape)
-    texture[a] = inside[a]
-    texture[~a] = outside[~a]
-
-    # compute world bounds
-    pw = tw - px * 2
-    ph = th - py * 2
-    aspect = pw / ph
-    if width is None and height is None:
-        height = 1
-    if width is None:
-        width = height * aspect
-    if height is None:
-        height = width / aspect
-    x0 = -width / 2
-    y0 = -height / 2
-    x1 = width / 2
-    y1 = height / 2
-
-    # scale texture distances
-    scale = width / tw
-    texture *= scale
-
-    # prepare fallback rectangle
-    # TODO: reduce size based on mesh resolution instead of dividing by 2
-    rect = rectangle(size=(width / 2, height / 2))
-
-    def f(p):
-        x = p[:,0]
-        y = p[:,1]
-        u = (x - x0) / (x1 - x0)
-        v = (y - y0) / (y1 - y0)
-        v = 1 - v
-        i = u * pw + px
-        j = v * ph + py
-        d = _bilinear_interpolate(texture, i, j)
-        q = rect(p).reshape(-1)
-        outside = (i < 0) | (i >= tw-1) | (j < 0) | (j >= th-1)
-        d[outside] = q[outside]
-        return d
-
-    return f
-
-def _bilinear_interpolate(a, x, y):
-    x0 = np.floor(x).astype(int)
-    x1 = x0 + 1
-    y0 = np.floor(y).astype(int)
-    y1 = y0 + 1
-
-    x0 = np.clip(x0, 0, a.shape[1] - 1)
-    x1 = np.clip(x1, 0, a.shape[1] - 1)
-    y0 = np.clip(y0, 0, a.shape[0] - 1)
-    y1 = np.clip(y1, 0, a.shape[0] - 1)
-
-    pa = a[y0, x0]
-    pb = a[y1, x0]
-    pc = a[y0, x1]
-    pd = a[y1, x1]
-
-    wa = (x1 - x) * (y1 - y)
-    wb = (x1 - x) * (y - y0)
-    wc = (x - x0) * (y1 - y)
-    wd = (x - x0) * (y - y0)
-
-    return wa * pa + wb * pb + wc * pc + wd * pd

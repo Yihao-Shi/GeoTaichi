@@ -1,5 +1,7 @@
 """Re-export the five adopted CFDEM results without changing simulation NPZs."""
 
+from src.mpm.PostPlot import write_vtk_file
+
 import argparse
 import hashlib
 import json
@@ -16,13 +18,7 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 
 from src.dem.PostPlot import write_dem_vtk_file, write_lsdem_vtk_file
-from src.mpm.PostPlot import write_vtk_file
-from src.mpm.Recorder import (
-    WriteFile,
-    _closed_domain_pressure_offset,
-    _has_resolved_air_reference,
-    _normalize_closed_domain_pressure,
-)
+from src.mpm.Recorder import WriteFile
 import src.utils.GlobalVariable as GlobalVariable
 
 CASES = (
@@ -83,22 +79,22 @@ def reprocess_case(folder, backup_root, dimension, scheme):
             if abs(float(particles["t_current"]) - float(grid["t_current"])) > 1e-8:
                 raise ValueError(f"Particle/grid snapshot times differ: {particle_file}")
             types = grid["cell_type"]
-            offset = _closed_domain_pressure_offset(grid["cell_pressure"], types)
+            offset = WriteFile._closed_domain_pressure_offset(grid["cell_pressure"], types)
             cell_data = {k: grid[k] for k in grid.files if k.startswith("cell_")}
-            cell_data["cell_pressure"] = _normalize_closed_domain_pressure(grid["cell_pressure"], types)
+            cell_data["cell_pressure"] = WriteFile._normalize_closed_domain_pressure(grid["cell_pressure"], types)
             pressure = particles["pressure"] - offset
             fluid = types == 1
             if not np.isfinite(pressure).all() or not np.isfinite(cell_data["cell_pressure"][fluid]).all():
                 raise ValueError(f"Non-finite pressure: {particle_file}")
             sims.current_print = step
-            recorder.VisualizeGrid(sims, grid["coords"], cell_data=cell_data)
+            recorder.visualize_grid(sims, grid["coords"], cell_data=cell_data)
             rows.append(
                 {
                     "frame": step,
                     "time_s": float(particles["t_current"]),
                     "pressure_offset_pa": offset,
                     "has_air_cells": bool(np.any(types == 0)),
-                    "has_air_reference": _has_resolved_air_reference(types),
+                    "has_air_reference": WriteFile._has_resolved_air_reference(types),
                     "fluid_grid_pressure_mean_pa": float(cell_data["cell_pressure"][fluid].mean()),
                     "particle_pressure_mean_pa": float(pressure.mean()),
                 }
@@ -124,7 +120,7 @@ def reprocess_case(folder, backup_root, dimension, scheme):
             np.testing.assert_array_equal(mesh.point_data["velocity"][:, :dimension], source["velocity"][:, :dimension])
         mesh = meshio.read(staging / f"GraphicMPMGrid{step:06d}.vtu")
         with np.load(folder / "grids" / f"MPMGrid{step:06d}.npz") as source:
-            expected = _normalize_closed_domain_pressure(source["cell_pressure"], source["cell_type"])
+            expected = WriteFile._normalize_closed_domain_pressure(source["cell_pressure"], source["cell_type"])
             np.testing.assert_allclose(
                 np.concatenate(mesh.cell_data["cell_pressure"]).reshape(-1), expected.reshape(-1)
             )

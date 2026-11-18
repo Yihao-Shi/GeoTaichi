@@ -2,26 +2,26 @@ import sys
 from pathlib import Path
 
 import numpy as np
+
 repository_root = Path(__file__).resolve().parents[3]
 if str(repository_root) not in sys.path:
     sys.path.insert(0, str(repository_root))
 
 from tools.derivations.symfunc import *
 
-
 mode = 2
 
 if mode == 1:
-    dfdx = make_matrix('dfdx', 3, 4)
-    d2psid2f = make_matrix('d2psid2f', 4, 4)
+    dfdx = make_matrix("dfdx", 3, 4)
+    d2psid2f = make_matrix("d2psid2f", 4, 4)
     d2psid2x = dfdx @ d2psid2f @ dfdx.T
 
-    code = ''
+    code = ""
     pair, reduced = cse(d2psid2x)
     for p in pair:
-        code += pycode(p[0]) + ' = ' + pycode(p[1]) + ';\n'
+        code += pycode(p[0]) + " = " + pycode(p[1]) + ";\n"
     for i, r in enumerate(reduced):
-        code += '\tout[' + str(i) + '] = ' + pycode(r) + ';'
+        code += "\tout[" + str(i) + "] = " + pycode(r) + ";"
 
     print(code)
 
@@ -61,35 +61,43 @@ if mode == 1:
         for d2 in range(3):
             for i in range(3 * 3):
                 for j in range(3 * 3):
-                    local_hessian[d1, d2] += dFdx[d1, i] * d2Psi_d2F[i, j] * dFdx[d2, j] 
+                    local_hessian[d1, d2] += dFdx[d1, i] * d2Psi_d2F[i, j] * dFdx[d2, j]
 
-    local_hessian1 = np.array([[dFdx[0, 0]*x0 + dFdx[0, 1]*x1 + dFdx[0, 2]*x2 + dFdx[0, 3]*x3 + dFdx[0, 4]*x4 + dFdx[0, 5]*x5 + dFdx[0, 6]*x6 + dFdx[0, 7]*x7 + dFdx[0, 8]*x8, 
-                                dFdx[1, 0]*x0 + dFdx[1, 1]*x1 + dFdx[1, 2]*x2 + dFdx[1, 3]*x3 + dFdx[1, 4]*x4 + dFdx[1, 5]*x5 + dFdx[1, 6]*x6 + dFdx[1, 7]*x7 + dFdx[1, 8]*x8, 
-                                dFdx[2, 0]*x0 + dFdx[2, 1]*x1 + dFdx[2, 2]*x2 + dFdx[2, 3]*x3 + dFdx[2, 4]*x4 + dFdx[2, 5]*x5 + dFdx[2, 6]*x6 + dFdx[2, 7]*x7 + dFdx[2, 8]*x8], 
-                                [dFdx[0, 0]*x9 + dFdx[0, 1]*x10 + dFdx[0, 2]*x11 + dFdx[0, 3]*x12 + dFdx[0, 4]*x13 + dFdx[0, 5]*x14 + dFdx[0, 6]*x15 + dFdx[0, 7]*x16 + dFdx[0, 8]*x17, 
-                                dFdx[1, 0]*x9 + dFdx[1, 1]*x10 + dFdx[1, 2]*x11 + dFdx[1, 3]*x12 + dFdx[1, 4]*x13 + dFdx[1, 5]*x14 + dFdx[1, 6]*x15 + dFdx[1, 7]*x16 + dFdx[1, 8]*x17, 
-                                dFdx[2, 0]*x9 + dFdx[2, 1]*x10 + dFdx[2, 2]*x11 + dFdx[2, 3]*x12 + dFdx[2, 4]*x13 + dFdx[2, 5]*x14 + dFdx[2, 6]*x15 + dFdx[2, 7]*x16 + dFdx[2, 8]*x17], 
-                                [dFdx[0, 0]*x18 + dFdx[0, 1]*x19 + dFdx[0, 2]*x20 + dFdx[0, 3]*x21 + dFdx[0, 4]*x22 + dFdx[0, 5]*x23 + dFdx[0, 6]*x24 + dFdx[0, 7]*x25 + dFdx[0, 8]*x26, 
-                                dFdx[1, 0]*x18 + dFdx[1, 1]*x19 + dFdx[1, 2]*x20 + dFdx[1, 3]*x21 + dFdx[1, 4]*x22 + dFdx[1, 5]*x23 + dFdx[1, 6]*x24 + dFdx[1, 7]*x25 + dFdx[1, 8]*x26, 
+    local_hessian1 = np.array([[dFdx[0, 0]*x0 + dFdx[0, 1]*x1 + dFdx[0, 2]*x2 + dFdx[0, 3]*x3 + dFdx[0, 4]*x4 + dFdx[0, 5]*x5 + dFdx[0, 6]*x6 + dFdx[0, 7]*x7 + dFdx[0, 8]*x8,
+                                dFdx[1, 0]*x0 + dFdx[1, 1]*x1 + dFdx[1, 2]*x2 + dFdx[1, 3]*x3 + dFdx[1, 4]*x4 + dFdx[1, 5]*x5 + dFdx[1, 6]*x6 + dFdx[1, 7]*x7 + dFdx[1, 8]*x8,
+                                dFdx[2, 0]*x0 + dFdx[2, 1]*x1 + dFdx[2, 2]*x2 + dFdx[2, 3]*x3 + dFdx[2, 4]*x4 + dFdx[2, 5]*x5 + dFdx[2, 6]*x6 + dFdx[2, 7]*x7 + dFdx[2, 8]*x8],
+                                [dFdx[0, 0]*x9 + dFdx[0, 1]*x10 + dFdx[0, 2]*x11 + dFdx[0, 3]*x12 + dFdx[0, 4]*x13 + dFdx[0, 5]*x14 + dFdx[0, 6]*x15 + dFdx[0, 7]*x16 + dFdx[0, 8]*x17,
+                                dFdx[1, 0]*x9 + dFdx[1, 1]*x10 + dFdx[1, 2]*x11 + dFdx[1, 3]*x12 + dFdx[1, 4]*x13 + dFdx[1, 5]*x14 + dFdx[1, 6]*x15 + dFdx[1, 7]*x16 + dFdx[1, 8]*x17,
+                                dFdx[2, 0]*x9 + dFdx[2, 1]*x10 + dFdx[2, 2]*x11 + dFdx[2, 3]*x12 + dFdx[2, 4]*x13 + dFdx[2, 5]*x14 + dFdx[2, 6]*x15 + dFdx[2, 7]*x16 + dFdx[2, 8]*x17],
+                                [dFdx[0, 0]*x18 + dFdx[0, 1]*x19 + dFdx[0, 2]*x20 + dFdx[0, 3]*x21 + dFdx[0, 4]*x22 + dFdx[0, 5]*x23 + dFdx[0, 6]*x24 + dFdx[0, 7]*x25 + dFdx[0, 8]*x26,
+                                dFdx[1, 0]*x18 + dFdx[1, 1]*x19 + dFdx[1, 2]*x20 + dFdx[1, 3]*x21 + dFdx[1, 4]*x22 + dFdx[1, 5]*x23 + dFdx[1, 6]*x24 + dFdx[1, 7]*x25 + dFdx[1, 8]*x26,
                                 dFdx[2, 0]*x18 + dFdx[2, 1]*x19 + dFdx[2, 2]*x20 + dFdx[2, 3]*x21 + dFdx[2, 4]*x22 + dFdx[2, 5]*x23 + dFdx[2, 6]*x24 + dFdx[2, 7]*x25 + dFdx[2, 8]*x26]])
     print(local_hessian, local_hessian1, dFdx@d2Psi_d2F@dFdx.T) """
 else:
-    dshape1 = make_vector('dshape1', 3)
-    dshape2 = make_vector('dshape2', 3)
-    d2psid2f = make_matrix('d2psid2f', 9, 9)
-    dfdx1 = Matrix([[dshape1[0], 0, 0, dshape1[1], 0, 0, dshape1[2], 0, 0],
-                    [0, dshape1[0], 0, 0, dshape1[1], 0, 0, dshape1[2], 0],
-                    [0, 0, dshape1[0], 0, 0, dshape1[1], 0, 0, dshape1[2]]])
-    dfdx2 = Matrix([[dshape2[0], 0, 0, dshape2[1], 0, 0, dshape2[2], 0, 0],
-                    [0, dshape2[0], 0, 0, dshape2[1], 0, 0, dshape2[2], 0],
-                    [0, 0, dshape2[0], 0, 0, dshape2[1], 0, 0, dshape2[2]]])
+    dshape1 = make_vector("dshape1", 3)
+    dshape2 = make_vector("dshape2", 3)
+    d2psid2f = make_matrix("d2psid2f", 9, 9)
+    dfdx1 = Matrix(
+        [
+            [dshape1[0], 0, 0, dshape1[1], 0, 0, dshape1[2], 0, 0],
+            [0, dshape1[0], 0, 0, dshape1[1], 0, 0, dshape1[2], 0],
+            [0, 0, dshape1[0], 0, 0, dshape1[1], 0, 0, dshape1[2]],
+        ]
+    )
+    dfdx2 = Matrix(
+        [
+            [dshape2[0], 0, 0, dshape2[1], 0, 0, dshape2[2], 0, 0],
+            [0, dshape2[0], 0, 0, dshape2[1], 0, 0, dshape2[2], 0],
+            [0, 0, dshape2[0], 0, 0, dshape2[1], 0, 0, dshape2[2]],
+        ]
+    )
     d2psid2x = dfdx1 @ d2psid2f @ dfdx2.T
 
-    code = ''
+    code = ""
     pair, reduced = cse(d2psid2x)
     for p in pair:
-        code += pycode(p[0]) + ' = ' + pycode(p[1]) + ';\n'
+        code += pycode(p[0]) + " = " + pycode(p[1]) + ";\n"
     for i, r in enumerate(reduced):
-        code += '\tout[' + str(i) + '] = ' + pycode(r) + ';'
+        code += "\tout[" + str(i) + "] = " + pycode(r) + ";"
 
     print(code)

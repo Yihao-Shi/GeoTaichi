@@ -10,16 +10,16 @@ from src.linear_solver.MatrixFreePBICGSTAB import MatrixFreePBICGSTAB
 from src.linear_solver.ScipyKrylov import checked_scipy_krylov
 from src.utils.constants import WARP_SZ
 from src.utils.linalg import round32
-from src.utils.TypeDefination import u1
+from src.utils.TypeDefinition import u1
 from src.utils.WarpReduce import warp_scan_up_f32
 
 EPSILON = 2.2204460492503131e-15
 
 
 from src.linear_solver.CompressedSparseRowKernel import (
-    compute_Ap,
-    compute_Ap_warp_reduce,
-    compute_Ap_shared_reduce,
+    compute_ap,
+    compute_ap_warp_reduce,
+    compute_ap_shared_reduce,
 )
 
 
@@ -209,4 +209,4 @@ class CSROperator(object):
 
     def matvec(self, x, Ax):
         Ax.fill(0)
-        compute_Ap(self.active_dofs, self.data, self.indices, self.offset, x, Ax)
+        compute_ap(self.active_dofs, self.data, self.indices, self.offset, x, Ax)

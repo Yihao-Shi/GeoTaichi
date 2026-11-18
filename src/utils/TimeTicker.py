@@ -1,29 +1,10 @@
-import taichi as ti
+from src.utils.constants import THRESHOLD
 
+import taichi as ti
 from contextlib import contextmanager
 import os
 from time import perf_counter
 import src.utils.GlobalVariable as GlobalVariable
-from src.utils.constants import Threshold
-
-
-def time_tolerance(timestep):
-    return max(Threshold, 1.0e-6 * abs(float(timestep)))
-
-
-def has_remaining_time(current_time, target_time, timestep):
-    return float(target_time) - float(current_time) > time_tolerance(timestep)
-
-
-def advance_time(sims, timestep):
-    """Kahan summation prevents roundoff from creating a tiny physical step."""
-    last_time, correction = getattr(sims, "_time_sum", (sims.current_time, 0.0))
-    if last_time != sims.current_time:  # A restart or caller reset the clock.
-        correction = 0.0
-    increment = float(timestep) - correction
-    updated = sims.current_time + increment
-    sims._time_sum = (updated, (updated - sims.current_time) - increment)
-    sims.current_time = updated
 
 
 class TimerRecord(object):
@@ -55,6 +36,25 @@ class Timer(object):
     per-stage GPU timings are not required. The default preserves the existing
     synchronized timing and CUDA error-reporting behavior.
     """
+
+    @staticmethod
+    def time_tolerance(timestep):
+        return max(THRESHOLD, 1.0e-6 * abs(float(timestep)))
+
+    @staticmethod
+    def has_remaining_time(current_time, target_time, timestep):
+        return float(target_time) - float(current_time) > Timer.time_tolerance(timestep)
+
+    @staticmethod
+    def advance_time(sims, timestep):
+        """Kahan summation prevents roundoff from creating a tiny physical step."""
+        last_time, correction = getattr(sims, "_time_sum", (sims.current_time, 0.0))
+        if last_time != sims.current_time:  # A restart or caller reset the clock.
+            correction = 0.0
+        increment = float(timestep) - correction
+        updated = sims.current_time + increment
+        sims._time_sum = (updated, (updated - sims.current_time) - increment)
+        sims.current_time = updated
 
     def __init__(self, synchronize=None):
         self.records = {}

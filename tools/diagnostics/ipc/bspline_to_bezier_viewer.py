@@ -1,9 +1,10 @@
 """Inspect quadratic B-spline knot insertion used for Bézier extraction."""
 
+from src.nurbs.Utilities import compute_uniform_knot_vector
+
 import argparse
 import sys
 from pathlib import Path
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 if str(PROJECT_ROOT) not in sys.path:
@@ -13,8 +14,7 @@ if str(PROJECT_ROOT) not in sys.path:
 def build_surface(resolution):
     import numpy as np
 
-    from src.nurbs.BSplinePrimitives import BSplineSurface
-    from src.nurbs.Fitting import compute_uniform_knot_vector
+    from src.nurbs.BSplineSurface import BSplineSurface
 
     surface = BSplineSurface()
     surface.degree_u = 2
@@ -23,9 +23,7 @@ def build_surface(resolution):
     surface.knot_vector_v = compute_uniform_knot_vector(2, resolution)
     coordinates = np.linspace(0.0, 1.0, resolution)
     x, y, z = np.meshgrid(coordinates, coordinates, [0.0], indexing="xy")
-    surface.control_points = np.stack(
-        [x.ravel(), y.ravel(), z.ravel()], axis=1
-    )
+    surface.control_points = np.stack([x.ravel(), y.ravel(), z.ravel()], axis=1)
     surface.closed = False
     surface.parent_indices = None
     surface.activate_boundary()

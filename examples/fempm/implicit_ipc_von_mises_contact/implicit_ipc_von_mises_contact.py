@@ -115,7 +115,7 @@ model.set_solver(
 model.add_surface(body_ids=[0])
 model.memory_allocate({})
 model.choose_contact_model(
-    "IPC",
+    "BarrierIPC",
     dhat=0.04,
     dmin=0.004,
     kappa=2.0e5,

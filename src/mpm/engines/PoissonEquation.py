@@ -1,10 +1,11 @@
+from src.utils.errors import CapacityError, LinearSolveError, NonlinearSolveError, SimulationStateError
 import taichi as ti
 
 from src.linear_solver.MatrixFreePCG import MatrixFreePCG
 from src.linear_solver.CoordinateSparseMatrix import CoordinateSparseMatrix
 from src.mpm.Simulation import Simulation
-from src.mpm.SceneManager import myScene
-from src.mpm.engines.Operator import MomentBalanceDynamicOperator
+from src.mpm.SceneManager import SceneManager
+from src.mpm.engines.MomentBalanceDynamicOperator import MomentBalanceDynamicOperator
 from src.mpm.engines.AssembleMatrixKernel import *
 
 from src.mpm.engines.PoissonEquationKernel import (
@@ -34,7 +35,7 @@ class MatrixFree(object):
         self.local_stiffness = None
         self.sparse_matrix = None
 
-    def _iter_twophase_materials(self, scene: myScene):
+    def _iter_twophase_materials(self, scene: SceneManager):
         mapping = getattr(scene.material, "mapping", None)
         if mapping is None:
             particle_num = int(scene.particleNum[0])
@@ -51,7 +52,7 @@ class MatrixFree(object):
             if end_index > start_index:
                 yield material_id, start_index, end_index, scene.material.matProps[material_id]
 
-    def manage_function(self, sims: Simulation, scene: myScene):
+    def manage_function(self, sims: Simulation, scene: SceneManager):
         self.operator = MomentBalanceDynamicOperator(sims.dimension, sims.assemble_type, sims.solver_type)
         if sims.quasi_static:
             self.assemble_mass_matrix = self.assemble_mass_matrix_quasi_static
@@ -62,25 +63,25 @@ class MatrixFree(object):
         if sims.calculate_reaction_force:
             self.calculate_reaction_force = self.calculate_reaction_forces
 
-        self.compute_residual_error = compute_disp_error_2D
-        self.assemble_element_local_stiffnesses = self.assemble_element_local_stiffness_2D
+        self.compute_residual_error = compute_disp_error_2d
+        self.assemble_element_local_stiffnesses = self.assemble_element_local_stiffness_2d
 
         if sims.dimension == 2:
             if sims.quasi_static:
-                self.assemble_residual_force = self.assemble_residual_force_quasi_static_2D
-                self.preconditioning_matrix = self.preconditioning_matrix_quasi_static_2D
+                self.assemble_residual_force = self.assemble_residual_force_quasi_static_2d
+                self.preconditioning_matrix = self.preconditioning_matrix_quasi_static_2d
             else:
-                self.assemble_residual_force = self.assemble_residual_force_dynamic_2D
-                self.preconditioning_matrix = self.preconditioning_matrix_dynamic_2D
+                self.assemble_residual_force = self.assemble_residual_force_dynamic_2d
+                self.preconditioning_matrix = self.preconditioning_matrix_dynamic_2d
 
             if scene.check_elastic_material():
                 if sims.assemble_type == "MatrixFree":
-                    self.assemble_diagonal_stiffness_matrix = assemble_elastic_diagonal_stiffness_matrix_2D
-                self.assemble_stiffness_matrix = assemble_elastic_stiffness_matrix_2D
+                    self.assemble_diagonal_stiffness_matrix = assemble_elastic_diagonal_stiffness_matrix_2d
+                self.assemble_stiffness_matrix = assemble_elastic_stiffness_matrix_2d
             else:
                 if sims.assemble_type == "MatrixFree":
-                    self.assemble_diagonal_stiffness_matrix = assemble_diagonal_stiffness_matrix_2D
-                self.assemble_stiffness_matrix = assemble_stiffness_matrix_2D
+                    self.assemble_diagonal_stiffness_matrix = assemble_diagonal_stiffness_matrix_2d
+                self.assemble_stiffness_matrix = assemble_stiffness_matrix_2d
         elif sims.dimension == 3:
             if sims.quasi_static:
                 self.assemble_residual_force = self.assemble_residual_force_quasi_static
@@ -100,26 +101,26 @@ class MatrixFree(object):
                     self.assemble_diagonal_stiffness_matrix = assemble_diagonal_stiffness_matrix
                 self.assemble_stiffness_matrix = assemble_stiffness_matrix
 
-    def manage_function_poisson(self, sims: Simulation, scene: myScene):
+    def manage_function_poisson(self, sims: Simulation, scene: SceneManager):
         self.operator = MomentBalanceDynamicOperator(sims.dimension, sims.assemble_type, sims.solver_type)
         self.calculate_reaction_force = self.no_operation
         if sims.calculate_reaction_force:
             self.calculate_reaction_force = self.calculate_reaction_forces
         # self.compute_residual_error = compute_disp_error_2D
         if sims.dimension == 2:
-            self.preconditioning_matrix = self.preconditioning_matrix_poisson_2D
+            self.preconditioning_matrix = self.preconditioning_matrix_poisson_2d
             if sims.poisson_equation:
                 if sims.is_2DAxisy:
-                    self.assemble_residual_force = self.assemble_residual_poisson_2DAxisy
+                    self.assemble_residual_force = self.assemble_residual_poisson_2d_axisy
                 else:
-                    self.assemble_residual_force = self.assemble_residual_poisson_2D
-                self.assemble_element_local_stiffnesses = self.assemble_element_local_stiffness_poisson2D
+                    self.assemble_residual_force = self.assemble_residual_poisson_2d
+                self.assemble_element_local_stiffnesses = self.assemble_element_local_stiffness_poisson2d
                 if sims.pressure_stabilize == "FIC":
-                    self.assemble_residual_force = self.assemble_residual_poisson_FIC_2D
-                    self.assemble_element_local_stiffnesses = self.assemble_element_local_stiffness_poisson_FIC_2D
+                    self.assemble_residual_force = self.assemble_residual_poisson_fic_2d
+                    self.assemble_element_local_stiffnesses = self.assemble_element_local_stiffness_poisson_fic_2d
             elif sims.poisson_equation_u_p:
-                self.assemble_residual_force = self.assemble_residual_poisson_2D_u_p
-                self.assemble_element_local_stiffnesses = self.assemble_element_local_stiffness_poisson2D_u_p
+                self.assemble_residual_force = self.assemble_residual_poisson_2d_u_p
+                self.assemble_element_local_stiffnesses = self.assemble_element_local_stiffness_poisson2d_u_p
 
         elif sims.dimension == 3:
             pass
@@ -127,7 +128,7 @@ class MatrixFree(object):
     def manage_operator(self, scene):
         self.operator.link_ptrs(scene, self.mass_matrix, self.local_stiffness)
 
-    def set_matrix_vector(self, dofs, sims: Simulation, scene: myScene):
+    def set_matrix_vector(self, dofs, sims: Simulation, scene: SceneManager):
         if sims.poisson_equation or sims.poisson_equation_u_p:
             sims.dof_multiplier = 1
             # Moving particles can activate more nodes than at initialization.
@@ -164,7 +165,9 @@ class MatrixFree(object):
         elif sims.assemble_type == "COO":
             self.sparse_matrix = CoordinateSparseMatrix(int(ifnode * ifnode * scene.particleNum[0]), int(dofs))
         else:
-            raise RuntimeError(f"SemiImplicit pressure assembly does not support assemble_type='{sims.assemble_type}'")
+            raise SimulationStateError(
+                f"SemiImplicit pressure assembly does not support assemble_type='{sims.assemble_type}'"
+            )
 
     def no_operation(self, scene):
         pass
@@ -172,7 +175,7 @@ class MatrixFree(object):
     def reset_matrix(self):
         unknow_reset(self.operator.active_dofs, self.unknow_vector)
 
-    def assemble_residual_force_quasi_static(self, sims: Simulation, scene: myScene):
+    def assemble_residual_force_quasi_static(self, sims: Simulation, scene: SceneManager):
         kernel_assemble_residual_force_quasi_static(scene.mass_cut_off, scene.node, self.right_hand_vector)
         kernel_assemble_displacement_load(
             scene.mass_cut_off,
@@ -183,7 +186,7 @@ class MatrixFree(object):
             self.diag_A,
         )
 
-    def assemble_residual_force_dynamic(self, sims: Simulation, scene: myScene):
+    def assemble_residual_force_dynamic(self, sims: Simulation, scene: SceneManager):
         kernel_assemble_residual_force_dynamic(
             scene.mass_cut_off, sims.newmark_beta, scene.node, self.right_hand_vector, sims.dt
         )
@@ -196,8 +199,8 @@ class MatrixFree(object):
             self.diag_A,
         )
 
-    def assemble_residual_force_quasi_static_2D(self, sims: Simulation, scene: myScene):
-        kernel_assemble_residual_force_quasi_static_2D(scene.mass_cut_off, scene.node, self.right_hand_vector)
+    def assemble_residual_force_quasi_static_2d(self, sims: Simulation, scene: SceneManager):
+        kernel_assemble_residual_force_quasi_static_2d(scene.mass_cut_off, scene.node, self.right_hand_vector)
         kernel_assemble_displacement_load(
             scene.mass_cut_off,
             int(scene.boundary.displacement_list[0]),
@@ -207,8 +210,8 @@ class MatrixFree(object):
             self.diag_A,
         )
 
-    def assemble_residual_force_dynamic_2D(self, sims: Simulation, scene: myScene):
-        kernel_assemble_residual_force_dynamic_2D(
+    def assemble_residual_force_dynamic_2d(self, sims: Simulation, scene: SceneManager):
+        kernel_assemble_residual_force_dynamic_2d(
             scene.mass_cut_off, sims.newmark_beta, scene.node, self.right_hand_vector, sims.dt
         )
         kernel_assemble_displacement_load(
@@ -220,8 +223,8 @@ class MatrixFree(object):
             self.diag_A,
         )
 
-    def assemble_residual_poisson_2D(self, sims: Simulation, scene: myScene):
-        kernel_assemble_residual_poisson_2D(
+    def assemble_residual_poisson_2d(self, sims: Simulation, scene: SceneManager):
+        kernel_assemble_residual_poisson_2d(
             scene.element.grid_nodes,
             int(scene.particleNum[0]),
             scene.particle,
@@ -234,8 +237,8 @@ class MatrixFree(object):
         )
         # kernel_assemble_pressure_load(scene.mass_cut_off, int(sims.npressure[None]), sims.pressure_constraint_list, scene.node, self.right_hand_vector, self.diag_A)
 
-    def assemble_residual_poisson_2DAxisy(self, sims: Simulation, scene: myScene):
-        kernel_assemble_residual_poisson_2DAxisy(
+    def assemble_residual_poisson_2d_axisy(self, sims: Simulation, scene: SceneManager):
+        kernel_assemble_residual_poisson_2d_axisy(
             scene.element.grid_nodes,
             int(scene.particleNum[0]),
             scene.particle,
@@ -247,10 +250,10 @@ class MatrixFree(object):
             self.right_hand_vector,
         )
 
-    def assemble_residual_poisson_FIC_2D(self, sims: Simulation, scene: myScene):
+    def assemble_residual_poisson_fic_2d(self, sims: Simulation, scene: SceneManager):
         self.right_hand_vector.fill(0)
         for _, start_index, end_index, mat_prop in self._iter_twophase_materials(scene):
-            kernel_assemble_residual_poisson_FIC_2D(
+            kernel_assemble_residual_poisson_fic_2d(
                 scene.element.grid_nodes,
                 start_index,
                 end_index,
@@ -268,10 +271,10 @@ class MatrixFree(object):
                 sims.pressure_beta,
             )
 
-    def assemble_residual_poisson_2D_u_p(self, sims: Simulation, scene: myScene):
+    def assemble_residual_poisson_2d_u_p(self, sims: Simulation, scene: SceneManager):
         self.right_hand_vector.fill(0)
         for _, start_index, end_index, mat_prop in self._iter_twophase_materials(scene):
-            kernel_assemble_residual_poisson_2D_u_p(
+            kernel_assemble_residual_poisson_2d_u_p(
                 scene.element.grid_nodes,
                 start_index,
                 end_index,
@@ -289,7 +292,7 @@ class MatrixFree(object):
                 sims.pressure_beta,
             )
 
-    def assemble_mass_matrix_quasi_static(self, sims: Simulation, scene: myScene):
+    def assemble_mass_matrix_quasi_static(self, sims: Simulation, scene: SceneManager):
         kernel_compute_penalty_matrix(
             scene.mass_cut_off,
             int(scene.boundary.displacement_list[0]),
@@ -298,7 +301,7 @@ class MatrixFree(object):
             self.mass_matrix,
         )
 
-    def assemble_mass_matrix_dynamic(self, sims: Simulation, scene: myScene):
+    def assemble_mass_matrix_dynamic(self, sims: Simulation, scene: SceneManager):
         kernel_compute_mass_matrix(sims.newmark_beta, scene.mass_cut_off, sims.dt, scene.node, self.mass_matrix)
         kernel_compute_penalty_matrix(
             scene.mass_cut_off,
@@ -308,14 +311,14 @@ class MatrixFree(object):
             self.mass_matrix,
         )
 
-    def assemble_compute_penalty_matrix(self, sims: Simulation, scene: myScene):
+    def assemble_compute_penalty_matrix(self, sims: Simulation, scene: SceneManager):
         self.mass_matrix.fill(0)
         kernel_compute_penalty_matrix_poisson(
             scene.mass_cut_off, int(sims.npressure[None]), sims.pressure_constraint_list, scene.node, self.mass_matrix
         )
 
-    def preconditioning_matrix_quasi_static(self, sims: Simulation, scene: myScene):
-        matrix_reset_(self.operator.active_dofs, self.diag_A, self.unknow_vector)
+    def preconditioning_matrix_quasi_static(self, sims: Simulation, scene: SceneManager):
+        matrix_reset(self.operator.active_dofs, self.diag_A, self.unknow_vector)
         kernel_preconditioning_matrix(
             scene.element.grid_nodes,
             int(scene.particleNum[0]),
@@ -327,8 +330,8 @@ class MatrixFree(object):
             self.local_stiffness,
         )
 
-    def preconditioning_matrix_dynamic(self, sims: Simulation, scene: myScene):
-        matrix_reset_(self.operator.active_dofs, self.diag_A, self.mass_matrix, self.unknow_vector)
+    def preconditioning_matrix_dynamic(self, sims: Simulation, scene: SceneManager):
+        matrix_reset(self.operator.active_dofs, self.diag_A, self.mass_matrix, self.unknow_vector)
         kernel_preconditioning_matrix(
             scene.element.grid_nodes,
             int(scene.particleNum[0]),
@@ -340,9 +343,9 @@ class MatrixFree(object):
             self.local_stiffness,
         )
 
-    def preconditioning_matrix_quasi_static_2D(self, sims: Simulation, scene: myScene):
-        matrix_reset_(self.operator.active_dofs, self.diag_A, self.unknow_vector)
-        kernel_preconditioning_matrix_2D(
+    def preconditioning_matrix_quasi_static_2d(self, sims: Simulation, scene: SceneManager):
+        matrix_reset(self.operator.active_dofs, self.diag_A, self.unknow_vector)
+        kernel_preconditioning_matrix_2d(
             scene.element.grid_nodes,
             int(scene.particleNum[0]),
             scene.particle,
@@ -353,9 +356,9 @@ class MatrixFree(object):
             self.local_stiffness,
         )
 
-    def preconditioning_matrix_dynamic_2D(self, sims: Simulation, scene: myScene):
-        matrix_reset_(self.operator.active_dofs, self.diag_A, self.mass_matrix, self.unknow_vector)
-        kernel_preconditioning_matrix_2D(
+    def preconditioning_matrix_dynamic_2d(self, sims: Simulation, scene: SceneManager):
+        matrix_reset(self.operator.active_dofs, self.diag_A, self.mass_matrix, self.unknow_vector)
+        kernel_preconditioning_matrix_2d(
             scene.element.grid_nodes,
             int(scene.particleNum[0]),
             scene.particle,
@@ -366,9 +369,9 @@ class MatrixFree(object):
             self.local_stiffness,
         )
 
-    def preconditioning_matrix_poisson_2D(self, sims: Simulation, scene: myScene):
-        matrix_reset_(self.operator.active_dofs, self.diag_A, self.mass_matrix, self.unknow_vector)
-        kernel_preconditioning_matrix_poisson2D(
+    def preconditioning_matrix_poisson_2d(self, sims: Simulation, scene: SceneManager):
+        matrix_reset(self.operator.active_dofs, self.diag_A, self.mass_matrix, self.unknow_vector)
+        kernel_preconditioning_matrix_poisson2d(
             scene.element.grid_nodes,
             int(scene.particleNum[0]),
             scene.particle,
@@ -379,7 +382,7 @@ class MatrixFree(object):
             self.local_stiffness,
         )
 
-    def assemble_element_local_stiffness(self, scene: myScene):
+    def assemble_element_local_stiffness(self, scene: SceneManager):
         kernel_assemble_local_stiffness(
             scene.element.grid_nodes,
             int(scene.particleNum[0]),
@@ -391,8 +394,8 @@ class MatrixFree(object):
             self.assemble_stiffness_matrix,
         )
 
-    def assemble_element_local_stiffness_2D(self, scene: myScene):
-        kernel_assemble_local_stiffness_2D(
+    def assemble_element_local_stiffness_2d(self, scene: SceneManager):
+        kernel_assemble_local_stiffness_2d(
             scene.element.grid_nodes,
             int(scene.particleNum[0]),
             scene.particle,
@@ -403,9 +406,9 @@ class MatrixFree(object):
             self.assemble_stiffness_matrix,
         )
 
-    def assemble_element_local_stiffness_poisson2D(self, sims: Simulation, scene: myScene):
+    def assemble_element_local_stiffness_poisson2d(self, sims: Simulation, scene: SceneManager):
         for _, start_index, end_index, mat_prop in self._iter_twophase_materials(scene):
-            kernel_assemble_local_stiffness_poisson2D(
+            kernel_assemble_local_stiffness_poisson2d(
                 scene.element.grid_nodes,
                 start_index,
                 end_index,
@@ -420,9 +423,9 @@ class MatrixFree(object):
                 scene.material.stateVars,
             )
 
-    def assemble_element_local_stiffness_poisson_FIC_2D(self, sims: Simulation, scene: myScene):
+    def assemble_element_local_stiffness_poisson_fic_2d(self, sims: Simulation, scene: SceneManager):
         for _, start_index, end_index, mat_prop in self._iter_twophase_materials(scene):
-            kernel_assemble_local_stiffness_poisson_FIC_2D(
+            kernel_assemble_local_stiffness_poisson_fic_2d(
                 scene.element.grid_nodes,
                 start_index,
                 end_index,
@@ -437,9 +440,9 @@ class MatrixFree(object):
                 scene.element.grid_size,
             )
 
-    def assemble_element_local_stiffness_poisson2D_u_p(self, sims: Simulation, scene: myScene):
+    def assemble_element_local_stiffness_poisson2d_u_p(self, sims: Simulation, scene: SceneManager):
         for _, start_index, end_index, mat_prop in self._iter_twophase_materials(scene):
-            kernel_assemble_local_stiffness_poisson2D_u_p(
+            kernel_assemble_local_stiffness_poisson2d_u_p(
                 scene.element.grid_nodes,
                 start_index,
                 end_index,
@@ -453,13 +456,13 @@ class MatrixFree(object):
                 sims.dt,
             )
 
-    def assemble_stiffness_poisson2D(self, sims: Simulation, scene: myScene):
+    def assemble_stiffness_poisson2d(self, sims: Simulation, scene: SceneManager):
         self.sparse_matrix.rows.fill(0)
         self.sparse_matrix.cols.fill(0)
         self.sparse_matrix.data.fill(0)
         boundary_pressure = 0.0  # Atmospheric gauge pressure, independent of cavitation.
         for _, start_index, end_index, mat_prop in self._iter_twophase_materials(scene):
-            kernel_assemble_stiffness_poisson2D(
+            kernel_assemble_stiffness_poisson2d(
                 scene.element.influenced_dofs,
                 scene.element.grid_nodes,
                 start_index,
@@ -482,7 +485,7 @@ class MatrixFree(object):
                 sims.pressure_stabilize == "FIC",
             )
 
-    def eliminate_pressure_increment_dirichlet(self, sims: Simulation, scene: myScene):
+    def eliminate_pressure_increment_dirichlet(self, sims: Simulation, scene: SceneManager):
         boundary_pressure = 0.0
         kernel_eliminate_pressure_increment_dirichlet(
             scene.element.grid_nodes,
@@ -498,7 +501,7 @@ class MatrixFree(object):
             self.right_hand_vector,
         )
 
-    def calculate_reaction_forces(self, scene: myScene):
+    def calculate_reaction_forces(self, scene: SceneManager):
         kernel_calculate_reaction_forces(
             scene.mass_cut_off,
             int(scene.boundary.displacement_list[0]),
@@ -507,7 +510,7 @@ class MatrixFree(object):
             self.accmulated_reaction_forces,
         )
 
-    def run(self, sims: Simulation, scene: myScene):
+    def run(self, sims: Simulation, scene: SceneManager):
         total_dof = self.checked_active_dofs()
         self.assemble_element_local_stiffnesses(scene)
         self.preconditioning_matrix(sims, scene)
@@ -522,7 +525,7 @@ class MatrixFree(object):
             tol=sims.residual_tolerance,
         )
         if not solved:
-            raise RuntimeError(
+            raise NonlinearSolveError(
                 f"MatrixFree {type(self.cg).__name__} failed to converge after "
                 f"{self.cg.last_iterations} iterations (initial residual={self.cg.last_initial_residual:.6e}, "
                 f"final residual={self.cg.last_residual:.6e}, reason={self.cg.last_breakdown_reason})"
@@ -535,12 +538,12 @@ class MatrixFree(object):
     def checked_active_dofs(self):
         total_dof = self.operator.active_dofs
         if not 0 <= total_dof <= self.right_hand_vector.shape[0]:
-            raise RuntimeError(
+            raise CapacityError(
                 f"Pressure active DOFs {total_dof} exceed allocated capacity " f"{self.right_hand_vector.shape[0]}"
             )
         return total_dof
 
-    def run_poisson(self, sims: Simulation, scene: myScene):
+    def run_poisson(self, sims: Simulation, scene: SceneManager):
         total_dof = self.checked_active_dofs()
         self.assemble_element_local_stiffnesses(sims, scene)
         self.preconditioning_matrix(sims, scene)
@@ -560,7 +563,7 @@ class MatrixFree(object):
             diagonal = self.diag_A.to_numpy()[:total_dof]
             diagonal_min = diagonal.min() if diagonal.size else float("nan")
             diagonal_max = diagonal.max() if diagonal.size else float("nan")
-            raise RuntimeError(
+            raise LinearSolveError(
                 "SemiImplicit pressure PCG failed to converge "
                 f"after {self.cg.last_iterations} iterations "
                 f"(initial residual={self.cg.last_initial_residual:.6e}, "
@@ -571,13 +574,13 @@ class MatrixFree(object):
                 f"nonpositive={int((diagonal <= 0.0).sum())})"
             )
 
-    def run_poisson_coo(self, sims: Simulation, scene: myScene):
+    def run_poisson_coo(self, sims: Simulation, scene: SceneManager):
         total_dof = self.checked_active_dofs()
         # Pressure increments belong to the current DOF numbering. Match the
         # MatrixFree initial guess; old increments have not been remapped.
         self.unknow_vector.fill(0.0)
         self.assemble_residual_force(sims, scene)
-        self.assemble_stiffness_poisson2D(sims, scene)
+        self.assemble_stiffness_poisson2d(sims, scene)
         self.sparse_matrix.linear_operator.update_active_dofs(total_dof)
         self.sparse_matrix.linear_operator.update_nnz(self.sparse_matrix.nonzeros)
         build_coo_jacobi_diagonal(
@@ -598,7 +601,7 @@ class MatrixFree(object):
         )
         if not solved:
             cg = self.sparse_matrix.linear_solver
-            raise RuntimeError(
+            raise LinearSolveError(
                 "SemiImplicit pressure COO-PCG failed to converge "
                 f"after {cg.last_iterations} iterations "
                 f"(initial residual={cg.last_initial_residual:.6e}, "

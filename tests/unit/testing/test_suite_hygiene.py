@@ -68,7 +68,7 @@ TAICHI_STATIC_EXPANSION_ROOTS = (
     "src/dem/engines/AffineBodyOperator.py",
     "src/dem/engines/AffineDiffIPC.py",
     "src/mpdem/engines/SoftAffineIPCOperator.py",
-    "src/physics_model/consititutive_model/finite_strain",
+    "src/physics_model/constitutive_model/finite_strain",
 )
 
 

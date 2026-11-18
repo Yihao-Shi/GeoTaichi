@@ -1,5 +1,19 @@
 """Friction engine responsibilities."""
 
+from src.utils.MatrixFunction import psd_project_nd
+from src.utils.errors import (
+    BackendError,
+    CapacityError,
+    ConfigurationError,
+    LineSearchError,
+    LinearSolveError,
+    NonfiniteStateError,
+    NonlinearSolveError,
+    SimulationStateError,
+)
+from src.physics_model.contact_model.ipc.Utilities import evaluate_distance_to_curve_fixed_dim
+from src.physics_model.contact_model.ipc.Utilities import evaluate_distance_to_surface_fixed_dim
+
 import math
 
 import numpy as np
@@ -19,11 +33,6 @@ from src.igampm.engines.FullyImplicitFriction import (
     surface_relative_velocity_jacobian,
 )
 from src.igampm.engines.TimeIntegration import newmark_endpoint_velocity_coefficients
-from src.physics_model.contact_model.ipc.ContactAssembly import psd_project_nd
-from src.physics_model.contact_model.ipc.NurbsContact import (
-    evaluate_distance_to_curve_fixed_dim,
-    evaluate_distance_to_surface_fixed_dim,
-)
 
 
 class FrictionEngineMixin:
@@ -313,7 +322,7 @@ class FrictionEngineMixin:
                 normal = self.friction_contacts[c].normal
                 mu_lambda = self.friction_contacts[c].mu_lambda
 
-                span_u, span_v, nshape = basis.NurbsBasisShape(
+                span_u, span_v, nshape = basis.nurbs_basis_shape(
                     prefix_num_knot_u,
                     prefix_num_knot_v,
                     prefix_num_ctrlpts,
@@ -460,7 +469,7 @@ class FrictionEngineMixin:
                 normal = self.friction_contacts[c].normal
                 mu_lambda = self.friction_contacts[c].mu_lambda
 
-                span_u, nshape, derivative_u, tangent_u, curvature_uu = basis.NurbsBasisHessian(
+                span_u, nshape, derivative_u, tangent_u, curvature_uu = basis.nurbs_basis_hessian(
                     prefix_num_knot_u,
                     prefix_num_ctrlpts,
                     num_knot_u,
@@ -600,7 +609,7 @@ class FrictionEngineMixin:
                     derivative_u,
                     tangent_u,
                     curvature_uu,
-                ) = basis.NurbsBasisHessian(
+                ) = basis.nurbs_basis_hessian(
                     prefix_num_knot_u,
                     prefix_num_ctrlpts,
                     num_knot_u,
@@ -939,7 +948,7 @@ class FrictionEngineMixin:
                     curvature_uu,
                     curvature_vv,
                     curvature_uv,
-                ) = basis.NurbsBasisHessian(
+                ) = basis.nurbs_basis_hessian(
                     prefix_num_knot_u,
                     prefix_num_knot_v,
                     prefix_num_ctrlpts,
@@ -1347,7 +1356,7 @@ class FrictionEngineMixin:
 
         active_mpm_dof = int(self.mpm.active_dof)
         if active_mpm_dof < 0 or active_mpm_dof % config.DIM != 0:
-            raise RuntimeError(
+            raise ConfigurationError(
                 "active MPM degrees of freedom must be a non-negative " "multiple of the spatial dimension"
             )
         iga_dq, iga_vn, iga_an = newmark_endpoint_velocity_coefficients(self.iga.integration, self.iga.dt)
@@ -1361,7 +1370,7 @@ class FrictionEngineMixin:
             mpm_an,
         )
         if not np.all(np.isfinite(coefficients)):
-            raise RuntimeError("fully implicit endpoint-velocity coefficients are non-finite")
+            raise NonfiniteStateError("fully implicit endpoint-velocity coefficients are non-finite")
         self._prepare_fully_implicit_endpoint_velocity(
             active_mpm_dof // config.DIM,
             float(iga_dq),
@@ -1409,12 +1418,12 @@ class FrictionEngineMixin:
                 3: "friction resistance or exact Jacobian is non-finite",
                 4: "contact particle references an inactive MPM grid node",
             }
-            raise RuntimeError(
+            raise SimulationStateError(
                 "fully implicit point-NURBS Taichi assembly failed: "
                 + messages.get(status, f"unknown device status {status}")
             )
         if need_matrix and (int(self.friction_nnz_overflow[0]) != 0 or int(self.friction_hash_matrix.overflow[0]) != 0):
-            raise RuntimeError(
+            raise CapacityError(
                 "IGA-MPM fully implicit friction block buffer overflow: "
                 f"used {int(self.friction_nnz_count[0])}, capacity "
                 f"{self.friction_nnz_capacity}. Increase friction_nnz."
@@ -1467,7 +1476,7 @@ class FrictionEngineMixin:
                     derivative_u,
                     tangent_u,
                     curvature_uu,
-                ) = basis.NurbsBasisHessian(
+                ) = basis.nurbs_basis_hessian(
                     prefix_num_knot_u,
                     prefix_num_ctrlpts,
                     num_knot_u,
@@ -1515,7 +1524,7 @@ class FrictionEngineMixin:
                 particle_id = self.friction_contacts[c].particle_id
                 knot = self.friction_contacts[c].knot_value
                 normal = self.friction_contacts[c].normal
-                span_u, span_v, nshape = basis.NurbsBasisShape(
+                span_u, span_v, nshape = basis.nurbs_basis_shape(
                     prefix_num_knot_u,
                     prefix_num_knot_v,
                     prefix_num_ctrlpts,
@@ -1640,7 +1649,7 @@ class FrictionEngineMixin:
             mpm_an,
         )
         if not all(math.isfinite(value) for value in coefficients) or min(iga_dq, mpm_dq) <= 0.0:
-            raise RuntimeError("fully implicit velocity predictor has invalid Newmark " "coefficients")
+            raise SimulationStateError("fully implicit velocity predictor has invalid Newmark " "coefficients")
         self._prepare_device_monolithic_vectors(active_mpm_dof, False)
         active_mpm_nodes = active_mpm_dof // config.DIM
         if self.iga.dirichlet.num > 0:
@@ -1660,7 +1669,7 @@ class FrictionEngineMixin:
         alpha = self._material_feasible_step_device()
         alpha = self.conservative_contact_step_device(max_step=alpha)
         if alpha < self.contact_ccd_min_step:
-            raise RuntimeError("fully implicit velocity predictor has no feasible " "IPC/material step")
+            raise SimulationStateError("fully implicit velocity predictor has no feasible " "IPC/material step")
         self._set_device_trial_displacements(alpha)
         self._accept_device_trial_displacements()
         self._synchronize_device_trial_state_with_accepted()
@@ -1689,7 +1698,7 @@ class FrictionEngineMixin:
         if not math.isfinite(dirichlet_merit) or dirichlet_merit < 0.0:
             raise ValueError("Dirichlet merit must be finite and non-negative")
         if not math.isfinite(merit_slope) or merit_slope >= 0.0:
-            raise RuntimeError("Newton correction is not a descent direction for 0.5 * ||R||^2")
+            raise LineSearchError("Newton correction is not a descent direction for 0.5 * ||R||^2")
 
         current_merit = 0.5 * current_residual * current_residual + dirichlet_merit
         # ACCD supplies the first conservative upper bound.  Trial-state
@@ -1798,7 +1807,7 @@ class FrictionEngineMixin:
                 residual = math.sqrt(residual_squared)
                 dirichlet_residual = float(self._device_dirichlet_residual(last_system["active_dof"]))
                 if not (math.isfinite(residual) and math.isfinite(dirichlet_residual)):
-                    raise RuntimeError("fully implicit IGA-MPM Taichi residual is non-finite")
+                    raise NonfiniteStateError("fully implicit IGA-MPM Taichi residual is non-finite")
                 if initial_residual is None:
                     initial_residual = residual
                 target = max(
@@ -1822,7 +1831,7 @@ class FrictionEngineMixin:
                 last_system["linear_absolute_tolerance"] = 0.1 * linear_residual
                 solve_result = self._solve_monolithic_linear_system(last_system, linear_solve=linear_solve)
                 if not solve_result["converged"]:
-                    raise RuntimeError(
+                    raise LinearSolveError(
                         "IGA-MPM Taichi fully implicit BiCGSTAB did not "
                         "converge: residual="
                         f"{solve_result['residual']:.6e}, iterations="
@@ -1834,7 +1843,7 @@ class FrictionEngineMixin:
                     include_friction=bool(include_friction),
                 )
                 if not math.isfinite(merit_slope) or merit_slope >= 0.0:
-                    raise RuntimeError(
+                    raise LineSearchError(
                         "fully implicit IGA-MPM Taichi Newton correction is "
                         "not a descent direction for 0.5 * ||R||^2"
                     )
@@ -1880,7 +1889,7 @@ class FrictionEngineMixin:
                     if last_armijo is not None and not last_armijo["accepted"]
                     else "maximum_newton_iterations"
                 )
-                raise RuntimeError(
+                raise NonlinearSolveError(
                     "IGA-MPM fully implicit Taichi friction Newton solve did "
                     "not converge; the trial displacement was rolled back "
                     f"(reason={reason}, residual="
@@ -1915,7 +1924,7 @@ class FrictionEngineMixin:
     ):
         """Solve the paper's nonconservative residual with its full Jacobian."""
         if self.friction_mode != "fully_implicit":
-            raise RuntimeError("fully implicit Newton requires friction_mode='fully_implicit'")
+            raise ConfigurationError("fully implicit Newton requires friction_mode='fully_implicit'")
         max_iterations = self.monolithic_max_iterations if max_iterations is None else int(max_iterations)
         if max_iterations <= 0:
             raise ValueError("fully implicit Newton max_iterations must be positive")
@@ -1934,7 +1943,7 @@ class FrictionEngineMixin:
                 verbose=verbose,
                 linear_solve=linear_solve,
             )
-        raise RuntimeError(
+        raise LineSearchError(
             "fully implicit IGA-MPM requires device COO or HashTriplet "
             "assembly; selecting a SciPy/custom linear solve changes only "
             "the finalized linear system boundary and does not enable a "
@@ -2006,7 +2015,9 @@ class FrictionEngineMixin:
         iga_dt = float(getattr(self.iga, "dt", 1.0))
         mpm_dt = float(getattr(self.mpm, "dt", 1.0))
         if not np.isfinite(iga_dt) or iga_dt <= 0.0 or not np.isfinite(mpm_dt) or mpm_dt <= 0.0:
-            raise RuntimeError("IGA-MPM lagged friction convergence requires finite positive " "subsystem timesteps")
+            raise NonlinearSolveError(
+                "IGA-MPM lagged friction convergence requires finite positive " "subsystem timesteps"
+            )
         result = 0.0
         if iga_dof > 0:
             result = max(
@@ -2085,7 +2096,7 @@ class FrictionEngineMixin:
                 "IGA-MPM lagged fixed-point solve requires callable " "inner_solve and assemble_updated_system"
             )
         if self.friction_mode != "lagged":
-            raise RuntimeError("IGA-MPM fixed-point driver requires lagged friction")
+            raise SimulationStateError("IGA-MPM fixed-point driver requires lagged friction")
 
         tolerance = self.friction_tolerance if tolerance is None else float(tolerance)
         if not np.isfinite(tolerance) or tolerance < 0.0:
@@ -2094,7 +2105,7 @@ class FrictionEngineMixin:
             grid_disp = self.mpm.grid_disp
 
         if use_builtin and not device_builtin_probe:
-            raise RuntimeError(
+            raise BackendError(
                 "built-in lagged IGA-MPM friction requires device COO or "
                 "HashTriplet assembly and the device monolithic solver; no "
                 "NumPy/SciPy fallback is performed"
@@ -2124,7 +2135,7 @@ class FrictionEngineMixin:
                     residual = (
                         last_inner_result.get("residual", np.inf) if isinstance(last_inner_result, dict) else np.inf
                     )
-                    raise RuntimeError(
+                    raise NonlinearSolveError(
                         "IGA-MPM frozen-friction Newton solve did not converge "
                         f"(outer iteration {outer_iteration + 1}, "
                         f"residual={float(residual):.6e})"
@@ -2138,7 +2149,7 @@ class FrictionEngineMixin:
                         linear_solve=(probe_solve if probe_solve is not None else linear_solve),
                     )
                     if not probe_result["converged"]:
-                        raise RuntimeError(
+                        raise LinearSolveError(
                             "IGA-MPM Taichi updated-friction PCG probe did "
                             "not converge: "
                             f"residual={probe_result['residual']:.6e}, "
@@ -2170,13 +2181,13 @@ class FrictionEngineMixin:
                         if solve is None:
                             solve = linear_solve
                         if solve is None:
-                            raise RuntimeError(
+                            raise NonlinearSolveError(
                                 "a custom host convergence probe must supply " "probe_solve or linear_solve explicitly"
                             )
                         correction = np.asarray(solve(matrix, rhs), dtype=np.float64)
                     correction = np.asarray(correction, dtype=np.float64).reshape(-1)
                     if not np.all(np.isfinite(correction)):
-                        raise RuntimeError(
+                        raise NonfiniteStateError(
                             "IGA-MPM updated-friction convergence probe " "returned a non-finite correction"
                         )
                     self._load_external_correction(correction)
@@ -2196,7 +2207,7 @@ class FrictionEngineMixin:
                     break
 
             if self.friction_iterations == -1 and not self.last_friction_converged:
-                raise RuntimeError(
+                raise NonlinearSolveError(
                     "IGA-MPM friction fixed-point iteration exhausted its "
                     f"safety cap ({self.friction_max_iterations}) without "
                     f"convergence (residual={self.last_friction_residual:.6e})"
@@ -2223,7 +2234,7 @@ class FrictionEngineMixin:
             if self._fully_implicit_device_available():
                 self.assemble_fully_implicit_friction_system_taichi(need_matrix=need_matrix)
             else:
-                raise RuntimeError(
+                raise BackendError(
                     "fully implicit IGA-MPM friction requires device COO or "
                     "HashTriplet assembly and the nonsymmetric Jacobian path; "
                     "the runtime does not fall back to NumPy contact assembly"
@@ -2260,7 +2271,7 @@ class FrictionEngineMixin:
                     need_matrix,
                 )
         if need_matrix and (int(self.friction_nnz_overflow[0]) != 0 or int(self.friction_hash_matrix.overflow[0]) != 0):
-            raise RuntimeError(
+            raise CapacityError(
                 f"IGA-MPM friction block buffer overflow: used {int(self.friction_nnz_count[0])}, "
                 f"capacity {self.friction_nnz_capacity}. Increase friction_nnz."
             )

@@ -1,3 +1,4 @@
+from src.utils.errors import SimulationStateError
 from src.iga.config import set_dimension
 from src.iga.GenerateManager import IGAGenerateManager
 from src.iga.MaterialManager import IGAMaterialManager
@@ -169,7 +170,7 @@ class IGA(SolverDiagnosticsMixin):
 
     def build(self):
         if self.primitives is None:
-            raise RuntimeError("IGA primitives have not been set")
+            raise SimulationStateError("IGA primitives have not been set")
 
         kwargs = {}
         kwargs.update(self.material_kwargs)
@@ -179,7 +180,7 @@ class IGA(SolverDiagnosticsMixin):
             kwargs["rest_shape"] = self.rest_shape
 
         if self.solver_type == "Implicit":
-            from src.iga.engines import ImplicitIGA
+            from src.iga.engines.ImplicitIGA import ImplicitIGA
 
             self.engine = ImplicitIGA(
                 primitives=self.primitives,
@@ -188,7 +189,7 @@ class IGA(SolverDiagnosticsMixin):
                 **kwargs,
             )
         else:
-            from src.iga.engines import ExplicitIGA
+            from src.iga.engines.ExplicitIGA import ExplicitIGA
 
             self.engine = ExplicitIGA(
                 primitives=self.primitives,

@@ -79,19 +79,17 @@ positions, radii, or time integration.
 | --- | --- |
 | `sources.py` | Host-side particle and triangle render-source descriptions |
 | `adapters.py` | DEM, MPM, level-set, and IGA source adapters |
-| `realtime.py` | Scene model, playback controller, options, and viewer |
+| `realtime.py` | Scene model, playback controller, and options |
+| `RealtimeViewer.py` | Interactive viewer |
 | `solver_adapters.py` | High-level solver-to-viewer lifecycle adapters |
 
 ## Callback example
 
 ```python
 import numpy as np
-from src.visualization import (
-    CallbackSceneModel,
-    ParticleRenderSource,
-    RealtimeViewer,
-    RealtimeViewerOptions,
-)
+from src.visualization.realtime import CallbackSceneModel, RealtimeViewerOptions
+from src.visualization.sources import ParticleRenderSource
+from src.visualization.RealtimeViewer import RealtimeViewer
 
 positions = np.array([[0.2, 0.3, 0.4], [0.6, 0.7, 0.4]])
 

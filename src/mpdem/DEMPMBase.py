@@ -1,23 +1,23 @@
+from src.utils.RuntimeHook import normalize_callbacks
+from src.utils.TimeTicker import Timer
 import time
 
 import taichi as ti
 
 from src.mpdem.GenerateManager import GenerateManager
-from src.dem.SceneManager import myScene as DEMScene
+from src.dem.SceneManager import SceneManager as DEMScene
 from src.dem.Simulation import Simulation as DEMSimulation
 from src.dem.Recorder import WriteFile as DEMWriteFile
 from src.mpdem.Engine import Engine
 from src.mpdem.Recorder import WriteFile
 from src.mpdem.Simulation import Simulation
-from src.mpm.SceneManager import myScene as MPMScene
+from src.mpm.SceneManager import SceneManager as MPMScene
 from src.mpm.Simulation import Simulation as MPMSimulation
 from src.mpm.Recorder import WriteFile as MPMWriteFile
-from src.utils.constants import Threshold
+from src.utils.constants import THRESHOLD
 from src.utils.ObjectIO import DictIO
 from src.utils.RuntimeHook import runtime_checkpoint
 from src.utils.SolverConsole import print_save_file_info, print_simulation_start
-from src.utils.SolverRuntime import normalize_callbacks
-from src.utils.TimeTicker import advance_time, has_remaining_time, time_tolerance
 
 
 class Solver:
@@ -83,9 +83,9 @@ class Solver:
         step_dt = self.sims.delta
         self.core()
         # JIT warm-up executes a complete coupled step on all three clocks.
-        advance_time(self.sims, step_dt)
-        advance_time(self.msims, step_dt)
-        advance_time(self.dsims, step_dt)
+        Timer.advance_time(self.sims, step_dt)
+        Timer.advance_time(self.msims, step_dt)
+        Timer.advance_time(self.dsims, step_dt)
         self.sims.current_step += 1
         self.msims.current_step = self.sims.current_step
         self.dsims.current_step = self.sims.current_step
@@ -95,16 +95,16 @@ class Solver:
         print(f"Compiling time = {self.compile_seconds} \n")
         self.sims.timer.profile1()
 
-    def CouplingSolver(self, mscene: MPMScene, dscene: DEMScene):
+    def coupling_solver(self, mscene: MPMScene, dscene: DEMScene):
         print_simulation_start(self.sims.coupling_scheme)
         ti.sync()
 
         self.engine.pre_calculate()
-        if self.sims.current_time < Threshold:
+        if self.sims.current_time < THRESHOLD:
             self.save_file(mscene, dscene)
             self.last_save_time = 1.0 * self.sims.current_time
 
-        if has_remaining_time(self.sims.current_time, self.sims.time, self.sims.delta):
+        if Timer.has_remaining_time(self.sims.current_time, self.sims.time, self.sims.delta):
             step_dt = min(self.sims.delta, self.sims.time - self.sims.current_time)
             self.sims.set_timestep(step_dt)
             self.msims.set_timestep(step_dt)
@@ -117,7 +117,7 @@ class Solver:
         self.solver_compute_seconds = 0.0
         ti.sync()
         start_time = time.perf_counter()
-        while has_remaining_time(self.sims.current_time, self.sims.time, self.sims.delta):
+        while Timer.has_remaining_time(self.sims.current_time, self.sims.time, self.sims.delta):
             step_dt = min(self.sims.delta, self.sims.time - self.sims.current_time)
             self.sims.set_timestep(step_dt)
             self.msims.set_timestep(step_dt)
@@ -125,9 +125,9 @@ class Solver:
             self.core()
 
             new_body = self.generator.regenerate(self.sims, self.dsims, self.msims, mscene, dscene)
-            advance_time(self.sims, step_dt)
-            advance_time(self.msims, step_dt)
-            advance_time(self.dsims, step_dt)
+            Timer.advance_time(self.sims, step_dt)
+            Timer.advance_time(self.msims, step_dt)
+            Timer.advance_time(self.dsims, step_dt)
             self.sims.current_step += 1
             self.msims.current_step = self.sims.current_step
             self.dsims.current_step = self.sims.current_step
@@ -141,7 +141,7 @@ class Solver:
                     self.dsims.set_max_bounding_sphere_radius(dscene.find_bounding_sphere_max_radius(self.dsims))
 
             runtime_checkpoint()
-        if abs(self.sims.time - self.sims.current_time) <= time_tolerance(self.sims.delta):
+        if abs(self.sims.time - self.sims.current_time) <= Timer.time_tolerance(self.sims.delta):
             self.sims.current_time = self.sims.time
             self.msims.current_time = self.sims.time
             self.dsims.current_time = self.sims.time
@@ -150,7 +150,7 @@ class Solver:
         self.physical_seconds = end_time - start_time
         self.solver_compute_seconds = max(self.physical_seconds - self.in_loop_output_seconds, 0.0)
 
-        if has_remaining_time(self.last_save_time, self.sims.current_time, self.sims.delta):
+        if Timer.has_remaining_time(self.last_save_time, self.sims.current_time, self.sims.delta):
             self.save_file(mscene, dscene)
 
         print("Simulation-loop time = ", self.physical_seconds)

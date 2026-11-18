@@ -4,6 +4,8 @@ Run from the repository root. Compilation is excluded; each sample synchronizes
 Taichi. This measures material assembly, not a complete coupled timestep.
 """
 
+from src.fem.elements.Utilities import create_element
+
 import argparse
 import json
 from pathlib import Path
@@ -15,8 +17,7 @@ import taichi as ti
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from src.fem.elements import create_element
-from src.fem.generator import FEMGenerateManager
+from src.fem.generator.MeshGenerator import FEMGenerateManager
 from src.fem.MaterialManager import FEMMaterialManager
 from src.fem.engines.ClassicalAssembler import ClassicalAssembler
 from src.linear_solver.BuildTriplet import BuildTriplet

@@ -5,60 +5,13 @@ solver fields only when a frame is synchronized with PyRender.
 """
 
 from __future__ import annotations
-
 from dataclasses import dataclass
-from typing import Any, Callable, Optional, Protocol, Sequence, Tuple, Union
-
 import numpy as np
-
+from typing import Any, Callable, Optional, Protocol, Tuple, Union
 
 Color = Tuple[float, float, float]
 ArrayProvider = Union[Any, Callable[[], Any]]
 CountProvider = Optional[Union[int, Callable[[], int]]]
-
-
-def _resolve(provider: ArrayProvider) -> Any:
-    value = provider() if callable(provider) else provider
-    converter = getattr(value, "to_numpy", None)
-    return converter() if converter is not None else value
-
-
-def _resolve_count(provider: CountProvider, capacity: int) -> int:
-    if provider is None:
-        return capacity
-    count = provider() if callable(provider) else provider
-    count = int(count)
-    if count < 0 or count > capacity:
-        raise ValueError(
-            f"render count {count} is outside field capacity {capacity}"
-        )
-    return count
-
-
-def _positions_3d(value: Any, count: int | None = None) -> np.ndarray:
-    positions = np.asarray(_resolve(value), dtype=np.float32)
-    if positions.ndim != 2 or positions.shape[1] not in (2, 3):
-        raise ValueError("positions must have shape (count, 2) or (count, 3)")
-    if count is not None:
-        positions = positions[:count]
-    if positions.shape[1] == 2:
-        positions = np.column_stack(
-            (positions, np.zeros(positions.shape[0], dtype=np.float32))
-        )
-    if not np.all(np.isfinite(positions)):
-        raise FloatingPointError("render positions contain non-finite values")
-    return np.ascontiguousarray(positions)
-
-
-def _validate_color(color: Sequence[float]) -> Color:
-    if len(color) != 3:
-        raise ValueError("render color must contain exactly three components")
-    result = tuple(float(component) for component in color)
-    if not np.all(np.isfinite(result)) or any(
-        component < 0.0 or component > 1.0 for component in result
-    ):
-        raise ValueError("render color components must be finite and in [0, 1]")
-    return result
 
 
 @dataclass(frozen=True)
@@ -77,14 +30,16 @@ class TriangleMeshSnapshot:
     smooth: bool
 
 
-GeometrySnapshot = Union[ParticleSnapshot, TriangleMeshSnapshot]
-
-
 class RenderSource(Protocol):
     name: str
 
     def snapshot(self) -> GeometrySnapshot:
         """Return one immutable host-side rendering snapshot."""
+
+
+Vector3 = tuple[float, float, float]
+
+GeometrySnapshot = Union[ParticleSnapshot, TriangleMeshSnapshot]
 
 
 @dataclass
@@ -103,9 +58,15 @@ class ParticleRenderSource:
     name: str = "particles"
 
     def __post_init__(self) -> None:
+        from src.visualization.Utilities import _validate_color
+
         self.color = _validate_color(self.color)
 
     def snapshot(self) -> ParticleSnapshot:
+        from src.visualization.Utilities import _positions_3d
+        from src.visualization.Utilities import _resolve
+        from src.visualization.Utilities import _resolve_count
+
         raw_positions = np.asarray(_resolve(self.positions))
         if raw_positions.ndim != 2:
             raise ValueError("particle positions must be a two-dimensional array")
@@ -151,9 +112,15 @@ class TriangleMeshRenderSource:
     name: str = "triangles"
 
     def __post_init__(self) -> None:
+        from src.visualization.Utilities import _validate_color
+
         self.color = _validate_color(self.color)
 
     def snapshot(self) -> TriangleMeshSnapshot:
+        from src.visualization.Utilities import _positions_3d
+        from src.visualization.Utilities import _resolve
+        from src.visualization.Utilities import _resolve_count
+
         raw_vertices = np.asarray(_resolve(self.vertices))
         if raw_vertices.ndim != 2:
             raise ValueError("triangle vertices must be a two-dimensional array")
@@ -169,9 +136,7 @@ class TriangleMeshRenderSource:
             raise ValueError("triangle faces must have shape (face_count, 3)")
         face_count = _resolve_count(self.face_count, raw_faces.shape[0])
         faces = np.ascontiguousarray(raw_faces[:face_count], dtype=np.int32)
-        if faces.size and (
-            np.min(faces) < 0 or np.max(faces) >= vertices.shape[0]
-        ):
+        if faces.size and (np.min(faces) < 0 or np.max(faces) >= vertices.shape[0]):
             raise ValueError("triangle connectivity references a missing vertex")
         return TriangleMeshSnapshot(
             vertices=vertices,

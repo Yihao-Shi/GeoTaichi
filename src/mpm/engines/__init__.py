@@ -9,7 +9,7 @@ __all__ = [
     "ImplicitEngine",
     "ULSemiImplicitTwoPhaseDoubleLayerEngine",
     "ULSemiImplicitTwoPhaseEngine",
-    "ULSemiImplicitTwoPhaseEngine_u_p",
+    "ULSemiImplicitTwoPhaseEngineUP",
 ]
 
 _LAZY_EXPORTS = {
@@ -24,9 +24,9 @@ _LAZY_EXPORTS = {
         "ULSemiImplicitTwoPhaseDoubleLayerEngine",
     ),
     "ULSemiImplicitTwoPhaseEngine": ("src.mpm.engines.ULSemiImplicitTwoPhaseEngine", "ULSemiImplicitTwoPhaseEngine"),
-    "ULSemiImplicitTwoPhaseEngine_u_p": (
-        "src.mpm.engines.ULSemiImplicitTwoPhaseEngine_u_p",
-        "ULSemiImplicitTwoPhaseEngine_u_p",
+    "ULSemiImplicitTwoPhaseEngineUP": (
+        "src.mpm.engines.ULSemiImplicitTwoPhaseEngineUP",
+        "ULSemiImplicitTwoPhaseEngineUP",
     ),
 }
 

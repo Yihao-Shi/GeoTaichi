@@ -1,16 +1,15 @@
+from src.utils.MatrixFunction import psd_project_nd
+from src.utils.StepRetry import StepRetryPolicy
 import taichi as ti
 import numpy as np
 import math
 
 import src.mpm.config as config
-from src.contact_detection.continuous_contact_detection import (
-    deformation_gradient_ccd,
-)
+from src.contact_detection.continuous_contact_detection.PolynomialCCD import deformation_gradient_ccd
 from src.mpm.engines.direct.ImplicitMPM import ImplicitMPM
-from src.mpm.engines.direct.MPMSolver import MPMConvergenceError
-from src.mpm.utils import copy_field, vectorize_id
-from src.utils.StepRetry import is_recoverable_nonlinear_failure
-from src.physics_model.contact_model.ipc.ContactAssembly import psd_project_nd
+from src.utils.VectorFunction import copy_field
+from src.utils.ScalarFunction import vectorize_id
+from src.utils.errors import MPMConvergenceError
 
 
 @ti.data_oriented
@@ -204,26 +203,26 @@ class ImplicitULMPM(ImplicitMPM):
     @ti.kernel
     def _mass_vel_acc_p2g(self):
         for i in range(self.particleNum[0]):
-            bodyID = self.particle[i].bodyID
-            goffset = self.body[bodyID].goffset
-            grid_num = self.body[bodyID].grid_num
-            grid_size = self.body[bodyID].grid_size
-            xmin = self.body[bodyID].xmin
+            body_id = self.particle[i].bodyID
+            goffset = self.body[body_id].goffset
+            grid_num = self.body[body_id].grid_num
+            grid_size = self.body[body_id].grid_size
+            xmin = self.body[body_id].xmin
 
             p_pos = self.affine_transfer_position(i)
             p_mass = self.particle[i].m
             p_vel = self.particle[i].v
             p_acc = self.particle[i].a
             for j in range(self.offset[i]):
-                nodeID = self.LnID[i, j]
+                node_id = self.LnID[i, j]
                 shape_fn = self.shape[i, j]
                 v_p2g = p_vel
                 if ti.static(self.velocity_proj):
-                    node_pos = xmin + grid_size * ti.Vector(vectorize_id(nodeID - goffset, grid_num))
+                    node_pos = xmin + grid_size * ti.Vector(vectorize_id(node_id - goffset, grid_num))
                     v_p2g += self.gradv[i] @ (node_pos - p_pos)
-                self.grid[nodeID].m += shape_fn * p_mass
-                self.grid[nodeID].v += shape_fn * p_mass * v_p2g
-                self.grid[nodeID].a += shape_fn * p_mass * p_acc
+                self.grid[node_id].m += shape_fn * p_mass
+                self.grid[node_id].v += shape_fn * p_mass * v_p2g
+                self.grid[node_id].a += shape_fn * p_mass * p_acc
 
     def assemble_material_force(self, active_dof, grid_disp, *, reuse_response=False):
         self._assemble_material_force(active_dof, grid_disp, bool(reuse_response))
@@ -252,21 +251,21 @@ class ImplicitULMPM(ImplicitMPM):
                         * pvol
                     )
                 else:
-                    dPsi_dF = self.material.total_dPsi_div_dF_at(i, deformation_gradient) * pvol
+                    dPsi_dF = self.material.total_d_psi_div_d_f_at(i, deformation_gradient) * pvol
             else:
-                dPsi_dF = self.material.dPsi_div_dF(deformation_gradient) * pvol
+                dPsi_dF = self.material.d_psi_div_d_f(deformation_gradient) * pvol
             for j in range(self.offset[i]):
                 grid_id = self.LnID[i, j]
                 dofs = config.DIM * (self.node2dof[grid_id] - 1)
                 dPsi_dx = ti.Vector.zero(ti.f64, config.DIM)
                 if ti.static(self.is_axisymmetric):
                     for component in ti.static(range(2)):
-                        derivative = self.axisymmetric_dF_du(i, j, component)
+                        derivative = self.axisymmetric_d_f_du(i, j, component)
                         for column, row in ti.static(ti.ndrange(3, 3)):
                             dPsi_dx[component] += derivative[row, column] * dPsi_dF[row + 3 * column]
                 elif ti.static(self.is_plane_strain):
                     for component in ti.static(range(2)):
-                        derivative = self.plane_strain_dF_du(i, j, component)
+                        derivative = self.plane_strain_d_f_du(i, j, component)
                         for column, row in ti.static(ti.ndrange(3, 3)):
                             dPsi_dx[component] += derivative[row, column] * dPsi_dF[row + 3 * column]
                 elif ti.static(config.DIM == 2):
@@ -352,9 +351,9 @@ class ImplicitULMPM(ImplicitMPM):
                         * pvol
                     )
                 else:
-                    d2Psi_d2F = self.material.total_d2Psi_div_d2F_at(i, deformation_gradient) * pvol
+                    d2Psi_d2F = self.material.total_d2_psi_div_d2_f_at(i, deformation_gradient) * pvol
             else:
-                d2Psi_d2F = self.material.d2Psi_div_d2F(deformation_gradient) * pvol
+                d2Psi_d2F = self.material.d2_psi_div_d2_f(deformation_gradient) * pvol
             if ti.static(project_spd):
                 d2Psi_d2F = psd_project_nd(d2Psi_d2F)
             for j in range(self.offset[i]):
@@ -376,14 +375,14 @@ class ImplicitULMPM(ImplicitMPM):
                     self.add_fixed_stiffness_block_entry(raw_index, base_joffset, base_koffset, d2Psi_dx2)
 
     @ti.kernel
-    def advent_particles(self, coeffPIC: ti.f64):
+    def advent_particles(self, coeff_pic: ti.f64):
         dt = self.TIdt[None]
         for i in range(self.particleNum[0]):
-            bodyID = self.particle[i].bodyID
-            goffset = self.body[bodyID].goffset
-            grid_num = self.body[bodyID].grid_num
-            grid_size = self.body[bodyID].grid_size
-            xmin = self.body[bodyID].xmin
+            body_id = self.particle[i].bodyID
+            goffset = self.body[body_id].goffset
+            grid_num = self.body[body_id].grid_num
+            grid_size = self.body[body_id].grid_size
+            xmin = self.body[body_id].xmin
 
             p_pos = self.affine_transfer_position(i)
             acc = ti.Vector.zero(ti.f64, config.DIM)
@@ -411,7 +410,7 @@ class ImplicitULMPM(ImplicitMPM):
                     dpos = xmin + grid_size * ti.Vector(vectorize_id(grid_id - goffset, grid_num)) - p_pos
                     Bp += shape_fn * grid_v.outer_product(dpos)
                     Dp += shape_fn * dpos.outer_product(dpos)
-            v1 = (1.0 - coeffPIC) * (v0 + acc * dt) + coeffPIC * vel
+            v1 = (1.0 - coeff_pic) * (v0 + acc * dt) + coeff_pic * vel
             self.particle[i].v = v1
             self.particle[i].a = acc
             self.particle[i].x += disp
@@ -490,7 +489,7 @@ class ImplicitULMPM(ImplicitMPM):
             if ti.static(self.is_finite_strain_plastic):
                 self.energy[None] += self.material.total_strain_energy_density_at(i, deformation_gradient) * pvol
             else:
-                self.energy[None] += self.material.Psi(deformation_gradient) * pvol
+                self.energy[None] += self.material.psi(deformation_gradient) * pvol
 
     def get_degree_of_freedom(self, **kwargs):
         return int(kwargs.get("scale", 0.2) * config.DIM * self.total_background_grid_num)
@@ -517,7 +516,7 @@ class ImplicitULMPM(ImplicitMPM):
             try:
                 solve_result = self.solve_hash_system(self.active_dof)
             except RuntimeError as exception:
-                if not is_recoverable_nonlinear_failure(exception):
+                if not StepRetryPolicy.is_recoverable_nonlinear_failure(exception):
                     raise
                 raise MPMConvergenceError("Direct implicit ULMPM linear solve failed to converge") from exception
             residual = solve_result["solution_inf_norm"] / self.dt

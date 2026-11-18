@@ -58,8 +58,10 @@ def test_uniform_bed_porosity_at_internal_solid_walls(dimension, corner):
         kernel_normalize_double_layer_nodes2d,
         kernel_normalize_double_layer_nodes3d,
     )
-    from src.mpm.structs.GridNode import NodeTwoPhase, NodeTwoPhase2D
-    from src.mpm.structs.Particle import ParticleCloudTwoPhase, ParticleCloudTwoPhase2D
+    from src.mpm.structs.NodeTwoPhase import NodeTwoPhase
+    from src.mpm.structs.NodeTwoPhase2D import NodeTwoPhase2D
+    from src.mpm.structs.ParticleCloudTwoPhase import ParticleCloudTwoPhase
+    from src.mpm.structs.ParticleCloudTwoPhase2D import ParticleCloudTwoPhase2D
 
     init(dim=dimension, arch="cpu", cpu_max_num_threads=2, offline_cache=False, log=False)
     GlobalVariable.SHAPEFUNCTION = 2
@@ -118,7 +120,8 @@ def test_shifting_cutoff_is_independent_of_length_units(dimension):
         kernel_delta_correct_double_layer_fluid2d,
         kernel_delta_correct_double_layer_fluid3d,
     )
-    from src.mpm.structs.Particle import ParticleCloudTwoPhase, ParticleCloudTwoPhase2D
+    from src.mpm.structs.ParticleCloudTwoPhase import ParticleCloudTwoPhase
+    from src.mpm.structs.ParticleCloudTwoPhase2D import ParticleCloudTwoPhase2D
 
     init(dim=dimension, arch="cpu", default_fp="float64", cpu_max_num_threads=2, offline_cache=False, log=False)
     node = ti.Struct.field({"vol": float, "porosity": float}, shape=(1, 1))
@@ -180,7 +183,8 @@ def test_shifting_corrects_interior_deficits_without_attracting_to_air(dimension
         kernel_delta_correct_double_layer_fluid2d,
         kernel_delta_correct_double_layer_fluid3d,
     )
-    from src.mpm.structs.Particle import ParticleCloudTwoPhase, ParticleCloudTwoPhase2D
+    from src.mpm.structs.ParticleCloudTwoPhase import ParticleCloudTwoPhase
+    from src.mpm.structs.ParticleCloudTwoPhase2D import ParticleCloudTwoPhase2D
 
     init(dim=dimension, arch="cpu", default_fp="float64", cpu_max_num_threads=2, offline_cache=False, log=False)
     dx, count = 0.125, 4

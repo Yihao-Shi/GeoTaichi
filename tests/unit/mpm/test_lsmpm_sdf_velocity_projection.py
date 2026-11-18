@@ -2,9 +2,20 @@ import numpy as np
 import pytest
 
 
-def _make_projection_fields(ti, local_points, local_velocities, *, scale, center,
-                            body_velocity, angular_velocity, quaternion, gnum,
-                            xmin_unscaled, spacing_unscaled):
+def _make_projection_fields(
+    ti,
+    local_points,
+    local_velocities,
+    *,
+    scale,
+    center,
+    body_velocity,
+    angular_velocity,
+    quaternion,
+    gnum,
+    xmin_unscaled,
+    spacing_unscaled,
+):
     point_count = local_points.shape[0]
     grid_count = int(np.prod(gnum))
     vec3 = ti.types.vector(3, ti.f64)
@@ -98,9 +109,7 @@ def _make_projection_fields(ti, local_points, local_velocities, *, scale, center
     rigid.q[0] = quaternion
     rigid.w[0] = angular_velocity
     box.xmin[0] = scale * xmin_unscaled
-    box.xmax[0] = scale * (
-        xmin_unscaled + (np.asarray(gnum) - 1) * spacing_unscaled
-    )
+    box.xmax[0] = scale * (xmin_unscaled + (np.asarray(gnum) - 1) * spacing_unscaled)
     box.gnum[0] = gnum
     box.grid_space[0] = scale * spacing_unscaled
     affine_fit = np.linalg.lstsq(
@@ -117,9 +126,7 @@ def _make_projection_fields(ti, local_points, local_velocities, *, scale, center
         ],
         dtype=np.float64,
     )
-    global_gradient = (
-        frame_spin + rotation @ local_gradient @ rotation.T
-    )
+    global_gradient = frame_spin + rotation @ local_gradient @ rotation.T
     template_f_rate = scale * global_gradient @ rotation
     for node in range(3):
         soft_grid.m[node] = 1.0
@@ -155,9 +162,9 @@ def _make_projection_fields(ti, local_points, local_velocities, *, scale, center
 
 def _run_projection(ti, fields, shape_function_type):
     from src.mpm.soft_particle.SoftBodyKernel import (
-        normalize_soft_levelset_velocity_projection_,
-        project_current_soft_points_to_levelset_,
-        reset_soft_levelset_velocity_projection_,
+        normalize_soft_levelset_velocity_projection,
+        project_current_soft_points_to_levelset,
+        reset_soft_levelset_velocity_projection,
     )
 
     (
@@ -175,10 +182,8 @@ def _run_projection(ti, fields, shape_function_type):
     ) = fields
     point_count = point.shape[0]
     grid_count = velocity.shape[0]
-    reset_soft_levelset_velocity_projection_(
-        1, grid_count, soft, velocity, weight
-    )
-    project_current_soft_points_to_levelset_(
+    reset_soft_levelset_velocity_projection(1, grid_count, soft, velocity, weight)
+    project_current_soft_points_to_levelset(
         point_count,
         shape_function_type,
         soft,
@@ -193,9 +198,7 @@ def _run_projection(ti, fields, shape_function_type):
         rigid,
         box,
     )
-    normalize_soft_levelset_velocity_projection_(
-        1, grid_count, soft, velocity, weight
-    )
+    normalize_soft_levelset_velocity_projection(1, grid_count, soft, velocity, weight)
     ti.sync()
 
 
@@ -204,12 +207,7 @@ def test_current_point_projection_removes_rigid_frame_velocity(
 ):
     ti = taichi_runtime
     coordinates = np.array(
-        [
-            [x, y, z]
-            for z in (-1.0, 0.0, 1.0)
-            for y in (-1.0, 0.0, 1.0)
-            for x in (-1.0, 0.0, 1.0)
-        ],
+        [[x, y, z] for z in (-1.0, 0.0, 1.0) for y in (-1.0, 0.0, 1.0) for x in (-1.0, 0.0, 1.0)],
         dtype=np.float64,
     )
     angle = np.deg2rad(37.0)
@@ -244,12 +242,7 @@ def test_current_point_projection_reproduces_affine_velocity_interior(
 ):
     ti = taichi_runtime
     coordinates = np.array(
-        [
-            [x, y, z]
-            for z in range(-3, 4)
-            for y in range(-3, 4)
-            for x in range(-3, 4)
-        ],
+        [[x, y, z] for z in range(-3, 4) for y in range(-3, 4) for x in range(-3, 4)],
         dtype=np.float64,
     )
     gradient = np.array(
@@ -270,9 +263,7 @@ def test_current_point_projection_reproduces_affine_velocity_interior(
         center=np.array([-1.0, 0.5, 2.0]),
         body_velocity=np.array([0.2, -0.3, 0.4]),
         angular_velocity=np.array([0.12, -0.07, 0.19]),
-        quaternion=np.array(
-            [0.0, 0.0, np.sin(angle / 2), np.cos(angle / 2)]
-        ),
+        quaternion=np.array([0.0, 0.0, np.sin(angle / 2), np.cos(angle / 2)]),
         gnum=np.array([9, 9, 9], dtype=np.int32),
         xmin_unscaled=np.array([-4.0, -4.0, -4.0]),
         spacing_unscaled=1.0,
@@ -300,7 +291,7 @@ def test_velocity_extension_crosses_nonmonotone_transported_sdf(
 ):
     ti = taichi_runtime
     from src.mpm.soft_particle.SoftBodyKernel import (
-        extend_soft_levelset_velocity_projection_,
+        extend_soft_levelset_velocity_projection,
     )
 
     vec3 = ti.types.vector(3, ti.f64)
@@ -342,7 +333,7 @@ def test_velocity_extension_crosses_nonmonotone_transported_sdf(
     velocity[seed] = [0.3, -0.2, 0.1]
     weight[seed] = 1.0
 
-    extend_soft_levelset_velocity_projection_(
+    extend_soft_levelset_velocity_projection(
         1,
         grid_count,
         0,
@@ -367,7 +358,7 @@ def test_velocity_extension_keeps_outer_sdf_boundary_fixed(
 ):
     ti = taichi_runtime
     from src.mpm.soft_particle.SoftBodyKernel import (
-        extend_soft_levelset_velocity_projection_,
+        extend_soft_levelset_velocity_projection,
     )
 
     vec3 = ti.types.vector(3, ti.f64)
@@ -404,7 +395,7 @@ def test_velocity_extension_keeps_outer_sdf_boundary_fixed(
     velocity[seed] = [0.3, -0.2, 0.1]
     weight[seed] = 1.0
 
-    extend_soft_levelset_velocity_projection_(
+    extend_soft_levelset_velocity_projection(
         1,
         grid_count,
         0,

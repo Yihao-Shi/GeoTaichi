@@ -1,3 +1,4 @@
+from src.utils.errors import CapacityError, SparseAssemblyError
 import taichi as ti
 import numpy as np
 
@@ -34,7 +35,9 @@ class HashReduction:
         self.hessian_size = int(hessian_size)
         self.max_pairs_num = max_pairs_num
         if device_reduction is not None and not bool(device_reduction):
-            raise RuntimeError("device_reduction=False is not supported: sparse reduction requires Taichi fields")
+            raise SparseAssemblyError(
+                "device_reduction=False is not supported: sparse reduction requires Taichi fields"
+            )
         self.device_reduction = True
         self.numpy_float_dtype = runtime_float_numpy_dtype()
         hash_capacity = 1
@@ -94,7 +97,7 @@ class HashReduction:
         """Reserve permanent reduced slots before the first assembly."""
         coordinates = np.asarray(coordinates)
         if not self.device_reduction or self.device_epoch or self.fixed_count:
-            raise RuntimeError("fixed slots require a fresh device reducer")
+            raise SparseAssemblyError("fixed slots require a fresh device reducer")
         if coordinates.ndim != 2 or coordinates.shape[1] != 2 or not np.issubdtype(coordinates.dtype, np.integer):
             raise ValueError("fixed block coordinates must be an integer (n, 2) array")
         if np.any(coordinates < 0) or np.any(coordinates > np.iinfo(np.int32).max):
@@ -160,7 +163,7 @@ class HashReduction:
                 failed_nnz = int(self.element_pair_num[0])
                 self._clear_device_pattern()
                 self.device_pattern_initialized = False
-                raise RuntimeError(
+                raise CapacityError(
                     "HashReduction device block-pattern table overflow: "
                     f"raw_pairs={pairs_num}, attempted_unique={failed_nnz}, "
                     f"capacity={self.tripletI.shape[0]}, hash_capacity={self.device_hash_capacity}. "
@@ -173,7 +176,7 @@ class HashReduction:
         if int(self.device_overflow[0]) != 0:
             self._clear_device_pattern()
             self.device_pattern_initialized = False
-            raise RuntimeError("HashReduction device pattern lookup failed after insertion")
+            raise SparseAssemblyError("HashReduction device pattern lookup failed after insertion")
 
         pattern_nnz = int(self.element_pair_num[0])
         current_nnz = int(self.device_current_unique[0])
@@ -214,7 +217,7 @@ class HashReduction:
                 failed_nnz = int(self.element_pair_num[0])
                 self._clear_device_pattern()
                 self.device_pattern_initialized = False
-                raise RuntimeError(
+                raise CapacityError(
                     "HashReduction device pattern overflow while compacting "
                     f"current entries: raw_pairs={pairs_num}, "
                     f"attempted_unique={failed_nnz}, "
@@ -225,7 +228,7 @@ class HashReduction:
             if int(self.device_overflow[0]) != 0:
                 self._clear_device_pattern()
                 self.device_pattern_initialized = False
-                raise RuntimeError("HashReduction device pattern lookup failed after compaction")
+                raise SparseAssemblyError("HashReduction device pattern lookup failed after compaction")
             self.device_pattern_version += 1
             self.device_pattern_rebuilds += 1
         elif new_entries > 0:

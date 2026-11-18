@@ -382,7 +382,7 @@ def _build_mpm_particle(output_path):
         visualize=False,
         path=str(output_path),
     )
-    mpm.init_F0()
+    mpm.init_f0()
     mpm.mass_vec.fill(0.0)
     mpm.grid_reset()
     mpm.compute_shapefn()
@@ -721,7 +721,7 @@ def test_taichi_point_nurbs_accd_two_sided_motion_and_coo_assembly(tmp_path):
 
 
 def test_default_monolithic_solve_routes_to_taichi_device_backend():
-    from src.igampm.engines import Engine
+    from src.igampm.engines.CoupledEngine import Engine
 
     engine = object.__new__(Engine)
     engine.activate_fric = True
@@ -904,7 +904,7 @@ def test_taichi_monolithic_assembly_merges_blocks_and_eliminates_dirichlet(
 
 @pytest.mark.parametrize("invalid_distance", [np.nan, np.inf, -np.inf])
 def test_nonfinite_expected_pair_is_never_treated_as_feasible(invalid_distance):
-    from src.igampm.engines import Engine
+    from src.igampm.engines.CoupledEngine import Engine
 
     engine = object.__new__(Engine)
     engine.mpm = SimpleNamespace(total_surface_num=1)
@@ -922,7 +922,7 @@ def test_nonfinite_expected_pair_is_never_treated_as_feasible(invalid_distance):
 
 
 def test_no_contact_pairs_ignore_dummy_storage():
-    from src.igampm.engines import Engine
+    from src.igampm.engines.CoupledEngine import Engine
 
     class DistanceField:
         def to_numpy(self):
@@ -939,7 +939,7 @@ def test_no_contact_pairs_ignore_dummy_storage():
 
 
 def test_public_contact_step_and_armijo_only_upload_then_use_taichi_backend():
-    from src.igampm.engines import Engine
+    from src.igampm.engines.CoupledEngine import Engine
 
     contact_source = inspect.getsource(Engine.conservative_contact_step)
     device_contact_source = inspect.getsource(Engine.conservative_contact_step_device)

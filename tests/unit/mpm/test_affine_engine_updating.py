@@ -1,5 +1,7 @@
 """Affine dispatch and transfer use the final grid field at the interpolation position."""
 
+from src.mpm.structs.GridNode import ImplicitNodes2D
+
 from types import SimpleNamespace
 
 import numpy as np
@@ -13,7 +15,7 @@ from src.mpm.engines.ULImplicitEngine import ImplicitEngine
 from src.mpm.engines.IncompressibleEngine import IncompressibleEngine
 from src.mpm.engines.ULExplicitTwoPhaseEngine import ULExplicitTwoPhaseEngine
 from src.mpm.engines.ULSemiImplicitTwoPhaseEngine import ULSemiImplicitTwoPhaseEngine
-from src.mpm.engines.ULSemiImplicitTwoPhaseEngine_u_p import ULSemiImplicitTwoPhaseEngine_u_p
+from src.mpm.engines.ULSemiImplicitTwoPhaseEngineUP import ULSemiImplicitTwoPhaseEngineUP
 from src.mpm.engines.ULSemiImplicitTwoPhaseDoubleLayerEngine import ULSemiImplicitTwoPhaseDoubleLayerEngine
 
 pytestmark = [pytest.mark.unit, pytest.mark.mpm, pytest.mark.cpu, pytest.mark.serial]
@@ -119,7 +121,7 @@ def test_fdm_taylor_keeps_affine_reconstruction_and_requested_blend(taichi_runti
         IncompressibleEngine,
         ULExplicitTwoPhaseEngine,
         ULSemiImplicitTwoPhaseEngine,
-        ULSemiImplicitTwoPhaseEngine_u_p,
+        ULSemiImplicitTwoPhaseEngineUP,
         ULSemiImplicitTwoPhaseDoubleLayerEngine,
     ],
 )
@@ -181,7 +183,7 @@ def test_explicit_affine_saves_matrix_after_stress_before_particle_motion(stabil
 def test_affine_matrix_reproduces_final_field_on_small_anisotropic_grid(taichi_runtime, dimension, reference):
     from src.mpm.engines.EngineKernel import (
         kernel_update_velocity_gradient_affine,
-        kernel_update_velocity_gradient_affine_2D,
+        kernel_update_velocity_gradient_affine_2d,
     )
 
     n = 7
@@ -214,7 +216,7 @@ def test_affine_matrix_reproduces_final_field_on_small_anisotropic_grid(taichi_r
         active=1, bodyID=0, x=position + (0.01 if reference else 0.0), velocity_gradient=np.zeros_like(gradient)
     )
     node.momentum.from_numpy(((coords * h - position) @ gradient.T + 0.3)[:, None, :])
-    kernel = kernel_update_velocity_gradient_affine if dimension == 3 else kernel_update_velocity_gradient_affine_2D
+    kernel = kernel_update_velocity_gradient_affine if dimension == 3 else kernel_update_velocity_gradient_affine_2d
     kernel(count, 1, ti.Vector([n] * dimension), ti.Vector(h), node, particle, ids, shape, size, reference)
     np.testing.assert_allclose(particle.velocity_gradient.to_numpy()[0], gradient, rtol=1e-5, atol=1e-5)
 
@@ -222,8 +224,7 @@ def test_affine_matrix_reproduces_final_field_on_small_anisotropic_grid(taichi_r
 @pytest.mark.isolated_dimension(2)
 @pytest.mark.parametrize("sparse", [False, True])
 def test_implicit_affine_p2g_preserves_acceleration_and_recovers_final_velocity(taichi_runtime, sparse):
-    from src.mpm.structs.GridNode import ImplicitNodes2D
-    from src.mpm.structs.Particle import ImplicitParticle2D
+    from src.mpm.structs.ImplicitParticle2D import ImplicitParticle2D
 
     sims = Simulation()
     sims.dimension = 2
@@ -300,7 +301,7 @@ def test_implicit_affine_p2g_preserves_acceleration_and_recovers_final_velocity(
 
 @pytest.mark.parametrize("mixture", [False, True])
 def test_twophase_affine_matrix_orientation_and_mixture_field(taichi_runtime, mixture):
-    from src.mpm.engines.EngineKernel import kernel_compute_affine_matrix_APIC_twophase2D
+    from src.mpm.engines.EngineKernel import kernel_compute_affine_matrix_apic_twophase2d
 
     position = np.array([0.32, 0.32])
     coords = np.column_stack((np.arange(49) % 7, np.arange(49) // 7)) * 0.1
@@ -333,7 +334,7 @@ def test_twophase_affine_matrix_orientation_and_mixture_field(taichi_runtime, mi
     ids.from_numpy(np.arange(49, dtype=np.int32))
     shape.from_numpy(weights)
     size[0] = 49
-    kernel_compute_affine_matrix_APIC_twophase2D(
+    kernel_compute_affine_matrix_apic_twophase2d(
         49, 1, node, particle, ids, shape, size, ti.Vector([0.1, 0.1]), ti.Vector([7, 7]), mixture
     )
     for name, expected in [

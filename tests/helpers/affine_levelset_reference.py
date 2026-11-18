@@ -5,10 +5,12 @@ from dataclasses import dataclass
 from typing import Iterable
 import numpy as np
 from src.physics_model.contact_model.ipc.LevelSetAffine import TrilinearLevelSet as _LevelSetInput
+from src.physics_model.contact_model.ipc.LevelSetAffine import NonpenetrationResult
 from src.physics_model.contact_model.ipc.LevelSetAffine import (
-    NonpenetrationResult,
-    _as_float_array,
-    _as_positive_scalar,
+    TrilinearLevelSet as _TrilinearLevelSet__as_float_array_owner,
+)
+from src.physics_model.contact_model.ipc.LevelSetAffine import (
+    TrilinearLevelSet as _TrilinearLevelSet__as_positive_scalar_owner,
 )
 from tests.helpers.ipc_scalar_reference import ipc_barrier_distance_terms_py
 
@@ -17,7 +19,7 @@ _AFFINE_OFFSET = np.full(3, 0.25, dtype=np.float64)
 
 class TrilinearLevelSet(_LevelSetInput):
     def grid_coordinates(self, template_point):
-        point = _as_float_array(template_point, (3,), "template_point")
+        point = _TrilinearLevelSet__as_float_array_owner._as_float_array(template_point, (3,), "template_point")
         return self.template_to_grid @ point + self.template_to_grid_offset
 
     def contains(self, template_point, margin=0.0):
@@ -99,7 +101,7 @@ class LevelSetGap:
 
 
 def affine_basis(reference_point):
-    point = _as_float_array(reference_point, (3,), "reference_point")
+    point = _TrilinearLevelSet__as_float_array_owner._as_float_array(reference_point, (3,), "reference_point")
     material = point + _AFFINE_OFFSET
     return np.array(
         [
@@ -113,7 +115,7 @@ def affine_basis(reference_point):
 
 
 def affine_matrix(controls):
-    controls = _as_float_array(controls, (4, 3), "controls")
+    controls = _TrilinearLevelSet__as_float_array_owner._as_float_array(controls, (4, 3), "controls")
     return np.column_stack(
         (
             controls[1] - controls[0],
@@ -145,10 +147,14 @@ def affine_levelset_gap(
     grid-resolution-dependent third derivatives.
     """
 
-    source_controls = _as_float_array(source_controls, (4, 3), "source_controls")
-    target_controls = _as_float_array(target_controls, (4, 3), "target_controls")
-    source_basis = _as_float_array(source_basis, (4,), "source_basis")
-    target_scale = _as_positive_scalar(target_scale, "target_scale")
+    source_controls = _TrilinearLevelSet__as_float_array_owner._as_float_array(
+        source_controls, (4, 3), "source_controls"
+    )
+    target_controls = _TrilinearLevelSet__as_float_array_owner._as_float_array(
+        target_controls, (4, 3), "target_controls"
+    )
+    source_basis = _TrilinearLevelSet__as_float_array_owner._as_float_array(source_basis, (4,), "source_basis")
+    target_scale = _TrilinearLevelSet__as_positive_scalar_owner._as_positive_scalar(target_scale, "target_scale")
     if not isinstance(target_levelset, TrilinearLevelSet):
         raise TypeError("target_levelset must be a TrilinearLevelSet")
 
@@ -256,7 +262,7 @@ def point_affine_levelset_gap(
     functions.
     """
 
-    source_point = _as_float_array(source_point, (3,), "source_point")
+    source_point = _TrilinearLevelSet__as_float_array_owner._as_float_array(source_point, (3,), "source_point")
     source_controls = np.zeros((4, 3), dtype=np.float64)
     source_controls[0] = source_point
     full = affine_levelset_gap(
@@ -294,11 +300,13 @@ def continued_ipc_barrier_distance_terms(
     singular, non-continued IPC barrier.
     """
 
-    dhat = _as_positive_scalar(dhat, "dhat")
-    kappa = _as_positive_scalar(kappa, "kappa")
+    dhat = _TrilinearLevelSet__as_positive_scalar_owner._as_positive_scalar(dhat, "dhat")
+    kappa = _TrilinearLevelSet__as_positive_scalar_owner._as_positive_scalar(kappa, "kappa")
     if continuation_distance is None:
         continuation_distance = 0.1 * dhat
-    delta = _as_positive_scalar(continuation_distance, "continuation_distance")
+    delta = _TrilinearLevelSet__as_positive_scalar_owner._as_positive_scalar(
+        continuation_distance, "continuation_distance"
+    )
     if delta >= dhat:
         raise ValueError("continuation_distance must be smaller than dhat")
     distance = float(distance)
@@ -325,8 +333,8 @@ class AffineLevelSetBody:
     body_id: int = -1
 
     def __post_init__(self):
-        self.controls = _as_float_array(self.controls, (4, 3), "controls")
-        self.scale = _as_positive_scalar(self.scale, "scale")
+        self.controls = _TrilinearLevelSet__as_float_array_owner._as_float_array(self.controls, (4, 3), "controls")
+        self.scale = _TrilinearLevelSet__as_positive_scalar_owner._as_positive_scalar(self.scale, "scale")
         if not isinstance(self.levelset, TrilinearLevelSet):
             raise TypeError("levelset must be a TrilinearLevelSet")
         basis = np.asarray(self.surface_basis, dtype=np.float64)
@@ -374,9 +382,9 @@ class AffineLevelSetIPC:
         self.bodies = list(bodies)
         if not self.bodies:
             raise ValueError("at least one affine level-set body is required")
-        self.dhat = _as_positive_scalar(dhat, "dhat")
-        self.kappa = _as_positive_scalar(kappa, "kappa")
-        self.time_scale = _as_positive_scalar(time_scale, "time_scale")
+        self.dhat = _TrilinearLevelSet__as_positive_scalar_owner._as_positive_scalar(dhat, "dhat")
+        self.kappa = _TrilinearLevelSet__as_positive_scalar_owner._as_positive_scalar(kappa, "kappa")
+        self.time_scale = _TrilinearLevelSet__as_positive_scalar_owner._as_positive_scalar(time_scale, "time_scale")
         mode = str(hessian_mode).strip().replace("-", "_").lower()
         aliases = {
             "exact": "exact",
@@ -396,7 +404,7 @@ class AffineLevelSetIPC:
         return np.concatenate([body.controls.reshape(-1) for body in self.bodies])
 
     def set_controls(self, packed):
-        values = _as_float_array(packed, (self.dof,), "packed controls")
+        values = _TrilinearLevelSet__as_float_array_owner._as_float_array(packed, (self.dof,), "packed controls")
         for body_id, body in enumerate(self.bodies):
             body.controls = values[12 * body_id : 12 * (body_id + 1)].reshape(4, 3).copy()
 
@@ -419,7 +427,11 @@ class AffineLevelSetIPC:
     ):
         if controls is not None:
             self.set_controls(controls)
-        barrier_kappa = self.kappa if kappa is None else _as_positive_scalar(kappa, "kappa")
+        barrier_kappa = (
+            self.kappa
+            if kappa is None
+            else _TrilinearLevelSet__as_positive_scalar_owner._as_positive_scalar(kappa, "kappa")
+        )
         energy = 0.0
         gradient = np.zeros(self.dof, dtype=np.float64)
         hessian = np.zeros((self.dof, self.dof), dtype=np.float64)
@@ -526,15 +538,21 @@ class AdjointIPCNonpenetration:
         if not all(hasattr(contact, name) for name in required):
             raise TypeError("contact does not implement the affine IPC interface")
         self.contact = contact
-        self.anchor_stiffness = _as_positive_scalar(anchor_stiffness, "anchor_stiffness")
+        self.anchor_stiffness = _TrilinearLevelSet__as_positive_scalar_owner._as_positive_scalar(
+            anchor_stiffness, "anchor_stiffness"
+        )
         self.continuation_ratio = float(continuation_ratio)
         if not np.isfinite(self.continuation_ratio) or self.continuation_ratio <= 0.0 or self.continuation_ratio >= 1.0:
             raise ValueError("continuation_ratio must lie in (0, 1)")
-        self.feasibility_tolerance = _as_positive_scalar(feasibility_tolerance, "feasibility_tolerance")
+        self.feasibility_tolerance = _TrilinearLevelSet__as_positive_scalar_owner._as_positive_scalar(
+            feasibility_tolerance, "feasibility_tolerance"
+        )
         self.maximum_stages = int(maximum_stages)
         if self.maximum_stages <= 0:
             raise ValueError("maximum_stages must be positive")
-        self.stiffness_growth = _as_positive_scalar(stiffness_growth, "stiffness_growth")
+        self.stiffness_growth = _TrilinearLevelSet__as_positive_scalar_owner._as_positive_scalar(
+            stiffness_growth, "stiffness_growth"
+        )
         if self.stiffness_growth <= 1.0:
             raise ValueError("stiffness_growth must be larger than one")
         self.initial_controls = self.contact.pack_controls().copy()
@@ -545,7 +563,7 @@ class AdjointIPCNonpenetration:
         self.last_result = None
 
     def _translated_controls(self, translations):
-        translations = _as_float_array(
+        translations = _TrilinearLevelSet__as_float_array_owner._as_float_array(
             translations,
             (3 * self.contact.body_num,),
             "translations",
@@ -588,7 +606,7 @@ class AdjointIPCNonpenetration:
         from scipy.optimize import minimize
 
         if anchor is not None:
-            self.anchor = _as_float_array(
+            self.anchor = _TrilinearLevelSet__as_float_array_owner._as_float_array(
                 anchor,
                 (3 * self.contact.body_num,),
                 "anchor",
@@ -596,7 +614,7 @@ class AdjointIPCNonpenetration:
         translations = self.anchor.copy()
         scipy_bounds = None
         if bounds is not None:
-            bounds_array = _as_float_array(
+            bounds_array = _TrilinearLevelSet__as_float_array_owner._as_float_array(
                 bounds,
                 (3 * self.contact.body_num, 2),
                 "translation bounds",
@@ -696,7 +714,7 @@ class AdjointIPCNonpenetration:
 
         if self.translation_hessian is None or self.last_result is None:
             raise RuntimeError("solve() must succeed before the adjoint call")
-        loss_gradient = _as_float_array(
+        loss_gradient = _TrilinearLevelSet__as_float_array_owner._as_float_array(
             loss_translation_gradient,
             (3 * self.contact.body_num,),
             "loss_translation_gradient",
@@ -704,7 +722,7 @@ class AdjointIPCNonpenetration:
         direct = (
             np.zeros_like(loss_gradient)
             if direct_anchor_gradient is None
-            else _as_float_array(
+            else _TrilinearLevelSet__as_float_array_owner._as_float_array(
                 direct_anchor_gradient,
                 loss_gradient.shape,
                 "direct_anchor_gradient",

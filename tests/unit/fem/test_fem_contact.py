@@ -1,24 +1,22 @@
+from src.fem.contact.Utilities import broad_phase_candidates
+from src.fem.contact.Utilities import build_contact_surface
 import numpy as np
 import pytest
 
 ti = pytest.importorskip("taichi")
 
 from src.fem import FEM
-from src.fem.contact import (
-    FEMCollisionCulling,
-    FEMContact,
-    broad_phase_candidates,
-    build_contact_surface,
-)
-from src.fem.contact.ContactAssembler import FEMContactAssembler
+from src.fem.contact.CollisionCulling import FEMCollisionCulling
+from src.fem.contact.ContactModel import FEMContact
+from src.fem.contact.FEMContactAssembler import FEMContactAssembler
 from tests.helpers.fem_contact_reference import ReferenceFEMContactAssembler
-from src.fem.contact.ContactAssembler import FEMMultiContactAssembler
+from src.fem.contact.FEMMultiContactAssembler import FEMMultiContactAssembler
 from src.fem.contact.LinkedCellBroadPhase import DynamicLinkedCellBroadPhase
 from src.fem.contact.BVHBroadPhase import DynamicBVHBroadPhase
 from tests.helpers.fem_broad_phase_reference import _reference_broad_phase_candidates
-from src.fem.engines.SparseMatrix import FEMSparseMatrix
-from src.fem.generator import FEMMesh
-from src.physics_model.consititutive_model.finite_strain import ClothARAP
+from src.fem.engines.FEMSparseMatrix import FEMSparseMatrix
+from src.fem.generator.Mesh import FEMMesh
+from src.physics_model.constitutive_model.cloth_model.ClothARAP import ClothARAP
 
 pytestmark = [pytest.mark.unit, pytest.mark.fem, pytest.mark.contact, pytest.mark.cpu, pytest.mark.serial]
 
@@ -59,7 +57,7 @@ def test_ipc_body_pairs_have_independent_parameters_and_candidates():
         young_modulus=1.0e4,
         poisson_ratio=0.3,
     )
-    fem.add_contact("IPC", dhat=0.1, self_contact=False)
+    fem.add_contact("BarrierIPC", dhat=0.1, self_contact=False)
     fem.add_contact_property(0, 1, dhat=0.08, dmin=0.0, kappa=2.0e3)
     fem.add_contact_property(1, 2, dhat=0.06, dmin=0.0, kappa=4.0e3)
     fem.set_solver(dt=1.0e-3, steps=1, linear_solver="BiCGSTAB")
@@ -373,7 +371,7 @@ def test_contact_configuration_selects_bvh():
     assembler = FEMContactAssembler(
         mesh,
         ClothARAP(1.0e3, thickness=0.01),
-        FEMContact("IPC", broad_phase="BVH", dhat=0.1, dmin=0.01),
+        FEMContact("BarrierIPC", broad_phase="BVH", dhat=0.1, dmin=0.01),
     )
 
     assert isinstance(assembler.broad_phase, DynamicBVHBroadPhase)
@@ -386,7 +384,7 @@ def test_contact_coordination_preallocates_fixed_device_buffers():
         mesh,
         ClothARAP(1.0e3, thickness=0.01),
         FEMContact(
-            "IPC",
+            "BarrierIPC",
             dhat=0.1,
             dmin=0.01,
             point_triangle_coordination_number=4.0,
@@ -417,7 +415,7 @@ def test_contact_explicit_pair_capacities_override_coordination_estimates():
         two_triangle_mesh(),
         ClothARAP(1.0e3, thickness=0.01),
         FEMContact(
-            "IPC",
+            "BarrierIPC",
             dhat=0.1,
             dmin=0.01,
             point_triangle_coordination_number=1.0,
@@ -437,7 +435,7 @@ def test_cloth_engine_registers_stitches_with_contact_culling():
     fem.add_mesh(two_triangle_mesh())
     fem.add_material("ClothARAP", stretch_stiffness=1.0e3, thickness=0.01)
     fem.add_stitch([[3, 0, 1]], stiffness=1.0e3, ratios=[0.1])
-    fem.add_contact("IPC", broad_phase="LinkedCell", dhat=0.1, dmin=0.01)
+    fem.add_contact("BarrierIPC", broad_phase="LinkedCell", dhat=0.1, dmin=0.01)
     fem.set_solver(linear_solver="BiCGSTAB", project_pd=False, step=0)
 
     engine = fem.build()
@@ -451,7 +449,7 @@ def test_cloth_engine_registers_stitches_with_contact_culling():
 def test_ipc_energy_gradient_tangent_and_ccd():
     mesh = two_triangle_mesh()
     material = ClothARAP(1.0e3, thickness=0.01)
-    contact = FEMContact("IPC", dhat=0.1, dmin=0.01, kappa=2.0e3, project_pd=False)
+    contact = FEMContact("BarrierIPC", dhat=0.1, dmin=0.01, kappa=2.0e3, project_pd=False)
     assembler = ReferenceFEMContactAssembler(mesh, material, contact)
     positions = mesh.points.copy()
     assembler.prepare_iteration(positions)
@@ -483,7 +481,7 @@ def test_ipc_energy_gradient_tangent_and_ccd():
 def test_ipc_self_contact_device_force_matches_output_adapter():
     mesh = two_triangle_mesh()
     material = ClothARAP(1.0e3, thickness=0.01)
-    contact = FEMContact("IPC", dhat=0.1, dmin=0.01, kappa=2.0e3, project_pd=False)
+    contact = FEMContact("BarrierIPC", dhat=0.1, dmin=0.01, kappa=2.0e3, project_pd=False)
     assembler = ReferenceFEMContactAssembler(mesh, material, contact)
     positions = ti.Vector.field(3, dtype=ti.f64, shape=mesh.number_of_nodes)
     force = ti.Vector.field(3, dtype=ti.f64, shape=mesh.number_of_nodes)
@@ -504,7 +502,7 @@ def test_lagged_friction_opposes_tangential_motion():
     mesh = two_triangle_mesh()
     material = ClothARAP(1.0e3, thickness=0.01)
     contact = FEMContact(
-        "IPC",
+        "BarrierIPC",
         dhat=0.1,
         dmin=0.01,
         kappa=2.0e3,
@@ -535,7 +533,7 @@ def test_lagged_friction_device_path_matches_output_adapter():
     mesh = two_triangle_mesh()
     material = ClothARAP(1.0e3, thickness=0.01)
     contact = FEMContact(
-        "IPC",
+        "BarrierIPC",
         dhat=0.1,
         dmin=0.01,
         kappa=2.0e3,
@@ -583,7 +581,7 @@ def test_lagged_friction_device_refresh_preserves_beginning_of_step_hat():
         mesh,
         ClothARAP(1.0e3, thickness=0.01),
         FEMContact(
-            "IPC",
+            "BarrierIPC",
             dhat=0.1,
             dmin=0.01,
             kappa=2.0e3,
@@ -608,7 +606,7 @@ def test_ipc_plane_energy_and_ccd_limit_are_one_sided():
     mesh.points[:, 2] += 0.04
     material = ClothARAP(1.0e3, thickness=0.01)
     contact = FEMContact(
-        "IPC",
+        "BarrierIPC",
         self_contact=False,
         planes=[{"point": (0.0, 0.0, 0.0), "normal": (0.0, 0.0, 1.0)}],
         dhat=0.05,
@@ -633,7 +631,7 @@ def test_fem_facade_dispatches_contact_into_implicit_cloth_engine():
     fem.set_configuration(dimension=3, solver_type="Implicit")
     fem.add_mesh(two_triangle_mesh())
     fem.add_material("ClothARAP", stretch_stiffness=1.0e3, thickness=0.01)
-    fem.add_contact("IPC", dhat=0.1, dmin=0.01, kappa=2.0e3)
+    fem.add_contact("BarrierIPC", dhat=0.1, dmin=0.01, kappa=2.0e3)
     fem.set_solver(quasi_static=False, dt=0.01, step=0)
 
     engine = fem.build()
@@ -659,7 +657,7 @@ def test_same_contact_backend_assembles_on_volume_boundary_surface():
     )
     fem.add_material("StVK", young_modulus=1.0e4, poisson_ratio=0.3, density=1.0)
     fem.add_contact(
-        "IPC",
+        "BarrierIPC",
         self_contact=False,
         planes=[((0.0, 0.0, 0.0), (0.0, 0.0, 1.0))],
         dhat=0.05,

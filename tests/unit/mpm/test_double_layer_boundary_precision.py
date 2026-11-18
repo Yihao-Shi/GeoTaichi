@@ -27,7 +27,8 @@ if __name__ == "__main__":
         kernel_enforce_double_layer_solid_plane_nodes2d,
         kernel_enforce_double_layer_solid_plane_nodes3d,
     )
-    from src.mpm.structs.GridNode import NodeTwoPhase, NodeTwoPhase2D
+    from src.mpm.structs.NodeTwoPhase import NodeTwoPhase
+    from src.mpm.structs.NodeTwoPhase2D import NodeTwoPhase2D
 
     dimension = int(sys.argv[1])
     ti.init(arch=ti.cpu, default_fp=ti.f64, cpu_max_num_threads=2, offline_cache=False)

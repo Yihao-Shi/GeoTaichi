@@ -4,26 +4,22 @@ import taichi as ti
 
 from src.dem.contact.ContactKernel import implicit_surface_wall_contact_geometry
 from src.dem.contact.ContactKernel import (
-    ISparticle_wall_contact_model_type1,
-    ISparticle_wall_contact_model_type2,
+    i_sparticle_wall_contact_model_type1,
+    i_sparticle_wall_contact_model_type2,
     implicit_surface_finite_wall_contact_geometry,
-    kernel_ISparticle_wall_force_assemble_,
-    update_wall_contact_table_,
+    kernel_i_sparticle_wall_force_assemble,
+    update_wall_contact_table,
 )
-from src.dem.contact.contact_point_root.ErodedGJK import GJKiteration
-from src.dem.structs.BaseStruct import (
-    ContactTable,
-    FacetFamily,
-    ImplicitSurfaceParticle,
-    PatchFamily,
-    PlaneFamily,
-    PolySuperEllipsoid,
-    PolySuperQuadrics,
-    RollingContactTable,
-)
+from src.dem.contact.contact_point_root.ErodedGJK import gj_kiteration
+from src.dem.structs.BaseStruct import ContactTable, RollingContactTable
+from src.dem.structs.FacetFamily import FacetFamily
+from src.dem.structs.ImplicitSurfaceParticle import ImplicitSurfaceParticle
+from src.dem.structs.PatchFamily import PatchFamily
+from src.dem.structs.PlaneFamily import PlaneFamily
+from src.dem.structs.PolySuperEllipsoid import PolySuperEllipsoid
+from src.dem.structs.PolySuperQuadrics import PolySuperQuadrics
 from src.physics_model.contact_model.LinearRollingModel import LinearRollingSurfaceProperty
 from src.physics_model.contact_model.LinearModel import LinearSurfaceProperty
-
 
 pytestmark = [pytest.mark.unit, pytest.mark.dem, pytest.mark.geometry, pytest.mark.cpu]
 
@@ -485,7 +481,7 @@ def test_finite_edge_force_uses_edge_normal(taichi_runtime):
         dt[None] = 1.0e-3
 
     initialize()
-    kernel_ISparticle_wall_force_assemble_(
+    kernel_i_sparticle_wall_force_assemble(
         1,
         1,
         dt,
@@ -497,7 +493,7 @@ def test_finite_edge_force_uses_edge_normal(taichi_runtime):
         contacts,
         particle_wall,
         contact_type,
-        ISparticle_wall_contact_model_type1,
+        i_sparticle_wall_contact_model_type1,
     )
 
     distance = np.sqrt(0.6**2 + 0.6**2)
@@ -550,7 +546,7 @@ def test_finite_wall_table_deduplicates_shared_feature(taichi_runtime):
         potential_walls[1] = 1
 
     initialize()
-    update_wall_contact_table_(
+    update_wall_contact_table(
         2,
         1,
         rigid,
@@ -578,7 +574,7 @@ def test_eroded_gjk_keeps_touching_and_deep_ball_ball_contacts(taichi_runtime):
         rotation = ti.Matrix.identity(float, 3)
         distances = ti.Vector([1.9, 1.8, 2.1])
         for i in ti.static(range(3)):
-            is_touch, pa, pb, _ = GJKiteration(
+            is_touch, pa, pb, _ = gj_kiteration(
                 0.05,
                 0.05,
                 1.0,
@@ -620,7 +616,7 @@ def test_deep_rotated_ball_ball_contact_has_common_normal_witnesses(taichi_runti
         c2, s2 = ti.cos(angle2), ti.sin(angle2)
         rotation1 = ti.Matrix([[c1, 0.0, s1], [0.0, 1.0, 0.0], [-s1, 0.0, c1]])
         rotation2 = ti.Matrix([[c2, -s2, 0.0], [s2, c2, 0.0], [0.0, 0.0, 1.0]])
-        is_touch, pa, pb, axis = GJKiteration(
+        is_touch, pa, pb, axis = gj_kiteration(
             0.05,
             0.05,
             1.0,
@@ -690,7 +686,7 @@ def test_polysuperquadrics_rolling_wall_kernel_uses_signed_gap(taichi_runtime):
         dt[None] = 1.0e-3
 
     initialize()
-    kernel_ISparticle_wall_force_assemble_(
+    kernel_i_sparticle_wall_force_assemble(
         1,
         0,
         dt,
@@ -702,7 +698,7 @@ def test_polysuperquadrics_rolling_wall_kernel_uses_signed_gap(taichi_runtime):
         contacts,
         particle_wall,
         contact_type,
-        ISparticle_wall_contact_model_type2,
+        i_sparticle_wall_contact_model_type2,
     )
 
     np.testing.assert_allclose(contacts[0].cnforce, [0.0, 0.0, 20.0], atol=1.0e-8)
@@ -745,7 +741,7 @@ def test_polysuperquadrics_linear_wall_kernel_uses_signed_gap(taichi_runtime):
         dt[None] = 1.0e-3
 
     initialize()
-    kernel_ISparticle_wall_force_assemble_(
+    kernel_i_sparticle_wall_force_assemble(
         1,
         0,
         dt,
@@ -757,7 +753,7 @@ def test_polysuperquadrics_linear_wall_kernel_uses_signed_gap(taichi_runtime):
         contacts,
         particle_wall,
         contact_type,
-        ISparticle_wall_contact_model_type1,
+        i_sparticle_wall_contact_model_type1,
     )
 
     np.testing.assert_allclose(contacts[0].cnforce, [0.0, 0.0, 20.0], atol=1.0e-8)

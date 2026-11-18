@@ -25,7 +25,7 @@ device hash reduction; dynamic contact can still use bucket reduction upstream.
 | `BuildTriplet` | Device block-triplet assembly, hash reduction, block Jacobi, and Krylov solve |
 | `HashReduction` | Duplicate block reduction and reusable sparsity patterns |
 | `MatrixFreeCG`, `MatrixFreePCG` | Symmetric matrix-free Krylov methods |
-| `MatrixFreeBICG`, `MatrixFreeBICGSTAB`, `MatrixFreePBICGSTAB` | Nonsymmetric matrix-free methods |
+| `MatrixFreeBICGSTAB`, `MatrixFreePBICGSTAB` | Nonsymmetric matrix-free methods |
 | `MultiGridPCG*` | Geometric multigrid pressure/Poisson solvers |
 
 `MatrixFreeKrylovKernel.py` shares reductions and vector kernels across CG, PCG,
@@ -73,6 +73,13 @@ also takes that fallback if its principal blocks are not positive definite;
 LU still uses the unchanged exact tangent. The requested true-residual test
 is preserved. Standalone exact ABD adjoints retain their previous
 single-block preconditioner and BiCGSTAB fallback.
+
+Failure types are defined in `src/utils/errors.py`. `BlockJacobiError`
+identifies invalid principal-block factorizations and is a subtype of
+`LinearSolveError`; FEM sparse solves and checked SciPy Krylov solves raise
+`LinearSolveError` on convergence or true-residual failure. Catch the specific
+type when selecting recovery, and preserve the requested fallback and
+true-residual checks.
 
 CUDA CG/PCG and (preconditioned) BiCGSTAB use `DeviceKrylov`: inner products,
 alpha/beta/omega and breakdown guards stay on device. Ordinary CG/PCG iterations

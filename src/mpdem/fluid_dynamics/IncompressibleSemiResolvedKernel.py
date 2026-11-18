@@ -2,8 +2,8 @@
 
 import taichi as ti
 
-from src.utils.ShapeFunctions import Guassian
-from src.utils.constants import PI, Threshold
+from src.utils.ShapeFunctions import guassian
+from src.utils.constants import PI, THRESHOLD
 
 
 @ti.func
@@ -11,7 +11,7 @@ def expanded_domain_gaussian(radius, relative_distance, support_size):
     # Use the entire selected neighborhood to reconstruct the undisturbed field;
     # a narrow kernel feeds the particle's own pressure disturbance back to it.
     smoothing_length = support_size * radius
-    return Guassian(smoothing_length, relative_distance, 1.0)
+    return guassian(smoothing_length, relative_distance, 1.0)
 
 
 @ti.func
@@ -102,7 +102,7 @@ def pressure_gradient_3d(
                 cell_type,
             )
             distance = (upper[d] - lower[d]) * grid_size[d]
-            if distance > Threshold:
+            if distance > THRESHOLD:
                 gradient[d] = (p_upper - p_lower) / distance
     return gradient
 
@@ -124,7 +124,7 @@ def sphere_support_bounds(position, radius, support_size, active_cnum, igrid_siz
 
 @ti.kernel
 def kernel_update_sphere_cell_solid_fraction(
-    sphereNum: int,
+    sphere_num: int,
     support_size: int,
     active_cnum: ti.types.vector(3, int),
     grid_size: ti.types.vector(3, float),
@@ -137,24 +137,24 @@ def kernel_update_sphere_cell_solid_fraction(
     cell_solid_fraction.fill(0.0)
     sphere_kernel_volume.fill(0.0)
     cell_volume = grid_size[0] * grid_size[1] * grid_size[2]
-    for nsphere in range(sphereNum):
+    for nsphere in range(sphere_num):
         np = sphere[nsphere].sphereIndex
         position = particle[np].x
         radius = particle[np].rad
         lower, upper = sphere_support_bounds(position, radius, support_size, active_cnum, igrid_size)
         for I in ti.grouped(ti.ndrange((lower[0], upper[0]), (lower[1], upper[1]), (lower[2], upper[2]))):
-            weight = Guassian(radius, position - cell_center_3d(I, grid_size), support_size)
+            weight = guassian(radius, position - cell_center_3d(I, grid_size), support_size)
             ti.atomic_add(sphere_kernel_volume[nsphere], weight * cell_volume)
 
-    for nsphere in range(sphereNum):
+    for nsphere in range(sphere_num):
         np = sphere[nsphere].sphereIndex
         position = particle[np].x
         radius = particle[np].rad
         particle_volume = 4.0 / 3.0 * PI * radius * radius * radius
-        kernel_volume = ti.max(sphere_kernel_volume[nsphere], Threshold)
+        kernel_volume = ti.max(sphere_kernel_volume[nsphere], THRESHOLD)
         lower, upper = sphere_support_bounds(position, radius, support_size, active_cnum, igrid_size)
         for I in ti.grouped(ti.ndrange((lower[0], upper[0]), (lower[1], upper[1]), (lower[2], upper[2]))):
-            weight = Guassian(radius, position - cell_center_3d(I, grid_size), support_size)
+            weight = guassian(radius, position - cell_center_3d(I, grid_size), support_size)
             ti.atomic_add(cell_solid_fraction[I], weight * particle_volume / kernel_volume)
 
     for I in ti.grouped(cell_solid_fraction):
@@ -163,14 +163,14 @@ def kernel_update_sphere_cell_solid_fraction(
 
 @ti.kernel
 def kernel_compute_incompressible_sphere_drag(
-    sphereNum: int,
+    sphere_num: int,
     cutoff: float,
     dependent_domain: int,
     influence_domain: int,
     active_cnum: ti.types.vector(3, int),
     grid_size: ti.types.vector(3, float),
     igrid_size: ti.types.vector(3, float),
-    matProps: ti.template(),
+    mat_props: ti.template(),
     particle: ti.template(),
     sphere: ti.template(),
     node: ti.template(),
@@ -187,7 +187,7 @@ def kernel_compute_incompressible_sphere_drag(
     fluid_velocity_weight.fill(0.0)
     fluid_fraction.fill(0.0)
     fluid_volume.fill(0.0)
-    for nsphere in range(sphereNum):
+    for nsphere in range(sphere_num):
         np = sphere[nsphere].sphereIndex
         position = particle[np].x
         radius = particle[np].rad
@@ -216,28 +216,28 @@ def kernel_compute_incompressible_sphere_drag(
                     1.0 - sample_cell_solid_fraction_3d(I, active_cnum, cell_solid_fraction)
                 )
 
-    for nsphere in range(sphereNum):
+    for nsphere in range(sphere_num):
         np = sphere[nsphere].sphereIndex
-        weight_sum = ti.max(fluid_volume[nsphere], Threshold)
-        velocity_f = fluid_velocity[nsphere] / ti.max(fluid_velocity_weight[nsphere], Threshold)
+        weight_sum = ti.max(fluid_volume[nsphere], THRESHOLD)
+        velocity_f = fluid_velocity[nsphere] / ti.max(fluid_velocity_weight[nsphere], THRESHOLD)
         epsilon_f = ti.min(1.0, ti.max(0.05, fluid_fraction[nsphere] / weight_sum))
         relative_velocity = velocity_f - particle[np].v
         for d in ti.static(range(3)):
-            if fluid_velocity_weight[nsphere][d] <= Threshold:
+            if fluid_velocity_weight[nsphere][d] <= THRESHOLD:
                 relative_velocity[d] = 0.0
         drag_force = drag_coefficient_model.drag_law(
-            epsilon_f, matProps.density, matProps.viscosity, particle[np].rad, relative_velocity
+            epsilon_f, mat_props.density, mat_props.viscosity, particle[np].rad, relative_velocity
         )
         position = particle[np].x
         radius = particle[np].rad
         lower, upper = sphere_support_bounds(position, radius, influence_domain, active_cnum, igrid_size)
         mapped_weight = 0.0
         for I in ti.grouped(ti.ndrange((lower[0], upper[0]), (lower[1], upper[1]), (lower[2], upper[2]))):
-            mapped_weight += Guassian(radius, position - cell_center_3d(I, grid_size), influence_domain)
-        mapped_weight = ti.max(mapped_weight, Threshold)
+            mapped_weight += guassian(radius, position - cell_center_3d(I, grid_size), influence_domain)
+        mapped_weight = ti.max(mapped_weight, THRESHOLD)
         exchanged_force = ti.Vector([0.0, 0.0, 0.0])
         for I in ti.grouped(ti.ndrange((lower[0], upper[0]), (lower[1], upper[1]), (lower[2], upper[2]))):
-            weight = Guassian(radius, position - cell_center_3d(I, grid_size), influence_domain) / mapped_weight
+            weight = guassian(radius, position - cell_center_3d(I, grid_size), influence_domain) / mapped_weight
             for d in ti.static(range(3)):
                 right_face = I + ti.Vector.unit(3, d)
                 left_mass = node.m[d][I] * face_fluid_fraction_3d(I, d, active_cnum, cell_solid_fraction)
@@ -280,7 +280,7 @@ def kernel_apply_cell_drag_force_to_mac_velocity(
 
 @ti.kernel
 def kernel_accumulate_incompressible_sphere_pressure_force(
-    sphereNum: int,
+    sphere_num: int,
     dependent_domain: int,
     influence_domain: int,
     active_cnum: ti.types.vector(3, int),
@@ -292,7 +292,7 @@ def kernel_accumulate_incompressible_sphere_pressure_force(
     cell_type: ti.template(),
     atmospheric_pressure: float,
 ):
-    for nsphere in range(sphereNum):
+    for nsphere in range(sphere_num):
         np = sphere[nsphere].sphereIndex
         position = particle[np].x
         radius = particle[np].rad
@@ -311,24 +311,24 @@ def kernel_accumulate_incompressible_sphere_pressure_force(
                     cell_type,
                 )
                 weight_sum += weight
-        pressure_gradient /= ti.max(weight_sum, Threshold)
+        pressure_gradient /= ti.max(weight_sum, THRESHOLD)
         # The wide background stencil can see water even when the sphere's
         # volume kernel is dry. Do not extrapolate its load to the full sphere.
         mapped_weight, wet_weight = 0.0, 0.0
         lower, upper = sphere_support_bounds(position, radius, influence_domain, active_cnum, igrid_size)
         for I in ti.grouped(ti.ndrange((lower[0], upper[0]), (lower[1], upper[1]), (lower[2], upper[2]))):
-            weight = Guassian(radius, position - cell_center_3d(I, grid_size), influence_domain)
+            weight = guassian(radius, position - cell_center_3d(I, grid_size), influence_domain)
             mapped_weight += weight
             if int(cell_type[I]) == 1:
                 wet_weight += weight
-        wet_fraction = wet_weight / ti.max(mapped_weight, Threshold)
+        wet_fraction = wet_weight / ti.max(mapped_weight, THRESHOLD)
         particle_volume = 4.0 / 3.0 * PI * radius * radius * radius
         particle[np].contact_force += -wet_fraction * particle_volume * pressure_gradient
 
 
 @ti.kernel
 def kernel_apply_integrated_added_mass(
-    sphereNum: int,
+    sphere_num: int,
     coefficient: float,
     fluid_density: float,
     gravity: ti.types.vector(3, float),
@@ -336,7 +336,7 @@ def kernel_apply_integrated_added_mass(
     sphere: ti.template(),
 ):
     """Apply Vp (rho_p + C_A rho_f) a = F without changing true mass."""
-    for nsphere in range(sphereNum):
+    for nsphere in range(sphere_num):
         np = sphere[nsphere].sphereIndex
         radius = particle[np].rad
         added_mass = coefficient * fluid_density * 4.0 / 3.0 * PI * radius**3
@@ -348,8 +348,8 @@ def kernel_apply_integrated_added_mass(
 
 @ti.kernel
 def kernel_apply_sphere_plane_wall_lubrication(
-    sphereNum: int,
-    wallNum: int,
+    sphere_num: int,
+    wall_num: int,
     viscosity: float,
     activation_gap: float,
     minimum_gap: float,
@@ -358,10 +358,10 @@ def kernel_apply_sphere_plane_wall_lubrication(
     wall: ti.template(),
 ):
     """Add the unresolved leading-order sphere--wall lubrication force."""
-    for nsphere in range(sphereNum):
+    for nsphere in range(sphere_num):
         np = sphere[nsphere].sphereIndex
         radius = particle[np].rad
-        for wall_id in range(wallNum):
+        for wall_id in range(wall_num):
             if wall[wall_id].active != 0:
                 normal = wall[wall_id].norm
                 distance = (particle[np].x - wall[wall_id].point).dot(normal)

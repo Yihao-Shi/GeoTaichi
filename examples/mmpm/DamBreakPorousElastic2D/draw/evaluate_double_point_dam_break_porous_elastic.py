@@ -12,7 +12,6 @@ if str(ROOT) not in sys.path:
 import glob
 import json
 import math
-from pathlib import Path
 import numpy as np
 
 from examples.mmpm.DamBreakPorousElastic2D.double_point_dam_break_porous_elastic_parameters import (

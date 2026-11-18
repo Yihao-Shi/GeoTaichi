@@ -1,6 +1,7 @@
 """3D incompressible MPM dam break carrying ten buoyant LSDEM bodies."""
 
 from __future__ import annotations
+from src.utils.RuntimeHook import python_callback
 
 import json
 import math
@@ -17,7 +18,6 @@ if str(ROOT) not in sys.path:
 os.environ.setdefault("GEOTAICHI_REAL_DTYPE", "float64")
 
 from geotaichi import DEMPM, init, polyhedron  # noqa: E402
-from src.utils.SolverRuntime import python_callback  # noqa: E402
 
 PREFIX = "GT_IBM_DAM3D_"
 

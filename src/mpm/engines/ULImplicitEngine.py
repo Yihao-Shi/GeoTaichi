@@ -1,9 +1,10 @@
+from src.utils.errors import NonlinearSolveError, SimulationStateError
 import math
 
 from src.mpm.engines.NewtonIteration import MomentumConservation
 from src.mpm.engines.Engine import Engine
 from src.mpm.engines.EngineKernel import *
-from src.mpm.SceneManager import myScene
+from src.mpm.SceneManager import SceneManager
 from src.mpm.Simulation import Simulation
 from src.mpm.SpatialHashGrid import SpatialHashGrid
 from src.mpm.engines.FreeSurfaceDetection import *
@@ -22,10 +23,10 @@ class ImplicitEngine(Engine):
         if sims.velocity_projection_scheme == "Affine":
             self.compute_nodal_kinematic = self.compute_nodal_kinematics
         if sims.dimension == 2:
-            self.update_nodal_displacements = self.update_nodal_displacement_2D
-            self.compute_internal_forces = self.compute_internal_force_2D
+            self.update_nodal_displacements = self.update_nodal_displacement_2d
+            self.compute_internal_forces = self.compute_internal_force_2d
             if sims.use_elastic_matrix_free_tangent:
-                self.compute_stress_strains = self.compute_stress_strain_elastic_tangent_2D
+                self.compute_stress_strains = self.compute_stress_strain_elastic_tangent_2d
         elif sims.dimension == 3:
             self.update_nodal_displacements = self.update_nodal_displacement
             self.compute_internal_forces = self.compute_internal_force
@@ -40,7 +41,7 @@ class ImplicitEngine(Engine):
         else:
             raise ValueError(f"The integration scheme {sims.integration_scheme} is not supported yet")
 
-    def choose_boundary_constraints(self, sims: Simulation, scene: myScene):
+    def choose_boundary_constraints(self, sims: Simulation, scene: SceneManager):
         self.apply_traction_constraints = no_operation
         self.apply_particle_traction_constraints = no_operation
         self.update_adaptive_grid = no_operation
@@ -50,13 +51,15 @@ class ImplicitEngine(Engine):
             self.apply_particle_traction_constraints = self.particle_traction_constraints
         if getattr(scene.element, "adaptive", False):
             if not getattr(scene.element, "strong_hanging_constraint", False):
-                raise RuntimeError("Implicit solid AdaptiveGrid requires " "HangingConstraintMode=ShapeFunction.")
+                raise SimulationStateError(
+                    "Implicit solid AdaptiveGrid requires " "HangingConstraintMode=ShapeFunction."
+                )
             self.update_adaptive_grid = self.update_grid_refinement
 
-    def reset_iterative_grid_message(self, scene: myScene):
+    def reset_iterative_grid_message(self, scene: SceneManager):
         grid_internal_force_reset(scene.mass_cut_off, scene.node)
 
-    def compute_nodal_mass(self, sims: Simulation, scene: myScene):
+    def compute_nodal_mass(self, sims: Simulation, scene: SceneManager):
         kernel_mass_p2g(
             scene.element.grid_nodes,
             int(scene.particleNum[0]),
@@ -68,7 +71,7 @@ class ImplicitEngine(Engine):
             scene.element.node_size,
         )
 
-    def compute_nodal_kinematics(self, sims: Simulation, scene: myScene):
+    def compute_nodal_kinematics(self, sims: Simulation, scene: SceneManager):
         kernel_mass_momentum_acceleration_force_ip2g(
             scene.element.grid_nodes,
             int(scene.particleNum[0]),
@@ -83,15 +86,15 @@ class ImplicitEngine(Engine):
             scene.sparse_grid,
         )
 
-    def compute_grid_velcity(self, sims: Simulation, scene: myScene):
+    def compute_grid_velcity(self, sims: Simulation, scene: SceneManager):
         kernel_compute_grid_velocity_acceleration(scene.mass_cut_off, scene.node)
 
-    def compute_nodal_kinematics_newmark(self, sims: Simulation, scene: myScene):
+    def compute_nodal_kinematics_newmark(self, sims: Simulation, scene: SceneManager):
         kernel_compute_nodal_kinematics_newmark(
             sims.newmark_beta, sims.newmark_gamma, scene.mass_cut_off, scene.node, sims.dt
         )
 
-    def compute_internal_force(self, sims: Simulation, scene: myScene):
+    def compute_internal_force(self, sims: Simulation, scene: SceneManager):
         kernel_internal_force_p2g(
             scene.element.grid_nodes,
             int(scene.particleNum[0]),
@@ -102,8 +105,8 @@ class ImplicitEngine(Engine):
             scene.element.node_size,
         )
 
-    def compute_internal_force_2D(self, sims: Simulation, scene: myScene):
-        kernel_internal_force_p2g_2D(
+    def compute_internal_force_2d(self, sims: Simulation, scene: SceneManager):
+        kernel_internal_force_p2g_2d(
             scene.element.grid_nodes,
             int(scene.particleNum[0]),
             scene.node,
@@ -113,7 +116,7 @@ class ImplicitEngine(Engine):
             scene.element.node_size,
         )
 
-    def update_nodal_displacement(self, scene: myScene):
+    def update_nodal_displacement(self, scene: SceneManager):
         kernel_update_nodal_disp(
             self.iterator.node_stride(scene),
             scene.mass_cut_off,
@@ -122,8 +125,8 @@ class ImplicitEngine(Engine):
             self.iterator.unknow_vector,
         )
 
-    def update_nodal_displacement_2D(self, scene: myScene):
-        kernel_update_nodal_disp_2D(
+    def update_nodal_displacement_2d(self, scene: SceneManager):
+        kernel_update_nodal_disp_2d(
             self.iterator.node_stride(scene),
             scene.mass_cut_off,
             scene.node,
@@ -131,71 +134,71 @@ class ImplicitEngine(Engine):
             self.iterator.unknow_vector,
         )
 
-    def compute_stress_strain(self, sims: Simulation, scene: myScene):
-        for materialID in range(scene.material.mapping.shape[0] - 1):
-            start_index = scene.material.mapping[materialID]
-            end_index = scene.material.mapping[materialID + 1]
+    def compute_stress_strain(self, sims: Simulation, scene: SceneManager):
+        for material_id in range(scene.material.mapping.shape[0] - 1):
+            start_index = scene.material.mapping[material_id]
+            end_index = scene.material.mapping[material_id + 1]
             kernel_compute_stress_strain_newmark(
                 sims.dt,
                 start_index,
                 end_index,
                 scene.particle,
                 scene.material.materialID,
-                scene.material.matProps[materialID + 1],
+                scene.material.matProps[material_id + 1],
                 scene.material.stateVars,
                 scene.material.stiffness_matrix,
             )
 
-    def compute_stress_strain_elastic_tangent(self, sims: Simulation, scene: myScene):
-        for materialID in range(scene.material.mapping.shape[0] - 1):
-            start_index = scene.material.mapping[materialID]
-            end_index = scene.material.mapping[materialID + 1]
+    def compute_stress_strain_elastic_tangent(self, sims: Simulation, scene: SceneManager):
+        for material_id in range(scene.material.mapping.shape[0] - 1):
+            start_index = scene.material.mapping[material_id]
+            end_index = scene.material.mapping[material_id + 1]
             kernel_compute_stress_strain_newmark_elastic_tangent(
                 sims.dt,
                 start_index,
                 end_index,
                 scene.particle,
                 scene.material.materialID,
-                scene.material.matProps[materialID + 1],
+                scene.material.matProps[material_id + 1],
                 scene.material.stateVars,
                 scene.material.stiffness_matrix,
             )
 
-    def compute_stress_strain_2D(self, sims: Simulation, scene: myScene):
-        for materialID in range(scene.material.mapping.shape[0] - 1):
-            start_index = scene.material.mapping[materialID]
-            end_index = scene.material.mapping[materialID + 1]
-            kernel_compute_stress_strain_newmark_2D(
+    def compute_stress_strain_2d(self, sims: Simulation, scene: SceneManager):
+        for material_id in range(scene.material.mapping.shape[0] - 1):
+            start_index = scene.material.mapping[material_id]
+            end_index = scene.material.mapping[material_id + 1]
+            kernel_compute_stress_strain_newmark_2d(
                 sims.dt,
                 start_index,
                 end_index,
                 scene.particle,
                 scene.material.materialID,
-                scene.material.matProps[materialID + 1],
+                scene.material.matProps[material_id + 1],
                 scene.material.stateVars,
                 scene.material.stiffness_matrix,
             )
 
-    def compute_stress_strain_elastic_tangent_2D(self, sims: Simulation, scene: myScene):
-        for materialID in range(scene.material.mapping.shape[0] - 1):
-            start_index = scene.material.mapping[materialID]
-            end_index = scene.material.mapping[materialID + 1]
-            kernel_compute_stress_strain_newmark_elastic_tangent_2D(
+    def compute_stress_strain_elastic_tangent_2d(self, sims: Simulation, scene: SceneManager):
+        for material_id in range(scene.material.mapping.shape[0] - 1):
+            start_index = scene.material.mapping[material_id]
+            end_index = scene.material.mapping[material_id + 1]
+            kernel_compute_stress_strain_newmark_elastic_tangent_2d(
                 sims.dt,
                 start_index,
                 end_index,
                 scene.particle,
                 scene.material.materialID,
-                scene.material.matProps[materialID + 1],
+                scene.material.matProps[material_id + 1],
                 scene.material.stateVars,
                 scene.material.stiffness_matrix,
             )
 
-    def update_velocity_gradient_2D(self, sims: Simulation, scene: myScene):
-        for materialID in range(scene.material.mapping.shape[0] - 1):
-            start_index = scene.material.mapping[materialID]
-            end_index = scene.material.mapping[materialID + 1]
-            kernel_update_displacement_gradient_2D(
+    def update_velocity_gradient_2d(self, sims: Simulation, scene: SceneManager):
+        for material_id in range(scene.material.mapping.shape[0] - 1):
+            start_index = scene.material.mapping[material_id]
+            end_index = scene.material.mapping[material_id + 1]
+            kernel_update_displacement_gradient_2d(
                 scene.element.grid_nodes,
                 start_index,
                 end_index,
@@ -203,17 +206,17 @@ class ImplicitEngine(Engine):
                 scene.node,
                 scene.particle,
                 scene.material.materialID,
-                scene.material.matProps[materialID + 1],
+                scene.material.matProps[material_id + 1],
                 scene.material.stateVars,
                 scene.element.LnID,
                 scene.element.dshape_fn,
                 scene.element.node_size,
             )
 
-    def update_velocity_gradient(self, sims: Simulation, scene: myScene):
-        for materialID in range(scene.material.mapping.shape[0] - 1):
-            start_index = scene.material.mapping[materialID]
-            end_index = scene.material.mapping[materialID + 1]
+    def update_velocity_gradient(self, sims: Simulation, scene: SceneManager):
+        for material_id in range(scene.material.mapping.shape[0] - 1):
+            start_index = scene.material.mapping[material_id]
+            end_index = scene.material.mapping[material_id + 1]
             kernel_update_displacement_gradient(
                 scene.element.grid_nodes,
                 start_index,
@@ -222,18 +225,18 @@ class ImplicitEngine(Engine):
                 scene.node,
                 scene.particle,
                 scene.material.materialID,
-                scene.material.matProps[materialID + 1],
+                scene.material.matProps[material_id + 1],
                 scene.material.stateVars,
                 scene.element.LnID,
                 scene.element.dshape_fn,
                 scene.element.node_size,
             )
 
-    def update_velocity_gradient_bbar_2D(self, sims: Simulation, scene: myScene):
-        for materialID in range(scene.material.mapping.shape[0] - 1):
-            start_index = scene.material.mapping[materialID]
-            end_index = scene.material.mapping[materialID + 1]
-            kernel_update_displacement_gradient_bbar_2D(
+    def update_velocity_gradient_bbar_2d(self, sims: Simulation, scene: SceneManager):
+        for material_id in range(scene.material.mapping.shape[0] - 1):
+            start_index = scene.material.mapping[material_id]
+            end_index = scene.material.mapping[material_id + 1]
+            kernel_update_displacement_gradient_bbar_2d(
                 scene.element.grid_nodes,
                 start_index,
                 end_index,
@@ -241,7 +244,7 @@ class ImplicitEngine(Engine):
                 scene.node,
                 scene.particle,
                 scene.material.materialID,
-                scene.material.matProps[materialID + 1],
+                scene.material.matProps[material_id + 1],
                 scene.material.stateVars,
                 scene.element.LnID,
                 scene.element.dshape_fn,
@@ -249,10 +252,10 @@ class ImplicitEngine(Engine):
                 scene.element.node_size,
             )
 
-    def update_velocity_gradient_bbar(self, sims: Simulation, scene: myScene):
-        for materialID in range(scene.material.mapping.shape[0] - 1):
-            start_index = scene.material.mapping[materialID]
-            end_index = scene.material.mapping[materialID + 1]
+    def update_velocity_gradient_bbar(self, sims: Simulation, scene: SceneManager):
+        for material_id in range(scene.material.mapping.shape[0] - 1):
+            start_index = scene.material.mapping[material_id]
+            end_index = scene.material.mapping[material_id + 1]
             kernel_update_displacement_gradient_bbar(
                 scene.element.grid_nodes,
                 start_index,
@@ -261,7 +264,7 @@ class ImplicitEngine(Engine):
                 scene.node,
                 scene.particle,
                 scene.material.materialID,
-                scene.material.matProps[materialID + 1],
+                scene.material.matProps[material_id + 1],
                 scene.material.stateVars,
                 scene.element.LnID,
                 scene.element.dshape_fn,
@@ -269,7 +272,7 @@ class ImplicitEngine(Engine):
                 scene.element.node_size,
             )
 
-    def compute_particle_kinematics(self, sims: Simulation, scene: myScene):
+    def compute_particle_kinematics(self, sims: Simulation, scene: SceneManager):
         kernel_kinemaitc_ig2p(
             scene.element.grid_nodes,
             sims.alphaPIC,
@@ -282,13 +285,13 @@ class ImplicitEngine(Engine):
             scene.element.node_size,
         )
 
-    def finalize_newton_raphson_iteration(self, sims: Simulation, scene: myScene):
+    def finalize_newton_raphson_iteration(self, sims: Simulation, scene: SceneManager):
         kernel_update_stress_strain_newmark(int(scene.particleNum[0]), scene.particle, sims.dt)
 
-    def update_grid_refinement(self, sims: Simulation, scene: myScene):
+    def update_grid_refinement(self, sims: Simulation, scene: SceneManager):
         scene.element.update_refinement(sims, scene)
 
-    def update_grid_refinement_profiled(self, sims: Simulation, scene: myScene):
+    def update_grid_refinement_profiled(self, sims: Simulation, scene: SceneManager):
         if getattr(scene.element, "adaptive", False) and scene.element.should_update_refinement(
             sims, scene.particleNum
         ):
@@ -296,12 +299,12 @@ class ImplicitEngine(Engine):
             self.update_adaptive_grid(sims, scene)
             sims.timer.end("Adaptive grid")
 
-    def find_active_nodes(self, scene: myScene):
+    def find_active_nodes(self, scene: SceneManager):
         find_active_node(self.iterator.node_stride(scene), scene.mass_cut_off, scene.node, scene.element.flag)
         scene.element.pse.run(scene.element.flag)
         return set_active_dofs(self.iterator.node_stride(scene), scene.mass_cut_off, scene.node, scene.element.flag)
 
-    def pre_calculation(self, sims: Simulation, scene: myScene, neighbor: SpatialHashGrid):
+    def pre_calculation(self, sims: Simulation, scene: SceneManager, neighbor: SpatialHashGrid):
         scene.element.calculate_characteristic_length(sims, int(scene.particleNum[0]), scene.particle, scene.psize)
         if sims.free_surface_detection:
             grid_mass_reset(scene.mass_cut_off, scene.node)
@@ -322,11 +325,11 @@ class ImplicitEngine(Engine):
                 scene.element.gnum,
             )
         self.compute_nodal_mass(sims, scene)
-        for materialID in range(scene.material.mapping.shape[0] - 1):
-            start_index = scene.material.mapping[materialID]
-            end_index = scene.material.mapping[materialID + 1]
+        for material_id in range(scene.material.mapping.shape[0] - 1):
+            start_index = scene.material.mapping[material_id]
+            end_index = scene.material.mapping[material_id + 1]
             scene.material.compute_elasto_plastic_stiffness(
-                materialID + 1, start_index, end_index, scene.particle, scene.material.materialID
+                material_id + 1, start_index, end_index, scene.particle, scene.material.materialID
             )
         total_dofs = estimate_active_grid_dofs(scene.mass_cut_off, scene.node)
         grid_mass_reset(scene.mass_cut_off, scene.node)
@@ -342,7 +345,7 @@ class ImplicitEngine(Engine):
         self.iterator.manage_operator(scene)
         self.iterator.operator.update_active_dofs(total_dofs)
 
-    def newmark_integrate(self, sims: Simulation, scene: myScene, neighbor=None):
+    def newmark_integrate(self, sims: Simulation, scene: SceneManager, neighbor=None):
         sims.timer.begin("Shape function")
         self.calculate_interpolation(sims, scene)
         sims.timer.end("Shape function")
@@ -392,7 +395,7 @@ class ImplicitEngine(Engine):
             iter_num += 1
 
         if not convergence:
-            raise RuntimeError(
+            raise NonlinearSolveError(
                 "Implicit MPM Newton solve did not converge: "
                 f"relative_displacement_correction={correction_error:.6e}, "
                 f"tolerance={sims.displacement_tolerance:.6e}, "
@@ -414,5 +417,5 @@ class ImplicitEngine(Engine):
         sims.timer.end("Compute residual")
         self.update_grid_refinement_profiled(sims, scene)
 
-    def affine_updating(self, sims: Simulation, scene: myScene, neighbor=None):
+    def affine_updating(self, sims: Simulation, scene: SceneManager, neighbor=None):
         self.newmark_integrate(sims, scene, neighbor)

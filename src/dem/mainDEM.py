@@ -1,12 +1,15 @@
+from src.dem.DEMBase import AffineBodySolver
+from src.dem.DEMBase import Solver
+from src.utils.errors import ConfigurationError, RecordingError, SimulationStateError
+from src.mpm.generator.Utilities import preprocess_soft_grid_template
 import numpy as np
 import taichi as ti
 
-from src.dem.SceneManager import myScene
+from src.dem.SceneManager import SceneManager
 from src.dem.GenerateManager import GenerateManager
 from src.dem.ContactManager import ContactManager
 from src.dem.engines.ExplicitEngine import ExplicitEngine
 from src.dem.engines.AffineBodyEngine import AffineBodyEngine
-from src.dem.DEMBase import Solver, AffineBodySolver
 from src.dem.PostPlot import write_dem_vtk_file, write_lsdem_vtk_file
 from src.dem.Recorder import WriteFile
 from src.dem.Simulation import Simulation
@@ -15,7 +18,7 @@ from src.utils.RegionFunction import RegionFunction
 from src.utils.SolverDiagnostics import SolverDiagnosticsMixin
 from src.utils.SolverConsole import print_solver_section, runtime_architecture
 from src.utils.StepRetry import StepRetryPolicy
-from src.utils.TypeDefination import vec3f
+from src.utils.TypeDefinition import vec3f
 
 
 class DEM(SolverDiagnosticsMixin):
@@ -29,7 +32,7 @@ class DEM(SolverDiagnosticsMixin):
             print("#", "".center(67), "#")
             print("# =================================================================== #", "\n")
         self.sims = Simulation()
-        self.scene = myScene()
+        self.scene = SceneManager()
         self.generator = GenerateManager()
         self.contactor = None
         self.enginer = None
@@ -39,81 +42,81 @@ class DEM(SolverDiagnosticsMixin):
 
     def set_configuration(self, log=True, **kwargs):
         if np.linalg.norm(np.array(self.sims.get_simulation_domain()) - np.zeros(3)) < 1e-10:
-            self.sims.set_domain(DictIO.GetEssential(kwargs, "domain"))
-        self.sims.set_boundary(DictIO.GetAlternative(kwargs, "boundary", [None, None, None]))
-        self.sims.set_gravity(DictIO.GetAlternative(kwargs, "gravity", vec3f([0.0, 0.0, -9.8])))
-        self.sims.set_engine(DictIO.GetAlternative(kwargs, "engine", "SymplecticEuler"))
-        self.sims.set_search(DictIO.GetAlternative(kwargs, "search", self.sims.search))
-        self.sims.set_search_direction(DictIO.GetAlternative(kwargs, "search_direction", "Up"))
+            self.sims.set_domain(DictIO.get_essential(kwargs, "domain"))
+        self.sims.set_boundary(DictIO.get_alternative(kwargs, "boundary", [None, None, None]))
+        self.sims.set_gravity(DictIO.get_alternative(kwargs, "gravity", vec3f([0.0, 0.0, -9.8])))
+        self.sims.set_engine(DictIO.get_alternative(kwargs, "engine", "SymplecticEuler"))
+        self.sims.set_search(DictIO.get_alternative(kwargs, "search", self.sims.search))
+        self.sims.set_search_direction(DictIO.get_alternative(kwargs, "search_direction", "Up"))
         self.sims.set_digital_elevation_contact_mode(
-            DictIO.GetAlternative(kwargs, "digital_elevation_contact", self.sims.digital_elevation_contact_mode)
+            DictIO.get_alternative(kwargs, "digital_elevation_contact", self.sims.digital_elevation_contact_mode)
         )
-        scheme = DictIO.GetAlternative(kwargs, "scheme", "DEM")
-        if DictIO.GetAlternative(kwargs, "affine_body", False):
+        scheme = DictIO.get_alternative(kwargs, "scheme", "DEM")
+        if DictIO.get_alternative(kwargs, "affine_body", False):
             scheme = "AffineBody"
         self.sims.set_dem_scheme(scheme)
         if scheme == "LSMPM" or "soft_shape_function" in kwargs or "lsmpm_shape_function" in kwargs:
-            soft_shape_function = DictIO.GetAlternative(
+            soft_shape_function = DictIO.get_alternative(
                 kwargs,
                 "soft_shape_function",
-                DictIO.GetAlternative(
+                DictIO.get_alternative(
                     kwargs,
                     "lsmpm_shape_function",
-                    DictIO.GetAlternative(kwargs, "shape_function", self.sims.soft_shape_function),
+                    DictIO.get_alternative(kwargs, "shape_function", self.sims.soft_shape_function),
                 ),
             )
             self.sims.set_soft_shape_function(soft_shape_function)
             self.sims.set_soft_grid_storage(
-                DictIO.GetAlternative(kwargs, "soft_grid_storage", self.sims.soft_grid_storage)
+                DictIO.get_alternative(kwargs, "soft_grid_storage", self.sims.soft_grid_storage)
             )
-            self.sims.set_soft_grid_type(DictIO.GetAlternative(kwargs, "soft_grid_type", self.sims.soft_grid_type))
+            self.sims.set_soft_grid_type(DictIO.get_alternative(kwargs, "soft_grid_type", self.sims.soft_grid_type))
             self.sims.set_soft_mechanical_grid_spacing_ratio(
-                DictIO.GetAlternative(
+                DictIO.get_alternative(
                     kwargs,
                     "soft_mechanical_grid_spacing_ratio",
                     self.sims.soft_mechanical_grid_spacing_ratio,
                 )
             )
             self.sims.set_soft_pic_fraction(
-                DictIO.GetAlternative(kwargs, "soft_pic_fraction", self.sims.soft_pic_fraction)
+                DictIO.get_alternative(kwargs, "soft_pic_fraction", self.sims.soft_pic_fraction)
             )
-            soft_rigid_contact = DictIO.GetAlternative(
-                kwargs, "soft_rigid_contact", DictIO.GetAlternative(kwargs, "lsmpm_soft_rigid_contact", None)
+            soft_rigid_contact = DictIO.get_alternative(
+                kwargs, "soft_rigid_contact", DictIO.get_alternative(kwargs, "lsmpm_soft_rigid_contact", None)
             )
             if soft_rigid_contact is not None:
                 self.sims.set_lsmpm_soft_rigid_contact(soft_rigid_contact)
-            soft_reinit = DictIO.GetAlternative(
+            soft_reinit = DictIO.get_alternative(
                 kwargs,
                 "soft_levelset_reinitialization",
-                DictIO.GetAlternative(kwargs, "lsmpm_levelset_reinitialization", None),
+                DictIO.get_alternative(kwargs, "lsmpm_levelset_reinitialization", None),
             )
             if isinstance(soft_reinit, dict):
                 self.sims.set_soft_levelset_reinitialization(**soft_reinit)
             elif soft_reinit is not None:
                 self.sims.set_soft_levelset_reinitialization(enabled=soft_reinit)
             self.sims.set_soft_levelset_reinitialization(
-                advection_scheme=DictIO.GetAlternative(kwargs, "soft_levelset_advection_scheme", None),
-                advection_cfl=DictIO.GetAlternative(kwargs, "soft_levelset_advection_cfl", None),
-                advection_interval=DictIO.GetAlternative(kwargs, "soft_levelset_advection_interval", None),
-                grad_threshold=DictIO.GetAlternative(kwargs, "soft_levelset_reinit_grad_threshold", None),
-                check_interval=DictIO.GetAlternative(kwargs, "soft_levelset_reinit_check_interval", None),
-                monitor_band=DictIO.GetAlternative(kwargs, "soft_levelset_reinit_monitor_band", None),
-                reinit_band=DictIO.GetAlternative(kwargs, "soft_levelset_reinit_band", None),
-                cfl=DictIO.GetAlternative(kwargs, "soft_levelset_reinit_cfl", None),
-                iterations=DictIO.GetAlternative(kwargs, "soft_levelset_reinit_iterations", None),
-                domain_check=DictIO.GetAlternative(kwargs, "soft_levelset_domain_check", None),
-                domain_tolerance_cells=DictIO.GetAlternative(kwargs, "soft_levelset_domain_tolerance_cells", None),
+                advection_scheme=DictIO.get_alternative(kwargs, "soft_levelset_advection_scheme", None),
+                advection_cfl=DictIO.get_alternative(kwargs, "soft_levelset_advection_cfl", None),
+                advection_interval=DictIO.get_alternative(kwargs, "soft_levelset_advection_interval", None),
+                grad_threshold=DictIO.get_alternative(kwargs, "soft_levelset_reinit_grad_threshold", None),
+                check_interval=DictIO.get_alternative(kwargs, "soft_levelset_reinit_check_interval", None),
+                monitor_band=DictIO.get_alternative(kwargs, "soft_levelset_reinit_monitor_band", None),
+                reinit_band=DictIO.get_alternative(kwargs, "soft_levelset_reinit_band", None),
+                cfl=DictIO.get_alternative(kwargs, "soft_levelset_reinit_cfl", None),
+                iterations=DictIO.get_alternative(kwargs, "soft_levelset_reinit_iterations", None),
+                domain_check=DictIO.get_alternative(kwargs, "soft_levelset_domain_check", None),
+                domain_tolerance_cells=DictIO.get_alternative(kwargs, "soft_levelset_domain_tolerance_cells", None),
             )
-        affine_parameters = DictIO.GetAlternative(kwargs, "affine_body_parameters", None)
+        affine_parameters = DictIO.get_alternative(kwargs, "affine_body_parameters", None)
         if affine_parameters is not None:
             self.sims.set_affine_body_parameters(**affine_parameters)
-        affine_assemble_type = DictIO.GetAlternative(kwargs, "affine_assemble_type", None)
+        affine_assemble_type = DictIO.get_alternative(kwargs, "affine_assemble_type", None)
         if affine_assemble_type is not None:
             self.sims.set_affine_body_parameters(assemble_type=affine_assemble_type)
-        self.sims.set_track_energy(DictIO.GetAlternative(kwargs, "track_energy", self.sims.energy_tracking))
-        self.sims.set_visualize(DictIO.GetAlternative(kwargs, "visualize", self.sims.visualize))
-        self.sims.set_enable_shell(DictIO.GetAlternative(kwargs, "enable_shell", self.sims.enable_shell))
-        self.sims.set_iterative_model(DictIO.GetAlternative(kwargs, "iterative_model", "LagrangianMultiplier"))
+        self.sims.set_track_energy(DictIO.get_alternative(kwargs, "track_energy", self.sims.energy_tracking))
+        self.sims.set_visualize(DictIO.get_alternative(kwargs, "visualize", self.sims.visualize))
+        self.sims.set_enable_shell(DictIO.get_alternative(kwargs, "enable_shell", self.sims.enable_shell))
+        self.sims.set_iterative_model(DictIO.get_alternative(kwargs, "iterative_model", "LagrangianMultiplier"))
         self.sims.validate_configuration(require_memory=False)
         if log:
             self.print_basic_simulation_info()
@@ -121,10 +124,10 @@ class DEM(SolverDiagnosticsMixin):
 
     def set_solver(self, solver, log=True):
         retry_policy = StepRetryPolicy(
-            enabled=DictIO.GetAlternative(solver, "enable_step_retry", False),
-            maximum_retries=DictIO.GetAlternative(solver, "step_retry_max_retries", 2),
-            reduction=DictIO.GetAlternative(solver, "step_retry_reduction", 0.5),
-            minimum_timestep=DictIO.GetAlternative(solver, "step_retry_minimum_timestep", 0.0),
+            enabled=DictIO.get_alternative(solver, "enable_step_retry", False),
+            maximum_retries=DictIO.get_alternative(solver, "step_retry_max_retries", 2),
+            reduction=DictIO.get_alternative(solver, "step_retry_reduction", 0.5),
+            minimum_timestep=DictIO.get_alternative(solver, "step_retry_minimum_timestep", 0.0),
         )
         retry_supported = self.sims.scheme == "AffineBody" or (
             self.sims.scheme == "LSMPM" and self.sims.lsmpm_soft_rigid_contact == "IPC"
@@ -135,12 +138,12 @@ class DEM(SolverDiagnosticsMixin):
         self.sims.step_retry_max_retries = retry_policy.maximum_retries
         self.sims.step_retry_reduction = retry_policy.reduction
         self.sims.step_retry_minimum_timestep = retry_policy.minimum_timestep
-        self.sims.set_timestep(DictIO.GetEssential(solver, "Timestep"))
-        self.sims.set_simulation_time(DictIO.GetEssential(solver, "SimulationTime"))
-        self.sims.set_CFL(DictIO.GetAlternative(solver, "CFL", 0.5))
-        self.sims.set_adaptive_timestep(DictIO.GetAlternative(solver, "AdaptiveStep", 0))
-        self.sims.set_save_interval(DictIO.GetEssential(solver, "SaveInterval"))
-        self.sims.set_save_path(DictIO.GetAlternative(solver, "SavePath", "OutputData"))
+        self.sims.set_timestep(DictIO.get_essential(solver, "Timestep"))
+        self.sims.set_simulation_time(DictIO.get_essential(solver, "SimulationTime"))
+        self.sims.set_cfl(DictIO.get_alternative(solver, "CFL", 0.5))
+        self.sims.set_adaptive_timestep(DictIO.get_alternative(solver, "AdaptiveStep", 0))
+        self.sims.set_save_interval(DictIO.get_essential(solver, "SaveInterval"))
+        self.sims.set_save_path(DictIO.get_alternative(solver, "SavePath", "OutputData"))
         if log:
             self.print_solver_info()
             print("\n")
@@ -169,74 +172,74 @@ class DEM(SolverDiagnosticsMixin):
         return point_num, surface_num, sdf_num
 
     def memory_allocate(self, memory, log=True):
-        self.sims.set_material_num(DictIO.GetEssential(memory, "max_material_number"))
+        self.sims.set_material_num(DictIO.get_essential(memory, "max_material_number"))
         if self.sims.scheme == "DEM":
-            self.sims.set_particle_num(DictIO.GetEssential(memory, "max_particle_number"))
-            self.sims.set_sphere_num(DictIO.GetAlternative(memory, "max_sphere_number", 0))
-            self.sims.set_clump_num(DictIO.GetAlternative(memory, "max_clump_number", 0))
+            self.sims.set_particle_num(DictIO.get_essential(memory, "max_particle_number"))
+            self.sims.set_sphere_num(DictIO.get_alternative(memory, "max_sphere_number", 0))
+            self.sims.set_clump_num(DictIO.get_alternative(memory, "max_clump_number", 0))
         elif self.sims.scheme == "AffineBody":
             if "max_affine_body_number" in memory:
-                affine_body_number = DictIO.GetEssential(memory, "max_affine_body_number")
+                affine_body_number = DictIO.get_essential(memory, "max_affine_body_number")
             else:
-                affine_body_number = DictIO.GetEssential(memory, "max_rigid_body_number")
+                affine_body_number = DictIO.get_essential(memory, "max_rigid_body_number")
             self.sims.set_rigid_body_num(affine_body_number)
-            self.sims.set_rigid_template_num(DictIO.GetAlternative(memory, "max_rigid_template_number", 1))
-            self.sims.set_surface_node_num(DictIO.GetAlternative(memory, "surface_node_number", 0))
+            self.sims.set_rigid_template_num(DictIO.get_alternative(memory, "max_rigid_template_number", 1))
+            self.sims.set_surface_node_num(DictIO.get_alternative(memory, "surface_node_number", 0))
         else:
-            self.sims.set_rigid_body_num(DictIO.GetEssential(memory, "max_rigid_body_number"))
-            self.sims.set_rigid_template_num(DictIO.GetAlternative(memory, "max_rigid_template_number", 1))
+            self.sims.set_rigid_body_num(DictIO.get_essential(memory, "max_rigid_body_number"))
+            self.sims.set_rigid_template_num(DictIO.get_alternative(memory, "max_rigid_template_number", 1))
             if self.sims.scheme == "LSDEM" or self.sims.scheme == "LSMPM":
-                self.sims.set_level_grid_num(DictIO.GetEssential(memory, "levelset_grid_number"))
-                self.sims.set_surface_node_num(DictIO.GetEssential(memory, "surface_node_number"))
+                self.sims.set_level_grid_num(DictIO.get_essential(memory, "levelset_grid_number"))
+                self.sims.set_surface_node_num(DictIO.get_essential(memory, "surface_node_number"))
                 self.sims.set_point_coordination_number(
-                    DictIO.GetAlternative(memory, "point_coordination_number", [4, 2])
+                    DictIO.get_alternative(memory, "point_coordination_number", [4, 2])
                 )
                 if self.sims.scheme == "LSMPM":
-                    self.sims.set_soft_body_num(DictIO.GetEssential(memory, "max_soft_body_number"))
-                    self.sims.set_material_point_num(DictIO.GetEssential(memory, "max_material_point_number"))
+                    self.sims.set_soft_body_num(DictIO.get_essential(memory, "max_soft_body_number"))
+                    self.sims.set_material_point_num(DictIO.get_essential(memory, "max_material_point_number"))
                     self.sims.set_soft_grid_num(
-                        DictIO.GetAlternative(
+                        DictIO.get_alternative(
                             memory,
                             "soft_grid_number",
-                            DictIO.GetEssential(memory, "levelset_grid_number"),
+                            DictIO.get_essential(memory, "levelset_grid_number"),
                         )
                     )
                     self.sims.set_soft_velocity_constraint_num(
-                        DictIO.GetAlternative(memory, "max_soft_velocity_constraint", 0)
+                        DictIO.get_alternative(memory, "max_soft_velocity_constraint", 0)
                     )
                     inferred = self._infer_soft_template_support_capacity()
                     self.sims.set_soft_template_support_num(
-                        DictIO.GetAlternative(
+                        DictIO.get_alternative(
                             memory,
                             "soft_template_material_point_number",
                             inferred[0] or self.sims.max_material_point_num,
                         ),
-                        DictIO.GetAlternative(
+                        DictIO.get_alternative(
                             memory,
                             "soft_template_surface_node_number",
                             inferred[1] or self.sims.max_surface_node_num * max(self.sims.max_rigid_template_num, 1),
                         ),
-                        DictIO.GetAlternative(
+                        DictIO.get_alternative(
                             memory,
                             "soft_template_levelset_node_number",
                             inferred[2] or self.sims.max_level_grid_num * max(self.sims.max_rigid_template_num, 1),
                         ),
                     )
-        self.sims.set_patch_num(DictIO.GetAlternative(memory, "max_patch_number", 0))
-        self.sims.set_facet_num(DictIO.GetAlternative(memory, "max_facet_number", 0))
-        self.sims.set_servo_wall_num(DictIO.GetAlternative(memory, "max_servo_wall_number", 0))
-        self.sims.set_plane_num(DictIO.GetAlternative(memory, "max_plane_number", 0))
+        self.sims.set_patch_num(DictIO.get_alternative(memory, "max_patch_number", 0))
+        self.sims.set_facet_num(DictIO.get_alternative(memory, "max_facet_number", 0))
+        self.sims.set_servo_wall_num(DictIO.get_alternative(memory, "max_servo_wall_number", 0))
+        self.sims.set_plane_num(DictIO.get_alternative(memory, "max_plane_number", 0))
         self.sims.set_digital_elevation_facet_num(
-            DictIO.GetAlternative(memory, "max_digital_elevation_facet_number", 0)
+            DictIO.get_alternative(memory, "max_digital_elevation_facet_number", 0)
         )
-        self.sims.set_compaction_ratio(DictIO.GetAlternative(memory, "compaction_ratio", [0.15, 0.05]))
-        self.sims.set_hierarchical_level(DictIO.GetAlternative(memory, "hierarchical_level", 1))
-        self.sims.set_rebuild_interval(DictIO.GetAlternative(memory, "bvh_rebuild_interval", 1000))
+        self.sims.set_compaction_ratio(DictIO.get_alternative(memory, "compaction_ratio", [0.15, 0.05]))
+        self.sims.set_hierarchical_level(DictIO.get_alternative(memory, "hierarchical_level", 1))
+        self.sims.set_rebuild_interval(DictIO.get_alternative(memory, "bvh_rebuild_interval", 1000))
         if self.sims.search == "HierarchicalLinkedCell":
-            self.sims.set_hierarchical_size(DictIO.GetEssential(memory, "hierarchical_size"))
+            self.sims.set_hierarchical_size(DictIO.get_essential(memory, "hierarchical_size"))
         self.sims.define_work_load()
 
-        self.sims.set_body_coordination_number(DictIO.GetAlternative(memory, "body_coordination_number", 16))
+        self.sims.set_body_coordination_number(DictIO.get_alternative(memory, "body_coordination_number", 16))
         affine_ipc = self.sims.scheme == "AffineBody" or (
             self.sims.scheme == "LSMPM" and self.sims.lsmpm_soft_rigid_contact == "IPC"
         )
@@ -250,17 +253,17 @@ class DEM(SolverDiagnosticsMixin):
             default_pt = 4 * self.sims.max_surface_node_num * int(body_coordination)
             default_ee = 12 * self.sims.max_surface_node_num * int(body_coordination)
             self.sims.set_affine_primitive_pair_capacity(
-                DictIO.GetAlternative(memory, "max_point_triangle_pairs", default_pt),
-                DictIO.GetAlternative(memory, "max_edge_edge_pairs", default_ee),
+                DictIO.get_alternative(memory, "max_point_triangle_pairs", default_pt),
+                DictIO.get_alternative(memory, "max_edge_edge_pairs", default_ee),
             )
             self.sims.set_affine_contact_block_capacity(
-                DictIO.GetAlternative(memory, "affine_contact_block_capacity", 256)
+                DictIO.get_alternative(memory, "affine_contact_block_capacity", 256)
             )
         self.sims.set_wall_coordination_number(
-            DictIO.GetAlternative(memory, "wall_coordination_number", self.sims.max_wall_num)
+            DictIO.get_alternative(memory, "wall_coordination_number", self.sims.max_wall_num)
         )
-        self.sims.set_verlet_distance_multiplier(DictIO.GetAlternative(memory, "verlet_distance_multiplier", 0.0))
-        self.sims.set_wall_per_cell(DictIO.GetAlternative(memory, "wall_per_cell", 4))
+        self.sims.set_verlet_distance_multiplier(DictIO.get_alternative(memory, "verlet_distance_multiplier", 0.0))
+        self.sims.set_wall_per_cell(DictIO.get_alternative(memory, "wall_per_cell", 4))
         self.sims.validate_configuration(require_memory=True)
 
         self.scene.activate_basic_class(self.sims)
@@ -409,8 +412,8 @@ class DEM(SolverDiagnosticsMixin):
     def add_template(self, template):
         types = self.sims.scheme
         if type(template) is dict:
-            types = DictIO.GetAlternative(
-                template, "TemplateType", DictIO.GetAlternative(template, "template_type", types)
+            types = DictIO.get_alternative(
+                template, "TemplateType", DictIO.get_alternative(template, "template_type", types)
             )
         self.generator.add_my_template(self.scene, template, types)
         if self.sims.max_particle_num > 0:
@@ -432,7 +435,7 @@ class DEM(SolverDiagnosticsMixin):
         reference_volume=None,
     ):
         if self.sims.scheme != "LSMPM":
-            raise RuntimeError("Soft-grid preprocessing requires scheme='LSMPM'")
+            raise ConfigurationError("Soft-grid preprocessing requires scheme='LSMPM'")
         if name not in self.generator.myTemplate:
             raise KeyError(f"Template name: {name} is not set before")
         if verlet_distance_multiplier is None:
@@ -449,10 +452,6 @@ class DEM(SolverDiagnosticsMixin):
         template_ptr.soft_mechanical_grid_spacing = float(mechanical_grid_spacing)
         template_ptr.soft_mechanical_grid_refinement = mechanical_grid_refinement
         template_ptr.soft_reference_volume = reference_volume
-
-        from src.mpm.generator.BodyGenerator import (
-            preprocess_soft_grid_template,
-        )
 
         material_points, point_volume, topology, support = preprocess_soft_grid_template(
             self.generator.myTemplate[name],
@@ -534,9 +533,9 @@ class DEM(SolverDiagnosticsMixin):
 
     def add_joint(self, joint):
         if self.sims.scheme != "AffineBody" and not self.is_lsmpm_soft_affine_ipc():
-            raise RuntimeError("AffineBody joints require the AffineBody scheme or LSMPM-Affine IPC coupling")
+            raise ConfigurationError("AffineBody joints require the AffineBody scheme or LSMPM-Affine IPC coupling")
         if self.enginer is not None and getattr(self.enginer, "operator", None) is not None:
-            raise RuntimeError("AffineBody joints must be added before the first simulation run")
+            raise ConfigurationError("AffineBody joints must be added before the first simulation run")
         self.scene.add_affine_joint(joint)
 
     def set_joint_target_angle(self, jointID, target_angle):
@@ -547,12 +546,12 @@ class DEM(SolverDiagnosticsMixin):
 
     def solve_affine_adjoint(self, loss_gradient):
         if self.enginer is None or not isinstance(self.enginer, AffineBodyEngine):
-            raise RuntimeError("solve_affine_adjoint requires an initialized AffineBody simulation")
+            raise RecordingError("solve_affine_adjoint requires an initialized AffineBody simulation")
         return self.enginer.solve_adjoint(loss_gradient)
 
     def differentiate_affine_step(self, loss_gradient):
         if self.enginer is None or not isinstance(self.enginer, AffineBodyEngine):
-            raise RuntimeError("differentiate_affine_step requires an initialized AffineBody simulation")
+            raise SimulationStateError("differentiate_affine_step requires an initialized AffineBody simulation")
         return self.enginer.differentiate_step_parameters(loss_gradient)
 
     def differentiable_affine(self, steps):
@@ -560,7 +559,7 @@ class DEM(SolverDiagnosticsMixin):
         if self.enginer is None:
             self.add_essentials()
         if not isinstance(self.enginer, AffineBodyEngine):
-            raise RuntimeError("differentiable_affine requires an AffineBody simulation")
+            raise SimulationStateError("differentiable_affine requires an AffineBody simulation")
         if self.enginer.operator is None:
             self.enginer.initialize(self.sims, self.scene)
         from src.dem.engines.DifferentiableABD import DifferentiableABD
@@ -574,7 +573,7 @@ class DEM(SolverDiagnosticsMixin):
         from src.mpdem.engines.SoftAffineIPCEngine import SoftAffineIPCEngine
 
         if not isinstance(self.enginer, SoftAffineIPCEngine):
-            raise RuntimeError("differentiable_soft_affine requires LSMPM-Affine IPC coupling")
+            raise SimulationStateError("differentiable_soft_affine requires LSMPM-Affine IPC coupling")
         if self.enginer.operator is None:
             self.enginer.initialize(self.sims, self.scene)
         from src.mpdem.engines.DifferentiableSoftAffine import (
@@ -601,7 +600,7 @@ class DEM(SolverDiagnosticsMixin):
             return
         self.choose_neighbor()
         if self.sims.max_material_num == 0:
-            raise RuntimeError("memory_allocate should be launched first!")
+            raise SimulationStateError("memory_allocate should be launched first!")
         self.sims.set_particle_particle_contact_model(particle_particle_contact_model)
         self.sims.set_particle_wall_contact_model(particle_wall_contact_model)
         self.contactor.particle_particle_initialize(self.sims)
@@ -614,16 +613,16 @@ class DEM(SolverDiagnosticsMixin):
             self.scene.add_affine_contact_property(materialID1, materialID2, property, dType)
             return
         if self.contactor is None:
-            raise RuntimeError("Please choose contact model /DEM.choose_contact_model/ first")
+            raise SimulationStateError("Please choose contact model /DEM.choose_contact_model/ first")
         self.contactor.add_contact_property(self.sims, materialID1, materialID2, property, dType)
 
     def inherit_property(self, materialID, property):
         pass
 
     def load_history_contact(self):
-        file_number = DictIO.GetAlternative(self.sims.history_contact_path, "file_number", 0)
-        ppcontact = DictIO.GetAlternative(self.sims.history_contact_path, "ppcontact", None)
-        pwcontact = DictIO.GetAlternative(self.sims.history_contact_path, "pwcontact", None)
+        file_number = DictIO.get_alternative(self.sims.history_contact_path, "file_number", 0)
+        ppcontact = DictIO.get_alternative(self.sims.history_contact_path, "ppcontact", None)
+        pwcontact = DictIO.get_alternative(self.sims.history_contact_path, "pwcontact", None)
 
         if not ppcontact is None:
             self.contactor.physpp.restart(self.contactor.neighbor, file_number, ppcontact, True)
@@ -679,7 +678,7 @@ class DEM(SolverDiagnosticsMixin):
                 if clump:
                     clump_path = file_path + f"/particles/DEMClump{file_number:06d}.npz"
                 if sphere is False and clump is False:
-                    raise RuntimeError("sphere or clump file is not exist")
+                    raise SimulationStateError("sphere or clump file is not exist")
             elif self.sims.scheme == "LSDEM":
                 rigid_path = file_path + f"/particles/LSDEMRigid{file_number:06d}.npz"
                 surface_path = file_path + f"/particles/LSDEMSurface{file_number:06d}.npz"
@@ -728,19 +727,19 @@ class DEM(SolverDiagnosticsMixin):
 
     def modify_parameters(self, **kwargs):
         if len(kwargs) > 0:
-            self.sims.set_simulation_time(DictIO.GetEssential(kwargs, "SimulationTime"))
+            self.sims.set_simulation_time(DictIO.get_essential(kwargs, "SimulationTime"))
             if "Timestep" in kwargs:
-                self.sims.set_timestep(DictIO.GetEssential(kwargs, "Timestep"))
+                self.sims.set_timestep(DictIO.get_essential(kwargs, "Timestep"))
             if "CFL" in kwargs:
-                self.sims.set_CFL(DictIO.GetEssential(kwargs, "CFL"))
+                self.sims.set_cfl(DictIO.get_essential(kwargs, "CFL"))
             if "AdaptiveTimestep" in kwargs:
-                self.sims.set_adaptive_timestep(DictIO.GetEssential(kwargs, "AdaptiveStep"))
+                self.sims.set_adaptive_timestep(DictIO.get_essential(kwargs, "AdaptiveStep"))
             if "SaveInterval" in kwargs:
-                self.sims.set_save_interval(DictIO.GetEssential(kwargs, "SaveInterval"))
+                self.sims.set_save_interval(DictIO.get_essential(kwargs, "SaveInterval"))
             if "SavePath" in kwargs:
-                self.sims.set_save_path(DictIO.GetEssential(kwargs, "SavePath"))
+                self.sims.set_save_path(DictIO.get_essential(kwargs, "SavePath"))
             if "gravity" in kwargs:
-                self.sims.set_gravity(DictIO.GetEssential(kwargs, "gravity"))
+                self.sims.set_gravity(DictIO.get_essential(kwargs, "gravity"))
 
     def add_engine(self, callback):
         if self.enginer is None:
@@ -780,12 +779,14 @@ class DEM(SolverDiagnosticsMixin):
                 )
             else:
                 self.solver = Solver(self.sims, self.generator, self.contactor, self.enginer, self.recorder)
-        if DictIO.GetAlternative(kwargs, "reset_function", True):
+        if DictIO.get_alternative(kwargs, "reset_function", True):
             self.solver.postprocess = []
             self.solver.clear_preintegration_callback_functions()
-        self.solver.set_preintegration_callback_function(DictIO.GetAlternative(kwargs, "preintegration_function", None))
-        self.solver.set_callback_function(DictIO.GetAlternative(kwargs, "function", None))
-        self.solver.set_particle_calm(self.scene, DictIO.GetAlternative(kwargs, "calm", None))
+        self.solver.set_preintegration_callback_function(
+            DictIO.get_alternative(kwargs, "preintegration_function", None)
+        )
+        self.solver.set_callback_function(DictIO.get_alternative(kwargs, "function", None))
+        self.solver.set_particle_calm(self.scene, DictIO.get_alternative(kwargs, "calm", None))
 
     def add_postfunctions(self, **functions):
         self.solver.set_callback_function(functions)
@@ -800,14 +801,14 @@ class DEM(SolverDiagnosticsMixin):
     def add_essentials(self, **kwargs):
         if self.sims.scheme == "AffineBody":
             self.sims.validate_configuration(require_memory=True)
-            self.add_engine(DictIO.GetAlternative(kwargs, "callback", None))
+            self.add_engine(DictIO.get_alternative(kwargs, "callback", None))
             self.add_recorder()
             self.add_solver(**kwargs)
             self.scene.set_boundary_condition(self.sims)
             return
         if self.is_lsmpm_soft_affine_ipc():
             self.sims.validate_configuration(require_memory=True)
-            self.add_engine(DictIO.GetAlternative(kwargs, "callback", None))
+            self.add_engine(DictIO.get_alternative(kwargs, "callback", None))
             self.add_recorder()
             self.add_solver(**kwargs)
             self.scene.set_boundary_condition(self.sims)
@@ -824,10 +825,10 @@ class DEM(SolverDiagnosticsMixin):
                 self.contactor.initialize(self.sims, self.scene, **kwargs)
         else:
             if self.sims.coupling is False:
-                raise RuntimeError("Particle should be added first")
+                raise SimulationStateError("Particle should be added first")
         if self.first_run:
             self.load_history_contact()
-        self.add_engine(DictIO.GetAlternative(kwargs, "callback", None))
+        self.add_engine(DictIO.get_alternative(kwargs, "callback", None))
         self.add_recorder()
         if self.sims.coupling == False:
             self.add_solver(**kwargs)
@@ -863,14 +864,14 @@ class DEM(SolverDiagnosticsMixin):
     def run(self, visualize=False, **kwargs):
         self.add_essentials(**kwargs)
         if self.sims.scheme == "AffineBody":
-            self.solver.Solver(self.scene)
+            self.solver.solve(self.scene)
             self.first_run = False
             return
         self.check_critical_timestep()
         if visualize is False:
-            self.solver.Solver(self.scene)
+            self.solver.solve(self.scene)
         else:
-            self.solver.Visualize(self.scene)
+            self.solver.visualize(self.scene)
         self.first_run = False
 
     def check_critical_timestep(self):

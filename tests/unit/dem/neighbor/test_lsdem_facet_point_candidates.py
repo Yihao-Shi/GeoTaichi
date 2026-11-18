@@ -1,4 +1,5 @@
 from __future__ import annotations
+from src.dem.structs.BaseStruct import VerticeNode
 
 import numpy as np
 import pytest
@@ -6,26 +7,22 @@ import pytest
 ti = pytest.importorskip("taichi")
 
 from src.dem.contact.ContactKernel import (
-    LSparticle_wall_contact_model,
+    l_sparticle_wall_contact_model,
     kernel_accumulate_linear_lsparticle_wall_elastic_energy,
-    kernel_LSparticle_wall_force_assemble_,
+    kernel_l_sparticle_wall_force_assemble,
 )
-from src.dem.neighbor.neighbor_kernel import (
-    accumulate_pwrelative_displacement_,
-    board_search_lsparticle_wall_linked_cell_,
-    flag_relative_displacement_,
+from src.dem.neighbor.NeighborKernel import (
+    accumulate_pwrelative_displacement,
+    board_search_lsparticle_wall_linked_cell,
+    flag_relative_displacement,
 )
-from src.dem.structs.BaseStruct import (
-    BoundingBox,
-    ContactTable,
-    FacetFamily,
-    ParticleFamily,
-    RigidBody,
-    VerletContactTable,
-    VerticeNode,
-)
-from src.physics_model.contact_model.LinearModel import LinearSurfaceProperty
+from src.dem.structs.BaseStruct import ContactTable, VerletContactTable
 
+from src.dem.structs.BoundingBox import BoundingBox
+from src.dem.structs.FacetFamily import FacetFamily
+from src.dem.structs.ParticleFamily import ParticleFamily
+from src.dem.structs.RigidBody import RigidBody
+from src.physics_model.contact_model.LinearModel import LinearSurfaceProperty
 
 pytestmark = [pytest.mark.unit, pytest.mark.dem, pytest.mark.cpu]
 
@@ -117,7 +114,7 @@ def test_surface_node_retains_adjacent_facets_and_resolves_only_finite_face():
         0.0,
         0.0,
     )
-    board_search_lsparticle_wall_linked_cell_(
+    board_search_lsparticle_wall_linked_cell(
         1,
         2,
         5.0e-2,
@@ -153,7 +150,7 @@ def test_surface_node_retains_adjacent_facets_and_resolves_only_finite_face():
     # Inactive facets are excluded even if they remain in a stale body-level
     # BVH/Verlet table.
     deactivate_wall_zero()
-    board_search_lsparticle_wall_linked_cell_(
+    board_search_lsparticle_wall_linked_cell(
         1,
         2,
         5.0e-2,
@@ -170,7 +167,7 @@ def test_surface_node_retains_adjacent_facets_and_resolves_only_finite_face():
     assert int(potential_point_wall[0]) == 1
     activate_wall_zero()
 
-    kernel_LSparticle_wall_force_assemble_(
+    kernel_l_sparticle_wall_force_assemble(
         1,
         dt,
         1,
@@ -182,7 +179,7 @@ def test_surface_node_retains_adjacent_facets_and_resolves_only_finite_face():
         wall,
         contacts,
         contact_prefix,
-        LSparticle_wall_contact_model,
+        l_sparticle_wall_contact_model,
     )
 
     forces = contacts.cnforce.to_numpy()
@@ -226,7 +223,7 @@ def test_surface_node_retains_adjacent_facets_and_resolves_only_finite_face():
     # Force assembly is defensive as well: deactivation clears a contact
     # immediately, before any subsequent neighbor rebuild.
     deactivate_wall_one()
-    kernel_LSparticle_wall_force_assemble_(
+    kernel_l_sparticle_wall_force_assemble(
         1,
         dt,
         1,
@@ -238,7 +235,7 @@ def test_surface_node_retains_adjacent_facets_and_resolves_only_finite_face():
         wall,
         contacts,
         contact_prefix,
-        LSparticle_wall_contact_model,
+        l_sparticle_wall_contact_model,
     )
     np.testing.assert_allclose(contacts.cnforce.to_numpy()[1], np.zeros(3))
     activate_wall_one()
@@ -254,7 +251,7 @@ def test_surface_node_retains_adjacent_facets_and_resolves_only_finite_face():
     # A deeply penetrated point remains paired with the active finite face,
     # but the facet on the other side of the diagonal is not retained.
     set_deep_surface_node()
-    board_search_lsparticle_wall_linked_cell_(
+    board_search_lsparticle_wall_linked_cell(
         1,
         2,
         5.0e-2,
@@ -273,7 +270,7 @@ def test_surface_node_retains_adjacent_facets_and_resolves_only_finite_face():
     # A point far behind both finite triangles must not be retained merely
     # because its signed distance is negative.
     set_far_surface_node()
-    board_search_lsparticle_wall_linked_cell_(
+    board_search_lsparticle_wall_linked_cell(
         1,
         2,
         5.0e-2,
@@ -316,7 +313,7 @@ def test_lsdem_point_wall_sweep_accumulates_on_device_before_flag_read():
 
     initialize()
     for _ in range(3):
-        accumulate_pwrelative_displacement_(
+        accumulate_pwrelative_displacement(
             1,
             dt,
             particle,
@@ -330,7 +327,7 @@ def test_lsdem_point_wall_sweep_accumulates_on_device_before_flag_read():
         broad_pairs.verletDisp.to_numpy()[0],
         np.array([-0.3, 0.0, -0.3]),
     )
-    flag_relative_displacement_(
+    flag_relative_displacement(
         0.17,
         1,
         particle_wall,

@@ -1,3 +1,4 @@
+from src.utils.errors import CapacityError, ConfigurationError, SimulationStateError
 from itertools import product
 
 import numpy as np
@@ -40,7 +41,7 @@ from src.mpm.elements.AdaptiveQuadrilateralKernel import (
 )
 from src.mpm.elements.QuadrilateralElement4Nodes import QuadrilateralElement4Nodes
 from src.utils.ObjectIO import DictIO
-from src.utils.TypeDefination import vec2f, vec2i
+from src.utils.TypeDefinition import vec2f, vec2i
 
 
 class AdaptiveQuadrilateralElement(QuadrilateralElement4Nodes):
@@ -51,44 +52,44 @@ class AdaptiveQuadrilateralElement(QuadrilateralElement4Nodes):
         self.adaptive = True
         self.refinement_ratio = 2
         self.max_level = int(
-            DictIO.GetAlternative(
+            DictIO.get_alternative(
                 adaptive_grid,
                 "MaxLevel",
-                DictIO.GetAlternative(adaptive_grid, "MaxRefinementLevel", 1),
+                DictIO.get_alternative(adaptive_grid, "MaxRefinementLevel", 1),
             )
         )
         self.finest_ratio = self.refinement_ratio**self.max_level
-        self.refine_interval = int(DictIO.GetAlternative(adaptive_grid, "RefineInterval", 50))
+        self.refine_interval = int(DictIO.get_alternative(adaptive_grid, "RefineInterval", 50))
         self.particle_split_interval = int(
-            DictIO.GetAlternative(adaptive_grid, "ParticleSplitInterval", self.refine_interval)
+            DictIO.get_alternative(adaptive_grid, "ParticleSplitInterval", self.refine_interval)
         )
-        self.refine_threshold = float(DictIO.GetAlternative(adaptive_grid, "RefineThreshold", 2e-3))
-        self.refine_criterion = str(DictIO.GetAlternative(adaptive_grid, "RefineCriterion", "Auto")).strip()
-        self.max_refined_ratio = float(DictIO.GetAlternative(adaptive_grid, "RefineRatio", 0.2))
-        self.refine_particles = bool(DictIO.GetAlternative(adaptive_grid, "RefineParticles", True))
-        self.follow_refined_particles = bool(DictIO.GetAlternative(adaptive_grid, "FollowRefinedParticles", True))
+        self.refine_threshold = float(DictIO.get_alternative(adaptive_grid, "RefineThreshold", 2e-3))
+        self.refine_criterion = str(DictIO.get_alternative(adaptive_grid, "RefineCriterion", "Auto")).strip()
+        self.max_refined_ratio = float(DictIO.get_alternative(adaptive_grid, "RefineRatio", 0.2))
+        self.refine_particles = bool(DictIO.get_alternative(adaptive_grid, "RefineParticles", True))
+        self.follow_refined_particles = bool(DictIO.get_alternative(adaptive_grid, "FollowRefinedParticles", True))
         self.follow_refined_particles_interval = int(
-            DictIO.GetAlternative(
+            DictIO.get_alternative(
                 adaptive_grid,
                 "FollowRefinedParticlesInterval",
                 min(self.refine_interval, 20),
             )
         )
-        self.buffer_cells = int(DictIO.GetAlternative(adaptive_grid, "BufferCells", 1))
-        self.penalty = float(DictIO.GetAlternative(adaptive_grid, "Penalty", 1.0))
-        self.penalty_iterations = int(DictIO.GetAlternative(adaptive_grid, "PenaltyIterations", 1))
-        self.penalty_beta = float(DictIO.GetAlternative(adaptive_grid, "PenaltyBeta", 10.0))
+        self.buffer_cells = int(DictIO.get_alternative(adaptive_grid, "BufferCells", 1))
+        self.penalty = float(DictIO.get_alternative(adaptive_grid, "Penalty", 1.0))
+        self.penalty_iterations = int(DictIO.get_alternative(adaptive_grid, "PenaltyIterations", 1))
+        self.penalty_beta = float(DictIO.get_alternative(adaptive_grid, "PenaltyBeta", 10.0))
         self.penalty_young = 0.0
         self.penalty_length = 0.0
         self.penalty_reference_volume = 0.0
-        self.bridging_domain = bool(DictIO.GetAlternative(adaptive_grid, "BridgingDomain", False))
-        self.bridging_cells = int(DictIO.GetAlternative(adaptive_grid, "BridgingCells", 1))
-        self.hanging_constraint_mode = str(DictIO.GetAlternative(adaptive_grid, "HangingConstraintMode", "Penalty"))
+        self.bridging_domain = bool(DictIO.get_alternative(adaptive_grid, "BridgingDomain", False))
+        self.bridging_cells = int(DictIO.get_alternative(adaptive_grid, "BridgingCells", 1))
+        self.hanging_constraint_mode = str(DictIO.get_alternative(adaptive_grid, "HangingConstraintMode", "Penalty"))
         self.strong_hanging_constraint = self.hanging_constraint_mode in (
             "Shape",
             "ShapeFunction",
         )
-        self.hanging_shape_capacity_factor = int(DictIO.GetAlternative(adaptive_grid, "HangingShapeCapacityFactor", 3))
+        self.hanging_shape_capacity_factor = int(DictIO.get_alternative(adaptive_grid, "HangingShapeCapacityFactor", 3))
 
         self.coarse_grid_size = vec2f(0.0, 0.0)
         self.coarse_igrid_size = vec2f(0.0, 0.0)
@@ -270,7 +271,7 @@ class AdaptiveQuadrilateralElement(QuadrilateralElement4Nodes):
             unsupported.append("non-periodic boundaries")
         if unsupported:
             requirements = ", ".join(unsupported)
-            raise RuntimeError(f"AdaptiveGrid currently requires: {requirements}")
+            raise SimulationStateError(f"AdaptiveGrid currently requires: {requirements}")
 
     def create_nodes(self, sims: Simulation, grid_size):
         self.validate_solver(sims)
@@ -557,7 +558,7 @@ class AdaptiveQuadrilateralElement(QuadrilateralElement4Nodes):
                 self.shape_function_center,
             )
             if self.strong_hanging_constraint and int(self.hanging_shape_overflow[None]) != 0:
-                raise RuntimeError(
+                raise CapacityError(
                     "AdaptiveGrid/HangingShapeCapacityFactor is too small for "
                     f"{self.hanging_constraint_mode}. Current support capacity is "
                     f"{self.grid_nodes} nodes per particle "
@@ -598,7 +599,7 @@ class AdaptiveQuadrilateralElement(QuadrilateralElement4Nodes):
             grad_shape_function_z,
         )
         if self.strong_hanging_constraint and int(self.hanging_shape_overflow[None]) != 0:
-            raise RuntimeError(
+            raise CapacityError(
                 "AdaptiveGrid/HangingShapeCapacityFactor is too small for "
                 f"{self.hanging_constraint_mode}. Current support capacity is "
                 f"{self.grid_nodes} nodes per particle "
@@ -637,7 +638,9 @@ class AdaptiveQuadrilateralElement(QuadrilateralElement4Nodes):
             return mark_refined_cells_stress_2d
 
         if material_name == "LinearElasticModel":
-            raise RuntimeError("AdaptiveGrid/RefineCriterion for LinearElastic must be " "Auto or EquivalentStress")
+            raise ConfigurationError(
+                "AdaptiveGrid/RefineCriterion for LinearElastic must be " "Auto or EquivalentStress"
+            )
 
         if criterion in ("plasticstrain", "equivalentplasticstrain"):
             if material_name == "ElasticPerfectlyPlasticModel":
@@ -659,7 +662,7 @@ class AdaptiveQuadrilateralElement(QuadrilateralElement4Nodes):
             if material_name in ("DruckerPragerModel", "ModifiedCamClayModel"):
                 return mark_refined_cells_softening_2d if is_soft else mark_refined_cells_epdstrain_2d
 
-        raise RuntimeError(
+        raise SimulationStateError(
             f"AdaptiveGrid/RefineCriterion={self.refine_criterion} does not " f"support material {material_name}"
         )
 
@@ -739,7 +742,7 @@ class AdaptiveQuadrilateralElement(QuadrilateralElement4Nodes):
                 refined_ratio = refined_cells / self.cellSum
                 if refined_extra_cells > self.max_refined_extra_cells:
                     refined_extra_ratio = refined_extra_cells / (self.cellSum * self.refined_cell_expansion)
-                    raise RuntimeError(
+                    raise CapacityError(
                         f"AdaptiveGrid refined coarse-cell ratio "
                         f"{refined_ratio:.6f} "
                         f"(extra fine-cell ratio {refined_extra_ratio:.6f}) "

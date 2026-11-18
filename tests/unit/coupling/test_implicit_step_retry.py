@@ -5,9 +5,9 @@ import pytest
 pytest.importorskip("taichi")
 
 from src.fedem.AffineIPCEngine import FEMAffineIPCEngine
-from src.fem.engines.ImplicitFEM import NewtonConvergenceError
 from src.fempm.ImplicitEngine import FEMPMImplicitEngine
 from src.utils.StepRetry import StepRetryPolicy
+from src.utils.errors import NewtonConvergenceError
 
 
 def test_fempm_run_does_not_take_a_floating_point_extra_step():

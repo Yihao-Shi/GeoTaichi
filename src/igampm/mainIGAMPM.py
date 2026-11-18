@@ -1,3 +1,4 @@
+from src.utils.errors import BackendError, ConfigurationError, SimulationStateError
 from src.igampm.ContactManager import ContactManager
 from src.igampm.Simulation import Simulation
 import src.igampm.config as config
@@ -36,9 +37,9 @@ class IGAMPM(SolverDiagnosticsMixin):
         self.sims = Simulation()
         self.contact_kwargs = dict(kwargs)
         self.contactor = ContactManager(**kwargs)
-        if self.contactor.contact_model != "IPC" and not self.mpm.sims.is_direct_backend():
+        if self.contactor.contact_model != "BarrierIPC" and not self.mpm.sims.is_direct_backend():
             if self.mpm.scene.particle is not None and self.mpm.sims.coupling != "Lagrangian":
-                raise RuntimeError(
+                raise SimulationStateError(
                     "construct explicit IGA-MPM before allocating MPM "
                     "particles, or configure coupling='Lagrangian' first"
                 )
@@ -55,19 +56,19 @@ class IGAMPM(SolverDiagnosticsMixin):
         self,
         dimension=None,
         coupling_scheme="IGAMPM",
-        contact_model="IPC",
+        contact_model="BarrierIPC",
         activate_friction=False,
         axisymmetric=False,
         axis_offset=0.0,
         log=True,
     ):
         if self.engine is not None and dimension is not None and int(dimension) != int(self.sims.dimension):
-            raise RuntimeError(
+            raise SimulationStateError(
                 "IGA-MPM dimension cannot be changed after build(); "
                 "the coupled fields and Taichi kernels use the build-time dimension"
             )
         if self.engine is not None:
-            raise RuntimeError(
+            raise SimulationStateError(
                 "IGA-MPM configuration cannot be changed after build(); " "construct a new coupling engine instead"
             )
         self.sims.set_configuration(
@@ -102,11 +103,13 @@ class IGAMPM(SolverDiagnosticsMixin):
             ],
         )
 
-    def choose_contact_model(self, contact_model="IPC", **kwargs):
+    def choose_contact_model(self, contact_model="BarrierIPC", **kwargs):
         if self.engine is not None:
             if bool(getattr(self.engine, "implicit_step_in_progress", False)):
-                raise RuntimeError("IGA-MPM contact parameters cannot be changed during an " "implicit IPC time step")
-            raise RuntimeError(
+                raise SimulationStateError(
+                    "IGA-MPM contact parameters cannot be changed during an " "implicit IPC time step"
+                )
+            raise SimulationStateError(
                 "IGA-MPM contact_model cannot be changed after build(); "
                 "friction mode and all contact parameters are frozen"
             )
@@ -116,12 +119,12 @@ class IGAMPM(SolverDiagnosticsMixin):
         updated_contact_kwargs.update(kwargs)
         candidate_kwargs = {key: value for key, value in updated_contact_kwargs.items() if key != "contact_model"}
         candidate = ContactManager(contact_model=contact_model, **candidate_kwargs)
-        if candidate.contact_model != "IPC":
+        if candidate.contact_model != "BarrierIPC":
             sims = getattr(self.mpm, "sims", None)
             scene = getattr(self.mpm, "scene", None)
             if sims is not None and not sims.is_direct_backend():
                 if getattr(scene, "particle", None) is not None and sims.coupling != "Lagrangian":
-                    raise RuntimeError(
+                    raise SimulationStateError(
                         "select explicit IGA-MPM contact before allocating MPM "
                         "particles, or configure coupling='Lagrangian' first"
                     )
@@ -148,13 +151,13 @@ class IGAMPM(SolverDiagnosticsMixin):
     def set_solver(self, iga=None, mpm=None, coupling=None, log=True, **kwargs):
         if iga is not None:
             if not hasattr(self.iga, "set_solver"):
-                raise RuntimeError("The current IGA object does not support set_solver().")
+                raise SimulationStateError("The current IGA object does not support set_solver().")
             iga_parameters = dict(iga)
             iga_parameters.setdefault("log", False)
             self.iga.set_solver(**iga_parameters)
         if mpm is not None:
             if not hasattr(self.mpm, "set_solver"):
-                raise RuntimeError("The current MPM object does not support set_solver().")
+                raise SimulationStateError("The current MPM object does not support set_solver().")
             self.mpm.set_solver(mpm, log=False)
         has_coupling_parameters = coupling is not None or bool(kwargs)
         coupling_parameters = {} if coupling is None else dict(coupling)
@@ -176,11 +179,11 @@ class IGAMPM(SolverDiagnosticsMixin):
             step_retry_reduction=retry_policy.reduction,
             step_retry_minimum_timestep=retry_policy.minimum_timestep,
         )
-        if retry_policy.enabled and self.contactor.contact_model != "IPC":
+        if retry_policy.enabled and self.contactor.contact_model != "BarrierIPC":
             raise ValueError("IGA-MPM step retry is available only for implicit IPC contact")
         if coupling_parameters:
             if self.engine is not None:
-                raise RuntimeError("IGA-MPM solver settings cannot change after build()")
+                raise SimulationStateError("IGA-MPM solver settings cannot change after build()")
             if "monolithic_linear_solver_tolerance" in coupling_parameters:
                 coupling_parameters.setdefault("monolithic_linear_solver_relative_tolerance", 0.0)
             self.contact_kwargs.update(coupling_parameters)
@@ -267,7 +270,7 @@ class IGAMPM(SolverDiagnosticsMixin):
 
     def print_neighbor_search_info(self):
         engine = self.engine
-        explicit = self.contactor.contact_model != "IPC"
+        explicit = self.contactor.contact_model != "BarrierIPC"
         print_solver_section(
             "IGAMPM",
             "Neighbor Search Information",
@@ -296,7 +299,7 @@ class IGAMPM(SolverDiagnosticsMixin):
             if dimension is not None:
                 config.set_dimension(dimension)
             return self.iga.build()
-        raise RuntimeError("IGAMPM requires an IGA wrapper with build() or a built IGA engine.")
+        raise SimulationStateError("IGAMPM requires an IGA wrapper with build() or a built IGA engine.")
 
     def _build_mpm_engine(self):
         if hasattr(self.mpm, "build_surface_node") and hasattr(self.mpm, "particle"):
@@ -307,9 +310,9 @@ class IGAMPM(SolverDiagnosticsMixin):
                 config.set_dimension(dimension)
             self.mpm.add_engine()
             if getattr(self.mpm, "enginer", None) is None:
-                raise RuntimeError("MPM wrapper did not build an engine.")
+                raise SimulationStateError("MPM wrapper did not build an engine.")
             return self.mpm.enginer
-        raise RuntimeError("IGAMPM requires an MPM wrapper with add_engine() or a built MPM engine.")
+        raise SimulationStateError("IGAMPM requires an MPM wrapper with add_engine() or a built MPM engine.")
 
     def _prepare_mpm_engine(self, mpm):
         if int(mpm.active_dof) > 0:
@@ -338,38 +341,38 @@ class IGAMPM(SolverDiagnosticsMixin):
         mpm_implicit = self._is_implicit_engine(self.mpm_engine)
         if iga_implicit and mpm_implicit:
             return
-        raise RuntimeError("IGA-MPM IPC requires both IGA and MPM solvers to be implicit")
+        raise ConfigurationError("IGA-MPM IPC requires both IGA and MPM solvers to be implicit")
 
     def _build_explicit_engine(self):
         if bool(self.contact_kwargs.get("enable_step_retry", False)):
             raise ValueError("IGA-MPM step retry is available only for implicit IPC contact")
         if self.sims.dimension != 3 or self.sims.is_axisymmetric:
-            raise RuntimeError(
+            raise SimulationStateError(
                 "explicit DEM-law IGA-MPM contact currently supports 3D "
                 "Cartesian simulations; use IPC for 2D/axisymmetric coupling"
             )
         if self._is_implicit_engine(self.iga_engine):
-            raise RuntimeError("explicit IGA-MPM requires an Explicit IGA solver")
+            raise ConfigurationError("explicit IGA-MPM requires an Explicit IGA solver")
         if self.mpm.sims.is_direct_backend():
-            raise RuntimeError("explicit IGA-MPM requires the native particle/grid MPM backend")
+            raise BackendError("explicit IGA-MPM requires the native particle/grid MPM backend")
         if self.mpm.sims.solver_type != "Explicit":
-            raise RuntimeError("explicit IGA-MPM requires an Explicit MPM solver")
+            raise ConfigurationError("explicit IGA-MPM requires an Explicit MPM solver")
         if self.mpm.sims.coupling != "Lagrangian":
-            raise RuntimeError("explicit IGA-MPM requires MPM coupling='Lagrangian'")
+            raise SimulationStateError("explicit IGA-MPM requires MPM coupling='Lagrangian'")
         if not self.contactor.phys.pending_properties:
-            raise RuntimeError("add at least one explicit IGA-MPM contact property before build()")
+            raise SimulationStateError("add at least one explicit IGA-MPM contact property before build()")
         self.mpm.scene.update_coupling_points_number(self.mpm.sims)
         if int(self.mpm.scene.couplingNum[0]) <= 0:
-            raise RuntimeError("explicit IGA-MPM requires at least one coupled MPM point")
+            raise SimulationStateError("explicit IGA-MPM requires at least one coupled MPM point")
         self.mpm.add_essentials(**self.contact_kwargs)
         self.mpm_engine = self.mpm.enginer
         mpm_dt = float(self.mpm.sims.dt[None])
         iga_dt = float(self.iga_engine.dt)
         if mpm_dt <= 0.0 or iga_dt <= 0.0:
-            raise RuntimeError("explicit IGA-MPM requires positive child timesteps")
+            raise ConfigurationError("explicit IGA-MPM requires positive child timesteps")
         tolerance = 1.0e-12 * max(1.0, abs(mpm_dt), abs(iga_dt))
         if abs(mpm_dt - iga_dt) > tolerance:
-            raise RuntimeError("explicit IGA-MPM child solvers must use the same timestep")
+            raise SimulationStateError("explicit IGA-MPM child solvers must use the same timestep")
         from src.igampm.engines.ExplicitEngine import ExplicitEngine
 
         return ExplicitEngine(self.iga, self.mpm, self.contactor, **self.contact_kwargs)
@@ -380,7 +383,7 @@ class IGAMPM(SolverDiagnosticsMixin):
             return self.engine
         self.add_essentials()
         self.iga_engine = self._build_iga_engine()
-        if self.contactor.contact_model != "IPC":
+        if self.contactor.contact_model != "BarrierIPC":
             self.engine = self._build_explicit_engine()
             self.engine.timer = self.sims.timer
             self._freeze_built_configuration()
@@ -394,7 +397,7 @@ class IGAMPM(SolverDiagnosticsMixin):
         iga_axisymmetric = bool(getattr(self.iga_engine, "is_axisymmetric", False))
         mpm_axisymmetric = bool(getattr(self.mpm_engine, "is_axisymmetric", False))
         if iga_axisymmetric != mpm_axisymmetric:
-            raise RuntimeError(
+            raise ConfigurationError(
                 "IGA-MPM axisymmetric IPC requires both child solvers to use " "the same axisymmetric mode"
             )
         axis_configuration_explicit = (
@@ -406,14 +409,14 @@ class IGAMPM(SolverDiagnosticsMixin):
             else bool(self.contact_kwargs.get("axisymmetric", False))
         )
         if axis_configuration_explicit and requested_axisymmetric != iga_axisymmetric:
-            raise RuntimeError(
+            raise SimulationStateError(
                 "IGA-MPM coupling and both child solvers must use the same " "planar or axisymmetric mode"
             )
         if iga_axisymmetric:
             iga_axis = float(self.iga_engine.axis_offset)
             mpm_axis = float(self.mpm_engine.axis_offset)
             if abs(iga_axis - mpm_axis) > 1.0e-12 * max(1.0, abs(iga_axis), abs(mpm_axis)):
-                raise RuntimeError("IGA-MPM axisymmetric child solvers must share axis_offset")
+                raise SimulationStateError("IGA-MPM axisymmetric child solvers must share axis_offset")
             requested_axis_offset = (
                 float(self.sims.axis_offset)
                 if self.sims.axis_configuration_explicit
@@ -423,11 +426,11 @@ class IGAMPM(SolverDiagnosticsMixin):
             if axis_offset_explicit and abs(requested_axis_offset - iga_axis) > 1.0e-12 * max(
                 1.0, abs(requested_axis_offset), abs(iga_axis)
             ):
-                raise RuntimeError("IGA-MPM coupling and child solvers must share axis_offset")
+                raise SimulationStateError("IGA-MPM coupling and child solvers must share axis_offset")
             self.sims.is_axisymmetric = True
             self.sims.axis_offset = iga_axis
         self._prepare_mpm_engine(self.mpm_engine)
-        from src.igampm.engines import Engine
+        from src.igampm.engines.CoupledEngine import Engine
 
         self.engine = Engine(self.iga_engine, self.mpm_engine, self.contactor, **self.contact_kwargs)
         self.engine.timer = self.sims.timer
@@ -458,7 +461,7 @@ class IGAMPM(SolverDiagnosticsMixin):
     ):
         engine = self.build()
         print_simulation_start("IGAMPM")
-        if self.contactor.contact_model != "IPC":
+        if self.contactor.contact_model != "BarrierIPC":
             unsupported = any(
                 value is not None
                 for value in (

@@ -7,6 +7,9 @@ callback after every accepted step; the time integration and boundary update
 therefore remain on device.
 """
 
+from src.utils.RuntimeHook import python_callback
+
+
 import argparse
 import json
 import math
@@ -36,7 +39,6 @@ from examples.mmpm.TwoPhaseWavemaker3D.draw.evaluate_two_layer_two_phase_wavemak
 
 
 from geotaichi import MPM, init
-from src.utils.SolverRuntime import python_callback
 
 DX_DEFAULT = 0.02
 # Keep seven cells of initial headspace: run-up compressed the former

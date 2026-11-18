@@ -171,7 +171,7 @@ fixed_nodes = np.concatenate(
 fem.add_boundary_condition(dirichlet=DirichletBoundary().add(fixed_nodes, "all", 0.0))
 
 fem.add_contact(
-    "IPC",
+    "BarrierIPC",
     broad_phase="BVH",
     # One shared assembler handles layer--layer, cloth--sphere and genuine
     # single-layer folds.  Using three identical pair-specific assemblers

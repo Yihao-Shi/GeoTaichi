@@ -78,7 +78,7 @@ dempm.dem.add_clump_template(template={
                                              "Position": ti.Vector([1.0, -1.0, -1.0]),
                                              "Radius": 0.5
                                             },
-                                            
+
                                             {
                                              "Position": ti.Vector([-1.0, 0., -1.0]),
                                              "Radius": 0.5
@@ -91,7 +91,7 @@ dempm.dem.add_clump_template(template={
                                              "Position": ti.Vector([1.0, 0., -1.0]),
                                              "Radius": 0.5
                                             },
-                                            
+
                                             {
                                              "Position": ti.Vector([-1.0, 1.0, -1.0]),
                                              "Radius": 0.5
@@ -104,8 +104,8 @@ dempm.dem.add_clump_template(template={
                                              "Position": ti.Vector([1.0, 1.0, -1.0]),
                                              "Radius": 0.5
                                             },
-                                            
-                                            
+
+
                                             {
                                              "Position": ti.Vector([-1.0, -1.0, 0.]),
                                              "Radius": 0.5
@@ -118,7 +118,7 @@ dempm.dem.add_clump_template(template={
                                              "Position": ti.Vector([1.0, -1.0, 0.]),
                                              "Radius": 0.5
                                             },
-                                            
+
                                             {
                                              "Position": ti.Vector([-1.0, 0., 0.]),
                                              "Radius": 0.5
@@ -131,7 +131,7 @@ dempm.dem.add_clump_template(template={
                                              "Position": ti.Vector([1.0, 0., 0.]),
                                              "Radius": 0.5
                                             },
-                                            
+
                                             {
                                              "Position": ti.Vector([-1.0, 1.0, 0.]),
                                              "Radius": 0.5
@@ -144,8 +144,8 @@ dempm.dem.add_clump_template(template={
                                              "Position": ti.Vector([1.0, 1.0, 0.]),
                                              "Radius": 0.5
                                             },
-                                            
-                                            
+
+
                                             {
                                              "Position": ti.Vector([-1.0, -1.0, 1.0]),
                                              "Radius": 0.5
@@ -158,7 +158,7 @@ dempm.dem.add_clump_template(template={
                                              "Position": ti.Vector([1.0, -1.0, 1.0]),
                                              "Radius": 0.5
                                             },
-                                            
+
                                             {
                                              "Position": ti.Vector([-1.0, 0., 1.0]),
                                              "Radius": 0.5
@@ -171,7 +171,7 @@ dempm.dem.add_clump_template(template={
                                              "Position": ti.Vector([1.0, 0., 1.0]),
                                              "Radius": 0.5
                                             },
-                                            
+
                                             {
                                              "Position": ti.Vector([-1.0, 1.0, 1.0]),
                                              "Radius": 0.5

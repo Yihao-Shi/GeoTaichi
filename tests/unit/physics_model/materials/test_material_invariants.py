@@ -6,18 +6,17 @@ import numpy as np
 import pytest
 import taichi as ti
 
-from src.physics_model.consititutive_model.infinitesimal_strain.MaterialKernel import (
-    ComputeLodeAngle,
-    ComputeStressInvariantJ2,
-    ComputeStressInvariantJ3,
-    DqDsigma,
-    Dj2Dsigma,
-    Dj3Dsigma,
-    DlodeDsigma,
-    EquivalentDeviatoricStress,
+from src.physics_model.constitutive_model.infinitesimal_strain.MaterialKernel import (
+    compute_lode_angle,
+    compute_stress_invariant_j2,
+    compute_stress_invariant_j3,
+    dq_dsigma,
+    dj2_dsigma,
+    dj3_dsigma,
+    dlode_dsigma,
+    equivalent_deviatoric_stress,
 )
-from src.utils.TypeDefination import vec6f
-
+from src.utils.TypeDefinition import vec6f
 
 pytestmark = [pytest.mark.cpu, pytest.mark.materials]
 
@@ -36,14 +35,14 @@ def _evaluate_invariants(
         stress_values[4],
         stress_values[5],
     )
-    invariant_values[0] = ComputeStressInvariantJ2(stress)
-    invariant_values[1] = ComputeStressInvariantJ3(stress)
-    invariant_values[2] = ComputeLodeAngle(stress)
-    invariant_values[3] = EquivalentDeviatoricStress(stress)
-    gradient_j2 = Dj2Dsigma(stress)
-    gradient_j3 = Dj3Dsigma(stress)
-    gradient_lode = DlodeDsigma(stress)
-    gradient_q = DqDsigma(stress)
+    invariant_values[0] = compute_stress_invariant_j2(stress)
+    invariant_values[1] = compute_stress_invariant_j3(stress)
+    invariant_values[2] = compute_lode_angle(stress)
+    invariant_values[3] = equivalent_deviatoric_stress(stress)
+    gradient_j2 = dj2_dsigma(stress)
+    gradient_j3 = dj3_dsigma(stress)
+    gradient_lode = dlode_dsigma(stress)
+    gradient_q = dq_dsigma(stress)
     for component in ti.static(range(6)):
         gradients[0, component] = gradient_j2[component]
         gradients[1, component] = gradient_j3[component]
@@ -60,25 +59,17 @@ def _deviator(stress):
 
 def _j2(stress):
     deviator = _deviator(stress)
-    return 0.5 * np.dot(deviator[:3], deviator[:3]) + np.dot(
-        deviator[3:], deviator[3:]
-    )
+    return 0.5 * np.dot(deviator[:3], deviator[:3]) + np.dot(deviator[3:], deviator[3:])
 
 
 def _j3(stress):
     s11, s22, s33, s12, s23, s13 = _deviator(stress)
-    return (
-        s11 * s22 * s33
-        + 2.0 * s12 * s23 * s13
-        - s33 * s12 * s12
-        - s11 * s23 * s23
-        - s22 * s13 * s13
-    )
+    return s11 * s22 * s33 + 2.0 * s12 * s23 * s13 - s33 * s12 * s12 - s11 * s23 * s23 - s22 * s13 * s13
 
 
 def _lode_angle(stress):
     j2 = _j2(stress)
-    argument = 1.5 * math.sqrt(3.0) * _j3(stress) / (j2 ** 1.5)
+    argument = 1.5 * math.sqrt(3.0) * _j3(stress) / (j2**1.5)
     return math.acos(np.clip(argument, -1.0, 1.0)) / 3.0
 
 
@@ -127,9 +118,7 @@ def test_stress_invariant_gradients_match_finite_difference(taichi_material_cpu)
     # entry.
     tensor_gradients_as_coordinate_gradients = gradients.copy()
     tensor_gradients_as_coordinate_gradients[:, 3:] *= 2.0
-    np.testing.assert_allclose(
-        invariants, expected_values, rtol=4.0e-6, atol=4.0e-7
-    )
+    np.testing.assert_allclose(invariants, expected_values, rtol=4.0e-6, atol=4.0e-7)
     np.testing.assert_allclose(
         tensor_gradients_as_coordinate_gradients,
         expected_gradients,

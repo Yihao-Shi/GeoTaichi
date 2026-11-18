@@ -1,5 +1,7 @@
 """Updated-Lagrangian HEX8 assembly for shared incremental solid models."""
 
+from src.utils.errors import RuntimeNotInitializedError
+
 import numpy as np
 import taichi as ti
 
@@ -7,7 +9,7 @@ from src.utils.MatrixFunction import matrix_form
 
 
 @ti.dataclass
-class _IntegrationPointState:
+class IntegrationPointState:
     stress: ti.types.vector(6, float)
 
 
@@ -23,7 +25,7 @@ class HexahedronElastoPlasticAssembler:
 
     def __init__(self, mesh, element, material):
         if ti.lang.impl.get_runtime().prog is None:
-            raise RuntimeError("HEX8 elastoplastic FEM requires an initialized Taichi runtime")
+            raise RuntimeNotInitializedError("HEX8 elastoplastic FEM requires an initialized Taichi runtime")
         if mesh.cell_type != "hexahedron":
             raise ValueError("incremental FEM elastoplasticity currently requires HEX8")
         self.mesh = mesh
@@ -37,6 +39,7 @@ class HexahedronElastoPlasticAssembler:
         self.real_type = ti.lang.impl.current_cfg().default_fp
         self.numpy_type = np.float64 if self.real_type == ti.f64 else np.float32
 
+        self.rest_position = ti.Vector.field(3, dtype=self.real_type, shape=self.node_count)
         self.connectivity = ti.Vector.field(8, dtype=ti.i32, shape=self.cell_count)
         self.reference_gradient = ti.field(
             dtype=self.real_type,
@@ -53,7 +56,7 @@ class HexahedronElastoPlasticAssembler:
             shape=(self.cell_count, self.quadrature_count),
         )
         self.cauchy_stress = ti.Vector.field(6, dtype=self.real_type, shape=self.integration_point_count)
-        self.integration_points = _IntegrationPointState.field(shape=self.integration_point_count)
+        self.integration_points = IntegrationPointState.field(shape=self.integration_point_count)
         self.state_variables = ti.Struct.field(material.get_state_vars(), shape=self.integration_point_count)
         self.previous_deformation_gradient = ti.Matrix.field(
             3,
@@ -67,6 +70,7 @@ class HexahedronElastoPlasticAssembler:
         self.minimum_jacobian = ti.field(dtype=self.real_type, shape=())
         self.time_step = ti.field(dtype=self.real_type, shape=())
 
+        self.rest_position.from_numpy(np.ascontiguousarray(mesh.rest_shape, dtype=self.numpy_type))
         self.connectivity.from_numpy(np.ascontiguousarray(element.connectivity, dtype=np.int32))
         self.reference_gradient.from_numpy(np.ascontiguousarray(element.shape_gradients, dtype=self.numpy_type))
         self.reference_weight.from_numpy(np.ascontiguousarray(element.reference_weights, dtype=self.numpy_type))
@@ -102,13 +106,14 @@ class HexahedronElastoPlasticAssembler:
 
     @ti.func
     def _deformation_gradient(self, cell_id, quadrature_id, positions):
-        value = ti.Matrix.zero(self.real_type, 3, 3)
+        # Displacement form keeps an undeformed element exactly at F = I.
+        value = ti.Matrix.identity(self.real_type, 3)
         nodes = self.connectivity[cell_id]
         for local_id in range(8):
+            displacement = positions[nodes[local_id]] - self.rest_position[nodes[local_id]]
             for spatial, material in ti.static(ti.ndrange(3, 3)):
                 value[spatial, material] += (
-                    positions[nodes[local_id]][spatial]
-                    * self.reference_gradient[cell_id, quadrature_id, local_id, material]
+                    displacement[spatial] * self.reference_gradient[cell_id, quadrature_id, local_id, material]
                 )
         return value
 
@@ -122,7 +127,7 @@ class HexahedronElastoPlasticAssembler:
             incremental_gradient = deformation_gradient @ previous.inverse()
             velocity_gradient = (incremental_gradient - ti.Matrix.identity(self.real_type, 3)) / self.time_step[None]
             point_id = cell_id * self.quadrature_count + quadrature_id
-            self.cauchy_stress[point_id] = self.material.ComputeStress(
+            self.cauchy_stress[point_id] = self.material.compute_stress(
                 point_id,
                 self.cauchy_stress[point_id],
                 velocity_gradient,

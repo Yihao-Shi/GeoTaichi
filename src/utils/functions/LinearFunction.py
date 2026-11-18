@@ -42,18 +42,18 @@ class LinearFunction:
             raise ValueError("The Length of Function is not enough!")
 
         self.function = Function1D.field(shape=self.i_interval)
-        
-        start_time = DictIO.GetEssential(functions[0], "TimeStamp")
-        start_value = DictIO.GetEssential(functions[0], "Value")
+
+        start_time = DictIO.get_essential(functions[0], "TimeStamp")
+        start_value = DictIO.get_essential(functions[0], "Value")
         for i in range(1, self.i_interval):
-            end_time = DictIO.GetEssential(functions[i], "TimeStamp")
-            end_value = DictIO.GetEssential(functions[i], "Value")
+            end_time = DictIO.get_essential(functions[i], "TimeStamp")
+            end_value = DictIO.get_essential(functions[i], "Value")
             if end_time <= start_time:
                 raise ValueError("The interval time should be larger than zero")
             self.function[i - 1].set_value(start_time, end_time, start_value, end_value)
 
             start_time = end_time
-            start_value =end_value          
+            start_value = end_value
 
     @ti.func
     def get_interval_value(self, curr_time):

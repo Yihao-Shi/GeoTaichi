@@ -1,159 +1,159 @@
 import taichi as ti
 
-from src.utils.constants import PI, MThreshold, Threshold, ZEROVEC3f
-from src.utils.VectorFunction import SquareLen
-from src.utils.Quaternion import RodriguesRotationMatrix
-from src.utils.TypeDefination import vec3f, mat3x3, vec6f
+from src.utils.constants import PI, M_THRESHOLD, THRESHOLD, ZEROVEC3F
+from src.utils.VectorFunction import square_len
+from src.utils.Quaternion import rodrigues_rotation_matrix
+from src.utils.TypeDefinition import vec3f, mat3x3, vec6f
 
 
 @ti.kernel
-def kernel_adaptive_timestep(particleNum: int, element_len: float, particle: ti.template()) -> float:
+def kernel_adaptive_timestep(particle_num: int, element_len: float, particle: ti.template()) -> float:
     max_vel = 0.0
-    for np in range(particleNum):
+    for np in range(particle_num):
         ti.atomic_max(max_vel, particle[np].v.norm())
-    return element_len / (max_vel + Threshold)
+    return element_len / (max_vel + THRESHOLD)
 
 
 @ti.kernel
-def kernel_update_coupling_material_points(particleNum: int, particle: ti.template(), is_in_region: ti.template()):
-    for np in range(particleNum):
+def kernel_update_coupling_material_points(particle_num: int, particle: ti.template(), is_in_region: ti.template()):
+    for np in range(particle_num):
         if not is_in_region(particle[np].x):
             particle[np].coupling = ti.u8(0)
 
 
 @ti.kernel
-def kernel_compute_coupling_material_points_number(particleNum: int, particle: ti.template()) -> int:
+def kernel_compute_coupling_material_points_number(particle_num: int, particle: ti.template()) -> int:
     need_coupling = 0
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].coupling) == 1:
             need_coupling += 1
     return need_coupling
 
 
 @ti.kernel
-def update_particle_storage_(
-    particleNum: int, particle: ti.template(), stateVars: ti.template(), update_state: ti.template()
+def update_particle_storage(
+    particle_num: int, particle: ti.template(), state_variables: ti.template(), update_state: ti.template()
 ) -> int:
     remaining_particle = 0
     ti.loop_config(serialize=True)
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
             particle[remaining_particle] = particle[np]
             if ti.static(update_state):
-                stateVars[remaining_particle] = stateVars[np]
+                state_variables[remaining_particle] = state_variables[np]
             remaining_particle += 1
     return remaining_particle
 
 
 @ti.kernel
-def find_max_radius_(particleNum: int, particle: ti.template()) -> float:
+def find_max_radius(particle_num: int, particle: ti.template()) -> float:
     rmax = 0.0
-    for np in range(particleNum):
+    for np in range(particle_num):
         ti.atomic_max(rmax, particle[np].rad)
     return rmax
 
 
 @ti.kernel
-def find_min_y_position_(particleNum: int, particle: ti.template()) -> float:
-    min_ypos = MThreshold
-    for np in range(particleNum):
+def find_min_y_position(particle_num: int, particle: ti.template()) -> float:
+    min_ypos = M_THRESHOLD
+    for np in range(particle_num):
         ypos = particle[np].x[1]
         ti.atomic_min(min_ypos, ypos)
     return min_ypos
 
 
 @ti.kernel
-def find_min_z_position_(particleNum: int, particle: ti.template()) -> float:
-    min_zpos = MThreshold
-    for np in range(particleNum):
+def find_min_z_position(particle_num: int, particle: ti.template()) -> float:
+    min_zpos = M_THRESHOLD
+    for np in range(particle_num):
         zpos = particle[np].x[2]
         ti.atomic_min(min_zpos, zpos)
     return min_zpos
 
 
 @ti.kernel
-def find_max_velocity_(particleNum: int, particle: ti.template()) -> float:
+def find_max_velocity(particle_num: int, particle: ti.template()) -> float:
     max_vel = 0.0
-    for np in range(particleNum):
+    for np in range(particle_num):
         vel = particle[np].v.norm()
         ti.atomic_max(max_vel, vel)
     return max_vel
 
 
 @ti.kernel
-def find_particle_max_radius_(particleNum: int, particle: ti.template()) -> float:
+def find_particle_max_radius(particle_num: int, particle: ti.template()) -> float:
     max_radius = 0.0
-    for np in range(particleNum):
+    for np in range(particle_num):
         radius = particle[np].rad
         ti.atomic_max(max_radius, radius)
     return max_radius
 
 
 @ti.kernel
-def find_particle_min_radius_(particleNum: int, particle: ti.template()) -> float:
-    min_radius = MThreshold
-    for np in range(particleNum):
+def find_particle_min_radius(particle_num: int, particle: ti.template()) -> float:
+    min_radius = M_THRESHOLD
+    for np in range(particle_num):
         radius = particle[np].rad
         ti.atomic_min(min_radius, radius)
     return min_radius
 
 
 @ti.kernel
-def set_particle_radius_from_array_(particleNum: int, particle: ti.template(), radius: ti.types.ndarray()):
-    for np in range(particleNum):
+def set_particle_radius_from_array(particle_num: int, particle: ti.template(), radius: ti.types.ndarray()):
+    for np in range(particle_num):
         particle[np].rad = radius[np]
 
 
 @ti.kernel
-def find_particle_min_mass_(particleNum: int, particle: ti.template()) -> float:
-    min_mass = MThreshold
-    for np in range(particleNum):
+def find_particle_min_mass(particle_num: int, particle: ti.template()) -> float:
+    min_mass = M_THRESHOLD
+    for np in range(particle_num):
         radius = particle[np].m
         ti.atomic_min(min_mass, radius)
     return min_mass
 
 
 @ti.kernel
-def modify_particle_bodyID_in_region(
-    value: int, particleNum: int, particle: ti.template(), is_in_region: ti.template()
+def modify_particle_body_id_in_region(
+    value: int, particle_num: int, particle: ti.template(), is_in_region: ti.template()
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if is_in_region(particle[np].x):
             particle[np].bodyID = ti.u8(value)
 
 
 @ti.kernel
-def modify_particle_materialID_in_region(
-    value: int, particleNum: int, particle: ti.template(), material: ti.template(), is_in_region: ti.template()
+def modify_particle_material_id_in_region(
+    value: int, particle_num: int, particle: ti.template(), material: ti.template(), is_in_region: ti.template()
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if is_in_region(particle[np].x):
             particle[np].materialID = ti.u8(value)
             particle[np].m = particle[np].vol * material[int(particle[np].materialID)].density
 
 
 @ti.kernel
-def modify_particle_position_in_region_2D(
+def modify_particle_position_in_region_2d(
     factor: int,
     value: ti.types.vector(2, float),
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
     is_in_region: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if is_in_region(particle[np].x):
             particle[np].x = factor * particle[np].x + value
 
 
 @ti.kernel
-def modify_particle_velocity_in_region_2D(
+def modify_particle_velocity_in_region_2d(
     factor: int,
     value: ti.types.vector(2, float),
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
     is_in_region: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if is_in_region(particle[np].x):
             particle[np].v = factor * particle[np].v + value
 
@@ -162,11 +162,11 @@ def modify_particle_velocity_in_region_2D(
 def modify_particle_position_in_region(
     factor: int,
     value: ti.types.vector(3, float),
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
     is_in_region: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if is_in_region(particle[np].x):
             particle[np].x = factor * particle[np].x + value
 
@@ -175,11 +175,11 @@ def modify_particle_position_in_region(
 def modify_particle_velocity_in_region(
     factor: int,
     value: ti.types.vector(3, float),
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
     is_in_region: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if is_in_region(particle[np].x):
             particle[np].v = factor * particle[np].v + value
 
@@ -188,90 +188,90 @@ def modify_particle_velocity_in_region(
 def modify_particle_stress_in_region(
     factor: int,
     value: ti.types.vector(6, float),
-    particleNum: int,
+    particle_num: int,
     particle: ti.template(),
     is_in_region: ti.template(),
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if is_in_region(particle[np].x):
             particle[np].stress = factor * particle[np].stress + value
 
 
 @ti.kernel
 def modify_particle_fix_v_in_region(
-    value: ti.types.vector(3, ti.u8), particleNum: int, particle: ti.template(), is_in_region: ti.template()
+    value: ti.types.vector(3, ti.u8), particle_num: int, particle: ti.template(), is_in_region: ti.template()
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         if is_in_region(particle[np].x):
             particle[np].fix_v = value
 
 
 @ti.kernel
-def modify_particle_bodyID(value: int, particleNum: int, particle: ti.template(), bodyID: int):
-    for np in range(particleNum):
-        if particle[np].bodyID == ti.u8(bodyID):
+def modify_particle_body_id(value: int, particle_num: int, particle: ti.template(), body_id: int):
+    for np in range(particle_num):
+        if particle[np].bodyID == ti.u8(body_id):
             particle[np].bodyID = ti.u8(value)
 
 
 @ti.kernel
-def modify_particle_materialID(
-    value: int, particleNum: int, particle: ti.template(), material: ti.template(), bodyID: int
+def modify_particle_material_id(
+    value: int, particle_num: int, particle: ti.template(), material: ti.template(), body_id: int
 ):
-    for np in range(particleNum):
-        if particle[np].bodyID == ti.u8(bodyID):
+    for np in range(particle_num):
+        if particle[np].bodyID == ti.u8(body_id):
             particle[np].materialID = ti.u8(value)
             particle[np].m = particle[np].vol * material[int(particle[np].materialID)].density
 
 
 @ti.kernel
 def modify_particle_position(
-    factor: int, value: ti.types.vector(3, float), particleNum: int, particle: ti.template(), bodyID: int
+    factor: int, value: ti.types.vector(3, float), particle_num: int, particle: ti.template(), body_id: int
 ):
-    for np in range(particleNum):
-        if particle[np].bodyID == ti.u8(bodyID):
+    for np in range(particle_num):
+        if particle[np].bodyID == ti.u8(body_id):
             particle[np].x = factor * particle[np].x + value
 
 
 @ti.kernel
 def modify_particle_velocity(
-    factor: int, value: ti.types.vector(3, float), particleNum: int, particle: ti.template(), bodyID: int
+    factor: int, value: ti.types.vector(3, float), particle_num: int, particle: ti.template(), body_id: int
 ):
-    for np in range(particleNum):
-        if particle[np].bodyID == ti.u8(bodyID):
+    for np in range(particle_num):
+        if particle[np].bodyID == ti.u8(body_id):
             particle[np].v = factor * particle[np].v + value
 
 
 @ti.kernel
-def modify_particle_position_2D(
-    factor: int, value: ti.types.vector(2, float), particleNum: int, particle: ti.template(), bodyID: int
+def modify_particle_position_2d(
+    factor: int, value: ti.types.vector(2, float), particle_num: int, particle: ti.template(), body_id: int
 ):
-    for np in range(particleNum):
-        if particle[np].bodyID == ti.u8(bodyID):
+    for np in range(particle_num):
+        if particle[np].bodyID == ti.u8(body_id):
             particle[np].x = factor * particle[np].x + value
 
 
 @ti.kernel
-def modify_particle_velocity_2D(
-    factor: int, value: ti.types.vector(2, float), particleNum: int, particle: ti.template(), bodyID: int
+def modify_particle_velocity_2d(
+    factor: int, value: ti.types.vector(2, float), particle_num: int, particle: ti.template(), body_id: int
 ):
-    for np in range(particleNum):
-        if particle[np].bodyID == ti.u8(bodyID):
+    for np in range(particle_num):
+        if particle[np].bodyID == ti.u8(body_id):
             particle[np].v = factor * particle[np].v + value
 
 
 @ti.kernel
 def modify_particle_stress(
-    factor: int, value: ti.types.vector(6, float), particleNum: int, particle: ti.template(), bodyID: int
+    factor: int, value: ti.types.vector(6, float), particle_num: int, particle: ti.template(), body_id: int
 ):
-    for np in range(particleNum):
-        if particle[np].bodyID == ti.u8(bodyID):
+    for np in range(particle_num):
+        if particle[np].bodyID == ti.u8(body_id):
             particle[np].stress = factor * particle[np].stress + value
 
 
 @ti.kernel
-def modify_particle_fix_v(value: ti.types.vector(3, ti.u8), particleNum: int, particle: ti.template(), bodyID: int):
-    for np in range(particleNum):
-        if particle[np].bodyID == ti.u8(bodyID):
+def modify_particle_fix_v(value: ti.types.vector(3, ti.u8), particle_num: int, particle: ti.template(), body_id: int):
+    for np in range(particle_num):
+        if particle[np].bodyID == ti.u8(body_id):
             particle[np].fix_v = value
 
 
@@ -282,24 +282,24 @@ def kernel_initialize_particle_fbar(particle_fbar: ti.template()):
 
 
 @ti.kernel
-def kernel_delete_particles(particleNum: int, particle: ti.template(), bodyID: int):
-    for np in range(particleNum):
-        if particle[np].bodyID == bodyID:
+def kernel_delete_particles(particle_num: int, particle: ti.template(), body_id: int):
+    for np in range(particle_num):
+        if particle[np].bodyID == body_id:
             particle[np].active = ti.u8(0)
 
 
 @ti.kernel
-def kernel_delete_particles_in_region(particleNum: int, particle: ti.template(), is_in_region: ti.template()):
-    for np in range(particleNum):
+def kernel_delete_particles_in_region(particle_num: int, particle: ti.template(), is_in_region: ti.template()):
+    for np in range(particle_num):
         if is_in_region(particle[np].x):
             particle[np].active = ti.u8(0)
 
 
 @ti.kernel
 def kernel_delete_overlap_particles(
-    particleNum: int, particle: ti.template(), position: ti.types.ndarray(), volume: ti.types.ndarray()
+    particle_num: int, particle: ti.template(), position: ti.types.ndarray(), volume: ti.types.ndarray()
 ):
-    for np in range(particleNum):
+    for np in range(particle_num):
         pos1 = particle[np].x
         rad1 = (3.0 / (4.0 * PI) * particle[np].vol) ** (1.0 / 3.0)
         for npj in range(position.shape[0]):
@@ -310,27 +310,27 @@ def kernel_delete_overlap_particles(
 
 
 @ti.kernel
-def check_in_domain(domain: ti.types.vector(3, float), particleNum: int, particle: ti.template()):
-    for np in range(particleNum):
+def check_in_domain(domain: ti.types.vector(3, float), particle_num: int, particle: ti.template()):
+    for np in range(particle_num):
         if int(particle[np].active) == 1 and not is_in_domain(domain, particle[np].x):
             particle[np].active = ti.u8(0)
 
 
 @ti.kernel
-def check_in_domain_2D(domain: ti.types.vector(2, float), particleNum: int, particle: ti.template()):
-    for np in range(particleNum):
-        if int(particle[np].active) == 1 and not is_in_domain_2D(domain, particle[np].x):
+def check_in_domain_2d(domain: ti.types.vector(2, float), particle_num: int, particle: ti.template()):
+    for np in range(particle_num):
+        if int(particle[np].active) == 1 and not is_in_domain_2d(domain, particle[np].x):
             particle[np].active = ti.u8(0)
 
 
 @ti.func
 def is_in_domain(domain, position):
     in_domain = 1
-    if in_domain == 1 and position[0] < Threshold:
+    if in_domain == 1 and position[0] < THRESHOLD:
         in_domain = 0
-    elif in_domain == 1 and position[1] < Threshold:
+    elif in_domain == 1 and position[1] < THRESHOLD:
         in_domain = 0
-    elif in_domain == 1 and position[2] < Threshold:
+    elif in_domain == 1 and position[2] < THRESHOLD:
         in_domain = 0
     elif in_domain == 1 and position[0] > domain[0]:
         in_domain = 0
@@ -342,11 +342,11 @@ def is_in_domain(domain, position):
 
 
 @ti.func
-def is_in_domain_2D(domain, position):
+def is_in_domain_2d(domain, position):
     in_domain = 1
-    if in_domain == 1 and position[0] < Threshold:
+    if in_domain == 1 and position[0] < THRESHOLD:
         in_domain = 0
-    elif in_domain == 1 and position[1] < Threshold:
+    elif in_domain == 1 and position[1] < THRESHOLD:
         in_domain = 0
     elif in_domain == 1 and position[0] > domain[0]:
         in_domain = 0
@@ -356,49 +356,49 @@ def is_in_domain_2D(domain, position):
 
 
 @ti.kernel
-def reset_verlet_disp_(particleNum: int, particle: ti.template()):
-    for np in range(particleNum):
-        particle[np].verletDisp = ZEROVEC3f
+def reset_verlet_disp(particle_num: int, particle: ti.template()):
+    for np in range(particle_num):
+        particle[np].verletDisp = ZEROVEC3F
 
 
 @ti.kernel
-def validate_particle_displacement_(limit: float, particleNum: int, particle: ti.template()) -> int:
+def validate_particle_displacement(limit: float, particle_num: int, particle: ti.template()) -> int:
     flag = 0
-    for np in range(particleNum):
-        if flag == 0 and SquareLen(particle[np].verletDisp) > limit:
+    for np in range(particle_num):
+        if flag == 0 and square_len(particle[np].verletDisp) > limit:
             flag = 1
     return flag
 
 
 @ti.kernel
-def kernel_apply_gravity_field_(
-    startIndex: int,
-    endIndex: int,
+def kernel_apply_gravity_field(
+    start_index: int,
+    end_index: int,
     gravity: ti.types.vector(3, float),
     k0: ti.types.ndarray(),
     distance: ti.types.ndarray(),
     particle: ti.template(),
-    materialID: ti.template(),
-    matProps: ti.template(),
-    stateVars: ti.template(),
+    material_id: ti.template(),
+    mat_props: ti.template(),
+    state_variables: ti.template(),
 ):
-    for i in range(startIndex, endIndex):
-        np = materialID[i]
+    for i in range(start_index, end_index):
+        np = material_id[i]
         direction = gravity.normalized()
         density = particle[np].m / particle[np].vol
         gamma = -distance[np] * density * gravity.norm()
         initial_gravity_stress = mat3x3(
-            [k0[i - startIndex] * gamma, 0.0, 0.0], [0.0, k0[i - startIndex] * gamma, 0.0], [0.0, 0.0, gamma]
+            [k0[i - start_index] * gamma, 0.0, 0.0], [0.0, k0[i - start_index] * gamma, 0.0], [0.0, 0.0, gamma]
         )
-        rotation_matrix = RodriguesRotationMatrix(-direction, vec3f(0.0, 0.0, 1.0))
+        rotation_matrix = rodrigues_rotation_matrix(-direction, vec3f(0.0, 0.0, 1.0))
         gravity_field = rotation_matrix.transpose() @ initial_gravity_stress @ rotation_matrix
         particle[np]._add_gravity_field(gravity_field)
-        matProps._initialize_vars(np, particle, stateVars)
+        mat_props._initialize_vars(np, particle, state_variables)
 
 
 @ti.kernel
-def kernel_setting_gravity_field_(particleNum: int, particle: ti.template(), gravity_field: ti.types.ndarray()):
-    for np in range(particleNum):
+def kernel_setting_gravity_field(particle_num: int, particle: ti.template(), gravity_field: ti.types.ndarray()):
+    for np in range(particle_num):
         particle[np]._add_gravity_field(
             vec6f(
                 gravity_field[np, 0],
@@ -415,11 +415,11 @@ def kernel_setting_gravity_field_(particleNum: int, particle: ti.template(), gra
 #                Assign Particle to Cell                    #
 # ========================================================= #
 @ti.kernel
-def kernel_compute_mass_center(particleNum: int, particle: ti.template(), bodyID: int) -> ti.types.vector(3, float):
+def kernel_compute_mass_center(particle_num: int, particle: ti.template(), body_id: int) -> ti.types.vector(3, float):
     pcount = 0
     mass_center = vec3f(0.0, 0.0, 0.0)
-    for i in range(particleNum):
-        if bodyID != particle[i].bodyID:
+    for i in range(particle_num):
+        if body_id != particle[i].bodyID:
             continue
         mass_center += particle[i].x
         pcount += 1
@@ -427,20 +427,20 @@ def kernel_compute_mass_center(particleNum: int, particle: ti.template(), bodyID
 
 
 @ti.kernel
-def kernel_tranverse_active_particle(particleNum: int, particle: ti.template()):
+def kernel_tranverse_active_particle(particle_num: int, particle: ti.template()):
     traverse_offset = 0
     ti.loop_config(serialize=True)
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].active) == 1:
             particle[traverse_offset], particle[np] = particle[np], particle[traverse_offset]
             traverse_offset += 1
 
 
 @ti.kernel
-def kernel_tranverse_coupling_particle(particleNum: int, particle: ti.template()):
+def kernel_tranverse_coupling_particle(particle_num: int, particle: ti.template()):
     traverse_offset = 0
     ti.loop_config(serialize=True)
-    for np in range(particleNum):
+    for np in range(particle_num):
         if int(particle[np].coupling) == 1:
             particle[traverse_offset], particle[np] = particle[np], particle[traverse_offset]
             traverse_offset += 1

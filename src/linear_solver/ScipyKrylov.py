@@ -1,5 +1,7 @@
 import numpy as np
 
+from src.utils.errors import LinearSolveError
+
 
 def checked_scipy_krylov(
     solver,
@@ -25,7 +27,7 @@ def checked_scipy_krylov(
     roundoff = 32.0 * np.finfo(np.float64).eps * max(rhs_norm, float(np.linalg.norm(matrix_product)), 1.0)
     name = solver_name or getattr(solver, "__name__", "SciPy Krylov")
     if info != 0 or not np.all(np.isfinite(solution)) or not np.isfinite(residual) or residual > target + roundoff:
-        raise RuntimeError(
+        raise LinearSolveError(
             f"{name} failed true-residual verification: info={info}, " f"residual={residual:.6e}, target={target:.6e}"
         )
     return solution

@@ -5,10 +5,9 @@ import pytest
 import taichi as ti
 
 import src.utils.GlobalVariable as GlobalVariable
-from src.physics_model.consititutive_model.infinitesimal_strain.LinearElastic import (
+from src.physics_model.constitutive_model.infinitesimal_strain.LinearElastic import (
     LinearElasticModel,
 )
-
 
 pytestmark = [pytest.mark.materials, pytest.mark.cpu]
 
@@ -51,9 +50,7 @@ def _evaluate_model(model, strain_increment, previous_stress):
             ti.Vector.zero(ti.f64, 3),
             state,
         )
-        stiffness[None] = model.compute_stiffness_tensor(
-            0, stress[None], state
-        )
+        stiffness[None] = model.compute_stiffness_tensor(0, stress[None], state)
 
     old_random_field = GlobalVariable.RANDOMFIELD
     GlobalVariable.RANDOMFIELD = False
@@ -80,19 +77,13 @@ def _evaluate_model(model, strain_increment, previous_stress):
         (2650.0, 7.0e7, 0.45),
     ],
 )
-def test_add_material_derives_isotropic_moduli_and_sound_speed(
-    density, young, poisson
-):
+def test_add_material_derives_isotropic_moduli_and_sound_speed(density, young, poisson):
     model = LinearElasticModel()
     model.add_material(density, young, poisson)
 
     expected_shear = young / (2.0 * (1.0 + poisson))
     expected_bulk = young / (3.0 * (1.0 - 2.0 * poisson))
-    expected_wave_speed = np.sqrt(
-        young
-        * (1.0 - poisson)
-        / ((1.0 + poisson) * (1.0 - 2.0 * poisson) * density)
-    )
+    expected_wave_speed = np.sqrt(young * (1.0 - poisson) / ((1.0 + poisson) * (1.0 - 2.0 * poisson) * density))
 
     assert model.density == density
     assert model.young == young
@@ -132,9 +123,7 @@ def test_state_schema_contains_only_equivalent_stress(configuration):
     ],
     ids=["hydrostatic", "deviatoric", "general-with-shear"],
 )
-def test_stress_update_and_stiffness_match_isotropic_oracle(
-    taichi_material_cpu, strain_increment
-):
+def test_stress_update_and_stiffness_match_isotropic_oracle(taichi_material_cpu, strain_increment):
     model = LinearElasticModel()
     model.add_material(density=1800.0, young=2.0e5, poisson=0.3)
     previous_stress = np.array(
@@ -142,15 +131,11 @@ def test_stress_update_and_stiffness_match_isotropic_oracle(
         dtype=np.float64,
     )
 
-    actual_stress, actual_stiffness, equivalent_stress = _evaluate_model(
-        model, strain_increment, previous_stress
-    )
+    actual_stress, actual_stiffness, equivalent_stress = _evaluate_model(model, strain_increment, previous_stress)
     expected_stiffness = _isotropic_stiffness(model.bulk, model.shear)
     tensor_strain_operator = expected_stiffness.copy()
     tensor_strain_operator[3:, 3:] *= 2.0
-    expected_stress = (
-        previous_stress + tensor_strain_operator @ strain_increment
-    )
+    expected_stress = previous_stress + tensor_strain_operator @ strain_increment
     expected_equivalent = np.sqrt(
         0.5
         * (
@@ -160,15 +145,11 @@ def test_stress_update_and_stiffness_match_isotropic_oracle(
         )
     )
 
-    np.testing.assert_allclose(
-        actual_stress, expected_stress, rtol=5.0e-8, atol=1.0e-5
-    )
+    np.testing.assert_allclose(actual_stress, expected_stress, rtol=5.0e-8, atol=1.0e-5)
     np.testing.assert_allclose(
         actual_stiffness,
         expected_stiffness,
         rtol=5.0e-8,
         atol=1.0e-5,
     )
-    assert equivalent_stress == pytest.approx(
-        expected_equivalent, rel=5.0e-8, abs=1.0e-5
-    )
+    assert equivalent_stress == pytest.approx(expected_equivalent, rel=5.0e-8, abs=1.0e-5)

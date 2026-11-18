@@ -10,10 +10,10 @@ def neo_hookean_stress(F, J, lam, mu):
 
 
 def constitutive_response(material, stress_old, F_old, F_new, J_new, grad_u, lam, mu):
-    if material == "linearElastic":
+    if material == "LinearElastic":
         eps = 0.5 * (grad_u + grad_u.T)
         return stress_old + lam * np.trace(eps) * np.eye(2) + 2.0 * mu * eps
-    if material == "neoHookean":
+    if material == "NeoHookean":
         return neo_hookean_stress(F_new, J_new, lam, mu)
     raise ValueError(material)
 
@@ -24,7 +24,7 @@ def constitutive_tangent_apply(material, F_old, F_new, J_new, G, comp, eta, lam,
     deps[0, comp] += 0.5 * G[0]
     deps[comp, 1] += 0.5 * G[1]
     deps[1, comp] += 0.5 * G[1]
-    if material == "linearElastic":
+    if material == "LinearElastic":
         return lam * np.trace(deps) * np.eye(2) + 2.0 * mu * deps
     H = F_old.T @ G
     dF = np.zeros((2, 2))
@@ -33,7 +33,11 @@ def constitutive_tangent_apply(material, F_old, F_new, J_new, G, comp, eta, lam,
     b = F_new @ F_new.T
     db = dF @ F_new.T + F_new @ dF.T
     dJ = J_new * eta
-    return mu / J_new * db - mu / (J_new * J_new) * (b - np.eye(2)) * dJ + lam * (1.0 - np.log(J_new)) / (J_new * J_new) * dJ * np.eye(2)
+    return (
+        mu / J_new * db
+        - mu / (J_new * J_new) * (b - np.eye(2)) * dJ
+        + lam * (1.0 - np.log(J_new)) / (J_new * J_new) * dJ * np.eye(2)
+    )
 
 
 def newmark_acceleration(delta_u, v_old, a_old, beta, dt):
@@ -45,7 +49,11 @@ def newmark_velocity(delta_u, v_old, a_old, beta, gamma, dt):
 
 
 def newmark_pressure_rate(p_new, p_old, pdot_old, pddot_old, beta, gamma, dt):
-    return gamma / (beta * dt) * (p_new - p_old) + (1.0 - gamma / beta) * pdot_old - dt * (gamma / (2.0 * beta) - 1.0) * pddot_old
+    return (
+        gamma / (beta * dt) * (p_new - p_old)
+        + (1.0 - gamma / beta) * pdot_old
+        - dt * (gamma / (2.0 * beta) - 1.0) * pddot_old
+    )
 
 
 def residual(material, u_new, p_new_nodes, p_old_nodes, data):
@@ -188,7 +196,9 @@ def jacobian_manual(material, u_new, p_new_nodes, p_old_nodes, data):
     p_rate_gap = ppp_gap
     if mode == "dynamic":
         p_rate_new = newmark_pressure_rate(p_new, p_old, pdot_old, pddot_old, data["beta"], data["gamma"], dt)
-        p_rate_new_avg = newmark_pressure_rate(p_avg, p_old_avg, pdot_old_avg, pddot_old_avg, data["beta"], data["gamma"], dt)
+        p_rate_new_avg = newmark_pressure_rate(
+            p_avg, p_old_avg, pdot_old_avg, pddot_old_avg, data["beta"], data["gamma"], dt
+        )
         p_rate_gap = (p_rate_new - p_rate_new_avg) - (pdot_old - pdot_old_avg)
 
     K = np.zeros((3 * len(N), 3 * len(N)))
@@ -216,15 +226,22 @@ def jacobian_manual(material, u_new, p_new_nodes, p_old_nodes, data):
                 dv = vol * eta
                 drho = coeff_rho * eta
                 dsigma = constitutive_tangent_apply(material, F_old, F_new, J_new, Gj, comp, eta, lam, mu)
-                mech = (-dsigma @ gi - sigma_total @ dgi + N[a] * drho * gravity) * vol + (-sigma_total @ gi + N[a] * rho_mix * gravity) * dv
+                mech = (-dsigma @ gi - sigma_total @ dgi + N[a] * drho * gravity) * vol + (
+                    -sigma_total @ gi + N[a] * rho_mix * gravity
+                ) * dv
                 if mode == "dynamic":
-                    mech[comp] -= data["mass"] * N[a] * N[b] * (
-                        1.0 / (data["beta"] * dt * dt) + data["damping"] * data["gamma"] / (data["beta"] * dt)
+                    mech[comp] -= (
+                        data["mass"]
+                        * N[a]
+                        * N[b]
+                        * (1.0 / (data["beta"] * dt * dt) + data["damping"] * data["gamma"] / (data["beta"] * dt))
                     )
                 K[3 * a + 0, row] = mech[0]
                 K[3 * a + 1, row] = mech[1]
 
-                scalar_grad = (-Gj.dot(gi) * hcol.dot(q) - Gj.dot(q) * hcol.dot(gi) + gi.dot(q) * eta) * dt * mobility * vol
+                scalar_grad = (
+                    (-Gj.dot(gi) * hcol.dot(q) - Gj.dot(q) * hcol.dot(gi) + gi.dot(q) * eta) * dt * mobility * vol
+                )
                 kpu = N[a] * (1.0 + log_ratio) * eta * vol + scalar_grad
                 if data["ppp"]:
                     kpu += tau * (N[a] - Navg[a]) * (p_rate_gap if mode == "dynamic" else ppp_gap) * dv
@@ -235,7 +252,7 @@ def jacobian_manual(material, u_new, p_new_nodes, p_old_nodes, data):
 def pack_unknowns(u, p):
     x = np.zeros(3 * len(p))
     for a in range(len(p)):
-        x[3 * a:3 * a + 2] = u[a]
+        x[3 * a : 3 * a + 2] = u[a]
         x[3 * a + 2] = p[a]
     return x
 
@@ -245,7 +262,7 @@ def unpack_unknowns(x):
     u = np.zeros((n, 2))
     p = np.zeros(n)
     for a in range(n):
-        u[a] = x[3 * a:3 * a + 2]
+        u[a] = x[3 * a : 3 * a + 2]
         p[a] = x[3 * a + 2]
     return u, p
 
@@ -332,6 +349,6 @@ def run_case(material, ppp, mode, trials=20):
 
 if __name__ == "__main__":
     for mode in ("static", "dynamic"):
-        for material in ("linearElastic", "neoHookean"):
+        for material in ("LinearElastic", "NeoHookean"):
             for ppp in (False, True):
                 run_case(material, ppp, mode, trials=25)

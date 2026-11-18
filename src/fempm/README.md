@@ -348,7 +348,7 @@ updated total deformation gradient
 
 Finite-strain Drucker--Prager and von Mises return
 mappings are defined in the
-[shared constitutive theory](../physics_model/consititutive_model/README.md#finite-strain-multiplicative-plasticity).
+[shared constitutive theory](../physics_model/constitutive_model/README.md#finite-strain-multiplicative-plasticity).
 Accepted plastic history is frozen while evaluating every Newton trial and is
 committed only after the complete FEM--MPM step converges.
 
@@ -368,7 +368,7 @@ route, including for cloth contact. Lagged friction remains independent;
 all 14 history entries, including void ratio and previous-pressure cache,
 participate in accepted-step rollback. See
 [parameters](../mpm/README.md#state-dependent-dp-in-coupled-implicit-ulmpm) and
-[theory](../physics_model/consititutive_model/README.md#state-dependent-finite-strain-drucker--prager).
+[theory](../physics_model/constitutive_model/README.md#state-dependent-finite-strain-drucker--prager).
 Parameter/history adjoints for this law are unsupported.
 
 For nonassociated DP, `set_solver({"inexact_newton": True, ...})` optionally
@@ -466,25 +466,30 @@ deformation gradients, and plastic history to the beginning of the step.
 ### 6. Axisymmetric contact measure
 
 In a no-swirl meridian solve, the geometric closest-point problem remains
-two-dimensional in $`(r,z)`$, but one MPM surface sample represents a full
+two-dimensional in $`(r,z)`$, but one MPM surface sample represents a one-radian sector of its
 reference ring. If $`\omega_p^{mer}`$ is its meridional measure at reference
 radius $`R_p`$, the contact weight is
 
 ```math
 \omega_p^{axi}
-=2\pi R_p\omega_p^{mer}.
+=R_p\omega_p^{mer}.
 ```
 
 Thus
 
 ```math
 E_p^{c,axi}
-=2\pi R_p\omega_p^{mer}
+=R_p\omega_p^{mer}
 \widehat d\,b(s).
 ```
 
 The ring factor enters the residual and every coupled Hessian block, while
 contact search and CCD remain point--edge operations in the meridian plane.
+
+Both children and contact use per-radian mass, energy and resultant forces.
+Full-revolution totals are `2*pi` times the reported values. Pressure and
+material parameters are unchanged. Start axisymmetric runs from frame zero
+after changing from the previous full-revolution convention.
 The material kinematics remain three-dimensional through the hoop stretch
 
 ```math
@@ -576,7 +581,7 @@ coupling with `axisymmetric=True` and the same finite `axis_offset`. Coordinate
 component zero is the radius and component one is the axial coordinate. TRI3
 FEM geometry must therefore lie in the stored `(r,z)` plane. The axisymmetric
 constitutive update is no-swirl three-dimensional kinematics with
-`F_theta_theta=r/R`; FEM/MPM volume and contact measures include `2*pi*R`.
+`F_theta_theta=r/R`; FEM/MPM volume and contact measures include `R`.
 For Cartesian 2D DP or von Mises MPM, the material update instead uses the
 classical 3D plane-strain embedding: the incremental total map has `F_33=1`,
 the elastic state and tangent are 3-by-3, and contact/grid unknowns remain
@@ -588,7 +593,7 @@ top-left block. Explicit DEM-law FEMPM remains three-dimensional.
 MPM and FEM nodal Neumann data are resultant forces. FEM
 `add_traction` performs the axisymmetric boundary integration, whereas a raw
 resultant supplied at a degree of freedom must already include the desired
-revolved measure.
+per-radian measure.
 
 ```python
 # ULMPM examples use NeoHookean, DruckerPrager, and VonMises.
@@ -619,7 +624,7 @@ model.set_solver(
 model.add_surface(body_ids=[0])
 model.memory_allocate({})
 model.choose_contact_model(
-    "IPC",
+    "BarrierIPC",
     dhat=2.0e-2,
     dmin=0.0,
     kappa=1.0e5,
@@ -732,8 +737,8 @@ the FEDEM subtriangle-area distribution.
   frames.
 - Implicit LinkedCell/BVH rebuild current or swept candidates every query and
   do not use `verlet_distance` or `verlet_distance_multiplier`.
-- In axisymmetric IPC, a meridional MPM contact sample represents its full
+- In axisymmetric IPC, a meridional MPM contact sample represents one radian of its
   reference ring. Its fixed IPC weight is the configured meridional measure
-  times `2*pi*R`; the contact search and CCD remain two-dimensional in `(r,z)`.
+  times `R`; the contact search and CCD remain two-dimensional in `(r,z)`.
 
 Focused coverage is under `tests/integration/fempm/`.

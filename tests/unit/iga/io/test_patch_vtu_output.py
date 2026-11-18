@@ -5,7 +5,7 @@ import pyvista as pv
 import pytest
 
 from third_party.pyevtk.hl import unstructuredGridToVTK
-from src.iga.elements.Patch import _sampled_grid_vtu_data
+from src.iga.elements.Patch import Patch
 
 
 @pytest.mark.parametrize(
@@ -37,7 +37,9 @@ def test_sampled_grid_vtu_round_trip(tmp_path, dimension, resolution, expected_c
     displacement = sampled_points + np.arange(1, dimension + 1, dtype=np.float64)
     stress = sum((10.0**d) * indices[d] for d in range(dimension))
 
-    points, connectivity, offsets, cell_types, point_data = _sampled_grid_vtu_data(sampled_points, displacement, stress)
+    points, connectivity, offsets, cell_types, point_data = Patch._sampled_grid_vtu_data(
+        sampled_points, displacement, stress
+    )
     output = tmp_path / f"sampled_{dimension}d"
     unstructuredGridToVTK(
         str(output),
@@ -69,7 +71,7 @@ def test_sampled_grid_vtu_round_trip(tmp_path, dimension, resolution, expected_c
 def test_patch_visualize_writes_one_vtu_per_frame(tmp_path):
     from types import SimpleNamespace
     from src.iga.elements.Patch import Patch
-    from src.nurbs.BasicSurface import Rectangle
+    from src.nurbs.Rectangle import Rectangle
 
     rectangle = Rectangle()
     rectangle.set_parameters(start_point=[0.0, 0.0], size=[1.0, 0.5])

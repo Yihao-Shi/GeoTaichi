@@ -3,13 +3,13 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from src.mpm.Recorder import WriteFile, build_sparse_block_mesh
+from src.mpm.Recorder import WriteFile
 from src.mpm.Simulation import Simulation
 from src.mpm.mainMPM import MPM
 
 
 def test_build_sparse_block_mesh_2d_maps_physical_ids_and_clips_boundary_blocks():
-    mesh = build_sparse_block_mesh(
+    mesh = WriteFile.build_sparse_block_mesh(
         dimension=2,
         active_block_ids=[0, 5],
         block_count=[3, 2],
@@ -27,7 +27,7 @@ def test_build_sparse_block_mesh_2d_maps_physical_ids_and_clips_boundary_blocks(
 
 
 def test_build_sparse_block_mesh_3d_uses_vtk_hexahedron_vertex_order():
-    mesh = build_sparse_block_mesh(
+    mesh = WriteFile.build_sparse_block_mesh(
         dimension=3,
         active_block_ids=[7],
         block_count=[2, 2, 2],
@@ -44,14 +44,14 @@ def test_build_sparse_block_mesh_3d_uses_vtk_hexahedron_vertex_order():
 
 def test_build_sparse_block_mesh_rejects_out_of_range_physical_id():
     with pytest.raises(ValueError, match="outside the physical block grid"):
-        build_sparse_block_mesh(2, [4], [2, 2], 4, [0.1, 0.1], [8, 8])
+        WriteFile.build_sparse_block_mesh(2, [4], [2, 2], 4, [0.1, 0.1], [8, 8])
 
 
 def test_sparse_block_mesh_writes_reviewable_vtu_cell_fields(tmp_path):
-    mesh = build_sparse_block_mesh(2, [0, 3], [2, 2], 4, [0.1, 0.1], [8, 8])
+    mesh = WriteFile.build_sparse_block_mesh(2, [0, 3], [2, 2], 4, [0.1, 0.1], [8, 8])
     writer = WriteFile.__new__(WriteFile)
     writer.vtk_path = str(tmp_path)
-    writer.VisualizeSparseGrid(SimpleNamespace(dimension=2, current_print=3), mesh)
+    writer.visualize_sparse_grid(SimpleNamespace(dimension=2, current_print=3), mesh)
 
     output = tmp_path / "GraphicMPMGrid000003.vtu"
     assert output.is_file()

@@ -1,11 +1,12 @@
+from src.utils.errors import ConfigurationError, SimulationStateError
 import taichi as ti
 import math
 import warnings
 
 from src.dem.Simulation import Simulation as DEMSimulation
 from src.mpm.Simulation import Simulation as MPMSimulation
-from src.utils.constants import Threshold
-from src.utils.TypeDefination import vec3f
+from src.utils.constants import THRESHOLD
+from src.utils.TypeDefinition import vec3f
 from src.utils.TimeTicker import Timer
 
 
@@ -71,7 +72,7 @@ class Simulation(object):
     def set_coupling_scheme(self, coupling_scheme):
         valid_scheme = ["MPDEM", "DEMPM", "MPM", "DEM", "CFDEM"]
         if not coupling_scheme in valid_scheme:
-            raise RuntimeError(
+            raise SimulationStateError(
                 f"KeyWord:: /CouplingScheme/ {coupling_scheme} is invalid. Only the followings are valid: {valid_scheme}"
             )
         self.coupling_scheme = coupling_scheme
@@ -84,7 +85,7 @@ class Simulation(object):
         }
         key = str(resolution).replace("-", "").replace("_", "").replace(" ", "").lower()
         if key not in aliases:
-            raise RuntimeError("cfdem_resolution must be 'Auto', 'SemiResolved', or 'FullyResolved'")
+            raise ConfigurationError("cfdem_resolution must be 'Auto', 'SemiResolved', or 'FullyResolved'")
         self.cfdem_resolution = aliases[key]
 
     def set_particle_interaction(self, particle_interaction):
@@ -93,7 +94,7 @@ class Simulation(object):
     def set_wall_interaction(self, wall_interaction):
         self.wall_interaction = wall_interaction
 
-    def set_CFD_coupling_domain(self, coupling_domain):
+    def set_cfd_coupling_domain(self, coupling_domain):
         self.infludence_domain = int(coupling_domain[0])
         self.dependent_domain = int(coupling_domain[1])
 
@@ -125,7 +126,7 @@ class Simulation(object):
     def set_simulation_time(self, time):
         self.time = time
 
-    def set_CFL(self, CFL):
+    def set_cfl(self, CFL):
         self.CFL = CFL
 
     def set_adaptive_timestep(self, adaptive_timestep):
@@ -211,7 +212,7 @@ class Simulation(object):
         self.max_potential_particle_pairs = 0
         self.particle_contact_list_length = 0
         particle_radius_sum = dem_rad_max + mpm_rad_max
-        if self.particle_interaction and particle_radius_sum > Threshold:
+        if self.particle_interaction and particle_radius_sum > THRESHOLD:
             potential_particle_ratio = (
                 (particle_radius_sum + msims.verlet_distance + dsims.verlet_distance) / particle_radius_sum
             ) ** 3
@@ -254,7 +255,7 @@ class Simulation(object):
 
     def validate_configuration(self):
         if self.enhanced_coupling and self.coupling_scheme == "CFDEM":
-            raise RuntimeError("enhanced_coupling is not used by CFDEM coupling")
+            raise SimulationStateError("enhanced_coupling is not used by CFDEM coupling")
 
     def _is_incompressible_fluid_fdm(self, msims: MPMSimulation):
         return msims.solver_type == "Implicit" and msims.material_type == "Fluid" and msims.discretization == "FDM"
@@ -277,38 +278,44 @@ class Simulation(object):
         )
         if direct_affine_ipc:
             if msims.dimension != 3:
-                raise RuntimeError("Direct MPM--AffineBody IPC currently supports 3D only")
+                raise SimulationStateError("Direct MPM--AffineBody IPC currently supports 3D only")
             return
         incompressible_affine = dsims.scheme == "AffineBody" and self._is_incompressible_fluid_fdm(msims)
         if incompressible_affine:
             if self.coupling_scheme not in ("MPDEM", "DEMPM"):
-                raise RuntimeError(
+                raise ConfigurationError(
                     "Incompressible MPM--AffineBody coupling requires coupling_scheme='MPDEM' or 'DEMPM'"
                 )
             if msims.dimension != 3:
-                raise RuntimeError("Incompressible MPM--AffineBody coupling currently supports 3D only")
+                raise SimulationStateError("Incompressible MPM--AffineBody coupling currently supports 3D only")
             if self.dem_timestep != self.delta:
-                raise RuntimeError("Incompressible MPM--AffineBody coupling does not support DEM subcycling")
+                raise SimulationStateError("Incompressible MPM--AffineBody coupling does not support DEM subcycling")
             if self.enable_step_retry or self.adaptive_timestep:
-                raise RuntimeError("Incompressible MPM--AffineBody coupling currently requires a fixed timestep")
+                raise SimulationStateError(
+                    "Incompressible MPM--AffineBody coupling currently requires a fixed timestep"
+                )
             return
         if self.dem_timestep < self.delta and not (
             self.coupling_scheme == "CFDEM"
             and dsims.scheme in ("DEM", "LSDEM")
             and self._is_incompressible_fluid_fdm(msims)
         ):
-            raise RuntimeError("DEMTimestep subcycling requires incompressible CFDEM with DEM scheme='DEM' or 'LSDEM'")
+            raise ConfigurationError(
+                "DEMTimestep subcycling requires incompressible CFDEM with DEM scheme='DEM' or 'LSDEM'"
+            )
         if self.coupling_scheme in ("MPDEM", "DEMPM"):
             if self._is_two_phase_double_layer_lsdem(msims, dsims):
                 if self.dem_timestep != self.delta:
-                    raise RuntimeError("TwoPhaseDoubleLayer LSDEM coupling currently requires DEMTimestep == Timestep")
+                    raise SimulationStateError(
+                        "TwoPhaseDoubleLayer LSDEM coupling currently requires DEMTimestep == Timestep"
+                    )
                 return
             if getattr(msims, "soft_particle", False):
                 if dsims.scheme != "LSDEM":
-                    raise RuntimeError(
+                    raise ConfigurationError(
                         "DEMPM soft_particle coupling requires DEM scheme='LSDEM' " "for level-set rigid bodies."
                     )
-                raise RuntimeError(
+                raise SimulationStateError(
                     "DEMPM level-set DEM + MPM soft_particle coupling is staged "
                     "structurally, but not runnable until the soft body scene, "
                     "generator, contact-node fields, and recorder are migrated "
@@ -316,36 +323,38 @@ class Simulation(object):
                     "path remains DEM scheme='LSMPM'."
                 )
             if dsims.scheme not in ("DEM", "LSDEM"):
-                raise RuntimeError(f"{self.coupling_scheme} currently supports DEM scheme='DEM' " "or scheme='LSDEM'")
+                raise SimulationStateError(
+                    f"{self.coupling_scheme} currently supports DEM scheme='DEM' " "or scheme='LSDEM'"
+                )
             if msims.solver_type == "Implicit":
                 if not self._is_incompressible_fluid_fdm(msims):
-                    raise RuntimeError(
+                    raise ConfigurationError(
                         f"{self.coupling_scheme} with Implicit MPM currently "
                         "supports only incompressible Fluid FDM coupling"
                     )
                 if msims.dimension != 3:
-                    raise RuntimeError("Implicit incompressible DEM-MPM coupling currently supports 3D only")
+                    raise SimulationStateError("Implicit incompressible DEM-MPM coupling currently supports 3D only")
             elif msims.solver_type in ("SemiImplicit", "SemiImplicit_u_p"):
-                raise RuntimeError(f"{self.coupling_scheme} does not support {msims.solver_type} MPM coupling")
+                raise SimulationStateError(f"{self.coupling_scheme} does not support {msims.solver_type} MPM coupling")
         elif self.coupling_scheme == "CFDEM":
             if msims.sparse_grid:
-                raise RuntimeError("CFDEM does not support MPM sparse_grid yet")
+                raise SimulationStateError("CFDEM does not support MPM sparse_grid yet")
             if dsims.scheme not in ("DEM", "LSDEM"):
-                raise RuntimeError("CFDEM currently supports DEM scheme='DEM' or scheme='LSDEM'")
+                raise SimulationStateError("CFDEM currently supports DEM scheme='DEM' or scheme='LSDEM'")
             if not self._is_incompressible_fluid_fdm(msims):
-                raise RuntimeError(
+                raise ConfigurationError(
                     "CFDEM requires incompressible semi-implicit MPM "
                     "(material_type='Fluid', solver_type='Implicit', discretization='FDM')"
                 )
             if msims.dimension != 3:
-                raise RuntimeError("Incompressible CFDEM currently supports 3D only")
+                raise SimulationStateError("Incompressible CFDEM currently supports 3D only")
             if self.cfdem_resolution == "FullyResolved" and dsims.scheme != "LSDEM":
-                raise RuntimeError(
+                raise ConfigurationError(
                     "FullyResolved incompressible CFDEM requires DEM scheme='LSDEM'; "
                     "pure DEM Sphere/Clump bodies are not fully resolved and must be represented as LSDEM SDF bodies"
                 )
             if self.cfdem_resolution == "SemiResolved" and dsims.scheme != "DEM":
-                raise RuntimeError("SemiResolved incompressible CFDEM requires DEM scheme='DEM'")
+                raise ConfigurationError("SemiResolved incompressible CFDEM requires DEM scheme='DEM'")
         elif self.coupling_scheme == "DEM":
             if dsims.scheme not in ("DEM", "LSDEM"):
-                raise RuntimeError("coupling_scheme='DEM' supports DEM scheme='DEM' or scheme='LSDEM'")
+                raise SimulationStateError("coupling_scheme='DEM' supports DEM scheme='DEM' or scheme='LSDEM'")

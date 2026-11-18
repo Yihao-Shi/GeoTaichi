@@ -1,3 +1,1 @@
-from src.fempm.mainFEMPM import FEMPM
-
-__all__ = ["FEMPM"]
+"""src.fempm package. Import implementation modules directly."""

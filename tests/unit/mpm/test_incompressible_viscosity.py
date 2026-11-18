@@ -14,7 +14,7 @@ from src.mpm.engines.EngineKernel import (
     kernel_kinemaitc_mac_cell_g2p,
     interpolate_mac_transport_velocity,
 )
-from src.mpm.structs.Particle import ParticleCloudIncompressible2D
+from src.mpm.structs.ParticleCloudIncompressible2D import ParticleCloudIncompressible2D
 from src.mpm.structs.StaggeredGrid import StaggeredGrid
 import src.utils.GlobalVariable as GlobalVariable
 
@@ -144,7 +144,7 @@ def test_fdm_shifting_volume_is_conservative_and_mirror_symmetric(
     taichi_runtime, monkeypatch, dimension, periodic, shape, stencil, length_ratio
 ):
     from src.mpm.engines import EngineKernel as kernels
-    from src.mpm.structs.Particle import ParticleCloudIncompressible3D
+    from src.mpm.structs.ParticleCloudIncompressible3D import ParticleCloudIncompressible3D
 
     GlobalVariable.DIMENSION = dimension
     GlobalVariable.SHAPEFUNCTION, GlobalVariable.INFLUENCENODE = shape, stencil
@@ -268,7 +268,8 @@ def test_fdm_shifting_volume_is_conservative_and_mirror_symmetric(
     ],
 )
 def test_mac_midpoint_rotation_transport_preserves_momentum_update(taichi_runtime, dimension, coupled):
-    from src.mpm.structs.Particle import ParticleCloudIncompressible3D, ImplicitParticleCoupling
+    from src.mpm.structs.ParticleCloudIncompressible3D import ParticleCloudIncompressible3D
+    from src.mpm.structs.ImplicitParticleCoupling import ImplicitParticleCoupling
 
     GlobalVariable.DIMENSION = dimension
     GlobalVariable.SHAPEFUNCTION = 2

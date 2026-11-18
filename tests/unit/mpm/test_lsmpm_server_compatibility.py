@@ -42,9 +42,9 @@ def test_precision_contract_matches_shared_surface_trace():
 
 
 def test_hemisphere_sampler_import_does_not_load_optional_alphashape():
-    from src.mpm.generator.Body import sample_solid_hemisphere_halton
+    from src.mpm.generator.Body import Body as _Body_sample_solid_hemisphere_halton_owner
 
-    points = sample_solid_hemisphere_halton(
+    points = _Body_sample_solid_hemisphere_halton_owner.sample_solid_hemisphere_halton(
         [0.0, 0.0, 0.0],
         1.0,
         32,

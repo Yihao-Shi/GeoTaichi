@@ -3,15 +3,30 @@
 import numpy as np
 import pytest
 
-from src.physics_model.consititutive_model.infinitesimal_strain.LinearElastic import LinearElasticModel
-from src.physics_model.consititutive_model.strain_rate.Bingham import BinghamModel
-from src.physics_model.consititutive_model.strain_rate.Newtonian import NewtonianModel
+from src.physics_model.constitutive_model.infinitesimal_strain.LinearElastic import LinearElasticModel
+from src.physics_model.constitutive_model.strain_rate.Bingham import BinghamModel
+from src.physics_model.constitutive_model.strain_rate.Newtonian import NewtonianModel
 
 pytestmark = [pytest.mark.materials, pytest.mark.cpu]
 
 
 def coupled_material():
     return {"YoungModulus": 1.0e6, "Porosity": 0.4, "Permeability": 1.0e-4}
+
+
+@pytest.mark.parametrize("name,identifier", [("Ergun", 0), ("Darcy", 1), ("Beetstra", 2)])
+def test_two_phase_drag_uses_canonical_names(name, identifier):
+    model = LinearElasticModel(material_type="TwoPhaseDoubleLayer", solver_type="SemiImplicit")
+    model.initialize_coupling()
+    model.model_initialize(dict(coupled_material(), DragModel=name))
+    assert model.drag_model == identifier
+
+
+@pytest.mark.parametrize("name", ["ergun", "permeability", "typo", 0, 1.5, None])
+def test_unknown_drag_model_is_not_silently_replaced_by_ergun(name):
+    model = LinearElasticModel(material_type="TwoPhaseDoubleLayer", solver_type="SemiImplicit")
+    with pytest.raises(ValueError, match="DragModel"):
+        model.model_initialize(dict(coupled_material(), DragModel=name))
 
 
 @pytest.mark.parametrize("material_type", ["TwoPhaseSingleLayer", "TwoPhaseDoubleLayer"])

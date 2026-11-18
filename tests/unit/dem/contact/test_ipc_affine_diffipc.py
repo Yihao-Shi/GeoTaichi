@@ -45,7 +45,7 @@ def _triangle_basis():
 @pytest.mark.parametrize("mode", ["ccd", "accd"])
 def test_mesh_diffipc_swept_candidates_match_full_pair_ccd(taichi_runtime, tmp_path, mode):
     from tests.unit.dem.contact.test_ipc_affine_friction_assembly import _build_affine_contact
-    from src.dem.engines.AffineDiffIPC import TaichiAffineMeshDiffIPCProjector
+    from src.dem.engines.TaichiAffineMeshDiffIPCProjector import TaichiAffineMeshDiffIPCProjector
 
     dem, controls = _build_affine_contact(tmp_path)
     operator = dem.enginer.operator

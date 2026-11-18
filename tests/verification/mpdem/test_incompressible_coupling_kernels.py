@@ -6,15 +6,15 @@ import pytest
 ti = pytest.importorskip("taichi")
 
 from src.mpdem.fluid_dynamics.DragForceModel import DragForce
-from src.mpdem.Engine import cache_dem_external_load, restore_dem_external_load
-from src.mpdem.fluid_dynamics.IncompressibleCoupling import (
+from src.dem.engines.EngineKernel import cache_dem_external_load, restore_dem_external_load
+from src.mpdem.fluid_dynamics.IncompressibleCouplingKernel import (
     cell_pressure_gradient_3d,
     estimate_cell_solid_fraction_3d,
     lsdem_volume_fraction_ibm_force_density,
     partitioned_body_share,
 )
 from src.mpdem.fluid_dynamics.IncompressibleCouplingKernel import kernel_ibm_velocity_l2_error
-from src.mpdem.fluid_dynamics.IncompressibleSemiResolved import (
+from src.mpdem.fluid_dynamics.IncompressibleSemiResolvedKernel import (
     expanded_domain_gaussian,
     kernel_apply_cell_drag_force_to_mac_velocity,
     kernel_apply_integrated_added_mass,
@@ -30,7 +30,7 @@ from src.mpm.engines.AssembleMatrixKernel import (
 from src.mpm.engines.EngineKernel import (
     kernel_apply_incompressible_ibm_mac_source,
     kernel_apply_mac_viscous_delta,
-    kernel_assemble_incompressible_mg_A_level0_coupled_3d,
+    kernel_assemble_incompressible_mg_a_level0_coupled_3d,
     kernel_compute_mac_viscous_delta,
     kernel_correct_velocity_coupled_3d,
 )
@@ -290,7 +290,7 @@ def test_drag_closures_match_difelice_exponent_and_gidaspow_dilute_limit(taichi_
         result[1] = model.linear_drag_law(1.0, 1.0, 1.0, 0.5, ti.Vector([32.0, 0.0, 0.0]))
         result[2] = model.linear_drag_law(1.0 - 1e-8, 1.0, 1.0, 0.5, ti.Vector([32.0, 0.0, 0.0]))
         result[3] = model.linear_drag_law(0.9, 1.0, 1.0, 0.5, ti.Vector([2000.0, 0.0, 0.0]))
-        result[4] = ti.Vector([model.EmpiricalModel(32.0), 0.0, 0.0])
+        result[4] = ti.Vector([model.empirical_model(32.0), 0.0, 0.0])
 
     evaluate()
     cd = 24 / 32 * (1 + 0.15 * 32**0.687)
@@ -613,7 +613,7 @@ def test_fully_resolved_mg_level_zero_uses_same_mixed_density(taichi_runtime):
     dt = ti.field(dtype=float, shape=())
     dt[None] = 0.2
 
-    kernel_assemble_incompressible_mg_A_level0_coupled_3d(
+    kernel_assemble_incompressible_mg_a_level0_coupled_3d(
         dt,
         ti.Vector([1.0, 1.0, 1.0]),
         FluidProperties(),

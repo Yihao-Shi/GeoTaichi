@@ -1,3 +1,4 @@
+import warnings
 import os
 
 import numpy as np
@@ -160,3 +161,32 @@ def _copy_numpy_field_prefix(values: ti.types.ndarray(), field: ti.template(), n
 def field_from_numpy_prefix(field, values):
     values = validate_numpy_prefix(field, values)
     _copy_numpy_field_prefix(values, field, int(getattr(field, "n", 0)), int(getattr(field, "m", 0)))
+
+
+def get_dataclass_to_dict(state_vars, selected_vars=None, start_index=0, end_index=-1):
+    exported_data = {}
+    if state_vars:
+        all_fields = state_vars.field_dict
+        selected_vars = selected_vars or all_fields.keys()
+        invalid_vars = set(selected_vars) - set(all_fields)
+        if invalid_vars:
+            warnings.warn(f"Field '{invalid_vars}' not found in state_vars, skipping.")
+
+        valid_vars = set(selected_vars) & set(all_fields)
+        for var in valid_vars:
+            attr_field = getattr(state_vars, var)
+            if end_index == -1:
+                end_index = attr_field.shape[0]
+            temp_data = field_to_numpy_slice(attr_field, start_index, end_index)
+            if temp_data.ndim == 2 and temp_data.shape[1] == 6:
+                full_tensor = np.zeros((temp_data.shape[0], 3, 3))
+                full_tensor[:, 0, 0] = temp_data[:, 0]
+                full_tensor[:, 1, 1] = temp_data[:, 1]
+                full_tensor[:, 2, 2] = temp_data[:, 2]
+                full_tensor[:, 0, 1] = full_tensor[:, 1, 0] = temp_data[:, 3]
+                full_tensor[:, 1, 2] = full_tensor[:, 2, 1] = temp_data[:, 4]
+                full_tensor[:, 0, 2] = full_tensor[:, 2, 0] = temp_data[:, 5]
+                exported_data[var] = np.ascontiguousarray(full_tensor)
+            else:
+                exported_data[var] = temp_data
+    return exported_data

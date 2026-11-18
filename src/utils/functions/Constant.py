@@ -1,10 +1,9 @@
 import taichi as ti
 
 
-
 class ConstantFunction:
     def __init__(self) -> None:
-        self.value = 0.
+        self.value = 0.0
 
     def set_function(self, value):
         self.value = value

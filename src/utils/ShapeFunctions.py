@@ -1,6 +1,6 @@
 import taichi as ti
 
-from src.utils.constants import ZEROVEC8f, ZEROMAT8x3, PI, SQRT_PI, Threshold, iPI
+from src.utils.constants import ZEROVEC8F, ZEROMAT8X3, PI, SQRT_PI, THRESHOLD, INV_PI
 from src.utils.ScalarFunction import sgn
 
 
@@ -8,7 +8,7 @@ from src.utils.ScalarFunction import sgn
 #                  GIMP shape function                      #
 # ========================================================= #
 @ti.func
-def ShapeGIMP(xp, xg, idx, lp):
+def shape_gimp(xp, xg, idx, lp):
     nx = 0.0
     dx = 1.0 / idx
     d = xp - xg
@@ -29,7 +29,7 @@ def ShapeGIMP(xp, xg, idx, lp):
 
 
 @ti.func
-def GShapeGIMP(xp, xg, idx, lp):
+def g_shape_gimp(xp, xg, idx, lp):
     dnx = 0.0
     dx = 1.0 / idx
     d = xp - xg
@@ -50,7 +50,7 @@ def GShapeGIMP(xp, xg, idx, lp):
 
 
 @ti.func
-def ShapeGIMPCenter(xp, xg, idx, lp):
+def shape_gimp_center(xp, xg, idx, lp):
     nxc = 0.0
     dx = 1.0 / idx
     d = xp - xg
@@ -71,7 +71,7 @@ def ShapeGIMPCenter(xp, xg, idx, lp):
 # ========================================================= #
 # refer to Axisymmetric Generalized Interpolation Material Point Method for Fully Coupled Thermomechanical Evalution of Transient Responses. International Journal of Computational Methods
 @ti.func
-def ShapeAxisyGIMP(xp, xg, idx, lp):
+def shape_axisy_gimp(xp, xg, idx, lp):
     nx = 0.0
     dx = 1.0 / idx
     d = xp - xg
@@ -99,7 +99,7 @@ def ShapeAxisyGIMP(xp, xg, idx, lp):
 
 
 @ti.func
-def GShapeAxisyGIMP(xp, xg, idx, lp):
+def g_shape_axisy_gimp(xp, xg, idx, lp):
     dnx = 0.0
     dx = 1.0 / idx
     d = xp - xg
@@ -125,7 +125,7 @@ def GShapeAxisyGIMP(xp, xg, idx, lp):
 
 
 @ti.func
-def ShapeAixGIMPCenter(xp, xg, idx, lp):
+def shape_aix_gimp_center(xp, xg, idx, lp):
     nxc = 0.0
     dx = 1.0 / idx
     d = xp - xg
@@ -146,7 +146,7 @@ def ShapeAixGIMPCenter(xp, xg, idx, lp):
 # ========================================================= #
 @ti.func
 def local_linear_shapefn(natural_position):
-    shapefn = ZEROVEC8f
+    shapefn = ZEROVEC8F
     shapefn[0] = 0.125 * (1 - natural_position[0]) * (1 - natural_position[1]) * (1 - natural_position[2])
     shapefn[1] = 0.125 * (1 + natural_position[0]) * (1 - natural_position[1]) * (1 - natural_position[2])
     shapefn[2] = 0.125 * (1 - natural_position[0]) * (1 + natural_position[1]) * (1 - natural_position[2])
@@ -160,7 +160,7 @@ def local_linear_shapefn(natural_position):
 
 @ti.func
 def local_linear_dshapefn(natural_position):
-    dshapefn = ZEROMAT8x3
+    dshapefn = ZEROMAT8X3
     dshapefn[0, 0] = -0.125 * (1 - natural_position[1]) * (1 - natural_position[2])
     dshapefn[0, 1] = -0.125 * (1 - natural_position[0]) * (1 - natural_position[2])
     dshapefn[0, 2] = -0.125 * (1 - natural_position[0]) * (1 - natural_position[1])
@@ -196,7 +196,7 @@ def local_linear_dshapefn(natural_position):
 
 
 @ti.func
-def ShapeLinear(xp, xg, idx, lp):
+def shape_linear(xp, xg, idx, lp):
     nx = 0.0
     d = ti.abs(xp - xg) * idx
     if d < 1.0:
@@ -205,7 +205,7 @@ def ShapeLinear(xp, xg, idx, lp):
 
 
 @ti.func
-def GShapeLinear(xp, xg, idx, lp):
+def g_shape_linear(xp, xg, idx, lp):
     dnx = 0.0
     d = ti.abs(xp - xg) * idx
     if d < 1.0:
@@ -214,14 +214,14 @@ def GShapeLinear(xp, xg, idx, lp):
 
 
 @ti.func
-def HShapeLinear(xp, xg, idx, lp):
+def h_shape_linear(xp, xg, idx, lp):
     # Piecewise-linear MPM has zero curvature away from grid knots.  The
     # piecewise-smooth adjoint keeps the accepted stencil fixed at a knot.
     return 0.0
 
 
 @ti.func
-def ShapeLinearCenter(xp, xg, idx, lp):
+def shape_linear_center(xp, xg, idx, lp):
     return 1.0 / 2.0
 
 
@@ -229,7 +229,7 @@ def ShapeLinearCenter(xp, xg, idx, lp):
 #           Quadratic bernstein shape function              #
 # ========================================================= #
 @ti.func
-def ShapeBernsteinQ(xp, xg, idx, btype):
+def shape_bernstein_q(xp, xg, idx, btype):
     nx = 0.0
     d = ti.abs(xp - xg) * idx
     if d < 1.0:
@@ -244,7 +244,7 @@ def ShapeBernsteinQ(xp, xg, idx, btype):
 
 
 @ti.func
-def GShapeBernsteinQ(xp, xg, idx, btype):
+def g_shape_bernstein_q(xp, xg, idx, btype):
     dnx = 0.0
     d_signed = (xp - xg) * idx
     d = ti.abs(d_signed)
@@ -280,7 +280,7 @@ def _quadratic_boundary_coordinate(d, btype):
 
 
 @ti.func
-def ShapeBsplineQ(xp, xg, idx, btype):
+def shape_bspline_q(xp, xg, idx, btype):
     nx = 0.0
     d = _quadratic_boundary_coordinate((xp - xg) * idx, btype)
     if btype == 0:
@@ -318,7 +318,7 @@ def ShapeBsplineQ(xp, xg, idx, btype):
 
 
 @ti.func
-def GShapeBsplineQ(xp, xg, idx, btype):
+def g_shape_bspline_q(xp, xg, idx, btype):
     dnx = 0.0
     d = _quadratic_boundary_coordinate((xp - xg) * idx, btype)
     if btype == 0:
@@ -356,7 +356,7 @@ def GShapeBsplineQ(xp, xg, idx, btype):
 
 
 @ti.func
-def HShapeBsplineQ(xp, xg, idx, btype):
+def h_shape_bspline_q(xp, xg, idx, btype):
     d2nx = 0.0
     d = (xp - xg) * idx
     if btype == 0:
@@ -389,7 +389,7 @@ def HShapeBsplineQ(xp, xg, idx, btype):
 #             Cubic B-spline shape function                 #
 # ========================================================= #
 @ti.func
-def ShapeBsplineC(xp, xg, idx, btype):
+def shape_bspline_c(xp, xg, idx, btype):
     nx = 0.0
     d = (xp - xg) * idx
     if d >= 1 and d < 2:
@@ -415,7 +415,7 @@ def ShapeBsplineC(xp, xg, idx, btype):
 
 
 @ti.func
-def GShapeBsplineC(xp, xg, idx, btype):
+def g_shape_bspline_c(xp, xg, idx, btype):
     dnx = 0.0
     d = (xp - xg) * idx
     if d >= 1 and d < 2:
@@ -441,7 +441,7 @@ def GShapeBsplineC(xp, xg, idx, btype):
 
 
 @ti.func
-def ShapeBsplineC_THB(xp, xg, dx, nlevel, ntype):
+def shape_bspline_c_thb(xp, xg, dx, nlevel, ntype):
     nx = 0.0
     r = xp - xg
     subdx = dx / (2.0**nlevel)
@@ -524,7 +524,7 @@ def ShapeBsplineC_THB(xp, xg, dx, nlevel, ntype):
 
 
 @ti.func
-def GShapeBsplineC_THB(xp, xg, dx, nlevel, ntype):
+def g_shape_bspline_c_thb(xp, xg, dx, nlevel, ntype):
     dnx = 0.0
     r = xp - xg
     subdx = dx / (2.0**nlevel)
@@ -610,7 +610,7 @@ def GShapeBsplineC_THB(xp, xg, dx, nlevel, ntype):
 #              Cubic spline radial function                 #
 # ========================================================= #
 @ti.func
-def CubicSpline(smoothing_length, relative_distance):
+def cubic_spline(smoothing_length, relative_distance):
     norm_distance = relative_distance.norm()
     multiplier = 3.0 / (2.0 * PI * smoothing_length * smoothing_length * smoothing_length)
     radius = norm_distance / smoothing_length
@@ -625,7 +625,7 @@ def CubicSpline(smoothing_length, relative_distance):
 
 
 @ti.func
-def GCubicSpline(smoothing_length, relative_distance):
+def g_cubic_spline(smoothing_length, relative_distance):
     norm_distance = relative_distance.norm()
     multiplier = 3.0 / (2.0 * PI * smoothing_length * smoothing_length * smoothing_length)
     radius = norm_distance / smoothing_length
@@ -638,7 +638,7 @@ def GCubicSpline(smoothing_length, relative_distance):
         dw_dr = 0.0
 
     gradient = relative_distance
-    if norm_distance > Threshold:
+    if norm_distance > THRESHOLD:
         gradient *= dw_dr / (norm_distance * smoothing_length)
     else:
         gradient *= 0.0
@@ -649,7 +649,7 @@ def GCubicSpline(smoothing_length, relative_distance):
 #             Quintic spline radial function                #
 # ========================================================= #
 @ti.func
-def QuinticSplineRadial(smoothing_length, relative_distance):
+def quintic_spline_radial(smoothing_length, relative_distance):
     norm_distance = relative_distance.norm()
     multiplier = 3.0 / (359.0 * PI * smoothing_length * smoothing_length * smoothing_length)
     radius = norm_distance / smoothing_length
@@ -666,7 +666,7 @@ def QuinticSplineRadial(smoothing_length, relative_distance):
 
 
 @ti.func
-def GQuinticSplineRadial(smoothing_length, relative_distance):
+def g_quintic_spline_radial(smoothing_length, relative_distance):
     norm_distance = relative_distance.norm()
     multiplier = 3.0 / (359.0 * PI * smoothing_length * smoothing_length * smoothing_length)
     radius = norm_distance / smoothing_length
@@ -681,7 +681,7 @@ def GQuinticSplineRadial(smoothing_length, relative_distance):
         dw_dr = 0.0
 
     gradient = relative_distance
-    if norm_distance > Threshold:
+    if norm_distance > THRESHOLD:
         gradient *= dw_dr / (norm_distance * smoothing_length)
     else:
         gradient *= 0.0
@@ -692,7 +692,7 @@ def GQuinticSplineRadial(smoothing_length, relative_distance):
 #                      Guass Kernel                         #
 # ========================================================= #
 @ti.func
-def Guassian(smoothing_length, relative_distance, cut_off=3.0):
+def guassian(smoothing_length, relative_distance, cut_off=3.0):
     norm_distance = relative_distance.norm()
     multiplier = 1.0 / ((SQRT_PI * smoothing_length) * (SQRT_PI * smoothing_length) * (SQRT_PI * smoothing_length))
     radius = norm_distance / smoothing_length
@@ -705,7 +705,7 @@ def Guassian(smoothing_length, relative_distance, cut_off=3.0):
 
 
 @ti.func
-def GGuassian(smoothing_length, relative_distance, cut_off=3.0):
+def g_guassian(smoothing_length, relative_distance, cut_off=3.0):
     norm_distance = relative_distance.norm()
     multiplier = 1.0 / ((SQRT_PI * smoothing_length) * (SQRT_PI * smoothing_length) * (SQRT_PI * smoothing_length))
     radius = norm_distance / smoothing_length
@@ -716,7 +716,7 @@ def GGuassian(smoothing_length, relative_distance, cut_off=3.0):
         dw_dr = 0.0
 
     gradient = relative_distance
-    if norm_distance > Threshold:
+    if norm_distance > THRESHOLD:
         gradient *= dw_dr / (norm_distance * smoothing_length)
     else:
         gradient *= 0.0
@@ -727,7 +727,7 @@ def GGuassian(smoothing_length, relative_distance, cut_off=3.0):
 #                   Super Guass Kernel                      #
 # ========================================================= #
 @ti.func
-def SuperGuassian(smoothing_length, relative_distance, cut_off=3.0):
+def super_guassian(smoothing_length, relative_distance, cut_off=3.0):
     norm_distance = relative_distance.norm()
     multiplier = 1.0 / ((SQRT_PI * smoothing_length) * (SQRT_PI * smoothing_length) * (SQRT_PI * smoothing_length))
     radius = norm_distance / smoothing_length
@@ -740,7 +740,7 @@ def SuperGuassian(smoothing_length, relative_distance, cut_off=3.0):
 
 
 @ti.func
-def GSuperGuassian(smoothing_length, relative_distance, cut_off=3.0):
+def g_super_guassian(smoothing_length, relative_distance, cut_off=3.0):
     norm_distance = relative_distance.norm()
     multiplier = 1.0 / ((SQRT_PI * smoothing_length) * (SQRT_PI * smoothing_length) * (SQRT_PI * smoothing_length))
     radius = norm_distance / smoothing_length
@@ -751,7 +751,7 @@ def GSuperGuassian(smoothing_length, relative_distance, cut_off=3.0):
         dw_dr = 0.0
 
     gradient = relative_distance
-    if norm_distance > Threshold:
+    if norm_distance > THRESHOLD:
         gradient *= dw_dr / (norm_distance * smoothing_length)
     else:
         gradient *= 0.0
@@ -762,7 +762,7 @@ def GSuperGuassian(smoothing_length, relative_distance, cut_off=3.0):
 #                    Weight Functions                       #
 # ========================================================= #
 @ti.func
-def CubicSplineWeight(xp, xg, idx):
+def cubic_spline_weight(xp, xg, idx):
     weight = 0.0
     radius = ti.abs(xp - xg) * idx
     if radius <= 0.5:
@@ -773,7 +773,7 @@ def CubicSplineWeight(xp, xg, idx):
 
 
 @ti.func
-def QuarticSplineWeight(xp, xg, idx):
+def quartic_spline_weight(xp, xg, idx):
     weight = 0.0
     radius = ti.abs(xp - xg) * idx
     if radius <= 1:
@@ -782,18 +782,18 @@ def QuarticSplineWeight(xp, xg, idx):
 
 
 @ti.func
-def CubicSplineWeight3D(xp, xg, idx):
-    wx = CubicSplineWeight(xp[0], xg[0], idx[0])
-    wy = CubicSplineWeight(xp[0], xg[0], idx[0])
-    wz = CubicSplineWeight(xp[0], xg[0], idx[0])
+def cubic_spline_weight3d(xp, xg, idx):
+    wx = cubic_spline_weight(xp[0], xg[0], idx[0])
+    wy = cubic_spline_weight(xp[0], xg[0], idx[0])
+    wz = cubic_spline_weight(xp[0], xg[0], idx[0])
     return wx * wy * wz
 
 
 @ti.func
-def QuarticSplineWeight3D(xp, xg, idx):
-    wx = QuarticSplineWeight(xp[0], xg[0], idx[0])
-    wy = QuarticSplineWeight(xp[0], xg[0], idx[0])
-    wz = QuarticSplineWeight(xp[0], xg[0], idx[0])
+def quartic_spline_weight3d(xp, xg, idx):
+    wx = quartic_spline_weight(xp[0], xg[0], idx[0])
+    wy = quartic_spline_weight(xp[0], xg[0], idx[0])
+    wz = quartic_spline_weight(xp[0], xg[0], idx[0])
     return wx * wy * wz
 
 
@@ -801,12 +801,12 @@ def QuarticSplineWeight3D(xp, xg, idx):
 #                  Heaviside Functions                      #
 # ========================================================= #
 @ti.func
-def SmoothedHeavisideFunction(epsilon, phi):
+def smoothed_heaviside_function(epsilon, phi):
     h = 0.0
     ieps = 1.0 / epsilon
     if phi > -epsilon:
         if phi < epsilon:
-            h = 0.5 * (1 + phi * ieps + ti.sin(PI * phi * ieps) * iPI)
+            h = 0.5 * (1 + phi * ieps + ti.sin(PI * phi * ieps) * INV_PI)
         else:
             h = 1.0
     return h
@@ -816,7 +816,7 @@ def SmoothedHeavisideFunction(epsilon, phi):
 #               Distortion Ratio Functions                  #
 # ========================================================= #
 @ti.func
-def DistortionRatioFuction(eta):
+def distortion_ratio_fuction(eta):
     value = 0.0
     if 0 <= eta < 0.5:
         value = 0.5 * eta
@@ -828,8 +828,18 @@ def DistortionRatioFuction(eta):
 
 
 @ti.func
-def CubicSmooth(relative_distance, support_domain):
+def cubic_smooth(relative_distance, support_domain):
     norm_distance = relative_distance.norm()
     relative_position = norm_distance / support_domain
     single_value = 1 - relative_position * relative_position
     return single_value * single_value * single_value if relative_position < 1.0 else 0.0
+
+
+@ti.func
+def jacobian2parent2parametric1d(eleknot):
+    return 0.5 * (eleknot[1] - eleknot[0])
+
+
+@ti.func
+def jacobian2parent2parametric2d(eleknot_u, eleknot_v):
+    return jacobian2parent2parametric1d(eleknot_u) * jacobian2parent2parametric1d(eleknot_v)

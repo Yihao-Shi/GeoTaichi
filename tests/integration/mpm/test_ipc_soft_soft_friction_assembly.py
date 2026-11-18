@@ -54,7 +54,7 @@ def _build_soft_soft_contact(
         visualize=False,
         path=str(tmp_path / "mpm"),
     )
-    mpm.init_F0()
+    mpm.init_f0()
     mpm.mass_vec.fill(0.0)
     mpm.grid_reset()
     mpm.compute_shapefn()

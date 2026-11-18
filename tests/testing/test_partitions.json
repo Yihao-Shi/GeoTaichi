@@ -7,6 +7,7 @@
         "tests/unit/testing/test_partition_runner.py",
         "tests/unit/testing/test_test_taxonomy.py",
         "tests/unit/testing/test_commit_checks.py",
+        "tests/unit/testing/test_source_layout.py",
         ".githooks/test_pre_commit.py",
         "tests/unit/mesh/test_gauss_points.py",
         "tests/unit/levelset/test_weno.py",

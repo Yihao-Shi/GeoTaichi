@@ -73,7 +73,7 @@ def main():
     import geotaichi as gt
     from geotaichi import FEM
     from src.fem import DirichletBoundary
-    from src.fem.generator import FEMMesh
+    from src.fem.generator.Mesh import FEMMesh
 
     gt.init(arch=args.arch, default_fp="float64", log=True)
     points, cells = rolled_mesh(args.nu, args.nv)

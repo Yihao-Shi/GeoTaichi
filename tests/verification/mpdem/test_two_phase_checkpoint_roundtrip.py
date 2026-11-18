@@ -15,8 +15,10 @@ import src.utils.GlobalVariable as GV
 if __name__ == "__main__":
     GV.DIMENSION = int(sys.argv[1])
 from src.mpm.Recorder import WriteFile
+from src.mpm.boundaries.BoundaryConstraint import BoundaryConstraints
 from src.mpm.generator.LoadFromFile import BodyReader
-from src.mpm.structs.Particle import ParticleCloudTwoPhase, ParticleCloudTwoPhase2D
+from src.mpm.structs.ParticleCloudTwoPhase import ParticleCloudTwoPhase
+from src.mpm.structs.ParticleCloudTwoPhase2D import ParticleCloudTwoPhase2D
 
 
 def run_check(dimension, material_type, folder):
@@ -34,13 +36,15 @@ def run_check(dimension, material_type, folder):
             psize=np.empty((0, dimension)),
             is_rigid=ti.field(int, shape=1),
             two_phase_fluid_mass_initialized=False,
+            restart_cell_pressure=None,
             material=SimpleNamespace(
                 stateVars=state,
                 matProps=SimpleNamespace(size=lambda: 2),
                 get_state_vars_dict=lambda **kw: {"strain": np.array([99.0, 99.0]), "epdstrain": np.array([0.3, 0.4])},
             ),
-            boundary=SimpleNamespace(particle_traction=traction_type.field(shape=3), ptraction_list=np.array([0])),
+            boundary=BoundaryConstraints(),
         )
+        scene.boundary.particle_traction = traction_type.field(shape=3)
         grid_pressure = ti.field(ti.f64, shape=(3,) * dimension)
         grid_pressure.from_numpy(np.arange(3**dimension, dtype=float).reshape((3,) * dimension) ** 2)
         scene.element = SimpleNamespace(
@@ -92,7 +96,7 @@ def run_check(dimension, material_type, folder):
     writer = WriteFile.__new__(WriteFile)
     writer.particle_path = str(folder)
     writer.visualizeParticle = lambda *a: None
-    writer.MonitorParticleTwoPhase(sims, scene)
+    writer.monitor_particle_two_phase(sims, scene)
     path = folder / "MPMParticle000001.npz"
     reader = BodyReader.__new__(BodyReader)
     reader.sims = sims
@@ -226,7 +230,7 @@ def run_check(dimension, material_type, folder):
     # particle pressure must initialize IBM just as it does in a fresh run.
     sims.current_time, sims.current_step = 0.0, 0
     scene.element.cell.pressure.fill(0.0)
-    writer.MonitorParticleTwoPhase(sims, scene)
+    writer.monitor_particle_two_phase(sims, scene)
     initial = make_scene()
     reader.add_npz_body(initial, {"Restart": True, "File": str(path)})
     assert initial.restart_cell_pressure is None

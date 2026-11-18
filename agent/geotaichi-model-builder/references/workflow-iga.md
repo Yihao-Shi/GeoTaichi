@@ -54,11 +54,11 @@ axisymmetric meridian, configure IGA, Direct implicit ULMPM, and IGAMPM with
 `dimension=2`, `axisymmetric=True`, and one shared `axis_offset`. Component
 zero is radius and all material/contact quadrature points must satisfy
 `R > 0`. Both material blocks use the 3D map with `F_theta_theta=r/R` and
-`2*pi*R` reference weights; NURBS closest-point geometry, ACCD, and friction
+`R` reference weights; NURBS closest-point geometry, ACCD, and friction
 remain two-dimensional in `(r,z)`.
 Require a finite positive reference-patch Jacobian at every quadrature point.
 `NeumannBoundary.append` takes resultant control-point forces rather than a
-traction density, so an axisymmetric problem must include the `2*pi*R`
+traction density, so an axisymmetric problem must include the `R`
 boundary measure before appending those values.
 
 ## 3. Contact manager lifecycle
@@ -98,7 +98,7 @@ the contact law, but IGA currently has no independent spectral estimate.
 Current solver-family routing is:
 
 - implicit IGA + implicit MPM -> monolithic IPC contact;
-- for `contact_model="IPC"`, explicit or mixed solver families -> rejected.
+- for `contact_model="BarrierIPC"`, explicit or mixed solver families -> rejected.
 
 For IPC verify barrier activation distance/stiffness, friction, closest-point
 geometry, matrix block assembly, line search, CCD/ACCD, convergence tolerances,
@@ -163,7 +163,7 @@ or contact benchmark. Explicit validation additionally checks pair-property
 lookup, closest-point bounds, persistent friction history, equal-and-opposite
 force transfer, normal-force moment balance, the finite-radius frictional
 couple, and both material/contact timestep estimates.
-Axisymmetric validation additionally checks revolved volume/contact measures
+Axisymmetric validation additionally checks per-radian volume/contact measures
 and the hoop stretch/tangent.
 
 For implicit prescribed motion at constant speed, use

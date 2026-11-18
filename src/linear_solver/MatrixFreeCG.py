@@ -1,10 +1,11 @@
+from src.utils.errors import ConfigurationError
+from src.linear_solver.DeviceKrylov import DeviceKrylov
 from math import isfinite, sqrt
 
 import taichi as ti
 from taichi.lang.impl import current_cfg
 
 from src.linear_solver.LinearOperator import LinearOperator
-from src.linear_solver.DeviceKrylov import DeviceKrylov, device_krylov_enabled
 
 from src.linear_solver.MatrixFreeKrylovKernel import (
     cg_reset as reset,
@@ -24,7 +25,7 @@ class MatrixFreeCG(object):
         self.Ax = ti.field(dtype=float)
         ti.root.dense(ti.i, int(length)).place(self.p, self.r, self.Ap, self.Ax)
         self.scalar_rest()
-        self.device_execution = device_krylov_enabled()
+        self.device_execution = DeviceKrylov.device_krylov_enabled()
         self._device_solver = None
 
         if current_cfg().arch == ti.cuda:
@@ -32,7 +33,9 @@ class MatrixFreeCG(object):
         elif current_cfg().arch == ti.cpu:
             self.reduce = reduce_atomic
         else:
-            raise RuntimeError(f"{str(current_cfg().arch)} is not supported for preconditioned bi-conjuction gradient.")
+            raise ConfigurationError(
+                f"{str(current_cfg().arch)} is not supported for preconditioned bi-conjuction gradient."
+            )
 
     def scalar_rest(self):
         self.alpha = 0.0
@@ -77,12 +80,12 @@ class MatrixFreeCG(object):
         self.scalar_rest()
         A.matvec(x, self.Ax)
         init(size, b, self.p, self.r, self.Ap, self.Ax)
-        initial_rTr = self.reduce(size, self.r, self.r)
-        initial_residual = sqrt(max(initial_rTr, 0.0))
+        initial_r_tr = self.reduce(size, self.r, self.r)
+        initial_residual = sqrt(max(initial_r_tr, 0.0))
         convergence_tol = max(tol, rel_tol * initial_residual)
         self.last_initial_residual = initial_residual
         self.last_residual = initial_residual
-        if not isfinite(initial_rTr) or initial_rTr < 0.0:
+        if not isfinite(initial_r_tr) or initial_r_tr < 0.0:
             self.last_residual = float("inf")
             self.last_breakdown_reason = "non_finite_initial_residual"
             return False
@@ -90,7 +93,7 @@ class MatrixFreeCG(object):
             self.last_converged = True
             return True
 
-        old_rTr = initial_rTr
+        old_r_tr = initial_r_tr
         update_p(size, self.p, self.r, self.beta)
         reliable_update_interval = 32
         for iteration in range(maxiter):
@@ -99,51 +102,51 @@ class MatrixFreeCG(object):
             if not isfinite(pAp) or pAp <= 0.0:
                 self.last_breakdown_reason = "non_positive_curvature"
                 break
-            self.alpha = old_rTr / pAp
+            self.alpha = old_r_tr / pAp
             if not isfinite(self.alpha):
                 self.last_breakdown_reason = "non_finite_alpha"
                 break
             update_x(size, x, self.p, self.alpha)
             update_r(size, self.r, self.Ap, self.alpha)
-            new_rTr = self.reduce(size, self.r, self.r)
+            new_r_tr = self.reduce(size, self.r, self.r)
             self.last_iterations = iteration + 1
-            if not isfinite(new_rTr) or new_rTr < 0.0:
+            if not isfinite(new_r_tr) or new_r_tr < 0.0:
                 self.last_residual = float("inf")
                 self.last_breakdown_reason = "non_finite_residual"
                 break
-            self.last_residual = sqrt(new_rTr)
+            self.last_residual = sqrt(new_r_tr)
             if self.last_residual <= convergence_tol or (iteration + 1) % reliable_update_interval == 0:
                 A.matvec(x, self.Ax)
                 init(size, b, self.p, self.r, self.Ap, self.Ax)
-                verified_rTr = self.reduce(size, self.r, self.r)
-                if not isfinite(verified_rTr) or verified_rTr < 0.0:
+                verified_r_tr = self.reduce(size, self.r, self.r)
+                if not isfinite(verified_r_tr) or verified_r_tr < 0.0:
                     self.last_residual = float("inf")
                     self.last_breakdown_reason = "non_finite_residual"
                     break
-                self.last_residual = sqrt(verified_rTr)
+                self.last_residual = sqrt(verified_r_tr)
                 if self.last_residual <= convergence_tol:
                     self.last_converged = True
                     break
-                old_rTr = verified_rTr
+                old_r_tr = verified_r_tr
                 update_p(size, self.p, self.r, 0.0)
                 self.last_residual_restarts += 1
                 continue
-            if old_rTr <= 0.0:
+            if old_r_tr <= 0.0:
                 self.last_breakdown_reason = "non_positive_previous_residual"
                 break
-            self.beta = new_rTr / old_rTr
+            self.beta = new_r_tr / old_r_tr
             if not isfinite(self.beta):
                 self.last_breakdown_reason = "non_finite_beta"
                 break
             update_p(size, self.p, self.r, self.beta)
-            old_rTr = new_rTr
+            old_r_tr = new_r_tr
 
         if not self.last_converged:
             A.matvec(x, self.Ax)
             init(size, b, self.p, self.r, self.Ap, self.Ax)
-            verified_rTr = self.reduce(size, self.r, self.r)
-            if isfinite(verified_rTr) and verified_rTr >= 0.0:
-                self.last_residual = sqrt(verified_rTr)
+            verified_r_tr = self.reduce(size, self.r, self.r)
+            if isfinite(verified_r_tr) and verified_r_tr >= 0.0:
+                self.last_residual = sqrt(verified_r_tr)
                 self.last_converged = self.last_residual <= convergence_tol
             else:
                 self.last_residual = float("inf")

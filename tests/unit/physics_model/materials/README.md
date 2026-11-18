@@ -15,7 +15,7 @@ template are not additional deformable built-in laws.
 
 | Entry point | Supported models exercised | Tests and checks |
 | --- | --- | --- |
-| FEM elastic/surface | StVK (including the LinearElastic alias), NeoHookean, ClothARAP, ClothNeoHookean | `unit/fem/test_fem_materials.py`: factory selection, rigid maps, directional tangent finite differences |
+| FEM elastic/surface | StVK (including the LinearElastic alias), NeoHookean, ClothARAP, ClothNeoHookean | `unit/fem/test_fem_materials.py`: factory selection and solid tangents; `test_cloth_models.py`: device energy/stress/tangent against NumPy oracles, rigid maps, directional tangent differences, strict model names |
 | FEM explicit HEX8 | ElasticPerfectlyPlastic, MohrCoulomb, DruckerPrager, StateDependentMohrCoulomb, ModifiedCamClay, GranularMaterial, SanisandMS, NorSand | `unit/fem/test_hex8_elastoplastic.py`: construction, state initialization, affine loading at all eight Gauss points, internal-force balance |
 | IGA explicit/implicit | NeoHookean | `unit/iga/test_iga_materials.py`: actual solver construction in 2D/3D, zero and nonzero deformation, energy/PK1 analytical oracle, tangent finite differences |
 | Native explicit MPM | LinearElastic; NeoHookean, HenckyElastic, MooneyRivlin, Gent, Hydrogel; all eight FEM incremental models above; Newtonian, Bingham | `unit/mpm/test_material_models.py`: production material manager, state schema, zero and repeated loading, independent particle history, volume update, finite state in 2D/3D |

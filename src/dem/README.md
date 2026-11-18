@@ -19,16 +19,21 @@ of contact laws.
 
 | Path | Responsibility |
 | --- | --- |
-| `generator/` | Regions, templates, bodies, walls, and restart input |
+| `generator/` | Regions, clump/level-set/affine templates, bodies, walls, and restart input |
 | `structs/` | Taichi particle, rigid-body, wall, contact, and level-set fields |
 | `neighbor/` | Neighbor search and Verlet/contact candidate management |
 | `contact/` | DEM contact models and force assembly |
-| `affine/` | Affine body templates and state |
 | `engines/` | Time integration and affine nonlinear solvers |
 | `mainDEM.py` | Public scene facade |
 
 Shared constitutive and contact formulas live in `src/physics_model`, while
 BVH and CCD primitives live in `src/contact_detection`.
+
+`generator/AffineBodyTemplate.py` prepares a copied, centered surface mesh and
+its mass properties without building an SDF. `GeneralShapeTemplate.py` prepares
+level-set objects and their grids. Both use the shared host surface quadrature
+in `src/utils/linalg.py`; their different generation and coordinate-transform
+contracts remain separate.
 
 Local contact finite-difference probes and NumPy surface-correction measures
 live in `tests/helpers/affine_contact_probe.py`. Production stepping uses the
@@ -918,7 +923,8 @@ when contact is intended.
 The affine implementation follows the same state/operator/engine ownership as
 the older DEM paths. `AffineBodyState.py` owns accepted and trial state,
 `AffineBodyOperator.py` owns Taichi contact/linear operations,
-`AffineDiffIPC.py` owns affine-mesh nonpenetration projectors, and
+`TaichiAffineDiffIPCProjector.py` and `TaichiAffineMeshDiffIPCProjector.py`
+own affine-mesh nonpenetration projectors, and
 `AffineBodyEngine.py` owns nonlinear orchestration and output. Configured
 device/reference, matrix, and friction paths are selected during
 initialization rather than rediscovered in every nonlinear iteration.

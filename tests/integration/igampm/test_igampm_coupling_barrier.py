@@ -1,5 +1,7 @@
 """Three-dimensional IGA-MPM barrier integration check."""
 
+from src.physics_model.contact_model.ipc.Utilities import get_distance_to_surface_fixed_dim
+
 import numpy as np
 import pytest
 import taichi as ti
@@ -69,7 +71,7 @@ def _build_mpm_particle(output_path):
         visualize=False,
         path=str(output_path),
     )
-    mpm.init_F0()
+    mpm.init_f0()
     mpm.mass_vec.fill(0.0)
     mpm.grid_reset()
     mpm.compute_shapefn()
@@ -85,7 +87,6 @@ def _build_mpm_particle(output_path):
 @pytest.mark.isolated_dimension(3)
 def test_igampm_aabb_pruning_keeps_active_distances_and_safe_ccd(taichi_runtime, tmp_path):
     from src.igampm import IGAMPM
-    from src.physics_model.contact_model.ipc.NurbsContact import get_distance_to_surface_fixed_dim
 
     config.set_dimension(3)
     iga = _build_iga_cube(tmp_path / "iga-bounds")

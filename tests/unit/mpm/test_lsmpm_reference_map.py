@@ -1,3 +1,4 @@
+from src.mpm.soft_particle.Structs import SoftMaterialPoint
 import numpy as np
 import pytest
 from types import SimpleNamespace
@@ -7,10 +8,11 @@ from types import SimpleNamespace
 def test_reference_map_preserves_affine_motion_without_sdf_accumulation(taichi_runtime, shape_type):
     ti = taichi_runtime
     from src.mpm.soft_particle.ReferenceMap import (
-        initialize_soft_reference_sdf_,
+        initialize_soft_reference_sdf,
         reconstruct_soft_levelset,
     )
-    from src.mpm.soft_particle.Structs import SoftBody, SoftMaterialPoint
+    from src.mpm.soft_particle.SoftBody import SoftBody
+
     from src.mpm.Simulation import Simulation
     from src.mpm.soft_particle.DEMPMBridge import bind_explicit_engine
 
@@ -51,7 +53,7 @@ def test_reference_map_preserves_affine_motion_without_sdf_accumulation(taichi_r
     )
     initial = xyz[:, 0].copy()
     grid.distance_field.from_numpy(initial)
-    initialize_soft_reference_sdf_(1, soft, grid, reference, initialized)
+    initialize_soft_reference_sdf(1, soft, grid, reference, initialized)
     sims = Simulation.__new__(Simulation)
     sims.initialize_soft_particle_options()
     sims.soft_levelset_domain_check = False
@@ -104,7 +106,7 @@ def test_reference_map_preserves_affine_motion_without_sdf_accumulation(taichi_r
             points.F[p] = R @ A @ R0.T
         # Corrupt the preceding SDF and attempt to reinitialize the reference.
         grid.distance_field.fill(0.0)
-        initialize_soft_reference_sdf_(1, soft, grid, reference, initialized)
+        initialize_soft_reference_sdf(1, soft, grid, reference, initialized)
         assert np.array_equal(reference.to_numpy(), initial)
         engine.initialize_soft_levelset_transport(sims, scene)
         engine.advance_soft_levelset_transport(sims, scene)

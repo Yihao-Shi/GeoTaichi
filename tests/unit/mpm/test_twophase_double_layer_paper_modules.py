@@ -4,7 +4,7 @@ import taichi as ti
 from geotaichi import init
 from examples.mmpm.TwoPhaseWavemaker3D.two_layer_two_phase_wavemaker_3d import set_moving_piston_mac_boundary
 from src.mpm.boundaries.BoundaryCore import apply_particle_traction_constraint_twophase
-from src.mpm.boundaries.BoundaryStrcut import ParticleLoadTwoPhase2D
+from src.mpm.boundaries.BoundaryStruct import ParticleLoadTwoPhase2D
 from src.mpm.engines.TwoPhaseDoubleLayerKernel import (
     FLUID_CELL,
     SOLID_CELL,
@@ -22,8 +22,8 @@ from src.mpm.engines.TwoPhaseDoubleLayerKernel import (
     kernel_mac_p2g_double_layer2d,
     kernel_reset_double_layer_grid,
     kernel_normalize_double_layer_mac_fields2d,
-    kernel_assemble_double_layer_pressure_A,
-    kernel_assemble_double_layer_pressure_mg_A,
+    kernel_assemble_double_layer_pressure_a,
+    kernel_assemble_double_layer_pressure_mg_a,
     kernel_assemble_double_layer_pressure_rhs,
     kernel_correct_double_layer_velocity2d,
     kernel_coarsen_double_layer_grid_type2d,
@@ -42,11 +42,12 @@ from src.mpm.engines.TwoPhaseDoubleLayerKernel import (
     _sample_mac_velocity,
     _sample_mac_velocity3d,
 )
-from src.mpm.structs.GridNode import NodeTwoPhase, NodeTwoPhase2D
-from src.mpm.structs.Particle import ParticleCloudTwoPhase2D
-from src.physics_model.consititutive_model.infinitesimal_strain.MohrCoulomb import MohrCoulombModel
-from src.physics_model.consititutive_model.infinitesimal_strain.MaterialKernel import ElasticTensorMultiplyVector
-from src.utils.TypeDefination import mat2x2, vec2f, vec3f
+from src.mpm.structs.NodeTwoPhase import NodeTwoPhase
+from src.mpm.structs.NodeTwoPhase2D import NodeTwoPhase2D
+from src.mpm.structs.ParticleCloudTwoPhase2D import ParticleCloudTwoPhase2D
+from src.physics_model.constitutive_model.infinitesimal_strain.MohrCoulomb import MohrCoulombModel
+from src.physics_model.constitutive_model.infinitesimal_strain.MaterialKernel import elastic_tensor_multiply_vector
+from src.utils.TypeDefinition import mat2x2, vec2f, vec3f
 
 NX = 5
 NY = 6
@@ -618,7 +619,7 @@ def _compute_elastic_oedometer_response(
 ):
     bulk = young / (3.0 * (1.0 - 2.0 * poisson))
     shear = young / (2.0 * (1.0 + poisson))
-    stress_increment = ElasticTensorMultiplyVector(ti.Vector([0.0, strain, 0.0, 0.0, 0.0, 0.0]), bulk, shear)
+    stress_increment = elastic_tensor_multiply_vector(ti.Vector([0.0, strain, 0.0, 0.0, 0.0, 0.0]), bulk, shear)
     out[0] = stress_increment[1] / strain
     out[1] = stress_increment[0] / strain
     out[2] = stress_increment[2] / strain
@@ -674,7 +675,7 @@ def test_pressure_matrix_reduces_to_uniform_laplacian():
     _fill_pressure_fields(
         cell_type, face_porosity_x, face_porosity_y, cell_solid_density, cell_fluid_density, fluid_sdf
     )
-    kernel_assemble_double_layer_pressure_A(
+    kernel_assemble_double_layer_pressure_a(
         ti.Vector([DX, DY]),
         dt,
         cell_type,
@@ -1275,7 +1276,7 @@ def test_pressure_matrix_uses_neumann_for_solid_walls_and_dirichlet_for_air():
     _fill_side_wall_pressure_fields(
         cell_type, face_porosity_x, face_porosity_y, cell_solid_density, cell_fluid_density, fluid_sdf
     )
-    kernel_assemble_double_layer_pressure_A(
+    kernel_assemble_double_layer_pressure_a(
         ti.Vector([DX, DY]),
         dt,
         cell_type,
@@ -1323,7 +1324,7 @@ def test_coarse_pressure_matrix_uses_gfm_theta_for_free_surface():
         cell_fluid_density,
         fluid_sdf,
     )
-    kernel_assemble_double_layer_pressure_mg_A(
+    kernel_assemble_double_layer_pressure_mg_a(
         ti.Vector([DX, DY]),
         dt,
         factor,
@@ -1559,7 +1560,7 @@ def test_pressure_projection_reduces_weighted_divergence_with_code_sign_conventi
         solid_velocity_y,
         b,
     )
-    kernel_assemble_double_layer_pressure_A(
+    kernel_assemble_double_layer_pressure_a(
         ti.Vector([DX, DY]),
         dt,
         cell_type,

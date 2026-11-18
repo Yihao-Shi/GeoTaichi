@@ -5,6 +5,8 @@ Merge buffers stay in global memory. CPU/Metal use serial work within each
 bucket while retaining the same device fields and prefix-sum/scatter stages.
 """
 
+from src.utils.errors import CapacityError
+
 import numpy as np
 import taichi as ti
 from taichi.lang.impl import current_cfg
@@ -83,7 +85,7 @@ class BucketReduction(HashReduction):
             else:
                 self.kernel_sort_and_reduce_portable()
         if int(self.device_overflow[0]):
-            raise RuntimeError("bucket reduction output capacity exceeded")
+            raise CapacityError("bucket reduction output capacity exceeded")
 
     def pattern_cache_statistics(self):
         nnz = int(self.element_pair_num[0])
@@ -245,11 +247,11 @@ class BucketReduction(HashReduction):
 
             lane_iter = lane_id + 1
             while lane_iter < num:
-                blockI1 = self.blockI[self.hash_table[begin + lane_iter]]
-                blockJ1 = self.blockJ[self.hash_table[begin + lane_iter]]
-                blockI2 = self.blockI[self.hash_table[begin + lane_iter - 1]]
-                blockJ2 = self.blockJ[self.hash_table[begin + lane_iter - 1]]
-                if blockI1 != blockI2 or blockJ1 != blockJ2:
+                block_i1 = self.blockI[self.hash_table[begin + lane_iter]]
+                block_j1 = self.blockJ[self.hash_table[begin + lane_iter]]
+                block_i2 = self.blockI[self.hash_table[begin + lane_iter - 1]]
+                block_j2 = self.blockJ[self.hash_table[begin + lane_iter - 1]]
+                if block_i1 != block_i2 or block_j1 != block_j2:
                     count += 1
                 lane_iter += WARP_SZ
             ti.simt.warp.sync(ti.u32(0xFFFFFFFF))

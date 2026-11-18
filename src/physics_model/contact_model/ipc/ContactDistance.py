@@ -6,7 +6,7 @@ from .ContactGeometry import (
 
 
 @ti.func
-def g_PE3D(v0, v1, v2):
+def g_pe3d(v0, v1, v2):
     g = ti.Vector.zero(float, 9)
     v01 = v0[0]
     v02 = v0[1]
@@ -48,7 +48,7 @@ def g_PE3D(v0, v1, v2):
 
 
 @ti.func
-def H_PE3D(v0, v1, v2):
+def h_pe3d(v0, v1, v2):
     H = ti.Matrix.zero(float, 9, 9)
     v01 = v0[0]
     v02 = v0[1]
@@ -278,7 +278,7 @@ def H_PE3D(v0, v1, v2):
 
 
 @ti.func
-def g_PT(v0, v1, v2, v3):
+def g_pt(v0, v1, v2, v3):
     g = ti.Vector.zero(float, 12)
     v01 = v0[0]
     v02 = v0[1]
@@ -329,7 +329,7 @@ def g_PT(v0, v1, v2, v3):
 
 
 @ti.func
-def H_PT(v0, v1, v2, v3):
+def h_pt(v0, v1, v2, v3):
     H = ti.Matrix.zero(float, 12, 12)
     v01 = v0[0]
     v02 = v0[1]
@@ -809,7 +809,7 @@ def H_PT(v0, v1, v2, v3):
 
 
 @ti.func
-def g_EE(v0, v1, v2, v3):
+def g_ee(v0, v1, v2, v3):
     g = ti.Vector.zero(float, 12)
     v01 = v0[0]
     v02 = v0[1]
@@ -871,7 +871,7 @@ def g_EE(v0, v1, v2, v3):
 
 
 @ti.func
-def H_EE(v0, v1, v2, v3):
+def h_ee(v0, v1, v2, v3):
     H = ti.Matrix.zero(float, 12, 12)
     v01 = v0[0]
     v02 = v0[1]
@@ -1301,7 +1301,7 @@ def H_EE(v0, v1, v2, v3):
 
 
 @ti.func
-def g_EECN2(v0, v1, v2, v3):
+def g_eecn2(v0, v1, v2, v3):
     g = ti.Vector.zero(float, 12)
     v01 = v0[0]
     v02 = v0[1]
@@ -1352,7 +1352,7 @@ def g_EECN2(v0, v1, v2, v3):
 
 
 @ti.func
-def H_EECN2(v0, v1, v2, v3):
+def h_eecn2(v0, v1, v2, v3):
     H = ti.Matrix.zero(float, 12, 12)
     v01 = v0[0]
     v02 = v0[1]
@@ -1663,8 +1663,8 @@ def point_edge_distance_grad_hess_2d(p, e0, e1):
         e03 = ti.Vector([e0[0], e0[1], 0.0])
         e13 = ti.Vector([e1[0], e1[1], 0.0])
         distance2 = point_line_distance2(p3, e03, e13)
-        gradient3 = g_PE3D(p3, e03, e13)
-        hessian3 = H_PE3D(p3, e03, e13)
+        gradient3 = g_pe3d(p3, e03, e13)
+        hessian3 = h_pe3d(p3, e03, e13)
         for site, component in ti.static(ti.ndrange(3, 2)):
             gradient[2 * site + component] = gradient3[3 * site + component]
         for first, second in ti.ndrange(3, 3):
@@ -1860,26 +1860,26 @@ def point_triangle_distance_grad_hess(p, t0, t1, t2):
         scatter_compact_grad_hess(g, H, gg, HH, ids, 2)
     elif dtype == 3:
         dist2 = point_line_distance2(p, t0, t1)
-        gg = g_PE3D(p, t0, t1)
-        HH = H_PE3D(p, t0, t1)
+        gg = g_pe3d(p, t0, t1)
+        HH = h_pe3d(p, t0, t1)
         ids = ti.Vector([0, 1, 2])
         scatter_compact_grad_hess(g, H, gg, HH, ids, 3)
     elif dtype == 4:
         dist2 = point_line_distance2(p, t1, t2)
-        gg = g_PE3D(p, t1, t2)
-        HH = H_PE3D(p, t1, t2)
+        gg = g_pe3d(p, t1, t2)
+        HH = h_pe3d(p, t1, t2)
         ids = ti.Vector([0, 2, 3])
         scatter_compact_grad_hess(g, H, gg, HH, ids, 3)
     elif dtype == 5:
         dist2 = point_line_distance2(p, t0, t2)
-        gg = g_PE3D(p, t0, t2)
-        HH = H_PE3D(p, t0, t2)
+        gg = g_pe3d(p, t0, t2)
+        HH = h_pe3d(p, t0, t2)
         ids = ti.Vector([0, 1, 3])
         scatter_compact_grad_hess(g, H, gg, HH, ids, 3)
     else:
         dist2 = point_plane_distance2(p, t0, t1, t2)
-        g = g_PT(p, t0, t1, t2)
-        H = H_PT(p, t0, t1, t2)
+        g = g_pt(p, t0, t1, t2)
+        H = h_pt(p, t0, t1, t2)
     return dist2, g, H, dtype
 
 
@@ -1905,26 +1905,26 @@ def point_triangle_distance_grad_hess_by_type(p, t0, t1, t2, dtype: ti.template(
         scatter_compact_grad_hess(g, H, gg, HH, ids, 2)
     elif ti.static(dtype == 3):
         dist2 = point_line_distance2(p, t0, t1)
-        gg = g_PE3D(p, t0, t1)
-        HH = H_PE3D(p, t0, t1)
+        gg = g_pe3d(p, t0, t1)
+        HH = h_pe3d(p, t0, t1)
         ids = ti.Vector([0, 1, 2])
         scatter_compact_grad_hess(g, H, gg, HH, ids, 3)
     elif ti.static(dtype == 4):
         dist2 = point_line_distance2(p, t1, t2)
-        gg = g_PE3D(p, t1, t2)
-        HH = H_PE3D(p, t1, t2)
+        gg = g_pe3d(p, t1, t2)
+        HH = h_pe3d(p, t1, t2)
         ids = ti.Vector([0, 2, 3])
         scatter_compact_grad_hess(g, H, gg, HH, ids, 3)
     elif ti.static(dtype == 5):
         dist2 = point_line_distance2(p, t0, t2)
-        gg = g_PE3D(p, t0, t2)
-        HH = H_PE3D(p, t0, t2)
+        gg = g_pe3d(p, t0, t2)
+        HH = h_pe3d(p, t0, t2)
         ids = ti.Vector([0, 1, 3])
         scatter_compact_grad_hess(g, H, gg, HH, ids, 3)
     else:
         dist2 = point_plane_distance2(p, t0, t1, t2)
-        g = g_PT(p, t0, t1, t2)
-        H = H_PT(p, t0, t1, t2)
+        g = g_pt(p, t0, t1, t2)
+        H = h_pt(p, t0, t1, t2)
     return dist2, g, H
 
 
@@ -1950,22 +1950,22 @@ def point_triangle_distance_grad(p, t0, t1, t2):
         scatter_compact_grad(g, gg, ids, 2)
     elif dtype == 3:
         dist2 = point_line_distance2(p, t0, t1)
-        gg = g_PE3D(p, t0, t1)
+        gg = g_pe3d(p, t0, t1)
         ids = ti.Vector([0, 1, 2])
         scatter_compact_grad(g, gg, ids, 3)
     elif dtype == 4:
         dist2 = point_line_distance2(p, t1, t2)
-        gg = g_PE3D(p, t1, t2)
+        gg = g_pe3d(p, t1, t2)
         ids = ti.Vector([0, 2, 3])
         scatter_compact_grad(g, gg, ids, 3)
     elif dtype == 5:
         dist2 = point_line_distance2(p, t0, t2)
-        gg = g_PE3D(p, t0, t2)
+        gg = g_pe3d(p, t0, t2)
         ids = ti.Vector([0, 1, 3])
         scatter_compact_grad(g, gg, ids, 3)
     else:
         dist2 = point_plane_distance2(p, t0, t1, t2)
-        g = g_PT(p, t0, t1, t2)
+        g = g_pt(p, t0, t1, t2)
     return dist2, g, dtype
 
 
@@ -1990,22 +1990,22 @@ def point_triangle_distance_grad_by_type(p, t0, t1, t2, dtype: ti.template()):
         scatter_compact_grad(g, gg, ids, 2)
     elif ti.static(dtype == 3):
         dist2 = point_line_distance2(p, t0, t1)
-        gg = g_PE3D(p, t0, t1)
+        gg = g_pe3d(p, t0, t1)
         ids = ti.Vector([0, 1, 2])
         scatter_compact_grad(g, gg, ids, 3)
     elif ti.static(dtype == 4):
         dist2 = point_line_distance2(p, t1, t2)
-        gg = g_PE3D(p, t1, t2)
+        gg = g_pe3d(p, t1, t2)
         ids = ti.Vector([0, 2, 3])
         scatter_compact_grad(g, gg, ids, 3)
     elif ti.static(dtype == 5):
         dist2 = point_line_distance2(p, t0, t2)
-        gg = g_PE3D(p, t0, t2)
+        gg = g_pe3d(p, t0, t2)
         ids = ti.Vector([0, 1, 3])
         scatter_compact_grad(g, gg, ids, 3)
     else:
         dist2 = point_plane_distance2(p, t0, t1, t2)
-        g = g_PT(p, t0, t1, t2)
+        g = g_pt(p, t0, t1, t2)
     return dist2, g
 
 
@@ -2027,8 +2027,8 @@ def edge_edge_distance_grad_hess(ea0, ea1, eb0, eb1):
         scatter_compact_grad_hess(g, H, gg, HH, ids, 2)
     elif dtype == 2:
         dist2 = point_line_distance2(ea0, eb0, eb1)
-        gg = g_PE3D(ea0, eb0, eb1)
-        HH = H_PE3D(ea0, eb0, eb1)
+        gg = g_pe3d(ea0, eb0, eb1)
+        HH = h_pe3d(ea0, eb0, eb1)
         ids = ti.Vector([0, 2, 3])
         scatter_compact_grad_hess(g, H, gg, HH, ids, 3)
     elif dtype == 3:
@@ -2043,26 +2043,26 @@ def edge_edge_distance_grad_hess(ea0, ea1, eb0, eb1):
         scatter_compact_grad_hess(g, H, gg, HH, ids, 2)
     elif dtype == 5:
         dist2 = point_line_distance2(ea1, eb0, eb1)
-        gg = g_PE3D(ea1, eb0, eb1)
-        HH = H_PE3D(ea1, eb0, eb1)
+        gg = g_pe3d(ea1, eb0, eb1)
+        HH = h_pe3d(ea1, eb0, eb1)
         ids = ti.Vector([1, 2, 3])
         scatter_compact_grad_hess(g, H, gg, HH, ids, 3)
     elif dtype == 6:
         dist2 = point_line_distance2(eb0, ea0, ea1)
-        gg = g_PE3D(eb0, ea0, ea1)
-        HH = H_PE3D(eb0, ea0, ea1)
+        gg = g_pe3d(eb0, ea0, ea1)
+        HH = h_pe3d(eb0, ea0, ea1)
         ids = ti.Vector([2, 0, 1])
         scatter_compact_grad_hess(g, H, gg, HH, ids, 3)
     elif dtype == 7:
         dist2 = point_line_distance2(eb1, ea0, ea1)
-        gg = g_PE3D(eb1, ea0, ea1)
-        HH = H_PE3D(eb1, ea0, ea1)
+        gg = g_pe3d(eb1, ea0, ea1)
+        HH = h_pe3d(eb1, ea0, ea1)
         ids = ti.Vector([3, 0, 1])
         scatter_compact_grad_hess(g, H, gg, HH, ids, 3)
     else:
         dist2 = line_line_distance2(ea0, ea1, eb0, eb1)
-        g = g_EE(ea0, ea1, eb0, eb1)
-        H = H_EE(ea0, ea1, eb0, eb1)
+        g = g_ee(ea0, ea1, eb0, eb1)
+        H = h_ee(ea0, ea1, eb0, eb1)
     return dist2, g, H, dtype
 
 
@@ -2117,7 +2117,7 @@ def edge_edge_distance_grad_by_type(ea0, ea1, eb0, eb1, dtype: ti.template()):
         scatter_compact_grad(g, gg, ids, 2)
     elif ti.static(dtype == 2):
         dist2 = point_line_distance2(ea0, eb0, eb1)
-        gg = g_PE3D(ea0, eb0, eb1)
+        gg = g_pe3d(ea0, eb0, eb1)
         ids = ti.Vector([0, 2, 3])
         scatter_compact_grad(g, gg, ids, 3)
     elif ti.static(dtype == 3):
@@ -2132,22 +2132,22 @@ def edge_edge_distance_grad_by_type(ea0, ea1, eb0, eb1, dtype: ti.template()):
         scatter_compact_grad(g, gg, ids, 2)
     elif ti.static(dtype == 5):
         dist2 = point_line_distance2(ea1, eb0, eb1)
-        gg = g_PE3D(ea1, eb0, eb1)
+        gg = g_pe3d(ea1, eb0, eb1)
         ids = ti.Vector([1, 2, 3])
         scatter_compact_grad(g, gg, ids, 3)
     elif ti.static(dtype == 6):
         dist2 = point_line_distance2(eb0, ea0, ea1)
-        gg = g_PE3D(eb0, ea0, ea1)
+        gg = g_pe3d(eb0, ea0, ea1)
         ids = ti.Vector([2, 0, 1])
         scatter_compact_grad(g, gg, ids, 3)
     elif ti.static(dtype == 7):
         dist2 = point_line_distance2(eb1, ea0, ea1)
-        gg = g_PE3D(eb1, ea0, ea1)
+        gg = g_pe3d(eb1, ea0, ea1)
         ids = ti.Vector([3, 0, 1])
         scatter_compact_grad(g, gg, ids, 3)
     else:
         dist2 = line_line_distance2(ea0, ea1, eb0, eb1)
-        g = g_EE(ea0, ea1, eb0, eb1)
+        g = g_ee(ea0, ea1, eb0, eb1)
     return dist2, g
 
 
@@ -2168,8 +2168,8 @@ def edge_edge_distance_grad_hess_by_type(ea0, ea1, eb0, eb1, dtype: ti.template(
         scatter_compact_grad_hess(g, H, gg, HH, ids, 2)
     elif ti.static(dtype == 2):
         dist2 = point_line_distance2(ea0, eb0, eb1)
-        gg = g_PE3D(ea0, eb0, eb1)
-        HH = H_PE3D(ea0, eb0, eb1)
+        gg = g_pe3d(ea0, eb0, eb1)
+        HH = h_pe3d(ea0, eb0, eb1)
         ids = ti.Vector([0, 2, 3])
         scatter_compact_grad_hess(g, H, gg, HH, ids, 3)
     elif ti.static(dtype == 3):
@@ -2184,26 +2184,26 @@ def edge_edge_distance_grad_hess_by_type(ea0, ea1, eb0, eb1, dtype: ti.template(
         scatter_compact_grad_hess(g, H, gg, HH, ids, 2)
     elif ti.static(dtype == 5):
         dist2 = point_line_distance2(ea1, eb0, eb1)
-        gg = g_PE3D(ea1, eb0, eb1)
-        HH = H_PE3D(ea1, eb0, eb1)
+        gg = g_pe3d(ea1, eb0, eb1)
+        HH = h_pe3d(ea1, eb0, eb1)
         ids = ti.Vector([1, 2, 3])
         scatter_compact_grad_hess(g, H, gg, HH, ids, 3)
     elif ti.static(dtype == 6):
         dist2 = point_line_distance2(eb0, ea0, ea1)
-        gg = g_PE3D(eb0, ea0, ea1)
-        HH = H_PE3D(eb0, ea0, ea1)
+        gg = g_pe3d(eb0, ea0, ea1)
+        HH = h_pe3d(eb0, ea0, ea1)
         ids = ti.Vector([2, 0, 1])
         scatter_compact_grad_hess(g, H, gg, HH, ids, 3)
     elif ti.static(dtype == 7):
         dist2 = point_line_distance2(eb1, ea0, ea1)
-        gg = g_PE3D(eb1, ea0, ea1)
-        HH = H_PE3D(eb1, ea0, ea1)
+        gg = g_pe3d(eb1, ea0, ea1)
+        HH = h_pe3d(eb1, ea0, ea1)
         ids = ti.Vector([3, 0, 1])
         scatter_compact_grad_hess(g, H, gg, HH, ids, 3)
     else:
         dist2 = line_line_distance2(ea0, ea1, eb0, eb1)
-        g = g_EE(ea0, ea1, eb0, eb1)
-        H = H_EE(ea0, ea1, eb0, eb1)
+        g = g_ee(ea0, ea1, eb0, eb1)
+        H = h_ee(ea0, ea1, eb0, eb1)
     return dist2, g, H
 
 
@@ -2224,7 +2224,7 @@ def edge_edge_distance_grad(ea0, ea1, eb0, eb1):
         scatter_compact_grad(g, gg, ids, 2)
     elif dtype == 2:
         dist2 = point_line_distance2(ea0, eb0, eb1)
-        gg = g_PE3D(ea0, eb0, eb1)
+        gg = g_pe3d(ea0, eb0, eb1)
         ids = ti.Vector([0, 2, 3])
         scatter_compact_grad(g, gg, ids, 3)
     elif dtype == 3:
@@ -2239,20 +2239,20 @@ def edge_edge_distance_grad(ea0, ea1, eb0, eb1):
         scatter_compact_grad(g, gg, ids, 2)
     elif dtype == 5:
         dist2 = point_line_distance2(ea1, eb0, eb1)
-        gg = g_PE3D(ea1, eb0, eb1)
+        gg = g_pe3d(ea1, eb0, eb1)
         ids = ti.Vector([1, 2, 3])
         scatter_compact_grad(g, gg, ids, 3)
     elif dtype == 6:
         dist2 = point_line_distance2(eb0, ea0, ea1)
-        gg = g_PE3D(eb0, ea0, ea1)
+        gg = g_pe3d(eb0, ea0, ea1)
         ids = ti.Vector([2, 0, 1])
         scatter_compact_grad(g, gg, ids, 3)
     elif dtype == 7:
         dist2 = point_line_distance2(eb1, ea0, ea1)
-        gg = g_PE3D(eb1, ea0, ea1)
+        gg = g_pe3d(eb1, ea0, ea1)
         ids = ti.Vector([3, 0, 1])
         scatter_compact_grad(g, gg, ids, 3)
     else:
         dist2 = line_line_distance2(ea0, ea1, eb0, eb1)
-        g = g_EE(ea0, ea1, eb0, eb1)
+        g = g_ee(ea0, ea1, eb0, eb1)
     return dist2, g, dtype

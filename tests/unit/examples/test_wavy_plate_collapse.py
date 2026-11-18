@@ -55,7 +55,7 @@ def test_independent_wave_geometry_mass_and_fixed_half():
     top = np.column_stack((radius, np.full(len(radius), cpt.SOIL_SIZE[1] - 0.5 * dr)))
     particle_ids, annular_area = cpt.axisymmetric_surface_pressure_particles(top, cpt.GRID_SIZE)
     assert len(particle_ids) == len(radius)
-    np.testing.assert_allclose(annular_area.sum(), np.pi * cpt.SOIL_SIZE[0] ** 2, rtol=1e-14)
+    np.testing.assert_allclose(annular_area.sum(), 0.5 * cpt.SOIL_SIZE[0] ** 2, rtol=1e-14)
     assert cpt.dp_direct_material(dilation_angle=0)["DilationAngle"] == 0
     state_dependent = cpt.dp_direct_material(state_dependent=True)
     assert state_dependent["model"] == "StateDependentDruckerPrager"

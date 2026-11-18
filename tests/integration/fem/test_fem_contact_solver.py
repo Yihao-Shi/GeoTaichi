@@ -66,7 +66,7 @@ def test_ipc_plane_runs_through_newton_ccd_and_line_search():
 
     assert result.converged
     assert np.min(result.positions[:, 2]) > 0.01
-    assert result.history[0]["contact"]["model"] == "IPC"
+    assert result.history[0]["contact"]["model"] == "BarrierIPC"
     assert result.history[0]["friction_converged"]
     assert result.history[0]["friction_residual"] <= 1.0e-7
     assert all(0.0 <= item["line_search_step"] <= 1.0 for item in result.history[0]["iterations"])

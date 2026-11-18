@@ -191,7 +191,7 @@ For implicit IPC, configure both children as implicit, select
 `mpm_backend="Direct"` with `configuration="ULMPM"`, and choose Neo-Hookean
 elasticity, finite-strain Drucker--Prager, or associated
 finite-strain von Mises on the MPM side. Then call
-`choose_contact_model("IPC", dhat=..., kappa=...,
+`choose_contact_model("BarrierIPC", dhat=..., kappa=...,
 friction_coefficient=..., friction_mode="lagged")`. The coupled solver owns a
 single FEM-node/active-MPM-grid Newton system, analytic PT Hessian pullback,
 CCD/ACCD and Armijo. `assemble_type` is `COO` or
@@ -214,9 +214,25 @@ It always follows physical residual/BiCGSTAB, has no constitutive outer loop,
 and keeps the lagged-friction iteration. All 14 history entries must participate
 in rollback/checkpoints. This law is also supported by standalone lagged MPM--IPC, IGA--MPM, and 3D
 Direct MPM--ABD IPC, with parameter/history adjoints unsupported.
+For constant-angle DP, von Mises or MCC continuum Direct MPM--ABD, use
+`coupling.differentiable(steps=N)`, advance only with `trajectory.step()`, then
+call `trajectory.backward({...})`. MPM seeds use particle `position`, `velocity`,
+`acceleration` and plastic state names; ABD seeds use `affine_position` and
+`affine_velocity`, shaped `(4 * body_count, 3)`. This fixed-step mesh BarrierIPC
+path requires retries disabled and ABD `newmark=[1, 0.5, 1]`. It reverses every
+executed friction outer solve and differentiates the normal, closest weights
+and normal-load cache refresh across frames, at fixed contact branches and
+iteration counts. See the
+[trajectory API and limits](../../../src/mpdem/README.md#continuum-mpm--abd-trajectory-adjoints).
 Von Mises accepts optional `HardeningModulus`. These plastic models require
-Direct ULMPM and cannot be combined with standalone child IPC; associated
-materials retain projected symmetric PCG.
+Direct ULMPM and cannot be combined with standalone child IPC. Continuum
+Direct MPM--ABD uses physical residual Newton/BiCGSTAB for associated and
+nonassociated DP, von Mises and MCC, without any plastic-volume or material
+outer loop. DP includes the trial plastic-volume derivative directly;
+von Mises is isochoric. Coupled MCC solves plastic return and pressure hardening
+in one local implicit system. Its
+trajectory also seeds `preconsolidation_pressure` and returns five named
+material-parameter slots; see the trajectory API above.
 The FEM internal formulation remains Total Lagrangian with a fixed rest shape;
 Direct plastic MPM is Updated Lagrangian, and IPC contact is evaluated in the
 current spatial configuration.
@@ -231,7 +247,7 @@ Set `dimension=2` on both children. For axisymmetry also set
 component zero is radius and all reference quadrature/contact radii must be
 positive. The 2D contact primitive is point--edge with analytic derivatives
 and CCD/ACCD. Axisymmetric FEM/MPM material maps include
-`F_theta_theta=r/R`, and reference volume/contact measures include `2*pi*R`.
+`F_theta_theta=r/R`, and reference volume/contact measures include `R`.
 The DEM-style explicit branch remains 3D only.
 
 All lagged-friction routes retain frozen data through a complete inner solve,

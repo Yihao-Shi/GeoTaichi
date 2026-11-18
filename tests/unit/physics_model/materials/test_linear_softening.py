@@ -4,8 +4,8 @@ import numpy as np
 import pytest
 import taichi as ti
 
-from src.physics_model.consititutive_model.SoftenModel import LinearSoft
-from src.physics_model.consititutive_model.infinitesimal_strain.DruckerPrager import DruckerPragerModel
+from src.physics_model.constitutive_model.SoftenModel import LinearSoft
+from src.physics_model.constitutive_model.infinitesimal_strain.DruckerPrager import DruckerPragerModel
 
 pytestmark = [pytest.mark.cpu, pytest.mark.materials]
 
@@ -34,8 +34,8 @@ def sample_dp_plastic_modulus(
 ):
     stress = ti.Vector([0.0, 0.0, 0.0, 10000.0, 0.0, 0.0])
     internal = ti.Vector([state_vars[0].epdstrain])
-    flow = model.ComputeDgDsigma(1, stress, internal, material_params[None])
-    result[None] = model.ComputePlasticModulus(
+    flow = model.compute_dg_dsigma(1, stress, internal, material_params[None])
+    result[None] = model.compute_plastic_modulus(
         1,
         flow,
         stress,

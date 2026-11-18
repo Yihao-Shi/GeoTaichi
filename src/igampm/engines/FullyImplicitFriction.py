@@ -6,11 +6,9 @@ blocks are therefore the complete generally nonsymmetric ``-dR/dq`` blocks;
 no PSD projection, symmetrization, or frozen-geometry approximation is used.
 """
 
-import taichi as ti
+from src.physics_model.contact_model.ipc.Utilities import ipc_fully_implicit_scalar_law
 
-from src.physics_model.contact_model.ipc.IPC import (
-    ipc_fully_implicit_scalar_law,
-)
+import taichi as ti
 
 
 @ti.func

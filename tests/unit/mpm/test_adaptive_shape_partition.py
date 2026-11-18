@@ -1,3 +1,4 @@
+from src.mpm.elements.Utilities import build_hanging_constraint_table
 import numpy as np
 import pytest
 import taichi as ti
@@ -6,12 +7,9 @@ from src.mpm.elements.AdaptiveHexahedronKernel import (
     adaptive_global_update,
     load_hanging_constraint_table,
 )
-from src.mpm.elements.AdaptiveNodeMap import (
-    AdaptiveNodeMap,
-    build_hanging_constraint_table,
-)
-from src.utils.ShapeFunctions import GShapeLinear, ShapeLinear
-from src.utils.TypeDefination import vec3f, vec3i
+from src.mpm.elements.AdaptiveNodeMap import AdaptiveNodeMap
+from src.utils.ShapeFunctions import g_shape_linear, shape_linear
+from src.utils.TypeDefinition import vec3f, vec3i
 
 
 @ti.dataclass
@@ -151,8 +149,8 @@ def run_level(max_level):
         lnid,
         shape_fn,
         dshape_fn,
-        ShapeLinear,
-        GShapeLinear,
+        shape_linear,
+        g_shape_linear,
     )
     out = np.zeros((particle_num, 5), dtype=np.float64)
     reduce_sums(particle_num, total_nodes, node_size, shape_fn, dshape_fn, out)

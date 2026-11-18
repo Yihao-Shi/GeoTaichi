@@ -4,18 +4,18 @@ The suite checks the ClampedLog potential, barrier force magnitude, analytical
 derivatives, activation boundary, and finite-difference consistency.
 """
 
+from src.physics_model.contact_model.ipc.Utilities import ipc_barrier_distance2_offset_terms
+from src.physics_model.contact_model.ipc.Utilities import ipc_barrier_distance2_terms
+from src.physics_model.contact_model.ipc.Utilities import ipc_barrier_force_magnitude
+from src.physics_model.contact_model.ipc.Utilities import ipc_barrier_force_magnitude_gradient
+
 import numpy as np
 import pytest
 import taichi as ti
 
 pytestmark = [pytest.mark.unit, pytest.mark.ipc, pytest.mark.contact]
 
-from src.physics_model.contact_model.ipc.IPC import (
-    ipc_barrier_force_magnitude,
-    ipc_barrier_force_magnitude_gradient,
-    ipc_toolkit_barrier_distance2_offset_terms,
-    ipc_toolkit_barrier_distance2_terms,
-)
+from src.physics_model.contact_model.ipc.Barrier import Barrier
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -35,7 +35,7 @@ def _eval_clamped_log(
     activation_argument: ti.f64,
     stiffness: ti.f64,
 ) -> ti.types.vector(3, ti.f64):
-    value, gradient, hessian = ipc_toolkit_barrier_distance2_terms(distance_argument, activation_argument, stiffness)
+    value, gradient, hessian = ipc_barrier_distance2_terms(distance_argument, activation_argument, stiffness)
     return ti.Vector([value, gradient, hessian])
 
 
@@ -47,7 +47,7 @@ def _eval_barrier_potential(
     stiffness: ti.f64,
     use_physical_barrier: ti.i32,
 ) -> ti.types.vector(3, ti.f64):
-    value, gradient, hessian = ipc_toolkit_barrier_distance2_offset_terms(
+    value, gradient, hessian = ipc_barrier_distance2_offset_terms(
         distance_squared,
         dhat,
         dmin,

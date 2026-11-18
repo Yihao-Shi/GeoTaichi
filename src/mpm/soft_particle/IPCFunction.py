@@ -12,14 +12,14 @@ class PointPointDerivative:
         return (pos1 - pos2).norm()
 
     @ti.func
-    def Ddistance_div_Dpoint(self, pos1, pos2):
+    def ddistance_div_dpoint(self, pos1, pos2):
         r = pos1 - pos2
         norm_r = ti.max(r.norm(), 1e-12)
         derivate = r / norm_r
         return derivate, -derivate
 
     @ti.func
-    def D2distance_div_Dpoint2(self, pos1, pos2):
+    def d2distance_div_dpoint2(self, pos1, pos2):
         r = pos1 - pos2
         norm_r = ti.max(r.norm(), 1e-12)
         one_div_norm_r = 1.0 / norm_r
@@ -39,11 +39,11 @@ class PointGroundDerivative:
         return self.ground.distance(ground_id, pos)
 
     @ti.func
-    def Ddistance_div_Dpoint(self, ground_id):
+    def ddistance_div_dpoint(self, ground_id):
         return self.ground.norm[ground_id]
 
     @ti.func
-    def D2distance_div_Dpoint2(self):
+    def d2distance_div_dpoint2(self):
         return ti.Matrix.zero(float, config.DIM, config.DIM)
 
 
@@ -57,9 +57,9 @@ class PointLevelSetDerivative:
         return self.level_set.distance(object_id, pos)
 
     @ti.func
-    def Ddistance_div_Dpoint(self, object_id, pos):
+    def ddistance_div_dpoint(self, object_id, pos):
         return self.level_set.gradient(object_id, pos)
 
     @ti.func
-    def D2distance_div_Dpoint2(self):
+    def d2distance_div_dpoint2(self):
         return ti.Matrix.zero(float, config.DIM, config.DIM)

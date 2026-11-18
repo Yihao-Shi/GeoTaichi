@@ -1,3 +1,4 @@
+from src.utils.errors import SimulationStateError
 import math
 
 import src.igampm.config as config
@@ -8,7 +9,7 @@ class Simulation:
     def __init__(self):
         self.dimension = config.get_dimension()
         self.coupling_scheme = "IGAMPM"
-        self.contact_model = "IPC"
+        self.contact_model = "BarrierIPC"
         self.activate_friction = False
         self.is_axisymmetric = False
         self.axis_offset = 0.0
@@ -24,13 +25,13 @@ class Simulation:
         self,
         dimension=None,
         coupling_scheme="IGAMPM",
-        contact_model="IPC",
+        contact_model="BarrierIPC",
         activate_friction=False,
         axisymmetric=False,
         axis_offset=0.0,
     ):
         if self._configuration_frozen:
-            raise RuntimeError(
+            raise SimulationStateError(
                 "IGA-MPM configuration cannot be changed after build(); " "construct a new coupling engine instead"
             )
         if dimension is not None:

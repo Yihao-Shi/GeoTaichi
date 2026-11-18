@@ -1,3 +1,4 @@
+from src.physics_model.contact_model.ipc.Utilities import ipc_barrier_distance2_offset_terms
 from types import SimpleNamespace
 
 import numpy as np
@@ -6,7 +7,7 @@ import taichi as ti
 
 from src.dem.engines.AffineBodyOperator import TaichiAffineBodyOperator
 from src.mpdem.engines.DirectAffineIPCAssembler import DirectAffineIPCAssembler
-from src.physics_model.contact_model.ipc.IPC import ipc_toolkit_barrier_distance2_offset_terms
+from src.physics_model.contact_model.ipc.Barrier import Barrier
 
 
 @ti.dataclass
@@ -17,7 +18,7 @@ class Particle:
 @ti.kernel
 def offset_barrier_energy(distance: float, dmin: float) -> float:
     active = (0.02 + 2.0 * dmin) * 0.02
-    energy, first, second = ipc_toolkit_barrier_distance2_offset_terms(
+    energy, first, second = ipc_barrier_distance2_offset_terms(
         distance * distance, 0.02, dmin, 1.0 / (active * active), 0
     )
     return 0.02 * energy

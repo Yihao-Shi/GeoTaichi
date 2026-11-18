@@ -4,13 +4,7 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
-from src.mpm.soft_particle.IPCMPM import (
-    IPCMPM,
-    _normalize_contact_search,
-    _normalize_friction_iterations,
-    _positive_float,
-    _positive_integer,
-)
+from src.mpm.soft_particle.IPCMPM import IPCMPM
 from src.mpm.soft_particle.IPCTLMPM import IPCTLMPM
 from src.mpm.soft_particle.IPCULMPM import IPCULMPM
 
@@ -166,10 +160,10 @@ def test_external_coupled_adjoint_splits_particle_prepare_and_finish():
 
 
 def test_direct_ipc_contact_search_never_falls_back_on_a_typo():
-    assert _normalize_contact_search("linked_cell") == "LinkedCell"
-    assert _normalize_contact_search("Brust") == "Brust"
+    assert IPCMPM._normalize_contact_search("linked_cell") == "LinkedCell"
+    assert IPCMPM._normalize_contact_search("Brust") == "Brust"
     with pytest.raises(ValueError, match="contact_search"):
-        _normalize_contact_search("linkd-cell")
+        IPCMPM._normalize_contact_search("linkd-cell")
 
 
 def _controller(iterations, residuals, tolerance=1.0e-3, safety_cap=50):
@@ -211,21 +205,21 @@ def _controller(iterations, residuals, tolerance=1.0e-3, safety_cap=50):
 @pytest.mark.parametrize("value", [1.5, np.inf, "bad"])
 def test_friction_iteration_validation_rejects_invalid_values(value):
     with pytest.raises(ValueError, match="friction_iterations"):
-        _normalize_friction_iterations(value)
+        IPCMPM._normalize_friction_iterations(value)
 
 
 def test_friction_iteration_validation_accepts_reference_modes():
-    assert _normalize_friction_iterations(1) == 1
-    assert _normalize_friction_iterations(4.0) == 4
-    assert _normalize_friction_iterations(-1) == -1
-    assert _normalize_friction_iterations(0) == -1
-    assert _normalize_friction_iterations(-7) == -1
-    assert _positive_integer(50, "cap") == 50
-    assert _positive_float(1.0e-8, "tolerance") == pytest.approx(1.0e-8)
+    assert IPCMPM._normalize_friction_iterations(1) == 1
+    assert IPCMPM._normalize_friction_iterations(4.0) == 4
+    assert IPCMPM._normalize_friction_iterations(-1) == -1
+    assert IPCMPM._normalize_friction_iterations(0) == -1
+    assert IPCMPM._normalize_friction_iterations(-7) == -1
+    assert IPCMPM._positive_integer(50, "cap") == 50
+    assert IPCMPM._positive_float(1.0e-8, "tolerance") == pytest.approx(1.0e-8)
     with pytest.raises(ValueError, match="cap"):
-        _positive_integer(0, "cap")
+        IPCMPM._positive_integer(0, "cap")
     with pytest.raises(ValueError, match="tolerance"):
-        _positive_float(0.0, "tolerance")
+        IPCMPM._positive_float(0.0, "tolerance")
 
 
 def test_begin_step_freezes_hat_x_once_and_cache_refresh_does_not_touch_it():

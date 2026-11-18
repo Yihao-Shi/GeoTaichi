@@ -1,3 +1,4 @@
+from src.utils.errors import SimulationStateError
 import warnings
 
 from src.mpm.Simulation import Simulation as MPMSimulation
@@ -28,12 +29,17 @@ class ContactManager:
             self.neighbor = NeighborBase(csims, msims, dsims, mpm_neighbor, dem_neighbor)
 
     def particle_particle_initialize(self, sims: Simulation, msims: MPMSimulation, dsims: DEMSimulation):
-        deactivate=False
+        deactivate = False
         if self.physpp is None:
-            if msims.max_particle_num == 0 or dsims.max_particle_num == 0: deactivate = True
-            if sims.particle_interaction is True and msims.material_type == "Fluid" and sims.particle_particle_contact_model != "Fluid Particle":
-                raise RuntimeError("particle-particle contact model should be set as /Fluid Particle/")
-            
+            if msims.max_particle_num == 0 or dsims.max_particle_num == 0:
+                deactivate = True
+            if (
+                sims.particle_interaction is True
+                and msims.material_type == "Fluid"
+                and sims.particle_particle_contact_model != "Fluid Particle"
+            ):
+                raise SimulationStateError("particle-particle contact model should be set as /Fluid Particle/")
+
             if dsims.scheme == "DEM":
                 if sims.particle_interaction is True and not sims.particle_particle_contact_model is None:
                     if sims.particle_particle_contact_model == "Linear Model":
@@ -43,7 +49,7 @@ class ContactManager:
                     elif sims.particle_particle_contact_model == "Fluid Particle":
                         self.physpp = ParticleFluid(sims.max_material_num)
                     else:
-                        raise ValueError('Particle to Particle Contact Model error!')
+                        raise ValueError("Particle to Particle Contact Model error!")
                 else:
                     self.physpp = ContactModelBase()
 
@@ -56,25 +62,27 @@ class ContactManager:
                     elif sims.particle_particle_contact_model == "Fluid Particle":
                         self.physpp = ParticleFluid(sims.max_material_num)
                     elif sims.particle_particle_contact_model == "Energy Conserving Model":
-                        self.physpp = EnergyConservationModel(sims.max_material_num, types='Penalty')
+                        self.physpp = EnergyConservationModel(sims.max_material_num, types="Penalty")
                     elif sims.particle_particle_contact_model == "Barrier Function Model":
-                        self.physpp = EnergyConservationModel(sims.max_material_num, types='Barrier')
+                        self.physpp = EnergyConservationModel(sims.max_material_num, types="Barrier")
                     else:
-                        raise ValueError('Particle to Particle Contact Model error!')
+                        raise ValueError("Particle to Particle Contact Model error!")
                 else:
                     self.physpp = ContactModelBase()
-                
-            if deactivate: self.physpp.null_model = True
+
+            if deactivate:
+                self.physpp.null_model = True
             self.physpp.manage_function("particle", sims.enhanced_coupling, dsims.scheme)
-        
+
     def particle_wall_initialize(self, sims: Simulation, msims: MPMSimulation, dsims: DEMSimulation):
-        deactivate=False
+        deactivate = False
         if self.physpw is None:
-            if msims.max_particle_num == 0 or dsims.max_wall_num == 0: deactivate = True
+            if msims.max_particle_num == 0 or dsims.max_wall_num == 0:
+                deactivate = True
             if sims.wall_interaction is True and not sims.particle_wall_contact_model is None:
                 if msims.material_type == "Fluid" and sims.particle_wall_contact_model != "Fluid Particle":
-                    raise RuntimeError("particle-wall contact model should be set as /Fluid Particle/")
-                
+                    raise SimulationStateError("particle-wall contact model should be set as /Fluid Particle/")
+
                 if sims.particle_wall_contact_model == "Linear Model":
                     self.physpw = LinearModel(sims.max_material_num)
                 elif sims.particle_wall_contact_model == "Hertz Mindlin Model":
@@ -82,11 +90,12 @@ class ContactManager:
                 elif sims.particle_wall_contact_model == "Fluid Particle":
                     self.physpw = ParticleFluid(sims.max_material_num)
                 else:
-                    raise ValueError('Particle to Wall Contact Model error!')
+                    raise ValueError("Particle to Wall Contact Model error!")
             else:
                 self.physpw = ContactModelBase()
-                
-            if deactivate: self.physpw.null_model = True
+
+            if deactivate:
+                self.physpw.null_model = True
             self.physpw.manage_function("wall", None, None)
             if sims.use_digital_elevation_heightfield(dsims) and not self.physpw.null_model:
                 self.physpw.enable_digital_elevation_heightfield()
@@ -95,29 +104,35 @@ class ContactManager:
         if self.physpp:
             self.physpp.collision_initialize(sims.enhanced_coupling, False, sims.particle_contact_list_length)
         else:
-            raise RuntimeError("Particle(MPM)-Particle(DEM) contact model have not been activated successfully!")
-        
-        if self.physpw:   
+            raise SimulationStateError(
+                "Particle(MPM)-Particle(DEM) contact model have not been activated successfully!"
+            )
+
+        if self.physpw:
             is_servo = True if dsims.servo_status == "On" else False
-            monitor_cf = 'wall' in dsims.monitor_type and msims.max_particle_num > 0 and sims.wall_interaction
+            monitor_cf = "wall" in dsims.monitor_type and msims.max_particle_num > 0 and sims.wall_interaction
             if self.physpw.digital_elevation_heightfield:
-                self.physpw.collision_initialize(sims.enhanced_coupling, is_servo or monitor_cf, msims.max_coupling_particle_num)
+                self.physpw.collision_initialize(
+                    sims.enhanced_coupling, is_servo or monitor_cf, msims.max_coupling_particle_num
+                )
                 self.print_heightfield_contact_memory_estimate(msims, dsims)
             else:
-                self.physpw.collision_initialize(sims.enhanced_coupling, is_servo or monitor_cf, sims.wall_contact_list_length)
+                self.physpw.collision_initialize(
+                    sims.enhanced_coupling, is_servo or monitor_cf, sims.wall_contact_list_length
+                )
                 self.print_wall_contact_memory_estimate(sims, msims, dsims, is_servo or monitor_cf)
         else:
-            raise RuntimeError("Particle(MPM)-Wall contact model have not been activated successfully!")
+            raise SimulationStateError("Particle(MPM)-Wall contact model have not been activated successfully!")
 
     def print_heightfield_contact_memory_estimate(self, msims: MPMSimulation, dsims: DEMSimulation):
         if not dsims.use_digital_elevation_heightfield():
             return
-        mib = 1024. * 1024.
+        mib = 1024.0 * 1024.0
         height_count = 0
         if not dsims.max_digital_elevation_grid_number is None:
             height_count = int(dsims.max_digital_elevation_grid_number[0] * dsims.max_digital_elevation_grid_number[1])
-        height_mib = height_count * 4. / mib
-        history_mib = msims.max_coupling_particle_num * 12. / mib
+        height_mib = height_count * 4.0 / mib
+        history_mib = msims.max_coupling_particle_num * 12.0 / mib
         total_mib = height_mib + history_mib
         print(" DEMPM Digital Elevation HeightField Contact Memory ".center(71, "-"))
         print(("Potential particle-wall list: Disabled").ljust(67))
@@ -128,20 +143,22 @@ class ContactManager:
         print(("Heightfield estimate: " + f"{height_mib:.3f} MiB").ljust(67))
         print(("History estimate: " + f"{history_mib:.3f} MiB").ljust(67))
         print(("Total heightfield-contact estimate: " + f"{total_mib:.3f} MiB").ljust(67))
-        print('\n')
+        print("\n")
 
-    def print_wall_contact_memory_estimate(self, sims: Simulation, msims: MPMSimulation, dsims: DEMSimulation, stores_force):
+    def print_wall_contact_memory_estimate(
+        self, sims: Simulation, msims: MPMSimulation, dsims: DEMSimulation, stores_force
+    ):
         if not sims.wall_interaction or dsims.max_wall_num <= 0:
             return
-        mib = 1024. * 1024.
-        int_bytes = 4.
-        vec3_bytes = 12.
+        mib = 1024.0 * 1024.0
+        int_bytes = 4.0
+        vec3_bytes = 12.0
         potential_list_mib = sims.max_potential_wall_pairs * int_bytes / mib
-        prefix_mib = 2. * (msims.max_coupling_particle_num + 1) * int_bytes / mib
+        prefix_mib = 2.0 * (msims.max_coupling_particle_num + 1) * int_bytes / mib
         if stores_force:
-            contact_table_bytes = 2. * int_bytes + 3. * vec3_bytes
+            contact_table_bytes = 2.0 * int_bytes + 3.0 * vec3_bytes
         else:
-            contact_table_bytes = 2. * int_bytes + vec3_bytes
+            contact_table_bytes = 2.0 * int_bytes + vec3_bytes
         history_table_bytes = int_bytes + vec3_bytes
         contact_table_mib = sims.wall_contact_list_length * (contact_table_bytes + history_table_bytes) / mib
         total_mib = potential_list_mib + prefix_mib + contact_table_mib
@@ -152,65 +169,72 @@ class ContactManager:
         print(("Prefix/history index estimate: " + f"{prefix_mib:.3f} MiB").ljust(67))
         print(("Contact table estimate: " + f"{contact_table_mib:.3f} MiB").ljust(67))
         print(("Total wall-contact estimate: " + f"{total_mib:.3f} MiB").ljust(67))
-        print('\n')
+        print("\n")
 
     def add_contact_property(self, sims: Simulation, materialID1, materialID2, property, dType):
         if materialID1 > sims.max_material_num - 1 or materialID2 > sims.max_material_num - 1:
-            raise RuntimeError("Material ID is out of the scope!")
+            raise SimulationStateError("Material ID is out of the scope!")
         else:
             if dType == "particle-particle":
                 if self.physpp.null_model is True:
                     dType = None
                     warnings.warn("Particle-particle contact model is NULL, this procedure is automatically failed")
-                    print('\n')
+                    print("\n")
             elif dType == "particle-wall":
                 if self.physpw.null_model is True:
                     dType = None
                     warnings.warn("Particle-wall contact model is NULL, this procedure is automatically failed")
-                    print('\n')
+                    print("\n")
             elif dType == "all":
                 if self.physpp.null_model is True and self.physpw.null_model is True:
                     dType = None
-                    warnings.warn("Particle-particle contact model and particle-wall contact model are NULL, this procedure is automatically failed")
-                    print('\n')
+                    warnings.warn(
+                        "Particle-particle contact model and particle-wall contact model are NULL, this procedure is automatically failed"
+                    )
+                    print("\n")
                 elif self.physpp.null_model is False and self.physpw.null_model is True:
                     dType = "particle-particle"
-                    warnings.warn("Particle-wall contact model is NULL, this procedure automatically transforms to add surface properties into particle-particle contact")
-                    print('\n')
+                    warnings.warn(
+                        "Particle-wall contact model is NULL, this procedure automatically transforms to add surface properties into particle-particle contact"
+                    )
+                    print("\n")
                 elif self.physpp.null_model is True and self.physpw.null_model is False:
                     dType = "particle-wall"
-                    warnings.warn("Particle-particle contact model is NULL, this procedure automatically transforms to add surface properties into particle-wall contact")
-                    print('\n')
-                    
+                    warnings.warn(
+                        "Particle-particle contact model is NULL, this procedure automatically transforms to add surface properties into particle-wall contact"
+                    )
+                    print("\n")
+
             if dType == "particle-particle":
-                componousID = self.physpp.add_surface_properties(sims.max_material_num, materialID1, materialID2, property)
-                self.physpp.surfaceProps[componousID].print_surface_info(materialID1, materialID2)
+                componous_id = self.physpp.add_surface_properties(
+                    sims.max_material_num, materialID1, materialID2, property
+                )
+                self.physpp.surfaceProps[componous_id].print_surface_info(materialID1, materialID2)
 
             elif dType == "particle-wall":
-                componousID = self.physpw.add_surface_properties(sims.max_material_num, materialID1, materialID2, property)
-                self.physpw.surfaceProps[componousID].print_surface_info(materialID1, materialID2)
+                componous_id = self.physpw.add_surface_properties(
+                    sims.max_material_num, materialID1, materialID2, property
+                )
+                self.physpw.surfaceProps[componous_id].print_surface_info(materialID1, materialID2)
 
             elif dType == "all":
-                componousID = self.physpp.add_surface_properties(sims.max_material_num, materialID1, materialID2, property)
-                componousID = self.physpw.add_surface_properties(sims.max_material_num, materialID1, materialID2, property)
-                self.physpp.surfaceProps[componousID].print_surface_info(materialID1, materialID2)
+                componous_id = self.physpp.add_surface_properties(
+                    sims.max_material_num, materialID1, materialID2, property
+                )
+                componous_id = self.physpw.add_surface_properties(
+                    sims.max_material_num, materialID1, materialID2, property
+                )
+                self.physpp.surfaceProps[componous_id].print_surface_info(materialID1, materialID2)
 
     def update_contact_property(self, sims: Simulation, materialID1, materialID2, property_name, value, overide):
         if materialID1 > sims.max_material_num - 1 or materialID2 > sims.max_material_num - 1:
-            raise RuntimeError("Material ID is out of the scope!")
+            raise SimulationStateError("Material ID is out of the scope!")
         else:
             if not self.physpp is None:
-                self.physpp.update_properties(sims.max_material_num, materialID1, materialID2, property_name, value, overide)
+                self.physpp.update_properties(
+                    sims.max_material_num, materialID1, materialID2, property_name, value, overide
+                )
             if not self.physpw is None:
-                self.physpw.update_properties(sims.max_material_num, materialID1, materialID2, property_name, value, overide)
-
-
-
-
-
-
-
-
-
-
-    
+                self.physpw.update_properties(
+                    sims.max_material_num, materialID1, materialID2, property_name, value, overide
+                )

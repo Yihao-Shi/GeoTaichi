@@ -1,6 +1,8 @@
 """Explicit two-way IGA--MPM stepping with DEM contact constitutive laws."""
 
 from __future__ import annotations
+from src.utils.RuntimeHook import normalize_callbacks
+from src.utils.SolverRuntime import StepSchedule
 
 import math
 import time
@@ -9,7 +11,6 @@ import taichi as ti
 
 from src.igampm.contact.ExplicitContact import ExplicitNurbsContact
 from src.utils.RuntimeHook import runtime_checkpoint
-from src.utils.SolverRuntime import StepSchedule, normalize_callbacks
 from src.utils.SolverConsole import print_save_file_info
 from src.utils.TimeTicker import Timer
 from src.utils.linalg import no_operation

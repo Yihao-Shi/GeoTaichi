@@ -1,21 +1,15 @@
 """Device assembly for classical total-Lagrangian FEM elements."""
 
+from src.utils.MatrixFunction import psd_project_nd
+
+from src.utils.errors import RuntimeNotInitializedError, SimulationStateError
+
 import numpy as np
 import taichi as ti
-
-from src.contact_detection.continuous_contact_detection import (
-    deformation_gradient_ccd,
-)
-from src.fem.engines.SparseMatrix import FEMSparseMatrix
-from src.physics_model.contact_model.ipc.ContactAssembly import psd_project_nd
-
-
-def _require_initialized_taichi():
-    if ti.lang.impl.get_runtime().prog is None:
-        raise RuntimeError(
-            "classical FEM device assembly requires an initialized runtime; "
-            "call geotaichi.init(...) or taichi.init(...) first"
-        )
+from src.utils.errors import InvertedElementError
+from src.utils.ScalarFunction import isinf
+from src.contact_detection.continuous_contact_detection.PolynomialCCD import deformation_gradient_ccd
+from src.fem.engines.FEMSparseMatrix import FEMSparseMatrix
 
 
 @ti.data_oriented
@@ -28,6 +22,14 @@ class ClassicalAssembler:
     Taichi; the selected COO/HashTriplet matrix then uses Scipy, PCG or
     BiCGSTAB for the global solve.
     """
+
+    @staticmethod
+    def _require_initialized_taichi():
+        if ti.lang.impl.get_runtime().prog is None:
+            raise RuntimeNotInitializedError(
+                "classical FEM device assembly requires an initialized runtime; "
+                "call geotaichi.init(...) or taichi.init(...) first"
+            )
 
     def __init__(
         self,
@@ -44,7 +46,7 @@ class ClassicalAssembler:
         allocate_hessian=True,
         linear_solver_relative_tolerance=0.0,
     ):
-        _require_initialized_taichi()
+        ClassicalAssembler._require_initialized_taichi()
         self.mesh = mesh
         self.element = element
         self.material = material
@@ -112,10 +114,8 @@ class ClassicalAssembler:
         self.total_energy = ti.field(dtype=self.real_type, shape=())
         self.minimum_jacobian = ti.field(dtype=self.real_type, shape=())
         self.maximum_material_step = ti.field(dtype=self.real_type, shape=())
-        # Stress output is reconstructed from deformation gradients and
-        # mapped directly to nodes. The former cell-sized field was never
-        # written or read by the classical assembler.
-        self.cell_stress = ti.Matrix.field(3, 3, dtype=self.real_type, shape=1)
+        self.cell_stress = ti.Matrix.field(3, 3, dtype=self.real_type, shape=self.cell_count)
+        self.invalid_stress_geometry = ti.field(ti.i32, shape=())
         self._stiffness_matrix = None
 
         self.connectivity.from_numpy(np.ascontiguousarray(element.connectivity, dtype=np.int32))
@@ -724,23 +724,43 @@ class ClassicalAssembler:
             self._stiffness_matrix.reset_device_assembly()
         return self._stiffness_matrix
 
-    def _cell_stress(self, positions):
-        deformation_gradients = self.deformation_gradient.to_numpy()
-        stress = np.zeros((self.cell_count, 3, 3), dtype=np.float64)
-        weights = np.asarray(self.element.reference_weights)
+    @ti.kernel
+    def _compute_cell_stress(self, positions: ti.template()):
+        self.invalid_stress_geometry[None] = 0
         for element_id in range(self.cell_count):
-            total_weight = float(np.sum(weights[element_id]))
-            if self.is_membrane:
-                frame = self.element._triangle_frame(positions[self.element.connectivity[element_id]])
+            stress = ti.Matrix.zero(self.real_type, 3, 3)
+            total_weight = 0.0
             for quadrature_id in range(self.quadrature_count):
-                value = self.material.cauchy_stress(
-                    np.asarray(deformation_gradients[element_id, quadrature_id], dtype=np.float64)
-                )
-                if self.is_membrane:
-                    value = frame[:2].T @ value @ frame[:2]
-                stress[element_id] += weights[element_id, quadrature_id] * value
-            stress[element_id] /= total_weight
-        return stress
+                deformation = self.deformation_gradient[element_id, quadrature_id]
+                jacobian = deformation.determinant()
+                minimum = 1.0e-14
+                if ti.static(type(self.material).__name__ == "NeoHookeanModel"):
+                    minimum = self.material.minimum_jacobian
+                if ti.static(type(self.material).__name__ == "StVenantKirchhoffModel"):
+                    if ti.static(self.is_membrane):
+                        jacobian = ti.sqrt((deformation.transpose() @ deformation).determinant())
+                if jacobian > minimum and not isinf(jacobian):
+                    value = self.material.cauchy_stress(deformation)
+                    weight = self.reference_weights[element_id, quadrature_id]
+                    if ti.static(self.is_membrane):
+                        coordinates = ti.Matrix.zero(self.real_type, 3, 3)
+                        for local, component in ti.static(ti.ndrange(3, 3)):
+                            coordinates[local, component] = positions[self.connectivity[element_id][local]][component]
+                        frame = self._current_frame(coordinates)
+                        stress += weight * (frame[:2, :].transpose() @ value @ frame[:2, :])
+                    else:
+                        stress += weight * value
+                    total_weight += weight
+                else:
+                    ti.atomic_max(self.invalid_stress_geometry[None], 1)
+            if total_weight > 0.0:
+                self.cell_stress[element_id] = stress / total_weight
+
+    def _cell_stress(self, positions):
+        self._compute_cell_stress(positions)
+        if self.invalid_stress_geometry[None]:
+            raise InvertedElementError("cannot compute stress for a collapsed or nonfinite element")
+        return self.cell_stress.to_numpy()
 
     def assemble_device(self, positions=None, need_stiffness=False, stiffness=None):
         if need_stiffness:
@@ -774,7 +794,7 @@ class ClassicalAssembler:
 
     def _require_hessian_storage(self):
         if not self.allocate_hessian:
-            raise RuntimeError("element Hessian storage is disabled for explicit FEM")
+            raise SimulationStateError("element Hessian storage is disabled for explicit FEM")
 
     def assemble(self, positions, need_stiffness=False, need_stress=False):
         """Explicit host snapshot adapter for tests and output only."""
@@ -787,7 +807,7 @@ class ClassicalAssembler:
             self.positions.from_numpy(values)
             source = self.positions
         force, stiffness = self.assemble_device(source, need_stiffness=need_stiffness)
-        stress = self._cell_stress(source.to_numpy()) if need_stress else None
+        stress = self._cell_stress(source) if need_stress else None
         result = (
             float(self.total_energy[None]),
             force.to_numpy(),
@@ -799,6 +819,3 @@ class ClassicalAssembler:
     def deformation_gradients(self, positions):
         self.assemble(positions)
         return self.deformation_gradient.to_numpy()
-
-
-__all__ = ["ClassicalAssembler"]

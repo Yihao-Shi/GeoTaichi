@@ -7,16 +7,17 @@ from src.mpm.elements.ElementBase import ElementBase
 from src.mpm.Simulation import Simulation
 from src.utils.linalg import flip3d_linear, flip2d_linear
 from src.utils.ShapeFunctions import *
-from src.utils.TypeDefination import vec2f, vec2i
+from src.utils.TypeDefinition import vec2f, vec2i
 import src.utils.GlobalVariable as GlobalVariable
 
+THRESHOLD = 1e-12
 
-Threshold = 1e-12
+
 @ti.data_oriented
 class StaggeredQuadrilateralElement(ElementBase):
     def __init__(self) -> None:
         super().__init__()
-        self.grid_size = vec2f(2., 2.)
+        self.grid_size = vec2f(2.0, 2.0)
         self.igrid_size = vec2f(0.5, 0.5)
         self.gnum = vec2i(0, 0)
         self.cnum = vec2i(0, 0)
@@ -26,7 +27,7 @@ class StaggeredQuadrilateralElement(ElementBase):
         self.grid_nodes = 4
         self.influenced_node = 2
         self.influenced_dofs = 8
-        self.cell_volume = 0.
+        self.cell_volume = 0.0
         self.cell_active = None
         self.cell = None
         self.LnID = None
@@ -43,14 +44,14 @@ class StaggeredQuadrilateralElement(ElementBase):
             grid_size = ti.Vector(grid_size)
         domain = np.array(sims.domain)
         grid_size = np.array(grid_size)
-        gnum = np.floor((domain + Threshold) / grid_size) + 1
+        gnum = np.floor((domain + THRESHOLD) / grid_size) + 1
         for d in range(2):
             if gnum[d] == 0:
                 gnum[d] = 1
         gnum = np.array(8 * np.ceil(gnum / 8), dtype=np.int32)
-        
+
         self.grid_size = vec2f(domain / gnum)
-        self.igrid_size = 1. / self.grid_size
+        self.igrid_size = 1.0 / self.grid_size
         self.cell_volume = self.calc_volume()
         self.gnum = vec2i(gnum)
         self.cnum = self.gnum - 1
@@ -62,69 +63,68 @@ class StaggeredQuadrilateralElement(ElementBase):
         self.calLength = ti.Vector.field(2, float, shape=sims.max_body_num)
 
     def set_nodal_coords(self):
-        X = np.linspace(0., self.cnum[0] * self.grid_size[0], int(self.gnum[0]))
-        Y = np.linspace(0., self.cnum[1] * self.grid_size[1], int(self.gnum[1]))
+        X = np.linspace(0.0, self.cnum[0] * self.grid_size[0], int(self.gnum[0]))
+        Y = np.linspace(0.0, self.cnum[1] * self.grid_size[1], int(self.gnum[1]))
         self.nodal_coords = flip2d_linear(np.array(list(product(X, Y))), size_u=X.shape[0], size_v=Y.shape[0])
-    
+
     def element_initialize(self, sims: Simulation):
         self.choose_shape_function(sims)
         if sims.max_particle_num > 0 and self.need_shape_cache(sims):
             self.set_essential_field(sims.max_particle_num, sims.shape_function, sims.mls)
 
     def need_shape_cache(self, sims: Simulation):
-        if (sims.material_type == "Fluid" and sims.solver_type == "Implicit" and
-            sims.discretization == "FDM"):
+        if sims.material_type == "Fluid" and sims.solver_type == "Implicit" and sims.discretization == "FDM":
             return False
         return True
 
     def calc_volume(self):
-        volume = 1.
+        volume = 1.0
         for i in range(np.array(self.grid_size).shape[0]):
             volume *= self.grid_size[i]
         return volume
-    
+
     def calc_total_particle(self, npic):
         return npic * npic
-    
+
     def calc_particle_size(self, npic):
         return 0.5 * self.grid_size / npic
-    
+
     def choose_shape_function(self, sims: Simulation):
         if sims.shape_function == "Linear" or sims.shape_function == "SmoothLinear":
             self.influenced_node = 2
             self.grid_nodes = 4
             self.ifnum = vec2i(2, 2)
 
-            self.shape_function = ShapeLinear
-            self.grad_shape_function = GShapeLinear
-            self.shape_function_center = ShapeLinearCenter
+            self.shape_function = shape_linear
+            self.grad_shape_function = g_shape_linear
+            self.shape_function_center = shape_linear_center
 
         elif sims.shape_function == "GIMP":
             self.influenced_node = 3
             self.grid_nodes = 9
             self.ifnum = vec2i(3, 3)
-            
-            self.shape_function = ShapeGIMP
-            self.grad_shape_function = GShapeGIMP
-            self.shape_function_center = ShapeGIMPCenter
+
+            self.shape_function = shape_gimp
+            self.grad_shape_function = g_shape_gimp
+            self.shape_function_center = shape_gimp_center
 
         elif sims.shape_function == "QuadBSpline":
             self.influenced_node = 3
             self.grid_nodes = 9
             self.ifnum = vec2i(3, 3)
-            
-            self.shape_function = ShapeBsplineQ
-            self.grad_shape_function = GShapeBsplineQ
+
+            self.shape_function = shape_bspline_q
+            self.grad_shape_function = g_shape_bspline_q
         elif sims.shape_function == "CubicBSpline":
             self.influenced_node = 4
             self.grid_nodes = 16
             self.ifnum = vec2i(4, 4)
-            
-            self.shape_function = ShapeBsplineC
-            self.grad_shape_function = GShapeBsplineC
+
+            self.shape_function = shape_bspline_c
+            self.grad_shape_function = g_shape_bspline_c
         else:
             raise KeyError(f"The shape function type {sims.shape_function} is not exist!")
-        
+
         GlobalVariable.INFLUENCENODE = self.influenced_node
         self.influenced_dofs = 3 * self.grid_nodes
 
@@ -145,33 +145,47 @@ class StaggeredQuadrilateralElement(ElementBase):
 
     def calculate_characteristic_length(self, sims: Simulation, particleNum, particle, psize):
         if sims.shape_function == "Linear":
-            self.calLength.fill(vec2f(0., 0.))
+            self.calLength.fill(vec2f(0.0, 0.0))
         elif sims.shape_function == "QuadBSpline":
             self.calLength.fill(0.5 * self.grid_size)
         elif sims.shape_function == "CubicBSpline":
             self.calLength.fill(self.grid_size)
         elif sims.shape_function == "GIMP":
-            set_particle_characteristic_length_gimp(particleNum, 1., self.calLength, particle, psize)
+            set_particle_characteristic_length_gimp(particleNum, 1.0, self.calLength, particle, psize)
 
     def print_message(self):
         print("Grid Size = ", self.grid_size)
         print("The number of nodes = ", self.gnum)
 
     def get_boundary_nodes(self, start_point, end_point):
-        start_bound = np.ceil([point - Threshold for point in start_point] * self.igrid_size)
-        end_bound = np.floor([point + Threshold for point in end_point] * self.igrid_size) + 1
+        start_bound = np.ceil([point - THRESHOLD for point in start_point] * self.igrid_size)
+        end_bound = np.floor([point + THRESHOLD for point in end_point] * self.igrid_size) + 1
         end_bound = np.maximum(end_bound, start_bound + 1)
 
         xnode = np.arange(start_bound[0], end_bound[0], 1)
         ynode = np.arange(start_bound[1], end_bound[1], 1)
-        
+
         total_nodes = np.array(list(product(xnode, ynode)))
         return np.array([n[0] + n[1] * self.gnum[0] for n in total_nodes], dtype=np.int32)
-    
+
     def calc_shape_fn(self, particleNum, particle):
-        self.global_update_stagger(self.grid_nodes, self.influenced_node, self.grid_size, self.igrid_size, self.gnum, particleNum[0], particle, self.calLength, 
-                              self.node_size, self.LnID, self.shape_fn, self.dshape_fn, self.shape_function, self.grad_shape_function)
-        
+        self.global_update_stagger(
+            self.grid_nodes,
+            self.influenced_node,
+            self.grid_size,
+            self.igrid_size,
+            self.gnum,
+            particleNum[0],
+            particle,
+            self.calLength,
+            self.node_size,
+            self.LnID,
+            self.shape_fn,
+            self.dshape_fn,
+            self.shape_function,
+            self.grad_shape_function,
+        )
+
     def calc_shape_fn_spline(self, particleNum, particle):
         pass
 
@@ -179,43 +193,78 @@ class StaggeredQuadrilateralElement(ElementBase):
         pass
 
     @ti.kernel
-    def global_update_stagger(self, total_nodes: int, influenced_node: int, element_size: ti.types.vector(3, float), ielement_size: ti.types.vector(3, float), gnum: ti.types.vector(3, int), particleNum: int, particle: ti.template(), 
-                              calLength: ti.template(), node_size: ti.template(), LnID: ti.template(), shape_fn: ti.template(), dshape_fn: ti.template(), shape_function: ti.template(), grad_shape_function: ti.template()):
-        for np in range(particleNum):
-            position, psize = particle[np].x, calLength[int(particle[np].bodyID)]
+    def global_update_stagger(
+        self,
+        total_nodes: int,
+        influenced_node: int,
+        element_size: ti.types.vector(3, float),
+        ielement_size: ti.types.vector(3, float),
+        gnum: ti.types.vector(3, int),
+        particle_num: int,
+        particle: ti.template(),
+        cal_length: ti.template(),
+        node_size: ti.template(),
+        ln_id: ti.template(),
+        shape_fn: ti.template(),
+        dshape_fn: ti.template(),
+        shape_function: ti.template(),
+        grad_shape_function: ti.template(),
+    ):
+        for np in range(particle_num):
+            position, psize = particle[np].x, cal_length[int(particle[np].bodyID)]
             base_bound = self.calc_base_cell(ielement_size, psize, position)
-            activeID = np * total_nodes
+            active_id = np * total_nodes
             for j in range(base_bound[1], base_bound[1] + influenced_node):
-                if j < 0 or j >= gnum[1]: continue
+                if j < 0 or j >= gnum[1]:
+                    continue
                 for i in range(base_bound[0], base_bound[0] + influenced_node):
-                    if i < 0 or i >= gnum[0]: continue
-                    nodeID = int(i + j * gnum[0])
+                    if i < 0 or i >= gnum[0]:
+                        continue
+                    node_id = int(i + j * gnum[0])
                     node_coords = vec2i(i, j) * element_size
                     shapen0, shapen1 = self.shapefn(particle[np].x, node_coords, ielement_size, psize, shape_function)
                     shapeval = shapen0 * shapen1
-                    if shapeval > Threshold:
-                        dshapen0, dshapen1 = self.grad_shapefn(particle[np].x, node_coords, ielement_size, psize, grad_shape_function)
+                    if shapeval > THRESHOLD:
+                        dshapen0, dshapen1 = self.grad_shapefn(
+                            particle[np].x, node_coords, ielement_size, psize, grad_shape_function
+                        )
                         grad_shapeval = vec2f([dshapen0 * shapen1, shapen0 * dshapen1])
-                        LnID[activeID] = nodeID
-                        shape_fn[activeID]=shapeval
-                        dshape_fn[activeID]=grad_shapeval
-                        activeID += 1
-            node_size[np] = ti.u8(activeID - np * total_nodes)
-            
+                        ln_id[active_id] = node_id
+                        shape_fn[active_id] = shapeval
+                        dshape_fn[active_id] = grad_shapeval
+                        active_id += 1
+            node_size[np] = ti.u8(active_id - np * total_nodes)
+
     @ti.func
     def calc_base_cell(self, ielement_size, particle_size, position):
-        return ti.floor((position - particle_size) * ielement_size, int) 
-    
+        return ti.floor((position - particle_size) * ielement_size, int)
+
     @ti.func
-    def shapefn(natural_particle_position, natural_coords, ielement_size, natural_particle_size, shape_function: ti.template()):
-        shapen0 = shape_function(natural_particle_position[0], natural_coords[0], ielement_size[0], natural_particle_size[0])
-        shapen1 = shape_function(natural_particle_position[1], natural_coords[1], ielement_size[1], natural_particle_size[1])
+    def shapefn(
+        natural_particle_position, natural_coords, ielement_size, natural_particle_size, shape_function: ti.template()
+    ):
+        shapen0 = shape_function(
+            natural_particle_position[0], natural_coords[0], ielement_size[0], natural_particle_size[0]
+        )
+        shapen1 = shape_function(
+            natural_particle_position[1], natural_coords[1], ielement_size[1], natural_particle_size[1]
+        )
         return shapen0, shapen1
 
     @ti.func
-    def grad_shapefn(natural_particle_position, natural_coords, ielement_size, natural_particle_size, grad_shape_function: ti.template()):
-        dshapen0 = grad_shape_function(natural_particle_position[0], natural_coords[0], ielement_size[0], natural_particle_size[0])
-        dshapen1 = grad_shape_function(natural_particle_position[1], natural_coords[1], ielement_size[1], natural_particle_size[1])
+    def grad_shapefn(
+        natural_particle_position,
+        natural_coords,
+        ielement_size,
+        natural_particle_size,
+        grad_shape_function: ti.template(),
+    ):
+        dshapen0 = grad_shape_function(
+            natural_particle_position[0], natural_coords[0], ielement_size[0], natural_particle_size[0]
+        )
+        dshapen1 = grad_shape_function(
+            natural_particle_position[1], natural_coords[1], ielement_size[1], natural_particle_size[1]
+        )
         return dshapen0, dshapen1
 
     @ti.func

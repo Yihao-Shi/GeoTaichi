@@ -4,8 +4,8 @@ import numpy as np
 import pytest
 import taichi as ti
 
-from src.physics_model.consititutive_model.infinitesimal_strain.MaterialKernel import EquivalentDeviatoricStrain
-from src.physics_model.consititutive_model.infinitesimal_strain.MohrCoulomb import MohrCoulombModel
+from src.physics_model.constitutive_model.infinitesimal_strain.MaterialKernel import equivalent_deviatoric_strain
+from src.physics_model.constitutive_model.infinitesimal_strain.MohrCoulomb import MohrCoulombModel
 
 pytestmark = [pytest.mark.cpu, pytest.mark.materials]
 
@@ -44,12 +44,12 @@ def test_zero_friction_is_tresca_and_paper_softening_slope_is_preserved(taichi_m
             stress = ti.Vector(
                 [data[i, 0, 0], data[i, 1, 1], data[i, 2, 2], data[i, 0, 1], data[i, 1, 2], data[i, 0, 2]]
             )
-            e, q, theta = model.ComputeStressInvariant(stress)
-            results[i] = model.ComputeShearFunction(e, q, theta, 0.0, 20000.0)
-        native = EquivalentDeviatoricStrain(ti.Vector([ep[j] for j in ti.static(range(6))]))
+            e, q, theta = model.compute_stress_invariant(stress)
+            results[i] = model.compute_shear_function(e, q, theta, 0.0, 20000.0)
+        native = equivalent_deviatoric_strain(ti.Vector([ep[j] for j in ti.static(range(6))]))
         results[3] = ti.sqrt(2.0) * native
         state[0].strain = ti.Vector([ep[j] for j in ti.static(range(6))])
-        parameters = model.GetMaterialParameter(ti.Vector.zero(ti.f64, 6), state[0])
+        parameters = model.get_material_parameter(ti.Vector.zero(ti.f64, 6), state[0])
         results[4] = parameters[4]
 
     sample(tensors, strain)

@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from src.igampm.engines import Engine
+from src.igampm.engines.CoupledEngine import Engine
 
 
 class _ArrayField:

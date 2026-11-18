@@ -1,5 +1,8 @@
 """Ten Cate E4 oil-sphere settling with semi-resolved incompressible CFDEM."""
 
+from src.utils.RuntimeHook import python_callback
+
+
 import argparse
 import json
 import math
@@ -73,7 +76,7 @@ def write_json(path: Path, payload):
 def run(config, args):
     os.environ.setdefault("GEOTAICHI_REAL_DTYPE", "float64")
     from geotaichi import DEMPM, init
-    from src.utils.SolverRuntime import python_callback
+
     import taichi as ti
 
     output = args.output_dir.resolve()

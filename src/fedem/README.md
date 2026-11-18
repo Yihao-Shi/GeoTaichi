@@ -582,7 +582,7 @@ history operations are Taichi kernels/functions.
 For a rigid LSDEM target, use `FEDEM` with `scheme="LSDEM"`: FEM boundary
 nodes query the rigid body's existing SDF. For an implicit elastic volume soft
 particle against an AffineBody, use `FEDEM` with `scheme="AffineBody"` and the
-`IPC` model; that fully coupled route rebuilds PT/EE collision candidates during
+`BarrierIPC` model; that fully coupled route rebuilds PT/EE collision candidates during
 Newton/CCD and does not use a Verlet multiplier.
 
 ## Construction order
@@ -689,12 +689,12 @@ force and moment. The coupling never builds or advects an SDF for the FEM
 body.
 
 For an elastic implicit FEM soft particle and `scheme="AffineBody"`, select
-IPC instead. TET4/HEX8 volumes expose their triangulated boundary; TRI3
+`BarrierIPC`. TET4/HEX8 volumes expose their triangulated boundary; TRI3
 membranes use their mesh directly:
 
 ```python
 coupling.choose_contact_model(
-    "IPC", dhat=2.0e-2, dmin=0.0, kappa=5.0e4,
+    "BarrierIPC", dhat=2.0e-2, dmin=0.0, kappa=5.0e4,
     friction_coefficient=0.3, epsv=1.0e-3,
     friction_mode="lagged", friction_iterations=-1,
     friction_tolerance=1.0e-7, friction_max_iterations=50,

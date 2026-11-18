@@ -10,7 +10,6 @@ ti = pytest.importorskip("taichi")
 import src.iga.config as iga_config
 import src.igampm.config as coupling_config
 
-
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.coupling,
@@ -77,14 +76,12 @@ def _iga_cube(tmp_path):
 
 
 def _particle_scene():
-    from src.mpm.structs.Particle import ParticleCoupling
+    from src.mpm.structs.ParticleCoupling import ParticleCoupling
 
     particle = ParticleCoupling.field(shape=1)
     _initialize_particle(particle)
     material = SimpleNamespace(matProps=ti.field(float, shape=2))
-    return SimpleNamespace(
-        particle=particle, couplingNum=np.asarray([1], dtype=np.int32), material=material
-    )
+    return SimpleNamespace(particle=particle, couplingNum=np.asarray([1], dtype=np.int32), material=material)
 
 
 @pytest.mark.parametrize("model_name", ["Linear", "HertzMindlin"])
@@ -127,9 +124,7 @@ def test_explicit_point_nurbs_dem_contact_is_balanced(tmp_path, model_name):
     assert normal_force[2] < 0.0
     assert mpm_force[0] < 0.0
     assert np.linalg.norm(overlap) > 0.0
-    assert np.linalg.norm(mpm_force + iga_force) < 1.0e-10 * np.linalg.norm(
-        mpm_force
-    )
+    assert np.linalg.norm(mpm_force + iga_force) < 1.0e-10 * np.linalg.norm(mpm_force)
 
 
 def test_explicit_dem_property_rejects_iga_rolling_dof_mismatch():
@@ -167,9 +162,7 @@ def test_public_explicit_igampm_advances_both_children(tmp_path):
 
     iga = IGA(log=False)
     mpm = MPM(log=False)
-    coupling = IGAMPM(
-        iga, mpm, log=False, contact_model="Linear"
-    )
+    coupling = IGAMPM(iga, mpm, log=False, contact_model="Linear")
     mpm.set_configuration(
         domain=[2.0, 2.0, 2.0],
         gravity=[0.0, 0.0, 0.0],
@@ -199,9 +192,7 @@ def test_public_explicit_igampm_advances_both_children(tmp_path):
             "PoissonRatio": 0.3,
         },
     )
-    mpm.add_element(
-        element={"ElementType": "R8N3D", "ElementSize": [0.1] * 3}
-    )
+    mpm.add_element(element={"ElementType": "R8N3D", "ElementSize": [0.1] * 3})
     mpm.add_region(
         region={
             "Name": "point",
@@ -236,9 +227,7 @@ def test_public_explicit_igampm_advances_both_children(tmp_path):
 
     iga.set_configuration(dimension=3, solver_type="Explicit")
     cube = Cube()
-    cube.set_parameters(
-        start_point=[0.0, 0.0, 0.2], size=[1.0, 1.0, 0.2]
-    )
+    cube.set_parameters(start_point=[0.0, 0.0, 0.2], size=[1.0, 1.0, 0.2])
     cube.generate_knot_u(degree=2, num_ctrlpts=3)
     cube.generate_knot_v(degree=2, num_ctrlpts=3)
     cube.generate_knot_w(degree=2, num_ctrlpts=3)

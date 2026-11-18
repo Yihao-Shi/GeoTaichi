@@ -1,9 +1,9 @@
 import taichi as ti
 
-from src.utils.constants import ZEROVEC3f, PI
+from src.utils.constants import ZEROVEC3F, PI
 import src.utils.GlobalVariable as GlobalVariable
-from src.utils.TypeDefination import real
-from src.utils.VectorFunction import Normalize, Squared
+from src.utils.TypeDefinition import real
+from src.utils.VectorFunction import normalize, squared
 
 
 @ti.dataclass
@@ -56,7 +56,7 @@ class LinearSurfaceProperty:
         pos1, pos2 = particle[end1].x, wall[end2]._get_center()
         particle_rad, norm = particle[end1].rad, wall[end2]._get_norm(pos1)
         distance = (pos1 - pos2).dot(norm)
-        fraction = ti.abs(wall[end2].processCircleShape(pos1, particle_rad, distance))
+        fraction = ti.abs(wall[end2].process_circle_shape(pos1, particle_rad, distance))
         kn = self.kn
         if ti.static(GlobalVariable.ADAPTIVESTIFF):
             kn = PI * particle_rad * self.emod
@@ -81,8 +81,8 @@ class LinearSurfaceProperty:
         return normal_damping_force * vn
 
     @ti.func
-    def _elastic_tangential_energy(self, ks, tangOverTemp):
-        return 0.5 * Squared(tangOverTemp) * ks
+    def _elastic_tangential_energy(self, ks, tang_over_temp):
+        return 0.5 * squared(tang_over_temp) * ks
 
     @ti.func
     def _viscous_tangential_energy(self, tangential_damping_force, vs):
@@ -113,33 +113,33 @@ class LinearSurfaceProperty:
         return normal_force, norm_elastic, norm_viscous_rate
 
     @ti.func
-    def _tangential_force(self, ks, sdratio, m_eff, normal_force, vs, norm, tangOverlapOld, dt):
-        tangOverlapRot = tangOverlapOld - tangOverlapOld.dot(norm) * norm
-        tangOverTemp = vs * dt[None] + tangOverlapOld.norm() * Normalize(tangOverlapRot)
-        tangOverlapTrial = tangOverTemp
-        trial_ft = -ks * tangOverTemp
+    def _tangential_force(self, ks, sdratio, m_eff, normal_force, vs, norm, tang_overlap_old, dt):
+        tang_overlap_rot = tang_overlap_old - tang_overlap_old.dot(norm) * norm
+        tang_over_temp = vs * dt[None] + tang_overlap_old.norm() * normalize(tang_overlap_rot)
+        tang_overlap_trial = tang_over_temp
+        trial_ft = -ks * tang_over_temp
 
         cf = ti.abs(normal_force)
-        tangential_force = ZEROVEC3f
+        tangential_force = ZEROVEC3F
         tang_elastic, tang_viscous_rate, friction_energy = 0.0, 0.0, 0.0
         if trial_ft.norm() > self.mus * cf:
             tangential_force = self.mud * cf * trial_ft.normalized()
-            tangOverTemp = -tangential_force / ks
+            tang_over_temp = -tangential_force / ks
             if ti.static(GlobalVariable.TRACKENERGY):
-                tang_elastic = self._elastic_tangential_energy(ks, tangOverTemp)
-                plastic_slip = tangOverlapTrial - tangOverTemp
+                tang_elastic = self._elastic_tangential_energy(ks, tang_over_temp)
+                plastic_slip = tang_overlap_trial - tang_over_temp
                 friction_energy = self._friction_energy(plastic_slip, tangential_force)
         else:
             tang_damping_force = -2 * sdratio * ti.sqrt(m_eff * ks) * vs
             tangential_force = trial_ft + tang_damping_force
             if ti.static(GlobalVariable.TRACKENERGY):
-                tang_elastic = self._elastic_tangential_energy(ks, tangOverTemp)
+                tang_elastic = self._elastic_tangential_energy(ks, tang_over_temp)
                 tang_viscous_rate = self._viscous_tangential_energy(tang_damping_force, vs)
-        return tangential_force, tangOverTemp, tang_elastic, tang_viscous_rate, friction_energy
+        return tangential_force, tang_over_temp, tang_elastic, tang_viscous_rate, friction_energy
 
     @ti.func
     def _resisting_momentum(self, rad_eff, normal_force, w_rel):
-        return -Normalize(w_rel) * self.rmu * ti.abs(normal_force) * rad_eff
+        return -normalize(w_rel) * self.rmu * ti.abs(normal_force) * rad_eff
 
     @ti.func
     def _get_stiffness(self, coeff, param):
@@ -151,7 +151,7 @@ class LinearSurfaceProperty:
             return self.kn * coeff, self.ks * coeff
 
     @ti.func
-    def _force_assemble(self, m_eff, rad_eff, gapn, coeff, param, norm, v_rel, w_rel, tangOverlapOld, dt):
+    def _force_assemble(self, m_eff, rad_eff, gapn, coeff, param, norm, v_rel, w_rel, tang_overlap_old, dt):
         kn, ks = self._get_stiffness(coeff, param)
 
         ndratio, sdratio = self.ndratio, self.sdratio
@@ -159,10 +159,10 @@ class LinearSurfaceProperty:
         vs = v_rel - vn * norm
 
         normal_force, norm_elastic, norm_viscous_rate = self._normal_force(kn, ndratio, m_eff, gapn, vn)
-        tangential_force, tangOverTemp, tang_elastic, tang_viscous_rate, friction_energy = self._tangential_force(
-            ks, sdratio, m_eff, normal_force, vs, norm, tangOverlapOld, dt
+        tangential_force, tang_over_temp, tang_elastic, tang_viscous_rate, friction_energy = self._tangential_force(
+            ks, sdratio, m_eff, normal_force, vs, norm, tang_overlap_old, dt
         )
-        resisting_momentum = ZEROVEC3f
+        resisting_momentum = ZEROVEC3F
         if ti.static(GlobalVariable.CONSTANTORQUEMODEL):
             resisting_momentum = self._resisting_momentum(rad_eff, normal_force, w_rel)
         if ti.static(GlobalVariable.TRACKENERGY):
@@ -173,5 +173,5 @@ class LinearSurfaceProperty:
         # A zero-duration force probe may project/cap the trial spring, but
         # must not commit that return mapping to contact history.
         if dt[None] == 0.0:
-            tangOverTemp = tangOverlapOld
-        return normal_force * norm, tangential_force, resisting_momentum, tangOverTemp
+            tang_over_temp = tang_overlap_old
+        return normal_force * norm, tangential_force, resisting_momentum, tang_over_temp

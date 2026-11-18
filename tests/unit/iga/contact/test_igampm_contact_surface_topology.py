@@ -244,7 +244,7 @@ def test_explicit_surface_include_and_exclude():
 
 
 def test_rectangular_boundary_uses_each_edges_parametric_direction():
-    from src.nurbs.BasicSurface import Rectangle
+    from src.nurbs.Rectangle import Rectangle
 
     rectangle = Rectangle()
     rectangle.set_parameters(size=[0.03, 1.0])

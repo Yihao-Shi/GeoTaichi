@@ -14,10 +14,12 @@ import src.utils.GlobalVariable as GV
 
 if __name__ == "__main__":
     GV.DIMENSION = int(sys.argv[1])
+from src.mpm.boundaries.BoundaryConstraint import BoundaryConstraints
 from src.mpm.Recorder import WriteFile
 from src.mpm.engines.IncompressibleEngine import IncompressibleEngine
 from src.mpm.generator.LoadFromFile import BodyReader
-from src.mpm.structs.Particle import ParticleCloudIncompressible2D, ParticleCloudIncompressible3D
+from src.mpm.structs.ParticleCloudIncompressible2D import ParticleCloudIncompressible2D
+from src.mpm.structs.ParticleCloudIncompressible3D import ParticleCloudIncompressible3D
 
 pytestmark = [pytest.mark.verification, pytest.mark.mpdem, pytest.mark.cpu]
 
@@ -38,11 +40,16 @@ def fixture(dimension):
     for index in np.ndindex((4,) * dimension):
         cell.type[index] = 1
     scene = SimpleNamespace(
+        boundary=BoundaryConstraints(),
+        restart_cell_pressure=None,
+        two_phase_fluid_mass_initialized=False,
         particle=particle,
         particleNum=np.array([1]),
         is_rigid=ti.field(int, shape=1),
         psize=np.full((1, dimension), 0.5),
-        material=SimpleNamespace(get_state_vars_dict=lambda **_: {}),
+        material=SimpleNamespace(
+            stateVars=None, get_state_vars_dict=lambda **_: {}, reload_state_variables=lambda *_args, **_kw: None
+        ),
         element=SimpleNamespace(
             cnum=ti.Vector(list(shape)),
             grid_size=ti.Vector([1.0] * dimension),
@@ -56,6 +63,7 @@ def fixture(dimension):
         material_type="IncompressibleFluid",
         dimension=dimension,
         current_time=0.1,
+        current_step=0,
         current_print=0,
         is_continue=True,
         max_particle_num=1,
@@ -79,7 +87,7 @@ def read_and_initialize(path, sims, scene):
 def check_legacy_pressure(tmp_path, dimension):
     sims, scene = fixture(dimension)
     writer = WriteFile.__new__(WriteFile)
-    output = writer.MonitorParticleBase(sims, scene, 1)
+    output = writer.monitor_particle_base(sims, scene, 1)
     output["pressure"] = np.array([17.0])
     path = tmp_path / "MPMParticle000000.npz"
     np.savez(path, **output)
@@ -97,7 +105,7 @@ def check_grid_roundtrip(tmp_path, dimension, coupling):
     writer = WriteFile.__new__(WriteFile)
     writer.particle_path = str(tmp_path)
     writer.visualizeParticle = lambda *args: None
-    method = writer.MonitorIncompressibleParticleCoupling if coupling else writer.MonitorIncompressibleParticle
+    method = writer.monitor_incompressible_particle_coupling if coupling else writer.monitor_incompressible_particle
     method(sims, scene)
     scene.element.cell.pressure.fill(123.0)
     read_and_initialize(tmp_path / "MPMParticle000000.npz", sims, scene)
@@ -109,7 +117,7 @@ def check_companion_grid(tmp_path, dimension, case):
     sims, scene = fixture(dimension)
     expected = np.random.default_rng(29).normal(size=(6,) * dimension)
     writer = WriteFile.__new__(WriteFile)
-    output = writer.MonitorParticleBase(sims, scene, 1)
+    output = writer.monitor_particle_base(sims, scene, 1)
     output["pressure"] = np.array([17.0])
     particles, grids = tmp_path / "particles", tmp_path / "grids"
     particles.mkdir()

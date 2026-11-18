@@ -1,7 +1,6 @@
 """Host-side bounded retry policy for recoverable implicit-step failures."""
 
 from __future__ import annotations
-
 import math
 from dataclasses import dataclass
 from typing import Optional
@@ -14,6 +13,39 @@ class StepRetryPolicy:
     ``maximum_retries`` counts additional attempts after the original step.
     A zero ``minimum_timestep`` disables the optional lower bound.
     """
+
+    @staticmethod
+    def nonlinear_failure_kind(exception: BaseException) -> str:
+        """Map implicit solver messages onto stable diagnostic categories."""
+        message = str(exception).lower().split(" (", 1)[0]
+        if "line search" in message or "no strictly feasible step" in message:
+            return "line_search_failure"
+        if "linear solve" in message or "pcg" in message or "bicg" in message:
+            return "linear_solver_nonconvergence"
+        if "descent" in message or "descending" in message:
+            return "non_descent_direction"
+        if "did not converge" in message or "failed to converge" in message:
+            return "newton_nonconvergence"
+        return "nonlinear_solver_failure"
+
+    @staticmethod
+    def is_recoverable_nonlinear_failure(exception: BaseException) -> bool:
+        """Recognize only failures emitted by an active nonlinear/linear solve."""
+
+        message = str(exception).lower()
+        return any(
+            phrase in message
+            for phrase in (
+                "did not converge",
+                "failed to converge",
+                "line search failed",
+                "not descending",
+                "descent direction",
+                "non-descent direction",
+                "no finite descent direction",
+                "no strictly feasible step",
+            )
+        )
 
     enabled: bool = False
     maximum_retries: int = 2
@@ -57,43 +89,3 @@ class StepRetryPolicy:
         if not candidate < current:
             return None
         return candidate
-
-
-def nonlinear_failure_kind(exception: BaseException) -> str:
-    """Map implicit solver messages onto stable diagnostic categories."""
-    message = str(exception).lower().split(" (", 1)[0]
-    if "line search" in message or "no strictly feasible step" in message:
-        return "line_search_failure"
-    if "linear solve" in message or "pcg" in message or "bicg" in message:
-        return "linear_solver_nonconvergence"
-    if "descent" in message or "descending" in message:
-        return "non_descent_direction"
-    if "did not converge" in message or "failed to converge" in message:
-        return "newton_nonconvergence"
-    return "nonlinear_solver_failure"
-
-
-def is_recoverable_nonlinear_failure(exception: BaseException) -> bool:
-    """Recognize only failures emitted by an active nonlinear/linear solve."""
-
-    message = str(exception).lower()
-    return any(
-        phrase in message
-        for phrase in (
-            "did not converge",
-            "failed to converge",
-            "line search failed",
-            "not descending",
-            "descent direction",
-            "non-descent direction",
-            "no finite descent direction",
-            "no strictly feasible step",
-        )
-    )
-
-
-__all__ = [
-    "StepRetryPolicy",
-    "is_recoverable_nonlinear_failure",
-    "nonlinear_failure_kind",
-]

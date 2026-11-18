@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 import taichi as ti
 
-from src.utils.ShapeFunctions import ShapeBsplineQ, GShapeBsplineQ
+from src.utils.ShapeFunctions import shape_bspline_q, g_shape_bspline_q
 
 
 @pytest.mark.parametrize(
@@ -16,7 +16,7 @@ def test_quadratic_boundary_value_and_gradient_resist_roundoff(taichi_runtime, b
     @ti.kernel
     def sample(position: ti.f64):
         result[None] = ti.Vector(
-            [ShapeBsplineQ(position, 0.2, 200.0, boundary), GShapeBsplineQ(position, 0.2, 200.0, boundary)]
+            [shape_bspline_q(position, 0.2, 200.0, boundary), g_shape_bspline_q(position, 0.2, 200.0, boundary)]
         )
 
     endpoint = 0.2 + edge / 200.0

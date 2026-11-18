@@ -4,7 +4,8 @@ import taichi as ti
 
 from geotaichi import init
 from src.mpm.engines.TwoPhaseDoubleLayerKernel import kernel_mac_p2g_double_layer2d, kernel_mac_p2g_double_layer3d
-from src.mpm.structs.Particle import ParticleCloudTwoPhase, ParticleCloudTwoPhase2D
+from src.mpm.structs.ParticleCloudTwoPhase import ParticleCloudTwoPhase
+from src.mpm.structs.ParticleCloudTwoPhase2D import ParticleCloudTwoPhase2D
 
 
 @pytest.mark.parametrize("dimension", [2, pytest.param(3, marks=pytest.mark.isolated_dimension(3))])

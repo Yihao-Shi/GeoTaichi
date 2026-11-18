@@ -80,11 +80,7 @@ def _run_ipc_contact_case(solver_cls, label, output_path):
     diff = (K - K.T).tocoo()
     sym_max = float(np.max(np.abs(diff.data))) if diff.nnz else 0.0
     data_max = float(np.max(np.abs(K.data))) if K.nnz else 0.0
-    print(
-        f"IPC{label}MPM barrier hash: contacts={ipc.curr_barrier_contact_num} "
-        f"raw={int(ipc.barrier_hash_matrix.raw_non_diag_count[0])} nnz={K.nnz} "
-        f"max={data_max:.3e} sym={sym_max:.3e}"
-    )
+    print("BarrierIPC")
     assert K.shape == (mpm.active_dof, mpm.active_dof)
     assert K.nnz > 0
     assert np.all(np.isfinite(K.data))

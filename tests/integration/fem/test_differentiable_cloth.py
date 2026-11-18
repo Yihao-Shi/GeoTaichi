@@ -67,7 +67,7 @@ def test_differentiable_cloth_honors_explicit_host_linear_solver():
         {"type": "Dirichlet", "nodes": mesh.node_sets["ymax"], "components": "all", "value": 0.0}
     )
     fem.add_contact(
-        "IPC",
+        "BarrierIPC",
         self_contact=False,
         planes=[((0, 0, 0), (0, 0, 1))],
         dhat=0.02,

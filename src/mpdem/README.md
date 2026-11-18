@@ -53,7 +53,7 @@ MPM–ABD configurations are distinguished by their physical model and contact o
 | --- | --- | --- | --- |
 | Incompressible fluid–ABD | Volume-fraction IBM and pressure projection | [Moving affine body](../../examples/mpm/IncompressibleFluid/affine_body_coupling_3d/affine_body_coupling_3d.py) | 3D, fixed timestep, no DEM subcycling; not IPC |
 | Hyperelastic soft-particle MPM–ABD | Soft-grid displacements and affine controls in one IPC Newton system | [Soft spheres](../../examples/mpdem/AffineBody/AffineSoftSphereIPC/affine_soft_sphere_ipc.py) | Hyperelastic only; follow the `scheme="LSMPM"` template lifecycle |
-| Continuum solid MPM–ABD | Active MPM-grid displacements and affine controls in one IPC Newton system | [Solid-bed impact](../../examples/mpdem/AffineBody/ABDImpactDP/direct_mpm_abd_impact.py) | 3D ULMPM; Neo-Hookean, Drucker–Prager, or von Mises; lagged friction |
+| Continuum solid MPM–ABD | Active MPM-grid displacements and affine controls in one IPC Newton system | [Solid-bed impact](../../examples/mpdem/AffineBody/ABDImpactDP/direct_mpm_abd_impact.py) | 3D ULMPM; Neo-Hookean, Drucker–Prager, von Mises or Modified Cam–Clay; lagged friction |
 
 These examples contain the required API selectors and allocation order. They do not represent different MPM balance laws. Ordinary explicit MPM–DEM/LSDEM and soft-particle contact are documented in Sections 1–10; solid IPC coupling is described in Sections 11–13 and 15.
 
@@ -545,7 +545,7 @@ N_{pi}m_p\boldsymbol{g}
 
 Here $`\boldsymbol{P}_p=\partial\Psi/\partial\boldsymbol{F}_p`$. The supported
 finite-strain elastic energies are defined in the
-[shared constitutive-model theory](../physics_model/consititutive_model/README.md);
+[shared constitutive-model theory](../physics_model/constitutive_model/README.md);
 the present section concerns their explicit coupling to level-set contact.
 
 Let $`a`$ be a boundary quadrature sample of body $`b`$, with reference local
@@ -1352,7 +1352,7 @@ the grid tangent has the form
 
 The supported Neo-Hookean, Hencky, Gent, and Hydrogel energies are maintained
 in the
-[shared constitutive-model theory](../physics_model/consititutive_model/README.md).
+[shared constitutive-model theory](../physics_model/constitutive_model/README.md).
 This soft route is hyperelastic; finite-strain plasticity belongs to the
 continuum-solid MPM route below.
 
@@ -1624,18 +1624,21 @@ search trials. The return mapping supplies
 
 History is committed only after the entire MPM--AffineBody equilibrium and
 friction fixed point converge. The Drucker--Prager and von Mises updates are defined in the
-[shared constitutive theory](../physics_model/consititutive_model/README.md#finite-strain-multiplicative-plasticity).
+[shared constitutive theory](../physics_model/constitutive_model/README.md#finite-strain-multiplicative-plasticity).
 
-Direct MPM--AffineBody automatically uses the physical DP force and full
-nonsymmetric Jacobian with Taichi BiCGSTAB when dilation and friction angles
-differ. The return map is recomputed at every Newton trial with accepted
-history frozen; this route has no material-consistency outer loop. Residual
-Armijo and the common contact/material CCD bound govern each update.
-Associated materials retain the projected symmetric PCG route. ABD, MPM,
+Direct MPM--AffineBody uses physical residual Newton and the full consistent
+Jacobian with Taichi BiCGSTAB for both associated and nonassociated DP,
+von Mises, and MCC. The return map is recomputed at every Newton trial with
+accepted history frozen; these paths have no plastic-volume or material-consistency
+outer loop. DP's trial plastic volume and its derivatives enter the stress
+and tangent directly. Von Mises is isochoric, so its plastic volume remains
+constant during a return. Residual Armijo and the common contact/material CCD
+bound govern each update. ABD, MPM,
 and mixed-contact lagged friction caches are still refreshed in a separate
 fixed-point loop before accepted-state history is committed.
-Use `friction_iterations=-1` to iterate to convergence; positive counts keep
-the existing fixed-count mode and report whether it reached the criterion.
+Use `friction_iterations=-1` to iterate to convergence; positive counts
+execute exactly that many outer iterations and report whether the final
+iterate reached the convergence criterion.
 
 Direct 3D MPM--ABD IPC additionally accepts `StateDependentDruckerPrager`.
 Its SDMC state law evolves friction/dilation from total volume and previous
@@ -1643,11 +1646,11 @@ Cauchy pressure using the same physical residual/BiCGSTAB route. The step
 freezes pressure before the independent lagged-friction iteration and commits
 void ratio only on acceptance. All 14 history entries participate in rollback.
 See [parameters](../mpm/README.md#state-dependent-dp-in-coupled-implicit-ulmpm)
-and [theory](../physics_model/consititutive_model/README.md#state-dependent-finite-strain-drucker--prager).
+and [theory](../physics_model/constitutive_model/README.md#state-dependent-finite-strain-drucker--prager).
 This is a continuum Direct-MPM material; LSMPM soft bodies and its
 parameter/history adjoints are unsupported.
 
-For nonassociated DP, `MPDEM.set_solver({"inexact_newton": True, ...})`
+For these plastic paths, `MPDEM.set_solver({"inexact_newton": True, ...})`
 optionally adapts the Krylov relative tolerance from 0.01 toward 1e-7,
 restarting its forcing history at every friction outer iteration. Its true
 linear error bound is `max(MPM_linear_atol, eta * R)`, referenced to physical
@@ -1663,7 +1666,7 @@ the ABD norm is physical surface motion.
 The public Direct MPM--ABD route defaults to `inexact_newton=False`, keeping
 the configured linear thresholds fixed. Set `inexact_newton=True` explicitly
 to select the adaptive forcing method. Four warm replays of a
-small coupled CUDA case reduced median wall time from 6.40 s to 3.22 s with
+small nonassociated-DP coupled CUDA case reduced median wall time from 6.40 s to 3.22 s with
 the same force criterion and friction convergence. Linear iterations ranged
 from 390--463 with strict solves and 129--157 with inexact solves; timing
 remains model dependent.
@@ -1686,6 +1689,102 @@ The common feasible line-search limit is
 The state is committed transactionally: AffineBody controls, MPM grid
 displacements, particles, deformation gradients, and plastic history either
 all advance or all return to the beginning of the step.
+
+#### Continuum MPM--ABD trajectory adjoints
+
+After configuring the two children and mixed BarrierIPC contact, use the
+coupling-owned tape instead of advancing either child independently:
+
+```python
+trajectory = coupling.differentiable(steps=100)
+for _ in range(100):
+    trajectory.step(verbose=False)
+gradients = trajectory.backward({
+    "affine_position": terminal_control_gradient,  # (4 * ABD body count, 3)
+    "position": terminal_particle_gradient,       # (MPM particle count, 3)
+})
+```
+
+The trajectory reuses the original monolithic forward solve and solves the
+unprojected coupled transpose system for each executed friction outer iterate
+before each replayed state commit. The
+device tape records MPM position, velocity, acceleration, total deformation
+and all DP/VM/MCC history, plus ABD control positions and velocities. Reverse
+propagation includes particle/grid transfers, plastic state commit, mixed
+barrier geometry, displacement-dependent interpolation, lagged-friction
+reference positions, and both children. Each frozen-friction solve is reversed
+through the analytic closest-weight, tangent-plane and normal-load cache update,
+including mixed contacts, MPM ground contact and ABD mesh self-contact. The
+outer-iterate workspace is reused between frames. `backward()` restores accepted terminal
+state and clocks on success or failure; it does not append replay history.
+
+MPM terminal seeds also accept `velocity`, `acceleration`,
+`deformation_gradient`, `plastic_deformation_inverse`,
+`equivalent_plastic_strain`, and `volumetric_plastic_strain`; ABD accepts
+`affine_velocity`. Omitted seeds are zero. Results contain `initial_*` MPM
+state VJPs, `affine_initial_position`, `affine_initial_velocity`, the MPM
+material parameter slots, separate/summed gravity VJPs, per-body ABD Young
+modulus, joint targets/damping, ABD friction scale, MPM ground friction, and
+the `(MPM body count, ABD body count)` `mixed_friction_coefficient` VJP.
+
+MCC additionally accepts a `preconsolidation_pressure` terminal seed and
+returns its `initial_preconsolidation_pressure` VJP. Its five material slots
+are `(poisson_ratio, stress_ratio, lambda_star, kappa_star, initial_pressure)`;
+DP/VM retain their existing four-slot results. MCC returns these named values
+instead of DP/VM yield aliases or a Young-modulus VJP. See the
+[MCC local equations and parameter maps](../physics_model/constitutive_model/README.md#finite-strain-mcc-in-direct-mpm--abd).
+
+Supported trajectories use dynamic 3D Cartesian Direct ULMPM with DP (including
+independent constant dilation), von Mises or Modified Cam--Clay, linear or quadratic B-spline
+transfer, `velocity_projection=False`, mesh BarrierIPC and fixed timesteps
+without retries. MPM retains its configured Newmark integration; ABD adjoints
+currently require `newmark=[1, 0.5, 1]`. State-dependent DP, other materials,
+DEM walls/servo, level-set contact and contact damping are rejected. Contact
+topology, closest-feature branches and the executed iteration count are discrete;
+derivatives apply within a fixed branch. Constitutive yield switches and zero
+deviatoric norms also use the material's branch/zero-gradient convention.
+Both fixed positive friction iteration counts and iteration to convergence
+are supported. Finite-difference validation
+uses the complete forward cache refresh, with matching contact branches and
+iteration counts across probes. Backward work grows with the executed outer
+iterations and trajectory length. The current loss seed is on terminal state;
+all earlier recorded states and plastic history participate in its chain rule.
+
+The maintained derivative checks for this path are:
+
+| Check | Coverage |
+| --- | --- |
+| `test_direct_affine_nonassociated.py` | Physical Newton without a material outer loop for associated DP/VM; nonsymmetric Jacobian and transpose solve; two-step state/history FD; full-forward mixed-friction FD with one, two and converged outer iterations; failed replay/commit restoration. |
+| `test_direct_affine_trajectory_gradients.py` | Three-step full-forward FD for each initial MPM/ABD state family and runtime parameters, with terminal position, velocity, acceleration and plastic-history seeds; repeated backward; shared-grid two-particle transfers; mixed sliding, regularized small-slip DP, ground and ABD self-friction. |
+| `test_direct_affine_material_trajectory.py` | Rebuilt-forward directional FD through all material parameter slots and shared gravity: four for VM and both DP flow rules, five for MCC. Rebuilds avoid stale compile-time constants. |
+| `test_direct_affine_quadratic_gradients.py` | Quadratic B-spline transfer, nonzero prescribed displacement, and MPM backward-Euler integration with mixed friction. |
+| `test_direct_affine_mcc.py` | Coupled MCC without a material outer loop; three-step pressure/plastic-history VJPs, mixed friction and failed replay restoration. |
+| `test_mcc_consistent_vjp.py` | Physical MCC stress/tangent and commit VJPs against an independent coupled-hardening oracle; elastic, compressive plastic, hydrostatic, dry-side softening and clipped local equations. |
+| `test_ipc_friction_cache_vjp.py` | Independent closest-point oracle for PT face/edge/vertex and EE interior/endpoint branches; zero, small and large slip; inactive contact. |
+| `test_coupled_ground_friction_cache_vjp.py` | Ground cache geometry and interpolation derivatives, including the zero-coefficient right derivative. |
+| `test_ipc_affine_friction_assembly.py` | ABD mesh-cache VJP against an actual cache refresh, including both PT and EE records. |
+| `test_fem_affine_matrix_capacity.py` | Raw capacity and mixed assembly contracts; coupled nonsymmetric Dirichlet elimination evaluated at both accepted and trial displacement. |
+
+Zero-coefficient checks retain the allocated friction path. Disabling friction
+at scene construction removes that parameterized path and is a different model.
+These boundary checks use second-order right differences and tighter primal
+and linear solves, keeping numerical solve error below the derivative signal.
+Trajectory probes restore the same accepted input, refresh friction normally,
+and use two perturbation sizes. Their assertions are conditional on matching
+contact branches and outer-iteration counts; a discrete contact switch is not a
+smooth derivative. CPU/f64 checks do not establish CUDA race freedom or replace
+long-horizon task-specific validation. Rest shape, density, contact thickness,
+barrier stiffness and friction regularization are not returned parameter VJPs
+of this trajectory interface. Loss seeds currently act on terminal state.
+
+Mixed raw assembly capacity remains bounded by
+`(barrier candidates + friction contacts) * (n + 12)**2`, where `n` is the
+maximum MPM support size. The `12` counts three triangle vertices scattering
+to four ABD control vectors each. A single body has four distinct control
+vectors, but their repeated contributions still occupy raw triplets before
+reduction; `(n + 4)**2` is not a safe raw-buffer capacity. With friction the
+configured bound is `2 * max_point_triangle_pairs * (n + 12)**2`. It is safe
+provided the candidate list fits its separately checked configured capacity.
 
 ### 16. Synchronized state and recorded balances
 

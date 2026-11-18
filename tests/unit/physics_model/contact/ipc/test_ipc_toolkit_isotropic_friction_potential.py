@@ -5,17 +5,17 @@ checks all six collision stencils and their finite-difference derivatives.
 Anisotropic and Stribeck extensions are outside this test's scope.
 """
 
+from src.physics_model.contact_model.ipc.Utilities import ipc_friction_f0
+from src.physics_model.contact_model.ipc.Utilities import ipc_friction_f1_over_speed
+from src.physics_model.contact_model.ipc.Utilities import ipc_friction_hessian_term
+
 import numpy as np
 import pytest
 import taichi as ti
 
 pytestmark = [pytest.mark.unit, pytest.mark.ipc, pytest.mark.contact]
 
-from src.physics_model.contact_model.ipc.IPC import (
-    ipc_friction_f0,
-    ipc_friction_f1_over_speed,
-    ipc_friction_hessian_term,
-)
+from src.physics_model.contact_model.ipc.Friction import Friction
 
 
 @pytest.fixture(scope="module", autouse=True)
