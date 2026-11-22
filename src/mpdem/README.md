@@ -14,9 +14,29 @@ walls. The public facade is named `DEMPM` internally and is exposed as both
 - Fully resolved incompressible MPM–LSDEM immersed boundary method (IBM): [3D dam break](../../examples/cfdem/FullyResolved/IBMLevelSetDamBreak3D/dam_break_levelset_ibm_3d.py).
 - Hybrid two-phase MPM–LSDEM coupling: [saturated-bed wavemaker](../../examples/mmpm/TwoPhaseLSDEMCoupling/wavemaker_lsdem_particles_3d/wavemaker_lsdem_particles_3d.py) and [sphere impact](../../examples/mmpm/TwoPhaseLSDEMCoupling/sphere_impact_submerged_bed_3d/sphere_impact_submerged_bed_3d.py).
 - Fully coupled material point method–affine body dynamics (MPM–ABD) IPC: [Solid MPM impact](../../examples/mpdem/AffineBody/ABDImpactDP/direct_mpm_abd_impact.py) and [hyperelastic soft-MPM contact](../../examples/mpdem/AffineBody/AffineSoftSphereIPC/affine_soft_sphere_ipc.py).
+- Stationary digging with a driven ABD boom/bucket and plastic MPM soil: [minimal excavation model](../../examples/mpdem/AffineBody/excavator_dig/README.md).
 - Incompressible fluid–ABD IBM: [moving affine-body example](../../examples/mpm/IncompressibleFluid/affine_body_coupling_3d/affine_body_coupling_3d.py).
 
 ## MPM AffineBody route selection
+
+The continuum Direct MPM--ABD run accepts `preintegration_function`, a callable
+or callback collection receiving the coupled system before each attempted
+step. Use `system.mpm.time + system.mpm.dt` for endpoint control targets so
+reduced-timestep retries evaluate the same trajectory at the correct time.
+Callbacks can run repeatedly for the same accepted state; their own side
+effects are not rolled back. `postprocessing` callbacks receive only accepted states.
+Calling `modify_parameters(SimulationTime=duration, Timestep=...)` in
+postprocessing updates the next attempt's configured timestep, including both
+children and the coupling's DEM timestep setting.
+
+For converged forward plastic solves, `set_solver` accepts
+`friction_relaxation` in `(0, 1]`, default `1.0`. Values below one blend each
+frozen-friction equilibrium toward the preceding friction iterate before
+refreshing the cache. The backstep is limited by all three CCD systems;
+accepted steps still require the original force and velocity-correction bounds.
+This can suppress a two-cycle without changing the converged equations.
+Relaxation requires convergence mode (`friction_iterations <= 0`);
+trajectory adjoints currently require `friction_relaxation=1.0`.
 
 ABD `newmark=[alpha, beta, gamma]` uses the original affine operator in both
 Direct MPM and soft-particle coupling. The shared incremental system uses
@@ -1663,6 +1683,15 @@ the attempted step's friction loops and resets on retry; Krylov forcing history
 still restarts each outer iteration. Terminal inexact corrections are checked at
 strict linear accuracy. The MPM norm is particle motion and `h` times the gradient;
 the ABD norm is physical surface motion.
+Plastic Newton stopping and its terminal strict solve use the same per-child
+velocity conversion as the friction probe: `gamma / (2 * alpha * beta * dt)`
+for MPM and the ABD integration's own factor for the surface. Dividing a
+combined displacement norm by `dt` is insufficient for Newmark integration;
+it can stop the inner solve while the identical friction probe still fails.
+In convergence mode, a friction refresh that already fails the physical force
+or prescribed-motion criterion proceeds to the next nonlinear solve without
+an unnecessary strict velocity probe. The probe is required once those
+criteria pass; explicitly requested fixed friction counts retain their probes.
 The public Direct MPM--ABD route defaults to `inexact_newton=False`, keeping
 the configured linear thresholds fixed. Set `inexact_newton=True` explicitly
 to select the adaptive forcing method. Four warm replays of a
@@ -1704,6 +1733,9 @@ gradients = trajectory.backward({
     "position": terminal_particle_gradient,       # (MPM particle count, 3)
 })
 ```
+
+This tape requires `friction_relaxation=1.0`; relaxed friction iterations are
+rejected before recording because their iteration-map derivatives are not implemented.
 
 For driven mechanisms, add joints with `coupling.dem.add_joint(...)` before
 initialization, and call

@@ -45,6 +45,7 @@ def _implicit_system(
     contact_model="BarrierIPC",
     dilation=30.0,
     inexact=False,
+    dmin=0.0,
 ):
     fem = FEM(log=False)
     fem.set_configuration(dimension=3, solver_type="Implicit")
@@ -167,7 +168,7 @@ def _implicit_system(
     coupling.choose_contact_model(
         contact_model,
         dhat=0.05,
-        dmin=0.0,
+        dmin=dmin,
         kappa=100.0,
         friction_coefficient=friction,
         epsv=1.0e-3,
@@ -178,6 +179,15 @@ def _implicit_system(
         coupling.fem.scene.material.is_fem_elastoplastic = True
     coupling.add_essentials()
     return coupling
+
+
+def test_contact_diagnostic_reports_clearance_above_nonzero_dmin(tmp_path):
+    coupling = _implicit_system(tmp_path, friction=0.0, dmin=0.015)
+    coupling.enginer.assemble_system(include_friction=False)
+    contact = coupling.enginer.contact.diagnostics()
+    assert contact["active_contacts"] >= 1
+    assert contact["minimum_distance"] == pytest.approx(0.02 - 0.015, rel=1e-12, abs=1e-14)
+    assert 0.0 < contact["minimum_distance"] < 0.015
 
 
 @pytest.mark.parametrize("search", ["LinkedCell", "BVH"])

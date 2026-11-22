@@ -92,24 +92,59 @@ and a rigidity error below 0.0041. These checks cover this illustrative model;
 GPU behavior and a full grasp/contact trajectory adjoint are not established
 by the forward runs.
 
-## Local control-gradient check
+## Complete trajectory check and optimization
 
-A separate two-step window starting from the saved `t=0.9` s holding state was
-checked with `DEM.differentiable_affine(steps=2)`. The objective was the free
-payload's center height. For this adjoint query, the existing public setting
-`linear_relative_tolerance=1e-10` was selected explicitly; the absolute default
-`1e-14` and all nonlinear/friction criteria were retained. A height-objective
-seed has a different scale from the incremental forward force residual, so a
-relative residual criterion is needed rather than assuming one absolute
-threshold serves both. No implicit precision floor was added.
+```sh
+python examples/dem/AffineBody/robot_grasp/robot_grasp.py \
+  --arch cpu --gradient-check --output-dir /private/tmp/grasp_gradient
+python examples/dem/AffineBody/robot_grasp/robot_grasp.py \
+  --arch cpu --train-iterations 3 --output-dir /private/tmp/grasp_training
+```
 
-The adjoint uses the existing complete-body preconditioner and its pivoted-LU
-BiCGSTAB fallback. With scalar control-point preconditioning, the original
-strong-contact query stalled at a true residual around `1.6e-9`; complete-body
-blocks reduced this to the floating-point scale while preserving the operator.
-Central differences of the complete two-step forward solve at `1e-3` and
-`5e-4` degrees gave directional derivatives `-8.43677494e-4` and
-`-8.43677889e-4`, versus the adjoint `-8.43678672e-4`. Relative errors were
-`1.40e-6` and `9.28e-7`. Backward restored the terminal accepted position.
-This is evidence for the smooth holding window; the whole close/lift/release
-trajectory across contact switches and GPU execution remain unverified.
+The gradient check records all 320 steps, reverses their actual angle commands,
+and reruns the complete forward problem for positive/negative perturbations
+of 0.01 and 0.005 degrees. Directions act on arm lifting, finger closing, and
+finger opening. The terminal objective combines the free payload's center and
+velocity; it retains sensitivity after release and landing. The declared
+derivative error bound is `1e-6 + 0.01 * max(abs(AD), abs(FD))`.
+`gradient-check.json` records every probe; a failed comparison raises an error.
+
+Before reversing the friction refresh, arm-gradient errors were about 2.26%
+and the closing-direction gradient had the wrong sign. `DifferentiableABD`
+now reverses each executed frozen-friction equilibrium and its cache refresh,
+including the fixed support plane. This changes the derivative chain rather
+than the forward physics or convergence criteria.
+
+The optimization minimizes half the squared error between the final payload
+x-coordinate and 1.18 m. It adjusts the smooth arm-lift amplitude, retaining the
+close/lift/hold/open protocol. Each update uses the adjoint derivative in a
+bounded scalar Gauss-Newton step of at most two degrees. No finite-difference
+gradient is used for training. `training.json` records actual forward losses;
+acceptance requires strictly decreasing loss, at least 70% total loss reduction,
+and the original lift/release height checks. This demonstrates optimization
+near a successful grasp; it does not establish learning a grasp from arbitrary
+controls. Add `--gradient-check` to the training command to run both in order.
+
+Contact sequences can change during the recorded trajectory. The gradient is
+still local to the executed activation/closest-feature branches and iteration
+counts; exact nonsmooth switching points need one-sided checks or a separate
+optimization treatment. GPU behavior remains unverified.
+
+The complete check passed on ARM64 CPU/float64, `dt=0.005` s, with
+`linear_relative_tolerance=1e-10` explicitly selected. The default absolute
+linear tolerance `1e-14` and all forward nonlinear/friction criteria were
+retained. The recorded friction-contact count ranged from zero to 12 and
+changed 11 times during the checked trajectory.
+
+| Direction | Relative error at 0.01 degrees | Relative error at 0.005 degrees |
+| --- | --- | --- |
+| Arm lifting | 2.38e-5 | 3.85e-5 |
+| Finger closing | 6.00e-3 | 5.31e-4 |
+| Finger opening | 5.72e-6 | 3.43e-6 |
+
+Three optimization updates changed the arm amplitude from -20 to
+-15.3995266 degrees. The released payload's final x-coordinate moved from
+1.196434669 m to 1.179979891 m (target 1.18 m). The loss decreased from
+1.35049e-4 to 2.02187e-10. The final protocol still lifted the free payload
+by at least 0.168497 m during hold and let it fall 0.169144 m after release.
+These are results for this one illustrative task and terminal objective.

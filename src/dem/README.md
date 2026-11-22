@@ -1023,6 +1023,21 @@ Focused evidence is in
 [joint/control tests](../../tests/unit/dem/test_affine_robot_controls.py) and
 [plastic coupling gradients](../../tests/integration/mpdem/test_direct_affine_trajectory_gradients.py).
 
+Standalone mesh-ABD trajectories reverse every executed lagged-friction outer
+solve, including the refresh of normal load, tangent projection and closest
+weights. Fixed plane and triangular walls retain their wall identity in the
+friction cache. Replay uses one step's outer-iterate workspace alongside the
+position/velocity tape. The single-equilibrium `differentiate_affine_step`
+interface retains its frozen-cache meaning; use `trajectory.backward` for the
+derivative of a complete step with refreshed friction.
+
+Contact activation, closest-feature choices and iteration counts are discrete.
+The returned derivative is local to the executed branches. A trajectory may
+create and lose contacts over time, but this does not supply a derivative of
+every possible change in contact sequence. The
+[complete grasp check and small trajectory optimization](../../examples/dem/AffineBody/robot_grasp/README.md)
+compare against perturbed complete forward runs.
+
 The minimum application model depends on the requested observable. Prescribed
 joint motion can represent an ideal actuator without an electric motor,
 hydraulic cylinder or powertrain model. Current angle motors are compliant

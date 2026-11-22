@@ -163,6 +163,63 @@ def _relative_error(actual, expected):
     )
 
 
+@pytest.mark.isolated_dimension(2)
+@pytest.mark.parametrize("kind", ["ground", "particle"])
+def test_lagged_friction_reuses_kernels_with_the_current_timestep(tmp_path, kind):
+    os.environ["GEOTAICHI_REAL_DTYPE"] = "float64"
+    ti.reset()
+    ti.init(arch=ti.cpu, default_fp=ti.f64, offline_cache=False, cpu_max_num_threads=1)
+    if kind == "ground":
+        config, mpm, contact = _build_soft_soft_contact(
+            tmp_path,
+            positions=(((0.45, 0.04),), ((0.70, 0.50),)),
+            expect_active=0,
+            ground_specs=(([0.0, 0.0], [0.0, 1.0]),),
+        )
+        contact.ground_friction_initialize()
+        coefficient = float(contact.gfriction[0].mu_lambda)
+        translations, probe_translations = ((2e-6, 0.0), (0.0, 0.0)), ((1.0, 0.0), (0.0, 0.0))
+        relative_displacement = 2e-6
+    else:
+        config, mpm, contact = _build_soft_soft_contact(tmp_path)
+        coefficient = float(contact.pfriction[0].mu_lambda)
+        translations, probe_translations = ((0.0, 2e-6), (0.0, -2e-6)), ((0.0, 0.5), (0.0, -0.5))
+        relative_displacement = 4e-6
+    assert coefficient > 0
+    epsilon = 0.1
+    contact.friction.epsv[0] = epsilon
+    displacement = _body_translation_displacement(config, mpm, translations)
+    probe = _body_translation_displacement(config, mpm, probe_translations)[: mpm.active_dof]
+
+    def evaluate(values):
+        mpm.grid_disp.from_numpy(values)
+        contact.update_particle_pos(mpm.grid_disp)
+        contact.friction_hash_matrix.reset_system()
+        contact.friction_grad.fill(0.0)
+        if kind == "ground":
+            contact.assemble_ground_friction_matrix()
+        else:
+            contact.assemble_particle_friction_matrix()
+        matrix = contact.friction_matrix(mpm.active_dof).toarray()
+        force = contact.friction_grad.to_numpy()[: mpm.active_dof]
+        mpm.energy[None] = 0.0
+        contact.get_friction_energy()
+        return float(mpm.energy[None]), float(probe @ force), float(probe @ matrix @ probe)
+
+    for timestep in (1e-3, 2e-4, 1e-3):
+        mpm.dt = timestep
+        baseline = evaluate(np.zeros_like(displacement))[0]
+        energy, force, tangent = evaluate(displacement)
+        velocity = relative_displacement / timestep
+        assert velocity < epsilon
+        assert force == pytest.approx(-coefficient * (2 / epsilon - velocity / epsilon**2) * velocity, rel=1e-7)
+        assert tangent == pytest.approx(coefficient * (2 / epsilon - 2 * velocity / epsilon**2) / timestep, rel=1e-7)
+        assert energy - baseline == pytest.approx(
+            coefficient * timestep * (velocity**2 / epsilon - velocity**3 / (3 * epsilon**2)), rel=1e-7
+        )
+    ti.reset()
+
+
 def test_ipc_soft_soft_friction_production_assembly(tmp_path):
     os.environ["GEOTAICHI_REAL_DTYPE"] = "float64"
     ti.init(arch=ti.cpu, default_fp=ti.f64, debug=False, offline_cache=False)

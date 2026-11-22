@@ -219,11 +219,21 @@ For constant-angle DP, von Mises or MCC continuum Direct MPM--ABD, use
 call `trajectory.backward({...})`. MPM seeds use particle `position`, `velocity`,
 `acceleration` and plastic state names; ABD seeds use `affine_position` and
 `affine_velocity`, shaped `(4 * body_count, 3)`. This fixed-step mesh BarrierIPC
-path requires retries disabled and ABD `newmark=[1, 0.5, 1]`. It reverses every
+path requires retries disabled, `friction_relaxation=1.0` and ABD `newmark=[1, 0.5, 1]`. It reverses every
 executed friction outer solve and differentiates the normal, closest weights
 and normal-load cache refresh across frames, at fixed contact branches and
 iteration counts. See the
 [trajectory API and limits](../../../src/mpdem/README.md#continuum-mpm--abd-trajectory-adjoints).
+For forward runs with driven joints, `coupling.run(preintegration_function=drive)`
+calls `drive(system)` before each attempted step. Compute targets from
+`system.mpm.time + system.mpm.dt` so bounded timestep retries use the correct
+endpoint; callback side effects are not rolled back. Postprocessing sees only
+accepted states. This callback does not add variable-timestep adjoint support.
+In postprocessing, `modify_parameters(SimulationTime=duration, Timestep=...)`
+sets the next Direct MPM--ABD step and synchronizes its child timestep settings.
+Converged forward plastic runs may select `friction_relaxation` in `(0, 1]`;
+values below one use a CCD-limited backstep before refreshing friction and are
+explicitly unsupported by the trajectory-adjoint API.
 Von Mises accepts optional `HardeningModulus`. These plastic models require
 Direct ULMPM and cannot be combined with standalone child IPC. Continuum
 Direct MPM--ABD uses physical residual Newton/BiCGSTAB for associated and

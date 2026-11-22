@@ -47,6 +47,7 @@ def _case(
     mpm_newmark=None,
     particle_count=1,
     joint=None,
+    friction_relaxation=1.0,
 ):
     from geotaichi import MPDEM, polyhedron
 
@@ -206,6 +207,7 @@ def _case(
             "linear_solver_tolerance": 1e-10,
             "linear_solver_max_iters": 1000,
             "scale": 1.0,
+            "friction_relaxation": friction_relaxation,
             **({"inexact_newton": inexact} if inexact is not None else {}),
         },
         log=False,

@@ -21,6 +21,8 @@ class DifferentiableMPMAffine:
     def __init__(self, coupling, steps):
         self.coupling = coupling
         self.system = coupling.enginer
+        if self.system.friction_relaxation != 1.0:
+            raise ValueError("Direct MPM--ABD trajectory adjoints require friction_relaxation=1.0")
         self.affine = self.system.affine
         self.simulation = coupling.mpm.enginer
         self.mpm = self.system.mpm

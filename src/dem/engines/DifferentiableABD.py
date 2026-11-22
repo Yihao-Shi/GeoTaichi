@@ -1,6 +1,6 @@
 """Device checkpoint/replay adjoint for AffineBody trajectories."""
 
-from src.utils.errors import RecordingError, SimulationStateError
+from src.utils.errors import CapacityError, RecordingError, SimulationStateError
 
 import numpy as np
 import taichi as ti
@@ -41,6 +41,12 @@ class DifferentiableABD:
         self.joint_target_vjp = ti.field(ti.f64, shape=max(self.operator.joint_num, 1))
         self.joint_damping_vjp = ti.field(ti.f64, shape=max(self.operator.joint_num, 1))
         self.friction_scale_vjp = ti.field(ti.f64, shape=())
+        limit = int(self.sims.affine_friction_iterations)
+        self.outer_capacity = int(self.sims.affine_friction_max_iterations) if limit <= 0 else limit
+        self.outer_count = 0
+        self.outer_position = ti.Vector.field(3, ti.f64, shape=(self.outer_capacity + 1, self.control_num))
+        self.cache_position = ti.Vector.field(3, ti.f64, shape=self.operator.vertex_num)
+        self.cache_rhs = ti.field(ti.f64, shape=3 * self.control_num)
         # ponytail: full O(steps*controls) tape; add interval checkpointing
         # only when long robot trajectories make this storage material.
         self._record_state(0)
@@ -91,6 +97,69 @@ class DifferentiableABD:
             self.joint_target_vjp[joint] += self.operator.joint_target_vjp[joint]
             self.joint_damping_vjp[joint] += self.operator.joint_damping_vjp[joint]
 
+    def _record_friction_iterate(self, record):
+        if record > self.outer_capacity:
+            raise CapacityError("friction iteration limit exceeds the allocated adjoint workspace")
+        self._record_friction_iterate_kernel(record)
+        self.outer_count = record
+
+    @ti.kernel
+    def _record_friction_iterate_kernel(self, record: ti.i32):
+        for control in range(self.control_num):
+            self.outer_position[record, control] = self.operator.y[control]
+
+    @ti.kernel
+    def _load_friction_iterate(self, record: ti.i32):
+        self.operator.accepted_translation_velocity[None] = ti.Vector.zero(ti.f64, 3)
+        for control in range(self.control_num):
+            self.operator.y[control] = self.outer_position[record, control]
+
+    @ti.kernel
+    def _record_cache_geometry(self):
+        for vertex in range(self.operator.vertex_num):
+            self.cache_position[vertex] = self.operator.x[vertex]
+
+    @ti.kernel
+    def _advance_outer_rhs(self):
+        for dof in self.cache_rhs:
+            self.operator.linear_rhs[dof] = self.cache_rhs[dof]
+
+    @ti.kernel
+    def _accumulate_initial_cache_vjp(self):
+        for control, component in ti.ndrange(self.control_num, 3):
+            self.operator.state_y_vjp[control][component] += self.cache_rhs[3 * control + component]
+
+    def _pullback_step(self, record):
+        op = self.operator
+        op.device_prepare_step_state_adjoint(int(self.engine.enforce_free_translation))
+        for outer in reversed(range(1, self.outer_count + 1)):
+            self._load_friction_iterate(outer - 1)
+            op.initialize_contact_damping_device()
+            self._record_cache_geometry()
+            op.device_backup_lagged_friction_for_adjoint()
+            self._load_friction_iterate(outer)
+            try:
+                self.engine._solve_adjoint_device()
+                op._differentiate_gravity_parameter()
+                op._differentiate_young_parameter()
+                op._differentiate_joint_target_parameters()
+                op._differentiate_joint_damping_parameters()
+                op._differentiate_friction_scale_parameter()
+                if outer == self.outer_count:
+                    op.device_add_translation_gravity_vjp()
+                op.device_propagate_step_state_adjoint()
+                op.device_propagate_lagged_friction_state_adjoint()
+                self.cache_rhs.fill(0.0)
+                if op.has_lagged_friction_contacts():
+                    op.device_propagate_mesh_friction_cache(self.cache_position, self.cache_rhs)
+                self._accumulate_parameter_vjp()
+                self.joint_controls.accumulate(record)
+                if outer > 1:
+                    self._advance_outer_rhs()
+            finally:
+                op.device_leave_equilibrium_adjoint()
+        self._accumulate_initial_cache_vjp()
+
     def step(self):
         """Advance once and append the accepted device state to the tape."""
         if self.record_count >= self.capacity:
@@ -134,10 +203,12 @@ class DifferentiableABD:
                 self.joint_controls.load(record)
                 self.sims.current_time = self.initial_time + record * self.dt
                 self.sims.current_step = self.initial_step + record
-                self.engine.step(self.sims, self.engine.scene)
-                self.engine.pullback_step_device()
-                self._accumulate_parameter_vjp()
-                self.joint_controls.accumulate(record)
+                self.engine.friction_recorder = self
+                try:
+                    self.engine.step(self.sims, self.engine.scene)
+                finally:
+                    self.engine.friction_recorder = None
+                self._pullback_step(record)
             completed = True
         finally:
             try:

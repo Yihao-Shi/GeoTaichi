@@ -15,13 +15,24 @@ from src.mpm.engines.direct.Convergence import mpm_correction_measure
 
 from src.dem.engines.AffineBodyOperator import MATRIX_HASH_TRIPLET
 from src.linear_solver.BuildTriplet import BuildTriplet
+from src.linear_solver.EquilibratedSolve import EquilibratedSolve
 
 
 @ti.data_oriented
 class DirectAffineIPCSystem:
     """Merge existing ABD, Direct-MPM, and mixed IPC device sources once."""
 
-    def __init__(self, affine, ipc, mixed_contact, *, inexact_newton=False, force_atol=1.0e-10, force_rtol=1.0e-8):
+    def __init__(
+        self,
+        affine,
+        ipc,
+        mixed_contact,
+        *,
+        inexact_newton=False,
+        force_atol=1.0e-10,
+        force_rtol=1.0e-8,
+        friction_relaxation=1.0,
+    ):
         self.affine = affine
         self.affine_acceleration_initialized = False
         self.ipc = ipc
@@ -60,6 +71,15 @@ class DirectAffineIPCSystem:
         if inexact_newton and not self.nonassociated_newton:
             raise ValueError("Direct MPM--ABD inexact_newton requires physical plastic Newton")
         self.inexact_newton = bool(inexact_newton)
+        self.friction_relaxation = float(friction_relaxation)
+        if (
+            isinstance(friction_relaxation, (bool, np.bool_))
+            or not math.isfinite(self.friction_relaxation)
+            or not 0.0 < self.friction_relaxation <= 1.0
+        ):
+            raise ValueError("friction_relaxation must be finite and in (0, 1]")
+        if self.friction_relaxation < 1.0 and not self.nonassociated_newton:
+            raise ValueError("friction_relaxation currently requires continuum plastic MPM--ABD")
         self.force_atol, self.force_rtol = float(force_atol), float(force_rtol)
         if not all(math.isfinite(value) and value >= 0.0 for value in (self.force_atol, self.force_rtol)):
             raise ValueError("Direct MPM--ABD force tolerances must be finite and non-negative")
@@ -122,6 +142,46 @@ class DirectAffineIPCSystem:
             preconditioner_group_size=4,
             preconditioner_group_nodes=self.affine_controls,
         )
+        self.equilibrated_solver = EquilibratedSolve(self.matrix) if self.nonassociated_newton else None
+        if self.friction_relaxation < 1.0:
+            self.relaxation_position = ti.Vector.field(3, ti.f64, shape=self.affine_controls)
+            self.relaxation_displacement = ti.field(ti.f64, shape=self.mpm.degree_of_freedom)
+
+    @ti.kernel
+    def _store_relaxation_state(self, active_mpm_dof: ti.i32):
+        for control in range(self.affine_controls):
+            self.relaxation_position[control] = self.affine.y[control]
+        for dof in range(active_mpm_dof):
+            self.relaxation_displacement[dof] = self.mpm.grid_disp[dof]
+
+    @ti.kernel
+    def _prepare_relaxation_direction(self, active_mpm_dof: ti.i32):
+        for control in range(self.affine_controls):
+            for component in ti.static(range(3)):
+                self.correction[3 * control + component] = (
+                    self.relaxation_position[control][component] - self.affine.y[control][component]
+                )
+        for dof in range(active_mpm_dof):
+            self.correction[3 * ti.static(self.affine_controls) + dof] = (
+                self.relaxation_displacement[dof] - self.mpm.grid_disp[dof]
+            )
+
+    def _relax_friction_iterate_device(self, sims, active_mpm_dof):
+        self._prepare_relaxation_direction(active_mpm_dof)
+        self._scatter_correction(active_mpm_dof)
+        limit = self.maximum_step_device(
+            active_mpm_dof=active_mpm_dof,
+            ccd_type=sims.affine_ccd_type,
+            ccd_eta=sims.affine_ccd_eta,
+            accd_tolerance=sims.affine_accd_tolerance,
+            ccd_max_iterations=sims.affine_ccd_max_iteration,
+        )
+        if not math.isfinite(limit) or limit <= 0:
+            raise SimulationStateError("Direct MPM--ABD friction relaxation CCD produced no feasible step")
+        self.begin_line_search_device()
+        self.set_line_search_trial_device(min(1.0 - self.friction_relaxation, limit), active_mpm_dof)
+        self.accept_line_search_trial_device(active_mpm_dof)
+        self._store_relaxation_state(active_mpm_dof)
 
     def begin_step_device(self, timestep):
         """Initialize one coupled step and freeze all three friction caches."""
@@ -516,7 +576,10 @@ class DirectAffineIPCSystem:
             )
             relative_tolerance = 0.0
         self.correction.fill(0.0)
-        result = self.matrix.solve_flat_system(
+        solve = (
+            self.equilibrated_solver.solve if self.equilibrated_solver is not None else self.matrix.solve_flat_system
+        )
+        result = solve(
             self.rhs,
             self.correction,
             active_nodes=active_nodes,
@@ -525,6 +588,7 @@ class DirectAffineIPCSystem:
             maxiter=self.mpm.linear_solver_max_iters,
             return_solution=False,
         )
+        self.last_linear_solve = result
         if not result["converged"]:
             raise NonlinearSolveError(
                 f"Direct MPM--ABD coupled {self.matrix.solver} did not converge: "
@@ -532,7 +596,6 @@ class DirectAffineIPCSystem:
                 f"iterations={result['iterations']}"
             )
         self._scatter_correction(active_mpm_dof)
-        self.last_linear_solve = result
         return result
 
     @ti.kernel
@@ -710,10 +773,14 @@ class DirectAffineIPCSystem:
         raise LineSearchError("Direct MPM--ABD residual Armijo line search failed")
 
     def _solve_nonassociated_equilibrium_device(self, sims, *, max_outer, requested_outer, record_adjoint):
+        if self.friction_relaxation < 1.0 and (record_adjoint or requested_outer > 0):
+            raise ValueError("friction_relaxation requires converged forward solves; trajectory adjoints require 1.0")
         self.mpm.begin_lagged_material_state()
         self.begin_step_device(self.mpm.dt)
         self._record_friction_iterate(0)
         active_mpm_dof = int(self.mpm.active_dof)
+        if self.friction_relaxation < 1.0:
+            self._store_relaxation_state(active_mpm_dof)
         total_newton = 0
         total_linear = 0
         friction_converged = False
@@ -752,21 +819,23 @@ class DirectAffineIPCSystem:
                     )
                     total_linear += linear["iterations"]
                     correction = self.direction_inf_norm(active_mpm_dof)
-                    if not math.isfinite(correction):
+                    correction_velocity = self.direction_inf_norm(active_mpm_dof, velocity=True)
+                    if not math.isfinite(correction) or not math.isfinite(correction_velocity):
                         raise NonfiniteStateError("Direct MPM--ABD Newton correction is non-finite")
                     if (
                         self.inexact_newton
                         and relative_tolerance > 0.0
                         and residual <= target
-                        and correction / self.mpm.dt <= float(sims.affine_newton_tolerance)
+                        and correction_velocity <= float(sims.affine_newton_tolerance)
                     ):
                         linear = self.solve_direction_device(active_mpm_dof, relative_tolerance=0.0)
                         total_linear += linear["iterations"]
                         correction = self.direction_inf_norm(active_mpm_dof)
-                        if not math.isfinite(correction):
+                        correction_velocity = self.direction_inf_norm(active_mpm_dof, velocity=True)
+                        if not math.isfinite(correction) or not math.isfinite(correction_velocity):
                             raise NonfiniteStateError("Direct MPM--ABD terminal Newton correction is non-finite")
                     if (
-                        correction / self.mpm.dt <= float(sims.affine_newton_tolerance)
+                        correction_velocity <= float(sims.affine_newton_tolerance)
                         and residual <= target
                         and prescribed <= 1.0e-10
                     ):
@@ -783,10 +852,16 @@ class DirectAffineIPCSystem:
                     )
                     _, prescribed = self.residual_metrics_device(active_mpm_dof)
                     total_newton += 1
+                if self.friction_relaxation < 1.0:
+                    self._relax_friction_iterate_device(sims, active_mpm_dof)
                 self._record_friction_iterate(outer + 1)
                 self.refresh_lagged_friction_device()
                 self.assemble_linearization_device(need_matrix=False)
                 residual, prescribed = self.residual_metrics_device(active_mpm_dof)
+                if requested_outer <= 0 and (residual > target or prescribed > 1.0e-10):
+                    # Force/constraint failure already requires another nonlinear solve.
+                    friction_residual = math.inf
+                    continue
                 if residual == 0.0 and prescribed == 0.0:
                     friction_residual = 0.0
                 else:

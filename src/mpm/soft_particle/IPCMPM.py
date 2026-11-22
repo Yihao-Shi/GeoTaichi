@@ -1725,9 +1725,9 @@ class IPCMPM:
                         )
                 tangent = self.ground.tangent_operator(wall)
                 relative_displacement = (
-                    self.mpm.p_temp[surface] - self.hat_x[surface] - self.ground.vel[wall] * self.mpm.dt
+                    self.mpm.p_temp[surface] - self.hat_x[surface] - self.ground.vel[wall] * self.mpm.TIdt[None]
                 )
-                tangent_velocity = tangent.transpose() @ relative_displacement / self.mpm.dt
+                tangent_velocity = tangent.transpose() @ relative_displacement / self.mpm.TIdt[None]
                 point_force = mu_lambda * self.friction.grad_term(tangent_velocity.norm()) * tangent @ tangent_velocity
                 ti.atomic_add(
                     self.friction_parameter_vjp[None][0],
@@ -1766,7 +1766,7 @@ class IPCMPM:
                     - self.mpm.p_temp[slave_surface]
                     + self.hat_x[slave_surface]
                 )
-                tangent_velocity = tangent.transpose() @ relative_displacement / self.mpm.dt
+                tangent_velocity = tangent.transpose() @ relative_displacement / self.mpm.TIdt[None]
                 point_force = mu_lambda * self.friction.grad_term(tangent_velocity.norm()) * tangent @ tangent_velocity
                 ti.atomic_add(
                     self.friction_parameter_vjp[None][0],
@@ -2464,16 +2464,16 @@ class IPCMPM:
             if mu_lambda > 0.0:
                 tangent = self.ground.tangent_operator(wall)
                 relative_displacement = (
-                    self.mpm.p_temp[surface] - self.hat_x[surface] - self.ground.vel[wall] * self.mpm.dt
+                    self.mpm.p_temp[surface] - self.hat_x[surface] - self.ground.vel[wall] * self.mpm.TIdt[None]
                 )
-                tangent_velocity = tangent.transpose() @ relative_displacement / self.mpm.dt
+                tangent_velocity = tangent.transpose() @ relative_displacement / self.mpm.TIdt[None]
                 speed = tangent_velocity.norm()
                 friction_gradient = self.friction.grad_term(speed)
                 inner = friction_gradient * ti.Matrix.identity(ti.f64, config.DIM)
                 if speed != 0.0:
                     inner += self.friction.hess_term(speed) / speed * tangent_velocity.outer_product(tangent_velocity)
                 point_force = mu_lambda * friction_gradient * tangent @ tangent_velocity
-                point_jacobian = mu_lambda * tangent @ psd_project_nd(inner) @ tangent.transpose() / self.mpm.dt
+                point_jacobian = mu_lambda * tangent @ psd_project_nd(inner) @ tangent.transpose() / self.mpm.TIdt[None]
                 point_adjoint = ti.Vector.zero(ti.f64, config.DIM)
                 adjoint_gradient = ti.Matrix.zero(ti.f64, config.DIM, config.DIM)
                 displacement_gradient = ti.Matrix.zero(ti.f64, config.DIM, config.DIM)
@@ -2518,14 +2518,14 @@ class IPCMPM:
                     - self.mpm.p_temp[slave_surface]
                     + self.hat_x[slave_surface]
                 )
-                tangent_velocity = tangent.transpose() @ relative_displacement / self.mpm.dt
+                tangent_velocity = tangent.transpose() @ relative_displacement / self.mpm.TIdt[None]
                 speed = tangent_velocity.norm()
                 friction_gradient = self.friction.grad_term(speed)
                 inner = friction_gradient * ti.Matrix.identity(ti.f64, config.DIM)
                 if speed != 0.0:
                     inner += self.friction.hess_term(speed) / speed * tangent_velocity.outer_product(tangent_velocity)
                 point_force = mu_lambda * friction_gradient * tangent @ tangent_velocity
-                point_jacobian = mu_lambda * tangent @ psd_project_nd(inner) @ tangent.transpose() / self.mpm.dt
+                point_jacobian = mu_lambda * tangent @ psd_project_nd(inner) @ tangent.transpose() / self.mpm.TIdt[None]
                 relative_adjoint = ti.Vector.zero(ti.f64, config.DIM)
                 master_adjoint_gradient = ti.Matrix.zero(ti.f64, config.DIM, config.DIM)
                 slave_adjoint_gradient = ti.Matrix.zero(ti.f64, config.DIM, config.DIM)
@@ -2911,7 +2911,7 @@ class IPCMPM:
                         cache_point[component] += weight * displacement_tape[record, config.DIM * block + component]
                         point_adjoint[component] += weight * self.mpm.incre_resolution[config.DIM * block + component]
             tangent = self.ground.tangent_operator(wall)
-            velocity = tangent.transpose() @ (self.mpm.p_temp[surface] - self.hat_x[surface]) / self.mpm.dt
+            velocity = tangent.transpose() @ (self.mpm.p_temp[surface] - self.hat_x[surface]) / self.mpm.TIdt[None]
             contraction = point_adjoint.dot(self.friction.grad_term(velocity.norm()) * (tangent @ velocity))
             gap = self.ground.distance(wall, cache_point)
             _, first, hessian = self._normal_terms(gap)
@@ -3974,8 +3974,8 @@ class IPCMPM:
             mu_lambda = self.gfriction[c].mu_lambda
             if mu_lambda > 0.0:
                 T = self.ground.tangent_operator(wid)
-                rel_disp = self.mpm.p_temp[s] - self.hat_x[s] - self.ground.vel[wid] * self.mpm.dt
-                vbar = T.transpose() @ rel_disp / self.mpm.dt
+                rel_disp = self.mpm.p_temp[s] - self.hat_x[s] - self.ground.vel[wid] * self.mpm.TIdt[None]
+                vbar = T.transpose() @ rel_disp / self.mpm.TIdt[None]
                 vbarnorm = vbar.norm()
                 friction_gradient = self.friction.grad_term(vbarnorm)
                 ddispbar_dpoint = mu_lambda * friction_gradient * T @ vbar
@@ -3985,7 +3985,7 @@ class IPCMPM:
                     inner_term = friction_gradient * ti.Matrix.identity(ti.f64, config.DIM)
                     if vbarnorm != 0:
                         inner_term += friction_hessian / vbarnorm * vbar.outer_product(vbar)
-                    d2dispbar_d2point = mu_lambda * T @ psd_project_nd(inner_term) @ T.transpose() / self.mpm.dt
+                    d2dispbar_d2point = mu_lambda * T @ psd_project_nd(inner_term) @ T.transpose() / self.mpm.TIdt[None]
 
                 for j in range(self.mpm.offset[i]):
                     base_jnode = self.mpm.LnID[i, j]
@@ -4190,7 +4190,7 @@ class IPCMPM:
                 norm = self.pfriction[c].normal
                 T = ti.Matrix.identity(ti.f64, config.DIM) - norm.outer_product(norm)
                 rel_disp = (self.mpm.p_temp[sp] - self.hat_x[sp]) - (self.mpm.p_temp[tp] - self.hat_x[tp])
-                vbar = T.transpose() @ rel_disp / self.mpm.dt
+                vbar = T.transpose() @ rel_disp / self.mpm.TIdt[None]
                 vbarnorm = vbar.norm()
                 friction_gradient = self.friction.grad_term(vbarnorm)
                 ddispbar_dpoint = mu_lambda * friction_gradient * T @ vbar
@@ -4200,7 +4200,7 @@ class IPCMPM:
                     inner_term = friction_gradient * ti.Matrix.identity(ti.f64, config.DIM)
                     if vbarnorm != 0:
                         inner_term += friction_hessian / vbarnorm * vbar.outer_product(vbar)
-                    d2dispbar_d2point = mu_lambda * T @ psd_project_nd(inner_term) @ T.transpose() / self.mpm.dt
+                    d2dispbar_d2point = mu_lambda * T @ psd_project_nd(inner_term) @ T.transpose() / self.mpm.TIdt[None]
 
                 # ----------------------
                 # i-i block
@@ -4327,8 +4327,8 @@ class IPCMPM:
             wid = self.gfriction[c].wallID
             mu_lambda = self.gfriction[c].mu_lambda
             T = self.ground.tangent_operator(wid)
-            rel_disp = self.mpm.p_temp[s] - self.hat_x[s] - self.ground.vel[wid] * self.mpm.dt
-            vbar = T.transpose() @ rel_disp / self.mpm.dt
+            rel_disp = self.mpm.p_temp[s] - self.hat_x[s] - self.ground.vel[wid] * self.mpm.TIdt[None]
+            vbar = T.transpose() @ rel_disp / self.mpm.TIdt[None]
             vbarnorm = vbar.norm()
             friction_gradient = self.friction.grad_term(vbarnorm)
             if vbarnorm != 0:
@@ -4351,7 +4351,7 @@ class IPCMPM:
                 grid_id = self.mpm.LnID[i, j]
                 dofs = config.DIM * (self.mpm.node2dof[grid_id] - 1)
                 disp += self.mpm.shape[i, j] * ti.Vector([grid_disp[dofs + d] for d in ti.static(range(config.DIM))])
-            gdisp = self.ground.vel[wid] * self.mpm.dt
+            gdisp = self.ground.vel[wid] * self.mpm.TIdt[None]
             rel_disp = disp - gdisp
             cur_disp = self.ground.norm[wid].dot(rel_disp)
             ptoc = linear_gap_accd(
@@ -4420,7 +4420,7 @@ class IPCMPM:
             ptoc = 1.0
             for k in range(self.ground.num):
                 dist = self.ground.distance(k, current_pos)
-                cur_disp = self.ground.norm[k].dot(disp - self.ground.vel[k] * self.mpm.dt)
+                cur_disp = self.ground.norm[k].dot(disp - self.ground.vel[k] * self.mpm.TIdt[None])
                 ptoc = ti.min(
                     ptoc,
                     linear_gap_accd(
@@ -4506,10 +4506,10 @@ class IPCMPM:
             mu_lambda = self.gfriction[c].mu_lambda
             if mu_lambda > 0.0:
                 T = self.ground.tangent_operator(wid)
-                rel_disp = self.mpm.p_temp[s] - self.hat_x[s] - self.ground.vel[wid] * self.mpm.dt
-                vbar = T.transpose() @ rel_disp / self.mpm.dt
+                rel_disp = self.mpm.p_temp[s] - self.hat_x[s] - self.ground.vel[wid] * self.mpm.TIdt[None]
+                vbar = T.transpose() @ rel_disp / self.mpm.TIdt[None]
                 vbarnorm = vbar.norm()
-                self.mpm.energy[None] += mu_lambda * self.friction.energy_term(vbarnorm, self.mpm.dt)
+                self.mpm.energy[None] += mu_lambda * self.friction.energy_term(vbarnorm, self.mpm.TIdt[None])
         for c in range(self.pfrictionNum[0]):
             sp = self.pfriction[c].masterID
             tp = self.pfriction[c].slaveID
@@ -4518,9 +4518,9 @@ class IPCMPM:
                 norm = self.pfriction[c].normal
                 T = ti.Matrix.identity(ti.f64, config.DIM) - norm.outer_product(norm)
                 rel_disp = (self.mpm.p_temp[sp] - self.hat_x[sp]) - (self.mpm.p_temp[tp] - self.hat_x[tp])
-                vbar = T.transpose() @ rel_disp / self.mpm.dt
+                vbar = T.transpose() @ rel_disp / self.mpm.TIdt[None]
                 vbarnorm = vbar.norm()
-                self.mpm.energy[None] += mu_lambda * self.friction.energy_term(vbarnorm, self.mpm.dt)
+                self.mpm.energy[None] += mu_lambda * self.friction.energy_term(vbarnorm, self.mpm.TIdt[None])
 
     def total_energy(self, grid_disp):
         self.mpm.energy[None] = 0.0

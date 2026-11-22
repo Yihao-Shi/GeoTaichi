@@ -21,7 +21,7 @@ pytestmark = [
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../.."))
 
 
-def _build_affine_contact(save_path, with_wall=False, friction_mode="lagged", assemble_type="COO"):
+def _build_affine_contact(save_path, with_wall=False, friction_mode="lagged", assemble_type="COO", **parameters):
     from geotaichi import DEM, polyhedron
 
     dem = DEM(log=False)
@@ -41,6 +41,7 @@ def _build_affine_contact(save_path, with_wall=False, friction_mode="lagged", as
         contact_damping_stiffness=0.0,
         hessian_shift=0.0,
         friction_mode=friction_mode,
+        **parameters,
     )
     memory = {
         "max_material_number": 1,
@@ -153,11 +154,17 @@ def _official_barrier_terms(distance, dhat, kappa):
     return energy, normal_force
 
 
-def test_mesh_friction_cache_pullback_matches_actual_cache_refresh(tmp_path):
+@pytest.mark.parametrize("with_wall", [False, True, "facet"])
+def test_mesh_friction_cache_pullback_matches_actual_cache_refresh(tmp_path, with_wall):
     ti.reset()
     ti.init(arch=ti.cpu, default_fp=ti.f64, cpu_max_num_threads=1, offline_cache=False)
-    dem, hat = _build_affine_contact(tmp_path)
+    dem, hat = _build_affine_contact(tmp_path, with_wall=with_wall)
     operator = dem.enginer.operator
+    if with_wall == "facet":
+        operator.wall_type[0] = 1
+        operator.wall_v0[0] = [1.0, 0.8, 0.75]
+        operator.wall_v1[0] = [2.1, 0.8, 0.75]
+        operator.wall_v2[0] = [1.0, 1.4, 0.75]
     rng = np.random.default_rng(512)
     cache = hat + 0.003 * rng.normal(size=hat.shape)
     current = hat + 0.002 * rng.normal(size=hat.shape)
@@ -195,6 +202,56 @@ def test_mesh_friction_cache_pullback_matches_actual_cache_refresh(tmp_path):
     for step in (1e-6, 2e-7):
         numerical = (objective(step) - objective(-step)) / (2 * step)
         assert analytic == pytest.approx(numerical, rel=2e-5, abs=1e-9)
+    ti.reset()
+
+
+@pytest.mark.parametrize("with_wall", [False, True])
+def test_trajectory_reverses_refreshed_friction_geometry(tmp_path, with_wall):
+    ti.reset()
+    ti.init(arch=ti.cpu, default_fp=ti.f64, cpu_max_num_threads=1, offline_cache=False)
+    dem, _ = _build_affine_contact(
+        tmp_path,
+        with_wall=with_wall,
+        assemble_type="HashTriplet",
+        friction_iterations=-1,
+        newton_tolerance=1e-10,
+        friction_tolerance=1e-10,
+        max_newton_iteration=40,
+        linear_relative_tolerance=1e-10,
+    )
+    op = dem.enginer.operator
+    velocity = op.velocity_y.to_numpy()
+    velocity[:4] = [0.0, 0.2, 0.0]
+    velocity[4:] = [0.0, -0.1, 0.0]
+    op.velocity_y.from_numpy(velocity)
+    tape = dem.differentiable_affine(steps=3)
+    initial_y, initial_v = op.y.to_numpy(), op.velocity_y.to_numpy()
+    signatures = []
+    for _ in range(3):
+        tape.step()
+        signatures.append(dem.enginer.last_friction_iterations)
+    rng = np.random.default_rng(918)
+    seed_y, seed_v = 0.1 * rng.normal(size=initial_y.shape), 0.01 * rng.normal(size=initial_v.shape)
+    direction_y, direction_v = rng.normal(size=initial_y.shape), rng.normal(size=initial_v.shape)
+    gradient = tape.backward(seed_y, seed_v)
+    analytic = np.sum(gradient["initial_position"].reshape(-1, 3) * direction_y) + np.sum(
+        gradient["initial_velocity"].reshape(-1, 3) * direction_v
+    )
+
+    def objective(shift):
+        op.y.from_numpy(initial_y + shift * direction_y)
+        op.velocity_y.from_numpy(initial_v + shift * direction_v)
+        dem.sims.current_time, dem.sims.current_step = 0.0, 0
+        for step in range(3):
+            dem.enginer.step(dem.sims, dem.scene)
+            assert dem.enginer.last_friction_iterations == signatures[step]
+            dem.sims.current_time += dem.sims.delta
+            dem.sims.current_step += 1
+        return np.sum(seed_y * op.y.to_numpy()) + np.sum(seed_v * op.velocity_y.to_numpy())
+
+    for epsilon in (1e-6, 5e-7):
+        numerical = (objective(epsilon) - objective(-epsilon)) / (2 * epsilon)
+        assert analytic == pytest.approx(numerical, rel=5e-4, abs=1e-7)
     ti.reset()
 
 
@@ -531,6 +588,7 @@ def test_lagged_friction_pages_preserve_adjoint_and_overflow(taichi_runtime, cou
                 ti.Vector([0.0, 0.0, 1.0]),
                 ti.Vector([0.1, 0.2, 0.3]),
                 i + 0.5,
+                -1,
                 False,
             )
 
@@ -549,6 +607,7 @@ def test_lagged_friction_pages_preserve_adjoint_and_overflow(taichi_runtime, cou
         ("weights", [1.0, -0.2, -0.3, -0.5]),
         ("normal", [0.0, 0.0, 1.0]),
         ("hat_rel", [0.1, 0.2, 0.3]),
+        ("wall", -1),
     ):
         values = field_to_numpy_prefix(getattr(operator, "friction_contact_" + name), count)
         np.testing.assert_array_equal(values, np.broadcast_to(expected, values.shape))

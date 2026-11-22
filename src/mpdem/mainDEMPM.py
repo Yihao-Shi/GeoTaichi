@@ -358,6 +358,8 @@ class DEMPM(SolverDiagnosticsMixin):
             self.dem.sims.set_simulation_time(simulation_time)
             if "Timestep" in kwargs:
                 self.sims.set_timestep(DictIO.get_essential(kwargs, "Timestep"))
+                if self.is_direct_mpm_affine_ipc():
+                    self.sims.set_dem_timestep(DictIO.get_essential(kwargs, "Timestep"))
                 self.mpm.sims.set_timestep(DictIO.get_essential(kwargs, "Timestep"))
                 self.dem.sims.set_timestep(DictIO.get_essential(kwargs, "Timestep"))
             if "CFL" in kwargs:
@@ -670,6 +672,7 @@ class DEMPM(SolverDiagnosticsMixin):
             inexact_newton=solver.get("inexact_newton", False),
             force_atol=solver.get("absolute_tolerance", 1.0e-10),
             force_rtol=solver.get("residual_tolerance", 1.0e-8),
+            friction_relaxation=solver.get("friction_relaxation", 1.0),
         )
         direct_mpm.mpm.time = float(self.sims.current_time)
         direct_mpm.mpm.step_count = int(self.sims.current_step)
@@ -690,6 +693,7 @@ class DEMPM(SolverDiagnosticsMixin):
         mpm_solver = direct_mpm.mpm
         affine_engine = self.dem.enginer
         callbacks = normalize_callbacks(DictIO.get_alternative(kwargs, "postprocessing", ()))
+        preintegration = normalize_callbacks(DictIO.get_alternative(kwargs, "preintegration_function", ()))
 
         if not self._direct_affine_output_started:
             direct_mpm.initial_simulation()
@@ -700,9 +704,12 @@ class DEMPM(SolverDiagnosticsMixin):
         target_time = float(self.sims.current_time + self.sims.time)
         nominal_timestep = float(self.sims.delta)
         while self.sims.current_time < target_time - 1.0e-14:
+            nominal_timestep = float(self.sims.delta)
             mpm_solver.dt = min(nominal_timestep, target_time - self.sims.current_time)
 
             def coupled_substep(verbose):
+                for callback in preintegration:
+                    callback(system)
                 direct_mpm.prepare_step_device()
                 result = system.solve_lagged_equilibrium_device(
                     self.dem.sims,
@@ -745,7 +752,7 @@ class DEMPM(SolverDiagnosticsMixin):
         if self.sims.current_time - last_save_time > 0.9 * max(nominal_timestep, 1.0e-14):
             direct_mpm.mpm.record()
             affine_engine._save(self.dem.sims, self.dem.scene)
-        mpm_solver.dt = nominal_timestep
+        mpm_solver.dt = float(self.sims.delta)
         self.mpm.first_run = False
         self.dem.first_run = False
         return {

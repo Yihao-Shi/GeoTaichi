@@ -40,6 +40,8 @@ def test_coupled_ground_cache_and_zero_coefficient_vjp():
     ti.init(arch=ti.cpu, default_fp=ti.f64, offline_cache=False, cpu_max_num_threads=1)
     ipc = object.__new__(IPCMPM)
     mpm = SimpleNamespace(dt=0.001)
+    mpm.TIdt = ti.field(ti.f64, shape=())
+    mpm.TIdt[None] = mpm.dt
     ipc.mpm = mpm
     ipc.ground = Ground()
     ipc.ground.append([0, 0, 0], [0, 0, 1])

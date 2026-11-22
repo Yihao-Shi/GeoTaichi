@@ -1,0 +1,353 @@
+{
+  "schema_version": 1,
+  "title": "Stationary two-joint excavator scooping plastic MPM soil",
+  "module": "mpdem",
+  "dimension": 3,
+  "coordinate_assumption": "3d",
+  "units": {
+    "length": "m",
+    "mass": "kg",
+    "time": "s"
+  },
+  "physics": {
+    "processes": [
+      "ABD linkage",
+      "finite-strain nonassociated Drucker-Prager plasticity",
+      "two-way frictional mesh IPC",
+      "gravity"
+    ],
+    "governing_assumptions": [
+      "fixed base",
+      "compliant ideal angle servos",
+      "dry continuum soil",
+      "implicit Direct ULMPM",
+      "Both MPM and ABD explicitly use backward Euler [1,0.5,1]"
+    ]
+  },
+  "geometry": {
+    "description": "World-hinged boom, hinged open-front/open-top solid bucket, and a soil bed on a fixed plane",
+    "coordinate_frame": "Cartesian z up; bucket opens toward negative x",
+    "dimensions": {
+      "pivot": [
+        0.25,
+        0.5,
+        0.72
+      ],
+      "bucket_hinge": [
+        0.73,
+        0.5,
+        0.42
+      ],
+      "soil_min": [
+        0.38,
+        0.42,
+        0.08
+      ],
+      "soil_max": [
+        0.62,
+        0.58,
+        0.28
+      ],
+      "ground_z": 0.06,
+      "bucket_x": [
+        -0.14,
+        0.1,
+        0.12
+      ],
+      "bucket_y": [
+        -0.12,
+        -0.1,
+        0.1,
+        0.12
+      ],
+      "bucket_z": [
+        -0.1,
+        -0.08,
+        0.1
+      ],
+      "boom_width": 0.035,
+      "grid_min": [
+        0.18,
+        0.25,
+        0
+      ],
+      "grid_max": [
+        1.02,
+        0.77,
+        1.0
+      ]
+    }
+  },
+  "discretization": {
+    "grid_spacing": 0.04,
+    "particle_or_template_resolution": "One point per 0.04 m cell; all soil points participate in bucket contact, including newly exposed soil",
+    "refinement_plan": "Halve grid/particle spacing and timestep before quantitative soil predictions"
+  },
+  "materials": [
+    {
+      "name": "soil",
+      "model": "DruckerPrager",
+      "parameters": {
+        "density": 1700.0,
+        "young_modulus": 200000.0,
+        "poisson_ratio": 0.3,
+        "Cohesion": 250.0,
+        "FrictionAngle": 30.0,
+        "DilationAngle": 0.0,
+        "dpType": "Circumscribed"
+      },
+      "provenance": "illustrative uncalibrated dry soil"
+    },
+    {
+      "name": "boom and bucket",
+      "model": "ABD Green-strain rigidity",
+      "parameters": {
+        "Density": 7800.0,
+        "YoungModulus": 100000000000.0
+      },
+      "provenance": "steel-like inertia; rigidity penalty selected for <= 1% affine metric error, not hardware calibration"
+    }
+  ],
+  "initial_conditions": {
+    "gravity": [
+      0,
+      0,
+      -9.81
+    ],
+    "velocity": [
+      0,
+      0,
+      0
+    ],
+    "state_variables": "Stress-free soil, undeformed mechanism and zero joint reference angles"
+  },
+  "boundary_conditions": [
+    {
+      "type": "world revolute boom",
+      "position_stiffness": 1000000000.0,
+      "axis_stiffness": 1000000.0,
+      "motor_stiffness": 100000000.0,
+      "damping": 30.0
+    },
+    {
+      "type": "bucket revolute",
+      "position_stiffness": 1000000000.0,
+      "axis_stiffness": 1000000.0,
+      "motor_stiffness": 50000000.0,
+      "damping": 10.0
+    },
+    {
+      "type": "motion",
+      "settle_until": 0.15,
+      "dig_until": 0.8,
+      "curl_until": 1.05,
+      "lift_until": 1.4,
+      "finish": 1.6,
+      "dig_boom_angle": 33.0,
+      "raised_boom_angle": -20.0,
+      "curled_bucket_pitch": 50.0,
+      "curl_boom_angle": 30.0,
+      "tilt_until": 0.25,
+      "insert_until": 0.5,
+      "cutting_height": 0.006
+    },
+    {
+      "type": "fixed ground plane",
+      "z": 0.06
+    },
+    {
+      "type": "frictionless normal constraints on soil-grid x/y sides",
+      "grid_min": [
+        0.18,
+        0.25,
+        0
+      ],
+      "grid_max": [
+        1.02,
+        0.77,
+        1.0
+      ]
+    }
+  ],
+  "contact_or_coupling": {
+    "enabled": true,
+    "law": "monolithic Direct MPM-ABD mesh BarrierIPC with converged lagged Coulomb friction",
+    "active_pairs": [
+      "all soil points-bucket",
+      "all soil points-boom",
+      "soil-ground",
+      "boom/bucket-ground"
+    ],
+    "parameters": {
+      "dhat": 0.024,
+      "dmin": 0.004,
+      "kappa": 300000.0,
+      "friction_coefficient": 0.4,
+      "epsv": 0.001,
+      "friction_max_iterations": 200
+    }
+  },
+  "time": {
+    "timestep": 0.0025,
+    "duration": 1.6,
+    "save_interval": 0.025,
+    "stability_policy": "Maximum nominal step 0.0025 s; up to seven halving retries to 0.00001953125 s; retain the accepted step after retry, allow 20% growth every eighth accepted retry-free step; recompute endpoint commands on every attempt; fixed physical residual/friction thresholds"
+  },
+  "capacities": {
+    "safety_margin": 1.5,
+    "estimates": {
+      "bodies": 2,
+      "joints": 2,
+      "soil_particles": 120,
+      "ground_pairs": 120,
+      "mixed_pairs_worst_case": 9600,
+      "rigid_ground_pairs": 44
+    },
+    "allocations": {
+      "max_affine_body_number": 2,
+      "max_point_triangle_pairs": 16384,
+      "max_edge_edge_pairs": 4096,
+      "affine_contact_block_capacity": 2048,
+      "max_plane_number": 1
+    }
+  },
+  "outputs": {
+    "path": "OutputData/excavator_dig",
+    "fields": [
+      "native MPM and ABD VTU/NPZ",
+      "trajectory.csv",
+      "summary.json",
+      "validation-evidence.json"
+    ],
+    "restart": false
+  },
+  "validation": {
+    "observable": "soil retained inside a raised bucket",
+    "expectation": [
+      0.2,
+      100.0
+    ],
+    "tolerance": 0.0,
+    "description": "At least 0.2 kg inside the lifted cavity above initial soil top plus 0.05 m; positive clearance, conserved mass, finite plastic state and equal/opposite mixed contact",
+    "evidence": "Native states and output diagnostics",
+    "invariants": [
+      {
+        "kind": "contract_observable",
+        "expectation": [
+          0.2,
+          100.0
+        ],
+        "tolerance": 0.0,
+        "basis": "At least two coarse material points carried out of the original soil bed"
+      },
+      {
+        "kind": "contact_gap",
+        "expectation": [
+          0.0,
+          1.0
+        ],
+        "tolerance": 0.0,
+        "basis": "Active mixed distance exceeds dmin"
+      },
+      {
+        "kind": "mass_balance",
+        "expectation": [
+          0.0,
+          1e-10
+        ],
+        "tolerance": 0.0,
+        "basis": "Relative soil-mass error"
+      },
+      {
+        "kind": "action_reaction",
+        "expectation": [
+          0.0,
+          1e-08
+        ],
+        "tolerance": 0.0,
+        "basis": "Norm of summed mixed contact force in N"
+      },
+      {
+        "kind": "contact_gap",
+        "expectation": [
+          0.0,
+          1.0
+        ],
+        "tolerance": 0.0,
+        "basis": "Positive ABD surface clearance from the shared fixed ground plane"
+      },
+      {
+        "kind": "contract_observable",
+        "expectation": [
+          0.0,
+          0.01
+        ],
+        "tolerance": 0.0,
+        "basis": "Maximum Frobenius norm of A^T A - I over both rigid bodies, with positive determinants"
+      },
+      {
+        "kind": "benchmark",
+        "expectation": [
+          0.0,
+          0.001
+        ],
+        "tolerance": 0.0,
+        "basis": "Maximum revolute-anchor mismatch below 1 mm"
+      },
+      {
+        "kind": "analytical",
+        "expectation": [
+          0.0,
+          0.1
+        ],
+        "tolerance": 0.0,
+        "basis": "Maximum joint reference tracking error below 0.1 degrees"
+      }
+    ]
+  },
+  "assumptions": [
+    "Two moving bodies provide a first digging test; no separate stick, tracks, cylinders, hydraulics or powertrain",
+    "Soil is not attached to the bucket",
+    "Coarse discretization and uncalibrated parameters are diagnostic",
+    "The prescribed two-joint trajectory inserts a downward cutting edge, then maintains a 0.006 m cutting-tip height before curl and lift; no soil attachment",
+    "The finite soil bed has frictionless normal side constraints; the rigid mechanism and soil share the fixed bottom support"
+  ],
+  "unresolved": [],
+  "api": {
+    "facade": "mpdem",
+    "runtime": {
+      "dim": 3,
+      "arch": "cpu",
+      "default_fp": "float64"
+    },
+    "evidence_ledger": {
+      "coupling": "examples/mpdem/AffineBody/ABDImpactDP/direct_mpm_abd_impact.py; src/mpdem/mainDEMPM.py:run_direct_mpm_affine_ipc",
+      "soil and ground": "tests/integration/mpdem/test_direct_affine_nonassociated.py:_case; src/mpm/generator/Body.py:add_particles",
+      "joints": "src/dem/mainDEM.py:add_joint/set_joint_target_angles; src/mpdem/engines/DirectAffineIPCSystem.py",
+      "geometry": "src/dem/generator/AffineBodyTemplate.py:_extract_mesh; src/dem/engines/AffineBodyState.py:_mass_matrix",
+      "contact capacity": "src/mpm/soft_particle/IPCMPM.py: ground defaults cover every soil-point/plane pair; 120 points times (68 bucket + 12 boom faces) = at most 9600 mixed pairs, below capacity 16384",
+      "side boundaries": "src/mpm/boundaries/BoundaryCondition.py:DirichletBoundary.append/finalize; grid numbering matches src/mpm/engines/direct/MPMSolver.py:add_body_info/_compute_shapefn",
+      "attempted endpoint control": "src/mpdem/mainDEMPM.py:run_direct_mpm_affine_ipc calls preintegration_function before each attempted step; src/mpm/engines/direct/MPMSolver.py:run_substep/StepSchedule records every accepted step when history_interval=1",
+      "rigid ground": "examples/dem/AffineBody/robot_grasp/robot_grasp.py:add_wall; src/dem/mainDEM.py:add_property(dType=all)"
+    },
+    "solver": {
+      "Timestep": 0.0025,
+      "SimulationTime": 1.6,
+      "SaveInterval": 0.025,
+      "linear_solver_tolerance": 1e-12,
+      "linear_solver_max_iters": 8000,
+      "inexact_newton": true,
+      "newmark": [
+        1.0,
+        0.5,
+        1.0
+      ],
+      "enable_step_retry": true,
+      "step_retry_max_retries": 7,
+      "step_retry_reduction": 0.5,
+      "step_retry_minimum_timestep": 1.953125e-05,
+      "history_interval": 1,
+      "friction_relaxation": 0.8
+    }
+  }
+}

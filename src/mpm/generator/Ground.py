@@ -14,7 +14,7 @@ class Ground:
 
     def append(self, pos, norm, vel=None):
         if vel is None:
-            vel = [0] * config.DIM
+            vel = [0] * len(pos)
         self.np_pos.append(pos)
         self.np_norm.append(norm)
         self.np_vel.append(vel)

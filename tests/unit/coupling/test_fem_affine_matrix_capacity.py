@@ -858,21 +858,32 @@ def test_direct_affine_nonsymmetric_dirichlet_elimination(taichi_runtime, trial_
     np.testing.assert_allclose(actual, dense)
 
 
-@pytest.mark.parametrize("pending", ["dirichlet"])
-def test_direct_affine_force_convergence_still_finishes_constraints(pending):
+@pytest.mark.parametrize("pending", ["dirichlet", "newmark_velocity"])
+@pytest.mark.parametrize("inexact", [False, True])
+def test_direct_affine_force_convergence_still_finishes_constraints(pending, inexact):
     system = object.__new__(DirectAffineIPCSystem)
+    system.friction_relaxation = 1.0
     system.mpm = SimpleNamespace(
         dt=0.001, active_dof=3, linear_solver_relative_tolerance=0.0, begin_lagged_material_state=lambda: None
     )
     system.force_atol, system.force_rtol = 1e-10, 1e-8
-    system.inexact_newton = False
+    system.inexact_newton = inexact
     state = {"done": False, "updates": []}
     system.begin_step_device = lambda _dt: None
     system.assemble_linearization_device = lambda **_kwargs: None
     system.refresh_lagged_friction_device = lambda: None
-    system.residual_metrics_device = lambda _dof: (0.0, 0.001 if pending == "dirichlet" and not state["done"] else 0.0)
+    system.residual_metrics_device = lambda _dof: (
+        1e-12 if pending == "newmark_velocity" and not state["done"] else 0.0,
+        0.001 if pending == "dirichlet" and not state["done"] else 0.0,
+    )
     system.solve_direction_device = lambda *_args, **_kwargs: {"iterations": 1}
-    system.direction_inf_norm = lambda _dof, velocity=False: 1.0 if velocity else 0.001
+    system.direction_inf_norm = lambda _dof, velocity=False: (
+        ((0.0 if state["done"] else 1.5e-7) if velocity else 0.75e-7 * system.mpm.dt)
+        if pending == "newmark_velocity"
+        else (1.0 if velocity else 0.001)
+    )
+    system.affine = SimpleNamespace(device_restore_step_start=lambda: None)
+    system.mpm.grid_disp = SimpleNamespace(fill=lambda _value: None)
 
     def update(*_args, **kwargs):
         state["done"] = True
@@ -897,6 +908,7 @@ def test_direct_affine_force_convergence_still_finishes_constraints(pending):
 @pytest.mark.parametrize("requested", [-1, 4])
 def test_direct_affine_positive_friction_count_is_exact(physical, requested):
     system = object.__new__(DirectAffineIPCSystem)
+    system.friction_relaxation = 1.0
     system.nonassociated_newton, system.inexact_newton = physical, False
     system.force_atol, system.force_rtol = 1e-10, 1e-8
     system.mpm = SimpleNamespace(dt=0.001, active_dof=3, begin_lagged_material_state=lambda: None)
@@ -921,6 +933,48 @@ def test_direct_affine_positive_friction_count_is_exact(physical, requested):
     assert result["friction_converged"]
     assert result["friction_iterations"] == expected
     assert records == list(range(expected + 1))
+
+
+def test_direct_affine_refreshed_force_failure_returns_to_newton_before_strict_probe():
+    system = object.__new__(DirectAffineIPCSystem)
+    system.friction_relaxation = 1.0
+    system.mpm = SimpleNamespace(dt=0.001, active_dof=3, begin_lagged_material_state=lambda: None)
+    system.force_atol, system.force_rtol, system.inexact_newton = 1e-10, 1e-8, True
+    state = {"residual": 0.0, "refreshes": 0, "updates": 0}
+    system.begin_step_device = lambda _dt: None
+    system._record_friction_iterate = lambda _record: None
+    system.assemble_linearization_device = lambda **_kwargs: None
+    system.residual_metrics_device = lambda _dof: (state["residual"], 0.0)
+    system.direction_inf_norm = lambda _dof, velocity=False: 1.0 if velocity else 0.001
+
+    def solve(*_args, **kwargs):
+        assert "relative_tolerance" in kwargs, "A failed force check already excludes friction convergence"
+        return {"iterations": 1}
+
+    def refresh():
+        state["refreshes"] += 1
+        state["residual"] = 1.0 if state["refreshes"] == 1 else 0.0
+
+    def update(*_args, **_kwargs):
+        state["residual"] = 0.0
+        state["updates"] += 1
+        return 0.0, 1.0
+
+    system.solve_direction_device, system.refresh_lagged_friction_device, system._line_search_device = (
+        solve,
+        refresh,
+        update,
+    )
+    system.affine = SimpleNamespace(device_restore_step_start=lambda: None)
+    system.mpm.grid_disp = SimpleNamespace(fill=lambda _value: None)
+    sims = SimpleNamespace(
+        affine_max_newton_iteration=3,
+        affine_max_step=0.02,
+        affine_friction_tolerance=1e-7,
+        affine_newton_tolerance=1e-7,
+    )
+    result = system._solve_nonassociated_equilibrium_device(sims, max_outer=2, requested_outer=-1, record_adjoint=False)
+    assert result["friction_converged"] and result["friction_iterations"] == 2 and state["updates"] == 1
 
 
 def test_classical_fem_reduced_capacity_uses_unique_mesh_edges():

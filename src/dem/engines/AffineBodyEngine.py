@@ -114,6 +114,7 @@ class AffineBodyEngine(object):
         self.device_nonlinear_path = False
         self.newmark_initialized = False
         self.enforce_free_translation = False
+        self.friction_recorder = None
         self.evaluate_device_surface_direction_norm = self._reference_device_surface_direction_norm
 
     @staticmethod
@@ -937,6 +938,8 @@ class AffineBodyEngine(object):
         """Official lagged IPC fixed-point/Newton flow on Taichi CUDA."""
         self.operator.initialize_contact_damping_device()
         energy = self._assemble_system_device(sims, need_matrix=True)
+        if self.friction_recorder is not None:
+            self.friction_recorder._record_friction_iterate(0)
 
         for outer_iteration in range(max_outer):
             self.last_friction_outer_iteration = outer_iteration + 1
@@ -944,6 +947,8 @@ class AffineBodyEngine(object):
             energy, inner_iterations = self._solve_lagged_inner_cuda(sims, energy)
             self.last_newton_iterations += inner_iterations
             self.last_friction_iterations = outer_iteration + 1
+            if self.friction_recorder is not None:
+                self.friction_recorder._record_friction_iterate(outer_iteration + 1)
 
             # Rebuild the frozen contact/friction data only after a complete
             # inner solve, then probe the updated fixed point

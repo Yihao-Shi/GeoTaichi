@@ -27,12 +27,157 @@ def joint_targets(time, motion):
     ]
 
 
+def differentiate_trajectory(dem, motion, duration, output, gradient_check, train_iterations):
+    """Check full-trajectory derivatives and optimize a landing objective."""
+    import taichi as ti
+
+    steps = round(duration / dem.sims.delta)
+    tape = dem.differentiable_affine(steps=steps)
+    op = dem.enginer.operator
+    times = (np.arange(steps) + 1) * tape.dt
+    commands = np.array([joint_targets(time, motion) for time in times])
+    seed = np.zeros((op.control_num, 3))
+    velocity_seed = np.zeros_like(seed)
+    seed[-4:] = np.array([1.0, 0.37, 0.11]) / 4
+    velocity_seed[-4:] = np.array([0.05, -0.02, 0.0]) / 4
+    history_length = len(dem.enginer.history)
+
+    def forward(targets, name):
+        # Diagnostic replay boundary: reset the saved device state, never host-integrate physics.
+        tape._load_state(0)
+        op.accepted_translation_velocity[None] = tape.translation_tape[0]
+        dem.sims.current_time, dem.sims.current_step = tape.initial_time, tape.initial_step
+        tape.record_count = 0
+        del dem.enginer.history[history_length:]
+        contacts = []
+        for step, angles in enumerate(targets):
+            dem.set_joint_target_angles([0, 1, 2], angles)
+            tape.step()
+            contacts.append(int(op.friction_contact_count[0]))
+            if (step + 1) % 40 == 0:
+                print(f"{name}: {step + 1}/{steps}", flush=True)
+        return float(np.sum(seed * op.y.to_numpy()) + np.sum(velocity_seed * op.velocity_y.to_numpy())), contacts
+
+    value, contacts = forward(commands, "baseline")
+    terminal_y, terminal_v = op.y.to_numpy(), op.velocity_y.to_numpy()
+    np.savez(
+        output / "gradient-trajectory.npz",
+        position=tape.position_tape.to_numpy(),
+        velocity=tape.velocity_tape.to_numpy(),
+        times=np.r_[0, times],
+        commands=commands,
+        friction_contacts=contacts,
+    )
+    if gradient_check:
+        print("full trajectory backward", flush=True)
+        gradient = tape.backward(seed, velocity_seed)["joint_target_angle_degrees_per_step"]
+        np.testing.assert_array_equal(op.y.to_numpy(), terminal_y)
+        np.testing.assert_array_equal(op.velocity_y.to_numpy(), terminal_v)
+        np.save(output / "joint-target-gradient.npy", gradient)
+    directions = {}
+    arm = np.zeros_like(commands)
+    arm[:, 0] = smooth_motion(times, motion["close_until"], motion["lift_until"])
+    directions["arm_lift"] = arm
+    for name, start, end in (
+        ("finger_closing", motion["settle_until"], motion["close_until"]),
+        ("finger_opening", motion["hold_until"], motion["open_until"]),
+    ):
+        direction = np.zeros_like(commands)
+        phase = np.clip((times - start) / (end - start), 0, 1)
+        direction[:, 1:] = np.sin(np.pi * phase)[:, None]
+        directions[name] = direction
+    result = dict(
+        backend=str(ti.lang.impl.current_cfg().arch),
+        precision="float64",
+        steps=steps,
+        dt=tape.dt,
+        objective="payload center dot [1,.37,.11] + velocity dot [.05,-.02,0]",
+        baseline_objective=value,
+        linear_relative_tolerance=dem.sims.affine_linear_relative_tolerance,
+        absolute_derivative_tolerance=1e-6,
+        relative_derivative_tolerance=0.01,
+        checks=[],
+    )
+    for name, direction in directions.items() if gradient_check else ():
+        analytic = float(np.sum(gradient * direction))
+        for epsilon in (0.01, 0.005):
+            plus, _ = forward(commands + epsilon * direction, f"{name} +{epsilon}")
+            minus, _ = forward(commands - epsilon * direction, f"{name} -{epsilon}")
+            numerical = (plus - minus) / (2 * epsilon)
+            error = abs(analytic - numerical)
+            check = dict(
+                direction=name,
+                epsilon_degrees=epsilon,
+                analytic=analytic,
+                numerical=numerical,
+                absolute_error=error,
+                relative_error=error / max(abs(analytic), abs(numerical), 1e-30),
+                passed=bool(error <= 1e-6 + 0.01 * max(abs(analytic), abs(numerical))),
+            )
+            result["checks"].append(check)
+            print(json.dumps(check), flush=True)
+            (output / "gradient-check.json").write_text(json.dumps(result, indent=2) + "\n")
+    if gradient_check:
+        result["passed"] = all(check["passed"] for check in result["checks"])
+        (output / "gradient-check.json").write_text(json.dumps(result, indent=2) + "\n")
+        if not result["passed"]:
+            raise RuntimeError("Complete-trajectory gradient check failed; inspect gradient-check.json")
+    if not train_iterations:
+        return
+
+    seed.fill(0.0)
+    velocity_seed.fill(0.0)
+    seed[-4:, 0] = 0.25
+    amplitude = motion["raised_arm_target_degrees"]
+    target_x = 1.18
+    training = dict(target_payload_x=target_x, parameter="arm lift amplitude (degrees)", iterations=[])
+    for iteration in range(train_iterations + 1):
+        targets = commands.copy()
+        targets[:, 0] = amplitude * arm[:, 0]
+        payload_x, _ = forward(targets, f"training {iteration}")
+        error = payload_x - target_x
+        training["iterations"].append(dict(amplitude=amplitude, payload_x=payload_x, loss=0.5 * error**2))
+        print(json.dumps(training["iterations"][-1]), flush=True)
+        (output / "training.json").write_text(json.dumps(training, indent=2) + "\n")
+        if iteration == train_iterations:
+            break
+        gradient = tape.backward(seed)["joint_target_angle_degrees_per_step"]
+        derivative = float(np.sum(gradient * arm))
+        if not np.isfinite(derivative) or abs(derivative) < 1e-8:
+            raise RuntimeError("The landing objective has no resolved arm-control gradient")
+        amplitude = float(np.clip(amplitude + np.clip(-error / derivative, -2.0, 2.0), -24.0, -12.0))
+    positions = tape.position_tape.to_numpy().reshape(steps + 1, 4, 4, 3)
+    centers = positions[:, 3].mean(axis=1)
+    hold = (times >= motion["lift_until"] - 1e-10) & (times <= motion["hold_until"] + 1e-10)
+    minimum_lift = float(centers[1:][hold, 2].min() - centers[0, 2])
+    release_fall = float(centers[1:][hold][-1, 2] - centers[-1, 2])
+    losses = [item["loss"] for item in training["iterations"]]
+    training.update(
+        minimum_hold_lift=minimum_lift,
+        release_fall=release_fall,
+        passed=bool(
+            losses[-1] < 0.3 * losses[0]
+            and np.all(np.diff(losses) < 0)
+            and minimum_lift >= 0.12
+            and release_fall >= 0.08
+        ),
+    )
+    np.savez(output / "trained-trajectory.npz", position=positions, times=np.r_[0, times], commands=targets)
+    (output / "training.json").write_text(json.dumps(training, indent=2) + "\n")
+    if not training["passed"]:
+        raise RuntimeError("Trajectory optimization did not meet the predeclared loss and grasp checks")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--arch", choices=("cpu", "gpu"), default="cpu")
     parser.add_argument("--dt", type=float, default=0.005)
     parser.add_argument("--stop-time", type=float, default=1.6, help="Run a prefix of the unchanged motion protocol")
     parser.add_argument("--output-dir", type=Path, default=ROOT / "OutputData/robot_grasp")
+    parser.add_argument("--gradient-check", action="store_true", help="Check the full control trajectory VJP")
+    parser.add_argument(
+        "--train-iterations", type=int, default=0, help="After gradient checks, optimize the landing point"
+    )
     args = parser.parse_args()
     if not np.isfinite(args.dt) or args.dt <= 0.0 or args.dt > 0.01:
         parser.error("dt must be finite in (0, 0.01] seconds")
@@ -40,6 +185,8 @@ def main():
         parser.error("stop-time must be finite in (0, 1.6] seconds")
     if not np.isclose(args.stop_time / args.dt, round(args.stop_time / args.dt), rtol=0, atol=1e-9):
         parser.error("stop-time must be an integer number of time steps")
+    if args.train_iterations < 0 or (args.train_iterations and args.stop_time != 1.6):
+        parser.error("train-iterations must be nonnegative and training requires the complete 1.6 s protocol")
 
     os.environ["GEOTAICHI_REAL_DTYPE"] = "float64"
     if args.arch == "cpu":
@@ -150,6 +297,11 @@ def main():
         )
     assert len(dem.scene.affine_bodies) == 4 and len(dem.scene.affine_joints) == 3
     assert all(3 not in (joint["BodyID1"], joint["BodyID2"]) for joint in dem.scene.affine_joints)
+
+    if args.gradient_check or args.train_iterations:
+        dem.set_affine_body_parameters(linear_relative_tolerance=1e-10)
+        differentiate_trajectory(dem, motion, args.stop_time, output, args.gradient_check, args.train_iterations)
+        return
 
     rows = []
     complete = np.isclose(args.stop_time, motion["finish"])

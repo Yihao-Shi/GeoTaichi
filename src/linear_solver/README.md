@@ -23,6 +23,7 @@ device hash reduction; dynamic contact can still use bucket reduction upstream.
 | `CoordinateSparseMatrix` | Scalar COO triplets with device matvec and optional conversion |
 | `CompressedSparseRow` | CSR storage and row-oriented operators |
 | `BuildTriplet` | Device block-triplet assembly, hash reduction, block Jacobi, and Krylov solve |
+| `EquilibratedSolve` | Device diagonal scaling of a nonsymmetric solve, verified against its unchanged physical matrix |
 | `HashReduction` | Duplicate block reduction and reusable sparsity patterns |
 | `MatrixFreeCG`, `MatrixFreePCG` | Symmetric matrix-free Krylov methods |
 | `MatrixFreeBICGSTAB`, `MatrixFreePBICGSTAB` | Nonsymmetric matrix-free methods |
@@ -57,6 +58,14 @@ groups the entire active matrix. Blocks are extracted after all contact terms,
 constraint elimination and sparse reduction, so mixed-contact stiffness is
 included while the complete coupled matrix remains the Krylov operator.
 Other matrices retain their default single-block preconditioner.
+
+Continuum plastic MPM--ABD forward solves additionally solve `D A D z = D b`,
+then recover `x = D z`, with `D_ii = 1 / sqrt(abs(A_ii))` for nonzero diagonal
+entries and one otherwise. The scaled device copy retains block Jacobi;
+the original matrix remains unchanged for physical residual checks and adjoints.
+Scaled targets are refined when needed within the original Krylov iteration
+budget. Acceptance always uses `norm(b - A x)` and the original absolute/relative
+tolerance. No matrix or numerical state is transferred to the host for this solve.
 
 Reordered raw contact stencils probe the existing device hash table in parallel
 before inserting new coordinates. `last_mapping_misses` counts raw entries

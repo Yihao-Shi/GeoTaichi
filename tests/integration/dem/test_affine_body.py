@@ -890,7 +890,7 @@ def test_differentiable_abd_two_step_lagged_friction(tmp_path, assemble_type):
     seed_y = 0.1 * rng.normal(size=initial_y.shape)
     seed_v = 1.0e-3 * rng.normal(size=initial_v.shape)
     friction_vjp = trajectory.backward(seed_y, seed_v)
-    # Cross-step cache refresh remains stop-gradient in lagged mode.
+    # Trajectory replay also differentiates the executed friction-cache refreshes.
     assert np.isfinite(friction_vjp["friction_scale"])
     assert abs(friction_vjp["friction_scale"]) > 1.0e-12
 

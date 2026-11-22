@@ -809,6 +809,24 @@ $`s`$. A physical-unit normalization may multiply the barrier by
 $`\widehat d/\widehat{s}^2`$; this changes units and stiffness scale but not
 the chain rule used by any contact stencil.
 
+### Distance diagnostics
+
+Let `d` be geometric surface distance and `dmin` the prescribed separation.
+The physical clearance is `d - dmin`. Existing diagnostic names follow the
+owning solver's convention:
+
+| Owner and query | Reported quantity | Feasibility check |
+| --- | --- | --- |
+| FEM--MPM `contact.diagnostics()` / Direct MPM--ABD `mixed.diagnostics()`, key `minimum_distance` | `min(d - pair_dmin)` | Greater than zero |
+| FEM--ABD `contact.diagnostics()["minimum_distance"]` | `min(d - pair_dmin)` | Greater than zero |
+| IGA--MPM `minimum_contact_distance()` and step `minimum_distance` | Geometric distance; far inactive pairs may carry conservative lower bounds | Greater than `dmin` |
+| Direct MPM--IPC `minimum_candidate_distance` / `validate_strict_feasibility()` | Geometric point--plane or point--point distance | Greater than `dmin` |
+| Standalone ABD `minimum_gap` | Geometric surface gap; this path uses zero prescribed separation | Greater than the requested feasibility margin |
+
+For the first two rows, the returned minimum already accounts for each pair's
+`dmin`; use it directly as clearance. The barrier and CCD kernels receive
+geometric distances and apply their own prescribed separation once.
+
 ## Solver references
 
 - [DEM contact geometry and rigid-particle balance](../../dem/README.md#2-contact-geometry-and-force-transfer)

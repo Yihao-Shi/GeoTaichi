@@ -32,6 +32,15 @@ force and tangent. Reuse is limited to the same displacement and frozen material
 history/lagged flow state; each new trial or outer iteration prepares it again.
 Standalone assembly remains self-contained by default.
 
+For Direct MPM, `mpm.create_ground().append(pos, norm, vel=None)` defaults to a
+zero velocity with the same dimension as `pos`. Ground construction may precede
+engine initialization and its import-sensitive dimension setup.
+
+Direct MPM--IPC lagged friction, energy and ground CCD read the current
+`TIdt` field inside their kernels. Step retries and timestep updates therefore
+use the current timestep without recompiling these kernels. Supported
+trajectory adjoints retain their fixed-timestep contract.
+
 Direct implicit ULMPM accepts `MPM.set_solver({"small_mass_ratio": alpha})`,
 default zero (disabled), with a finite `0 <= alpha < 1`. After P2G, it removes
 nodes at or below `max(1e-12, alpha * mean_grid_mass)`; the mean includes every

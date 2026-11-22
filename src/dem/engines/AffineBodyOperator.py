@@ -577,6 +577,7 @@ class TaichiAffineBodyOperator(object):
             "normal": ti.Vector.field(3, float),
             "hat_rel": ti.Vector.field(3, float),
             "coeff": ti.field(float),
+            "wall": ti.field(ti.i32),
         }
         capacity = self.friction_contact_capacity
         self.friction_contact_paged = ti.lang.impl.current_cfg().arch in (ti.cpu, ti.cuda)
@@ -3304,7 +3305,7 @@ class TaichiAffineBodyOperator(object):
 
     @ti.func
     def _store_lagged_friction_contact(
-        self, bodies, vertices, weights, normal, hat_rel, coeff, count_only: ti.template()
+        self, bodies, vertices, weights, normal, hat_rel, coeff, wall, count_only: ti.template()
     ):
         contact = ti.atomic_add(self.friction_contact_count[0], 1)
         if contact < self.friction_contact_capacity:
@@ -3315,6 +3316,7 @@ class TaichiAffineBodyOperator(object):
                 self.friction_contact_normal[contact] = normal
                 self.friction_contact_hat_rel[contact] = hat_rel
                 self.friction_contact_coeff[contact] = coeff
+                self.friction_contact_wall[contact] = wall
         else:
             self.friction_contact_overflow[0] = 1
 
@@ -3333,6 +3335,7 @@ class TaichiAffineBodyOperator(object):
             self.adjoint_friction_contact_normal[contact] = self.friction_contact_normal[contact]
             self.adjoint_friction_contact_hat_rel[contact] = self.friction_contact_hat_rel[contact]
             self.adjoint_friction_contact_coeff[contact] = self.friction_contact_coeff[contact]
+            self.adjoint_friction_contact_wall[contact] = self.friction_contact_wall[contact]
 
     @ti.kernel
     def device_restore_lagged_friction_for_adjoint(self):
@@ -3350,6 +3353,7 @@ class TaichiAffineBodyOperator(object):
             self.friction_contact_normal[contact] = self.adjoint_friction_contact_normal[contact]
             self.friction_contact_hat_rel[contact] = self.adjoint_friction_contact_hat_rel[contact]
             self.friction_contact_coeff[contact] = self.adjoint_friction_contact_coeff[contact]
+            self.friction_contact_wall[contact] = self.adjoint_friction_contact_wall[contact]
 
     @ti.kernel
     def _initialize_lagged_mesh_friction(
@@ -3396,7 +3400,9 @@ class TaichiAffineBodyOperator(object):
                     )
                     normal_force = ti.max(-2.0 * db * distance, 0.0)
                     coeff = mu * normal_force * 0.25 * self.node_area[vertex_id] * self.scale_device[None]
-                    self._store_lagged_friction_contact(bodies, vertices, weights, normal, hat_rel, coeff, count_only)
+                    self._store_lagged_friction_contact(
+                        bodies, vertices, weights, normal, hat_rel, coeff, -1, count_only
+                    )
 
         for candidate_id in range(edge_candidate_count[None]):
             edge_i = candidate_edge0[candidate_id]
@@ -3445,7 +3451,9 @@ class TaichiAffineBodyOperator(object):
                         * (self.edge_area[edge_i] + self.edge_area[edge_j])
                         * self.scale_device[None]
                     )
-                    self._store_lagged_friction_contact(bodies, vertices, weights, normal, hat_rel, coeff, count_only)
+                    self._store_lagged_friction_contact(
+                        bodies, vertices, weights, normal, hat_rel, coeff, -1, count_only
+                    )
 
     @ti.kernel
     def _initialize_lagged_wall_friction(self, count_only: ti.template()):
@@ -3506,6 +3514,7 @@ class TaichiAffineBodyOperator(object):
                     normal,
                     self.friction_reference_vertex(vertex_id) + self.wall_step_displacement[wall_id],
                     mu * normal_force * self.scale_device[None],
+                    wall_id,
                     count_only,
                 )
 
@@ -5804,13 +5813,87 @@ class TaichiAffineBodyOperator(object):
             edge_contact,
         )
 
+    @ti.func
+    def _wall_friction_cache_vjp(self, contact, cache_positions):
+        wall = self.friction_contact_wall[contact]
+        vertex = self.friction_contact_vertices[contact][0]
+        body = self.node2body[vertex]
+        adjoint = ti.Vector.zero(float, 3)
+        for control, component in ti.ndrange(4, 3):
+            adjoint[component] += self.basis[vertex, control] * self.linear_x[12 * body + 3 * control + component]
+        value = ti.Vector.zero(float, 12)
+        dhat, kappa = self._pw_dhat(body, wall), self._pw_kappa(body, wall)
+        if self.wall_type[wall] == 0:
+            normal = self.wall_normal[wall]
+            gap = (cache_positions[vertex] - self.wall_point[wall]).dot(normal)
+            _, _, second = self._ipc_barrier_gap(gap, dhat, kappa)
+            projection = ti.Matrix.identity(float, 3) - normal.outer_product(normal)
+            velocity = projection @ ((self.x[vertex] - self.friction_contact_hat_rel[contact]) / self.dt_device[None])
+            unit_force = ipc_friction_f1_over_speed(velocity.norm(), self.epsv) * velocity
+            scale = self.friction_scale[0] * self._pw_mu(body, wall) * self.node_area[vertex] * self.scale_device[None]
+            for component in ti.static(range(3)):
+                value[component] = scale * second * adjoint.dot(unit_force) * normal[component]
+        else:
+            distance2, gradient, hessian, _ = point_triangle_distance_grad_hess(
+                cache_positions[vertex], self.wall_v0[wall], self.wall_v1[wall], self.wall_v2[wall]
+            )
+            positions, references, seed = (
+                ti.Vector.zero(float, 12),
+                ti.Vector.zero(float, 12),
+                ti.Vector.zero(float, 12),
+            )
+            for component in ti.static(range(3)):
+                positions[component] = self.x[vertex][component]
+                references[component] = self.friction_contact_hat_rel[contact][component]
+                seed[component] = adjoint[component]
+                positions[3 + component], references[3 + component] = (
+                    self.wall_v0[wall][component],
+                    self.wall_v0[wall][component],
+                )
+                positions[6 + component], references[6 + component] = (
+                    self.wall_v1[wall][component],
+                    self.wall_v1[wall][component],
+                )
+                positions[9 + component], references[9 + component] = (
+                    self.wall_v2[wall][component],
+                    self.wall_v2[wall][component],
+                )
+            _, first, _ = ipc_barrier_distance2_terms(distance2, dhat * dhat, kappa)
+            normal_force = -2.0 * ti.sqrt(ti.max(distance2, 1e-300)) * first
+            coefficient = self.friction_scale[0] * self.friction_contact_coeff[contact]
+            coefficient_gradient = ti.Vector.zero(float, 12)
+            if normal_force > 0.0:
+                coefficient_gradient = (
+                    coefficient
+                    / normal_force
+                    * ipc_barrier_force_magnitude_gradient(distance2, gradient, dhat, 0.0, kappa, 0)
+                )
+            full = -ipc_lagged_friction_cache_vjp(
+                positions,
+                references,
+                seed,
+                distance2,
+                gradient,
+                hessian,
+                coefficient,
+                coefficient_gradient,
+                self.dt_device[None],
+                self.epsv,
+                False,
+            )
+            for component in ti.static(range(3)):
+                value[component] = full[component]
+        return value
+
     @ti.kernel
     def device_propagate_mesh_friction_cache(self, cache_positions: ti.template(), rhs: ti.template()):
         for contact in range(self.friction_contact_count[0]):
             bodies = self.friction_contact_bodies[contact]
             vertices = self.friction_contact_vertices[contact]
             value = ti.Vector.zero(float, 12)
-            if bodies[0] == bodies[1]:
+            if self.friction_contact_wall[contact] >= 0:
+                value = self._wall_friction_cache_vjp(contact, cache_positions)
+            elif bodies[0] == bodies[1]:
                 value = self._mesh_friction_cache_vjp(contact, cache_positions, True)
             else:
                 value = self._mesh_friction_cache_vjp(contact, cache_positions, False)
