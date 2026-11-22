@@ -223,9 +223,7 @@ def test_fempm_nonpotential_plasticity_dispatches_to_residual_merit_line_search(
     engine = object.__new__(FEMPMImplicitEngine)
     engine.mpm_uses_residual_merit = True
     calls = []
-    engine._residual_merit_line_search = lambda system, friction, residual: (
-        calls.append((system, friction, residual)) or (0.5, 1, 0.25)
-    )
+    engine._residual_merit_line_search = lambda *args: calls.append(args) or (0.5, 1, 0.25)
     engine._total_energy = lambda *args: pytest.fail(
         "non-potential finite-strain plasticity must not use energy Armijo"
     )
@@ -235,10 +233,12 @@ def test_fempm_nonpotential_plasticity_dispatches_to_residual_merit_line_search(
         {"active_mpm_dof": 2},
         False,
         3.0,
+        1.0e-7,
+        2.0,
     )
 
     assert result == (0.5, 1, 0.25)
-    assert calls == [({"active_mpm_dof": 2}, False, 3.0)]
+    assert calls == [({"active_mpm_dof": 2}, False, 3.0, 1.0e-7, 2.0)]
 
 
 def test_implicit_ipc_accepts_coo_device_assembly(tmp_path):
@@ -257,6 +257,15 @@ def test_implicit_ipc_dp_keeps_ccd_and_armijo_pipeline(tmp_path, assembly, dilat
         mpm_material="DruckerPrager",
         dilation=dilation,
     )
+    engine = coupling.enginer
+    if dilation != 30.0:
+        set_boundary_data = engine.fem.set_boundary_data_step
+
+        def set_moving_boundary(time, step):
+            set_boundary_data(time, step)
+            engine.fem.state.prescribed_displacement[2] = 0.2 * time
+
+        engine.fem.set_boundary_data_step = set_moving_boundary
     result = coupling.run(steps=1, verbose=False)
 
     assert result["converged"]
@@ -265,6 +274,8 @@ def test_implicit_ipc_dp_keeps_ccd_and_armijo_pipeline(tmp_path, assembly, dilat
     if dilation != 30.0:
         assert not coupling.mpm.enginer.has_lagged_material
         assert result["history"][-1]["material_lagged_iterations"] == 0
+        assert result["history"][-1]["friction_iterations"][0][0]["constraint_residual"] == pytest.approx(2.0e-4)
+        assert engine.fem.state.position[0][2] == pytest.approx(2.0e-4)
     record = result["history"][-1]
     assert record["material"] == "FiniteStrainDruckerPragerModel"
     assert record["contact"]["active_contacts"] >= 1
@@ -303,6 +314,55 @@ def test_nonassociated_ipc_physical_jacobian_by_fd(tmp_path):
     assert np.linalg.norm(analytic - numerical) / np.linalg.norm(analytic) < 1e-5
     assert not engine.monolithic_hash.matrix_symmetric
     assert not mpm.has_lagged_material
+
+
+@pytest.mark.parametrize("assembly", ["HashTriplet", "COO"])
+def test_nonassociated_ipc_merit_slope_with_prescribed_motion(tmp_path, assembly, monkeypatch):
+    coupling = _implicit_system(tmp_path, assembly=assembly, mpm_material="DruckerPrager", dilation=0.0)
+    engine = coupling.enginer
+    state = engine.fem.state
+    mpm = engine.mpm
+    mpm.F0.from_numpy(np.array([np.diag([1.18, 0.82, 0.90])]))
+    state.prescribed_displacement[2] = 2.0e-4
+    initial_positions = state.position.to_numpy()
+    state.build_newmark_prediction(engine.dt, engine.fem.integration)
+    engine.contact.begin_step(state.position, mpm.grid_disp, engine.dt)
+    # Differentiate inside the smooth friction branch, away from zero slip and epsv.
+    initial_displacement = mpm.grid_disp.to_numpy()
+    initial_displacement[: mpm.active_dof : 3] = 3.0e-7
+    mpm.grid_disp.from_numpy(initial_displacement)
+    system = engine.assemble_system(include_friction=True)
+    assert system["contact_count"] > 0
+    active_dof = system["active_dof"]
+    residual_norm = float(engine._free_residual_squared(active_dof, engine.physical_rhs)) ** 0.5
+    constraint_merit = 0.5 * max(residual_norm, 1.0) ** 2
+
+    # Deliberately perturb the free correction so exact-Newton's ideal slope is not an oracle.
+    engine._solve_linear_system(system)
+    direction = engine.correction.to_numpy()
+    direction[3 * engine.fem_nodes : active_dof] *= 0.6
+    engine.correction.from_numpy(direction)
+    engine._split_direction(mpm.active_dof)
+    slope = engine._physical_merit_slope(system) - 2.0 * constraint_merit
+    assert not np.isclose(slope, -(residual_norm**2) - 2.0 * constraint_merit)
+
+    def merit(alpha):
+        engine._set_fem_residual_trial(alpha)
+        mpm.update_grid_disp(mpm.active_dof, alpha)
+        residual = engine._trial_physical_residual(state.trial_position, mpm.grid_disp_temp, True)
+        mismatch_fraction = (state.prescribed_displacement[2] - state.trial_position[0][2]) / 2.0e-4
+        return 0.5 * residual**2 + mismatch_fraction**2 * constraint_merit
+
+    step = 1.0e-4
+    np.testing.assert_allclose(slope, (merit(step) - merit(-step)) / (2.0 * step), rtol=1.0e-6)
+    np.testing.assert_array_equal(state.position.to_numpy(), initial_positions)
+    np.testing.assert_array_equal(mpm.grid_disp.to_numpy(), initial_displacement)
+
+    monkeypatch.setattr(engine.contact, "maximum_step", lambda *args: 0.5)
+    alpha, backtracks, accepted_merit = engine._line_search(system, True, residual_norm, 0.0, constraint_merit)
+    assert alpha == 0.5 and backtracks == 0
+    assert state.position[0][2] == pytest.approx(1.0e-4)
+    assert accepted_merit < 0.5 * residual_norm**2 + constraint_merit
 
 
 @pytest.mark.parametrize("assembly", ["HashTriplet", "COO"])

@@ -690,11 +690,12 @@ class FEMPMImplicitEngine:
                             self.rhs[row_dof],
                             -value * self.fixed_correction[column_dof],
                         )
-                    if self.fixed[row_dof] != 0:
-                        ti.atomic_add(
-                            self.rhs[column_dof],
-                            -value * self.fixed_correction[row_dof],
-                        )
+                    if ti.static(self.monolithic_hash.matrix_symmetric):
+                        if self.fixed[row_dof] != 0:
+                            ti.atomic_add(
+                                self.rhs[column_dof],
+                                -value * self.fixed_correction[row_dof],
+                            )
                     if self.fixed[row_dof] != 0 or self.fixed[column_dof] != 0:
                         block[3 * row + column] = 0.0
                 self.monolithic_hash.non_diag.blockH[entry] = block
@@ -893,6 +894,10 @@ class FEMPMImplicitEngine:
 
     @ti.kernel
     def _split_direction(self, active_mpm_dof: ti.i32):
+        if ti.static(self.mpm_uses_residual_merit):
+            for dof in range(3 * (self.fem_nodes + active_mpm_dof // self.mpm_dimension)):
+                if self.fixed[dof] != 0:
+                    self.correction[dof] = self.fixed_correction[dof]
         for node, component in ti.ndrange(self.fem_nodes, 3):
             dof = 3 * node + component
             self.fem.state.direction[node][component] = self.correction[dof]
@@ -1063,15 +1068,53 @@ class FEMPMImplicitEngine:
             )
         )
 
+    @ti.kernel
+    def _load_block_direction(self, active_nodes: ti.i32, direction: ti.template()):
+        for node, component in ti.ndrange(active_nodes, 3):
+            direction[node][component] = self.correction[3 * node + component]
+
+    @ti.kernel
+    def _reduce_physical_merit_slope(
+        self, active_dof: ti.i32, product: ti.template(), block_storage: ti.template()
+    ) -> ti.f64:
+        slope = 0.0
+        for dof in range(active_dof):
+            if self.fixed[dof] == 0:
+                # Recover the eliminated fixed-column product J_fc p_c.
+                value = self.physical_rhs[dof] - self.rhs[dof]
+                if ti.static(block_storage):
+                    value += product[dof // 3][dof % 3]
+                else:
+                    value += product[dof]
+                slope -= self.physical_rhs[dof] * value
+        return slope
+
+    def _physical_merit_slope(self, system):
+        matrix = system["matrix"]
+        active_dof = int(system["active_dof"])
+        if self.assemble_type == "HashTriplet":
+            active_nodes = int(system["active_nodes"])
+            self._load_block_direction(active_nodes, matrix.x)
+            matrix.matvec(active_nodes, int(matrix.non_diag.element_pair_num[0]), matrix.x, matrix.Ax)
+            return float(self._reduce_physical_merit_slope(active_dof, matrix.Ax, True))
+        matrix.linear_operator.matvec(self.correction, self.energy_scratch_rhs)
+        return float(self._reduce_physical_merit_slope(active_dof, self.energy_scratch_rhs, False))
+
+    @ti.kernel
+    def _set_fem_residual_trial(self, alpha: ti.f64):
+        for node in range(self.fem_nodes):
+            self.fem.state.trial_position[node] = self.fem.state.position[node] + alpha * self.fem.state.direction[node]
+
     def _residual_merit_line_search(
-        self,
-        system,
-        include_friction,
-        current_residual,
+        self, system, include_friction, current_residual, residual_tolerance, constraint_merit
     ):
         active_mpm_dof = int(system["active_mpm_dof"])
-        current_merit = 0.5 * current_residual * current_residual
-        merit_slope = -current_residual * current_residual
+        current_merit = 0.5 * current_residual**2 + constraint_merit
+        merit_slope = self._physical_merit_slope(system) - 2.0 * constraint_merit
+        if not math.isfinite(merit_slope) or merit_slope >= 0.0:
+            raise NewtonConvergenceError(
+                f"FEMPM IPC Newton correction is not a descent direction for the residual merit (slope={merit_slope:.6e})"
+            )
         mpm_material_step = float(self.mpm.ccd(active_mpm_dof))
         fem_material_step = self._fem_material_step()
         contact_step = self.contact.maximum_step(
@@ -1080,11 +1123,12 @@ class FEMPMImplicitEngine:
             self.mpm.grid_disp,
             self.mpm.incre_resolution,
         )
-        alpha = min(1.0, mpm_material_step, fem_material_step, contact_step)
+        initial_step = min(1.0, mpm_material_step, fem_material_step, contact_step)
+        alpha = initial_step
         for backtrack in range(self.line_search_max_backtracks + 1):
             if alpha < self.line_search_minimum_step:
                 break
-            self.fem.state.set_trial_position(alpha)
+            self._set_fem_residual_trial(alpha)
             self.mpm.update_grid_disp(active_mpm_dof, alpha)
             trial_residual = math.inf
             try:
@@ -1096,25 +1140,28 @@ class FEMPMImplicitEngine:
                     )
             except (FloatingPointError, RuntimeError, ValueError):
                 trial_residual = math.inf
-            trial_merit = 0.5 * trial_residual * trial_residual
-            if math.isfinite(trial_merit) and trial_merit <= (
-                current_merit + self.line_search_c1 * alpha * merit_slope
+            trial_merit = 0.5 * trial_residual**2 + (1.0 - alpha) ** 2 * constraint_merit
+            force_converged = current_residual <= residual_tolerance and trial_residual <= residual_tolerance
+            if math.isfinite(trial_merit) and (
+                trial_merit <= current_merit + self.line_search_c1 * alpha * merit_slope or force_converged
             ):
                 self.fem.state.accept_trial_position()
                 self._accept_mpm_trial(active_mpm_dof)
                 return alpha, backtrack, trial_merit
             alpha *= self.line_search_reduction
         raise NewtonConvergenceError(
-            "FEMPM IPC residual-merit Armijo line search failed; reduce the "
-            "timestep or increase contact/linear solver accuracy"
+            "FEMPM IPC residual-merit Armijo line search failed "
+            f"(initial_step={initial_step:.6e}, final_step={alpha:.6e}, slope={merit_slope:.6e})"
         )
 
-    def _line_search(self, system, include_friction, current_residual):
+    def _line_search(self, system, include_friction, current_residual, residual_tolerance=0.0, constraint_merit=0.0):
         if self.mpm_uses_residual_merit:
             return self._residual_merit_line_search(
                 system,
                 include_friction,
                 current_residual,
+                residual_tolerance,
+                constraint_merit,
             )
         active_mpm_dof = int(system["active_mpm_dof"])
         active_dof = int(system["active_dof"])
@@ -1171,6 +1218,7 @@ class FEMPMImplicitEngine:
 
     def _solve_newton(self, include_friction, verbose):
         initial_norm = getattr(self, "_friction_force_reference", None)
+        constraint_weight = 0.0
         previous_norm = None
         records = []
         converged = False
@@ -1182,6 +1230,13 @@ class FEMPMImplicitEngine:
             if initial_norm is None:
                 initial_norm = max(residual_norm, 1.0)
                 self._friction_force_reference = initial_norm
+            constraint_residual = float(self.constraint_inf_norm[None])
+            if (
+                self.mpm_uses_residual_merit
+                and iteration == 0
+                and float(self.constraint_velocity_inf_norm[None]) > self.correction_velocity_tolerance
+            ):
+                constraint_weight = initial_norm / constraint_residual
             record = {
                 "iteration": iteration,
                 "residual_norm": residual_norm,
@@ -1189,7 +1244,7 @@ class FEMPMImplicitEngine:
                 "residual_tolerance": (self.absolute_tolerance + self.residual_tolerance * initial_norm),
                 "convergence_reason": None,
                 "line_search_step": 0.0,
-                "constraint_residual": float(self.constraint_inf_norm[None]),
+                "constraint_residual": constraint_residual,
                 **self.contact.diagnostics(),
             }
             records.append(record)
@@ -1258,10 +1313,13 @@ class FEMPMImplicitEngine:
                 last_system,
                 include_friction,
                 residual_norm,
+                record["residual_tolerance"] if self.nonassociated_newton else 0.0,
+                0.5 * (constraint_weight * constraint_residual) ** 2,
             )
             record["line_search_step"] = alpha
             record["line_search_backtracks"] = backtracks
-            self.fem.apply_boundary_step(self.dt, 0)
+            if not self.mpm_uses_residual_merit:
+                self.fem.apply_boundary_step(self.dt, 0)
             if verbose:
                 print(f"FEMPM implicit Newton {iteration + 1}: " f"residual={residual_norm:.4e}, alpha={alpha:.4e}")
         if not converged and self.raise_on_nonconvergence:
@@ -1350,7 +1408,8 @@ class FEMPMImplicitEngine:
     def _advance_prepared_substep(self, verbose=True):
         next_time = self.time + self.dt
         self.fem.set_boundary_data_step(next_time, self.step_count + 1)
-        self.fem.apply_boundary_step(self.dt, 0)
+        if not self.mpm_uses_residual_merit:
+            self.fem.apply_boundary_step(self.dt, 0)
         self.fem.update_external_force_step(next_time, self.step_count + 1)
         self.fem.state.build_newmark_prediction(self.dt, self.fem.integration)
         self.contact.begin_step(self.fem.state.position, self.mpm.grid_disp, self.dt)

@@ -393,12 +393,20 @@ the residual merit
 \|\boldsymbol{R}_{free}(\boldsymbol{q})\|^2.
 ```
 
-For an exact Newton direction,
+Armijo uses the actual directional derivative
+$`\boldsymbol{R}_{free}^T(\boldsymbol{J}\boldsymbol{p})_{free}`$,
+including the eliminated prescribed-displacement columns. It equals
+$`-\|\boldsymbol{R}_{free}\|^2`$ for an exact Newton direction.
+When prescribed motion is outstanding, the merit also includes the squared
+Dirichlet mismatch, weighted by the force reference divided by the initial
+mismatch. The weight stays fixed within each Newton solve. A feasible trial
+advances the prescribed FEM and MPM displacement by the same line-search
+fraction $`\alpha`$, leaving $`1-\alpha`$ of the mismatch. Once the motion is
+reached, only the free-force term remains.
 
-```math
-\mathcal{M}'(0)
-=-\|\boldsymbol{R}_{free}\|^2.
-```
+As in IGA--MPM, a feasible nonassociated DP trial can finish the motion
+convergence when both force norms are already within tolerance, without
+requiring further force decrease below that tolerance.
 
 This keeps plastic return mapping inside the same fully coupled contact
 equilibrium without pretending that a non-potential material is hyperelastic.
