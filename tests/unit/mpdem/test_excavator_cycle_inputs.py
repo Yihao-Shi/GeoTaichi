@@ -1,4 +1,4 @@
-"""Input checks independent of the untracked Blender assets."""
+"""Input checks for the excavation-to-truck cycle."""
 
 import csv
 from pathlib import Path
@@ -43,3 +43,12 @@ def test_sample_soil_stays_in_volume_and_above_plane_gap(cycle):
     np.testing.assert_array_equal(points, cycle.sample_soil(mesh, 180, 0.01))
     with pytest.raises(ValueError, match="above the ground clearance"):
         cycle.sample_soil(mesh, 180, 0.5)
+
+
+def test_bundled_scene_contains_complete_motion_and_contact_solids(cycle):
+    scene = Path(cycle.__file__).parent / "inputs"
+    pose = cycle.load_motion(scene / "trajectory.csv")
+    assert np.isfinite(pose(6)[0]).all()
+    for name, faces in (("bucket_contact", 84), ("truck_bed_contact", 92)):
+        assert len(cycle.load_solid(scene / "contact" / f"{name}.obj").faces) == faces
+    assert cycle.load_solid(scene / "contact/soil_initial_volume.obj").volume == pytest.approx(13.5683, abs=1e-4)

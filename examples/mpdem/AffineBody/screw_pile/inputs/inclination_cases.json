@@ -1,0 +1,95 @@
+{
+  "initial_mesh_clearance_m": 0.02,
+  "poses": [
+    {
+      "inclination_deg": 0,
+      "tip_origin_world_m": [
+        0,
+        0,
+        0.02
+      ],
+      "rotation_matrix_local_to_world": [
+        [
+          1.0,
+          0,
+          0.0
+        ],
+        [
+          0,
+          1,
+          0
+        ],
+        [
+          -0.0,
+          0,
+          1.0
+        ]
+      ],
+      "insertion_unit_vector_world": [
+        -0.0,
+        0,
+        -1.0
+      ]
+    },
+    {
+      "inclination_deg": 15,
+      "tip_origin_world_m": [
+        0,
+        0,
+        0.02905867
+      ],
+      "rotation_matrix_local_to_world": [
+        [
+          0.9659258262890683,
+          0,
+          0.25881904510252074
+        ],
+        [
+          0,
+          1,
+          0
+        ],
+        [
+          -0.25881904510252074,
+          0,
+          0.9659258262890683
+        ]
+      ],
+      "insertion_unit_vector_world": [
+        -0.25881904510252074,
+        0,
+        -0.9659258262890683
+      ]
+    },
+    {
+      "inclination_deg": 30,
+      "tip_origin_world_m": [
+        0,
+        0,
+        0.04462674
+      ],
+      "rotation_matrix_local_to_world": [
+        [
+          0.8660254037844387,
+          0,
+          0.49999999999999994
+        ],
+        [
+          0,
+          1,
+          0
+        ],
+        [
+          -0.49999999999999994,
+          0,
+          0.8660254037844387
+        ]
+      ],
+      "insertion_unit_vector_world": [
+        -0.49999999999999994,
+        0,
+        -0.8660254037844387
+      ]
+    }
+  ]
+}

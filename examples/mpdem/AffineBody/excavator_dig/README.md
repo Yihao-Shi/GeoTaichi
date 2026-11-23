@@ -78,20 +78,26 @@ not establish temporal convergence of an excavation result.
 The accepted step is retained for the next attempt. Every eighth accepted step
 can increase it by 20% if that step needed no retry, up to the nominal maximum.
 
-## Six-second excavation-to-truck smoke run
+## Six-second excavation-to-truck cycle
 
-`excavator_cycle.py` takes the authored `trajectory.csv` and three contact OBJ
-files from `research/demo/excavator` (or `--scene-dir`). That asset directory
-is local/ignored in Git; copy it to another machine before running there.
+`excavator_cycle.py` reads `inputs/trajectory.csv` and the original bucket,
+truck bed, and soil volume meshes under `inputs/contact/`. For custom assets,
+pass `--scene-dir` with the same layout.
 The earlier example reached the end of its motion without retaining soil in
 the raised bucket. This run reports numerical completion separately from
 successful transport.
 
 ```sh
 python -u examples/mpdem/AffineBody/excavator_dig/excavator_cycle.py \
-  --arch cpu --particles 180 --grid-size 0.5 --dt 0.01 \
-  --output-dir /private/tmp/excavator-cycle-results
+  --resolution low --arch cpu --output-dir /tmp/excavator-low
+python -u examples/mpdem/AffineBody/excavator_dig/excavator_cycle.py \
+  --resolution full --arch gpu --output-dir /tmp/excavator-full
 ```
+
+| Profile | Soil particles | Grid (m) | Nominal step (s) | Mixed pair capacity |
+| --- | ---: | ---: | ---: | ---: |
+| `low` | 180 | 0.5 | 0.010 | 2,048 |
+| `full` | 18,000 | 0.125 | 0.005 | 8,192 |
 
 Use a new output directory. `--stop-time` can shorten a setup probe; only a
 run reaching 6 s covers cut, curl, lift, swing, dump and retract. The pilot
@@ -119,9 +125,8 @@ carried above the initial pile at the end of lift that are subsequently
 outside both cavities. `failure.json` is written for an aborted solve;
 missing `summary.json` is not evidence of completion.
 
-At 180 equal-volume points, one particle represents about 128 kg, so this is
-not a quantitative truck-load prediction. For a remote pilot, change
-`--particles` to 10,000 and then 20,000, refine `--grid-size` and `--dt`, and
-size `--max-point-triangle-pairs` from contact/CCD high-water marks and device
-memory. Run each at its intended backend; the local CPU pilot does not
-validate CUDA, spatial/time convergence, or calibrated soil behavior.
+At 180 equal-volume points, one particle represents about 128 kg. The low
+profile completed the 6 s cycle with one particle retained in the truck bed.
+The full profile is a remote-scale input. Check contact/CCD high-water marks
+against `--max-point-triangle-pairs` and device memory. The profiles accept
+individual overrides via `--particles`, `--grid-size`, and `--dt`.

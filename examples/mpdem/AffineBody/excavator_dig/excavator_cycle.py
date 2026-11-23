@@ -1,4 +1,4 @@
-"""Coarse Direct ULMPM–ABD smoke run of the six-second excavator demo."""
+"""Direct ULMPM–ABD excavation-to-truck cycle at two resolutions."""
 
 import argparse
 import csv
@@ -17,6 +17,10 @@ from shapely.ops import polygonize
 from excavator_dig import CONTRACT, ROOT
 
 PHASE_ENDS = {"lift": 2.125, "swing": 3.75, "dump": 4.875, "retract": 6.0}
+PROFILES = {
+    "low": dict(particles=180, grid_size=0.5, dt=0.01, max_point_triangle_pairs=2048),
+    "full": dict(particles=18000, grid_size=0.125, dt=0.005, max_point_triangle_pairs=8192),
+}
 
 
 def load_solid(path):
@@ -74,15 +78,19 @@ def sample_soil(mesh, count, minimum_z):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--scene-dir", type=Path, default=ROOT / "research/demo/excavator")
+    parser.add_argument("--scene-dir", type=Path, default=Path(__file__).resolve().parent / "inputs")
+    parser.add_argument("--resolution", choices=PROFILES, default="low")
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--arch", choices=("cpu", "gpu"), default="cpu")
-    parser.add_argument("--particles", type=int, default=180)
-    parser.add_argument("--grid-size", type=float, default=0.5)
-    parser.add_argument("--dt", type=float, default=0.01)
+    parser.add_argument("--particles", type=int)
+    parser.add_argument("--grid-size", type=float)
+    parser.add_argument("--dt", type=float)
     parser.add_argument("--stop-time", type=float, default=6.0)
-    parser.add_argument("--max-point-triangle-pairs", type=int, default=2048)
+    parser.add_argument("--max-point-triangle-pairs", type=int)
     args = parser.parse_args()
+    for key, value in PROFILES[args.resolution].items():
+        if getattr(args, key) is None:
+            setattr(args, key, value)
     if not (
         args.particles > 0
         and args.grid_size > 0
@@ -258,6 +266,7 @@ def main():
         json.dumps(
             dict(
                 source=str(args.scene_dir.resolve()),
+                resolution=args.resolution,
                 backend=str(ti.lang.impl.current_cfg().arch),
                 precision="float64",
                 particles=len(points),
