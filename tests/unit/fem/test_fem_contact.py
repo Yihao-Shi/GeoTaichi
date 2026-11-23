@@ -410,23 +410,25 @@ def test_contact_coordination_preallocates_fixed_device_buffers():
         assembler._require_device_friction_capacity(0, 11)
 
 
-def test_contact_explicit_pair_capacities_override_coordination_estimates():
+def test_contact_common_coordination_and_specific_budget():
     assembler = FEMContactAssembler(
         two_triangle_mesh(),
         ClothARAP(1.0e3, thickness=0.01),
-        FEMContact(
+        FEMContact.create(
             "BarrierIPC",
             dhat=0.1,
             dmin=0.01,
-            point_triangle_coordination_number=1.0,
-            edge_edge_coordination_number=1.0,
-            max_point_triangle_pairs=11,
-            max_edge_edge_pairs=13,
+            contact_coordination_number=5.25,
+            edge_edge_coordination_number=6.25,
         ),
     )
 
     assert assembler.max_point_triangle_pairs == 11
     assert assembler.max_edge_edge_pairs == 13
+    pair = assembler.contact.add_property(0, 0, contact_coordination_number=2.5)
+    assert pair.point_triangle_coordination_number == pair.edge_edge_coordination_number == 2.5
+    with pytest.raises(TypeError, match="max_point_triangle_pairs"):
+        FEMContact.create("BarrierIPC", max_point_triangle_pairs=12)
 
 
 def test_cloth_engine_registers_stitches_with_contact_culling():

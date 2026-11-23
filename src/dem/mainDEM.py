@@ -1,3 +1,4 @@
+from src.contact_detection.Capacity import reject_contact_pair_limits, validate_contact_coordination_number
 from src.dem.DEMBase import AffineBodySolver
 from src.dem.DEMBase import Solver
 from src.utils.errors import ConfigurationError, RecordingError, SimulationStateError
@@ -244,20 +245,19 @@ class DEM(SolverDiagnosticsMixin):
             self.sims.scheme == "LSMPM" and self.sims.lsmpm_soft_rigid_contact == "IPC"
         )
         if affine_ipc:
-            # Backwards-compatible defaults preserve the former primitive
-            # buffer scale.  Production IPC scenes should set these two
-            # topology-level capacities explicitly.
-            body_coordination = self.sims.body_coordination_number
-            if isinstance(body_coordination, (list, tuple, np.ndarray)):
-                body_coordination = max(body_coordination)
-            default_pt = 4 * self.sims.max_surface_node_num * int(body_coordination)
-            default_ee = 12 * self.sims.max_surface_node_num * int(body_coordination)
-            self.sims.set_affine_primitive_pair_capacity(
-                DictIO.get_alternative(memory, "max_point_triangle_pairs", default_pt),
-                DictIO.get_alternative(memory, "max_edge_edge_pairs", default_ee),
+            reject_contact_pair_limits(memory, "max_point_triangle_pairs", "max_edge_edge_pairs")
+            coordination = DictIO.get_alternative(memory, "contact_coordination_number", None)
+            if coordination is not None:
+                coordination = validate_contact_coordination_number(coordination)
+            pt_default = self.sims.point_triangle_coordination_number if coordination is None else coordination
+            ee_default = self.sims.edge_edge_coordination_number if coordination is None else coordination
+            self.sims.point_triangle_coordination_number = validate_contact_coordination_number(
+                DictIO.get_alternative(memory, "point_triangle_coordination_number", pt_default),
+                "point_triangle_coordination_number",
             )
-            self.sims.set_affine_contact_block_capacity(
-                DictIO.get_alternative(memory, "affine_contact_block_capacity", 256)
+            self.sims.edge_edge_coordination_number = validate_contact_coordination_number(
+                DictIO.get_alternative(memory, "edge_edge_coordination_number", ee_default),
+                "edge_edge_coordination_number",
             )
         self.sims.set_wall_coordination_number(
             DictIO.get_alternative(memory, "wall_coordination_number", self.sims.max_wall_num)
@@ -355,16 +355,12 @@ class DEM(SolverDiagnosticsMixin):
             entries.extend(
                 (
                     (
-                        "Maximum Point-Triangle Pairs",
-                        self.sims.max_point_triangle_pairs,
+                        "Point-Triangle Coordination Number",
+                        self.sims.point_triangle_coordination_number,
                     ),
                     (
-                        "Maximum Edge-Edge Pairs",
-                        self.sims.max_edge_edge_pairs,
-                    ),
-                    (
-                        "Affine Contact Block Capacity",
-                        self.sims.affine_contact_block_capacity,
+                        "Edge-Edge Coordination Number",
+                        self.sims.edge_edge_coordination_number,
                     ),
                 )
             )

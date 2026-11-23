@@ -912,20 +912,18 @@ class FEMPMIPCAssembler:
             self._compute_ccd_3d(raw_count, self.candidate_field())
         return max(0.0, min(1.0, float(self.minimum_step[None])))
 
+    def _raw_blocks_per_contact(self):
+        stencil_blocks = int(self.mpm.shape_func.max_node_per_particle) + self.fem_site_count
+        return stencil_blocks * (stencil_blocks - 1)
+
     def contact_block_capacity(self, candidate_count):
-        support = int(self.mpm.shape_func.max_node_per_particle)
         contacts = int(candidate_count) + int(self.friction_count)
-        return max(
-            1,
-            contacts * (support + self.fem_site_count) * (support + self.fem_site_count),
-        )
+        return max(1, contacts * self._raw_blocks_per_contact())
 
     def configured_contact_block_capacity(self):
         candidates = self.max_point_triangle_pairs if self.dimension == 3 else self.max_point_edge_pairs
         contributions = 2 if self.activate_friction else 1
-        support = int(self.mpm.shape_func.max_node_per_particle)
-        stencil_blocks = support + self.fem_site_count
-        return max(1, contributions * candidates * stencil_blocks**2)
+        return max(1, contributions * candidates * self._raw_blocks_per_contact())
 
     def diagnostics(self):
         minimum = float(self.minimum_distance[None])

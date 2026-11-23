@@ -80,7 +80,7 @@ can increase it by 20% if that step needed no retry, up to the nominal maximum.
 
 ## Six-second excavation-to-truck cycle
 
-`excavator_cycle.py` reads `inputs/trajectory.csv` and the original bucket,
+`excavator_cycle.py` reads `inputs/trajectory.csv` and the demo's bucket,
 truck bed, and soil volume meshes under `inputs/contact/`. For custom assets,
 pass `--scene-dir` with the same layout.
 The earlier example reached the end of its motion without retaining soil in
@@ -96,12 +96,13 @@ python -u examples/mpdem/AffineBody/excavator_dig/excavator_cycle.py \
 
 | Profile | Soil particles | Grid (m) | Nominal step (s) | Mixed pair capacity |
 | --- | ---: | ---: | ---: | ---: |
-| `low` | 180 | 0.5 | 0.010 | 2,048 |
-| `full` | 18,000 | 0.125 | 0.005 | 8,192 |
+| `low` | 180 | 0.5 | 0.010 | 256 |
+| `full` | 64,000 | 0.125 | 0.005 | 256 |
 
 Use a new output directory. `--stop-time` can shorten a setup probe; only a
 run reaching 6 s covers cut, curl, lift, swing, dump and retract. The pilot
-samples equal-volume MPM points inside the original 13.57 m³ pile. The
+samples equal-volume MPM points inside the enlarged 48.20 m³ pile (6.40 × 4.90 m
+footprint, 4.81 m high). The initial bucket pose clears the new pile. The
 original contact meshes (84 bucket and 92 bed triangles) are kept intact;
 there are no ABD bodies for the tracks, links, cylinders or truck chassis.
 The soil has an open footprint and a fixed ground plane at `z=0`.
@@ -125,8 +126,15 @@ carried above the initial pile at the end of lift that are subsequently
 outside both cavities. `failure.json` is written for an aborted solve;
 missing `summary.json` is not evidence of completion.
 
-At 180 equal-volume points, one particle represents about 128 kg. The low
-profile completed the 6 s cycle with one particle retained in the truck bed.
-The full profile is a remote-scale input. Check contact/CCD high-water marks
-against `--max-point-triangle-pairs` and device memory. The profiles accept
-individual overrides via `--particles`, `--grid-size`, and `--dt`.
+At 180 equal-volume points, one particle represents about 455 kg. The full
+profile keeps approximately the original sampling density in the enlarged pile
+and is a remote-scale input. The pair capacity bounds the broad-phase and swept
+CCD candidate buffers, not just actual contacts. With the 64,000 soil points
+held at their initial positions, the BVH needed 1,548 candidates at the 0.125 s
+target pose; this is a geometry probe, not a time-stepped result.
+Both profiles default to `--contact-coordination-number` of `256 / 176`,
+where 176 is the combined bucket and bed triangle count. For the bundled
+geometry this gives 256 mixed pairs. The 1,548-candidate probe corresponds to a
+coordination number of about 8.8 for that pose. A run-time overflow reports the
+required capacity. The profiles also accept `--particles`, `--grid-size`, and
+`--dt`.

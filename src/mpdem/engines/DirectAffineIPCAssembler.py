@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import taichi as ti
 
+from src.contact_detection.Capacity import contact_pair_capacity
 from src.fempm.contact.IPCAssembler import FEMPMIPCAssembler
 from src.physics_model.contact_model.ipc.ContactDistance import point_triangle_distance_grad_hess
 from src.physics_model.contact_model.ipc.Utilities import (
@@ -37,8 +38,10 @@ class DirectAffineIPCAssembler(FEMPMIPCAssembler):
             search = str(getattr(simulation, "search", "BVH"))
         contact_simulation = SimpleNamespace(
             search=search,
-            max_point_triangle_pairs=int(simulation.max_point_triangle_pairs),
-            max_point_edge_pairs=max(int(getattr(simulation, "max_point_edge_pairs", 1)), 1),
+            max_point_triangle_pairs=contact_pair_capacity(
+                len(affine.faces_np), simulation.contact_coordination_number
+            ),
+            max_point_edge_pairs=1,
         )
         super().__init__(
             SimpleNamespace(
@@ -238,18 +241,11 @@ class DirectAffineIPCAssembler(FEMPMIPCAssembler):
                             * hessian,
                         )
 
-    def contact_block_capacity(self, candidate_count):
-        support = int(self.mpm.shape_func.max_node_per_particle) + 12
-        contacts = int(candidate_count) + int(self.friction_count)
-        return max(1, contacts * support * support)
-
-    def configured_contact_block_capacity(self):
-        support = int(self.mpm.shape_func.max_node_per_particle) + 12
-        contributions = 2 if self.activate_friction else 1
-        return max(
-            1,
-            contributions * int(self.max_point_triangle_pairs) * support * support,
-        )
+    def _raw_blocks_per_contact(self):
+        support = int(self.mpm.shape_func.max_node_per_particle)
+        # The three triangle vertices all map to the same four controls.
+        # All 3x3 site combinations on each equal control bypass raw storage.
+        return (support + 3 * 4) ** 2 - support - 4 * 3**2
 
     @ti.func
     def _contact_adjoint(self, stencil, particle):

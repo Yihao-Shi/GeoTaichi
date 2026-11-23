@@ -48,7 +48,7 @@
   "capacities": {
     "safety_margin": 2.0,
     "estimates": {"bodies": 4, "joints": 3, "vertices": 32, "faces": 48, "controls": 16},
-    "allocations": {"max_affine_body_number": 4, "max_point_triangle_pairs": 4096, "max_edge_edge_pairs": 8192, "affine_contact_block_capacity": 4096}
+    "allocations": {"max_affine_body_number": 4, "point_triangle_coordination_number": 85.33333333333333, "edge_edge_coordination_number": 170.66666666666666}
   },
   "outputs": {"path": "OutputData/robot_grasp", "fields": ["VTU body surfaces", "NPZ affine state", "trajectory.csv", "summary.json", "validation-evidence.json"], "restart": false},
   "validation": {

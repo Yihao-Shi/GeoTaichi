@@ -164,7 +164,9 @@ def _implicit_system(
         log=False,
     )
     coupling.add_surface()
-    coupling.memory_allocate({})
+    coupling.memory_allocate({"contact_coordination_number": 16.5})
+    assert coupling.sims.max_point_triangle_pairs == int(np.ceil(len(coupling.surface_faces) * 16.5))
+    assert coupling.sims.max_point_edge_pairs == 1
     coupling.choose_contact_model(
         contact_model,
         dhat=0.05,

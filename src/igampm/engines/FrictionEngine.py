@@ -104,13 +104,10 @@ class FrictionEngineMixin:
             matrix_contact_id = contact_id
             if ti.static(self.compact_contact_slots):
                 matrix_contact_id = self.friction_contact_slots[contact_id] - 1
-            slot = matrix_contact_id * ti.static(self.contact_pair_capacity) + local_i * stencil + local_j
             if (
                 0 <= contact_id < ti.static(self.contact_pair_count)
                 and 0 <= local_i < stencil
                 and 0 <= local_j < stencil
-                and 0 <= slot
-                and slot < self.friction_hash_matrix.non_diag.blockI.shape[0]
                 and block_i >= 0
                 and block_j >= 0
             ):
@@ -122,13 +119,17 @@ class FrictionEngineMixin:
                                 block[row, column],
                             )
                 else:
-                    self.friction_hash_matrix.non_diag.blockI[slot] = block_i
-                    self.friction_hash_matrix.non_diag.blockJ[slot] = block_j
-                    for row in ti.static(range(config.DIM)):
-                        for column in ti.static(range(config.DIM)):
-                            self.friction_hash_matrix.non_diag.blockH[slot][row * config.DIM + column] = block[
-                                row, column
-                            ]
+                    slot = self._contact_raw_block_slot(matrix_contact_id, local_i, local_j)
+                    if local_i != local_j and 0 <= slot < self.friction_hash_matrix.non_diag.blockI.shape[0]:
+                        self.friction_hash_matrix.non_diag.blockI[slot] = block_i
+                        self.friction_hash_matrix.non_diag.blockJ[slot] = block_j
+                        for row in ti.static(range(config.DIM)):
+                            for column in ti.static(range(config.DIM)):
+                                self.friction_hash_matrix.non_diag.blockH[slot][row * config.DIM + column] = block[
+                                    row, column
+                                ]
+                    else:
+                        self.friction_hash_matrix.overflow[0] = 1
             else:
                 self.friction_hash_matrix.overflow[0] = 1
         else:
@@ -225,7 +226,7 @@ class FrictionEngineMixin:
         basis: ti.template(),
     ):
         for candidate in range(self.contact_candidate_count[surface_id]):
-            c = self.contact_candidates[surface_id, candidate]
+            c = self.contact_candidates[self.contact_candidate_offset[surface_id] + candidate]
             if self.contacts[c].active:
                 sample_id = self.contacts[c].sample_id
                 position = self.mpm.p_temp[sample_id]
@@ -270,7 +271,7 @@ class FrictionEngineMixin:
         basis: ti.template(),
     ):
         for candidate in range(self.contact_candidate_count[surface_id]):
-            c = self.contact_candidates[surface_id, candidate]
+            c = self.contact_candidates[self.contact_candidate_offset[surface_id] + candidate]
             if self.contacts[c].active:
                 sample_id = self.contacts[c].sample_id
                 position = self.mpm.p_temp[sample_id]
@@ -598,7 +599,7 @@ class FrictionEngineMixin:
         """Exact curve-contact residual and complete nonsymmetric Jacobian."""
         iga_nodes = ti.static(self.iga.degree_of_freedom // config.DIM)
         for candidate in range(self.contact_candidate_count[surface_id]):
-            c = self.contact_candidates[surface_id, candidate]
+            c = self.contact_candidates[self.contact_candidate_offset[surface_id] + candidate]
             if self.contacts[c].active:
                 sample_id = self.contacts[c].sample_id
                 particle_id = self.contacts[c].particle_id
@@ -931,7 +932,7 @@ class FrictionEngineMixin:
         """Exact surface-contact residual and nonsymmetric IFT Jacobian."""
         iga_nodes = ti.static(self.iga.degree_of_freedom // config.DIM)
         for candidate in range(self.contact_candidate_count[surface_id]):
-            c = self.contact_candidates[surface_id, candidate]
+            c = self.contact_candidates[self.contact_candidate_offset[surface_id] + candidate]
             if self.contacts[c].active:
                 sample_id = self.contacts[c].sample_id
                 particle_id = self.contacts[c].particle_id

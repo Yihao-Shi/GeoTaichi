@@ -217,6 +217,9 @@ def main():
         + arguments.affine_count * affine_object.mesh.vertices.shape[0]
         + plate_count * plate_object.mesh.vertices.shape[0]
     )
+    affine_face_count = arguments.affine_count * len(affine_object.mesh.faces) + plate_count * len(
+        plate_object.mesh.faces
+    )
     dem.memory_allocate(
         memory={
             "max_material_number": 2,
@@ -232,8 +235,8 @@ def main():
             "verlet_distance_multiplier": [0.15, 0.15],
             "point_coordination_number": [24, 12],
             "compaction_ratio": [1.0, 1.0],
-            "max_point_triangle_pairs": max(4096, total_affine * total_affine * 128),
-            "max_edge_edge_pairs": max(8192, total_affine * total_affine * 256),
+            "point_triangle_coordination_number": max(4096, total_affine * total_affine * 128) / (affine_face_count),
+            "edge_edge_coordination_number": max(8192, total_affine * total_affine * 256) / (affine_face_count),
         },
         log=True,
     )

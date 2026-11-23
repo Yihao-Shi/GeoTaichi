@@ -84,8 +84,8 @@ parser.add_argument("--linear-relative-tolerance", type=float, default=1.0e-5)
 parser.add_argument("--newton-velocity-tolerance", type=float, default=1.0e-2)
 parser.add_argument("--max-iterations", type=positive_integer, default=250)
 parser.add_argument("--broad-phase", default="BVH", choices=("BVH", "LinkedCell"))
-parser.add_argument("--max-point-triangle-pairs", type=positive_integer, default=None)
-parser.add_argument("--max-edge-edge-pairs", type=positive_integer, default=None)
+parser.add_argument("--point-triangle-coordination-number", type=float, default=32.0)
+parser.add_argument("--edge-edge-coordination-number", type=float, default=128.0)
 parser.add_argument(
     "--output-dir",
     default=str(CASE_DIR / "OutputData" / "implicit_cloth_twist"),
@@ -185,8 +185,8 @@ if arguments.contact:
         epsv=1.0e-3,
         ccd_safety=0.9,
         project_pd=arguments.contact_project_pd,
-        max_point_triangle_pairs=arguments.max_point_triangle_pairs,
-        max_edge_edge_pairs=arguments.max_edge_edge_pairs,
+        point_triangle_coordination_number=arguments.point_triangle_coordination_number,
+        edge_edge_coordination_number=arguments.edge_edge_coordination_number,
     )
 cloth.set_solver(
     quasi_static=False,

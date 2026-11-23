@@ -928,6 +928,20 @@ Set `scheme="AffineBody"` and configure nonlinear options with
 gradient, Hessian, CCD, line search, and Krylov paths. Assembly can be
 `"MatrixFree"`, `"COO"`, or `"HashTriplet"` depending on the selected solver.
 
+AffineBody mesh IPC sizes the global PT and EE buffers from the assembled
+surface triangle count. Each capacity is `max(1, ceil(triangles * coordination))`.
+Set `point_triangle_coordination_number` and `edge_edge_coordination_number`
+(defaults 32 and 128), or use `contact_coordination_number` for both. The LSMPM
+Soft–Affine mesh candidate search also uses the affine triangle count and PT
+coordination number. These settings are separate from body-level coordination.
+
+AffineBody matrix capacity is derived from the assembly stencils; remove the
+old `affine_contact_block_capacity` allocation key. Lagged mesh friction in
+HashTriplet groups contacts by body pair and reserves at most 56 non-diagonal
+blocks per pair. Fully implicit friction writes at most 216 PT or 224 EE raw
+non-diagonal blocks per contact. COO also stores the diagonal contributions.
+The body-pair barrier reserves its Hessian and projection workspace separately.
+
 IPC initial states must be strictly feasible: body-body and body-wall gaps
 must be positive and inside the configured barrier activation distance only
 when contact is intended.

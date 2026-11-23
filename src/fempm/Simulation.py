@@ -1,6 +1,11 @@
 """Shared configuration state for explicit and implicit FEM--MPM coupling."""
 
 from __future__ import annotations
+from src.contact_detection.Capacity import (
+    contact_pair_capacity,
+    reject_contact_pair_limits,
+    validate_contact_coordination_number,
+)
 from src.utils.errors import SimulationStateError
 from src.contact_detection.bounding_volume_hierarchy.Utilities import validate_bvh_rebuild_interval
 
@@ -110,23 +115,26 @@ class FEMPMSimulation:
         # MPM reserves material id 0 and exposes user materials as 1..N.
         self.max_mpm_material_num = int(memory.get("max_mpm_material_number", int(mpm_sims.max_material_num) + 1))
         self.max_fem_body_num = int(max(body_count, 1))
-        self.contact_coordination_number = max(int(memory.get("contact_coordination_number", 16)), 1)
+        reject_contact_pair_limits(memory, "max_point_triangle_pairs", "max_point_edge_pairs", "max_edge_edge_pairs")
+        implicit = mpm_sims.solver_type == "Implicit"
+        coordination = memory.get("contact_coordination_number", 16)
+        if implicit:
+            reject_contact_pair_limits(memory, "max_contact_pairs")
+            self.contact_coordination_number = validate_contact_coordination_number(coordination)
+        else:
+            self.contact_coordination_number = max(int(coordination), 1)
         self.compaction_ratio = float(memory.get("compaction_ratio", 1.0))
         if not 0.0 < self.compaction_ratio <= 1.0:
             raise ValueError("FEMPM compaction_ratio must be in (0, 1]")
-        potential = self.max_particle_num * self.contact_coordination_number
-        self.max_contact_pairs = int(
-            memory.get(
-                "max_contact_pairs",
-                max(1, int(np.ceil(self.compaction_ratio * potential))),
+        if implicit:
+            self.max_contact_pairs = contact_pair_capacity(face_count, self.contact_coordination_number)
+        else:
+            potential = self.max_particle_num * self.contact_coordination_number
+            self.max_contact_pairs = int(
+                memory.get("max_contact_pairs", max(1, math.ceil(self.compaction_ratio * potential)))
             )
-        )
-        # Implicit IPC uses a point--triangle stencil in 3D and a point--edge
-        # stencil in 2D.  Keep both capacities explicit so broad phase,
-        # culling, friction history and sparse matrices can be allocated once
-        # at construction instead of rebuilding Taichi fields after a search.
-        self.max_point_triangle_pairs = int(memory.get("max_point_triangle_pairs", self.max_contact_pairs))
-        self.max_point_edge_pairs = int(memory.get("max_point_edge_pairs", self.max_contact_pairs))
+        self.max_point_triangle_pairs = self.max_contact_pairs if implicit and self.dimension == 3 else 1
+        self.max_point_edge_pairs = self.max_contact_pairs if implicit and self.dimension == 2 else 1
         self.max_facet_cell_pairs = int(
             memory.get(
                 "max_facet_cell_pairs",

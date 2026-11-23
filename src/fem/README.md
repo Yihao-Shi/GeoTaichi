@@ -798,12 +798,12 @@ physical nodal displacement, and the first force reference persists across the
 attempted step's friction refreshes. A small nonzero force does not bypass the
 updated correction probe.
 
-Contact candidates and their PT/EE Hessian blocks are allocated once when the
-assembler is created. By default their capacities are the triangle count
-multiplied by the two coordination numbers above. Use
-`max_point_triangle_pairs` and `max_edge_edge_pairs` to override either
-estimate explicitly. A capacity underestimate raises an error asking for a
-larger value; contact assembly never resizes these fields at runtime.
+The assembler allocates separate global PT and EE pair buffers. Each capacity
+is the selected surface triangle count times its coordination number, rounded
+up with a minimum of one slot. Set `contact_coordination_number` for both kinds
+or set `point_triangle_coordination_number` and `edge_edge_coordination_number`
+individually. Their defaults are 32 and 128. Capacity overflow reports which
+coordination number to increase.
 
 Multiple disconnected FEM bodies may be stored in one compatible mesh block.
 Pass one `cell_body_ids` value per cell, or let connected components define

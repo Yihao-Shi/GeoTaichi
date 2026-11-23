@@ -1,3 +1,4 @@
+from src.contact_detection.Capacity import reject_contact_pair_limits, validate_contact_coordination_number
 from src.utils.RuntimeHook import normalize_callbacks
 from src.utils.errors import SimulationStateError
 from types import SimpleNamespace
@@ -193,15 +194,13 @@ class DEMPM(SolverDiagnosticsMixin):
         self.sims.set_particle_contact_list_capacity(DictIO.get_alternative(memory, "max_particle_contact_pairs", 0))
         self.sims.set_wall_contact_list_capacity(DictIO.get_alternative(memory, "max_wall_contact_pairs", 0))
         if self.is_direct_mpm_affine_ipc():
-            particles = int(getattr(self.mpm.direct_bodies, "particle_counter", 0))
-            default_pairs = max(1, particles * int(self.sims.body_coordination_number))
-            self.sims.max_point_triangle_pairs = int(
-                DictIO.get_alternative(memory, "max_point_triangle_pairs", default_pairs)
+            reject_contact_pair_limits(
+                memory, "max_point_triangle_pairs", "max_point_edge_pairs", "max_edge_edge_pairs"
             )
-            self.sims.max_point_edge_pairs = int(DictIO.get_alternative(memory, "max_point_edge_pairs", 1))
+            self.sims.contact_coordination_number = validate_contact_coordination_number(
+                DictIO.get_alternative(memory, "contact_coordination_number", 64.0)
+            )
             self.sims.contact_search = str(self.dem.sims.search)
-            if self.sims.max_point_triangle_pairs <= 0 or self.sims.max_point_edge_pairs <= 0:
-                raise ValueError("Direct MPM--AffineBody IPC pair capacities must be positive")
         self.sims.validate_coupling_configuration(self.mpm.sims, self.dem.sims)
         if log:
             self.print_memory_info()

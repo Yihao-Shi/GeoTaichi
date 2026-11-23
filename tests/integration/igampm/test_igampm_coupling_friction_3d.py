@@ -189,7 +189,7 @@ def test_compact_contact_slots_preserve_normal_and_friction(taichi_runtime, tmp_
             epsv=1.0e-3,
             activate_friction=True,
             compact_contact_slots=compact,
-            **({"barrier_nnz": 289, "friction_nnz": 289} if compact else {}),
+            **({"barrier_nnz": 272, "friction_nnz": 272} if compact else {}),
         )
         engine = coupling.build()
         engine.initialize_friction()
@@ -206,9 +206,9 @@ def test_compact_contact_slots_preserve_normal_and_friction(taichi_runtime, tmp_
         assert np.max(np.abs(difference.data), initial=0.0) < 1.0e-7
     np.testing.assert_allclose(full[0].barrier_grad.to_numpy(), compact[0].barrier_grad.to_numpy())
     np.testing.assert_allclose(full[0].friction_grad.to_numpy(), compact[0].friction_grad.to_numpy())
-    assert int(compact[0].barrier_hash_matrix.raw_non_diag_count[0]) == 289
-    assert int(compact[0].friction_hash_matrix.raw_non_diag_count[0]) == 289
-    assert int(full[0].barrier_hash_matrix.raw_non_diag_count[0]) == 12 * 289
+    assert int(compact[0].barrier_hash_matrix.raw_non_diag_count[0]) == 17 * 16
+    assert int(compact[0].friction_hash_matrix.raw_non_diag_count[0]) == 17 * 16
+    assert int(full[0].barrier_hash_matrix.raw_non_diag_count[0]) == 12 * 17 * 16
     # A second active pair exceeds the one-pair buffer instead of being dropped.
     active = compact[0].contacts.active.to_numpy()
     active[0] = 1

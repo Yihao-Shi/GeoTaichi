@@ -1825,14 +1825,18 @@ long-horizon task-specific validation. Rest shape, density, contact thickness,
 barrier stiffness and friction regularization are not returned parameter VJPs
 of this trajectory interface. Loss seeds currently act on terminal state.
 
-Mixed raw assembly capacity remains bounded by
-`(barrier candidates + friction contacts) * (n + 12)**2`, where `n` is the
-maximum MPM support size. The `12` counts three triangle vertices scattering
-to four ABD control vectors each. A single body has four distinct control
-vectors, but their repeated contributions still occupy raw triplets before
-reduction; `(n + 4)**2` is not a safe raw-buffer capacity. With friction the
-configured bound is `2 * max_point_triangle_pairs * (n + 12)**2`. It is safe
-provided the candidate list fits its separately checked configured capacity.
+Direct MPM–AffineBody IPC allocates a global point–triangle candidate buffer
+with `max(1, ceil(affine_triangles * contact_coordination_number))` slots.
+Set the coordination number in coupling `memory_allocate`, where it defaults
+to 64. The same buffer budget applies to current and swept queries.
+
+Each mixed barrier or friction term reserves at most
+`(n + 12)**2 - n - 36` raw non-diagonal blocks, where `n` is the maximum MPM
+support size. The three triangle vertices each scatter to the same four ABD
+controls; the `n` grid diagonal terms and `4 * 3**2` equal-control terms
+bypass raw storage. The other repeated contributions still occupy raw slots
+until reduction. With friction the configured bound is twice the PT candidate
+capacity times this per-term bound.
 
 ### 16. Synchronized state and recorded balances
 

@@ -205,9 +205,8 @@
     },
     "allocations": {
       "max_affine_body_number": 2,
-      "max_point_triangle_pairs": 16384,
-      "max_edge_edge_pairs": 4096,
-      "affine_contact_block_capacity": 2048,
+      "point_triangle_coordination_number": 204.8,
+      "edge_edge_coordination_number": 51.2,
       "max_plane_number": 1
     }
   },

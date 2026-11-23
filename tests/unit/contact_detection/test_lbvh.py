@@ -529,8 +529,21 @@ def test_abd_rebuilds_topology_and_preserves_current_and_swept_candidates(taichi
     face_body.from_numpy(np.arange(2, dtype=np.int32))
     edge_body.from_numpy(body_ids)
     broad = AffineBodyBoundingVolumeHierarchy(
-        SimpleNamespace(search="BVH", max_point_triangle_pairs=128, max_edge_edge_pairs=128), 6, 2, 6, 0.1
+        SimpleNamespace(search="BVH", point_triangle_coordination_number=1.25, edge_edge_coordination_number=2.25),
+        6,
+        2,
+        6,
+        0.1,
     )
+    assert broad.candidate_capacity == 3
+    assert broad.edge_candidate_capacity == 5
+    with pytest.raises(RuntimeError, match="need 4, allocated 3"):
+        broad._require_candidate_capacity(4)
+    with pytest.raises(RuntimeError, match="need 6, allocated 5"):
+        broad._require_edge_candidate_capacity(6)
+    # Use enough pairs for the repeated search below.
+    broad._allocate_candidates(128)
+    broad._allocate_edge_candidates(128)
     original_build = broad.lbvh.build
     builds = []
 

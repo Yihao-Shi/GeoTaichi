@@ -1,8 +1,10 @@
 """Configuration objects for FEM contact."""
 
 from __future__ import annotations
-from dataclasses import dataclass, field
+from dataclasses import InitVar, dataclass, field
 import numpy as np
+
+from src.contact_detection.Capacity import validate_contact_coordination_number
 
 
 @dataclass
@@ -62,14 +64,13 @@ class FEMContact:
     friction_iterations: int = 1
     friction_max_iterations: int = 50
     friction_tolerance: float = 1.0e-7
-    point_triangle_coordination_number: float = 32.0
-    edge_edge_coordination_number: float = 128.0
-    max_point_triangle_pairs: int | None = None
-    max_edge_edge_pairs: int | None = None
+    point_triangle_coordination_number: float | None = None
+    edge_edge_coordination_number: float | None = None
     body_pair: tuple | None = None
     pair_contacts: list = field(default_factory=list, repr=False)
+    contact_coordination_number: InitVar[float | None] = None
 
-    def __post_init__(self):
+    def __post_init__(self, contact_coordination_number):
         if self.model != "BarrierIPC":
             raise ValueError("FEM contact model must be 'BarrierIPC'")
         broad_phase_key = str(self.broad_phase).strip().replace("_", "").replace("-", "").replace(" ", "").lower()
@@ -88,21 +89,20 @@ class FEMContact:
         if self.dmin is not None:
             self.dmin = FEMContact._positive("dmin", self.dmin, allow_zero=True)
         self.kappa = FEMContact._positive("kappa", self.kappa)
-        self.point_triangle_coordination_number = FEMContact._positive(
-            "point_triangle_coordination_number",
-            self.point_triangle_coordination_number,
+        if contact_coordination_number is not None:
+            contact_coordination_number = validate_contact_coordination_number(contact_coordination_number)
+        pt_default = 32.0 if contact_coordination_number is None else contact_coordination_number
+        ee_default = 128.0 if contact_coordination_number is None else contact_coordination_number
+        if self.point_triangle_coordination_number is None:
+            self.point_triangle_coordination_number = pt_default
+        if self.edge_edge_coordination_number is None:
+            self.edge_edge_coordination_number = ee_default
+        self.point_triangle_coordination_number = validate_contact_coordination_number(
+            self.point_triangle_coordination_number, "point_triangle_coordination_number"
         )
-        self.edge_edge_coordination_number = FEMContact._positive(
-            "edge_edge_coordination_number",
-            self.edge_edge_coordination_number,
+        self.edge_edge_coordination_number = validate_contact_coordination_number(
+            self.edge_edge_coordination_number, "edge_edge_coordination_number"
         )
-        for name in ("max_point_triangle_pairs", "max_edge_edge_pairs"):
-            value = getattr(self, name)
-            if value is not None:
-                value = int(value)
-                if value <= 0:
-                    raise ValueError(f"{name} must be positive")
-                setattr(self, name, value)
         self.friction_coefficient = FEMContact._positive(
             "friction_coefficient", self.friction_coefficient, allow_zero=True
         )
@@ -169,8 +169,7 @@ class FEMContact:
             "contactsearch": "broad_phase",
             "pointtrianglecoordinationnumber": "point_triangle_coordination_number",
             "edgeedgecoordinationnumber": "edge_edge_coordination_number",
-            "maxpointtrianglepairs": "max_point_triangle_pairs",
-            "maxedgeedgepairs": "max_edge_edge_pairs",
+            "contactcoordinationnumber": "contact_coordination_number",
         }
         canonical = {}
         for name, value in parameters.items():
@@ -200,9 +199,13 @@ class FEMContact:
             "friction_tolerance": self.friction_tolerance,
             "point_triangle_coordination_number": self.point_triangle_coordination_number,
             "edge_edge_coordination_number": self.edge_edge_coordination_number,
-            "max_point_triangle_pairs": self.max_point_triangle_pairs,
-            "max_edge_edge_pairs": self.max_edge_edge_pairs,
         }
+        if any(
+            str(key).replace("_", "").replace("-", "").replace(" ", "").lower() == "contactcoordinationnumber"
+            and value is not None
+            for key, value in parameters.items()
+        ):
+            del inherited["point_triangle_coordination_number"], inherited["edge_edge_coordination_number"]
         inherited.update(parameters)
         created = type(self).create(self.model, **inherited)
         created.body_pair = tuple(sorted((int(body_id1), int(body_id2))))
@@ -253,8 +256,6 @@ class FEMContact:
                     friction_tolerance=self.friction_tolerance,
                     point_triangle_coordination_number=self.point_triangle_coordination_number,
                     edge_edge_coordination_number=self.edge_edge_coordination_number,
-                    max_point_triangle_pairs=self.max_point_triangle_pairs,
-                    max_edge_edge_pairs=self.max_edge_edge_pairs,
                 )
             )
         return tuple(selected)

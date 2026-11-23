@@ -49,6 +49,11 @@ def test_bundled_scene_contains_complete_motion_and_contact_solids(cycle):
     scene = Path(cycle.__file__).parent / "inputs"
     pose = cycle.load_motion(scene / "trajectory.csv")
     assert np.isfinite(pose(6)[0]).all()
-    for name, faces in (("bucket_contact", 84), ("truck_bed_contact", 92)):
-        assert len(cycle.load_solid(scene / "contact" / f"{name}.obj").faces) == faces
-    assert cycle.load_solid(scene / "contact/soil_initial_volume.obj").volume == pytest.approx(13.5683, abs=1e-4)
+    bucket = cycle.load_solid(scene / "contact/bucket_contact.obj")
+    assert len(bucket.faces) == 84
+    assert len(cycle.load_solid(scene / "contact/truck_bed_contact.obj").faces) == 92
+    soil = cycle.load_solid(scene / "contact/soil_initial_volume.obj")
+    np.testing.assert_allclose(soil.extents, [6.4, 4.9, 4.808], atol=0.001)
+    assert soil.volume == pytest.approx(48.196, abs=0.001)
+    pin, rotation = pose(0)
+    assert (pin + rotation.apply(bucket.vertices))[:, 2].min() > soil.bounds[1, 2]

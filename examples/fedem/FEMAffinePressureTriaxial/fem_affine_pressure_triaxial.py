@@ -99,13 +99,15 @@ def main():
         friction_mode="lagged",
         friction_iterations=1,
     )
+    affine_shape = gt.polyhedron(file=str(PLATE_MESH))
+    affine_face_count = 6 * len(affine_shape.mesh.faces)
     dem.memory_allocate(
         {
             "max_material_number": 1,
             "max_affine_body_number": 6,
             "surface_node_number": 256,
-            "max_point_triangle_pairs": 1024,
-            "max_edge_edge_pairs": 2048,
+            "point_triangle_coordination_number": 1024 / (affine_face_count),
+            "edge_edge_coordination_number": 2048 / (affine_face_count),
             "body_coordination_number": 32,
             "wall_coordination_number": 1,
             "compaction_ratio": [1.0, 1.0],
@@ -113,7 +115,7 @@ def main():
         log=True,
     )
     dem.add_attribute(0, {"Density": 2500.0})
-    dem.add_template({"Name": "plate", "TemplateType": "AffineBody", "Object": gt.polyhedron(file=str(PLATE_MESH))})
+    dem.add_template({"Name": "plate", "TemplateType": "AffineBody", "Object": affine_shape})
     dem.create_body(
         {
             "BodyType": "AffineBody",

@@ -3,6 +3,7 @@
 import argparse
 import csv
 import json
+import math
 import os
 import sys
 from pathlib import Path
@@ -18,8 +19,8 @@ from excavator_dig import CONTRACT, ROOT
 
 PHASE_ENDS = {"lift": 2.125, "swing": 3.75, "dump": 4.875, "retract": 6.0}
 PROFILES = {
-    "low": dict(particles=180, grid_size=0.5, dt=0.01, max_point_triangle_pairs=2048),
-    "full": dict(particles=18000, grid_size=0.125, dt=0.005, max_point_triangle_pairs=8192),
+    "low": dict(particles=180, grid_size=0.5, dt=0.01),
+    "full": dict(particles=64000, grid_size=0.125, dt=0.005),
 }
 
 
@@ -86,7 +87,7 @@ def main():
     parser.add_argument("--grid-size", type=float)
     parser.add_argument("--dt", type=float)
     parser.add_argument("--stop-time", type=float, default=6.0)
-    parser.add_argument("--max-point-triangle-pairs", type=int)
+    parser.add_argument("--contact-coordination-number", type=float, default=256 / 176)
     args = parser.parse_args()
     for key, value in PROFILES[args.resolution].items():
         if getattr(args, key) is None:
@@ -96,7 +97,8 @@ def main():
         and args.grid_size > 0
         and 0 < args.dt <= args.stop_time <= 6
         and np.isfinite(args.grid_size)
-        and args.max_point_triangle_pairs > 0
+        and np.isfinite(args.contact_coordination_number)
+        and args.contact_coordination_number > 0
     ):
         parser.error("Require positive capacities/grid size and 0 < dt <= stop-time <= 6 s")
     os.environ["GEOTAICHI_REAL_DTYPE"] = "float64"
@@ -193,6 +195,8 @@ def main():
     dem.memory_allocate(
         {
             **baseline["capacities"]["allocations"],
+            "point_triangle_coordination_number": 16384 / 176,
+            "edge_edge_coordination_number": 4096 / 176,
             "max_material_number": 1,
             "max_rigid_template_number": 2,
             "surface_node_number": len(bucket.vertices) + len(truck.vertices),
@@ -253,8 +257,7 @@ def main():
     model.memory_allocate(
         {
             "body_coordination_number": 4,
-            "max_point_triangle_pairs": args.max_point_triangle_pairs,
-            "max_point_edge_pairs": 1,
+            "contact_coordination_number": args.contact_coordination_number,
         },
         log=False,
     )
@@ -278,7 +281,8 @@ def main():
                 solver=solver,
                 affine_newton_displacement_cap_m=0.10,
                 anchor_stiffness_N_per_m=1e9,
-                max_mixed_pairs=args.max_point_triangle_pairs,
+                contact_coordination_number=args.contact_coordination_number,
+                max_mixed_pairs=math.ceil((len(bucket.faces) + len(truck.faces)) * args.contact_coordination_number),
             ),
             indent=2,
         )

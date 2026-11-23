@@ -727,6 +727,9 @@ thresholds when both are explicitly supplied. Setting only the absolute keyword
 selects absolute-only stopping; no extra relative-zero keyword is required.
 Current and swept contact candidates are rebuilt for every
 Newton/CCD query, so this implicit route does not use a Verlet multiplier.
+The mixed raw source reserves at most 132 non-diagonal blocks per PT term and
+82 per EE term. Barrier and friction have separate contributions; equal-control
+and equal-node terms accumulate directly into the diagonal.
 
 The implicit branch also accepts `enable_step_retry` (default `False`),
 `step_retry_max_retries` (default `2`), `step_retry_reduction` (default `0.5`),

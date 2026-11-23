@@ -681,10 +681,10 @@ def main():
     model.memory_allocate(
         {
             "max_particle_number": particle_count,
-            "contact_coordination_number": 4 if implicit else 8,
-            "max_contact_pairs": max(32_768, 4 * particle_count),
-            "max_point_triangle_pairs": 1 if implicit else max(32_768, 4 * particle_count),
-            "max_point_edge_pairs": max(32_768, 4 * particle_count) if implicit else 1,
+            "contact_coordination_number": (
+                max(32_768, 4 * particle_count) / len(model.surface_faces) if implicit else 8
+            ),
+            **({} if implicit else {"max_contact_pairs": max(32_768, 4 * particle_count)}),
             "max_facet_cell_pairs": 1 if implicit else 8_192,
         }
     )

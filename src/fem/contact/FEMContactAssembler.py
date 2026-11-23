@@ -5,6 +5,7 @@ from src.physics_model.contact_model.ipc.Utilities import ipc_friction_f0
 from src.physics_model.contact_model.ipc.Utilities import ipc_friction_f1_over_speed
 from src.physics_model.contact_model.ipc.Utilities import ipc_friction_hessian_term
 from src.physics_model.contact_model.ipc.Utilities import ipc_barrier_distance2_offset_terms
+from src.contact_detection.Capacity import contact_pair_capacity
 from src.utils.errors import CapacityError, RuntimeNotInitializedError, SimulationStateError
 from src.fem.contact.Utilities import build_contact_surface
 
@@ -57,17 +58,9 @@ class FEMContactAssembler:
         self.contact = contact
         selected_bodies = None if contact.body_pair is None else set(contact.body_pair)
         self.surface = build_contact_surface(mesh, selected_bodies)
-        face_count = max(int(self.surface.faces.shape[0]), 1)
-        self.max_point_triangle_pairs = (
-            int(contact.max_point_triangle_pairs)
-            if contact.max_point_triangle_pairs is not None
-            else max(1, int(np.ceil(face_count * contact.point_triangle_coordination_number)))
-        )
-        self.max_edge_edge_pairs = (
-            int(contact.max_edge_edge_pairs)
-            if contact.max_edge_edge_pairs is not None
-            else max(1, int(np.ceil(face_count * contact.edge_edge_coordination_number)))
-        )
+        face_count = self.surface.faces.shape[0]
+        self.max_point_triangle_pairs = contact_pair_capacity(face_count, contact.point_triangle_coordination_number)
+        self.max_edge_edge_pairs = contact_pair_capacity(face_count, contact.edge_edge_coordination_number)
         diagonal = float(np.linalg.norm(np.ptp(mesh.points, axis=0)))
         characteristic = max(diagonal, 1.0)
         if contact.dmin is None:
@@ -864,13 +857,13 @@ class FEMContactAssembler:
             raise CapacityError(
                 "point-triangle contact capacity is too small: "
                 f"need {int(pt_count)}, allocated {self.device_pt_capacity}; "
-                "increase point_triangle_coordination_number or max_point_triangle_pairs"
+                "increase point_triangle_coordination_number"
             )
         if int(ee_count) > self.device_ee_capacity:
             raise CapacityError(
                 "edge-edge contact capacity is too small: "
                 f"need {int(ee_count)}, allocated {self.device_ee_capacity}; "
-                "increase edge_edge_coordination_number or max_edge_edge_pairs"
+                "increase edge_edge_coordination_number"
             )
 
     def _require_device_friction_capacity(self, pt_count, ee_count):
@@ -878,13 +871,13 @@ class FEMContactAssembler:
             raise CapacityError(
                 "point-triangle friction capacity is too small: "
                 f"need {int(pt_count)}, allocated {self.friction_pt_capacity}; "
-                "increase point_triangle_coordination_number or max_point_triangle_pairs"
+                "increase point_triangle_coordination_number"
             )
         if int(ee_count) > self.friction_ee_capacity:
             raise CapacityError(
                 "edge-edge friction capacity is too small: "
                 f"need {int(ee_count)}, allocated {self.friction_ee_capacity}; "
-                "increase edge_edge_coordination_number or max_edge_edge_pairs"
+                "increase edge_edge_coordination_number"
             )
 
     def prepare_iteration_device(self, positions, end_positions=None):

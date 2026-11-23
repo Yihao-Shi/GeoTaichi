@@ -41,7 +41,7 @@
         ],
         "grid_size_m": 0.8,
         "dt_s": 0.02,
-        "max_pairs": 2048
+        "contact_coordination_number": 0.6826666666666666
       },
       "full": {
         "mesh": "screw_pile.obj",
@@ -52,7 +52,7 @@
         ],
         "grid_size_m": 0.25,
         "dt_s": 0.008,
-        "max_pairs": 8192
+        "contact_coordination_number": 0.5846417356551528
       }
     }
   },

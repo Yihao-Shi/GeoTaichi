@@ -50,8 +50,8 @@ def build_body(
             surface_node_number=16,
             body_coordination_number=2,
             wall_coordination_number=1,
-            max_point_triangle_pairs=128,
-            max_edge_edge_pairs=512,
+            point_triangle_coordination_number=128 / (16 if pair else 8),
+            edge_edge_coordination_number=512 / (16 if pair else 8),
         ),
         log=False,
     )

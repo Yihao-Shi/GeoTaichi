@@ -10,6 +10,11 @@ import src.mpm.config as mpm_config
 from .ContactEngine import ContactEngineMixin
 from .FrictionEngine import FrictionEngineMixin
 from .ImplicitEngine import ImplicitEngineMixin
+from src.contact_detection.Capacity import (
+    contact_pair_capacity,
+    reject_contact_pair_limits,
+    validate_contact_coordination_number,
+)
 from src.iga.engines.ImplicitIGA import ImplicitIGA
 from src.igampm.ContactManager import ContactManager
 from src.igampm.contact.ContactSurface import CouplingContactSurface
@@ -202,31 +207,31 @@ class Engine(
             normal=ti.types.vector(config.DIM, ti.f64),
             knot_value=ti.types.vector(2, ti.f64),
         )
-        # IPC keeps every active point--boundary-primitive pair.  Retaining
-        # only the nearest IGA face drops constraints at patch/solid corners.
-        self.contact_capacity = max(
-            1,
-            self.mpm.total_surface_num * max(1, self.contact_surface.num_surfaces),
+        # CCD and matrix slots use stable sample–surface IDs across queries.
+        self.contact_pair_count = int(self.mpm.total_surface_num * self.contact_surface.num_surfaces)
+        pair_slots = max(1, self.contact_pair_count)
+        reject_contact_pair_limits(kwargs, "max_contact_pairs")
+        coordination = validate_contact_coordination_number(
+            kwargs.get("contact_coordination_number", max(1, self.mpm.total_surface_num))
         )
-        self.contacts = contact_dtype.field(shape=self.contact_capacity)
-        self.contact_candidate_count = ti.field(ti.i32, shape=max(1, self.contact_surface.num_surfaces))
-        self.contact_candidates = ti.field(
-            ti.i32, shape=(max(1, self.contact_surface.num_surfaces), max(1, self.mpm.total_surface_num))
-        )
+        self.contact_capacity = min(pair_slots, contact_pair_capacity(self.contact_surface.num_surfaces, coordination))
+        self.contacts = contact_dtype.field(shape=pair_slots)
+        surface_slots = max(1, self.contact_surface.num_surfaces)
+        self.contact_candidate_count = ti.field(ti.i32, shape=surface_slots)
+        self.contact_candidate_offset = ti.field(ti.i32, shape=surface_slots)
+        self.contact_candidates = ti.field(ti.i32, shape=self.contact_capacity)
         self.contact_accd_candidates = ti.field(ti.i32, shape=self.contact_capacity)
         self.contact_point_direction = ti.Vector.field(config.DIM, ti.f64, shape=max(1, self.mpm.total_surface_num))
         # Seeds are acceleration hints, not accepted contact state. Any finite
         # parameter remains valid after sample remapping or step rollback.
-        self.contact_projection_seed = (
-            ti.Vector.field(2, ti.f64, shape=self.contact_capacity) if config.DIM == 3 else None
-        )
-        self.friction_contacts = friction_contact_dtype.field(shape=self.contact_capacity)
-        self.contact_active_buffer = ti.field(ti.i32, shape=self.contact_capacity)
-        self.contact_surface_id_buffer = ti.field(ti.i32, shape=self.contact_capacity)
-        self.contact_sample_id_buffer = ti.field(ti.i32, shape=self.contact_capacity)
-        self.contact_particle_id_buffer = ti.field(ti.i32, shape=self.contact_capacity)
-        self.contact_distance_buffer = ti.field(ti.f64, shape=self.contact_capacity)
-        self.contact_knot_value_buffer = ti.Vector.field(2, ti.f64, shape=self.contact_capacity)
+        self.contact_projection_seed = ti.Vector.field(2, ti.f64, shape=pair_slots) if config.DIM == 3 else None
+        self.friction_contacts = friction_contact_dtype.field(shape=pair_slots)
+        self.contact_active_buffer = ti.field(ti.i32, shape=pair_slots)
+        self.contact_surface_id_buffer = ti.field(ti.i32, shape=pair_slots)
+        self.contact_sample_id_buffer = ti.field(ti.i32, shape=pair_slots)
+        self.contact_particle_id_buffer = ti.field(ti.i32, shape=pair_slots)
+        self.contact_distance_buffer = ti.field(ti.f64, shape=pair_slots)
+        self.contact_knot_value_buffer = ti.Vector.field(2, ti.f64, shape=pair_slots)
         self.curr_barrier_contact_num = 0
         self.curr_friction_contact_num = 0
         self.contact_num = ti.field(ti.i32, shape=1)
@@ -241,15 +246,14 @@ class Engine(
             )
         )
         per_contact_blocks = contact_ctrlpts + contact_mpm_nodes
-        # Every possible point--NURBS contact owns one fixed square block
-        # stencil.  Matrix kernels index this stencil directly instead of
+        # Each point--NURBS contact owns the off-diagonal part of its stencil.
+        # Matrix kernels index these slots directly instead of
         # atomically appending triplets, so an unchanged topology has exactly
         # the same raw order on device and can reuse HashReduction's pattern.
         self.contact_ctrlpts_capacity = contact_ctrlpts
         self.contact_mpm_nodes_capacity = contact_mpm_nodes
         self.contact_stencil_capacity = per_contact_blocks
-        self.contact_pair_capacity = per_contact_blocks * per_contact_blocks
-        self.contact_pair_count = int(self.mpm.total_surface_num * self.contact_surface.num_surfaces)
+        self.contact_pair_capacity = per_contact_blocks * (per_contact_blocks - 1)
         self.compact_contact_slots = kwargs.get("compact_contact_slots", False)
         if not isinstance(self.compact_contact_slots, (bool, np.bool_)):
             raise TypeError("compact_contact_slots must be a boolean")
@@ -303,14 +307,14 @@ class Engine(
         self.barrier_projection_status = ti.field(ti.i32, shape=())
         if config.DIM == 3:
             reduced_dimension = config.DIM + 2
-            projection_shape = (self.contact_capacity, self.contact_ctrlpts_capacity)
-            self.barrier_projection_active = ti.field(ti.i32, shape=self.contact_capacity)
-            self.barrier_projection_distance = ti.field(ti.f64, shape=self.contact_capacity)
-            self.barrier_projection_span = ti.Vector.field(2, ti.i32, shape=self.contact_capacity)
-            self.barrier_projection_free = ti.Vector.field(2, ti.i32, shape=self.contact_capacity)
-            self.barrier_projection_pointer = ti.Vector.field(config.DIM, ti.f64, shape=self.contact_capacity)
-            self.barrier_projection_tangent_u = ti.Vector.field(config.DIM, ti.f64, shape=self.contact_capacity)
-            self.barrier_projection_tangent_v = ti.Vector.field(config.DIM, ti.f64, shape=self.contact_capacity)
+            projection_shape = (pair_slots, self.contact_ctrlpts_capacity)
+            self.barrier_projection_active = ti.field(ti.i32, shape=pair_slots)
+            self.barrier_projection_distance = ti.field(ti.f64, shape=pair_slots)
+            self.barrier_projection_span = ti.Vector.field(2, ti.i32, shape=pair_slots)
+            self.barrier_projection_free = ti.Vector.field(2, ti.i32, shape=pair_slots)
+            self.barrier_projection_pointer = ti.Vector.field(config.DIM, ti.f64, shape=pair_slots)
+            self.barrier_projection_tangent_u = ti.Vector.field(config.DIM, ti.f64, shape=pair_slots)
+            self.barrier_projection_tangent_v = ti.Vector.field(config.DIM, ti.f64, shape=pair_slots)
             self.barrier_projection_shape = ti.field(ti.f64, shape=projection_shape)
             self.barrier_projection_derivative_u = ti.field(ti.f64, shape=projection_shape)
             self.barrier_projection_derivative_v = ti.field(ti.f64, shape=projection_shape)
@@ -318,13 +322,13 @@ class Engine(
                 reduced_dimension,
                 reduced_dimension,
                 ti.f64,
-                shape=self.contact_capacity,
+                shape=pair_slots,
             )
             self.barrier_projection_point_jacobian = ti.Matrix.field(
                 reduced_dimension,
                 config.DIM,
                 ti.f64,
-                shape=self.contact_capacity,
+                shape=pair_slots,
             )
         self.friction_nnz_count = ti.field(ti.i32, shape=1)
         self.friction_nnz_overflow = ti.field(ti.i32, shape=1)

@@ -283,9 +283,7 @@ def build(p, output):
     model.memory_allocate(
         {
             "max_particle_number": count,
-            "max_contact_pairs": capacity,
-            "max_point_edge_pairs": 1,
-            "max_point_triangle_pairs": capacity,
+            "contact_coordination_number": capacity / len(model.surface_faces),
         }
     )
     model.choose_contact_model(

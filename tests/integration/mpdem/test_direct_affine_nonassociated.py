@@ -157,7 +157,6 @@ def _case(
             "surface_node_number": 6 * affine_bodies,
             "body_coordination_number": 2,
             "wall_coordination_number": 0,
-            "affine_contact_block_capacity": 256,
             "compaction_ratio": [1.0, 1.0],
         },
         log=False,
@@ -213,7 +212,7 @@ def _case(
         log=False,
     )
     coupling.memory_allocate(
-        {"body_coordination_number": 2, "max_point_triangle_pairs": 32, "max_point_edge_pairs": 1}, log=False
+        {"body_coordination_number": 2, "contact_coordination_number": 32 / (8 * affine_bodies)}, log=False
     )
     coupling.choose_contact_model(
         "BarrierIPC",
@@ -328,6 +327,7 @@ def test_associated_route_uses_physical_newton_without_material_outer(tmp_path, 
 
 def test_public_nonassociated_default_keeps_fixed_linear_tolerances(tmp_path):
     coupling = _case(tmp_path, inexact=None)
+    assert coupling.direct_affine_contact.max_point_triangle_pairs == 32
     assert not coupling.enginer.inexact_newton
     assert coupling.enginer.mpm.linear_solver_relative_tolerance == 0.0
     result = coupling.run(verbose=False)

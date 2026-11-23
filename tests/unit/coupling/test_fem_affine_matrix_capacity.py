@@ -13,6 +13,7 @@ from src.fedem.Simulation import FEDEMSimulation
 from src.fedem.contact.AffineIPCAssembler import FEMAffineIPCAssembler
 from src.fem.engines.ClassicalAssembler import ClassicalAssembler
 from src.fempm.ImplicitEngine import FEMPMImplicitEngine
+from src.linear_solver.BuildTriplet import BuildTriplet
 from src.linear_solver.CoordinateSparseMatrix import CoordinateSparseMatrix
 from src.mpdem.engines.DirectAffineIPCAssembler import (
     DirectAffineIPCAssembler,
@@ -140,7 +141,7 @@ def test_affine_pressure_servo_moves_inward_when_pressure_is_low_and_reverses_wh
 def test_affine_source_capacity_uses_fixed_primitive_pair_capacities():
     calls = []
 
-    def estimate(_sims, **kwargs):
+    def estimate(**kwargs):
         calls.append(kwargs)
         return 8_192
 
@@ -163,9 +164,6 @@ def test_affine_source_capacity_uses_fixed_primitive_pair_capacities():
         {
             "vf_candidate_capacity": 123,
             "ee_candidate_capacity": 456,
-            "full_symmetric_input": True,
-            "safety_factor": 1.0,
-            "minimum_capacity": 1,
         }
     ]
 
@@ -215,24 +213,25 @@ def test_mixed_contact_capacity_uses_declared_pair_capacity_and_friction():
     engine.simulation.max_point_triangle_pairs = 4_096
     engine.simulation.max_edge_edge_pairs = 4_096
     engine.contact = SimpleNamespace(activate_friction=True)
-    assert engine._configured_contact_raw_capacity() == 2 * (169 + 100) * 4_096
+    assert engine._configured_contact_raw_capacity() == 2 * (132 + 82) * 4_096
 
     engine.contact.activate_friction = False
-    assert engine._configured_contact_raw_capacity() == (169 + 100) * 4_096
+    assert engine._configured_contact_raw_capacity() == (132 + 82) * 4_096
 
 
 def test_direct_mpm_affine_contact_capacity_covers_basis_pullback():
     assembler = object.__new__(DirectAffineIPCAssembler)
     assembler.mpm = SimpleNamespace(shape_func=SimpleNamespace(max_node_per_particle=8))
     assembler.friction_count = 3
+    assembler.dimension = 3
     assembler.activate_friction = True
     assembler.max_point_triangle_pairs = 11
 
-    assert assembler.contact_block_capacity(5) == 8 * 20**2
-    assert assembler.configured_contact_block_capacity() == 2 * 11 * 20**2
+    assert assembler.contact_block_capacity(5) == 8 * 356
+    assert assembler.configured_contact_block_capacity() == 2 * 11 * 356
 
 
-def test_direct_mpm_affine_gradient_uses_grid_shape_and_abd_basis(
+def test_direct_mpm_affine_scatter_uses_grid_shape_and_abd_basis(
     taichi_runtime,
 ):
     import taichi as ti
@@ -266,6 +265,7 @@ def test_direct_mpm_affine_gradient_uses_grid_shape_and_abd_basis(
         LnID=local_nodes,
         node2dof=node2dof,
         shape=shape,
+        shape_func=SimpleNamespace(max_node_per_particle=2),
     )
     rhs = ti.field(ti.f64, shape=18)
     gradient_values = np.arange(1.0, 13.0)
@@ -286,6 +286,26 @@ def test_direct_mpm_affine_gradient_uses_grid_shape_and_abd_basis(
     expected[4] = -0.25 * gradient_values[:3]
     expected[5] = -0.75 * gradient_values[:3]
     np.testing.assert_allclose(rhs.to_numpy().reshape(6, 3), expected)
+
+    capacity = assembler._raw_blocks_per_contact()
+    matrix = BuildTriplet(
+        dim=3,
+        max_pairs_num=capacity,
+        max_nonzeros=1,
+        max_active_nodes=6,
+        symmetric=False,
+        device_reduction=True,
+        raw_only=True,
+    )
+
+    @ti.kernel
+    def scatter_hessian():
+        for i, j in ti.ndrange(4, 4):
+            assembler._scatter_hessian_block(ti.Vector([0, 1, 2, 3]), 0, i, j, ti.Matrix.identity(ti.f64, 3), matrix)
+
+    scatter_hessian()
+    assert int(matrix.overflow[0]) == 0
+    assert int(matrix.raw_non_diag_count[0]) == capacity == 158
 
 
 def test_direct_mpm_affine_ccd_maps_control_direction_to_vertices(

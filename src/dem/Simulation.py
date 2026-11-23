@@ -43,7 +43,6 @@ class Simulation(object):
         self.affine_barrier_stiffness = 1.0e6
         self.affine_contact_model = "BarrierIPC"
         self.affine_contact_damping_stiffness = 0.0
-        self.affine_contact_block_capacity = 256
         self.affine_force_local_damping = None
         self.affine_torque_local_damping = None
         self.affine_friction_epsv = 1.0e-4
@@ -188,10 +187,8 @@ class Simulation(object):
         self.max_soft_template_sdf_num = 0
         self.max_soft_velocity_constraint_num = 0
         self.max_surface_node_num = 0
-        # Fixed primitive-contact capacities for AffineBody triangle-mesh IPC.
-        # They are independent of coarse body-pair coordination.
-        self.max_point_triangle_pairs = 0
-        self.max_edge_edge_pairs = 0
+        self.point_triangle_coordination_number = 32.0
+        self.edge_edge_coordination_number = 128.0
         self.max_ls_contact_node_num = 0
         self.max_rigid_template_num = 0
         self.max_wall_num = 0
@@ -880,21 +877,6 @@ class Simulation(object):
                 )
         else:
             self.body_coordination_number = max(body_coordination_number, 1)
-
-    def set_affine_primitive_pair_capacity(self, point_triangle_pairs, edge_edge_pairs):
-        self.max_point_triangle_pairs = int(point_triangle_pairs)
-        self.max_edge_edge_pairs = int(edge_edge_pairs)
-        if self.max_point_triangle_pairs < 0:
-            raise ValueError("AffineBody max_point_triangle_pairs must be non-negative")
-        if self.max_edge_edge_pairs < 0:
-            raise ValueError("AffineBody max_edge_edge_pairs must be non-negative")
-
-    def set_affine_contact_block_capacity(self, capacity):
-        numeric_capacity = float(capacity)
-        block_capacity = int(numeric_capacity)
-        if not math.isfinite(numeric_capacity) or numeric_capacity != block_capacity or block_capacity <= 0:
-            raise ValueError("AffineBody contact block capacity must be a positive integer")
-        self.affine_contact_block_capacity = block_capacity
 
     def set_wall_coordination_number(self, wall_coordination_number):
         if self.search == "HierarchicalLinkedCell":

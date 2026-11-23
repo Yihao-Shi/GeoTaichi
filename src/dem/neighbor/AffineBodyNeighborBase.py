@@ -1,3 +1,4 @@
+from src.contact_detection.Capacity import contact_pair_capacity
 from src.utils.errors import CapacityError
 
 import taichi as ti
@@ -34,14 +35,8 @@ class AffineBodyNeighborBase(object):
         self.edge_center = ti.Vector.field(3, dtype=float, shape=max(self.edge_num, 1))
         self.edge_radius = ti.field(dtype=float, shape=max(self.edge_num, 1))
 
-        configured_pt = int(getattr(sims, "max_point_triangle_pairs", 0))
-        configured_ee = int(getattr(sims, "max_edge_edge_pairs", 0))
-        self.fixed_candidate_capacity = configured_pt >= 0
-        self.fixed_edge_candidate_capacity = configured_ee >= 0
-        vf_capacity = max(configured_pt, 1)
-        ee_capacity = max(configured_ee, 1)
-        self._allocate_candidates(vf_capacity)
-        self._allocate_edge_candidates(ee_capacity)
+        self._allocate_candidates(contact_pair_capacity(self.face_num, sims.point_triangle_coordination_number))
+        self._allocate_edge_candidates(contact_pair_capacity(self.face_num, sims.edge_edge_coordination_number))
 
     def _allocate_candidates(self, capacity):
         self.candidate_capacity = int(max(capacity, 1))
@@ -94,41 +89,17 @@ class AffineBodyNeighborBase(object):
         self.last_edge_candidate_overflow = int(self.edge_candidate_overflow[None])
         return self.last_candidate_pairs
 
-    def _grow_candidates(self, requested_count=None):
-        requested = int(requested_count) if requested_count is not None else self.candidate_capacity * 2
-        if self.fixed_candidate_capacity:
-            raise CapacityError(
-                "AffineBody max_point_triangle_pairs is too small: "
-                f"need {requested}, allocated {self.candidate_capacity}"
-            )
-        max_pairs = max(self.vertex_num * self.face_num, 1)
-        new_capacity = min(max(self.candidate_capacity * 2, requested, 1), max_pairs)
-        if new_capacity <= self.candidate_capacity and self.candidate_capacity < max_pairs:
-            new_capacity = min(self.candidate_capacity + max(self.vertex_num, 1), max_pairs)
-        if new_capacity <= self.candidate_capacity:
-            raise CapacityError(
-                "Affine body neighbor candidate buffer overflowed even at the dense vertex-face capacity. "
-                "The contact broadphase generated too many pairs."
-            )
-        self._allocate_candidates(new_capacity)
+    def _require_candidate_capacity(self, count):
+        raise CapacityError(
+            f"AffineBody point–triangle pairs need {count}, allocated {self.candidate_capacity}. "
+            "Increase point_triangle_coordination_number."
+        )
 
-    def _grow_edge_candidates(self, requested_count=None):
-        requested = int(requested_count) if requested_count is not None else self.edge_candidate_capacity * 2
-        if self.fixed_edge_candidate_capacity:
-            raise CapacityError(
-                "AffineBody max_edge_edge_pairs is too small: "
-                f"need {requested}, allocated {self.edge_candidate_capacity}"
-            )
-        max_pairs = max(self.edge_num * max(self.edge_num - 1, 1) // 2, 1)
-        new_capacity = min(max(self.edge_candidate_capacity * 2, requested, 1), max_pairs)
-        if new_capacity <= self.edge_candidate_capacity and self.edge_candidate_capacity < max_pairs:
-            new_capacity = min(self.edge_candidate_capacity + max(self.edge_num, 1), max_pairs)
-        if new_capacity <= self.edge_candidate_capacity:
-            raise CapacityError(
-                "Affine body neighbor edge-edge candidate buffer overflowed even at the dense edge-edge capacity. "
-                "The contact broadphase generated too many pairs."
-            )
-        self._allocate_edge_candidates(new_capacity)
+    def _require_edge_candidate_capacity(self, count):
+        raise CapacityError(
+            f"AffineBody edge–edge pairs need {count}, allocated {self.edge_candidate_capacity}. "
+            "Increase edge_edge_coordination_number."
+        )
 
     def update(self, x, dx, faces, edges, node2body, face2body, edge2body, margin, swept=False):
         raise NotImplementedError

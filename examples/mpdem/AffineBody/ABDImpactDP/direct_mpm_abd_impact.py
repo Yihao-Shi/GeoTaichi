@@ -162,7 +162,6 @@ def main():
             "surface_node_number": 12,
             "body_coordination_number": 2,
             "wall_coordination_number": 0,
-            "affine_contact_block_capacity": 512,
             "compaction_ratio": [1.0, 1.0],
         },
         log=True,
@@ -211,8 +210,7 @@ def main():
     coupling.memory_allocate(
         {
             "body_coordination_number": 8,
-            "max_point_triangle_pairs": 4096,
-            "max_point_edge_pairs": 1,
+            "contact_coordination_number": 4096 / 20,
         },
         log=True,
     )

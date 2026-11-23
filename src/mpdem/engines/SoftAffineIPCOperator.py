@@ -7,6 +7,7 @@ from src.utils.MatrixFunction import psd_project_nd
 from src.physics_model.contact_model.ipc.Utilities import ipc_friction_f0
 from src.physics_model.contact_model.ipc.Utilities import ipc_friction_f1_over_speed
 from src.physics_model.contact_model.ipc.Utilities import ipc_friction_hessian_term
+from src.contact_detection.Capacity import contact_pair_capacity
 from src.utils.errors import (
     BackendError,
     CapacityError,
@@ -285,9 +286,9 @@ class SoftAffineIPCOperator(object):
         self.mixed_bvh_end_position = ti.Vector.field(3, float, shape=max(self.mixed_bvh_node_count, 1))
         self.mixed_candidate_capacity = 0
         if not self.affine.levelset_contact and self.soft_surface_point_num > 0 and self.affine.face_num > 0:
-            self.mixed_candidate_capacity = int(getattr(sims, "max_point_triangle_pairs", 0))
-            if self.mixed_candidate_capacity <= 0:
-                raise ValueError("SoftAffineIPC mesh coupling requires a positive " "max_point_triangle_pairs")
+            self.mixed_candidate_capacity = contact_pair_capacity(
+                self.affine.face_num, sims.point_triangle_coordination_number
+            )
             surface_ids = np.ascontiguousarray(
                 scene.soft_surface_point_id.to_numpy()[: self.soft_surface_point_num],
                 dtype=np.int32,
@@ -2406,7 +2407,9 @@ class SoftAffineIPCOperator(object):
             )
         except RuntimeError as error:
             if "point-triangle broad-phase capacity" in str(error):
-                raise SimulationStateError("SoftAffineIPC max_point_triangle_pairs is too small: " f"{error}") from None
+                raise SimulationStateError(
+                    "SoftAffineIPC point_triangle_coordination_number is too small: " f"{error}"
+                ) from None
             raise
         return count
 

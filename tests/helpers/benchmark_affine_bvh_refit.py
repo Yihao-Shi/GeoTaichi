@@ -53,8 +53,8 @@ def main():
     edge_body.from_numpy(np.repeat(np.arange(args.bodies, dtype=np.int32), ne))
     config = SimpleNamespace(
         search="BVH",
-        max_point_triangle_pairs=max(80000, args.bodies * 1000),
-        max_edge_edge_pairs=max(400000, args.bodies * 4000),
+        point_triangle_coordination_number=max(80000, args.bodies * 1000) / len(faces),
+        edge_edge_coordination_number=max(400000, args.bodies * 4000) / len(faces),
     )
     broad = AffineBodyBoundingVolumeHierarchy(config, len(vertices), len(faces), len(edges), 0.006)
     build = broad.lbvh.build

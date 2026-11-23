@@ -104,8 +104,8 @@ def test_failed_run_records_diagnostics_and_reraises(tmp_path, monkeypatch, name
         assert allocations[0]["max_affine_body_number"] == 1000
         assert parameters[0]["barrier_stiffness"] == 8e12
         assert parameters[0]["linear_max_iteration"] == 12000
-        assert allocations[0]["max_point_triangle_pairs"] == 16000000
-        assert allocations[0]["max_edge_edge_pairs"] == 32000000
+        assert allocations[0]["point_triangle_coordination_number"] * 5_002_000 == pytest.approx(16_000_000)
+        assert allocations[0]["edge_edge_coordination_number"] * 5_002_000 == pytest.approx(32_000_000)
     else:
         assert allocations[0]["max_affine_body_number"] == 1001
         assert allocations[0]["surface_node_number"] == 1000 * 8 + 2562

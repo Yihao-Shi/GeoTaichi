@@ -78,13 +78,15 @@ def main():
         ccd=True,
         ccd_type="ccd",
     )
+    affine_shape = gt.polyhedron(file=str(GRAIN_MESH))
+    affine_face_count = args.grain_count * len(affine_shape.mesh.faces)
     dem.memory_allocate(
         {
             "max_material_number": 1,
             "max_affine_body_number": args.grain_count,
             "surface_node_number": 12 * args.grain_count,
-            "max_point_triangle_pairs": max(8192, 256 * args.grain_count),
-            "max_edge_edge_pairs": max(16384, 512 * args.grain_count),
+            "point_triangle_coordination_number": max(8192, 256 * args.grain_count) / (affine_face_count),
+            "edge_edge_coordination_number": max(16384, 512 * args.grain_count) / (affine_face_count),
             "body_coordination_number": 20,
             "wall_coordination_number": 1,
             "compaction_ratio": [1.0, 1.0],
@@ -92,7 +94,7 @@ def main():
         log=True,
     )
     dem.add_attribute(0, {"Density": 1800.0})
-    dem.add_template({"Name": "grain", "TemplateType": "AffineBody", "Object": gt.polyhedron(file=str(GRAIN_MESH))})
+    dem.add_template({"Name": "grain", "TemplateType": "AffineBody", "Object": affine_shape})
     initial_centers = grain_centers(args.grain_count)
     rng = np.random.default_rng(20261002)
     dem.create_body(

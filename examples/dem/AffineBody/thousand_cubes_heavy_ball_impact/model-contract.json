@@ -108,8 +108,8 @@
       "candidate_counts": "Initial separated grid is small; settled/colliding counts must be measured by full-size CUDA gate and production overflow checks."
     },
     "allocations": {
-      "max_point_triangle_pairs": 600000,
-      "max_edge_edge_pairs": 1500000,
+      "point_triangle_coordination_number": 35.046728971962615,
+      "edge_edge_coordination_number": 87.61682242990655,
       "max_hash_triplets": 8000000
     },
     "policy": "Stop and retain failure on overflow/OOM; never drop contacts or change mesh to fit."
@@ -191,8 +191,8 @@
       "SaveInterval": 0.01
     },
     "memory": {
-      "max_point_triangle_pairs": 600000,
-      "max_edge_edge_pairs": 1500000,
+      "point_triangle_coordination_number": 35.046728971962615,
+      "edge_edge_coordination_number": 87.61682242990655,
       "max_hash_triplets": 8000000
     },
     "materials": [

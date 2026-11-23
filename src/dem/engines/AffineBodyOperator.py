@@ -89,12 +89,6 @@ class TaichiAffineBodyOperator(object):
         return aliases[key]
 
     @staticmethod
-    def _coordination_value(value, default=16):
-        if isinstance(value, (list, tuple, np.ndarray)):
-            return max(int(v) for v in value) if len(value) > 0 else int(default)
-        return int(value) if value is not None else int(default)
-
-    @staticmethod
     def _property_value(properties, names, default):
         for name in names:
             if name in properties:
@@ -471,9 +465,9 @@ class TaichiAffineBodyOperator(object):
         self._allocate_friction_contact_fields("adjoint_friction_contact")
         self.friction_scale = ti.field(dtype=float, shape=1)
         self.friction_scale[0] = 1.0
-        hash_triplet_capacity = self._estimate_hash_triplet_capacity(sims)
+        hash_triplet_capacity = self._estimate_hash_triplet_capacity()
         self.max_hash_triplets = int(os.environ.get("GT_AFFINE_MAX_HASH_TRIPLETS", str(hash_triplet_capacity)))
-        coo_capacity = 9 * self._estimate_hash_triplet_capacity(sims, safety_factor=1.0, minimum_capacity=1)
+        coo_capacity = 9 * self._estimate_hash_triplet_capacity(coo=True)
         self.max_coo_entries = int(os.environ.get("GT_AFFINE_MAX_COO_ENTRIES", str(max(coo_capacity, 1))))
         if self.max_coo_entries <= 0:
             raise ValueError("AffineBody COO capacity must be positive")
@@ -489,7 +483,7 @@ class TaichiAffineBodyOperator(object):
         # The contact-damping operator is frozen for one Newton solve, so it
         # must persist across matrix resets.  Keep only its upper 3x3 block
         # triplets; the old dense dof-by-dof field wasted quadratic memory.
-        self.contact_damping_capacity = self._estimate_contact_damping_capacity(sims)
+        self.contact_damping_capacity = self._estimate_contact_damping_capacity()
         self.contact_damping_count = ti.field(dtype=ti.i32, shape=())
         self.contact_damping_overflow = ti.field(dtype=ti.i32, shape=())
         self.contact_damping_block_i = ti.field(dtype=ti.i32, shape=self.contact_damping_capacity)
@@ -592,7 +586,7 @@ class TaichiAffineBodyOperator(object):
         for name, field in fields.items():
             setattr(self, f"{prefix}_{name}", field)
 
-    def _estimate_contact_damping_capacity(self, sims):
+    def _estimate_contact_damping_capacity(self):
         """Bound frozen upper 3x3 blocks from configured contact resources."""
         if self.contact_damping_stiffness <= 0.0 or self.levelset_contact:
             return 1
@@ -603,21 +597,17 @@ class TaichiAffineBodyOperator(object):
             self.body_num * max(self.body_num - 1, 0) // 2,
             mesh_candidates,
         )
-        wall_coord = TaichiAffineBodyOperator._coordination_value(sims.wall_coordination_number, self.wall_num)
-        wall_candidates = self.vertex_num * min(max(wall_coord, 0), self.wall_num) if self.wall_num > 0 else 0
+        wall_candidates = self.vertex_num * self.wall_num
         # One projected body pair has 8 affine controls (36 upper blocks);
         # one point-wall stencil has 4 controls (10 upper blocks).
         return max(36 * active_body_pairs + 10 * wall_candidates, 1)
 
     def _estimate_hash_triplet_capacity(
         self,
-        sims,
         *,
         vf_candidate_capacity=None,
         ee_candidate_capacity=None,
-        full_symmetric_input=None,
-        safety_factor=None,
-        minimum_capacity=None,
+        coo=False,
     ):
         """Estimate raw 3x3 block scatters before reduction.
 
@@ -634,16 +624,15 @@ class TaichiAffineBodyOperator(object):
             int(self.neighbor.edge_candidate_capacity if ee_candidate_capacity is None else ee_candidate_capacity),
             0,
         )
-        wall_coord = TaichiAffineBodyOperator._coordination_value(sims.wall_coordination_number, self.wall_num)
-        wall_candidates = self.vertex_num * min(max(wall_coord, 0), self.wall_num) if self.wall_num > 0 else 0
+        # Wall kernels visit every vertex/wall combination.
+        wall_candidates = self.vertex_num * self.wall_num
 
-        # Friction is emitted per four-site stencil (16 affine controls).
-        # One projected body-pair barrier reserves an 8x8 block segment plus
-        # an equally sized in-array Jacobi workspace. A wall point maps to
-        # four controls.
-        four_site_scatter = int(getattr(sims, "affine_contact_block_capacity", 256))
-        if four_site_scatter <= 0:
-            raise ValueError("AffineBody contact block capacity must be positive")
+        # Each of the four sites scatters to four controls. Equal controls
+        # bypass HashTriplet's raw buffer: PT has site multiplicities 1+3,
+        # EE has 2+2. COO still writes every block, including the diagonal.
+        pt_scatter = 16**2 if coo else 16**2 - 4 * (1**2 + 3**2)
+        ee_scatter = 16**2 if coo else 16**2 - 4 * (2**2 + 2**2)
+        # A body pair reserves its 8x8 barrier plus the Jacobi workspace.
         body_pair_scatter = 2 * (2 * 4) ** 2
         one_point_scatter = 4 * 4
         mesh_candidates = vf_candidates + ee_candidates if self.body_num > 1 else 0
@@ -651,8 +640,17 @@ class TaichiAffineBodyOperator(object):
             self.body_num * max(self.body_num - 1, 0) // 2,
             mesh_candidates,
         )
-        mesh_hessian_triplets = active_body_pair_bound * body_pair_scatter + mesh_candidates * four_site_scatter
-        wall_hessian_triplets = 2 * one_point_scatter
+        mesh_hessian_triplets = active_body_pair_bound * body_pair_scatter
+        wall_hessian_triplets = wall_candidates * one_point_scatter
+        if not coo and not self.fully_implicit and not self.levelset_contact:
+            # Lagged friction reuses one segment per body pair, and one
+            # four-control segment per body for all of its wall contacts.
+            mesh_hessian_triplets += active_body_pair_bound * 8 * 7
+            wall_hessian_triplets += min(self.body_num, wall_candidates) * 4 * 3
+        else:
+            if self.body_num > 1:
+                mesh_hessian_triplets += vf_candidates * pt_scatter + ee_candidates * ee_scatter
+            wall_hessian_triplets += wall_candidates * one_point_scatter
         base_triplets_per_body = 52
         levelset_hessian_triplets = 2 * (8 * 8)
         base_triplets = self.body_num * base_triplets_per_body
@@ -670,26 +668,16 @@ class TaichiAffineBodyOperator(object):
         if self.contact_damping_stiffness > 0.0:
             # COO and nonsymmetric HashTriplet store both triangles.  The
             # frozen cache itself stores only the upper triangle.
-            damping_triplets = 2 * self._estimate_contact_damping_capacity(sims)
+            damping_triplets = 2 * self._estimate_contact_damping_capacity()
         estimated = (
             base_triplets
             + joint_triplets
             + mesh_hessian_triplets
-            + wall_candidates * wall_hessian_triplets
+            + wall_hessian_triplets
             + levelset_candidates * levelset_hessian_triplets
             + damping_triplets
         )
-        safety = (
-            float(os.environ.get("GT_AFFINE_HASH_TRIPLET_SAFETY", "1.25"))
-            if safety_factor is None
-            else float(safety_factor)
-        )
-        minimum = 256 if minimum_capacity is None else int(minimum_capacity)
-        if not np.isfinite(safety) or safety < 1.0:
-            raise ValueError("affine HashTriplet safety factor must be finite and >= 1")
-        if minimum <= 0:
-            raise ValueError("affine HashTriplet minimum capacity must be positive")
-        return max(minimum, int(np.ceil(safety * estimated)))
+        return max(estimated, 1)
 
     def bind_coo_matrix(self, coo_matrix):
         if int(coo_matrix.capacity) < self.max_coo_entries:

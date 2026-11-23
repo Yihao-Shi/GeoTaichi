@@ -5203,154 +5203,154 @@
           "name": "add_attribute",
           "signature": "add_attribute(self, materialID, attribute)",
           "source": "src/dem/mainDEM.py",
-          "line": 409,
+          "line": 412,
           "doc": ""
         },
         {
           "name": "add_body",
           "signature": "add_body(self, body)",
           "source": "src/dem/mainDEM.py",
-          "line": 528,
+          "line": 531,
           "doc": ""
         },
         {
           "name": "add_body_from_file",
           "signature": "add_body_from_file(self, body)",
           "source": "src/dem/mainDEM.py",
-          "line": 531,
+          "line": 534,
           "doc": ""
         },
         {
           "name": "add_engine",
           "signature": "add_engine(self, callback)",
           "source": "src/dem/mainDEM.py",
-          "line": 757,
+          "line": 760,
           "doc": ""
         },
         {
           "name": "add_essentials",
           "signature": "add_essentials(self, **kwargs)",
           "source": "src/dem/mainDEM.py",
-          "line": 814,
+          "line": 817,
           "doc": ""
         },
         {
           "name": "add_joint",
           "signature": "add_joint(self, joint)",
           "source": "src/dem/mainDEM.py",
-          "line": 534,
+          "line": 537,
           "doc": ""
         },
         {
           "name": "add_postfunctions",
           "signature": "add_postfunctions(self, **functions)",
           "source": "src/dem/mainDEM.py",
-          "line": 804,
+          "line": 807,
           "doc": ""
         },
         {
           "name": "add_property",
           "signature": "add_property(self, materialID1, materialID2, property, dType='all')",
           "source": "src/dem/mainDEM.py",
-          "line": 622,
+          "line": 625,
           "doc": ""
         },
         {
           "name": "add_recorder",
           "signature": "add_recorder(self)",
           "source": "src/dem/mainDEM.py",
-          "line": 772,
+          "line": 775,
           "doc": ""
         },
         {
           "name": "add_region",
           "signature": "add_region(self, region)",
           "source": "src/dem/mainDEM.py",
-          "line": 402,
+          "line": 405,
           "doc": ""
         },
         {
           "name": "add_solver",
           "signature": "add_solver(self, **kwargs)",
           "source": "src/dem/mainDEM.py",
-          "line": 783,
+          "line": 786,
           "doc": ""
         },
         {
           "name": "add_template",
           "signature": "add_template(self, template)",
           "source": "src/dem/mainDEM.py",
-          "line": 412,
+          "line": 415,
           "doc": ""
         },
         {
           "name": "add_wall",
           "signature": "add_wall(self, body)",
           "source": "src/dem/mainDEM.py",
-          "line": 598,
+          "line": 601,
           "doc": ""
         },
         {
           "name": "add_wall_from_file",
           "signature": "add_wall_from_file(self, body)",
           "source": "src/dem/mainDEM.py",
-          "line": 601,
+          "line": 604,
           "doc": ""
         },
         {
           "name": "check_critical_timestep",
           "signature": "check_critical_timestep(self)",
           "source": "src/dem/mainDEM.py",
-          "line": 890,
+          "line": 893,
           "doc": ""
         },
         {
           "name": "check_verlet_distance_multiplier",
           "signature": "check_verlet_distance_multiplier(self)",
           "source": "src/dem/mainDEM.py",
-          "line": 858,
+          "line": 861,
           "doc": ""
         },
         {
           "name": "choose_contact_model",
           "signature": "choose_contact_model(self, particle_particle_contact_model=None, particle_wall_contact_model=None)",
           "source": "src/dem/mainDEM.py",
-          "line": 611,
+          "line": 614,
           "doc": ""
         },
         {
           "name": "choose_neighbor",
           "signature": "choose_neighbor(self)",
           "source": "src/dem/mainDEM.py",
-          "line": 604,
+          "line": 607,
           "doc": ""
         },
         {
           "name": "create_body",
           "signature": "create_body(self, body)",
           "source": "src/dem/mainDEM.py",
-          "line": 522,
+          "line": 525,
           "doc": ""
         },
         {
           "name": "create_body_batch",
           "signature": "create_body_batch(self, body)",
           "source": "src/dem/mainDEM.py",
-          "line": 525,
+          "line": 528,
           "doc": ""
         },
         {
           "name": "delete_particles",
           "signature": "delete_particles(self, bodyID=None, region_name=None, function=None)",
           "source": "src/dem/mainDEM.py",
-          "line": 938,
+          "line": 941,
           "doc": ""
         },
         {
           "name": "delete_walls",
           "signature": "delete_walls(self, wallID)",
           "source": "src/dem/mainDEM.py",
-          "line": 947,
+          "line": 950,
           "doc": ""
         },
         {
@@ -5364,238 +5364,238 @@
           "name": "differentiable_affine",
           "signature": "differentiable_affine(self, steps)",
           "source": "src/dem/mainDEM.py",
-          "line": 570,
+          "line": 573,
           "doc": "Create a device-resident fixed-step AffineBody trajectory tape."
         },
         {
           "name": "differentiable_soft_affine",
           "signature": "differentiable_soft_affine(self, steps)",
           "source": "src/dem/mainDEM.py",
-          "line": 582,
+          "line": 585,
           "doc": "Create a soft MPM-ABD trajectory tape; plastic soft materials are rejected."
         },
         {
           "name": "differentiate_affine_step",
           "signature": "differentiate_affine_step(self, loss_gradient)",
           "source": "src/dem/mainDEM.py",
-          "line": 565,
+          "line": 568,
           "doc": ""
         },
         {
           "name": "get_critical_timestep",
           "signature": "get_critical_timestep(self)",
           "source": "src/dem/mainDEM.py",
-          "line": 898,
+          "line": 901,
           "doc": ""
         },
         {
           "name": "get_joint_states",
           "signature": "get_joint_states(self)",
           "source": "src/dem/mainDEM.py",
-          "line": 553,
+          "line": 556,
           "doc": "Read joint angles (degrees), speeds (degrees/s), and constraint errors."
         },
         {
           "name": "inherit_property",
           "signature": "inherit_property(self, materialID, property)",
           "source": "src/dem/mainDEM.py",
-          "line": 632,
+          "line": 635,
           "doc": ""
         },
         {
           "name": "is_lsmpm_soft_affine_ipc",
           "signature": "is_lsmpm_soft_affine_ipc(self)",
           "source": "src/dem/mainDEM.py",
-          "line": 807,
+          "line": 810,
           "doc": ""
         },
         {
           "name": "load_history_contact",
           "signature": "load_history_contact(self)",
           "source": "src/dem/mainDEM.py",
-          "line": 635,
+          "line": 638,
           "doc": ""
         },
         {
           "name": "memory_allocate",
           "signature": "memory_allocate(self, memory, log=True)",
           "source": "src/dem/mainDEM.py",
-          "line": 174,
+          "line": 175,
           "doc": ""
         },
         {
           "name": "modify_parameters",
           "signature": "modify_parameters(self, **kwargs)",
           "source": "src/dem/mainDEM.py",
-          "line": 741,
+          "line": 744,
           "doc": ""
         },
         {
           "name": "postprocessing",
           "signature": "postprocessing(self, start_file=0, end_file=-1, read_path=None, write_path=None, scheme='DEM', **kwargs)",
           "source": "src/dem/mainDEM.py",
-          "line": 956,
+          "line": 959,
           "doc": ""
         },
         {
           "name": "preprocess_soft_grid_template",
           "signature": "preprocess_soft_grid_template(self, name, points_per_cell=1, center_quadrature=False, verlet_distance_multiplier=None, material_points=None, point_volume=None, mechanical_grid_spacing=None, mechanical_grid_refinement=None, reference_volume=None)",
           "source": "src/dem/mainDEM.py",
-          "line": 425,
+          "line": 428,
           "doc": ""
         },
         {
           "name": "print_basic_simulation_info",
           "signature": "print_basic_simulation_info(self)",
           "source": "src/dem/mainDEM.py",
-          "line": 278,
+          "line": 281,
           "doc": ""
         },
         {
           "name": "print_memory_info",
           "signature": "print_memory_info(self)",
           "source": "src/dem/mainDEM.py",
-          "line": 333,
+          "line": 336,
           "doc": ""
         },
         {
           "name": "print_neighbor_search_info",
           "signature": "print_neighbor_search_info(self)",
           "source": "src/dem/mainDEM.py",
-          "line": 381,
+          "line": 384,
           "doc": ""
         },
         {
           "name": "print_simulation_info",
           "signature": "print_simulation_info(self)",
           "source": "src/dem/mainDEM.py",
-          "line": 295,
+          "line": 298,
           "doc": ""
         },
         {
           "name": "print_solver_info",
           "signature": "print_solver_info(self)",
           "source": "src/dem/mainDEM.py",
-          "line": 315,
+          "line": 318,
           "doc": ""
         },
         {
           "name": "read_restart",
           "signature": "read_restart(self, file_number, file_path, particle=True, sphere=True, clump=False, wall=True, servo=False, ppcontact=True, pwcontact=True, is_continue=True)",
           "source": "src/dem/mainDEM.py",
-          "line": 662,
+          "line": 665,
           "doc": ""
         },
         {
           "name": "run",
           "signature": "run(self, visualize=False, **kwargs)",
           "source": "src/dem/mainDEM.py",
-          "line": 877,
+          "line": 880,
           "doc": ""
         },
         {
           "name": "save_data",
           "signature": "save_data(self)",
           "source": "src/dem/mainDEM.py",
-          "line": 951,
+          "line": 954,
           "doc": ""
         },
         {
           "name": "select_save_data",
           "signature": "select_save_data(self, particle=True, sphere=False, clump=False, surface=True, grid=False, bounding=False, wall=False, particle_particle_contact=False, particle_wall_contact=False)",
           "source": "src/dem/mainDEM.py",
-          "line": 645,
+          "line": 648,
           "doc": ""
         },
         {
           "name": "servo_switch",
           "signature": "servo_switch(self, status='On')",
           "source": "src/dem/mainDEM.py",
-          "line": 869,
+          "line": 872,
           "doc": ""
         },
         {
           "name": "set_affine_body_parameters",
           "signature": "set_affine_body_parameters(self, **kwargs)",
           "source": "src/dem/mainDEM.py",
-          "line": 151,
+          "line": 152,
           "doc": ""
         },
         {
           "name": "set_configuration",
           "signature": "set_configuration(self, log=True, **kwargs)",
           "source": "src/dem/mainDEM.py",
-          "line": 43,
+          "line": 44,
           "doc": ""
         },
         {
           "name": "set_joint_target_angle",
           "signature": "set_joint_target_angle(self, jointID, target_angle)",
           "source": "src/dem/mainDEM.py",
-          "line": 542,
+          "line": 545,
           "doc": "Set an affine revolute-joint motor target in degrees."
         },
         {
           "name": "set_joint_target_angles",
           "signature": "set_joint_target_angles(self, jointIDs, target_angles)",
           "source": "src/dem/mainDEM.py",
-          "line": 546,
+          "line": 549,
           "doc": "Set a batch of revolute motor targets in degrees, between steps."
         },
         {
           "name": "set_solver",
           "signature": "set_solver(self, solver, log=True)",
           "source": "src/dem/mainDEM.py",
-          "line": 125,
+          "line": 126,
           "doc": ""
         },
         {
           "name": "set_static_wall",
           "signature": "set_static_wall(self, static_wall=True)",
           "source": "src/dem/mainDEM.py",
-          "line": 866,
+          "line": 869,
           "doc": ""
         },
         {
           "name": "set_window",
           "signature": "set_window(self, window)",
           "source": "src/dem/mainDEM.py",
-          "line": 874,
+          "line": 877,
           "doc": ""
         },
         {
           "name": "solve_affine_adjoint",
           "signature": "solve_affine_adjoint(self, loss_gradient)",
           "source": "src/dem/mainDEM.py",
-          "line": 560,
+          "line": 563,
           "doc": ""
         },
         {
           "name": "update_contact_properties",
           "signature": "update_contact_properties(self, materialID1, materialID2, property_name, value, overide=True)",
           "source": "src/dem/mainDEM.py",
-          "line": 935,
+          "line": 938,
           "doc": ""
         },
         {
           "name": "update_material_properties",
           "signature": "update_material_properties(self, materialID, property_name, value, override=True)",
           "source": "src/dem/mainDEM.py",
-          "line": 904,
+          "line": 907,
           "doc": ""
         },
         {
           "name": "update_particle_properties",
           "signature": "update_particle_properties(self, property_name, value, override=True, bodyID=None, region_name=None, function=None)",
           "source": "src/dem/mainDEM.py",
-          "line": 907,
+          "line": 910,
           "doc": ""
         },
         {
           "name": "update_wall_status",
           "signature": "update_wall_status(self, wallID, property_name, value, override=True)",
           "source": "src/dem/mainDEM.py",
-          "line": 922,
+          "line": 925,
           "doc": ""
         }
       ],
@@ -5665,12 +5665,12 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 144,
+              "line": 145,
               "reader": "get_alternative"
             },
             {
               "source": "src/dem/mainDEM.py",
-              "line": 749,
+              "line": 752,
               "reader": "get_essential"
             }
           ]
@@ -5680,7 +5680,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 113,
+              "line": 114,
               "reader": "get_alternative"
             }
           ]
@@ -5690,7 +5690,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 55,
+              "line": 56,
               "reader": "get_alternative"
             }
           ]
@@ -5700,17 +5700,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 110,
-              "reader": "get_alternative"
-            }
-          ]
-        },
-        {
-          "name": "affine_contact_block_capacity",
-          "locations": [
-            {
-              "source": "src/dem/mainDEM.py",
-              "line": 260,
+              "line": 111,
               "reader": "get_alternative"
             }
           ]
@@ -5775,7 +5765,7 @@
           "locations": [
             {
               "source": "src/dem/Simulation.py",
-              "line": 1061,
+              "line": 1051,
               "reader": "get_alternative"
             }
           ]
@@ -5785,7 +5775,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 242,
+              "line": 243,
               "reader": "get_alternative"
             }
           ]
@@ -6050,7 +6040,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 46,
+              "line": 47,
               "reader": "get_alternative"
             }
           ]
@@ -6110,7 +6100,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 237,
+              "line": 238,
               "reader": "get_alternative"
             }
           ]
@@ -6120,17 +6110,17 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 817,
+              "line": 820,
               "reader": "get_alternative"
             },
             {
               "source": "src/dem/mainDEM.py",
-              "line": 824,
+              "line": 827,
               "reader": "get_alternative"
             },
             {
               "source": "src/dem/mainDEM.py",
-              "line": 844,
+              "line": 847,
               "reader": "get_alternative"
             }
           ]
@@ -6140,7 +6130,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 802,
+              "line": 805,
               "reader": "get_alternative"
             }
           ]
@@ -6150,7 +6140,7 @@
           "locations": [
             {
               "source": "src/dem/Simulation.py",
-              "line": 1053,
+              "line": 1043,
               "reader": "get_alternative"
             }
           ]
@@ -6190,12 +6180,12 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 143,
+              "line": 144,
               "reader": "get_alternative"
             },
             {
               "source": "src/dem/mainDEM.py",
-              "line": 747,
+              "line": 750,
               "reader": "get_essential"
             }
           ]
@@ -6250,7 +6240,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 235,
+              "line": 236,
               "reader": "get_alternative"
             }
           ]
@@ -6262,6 +6252,16 @@
               "source": "src/dem/generator/LoadFromFile.py",
               "line": 626,
               "reader": "get_essential"
+            }
+          ]
+        },
+        {
+          "name": "contact_coordination_number",
+          "locations": [
+            {
+              "source": "src/dem/mainDEM.py",
+              "line": 249,
+              "reader": "get_alternative"
             }
           ]
         },
@@ -6405,7 +6405,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 52,
+              "line": 53,
               "reader": "get_alternative"
             }
           ]
@@ -6455,7 +6455,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 45,
+              "line": 46,
               "reader": "get_essential"
             }
           ]
@@ -6472,6 +6472,16 @@
               "source": "src/dem/contact/Linear.py",
               "line": 98,
               "reader": "get_essential"
+            }
+          ]
+        },
+        {
+          "name": "edge_edge_coordination_number",
+          "locations": [
+            {
+              "source": "src/dem/mainDEM.py",
+              "line": 259,
+              "reader": "get_alternative"
             }
           ]
         },
@@ -6495,7 +6505,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 118,
+              "line": 119,
               "reader": "get_alternative"
             }
           ]
@@ -6505,7 +6515,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 127,
+              "line": 128,
               "reader": "get_alternative"
             }
           ]
@@ -6565,7 +6575,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 48,
+              "line": 49,
               "reader": "get_alternative"
             }
           ]
@@ -6635,7 +6645,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 636,
+              "line": 639,
               "reader": "get_alternative"
             }
           ]
@@ -6925,7 +6935,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 801,
+              "line": 804,
               "reader": "get_alternative"
             }
           ]
@@ -6985,12 +6995,12 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 47,
+              "line": 48,
               "reader": "get_alternative"
             },
             {
               "source": "src/dem/mainDEM.py",
-              "line": 755,
+              "line": 758,
               "reader": "get_essential"
             }
           ]
@@ -7140,7 +7150,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 236,
+              "line": 237,
               "reader": "get_alternative"
             }
           ]
@@ -7150,7 +7160,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 239,
+              "line": 240,
               "reader": "get_essential"
             }
           ]
@@ -7395,7 +7405,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 119,
+              "line": 120,
               "reader": "get_alternative"
             }
           ]
@@ -7415,12 +7425,12 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 192,
+              "line": 193,
               "reader": "get_essential"
             },
             {
               "source": "src/dem/mainDEM.py",
-              "line": 204,
+              "line": 205,
               "reader": "get_essential"
             }
           ]
@@ -7440,7 +7450,7 @@
           "locations": [
             {
               "source": "src/dem/Simulation.py",
-              "line": 676,
+              "line": 674,
               "reader": "get"
             }
           ]
@@ -7450,7 +7460,7 @@
           "locations": [
             {
               "source": "src/dem/Simulation.py",
-              "line": 674,
+              "line": 672,
               "reader": "get"
             }
           ]
@@ -7490,7 +7500,7 @@
           "locations": [
             {
               "source": "src/dem/Simulation.py",
-              "line": 1054,
+              "line": 1044,
               "reader": "get_alternative"
             }
           ]
@@ -7500,7 +7510,7 @@
           "locations": [
             {
               "source": "src/dem/Simulation.py",
-              "line": 1057,
+              "line": 1047,
               "reader": "get_alternative"
             }
           ]
@@ -7510,7 +7520,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 91,
+              "line": 92,
               "reader": "get_alternative"
             }
           ]
@@ -7520,7 +7530,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 62,
+              "line": 63,
               "reader": "get_alternative"
             }
           ]
@@ -7530,7 +7540,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 84,
+              "line": 85,
               "reader": "get_alternative"
             }
           ]
@@ -7745,7 +7755,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 182,
+              "line": 183,
               "reader": "get_essential"
             }
           ]
@@ -7765,7 +7775,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 179,
+              "line": 180,
               "reader": "get_alternative"
             }
           ]
@@ -7775,17 +7785,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 233,
-              "reader": "get_alternative"
-            }
-          ]
-        },
-        {
-          "name": "max_edge_edge_pairs",
-          "locations": [
-            {
-              "source": "src/dem/mainDEM.py",
-              "line": 257,
+              "line": 234,
               "reader": "get_alternative"
             }
           ]
@@ -7795,7 +7795,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 229,
+              "line": 230,
               "reader": "get_alternative"
             }
           ]
@@ -7805,7 +7805,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 175,
+              "line": 176,
               "reader": "get_essential"
             }
           ]
@@ -7815,7 +7815,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 199,
+              "line": 200,
               "reader": "get_essential"
             }
           ]
@@ -7825,7 +7825,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 177,
+              "line": 178,
               "reader": "get_essential"
             }
           ]
@@ -7835,7 +7835,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 228,
+              "line": 229,
               "reader": "get_alternative"
             }
           ]
@@ -7845,17 +7845,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 231,
-              "reader": "get_alternative"
-            }
-          ]
-        },
-        {
-          "name": "max_point_triangle_pairs",
-          "locations": [
-            {
-              "source": "src/dem/mainDEM.py",
-              "line": 256,
+              "line": 232,
               "reader": "get_alternative"
             }
           ]
@@ -7865,12 +7855,12 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 184,
+              "line": 185,
               "reader": "get_essential"
             },
             {
               "source": "src/dem/mainDEM.py",
-              "line": 189,
+              "line": 190,
               "reader": "get_essential"
             }
           ]
@@ -7880,12 +7870,12 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 186,
+              "line": 187,
               "reader": "get_alternative"
             },
             {
               "source": "src/dem/mainDEM.py",
-              "line": 190,
+              "line": 191,
               "reader": "get_alternative"
             }
           ]
@@ -7895,7 +7885,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 230,
+              "line": 231,
               "reader": "get_alternative"
             }
           ]
@@ -7905,7 +7895,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 198,
+              "line": 199,
               "reader": "get_essential"
             }
           ]
@@ -7915,7 +7905,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 208,
+              "line": 209,
               "reader": "get_alternative"
             }
           ]
@@ -7925,7 +7915,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 178,
+              "line": 179,
               "reader": "get_alternative"
             }
           ]
@@ -8095,7 +8085,7 @@
           "locations": [
             {
               "source": "src/dem/Simulation.py",
-              "line": 1066,
+              "line": 1056,
               "reader": "get_alternative"
             }
           ]
@@ -8245,7 +8235,7 @@
           "locations": [
             {
               "source": "src/dem/Simulation.py",
-              "line": 531,
+              "line": 529,
               "reader": "get"
             }
           ]
@@ -8515,7 +8505,7 @@
           "locations": [
             {
               "source": "src/dem/Simulation.py",
-              "line": 1060,
+              "line": 1050,
               "reader": "get_alternative"
             }
           ]
@@ -8650,7 +8640,17 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 195,
+              "line": 196,
+              "reader": "get_alternative"
+            }
+          ]
+        },
+        {
+          "name": "point_triangle_coordination_number",
+          "locations": [
+            {
+              "source": "src/dem/mainDEM.py",
+              "line": 255,
               "reader": "get_alternative"
             }
           ]
@@ -8660,7 +8660,7 @@
           "locations": [
             {
               "source": "src/dem/Simulation.py",
-              "line": 1062,
+              "line": 1052,
               "reader": "get_alternative"
             }
           ]
@@ -8720,7 +8720,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 637,
+              "line": 640,
               "reader": "get_alternative"
             }
           ]
@@ -8730,7 +8730,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 799,
+              "line": 802,
               "reader": "get_alternative"
             }
           ]
@@ -8740,7 +8740,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 638,
+              "line": 641,
               "reader": "get_alternative"
             }
           ]
@@ -8870,7 +8870,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 795,
+              "line": 798,
               "reader": "get_alternative"
             }
           ]
@@ -8965,12 +8965,12 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 145,
+              "line": 146,
               "reader": "get_essential"
             },
             {
               "source": "src/dem/mainDEM.py",
-              "line": 751,
+              "line": 754,
               "reader": "get_essential"
             }
           ]
@@ -8995,12 +8995,12 @@
             },
             {
               "source": "src/dem/mainDEM.py",
-              "line": 146,
+              "line": 147,
               "reader": "get_alternative"
             },
             {
               "source": "src/dem/mainDEM.py",
-              "line": 753,
+              "line": 756,
               "reader": "get_essential"
             }
           ]
@@ -9055,7 +9055,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 54,
+              "line": 55,
               "reader": "get_alternative"
             }
           ]
@@ -9065,7 +9065,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 49,
+              "line": 50,
               "reader": "get_alternative"
             }
           ]
@@ -9075,7 +9075,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 50,
+              "line": 51,
               "reader": "get_alternative"
             }
           ]
@@ -9095,7 +9095,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 65,
+              "line": 66,
               "reader": "get_alternative"
             }
           ]
@@ -9145,12 +9145,12 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 142,
+              "line": 143,
               "reader": "get_essential"
             },
             {
               "source": "src/dem/mainDEM.py",
-              "line": 743,
+              "line": 746,
               "reader": "get_essential"
             }
           ]
@@ -9160,7 +9160,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 201,
+              "line": 202,
               "reader": "get_alternative"
             }
           ]
@@ -9170,7 +9170,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 70,
+              "line": 71,
               "reader": "get_alternative"
             }
           ]
@@ -9180,7 +9180,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 72,
+              "line": 73,
               "reader": "get_alternative"
             }
           ]
@@ -9190,7 +9190,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 99,
+              "line": 100,
               "reader": "get_alternative"
             }
           ]
@@ -9200,7 +9200,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 100,
+              "line": 101,
               "reader": "get_alternative"
             }
           ]
@@ -9210,7 +9210,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 98,
+              "line": 99,
               "reader": "get_alternative"
             }
           ]
@@ -9220,7 +9220,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 107,
+              "line": 108,
               "reader": "get_alternative"
             }
           ]
@@ -9230,7 +9230,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 108,
+              "line": 109,
               "reader": "get_alternative"
             }
           ]
@@ -9240,7 +9240,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 104,
+              "line": 105,
               "reader": "get_alternative"
             }
           ]
@@ -9250,7 +9250,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 105,
+              "line": 106,
               "reader": "get_alternative"
             }
           ]
@@ -9260,7 +9260,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 102,
+              "line": 103,
               "reader": "get_alternative"
             }
           ]
@@ -9270,7 +9270,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 101,
+              "line": 102,
               "reader": "get_alternative"
             }
           ]
@@ -9280,7 +9280,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 106,
+              "line": 107,
               "reader": "get_alternative"
             }
           ]
@@ -9290,7 +9290,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 103,
+              "line": 104,
               "reader": "get_alternative"
             }
           ]
@@ -9300,7 +9300,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 88,
+              "line": 89,
               "reader": "get_alternative"
             }
           ]
@@ -9310,7 +9310,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 74,
+              "line": 75,
               "reader": "get_alternative"
             }
           ]
@@ -9320,7 +9320,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 81,
+              "line": 82,
               "reader": "get_alternative"
             }
           ]
@@ -9330,7 +9330,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 83,
+              "line": 84,
               "reader": "get_alternative"
             }
           ]
@@ -9340,7 +9340,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 59,
+              "line": 60,
               "reader": "get_alternative"
             }
           ]
@@ -9350,7 +9350,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 222,
+              "line": 223,
               "reader": "get_alternative"
             }
           ]
@@ -9360,7 +9360,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 212,
+              "line": 213,
               "reader": "get_alternative"
             }
           ]
@@ -9370,7 +9370,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 217,
+              "line": 218,
               "reader": "get_alternative"
             }
           ]
@@ -9450,7 +9450,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 128,
+              "line": 129,
               "reader": "get_alternative"
             }
           ]
@@ -9460,7 +9460,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 130,
+              "line": 131,
               "reader": "get_alternative"
             }
           ]
@@ -9470,7 +9470,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 129,
+              "line": 130,
               "reader": "get_alternative"
             }
           ]
@@ -9505,12 +9505,12 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 187,
+              "line": 188,
               "reader": "get_alternative"
             },
             {
               "source": "src/dem/mainDEM.py",
-              "line": 193,
+              "line": 194,
               "reader": "get_essential"
             }
           ]
@@ -9740,7 +9740,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 416,
+              "line": 419,
               "reader": "get_alternative"
             }
           ]
@@ -9760,7 +9760,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 415,
+              "line": 418,
               "reader": "get_alternative"
             }
           ]
@@ -9770,12 +9770,12 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 141,
+              "line": 142,
               "reader": "get_essential"
             },
             {
               "source": "src/dem/mainDEM.py",
-              "line": 745,
+              "line": 748,
               "reader": "get_essential"
             }
           ]
@@ -9845,7 +9845,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 116,
+              "line": 117,
               "reader": "get_alternative"
             }
           ]
@@ -9965,7 +9965,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 265,
+              "line": 268,
               "reader": "get_alternative"
             }
           ]
@@ -9995,7 +9995,7 @@
           "locations": [
             {
               "source": "src/dem/Simulation.py",
-              "line": 1065,
+              "line": 1055,
               "reader": "get_alternative"
             }
           ]
@@ -10050,7 +10050,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 117,
+              "line": 118,
               "reader": "get_alternative"
             }
           ]
@@ -10060,7 +10060,7 @@
           "locations": [
             {
               "source": "src/dem/Simulation.py",
-              "line": 1051,
+              "line": 1041,
               "reader": "get_alternative"
             }
           ]
@@ -10090,7 +10090,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 263,
+              "line": 266,
               "reader": "get_alternative"
             }
           ]
@@ -10100,7 +10100,7 @@
           "locations": [
             {
               "source": "src/dem/mainDEM.py",
-              "line": 266,
+              "line": 269,
               "reader": "get_alternative"
             }
           ]
@@ -10265,7 +10265,7 @@
           "locations": [
             {
               "source": "src/dem/Simulation.py",
-              "line": 1052,
+              "line": 1042,
               "reader": "get_alternative"
             }
           ]
@@ -10547,7 +10547,7 @@
       ],
       "summary": {
         "method_count": 57,
-        "configuration_key_count": 295,
+        "configuration_key_count": 296,
         "example_count": 222
       }
     },
@@ -10566,49 +10566,49 @@
           "name": "add_body",
           "signature": "add_body(self, mpm_body=None, dem_particle=None, write_file=False, check_overlap=False, adaptive_boundary_radius=False)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 281,
+          "line": 278,
           "doc": ""
         },
         {
           "name": "add_essentials",
           "signature": "add_essentials(self, **kwargs)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 441,
+          "line": 438,
           "doc": ""
         },
         {
           "name": "add_ipc_property",
           "signature": "add_ipc_property(self, MPMbody, AffineBody, property=None, **kwargs)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 348,
+          "line": 345,
           "doc": ""
         },
         {
           "name": "add_postfunctions",
           "signature": "add_postfunctions(self, **functions)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 533,
+          "line": 530,
           "doc": ""
         },
         {
           "name": "add_property",
           "signature": "add_property(self, DEMmaterial, MPMmaterial, property, dType='all')",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 339,
+          "line": 336,
           "doc": ""
         },
         {
           "name": "check_critical_timestep",
           "signature": "check_critical_timestep(self)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 824,
+          "line": 821,
           "doc": ""
         },
         {
           "name": "choose_contact_model",
           "signature": "choose_contact_model(self, particle_particle_contact_model, particle_wall_contact_model=None, **kwargs)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 303,
+          "line": 300,
           "doc": ""
         },
         {
@@ -10622,168 +10622,168 @@
           "name": "differentiable",
           "signature": "differentiable(self, steps)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 680,
+          "line": 677,
           "doc": "Record a fixed-step continuum Direct MPM--ABD trajectory."
         },
         {
           "name": "get_critical_timestep",
           "signature": "get_critical_timestep(self)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 852,
+          "line": 849,
           "doc": ""
         },
         {
           "name": "is_dem_lsm_pm_soft_rigid_mode",
           "signature": "is_dem_lsm_pm_soft_rigid_mode(self)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 539,
+          "line": 536,
           "doc": ""
         },
         {
           "name": "is_direct_mpm_affine_ipc",
           "signature": "is_direct_mpm_affine_ipc(self)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 542,
+          "line": 539,
           "doc": ""
         },
         {
           "name": "is_incompressible_mpm_affine_body",
           "signature": "is_incompressible_mpm_affine_body(self)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 549,
+          "line": 546,
           "doc": ""
         },
         {
           "name": "load_history_contact",
           "signature": "load_history_contact(self)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 428,
+          "line": 425,
           "doc": ""
         },
         {
           "name": "memory_allocate",
           "signature": "memory_allocate(self, memory, dem_memory=None, mpm_memory=None, log=True)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 181,
+          "line": 182,
           "doc": ""
         },
         {
           "name": "modify_parameters",
           "signature": "modify_parameters(self, **kwargs)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 353,
+          "line": 350,
           "doc": ""
         },
         {
           "name": "postprocessing",
           "signature": "postprocessing(self, start_file=0, end_file=-1, read_path=None, write_path=None, scheme=None, **kwargs)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 862,
+          "line": 859,
           "doc": ""
         },
         {
           "name": "print_basic_simulation_info",
           "signature": "print_basic_simulation_info(self)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 211,
+          "line": 208,
           "doc": ""
         },
         {
           "name": "print_memory_info",
           "signature": "print_memory_info(self)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 242,
+          "line": 239,
           "doc": ""
         },
         {
           "name": "print_neighbor_search_info",
           "signature": "print_neighbor_search_info(self)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 260,
+          "line": 257,
           "doc": ""
         },
         {
           "name": "print_solver_info",
           "signature": "print_solver_info(self)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 225,
+          "line": 222,
           "doc": ""
         },
         {
           "name": "read_restart",
           "signature": "read_restart(self, file_number, file_path, ppcontact=False, pwcontact=False)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 416,
+          "line": 413,
           "doc": ""
         },
         {
           "name": "run",
           "signature": "run(self, **kwargs)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 812,
+          "line": 809,
           "doc": ""
         },
         {
           "name": "run_dem_lsm_pm_soft_rigid",
           "signature": "run_dem_lsm_pm_soft_rigid(self, **kwargs)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 765,
+          "line": 762,
           "doc": ""
         },
         {
           "name": "run_direct_mpm_affine_ipc",
           "signature": "run_direct_mpm_affine_ipc(self, **kwargs)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 689,
+          "line": 686,
           "doc": ""
         },
         {
           "name": "run_incompressible_mpm_affine_body",
           "signature": "run_incompressible_mpm_affine_body(self, **kwargs)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 581,
+          "line": 578,
           "doc": ""
         },
         {
           "name": "save_data",
           "signature": "save_data(self)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 857,
+          "line": 854,
           "doc": ""
         },
         {
           "name": "select_save_data",
           "signature": "select_save_data(self, particle_particle_contact=False, particle_wall_contact=False)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 438,
+          "line": 435,
           "doc": ""
         },
         {
           "name": "set_configuration",
           "signature": "set_configuration(self, log=True, **kwargs)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 79,
+          "line": 80,
           "doc": ""
         },
         {
           "name": "set_solver",
           "signature": "set_solver(self, solver, log=True)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 145,
+          "line": 146,
           "doc": ""
         },
         {
           "name": "sync_settings",
           "signature": "sync_settings(self)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 392,
+          "line": 389,
           "doc": ""
         },
         {
           "name": "update_contact_properties",
           "signature": "update_contact_properties(self, materialID1, materialID2, property_name, value, overide=True)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 536,
+          "line": 533,
           "doc": ""
         }
       ],
@@ -10793,7 +10793,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 673,
+              "line": 670,
               "reader": "get"
             }
           ]
@@ -10803,98 +10803,8 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 167,
+              "line": 168,
               "reader": "get_alternative"
-            },
-            {
-              "source": "src/mpdem/mainDEMPM.py",
-              "line": 370,
-              "reader": "get_essential"
-            },
-            {
-              "source": "src/mpdem/mainDEMPM.py",
-              "line": 371,
-              "reader": "get_essential"
-            },
-            {
-              "source": "src/mpdem/mainDEMPM.py",
-              "line": 372,
-              "reader": "get_essential"
-            }
-          ]
-        },
-        {
-          "name": "alphaPIC",
-          "locations": [
-            {
-              "source": "src/mpdem/mainDEMPM.py",
-              "line": 388,
-              "reader": "get_essential"
-            }
-          ]
-        },
-        {
-          "name": "background_damping",
-          "locations": [
-            {
-              "source": "src/mpdem/mainDEMPM.py",
-              "line": 386,
-              "reader": "get_essential"
-            }
-          ]
-        },
-        {
-          "name": "body_coordination_number",
-          "locations": [
-            {
-              "source": "src/mpdem/mainDEMPM.py",
-              "line": 190,
-              "reader": "get_alternative"
-            }
-          ]
-        },
-        {
-          "name": "calm",
-          "locations": [
-            {
-              "source": "src/mpdem/mainDEMPM.py",
-              "line": 522,
-              "reader": "get_alternative"
-            }
-          ]
-        },
-        {
-          "name": "CFD_coupling_domain",
-          "locations": [
-            {
-              "source": "src/mpdem/mainDEMPM.py",
-              "line": 128,
-              "reader": "get_alternative"
-            }
-          ]
-        },
-        {
-          "name": "cfdem_resolution",
-          "locations": [
-            {
-              "source": "src/mpdem/mainDEMPM.py",
-              "line": 114,
-              "reader": "get_alternative"
-            }
-          ]
-        },
-        {
-          "name": "CFL",
-          "locations": [
-            {
-              "source": "src/mpdem/mainDEMPM.py",
-              "line": 166,
-              "reader": "get_alternative"
-            },
-            {
-              "source": "src/mpdem/mainDEMPM.py",
-              "line": 366,
-              "reader": "get_essential"
             },
             {
               "source": "src/mpdem/mainDEMPM.py",
@@ -10905,6 +10815,96 @@
               "source": "src/mpdem/mainDEMPM.py",
               "line": 368,
               "reader": "get_essential"
+            },
+            {
+              "source": "src/mpdem/mainDEMPM.py",
+              "line": 369,
+              "reader": "get_essential"
+            }
+          ]
+        },
+        {
+          "name": "alphaPIC",
+          "locations": [
+            {
+              "source": "src/mpdem/mainDEMPM.py",
+              "line": 385,
+              "reader": "get_essential"
+            }
+          ]
+        },
+        {
+          "name": "background_damping",
+          "locations": [
+            {
+              "source": "src/mpdem/mainDEMPM.py",
+              "line": 383,
+              "reader": "get_essential"
+            }
+          ]
+        },
+        {
+          "name": "body_coordination_number",
+          "locations": [
+            {
+              "source": "src/mpdem/mainDEMPM.py",
+              "line": 191,
+              "reader": "get_alternative"
+            }
+          ]
+        },
+        {
+          "name": "calm",
+          "locations": [
+            {
+              "source": "src/mpdem/mainDEMPM.py",
+              "line": 519,
+              "reader": "get_alternative"
+            }
+          ]
+        },
+        {
+          "name": "CFD_coupling_domain",
+          "locations": [
+            {
+              "source": "src/mpdem/mainDEMPM.py",
+              "line": 129,
+              "reader": "get_alternative"
+            }
+          ]
+        },
+        {
+          "name": "cfdem_resolution",
+          "locations": [
+            {
+              "source": "src/mpdem/mainDEMPM.py",
+              "line": 115,
+              "reader": "get_alternative"
+            }
+          ]
+        },
+        {
+          "name": "CFL",
+          "locations": [
+            {
+              "source": "src/mpdem/mainDEMPM.py",
+              "line": 167,
+              "reader": "get_alternative"
+            },
+            {
+              "source": "src/mpdem/mainDEMPM.py",
+              "line": 363,
+              "reader": "get_essential"
+            },
+            {
+              "source": "src/mpdem/mainDEMPM.py",
+              "line": 364,
+              "reader": "get_essential"
+            },
+            {
+              "source": "src/mpdem/mainDEMPM.py",
+              "line": 365,
+              "reader": "get_essential"
             }
           ]
         },
@@ -10913,7 +10913,17 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 192,
+              "line": 193,
+              "reader": "get_alternative"
+            }
+          ]
+        },
+        {
+          "name": "contact_coordination_number",
+          "locations": [
+            {
+              "source": "src/mpdem/mainDEMPM.py",
+              "line": 199,
               "reader": "get_alternative"
             }
           ]
@@ -10933,12 +10943,12 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 113,
+              "line": 114,
               "reader": "get_alternative"
             },
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 390,
+              "line": 387,
               "reader": "get_alternative"
             }
           ]
@@ -10948,7 +10958,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 164,
+              "line": 165,
               "reader": "get_alternative"
             }
           ]
@@ -10958,7 +10968,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 118,
+              "line": 119,
               "reader": "get_alternative"
             }
           ]
@@ -10968,7 +10978,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 84,
+              "line": 85,
               "reader": "get_essential"
             }
           ]
@@ -10978,7 +10988,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 505,
+              "line": 502,
               "reader": "get_alternative"
             }
           ]
@@ -11013,7 +11023,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 127,
+              "line": 128,
               "reader": "get_alternative"
             }
           ]
@@ -11023,7 +11033,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 147,
+              "line": 148,
               "reader": "get_alternative"
             }
           ]
@@ -11043,7 +11053,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 129,
+              "line": 130,
               "reader": "get_alternative"
             }
           ]
@@ -11053,7 +11063,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 429,
+              "line": 426,
               "reader": "get_alternative"
             }
           ]
@@ -11083,7 +11093,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 675,
+              "line": 672,
               "reader": "get"
             }
           ]
@@ -11093,7 +11103,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 521,
+              "line": 518,
               "reader": "get_alternative"
             }
           ]
@@ -11103,22 +11113,22 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 121,
-              "reader": "get_alternative"
-            },
-            {
-              "source": "src/mpdem/mainDEMPM.py",
               "line": 122,
               "reader": "get_alternative"
             },
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 383,
+              "line": 123,
+              "reader": "get_alternative"
+            },
+            {
+              "source": "src/mpdem/mainDEMPM.py",
+              "line": 380,
               "reader": "get_essential"
             },
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 384,
+              "line": 381,
               "reader": "get_essential"
             }
           ]
@@ -11128,7 +11138,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 672,
+              "line": 669,
               "reader": "get"
             }
           ]
@@ -11138,27 +11148,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 193,
-              "reader": "get_alternative"
-            }
-          ]
-        },
-        {
-          "name": "max_point_edge_pairs",
-          "locations": [
-            {
-              "source": "src/mpdem/mainDEMPM.py",
-              "line": 201,
-              "reader": "get_alternative"
-            }
-          ]
-        },
-        {
-          "name": "max_point_triangle_pairs",
-          "locations": [
-            {
-              "source": "src/mpdem/mainDEMPM.py",
-              "line": 199,
+              "line": 194,
               "reader": "get_alternative"
             }
           ]
@@ -11168,7 +11158,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 194,
+              "line": 195,
               "reader": "get_alternative"
             }
           ]
@@ -11248,7 +11238,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 115,
+              "line": 116,
               "reader": "get_alternative"
             }
           ]
@@ -11268,12 +11258,12 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 585,
+              "line": 582,
               "reader": "get_alternative"
             },
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 695,
+              "line": 692,
               "reader": "get_alternative"
             }
           ]
@@ -11283,7 +11273,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 430,
+              "line": 427,
               "reader": "get_alternative"
             }
           ]
@@ -11293,7 +11283,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 696,
+              "line": 693,
               "reader": "get_alternative"
             }
           ]
@@ -11303,7 +11293,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 431,
+              "line": 428,
               "reader": "get_alternative"
             }
           ]
@@ -11313,7 +11303,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 716,
+              "line": 713,
               "reader": "get_alternative"
             }
           ]
@@ -11323,7 +11313,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 519,
+              "line": 516,
               "reader": "get_alternative"
             }
           ]
@@ -11333,7 +11323,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 674,
+              "line": 671,
               "reader": "get"
             }
           ]
@@ -11368,13 +11358,33 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 168,
+              "line": 169,
               "reader": "get_essential"
             },
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 374,
+              "line": 371,
               "reader": "get_essential"
+            },
+            {
+              "source": "src/mpdem/mainDEMPM.py",
+              "line": 372,
+              "reader": "get_essential"
+            },
+            {
+              "source": "src/mpdem/mainDEMPM.py",
+              "line": 373,
+              "reader": "get_essential"
+            }
+          ]
+        },
+        {
+          "name": "SavePath",
+          "locations": [
+            {
+              "source": "src/mpdem/mainDEMPM.py",
+              "line": 170,
+              "reader": "get_alternative"
             },
             {
               "source": "src/mpdem/mainDEMPM.py",
@@ -11385,30 +11395,10 @@
               "source": "src/mpdem/mainDEMPM.py",
               "line": 376,
               "reader": "get_essential"
-            }
-          ]
-        },
-        {
-          "name": "SavePath",
-          "locations": [
-            {
-              "source": "src/mpdem/mainDEMPM.py",
-              "line": 169,
-              "reader": "get_alternative"
             },
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 378,
-              "reader": "get_essential"
-            },
-            {
-              "source": "src/mpdem/mainDEMPM.py",
-              "line": 379,
-              "reader": "get_essential"
-            },
-            {
-              "source": "src/mpdem/mainDEMPM.py",
-              "line": 380,
+              "line": 377,
               "reader": "get_essential"
             }
           ]
@@ -11418,7 +11408,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 130,
+              "line": 131,
               "reader": "get_alternative"
             }
           ]
@@ -11438,12 +11428,12 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 165,
+              "line": 166,
               "reader": "get_essential"
             },
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 355,
+              "line": 352,
               "reader": "get_essential"
             }
           ]
@@ -11468,7 +11458,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 148,
+              "line": 149,
               "reader": "get_alternative"
             }
           ]
@@ -11478,7 +11468,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 150,
+              "line": 151,
               "reader": "get_alternative"
             }
           ]
@@ -11488,7 +11478,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 149,
+              "line": 150,
               "reader": "get_alternative"
             }
           ]
@@ -11498,7 +11488,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 767,
+              "line": 764,
               "reader": "get_alternative"
             }
           ]
@@ -11538,7 +11528,17 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 162,
+              "line": 163,
+              "reader": "get_essential"
+            },
+            {
+              "source": "src/mpdem/mainDEMPM.py",
+              "line": 357,
+              "reader": "get_essential"
+            },
+            {
+              "source": "src/mpdem/mainDEMPM.py",
+              "line": 359,
               "reader": "get_essential"
             },
             {
@@ -11548,17 +11548,7 @@
             },
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 362,
-              "reader": "get_essential"
-            },
-            {
-              "source": "src/mpdem/mainDEMPM.py",
-              "line": 363,
-              "reader": "get_essential"
-            },
-            {
-              "source": "src/mpdem/mainDEMPM.py",
-              "line": 364,
+              "line": 361,
               "reader": "get_essential"
             }
           ]
@@ -11568,12 +11558,12 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 125,
+              "line": 126,
               "reader": "get_alternative"
             },
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 126,
+              "line": 127,
               "reader": "get_alternative"
             }
           ]
@@ -11583,7 +11573,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 726,
+              "line": 723,
               "reader": "get_alternative"
             }
           ]
@@ -11593,17 +11583,17 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 123,
-              "reader": "get_alternative"
-            },
-            {
-              "source": "src/mpdem/mainDEMPM.py",
               "line": 124,
               "reader": "get_alternative"
             },
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 766,
+              "line": 125,
+              "reader": "get_alternative"
+            },
+            {
+              "source": "src/mpdem/mainDEMPM.py",
+              "line": 763,
               "reader": "get_alternative"
             }
           ]
@@ -11613,7 +11603,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 191,
+              "line": 192,
               "reader": "get_alternative"
             }
           ]
@@ -11623,7 +11613,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 116,
+              "line": 117,
               "reader": "get_alternative"
             }
           ]
@@ -11634,7 +11624,10 @@
         "examples/mpdem/AffineBody/AffineSoftSphereIPC/affine_soft_sphere_ipc.py",
         "examples/mpdem/AffineBody/MPMAffineDeposition/mpm_affine_deposition.py",
         "examples/mpdem/AffineBody/MPMAffineTriaxial/mpm_affine_triaxial.py",
+        "examples/mpdem/AffineBody/excavator_dig/excavator_cycle.py",
         "examples/mpdem/AffineBody/excavator_dig/excavator_dig.py",
+        "examples/mpdem/AffineBody/screw_pile/screw_pile.py",
+        "examples/mpdem/AffineBody/target_penetration_dp_inverse/target_penetration_dp_inverse.py",
         "examples/mpdem/LevelSet/Bucket/Centrifuge_Plaxis3D.py",
         "examples/mpdem/LevelSet/Bucket/build_bucket_stl.py",
         "examples/mpdem/LevelSet/Bucket/centrifuge_stl.py",
@@ -11714,13 +11707,12 @@
         "examples/mpdem/MultiSphere/SphereSliding/OutputData/iP2SContact/mu=0.2/particles/draw/draw2.py",
         "examples/mpdem/MultiSphere/SphereSliding/sphere_sliding.py",
         "examples/mpdem/MultiSphere/StoneColumn/prepare.py",
-        "examples/mpdem/MultiSphere/StoneColumn/stone_column.py",
-        "examples/mpdem/target_penetration_dp_inverse/target_penetration_dp_inverse.py"
+        "examples/mpdem/MultiSphere/StoneColumn/stone_column.py"
       ],
       "summary": {
         "method_count": 32,
-        "configuration_key_count": 67,
-        "example_count": 86
+        "configuration_key_count": 66,
+        "example_count": 88
       }
     },
     "cfdem": {
@@ -11738,49 +11730,49 @@
           "name": "add_body",
           "signature": "add_body(self, mpm_body=None, dem_particle=None, write_file=False, check_overlap=False, adaptive_boundary_radius=False)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 281,
+          "line": 278,
           "doc": ""
         },
         {
           "name": "add_essentials",
           "signature": "add_essentials(self, **kwargs)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 441,
+          "line": 438,
           "doc": ""
         },
         {
           "name": "add_ipc_property",
           "signature": "add_ipc_property(self, MPMbody, AffineBody, property=None, **kwargs)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 348,
+          "line": 345,
           "doc": ""
         },
         {
           "name": "add_postfunctions",
           "signature": "add_postfunctions(self, **functions)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 533,
+          "line": 530,
           "doc": ""
         },
         {
           "name": "add_property",
           "signature": "add_property(self, DEMmaterial, MPMmaterial, property, dType='all')",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 339,
+          "line": 336,
           "doc": ""
         },
         {
           "name": "check_critical_timestep",
           "signature": "check_critical_timestep(self)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 824,
+          "line": 821,
           "doc": ""
         },
         {
           "name": "choose_contact_model",
           "signature": "choose_contact_model(self, particle_particle_contact_model, particle_wall_contact_model=None, **kwargs)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 303,
+          "line": 300,
           "doc": ""
         },
         {
@@ -11794,168 +11786,168 @@
           "name": "differentiable",
           "signature": "differentiable(self, steps)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 680,
+          "line": 677,
           "doc": "Record a fixed-step continuum Direct MPM--ABD trajectory."
         },
         {
           "name": "get_critical_timestep",
           "signature": "get_critical_timestep(self)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 852,
+          "line": 849,
           "doc": ""
         },
         {
           "name": "is_dem_lsm_pm_soft_rigid_mode",
           "signature": "is_dem_lsm_pm_soft_rigid_mode(self)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 539,
+          "line": 536,
           "doc": ""
         },
         {
           "name": "is_direct_mpm_affine_ipc",
           "signature": "is_direct_mpm_affine_ipc(self)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 542,
+          "line": 539,
           "doc": ""
         },
         {
           "name": "is_incompressible_mpm_affine_body",
           "signature": "is_incompressible_mpm_affine_body(self)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 549,
+          "line": 546,
           "doc": ""
         },
         {
           "name": "load_history_contact",
           "signature": "load_history_contact(self)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 428,
+          "line": 425,
           "doc": ""
         },
         {
           "name": "memory_allocate",
           "signature": "memory_allocate(self, memory, dem_memory=None, mpm_memory=None, log=True)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 181,
+          "line": 182,
           "doc": ""
         },
         {
           "name": "modify_parameters",
           "signature": "modify_parameters(self, **kwargs)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 353,
+          "line": 350,
           "doc": ""
         },
         {
           "name": "postprocessing",
           "signature": "postprocessing(self, start_file=0, end_file=-1, read_path=None, write_path=None, scheme=None, **kwargs)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 862,
+          "line": 859,
           "doc": ""
         },
         {
           "name": "print_basic_simulation_info",
           "signature": "print_basic_simulation_info(self)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 211,
+          "line": 208,
           "doc": ""
         },
         {
           "name": "print_memory_info",
           "signature": "print_memory_info(self)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 242,
+          "line": 239,
           "doc": ""
         },
         {
           "name": "print_neighbor_search_info",
           "signature": "print_neighbor_search_info(self)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 260,
+          "line": 257,
           "doc": ""
         },
         {
           "name": "print_solver_info",
           "signature": "print_solver_info(self)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 225,
+          "line": 222,
           "doc": ""
         },
         {
           "name": "read_restart",
           "signature": "read_restart(self, file_number, file_path, ppcontact=False, pwcontact=False)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 416,
+          "line": 413,
           "doc": ""
         },
         {
           "name": "run",
           "signature": "run(self, **kwargs)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 812,
+          "line": 809,
           "doc": ""
         },
         {
           "name": "run_dem_lsm_pm_soft_rigid",
           "signature": "run_dem_lsm_pm_soft_rigid(self, **kwargs)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 765,
+          "line": 762,
           "doc": ""
         },
         {
           "name": "run_direct_mpm_affine_ipc",
           "signature": "run_direct_mpm_affine_ipc(self, **kwargs)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 689,
+          "line": 686,
           "doc": ""
         },
         {
           "name": "run_incompressible_mpm_affine_body",
           "signature": "run_incompressible_mpm_affine_body(self, **kwargs)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 581,
+          "line": 578,
           "doc": ""
         },
         {
           "name": "save_data",
           "signature": "save_data(self)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 857,
+          "line": 854,
           "doc": ""
         },
         {
           "name": "select_save_data",
           "signature": "select_save_data(self, particle_particle_contact=False, particle_wall_contact=False)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 438,
+          "line": 435,
           "doc": ""
         },
         {
           "name": "set_configuration",
           "signature": "set_configuration(self, log=True, **kwargs)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 79,
+          "line": 80,
           "doc": ""
         },
         {
           "name": "set_solver",
           "signature": "set_solver(self, solver, log=True)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 145,
+          "line": 146,
           "doc": ""
         },
         {
           "name": "sync_settings",
           "signature": "sync_settings(self)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 392,
+          "line": 389,
           "doc": ""
         },
         {
           "name": "update_contact_properties",
           "signature": "update_contact_properties(self, materialID1, materialID2, property_name, value, overide=True)",
           "source": "src/mpdem/mainDEMPM.py",
-          "line": 536,
+          "line": 533,
           "doc": ""
         }
       ],
@@ -11965,7 +11957,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 673,
+              "line": 670,
               "reader": "get"
             }
           ]
@@ -11975,22 +11967,22 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 167,
+              "line": 168,
               "reader": "get_alternative"
             },
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 370,
+              "line": 367,
               "reader": "get_essential"
             },
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 371,
+              "line": 368,
               "reader": "get_essential"
             },
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 372,
+              "line": 369,
               "reader": "get_essential"
             }
           ]
@@ -12010,7 +12002,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 388,
+              "line": 385,
               "reader": "get_essential"
             }
           ]
@@ -12020,7 +12012,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 386,
+              "line": 383,
               "reader": "get_essential"
             }
           ]
@@ -12030,7 +12022,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 190,
+              "line": 191,
               "reader": "get_alternative"
             }
           ]
@@ -12040,7 +12032,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 522,
+              "line": 519,
               "reader": "get_alternative"
             }
           ]
@@ -12050,7 +12042,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 128,
+              "line": 129,
               "reader": "get_alternative"
             }
           ]
@@ -12060,7 +12052,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 114,
+              "line": 115,
               "reader": "get_alternative"
             }
           ]
@@ -12070,22 +12062,22 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 166,
+              "line": 167,
               "reader": "get_alternative"
             },
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 366,
+              "line": 363,
               "reader": "get_essential"
             },
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 367,
+              "line": 364,
               "reader": "get_essential"
             },
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 368,
+              "line": 365,
               "reader": "get_essential"
             }
           ]
@@ -12095,7 +12087,17 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 192,
+              "line": 193,
+              "reader": "get_alternative"
+            }
+          ]
+        },
+        {
+          "name": "contact_coordination_number",
+          "locations": [
+            {
+              "source": "src/mpdem/mainDEMPM.py",
+              "line": 199,
               "reader": "get_alternative"
             }
           ]
@@ -12105,12 +12107,12 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 113,
+              "line": 114,
               "reader": "get_alternative"
             },
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 390,
+              "line": 387,
               "reader": "get_alternative"
             }
           ]
@@ -12120,7 +12122,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 164,
+              "line": 165,
               "reader": "get_alternative"
             }
           ]
@@ -12130,7 +12132,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 118,
+              "line": 119,
               "reader": "get_alternative"
             }
           ]
@@ -12140,7 +12142,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 84,
+              "line": 85,
               "reader": "get_essential"
             }
           ]
@@ -12150,7 +12152,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 505,
+              "line": 502,
               "reader": "get_alternative"
             }
           ]
@@ -12180,7 +12182,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 127,
+              "line": 128,
               "reader": "get_alternative"
             }
           ]
@@ -12190,7 +12192,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 147,
+              "line": 148,
               "reader": "get_alternative"
             }
           ]
@@ -12200,7 +12202,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 129,
+              "line": 130,
               "reader": "get_alternative"
             }
           ]
@@ -12210,7 +12212,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 429,
+              "line": 426,
               "reader": "get_alternative"
             }
           ]
@@ -12220,7 +12222,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 675,
+              "line": 672,
               "reader": "get"
             }
           ]
@@ -12230,7 +12232,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 521,
+              "line": 518,
               "reader": "get_alternative"
             }
           ]
@@ -12240,22 +12242,22 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 121,
-              "reader": "get_alternative"
-            },
-            {
-              "source": "src/mpdem/mainDEMPM.py",
               "line": 122,
               "reader": "get_alternative"
             },
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 383,
+              "line": 123,
+              "reader": "get_alternative"
+            },
+            {
+              "source": "src/mpdem/mainDEMPM.py",
+              "line": 380,
               "reader": "get_essential"
             },
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 384,
+              "line": 381,
               "reader": "get_essential"
             }
           ]
@@ -12265,7 +12267,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 672,
+              "line": 669,
               "reader": "get"
             }
           ]
@@ -12275,27 +12277,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 193,
-              "reader": "get_alternative"
-            }
-          ]
-        },
-        {
-          "name": "max_point_edge_pairs",
-          "locations": [
-            {
-              "source": "src/mpdem/mainDEMPM.py",
-              "line": 201,
-              "reader": "get_alternative"
-            }
-          ]
-        },
-        {
-          "name": "max_point_triangle_pairs",
-          "locations": [
-            {
-              "source": "src/mpdem/mainDEMPM.py",
-              "line": 199,
+              "line": 194,
               "reader": "get_alternative"
             }
           ]
@@ -12305,7 +12287,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 194,
+              "line": 195,
               "reader": "get_alternative"
             }
           ]
@@ -12315,7 +12297,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 115,
+              "line": 116,
               "reader": "get_alternative"
             }
           ]
@@ -12335,12 +12317,12 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 585,
+              "line": 582,
               "reader": "get_alternative"
             },
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 695,
+              "line": 692,
               "reader": "get_alternative"
             }
           ]
@@ -12350,7 +12332,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 430,
+              "line": 427,
               "reader": "get_alternative"
             }
           ]
@@ -12360,7 +12342,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 696,
+              "line": 693,
               "reader": "get_alternative"
             }
           ]
@@ -12370,7 +12352,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 431,
+              "line": 428,
               "reader": "get_alternative"
             }
           ]
@@ -12380,7 +12362,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 716,
+              "line": 713,
               "reader": "get_alternative"
             }
           ]
@@ -12390,7 +12372,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 519,
+              "line": 516,
               "reader": "get_alternative"
             }
           ]
@@ -12400,7 +12382,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 674,
+              "line": 671,
               "reader": "get"
             }
           ]
@@ -12410,13 +12392,33 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 168,
+              "line": 169,
               "reader": "get_essential"
             },
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 374,
+              "line": 371,
               "reader": "get_essential"
+            },
+            {
+              "source": "src/mpdem/mainDEMPM.py",
+              "line": 372,
+              "reader": "get_essential"
+            },
+            {
+              "source": "src/mpdem/mainDEMPM.py",
+              "line": 373,
+              "reader": "get_essential"
+            }
+          ]
+        },
+        {
+          "name": "SavePath",
+          "locations": [
+            {
+              "source": "src/mpdem/mainDEMPM.py",
+              "line": 170,
+              "reader": "get_alternative"
             },
             {
               "source": "src/mpdem/mainDEMPM.py",
@@ -12427,30 +12429,10 @@
               "source": "src/mpdem/mainDEMPM.py",
               "line": 376,
               "reader": "get_essential"
-            }
-          ]
-        },
-        {
-          "name": "SavePath",
-          "locations": [
-            {
-              "source": "src/mpdem/mainDEMPM.py",
-              "line": 169,
-              "reader": "get_alternative"
             },
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 378,
-              "reader": "get_essential"
-            },
-            {
-              "source": "src/mpdem/mainDEMPM.py",
-              "line": 379,
-              "reader": "get_essential"
-            },
-            {
-              "source": "src/mpdem/mainDEMPM.py",
-              "line": 380,
+              "line": 377,
               "reader": "get_essential"
             }
           ]
@@ -12460,7 +12442,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 130,
+              "line": 131,
               "reader": "get_alternative"
             }
           ]
@@ -12470,12 +12452,12 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 165,
+              "line": 166,
               "reader": "get_essential"
             },
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 355,
+              "line": 352,
               "reader": "get_essential"
             }
           ]
@@ -12485,7 +12467,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 148,
+              "line": 149,
               "reader": "get_alternative"
             }
           ]
@@ -12495,7 +12477,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 150,
+              "line": 151,
               "reader": "get_alternative"
             }
           ]
@@ -12505,7 +12487,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 149,
+              "line": 150,
               "reader": "get_alternative"
             }
           ]
@@ -12515,7 +12497,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 767,
+              "line": 764,
               "reader": "get_alternative"
             }
           ]
@@ -12525,7 +12507,17 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 162,
+              "line": 163,
+              "reader": "get_essential"
+            },
+            {
+              "source": "src/mpdem/mainDEMPM.py",
+              "line": 357,
+              "reader": "get_essential"
+            },
+            {
+              "source": "src/mpdem/mainDEMPM.py",
+              "line": 359,
               "reader": "get_essential"
             },
             {
@@ -12535,17 +12527,7 @@
             },
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 362,
-              "reader": "get_essential"
-            },
-            {
-              "source": "src/mpdem/mainDEMPM.py",
-              "line": 363,
-              "reader": "get_essential"
-            },
-            {
-              "source": "src/mpdem/mainDEMPM.py",
-              "line": 364,
+              "line": 361,
               "reader": "get_essential"
             }
           ]
@@ -12555,12 +12537,12 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 125,
+              "line": 126,
               "reader": "get_alternative"
             },
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 126,
+              "line": 127,
               "reader": "get_alternative"
             }
           ]
@@ -12570,7 +12552,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 726,
+              "line": 723,
               "reader": "get_alternative"
             }
           ]
@@ -12580,17 +12562,17 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 123,
-              "reader": "get_alternative"
-            },
-            {
-              "source": "src/mpdem/mainDEMPM.py",
               "line": 124,
               "reader": "get_alternative"
             },
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 766,
+              "line": 125,
+              "reader": "get_alternative"
+            },
+            {
+              "source": "src/mpdem/mainDEMPM.py",
+              "line": 763,
               "reader": "get_alternative"
             }
           ]
@@ -12600,7 +12582,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 191,
+              "line": 192,
               "reader": "get_alternative"
             }
           ]
@@ -12610,7 +12592,7 @@
           "locations": [
             {
               "source": "src/mpdem/mainDEMPM.py",
-              "line": 116,
+              "line": 117,
               "reader": "get_alternative"
             }
           ]
@@ -12654,7 +12636,7 @@
       ],
       "summary": {
         "method_count": 32,
-        "configuration_key_count": 55,
+        "configuration_key_count": 54,
         "example_count": 14
       }
     },
@@ -16155,7 +16137,7 @@
           "locations": [
             {
               "source": "src/fempm/Simulation.py",
-              "line": 99,
+              "line": 104,
               "reader": "get"
             }
           ]
@@ -16175,7 +16157,7 @@
           "locations": [
             {
               "source": "src/fempm/Simulation.py",
-              "line": 114,
+              "line": 126,
               "reader": "get"
             }
           ]
@@ -16195,7 +16177,7 @@
           "locations": [
             {
               "source": "src/fempm/Simulation.py",
-              "line": 113,
+              "line": 120,
               "reader": "get"
             }
           ]
@@ -16400,7 +16382,7 @@
           "locations": [
             {
               "source": "src/fempm/Simulation.py",
-              "line": 119,
+              "line": 134,
               "reader": "get"
             }
           ]
@@ -16410,7 +16392,7 @@
           "locations": [
             {
               "source": "src/fempm/Simulation.py",
-              "line": 131,
+              "line": 139,
               "reader": "get"
             }
           ]
@@ -16440,7 +16422,7 @@
           "locations": [
             {
               "source": "src/fempm/Simulation.py",
-              "line": 111,
+              "line": 116,
               "reader": "get"
             }
           ]
@@ -16450,7 +16432,7 @@
           "locations": [
             {
               "source": "src/fempm/Simulation.py",
-              "line": 101,
+              "line": 106,
               "reader": "get"
             }
           ]
@@ -16460,27 +16442,7 @@
           "locations": [
             {
               "source": "src/fempm/Simulation.py",
-              "line": 105,
-              "reader": "get"
-            }
-          ]
-        },
-        {
-          "name": "max_point_edge_pairs",
-          "locations": [
-            {
-              "source": "src/fempm/Simulation.py",
-              "line": 129,
-              "reader": "get"
-            }
-          ]
-        },
-        {
-          "name": "max_point_triangle_pairs",
-          "locations": [
-            {
-              "source": "src/fempm/Simulation.py",
-              "line": 128,
+              "line": 110,
               "reader": "get"
             }
           ]
@@ -16490,7 +16452,7 @@
           "locations": [
             {
               "source": "src/fempm/Simulation.py",
-              "line": 103,
+              "line": 108,
               "reader": "get"
             }
           ]
@@ -16790,7 +16752,7 @@
           "locations": [
             {
               "source": "src/fempm/Simulation.py",
-              "line": 139,
+              "line": 147,
               "reader": "get"
             }
           ]
@@ -16800,7 +16762,7 @@
           "locations": [
             {
               "source": "src/fempm/Simulation.py",
-              "line": 137,
+              "line": 145,
               "reader": "get"
             }
           ]
@@ -16816,7 +16778,7 @@
       ],
       "summary": {
         "method_count": 19,
-        "configuration_key_count": 66,
+        "configuration_key_count": 64,
         "example_count": 6
       }
     },
@@ -17187,7 +17149,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 64,
+              "line": 69,
               "reader": "get"
             }
           ]
@@ -17197,7 +17159,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 65,
+              "line": 70,
               "reader": "get"
             }
           ]
@@ -17207,7 +17169,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 342,
+              "line": 348,
               "reader": "get"
             }
           ]
@@ -17217,7 +17179,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 342,
+              "line": 348,
               "reader": "get"
             }
           ]
@@ -17227,7 +17189,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 267,
+              "line": 273,
               "reader": "get"
             }
           ]
@@ -17237,7 +17199,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 253,
+              "line": 259,
               "reader": "get"
             }
           ]
@@ -17247,7 +17209,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 185,
+              "line": 190,
               "reader": "get"
             }
           ]
@@ -17257,7 +17219,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 63,
+              "line": 68,
               "reader": "get"
             }
           ]
@@ -17267,7 +17229,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 62,
+              "line": 67,
               "reader": "get"
             }
           ]
@@ -17277,7 +17239,17 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 61,
+              "line": 66,
+              "reader": "get"
+            }
+          ]
+        },
+        {
+          "name": "contact_coordination_number",
+          "locations": [
+            {
+              "source": "src/igampm/engines/CoupledEngine.py",
+              "line": 215,
               "reader": "get"
             }
           ]
@@ -17342,7 +17314,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 82,
+              "line": 87,
               "reader": "get"
             },
             {
@@ -17427,7 +17399,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 268,
+              "line": 274,
               "reader": "get"
             }
           ]
@@ -17457,7 +17429,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 172,
+              "line": 177,
               "reader": "get"
             }
           ]
@@ -17467,7 +17439,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 171,
+              "line": 176,
               "reader": "get"
             }
           ]
@@ -17477,7 +17449,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 169,
+              "line": 174,
               "reader": "get"
             }
           ]
@@ -17487,7 +17459,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 170,
+              "line": 175,
               "reader": "get"
             }
           ]
@@ -17497,7 +17469,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 173,
+              "line": 178,
               "reader": "get"
             }
           ]
@@ -17517,7 +17489,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 67,
+              "line": 72,
               "reader": "get"
             }
           ]
@@ -17527,7 +17499,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 66,
+              "line": 71,
               "reader": "get"
             }
           ]
@@ -17537,7 +17509,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 80,
+              "line": 85,
               "reader": "get"
             }
           ]
@@ -17547,7 +17519,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 78,
+              "line": 83,
               "reader": "get"
             }
           ]
@@ -17557,7 +17529,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 79,
+              "line": 84,
               "reader": "get"
             }
           ]
@@ -17567,7 +17539,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 383,
+              "line": 389,
               "reader": "get"
             }
           ]
@@ -17577,7 +17549,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 391,
+              "line": 397,
               "reader": "get"
             }
           ]
@@ -17587,7 +17559,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 378,
+              "line": 384,
               "reader": "get"
             }
           ]
@@ -17597,7 +17569,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 376,
+              "line": 382,
               "reader": "get"
             }
           ]
@@ -17607,7 +17579,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 69,
+              "line": 74,
               "reader": "get"
             }
           ]
@@ -17617,7 +17589,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 77,
+              "line": 82,
               "reader": "get"
             }
           ]
@@ -17677,7 +17649,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 83,
+              "line": 88,
               "reader": "get"
             },
             {
@@ -17692,7 +17664,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 85,
+              "line": 90,
               "reader": "get"
             },
             {
@@ -17707,7 +17679,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 84,
+              "line": 89,
               "reader": "get"
             },
             {
@@ -17732,7 +17704,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 58,
+              "line": 63,
               "reader": "get"
             }
           ]
@@ -17742,7 +17714,7 @@
           "locations": [
             {
               "source": "src/igampm/engines/CoupledEngine.py",
-              "line": 90,
+              "line": 95,
               "reader": "get"
             },
             {
@@ -17772,7 +17744,7 @@
       ],
       "summary": {
         "method_count": 12,
-        "configuration_key_count": 56,
+        "configuration_key_count": 57,
         "example_count": 5
       }
     }
@@ -18282,9 +18254,6 @@
       "affine_body_parameters": [
         "dem/keys/affine_body_parameters"
       ],
-      "affine_contact_block_capacity": [
-        "dem/keys/affine_contact_block_capacity"
-      ],
       "alpha": [
         "mpm/keys/alpha",
         "dem/keys/alpha",
@@ -18592,8 +18561,12 @@
         "igampm/keys/contact_ccd_safety"
       ],
       "contact_coordination_number": [
+        "dem/keys/contact_coordination_number",
+        "mpdem/keys/contact_coordination_number",
+        "cfdem/keys/contact_coordination_number",
         "fedem/keys/contact_coordination_number",
-        "fempm/keys/contact_coordination_number"
+        "fempm/keys/contact_coordination_number",
+        "igampm/keys/contact_coordination_number"
       ],
       "contact_num": [
         "dem/keys/contact_num",
@@ -18808,6 +18781,7 @@
         "fem/keys/e_Tao"
       ],
       "edge_edge_coordination_number": [
+        "dem/keys/edge_edge_coordination_number",
         "fedem/keys/edge_edge_coordination_number"
       ],
       "EffectiveModulus": [
@@ -19011,6 +18985,10 @@
       ],
       "friction_profile": [
         "igampm/keys/friction_profile"
+      ],
+      "friction_relaxation": [
+        "mpdem/keys/friction_relaxation",
+        "cfdem/keys/friction_relaxation"
       ],
       "friction_tolerance": [
         "igampm/keys/friction_tolerance"
@@ -19434,7 +19412,6 @@
         "mpm/keys/max_displacement_constraint"
       ],
       "max_edge_edge_pairs": [
-        "dem/keys/max_edge_edge_pairs",
         "fedem/keys/max_edge_edge_pairs"
       ],
       "max_facet_cell_pairs": [
@@ -19505,17 +19482,8 @@
       "max_plane_number": [
         "dem/keys/max_plane_number"
       ],
-      "max_point_edge_pairs": [
-        "mpdem/keys/max_point_edge_pairs",
-        "cfdem/keys/max_point_edge_pairs",
-        "fempm/keys/max_point_edge_pairs"
-      ],
       "max_point_triangle_pairs": [
-        "dem/keys/max_point_triangle_pairs",
-        "mpdem/keys/max_point_triangle_pairs",
-        "cfdem/keys/max_point_triangle_pairs",
-        "fedem/keys/max_point_triangle_pairs",
-        "fempm/keys/max_point_triangle_pairs"
+        "fedem/keys/max_point_triangle_pairs"
       ],
       "max_reflection_constraint": [
         "mpm/keys/max_reflection_constraint"
@@ -19922,6 +19890,7 @@
         "dem/keys/point_coordination_number"
       ],
       "point_triangle_coordination_number": [
+        "dem/keys/point_triangle_coordination_number",
         "fedem/keys/point_triangle_coordination_number"
       ],
       "PointLight": [
@@ -20793,10 +20762,6 @@
       "zeta": [
         "mpm/keys/zeta",
         "fem/keys/zeta"
-      ],
-      "friction_relaxation": [
-        "mpdem/keys/friction_relaxation",
-        "cfdem/keys/friction_relaxation"
       ]
     }
   }

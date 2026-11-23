@@ -259,7 +259,8 @@ def main():
         log=False,
     )
     coupling.memory_allocate(
-        {"body_coordination_number": 4, "max_point_triangle_pairs": 16384, "max_point_edge_pairs": 1}, log=False
+        {"body_coordination_number": 4, "contact_coordination_number": 16384 / (len(boom.faces) + len(bucket.faces))},
+        log=False,
     )
     coupling.choose_contact_model(
         "BarrierIPC", **contact, friction_mode="lagged", friction_iterations=-1, project_pd=True

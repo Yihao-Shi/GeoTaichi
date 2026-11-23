@@ -112,9 +112,8 @@
     "allocations": {
       "max_affine_body_number": 5,
       "surface_node_number": 12810,
-      "max_point_triangle_pairs": 32768,
-      "max_edge_edge_pairs": 65536,
-      "affine_contact_block_capacity": 1024
+      "point_triangle_coordination_number": 1.28,
+      "edge_edge_coordination_number": 2.56
     }
   },
   "outputs": {
@@ -247,9 +246,8 @@
       "max_material_number": 1,
       "max_affine_body_number": 5,
       "surface_node_number": 12810,
-      "max_point_triangle_pairs": 32768,
-      "max_edge_edge_pairs": 65536,
-      "affine_contact_block_capacity": 1024
+      "point_triangle_coordination_number": 1.28,
+      "edge_edge_coordination_number": 2.56
     },
     "materials": [],
     "elements": [],

@@ -46,7 +46,6 @@ dem.memory_allocate(
         "max_plane_number": 1,
         "body_coordination_number": 8,
         "wall_coordination_number": 4,
-        "affine_contact_block_capacity": int(os.environ.get("GT_AFFINE_CONTACT_BLOCK_CAPACITY", "256")),
         "compaction_ratio": [1.0, 1.0],
     },
     log=False,

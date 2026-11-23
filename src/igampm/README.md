@@ -187,8 +187,18 @@ positive rational weights, the point--AABB distance is a conservative lower
 bound on the point--NURBS distance. Pairs with a lower bound outside the barrier
 activation distance retain that bound for ACCD and skip closest-point
 projection. Near pairs use the full span-multistart projection. Thus inactive entries in `contacts.distance`
-and an inactive global minimum may be lower bounds; active contact geometry,
+and an inactive global minimum may be lower bounds. Active contact geometry,
 energy, force, and Hessian retain their full projection values.
+
+Set `contact_coordination_number` on `IGAMPM(...)` to budget the global
+projection candidate list and each swept CCD group. The capacity is the
+number of NURBS boundary curves/surfaces times this value, rounded up, capped
+at the complete sample–boundary product, with at least one slot. The default
+coordination number is the number of MPM surface samples (at least one).
+Candidate overflow reports the required and allocated sizes. CCD distance
+bounds, projection seeds, and matrix slots retain complete pair indexing.
+Each matrix contact slot reserves `s * (s - 1)` raw blocks for `s` local
+controls and grid nodes combined. Diagonal blocks use separate storage.
 
 For 3D surfaces, knot-span control-hull boxes are refreshed once per geometry
 query and shared by all particles. The shared LBVH is rebuilt on device from

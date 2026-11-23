@@ -38,8 +38,6 @@ def dem_case(tmp_path):
             "surface_node_number": 16,
             "max_facet_number": 2,
             "max_servo_wall_number": 1,
-            "max_point_triangle_pairs": 128,
-            "max_edge_edge_pairs": 128,
             "body_coordination_number": 4,
             "wall_coordination_number": 2,
         },

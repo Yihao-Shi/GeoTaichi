@@ -95,9 +95,7 @@ def test_implicit_ipc_accepts_cloth_surface(tmp_path, mpm_material, inexact):
     coupling.memory_allocate(
         {
             "max_particle_number": 1,
-            "max_contact_pairs": 64,
-            "max_point_triangle_pairs": 64,
-            "max_point_edge_pairs": 64,
+            "contact_coordination_number": 64 / len(coupling.surface_faces),
         },
         log=False,
     )

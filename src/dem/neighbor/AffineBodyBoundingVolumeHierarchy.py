@@ -83,51 +83,48 @@ class AffineBodyBoundingVolumeHierarchy(BoundingVolumeHierarchy, AffineBodyNeigh
         self._initialize_leaf_owners(node2body, face2body, edge2body)
         for depth in range(self.lbvh.maximum_depth, -1, -1):
             self._initialize_internal_owners(depth)
-        while True:
-            board_search_affine_vertex_face_bvh(
-                self.vertex_batch_id,
-                self.face_batch_id,
-                self.vertex_num,
-                self.candidate_capacity,
-                self.lbvh.prefix_batch_size,
-                self.lbvh.nodes,
-                self.node_owner,
-                self.node_escape,
-                self.lbvh.morton_codes,
-                self.lbvh.primitive_ids,
-                self.lbvh.extended_morton,
-                self.lbvh.aabb.aabbs,
-                node2body,
-                face2body,
-                self.candidate_vertex,
-                self.candidate_face,
-                self.candidate_count,
-                self.candidate_overflow,
-            )
-            board_search_affine_edge_edge_bvh(
-                self.edge_batch_id,
-                self.edge_num,
-                self.edge_candidate_capacity,
-                self.lbvh.prefix_batch_size,
-                self.lbvh.nodes,
-                self.node_owner,
-                self.node_escape,
-                self.lbvh.morton_codes,
-                self.lbvh.primitive_ids,
-                self.lbvh.extended_morton,
-                self.lbvh.aabb.aabbs,
-                edge2body,
-                self.candidate_edge0,
-                self.candidate_edge1,
-                self.edge_candidate_count,
-                self.edge_candidate_overflow,
-            )
-            count = self._finish_update()
-            self.last_cell_overflow = 0
-            if self.last_candidate_overflow:
-                self._grow_candidates(self.last_vertex_face_candidate_pairs)
-                continue
-            if self.last_edge_candidate_overflow:
-                self._grow_edge_candidates(self.last_edge_edge_candidate_pairs)
-                continue
-            return count
+        board_search_affine_vertex_face_bvh(
+            self.vertex_batch_id,
+            self.face_batch_id,
+            self.vertex_num,
+            self.candidate_capacity,
+            self.lbvh.prefix_batch_size,
+            self.lbvh.nodes,
+            self.node_owner,
+            self.node_escape,
+            self.lbvh.morton_codes,
+            self.lbvh.primitive_ids,
+            self.lbvh.extended_morton,
+            self.lbvh.aabb.aabbs,
+            node2body,
+            face2body,
+            self.candidate_vertex,
+            self.candidate_face,
+            self.candidate_count,
+            self.candidate_overflow,
+        )
+        board_search_affine_edge_edge_bvh(
+            self.edge_batch_id,
+            self.edge_num,
+            self.edge_candidate_capacity,
+            self.lbvh.prefix_batch_size,
+            self.lbvh.nodes,
+            self.node_owner,
+            self.node_escape,
+            self.lbvh.morton_codes,
+            self.lbvh.primitive_ids,
+            self.lbvh.extended_morton,
+            self.lbvh.aabb.aabbs,
+            edge2body,
+            self.candidate_edge0,
+            self.candidate_edge1,
+            self.edge_candidate_count,
+            self.edge_candidate_overflow,
+        )
+        count = self._finish_update()
+        self.last_cell_overflow = 0
+        if self.last_candidate_overflow:
+            self._require_candidate_capacity(self.last_vertex_face_candidate_pairs)
+        if self.last_edge_candidate_overflow:
+            self._require_edge_candidate_capacity(self.last_edge_edge_candidate_pairs)
+        return count

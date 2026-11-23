@@ -66,7 +66,6 @@ dem.memory_allocate(
         "max_plane_number": 2,
         "body_coordination_number": 4,
         "wall_coordination_number": 2,
-        "affine_contact_block_capacity": 256,
         "compaction_ratio": [1.0, 1.0],
     },
     log=False,

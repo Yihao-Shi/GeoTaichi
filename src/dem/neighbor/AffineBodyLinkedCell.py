@@ -113,9 +113,7 @@ class AffineBodyLinkedCell(LinkedCell, AffineBodyNeighborBase):
                 self._grow_cells()
                 continue
             if self.last_candidate_overflow:
-                self._grow_candidates(self.last_vertex_face_candidate_pairs)
-                continue
+                self._require_candidate_capacity(self.last_vertex_face_candidate_pairs)
             if self.last_edge_candidate_overflow:
-                self._grow_edge_candidates(self.last_edge_edge_candidate_pairs)
-                continue
+                self._require_edge_candidate_capacity(self.last_edge_edge_candidate_pairs)
             return count

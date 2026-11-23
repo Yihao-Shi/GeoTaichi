@@ -58,7 +58,6 @@ memory = {
     "surface_node_number": int(os.environ.get("GT_AFFINE_SURFACE_NODE_NUMBER", "24")),
     "body_coordination_number": 8,
     "wall_coordination_number": 0,
-    "affine_contact_block_capacity": int(os.environ.get("GT_AFFINE_CONTACT_BLOCK_CAPACITY", "256")),
     "compaction_ratio": [1.0, 1.0],
 }
 if search == "HierarchicalLinkedCell":

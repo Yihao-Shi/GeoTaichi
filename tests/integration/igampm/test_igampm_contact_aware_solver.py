@@ -394,12 +394,22 @@ def _build_mpm_particle(output_path):
     return mpm
 
 
-def test_compact_contact_candidates_preserve_barrier_and_distant_ccd(tmp_path):
+@pytest.mark.parametrize("coordination", [1.0, 0.25])
+def test_compact_contact_candidates_preserve_barrier_and_distant_ccd(tmp_path, coordination):
     from src.igampm import IGAMPM
 
     iga = _build_iga_rectangle(tmp_path / "iga")
     mpm = _build_mpm_particle(tmp_path / "mpm")
-    engine = IGAMPM(iga, mpm, kappa=1e4, dhat=0.08, dmin=0.005, barrier_nnz=20_000, project_pd=True).build()
+    engine = IGAMPM(
+        iga,
+        mpm,
+        kappa=1e4,
+        dhat=0.08,
+        dmin=0.005,
+        barrier_nnz=20_000,
+        project_pd=True,
+        contact_coordination_number=coordination,
+    ).build()
     engine.begin_implicit_ipc_step()
     counts = engine.contact_candidate_count.to_numpy()
     assert 0 < counts.sum() < engine.contact_pair_count
@@ -409,15 +419,20 @@ def test_compact_contact_candidates_preserve_barrier_and_distant_ccd(tmp_path):
     engine.barrier_hash_matrix.finalize_taichi_assembly()
     expected_matrix = engine.barrier_hash_matrix.to_scipy().toarray()
 
-    # Replaying the full face/sample product is the uncompressed oracle.
     faces, samples = engine.contact_surface.num_surfaces, mpm.total_surface_num
-    ids = np.arange(samples, dtype=np.int32)[None, :] * faces + np.arange(faces, dtype=np.int32)[:, None]
-    engine.contact_candidates.from_numpy(ids)
-    engine.contact_candidate_count.from_numpy(np.full(faces, samples, dtype=np.int32))
-    engine.assemble_barrier_system()
-    engine.barrier_hash_matrix.finalize_taichi_assembly()
-    np.testing.assert_allclose(engine.barrier_grad.to_numpy(), expected_force, rtol=1e-13, atol=1e-13)
-    np.testing.assert_allclose(engine.barrier_hash_matrix.to_scipy().toarray(), expected_matrix, rtol=1e-13, atol=1e-13)
+    assert engine.contact_capacity == int(np.ceil(faces * coordination))
+    if engine.contact_capacity == engine.contact_pair_count:
+        # Replaying the full face/sample product is the uncompressed oracle.
+        ids = np.arange(samples, dtype=np.int32)[None, :] * faces + np.arange(faces, dtype=np.int32)[:, None]
+        engine.contact_candidates.from_numpy(ids.ravel())
+        engine.contact_candidate_offset.from_numpy(np.arange(faces, dtype=np.int32) * samples)
+        engine.contact_candidate_count.from_numpy(np.full(faces, samples, dtype=np.int32))
+        engine.assemble_barrier_system()
+        engine.barrier_hash_matrix.finalize_taichi_assembly()
+        np.testing.assert_allclose(engine.barrier_grad.to_numpy(), expected_force, rtol=1e-13, atol=1e-13)
+        np.testing.assert_allclose(
+            engine.barrier_hash_matrix.to_scipy().toarray(), expected_matrix, rtol=1e-13, atol=1e-13
+        )
 
     # A presently inactive point can approach the solid during the proposed step.
     mpm.grid_disp.fill(0.0)
@@ -426,11 +441,21 @@ def test_compact_contact_candidates_preserve_barrier_and_distant_ccd(tmp_path):
     mpm.grid_disp.from_numpy(moving)
     engine.initialize_barrier()
     assert engine.contact_candidate_count.to_numpy().sum() == 0
-    moving[: mpm.active_dof].reshape(-1, 2)[:, 1] = 0.5
-    mpm.incre_resolution.from_numpy(moving)
     iga.incre_resolution.fill(0.0)
+    if engine.contact_capacity < engine.contact_pair_count:
+        moving[: mpm.active_dof].reshape(-1, 2)[:, 1] = 0.5
+        mpm.incre_resolution.from_numpy(moving)
+        with pytest.raises(RuntimeError, match=r"swept point–NURBS candidates need 2, allocated 1"):
+            engine.conservative_contact_step_device(verify=True)
+    moving[: mpm.active_dof].reshape(-1, 2)[:, 1] = 0.3
+    mpm.incre_resolution.from_numpy(moving)
     alpha = engine.conservative_contact_step_device(verify=True)
     assert 0.0 < alpha < 1.0
+    if engine.contact_capacity < engine.contact_pair_count:
+        engine.contacts.active.fill(1)
+        engine.contact_candidate_count.fill(samples)
+        with pytest.raises(RuntimeError, match=r"candidates need 4, allocated 1"):
+            engine._pack_contact_candidates(clear_active=True)
 
 
 def test_newton_reuses_contact_queries_without_changing_solution(tmp_path, monkeypatch):
@@ -438,7 +463,16 @@ def test_newton_reuses_contact_queries_without_changing_solution(tmp_path, monke
 
     iga = _build_iga_rectangle(tmp_path / "iga-reuse")
     mpm = _build_mpm_particle(tmp_path / "mpm-reuse")
-    engine = IGAMPM(iga, mpm, kappa=1e4, dhat=0.08, dmin=0.005, barrier_nnz=20_000, project_pd=True).build()
+    engine = IGAMPM(
+        iga,
+        mpm,
+        kappa=1e4,
+        dhat=0.08,
+        dmin=0.005,
+        barrier_nnz=20_000,
+        project_pd=True,
+        contact_coordination_number=coordination,
+    ).build()
     engine.begin_implicit_ipc_step()
     query = engine.initialize_barrier
     assemble = engine.assemble_monolithic_newton_system

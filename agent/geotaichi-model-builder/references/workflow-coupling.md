@@ -187,7 +187,9 @@ Validation must exercise both broad phases, equal-and-opposite transfer,
 history across rebuild, material-id/body-id property lookup, overflow, and the
 minimum MPM/FEM/contact timestep.
 
-For implicit IPC, configure both children as implicit, select
+For implicit IPC, set `contact_coordination_number` in `memory_allocate`.
+The IPC budget is the number of selected FEM boundary facets times the
+coordination number, rounded up. Configure both children as implicit, select
 `mpm_backend="Direct"` with `configuration="ULMPM"`, and choose Neo-Hookean
 elasticity, finite-strain Drucker--Prager, or associated
 finite-strain von Mises on the MPM side. Then call

@@ -847,31 +847,30 @@ def test_fully_implicit_contact_step_converges_with_each_backend(tmp_path, backe
 @pytest.mark.parametrize(
     ("fully_implicit", "expected"),
     [
-        # A one-body solve has no body/body contact. The 256-entry floor covers
-        # its 52 base blocks and five wall contacts (2 * 16 blocks each).
-        (True, 256),
-        (False, 256),
+        # A one-body solve has 52 base blocks and ten vertex/wall pairs.
+        (True, 372),
+        (False, 224),
     ],
 )
-def test_affine_hash_capacity_bounds_raw_contact_scatter(monkeypatch, fully_implicit, expected):
-    monkeypatch.setenv("GT_AFFINE_HASH_TRIPLET_SAFETY", "1.0")
+def test_affine_hash_capacity_bounds_raw_contact_scatter(fully_implicit, expected):
     operator = object.__new__(TaichiAffineBodyOperator)
     operator.fully_implicit = fully_implicit
+    operator.levelset_contact = False
     operator.neighbor = SimpleNamespace(candidate_capacity=2, edge_candidate_capacity=3)
-    operator.wall_num = 1
+    operator.wall_num = 2
     operator.vertex_num = 5
     operator.body_num = 1
     operator.joint_num = 0
     operator.dof = 12
     operator.contact_damping_stiffness = 0.0
-    sims = SimpleNamespace(wall_coordination_number=1)
-    assert operator._estimate_hash_triplet_capacity(sims) == expected
+    assert operator._estimate_hash_triplet_capacity() == expected
 
 
-def test_affine_hash_capacity_uses_configured_contact_block_capacity(monkeypatch):
-    monkeypatch.setenv("GT_AFFINE_HASH_TRIPLET_SAFETY", "1.0")
+@pytest.mark.parametrize("fully_implicit", [False, True])
+def test_affine_capacity_counts_raw_contact_blocks_and_pair_workspace(fully_implicit):
     operator = object.__new__(TaichiAffineBodyOperator)
-    operator.fully_implicit = False
+    operator.fully_implicit = fully_implicit
+    operator.levelset_contact = False
     operator.neighbor = SimpleNamespace(candidate_capacity=2, edge_candidate_capacity=3)
     operator.wall_num = 0
     operator.vertex_num = 10
@@ -879,11 +878,9 @@ def test_affine_hash_capacity_uses_configured_contact_block_capacity(monkeypatch
     operator.joint_num = 0
     operator.dof = 24
     operator.contact_damping_stiffness = 0.0
-    sims = SimpleNamespace(
-        wall_coordination_number=0,
-        affine_contact_block_capacity=128,
-    )
-    assert operator._estimate_hash_triplet_capacity(sims, safety_factor=1.0, minimum_capacity=1) == 872
+    friction = 2 * 216 + 3 * 224 if fully_implicit else 56
+    assert operator._estimate_hash_triplet_capacity() == 104 + 128 + friction
+    assert operator._estimate_hash_triplet_capacity(coo=True) == 104 + 128 + 5 * 256
 
 
 def test_affine_hash_overflow_is_reported_before_linear_solve():

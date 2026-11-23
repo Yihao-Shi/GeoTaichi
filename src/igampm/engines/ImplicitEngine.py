@@ -847,11 +847,12 @@ class ImplicitEngineMixin:
                                     )
                                 if motion_bound > 0.0 and max_step * motion_bound > safety * (distance - clearance):
                                     slot = ti.atomic_add(self.contact_accd_active_count[None], 1)
-                                    self.contact_accd_candidates[slot] = contact_id
-                                    self.contact_accd_toc[contact_id] = 0.0
-                                    self.contact_accd_distance[contact_id] = distance
-                                    self.contact_accd_motion_bound[contact_id] = motion_bound
-                                    self.contact_accd_active[contact_id] = 1
+                                    if slot < self.contact_capacity:
+                                        self.contact_accd_candidates[slot] = contact_id
+                                        self.contact_accd_toc[slot] = 0.0
+                                        self.contact_accd_distance[slot] = distance
+                                        self.contact_accd_motion_bound[slot] = motion_bound
+                                        self.contact_accd_active[slot] = 1
                             else:
                                 ti.atomic_max(self.contact_query_status[None], 2)
 
@@ -879,14 +880,14 @@ class ImplicitEngineMixin:
             contact_id = self.contact_accd_candidates[candidate]
             surface_id = contact_id % surface.num_surfaces
             sample_id = contact_id // surface.num_surfaces
-            if self.contact_accd_active[contact_id] != 0:
-                pair_toc = self.contact_accd_toc[contact_id]
+            if self.contact_accd_active[candidate] != 0:
+                pair_toc = self.contact_accd_toc[candidate]
                 remaining = max_step - pair_toc
                 increment = ti.min(
                     remaining,
                     point_nurbs_accd_increment(
-                        self.contact_accd_distance[contact_id],
-                        self.contact_accd_motion_bound[contact_id],
+                        self.contact_accd_distance[candidate],
+                        self.contact_accd_motion_bound[candidate],
                         safety,
                         clearance,
                     ),
@@ -933,10 +934,10 @@ class ImplicitEngineMixin:
                     target_excess = (1.0 - safety) * (self.contacts[contact_id].distance - clearance)
                     target_crossed = pair_toc > 0.0 and trial_distance - clearance < target_excess
                     if clearance < trial_distance < ti.math.inf and not target_crossed:
-                        self.contact_accd_toc[contact_id] = trial_toc
-                        self.contact_accd_distance[contact_id] = trial_distance
+                        self.contact_accd_toc[candidate] = trial_toc
+                        self.contact_accd_distance[candidate] = trial_distance
                         active = ti.cast(trial_toc < max_step, ti.i32)
-                self.contact_accd_active[contact_id] = active
+                self.contact_accd_active[candidate] = active
                 ti.atomic_add(self.contact_accd_active_count[None], active)
 
     @ti.kernel
@@ -944,8 +945,7 @@ class ImplicitEngineMixin:
         # Reduce only final TOCs: intermediate iterates are lower bounds that
         # would incorrectly keep the global step at the first accepted iterate.
         for candidate in range(candidate_count):
-            contact_id = self.contact_accd_candidates[candidate]
-            ti.atomic_min(self.contact_step_alpha[None], self.contact_accd_toc[contact_id])
+            ti.atomic_min(self.contact_step_alpha[None], self.contact_accd_toc[candidate])
 
     def assemble_monolithic_newton_system(
         self, include_friction=None, need_matrix=True, *, prepare_contacts=True, residual_prepared=False
@@ -1191,6 +1191,11 @@ class ImplicitEngineMixin:
                 self.contact_surface,
             )
             candidate_count = int(self.contact_accd_active_count[None])
+            if candidate_count > self.contact_capacity:
+                raise CapacityError(
+                    f"IGA-MPM swept point–NURBS candidates need {candidate_count}, allocated {self.contact_capacity}. "
+                    "Increase contact_coordination_number."
+                )
             for _ in range(self.contact_ccd_max_iterations):
                 if self.contact_accd_active_count[None] == 0:
                     break

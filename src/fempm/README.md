@@ -577,6 +577,14 @@ Use `add_surface`, `choose_contact_model`, and `add_property`.
 
 ## Implicit IPC lifecycle
 
+Set `contact_coordination_number` (default 16) in `memory_allocate`.
+The IPC pair capacity is `max(1, ceil(selected_facets * contact_coordination_number))`.
+Selected facets are boundary edges in 2D and triangles in 3D. The explicit
+DEM-law route retains its particle-based allocation and `compaction_ratio`.
+Each implicit barrier or friction term reserves at most `s * (s - 1)` raw
+blocks, where `s` is the maximum MPM support size plus the number of facet
+nodes. Diagonal contributions use separate storage.
+
 The implicit branch uses `mpm_backend="Direct"`, implicit FEM/MPM solvers,
 elastic FEM, and either elastic or supported associated finite-strain MPM
 plasticity. `MPMmaterial` in the historical `add_property` signature denotes

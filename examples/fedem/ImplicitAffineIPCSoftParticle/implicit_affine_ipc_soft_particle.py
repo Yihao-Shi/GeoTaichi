@@ -73,6 +73,9 @@ gt.init(
     offline_cache=False,
 )
 
+mesh_path = Path(arguments.mesh_path).expanduser().resolve()
+affine_shape = gt.polyhedron(file=str(mesh_path))
+
 dem = gt.DEM(log=True)
 dem.set_configuration(
     domain=[1.0, 1.0, 1.2],
@@ -99,9 +102,7 @@ dem.memory_allocate(
         "max_material_number": 1,
         "max_affine_body_number": 1,
         "surface_node_number": 256,
-        # There is one affine body, hence no Affine--Affine PT/EE contact.
-        "max_point_triangle_pairs": 0,
-        "max_edge_edge_pairs": 0,
+        "contact_coordination_number": 1 / len(affine_shape.mesh.faces),
         "body_coordination_number": 16,
         "wall_coordination_number": 1,
         "compaction_ratio": [1.0, 1.0],
@@ -109,12 +110,11 @@ dem.memory_allocate(
     log=True,
 )
 dem.add_attribute(materialID=0, attribute={"Density": 1000.0})
-mesh_path = Path(arguments.mesh_path).expanduser().resolve()
 dem.add_template(
     {
         "Name": "affine_sphere",
         "TemplateType": "AffineBody",
-        "Object": gt.polyhedron(file=str(mesh_path)),
+        "Object": affine_shape,
     }
 )
 dem.create_body(

@@ -220,20 +220,13 @@ class FEMAffineIPCEngine:
         """Bound affine raw scatters from fixed PT/EE capacities."""
         vf_candidates = int(getattr(self.dem_wrapper.sims, "max_point_triangle_pairs", 0))
         ee_candidates = int(getattr(self.dem_wrapper.sims, "max_edge_edge_pairs", 0))
-        # The coupled source emits both global triangles before monolithic
-        # canonicalization.  Ask the affine operator for that exact storage
-        # mode directly; do not double a standalone estimate that contains a
-        # safety factor and minimum allocation floor.
+        # The affine raw bound covers both global triangles before reduction.
         return max(
             1,
             int(
                 self.affine._estimate_hash_triplet_capacity(
-                    self.dem_wrapper.sims,
                     vf_candidate_capacity=vf_candidates,
                     ee_candidate_capacity=ee_candidates,
-                    full_symmetric_input=True,
-                    safety_factor=1.0,
-                    minimum_capacity=1,
                 )
             ),
         )
@@ -245,7 +238,8 @@ class FEMAffineIPCEngine:
         contribution_count = 2 if self.contact.activate_friction else 1
         return max(
             1,
-            contribution_count * (169 * pt_capacity + 100 * ee_capacity),
+            contribution_count
+            * (FEMAffineIPCAssembler.PT_RAW_BLOCKS * pt_capacity + FEMAffineIPCAssembler.EE_RAW_BLOCKS * ee_capacity),
         )
 
     @staticmethod

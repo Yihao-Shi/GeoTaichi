@@ -40,16 +40,15 @@ def main():
     parser.add_argument("--arch", choices=("cpu", "gpu"), default="cpu")
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--stop-time", type=float, help="Stop a setup or contact probe early (s).")
-    parser.add_argument("--max-point-triangle-pairs", type=int)
+    parser.add_argument("--contact-coordination-number", type=float)
     args = parser.parse_args()
     contract = json.loads((HERE / "model-contract.json").read_text())
     profile = contract["discretization"]["profiles"][args.resolution]
     setup, timing = contract["geometry"], contract["time"]
     dt = profile["dt_s"]
     stop = timing["duration"] if args.stop_time is None else args.stop_time
-    max_pairs = profile["max_pairs"] if args.max_point_triangle_pairs is None else args.max_point_triangle_pairs
-    if not dt <= stop <= timing["duration"] or max_pairs <= 0:
-        parser.error("Require nominal dt <= stop-time <= installation end and a positive pair capacity")
+    if not dt <= stop <= timing["duration"]:
+        parser.error("Require nominal dt <= stop-time <= installation end")
 
     mesh = trimesh.load_mesh(INPUTS / profile["mesh"], merge_tex=True, merge_norm=True)
     if not mesh.is_volume or not np.isfinite(mesh.vertices).all():
@@ -150,9 +149,7 @@ def main():
             "max_affine_body_number": 1,
             "max_rigid_template_number": 1,
             "max_material_number": 1,
-            "max_point_triangle_pairs": 1,
-            "max_edge_edge_pairs": 1,
-            "affine_contact_block_capacity": 2048,
+            "contact_coordination_number": 1 / len(mesh.faces),
             "surface_node_number": len(mesh.vertices),
             "body_coordination_number": 4,
             "wall_coordination_number": 1,
@@ -182,9 +179,10 @@ def main():
         )
     solver = dict(contract["api"]["solver"], Timestep=dt, SimulationTime=stop, SavePath=str(output))
     model.set_solver(solver, log=False)
-    model.memory_allocate(
-        {"body_coordination_number": 4, "max_point_triangle_pairs": max_pairs, "max_point_edge_pairs": 1}, log=False
-    )
+    coordination = args.contact_coordination_number
+    if coordination is None:
+        coordination = profile["contact_coordination_number"]
+    model.memory_allocate({"body_coordination_number": 4, "contact_coordination_number": coordination}, log=False)
     model.choose_contact_model("BarrierIPC", **contact, friction_mode="lagged", friction_iterations=-1, project_pd=True)
     model.add_ipc_property(MPMbody=0, AffineBody=0, property=contact)
 
@@ -199,7 +197,7 @@ def main():
         timing=timing,
         contact=contact,
         solver=solver,
-        max_pairs=max_pairs,
+        contact_coordination_number=coordination,
     )
     (output / "run-config.json").write_text(json.dumps(run_config, indent=2) + "\n")
     motion = (tilt, tip, setup["pitch_m"], setup["turns"], timing["settle_s"], timing["installation_s"])

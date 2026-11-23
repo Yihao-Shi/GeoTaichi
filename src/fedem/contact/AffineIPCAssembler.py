@@ -52,6 +52,11 @@ from src.physics_model.contact_model.ipc.Barrier import Barrier
 class FEMAffineIPCAssembler:
     """IPC PT/EE barrier and lagged friction pulled back to global blocks."""
 
+    # Worst-case PT has one FEM point and three sites sharing four affine
+    # controls; EE has two FEM nodes and two sites sharing those controls.
+    PT_RAW_BLOCKS = 13**2 - (1 + 4 * 3**2)
+    EE_RAW_BLOCKS = 10**2 - (2 + 4 * 2**2)
+
     def __init__(self, fem, affine, model, simulation, fem_faces=None):
         self.fem = fem
         self.affine = affine
@@ -1260,16 +1265,13 @@ class FEMAffineIPCAssembler:
         return max(0.0, min(1.0, float(self.minimum_step[None])))
 
     def contact_block_capacity(self, pt_count, ee_count):
-        # A PT stencil pulls back to at most 13 global blocks (one FEM point
-        # against three affine vertices), hence 13^2=169 block scatters.  An
-        # EE stencil has at most ten blocks and therefore 10^2=100 scatters.
         # Barrier and frozen-friction Hessians are separate contributions.
         pt_contributions = int(pt_count)
         ee_contributions = int(ee_count)
         if self.activate_friction:
             pt_contributions += max(int(pt_count), int(self.friction_pt_count))
             ee_contributions += max(int(ee_count), int(self.friction_ee_count))
-        return max(1, 169 * pt_contributions + 100 * ee_contributions)
+        return max(1, self.PT_RAW_BLOCKS * pt_contributions + self.EE_RAW_BLOCKS * ee_contributions)
 
     def diagnostics(self):
         minimum = float(self.minimum_distance[None])
