@@ -1,0 +1,19 @@
+<?xml version='1.0' encoding='utf-8'?>
+<VTKFile type="Collection" version="0.1" byte_order="LittleEndian">
+  <Collection>
+    <DataSet timestep="0" part="0" file="soil_000000.vtu" />
+    <DataSet timestep="0" part="1" file="screw_pile_000000.vtu" />
+    <DataSet timestep="14" part="0" file="soil_000001.vtu" />
+    <DataSet timestep="14" part="1" file="screw_pile_000001.vtu" />
+    <DataSet timestep="28" part="0" file="soil_000002.vtu" />
+    <DataSet timestep="28" part="1" file="screw_pile_000002.vtu" />
+    <DataSet timestep="42" part="0" file="soil_000003.vtu" />
+    <DataSet timestep="42" part="1" file="screw_pile_000003.vtu" />
+    <DataSet timestep="56" part="0" file="soil_000004.vtu" />
+    <DataSet timestep="56" part="1" file="screw_pile_000004.vtu" />
+    <DataSet timestep="70" part="0" file="soil_000005.vtu" />
+    <DataSet timestep="70" part="1" file="screw_pile_000005.vtu" />
+    <DataSet timestep="70.5" part="0" file="soil_000006.vtu" />
+    <DataSet timestep="70.5" part="1" file="screw_pile_000006.vtu" />
+  </Collection>
+</VTKFile>

@@ -24,6 +24,11 @@ def test_equilibrated_solve_preserves_physical_matrix_and_true_residual(
         preconditioner_group_nodes=4,
     )
     solver = EquilibratedSolve(matrix)
+    scaled = solver.scaled_matrix
+    assert scaled.non_diag.tripletI is matrix.non_diag.tripletI
+    assert scaled.non_diag.tripletJ is matrix.non_diag.tripletJ
+    assert scaled.non_diag.tripletH is not matrix.non_diag.tripletH
+    assert not hasattr(scaled.non_diag, "blockH")
     rhs, solution = ti.field(ti.f64, shape=18), ti.field(ti.f64, shape=18)
     rng = np.random.default_rng(8061)
     for nodes in (5, 4, 5):
@@ -46,6 +51,7 @@ def test_equilibrated_solve_preserves_physical_matrix_and_true_residual(
         assert result["residual"] == pytest.approx(residual, abs=1e-11)
         np.testing.assert_allclose(actual, expected, rtol=1e-6, atol=1e-8)
         np.testing.assert_array_equal(matrix.to_scipy(nodes).toarray(), before)
+        assert scaled._row_entries is matrix._row_entries
     rejected = solver.solve(rhs, solution, active_nodes=nodes, tol=1e-12, maxiter=0)
     assert not rejected["converged"]
     assert rejected["residual"] == pytest.approx(np.linalg.norm(force))

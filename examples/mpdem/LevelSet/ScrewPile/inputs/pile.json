@@ -1,0 +1,65 @@
+{
+  "geometry": {
+    "coordinate_frame": "z-up in world; local z from tip to head",
+    "soil_size_m": [
+      16.0,
+      16.0,
+      16.0
+    ],
+    "pitch_m": 2.05,
+    "length_m": 13.0,
+    "inclination_deg": 15,
+    "turns": 7,
+    "final_advancement_ratio": 1.0
+  },
+  "mesh": "screw_pile.obj",
+  "gravity": [
+    0,
+    0,
+    -9.81
+  ],
+  "soil": {
+    "density": 1700.0,
+    "young_modulus": 200000.0,
+    "poisson_ratio": 0.3,
+    "Cohesion": 250.0,
+    "FrictionAngle": 30.0,
+    "DilationAngle": 0.0,
+    "dpType": "Circumscribed"
+  },
+  "steel_density": 7800.0,
+  "friction_coefficient": 0.4,
+  "settle_s": 0.5,
+  "seconds_per_turn": 10.0,
+  "profiles": {
+    "full": {
+      "soil_counts": [
+        64,
+        64,
+        80
+      ],
+      "grid_size_m": 0.25,
+      "dt_s": 0.0001
+    },
+    "dense": {
+      "soil_counts": [
+        144,
+        144,
+        154
+      ],
+      "grid_size_m": 0.2,
+      "dt_s": 0.0001
+    },
+    "h200": {
+      "soil_counts": [
+        586,
+        586,
+        586
+      ],
+      "grid_size_m": 0.05460750853242321,
+      "dt_s": 0.0001,
+      "seconds_per_turn": 2.5,
+      "snapshot_interval_s": 0.5
+    }
+  }
+}

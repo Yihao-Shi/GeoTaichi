@@ -1205,8 +1205,42 @@ class Simulation(object):
                 )
             if self.solver_type == "Implicit" and self.material_type != "Solid":
                 self._raise_unsupported("Implicit BlockScan sparse_grid", ["material_type='Solid'"])
-            if self.mode != "Normal":
-                self._raise_unsupported("BlockScan sparse_grid", ["mode='Normal'"])
+            if self.mode == "Lightweight":
+                if (
+                    self.dimension != 3
+                    or self.mapping != "USL"
+                    or self.shape_function not in ("Linear", "GIMP")
+                    or self.material_type != "Solid"
+                    or self.stabilize
+                    or self.velocity_projection_scheme
+                ):
+                    self._raise_unsupported(
+                        "Lightweight BlockScan sparse_grid",
+                        [
+                            "3D solid USL",
+                            "Linear or GIMP",
+                            "stabilize=None",
+                            "velocity_projection=None",
+                        ],
+                    )
+                if (
+                    self.free_surface_detection
+                    or self.pressure_smoothing
+                    or self.strain_smoothing
+                    or self.ptraction_method == "Virtual"
+                    or self.nptraction > 0
+                ):
+                    self._raise_unsupported(
+                        "Lightweight BlockScan sparse_grid",
+                        [
+                            "free_surface_detection=False",
+                            "pressure_smoothing=False",
+                            "strain_smoothing=False",
+                            "max_particle_traction_constraint=0",
+                        ],
+                    )
+            elif self.mode != "Normal":
+                self._raise_unsupported("BlockScan sparse_grid", ["mode='Normal' or 'Lightweight'"])
             if self.mapping == "G2P2G" and self.velocity_projection_scheme != "Affine":
                 self._raise_unsupported("BlockScan sparse_grid", ["mapping='USL', 'USF', or 'MUSL'"])
             if self.coupling not in (False, "Lagrangian"):

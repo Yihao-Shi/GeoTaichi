@@ -5,7 +5,7 @@ import math
 import taichi as ti
 
 from src.linear_solver.BuildTriplet import BuildTriplet
-from src.utils.errors import NonfiniteStateError
+from src.utils.errors import NonfiniteStateError, SparseAssemblyError
 
 
 @ti.data_oriented
@@ -17,7 +17,7 @@ class EquilibratedSolve:
         self.dim = matrix.dim
         self.scaled_matrix = BuildTriplet(
             dim=self.dim,
-            max_pairs_num=matrix.max_nonzeros,
+            max_pairs_num=1,
             max_nonzeros=matrix.max_nonzeros,
             max_active_nodes=matrix.max_active_nodes,
             symmetric=False,
@@ -26,6 +26,7 @@ class EquilibratedSolve:
             device_reduction=True,
             preconditioner_group_size=matrix.preconditioner_group_size,
             preconditioner_group_nodes=matrix.preconditioner_group_nodes,
+            reduced_pattern_from=matrix,
         )
         self.scale = ti.Vector.field(self.dim, ti.f64, shape=matrix.max_active_nodes)
         self.scaled_rhs = ti.field(ti.f64, shape=self.dim * matrix.max_active_nodes)
@@ -55,16 +56,20 @@ class EquilibratedSolve:
     def _scale_matrix(self, active_nodes: ti.i32, count: ti.i32):
         for block in range(active_nodes):
             for row, column in ti.static(ti.ndrange(self.dim, self.dim)):
-                self.scaled_matrix.diag[block][self.dim * row + column] *= (
+                index = self.dim * row + column
+                self.scaled_matrix.diag[block][index] = self.matrix.diag[block][index] * (
                     self.scale[block][row] * self.scale[block][column]
                 )
         for contact in range(count):
             i = self.scaled_matrix.non_diag.tripletI[contact]
             j = self.scaled_matrix.non_diag.tripletJ[contact]
-            for row, column in ti.static(ti.ndrange(self.dim, self.dim)):
-                self.scaled_matrix.non_diag.tripletH[contact][self.dim * row + column] *= (
-                    self.scale[i][row] * self.scale[j][column]
-                )
+            if 0 <= i < active_nodes and 0 <= j < active_nodes:
+                for row, column in ti.static(ti.ndrange(self.dim, self.dim)):
+                    index = self.dim * row + column
+                    factor = self.scale[i][row] * self.scale[j][column]
+                    self.scaled_matrix.non_diag.tripletH[contact][index] = (
+                        self.matrix.non_diag.tripletH[contact][index] * factor
+                    )
 
     @ti.kernel
     def _recover(self, rhs: ti.template(), solution: ti.template(), active_nodes: ti.i32):
@@ -87,20 +92,8 @@ class EquilibratedSolve:
         maxiter = int(maxiter)
         if maxiter < 0:
             raise ValueError("EquilibratedSolve maxiter must be non-negative")
-        self.scaled_matrix.reset_system()
-        # The input is already assembled; re-finalizing can discard a reduced-only input.
-        self.scaled_matrix._append_raw_fields(
-            active_nodes,
-            0,
-            self.matrix.diag,
-            self.matrix.non_diag.tripletI,
-            self.matrix.non_diag.tripletJ,
-            self.matrix.non_diag.tripletH,
-            self.matrix.non_diag.element_pair_num,
-            self.matrix.overflow,
-            1.0,
-        )
-        self.scaled_matrix.finalize_taichi_assembly()
+        if int(self.matrix.overflow[0]) != 0:
+            raise SparseAssemblyError("Cannot equilibrate a matrix with an overflowed assembly")
         values = self._prepare(rhs, active_nodes)
         minimum, initial_residual = float(values[0]), math.sqrt(max(float(values[1]), 0.0))
         if values[2] != 0.0 or not math.isfinite(initial_residual) or not 0.0 < minimum < 1.0e300:

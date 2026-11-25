@@ -622,6 +622,9 @@ def test_cuda_monolithic_soft_particle_matrix_matches_cpu_oracle(
     from src.mpm.boundaries.BoundaryCondition import DirichletBoundary
 
     config, mpm, contact = _build_point_plane_contact(tmp_path)
+    assert "system_hash_matrix" not in vars(contact)
+    assert contact.pbarrier.shape[0] == contact.pfriction.shape[0] == 1
+    assert contact.barrier_nnz == contact.friction_nnz == 4 * mpm.stiffness_stencil_stride
     mpm.compute_mass_list(mpm.integration)
     constrained_grid = int(mpm.dof2node.to_numpy()[0])
     dirichlet = DirichletBoundary()
@@ -639,6 +642,7 @@ def test_cuda_monolithic_soft_particle_matrix_matches_cpu_oracle(
     reference_solution = solve_csr_system(reference_rhs, reference_matrix)
 
     device_matrix = contact.assemble_current_system(mpm.grid_disp)
+    assert contact.system_hash_matrix is device_matrix
     device_rhs = mpm.rhs.to_numpy()[: mpm.active_dof].copy()
     np.testing.assert_allclose(
         device_matrix.to_scipy(mpm.active_dof // config.DIM).toarray(),

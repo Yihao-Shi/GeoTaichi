@@ -6,7 +6,7 @@ import numpy as np
 import taichi as ti
 from taichi.lang.impl import current_cfg
 from src.utils.PrefixSum import PrefixSumExecutor
-from src.utils.TypeDefinition import vec2i, vec3i
+from src.utils.TypeDefinition import vec2i, vec3i, vec3f
 import src.utils.GlobalVariable as GlobalVariable
 
 
@@ -79,6 +79,48 @@ class BlockSparseGrid:
             self._mark_active_blocks_2d(int(particle_num), int(total_nodes), LnID, node_size, gnum)
         else:
             self._mark_active_blocks_3d(int(particle_num), int(total_nodes), LnID, node_size, gnum)
+        self._compact_marked_blocks(gnum)
+        if self.dimension == 2:
+            self._remap_lnid_2d(int(particle_num), int(total_nodes), LnID, node_size, gnum)
+        else:
+            self._remap_lnid_3d(int(particle_num), int(total_nodes), LnID, node_size, gnum)
+
+    def rebuild_lightweight(self, particle_num, element, particle):
+        self.reset_metadata()
+        self._mark_particle_support(particle_num, element.gnum, element.igrid_size, element.calLength, particle)
+        self._compact_marked_blocks(element.gnum)
+
+    @ti.kernel
+    def _mark_particle_support(
+        self,
+        particle_num: int,
+        gnum: vec3i,
+        inverse_grid_size: vec3f,
+        particle_lengths: ti.template(),
+        particle: ti.template(),
+    ):
+        for p in range(particle_num):
+            if particle[p].active == 1:
+                length = particle_lengths[int(particle[p].bodyID)]
+                base = ti.floor((particle[p].x - length) * inverse_grid_size).cast(int)
+                last = base + ti.static(GlobalVariable.INFLUENCENODE - 1)
+                first = ti.max(base, 0)
+                last = ti.min(last, gnum - 1)
+                if any(last < first):
+                    continue
+                first_block = first // ti.static(self.block_size)
+                last_block = last // ti.static(self.block_size)
+                for block in ti.grouped(
+                    ti.ndrange(
+                        (first_block[0], last_block[0] + 1),
+                        (first_block[1], last_block[1] + 1),
+                        (first_block[2], last_block[2] + 1),
+                    )
+                ):
+                    block_id = block[0] + self.block_count[0] * (block[1] + self.block_count[1] * block[2])
+                    ti.atomic_or(self.block_mask[block_id], 1)
+
+    def _compact_marked_blocks(self, gnum):
         self.prefix_sum.run(self.block_mask)
         if self.dimension == 2:
             self._build_block_map_2d(gnum)
@@ -92,10 +134,6 @@ class BlockSparseGrid:
                 f"active blocks={active}, capacity={self.max_active_blocks}. "
                 "Increase sparse_grid/MaxActiveBlocks or sparse_grid/CapacityFactor."
             )
-        if self.dimension == 2:
-            self._remap_lnid_2d(int(particle_num), int(total_nodes), LnID, node_size, gnum)
-        else:
-            self._remap_lnid_3d(int(particle_num), int(total_nodes), LnID, node_size, gnum)
 
     def get_active_blocks(self):
         return int(self.active_block_count[None])

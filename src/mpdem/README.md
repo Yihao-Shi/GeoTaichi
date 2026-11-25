@@ -60,6 +60,12 @@ adjoint applications use pivoted LU. Exact adjoints retain their explicit
 PCG-to-BiCGSTAB fallback when the unprojected tangent is not positive definite.
 No full matrix or preconditioned vector is transferred to the host.
 
+For one Direct MPM body, the reduced MPM--MPM block capacity follows the
+interpolation supports shared by material, ground and mixed contact assembly.
+The coupled matrix reserves ABD and mixed cross blocks separately. BiCGSTAB
+equilibration uses the coupled matrix's coordinates and row adjacency with a
+separate array of scaled values so the physical residual uses the original matrix.
+
 Soft--ABD fully implicit friction uses the original absolute-coordinate
 iterate and shares ABD's force defaults: `fully_implicit_force_atol=1e-9` N,
 `fully_implicit_force_rtol=1e-8`. The incremental residual threshold is

@@ -93,3 +93,11 @@ examples/**/checkpoints/**
 
 # Keep macOS metadata excluded even under the input/script exceptions.
 **/._*
+
+# Local example videos and partial downloads.
+/examples/**/*.[mM][pP]4
+/examples/**/*.[mM][pP]4.part
+
+# Local visualization results for the explicit excavation and screw-pile examples.
+/examples/mpdem/LevelSet/excavator_dig/explicit_*/dry-sand/vtu/*.pvd
+/examples/mpdem/LevelSet/screw_pile/dense/vtu/*.pvd

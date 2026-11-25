@@ -242,6 +242,15 @@ def _case(
 def test_nonassociated_jacobian_and_residual_only_friction(tmp_path):
     coupling = _case(tmp_path)
     system = coupling.enginer
+    ipc = system.ipc
+    assert not ipc.enable_particle_contact
+    assert ipc.barrier_nnz == ipc.friction_nnz == ipc.ground.num * ipc.mpm.stiffness_stencil_stride
+    assert "system_hash_matrix" not in vars(ipc)
+    assert system.matrix.max_nonzeros <= (
+        system.mpm.stiffness_stencil_width * (system.mpm.stiffness_stencil_width - 1)
+        + system.affine_controls * (system.affine_controls - 1)
+        + 2 * system.affine_controls * system.mpm_node_capacity
+    )
     system.mpm.F0.from_numpy(np.array([np.diag([1.18, 0.82, 0.90])]))
     system.begin_step_device(0.001)
     mpm_dof = system.mpm.active_dof
@@ -280,6 +289,7 @@ def test_nonassociated_jacobian_and_residual_only_friction(tmp_path):
     loss_gradient = np.random.default_rng(3).normal(size=size)
     adjoint = system.solve_adjoint_device(loss_gradient).to_numpy()[:size]
     np.testing.assert_allclose(matrix.T @ adjoint, loss_gradient, rtol=1e-7, atol=1e-7)
+    assert "system_hash_matrix" not in vars(ipc)
 
 
 def test_nonassociated_strict_and_inexact_lagged_solve(tmp_path):

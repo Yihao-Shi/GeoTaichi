@@ -94,6 +94,16 @@ class ImplicitMPM(MPMSolver):
             dtype=ti.f64,
             shape=self.n_particles,
         )
+        self.initial_deformation_gradient = kwargs.get("initial_deformation_gradient")
+        if self.initial_deformation_gradient is not None:
+            gradient = np.array(self.initial_deformation_gradient, dtype=np.float64, copy=True, order="C")
+            expected_shape = (self.n_particles, self.material_dimension, self.material_dimension)
+            if gradient.shape != expected_shape or not np.isfinite(gradient).all():
+                raise ValueError(f"initial_deformation_gradient must be finite with shape {expected_shape}")
+            determinant = np.linalg.det(gradient)
+            if not np.isfinite(determinant).all() or np.any(determinant <= 0.0):
+                raise ValueError("initial_deformation_gradient must have finite positive determinants")
+            self.initial_deformation_gradient = gradient
         self.vonMises = ti.field(ti.f64, shape=self.n_particles)
         if self.is_finite_strain_plastic:
             self.material.allocate_state(self.n_particles)
@@ -141,10 +151,9 @@ class ImplicitMPM(MPMSolver):
         # the union of two overlapping particle supports.  Keeping these
         # capacities separate prevents the persistent GPU hash table from
         # allocating two entries for every raw particle/local-pair slot.
-        neighbor_block_capacity = (2 * support_width - 1) ** config.DIM
-        stiffness_reduced_nnz = min(
-            self.stiffness_nnz,
-            active_node_capacity * max(0, neighbor_block_capacity - 1),
+        self.grid_stencil_offdiag_capacity = min(
+            self.n_particles * self.stiffness_stencil_width * (self.stiffness_stencil_width - 1),
+            active_node_capacity * ((2 * support_width - 1) ** config.DIM - 1),
         )
         self.total_nnz = int(self.stiffness_nnz + self.degree_of_freedom)
         device_reduction = kwargs.get("device_reduction", True)
@@ -158,7 +167,7 @@ class ImplicitMPM(MPMSolver):
         self.hash_matrix = BuildTriplet(
             dim=config.DIM,
             max_pairs_num=max(1, self.stiffness_nnz),
-            max_nonzeros=max(1, stiffness_reduced_nnz),
+            max_nonzeros=max(1, self.grid_stencil_offdiag_capacity),
             max_active_nodes=active_node_capacity,
             symmetric=False,
             solver=self.linear_solver_name,
@@ -707,7 +716,10 @@ class ImplicitMPM(MPMSolver):
         copy_grad(active_dof, energy_gradient, grid_disp.grad)
 
     def initial_simulation(self):
-        self.init_f0()
+        if self.initial_deformation_gradient is None:
+            self.init_f0()
+        else:
+            self.F0.from_numpy(self.initial_deformation_gradient)
         super().initial_simulation()
 
     def calculate_von_mises(self):

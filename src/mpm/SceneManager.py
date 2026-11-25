@@ -328,6 +328,8 @@ class SceneManager(object):
         return adaptive_grid
 
     def activate_element(self, sims: Simulation, element):
+        if sims.sparse_grid and sims.mode == "Lightweight" and element.get("AdaptiveGrid"):
+            raise SimulationStateError("Lightweight BlockScan sparse_grid requires a regular element grid.")
         if sims.sparse_grid and sims.contact_detection and not element.get("AdaptiveGrid"):
             if sims.solver_type != "Explicit" or sims.material_type != "Solid":
                 raise ConfigurationError(

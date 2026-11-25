@@ -268,7 +268,10 @@ class HexahedronElement8Nodes(ElementBase):
             if sims.stabilize == "Displacement F-Bar Method":
                 self.calLength_lower_order.fill(0.5 * self.grid_size)
         elif sims.shape_function == "GIMP":
-            set_particle_characteristic_length_gimp(particleNum, 1.0, self.calLength, particle, psize)
+            if psize.shape == (1, 3):
+                self.calLength.fill(vec3f(psize[0]))
+            else:
+                set_particle_characteristic_length_gimp(particleNum, 1.0, self.calLength, particle, psize)
         elif sims.shape_function == "CPDI1" or sims.shape_function == "CPDI2":
             set_particle_characteristic_length_cpdi(particleNum, self.calLength, particle, psize)
 

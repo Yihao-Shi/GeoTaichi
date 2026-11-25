@@ -63,6 +63,24 @@ def test_direct_backend_builds_implicit_ulmpm_from_main_mpm_flow(tmp_path):
     assert mpm.enginer.linear_solver_relative_tolerance == 2.0e-9
 
 
+@pytest.mark.parametrize("invert_particle", [False, True])
+def test_direct_implicit_initial_deformation_gradient(tmp_path, invert_particle):
+    ti.init(arch=ti.cpu, default_fp=ti.f64, offline_cache=False)
+    mpm = _configure_direct_mpm(tmp_path / "initial-deformation")
+    gradient = np.tile(np.eye(2), (4, 1, 1))
+    gradient[:, 1, 1] = [0.8, 0.9, 0.7, 1.0]
+    if invert_particle:
+        gradient[0, 1, 1] *= -1
+    mpm.set_solver({**mpm.direct_solver, "initial_deformation_gradient": gradient})
+    if invert_particle:
+        with pytest.raises(ValueError, match="positive determinants"):
+            mpm.add_engine()
+    else:
+        mpm.add_engine()
+        mpm.enginer.initial_simulation()
+        np.testing.assert_array_equal(mpm.enginer.F0.to_numpy(), gradient)
+
+
 def test_direct_backend_rejects_particles_outside_the_background_grid(tmp_path):
     ti.init(arch=ti.cpu, default_fp=ti.f64, offline_cache=False)
     mpm = _configure_direct_mpm(tmp_path / "domain-guard")

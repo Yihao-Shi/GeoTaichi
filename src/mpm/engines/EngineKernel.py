@@ -1,4 +1,4 @@
-from src.mpm.sparse_grid.Utilities import compact_node_grid_coord
+from src.mpm.sparse_grid.Utilities import compact_node_grid_coord, compact_node_id
 import taichi as ti
 
 from src.physics_model.constitutive_model.MaterialKernel import get_angular_velocity
@@ -200,6 +200,7 @@ def lightweight_p2g(
     boundary_types: ti.template(),
     node: ti.template(),
     particle: ti.template(),
+    sparse_grid: ti.template(),
 ):
     ti.block_local(node.m)
     for d in ti.static(range(GlobalVariable.DIMENSION)):
@@ -207,6 +208,8 @@ def lightweight_p2g(
     for d in ti.static(range(GlobalVariable.DIMENSION)):
         ti.block_local(node.force.get_scalar_field(d))
     for np in range(particle_num):
+        if particle[np].active == 0:
+            continue
         body_id = int(particle[np].bodyID)
         position = particle[np].x
         velocity = particle[np].v
@@ -217,11 +220,20 @@ def lightweight_p2g(
 
         internal_force = -volume * previous_stress
         external_force = particle[np]._compute_external_force(gravity)
-        for offset in ti.static(ti.grouped(ti.ndrange(*((GlobalVariable.INFLUENCENODE,) * GlobalVariable.DIMENSION)))):
+        for offset in ti.grouped(ti.ndrange(*ti.static((GlobalVariable.INFLUENCENODE,) * GlobalVariable.DIMENSION))):
             base = ti.floor((position - psize) * igrid_size).cast(int)
             grid_id = base + offset
             if all(grid_id >= 0) and all(grid_id < gnum):
                 node_id = linearize(grid_id, gnum)
+                if ti.static(sparse_grid != None):
+                    node_id = compact_node_id(
+                        node_id,
+                        gnum,
+                        sparse_grid.block_count,
+                        sparse_grid.block_size,
+                        sparse_grid.block_volume,
+                        sparse_grid.block_map,
+                    )
                 grid_pos = grid_id * grid_size
                 shape_fn, dshape_fn = ti.Vector.zero(float, GlobalVariable.DIMENSION), ti.Vector.zero(
                     float, GlobalVariable.DIMENSION
@@ -355,6 +367,7 @@ def lightweight_g2p(
     boundary_types: ti.template(),
     node: ti.template(),
     particle: ti.template(),
+    sparse_grid: ti.template(),
     mat_props: ti.template(),
     state_variables: ti.template(),
 ):
@@ -363,22 +376,33 @@ def lightweight_g2p(
     for d in ti.static(range(GlobalVariable.DIMENSION)):
         ti.block_local(node.force.get_scalar_field(d))
     for np in range(particle_num):
+        if particle[np].active == 0:
+            continue
         # np = particleID[pid]
         body_id = int(particle[np].bodyID)
         material_id = int(particle[np].materialID)
         position = particle[np].x
-        v_flip = particle[np].v
+        v_flip = ti.Vector.zero(float, GlobalVariable.DIMENSION)
         psize = particle_lengths[body_id]
 
         v_pic = ti.Vector.zero(float, GlobalVariable.DIMENSION)
         Wp = ti.Matrix.zero(float, GlobalVariable.DIMENSION, GlobalVariable.DIMENSION)
         velocity_gradient = ti.Matrix.zero(float, GlobalVariable.DIMENSION, GlobalVariable.DIMENSION)
         velocity_gradient_bar = ti.Matrix.zero(float, GlobalVariable.DIMENSION, GlobalVariable.DIMENSION)
-        for offset in ti.static(ti.grouped(ti.ndrange(*((GlobalVariable.INFLUENCENODE,) * GlobalVariable.DIMENSION)))):
+        for offset in ti.grouped(ti.ndrange(*ti.static((GlobalVariable.INFLUENCENODE,) * GlobalVariable.DIMENSION))):
             base = ti.floor((position - psize) * igrid_size).cast(int)
             grid_id = base + offset
             if all(grid_id >= 0) and all(grid_id < gnum):
                 node_id = linearize(grid_id, gnum)
+                if ti.static(sparse_grid != None):
+                    node_id = compact_node_id(
+                        node_id,
+                        gnum,
+                        sparse_grid.block_count,
+                        sparse_grid.block_size,
+                        sparse_grid.block_volume,
+                        sparse_grid.block_map,
+                    )
                 grid_pos = grid_id * grid_size
                 shape_fn, dshape_fn = ti.Vector.zero(float, GlobalVariable.DIMENSION), ti.Vector.zero(
                     float, GlobalVariable.DIMENSION
@@ -419,7 +443,7 @@ def lightweight_g2p(
                 for d in ti.static(range(GlobalVariable.DIMENSION)):
                     weight *= shape_fn[d]
                 v_pic += weight * velocity
-                v_flip += weight * acceleration * dt[None]
+                v_flip += weight * acceleration
 
                 if ti.static(GlobalVariable.Affine):
                     dpos = grid_pos - position
@@ -492,22 +516,36 @@ def lightweight_g2p(
         particle[np].velocity_gradient = velocity_gradient_bar
         if ti.static(GlobalVariable.Affine):
             particle[np].velocity_gradient = velocity_gradient
-        particle[np].v = alpha * v_pic + (1.0 - alpha) * v_flip
-        if ti.static(not (GlobalVariable.Affine and GlobalVariable.FBAR)):
-            particle[np].x += v_pic * dt[None]
+        if ti.static(GlobalVariable.Affine):
+            particle[np].v = alpha * v_pic + (1.0 - alpha) * (particle[np].v + v_flip * dt[None])
+            if ti.static(not GlobalVariable.FBAR):
+                particle[np].x += v_pic * dt[None]
+        else:
+            particle[np]._update_particle_state(dt, alpha, v_pic, v_flip)
 
         if ti.static(not GlobalVariable.FBAR):
             previous_stress, volume = particle[np].stress, particle[np].vol
-            volume *= (ti.Matrix.identity(float, GlobalVariable.DIMENSION) + dt[None] * velocity_gradient).determinant()
-            stress = ti.Vector.zero(float, 6)
+            stress = previous_stress
             for mat_id in ti.static(range(1, mat_props.shape[0])):
                 if material_id == mat_id:
+                    if ti.static(GlobalVariable.Affine):
+                        volume *= (
+                            ti.Matrix.identity(float, GlobalVariable.DIMENSION) + dt[None] * velocity_gradient
+                        ).determinant()
+                    elif ti.static(GlobalVariable.DIMENSION == 2):
+                        volume *= mat_props[mat_id].update_particle_volume_2d(
+                            np, velocity_gradient_bar, state_variables, dt
+                        )
+                    else:
+                        volume *= mat_props[mat_id].update_particle_volume(
+                            np, velocity_gradient_bar, state_variables, dt
+                        )
                     if ti.static(GlobalVariable.DIMENSION == 2):
-                        stress = mat_props[1].compute_stress2d(
+                        stress = mat_props[mat_id].compute_stress2d(
                             np, previous_stress, velocity_gradient_bar, state_variables, dt
                         )
                     elif ti.static(GlobalVariable.DIMENSION == 3):
-                        stress = mat_props[1].compute_stress(
+                        stress = mat_props[mat_id].compute_stress(
                             np, previous_stress, velocity_gradient_bar, state_variables, dt
                         )
             particle[np].stress = stress

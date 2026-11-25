@@ -219,7 +219,7 @@ class Engine(object):
 
     def reset_message(self):
         self.sims.timer.begin("Reset")
-        self.mengine.reset_grid_message(self.mscene)
+        self.mengine.reset_grid_messages(self.mscene)
         if self.sims.coupling_scheme != "CFDEM" and (self.sims.particle_interaction or self.sims.wall_interaction):
             self.mengine.reset_particle_message(self.mscene)
         self.dengine.reset_wall_message(self.dscene)

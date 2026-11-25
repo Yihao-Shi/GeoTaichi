@@ -14,6 +14,7 @@ from src.physics_model.contact_model.ipc.Utilities import ipc_fully_implicit_poi
 from src.physics_model.contact_model.ipc.Utilities import ipc_fully_implicit_point_plane_stribeck_friction
 
 import math
+from functools import cached_property
 import taichi as ti
 import numpy as np
 from taichi.lang.impl import current_cfg
@@ -261,6 +262,10 @@ class IPCMPM:
         if not self.friction.has_friction and not kwargs.get("activate_friction", False):
             self.activate_fric = False
         self.enable_particle_contact = self.mpm.n_body > 1
+        particle_barrier_capacity = int(barrier_set[0]) if self.enable_particle_contact else 0
+        particle_friction_capacity = int(friction_set[0]) if self.enable_particle_contact else 0
+        ground_barrier_capacity = int(barrier_set[1]) if self.ground.num else 0
+        ground_friction_capacity = int(friction_set[1]) if self.ground.num else 0
         self.curr_barrier_contact_num = 0
         self.curr_friction_contact_num = 0
         # Contact kernels scatter one dense node block per support-node pair.
@@ -269,12 +274,16 @@ class IPCMPM:
         # DIM^2 mostly-empty blocks for every actual dense block.
         support_nodes = int(self.mpm.shape_func.max_node_per_particle)
         support_block_pairs = support_nodes * support_nodes
-        self.barrier_nnz = 4 * support_block_pairs * barrier_set[0] + support_block_pairs * barrier_set[1]
-        self.friction_nnz = 4 * support_block_pairs * friction_set[0] + support_block_pairs * friction_set[1]
+        self.barrier_nnz = support_block_pairs * (4 * particle_barrier_capacity + ground_barrier_capacity)
+        self.friction_nnz = support_block_pairs * (4 * particle_friction_capacity + ground_friction_capacity)
         active_node_capacity = max(1, self.mpm.degree_of_freedom // config.DIM)
         maximum_unique_off_diagonal = active_node_capacity * max(0, active_node_capacity - 1)
-        barrier_reduced_nnz = min(self.barrier_nnz, maximum_unique_off_diagonal)
-        friction_reduced_nnz = min(self.friction_nnz, maximum_unique_off_diagonal)
+        # Ground contact couples nodes of a single particle support, just like material stiffness.
+        contact_reduced_capacity = (
+            maximum_unique_off_diagonal if self.enable_particle_contact else self.mpm.grid_stencil_offdiag_capacity
+        )
+        barrier_reduced_nnz = min(self.barrier_nnz, contact_reduced_capacity)
+        friction_reduced_nnz = min(self.friction_nnz, contact_reduced_capacity)
         if self.activate_barrier:
             self.barrier_hash_matrix = BuildTriplet(
                 config.DIM,
@@ -294,65 +303,27 @@ class IPCMPM:
                 device_reduction=True,
             )
 
-        # Every Taichi architecture uses one monolithic device matrix. Body, barrier and
-        # friction blocks are appended device-to-device and reduced once;
-        # neither CSR addition nor a full correction vector crosses PCIe.
         self.cuda_monolithic_solver = True
-        self.system_hash_matrix = None
         self.system_physical_rhs = None
-        if self.cuda_monolithic_solver:
-            system_raw_capacity = self.mpm.hash_matrix.non_diag.max_pairs_num
-            system_reduced_capacity = self.mpm.hash_matrix.max_nonzeros
-            if self.activate_barrier:
-                system_raw_capacity += self.barrier_hash_matrix.non_diag.max_pairs_num
-                system_reduced_capacity += self.barrier_hash_matrix.max_nonzeros
-            if self.activate_fric:
-                system_raw_capacity += self.friction_hash_matrix.non_diag.max_pairs_num
-                system_reduced_capacity += self.friction_hash_matrix.max_nonzeros
-            system_reduced_capacity = min(system_reduced_capacity, maximum_unique_off_diagonal)
-            monolithic_solver = self._cuda_monolithic_krylov_solver()
-            lagged_symmetric_system = monolithic_solver == "PCG"
-            if lagged_symmetric_system:
-                system_reduced_capacity = min(
-                    system_reduced_capacity,
-                    maximum_unique_off_diagonal // 2,
-                )
-            self.system_hash_matrix = BuildTriplet(
-                config.DIM,
-                max(1, system_raw_capacity),
-                max(1, system_reduced_capacity),
-                max(1, self.mpm.degree_of_freedom // config.DIM),
-                symmetric=False,
-                matrix_symmetric=lagged_symmetric_system,
-                full_symmetric_input=lagged_symmetric_system,
-                solver=monolithic_solver,
-                device_reduction=True,
-            )
-            # Dirichlet elimination overwrites ``mpm.rhs``.  Keep the
-            # unconstrained physical residual on device so the
-            # nonconservative fully implicit line search can evaluate the
-            # exact merit slope -R^T K p without rebuilding or downloading
-            # the matrix.
-            self.system_physical_rhs = ti.field(ti.f64, shape=self.mpm.degree_of_freedom)
 
         if self.activate_barrier:
-            self.gbarrier = ground_barrier_dtype.field(shape=max(1, int(barrier_set[1])))
+            self.gbarrier = ground_barrier_dtype.field(shape=max(1, ground_barrier_capacity))
             self.gbarrierNum = ti.field(ti.i32, shape=1)
             self.gbarrier_overflow = ti.field(ti.i32, shape=1)
             self.barrier_infeasible = ti.field(ti.i32, shape=1)
-            self.pbarrier = particle_barrier_dtype.field(shape=barrier_set[0])
+            self.pbarrier = particle_barrier_dtype.field(shape=max(1, particle_barrier_capacity))
             self.pbarrierNum = ti.field(ti.i32, shape=1)
             self.pbarrier_overflow = ti.field(ti.i32, shape=1)
         if self.activate_fric:
-            ground_friction_capacity = max(1, int(friction_set[1]))
+            ground_friction_capacity = max(1, ground_friction_capacity)
             self.gfriction = ground_friction_dtype.field(shape=ground_friction_capacity)
             self.gfrictionNum = ti.field(ti.i32, shape=1)
             self.gfriction_overflow = ti.field(ti.i32, shape=1)
-            self.pfriction = particle_friction_dtype.field(shape=friction_set[0])
+            self.pfriction = particle_friction_dtype.field(shape=max(1, particle_friction_capacity))
             self.pfrictionNum = ti.field(ti.i32, shape=1)
             self.pfriction_overflow = ti.field(ti.i32, shape=1)
             self.adjoint_gfriction = ground_friction_dtype.field(shape=ground_friction_capacity)
-            self.adjoint_pfriction = particle_friction_dtype.field(shape=friction_set[0])
+            self.adjoint_pfriction = particle_friction_dtype.field(shape=max(1, particle_friction_capacity))
             self.adjoint_gfriction_num = ti.field(ti.i32, shape=())
             self.adjoint_pfriction_num = ti.field(ti.i32, shape=())
             self.adjoint_friction_valid = ti.field(ti.i32, shape=())
@@ -3054,6 +3025,35 @@ class IPCMPM:
             self._restore_grid_displacement(self.device_grid_disp_snapshot)
             raise
 
+    @cached_property
+    def system_hash_matrix(self):
+        """Allocate the standalone destination only when it is used."""
+        sources = [self.mpm.hash_matrix]
+        if self.activate_barrier:
+            sources.append(self.barrier_hash_matrix)
+        if self.activate_fric:
+            sources.append(self.friction_hash_matrix)
+        active_nodes = max(1, self.mpm.degree_of_freedom // config.DIM)
+        solver = self._cuda_monolithic_krylov_solver()
+        symmetric = solver == "PCG"
+        topology = active_nodes * (active_nodes - 1)
+        if not self.enable_particle_contact:
+            topology = min(topology, self.mpm.grid_stencil_offdiag_capacity)
+        if symmetric:
+            topology //= 2
+        reduced_capacity = min(sum(source.max_nonzeros for source in sources), topology)
+        return BuildTriplet(
+            config.DIM,
+            max(1, sum(source.non_diag.max_pairs_num for source in sources)),
+            max(1, reduced_capacity),
+            active_nodes,
+            symmetric=False,
+            matrix_symmetric=symmetric,
+            full_symmetric_input=symmetric,
+            solver=solver,
+            device_reduction=True,
+        )
+
     def _assemble_cuda_monolithic_matrix(self, active_dof):
         """Merge all current raw blocks and impose constraints on the GPU."""
         active_nodes = int(active_dof) // config.DIM
@@ -3080,8 +3080,6 @@ class IPCMPM:
         if matrix.full_symmetric_input:
             matrix.canonicalize_full_symmetric_input()
         if self.system_physical_rhs is None:
-            # CPU-backend tests deliberately exercise the production device
-            # dataflow by enabling it after construction.
             self.system_physical_rhs = ti.field(ti.f64, shape=self.mpm.degree_of_freedom)
         self._copy_cuda_physical_rhs(int(active_dof))
         if self.mpm.dirichlet.num > 0:

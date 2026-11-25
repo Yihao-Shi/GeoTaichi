@@ -315,3 +315,93 @@ def test_sparse_grid_explicit_3d_fluid(tmp_path):
         "_run_sparse_fluid_3d_case()\n"
     )
     _run_subprocess(code, tmp_path)
+
+
+def _run_lightweight_comparison(output_root=None):
+    from geotaichi import MPM
+
+    reference = None
+    for mode, sparse in [("Normal", False), ("Lightweight", False), ("Lightweight", True)]:
+        path = _output_path(f"lightweight_{mode}_{sparse}", output_root)
+        mpm = MPM(log=False)
+        mpm.set_configuration(
+            domain=[1.0] * 3,
+            gravity=[0.0, 0.0, -9.81],
+            alphaPIC=0.1,
+            mapping="USL",
+            shape_function="GIMP",
+            mode=mode,
+            sparse_grid={"BlockSize": 2, "MaxActiveBlocks": 32} if sparse else False,
+            visualize=False,
+            log=False,
+        )
+        mpm.set_solver(dict(Timestep=1e-4, SimulationTime=1e-3, SaveInterval=1e-3, SavePath=path), log=False)
+        mpm.memory_allocate(
+            dict(
+                max_material_number=2, max_particle_number=128, max_constraint_number={"max_velocity_constraint": 256}
+            ),
+            log=False,
+        )
+        for material_id, modulus in [(1, 2e5), (2, 4e5)]:
+            mpm.add_material(
+                "LinearElastic", dict(MaterialID=material_id, Density=1700.0, YoungModulus=modulus, PoissonRatio=0.3)
+            )
+        mpm.add_element(dict(ElementType="R8N3D", ElementSize=[0.1] * 3))
+        for material_id, start_x in [(1, 0.11), (2, 0.21)]:
+            mpm.add_region(
+                dict(
+                    Name=f"block{material_id}",
+                    Type="Rectangle",
+                    BoundingBoxPoint=[start_x, 0.14, 0.09],
+                    BoundingBoxSize=[0.1, 0.1, 0.1],
+                )
+            )
+            mpm.add_body(
+                dict(
+                    Template=dict(
+                        RegionName=f"block{material_id}",
+                        nParticlesPerCell=2,
+                        BodyID=0,
+                        MaterialID=material_id,
+                        InitialVelocity=[0.1, 0.2, -0.3],
+                        FixVelocity=["Free", "Fix", "Free"],
+                    )
+                )
+            )
+        mpm.add_boundary_condition(
+            dict(
+                BoundaryType="VelocityConstraint",
+                Velocity=[None, None, 0.0],
+                StartPoint=[0.0, 0.0, 0.0],
+                EndPoint=[1.0, 1.0, 0.1],
+            )
+        )
+        mpm.select_save_data(particle=False, grid=False, object=False)
+        mpm.run()
+
+        number = int(mpm.scene.particleNum[0])
+        particle = mpm.scene.particle
+        state = [getattr(particle, name).to_numpy()[:number] for name in ("x", "v", "vol", "stress")]
+        assert number > 0 and np.max(np.abs(state[-1])) > 0
+        np.testing.assert_allclose(state[1][:, 1], 0.2, atol=1e-7)
+        if reference is None:
+            reference = state
+        else:
+            for actual, expected in zip(state, reference):
+                np.testing.assert_allclose(actual, expected, rtol=1e-7, atol=1e-9)
+        if sparse:
+            grid = mpm.scene.sparse_grid
+            assert 0 < grid.get_active_blocks() < grid.total_blocks
+            assert mpm.scene.element.LnID is None
+
+
+def test_lightweight_gimp_dense_and_blockscan_match_normal(tmp_path):
+    _skip_if_local_backend_cannot_allocate_sparse_grid()
+
+    code = (
+        "from geotaichi import init\n"
+        "from tests.integration.mpm.test_sparse_grid_explicit import _run_lightweight_comparison\n"
+        f'init(dim=3, arch={_test_arch()!r}, default_fp="float64", cpu_max_num_threads=2, log=False)\n'
+        "_run_lightweight_comparison()\n"
+    )
+    _run_subprocess(code, tmp_path)

@@ -125,19 +125,29 @@ class DirectAffineIPCSystem:
         if ipc.activate_fric:
             self.mpm_sources.append(ipc.friction_hash_matrix)
         total_raw = affine_raw + mixed_raw + sum(int(source.non_diag.max_pairs_num) for source in self.mpm_sources)
-        maximum_pairs = self.node_capacity * max(self.node_capacity - 1, 0)
-        if not self.nonassociated_newton:
-            maximum_pairs //= 2
-        reduced = min(max(total_raw, 1), max(maximum_pairs, 1))
+        symmetric = not self.nonassociated_newton
+        symmetry_divisor = 2 if symmetric else 1
+        mpm_topology = self.mpm_node_capacity * max(self.mpm_node_capacity - 1, 0)
+        if not ipc.enable_particle_contact:
+            # Material, plane IPC and the MPM--MPM block of each mixed stencil
+            # stay within a single particle support.
+            mpm_topology = min(mpm_topology, self.mpm.grid_stencil_offdiag_capacity)
+        affine_topology = self.affine_controls * max(self.affine_controls - 1, 0)
+        cross_topology = 2 * self.affine_controls * self.mpm_node_capacity
+        reduced = (
+            mpm_topology // symmetry_divisor
+            + affine_topology // symmetry_divisor
+            + min(mixed_raw, cross_topology // symmetry_divisor)
+        )
         self.matrix = BuildTriplet(
             dim=3,
             max_pairs_num=max(total_raw, 1),
-            max_nonzeros=reduced,
+            max_nonzeros=max(1, min(total_raw, reduced)),
             max_active_nodes=max(self.node_capacity, 1),
             symmetric=False,
             solver="BiCGSTAB" if self.nonassociated_newton else "PCG",
-            matrix_symmetric=not self.nonassociated_newton,
-            full_symmetric_input=not self.nonassociated_newton,
+            matrix_symmetric=symmetric,
+            full_symmetric_input=symmetric,
             device_reduction=True,
             preconditioner_group_size=4,
             preconditioner_group_nodes=self.affine_controls,

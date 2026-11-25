@@ -36,6 +36,13 @@ For Direct MPM, `mpm.create_ground().append(pos, norm, vel=None)` defaults to a
 zero velocity with the same dimension as `pos`. Ground construction may precede
 engine initialization and its import-sensitive dimension setup.
 
+Direct implicit single-phase MPM accepts `initial_deformation_gradient` in
+`MPM.set_solver(...)`. Supply one total deformation gradient per particle in
+insertion order, with shape `(particle_count, material_dimension, material_dimension)`.
+Each matrix must be finite with a positive determinant. The default is identity.
+The option seeds the first output and solve without changing particle positions,
+masses, or the material's default internal history.
+
 Direct MPM--IPC lagged friction, energy and ground CCD read the current
 `TIdt` field inside their kernels. Step retries and timestep updates therefore
 use the current timestep without recompiling these kernels. Supported
@@ -2172,6 +2179,10 @@ The [implicit block example](../../examples/mpm/direct/implicit_ulmpm_block2d.py
 
 The example-backed implicit ULMPM materials include Neo-Hookean elasticity, finite-strain Drucker–Prager, and von Mises plasticity. The [implicit elastic bar](../../examples/mpm/ElasticBar/ImplicitBar.py) uses linear elasticity. Cross-solver contact is documented under [FEM–MPM](../fempm/README.md), [IGA–MPM](../igampm/README.md), and [MPM–ABD](../mpdem/README.md).
 
+Direct IPC reserves particle--particle matrix blocks only for multiple MPM
+bodies and ground blocks only when planes exist. It creates the standalone
+system matrix on first use, so coupled assembly can use the MPM sources alone.
+
 Direct nonassociated Drucker–Prager accepts independent `DilationAngle`.
 Standalone lagged IPC, FEM--MPM, IGA--MPM, and Direct MPM--ABD enable the
 physical nonsymmetric Newton map, including
@@ -2272,8 +2283,11 @@ sliding, sticking, normal-axis and separation checks.
 
 ## Sparse and adaptive grids
 
-Block-sparse storage is configured through `sparse_grid={...}`. Adaptive
-elements rebuild topology on device only when refinement changes. Level balance
+Block-sparse storage is configured through `sparse_grid={...}`. Lightweight
+MPM supports BlockScan on a regular 3D explicit solid USL grid with Linear or
+GIMP interpolation. Each step marks blocks from the particle support without
+allocating per-particle shape or gradient arrays. Adaptive elements rebuild
+topology on device only when refinement changes. Level balance
 uses at most `MaxLevel - 1` neighbor propagation passes. Node allocation visits
 new refinement levels rather than enumerating every previously refined support;
 unchanged topology retains its node and constraint tables. Particle marking,

@@ -1042,6 +1042,10 @@ class ULExplicitEngine(Engine):
         self.input_layer = self.output_layer
 
     def lightweight(self, sims: Simulation, scene: SceneManager, neighbor: SpatialHashGrid):
+        if scene.sparse_grid is not None:
+            sims.timer.begin("Shape function")
+            scene.sparse_grid.rebuild_lightweight(int(scene.particleNum[0]), scene.element, scene.particle)
+            sims.timer.end("Shape function")
         sims.timer.begin("P2G")
         lightweight_p2g(
             int(scene.particleNum[0]),
@@ -1053,6 +1057,7 @@ class ULExplicitEngine(Engine):
             scene.element.boundary_type,
             scene.node,
             scene.particle,
+            scene.sparse_grid,
         )
         sims.timer.end("P2G")
         sims.timer.begin("Traction boundary")
@@ -1066,6 +1071,7 @@ class ULExplicitEngine(Engine):
         sims.timer.begin("Contact & Kinematic boundary")
         self.pre_contact_calculate(sims, scene)
         self.apply_kinematic_constraints(sims, scene)
+        self.apply_dirichlet_constraints(sims, scene)
         self.compute_contact_force_(sims, scene)
         sims.timer.end("Contact & Kinematic boundary")
         sims.timer.begin("G2P")
@@ -1082,6 +1088,7 @@ class ULExplicitEngine(Engine):
             scene.element.boundary_type,
             scene.node,
             scene.particle,
+            scene.sparse_grid,
             scene.material.matProps,
             scene.material.stateVars,
         )

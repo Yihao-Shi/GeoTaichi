@@ -7,6 +7,7 @@ from src.linear_solver.DeviceKrylov import DeviceKrylov
 import taichi as ti
 import numpy as np
 import math
+from types import SimpleNamespace
 from taichi.lang.impl import current_cfg
 from src.linear_solver.HashReduction import HashReduction
 from src.linear_solver.LinearOperator import LinearOperator
@@ -179,6 +180,7 @@ class BuildTriplet:
         reduction="hash",
         preconditioner_group_size=1,
         preconditioner_group_nodes=None,
+        reduced_pattern_from=None,
     ):
         if dim not in (1, 2, 3, 4):
             raise ValueError(
@@ -219,6 +221,15 @@ class BuildTriplet:
         self.hessian_size = 6 if self.symmetric else dim * dim
         self.max_active_nodes = max_active_nodes
         self.max_nonzeros = max_nonzeros
+        if reduced_pattern_from is not None and (
+            self.raw_only
+            or dim != reduced_pattern_from.dim
+            or max_active_nodes != reduced_pattern_from.max_active_nodes
+            or max_nonzeros != reduced_pattern_from.max_nonzeros
+            or self.symmetric != reduced_pattern_from.symmetric
+            or self.matrix_symmetric != reduced_pattern_from.matrix_symmetric
+        ):
+            raise ValueError("A solve-only matrix must match its source pattern dimensions and symmetry")
         self.solver = self._normalize_solver(solver or ("PCG" if self.symmetric else "BiCGSTAB"))
         self.preconditioner_group_size = int(preconditioner_group_size)
         if self.preconditioner_group_size < 1 or self.preconditioner_group_size != preconditioner_group_size:
@@ -265,16 +276,27 @@ class BuildTriplet:
             from src.linear_solver.BucketReduction import BucketReduction
 
             reducer = BucketReduction
-        self.non_diag = reducer(
-            max_pairs_num,
-            dim,
-            max_nonzeros,
-            hessian_size=self.hessian_size,
-            pattern_cache=pattern_cache,
-            pattern_cache_extra_fraction=pattern_cache_extra_fraction,
-            pattern_cache_max_age=pattern_cache_max_age,
-            device_reduction=device_reduction,
-        )
+        self._reduced_pattern_from = reduced_pattern_from
+        if reduced_pattern_from is None:
+            self.non_diag = reducer(
+                max_pairs_num,
+                dim,
+                max_nonzeros,
+                hessian_size=self.hessian_size,
+                pattern_cache=pattern_cache,
+                pattern_cache_extra_fraction=pattern_cache_extra_fraction,
+                pattern_cache_max_age=pattern_cache_max_age,
+                device_reduction=device_reduction,
+            )
+        else:
+            # A solve-only copy owns its values and reuses the assembled pattern.
+            pattern = reduced_pattern_from.non_diag
+            self.non_diag = SimpleNamespace(
+                element_pair_num=pattern.element_pair_num,
+                tripletI=pattern.tripletI,
+                tripletJ=pattern.tripletJ,
+                tripletH=ti.Vector.field(self.hessian_size, dtype=float, shape=max_nonzeros),
+            )
         self.raw_non_diag_count = ti.field(ti.i32, shape=1)
         self.overflow = ti.field(ti.i32, shape=1)
 
@@ -852,6 +874,12 @@ class BuildTriplet:
         raise ValueError(f"Unknown BuildTriplet solver: {solver}")
 
     def _prepare_row_matvec(self, active_nodes, nnz, transpose):
+        if self._reduced_pattern_from is not None:
+            source = self._reduced_pattern_from
+            source._prepare_row_matvec(active_nodes, nnz, transpose)
+            self._row_offsets = source._row_offsets
+            self._row_entries = source._row_entries
+            return
         if not self._row_storage_initialized:
             # Assembly-only matrices never allocate a Krylov row adjacency.
             self._row_scan = PrefixSumExecutor(self.max_active_nodes + 1)
@@ -1130,6 +1158,8 @@ class BuildTriplet:
         }
 
     def load_from_scipy_blocks(self, K, active_nodes=None):
+        if self._reduced_pattern_from is not None:
+            raise SparseAssemblyError("Cannot replace a solve-only matrix's shared pattern")
         if self.full_symmetric_input:
             raise SimulationStateError(
                 "full_symmetric_input matrices require raw two-triangle "
