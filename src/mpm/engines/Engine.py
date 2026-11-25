@@ -53,8 +53,6 @@ class Engine(object):
                 self.compute = self.usf_updating
             elif sims.mapping == "MUSL":
                 self.compute = self.musl_updating
-            elif sims.mapping == "G2P2G":
-                self.compute = self.g2p2g
             else:
                 raise ValueError(f"The mapping scheme {sims.mapping} is not supported yet")
 
@@ -207,7 +205,7 @@ class Engine(object):
                 if sims.stabilize == "B-Bar Method":
                     self.compute_forces = self.compute_force_bbar_2d_axisy
                     self.compute_velocity_gradient = self.update_velocity_gradient_bbar_axisy_2d
-                    if sims.velocity_projection_scheme == "Affine":
+                    if sims.mode != "Lightweight" and sims.velocity_projection_scheme == "Affine":
                         raise SimulationStateError("")
                 elif sims.stabilize == "F-Bar Method":
                     self.compute_forces = self.compute_force_2d_axisy
@@ -215,14 +213,14 @@ class Engine(object):
                         raise SimulationStateError("2D condition do not support moving least squares")
                     if sims.material_type == "Fluid":
                         raise SimulationStateError("2D condition do not support F-bar method for fluid materials")
-                    if sims.velocity_projection_scheme == "Affine":
+                    if sims.mode != "Lightweight" and sims.velocity_projection_scheme == "Affine":
                         raise SimulationStateError("2D condition do not support affine projection")
                 else:
                     self.compute_forces = self.compute_force_2d_axisy
                     self.compute_velocity_gradient = self.update_velocity_gradient_axisy_2d
                     if sims.mls:
                         raise SimulationStateError("2D condition do not support moving least squares")
-                    if sims.velocity_projection_scheme == "Affine":
+                    if sims.mode != "Lightweight" and sims.velocity_projection_scheme == "Affine":
                         raise SimulationStateError("")
 
                 if sims.gauss_number > 0:
@@ -760,6 +758,8 @@ class Engine(object):
             scene.element.boundary_type,
             scene.node,
             scene.particle,
+            scene.sparse_grid,
+            sims.is_2DAxisy,
         )
 
     def traction_constraints(self, sims, scene):
@@ -793,9 +793,6 @@ class Engine(object):
         raise NotImplementedError
 
     def affine_updating(self, sims, scene, neighbor=None):
-        raise NotImplementedError
-
-    def g2p2g(self, sims, scene):
         raise NotImplementedError
 
     def lightweight(self, sims, scene):

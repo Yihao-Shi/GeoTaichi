@@ -76,3 +76,18 @@ def compact_node_id(
                 lz = iz - bz * block_size
                 compact = compact_block * block_volume + lx + ly * block_size + lz * block_size * block_size
     return compact
+
+
+@ti.func
+def storage_node_id(physical_node: int, gnum, sparse_grid: ti.template()):
+    node_id = physical_node
+    if ti.static(sparse_grid != None):
+        node_id = compact_node_id(
+            physical_node,
+            gnum,
+            sparse_grid.block_count,
+            sparse_grid.block_size,
+            sparse_grid.block_volume,
+            sparse_grid.block_map,
+        )
+    return node_id

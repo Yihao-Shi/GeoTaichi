@@ -9,10 +9,28 @@ from pathlib import Path
 import sys
 
 import numpy as np
+import trimesh
 from shapely import contains_xy
+from shapely.ops import polygonize
 from scipy.interpolate import CubicSpline
 from scipy.spatial.transform import Rotation
 from scipy.stats import qmc
+
+
+def load_solid(path):
+    mesh = trimesh.load(path, merge_tex=True, merge_norm=True)
+    if not mesh.is_volume:
+        raise ValueError(f"Expected a closed, oriented solid: {path}")
+    return mesh
+
+
+def bucket_cavity(mesh):
+    # shortcut: follows the demo’s planar side panels, use a cavity mesh for other buckets.
+    side_x = np.unique(mesh.vertices[:, 0])[1:-1]
+    facet = np.flatnonzero(np.isclose(mesh.facets_origin[:, 0], side_x[0]) & (mesh.facets_normal[:, 0] > 0.99))
+    (outline,) = polygonize(mesh.vertices[mesh.facets_boundary[facet.item()]][:, :, 1:])
+    return side_x, outline
+
 
 HERE = Path(__file__).resolve().parent
 
@@ -64,7 +82,6 @@ if args.arch == "cpu":
 
 import geotaichi as gt
 import taichi as ti
-from examples.mpdem.excavator_geometry import bucket_cavity, load_solid
 from src.mpm.generator.InsertionKernel import kernel_apply_stress_from_file
 from src.utils.Quaternion import set_to_rotate
 

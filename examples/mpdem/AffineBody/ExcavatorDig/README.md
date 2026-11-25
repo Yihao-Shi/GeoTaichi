@@ -15,7 +15,7 @@ are in [model-contract.json](model-contract.json). The soil and mechanism are
 illustrative and have not been calibrated.
 
 ```sh
-python examples/mpdem/AffineBody/excavator_dig/excavator_dig.py \
+python examples/mpdem/AffineBody/ExcavatorDig/excavator_dig.py \
   --arch cpu --output-dir /private/tmp/excavator
 ```
 
@@ -81,7 +81,7 @@ can increase it by 20% if that step needed no retry, up to the nominal maximum.
 ## Excavation-to-truck cycle
 
 `excavator_cycle.py` uses the soil geometry, bucket and bed contact solids, and
-1.75× slowed bucket trajectories from the [explicit cases](../../LevelSet/excavator_dig/README.md).
+1.75× slowed bucket trajectories from the [explicit cases](../../LevelSet/ExcavatorDig/README.md).
 The bucket holds its initial pose for the corresponding explicit release time.
 Four compliant spherical anchors per body drive the pose with continuous
 clamped-cubic interpolation for the pin position, yaw and pitch. The truck
@@ -94,9 +94,9 @@ legacy 6 s scene and its quaternion trajectory.
 | `trench` | 149,454 | 0.3125 | 1.1 | 16.1 |
 
 ```sh
-python -u examples/mpdem/AffineBody/excavator_dig/excavator_cycle.py \
+python -u examples/mpdem/AffineBody/ExcavatorDig/excavator_cycle.py \
   --case cone --resolution full --arch gpu --output-dir /tmp/abd-cone
-python -u examples/mpdem/AffineBody/excavator_dig/excavator_cycle.py \
+python -u examples/mpdem/AffineBody/ExcavatorDig/excavator_cycle.py \
   --case trench --resolution full --arch gpu --output-dir /tmp/abd-trench
 ```
 

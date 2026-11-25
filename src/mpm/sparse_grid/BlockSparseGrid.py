@@ -6,7 +6,7 @@ import numpy as np
 import taichi as ti
 from taichi.lang.impl import current_cfg
 from src.utils.PrefixSum import PrefixSumExecutor
-from src.utils.TypeDefinition import vec2i, vec3i, vec3f
+from src.utils.TypeDefinition import vec2i, vec3i
 import src.utils.GlobalVariable as GlobalVariable
 
 
@@ -94,8 +94,8 @@ class BlockSparseGrid:
     def _mark_particle_support(
         self,
         particle_num: int,
-        gnum: vec3i,
-        inverse_grid_size: vec3f,
+        gnum: ti.types.vector(GlobalVariable.DIMENSION, int),
+        inverse_grid_size: ti.types.vector(GlobalVariable.DIMENSION, float),
         particle_lengths: ti.template(),
         particle: ti.template(),
     ):
@@ -110,14 +110,19 @@ class BlockSparseGrid:
                     continue
                 first_block = first // ti.static(self.block_size)
                 last_block = last // ti.static(self.block_size)
+                first_z, stop_z = 0, 1
+                if ti.static(self.dimension == 3):
+                    first_z, stop_z = first_block[2], last_block[2] + 1
                 for block in ti.grouped(
                     ti.ndrange(
                         (first_block[0], last_block[0] + 1),
                         (first_block[1], last_block[1] + 1),
-                        (first_block[2], last_block[2] + 1),
+                        (first_z, stop_z),
                     )
                 ):
-                    block_id = block[0] + self.block_count[0] * (block[1] + self.block_count[1] * block[2])
+                    block_id = block[0] + self.block_count[0] * block[1]
+                    if ti.static(self.dimension == 3):
+                        block_id += self.block_count[0] * self.block_count[1] * block[2]
                     ti.atomic_or(self.block_mask[block_id], 1)
 
     def _compact_marked_blocks(self, gnum):

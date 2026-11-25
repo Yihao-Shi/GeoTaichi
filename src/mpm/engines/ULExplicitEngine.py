@@ -4,13 +4,13 @@ from src.mpm.engines.EngineKernel import *
 from src.mpm.SceneManager import SceneManager
 from src.mpm.Simulation import Simulation
 from src.mpm.SpatialHashGrid import SpatialHashGrid
+from src.utils.errors import SimulationStateError
 from src.utils.linalg import no_operation
 
 
 @ti.data_oriented
 class ULExplicitEngine(Engine):
     def __init__(self, sims) -> None:
-        self.input_layer = 0
         self.compute = None
         self.compute_stress_strains = None
         self.bulid_neighbor_list = None
@@ -1018,37 +1018,17 @@ class ULExplicitEngine(Engine):
         self.compute_velocity_gradient(sims, scene)
         self.compute_particle_kinematic(sims, scene)
 
-    def g2p2g(self, sims: Simulation, scene: SceneManager, neighbor: SpatialHashGrid):
-        self.output_layer = 1 - self.input_layer
-        g2p2g(
-            scene.element.grid_nodes,
-            int(scene.particleNum[0]),
-            scene.element.grid_size,
-            scene.element.igrid_size,
-            sims.gravity,
-            sims.dt,
-            scene.node[self.output_layer],
-            scene.node[self.input_layer],
-            scene.particle,
-            scene.element.LnID,
-            scene.element.shape_fn,
-            scene.element.node_size,
-            scene.material.matProps,
-            scene.material.stateVars,
-            neighbor.sorted.object_list,
-        )
-        self.compute_grid_kinematic(sims, scene)
-        self.apply_kinematic_constraints(sims, scene)
-        self.input_layer = self.output_layer
-
     def lightweight(self, sims: Simulation, scene: SceneManager, neighbor: SpatialHashGrid):
+        axisymmetric = sims.is_2DAxisy
+        particle_num = int(scene.particleNum[0])
+        if axisymmetric and lightweight_has_invalid_radius(particle_num, scene.particle):
+            raise SimulationStateError("Axisymmetric Lightweight MPM requires finite positive particle radii.")
         if scene.sparse_grid is not None:
             sims.timer.begin("Shape function")
-            scene.sparse_grid.rebuild_lightweight(int(scene.particleNum[0]), scene.element, scene.particle)
+            scene.sparse_grid.rebuild_lightweight(particle_num, scene.element, scene.particle)
             sims.timer.end("Shape function")
-        sims.timer.begin("P2G")
-        lightweight_p2g(
-            int(scene.particleNum[0]),
+        transfer = (
+            particle_num,
             scene.element.gnum,
             scene.element.grid_size,
             scene.element.igrid_size,
@@ -1058,26 +1038,17 @@ class ULExplicitEngine(Engine):
             scene.node,
             scene.particle,
             scene.sparse_grid,
+            axisymmetric,
+            axisymmetric and sims.contact_detection == "MPMContact",
         )
-        sims.timer.end("P2G")
-        sims.timer.begin("Traction boundary")
-        self.apply_particle_traction_constraints(sims, scene)
-        self.apply_traction_constraints(sims, scene)
-        self.apply_absorbing_constraints(sims, scene)
-        sims.timer.end("Traction boundary")
-        sims.timer.begin("Grid kinematic")
-        lightweight_grid_operation(scene.mass_cut_off, sims.background_damping, scene.node, sims.dt)
-        sims.timer.end("Grid kinematic")
-        sims.timer.begin("Contact & Kinematic boundary")
-        self.pre_contact_calculate(sims, scene)
-        self.apply_kinematic_constraints(sims, scene)
+        sims.timer.begin("P2G-1")
+        lightweight_p2g(*transfer, False)
+        self.compute_grid_velcity(sims, scene)
         self.apply_dirichlet_constraints(sims, scene)
-        self.compute_contact_force_(sims, scene)
-        sims.timer.end("Contact & Kinematic boundary")
-        sims.timer.begin("G2P")
-        lightweight_g2p(
-            int(scene.particleNum[0]),
-            sims.alphaPIC,
+        sims.timer.end("P2G-1")
+        sims.timer.begin("Stress update")
+        lightweight_update_stress(
+            particle_num,
             scene.mass_cut_off,
             sims.fbar_fraction,
             scene.element.gnum,
@@ -1091,6 +1062,41 @@ class ULExplicitEngine(Engine):
             scene.sparse_grid,
             scene.material.matProps,
             scene.material.stateVars,
+            axisymmetric,
+        )
+        sims.timer.end("Stress update")
+        sims.timer.begin("P2G-2")
+        lightweight_p2g(*transfer, True)
+        sims.timer.end("P2G-2")
+        sims.timer.begin("Traction boundary")
+        self.apply_particle_traction_constraints(sims, scene)
+        self.apply_traction_constraints(sims, scene)
+        self.apply_absorbing_constraints(sims, scene)
+        sims.timer.end("Traction boundary")
+        sims.timer.begin("Grid kinematic")
+        self.compute_grid_kinematic(sims, scene)
+        sims.timer.end("Grid kinematic")
+        sims.timer.begin("Contact & Kinematic boundary")
+        if not axisymmetric:
+            self.pre_contact_calculate(sims, scene)
+        self.apply_kinematic_constraints(sims, scene)
+        self.apply_dirichlet_constraints(sims, scene)
+        self.compute_contact_force_(sims, scene)
+        sims.timer.end("Contact & Kinematic boundary")
+        sims.timer.begin("G2P")
+        lightweight_g2p(
+            particle_num,
+            sims.alphaPIC,
+            scene.element.gnum,
+            scene.element.grid_size,
+            scene.element.igrid_size,
+            sims.dt,
+            scene.element.calLength,
+            scene.element.boundary_type,
+            scene.node,
+            scene.particle,
+            scene.sparse_grid,
+            axisymmetric,
         )
         sims.timer.end("G2P")
 

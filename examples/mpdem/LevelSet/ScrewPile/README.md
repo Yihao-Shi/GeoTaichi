@@ -17,7 +17,7 @@ not a rate-equivalent reproduction of the slower run.
 | `h200` | 201,230,056 | 16 / 293 | 8 |
 
 ```sh
-python -u examples/mpdem/LevelSet/screw_pile/screw_pile_explicit.py \
+python -u examples/mpdem/LevelSet/ScrewPile/screw_pile_explicit.py \
   --resolution h200 --arch gpu --positions-only \
   --output-dir /dev/shm/screw-pile-h200
 ```

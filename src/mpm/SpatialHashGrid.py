@@ -27,7 +27,7 @@ class SpatialHashGrid(object):
 
     def neighbor_initialze(self, scene: SceneManager, grid_size=None):
         self.place_particles = no_operation
-        if self.sims.neighbor_detection:  # or self.sims.solver_type == "G2P2G" or self.sims.mode == "Lightweight":
+        if self.sims.neighbor_detection:
             if grid_size is None:
                 scene.ensure_neighbor_particle_radius()
                 rad_max, rad_min = scene.find_bounding_sphere_radius()

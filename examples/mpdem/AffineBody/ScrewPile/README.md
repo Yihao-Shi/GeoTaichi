@@ -1,7 +1,7 @@
 # 15° screw-pile installation with ABD and Direct ULMPM
 
 A 13 m screw pile follows seven clockwise turns while advancing 14.35 m into
-a 16 × 16 × 16 m bed. The [explicit case](../../LevelSet/screw_pile/README.md)
+a 16 × 16 × 16 m bed. The [explicit case](../../LevelSet/ScrewPile/README.md)
 uses the same full mesh, 15° inclination, initial tip position, pitch and
 70.5 s schedule. Four compliant spherical anchors track a smooth prescribed
 motion after a 0.5 s hold.
@@ -12,9 +12,9 @@ motion after a 0.5 s hold.
 | `full` | 14,012 | 149,940 (42 × 42 × 85) | 0.5 | 0.008 |
 
 ```sh
-python -u examples/mpdem/AffineBody/screw_pile/screw_pile.py \
+python -u examples/mpdem/AffineBody/ScrewPile/screw_pile.py \
   --resolution low --arch cpu --stop-time 0.02 --output-dir /tmp/abd-pile-pilot
-python -u examples/mpdem/AffineBody/screw_pile/screw_pile.py \
+python -u examples/mpdem/AffineBody/ScrewPile/screw_pile.py \
   --resolution full --arch gpu --output-dir /tmp/abd-pile-full
 ```
 

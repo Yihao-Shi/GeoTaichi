@@ -377,9 +377,12 @@ class MPM(SolverDiagnosticsMixin):
                     ("Sparse Block Size", self.sims.sparse_grid_block_size),
                 ]
             )
+        mapping = self.sims.mapping
+        if self.sims.mode != "Lightweight" and self.sims.velocity_projection_scheme == "Affine":
+            mapping = "Affine"
         entries.extend(
             [
-                ("Mapping Scheme", "Affine" if self.sims.velocity_projection_scheme == "Affine" else self.sims.mapping),
+                ("Mapping Scheme", mapping),
                 ("Shape Function", self.sims.shape_function),
                 ("Velocity Projection", self.sims.velocity_projection_scheme),
             ]
@@ -992,7 +995,7 @@ class MPM(SolverDiagnosticsMixin):
         self.scene.calc_mass_cutoff(self.sims)
         if self.first_run:
             self.scene.boundary.set_boundary(self.sims)
-        if self.sims.mode == "Normal":
+        if self.sims.mode == "Normal" or (self.sims.mode == "Lightweight" and self.sims.is_2DAxisy):
             self.scene.boundary.set_boundary_types(self.sims, self.scene.element)
         if self.sims.is_continue:
             if self.sims.coupling is False:

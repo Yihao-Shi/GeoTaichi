@@ -13,7 +13,7 @@ from scipy.spatial.transform import Rotation
 @pytest.fixture
 def cycle(monkeypatch):
     root = Path(__file__).resolve().parents[3]
-    monkeypatch.syspath_prepend(str(root / "examples/mpdem/AffineBody/excavator_dig"))
+    monkeypatch.syspath_prepend(str(root / "examples/mpdem/AffineBody/ExcavatorDig"))
     import excavator_cycle
 
     return excavator_cycle
@@ -120,14 +120,12 @@ def test_paired_excavation_preserves_soil_volume_and_motion(cycle, case, count, 
     assert duration == pytest.approx(settle + 15) and phases["retract"] == duration
 
 
-def test_coarse_trench_grid_fixes_floor_and_only_wall_normal_below_rim():
-    from examples.mpdem.soil_setup import soil_boundary_dofs
-
+def test_coarse_trench_grid_fixes_floor_and_only_wall_normal_below_rim(cycle):
     h = 0.3125
     lo = np.array([-1.5, -1.25, -0.625])
     hi = lo + 12 * h
     minimum, maximum = np.array([-0.875, -0.625, 0]), np.array([1, 1.25, 1.25])
-    fixed = [set(a) for a in soil_boundary_dofs(lo, hi, h, (minimum, maximum, 1.5625))]
+    fixed = [set(a) for a in cycle.soil_boundary_dofs(lo, hi, h, (minimum, maximum, 1.5625))]
 
     def components(x, y, z):
         node = x + 13 * (y + 13 * z)

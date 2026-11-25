@@ -35,7 +35,6 @@ from src.mpm.structs.ParticleCloudTwoPhase import ParticleCloudTwoPhase
 from src.mpm.structs.ParticleCloudTwoPhase2D import ParticleCloudTwoPhase2D
 from src.mpm.structs.ParticleCloud2DAxisy import ParticleCloud2DAxisy
 from src.mpm.structs.ParticleCloudTwoPhase2DAxisy import ParticleCloudTwoPhase2DAxisy
-from src.mpm.structs.Particle import LargeScaleParticle
 from src.mpm.structs.ParticleCoupling import ParticleCoupling
 from src.mpm.structs.ImplicitParticle import ImplicitParticle
 from src.mpm.structs.ImplicitParticle2D import ImplicitParticle2D
@@ -166,9 +165,7 @@ class SceneManager(object):
                     elif sims.is_2DAxisy:
                         ptemp = ParticleCloud2DAxisy
                 elif sims.dimension == 3:
-                    if sims.solver_type == "G2P2G":
-                        ptemp = LargeScaleParticle
-                    elif sims.material_type == "TwoPhaseSingleLayer":
+                    if sims.material_type == "TwoPhaseSingleLayer":
                         ptemp = ParticleCloudTwoPhase
                     else:
                         ptemp = ParticleCloud
@@ -335,7 +332,7 @@ class SceneManager(object):
                 raise ConfigurationError(
                     "Ordinary BlockScan contact requires solver_type='Explicit' and material_type='Solid'"
                 )
-        if sims.sparse_grid and sims.is_2DAxisy and not element.get("AdaptiveGrid"):
+        if sims.sparse_grid and sims.is_2DAxisy and sims.mode == "Normal" and not element.get("AdaptiveGrid"):
             if (
                 sims.solver_type != "Explicit"
                 or sims.shape_function != "GIMP"
@@ -571,17 +568,6 @@ class SceneManager(object):
                 )
                 self.free_particle_list = ti.field(dtype=int)
                 ti.root.dense(ti.i, int(sims.max_particle_num)).place(self.free_particle_list)
-
-            if sims.mapping == "G2P2G" and sims.velocity_projection_scheme != "Affine":
-                self.grandparent = [self.grandparent]
-                self.parent = [self.parent]
-                self.child = [self.child]
-                output_grid = self.find_grid_class(sims, grid_level)
-                if sims.sparse_grid:
-                    raise SimulationStateError("BlockScan sparse_grid does not support mapping='G2P2G' yet.")
-                else:
-                    self.child = ti.root.dense(ti.ij, (self.element.gridSum, grid_level))
-                self.grid = [self.node, self.child[1].place(output_grid)]
         self.element.calculate_basis_function(sims, grid_level)
         self.print_grid_message(sims, grid_level, cut_off)
 

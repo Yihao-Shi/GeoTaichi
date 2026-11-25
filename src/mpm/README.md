@@ -91,7 +91,7 @@ remapped particle support IDs; GeoContact reconstructs physical node coordinates
 from the active block map. Velocity and reflection contact constraints remap
 their physical boundary IDs on each application and skip inactive blocks.
 DEMContact applies those constraints before assembling its nodal force.
-Axisymmetric BlockScan supports native explicit ULMPM with GIMP, with either
+In `Normal` mode, axisymmetric BlockScan supports native explicit ULMPM with GIMP, with either
 no stabilization or B-Bar Method, including MPMContact, GeoContact and polygon
 DEMContact. Other axisymmetric shape functions/stabilizations and implicit
 BlockScan contact remain unsupported. BlockScan
@@ -436,8 +436,8 @@ Selecting `velocity_projection="Affine"` uses the engine's `affine_updating`
 path and preserves `alphaPIC`. Velocity reconstruction accepts `None`,
 `Affine`, or `Taylor`; the PIC/FLIP blend is controlled only by `alphaPIC`
 (default `0.0`), independently of the reconstruction.
-The `mapping` setting (`USF`, `USL`, `MUSL`, or
-`G2P2G`) does not select the update order in this mode. Native explicit engines
+The `mapping` setting (`USF`, `USL`, or `MUSL`) does not select the update
+order in this mode. Native explicit engines
 update stress and save the affine matrix from the final constrained grid
 velocity before moving particles. Implicit solid engines save it from the
 converged Newmark velocity; pressure-based engines use the corrected velocity.
@@ -538,9 +538,6 @@ The updated volume and deformation gradient are
 V_p^{n+1}
 =V_p^n\det\left(\boldsymbol{I}+\Delta t\boldsymbol{L}_p\right).
 ```
-
-The fused G2P2G path evaluates the same transfer identities without storing a
-complete intermediate grid state.
 
 ### 4. Updated-Lagrangian explicit integration
 
@@ -811,6 +808,20 @@ and the three-dimensional no-swirl update is
 
 The axis must satisfy $`r>0`$; an axis offset simply replaces $`r`$ by the
 distance from that axis.
+
+Set `mode="Lightweight"`, `dimension=2`, and `axisymmetric=True` for native
+explicit ULMPM on a regular grid. Use non-periodic boundaries,
+`axis_offset=0`, and finite positive particle radii. Lightweight evaluates
+hoop strain and hoop-stress forces on the fly and uses the three-dimensional
+constitutive update with per-radian particle volumes. Linear, axisymmetric
+GIMP, and quadratic or cubic B-splines are available with PIC/FLIP, Taylor,
+or Affine transfer. B-Bar requires Linear or GIMP. F-Bar is available for
+solids. Use Stable particle traction for surface loads and `MPMContact` for
+grid contact. For solids, `sparse_grid={"Backend": "BlockScan"}` enables the
+compact grid with the same shape functions, transfers, and stabilization options.
+`Lightweight` always uses USF. It updates particle stress from the initial grid
+velocity and uses that stress to assemble forces before advancing the grid and
+transferring back to the particles. You can omit `mapping` in this mode.
 
 ### 8. Implicit solid equilibrium
 
@@ -2284,9 +2295,12 @@ sliding, sticking, normal-axis and separation checks.
 ## Sparse and adaptive grids
 
 Block-sparse storage is configured through `sparse_grid={...}`. Lightweight
-MPM supports BlockScan on a regular 3D explicit solid USL grid with Linear or
-GIMP interpolation. Each step marks blocks from the particle support without
-allocating per-particle shape or gradient arrays. Adaptive elements rebuild
+supports BlockScan for explicit solids on regular 2D and 3D Cartesian grids
+and on 2D axisymmetric grids. Use Linear, GIMP, or quadratic or cubic B-splines
+with PIC/FLIP, Taylor, or Affine transfer. B-Bar is available with Linear and
+GIMP. F-Bar is available with all four shape functions. Each step marks blocks
+from the particle support without allocating per-particle shape or gradient
+arrays. Adaptive elements rebuild
 topology on device only when refinement changes. Level balance
 uses at most `MaxLevel - 1` neighbor propagation passes. Node allocation visits
 new refinement levels rather than enumerating every previously refined support;

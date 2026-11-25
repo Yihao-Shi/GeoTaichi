@@ -15,20 +15,87 @@ from scipy.interpolate import CubicSpline
 from scipy.spatial.transform import Rotation, Slerp
 from scipy.stats import qmc
 from shapely import contains_xy
+from shapely.ops import polygonize
 
-from excavator_dig import CONTRACT, ROOT
-
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-from examples.mpdem.excavator_geometry import bucket_cavity, load_solid
-from examples.mpdem.soil_setup import add_soil_boundary, box_points, geostatic_state
-
-EXPLICIT = ROOT / "examples/mpdem/LevelSet/excavator_dig"
+HERE = Path(__file__).resolve().parent
+ROOT = HERE.parents[3]
+CONTRACT = HERE / "model-contract.json"
+EXPLICIT = ROOT / "examples/mpdem/LevelSet/ExcavatorDig"
 PHASE_ENDS = {"lift": 2.125, "swing": 3.75, "dump": 4.875, "retract": 6.0}
 PROFILES = {
     "low": dict(particles=180, grid_size=0.5, dt=0.01),
     "full": dict(particles=150000, grid_size=0.25, dt=0.005),
 }
+
+
+def load_solid(path):
+    mesh = trimesh.load(path, merge_tex=True, merge_norm=True)
+    if not mesh.is_volume:
+        raise ValueError(f"Expected a closed, oriented solid: {path}")
+    return mesh
+
+
+def bucket_cavity(mesh):
+    # shortcut: follows the demo’s planar side panels, use a cavity mesh for other buckets.
+    side_x = np.unique(mesh.vertices[:, 0])[1:-1]
+    facet = np.flatnonzero(np.isclose(mesh.facets_origin[:, 0], side_x[0]) & (mesh.facets_normal[:, 0] > 0.99))
+    (outline,) = polygonize(mesh.vertices[mesh.facets_boundary[facet.item()]][:, :, 1:])
+    return side_x, outline
+
+
+def box_points(minimum, size, counts):
+    spacing = np.asarray(size) / counts
+    axes = [low + (np.arange(n) + 0.5) * dx for low, n, dx in zip(minimum, counts, spacing)]
+    points = np.stack(np.meshgrid(*axes, indexing="ij"), axis=-1).reshape(-1, 3)
+    return points, float(spacing.prod())
+
+
+def geostatic_state(depth, material, gravity):
+    """Return K0, principal Kirchhoff stresses and elastic Hencky deformation."""
+    if not np.isfinite(depth).all() or np.any(depth <= 0):
+        raise ValueError("Every soil point must have an overlying free surface")
+    k0 = 1.0 - np.sin(np.deg2rad(material["FrictionAngle"]))
+    stress = -(material["density"] * gravity * depth[:, None]) * np.array([k0, k0, 1.0])
+    young, poisson = material["young_modulus"], material["poisson_ratio"]
+    log_stretch = ((1 + poisson) * stress - poisson * stress.sum(axis=1, keepdims=True)) / young
+    return k0, stress, np.exp(log_stretch)[:, :, None] * np.eye(3)
+
+
+def soil_boundary_dofs(lo, hi, h, container=None):
+    """Fixed bottom and normal-only side supports, with an optional inner container."""
+    shape = np.ceil((np.asarray(hi) - lo) / h).astype(int) + 1
+    nx, ny, nz = shape
+    z, y, x = np.ogrid[:nz, :ny, :nx]
+    coords = [lo[0] + h * x, lo[1] + h * y, lo[2] + h * z]
+    nodes = np.arange(nx * ny * nz, dtype=np.int32).reshape(nz, ny, nx)
+    tol = 1e-9 * h
+    floor = coords[2] <= tol
+    fixed = []
+    for axis, coord in enumerate(coords):
+        mask = floor | (coord <= lo[axis] + tol) | (coord >= lo[axis] + h * (shape[axis] - 1) - tol)
+        if container is not None and axis < 2:
+            minimum, maximum, rim = container
+            cross = 1 - axis
+            within = (
+                (coords[cross] >= minimum[cross] - h - tol)
+                & (coords[cross] <= maximum[cross] + h + tol)
+                & (coords[2] <= rim + tol)
+            )
+            sides = ((coord >= minimum[axis] - h - tol) & (coord <= minimum[axis] + tol)) | (
+                (coord >= maximum[axis] - tol) & (coord <= maximum[axis] + h + tol)
+            )
+            mask = mask | (within & sides)
+        fixed.append(3 * nodes[np.broadcast_to(mask, nodes.shape)] + axis)
+    return fixed
+
+
+def add_soil_boundary(mpm, lo, hi, h, container=None):
+    from src.mpm.boundaries.BoundaryCondition import DirichletBoundary
+
+    fixed = soil_boundary_dofs(lo, hi, h, container)
+    boundary = DirichletBoundary()
+    boundary.append(fixed, np.zeros(sum(map(len, fixed))))
+    mpm.add_boundary_condition(dirichlet=boundary)
 
 
 def load_motion(path):

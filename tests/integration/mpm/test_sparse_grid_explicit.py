@@ -328,13 +328,14 @@ def _run_lightweight_comparison(output_root=None):
             domain=[1.0] * 3,
             gravity=[0.0, 0.0, -9.81],
             alphaPIC=0.1,
-            mapping="USL",
+            mapping="USF" if mode == "Normal" else "MUSL",
             shape_function="GIMP",
             mode=mode,
             sparse_grid={"BlockSize": 2, "MaxActiveBlocks": 32} if sparse else False,
             visualize=False,
             log=False,
         )
+        assert mpm.sims.mapping == "USF"
         mpm.set_solver(dict(Timestep=1e-4, SimulationTime=1e-3, SaveInterval=1e-3, SavePath=path), log=False)
         mpm.memory_allocate(
             dict(
@@ -405,3 +406,79 @@ def test_lightweight_gimp_dense_and_blockscan_match_normal(tmp_path):
         "_run_lightweight_comparison()\n"
     )
     _run_subprocess(code, tmp_path)
+
+
+@pytest.mark.parametrize(
+    "dimension,shape,stabilize,projection",
+    [
+        pytest.param(2, "Linear", "B-Bar Method", None, marks=pytest.mark.isolated_dimension(2)),
+        pytest.param(2, "QuadBSpline", "F-Bar Method", "Affine", marks=pytest.mark.isolated_dimension(2)),
+        pytest.param(2, "CubicBSpline", "F-Bar Method", None, marks=pytest.mark.isolated_dimension(2)),
+        pytest.param(3, "GIMP", "B-Bar Method", "Taylor", marks=pytest.mark.isolated_dimension(3)),
+        pytest.param(3, "QuadBSpline", "F-Bar Method", None, marks=pytest.mark.isolated_dimension(3)),
+        pytest.param(3, "CubicBSpline", "F-Bar Method", "Affine", marks=pytest.mark.isolated_dimension(3)),
+    ],
+)
+def test_cartesian_lightweight_blockscan_matches_dense(
+    tmp_path, taichi_runtime, dimension, shape, stabilize, projection
+):
+    from src.mpm.mainMPM import MPM
+
+    ti = taichi_runtime
+    if ti.lang.impl.current_cfg().arch not in (ti.cpu, ti.cuda):
+        pytest.skip("BlockScan requires Taichi CPU or CUDA")
+
+    states = []
+    for sparse in (False, True):
+        mpm = MPM(log=False)
+        mpm.set_configuration(
+            dimension=dimension,
+            domain=[0.6] * dimension,
+            gravity=[0.0] * dimension,
+            mode="Lightweight",
+            shape_function=shape,
+            stabilize=stabilize,
+            velocity_projection=projection,
+            sparse_grid={"BlockSize": 2, "MaxActiveBlocks": 12 if dimension == 2 else 28} if sparse else False,
+            log=False,
+        )
+        mpm.set_solver(
+            {"Timestep": 1e-4, "SimulationTime": 3e-4, "SaveInterval": 3e-4, "SavePath": str(tmp_path / str(sparse))},
+            log=False,
+        )
+        mpm.memory_allocate({"max_material_number": 1, "max_particle_number": 16}, log=False)
+        mpm.add_material("LinearElastic", {"MaterialID": 1, "Density": 1800, "YoungModulus": 2e4, "PoissonRatio": 0.3})
+        mpm.add_element({"ElementType": "Q4N2D" if dimension == 2 else "R8N3D", "ElementSize": [0.1] * dimension})
+        mpm.add_region(
+            {
+                "Name": "block",
+                "Type": "Rectangle2D" if dimension == 2 else "Rectangle",
+                "BoundingBoxPoint": [0.21] * dimension,
+                "BoundingBoxSize": [0.08] * dimension,
+            }
+        )
+        for _ in range(2):
+            mpm.add_body({"Template": {"RegionName": "block", "nParticlesPerCell": 1, "BodyID": 0, "MaterialID": 1}})
+        particle = mpm.scene.particle
+        for p, (x, v) in enumerate(((0.45, 0.3), (0.54, -0.2))):
+            particle[p].x = [x] + [0.48] * (dimension - 1)
+            particle[p].v = [v] + [0.0] * (dimension - 1)
+        mpm.add_boundary_condition()
+        mpm.select_save_data(particle=False, grid=False, object=False)
+        mpm.run()
+
+        assert mpm.sims.mapping == "USF"
+        assert mpm.scene.particleNum[0] == 2
+        assert np.max(np.abs(particle.stress.to_numpy()[:2])) > 0.1
+        states.append(
+            [getattr(particle, name).to_numpy()[:2] for name in ("x", "v", "vol", "stress", "velocity_gradient")]
+        )
+        if sparse:
+            grid = mpm.scene.sparse_grid
+            assert 0 < grid.get_active_blocks() < grid.total_blocks
+            assert grid.node_capacity < mpm.scene.element.gridSum
+            assert mpm.scene.element.LnID is None
+
+    for actual, expected in zip(*states):
+        assert np.isfinite(actual).all() and np.isfinite(expected).all()
+        np.testing.assert_allclose(actual, expected, rtol=1e-8, atol=1e-10)

@@ -4,6 +4,12 @@
 `CODING_GUIDELINES.md` 第 5 节；每次迁移说明实际归属问题，再更新本记录。
 不要把“检查全部代码”理解为机械拆分、统一改名或搬迁全部文件。
 
+## 2026-11-25 MPDEM 算例前处理归属
+
+- MPM 粒子采样、K₀ 初始状态和网格约束从 `examples/mpdem/soil_setup.py` 并入 ABD 挖掘和螺旋桩模拟入口。
+- 接触实体读取和铲斗内腔提取从 `examples/mpdem/excavator_geometry.py` 并入 ABD 与 LevelSet 挖掘入口。
+- 模拟入口直接定义建模函数，测试从对应入口验证输入。各算例保留自己的几何和配置，运行结果中的历史源码快照保留。
+
 ## 2026-11-16 Utilities 清理与函数命名补齐
 
 用户要求扫描全仓库、优先检查 Utilities、合并适合共享的实现，并继续统一函数、kernel、

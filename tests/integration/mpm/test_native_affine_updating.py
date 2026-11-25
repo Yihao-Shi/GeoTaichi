@@ -11,7 +11,7 @@ pytestmark = [pytest.mark.slow, pytest.mark.serial]
     "configuration,solver_type,mapping,mode,stabilize,affine_field",
     [
         ("ULMPM", "Explicit", "USF", "Normal", None, False),
-        ("ULMPM", "Explicit", "G2P2G", "Normal", None, False),
+        ("ULMPM", "Explicit", "USL", "Normal", None, False),
         ("TLMPM", "Explicit", "MUSL", "Normal", None, False),
         ("ULMPM", "Implicit", "USL", "Normal", None, False),
         ("ULMPM", "Explicit", "USF", "Lightweight", None, False),
@@ -102,7 +102,21 @@ def test_native_affine_uniform_translation(
     assert count > 0
     assert mpm.enginer.compute == mpm.enginer.affine_updating
     np.testing.assert_allclose(mpm.scene.particle.v.to_numpy()[:count], [[0.2, 0.1]] * count, atol=2e-6)
-    np.testing.assert_allclose(mpm.scene.particle.velocity_gradient.to_numpy()[:count], [gradient] * count, atol=2e-5)
+    expected_transfer = gradient
+    if mode == "Lightweight" and affine_field:
+        # Centered quadratic B-splines have weights (1/8, 3/4, 1/8) in each direction.
+        # USF deposits the updated stress, so its final grid velocities include an elastic impulse.
+        weights = np.array([0.125, 0.75, 0.125])
+        expected_transfer = np.zeros((2, 2))
+        grid_width = int(mpm.scene.element.gnum[0])
+        for j, wy in enumerate(weights):
+            for i, wx in enumerate(weights):
+                velocity = np.asarray(mpm.scene.node[i + 1 + (j + 1) * grid_width, 0].momentum)
+                offset = 0.1 * np.array([i - 1, j - 1])
+                expected_transfer += wx * wy * np.outer(velocity, offset) / (0.05**2)
+    np.testing.assert_allclose(
+        mpm.scene.particle.velocity_gradient.to_numpy()[:count], [expected_transfer] * count, atol=2e-5
+    )
     np.testing.assert_allclose(
         mpm.scene.particle.x.to_numpy()[:count], [[0.2 + duration * 0.2, 0.2 + duration * 0.1]] * count, atol=2e-6
     )

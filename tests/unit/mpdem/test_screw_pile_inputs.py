@@ -9,13 +9,12 @@ import pytest
 import trimesh
 from scipy.spatial.transform import Rotation
 
-from examples.mpdem.soil_setup import box_points, geostatic_state
-from examples.mpdem.LevelSet.screw_pile import pile_archive
+from examples.mpdem.LevelSet.ScrewPile import pile_archive
 
 
 @pytest.fixture(scope="module")
 def pile():
-    folder = Path(__file__).resolve().parents[3] / "examples/mpdem/AffineBody/screw_pile"
+    folder = Path(__file__).resolve().parents[3] / "examples/mpdem/AffineBody/ScrewPile"
     spec = importlib.util.spec_from_file_location("screw_pile", folder / "screw_pile.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -31,14 +30,14 @@ def test_pile_profiles_preserve_geometry_and_soil_volume(pile, name, count, face
     assert len(mesh.faces) == faces
     np.testing.assert_allclose(mesh.extents, [2.8, 2.8, 13], atol=0.005)
     size = np.array(contract["geometry"]["soil_size_m"])
-    points, volume = box_points([-size[0] / 2, -size[1] / 2, 0], size, profile["soil_counts"])
+    points, volume = module.box_points([-size[0] / 2, -size[1] / 2, 0], size, profile["soil_counts"])
     assert points.shape == (count, 3)
     assert np.abs(points[:, :2]).max() < size[0] / 2
     assert 0 < points[:, 2].min() < points[:, 2].max() < size[2]
     assert volume * count == pytest.approx(size.prod())
     assert size.tolist() == [16.0, 16.0, 16.0]
     material = contract["materials"][0]["parameters"]
-    k0, stress, deformation = geostatic_state(size[2] - points[:, 2], material, 9.81)
+    k0, stress, deformation = module.geostatic_state(size[2] - points[:, 2], material, 9.81)
     assert k0 == pytest.approx(0.5)
     assert np.all(stress < 0.0) and np.all(np.linalg.det(deformation) > 0.0)
 
@@ -71,7 +70,7 @@ def test_pile_rotates_clockwise_while_advancing_along_its_axis(pile):
 
 
 def test_explicit_pile_profiles_limit_initial_cell_occupancy():
-    folder = Path(__file__).resolve().parents[3] / "examples/mpdem/LevelSet/screw_pile"
+    folder = Path(__file__).resolve().parents[3] / "examples/mpdem/LevelSet/ScrewPile"
     config = json.loads((folder / "inputs/pile.json").read_text())
     size = np.asarray(config["geometry"]["soil_size_m"])
     np.testing.assert_array_equal(size, [16.0, 16.0, 16.0])

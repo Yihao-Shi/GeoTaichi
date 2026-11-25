@@ -125,7 +125,7 @@ def test_fdm_taylor_keeps_affine_reconstruction_and_requested_blend(taichi_runti
         ULSemiImplicitTwoPhaseDoubleLayerEngine,
     ],
 )
-@pytest.mark.parametrize("mapping", ["USF", "USL", "MUSL", "G2P2G"])
+@pytest.mark.parametrize("mapping", ["USF", "USL", "MUSL"])
 def test_affine_dispatch_ignores_mapping(taichi_runtime, engine_type, mapping):
     sims = Simulation()
     sims.dimension = 2

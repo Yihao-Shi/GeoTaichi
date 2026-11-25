@@ -730,18 +730,16 @@ class Simulation(object):
 
     def set_moving_least_square(self, mls):
         self.mls = mls
-        if self.mapping == "G2P2G" and self.velocity_projection_scheme != "Affine":
-            self.mls = True
         if mls is True:
             self.set_velocity_projection_scheme("Affine")
 
     def set_mapping_scheme(self, mapping):
-        typelist = ["USL", "USF", "MUSL", "G2P2G"]
+        typelist = ["USL", "USF", "MUSL"]
         if not mapping in typelist:
             raise SimulationStateError(
                 f"KeyWord:: /mapping: {mapping}/ is invalid. The valid type are given as follows: {typelist}"
             )
-        self.mapping = mapping
+        self.mapping = "USF" if self.mode == "Lightweight" else mapping
 
     def set_shape_function(self, shape_function):
         typelist = ["Linear", "SmoothLinear", "GIMP", "QuadBSpline", "CubicBSpline"]
@@ -750,8 +748,6 @@ class Simulation(object):
                 f"KeyWord:: /mapping: {shape_function}/ is invalid. The valid type are given as follows: {typelist}"
             )
         self.shape_function = shape_function
-        if self.mapping == "G2P2G":
-            self.shape_function == "QuadBSpline"
         if self.shape_function == "Linear" or self.shape_function == "SmoothLinear":
             GlobalVariable.SHAPEFUNCTION = 0
         elif self.shape_function == "GIMP":
@@ -1192,6 +1188,26 @@ class Simulation(object):
         if self.mode == "Lightweight":
             if self.configuration != "ULMPM" or self.solver_type != "Explicit":
                 self._raise_unsupported("Lightweight MPM", ["ULMPM", "solver_type='Explicit'"])
+            if self.stabilize == "B-Bar Method" and self.shape_function not in ("Linear", "SmoothLinear", "GIMP"):
+                self._raise_unsupported("Lightweight B-Bar", ["Linear, SmoothLinear, or GIMP"])
+            if self.is_2DAxisy:
+                requirements = []
+                if self.axis_offset != 0.0:
+                    requirements.append("axis_offset=0")
+                if self.mls:
+                    requirements.append("moving_least_square=False")
+                if self.gauss_number > 0 or self.isTHB:
+                    requirements.append("gauss_number=0 and set_THB=False")
+                if self.stabilize == "Displacement F-Bar Method":
+                    requirements.append("stabilize=None, 'B-Bar Method', or 'F-Bar Method'")
+                if self.contact_detection not in (None, False, "MPMContact"):
+                    requirements.append("MPMContact or no contact")
+                if getattr(self, "ptraction_method", "Stable") != "Stable":
+                    requirements.append("Stable particle traction")
+                if self.xpbc or self.ypbc:
+                    requirements.append("non-periodic boundaries")
+                if requirements:
+                    self._raise_unsupported("Axisymmetric Lightweight MPM", requirements)
 
         if self.sparse_grid:
             if self.sparse_grid_backend != "BlockScan":
@@ -1206,29 +1222,22 @@ class Simulation(object):
             if self.solver_type == "Implicit" and self.material_type != "Solid":
                 self._raise_unsupported("Implicit BlockScan sparse_grid", ["material_type='Solid'"])
             if self.mode == "Lightweight":
-                if (
-                    self.dimension != 3
-                    or self.mapping != "USL"
-                    or self.shape_function not in ("Linear", "GIMP")
-                    or self.material_type != "Solid"
-                    or self.stabilize
-                    or self.velocity_projection_scheme
+                if self.material_type != "Solid" or self.shape_function not in (
+                    "Linear",
+                    "GIMP",
+                    "QuadBSpline",
+                    "CubicBSpline",
                 ):
                     self._raise_unsupported(
                         "Lightweight BlockScan sparse_grid",
-                        [
-                            "3D solid USL",
-                            "Linear or GIMP",
-                            "stabilize=None",
-                            "velocity_projection=None",
-                        ],
+                        ["material_type='Solid'", "Linear, GIMP, QuadBSpline, or CubicBSpline"],
                     )
                 if (
                     self.free_surface_detection
                     or self.pressure_smoothing
                     or self.strain_smoothing
                     or self.ptraction_method == "Virtual"
-                    or self.nptraction > 0
+                    or (not self.is_2DAxisy and self.nptraction > 0)
                 ):
                     self._raise_unsupported(
                         "Lightweight BlockScan sparse_grid",
@@ -1236,13 +1245,11 @@ class Simulation(object):
                             "free_surface_detection=False",
                             "pressure_smoothing=False",
                             "strain_smoothing=False",
-                            "max_particle_traction_constraint=0",
+                            "Stable axisymmetric particle traction or max_particle_traction_constraint=0",
                         ],
                     )
             elif self.mode != "Normal":
                 self._raise_unsupported("BlockScan sparse_grid", ["mode='Normal' or 'Lightweight'"])
-            if self.mapping == "G2P2G" and self.velocity_projection_scheme != "Affine":
-                self._raise_unsupported("BlockScan sparse_grid", ["mapping='USL', 'USF', or 'MUSL'"])
             if self.coupling not in (False, "Lagrangian"):
                 self._raise_unsupported(
                     "BlockScan sparse_grid",

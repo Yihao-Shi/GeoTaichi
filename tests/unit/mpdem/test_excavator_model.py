@@ -9,7 +9,7 @@ import pytest
 
 
 def model():
-    folder = Path(__file__).resolve().parents[3] / "examples/mpdem/AffineBody/excavator_dig"
+    folder = Path(__file__).resolve().parents[3] / "examples/mpdem/AffineBody/ExcavatorDig"
     spec = importlib.util.spec_from_file_location("excavator_dig", folder / "excavator_dig.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

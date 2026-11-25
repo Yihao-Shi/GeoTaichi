@@ -14,7 +14,7 @@ walls. The public facade is named `DEMPM` internally and is exposed as both
 - Fully resolved incompressible MPM–LSDEM immersed boundary method (IBM): [3D dam break](../../examples/cfdem/FullyResolved/IBMLevelSetDamBreak3D/dam_break_levelset_ibm_3d.py).
 - Hybrid two-phase MPM–LSDEM coupling: [saturated-bed wavemaker](../../examples/mmpm/TwoPhaseLSDEMCoupling/wavemaker_lsdem_particles_3d/wavemaker_lsdem_particles_3d.py) and [sphere impact](../../examples/mmpm/TwoPhaseLSDEMCoupling/sphere_impact_submerged_bed_3d/sphere_impact_submerged_bed_3d.py).
 - Fully coupled material point method–affine body dynamics (MPM–ABD) IPC: [Solid MPM impact](../../examples/mpdem/AffineBody/ABDImpactDP/direct_mpm_abd_impact.py) and [hyperelastic soft-MPM contact](../../examples/mpdem/AffineBody/AffineSoftSphereIPC/affine_soft_sphere_ipc.py).
-- Stationary digging with a driven ABD boom/bucket and plastic MPM soil: [minimal excavation model](../../examples/mpdem/AffineBody/excavator_dig/README.md).
+- Stationary digging with a driven ABD boom/bucket and plastic MPM soil: [minimal excavation model](../../examples/mpdem/AffineBody/ExcavatorDig/README.md).
 - Incompressible fluid–ABD IBM: [moving affine-body example](../../examples/mpm/IncompressibleFluid/affine_body_coupling_3d/affine_body_coupling_3d.py).
 
 ## MPM AffineBody route selection

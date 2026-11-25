@@ -1,4 +1,4 @@
-from src.mpm.sparse_grid.Utilities import compact_node_id
+from src.mpm.sparse_grid.Utilities import compact_node_id, storage_node_id
 from src.mpm.sparse_grid.Utilities import compact_node_grid_coord
 import taichi as ti
 
@@ -11,6 +11,7 @@ from src.utils.ShapeFunctions import (
     g_shape_linear,
     shape_linear_center,
     shape_gimp,
+    shape_axisy_gimp,
     g_shape_gimp,
     shape_gimp_center,
     shape_bspline_q,
@@ -521,13 +522,21 @@ def lightweight_particle_traction_constraint(
     boundary_types: ti.template(),
     node: ti.template(),
     particle: ti.template(),
+    sparse_grid: ti.template(),
+    axisymmetric: ti.template(),
 ):
     for d in ti.static(range(GlobalVariable.DIMENSION)):
         ti.block_local(node.force.get_scalar_field(d))
     for nboundary in range(lists):
         particle_id = constraints[nboundary].pid
+        if ti.static(axisymmetric):
+            if particle_id < 0 or particle[particle_id].active == 0:
+                continue
         body_id = int(particle[particle_id].bodyID)
-        constraints[nboundary]._calc_psize_cp(dt, particle[particle_id].velocity_gradient)
+        gradient = particle[particle_id].velocity_gradient
+        constraints[nboundary]._calc_psize_cp(dt, gradient)
+        if ti.static(axisymmetric):
+            constraints[nboundary].psize *= 1.0 + dt[None] * gradient[2, 2]
         position = particle[particle_id].x
         psize = particle_lengths[body_id]
 
@@ -540,7 +549,8 @@ def lightweight_particle_traction_constraint(
                 if grid_id[d] < 0 or grid_id[d] >= gnum[d]:
                     no_skip = False
             if no_skip:
-                node_id = linearize(grid_id, gnum)
+                physical_node = linearize(grid_id, gnum)
+                node_id = storage_node_id(physical_node, gnum, sparse_grid)
                 grid_pos = grid_id * grid_size
                 shape_fn = ti.Vector.zero(float, GlobalVariable.DIMENSION)
                 if ti.static(GlobalVariable.SHAPEFUNCTION == 0):
@@ -548,14 +558,17 @@ def lightweight_particle_traction_constraint(
                         shape_fn[d] = shape_linear(position[d], grid_pos[d], igrid_size[d], 0)
                 elif ti.static(GlobalVariable.SHAPEFUNCTION == 1):
                     for d in ti.static(range(GlobalVariable.DIMENSION)):
-                        shape_fn[d] = shape_gimp(position[d], grid_pos[d], igrid_size[d], psize[d])
+                        if ti.static(axisymmetric and d == 0):
+                            shape_fn[d] = shape_axisy_gimp(position[d], grid_pos[d], igrid_size[d], psize[d])
+                        else:
+                            shape_fn[d] = shape_gimp(position[d], grid_pos[d], igrid_size[d], psize[d])
                 elif ti.static(GlobalVariable.SHAPEFUNCTION == 2):
-                    boundary_type = boundary_types[node_id, body_id]
+                    boundary_type = boundary_types[physical_node, body_id]
                     for d in ti.static(range(GlobalVariable.DIMENSION)):
                         btypes = int(boundary_type[d])
                         shape_fn[d] = shape_bspline_q(position[d], grid_pos[d], igrid_size[d], btypes)
                 elif ti.static(GlobalVariable.SHAPEFUNCTION == 3):
-                    boundary_type = boundary_types[node_id, body_id]
+                    boundary_type = boundary_types[physical_node, body_id]
                     for d in ti.static(range(GlobalVariable.DIMENSION)):
                         btypes = int(boundary_type[d])
                         shape_fn[d] = shape_bspline_c(position[d], grid_pos[d], igrid_size[d], btypes)
