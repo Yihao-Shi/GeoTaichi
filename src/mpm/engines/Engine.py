@@ -252,8 +252,9 @@ class Engine(object):
         if sims.neighbor_detection:
             if sims.coupling == "Lagrangian":
                 self.execute_board_serach = self.update_verlet_table
-                self.system_resolve = self.compute_nodal_kinematic
-                self.compute_nodal_kinematic = no_operation
+                if sims.mode != "Lightweight":
+                    self.system_resolve = self.compute_nodal_kinematic
+                    self.compute_nodal_kinematic = no_operation
             self.bulid_neighbor_list = self.board_search
 
             self.free_surface_by_geometry = no_operation

@@ -4,8 +4,13 @@ Each `dry-sand/` directory holds the 800,000-point H200 run. Position
 snapshots are saved every 0.1 s in `results/snapshots/`. The five native
 checkpoints and contact histories are in `results/`, and the `vtu/`
 collection contains the soil stresses and rigid surfaces from those five
-checkpoints. The left-front videos use the repaired excavator linkage and
-render at 1920 × 1440.
+checkpoints. The left-front videos render at 1920 × 1440. The replay
+poses a single stick and a short bucket four-bar around the recorded bucket
+trajectory and draws sand at the recorded material-point centers. The visible
+truck bed uses the same wall and floor geometry as the contact mesh in the VTUs.
+The visible bucket shell uses the VTU contact mesh. Five decorative teeth
+sit on the outside of its continuous cutting edge and extend 4 cm past it.
+The teeth are added only for replay.
 
 | Case | End time (s) | Bucket release (s) | Step (s) | Points in the bed at the end |
 | --- | ---: | ---: | ---: | ---: |
@@ -49,3 +54,20 @@ blender -b "$assets/excavator-${case}.blend" --python-exit-code 1 \
 ffmpeg -framerate 10 -i "$frames/%04d.png" -c:v libx264 -preset fast \
   -crf 17 -pix_fmt yuv420p -r 30 -movflags +faststart "excavator-${case}.mp4"
 ```
+
+The realistic damped-cone replay uses Poly Haven's [Quarry 02](https://polyhaven.com/a/quarry_02)
+and [Gravel Ground 01](https://polyhaven.com/a/gravel_ground_01) ([CC0](https://polyhaven.com/license)).
+The machine and lighting references are the [Volvo EC230](https://www.volvoce.com/en-us/products/excavators/ec230/),
+[Volvo quick couplers](https://www.volvoce.com/en-us/products/excavator-attachments/excavator-quick-couplers/),
+and the [CM Labs excavator simulator](https://cm-labs.com/en/simulation-curriculum/intellia-excavator-simulation-curriculum/).
+
+```sh
+case_dir="explicit_cone/dry-sand-damped"
+blender -b explicit_cone/inputs/excavator-cone.blend --python-exit-code 1 \
+  --python explicit_cone/render_cone.py -- \
+  "$case_dir/results" "$frames" "$case_dir/results/provenance/trajectory.csv" \
+  --view left-front --textures "$case_dir/render-textures"
+```
+
+Use an empty frames directory for a new render. Append `--check-linkage` to
+check the rendered stick, linkage, bucket and truck meshes at each snapshot.

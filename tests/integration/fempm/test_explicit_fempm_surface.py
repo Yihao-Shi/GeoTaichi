@@ -32,7 +32,7 @@ def taichi_cpu_runtime():
     ti.reset()
 
 
-def _coupled_system(tmp_path, search, contact_model="Linear"):
+def _coupled_system(tmp_path, search, contact_model="Linear", mode="Normal", sparse_grid=False):
     mpm = MPM(log=False)
     fem = FEM(log=False)
     coupling = FEMPM(fem, mpm, log=False)
@@ -42,6 +42,9 @@ def _coupled_system(tmp_path, search, contact_model="Linear"):
         gravity=[0.0, 0.0, 0.0],
         alphaPIC=0.0,
         mapping="USL",
+        mode=mode,
+        sparse_grid=sparse_grid,
+        boundary_direction_detection=mode == "Lightweight",
         shape_function="Linear",
         configuration="ULMPM",
         solver_type="Explicit",
@@ -198,6 +201,24 @@ def test_explicit_fempm_search_force_balance_and_history(tmp_path, search):
 
     coupling.enginer.integration()
     assert coupling.enginer.minimum_jacobian == pytest.approx(1.0)
+
+
+@pytest.mark.parametrize("sparse_grid", [False, {"Backend": "BlockScan", "BlockSize": 4, "MaxActiveBlocks": 8}])
+def test_lightweight_fempm_transfers_contact_impulse(tmp_path, sparse_grid):
+    coupling = _coupled_system(tmp_path, "LinkedCell", mode="Lightweight", sparse_grid=sparse_grid)
+    particle = coupling.mpm.scene.particle
+    velocity_before = np.array(particle[0].v)
+
+    coupling.enginer.step()
+
+    force = np.array(particle[0].external_force)
+    assert force[2] > 0.0
+    np.testing.assert_allclose(
+        particle[0].m * (np.array(particle[0].v) - velocity_before),
+        coupling.sims.delta * force,
+        rtol=5.0e-7,
+        atol=1.0e-12,
+    )
 
 
 def test_explicit_fempm_hertz_and_shared_timestep_gate(tmp_path):

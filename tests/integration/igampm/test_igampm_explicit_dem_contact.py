@@ -154,7 +154,8 @@ def test_explicit_contact_rejects_missing_material_patch_property(tmp_path):
         ExplicitNurbsContact(_iga_cube(tmp_path), _particle_scene(), manager.phys)
 
 
-def test_public_explicit_igampm_advances_both_children(tmp_path):
+@pytest.mark.parametrize("mode", ["Normal", "Lightweight"])
+def test_public_explicit_igampm_advances_both_children(tmp_path, mode):
     from src.iga import Cube, Primitives
     from src.iga.mainIGA import IGA
     from src.igampm import IGAMPM
@@ -168,6 +169,7 @@ def test_public_explicit_igampm_advances_both_children(tmp_path):
         gravity=[0.0, 0.0, 0.0],
         alphaPIC=0.0,
         mapping="USL",
+        mode=mode,
         shape_function="Linear",
         configuration="ULMPM",
         solver_type="Explicit",

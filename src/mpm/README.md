@@ -823,6 +823,11 @@ compact grid with the same shape functions, transfers, and stabilization options
 velocity and uses that stress to assemble forces before advancing the grid and
 transferring back to the particles. You can omit `mapping` in this mode.
 
+In native explicit Lagrangian coupling, the contact solver adds forces to the
+owned MPM particles before Lightweight transfers them to the grid. Neighbor
+updates use the same Lightweight P2G as an uncoupled step, including with
+BlockScan. A single simulation uses one Taichi device.
+
 ### 8. Implicit solid equilibrium
 
 Direct implicit MPM uses exactly three finite positive

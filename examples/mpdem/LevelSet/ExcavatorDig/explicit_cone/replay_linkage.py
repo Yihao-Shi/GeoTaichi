@@ -4,10 +4,10 @@ from math import acos, cos, pi, sin, tau
 
 import bmesh
 import bpy
-from mathutils import Vector
+from mathutils import Matrix, Vector
 
 
-def fit_linkage():
+def fit_linkage(trench=False):
     objects = bpy.data.objects
     boom, stick, bucket = (objects[name] for name in ("boom", "stick", "bucket"))
     shaft = objects["stick_mesh"]
@@ -76,7 +76,9 @@ def fit_linkage():
         obj = bpy.data.objects.new(name, mesh)
         stick.users_collection[0].objects.link(obj)
         obj.parent, obj.location = parent, a
-        obj.rotation_euler.x = pi / 2
+        if parent is not None:
+            tangent = (b - a).normalized()
+            obj.rotation_euler = Matrix((tangent, across.cross(tangent), across)).transposed().to_euler()
         obj.data.materials.append(mat)
         bevel = obj.modifiers.new("Rounded plate edges", "BEVEL")
         bevel.width, bevel.segments = 0.012, 3
@@ -87,30 +89,36 @@ def fit_linkage():
     lug = hinge + Vector((0, -0.346, -0.219))
     coupler = [
         plate("Pin coupler cheek", bucket, center + side * across, hinge + center + side * across, 0.112, 0.065, steel)
-        for side in (-0.199, 0.199)
+        for side in (-0.29, 0.29)
     ]
-    coupler.append(
-        plate("Coupler back plate", bucket, center + Vector((0, -0.108, 0.17)), lug + center, 0.112, 0.26, steel)
-    )
-    pin("Bucket adapter pin", bucket, center, 0.091, 0.54)
-    coupler_pin = pin("Stick tip pin", bucket, hinge + center, 0.101, 0.53)
-    coupler.append(pin("Bucket link pin", bucket, lug + center, 0.079, 0.49))
+    if trench:
+        # Leave the center open where the stick passes between the coupler lugs.
+        coupler.extend(
+            plate(
+                "Coupler back plate",
+                bucket,
+                center + Vector((side, -0.108, 0.17)),
+                lug + center + side * across,
+                0.112,
+                0.065,
+                steel,
+            )
+            for side in (-0.29, 0.29)
+        )
+    else:
+        coupler.append(
+            plate("Coupler back plate", bucket, center + Vector((0, -0.108, 0.17)), lug + center, 0.112, 0.62, steel)
+        )
+    pin("Bucket adapter pin", bucket, center, 0.091, 0.65)
+    coupler_pin = pin("Stick tip pin", bucket, hinge + center, 0.101, 0.65)
+    coupler.append(pin("Bucket link pin", bucket, lug + center, 0.079, 0.79))
     stick_drive = stick_pin + drive + center
     pin("Rocker pivot", stick, stick_drive, 0.081, 0.41)
     plate("Welded rocker mount", stick, stick_pin + 0.59 * up + center, stick_drive, 0.103, 0.31, paint)
     pin("Cylinder head pin", stick, stick_pin + anchor + center, 0.094, 0.34)
-    plate(
-        "Welded cylinder mount",
-        stick,
-        stick_pin + 2.59 * up + 0.16 * normal + center,
-        stick_pin + anchor + center,
-        0.102,
-        0.25,
-        paint,
-    )
     rocker = [plate("Bucket rocker", None, Vector(), Vector((0.621, 0, 0)), 0.093, 0.052, paint) for _ in range(2)]
     link = [plate("Bucket power link", None, Vector(), Vector((0.830, 0, 0)), 0.098, 0.056, steel) for _ in range(2)]
-    apex_pin = pin("Rocker cross pin", None, Vector(), 0.08, 0.53)
+    apex_pin = pin("Rocker cross pin", None, Vector(), 0.08, 0.79)
     for name in ("bucket_ram_barrel", "bucket_ram_rod"):
         for obj in objects[name].children:
             obj.hide_render = True
@@ -126,7 +134,8 @@ def fit_linkage():
             face.use_smooth = len(face.vertices) == 4
         return obj
 
-    barrel = tube("Bucket cylinder barrel", 0.105, 1.47, paint)
+    eye = tube("Bucket cylinder clevis", 0.066, 0.19, steel)
+    barrel = tube("Bucket cylinder barrel", 0.105, 1.29, paint)
     gland = tube("Bucket cylinder gland", 0.115, 0.085, steel)
     rod = tube("Bucket cylinder piston", 0.064, 1.33, chrome)
     for joint in (boom, stick):
@@ -164,8 +173,6 @@ def fit_linkage():
         c = d + projected * direction - (0.621**2 - projected**2) ** 0.5 * axis.cross(direction)
 
         def align(parts, start, end, offset):
-            from mathutils import Matrix
-
             tangent = (end - start).normalized()
             transform = Matrix((tangent, axis.cross(tangent), axis)).transposed().to_4x4()
             for obj, side in zip(parts, (-offset, offset)):
@@ -173,7 +180,7 @@ def fit_linkage():
                 obj.matrix_world = transform
 
         align(rocker, d, c, 0.18)
-        align(link, b, c, 0.235)
+        align(link, b, c, 0.36)
         apex_pin.location = c
         apex_pin.rotation_euler = axis.to_track_quat("Z", "Y").to_euler()
         length = (c - mount).length
@@ -181,10 +188,14 @@ def fit_linkage():
         direction = (c - mount) / length
         rotation = direction.to_track_quat("Z", "Y").to_euler()
         for obj, location in (
-            (barrel, mount + 0.735 * direction),
+            (eye, mount + 0.095 * direction),
+            (barrel, mount + 0.825 * direction),
             (gland, mount + 1.47 * direction),
             (rod, c - 0.665 * direction),
         ):
             obj.location, obj.rotation_euler = location, rotation
 
-    return pose, (shaft, coupler_pin, *rocker, *link, apex_pin, barrel, gland, rod), coupler
+    moving = (shaft, coupler_pin, *rocker, *link, apex_pin, eye, barrel, gland, rod)
+    clearance_pairs = [(shaft, part) for part in (*coupler[:-1], *rocker, *link, barrel, rod)]
+    clearance_pairs.extend((cheek, part) for cheek in coupler[:2] for part in (*rocker, *link))
+    return pose, moving, coupler, clearance_pairs

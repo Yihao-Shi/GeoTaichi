@@ -15,6 +15,120 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from replay_linkage import fit_linkage
 
+
+def fit_bucket(bucket, shell):
+    contact = bpy.data.objects["bucket_contact"]
+    to_pin = bucket.matrix_world.inverted() @ contact.matrix_world
+    profile = [to_pin @ vertex.co for vertex in contact.data.vertices]
+    # shortcut: these two scenes share the same bowl profile. Use a named lip edge for other assets.
+    front = max(point.y for point in profile)
+    rim = sorted((point for point in profile if abs(point.y - front) < 1e-5), key=lambda point: point.x)
+    assert len(rim) == 2 and rim[1].x > rim[0].x and abs(rim[1].z - rim[0].z) < 1e-5
+    edge = rim[0]
+    lower = max(
+        (point for point in profile if abs(point.x - edge.x) < 1e-5 and point.y < front - 1e-5),
+        key=lambda point: point.y,
+    )
+    forward = (edge - lower).normalized()
+    outward = forward.cross(Vector((1, 0, 0)))
+
+    material = bpy.data.materials.new("Bucket steel")
+    shader = material.node_tree.nodes.get("Principled BSDF")
+    shader.inputs["Base Color"].default_value = (0.12, 0.104, 0.084, 1)
+    shader.inputs["Metallic"].default_value = 0.4
+    shader.inputs["Roughness"].default_value = 0.58
+    shell.data = contact.data.copy()
+    shell.data.transform(shell.matrix_world.inverted() @ contact.matrix_world)
+    shell.data.materials.clear()
+    shell.data.materials.append(material)
+    assert all(
+        (shell.matrix_world @ visual.co - contact.matrix_world @ source.co).length < 1e-5
+        for visual, source in zip(shell.data.vertices, contact.data.vertices, strict=True)
+    )
+    for face in shell.data.polygons:
+        face.use_smooth = True
+    shell.data.set_sharp_from_angle(angle=0.5)
+
+    # Seat the adapters in the outside of the lip and leave 4 cm of tooth ahead of it.
+    vertices, faces = [], []
+    sections = ((-0.10, 0.094, -0.008, 0.043), (-0.025, 0.080, -0.008, 0.043), (0.04, 0.042, 0.003, 0.017))
+    for position in (0.13, 0.315, 0.5, 0.685, 0.87):
+        seat = rim[0].lerp(rim[1], position)
+        start = len(vertices)
+        for length, width, low, high in sections:
+            for side, offset in ((-1, low), (1, low), (1, high), (-1, high)):
+                vertices.append(seat + length * forward + offset * outward + Vector((side * width / 2, 0, 0)))
+        faces.extend(((start + 3, start + 2, start + 1, start), (start + 8, start + 9, start + 10, start + 11)))
+        for ring in (start, start + 4):
+            for j in range(4):
+                k = (j + 1) % 4
+                faces.append((ring + j, ring + k, ring + 4 + k, ring + 4 + j))
+    mesh = bpy.data.meshes.new("Short bucket teeth")
+    mesh.from_pydata(vertices, [], faces)
+    tooth_steel = material.copy()
+    tooth_steel.name = "Bucket tooth steel"
+    shader = tooth_steel.node_tree.nodes.get("Principled BSDF")
+    shader.inputs["Base Color"].default_value = (0.17, 0.149, 0.117, 1)
+    mesh.materials.append(tooth_steel)
+    teeth = bpy.data.objects.new(mesh.name, mesh)
+    bpy.context.collection.objects.link(teeth)
+    teeth.parent = bucket
+    bevel = teeth.modifiers.new("Tooth edge bevel", "BEVEL")
+    bevel.width, bevel.segments = 0.003, 2
+    return teeth
+
+
+def fit_truck_bed():
+    """Skin the actual contact bed so its walls occlude the same cargo as the VTUs."""
+    bed = bpy.data.objects["bed_mesh"]
+    contact = bpy.data.objects["truck_bed_contact"]
+    material = bpy.data.materials.new("Truck bed enamel")
+    shader = material.node_tree.nodes.get("Principled BSDF")
+    shader.inputs["Base Color"].default_value = (0.51, 0.27, 0.047, 1)
+    shader.inputs["Roughness"].default_value = 0.55
+    shader.inputs["Metallic"].default_value = 0.2
+    lining = material.copy()
+    lining.name = "Scuffed bed liner"
+    shader = lining.node_tree.nodes.get("Principled BSDF")
+    shader.inputs["Base Color"].default_value = (0.16, 0.127, 0.091, 1)
+    shader.inputs["Roughness"].default_value = 0.68
+    shader.inputs["Metallic"].default_value = 0.48
+
+    bed.data = contact.data.copy()
+    bed.data.transform(bed.matrix_world.inverted() @ contact.matrix_world)
+    bed.data.materials.clear()
+    bed.data.materials.append(material)
+    bed.data.materials.append(lining)
+    xyz = [bed.matrix_world @ v.co for v in bed.data.vertices]
+    xmin, ymin, zmin = (min(p[i] for p in xyz) for i in range(3))
+    xmax, ymax, zmax = (max(p[i] for p in xyz) for i in range(3))
+    for face in bed.data.polygons:
+        center = bed.matrix_world @ face.center
+        if (
+            xmin + 0.01 < center.x < xmax - 0.01
+            and ymin + 0.01 < center.y < ymax - 0.01
+            and zmin + 0.01 < center.z < zmax - 0.01
+        ):
+            face.material_index = 1
+    bevel = bed.modifiers.new("Welded edges", "BEVEL")
+    bevel.width, bevel.segments = 0.014 / bed.scale.x, 2
+
+    # Form the outer stiffeners without changing the welded liner or the load coordinates.
+    for x in (xmin, xmax):
+        for fraction in (0.06, 0.27, 0.49, 0.71, 0.94):
+            bpy.ops.mesh.primitive_cube_add(size=1)
+            rib = bpy.context.object
+            rib.name = "Truck bed side stiffener"
+            rib.dimensions = (0.075, 0.084, zmax - zmin - 0.15)
+            bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+            rib.parent = bed.parent
+            rib.matrix_parent_inverse = bed.parent.matrix_world.inverted()
+            rib.location = (x, ymin + fraction * (ymax - ymin), (zmin + zmax) / 2)
+            rib.data.materials.append(material)
+            bevel = rib.modifiers.new("Pressed edges", "BEVEL")
+            bevel.width, bevel.segments = 0.016, 2
+
+
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("run", type=Path)
 parser.add_argument("output", type=Path)
@@ -108,7 +222,7 @@ if args.textures:
             second.image = texture.image
             gravel.links.new(rotation.outputs["Vector"], second.inputs["Vector"])
             noise = gravel.nodes.new("ShaderNodeTexNoise")
-            noise.inputs["Scale"].default_value = .33
+            noise.inputs["Scale"].default_value = 0.33
             gravel.links.new(coordinates.outputs["Object"], noise.inputs["Vector"])
             mix = gravel.nodes.new("ShaderNodeMixRGB")
             gravel.links.new(noise.outputs["Fac"], mix.inputs["Fac"])
@@ -116,7 +230,7 @@ if args.textures:
             gravel.links.new(second.outputs["Color"], mix.inputs[2])
             dirt = gravel.nodes.new("ShaderNodeMixRGB")
             dirt.blend_type = "MULTIPLY"
-            dirt.inputs[2].default_value = (.63, .57, .47, 1)
+            dirt.inputs[2].default_value = (0.63, 0.57, 0.47, 1)
             gravel.links.new(noise.outputs["Fac"], dirt.inputs["Fac"])
             gravel.links.new(mix.outputs[0], dirt.inputs[1])
             color = dirt.outputs[0]
@@ -167,7 +281,7 @@ soil.modifiers.new("Display sand", "NODES").node_group = tree
 
 bucket = bpy.data.objects["bucket"]
 bucket.animation_data_clear()
-pose_linkage, linkage, coupler = fit_linkage()
+pose_linkage, linkage, coupler, clearance_pairs = fit_linkage(trench="trench" in config)
 ram_pairs = []
 for name in ("boom_ram_L", "boom_ram_R", "stick_ram"):
     pair = []
@@ -187,8 +301,16 @@ def bvh(obj, graph):
 
 
 bucket_mesh = bpy.data.objects["bucket_mesh"]
-bed = bpy.data.objects["bed_mesh"]
+bpy.context.view_layer.update()
+bucket_teeth = fit_bucket(bucket, bucket_mesh)
+fit_truck_bed()
+bpy.context.view_layer.update()
+boom_mesh = bpy.data.objects["boom_mesh"]
+truck_meshes = [
+    obj for obj in bpy.data.objects["dump-truck"].children_recursive if obj.type == "MESH" and not obj.hide_render
+]
 graph = bpy.context.evaluated_depsgraph_get()
+truck = {obj: bvh(obj, graph) for obj in truck_meshes} if args.check_linkage else {}
 scene.render.image_settings.file_format = "PNG"
 scene.render.image_settings.color_mode = "RGB"
 output.mkdir(parents=True, exist_ok=True)
@@ -228,16 +350,19 @@ for path in files:
             pivot.matrix_world = transform
     if args.check_linkage:
         bpy.context.view_layer.update()
-        shell = bvh(bucket_mesh, graph)
-        truck = bvh(bed, graph)
-        assert not truck.overlap(shell), (f"{t:.2f} s", bed.name, bucket_mesh.name)
-        for part in (*linkage, *coupler):
-            part_tree = bvh(part, graph)
-            assert part in coupler or not shell.overlap(part_tree), (f"{t:.2f} s", part.name, bucket_mesh.name)
-            assert not truck.overlap(part_tree), (f"{t:.2f} s", part.name, bed.name)
+        bucket_parts = (bucket_mesh, bucket_teeth)
+        parts = {obj: bvh(obj, graph) for obj in (*linkage, *coupler, *bucket_parts, boom_mesh)}
+        bucket_pairs = tuple((shell, part) for shell in bucket_parts for part in linkage)
+        for a, b in (*clearance_pairs, *bucket_pairs):
+            assert not parts[a].overlap(parts[b]), (f"{t:.2f} s", a.name, b.name)
+        for a, tree in parts.items():
+            for b, truck_tree in truck.items():
+                assert not tree.overlap(truck_tree), (f"{t:.2f} s", a.name, b.name)
         continue
     scene.render.filepath = str(image)
     bpy.ops.render.render(write_still=True)
 
 if args.check_linkage:
-    print(f"Checked bucket clearance at {len(files)} replay poses")
+    print(
+        f"Checked linkage, bucket and truck clearance at {len(files) if not args.frames else len(args.frames)} replay poses"
+    )
