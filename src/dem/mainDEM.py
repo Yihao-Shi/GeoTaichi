@@ -16,6 +16,7 @@ from src.dem.Recorder import WriteFile
 from src.dem.Simulation import Simulation
 from src.utils.ObjectIO import DictIO
 from src.utils.RegionFunction import RegionFunction
+from src.utils.DistributedRuntime import require_single_rank
 from src.utils.SolverDiagnostics import SolverDiagnosticsMixin
 from src.utils.SolverConsole import print_solver_section, runtime_architecture
 from src.utils.StepRetry import StepRetryPolicy
@@ -871,6 +872,7 @@ class DEM(SolverDiagnosticsMixin):
         self.sims.set_window_parameters(window)
 
     def run(self, visualize=False, **kwargs):
+        require_single_rank("DEM")
         self.add_essentials(**kwargs)
         if self.sims.scheme == "AffineBody":
             self.solver.solve(self.scene)

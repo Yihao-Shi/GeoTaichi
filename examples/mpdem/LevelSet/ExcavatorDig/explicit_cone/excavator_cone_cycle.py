@@ -43,12 +43,24 @@ parser.add_argument("--settle-damping", type=float, default=0.0, help="Grid damp
 parser.add_argument("--dig-damping", type=float, default=0.0, help="Grid damping after bucket release")
 parser.add_argument("--settle-max", type=float, default=15.0, help="Maximum time to wait for soil settling (s)")
 parser.add_argument("--dt", type=float, default=1e-4)
+parser.add_argument(
+    "--contact-stiffness-scale", type=float, default=1.0, help="Multiplier for both contact stiffnesses"
+)
+parser.add_argument("--sdf-spacing", type=float, default=0.04, help="Rigid contact SDF spacing (m)")
 parser.add_argument("--trajectory", type=Path)
 parser.add_argument("--trench", type=Path, help="Use flat soil and MPM trough walls from this JSON file")
 parser.add_argument("--resume-from", type=Path)
 parser.add_argument("--resume-index", type=int)
 parser.add_argument("--pic", type=float, default=0.0)
+parser.add_argument("--particles", type=int, help="Total cone particles across all torchrun ranks")
 args = parser.parse_args()
+world = int(os.environ.get("WORLD_SIZE", "1"))
+rank = int(os.environ.get("RANK", "0"))
+distributed = world > 1
+if distributed and (args.arch != "gpu" or args.trench):
+    parser.error("Distributed runs require --arch gpu and a cone")
+if args.particles is not None and (args.trench or not world <= args.particles <= 2**30 or args.particles % world):
+    parser.error("--particles requires a cone count in [WORLD_SIZE, 2**30] divisible by WORLD_SIZE")
 if args.trajectory is None:
     args.trajectory = (args.trench.parent if args.trench else HERE / "inputs") / "trajectory.csv"
 slowdown = 1.75
@@ -72,6 +84,10 @@ if (args.resume_from is None) != (args.resume_index is None):
     parser.error("--resume-from and --resume-index must be used together")
 if args.dt <= 0 or args.stop_time <= 0 or args.settle_max < 1.0:
     parser.error("Require a positive time step and cycle duration, and at least 1 s to settle")
+if not np.isfinite(args.sdf_spacing) or args.sdf_spacing <= 0:
+    parser.error("--sdf-spacing must be finite and positive")
+if not np.isfinite(args.contact_stiffness_scale) or args.contact_stiffness_scale <= 0:
+    parser.error("--contact-stiffness-scale must be finite and positive")
 if not 0 <= args.pic <= 1 or not all(0 <= damping < 1 for damping in (args.settle_damping, args.dig_damping)):
     parser.error("Require --pic in [0, 1] and both damping options in [0, 1)")
 source = args.source.resolve() if args.source else HERE.parents[4]
@@ -85,7 +101,8 @@ import taichi as ti
 from src.mpm.generator.InsertionKernel import kernel_apply_stress_from_file
 from src.utils.Quaternion import set_to_rotate
 
-count = 800_000
+total_count = args.particles if args.particles is not None else 800_000
+count = total_count // world
 h = 0.125
 cone = json.loads((HERE / "inputs/cone.json").read_text())
 base_radius = cone["radius_m"]
@@ -119,6 +136,9 @@ bed_min, bed_max = np.array([np.unique(truck.vertices[:, axis])[[1, 2]] for axis
 lo = np.array([-8.0, -16.0, -0.5])
 hi = np.array([12.0, 8.0, 9.5])
 domain = hi - lo
+restart_root = args.resume_from.resolve() if args.resume_from else None
+restart_shard = restart_root / f"rank-{rank:02d}" if distributed and restart_root else restart_root
+config = json.loads((restart_shard / "run-config.json").read_text()) if restart_shard else None
 wall_slabs = []
 if args.trench:
     trench = json.loads(args.trench.read_text())
@@ -147,22 +167,34 @@ if args.trench:
             wall_slabs.append((axis, start, end))
 else:
     restart_config["cone"] = dict(cone, height_m=float(height))
-    # Sample the cone by cross-sectional area, then a uniform disk at each height.
-    u, v, w = qmc.Halton(3, scramble=True, seed=17).random(count).T
+    volume = np.pi * base_radius**2 * height / (3.0 * total_count)
+    spacing = np.full(3, volume ** (1 / 3))
+if not args.trench and not restart_shard:
+    # Sample by cross-sectional area, then a uniform disk at each height.
+    # Sobol skip-ahead lets each rank generate only its own slice of one sequence.
+    if distributed:
+        sequence = qmc.Sobol(3, scramble=True, bits=30, seed=17)
+        if rank:
+            sequence.fast_forward(rank * count)
+        u, v, w = sequence.random(count).T
+    else:
+        u, v, w = qmc.Halton(3, scramble=True, seed=17).random(count).T
     radial_scale = np.cbrt(1.0 - w)
     z = height * (1.0 - radial_scale)
     r = base_radius * radial_scale * np.sqrt(u)
     angle = 2.0 * np.pi * v
     points = np.column_stack((r * np.cos(angle), cone["center_y_m"] + r * np.sin(angle), z))
-    volume = np.pi * base_radius**2 * height / (3.0 * count)
-    spacing = np.full(3, volume ** (1 / 3))
     cover = height * (1.0 - np.hypot(points[:, 0], points[:, 1] - cone["center_y_m"]) / base_radius) - z
 radius = (3 * volume / (4 * np.pi)) ** (1 / 3)
-if not np.isfinite(cover).all() or np.any(cover <= 0.0):
-    raise ValueError("Every soil point must have a positive cover depth")
 k0 = 1.0 - np.sin(np.deg2rad(material["FrictionAngle"]))
-stress = -(material["density"] * 9.81 * cover[:, None]) * np.array([k0, k0, 1.0])
-assert points.shape == stress.shape == (count, 3) and np.all((lo < points) & (points < hi))
+if restart_shard:
+    min_initial_zz = config["min_initial_zz_pa"]
+else:
+    min_initial_zz = -material["density"] * 9.81 * cover.max()
+    if not np.isfinite(cover).all() or np.any(cover <= 0.0):
+        raise ValueError("Every soil point must have a positive cover depth")
+    stress = -(material["density"] * 9.81 * cover[:, None]) * np.array([k0, k0, 1.0])
+    assert points.shape == stress.shape == (count, 3) and np.all((lo < points) & (points < hi))
 settling = dict(rms_limit_m_s=0.01, p95_limit_m_s=0.025, hold_s=1.0, max_wait_s=args.settle_max)
 if args.settle_damping:
     settling["background_damping"] = args.settle_damping
@@ -174,37 +206,65 @@ for time, steps in ((args.stop_time, cycle_steps), (args.settle_max, wait_steps)
 start_step = 0
 release_step = None
 quiet_samples = 0
-if args.resume_from:
-    args.resume_from = args.resume_from.resolve()
-    config = json.loads((args.resume_from / "run-config.json").read_text())
+loaded_checkpoint = None
+if restart_shard:
+    if distributed:
+        manifest = json.loads((restart_root / "latest-checkpoint.json").read_text())
+        if manifest["ranks"] != world or not 0 <= args.resume_index <= manifest["index"]:
+            parser.error("Restart requires the original rank count and a fully published checkpoint index")
+        if (config.get("rank"), config.get("ranks"), config.get("total_particles")) != (rank, world, total_count):
+            parser.error("Restart requires the original rank layout and --particles")
+    elif config.get("ranks", 1) != 1:
+        parser.error("Launch the checkpoint with its original number of ranks")
     for key, value in dict(restart_config, dt_s=args.dt).items():
         if config.get(key) != value:
             parser.error(f"Restart requires the same {key}: expected {config.get(key)!r}, got {value!r}")
+    if config.get("sdf_spacing_m", 0.04) != args.sdf_spacing:
+        parser.error("Restart requires the same --sdf-spacing")
+    if "contact_stiffness_scale" in config and config["contact_stiffness_scale"] != args.contact_stiffness_scale:
+        parser.error("Restart requires the same --contact-stiffness-scale")
     if config.get("dig_background_damping", 0.0) != args.dig_damping:
         parser.error("Restart requires the same --dig-damping")
-    name = f"MPMParticle{args.resume_index:06d}.npz"
-    with np.load(args.resume_from / "particles" / name, allow_pickle=False) as data:
+    with np.load(restart_shard / "particles" / f"MPMParticle{args.resume_index:06d}.npz", allow_pickle=False) as data:
         start_time = float(data["t_current"])
+        if int(data["body_num"]) != count:
+            parser.error("Restart particle count differs from the configured shard")
     start_step = round(start_time / args.dt)
-    if not (start_step > 0 and np.isclose(start_step * args.dt, start_time, rtol=0, atol=1e-10)):
-        parser.error("The restart time must be a positive time step")
+    if not (start_step >= 0 and np.isclose(start_step * args.dt, start_time, rtol=0, atol=1e-10)):
+        parser.error("The restart time must fall on the original fixed time step")
+    if distributed and args.resume_index == manifest["index"] and start_time != manifest["time_s"]:
+        parser.error("Restart shard time differs from the published checkpoint time")
+    case_checkpoint = restart_shard / f"ExcavatorState{args.resume_index:06d}.npz"
     if "settling" in config:
         if config["settling"] != settling:
             parser.error("Restart requires the same settling settings")
-        with (args.resume_from / "progress.csv").open(newline="") as stream:
-            history = [row for row in csv.DictReader(stream) if float(row["t"]) <= start_time + 1e-10]
-        if history:
-            quiet_samples = int(history[-1]["quiet_samples"])
-            release_step = int(history[-1]["release_step"]) if history[-1]["release_step"] else None
+        if case_checkpoint.is_file():
+            with np.load(case_checkpoint, allow_pickle=False) as data:
+                quiet_samples = int(data["quiet_samples"])
+                saved_release = int(data["release_step"])
+                release_step = saved_release if saved_release >= 0 else None
+                loaded_checkpoint = np.unpackbits(data["loaded"], count=count).astype(bool)
+        else:
+            with (restart_shard / "progress.csv").open(newline="") as stream:
+                history = [row for row in csv.DictReader(stream) if float(row["t"]) <= start_time + 1e-10]
+            if history:
+                quiet_samples = int(history[-1]["quiet_samples"])
+                release_step = int(history[-1]["release_step"]) if history[-1]["release_step"] else None
     else:
         release_step = 0
 end_step = wait_steps if release_step is None else release_step + cycle_steps
 if start_step >= end_step:
     parser.error("Restart must precede the end of the settling or excavation stage")
 
-out = args.output.resolve()
+root_out = args.output.resolve()
+out = root_out / f"rank-{rank:02d}" if distributed else root_out
 out.mkdir(parents=True, exist_ok=False)
-gt.init(arch=args.arch, default_fp="float64", cpu_max_num_threads=1, log=False)
+gt.init(arch=args.arch, distributed=distributed, default_fp="float64", cpu_max_num_threads=1, log=False)
+if distributed:
+    import torch
+    import torch.distributed as dist
+
+    print(f"CUDA rank {rank}/{world} on GPU {os.environ['CUDA_VISIBLE_DEVICES']} with {count:,} particles", flush=True)
 model = gt.MPDEM(log=False)
 mpm, dem = model.mpm, model.dem
 model.set_configuration(domain=domain.tolist(), gravity=[0, 0, -9.81], visualize=False, log=False)
@@ -213,13 +273,21 @@ mpm.set_configuration(
     configuration="ULMPM",
     mapping="USL",
     shape_function=shape_function,
+    mode="Lightweight" if distributed else "Normal",
     alphaPIC=args.pic,
     background_damping=args.settle_damping if release_step is None else args.dig_damping,
     log=False,
 )
 dem.set_configuration(scheme="LSDEM", search="LinkedCell", gravity=[0, 0, 0], visualize=False, log=False)
 model.set_solver(
-    dict(Timestep=args.dt, SimulationTime=end_step * args.dt, CFL=0.4, SaveInterval=5.0, SavePath=str(out)), log=False
+    dict(
+        Timestep=args.dt,
+        SimulationTime=end_step * args.dt,
+        CFL=0.4,
+        SaveInterval=(2.0 if restart_shard and args.resume_index >= 1 else 0.01) if distributed else 5.0,
+        SavePath=str(out),
+    ),
+    log=False,
 )
 nx, ny = np.rint(domain[:2] / h).astype(int) + 1
 floor_guard_nodes = int(nx * ny * (round(-lo[2] / h) + 1))
@@ -248,8 +316,37 @@ mpm.add_material(
     ),
 )
 mpm.add_element(dict(ElementType="R8N3D", ElementSize=[h] * 3))
-if args.resume_from:
-    mpm.read_restart(args.resume_index, str(args.resume_from), current_step=start_step)
+if restart_shard:
+    mpm.read_restart(args.resume_index, str(restart_shard), current_step=start_step)
+elif distributed:
+    particle = mpm.scene.particle
+
+    @ti.kernel
+    def seed_soil(start: int, xyz: ti.types.ndarray(ndim=2), normal_stress: ti.types.ndarray(ndim=2)):
+        for i in range(xyz.shape[0]):
+            idx = start + i
+            x = ti.Vector([xyz[i, 0], xyz[i, 1], xyz[i, 2]])
+            particle[idx]._set_essential(
+                rank * count + idx,
+                0,
+                1,
+                material["density"],
+                volume,
+                x,
+                ti.Vector.zero(ti.f64, 3),
+                ti.Vector.zero(ti.u8, 3),
+            )
+            particle[idx].stress = ti.Vector(
+                [normal_stress[i, 0], normal_stress[i, 1], normal_stress[i, 2], 0.0, 0.0, 0.0]
+            )
+
+    for start in range(0, count, 1_000_000):
+        end = min(count, start + 1_000_000)
+        seed_soil(start, points[start:end] - lo, stress[start:end])
+    mpm.scene.psize = (0.5 * spacing)[None, :]
+    mpm.scene.material.state_vars_initialize(1, 0, count, particle)
+    mpm.scene.particleNum[0] = count
+    del points, stress, cover, u, v, w, radial_scale, z, r, angle
 else:
     cloud = np.column_stack((points - lo, np.full(count, volume), np.broadcast_to(0.5 * spacing, (count, 3))))
     particle_file = out / "soil.txt"
@@ -287,12 +384,35 @@ mpm.add_boundary_condition(
     )
 )
 
+pin, rotation = pose(0.0)
+# Preserve the original 16 cm search margin when refining the grid.
+space = args.sdf_spacing
+extent = int(np.ceil((3 * radius + 0.16) / space))
+frames = []
+templates = []
+for name, mesh, center in [
+    ("bucket", bucket, pin + rotation.apply(bucket.center_mass)),
+    ("truck", truck, truck.center_mass),
+]:
+    _, frame = np.linalg.eigh(mesh.moment_inertia)
+    frame[:, 0] *= np.linalg.det(frame)
+    frames.append(frame)
+    template_mesh = mesh.copy()
+    template_mesh.vertices = (mesh.vertices - mesh.center_mass) @ frame
+    path = out / f"{name}.obj"
+    template_mesh.export(path, include_texture=False, include_normals=False)
+    shape = gt.polyhedron(file=str(path)).grids(space=space, extent=extent).reset(False)
+    shape.grid.set_grid(shape.lower_bound, shape.upper_bound - shape.lower_bound)
+    # Recentering during template generation can change rounding at a grid boundary.
+    capacity = int(np.prod(shape.grid.gnum.astype(np.int64) + 2))
+    templates.append((name, shape, center, capacity))
+
 dem.memory_allocate(
     dict(
         max_material_number=2,
         max_rigid_body_number=2,
         max_rigid_template_number=2,
-        levelset_grid_number=1500000,
+        levelset_grid_number=max(capacity for _, _, _, capacity in templates),
         surface_node_number=len(bucket.vertices) + len(truck.vertices),
         body_coordination_number=0,
         wall_coordination_number=0,
@@ -306,25 +426,9 @@ model.memory_allocate(
     dict(body_coordination_number=2, wall_coordination_number=0, compaction_ratio=[1.0, 1.0]), log=False
 )
 dem.add_attribute(0, dict(Density=steel["Density"], ForceLocalDamping=0.0, TorqueLocalDamping=0.0))
-pin, rotation = pose(0.0)
-# Use a 4 cm SDF to resolve the bucket walls. Pad enough for finite particle radii.
-space = 0.04
-extent = int(np.ceil(3 * radius / space)) + 4
-frames = []
-for name, mesh, center in [
-    ("bucket", bucket, pin + rotation.apply(bucket.center_mass)),
-    ("truck", truck, truck.center_mass),
-]:
-    _, frame = np.linalg.eigh(mesh.moment_inertia)
-    frame[:, 0] *= np.linalg.det(frame)
-    frames.append(frame)
-    template_mesh = mesh.copy()
-    template_mesh.vertices = (mesh.vertices - mesh.center_mass) @ frame
-    path = out / f"{name}.obj"
-    template_mesh.export(path, include_texture=False, include_normals=False)
-    dem.add_template(
-        dict(Name=name, Object=gt.polyhedron(file=str(path)).grids(space=space, extent=extent).reset(False))
-    )
+for name, shape, center, capacity in templates:
+    dem.add_template(dict(Name=name, Object=shape))
+    assert shape.grid.gridSum <= capacity
     dem.create_body(
         dict(
             GenerateType="Create",
@@ -343,7 +447,7 @@ for name, mesh, center in [
 dem.choose_contact_model(None, None)
 model.choose_contact_model("Linear Model")
 # k_n scales with particle length for this penalty sensitivity probe.
-kn = 10 * material["young_modulus"] * volume ** (1 / 3)
+kn = 10 * args.contact_stiffness_scale * material["young_modulus"] * volume ** (1 / 3)
 model.add_property(
     0,
     1,
@@ -358,18 +462,19 @@ model.add_property(
 mpm.select_save_data()
 dem.select_save_data(surface=True)
 model.select_save_data(particle_particle_contact=True)
-if args.resume_from:
+if restart_shard:
     # Both LSDEM bodies are prescribed, so their geometry and state can be rebuilt.
     dem.sims.set_is_continue(True)
     dem.sims.current_print = args.resume_index
     dem.sims.current_time = mpm.sims.current_time
-    model.read_restart(args.resume_index, str(args.resume_from), ppcontact=True)
+    model.read_restart(args.resume_index, str(restart_shard), ppcontact=True)
 model.add_essentials()
-model.check_critical_timestep()
-dt = model.sims.delta
-if not np.isclose(dt, args.dt, rtol=0, atol=1e-12):
+if not distributed:
+    model.check_critical_timestep()
+dt = args.dt
+if not np.isclose(model.sims.delta, dt, rtol=0, atol=1e-12):
     raise RuntimeError("Prescribed motion requires the requested fixed time step")
-print(f"cycle dt={dt:g} radius={radius:g} SDF={space:g} kn={kn:g} K0={k0:g} min_zz={stress[:, 2].min():g}", flush=True)
+print(f"cycle dt={dt:g} radius={radius:g} SDF={space:g} kn={kn:g} K0={k0:g} min_zz={min_initial_zz:g}", flush=True)
 
 rigid = dem.scene.rigid
 sphere = dem.scene.get_bounding_sphere()
@@ -431,16 +536,14 @@ set_pose(
     initial_bounding[1],
     0,
 )
-if args.resume_from:
-    for sims in (model.sims, mpm.sims, dem.sims):
-        sims.current_step = start_step
-        sims.CurrentTime[None] = start_time
 
 
 # Prescribed kinematics are applied at the engine's rigid integration point.
 # The mixed contact contribution to the MPM update still uses the current rigid pose and twist.
 def update_rigid(*unused):
     step = model.sims.current_step
+    if not np.isclose(model.sims.delta, dt, rtol=0, atol=1e-12):
+        raise RuntimeError(f"Prescribed motion requires dt={dt:g}; effective dt={model.sims.delta:g}")
     set_pose(0, *bucket_command(step + 1), initial_bounding[0], step + 1)
 
 
@@ -458,13 +561,13 @@ def in_bucket(t, x):
     return (local[:, 0] > side_x[0]) & (local[:, 0] < side_x[1]) & contains_xy(cavity, local[:, 1], local[:, 2])
 
 
-if args.resume_from and release_step is not None:
+if loaded_checkpoint is not None:
+    loaded[:] = loaded_checkpoint
+elif restart_shard and release_step is not None:
     for step in range(samples, start_step + 1, samples):
         cycle_t = (step - release_step) * dt
         if cohort_start <= cycle_t / slowdown <= cohort_end:
-            loaded |= in_bucket(
-                cycle_t, np.load(args.resume_from / "snapshots" / f"{step:06d}.npy", allow_pickle=False)
-            )
+            loaded |= in_bucket(cycle_t, np.load(restart_shard / "snapshots" / f"{step:06d}.npy", allow_pickle=False))
 
 
 def save_snapshot(step, x):
@@ -477,6 +580,36 @@ def save_snapshot(step, x):
 save_snapshot(start_step, mpm.scene.particle.x.to_numpy()[:count] + lo)
 
 
+def reduce_values(values, operation):
+    tensor = torch.tensor(values, device="cuda", dtype=torch.float64)
+    dist.all_reduce(tensor, op=operation)
+    return tensor.cpu().numpy()
+
+
+if distributed:
+    save_native = model.solver.save_file
+
+    def save_checkpoint(*scenes):
+        index = model.sims.current_print
+        time = model.sims.current_time
+        save_native(*scenes)
+        np.savez(
+            out / f"ExcavatorState{index:06d}.npz",
+            quiet_samples=quiet_samples,
+            release_step=-1 if release_step is None else release_step,
+            loaded=np.packbits(loaded),
+        )
+        if index == 1:
+            model.sims.save_interval = 2.0
+        dist.barrier(device_ids=[0])
+        if rank == 0:
+            temporary = root_out / "latest-checkpoint.partial.json"
+            temporary.write_text(json.dumps(dict(index=index, time_s=time, ranks=world)) + "\n")
+            temporary.replace(root_out / "latest-checkpoint.json")
+
+    model.solver.save_file = save_checkpoint
+
+
 def sample():
     global release_step, quiet_samples, end_step
     step = model.sims.current_step + 1
@@ -486,14 +619,18 @@ def sample():
     x = mpm.scene.particle.x.to_numpy()[:count] + lo
     v = mpm.scene.particle.v.to_numpy()[:count]
     particle_volume = mpm.scene.particle.vol.to_numpy()[:count]
-    if (
+    invalid = (
         not np.isfinite(x).all()
         or not np.isfinite(v).all()
         or np.any((x < lo) | (x > hi))
         or not np.isfinite(particle_volume).all()
         or np.any(particle_volume <= 0)
-    ):
-        np.savez(out / "invalid-state.npz", x=x, v=v, volume=particle_volume, initial=points, time=t)
+    )
+    if distributed:
+        invalid = bool(reduce_values([invalid], dist.ReduceOp.MAX)[0])
+    if invalid:
+        if not distributed:
+            np.savez(out / "invalid-state.npz", x=x, v=v, volume=particle_volume, initial=points, time=t)
         raise RuntimeError(
             f"Invalid soil at {t:g}, nan x/v={(~np.isfinite(x)).sum()}/{(~np.isfinite(v)).sum()}, "
             f"min volume {np.nanmin(particle_volume):g}, "
@@ -502,8 +639,17 @@ def sample():
     speed = np.linalg.norm(v, axis=1)
     rms_speed = np.sqrt(np.mean(speed**2))
     p95_speed = np.quantile(speed, 0.95)
+    p95_ok = p95_speed <= settling["p95_limit_m_s"]
+    if distributed:
+        # The global empirical 95th percentile is below the limit when 95% of all points qualify.
+        speed2, qualifying = reduce_values(
+            [np.dot(speed, speed), np.count_nonzero(speed <= settling["p95_limit_m_s"])],
+            dist.ReduceOp.SUM,
+        )
+        rms_speed = np.sqrt(speed2 / total_count)
+        p95_ok = qualifying >= int(np.ceil(0.95 * total_count))
     if release_step is None:
-        if rms_speed <= settling["rms_limit_m_s"] and p95_speed <= settling["p95_limit_m_s"]:
+        if rms_speed <= settling["rms_limit_m_s"] and p95_ok:
             quiet_samples += 1
         else:
             quiet_samples = 0
@@ -535,6 +681,12 @@ def sample():
         int((loaded & bed).sum()),
         particle_volume.min(),
     )
+    if distributed:
+        latest[1], negative_min_z, latest[3], negative_min_volume = reduce_values(
+            [latest[1], -latest[2], latest[3], -latest[10]], dist.ReduceOp.MAX
+        )
+        latest[2], latest[10] = -negative_min_z, -negative_min_volume
+        latest[6:10] = reduce_values(latest[6:10], dist.ReduceOp.SUM).astype(np.int64).tolist()
     save_snapshot(step, x)
     writer.writerow([*latest, rms_speed, p95_speed, quiet_samples, release_step])
     print(
@@ -554,12 +706,15 @@ def write_run_config():
         dig_background_damping=args.dig_damping,
         release_time_s=None if release_step is None else release_step * dt,
         sdf_spacing_m=space,
+        contact_stiffness_scale=args.contact_stiffness_scale,
         K0=k0,
-        min_initial_zz_pa=float(stress[:, 2].min()),
+        min_initial_zz_pa=float(min_initial_zz),
         origin_m=lo.tolist(),
         maximum_m=hi.tolist(),
         snapshot_interval_s=samples * dt,
     )
+    if distributed:
+        config.update(total_particles=total_count, rank=rank, ranks=world, sampling="scrambled Sobol")
     temporary = out / "run-config.partial.json"
     temporary.write_text(json.dumps(config, indent=2) + "\n")
     temporary.replace(out / "run-config.json")
@@ -582,9 +737,14 @@ columns = (
 latest = []
 with (out / "progress.csv").open("w", newline="", buffering=1) as stream:
     writer = csv.writer(stream)
-    writer.writerow((*columns, "rms_speed_m_s", "p95_speed_m_s", "quiet_samples", "release_step"))
+    percentile_column = "rank_p95_speed_m_s" if distributed else "p95_speed_m_s"
+    writer.writerow((*columns, "rms_speed_m_s", percentile_column, "quiet_samples", "release_step"))
     model.solver.postprocess.append(sample)
-    model.solver.coupling_solver(mpm.scene, dem.scene)
+    if distributed:
+        model.run(reset_function=False)
+        dist.destroy_process_group()
+    else:
+        model.solver.coupling_solver(mpm.scene, dem.scene)
 assert latest and np.isclose(latest[0], end_step * dt, rtol=0, atol=1e-10)
 summary = dict(zip(columns, map(float, latest)))
 summary.update(

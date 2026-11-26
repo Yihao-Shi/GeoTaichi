@@ -27,7 +27,7 @@ def test_blockscan_contact_matches_dense(
         None: "compute_grid_kinematic",
         "MPMContact": "compute_contact_force",
         "GeoContact": "compute_geocontact_force",
-        "DEMContact": "compute_demcontact_force_2D",
+        "DEMContact": "compute_demcontact_force_2d",
     }[contact]
     original_contact = getattr(ULExplicitEngine, method)
     original_interpolation = Engine.calculate_interpolations

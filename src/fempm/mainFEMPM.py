@@ -24,6 +24,7 @@ from src.utils.SolverConsole import (
     print_solver_section,
     runtime_architecture,
 )
+from src.utils.DistributedRuntime import require_single_rank
 from src.utils.SolverDiagnostics import SolverDiagnosticsMixin
 from src.utils.StepRetry import StepRetryPolicy
 
@@ -512,6 +513,7 @@ class FEMPM(SolverDiagnosticsMixin):
             self.fem.engine.reconfigure_device_boundary_timeline(stable, total_step)
 
     def run(self, **kwargs):
+        require_single_rank("FEMPM")
         self.add_essentials(**kwargs)
         if isinstance(self.contactor.model, IPCModel):
             print_simulation_start("FEMPM")

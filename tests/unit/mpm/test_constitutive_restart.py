@@ -108,7 +108,7 @@ def make_native_snapshot(tmp_path, dimension):
     scene.push_psize = lambda sizes: setattr(scene, "psize", sizes)
     sims = SimpleNamespace(
         current_time=0.25,
-        current_step=0,
+        current_step=5,
         current_print=0,
         CurrentTime=ti.field(float, shape=()),
         material_type="Solid",
@@ -143,7 +143,9 @@ def test_native_snapshot_roundtrip_uses_raw_history_and_rejects_lost_legacy_tens
     particle.x.fill(-5)
     particle.v.fill(-5)
     particle.velocity_gradient.fill(-5)
+    sims.current_step = 0
     reader.add_npz_body(scene, {"File": str(path), "Restart": True})
+    assert snapshot["current_step"] == sims.current_step == 5
     for name, field in material.stateVars.field_dict.items():
         np.testing.assert_array_equal(field.to_numpy()[:2], raw[name])
     for field, key in [
@@ -160,6 +162,14 @@ def test_native_snapshot_roundtrip_uses_raw_history_and_rejects_lost_legacy_tens
         reader.add_npz_body(scene, {"File": str(path), "Restart": True})
     assert sims.current_time == 0
     np.testing.assert_array_equal(particle.x.to_numpy(), before)
+
+
+def test_legacy_snapshot_restores_explicit_step_count(tmp_path, taichi_runtime):
+    reader, scene, sims, snapshot, path = make_native_snapshot(tmp_path, 2)
+    del snapshot["current_step"]
+    np.savez(path, **snapshot)
+    reader.add_npz_body(scene, {"File": str(path), "Restart": True, "CurrentStep": 25})
+    assert sims.current_step == 25
 
 
 @pytest.mark.parametrize(

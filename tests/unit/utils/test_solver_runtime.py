@@ -7,6 +7,46 @@ import importlib
 
 import pytest
 
+from src.utils import GlobalVariable
+from src.utils.errors import ConfigurationError
+
+
+def test_distributed_init_requires_gpu_and_torchrun(monkeypatch):
+    import geotaichi as gt
+
+    monkeypatch.delenv("WORLD_SIZE", raising=False)
+    with pytest.raises(ConfigurationError, match="requires arch='gpu'"):
+        gt.init(arch="cpu", distributed=True, log=False)
+    with pytest.raises(ConfigurationError, match="requires torchrun"):
+        gt.init(dim=GlobalVariable.DIMENSION, distributed=True, log=False)
+
+
+def test_distributed_init_selects_runtime_for_solver_runs(monkeypatch):
+    import geotaichi as gt
+
+    options = {}
+    monkeypatch.setattr(gt, "init_distributed_cuda", lambda **kwargs: options.update(kwargs))
+    monkeypatch.setattr(gt.ti, "init", lambda **kwargs: None)
+    monkeypatch.setenv("GEOTAICHI_FORCE_CPU", "1")
+    monkeypatch.setattr(GlobalVariable, "DISTRIBUTED", False)
+    monkeypatch.setattr(GlobalVariable, "USEGPU", False)
+
+    gt.init(dim=GlobalVariable.DIMENSION, distributed=True, log=False, device_memory_GB=2)
+    assert GlobalVariable.DISTRIBUTED
+    assert options["device_memory_GB"] == 2
+
+    gt.init(dim=GlobalVariable.DIMENSION, arch="cpu", log=False)
+    assert not GlobalVariable.DISTRIBUTED
+
+
+@pytest.mark.parametrize("solver_name", ["DEM", "FEM", "IGA", "FEDEM", "FEMPM", "IGAMPM"])
+def test_unsupported_solver_run_rejects_distributed_init(monkeypatch, solver_name):
+    module = importlib.import_module(f"src.{solver_name.lower()}.main{solver_name}")
+    solver_class = getattr(module, solver_name)
+    monkeypatch.setattr(GlobalVariable, "DISTRIBUTED", True)
+    with pytest.raises(ConfigurationError, match=f"{solver_name} does not support distributed execution"):
+        solver_class.run(None)
+
 
 def test_inexact_newton_forcing_restarts_caps_and_tightens():
     assert inexact_newton_relative_tolerance(1.0, None) == 0.01

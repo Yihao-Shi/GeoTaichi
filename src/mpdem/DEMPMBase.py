@@ -100,7 +100,7 @@ class Solver:
         ti.sync()
 
         self.engine.pre_calculate()
-        if self.sims.current_time < THRESHOLD:
+        if self.sims.current_print == 0 and self.sims.current_time < THRESHOLD:
             self.save_file(mscene, dscene)
             self.last_save_time = 1.0 * self.sims.current_time
 

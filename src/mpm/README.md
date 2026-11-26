@@ -826,7 +826,69 @@ transferring back to the particles. You can omit `mapping` in this mode.
 In native explicit Lagrangian coupling, the contact solver adds forces to the
 owned MPM particles before Lightweight transfers them to the grid. Neighbor
 updates use the same Lightweight P2G as an uncoupled step, including with
-BlockScan. A single simulation uses one Taichi device.
+BlockScan.
+
+#### Multi-GPU MPM
+
+Call `gt.init(arch="gpu", distributed=True)` before using CUDA in each process
+launched by `torchrun`, then call `mpm.run()`. Initialization binds the process
+to one CUDA GPU using `LOCAL_RANK` and starts an NCCL process group through
+PyTorch with CUDA/NCCL support. If set, `CUDA_VISIBLE_DEVICES` determines the
+GPU order. With `log=True`, rank 0 writes the daily log file. Call
+`torch.distributed.destroy_process_group()` after the final run on each rank.
+The explicit `run(distributed=True)` argument remains available for callers
+that initialize the CUDA/NCCL runtime themselves. Each solver validates its
+configuration at `run()`. Give each rank a disjoint, nonempty subset of the
+initial particles and a distinct `SavePath`. Replicate the grid, solver settings,
+materials, and grid boundary conditions. Use consistent body IDs and rigidity flags across shards. GIMP
+and SmoothLinear require a uniform particle size per body. Particle data,
+particle-local loads, and constitutive history stay on the owning rank.
+
+| Path | Distributed options |
+| --- | --- |
+| `Normal` Cartesian UL | 2D and 3D. USL, USF, MUSL, Taylor and Affine. Standard integration, B-Bar, F-Bar, pressure smoothing, MLS, and Gauss quadrature. Displacement F-Bar uses a single-phase fluid material and a quadratic or cubic B-spline. |
+| `Normal` Cartesian TL | 2D and 3D. Reference-grid mass, USL, USF, MUSL, Taylor and Affine. MLS, Gauss quadrature, B-Bar and F-Bar are unavailable on this path. |
+| `Normal` axisymmetric UL | Standard integration, B-Bar, solid F-Bar and pressure smoothing. Axisymmetric Affine, MLS, Gauss quadrature and Displacement F-Bar are unavailable. |
+| `Lightweight` UL | 2D Cartesian, 2D axisymmetric and 3D solid MPM. Grid contact, MLS, Gauss quadrature and both F-Bar variants are unavailable in distributed Lightweight. |
+
+`Normal` supports MPMContact and GeoContact in 2D and 3D, and DEMContact in 2D.
+Replicate the contact parameters and the moving DEMContact polygon. The
+[MPDEM guide](../mpdem/README.md#runtime-and-ownership) covers 3D LSDEM coupling.
+The usual single-device restrictions on basis, materials, and scheme
+combinations still apply. MLS uses a quadratic or cubic B-spline.
+
+Each rank stores the full dense grid. The ranks sum particle contributions
+before grid normalization and integrate identical grid states. For TL, the
+reference mass is assembled and summed once per run. Contact, MUSL remapping,
+and stabilization exchange their additive fields at the corresponding stages.
+The starting and adaptive time steps use the minimum across ranks. Grid output
+contains a replica of the grid. Axisymmetric runs check particle radii on every
+rank. Grid memory per rank and communication both grow with grid size.
+
+Use `sparse_grid=False` on a regular grid. BlockScan, adaptive grids, THB,
+implicit and Direct MPM, free-surface detection, virtual particle traction,
+dynamic insertion and interactive visualization are outside this mode.
+
+Fixed-step solid ULMPM can resume with either `Normal` or `Lightweight`.
+Recreate the model on the original set of ranks, set the original effective
+step and a fresh per-rank `SavePath`, and call
+`mpm.read_restart(index, shard_dir)` before `mpm.run()`.
+Each rank reads its original shard at the same checkpoint index. Supply
+`current_step=` for old files without a saved step count. The configured
+`SimulationTime` is the absolute end time. Distributed restart currently
+excludes adaptive time stepping, TLMPM, fluids, Gauss quadrature and DEMContact.
+
+From the repository root, compare a sharded CUDA run with a single-card
+trajectory. Pass `--dimension 2` for 2D Cartesian and add `--axisymmetric`
+for axisymmetry. Omit `--standalone` to exercise 3D MPM–LSDEM.
+
+```bash
+export PYTHONPATH=.
+driver=tests/integration/mpm/run_lightweight_multigpu_cuda.py
+CUDA_VISIBLE_DEVICES=0 python "$driver" --mode Normal --standalone --output-dir /tmp/mpm-one
+CUDA_VISIBLE_DEVICES=0,1 torchrun --standalone --nproc-per-node=2 "$driver" \
+    --mode Normal --standalone --output-dir /tmp/mpm-two --compare-with /tmp/mpm-one/rank-00/state.npz
+```
 
 ### 8. Implicit solid equilibrium
 

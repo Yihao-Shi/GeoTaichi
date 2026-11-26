@@ -2,6 +2,7 @@ from src.utils.errors import BackendError, ConfigurationError, SimulationStateEr
 from src.igampm.ContactManager import ContactManager
 from src.igampm.Simulation import Simulation
 import src.igampm.config as config
+from src.utils.DistributedRuntime import require_single_rank
 from src.utils.SolverDiagnostics import SolverDiagnosticsMixin
 from src.utils.SolverConsole import (
     print_save_file_info,
@@ -459,6 +460,7 @@ class IGAMPM(SolverDiagnosticsMixin):
         record=True,
         postprocessing=(),
     ):
+        require_single_rank("IGAMPM")
         engine = self.build()
         print_simulation_start("IGAMPM")
         if self.contactor.contact_model != "BarrierIPC":

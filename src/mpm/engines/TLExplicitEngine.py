@@ -37,7 +37,14 @@ class TLExplicitEngine(ULExplicitEngine):
         grid_reset(scene.mass_cut_off, scene.node)
 
     def reset_reference_grid_message(self, scene: SceneManager):
-        tlgrid_reset(scene.mass_cut_off, scene.node)
+        if self.distributed_mpm is None:
+            tlgrid_reset(scene.mass_cut_off, scene.node)
+        else:
+            # Clear additive fields at every node while retaining reference mass.
+            for name in ("momentum", "force", "grad_domain", "contact_force", "contact_pos", "pressure"):
+                field = getattr(scene.node, name, None)
+                if field is not None:
+                    field.fill(0)
 
     def compute_nodal_kinematics(self, sims: Simulation, scene: SceneManager):
         kernel_momentum_p2g(
@@ -162,21 +169,22 @@ class TLExplicitEngine(ULExplicitEngine):
                 scene.element.node_size,
                 scene.element.gnum,
             )
+        if self.distributed_mpm is not None:
+            scene.node.m.fill(0)
         self.compute_nodal_mass(sims, scene)
+        if self.distributed_mpm is not None:
+            self.distributed_mpm.sum_field(scene.node.m)
 
     def usl_updating(self, sims: Simulation, scene: SceneManager, neighbor=None):
         sims.timer.begin("Shape function")
         self.update_adaptive_interpolation(sims, scene)
         sims.timer.end("Shape function")
         sims.timer.begin("P2G")
-        self.compute_nodal_kinematic(sims, scene)
-        self.compute_grid_velcity(sims, scene)
+        self.map_nodal_kinematics(sims, scene)
         self.compute_forces(sims, scene)
         sims.timer.end("P2G")
         sims.timer.begin("Traction boundary")
-        self.apply_particle_traction_constraints(sims, scene)
-        self.apply_traction_constraints(sims, scene)
-        self.apply_absorbing_constraints(sims, scene)
+        self.apply_grid_loads(sims, scene)
         sims.timer.end("Traction boundary")
         sims.timer.begin("Grid kinematic")
         self.compute_grid_kinematic(sims, scene)
@@ -206,8 +214,7 @@ class TLExplicitEngine(ULExplicitEngine):
         self.update_adaptive_interpolation(sims, scene)
         sims.timer.end("Shape function")
         sims.timer.begin("P2G")
-        self.compute_nodal_kinematic(sims, scene)
-        self.compute_grid_velcity(sims, scene)
+        self.map_nodal_kinematics(sims, scene)
         self.apply_dirichlet_constraints(sims, scene)
         self.apply_adaptive_velocity_constraints(sims, scene)
         self.apply_dirichlet_constraints(sims, scene)
@@ -223,9 +230,7 @@ class TLExplicitEngine(ULExplicitEngine):
         self.compute_forces(sims, scene)
         sims.timer.end("P2G")
         sims.timer.begin("Traction boundary")
-        self.apply_particle_traction_constraints(sims, scene)
-        self.apply_traction_constraints(sims, scene)
-        self.apply_absorbing_constraints(sims, scene)
+        self.apply_grid_loads(sims, scene)
         sims.timer.end("Traction boundary")
         sims.timer.begin("Grid kinematic")
         self.compute_grid_kinematic(sims, scene)
@@ -248,14 +253,11 @@ class TLExplicitEngine(ULExplicitEngine):
         self.update_adaptive_interpolation(sims, scene)
         sims.timer.end("Shape function")
         sims.timer.begin("P2G")
-        self.compute_nodal_kinematic(sims, scene)
-        self.compute_grid_velcity(sims, scene)
+        self.map_nodal_kinematics(sims, scene)
         self.compute_forces(sims, scene)
         sims.timer.end("P2G")
         sims.timer.begin("Traction boundary")
-        self.apply_particle_traction_constraints(sims, scene)
-        self.apply_traction_constraints(sims, scene)
-        self.apply_absorbing_constraints(sims, scene)
+        self.apply_grid_loads(sims, scene)
         sims.timer.end("Traction boundary")
         sims.timer.begin("Grid kinematic")
         self.compute_grid_kinematic(sims, scene)

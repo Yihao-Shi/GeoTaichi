@@ -4,6 +4,7 @@ from src.iga.GenerateManager import IGAGenerateManager
 from src.iga.MaterialManager import IGAMaterialManager
 from src.iga.SceneManager import IGAScene
 from src.iga.Simulation import IGASimulation
+from src.utils.DistributedRuntime import require_single_rank
 from src.utils.SolverDiagnostics import SolverDiagnosticsMixin
 from src.utils.SolverConsole import (
     print_material_info,
@@ -205,6 +206,7 @@ class IGA(SolverDiagnosticsMixin):
         return self.engine
 
     def run(self, *args, **kwargs):
+        require_single_rank("IGA")
         if self.engine is None:
             self.build()
         print_simulation_start("IGA")

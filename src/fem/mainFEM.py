@@ -12,6 +12,7 @@ from src.fem.contact.ContactModel import FEMContact
 from src.fem.generator.MeshGenerator import FEMGenerateManager
 from src.fem.generator.Mesh import FEMMesh
 from src.fem.soft_particle.ContactModel import FEMSoftParticleContactModel
+from src.utils.DistributedRuntime import require_single_rank
 from src.utils.SolverDiagnostics import SolverDiagnosticsMixin
 from src.utils.SolverConsole import (
     print_material_info,
@@ -651,6 +652,7 @@ class FEM(SolverDiagnosticsMixin):
         return self.engine
 
     def run(self, *args, **kwargs):
+        require_single_rank("FEM")
         if self.engine is None:
             self.build()
         print_simulation_start("FEM")

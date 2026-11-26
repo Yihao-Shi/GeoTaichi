@@ -217,6 +217,10 @@ class QuadrilateralElement4Nodes(ElementBase):
             self.shape_function = shape_linear
             self.grad_shape_function = g_shape_linear
             self.shape_function_center = shape_linear_center
+            if sims.is_2DAxisy:
+                self.shape_function_r = self.shape_function_z = shape_linear
+                self.grad_shape_function_r = self.grad_shape_function_z = g_shape_linear
+                self.shape_function_center_r = self.shape_function_center_z = shape_linear_center
 
         elif sims.shape_function == "GIMP":
             if not sims.is_2DAxisy:

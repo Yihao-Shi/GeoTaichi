@@ -509,11 +509,22 @@ class BodyReader(Generator):
         saved_time = float(data["t_current"])
         if not np.isfinite(saved_time) or saved_time < 0:
             raise ValueError("Restart time must be finite and non-negative")
+        step = data["current_step"].item() if "current_step" in data else template.get("CurrentStep")
+        if step is not None and (not np.isfinite(step) or int(step) != step or step < 0):
+            raise ValueError("Restart current_step must be a non-negative integer")
+        if "current_step" in data and template.get("CurrentStep") not in (None, step):
+            raise ValueError("The requested current_step does not match the checkpoint")
         dim = self.sims.dimension
         sizes = np.asarray(data["psize"], dtype=float)
-        if sizes.shape == (dim,):
-            sizes = np.broadcast_to(sizes, (count, dim)).copy()
-        if sizes.shape != (count, dim) or not np.isfinite(sizes).all() or np.any(sizes <= 0):
+        if sizes.shape in ((dim,), (1, dim)):
+            compact_gimp = (
+                dim == 3
+                and self.sims.shape_function == "GIMP"
+                and not self.sims.neighbor_detection
+                and not getattr(scene.element, "adaptive", False)
+            )
+            sizes = sizes.reshape(1, dim) if compact_gimp else np.broadcast_to(sizes, (count, dim))
+        if sizes.shape not in ((1, dim), (count, dim)) or not np.isfinite(sizes).all() or np.any(sizes <= 0):
             raise ValueError("Restart psize must be positive with shape (particles, dimension)")
         incompressible = "pressure" in data and "stress" not in data
         fields = {
@@ -535,7 +546,8 @@ class BodyReader(Generator):
             if self.sims.coupling:
                 fields.update(coupling="coupling", radius="rad")
             if self.sims.neighbor_detection:
-                fields.update(free_surface="free_surface", mass_density="mass_density", normal="normal")
+                # Older coupling files omit these derived fields. Pre-calculation rebuilds them.
+                fields.update((name, name) for name in ("free_surface", "mass_density", "normal") if name in data)
         values = {}
         for key, name in fields.items():
             if incompressible and key == "coupling" and key not in data:
@@ -615,10 +627,9 @@ class BodyReader(Generator):
                 )
                 if self.sims.coupling:
                     kernel_rebulid_particle_coupling(count, scene.particle, values["coupling"], values["radius"])
-                if self.sims.neighbor_detection:
-                    kernel_rebulid_particle_neighbor_detection(
-                        count, scene.particle, values["free_surface"], values["mass_density"], values["normal"]
-                    )
+                for name in ("free_surface", "mass_density", "normal"):
+                    if name in values:
+                        field_from_numpy_prefix(getattr(scene.particle, name), values[name])
             for field, value in history_uploads:
                 field.from_numpy(value)
             scene.psize = sizes.copy()
@@ -630,6 +641,8 @@ class BodyReader(Generator):
             if self.sims.is_continue:
                 self.sims.current_time = saved_time
                 self.sims.CurrentTime[None] = saved_time
+                if step is not None:
+                    self.sims.current_step = int(step)
         print("Insert particle Number: ", count)
 
     def add_npz_body(self, scene: SceneManager, template):

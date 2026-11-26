@@ -123,7 +123,7 @@ def test_adaptive_contact_steps(
     method = {
         "MPMContact": "compute_contact_force",
         "GeoContact": "compute_geocontact_force",
-        "DEMContact": "compute_demcontact_force_2D",
+        "DEMContact": "compute_demcontact_force_2d",
     }[contact]
     original = getattr(ULExplicitEngine, method)
 

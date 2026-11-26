@@ -47,6 +47,7 @@ class MPM(SolverDiagnosticsMixin):
         self.recorder = None
         self.solver = None
         self.first_run = True
+        self._restart_checkpoint = None
         self.direct_bodies = None
         self.direct_ground = None
         self.direct_dirichlet = None
@@ -555,7 +556,7 @@ class MPM(SolverDiagnosticsMixin):
     def read_restart(
         self, file_number, file_path, is_continue=True, *, particle_size=None, current_step=None, **kwargs
     ):
-        """Restore a snapshot; legacy two-phase files need original sizes and the saved step count."""
+        """Restore a snapshot. Supply current_step when the checkpoint lacks it."""
         old_continue, old_print = self.sims.is_continue, self.sims.current_print
         try:
             self.sims.set_is_continue(is_continue)
@@ -576,6 +577,7 @@ class MPM(SolverDiagnosticsMixin):
         except BaseException:
             self.sims.is_continue, self.sims.current_print = old_continue, old_print
             raise
+        self._restart_checkpoint = (file_number, file_path) if is_continue else None
 
     def add_boundary_condition(self, boundary=None, dirichlet=None, neumann=None):
         if self.sims.is_direct_backend():
@@ -1003,7 +1005,26 @@ class MPM(SolverDiagnosticsMixin):
                 self.sims.current_print += 1
             self.sims.set_is_continue(False)
 
-    def run(self, visualize=False, **kwargs):
+    def run(self, visualize=False, *, distributed=False, **kwargs):
+        if GlobalVariable.DISTRIBUTED or distributed:
+            from src.mpm.DistributedMPM import DistributedMPM
+
+            if visualize or self.sims.coupling:
+                raise ConfigurationError("distributed MPM.run requires a standalone model without visualization")
+            exchange = DistributedMPM(self)
+            self.add_essentials(**kwargs)
+            self.enginer.distributed_mpm = exchange
+            try:
+                restart_dt = self.sims.delta
+                self.check_critical_timestep(exchange.minimum_timestep)
+                if exchange.restart_index is not None and self.sims.delta != restart_dt:
+                    raise ConfigurationError("The checkpoint timestep exceeds the current distributed stability limit")
+                self.solver.solve(self.scene, self.neighbor)
+            finally:
+                self.enginer.distributed_mpm = None
+            self._restart_checkpoint = None
+            self.first_run = False
+            return
         self.add_essentials(**kwargs)
         if self.sims.is_direct_backend():
             print_simulation_start("MPM")
@@ -1028,14 +1049,13 @@ class MPM(SolverDiagnosticsMixin):
             self.solver.visualize(self.scene, self.neighbor)
         self.first_run = False
 
-    def check_critical_timestep(self):
+    def check_critical_timestep(self, reduce_timestep=None):
         if self.sims.solver_type == "Explicit":
             print("#", " Check Timestep ... ...".ljust(67))
             critical_timestep = self.scene.get_critical_timestep()
-            if self.sims.CFL * critical_timestep < self.sims.dt[None]:
-                self.sims.update_critical_timestep(critical_timestep)
-            else:
-                print("The prescribed time step is sufficiently small\n")
+            if reduce_timestep is not None:
+                critical_timestep = reduce_timestep(critical_timestep)
+            self.sims.update_critical_timestep(critical_timestep)
 
     def update_particle_properties(
         self, property_name, value, override=True, bodyID=None, region_name=None, function=None

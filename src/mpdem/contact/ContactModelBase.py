@@ -1,5 +1,4 @@
 from src.utils.errors import SimulationStateError
-import os
 import numpy as np
 
 from src.mpdem.contact.NeighborBase import NeighborBase
@@ -124,17 +123,28 @@ class ContactModelBase(object):
         )
         return end1, end2, old_tangential_overlap
 
-    def restart(self, pcontact, file_number, contact, is_particle_particle=True):
-        if not contact is None:
-            if not os.path.exists(contact):
-                raise EOFError("Invaild contact path")
-
-            if is_particle_particle:
-                contact_info = np.load(contact + "/DEMPMContactPP{0:06d}.npz".format(file_number), allow_pickle=True)
-                self.rebuild_ppcontact_list(pcontact, contact_info)
-            else:
-                contact_info = np.load(contact + "/DEMPMContactPW{0:06d}.npz".format(file_number), allow_pickle=True)
-                self.rebuild_pwcontact_list(pcontact, contact_info)
+    def restart(self, pcontact, file_number, contact, is_particle_particle=True, *, time=None, particle_count=None):
+        if contact is None:
+            return
+        kind = "PP" if is_particle_particle else "PW"
+        with np.load(f"{contact}/DEMPMContact{kind}{file_number:06d}.npz", allow_pickle=False) as contact_info:
+            if time is not None and float(contact_info["t_current"]) != time:
+                raise SimulationStateError("Coupling contact history time differs from the particle checkpoint")
+            offsets, targets, overlap = self.rebuild_contact_list(contact_info)
+            if (
+                offsets.ndim != 1
+                or not offsets.size
+                or offsets.dtype.kind not in "iu"
+                or (particle_count is not None and offsets.size != particle_count + 1)
+                or offsets[0] != 0
+                or np.any(offsets[1:] < offsets[:-1])
+                or targets.shape != (offsets[-1],)
+                or overlap.shape != (offsets[-1], 3)
+                or not np.isfinite(overlap).all()
+            ):
+                raise SimulationStateError("Invalid coupling contact history layout")
+            rebuild = self.rebuild_ppcontact_list if is_particle_particle else self.rebuild_pwcontact_list
+            rebuild(pcontact, contact_info)
 
     def get_contact_energy_output(self):
         output = {}

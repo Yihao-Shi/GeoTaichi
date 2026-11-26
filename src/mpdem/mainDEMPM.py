@@ -1,4 +1,5 @@
 from src.contact_detection.Capacity import reject_contact_pair_limits, validate_contact_coordination_number
+from src.utils import GlobalVariable
 from src.utils.RuntimeHook import normalize_callbacks
 from src.utils.errors import SimulationStateError
 from types import SimpleNamespace
@@ -71,6 +72,7 @@ class DEMPM(SolverDiagnosticsMixin):
         self.enginer = None
         self.solver = None
         self.recorder = None
+        self._contact_history_pending = False
         self.direct_affine_ipc_model = None
         self.direct_affine_contact = None
         self._direct_affine_output_started = False
@@ -411,6 +413,9 @@ class DEMPM(SolverDiagnosticsMixin):
             self.dem.sims.current_time = 1.0 * self.mpm.sims.current_time
             self.sims.current_time = 1.0 * self.mpm.sims.current_time
             self.sims.CurrentTime[None] = self.mpm.sims.current_time
+            self.dem.sims.CurrentTime[None] = self.mpm.sims.current_time
+            self.dem.sims.current_step = self.mpm.sims.current_step
+            self.sims.current_step = self.mpm.sims.current_step
 
     def read_restart(self, file_number, file_path, ppcontact=False, pwcontact=False):
         ppcontact_path = None
@@ -423,16 +428,26 @@ class DEMPM(SolverDiagnosticsMixin):
         self.sims.history_contact_path.update(
             file_number=file_number, ppcontact=ppcontact_path, pwcontact=pwcontact_path
         )
+        self._contact_history_pending = True
 
     def load_history_contact(self):
+        if not self._contact_history_pending:
+            return
         file_number = DictIO.get_alternative(self.sims.history_contact_path, "file_number", 0)
         ppcontact = DictIO.get_alternative(self.sims.history_contact_path, "ppcontact", None)
         pwcontact = DictIO.get_alternative(self.sims.history_contact_path, "pwcontact", None)
 
-        if not ppcontact is None:
-            self.contactor.physpp.restart(self.contactor.neighbor, file_number, ppcontact, True)
-        if not pwcontact is None:
-            self.contactor.physpw.restart(self.contactor.neighbor, file_number, pwcontact, False)
+        time = self.sims.current_time if self.mpm._restart_checkpoint is not None else None
+        particle_count = int(self.mpm.scene.couplingNum[0])
+        if ppcontact is not None:
+            self.contactor.physpp.restart(
+                self.contactor.neighbor, file_number, ppcontact, True, time=time, particle_count=particle_count
+            )
+        if pwcontact is not None:
+            self.contactor.physpw.restart(
+                self.contactor.neighbor, file_number, pwcontact, False, time=time, particle_count=particle_count
+            )
+        self._contact_history_pending = False
 
     def select_save_data(self, particle_particle_contact=False, particle_wall_contact=False):
         self.sims.set_save_data(particle_particle_contact, particle_wall_contact)
@@ -808,19 +823,42 @@ class DEMPM(SolverDiagnosticsMixin):
         finally:
             self.dem.sims.set_dem_coupling(original_coupling)
 
-    def run(self, **kwargs):
-        if self.is_dem_lsm_pm_soft_rigid_mode():
-            self.run_dem_lsm_pm_soft_rigid(**kwargs)
-            return
-        if self.is_direct_mpm_affine_ipc():
-            return self.run_direct_mpm_affine_ipc(**kwargs)
-        if self.is_incompressible_mpm_affine_body():
-            return self.run_incompressible_mpm_affine_body(**kwargs)
-        self.add_essentials(**kwargs)
-        self.check_critical_timestep()
-        self.solver.coupling_solver(self.mpm.scene, self.dem.scene)
+    def run(self, *, distributed=False, **kwargs):
+        exchange = None
+        if GlobalVariable.DISTRIBUTED or distributed:
+            from src.mpdem.DistributedLSDEM import DistributedLSDEM
 
-    def check_critical_timestep(self):
+            if DictIO.get_alternative(kwargs, "visualize", False):
+                raise SimulationStateError("distributed MPDEM requires a run without visualization")
+            self.sync_settings()
+            exchange = DistributedLSDEM(self)
+        else:
+            if self.is_dem_lsm_pm_soft_rigid_mode():
+                self.run_dem_lsm_pm_soft_rigid(**kwargs)
+                return
+            if self.is_direct_mpm_affine_ipc():
+                return self.run_direct_mpm_affine_ipc(**kwargs)
+            if self.is_incompressible_mpm_affine_body():
+                return self.run_incompressible_mpm_affine_body(**kwargs)
+        self.add_essentials(**kwargs)
+        if exchange is None:
+            self.check_critical_timestep()
+            self.solver.coupling_solver(self.mpm.scene, self.dem.scene)
+            return
+        self.mpm.enginer.distributed_mpm = exchange
+        self.enginer.distributed = exchange
+        try:
+            restart_dt = self.sims.delta
+            self.check_critical_timestep(exchange.minimum_timestep)
+            if exchange.restart_index is not None and self.sims.delta != restart_dt:
+                raise SimulationStateError("The checkpoint timestep exceeds the current distributed stability limit")
+            self.solver.coupling_solver(self.mpm.scene, self.dem.scene)
+            self.mpm._restart_checkpoint = None
+        finally:
+            self.mpm.enginer.distributed_mpm = None
+            self.enginer.distributed = None
+
+    def check_critical_timestep(self, reduce_timestep=None):
         print("#", " Check Timestep ... ...".ljust(67))
         dem_critical_timestep = self.dem.get_critical_timestep()
         mpm_critical_timestep = (
@@ -846,6 +884,8 @@ class DEMPM(SolverDiagnosticsMixin):
             self.dem.sims.init_delta = self.sims.dem_timestep
         else:
             critical_timestep = min(dem_critical_timestep, mpm_critical_timestep, dempm_critical_timestep)
+            if reduce_timestep is not None:
+                critical_timestep = reduce_timestep(critical_timestep)
             self.sims.update_critical_timestep(self.mpm.sims, self.dem.sims, critical_timestep)
 
     def get_critical_timestep(self):

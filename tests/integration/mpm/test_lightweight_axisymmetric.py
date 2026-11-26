@@ -6,7 +6,18 @@ import pytest
 pytestmark = [pytest.mark.serial, pytest.mark.isolated_dimension(2)]
 
 
-def _make_model(tmp_path, shape, projection, stabilize=None, *, contact=False, traction=None, sparse_grid=False):
+def _make_model(
+    tmp_path,
+    shape,
+    projection,
+    stabilize=None,
+    *,
+    contact=False,
+    traction=None,
+    sparse_grid=False,
+    mode="Lightweight",
+    adaptive=False,
+):
     from src.mpm.mainMPM import MPM
 
     mpm = MPM(log=False)
@@ -14,7 +25,7 @@ def _make_model(tmp_path, shape, projection, stabilize=None, *, contact=False, t
         dimension=2,
         domain=[0.6, 0.6],
         gravity=[0, 0],
-        mode="Lightweight",
+        mode=mode,
         axisymmetric=True,
         shape_function=shape,
         velocity_projection=projection,
@@ -42,7 +53,10 @@ def _make_model(tmp_path, shape, projection, stabilize=None, *, contact=False, t
         model="LinearElastic",
         material={"MaterialID": 1, "Density": 1800, "YoungModulus": 2e4, "PoissonRatio": 0.3},
     )
-    mpm.add_element(element={"ElementType": "Q4N2D", "ElementSize": [0.1, 0.1]})
+    element = {"ElementType": "Q4N2D", "ElementSize": [0.1, 0.1]}
+    if adaptive:
+        element["AdaptiveGrid"] = {"MaxLevel": 1}
+    mpm.add_element(element=element)
     mpm.add_region(
         region={
             "Name": "ring",
@@ -123,6 +137,25 @@ def test_axisymmetric_rejects_zero_radius(tmp_path, taichi_runtime):
     mpm.scene.particle[0].x = [0.0, 0.25]
     with pytest.raises(SimulationStateError, match="positive particle radii"):
         mpm.run()
+
+
+@pytest.mark.parametrize("mode", ["Lightweight", "Normal"])
+def test_distributed_axisymmetric_rejects_blockscan(tmp_path, taichi_runtime, monkeypatch, mode):
+    from src.utils import GlobalVariable
+    from src.utils.errors import ConfigurationError
+
+    mpm = _make_model(tmp_path, "GIMP", None, sparse_grid={"Backend": "BlockScan"}, mode=mode)
+    monkeypatch.setattr(GlobalVariable, "DISTRIBUTED", True)
+    with pytest.raises(ConfigurationError, match="does not support BlockScan.*sparse_grid=False"):
+        mpm.run()
+
+
+def test_distributed_normal_rejects_adaptive_grid(tmp_path, taichi_runtime):
+    from src.utils.errors import ConfigurationError
+
+    mpm = _make_model(tmp_path, "GIMP", None, mode="Normal", adaptive=True)
+    with pytest.raises(ConfigurationError, match="adaptive refinement"):
+        mpm.run(distributed=True)
 
 
 def test_axisymmetric_particle_traction_uses_area_per_radian(tmp_path, taichi_runtime):

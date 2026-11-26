@@ -3,6 +3,8 @@ from src.sdf.polyhedron import polyhedron
 from src.sdf.surfacefunction import surfacefunction
 from src.utils.SolverRuntime import StepSchedule
 from src.utils.RuntimeHook import python_callback
+from src.utils.DistributedRuntime import init_distributed_cuda
+from src.utils.errors import ConfigurationError
 
 # Copyright (c) 2023, multiscale geomechanics lab, Zhejiang University
 # This file is from the GeoTaichi project, released under the GNU General Public License v3.0
@@ -151,6 +153,8 @@ def init(
     print_ir=False,
     log=True,
     random_seed=0,
+    *,
+    distributed=False,
 ):
     """
     Initializes the Taichi runtime environment.
@@ -166,9 +170,12 @@ def init(
         device_memory_fraction (float): The fraction of device memory to be used if the backend is GPU.
         kernel_profiler (bool): Whether to enable kernel function profiling.
         log (bool): Whether to enable logging.
+        distributed (bool): Bind one CUDA device per torchrun rank and initialize NCCL.
     """
     if dim != 2 and dim != 3:
         raise ValueError(f"Keyword:: /dim/ should be either 2 or 3.")
+    if distributed and arch != "gpu":
+        raise ConfigurationError("distributed initialization requires arch='gpu' (CUDA)")
     GlobalVariable.DIMENSION = dim
 
     if default_fp == "float64":
@@ -185,7 +192,25 @@ def init(
     else:
         raise RuntimeError("Only ['int64', 'int32'] is available for default type of int")
 
-    if arch == "cpu":
+    if distributed:
+        memory_options = {}
+        if device_memory_GB is not None:
+            memory_options["device_memory_GB"] = device_memory_GB
+        elif device_memory_fraction is not None:
+            memory_options["device_memory_fraction"] = device_memory_fraction
+        init_distributed_cuda(
+            offline_cache=offline_cache,
+            debug=debug,
+            default_fp=default_fp,
+            default_ip=default_ip,
+            kernel_profiler=kernel_profiler,
+            print_ir=print_ir,
+            log_level=ti.ERROR,
+            random_seed=random_seed,
+            **memory_options,
+        )
+        GlobalVariable.USEGPU = True
+    elif arch == "cpu":
         if (
             platform.system() == "Darwin"
             and platform.machine() == "arm64"
@@ -294,7 +319,8 @@ def init(
     else:
         raise RuntimeError("arch is not recognized, please choose in the following: ['cpu', 'gpu']")
 
-    if log:
+    GlobalVariable.DISTRIBUTED = distributed
+    if log and (not distributed or os.environ.get("RANK") == "0"):
         make_print_to_file()
 
 

@@ -990,6 +990,7 @@ class WriteFile:
             psize = scene.psize
         return {
             "t_current": sims.current_time,
+            "current_step": sims.current_step,
             "body_num": particle_num,
             "active": active,
             "particleID": particle_id,

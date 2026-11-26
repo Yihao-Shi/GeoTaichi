@@ -14,6 +14,7 @@ from src.mpm.engines.FreeSurfaceDetection import *
 class Engine(object):
     def __init__(self, sims: Simulation) -> None:
         self.compute = None
+        self.distributed_mpm = None
         self.compute_stress_strains = None
         self.bulid_neighbor_list = None
         self.apply_traction_constraints = None
@@ -209,6 +210,8 @@ class Engine(object):
                         raise SimulationStateError("")
                 elif sims.stabilize == "F-Bar Method":
                     self.compute_forces = self.compute_force_2d_axisy
+                    self.calculate_velocity_gradient = self.update_velocity_gradient_axisy_2d
+                    self.compute_velocity_gradient = self.update_velocity_gradient_fbar
                     if sims.mls:
                         raise SimulationStateError("2D condition do not support moving least squares")
                     if sims.material_type == "Fluid":
@@ -306,6 +309,8 @@ class Engine(object):
                 scene.element.shape_fn,
                 scene.element.node_size,
             )
+            if self.distributed_mpm is not None:
+                self.distributed_mpm.sum_field(scene.node.pressure)
             kernel_grid_pressure(scene.mass_cut_off, scene.is_rigid, scene.node)
             kernel_pressure_g2p(
                 int(scene.particleNum[0]),
@@ -583,6 +588,8 @@ class Engine(object):
         raise NotImplementedError
 
     def update_velocity_gradient_fbar(self, sims: Simulation, scene: SceneManager):
+        # Axisymmetric grid transfers are 2D, but the deformation includes the hoop component.
+        gradient_dimension = 3 if sims.is_2DAxisy else sims.dimension
         scene.node.jacobian.fill(0)
         self.calculate_velocity_gradient(sims, scene)
         kernel_jacobian_p2g(
@@ -595,7 +602,10 @@ class Engine(object):
             scene.element.LnID,
             scene.element.shape_fn,
             scene.element.node_size,
+            gradient_dimension,
         )
+        if self.distributed_mpm is not None:
+            self.distributed_mpm.sum_field(scene.node.jacobian)
         kernel_grid_jacobian(scene.volume_cut_off, scene.is_rigid, scene.node)
         kernel_update_velocity_gradient_fbar(
             sims.fbar_fraction,
@@ -608,6 +618,7 @@ class Engine(object):
             scene.element.LnID,
             scene.element.shape_fn,
             scene.element.node_size,
+            gradient_dimension,
         )
 
     def compute_external_force(self, sims: Simulation, scene: SceneManager):

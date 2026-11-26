@@ -25,7 +25,10 @@ pose until the measured settling criterion is satisfied. The cone uses grid
 damping of 0.6 during this hold. `--dig-damping` controls grid damping
 from bucket release through the end of the run and defaults to zero. The
 bucket motion is slowed by a factor of 1.75 and interpolated with a clamped
-cubic spline.
+cubic spline. `--sdf-spacing` sets the rigid contact grid spacing in metres
+for both the bucket and the truck bed. It defaults to 0.04 m. The contact
+grid must resolve the wall thickness, and the linear penalty law permits
+finite overlap even with a refined SDF.
 
 Run from this directory with a fresh output path.
 
@@ -38,9 +41,40 @@ python -u explicit_cone/excavator_cone_cycle.py /tmp/trench-dry-sand \
   --arch gpu --trench explicit_trench/inputs/trench.json --dt 5e-5
 ```
 
-To resume, use the same case options, `--resume-from /path/to/results`, and
-`--resume-index INDEX`. `export_vtu.py RUN OUTPUT` exports the native
-checkpoints and validates the VTUs by reading them back.
+For a single 200-million-point cone across eight CUDA GPUs, run from this
+same directory with PyTorch CUDA/NCCL installed.
+
+```sh
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 torchrun --standalone --nproc-per-node=8 \
+  explicit_cone/excavator_cone_cycle.py /path/to/cone-200m \
+  --arch gpu --particles 200000000 --dt 8e-5 --settle-damping 0.6 --dig-damping 0.25
+```
+
+The fixed step of 80 μs is below the 200-million-point case’s initial
+CFL limit of about 85 μs. Lightweight MPM keeps 25 million particles and a full
+grid on each GPU.
+Each rank seeds a distinct slice of one scrambled Sobol sequence. The global
+settling check uses the pooled RMS speed and the fraction of all points below
+the p95 speed limit. The progress CSV reports the rank-local p95 speed.
+Each `rank-NN/` directory holds its own particle and contact output. The
+run-level `latest-checkpoint.json` is updated after all ranks have written
+the same checkpoint, at 0 s, 0.01 s, every 2 s thereafter, and at the end.
+Allow about 1.6 TB for a run that uses the entire settling window, including
+the full-resolution replay snapshots.
+
+To resume, use the same launcher, rank count and case options. Pass a new output
+path and `--resume-from /path/to/results --resume-index INDEX`. Read `INDEX` from
+`latest-checkpoint.json` for the latest complete distributed checkpoint. Each
+rank reads the corresponding `rank-NN/` directory. The script restores the
+particle and friction state and reconstructs the bucket and truck from the
+prescribed trajectory. Old checkpoints use the saved time and original fixed
+step to recover the step count, and the rank’s progress CSV and snapshots to
+recover the settling state and loaded cohort. For the fourfold contact
+stiffness trial, include `--contact-stiffness-scale 4` with the original
+`--dt 4e-5` and `--sdf-spacing 0.01`.
+
+The single-process run accepts the same resume flags. `export_vtu.py RUN OUTPUT`
+exports the native checkpoints and validates the VTUs by reading them back.
 
 For video replay set `case` to `cone` or `trench` and set `frames` to an
 absolute output path. The video repeats the 10 source frames per playback

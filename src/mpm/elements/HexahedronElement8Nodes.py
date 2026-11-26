@@ -117,7 +117,8 @@ class HexahedronElement8Nodes(ElementBase):
                 self.gauss_point = GaussPointInRectangle(gauss_point=sims.gauss_number)
                 self.gauss_point.create_gauss_point()
             if sims.mode == "Normal" and self.need_shape_cache(sims):
-                self.set_essential_field(is_bbar, sims.max_particle_num, sims.shape_function, sims.mls)
+                # MLS changes force assembly, but stress and contact still use shape gradients.
+                self.set_essential_field(is_bbar, sims.max_particle_num, sims.shape_function, mls=False)
 
         if sims.solver_type == "Implicit":
             if sims.discretization == "FEM":

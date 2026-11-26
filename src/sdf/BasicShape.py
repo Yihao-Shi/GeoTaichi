@@ -1,6 +1,5 @@
 from src.utils.errors import SimulationStateError
 import numpy as np
-import open3d as o3d
 import meshio
 import itertools, multiprocessing
 import time, math, warnings, types
@@ -401,9 +400,22 @@ class BasicShape(object):
         if estimate:
             self.grid.generate_sdf(self(self.grid.node_coord).reshape(-1))
         else:
-            self.grid.generate_sdf(self.mesh_distance(self.grid.node_coord).reshape(-1))
+            # Triangle candidate lists can dwarf the coordinates of a refined grid.
+            nodes = self.grid.node_coord
+            batch_size = 32768
+            self.grid.generate_sdf(
+                np.concatenate(
+                    [
+                        self.mesh_distance(nodes[start : start + batch_size]).reshape(-1)
+                        for start in range(0, len(nodes), batch_size)
+                    ]
+                )
+            )
 
     def construct_surface_mesh_from_point_cloud(self, points, estimate_normals=False):
+        # Open3D probes CUDA on import, before distributed init can bind the rank.
+        import open3d as o3d
+
         pcd = o3d.geometry.PointCloud()
         if not estimate_normals:
             normals = self._normal(points)

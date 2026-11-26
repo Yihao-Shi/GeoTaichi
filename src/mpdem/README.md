@@ -1953,6 +1953,27 @@ lists, contact histories, and coupling forces. Search, contact assembly, and
 state exchange run in Taichi kernels. Python coordinates the two solvers,
 capacity validation, output, and optional external CFD callbacks.
 
+Call `gt.init(arch="gpu", distributed=True)` and then `mpdem.run()` for 3D
+explicit Lagrangian solid ULMPM–LSDEM body contact on multiple CUDA GPUs
+with either `Normal` or `Lightweight`.
+Follow the per-rank setup and launcher in the [MPM guide](../mpm/README.md#multi-gpu-mpm). Each rank
+holds only its MPM particles and a replica of every LSDEM body. Use identical
+rigid geometry, initial state, and contact parameters on every rank. Contact
+forces on local MPM particles enter the shared grid exchange. NCCL sums the
+rigid contact forces and torques before each rank advances the rigid bodies.
+Each rank writes its own MPM shard and a replica of the LSDEM state. This mode
+requires a shared MPM/DEM time step and excludes walls, internal DEM contacts,
+MPM grid contact and DEM subcycling.
+
+For fixed-step continuation, use the same rank layout, rigid geometry and
+contact settings. Enable `mpdem.select_save_data(particle_particle_contact=True)`
+when writing checkpoints. Restore each MPM shard with `mpm.read_restart` and
+restore the LSDEM state at the same time and index. An example with prescribed
+bodies can reconstruct their pose and twist from the original motion at that
+time. Call `mpdem.read_restart(index, shard_dir, ppcontact=True)` to restore the
+local contact history and run with a fresh per-rank output directory. The
+excavator example shows this workflow.
+
 The incompressible sphere path solves
 `d(epsilon_f)/dt + div(epsilon_f u_f) = 0`; drag reaction is distributed to
 available MAC faces with porosity-weighted mass. The 3D LSDEM path retains

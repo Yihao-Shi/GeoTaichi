@@ -38,6 +38,41 @@ class ULExplicitEngine(Engine):
         self.update_adaptive_grid = no_operation
         super().__init__(sims)
 
+    def reset_grid_message(self, scene: SceneManager):
+        if self.distributed_mpm is None:
+            super().reset_grid_message(scene)
+        else:
+            # Forces at zero-mass nodes must not enter the next collective.
+            scene.node.fill(0)
+
+    def calculate_interpolations(self, sims: Simulation, scene: SceneManager):
+        if self.distributed_mpm is not None and sims.is_2DAxisy:
+            self.check_axisymmetric_radii(scene)
+        super().calculate_interpolations(sims, scene)
+
+    def map_nodal_kinematics(self, sims: Simulation, scene: SceneManager):
+        self.compute_nodal_kinematic(sims, scene)
+        if self.distributed_mpm is not None:
+            if sims.configuration == "TLMPM":
+                self.distributed_mpm.sum_field(scene.node.momentum)
+            else:
+                self.distributed_mpm.reduce_grid(force=False)
+        self.compute_grid_velcity(sims, scene)
+
+    def apply_grid_loads(self, sims: Simulation, scene: SceneManager):
+        self.apply_particle_traction_constraints(sims, scene)
+        if self.distributed_mpm is not None:
+            self.distributed_mpm.reduce_grid(force=True)
+        self.apply_traction_constraints(sims, scene)
+        self.apply_absorbing_constraints(sims, scene)
+
+    def adaptive_timestep(self, sims: Simulation, scene: SceneManager):
+        if self.distributed_mpm is None:
+            super().adaptive_timestep(sims, scene)
+        elif sims.adaptive_timestep > 0 and sims.current_step % sims.adaptive_timestep == 0:
+            min_dt = self.distributed_mpm.minimum_timestep(scene.adaptive_timestep(sims))
+            sims.set_timestep(min(sims.init_delta, sims.CFL * min_dt))
+
     def choose_boundary_constraints(self, sims: Simulation, scene: SceneManager):
         super().choose_boundary_constraints(sims, scene)
         if getattr(scene.element, "adaptive", False):
@@ -69,6 +104,8 @@ class ULExplicitEngine(Engine):
             scene.element.dshape_fn,
             scene.element.node_size,
         )
+        if self.distributed_mpm is not None:
+            self.distributed_mpm.sum_field(scene.node.grad_domain)
 
     def calculate_precontact(self, sims: Simulation, scene: SceneManager):
         kernel_calc_contact_normal(
@@ -81,6 +118,8 @@ class ULExplicitEngine(Engine):
             scene.element.dshape_fn,
             scene.element.node_size,
         )
+        if self.distributed_mpm is not None:
+            self.distributed_mpm.sum_field(scene.node.grad_domain)
 
     def compute_geocontact_force(self, sims: Simulation, scene: SceneManager):
         kernel_calc_contact_displacement(
@@ -95,6 +134,8 @@ class ULExplicitEngine(Engine):
             scene.element.node_size,
             scene.element,
         )
+        if self.distributed_mpm is not None:
+            self.distributed_mpm.sum_field(scene.node.contact_pos)
         kernel_calc_geocontact(
             scene.mass_cut_off,
             scene.contact.friction,
@@ -135,6 +176,8 @@ class ULExplicitEngine(Engine):
                 scene.node,
                 scene.element,
             )
+        if self.distributed_mpm is not None:
+            self.distributed_mpm.sum_field(scene.node.contact_force)
         kernel_move_contact_polygon(scene.contact.polygon_vertices, scene.contact.velocity, sims.dt)
         self.apply_contact_velocity_constraints(sims, scene)
         self.apply_contact_reflection_constraints(sims, scene)
@@ -194,6 +237,9 @@ class ULExplicitEngine(Engine):
             scene.element.shape_fn,
             scene.element.node_size,
         )
+        if self.distributed_mpm is not None:
+            self.distributed_mpm.sum_field(scene.node.jacobian)
+            self.distributed_mpm.sum_field(scene.node.vol)
         kernel_grid_jacobian(scene.volume_cut_off, scene.is_rigid, scene.node)
         for material_id in range(scene.material.mapping.shape[0] - 1):
             start_index = scene.material.mapping[material_id]
@@ -213,6 +259,8 @@ class ULExplicitEngine(Engine):
                 scene.material.stateVars,
                 sims.dt,
             )
+        if self.distributed_mpm is not None:
+            self.distributed_mpm.sum_field(scene.node.pressure)
         kernel_grid_pressure_volume(scene.volume_cut_off, scene.is_rigid, scene.node)
         kernel_pressure_correction(
             scene.element.grid_nodes_lower_order,
@@ -239,6 +287,9 @@ class ULExplicitEngine(Engine):
             scene.element.shape_fn,
             scene.element.node_size,
         )
+        if self.distributed_mpm is not None:
+            self.distributed_mpm.sum_field(scene.node.jacobian)
+            self.distributed_mpm.sum_field(scene.node.vol)
         kernel_grid_jacobian(scene.volume_cut_off, scene.is_rigid, scene.node)
         for material_id in range(scene.material.mapping.shape[0] - 1):
             start_index = scene.material.mapping[material_id]
@@ -258,6 +309,8 @@ class ULExplicitEngine(Engine):
                 scene.material.stateVars,
                 sims.dt,
             )
+        if self.distributed_mpm is not None:
+            self.distributed_mpm.sum_field(scene.node.pressure)
         kernel_grid_pressure_volume(scene.volume_cut_off, scene.is_rigid, scene.node)
         kernel_pressure_correction(
             scene.element.grid_nodes_lower_order,
@@ -481,6 +534,7 @@ class ULExplicitEngine(Engine):
             scene.node,
             scene.particle,
             scene.element.LnID,
+            scene.element.shape_fn,
             scene.element.node_size,
         )
 
@@ -495,6 +549,7 @@ class ULExplicitEngine(Engine):
             scene.node,
             scene.particle,
             scene.element.LnID,
+            scene.element.shape_fn,
             scene.element.node_size,
         )
 
@@ -514,6 +569,8 @@ class ULExplicitEngine(Engine):
         kernel_volume_p2c(
             scene.element.cnum, scene.element.igrid_size, int(scene.particleNum[0]), scene.element.cell, scene.particle
         )
+        if self.distributed_mpm is not None:
+            self.distributed_mpm.sum_field(scene.element.cell.volume)
         kernel_find_valid_element(scene.element.cell_volume, scene.element.cell)
         kernel_sum_cell_stress(
             sims.gauss_number,
@@ -525,22 +582,27 @@ class ULExplicitEngine(Engine):
             scene.element.cell,
             scene.element.gauss_cell,
         )
+        if self.distributed_mpm is not None:
+            self.distributed_mpm.sum_field(scene.element.gauss_cell.vol)
+            self.distributed_mpm.sum_field(scene.element.gauss_cell.stress)
         kernel_compute_gauss_average_stress(
             sims.gauss_number, scene.volume_cut_off, scene.element.cell, scene.element.gauss_cell
         )
         kernel_average_pressure(sims.gauss_number, scene.element.cell, scene.element.gauss_cell)
-        kernel_internal_force_on_gauss_point_p2g(
-            sims.gauss_number,
-            scene.element.cnum,
-            scene.element.gnum,
-            scene.element.grid_size,
-            scene.element.igrid_size,
-            scene.node,
-            scene.element.cell,
-            scene.element.gauss_cell,
-            scene.element.gauss_point.gpcoords,
-            scene.element.gauss_point.weight,
-        )
+        # The global Gauss integral must enter the force sum only once.
+        if self.distributed_mpm is None or self.distributed_mpm.dist.get_rank() == 0:
+            kernel_internal_force_on_gauss_point_p2g(
+                sims.gauss_number,
+                scene.element.cnum,
+                scene.element.gnum,
+                scene.element.grid_size,
+                scene.element.igrid_size,
+                scene.node,
+                scene.element.cell,
+                scene.element.gauss_cell,
+                scene.element.gauss_point.gpcoords,
+                scene.element.gauss_point.weight,
+            )
         kernel_internal_force_on_material_point_p2g(
             scene.element.cnum,
             scene.element.gnum,
@@ -568,6 +630,8 @@ class ULExplicitEngine(Engine):
         kernel_volume_p2c_2d(
             scene.element.cnum, scene.element.igrid_size, int(scene.particleNum[0]), scene.element.cell, scene.particle
         )
+        if self.distributed_mpm is not None:
+            self.distributed_mpm.sum_field(scene.element.cell.volume)
         kernel_find_valid_element(scene.element.cell_volume, scene.element.cell)
         kernel_sum_cell_stress_2d(
             sims.gauss_number,
@@ -579,22 +643,27 @@ class ULExplicitEngine(Engine):
             scene.element.cell,
             scene.element.gauss_cell,
         )
+        if self.distributed_mpm is not None:
+            self.distributed_mpm.sum_field(scene.element.gauss_cell.vol)
+            self.distributed_mpm.sum_field(scene.element.gauss_cell.stress)
         kernel_compute_gauss_average_stress_2d(
             sims.gauss_number, scene.volume_cut_off, scene.element.cell, scene.element.gauss_cell
         )
         kernel_average_pressure_2d(sims.gauss_number, scene.element.cell, scene.element.gauss_cell)
-        kernel_internal_force_on_gauss_point_p2g_2d(
-            sims.gauss_number,
-            scene.element.cnum,
-            scene.element.gnum,
-            scene.element.grid_size,
-            scene.element.igrid_size,
-            scene.node,
-            scene.element.cell,
-            scene.element.gauss_cell,
-            scene.element.gauss_point.gpcoords,
-            scene.element.gauss_point.weight,
-        )
+        # The global Gauss integral must enter the force sum only once.
+        if self.distributed_mpm is None or self.distributed_mpm.dist.get_rank() == 0:
+            kernel_internal_force_on_gauss_point_p2g_2d(
+                sims.gauss_number,
+                scene.element.cnum,
+                scene.element.gnum,
+                scene.element.grid_size,
+                scene.element.igrid_size,
+                scene.node,
+                scene.element.cell,
+                scene.element.gauss_cell,
+                scene.element.gauss_point.gpcoords,
+                scene.element.gauss_point.weight,
+            )
         kernel_internal_force_on_material_point_p2g_2d(
             scene.element.cnum,
             scene.element.gnum,
@@ -820,6 +889,8 @@ class ULExplicitEngine(Engine):
             scene.element.shape_fn,
             scene.element.node_size,
         )
+        if self.distributed_mpm is not None:
+            self.distributed_mpm.sum_field(scene.node.momentum)
 
     def pre_calculation(self, sims: Simulation, scene: SceneManager, neighbor: SpatialHashGrid):
         scene.element.calculate_characteristic_length(sims, int(scene.particleNum[0]), scene.particle, scene.psize)
@@ -840,14 +911,11 @@ class ULExplicitEngine(Engine):
         self.calculate_interpolation(sims, scene)
         sims.timer.end("Shape function")
         sims.timer.begin("P2G")
-        self.compute_nodal_kinematic(sims, scene)
-        self.compute_grid_velcity(sims, scene)
+        self.map_nodal_kinematics(sims, scene)
         self.compute_forces(sims, scene)
         sims.timer.end("P2G")
         sims.timer.begin("Traction boundary")
-        self.apply_particle_traction_constraints(sims, scene)
-        self.apply_traction_constraints(sims, scene)
-        self.apply_absorbing_constraints(sims, scene)
+        self.apply_grid_loads(sims, scene)
         sims.timer.end("Traction boundary")
         sims.timer.begin("Grid kinematic")
         self.compute_grid_kinematic(sims, scene)
@@ -879,14 +947,11 @@ class ULExplicitEngine(Engine):
         self.calculate_interpolation(sims, scene)
         sims.timer.end("Shape function")
         sims.timer.begin("P2G")
-        self.compute_nodal_kinematic(sims, scene)
-        self.compute_grid_velcity(sims, scene)
+        self.map_nodal_kinematics(sims, scene)
         self.compute_forces(sims, scene)
         sims.timer.end("P2G")
         sims.timer.begin("Traction boundary")
-        self.apply_particle_traction_constraints(sims, scene)
-        self.apply_traction_constraints(sims, scene)
-        self.apply_absorbing_constraints(sims, scene)
+        self.apply_grid_loads(sims, scene)
         sims.timer.end("Traction boundary")
         sims.timer.begin("Grid kinematic")
         self.compute_grid_kinematic(sims, scene)
@@ -919,8 +984,7 @@ class ULExplicitEngine(Engine):
         self.calculate_interpolation(sims, scene)
         sims.timer.end("Shape function")
         sims.timer.begin("P2G-1")
-        self.compute_nodal_kinematic(sims, scene)
-        self.compute_grid_velcity(sims, scene)
+        self.map_nodal_kinematics(sims, scene)
         self.apply_dirichlet_constraints(sims, scene)
         self.apply_adaptive_velocity_constraints(sims, scene)
         self.apply_dirichlet_constraints(sims, scene)
@@ -937,9 +1001,7 @@ class ULExplicitEngine(Engine):
         self.compute_forces(sims, scene)
         sims.timer.end("P2G-2")
         sims.timer.begin("Traction boundary")
-        self.apply_particle_traction_constraints(sims, scene)
-        self.apply_traction_constraints(sims, scene)
-        self.apply_absorbing_constraints(sims, scene)
+        self.apply_grid_loads(sims, scene)
         sims.timer.end("Traction boundary")
         sims.timer.begin("Grid kinematic")
         self.compute_grid_kinematic(sims, scene)
@@ -961,14 +1023,11 @@ class ULExplicitEngine(Engine):
         self.calculate_interpolation(sims, scene)
         sims.timer.end("Shape function")
         sims.timer.begin("P2G")
-        self.compute_nodal_kinematic(sims, scene)
-        self.compute_grid_velcity(sims, scene)
+        self.map_nodal_kinematics(sims, scene)
         self.compute_forces(sims, scene)
         sims.timer.end("P2G")
         sims.timer.begin("Traction boundary")
-        self.apply_particle_traction_constraints(sims, scene)
-        self.apply_traction_constraints(sims, scene)
-        self.apply_absorbing_constraints(sims, scene)
+        self.apply_grid_loads(sims, scene)
         sims.timer.end("Traction boundary")
         sims.timer.begin("Grid kinematic")
         self.compute_grid_kinematic(sims, scene)
@@ -1018,11 +1077,18 @@ class ULExplicitEngine(Engine):
         self.compute_velocity_gradient(sims, scene)
         self.compute_particle_kinematic(sims, scene)
 
+    def check_axisymmetric_radii(self, scene: SceneManager):
+        invalid_radius = lightweight_has_invalid_radius(int(scene.particleNum[0]), scene.particle)
+        if self.distributed_mpm is not None:
+            invalid_radius = self.distributed_mpm.any_invalid_radius(invalid_radius)
+        if invalid_radius:
+            raise SimulationStateError("Axisymmetric MPM requires finite positive particle radii.")
+
     def lightweight(self, sims: Simulation, scene: SceneManager, neighbor: SpatialHashGrid):
         axisymmetric = sims.is_2DAxisy
         particle_num = int(scene.particleNum[0])
-        if axisymmetric and lightweight_has_invalid_radius(particle_num, scene.particle):
-            raise SimulationStateError("Axisymmetric Lightweight MPM requires finite positive particle radii.")
+        if axisymmetric:
+            self.check_axisymmetric_radii(scene)
         if scene.sparse_grid is not None:
             sims.timer.begin("Shape function")
             scene.sparse_grid.rebuild_lightweight(particle_num, scene.element, scene.particle)
@@ -1043,6 +1109,8 @@ class ULExplicitEngine(Engine):
         )
         sims.timer.begin("P2G-1")
         lightweight_p2g(*transfer, False)
+        if self.distributed_mpm is not None:
+            self.distributed_mpm.reduce_grid(force=False)
         self.compute_grid_velcity(sims, scene)
         self.apply_dirichlet_constraints(sims, scene)
         sims.timer.end("P2G-1")
@@ -1069,9 +1137,7 @@ class ULExplicitEngine(Engine):
         lightweight_p2g(*transfer, True)
         sims.timer.end("P2G-2")
         sims.timer.begin("Traction boundary")
-        self.apply_particle_traction_constraints(sims, scene)
-        self.apply_traction_constraints(sims, scene)
-        self.apply_absorbing_constraints(sims, scene)
+        self.apply_grid_loads(sims, scene)
         sims.timer.end("Traction boundary")
         sims.timer.begin("Grid kinematic")
         self.compute_grid_kinematic(sims, scene)

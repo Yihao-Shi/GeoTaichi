@@ -1868,7 +1868,7 @@ def kernel_force_mls_p2g(
             for ln in range(offset, offset + int(node_size[np])):
                 node_id = ln_id[ln]
                 shape_fn = shapefn[ln]
-                pointer = grid_size * ti.Vector([*vectorize_id(node_id, gnum)]) - position
+                pointer = grid_size * vectorize_id(node_id, gnum) - position
                 internal_force = vec3f(
                     f_int[0] * inertia_tensor[0] * pointer[0]
                     + f_int[3] * inertia_tensor[1] * pointer[1]
@@ -1886,7 +1886,7 @@ def kernel_force_mls_p2g(
                     or ti.static(GlobalVariable.MPMYPBC)
                     or ti.static(GlobalVariable.MPMZPBC)
                 ):
-                    index = ti.Vector([vectorize_id(node_id, gnum)])
+                    index = vectorize_id(node_id, gnum)
                     if ti.static(GlobalVariable.MPMXPBC):
                         xindex = -index[0] + gnum[0]
                         if xindex == 0 or xindex == gnum[0]:
@@ -1914,7 +1914,7 @@ def kernel_force_mls_p2g(
 def kernel_force_mls_p2g_2d(
     total_nodes: int,
     particle_num: int,
-    gravity: ti.types.vector(3, float),
+    gravity: ti.types.vector(2, float),
     gnum: ti.types.vector(2, int),
     grid_size: ti.types.vector(2, float),
     inertia_tensor: ti.types.vector(2, float),
@@ -1936,7 +1936,7 @@ def kernel_force_mls_p2g_2d(
             for ln in range(offset, offset + int(node_size[np])):
                 node_id = ln_id[ln]
                 shape_fn = shapefn[ln]
-                pointer = grid_size * ti.Vector([*vectorize_id(node_id, gnum)]) - position
+                pointer = grid_size * vectorize_id(node_id, gnum) - position
                 internal_force = vec2f(
                     f_int[0] * inertia_tensor[0] * pointer[0] + f_int[3] * inertia_tensor[1] * pointer[1],
                     f_int[3] * inertia_tensor[0] * pointer[0] + f_int[1] * inertia_tensor[1] * pointer[1],
@@ -1947,7 +1947,7 @@ def kernel_force_mls_p2g_2d(
                     or ti.static(GlobalVariable.MPMYPBC)
                     or ti.static(GlobalVariable.MPMZPBC)
                 ):
-                    index = ti.Vector([vectorize_id(node_id, gnum)])
+                    index = vectorize_id(node_id, gnum)
                     if ti.static(GlobalVariable.MPMXPBC):
                         xindex = -index[0] + gnum[0]
                         if xindex == 0 or xindex == gnum[0]:
@@ -3160,6 +3160,7 @@ def kernel_jacobian_p2g(
     ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
+    gradient_dimension: ti.template(),
 ):
     ti.block_local(node.jacobian)
     for np in range(particle_num):
@@ -3167,9 +3168,7 @@ def kernel_jacobian_p2g(
             body_id = int(particle[np].bodyID)
             mass = particle[np].m
             velocity_gradient = particle[np].velocity_gradient
-            djacobian = (
-                ti.Matrix.identity(float, GlobalVariable.DIMENSION) + dt[None] * velocity_gradient
-            ).determinant()
+            djacobian = (ti.Matrix.identity(float, gradient_dimension) + dt[None] * velocity_gradient).determinant()
             transfer_var = mass * djacobian
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
@@ -3712,6 +3711,7 @@ def kernel_update_velocity_gradient_fbar(
     ln_id: ti.template(),
     shapefn: ti.template(),
     node_size: ti.template(),
+    gradient_dimension: ti.template(),
 ):
     # ti.block_local(dt)
     for np in range(particle_num):
@@ -3726,19 +3726,19 @@ def kernel_update_velocity_gradient_fbar(
                 djacobian_bar += shape_mapping(shape_fn, node[node_id, body_id].jacobian)
 
             velocity_gradient = particle[np].velocity_gradient
-            ddeformation_gradient = ti.Matrix.identity(float, GlobalVariable.DIMENSION) + dt[None] * velocity_gradient
+            ddeformation_gradient = ti.Matrix.identity(float, gradient_dimension) + dt[None] * velocity_gradient
             djacobian = ddeformation_gradient.determinant()
             djacobian_bar_new = fraction * djacobian_bar + (1.0 - fraction) * djacobian
             # jacobian_bar_new = clamp(0.01, 100, jacobian_bar_new)
 
-            multiplier = (djacobian_bar_new / djacobian) ** (1.0 / GlobalVariable.DIMENSION)
+            multiplier = (djacobian_bar_new / djacobian) ** (1.0 / gradient_dimension)
             # === split into volumetric + deviatoric ===
-            trL = velocity_gradient.trace() / GlobalVariable.DIMENSION
-            dev_l = velocity_gradient - trL * ti.Matrix.identity(float, GlobalVariable.DIMENSION)
+            trL = velocity_gradient.trace() / gradient_dimension
+            dev_l = velocity_gradient - trL * ti.Matrix.identity(float, gradient_dimension)
 
             # adjust only volumetric part
             tr_l_new = (multiplier - 1.0) / dt[None] + multiplier * trL
-            updated_velocity_gradient = dev_l + tr_l_new * ti.Matrix.identity(float, GlobalVariable.DIMENSION)
+            updated_velocity_gradient = dev_l + tr_l_new * ti.Matrix.identity(float, gradient_dimension)
 
             particle[np].velocity_gradient = updated_velocity_gradient
 
@@ -5069,9 +5069,6 @@ def kernel_calc_demcontact_2d(
     element: ti.template(),
 ):
     # ti.block_local(dt)
-    v1, v2 = velocity, ZEROVEC2F
-    normal, tangential = ZEROVEC2F, ZEROVEC2F
-
     for i in range(start_index, end_index):
         np = material_id[i]
         if int(particle[np].active) == 1:
@@ -5090,7 +5087,7 @@ def kernel_calc_demcontact_2d(
             else:
                 delta = circle_radius - distance
                 normal = normalize(normal)
-                relative_velocity = v1 - v2
+                relative_velocity = velocity - v2
                 normal_force = ti.max(
                     0.0, delta * k_normal + 2.0 * ti.sqrt(m2 * k_normal) * relative_velocity.dot(normal)
                 )

@@ -38,3 +38,17 @@ def test_nonfinite_samples_fail(value):
     axis = np.array([0.0, 1.0])
     with pytest.raises(ValueError, match="finite"):
         mesh._worker(lambda p: np.full(len(p), value), (axis, axis, axis), sparse=False)
+
+
+def test_polyhedron_grid_batches_preserve_signed_distance():
+    from pathlib import Path
+
+    from src.sdf.polyhedron import polyhedron
+
+    cube = Path(__file__).resolve().parents[2] / "data" / "affine_cube.obj"
+    shape = polyhedron(str(cube)).grids(space=0.03, extent=1).reset(False)
+    shape.generate()
+    assert shape.grid.gridSum > 32768
+    expected = shape.mesh_distance(shape.grid.node_coord).ravel()
+    assert expected.min() < 0 < expected.max()
+    np.testing.assert_array_equal(shape.grid.distance_field, expected)

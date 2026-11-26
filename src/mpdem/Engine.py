@@ -58,6 +58,7 @@ class Engine(object):
         self.physpp = physpp
         self.physpw = physpw
         self.compute = None
+        self.distributed = None
         self.reset_contact_energy = self.reset_contact_energies
         self.incompressible_coupler = None
         self.precompute_incompressible = no_operation
@@ -151,6 +152,18 @@ class Engine(object):
                         self.choose_two_phase_double_layer_lsdem_coupling()
                 else:
                     self.compute = self.lsintegration
+                    if (
+                        self.msims.mode == "Normal"
+                        and self.msims.configuration == "ULMPM"
+                        and self.msims.material_type == "Solid"
+                        and self.msims.coupling == "Lagrangian"
+                        and self.msims.neighbor_detection
+                        and not self.msims.is_direct_backend()
+                        and self.mengine.system_resolve is not no_operation
+                    ):
+                        # LSDEM rebuild branches can skip system_resolve. Map after interpolation every step.
+                        self.mengine.compute_nodal_kinematic = self.mengine.system_resolve
+                        self.mengine.system_resolve = no_operation
         elif self.sims.coupling_scheme == "DEM":
             if self.dsims.scheme == "DEM":
                 self.compute = self.dem_integration
@@ -209,8 +222,10 @@ class Engine(object):
             self.physpw.update_contact_table(self.sims, self.mscene, self.dscene, self.neighbor)
             self.neighbor.update_particle_particle_auxiliary_lists()
             self.neighbor.update_particle_wall_auxiliary_lists()
-            self.physpp.resolve(self.sims, self.mscene, self.dscene, self.neighbor)
-            self.physpw.resolve(self.sims, self.mscene, self.dscene, self.neighbor)
+            if self.distributed is None or self.distributed.restart_index is None:
+                # Restored friction history advances only on a physical step.
+                self.physpp.resolve(self.sims, self.mscene, self.dscene, self.neighbor)
+                self.physpw.resolve(self.sims, self.mscene, self.dscene, self.neighbor)
         self.precompute_incompressible()
 
     def reset_contact_energies(self):
@@ -338,6 +353,8 @@ class Engine(object):
 
         self.dengine.system_resolve(self.dsims, self.dscene, self.dneighbor)
         self.system_resolve()
+        if self.distributed is not None:
+            self.distributed.reduce_reactions()
 
         self.update_servo_wall()
         self.get_wall_contact_forces()
@@ -419,6 +436,8 @@ class Engine(object):
             min_dt2 = self.dscene.adaptive_timestep(self.dsims)
             min_dt3 = kernel_adaptive_timestep(int(self.mscene.particleNum[0]), self.mscene.particle)
             min_dt = min(self.sims.init_delta, self.sims.CFL * min(min_dt1, min_dt2, min_dt3))
+            if self.distributed is not None:
+                min_dt = self.distributed.minimum_timestep(min_dt)
             self.dsims.set_timestep(min_dt)
             self.msims.set_timestep(min_dt)
             self.sims.set_timestep(min_dt)
